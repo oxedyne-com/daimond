@@ -1,0 +1,10 @@
+{
+  "workflow": "codefix",
+  "model": "accounts/fireworks/models/gpt-oss-120b",
+  "elapsedS": "18.8",
+  "cargoTest": "ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+  "testsPass": true,
+  "docCommentsAdded": 4,
+  "spendUsd": 0.0408,
+  "consoleErrors": []
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Chats &amp; Foci — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html" aria-current="page">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Chats &amp; Foci</h1>
+	<p class="lede">A chat is a conversation with the daimon. A Focus is a chat you have distilled into a repeatable method. This page covers starting and reading chats, the turn controls, and folding a chat into a Focus.</p>
+
+	<h2>Starting and returning to a chat</h2>
+	<p>Choose <span class="ui">New chat</span> — the <strong>＋</strong> beside <strong>Chats</strong> at the top of the rail. Type in the box at the bottom of the centre panel and send with <span class="ui">➤</span>. Every chat you start is listed under <strong>Chats</strong> in the rail; click one to bring it back to the centre. A new chat starts on your default model; you can change the model for just that chat from the selector in its header.</p>
+
+	<h2>Reading a long conversation</h2>
+	<p>A conversation grows quickly, so the chat header carries controls to keep it readable. They sit at the top-right of the centre panel.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Steps</h3>
+			<p>The <span class="ui">Steps</span> button shows or hides the tool steps in the thread — the work the agent did between your message and its answer. Hide them to read just the conversation; show them to see what it actually did.</p>
+		</div>
+		<div class="card">
+			<h3>Collapse</h3>
+			<p>The <span class="ui">−</span> button collapses every answer, leaving what you asked. It is the quickest way to skim a long thread, and it is also how you start picking turns to fold.</p>
+		</div>
+		<div class="card">
+			<h3>Jump back</h3>
+			<p>The <span class="ui">↑</span> button jumps back to your last message. Press it again to walk back through the ones before it.</p>
+		</div>
+	</div>
+
+	<figure class="shot" data-shot="chat-turns">
+		<img alt="A chat with answers collapsed, showing the questions asked, and the turn-selection controls in the header." src="shots/chat-turns.png" loading="lazy">
+		<figcaption>Collapsing the answers leaves what you asked, and turns on the controls for selecting turns to fold.</figcaption>
+	</figure>
+
+	<h2>Folding a chat into a Focus</h2>
+	<p>When a conversation has found a good way of doing something, you fold it: you keep the method and drop the back-and-forth that produced it. The result is a <strong>Focus</strong> — a saved, repeatable method you can return to and run again.</p>
+
+	<p>Two units make up a Focus:</p>
+	<ul>
+		<li>A <strong>fold</strong> is one improvement — a single step forward in the method.</li>
+		<li>A <strong>brief</strong> is the accumulated method: the field schema, the ordered steps, and the checks you found the hard way. A Focus is a brief together with the chain of folds that produced it.</li>
+	</ul>
+
+	<h3>Selecting turns and folding them</h3>
+	<p>Collapse the thread with <span class="ui">−</span>, then pick the turns worth keeping. A row of controls appears in the header for this:</p>
+	<ul>
+		<li><span class="ui">Select all</span> — mark every turn.</li>
+		<li><span class="ui">Deselect all</span> — clear the selection.</li>
+		<li><span class="ui">Fold selected</span> — fold the chosen turns into the Focus.</li>
+	</ul>
+	<p>You fold a step you have <em>adopted</em>, not a passing remark: folding keeps the reduced method, not the transcript.</p>
+
+	<figure class="shot" data-shot="focus-fold">
+		<img alt="The Focus command surface shown in place of the chat, with controls to steer and fold the method." src="shots/focus-fold.png" loading="lazy">
+		<figcaption>Selecting a Focus shows its command surface in place of the chat, where you steer and fold the method.</figcaption>
+	</figure>
+
+	<h2>Working a Focus</h2>
+	<p>Foci are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Foci</strong>. Selecting a Focus replaces the chat in the centre with its command surface — a compact view where you steer the method and fold further improvements into it. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
+
+	<div class="next">
+		<a href="models.html">&larr; Models &amp; credits</a>
+		<a href="email-web-files.html">Next: Email, Web &amp; files &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

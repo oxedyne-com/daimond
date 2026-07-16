@@ -1,0 +1,80 @@
+/* tools.css — the Tools panel: what Daimond can do, and what the rest would cost.
+ *
+ * One card shape for every tool, whether it is free, owned or for sale. The shop is a
+ * section inside Tools, not a different room — a tool you have and a tool you could
+ * have are the same kind of thing, and the only difference is the button. */
+
+.tools-body {
+	flex: 1; min-height: 0; overflow-y: auto;
+	padding: 12px 14px 18px;
+	display: flex; flex-direction: column; gap: 8px;
+}
+
+.tools-head {
+	font-size: 13px; line-height: 1.55;
+	color: var(--text-secondary);
+	padding-bottom: 4px;
+}
+.tools-head b { color: var(--text-primary); }
+
+.tools-sec {
+	margin-top: 12px;
+	font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+	color: var(--text-muted);
+}
+
+.tools-card {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	gap: 4px 12px;
+	padding: 10px 12px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+/* A tool that is for sale is the one thing here asking for a decision, so it is the one
+   thing that is not the colour of the furniture. */
+.tools-card.locked { background: var(--bg-secondary); border-color: var(--border-2); }
+
+.tools-name {
+	grid-column: 1;
+	font-size: 13.5px; font-weight: 600;
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+}
+.tools-card.locked .tools-name { font-family: inherit; }
+.tools-blurb {
+	grid-column: 1; grid-row: 2;
+	font-size: 12.5px; line-height: 1.5;
+	color: var(--text-secondary);
+}
+
+.tools-tag {
+	grid-column: 2; grid-row: 1 / span 2;
+	font-size: 11px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+.tools-tag.on { color: var(--ok); }
+
+.tools-buy {
+	grid-column: 2; grid-row: 1 / span 2;
+	background: var(--accent); color: #fff;
+	border: 1px solid var(--accent); border-radius: var(--radius-sm);
+	padding: 8px 14px; font-size: 13px;
+	white-space: nowrap;
+}
+.tools-buy:hover { filter: brightness(1.08); }
+.tools-buy:disabled { opacity: 0.6; cursor: default; }
+
+.tools-fine {
+	font-size: 12px; line-height: 1.5;
+	color: var(--text-muted);
+	padding: 2px 2px 0;
+}
+.tools-err {
+	font-size: 12px; line-height: 1.45;
+	padding: 7px 9px; border-radius: var(--radius-sm);
+	color: var(--accent-text); background: var(--accent-soft);
+}

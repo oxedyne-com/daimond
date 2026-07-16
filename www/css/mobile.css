@@ -1,0 +1,280 @@
+/* ============================================================
+   Daimond — the phone shell
+   ------------------------------------------------------------
+   The mobile paradigm, rotated 90° from the desktop's two-seat
+   stage. On a phone the CONVERSATION is the floor and is never
+   left; a "thing" (Web, Doc, Message, Compose, Tools) rises as a
+   draggable bottom SHEET over it, and at its half detent you see
+   the thing AND the tail of the chat at once — the daimon still
+   beside the thing, only stacked instead of splayed. Foci and
+   Chats live in a left DRAWER; the four dwellable destinations
+   (Chat, Email, Files, Agents) sit on the bottom bar.
+
+   This file owns the drawer, the sheet and the hamburger. The
+   plain rearranging (one destination at a time, touch targets)
+   stays in responsive.css. Everything here is confined to the
+   phone breakpoint so desktop is untouched.
+   ============================================================ */
+
+/* The hamburger and the sheet exist only on a phone. */
+#drawer-btn { display: none; }
+#msheet     { display: none; }
+#scrim      { display: none; }
+
+@media (max-width: 760px) {
+
+	/* ── The hamburger ─────────────────────────────────────────
+	   Far left of the top bar, within thumb reach is less important
+	   here than convention: the menu lives where a menu lives. */
+	#drawer-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 38px;
+		height: 38px;
+		margin-right: 2px;
+		padding: 0;
+		background: none;
+		border: none;
+		border-radius: var(--radius);
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+	#drawer-btn .ic { width: 22px; height: 22px; }
+	#drawer-btn:active { background: var(--accent-soft); }
+
+	/* ── The left drawer: Foci + Chats + Admin ─────────────────
+	   The whole rail, slid in from the left over a scrim. It keeps
+	   its own internal split (Foci/Chats above, Admin below), so
+	   nothing about the rail's contents changes — only where it is. */
+	.panel.rail {
+		position: fixed !important;
+		z-index: 80;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: min(86vw, 344px) !important;
+		max-width: 344px;
+		height: 100dvh !important;
+		margin: 0;
+		/* Opaque, or the drawer is see-through: a desktop rail column never
+		   needed a background, but a floating drawer does. */
+		background: var(--bg-primary);
+		border-right: 1px solid var(--border);
+		padding: 8px;
+		transform: translateX(-100%);
+		transition: transform .28s cubic-bezier(.32, .72, 0, 1);
+		box-shadow: 0 0 40px rgba(0, 0, 0, .45);
+		will-change: transform;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+	body.drawer-open .panel.rail { transform: translateX(0); }
+	@media (prefers-reduced-motion: reduce) {
+		.panel.rail { transition: none; }
+	}
+
+	/* The scrim dims and catches the tap that closes the drawer. The
+	   sheet has NO scrim on purpose — the chat above it stays live. */
+	#scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 70;
+		background: rgba(0, 0, 0, .38);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity .28s ease;
+	}
+	body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
+
+	/* ── The sheet: a thing, over the chat ─────────────────────
+	   Anchored to the bottom, ABOVE the bar, so the bar is always
+	   reachable and a destination is one tap away. The detent changes
+	   the sheet's HEIGHT (not a translate), so its foot — the "Ask
+	   about this" pill — is on screen at every detent, which is the
+	   whole point: the thing, and the ear for it, together. No
+	   transition WHILE dragging (`.dragging`), so it tracks the finger. */
+	#msheet {
+		display: flex;
+		flex-direction: column;
+		position: fixed;
+		z-index: 40;
+		left: 0;
+		right: 0;
+		bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+		height: 0;					/* closed; the controller sets the detent height */
+		background: var(--bg-primary);
+		border-top-left-radius: 16px;
+		border-top-right-radius: 16px;
+		border: 1px solid var(--border);
+		border-bottom: none;
+		box-shadow: 0 -8px 40px rgba(0, 0, 0, .38);
+		overflow: hidden;
+		/* The DETENT sets the height instantly (no relayout animation, which is
+		   janky with an iframe inside); the open/close SLIDE is a transform, which
+		   the compositor handles smoothly. Closed = slid fully below its own foot. */
+		transform: translateY(110%);
+		transition: transform .3s cubic-bezier(.32, .72, 0, 1);
+		will-change: transform;
+	}
+	#msheet.open { transform: translateY(0); }
+	#msheet.dragging { transition: none; }
+	@media (prefers-reduced-motion: reduce) {
+		#msheet { transition: none; }
+	}
+
+	/* The grabber: the drag handle, and the only place a vertical drag
+	   moves the sheet rather than scrolling the thing inside it. */
+	.msheet-grab {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px 6px;
+		cursor: grab;
+		touch-action: none;			/* the grabber owns the vertical gesture */
+		border-top-left-radius: 16px;
+		border-top-right-radius: 16px;
+	}
+	.msheet-grab:active { cursor: grabbing; }
+	.msheet-bar {
+		position: absolute;
+		left: 50%;
+		transform: translateX(-50%);
+		top: 7px;
+		width: 38px;
+		height: 4px;
+		border-radius: 3px;
+		background: var(--border);
+	}
+	.msheet-title {
+		flex: 1;
+		min-width: 0;
+		margin-top: 6px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.msheet-close {
+		margin-top: 4px;
+		width: 32px;
+		height: 32px;
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		border-radius: var(--radius);
+		color: var(--text-muted);
+		font-size: 20px;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.msheet-close:active { background: var(--accent-soft); }
+
+	/* The thing itself fills the room between the grabber and the ask
+	   pill. The moved panel keeps its own header and controls. */
+	.msheet-scroll {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	#msheet .panel {
+		display: flex !important;
+		height: 100% !important;
+		width: 100% !important;
+		min-width: 0 !important;
+		border: none;
+		border-radius: 0;
+	}
+
+	/* The ask pill: the composer, relocated. "Ask about THIS" is the
+	   whole thesis — read the thing, and the daimon is still there to
+	   be asked about it. It posts to the one conversation on the floor. */
+	.msheet-ask {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+		border-top: 1px solid var(--border);
+		background: var(--bg-secondary);
+	}
+	.msheet-ask.hidden { display: none; }
+	#msheet-ask-input {
+		flex: 1;
+		min-width: 0;
+		font-size: 16px;			/* 16px keeps iOS Safari from zooming on focus */
+		padding: 10px 13px;
+		border: 1px solid var(--border);
+		border-radius: 20px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+	}
+	#msheet-ask-input:focus { outline: none; border-color: var(--accent); }
+	#msheet-ask-send {
+		flex: none;
+		width: 42px;
+		height: 42px;
+		border: none;
+		border-radius: 50%;
+		background: var(--accent);
+		color: #fff;
+		font-size: 17px;
+		cursor: pointer;
+	}
+	#msheet-ask-send:disabled { opacity: .4; }
+
+	/* While a sheet is up, the destination behind it is always the
+	   chat floor. Its own input bar is hidden — the ask pill speaks
+	   for it — so two composers can never disagree. */
+	body.sheet-open .ai .chat-input-bar { visibility: hidden; }
+
+	/* The bar sits ABOVE the sheet, so a destination is always one tap
+	   away and the sheet's foot rests just above it (see #msheet bottom). */
+	.mnav { position: relative; z-index: 60; }
+
+	/* ── No iOS auto-zoom ───────────────────────────────────────
+	   Safari zooms IN (and never back out) when a focused control is
+	   under 16px. Every form control is 16px on a phone so focusing a
+	   name box, a filter, or a dialog field never jerks the view. */
+	input, textarea, select,
+	.settings-select, .dlg-input, .dlg-select, .files-filter-input {
+		font-size: 16px !important;
+	}
+
+	/* ── Modals fit the phone ──────────────────────────────────
+	   The settings modal hosts an admin view (Models / Credits) that
+	   already carries its OWN header — the right title and a top-right
+	   ×. Show that (it is hidden on desktop) and drop the modal's own
+	   generic "Settings" heading and bottom Close, which duplicated it
+	   with the wrong title and no corner close. And size to the DYNAMIC
+	   viewport so a tall form scrolls inside instead of dragging. */
+	.modal { padding: 12px; align-items: flex-start; }
+	.modal-card {
+		width: 100%;
+		max-width: 520px;
+		margin: 0 auto;
+		max-height: calc(100dvh - 24px);
+		padding: 16px;
+	}
+	#settings-slot .admin-view-head { display: flex !important; }
+	#settings-modal > .modal-card > h2 { display: none; }
+	#settings-modal #settings-close { display: none; }
+	/* The view's own × sits top-right and is the close. Make it a clear target. */
+	#settings-slot .admin-back { font-size: 22px; padding: 4px 10px; }
+}
+
+/* A wider phone / small tablet in landscape gets a roomier sheet and
+   drawer, but the same paradigm. The single 760 cliff is deliberately
+   the only structural switch for now; this is a comfort tweak. */
+@media (max-width: 760px) and (min-width: 560px) and (orientation: landscape) {
+	.panel.rail { width: 380px !important; }
+}

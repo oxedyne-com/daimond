@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Getting started — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+/* Mirror the app's theme when the guide is framed same-origin; otherwise the
+   prefers-colour-scheme media query in guide.css decides. */
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) { /* cross-origin or opened directly: the media query handles it. */ }
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html" aria-current="page">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Getting started</h1>
+	<p class="lede">Daimond is an AI agent workspace that runs entirely in your browser. There is no account on a server and no app to install: your chats, keys and files live only on this device.</p>
+
+	<p>Nothing leaves your device unless you choose to make it happen. Daimond starts talking to the outside world in exactly two cases: when you connect your own model provider, so your messages go to that provider; or when you buy credits and let Daimond run a model for you. Until then, everything you type stays in this browser.</p>
+
+	<figure class="shot" data-shot="getting-started">
+		<img alt="The Daimond workspace on first run: the Foci and Chats rail on the left, the chat panel in the centre, and the admin panel at the bottom-left." src="shots/getting-started.png" loading="lazy">
+		<figcaption>Daimond on first run. The conversation sits in the centre; the admin panel is bottom-left.</figcaption>
+	</figure>
+
+	<h2>The shortest path to a first answer</h2>
+	<p>Three steps. Each one points at a control you can see on screen.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>Create an account</h3>
+			<p>On first run Daimond offers to <strong>protect this device</strong> with a passphrase. Type your name and a passphrase, then choose <span class="ui">Create passphrase</span>. The passphrase encrypts your stored keys and mail credentials, and it is your on-device identity. It is never sent anywhere, so keep it somewhere safe — if you lose it, the encrypted data is gone.</p>
+			<p>You may also choose <span class="ui">Skip for now</span> and set a passphrase later, but connecting a provider key works best once a passphrase is in place to protect it.</p>
+		</li>
+		<li>
+			<h3>Connect a model, or buy credits</h3>
+			<p>A daimon needs a model to think with. You have two ways to give it one, both reached from the admin panel at the bottom-left:</p>
+			<ul>
+				<li><strong>Bring your own key.</strong> Open the <span class="ui">Models</span> row, choose <span class="ui">+ Add provider</span>, pick a provider, paste its API key, and star a default model. Your messages then go straight to that provider on your own account.</li>
+				<li><strong>Buy credits.</strong> Open the <span class="ui">Credits</span> row and buy a pack. Daimond runs the model for you, with no provider key to manage and no subscription.</li>
+			</ul>
+			<p>Either one is enough. See <a href="models.html">Models &amp; credits</a> for the detail.</p>
+		</li>
+		<li>
+			<h3>Start a chat</h3>
+			<p>Choose <span class="ui">New chat</span> at the top of the rail (the <strong>＋</strong> beside <strong>Chats</strong>), type a message in the box at the bottom of the centre panel, and send it with <span class="ui">➤</span>. That centre panel is the daimon — the conversation Daimond is built around.</p>
+		</li>
+	</ol>
+
+	<h2>What you are looking at</h2>
+	<p>The screen has three zones. The <strong>rail</strong> on the left lists what you are working on and, below a movable divider, the <strong>admin panel</strong>. The <strong>stage</strong> in the centre holds the conversation and anything you are reading beside it. The <strong>dock</strong> on the right holds the sources you pull from — Email, the Workspace and live agent runs.</p>
+
+	<figure class="shot" data-shot="admin-panel">
+		<img alt="The admin panel at the bottom-left: an identity row, a Models row, a Credits row, a Tools row, and workspace storage rows." src="shots/admin-panel.png" loading="lazy">
+		<figcaption>The admin panel. Each row answers a question about the machine, and the ones you can act on are buttons.</figcaption>
+	</figure>
+
+	<p>The admin panel is where Daimond is set up and where it tells you what it is costing. Each row is a button that opens the thing it names: your identity, <span class="ui">Models</span>, <span class="ui">Credits</span>, <span class="ui">Tools</span>, and the storage your workspace is using. The next page walks through every part of the screen.</p>
+
+	<div class="next">
+		<span></span>
+		<a href="interface.html">Next: The interface &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

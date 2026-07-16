@@ -1,0 +1,86 @@
+[package]
+name = "oxedyne_daimond"
+version = "0.1.0"
+authors = ["Jason Hoogland <jason@oxedyne.io>"]
+edition = "2021"
+license-file = "LICENSE"
+description = "Daimond — the browser-first agentic workspace client, built on the Hematite (fe2o3) library. Source-available so the privacy claim can be verified."
+repository = "https://github.com/oxedyne-com/daimond"
+
+[lib]
+path = "src/lib.rs"
+# `cdylib` lets wasm-pack emit a browser wasm module; `rlib` keeps the
+# native consumers (the agent smoke example) linking as before.
+crate-type = ["cdylib", "rlib"]
+
+# Portable dependencies — build on both native and wasm32.  These are
+# pulled in by the target-agnostic modules (protocol, session, syntax,
+# agent, tools, skills, and the transport-neutral half of llm).  fe2o3
+# (the Hematite library) is pinned to a fixed revision so the build is
+# reproducible: the same source always yields the same wasm.  The
+# revision below is the fe2o3 commit these sources were built against.
+[dependencies]
+oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+
+# Native-only dependencies.  The O3db session backend and the hand-rolled
+# TLS transport are native concerns; none of these crates target wasm32.
+# Target-gated so Cargo feature unification never touches the wasm build (F6).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6444a9678f9c75c269a03dc0013eb5d450bfd622" }
+
+tokio = { version = "1.35", features = ["full"] }
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+
+# Wasm-only dependencies.  The browser transport replaces the native
+# TLS client with `fetch` + `ReadableStream` via web-sys, driven by
+# wasm-bindgen-futures.  `getrandom`'s `js` backend must stay confined
+# to wasm32 so it never leaks onto native (F6).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen		= "0.2"
+wasm-bindgen-futures	= "0.4"
+js-sys			= "0.3"
+getrandom		= { version = "0.2", features = ["js"] }
+web-sys = { version = "0.3", features = [
+	"AbortController",
+	"AbortSignal",
+	"Headers",
+	"ReadableStream",
+	"ReadableStreamDefaultReader",
+	"ReadableStreamReadResult",
+	"Request",
+	"RequestInit",
+	"RequestMode",
+	"Response",
+	"Window",
+	"WorkerGlobalScope",
+	# OPFS filesystem edge (main-thread async path).
+	"Navigator",
+	"StorageManager",
+	"FileSystemDirectoryHandle",
+	"FileSystemFileHandle",
+	"FileSystemGetFileOptions",
+	"FileSystemGetDirectoryOptions",
+	"FileSystemRemoveOptions",
+	"FileSystemWritableFileStream",
+	"WritableStream",
+	"Blob",
+	"File",
+	# Telling the page the real folder was taken away (see `opfs::notify_folder_lost`).
+	"CustomEvent",
+	"EventTarget",
+] }
+
+[dev-dependencies]
+tokio = { version = "1.35", features = ["full", "test-util"] }

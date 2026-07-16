@@ -1,0 +1,24 @@
+# Rust build output.
+/target/
+
+# wasm-pack build output for the browser UI. Regenerated from source with
+#   wasm-pack build --target web --out-dir www/pkg
+/www/pkg/
+
+# Vendored runtime tool artefacts (the Typst compiler wasm + fonts, etc.).
+# Large downloadable binaries served at runtime, not part of the source.
+/www/vendor/
+
+# Test-harness scratch: screenshots, logs, and per-run audit scripts/results.
+# The reusable harness itself (verify_*.mjs, harness.mjs, mockllm.mjs, …) is kept.
+/dev/shots/
+/dev/results/*.png
+/dev/*.log
+/dev/*.out
+/dev/audit_*.mjs
+/dev/audit_result_*.json
+/dev/.secrets/
+
+# Editor / OS noise.
+*.swp
+.DS_Store

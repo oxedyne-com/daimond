@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Models &amp; credits — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html" aria-current="page">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Models &amp; credits</h1>
+	<p class="lede">A daimon thinks with a model. You can bring your own provider key and pay that provider directly, or buy credits and let Daimond run a model for you. This page covers both, and how to keep credits topped up.</p>
+
+	<h2>Two ways to power a daimon</h2>
+	<div class="cards">
+		<div class="card">
+			<h3>Bring your own key</h3>
+			<p>Connect an account you already hold with a model provider. Your messages go straight to that provider; Daimond is not in the path, and nothing is charged by us.</p>
+		</div>
+		<div class="card">
+			<h3>Buy credits</h3>
+			<p>No provider account to manage. Daimond runs the model for you and draws down the credits you bought. No subscription: you keep what you buy.</p>
+		</div>
+	</div>
+	<p>Either is enough to start. You can do both — connect a key for everyday work and keep credits for when you would rather not manage one.</p>
+
+	<h2>Connecting a provider</h2>
+	<p>Open the <span class="ui">Models</span> row in the admin panel, bottom-left. It lists a key for each provider you use and shows which model new chats start on. To add one, choose <span class="ui">+ Add provider</span> and answer the same three questions, whoever the provider is.</p>
+
+	<figure class="shot" data-shot="models-form">
+		<img alt="The Add provider form: a provider drop-down, an API key box, and a default model drop-down, with a Save and start button." src="shots/models-form.png" loading="lazy">
+		<figcaption>Adding a provider: choose the provider, paste the key, star a default model, then Save &amp; start.</figcaption>
+	</figure>
+
+	<ol class="steps">
+		<li>
+			<h3>Choose a provider</h3>
+			<p>Pick from the list — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, or <strong>Custom</strong> for any other service that speaks the same chat-completions API. Choosing Custom reveals a <strong>Base URL</strong> box to point Daimond at that service.</p>
+		</li>
+		<li>
+			<h3>Paste your API key</h3>
+			<p>Paste the key from your provider account into the <strong>API key</strong> box. It is stored on this device only, wrapped under your passphrase, and sent only to the provider you chose.</p>
+		</li>
+		<li>
+			<h3>Star a default model</h3>
+			<p>Choose a <strong>Default model</strong> from the list (or type a model id for a custom provider). This is the one model new chats and Foci start on. Then choose <span class="ui">Save &amp; start</span>.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>Everything stays on this device.</strong> Your keys, chats and files live only in this browser. Nothing is sent to us — a provider key you add talks to that provider, and to no one else.</div>
+
+	<h3>The default model, and picking another for one chat</h3>
+	<p>One model is the default that new chats and Foci begin on. Any connected model can be chosen for a single chat: open a chat and use the model selector in its header (top-right of the centre panel) to switch just that conversation, without changing the default.</p>
+
+	<h2>Buying credits</h2>
+	<p>Open the <span class="ui">Credits</span> row in the admin panel. It shows your balance and a set of packs to buy. There is no subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload.</p>
+
+	<figure class="shot" data-shot="credits">
+		<img alt="The Credits view: the current balance, a row of credit packs to buy, and the auto-reload settings below." src="shots/credits.png" loading="lazy">
+		<figcaption>Credits: your balance, packs to buy, and the auto-reload settings underneath.</figcaption>
+	</figure>
+
+	<p>Payment is handled on the payment provider's own hosted page. No card number, expiry or security code is ever typed into Daimond, so there is nothing here to leak.</p>
+
+	<h2>Auto-reload</h2>
+	<p>Auto-reload is a standing instruction to buy your own credits when they run low, so a long job does not stop halfway. It is the one place Daimond is allowed to charge a saved card while you are away, so it is deliberately explicit. Three numbers set it, found below the packs in the Credits view:</p>
+	<ul>
+		<li><strong>Below</strong> — the balance at which a top-up fires.</li>
+		<li><strong>Buy</strong> — how much one top-up adds.</li>
+		<li><strong>Never more than</strong> — a hard cap on total top-ups in a calendar month. This is the number that matters: it is a ceiling, not a target, and it is enforced on the same code path as the charge, so it cannot be walked around.</li>
+	</ul>
+
+	<div class="note">Auto-reload cannot be switched on without a saved card — a control that turned on and then silently failed would be worse than one that is disabled and says why. Saving a card is a redirect to the payment provider's hosted page; Daimond never sees the card details.</div>
+
+	<div class="next">
+		<a href="interface.html">&larr; The interface</a>
+		<a href="chats-and-foci.html">Next: Chats &amp; Foci &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

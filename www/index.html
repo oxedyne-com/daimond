@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Daimond</title>
+<link rel="icon" type="image/svg+xml" href="assets/daimond_mark.svg">
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/render.css">
+<link rel="stylesheet" href="css/files.css">
+<link rel="stylesheet" href="css/mail.css">
+<link rel="stylesheet" href="css/tools.css">
+<link rel="stylesheet" href="css/autoreload.css">
+<link rel="stylesheet" href="css/models.css">
+<link rel="stylesheet" href="css/updater.css">
+<link rel="stylesheet" href="css/spend.css">
+<link rel="stylesheet" href="css/passkey.css">
+<link rel="stylesheet" href="css/responsive.css">
+<link rel="stylesheet" href="css/mobile.css">
+</head>
+<body data-mpanel="ai">
+
+<!-- Main app: browser-only, no server. The whole agent runs in wasm. -->
+<div id="app">
+
+	<!-- Top bar -->
+	<div class="topbar">
+		<!-- The hamburger: phone only, opens the rail as a left drawer. -->
+		<button id="drawer-btn" title="Menu" aria-label="Open menu">
+			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+		</button>
+		<div class="brand">
+			<img class="brand-logo" src="assets/daimond_mark.svg" alt="" aria-hidden="true">
+			<b>Daimond</b>
+		</div>
+		<div class="top-meter" id="top-meter"></div>
+		<div class="top-actions">
+			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
+			     closer sends it back here. -->
+			<div class="panel-tags" id="panel-tags"></div>
+			<button class="update-chip" id="update-chip" hidden title="Daimond is up to date" aria-label="Daimond is up to date">
+				<svg class="ic ic-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
+				<svg class="ic ic-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+			</button>
+			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide">
+				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
+			</button>
+			<select class="theme-select" id="theme-select" title="Theme" aria-label="Theme">
+				<option value="light">Light</option>
+				<option value="dark">Dark</option>
+				<option value="lollypop">Lollypop</option>
+			</select>
+		</div>
+	</div>
+
+	<!-- Four panels -->
+	<div class="main" id="main">
+
+		<!-- Rail: two panes, split by a handle the user can move but not remove.
+		     Above: what you are working on. Below: the Admin panel — who you are,
+		     how Daimond is set up, and what it is costing. Settings and the forms
+		     that configure Daimond live there rather than in a popup, so a chat
+		     stays live beside them: the user can ask Daimond what an app password is
+		     while the box asking for one is still on screen. -->
+		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Foci">
+			<div class="rail-top" id="rail-top">
+				<div class="railhead"><span>Foci</span>
+					<button class="addbtn" id="new-focus-btn" title="New Focus">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="rail" title="Close panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</div>
+				<div class="focus-list" id="focus-list"></div>
+				<div class="railhead"><span>Chats</span>
+					<button class="addbtn" id="new-session-btn" title="New chat">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+					</button>
+				</div>
+				<div class="session-list" id="session-list"></div>
+			</div>
+
+			<div class="rhandle" id="handle-split" title="Drag to resize, double-click to reset"></div>
+
+			<!-- The Admin panel. -->
+			<div class="admin" id="admin">
+
+				<!-- The status header: the state of the machine, at a glance and
+				     without asking. Each row is the answer to a question the user
+				     would otherwise have to open something to find out, and each
+				     one that can be acted on is a button that goes there. -->
+				<div class="admin-status" id="admin-status">
+					<div class="astat-row astat-id">
+						<button class="user-row" id="user-row" title="Your Daimond identity">
+							<span class="user-avatar" id="user-avatar" aria-hidden="true">◈</span>
+							<span class="user-info" id="user-info">Browser-only</span>
+						</button>
+						<button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+					</div>
+					<button class="astat-row astat-btn" id="astat-model"></button>
+					<button class="astat-row astat-btn" id="astat-account"></button>
+					<button class="astat-row astat-btn" id="astat-tools"></button>
+					<div class="astat-row" id="astat-store"></div>
+					<!-- The real folder, when the browser can open one. Its size is not a thing the
+					     browser will tell us, so it is asked for rather than assumed. -->
+					<div class="astat-row" id="astat-store-native" style="display:none"></div>
+					<!-- Global spend readout: session / week / month, priced per model. -->
+					<div class="spend-row" id="spend-row" style="display:none"></div>
+				</div>
+
+				<div class="admin-body" id="admin-body">
+
+					<!-- Home: what the panel rests on. Built in JS, because what it
+					     offers depends on whether there is an identity to offer it to. -->
+					<div class="admin-view" id="admin-home"></div>
+
+					<!-- Models: a key per provider, and the one model a new chat starts on.
+					     Reached from the "Models" status row above, which counts them. -->
+					<div class="admin-view" id="admin-models" style="display:none">
+						<div class="admin-view-head">
+							<div class="admin-title">Models</div>
+							<button class="admin-back" id="settings-done" title="Done">×</button>
+						</div>
+						<div class="settings-section">
+							<p class="cfg-lead">A key for each provider you use. One model is the default that new chats and Foci start on; any of them can be picked for a single chat.</p>
+							<div id="models-list" class="models-list"></div>
+							<button type="button" id="models-add" class="models-add">+ Add provider</button>
+
+							<!-- Adding one: the same three questions, whoever the provider is. -->
+							<div id="byok-form" class="byok-form" style="display:none">
+								<label class="cfg-fieldlabel" for="cfg-provider">Provider</label>
+								<select id="cfg-provider" class="settings-select">
+									<option value="">Choose a provider…</option>
+									<option value="fireworks">Fireworks AI</option>
+									<option value="openrouter">OpenRouter</option>
+									<option value="together">Together AI</option>
+									<option value="groq">Groq</option>
+									<option value="deepinfra">DeepInfra</option>
+									<option value="custom">Custom (advanced)…</option>
+								</select>
+								<div id="cfg-url-row" style="display:none;">
+									<label class="cfg-fieldlabel" for="cfg-base-url">Base URL</label>
+									<input type="text" id="cfg-base-url" placeholder="https://…/v1/chat/completions" spellcheck="false" autocomplete="off">
+								</div>
+								<label class="cfg-fieldlabel" for="cfg-api-key">API key</label>
+								<input type="text" id="cfg-api-key" placeholder="Paste your API key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+								<label class="cfg-fieldlabel" for="cfg-model">Default model</label>
+								<select id="cfg-model" class="settings-select">
+									<option value="">Choose a provider first…</option>
+								</select>
+								<input type="text" id="cfg-model-custom" placeholder="Model id (type manually)" spellcheck="false" style="display:none;">
+								<p class="cfg-fieldnote">New agents use this unless you choose another for them.</p>
+								<button type="button" id="byok-save">Save &amp; start</button>
+							</div>
+							<div id="byok-note" class="login-error"></div>
+							<p class="cfg-hint"><strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.</p>
+						</div>
+					</div>
+
+					<!-- Credits: reached from the "Credits" status row. -->
+					<div class="admin-view" id="admin-credits" style="display:none">
+						<div class="admin-view-head">
+							<div class="admin-title">Credits</div>
+							<button class="admin-back" id="credits-done" title="Done">×</button>
+						</div>
+						<div class="settings-section" id="credits-section">
+							<p class="cfg-lead">Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.</p>
+							<div class="credits-balance" id="credits-balance"></div>
+							<div class="credits-packs" id="credits-packs"></div>
+							<div id="credits-note" class="login-error"></div>
+							<div id="autoreload" class="autoreload"></div>
+						</div>
+					</div>
+
+					<!-- A form, built on demand: a mailbox to add, a thing to configure. -->
+					<div class="admin-view" id="admin-form" style="display:none"></div>
+				</div>
+			</div>
+		</aside>
+		<div class="phandle" id="handle-rail" data-panel="rail" title="Drag to resize, double-click to reset"></div>
+
+		<!-- ── The stage ───────────────────────────────────────────────
+		     The middle zone. Its occupants are EXCLUSIVE to it: they take the
+		     stage, solo or two side by side, and never dock at the right. AI is
+		     the default occupant and comes back whenever the stage would
+		     otherwise be empty, because an app whose middle holds no
+		     conversation is not Daimond.
+
+		     The point of two seats is that you never leave the conversation to
+		     do a thing: read the message, watch the page, read the document —
+		     with the daimon still there beside it, to be asked about it. -->
+		<div class="stage" id="stage">
+
+			<!-- AI: the conversation. -->
+			<section class="panel ai" id="panel-ai" data-panel="ai" data-zone="stage" data-label="AI">
+				<div class="chead">
+					<span class="ctitle" id="current-session-name">No chat</span>
+					<div class="chead-right">
+						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;"></select>
+						<span class="cmeter" id="ai-meter"></span>
+						<!-- The controls that were an icon nobody could read. A word says what a
+						     picture of a spanner was only hinting at. -->
+						<span class="csel" id="select-tools" style="display:none">
+							<button class="chip-btn" id="sel-all">Select all</button>
+							<button class="chip-btn" id="sel-none">Deselect all</button>
+							<button class="chip-btn accent" id="sel-fold">Fold selected</button>
+						</span>
+						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread">Steps</button>
+						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold">−</button>
+					</div>
+				</div>
+				<div class="chat-output" id="chat-output"></div>
+				<div class="chat-input-bar">
+					<textarea id="chat-input" placeholder="Type a message…" rows="1"></textarea>
+					<button id="chat-send" title="Send">➤</button>
+					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it.">↑</button>
+				</div>
+				<!-- Brief view: the Focus command surface (steer + fold), shown in
+				     place of the chat when a Focus is selected. Built in JS. -->
+				<div class="brief-view" id="brief-view" style="display:none">
+					<div class="brief-body" id="brief-body"></div>
+					<div class="brief-controls" id="brief-controls"></div>
+				</div>
+			</section>
+
+			<!-- Web: a page. Shown always; operated only where a driver can reach
+			     it — a same-origin page we serve ourselves, or a real tab under
+			     Daimond Hands. A cross-origin iframe is opaque to us, and that is
+			     the same-origin policy, not a gap to be worked around. -->
+			<aside class="panel web" id="panel-web" data-panel="web" data-zone="stage" data-label="Web">
+				<div class="chead">
+					<span class="web-mode" id="web-mode" title="Who is driving"></span>
+					<span class="ctitle web-url" id="web-url">The Web panel</span>
+					<div class="chead-right">
+						<button class="icon-btn" id="web-back" title="Back">‹</button>
+						<button class="icon-btn" id="web-reload" title="Reload">⟳</button>
+						<button class="icon-btn" id="web-pop" title="Open in a real tab">↗</button>
+						<button class="addbtn panel-close" data-close="web" title="Close panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="web-body" id="web-body">
+					<iframe class="web-frame" id="web-frame" referrerpolicy="no-referrer"
+						sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+					<img class="web-mirror" id="web-mirror" alt="" style="display:none">
+					<div class="web-note" id="web-note"></div>
+					<!-- The blindfold. Not a promise to look away: nothing is sent. -->
+					<div class="web-blind" id="web-blind" style="display:none">
+						<div class="web-blind-eye">◍</div>
+						<div class="web-blind-title">You're driving. I'm not watching.</div>
+						<div class="web-blind-note">Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.</div>
+						<button class="web-takeover" id="web-takeover">I've resumed — check</button>
+					</div>
+				</div>
+			</aside>
+
+			<!-- A compiled document, where there is room to read it. -->
+			<aside class="panel doc" id="panel-doc" data-panel="doc" data-zone="stage" data-label="Doc">
+				<div class="chead">
+					<span class="ctitle doc-name" id="doc-name"></span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="doc" title="Close panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<embed class="doc-embed" id="doc-embed" type="application/pdf">
+			</aside>
+
+			<!-- One mail message, where there is room to read it — and, now that
+			     the stage seats two, with the chat still beside it. -->
+			<aside class="panel msg" id="panel-msg" data-panel="msg" data-zone="stage" data-label="Message">
+				<div class="chead">
+					<span class="ctitle" id="msg-title">Message</span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="msg" title="Close panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="msg-head" id="msg-head"></div>
+				<div class="msg-body" id="msg-body"></div>
+			</aside>
+
+			<!-- What Daimond can do, and what the rest would cost. A stage guest, because a
+			     tool with a price on it is a thing being inspected, and the rail is too
+			     narrow to inspect anything in. -->
+			<aside class="panel tools" id="panel-tools" data-panel="tools" data-zone="stage" data-label="Tools">
+				<div class="chead">
+					<span class="ctitle">Tools</span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="tools" title="Close panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="tools-body" id="tools-body"></div>
+			</aside>
+
+			<!-- Writing one. A stage guest, not a popup: a message worth writing is worth
+			     the room, and the daimon stays beside it, so the draft can be talked over
+			     while it is being written. Nothing here sends by itself — the Send button
+			     is the only thing in Daimond that puts mail on the wire, and only a person
+			     can press it. -->
+			<aside class="panel compose" id="panel-compose" data-panel="compose" data-zone="stage" data-label="Compose">
+				<div class="chead">
+					<span class="ctitle" id="compose-title">New message</span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="compose" title="Close panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="compose-head">
+					<label class="compose-row"><span>From</span><select id="compose-from"></select></label>
+					<label class="compose-row"><span>To</span><input id="compose-to" type="text" autocomplete="off" placeholder="someone@example.com"></label>
+					<label class="compose-row"><span>Cc</span><input id="compose-cc" type="text" autocomplete="off" placeholder="Optional"></label>
+					<label class="compose-row"><span>Subject</span><input id="compose-subject" type="text" autocomplete="off"></label>
+				</div>
+				<textarea class="compose-text" id="compose-text" spellcheck="true" placeholder="Write your message."></textarea>
+				<div class="compose-atts" id="compose-atts"></div>
+				<div class="compose-foot">
+					<button class="compose-send" id="compose-send">Send</button>
+					<button class="compose-btn" id="compose-save">Save draft</button>
+					<button class="compose-btn" id="compose-attach">Attach…</button>
+					<input type="file" id="compose-file" multiple hidden>
+					<button class="compose-btn danger" id="compose-discard">Discard</button>
+					<span class="compose-note" id="compose-note"></span>
+				</div>
+			</aside>
+		</div>
+
+		<div class="phandle" id="handle-dock" title="Drag to resize, double-click to reset"></div>
+		<!-- ── The dock ────────────────────────────────────────────────
+		     The right zone: the sources you pull from. A closed dock panel is a
+		     tag in the header; clicking the tag docks it. A second column opens
+		     only when there is genuinely room for one. -->
+		<div class="dock" id="dock">
+			<div class="pcol" id="dock-a"></div>
+			<div class="pcol" id="dock-b"></div>
+		</div>
+
+		<!-- Dock panels below are relocated into their column by the layout engine. -->
+
+		<!-- Agents: live runs -->
+		<aside class="panel agents" id="panel-agents" data-panel="agents" data-zone="dock" data-label="Agents">
+			<div class="railhead"><span>Agents</span>
+				<span class="rail-count" id="agents-count"></span>
+				<button class="addbtn" id="agents-clear" title="Clear finished agents" style="display:none">
+					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12"/></svg>
+				</button>
+				<button class="addbtn panel-close" data-close="agents" title="Close panel">
+					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+				</button>
+			</div>
+			<div class="agents-list" id="agents-list"></div>
+		</aside>
+
+		<!-- Email: the mailboxes, and what is in them -->
+		<aside class="panel mail" id="panel-mail" data-panel="mail" data-zone="dock" data-label="Email">
+			<div class="railhead"><span>Email</span>
+				<span class="mail-actions">
+					<button class="addbtn" data-act="mail-new" title="Write a message" aria-label="Write a message">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+					</button>
+					<button class="addbtn" data-act="mail-add" title="Add a mailbox" aria-label="Add a mailbox">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+					</button>
+					<button class="addbtn" data-act="mail-sync" title="Sync now" aria-label="Sync now">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="mail" title="Close panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="mail-card">
+				<div class="mail-state" id="mail-state"></div>
+				<div class="mail-accounts" id="mail-accounts"></div>
+				<div class="mail-list" id="mail-list"></div>
+			</div>
+		</aside>
+
+		<!-- Workspace: OPFS file tree -->
+		<aside class="panel work" id="panel-work" data-panel="work" data-zone="dock" data-label="Workspace">
+			<div class="railhead"><span>Workspace</span>
+				<span class="files-actions">
+					<button class="addbtn" data-act="new-file" title="New file" aria-label="New file">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V10z"/><path d="M13 3v6h6"/><path d="M12 12.5v5M9.5 15h5"/></svg>
+					</button>
+					<button class="addbtn" data-act="new-dir" title="New folder" aria-label="New folder">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
+					</button>
+					<button class="addbtn" data-act="upload" title="Upload files" aria-label="Upload files">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+					</button>
+					<button class="addbtn" data-act="up" title="Parent folder" aria-label="Parent folder">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V7M6 13l6-6 6 6"/></svg>
+					</button>
+					<button class="addbtn" data-act="refresh" title="Refresh" aria-label="Refresh">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="work" title="Close panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="files-card">
+				<div class="files-mode"></div>
+				<button class="instructions-chip" id="instructions-chip" style="display:none"></button>
+				<div class="files-path"></div>
+				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false"></div>
+				<div class="files-tree"></div>
+				<div class="files-view" style="display:none"></div>
+			</div>
+		</aside>
+
+		<!-- Spending: where inference (your key) and credits (gateway services) go -->
+		<aside class="panel spend" id="panel-spend" data-panel="spend" data-zone="dock" data-label="Spending">
+			<div class="railhead"><span>Spending</span>
+				<span class="spend-actions">
+					<button class="addbtn" data-act="spend-refresh" title="Refresh" aria-label="Refresh">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="spend" title="Close panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="spend-view" id="spend-view"></div>
+		</aside>
+	</div>
+
+	<!-- Mobile: the dwellable destinations. The chat is the floor; "things"
+	     (Web, Doc, Message, Compose, Tools) rise as a sheet over it, and the
+	     rail (Foci/Chats/Admin) is the left drawer behind the hamburger. -->
+	<nav class="mnav" id="mnav">
+		<button data-mp="ai" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-4 4v-4H4z"/></svg><span>Chat</span></button>
+		<button data-mp="mail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span>Email</span></button>
+		<button data-mp="work"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg><span>Files</span></button>
+		<button data-mp="agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 4v4"/><circle cx="12" cy="4" r="0.6"/><path d="M9 13v1.5M15 13v1.5"/><path d="M2 12v3M22 12v3"/></svg><span>Agents</span></button>
+	</nav>
+</div>
+
+<!-- Phone shell: the scrim behind the drawer, and the sheet that raises a
+     "thing" over the chat. Both are inert on desktop (see mobile.css). -->
+<div id="scrim"></div>
+<div id="msheet" aria-label="Panel">
+	<div class="msheet-grab" id="msheet-grab">
+		<span class="msheet-bar" aria-hidden="true"></span>
+		<span class="msheet-title" id="msheet-title"></span>
+		<button class="msheet-close" id="msheet-close" title="Close" aria-label="Close">✕</button>
+	</div>
+	<div class="msheet-scroll" id="msheet-body"></div>
+	<div class="msheet-ask" id="msheet-ask">
+		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true">
+		<button id="msheet-ask-send" title="Ask" aria-label="Ask">➤</button>
+	</div>
+</div>
+
+<!-- Settings, where there is no rail to hold them. On a phone, and in the band
+     where the rail folds away, there is no room for a form beside a live chat —
+     so the settings view is MOVED into this card and back out again. There is
+     one settings form in the document, not two. -->
+<div id="settings-modal" class="modal" style="display:none;">
+	<div class="modal-card">
+		<h2>Settings</h2>
+		<div id="settings-slot"></div>
+		<button class="modal-close" id="settings-close">Close</button>
+	</div>
+</div>
+
+<!-- Identity modal: create a passphrase on first run, unlock on return. The
+     passphrase encrypts the stored API key and is the on-device Daimond identity. -->
+<div id="identity-modal" class="modal" style="display:none;">
+	<div class="modal-card">
+		<img class="login-logo" id="id-logo" src="assets/daimond_word.svg" alt="Daimond" data-light="assets/daimond_word_dark.svg" data-dark="assets/daimond_word.svg">
+		<h2 id="id-title">Protect this device</h2>
+		<p class="cfg-lead" id="id-lead"></p>
+		<!-- Several accounts on one browser: pick whose to unlock, or add another. Built in JS, and
+		     shown only when there is more than one account or one to add. -->
+		<div class="id-accounts" id="id-accounts" style="display:none"></div>
+		<div class="id-fields">
+			<div id="id-name-row">
+				<input type="text" id="id-name" placeholder="Your name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
+			</div>
+			<input type="text" id="id-pass" placeholder="Passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+			<input type="text" id="id-pass2" placeholder="Confirm passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+		</div>
+		<div id="id-error" class="login-error"></div>
+		<button type="button" id="id-primary">Create passphrase</button>
+		<button type="button" id="id-skip" class="modal-close">Skip for now</button>
+	</div>
+</div>
+
+<!-- accounts.js FIRST: it installs the per-account storage namespace before any
+     module reads or writes localStorage. -->
+<script src="js/accounts.js"></script>
+<!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
+     ready before the first turn. -->
+<script src="js/journal.js"></script>
+<script src="js/marked.min.js"></script>
+<script src="js/render.js"></script>
+<script src="js/pricing.js"></script>
+<script src="js/ledger.js"></script>
+<script src="js/identity.js"></script>
+<!-- passkey.js AFTER identity.js: it builds on DaimondIdentity to seal and
+     recover the passphrase behind a WebAuthn PRF credential. -->
+<script src="js/passkey.js"></script>
+<script src="js/gateway.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/pairing.js"></script>
+<script src="js/mail.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/models.js"></script>
+<script src="js/autoreload.js"></script>
+<script src="js/web.js"></script>
+<script src="js/spend.js"></script>
+<script src="js/updater.js"></script>
+<!-- The phone shell (drawer + sheet). Classic, before the module, so
+     window.DaimondSheet/DaimondShell exist when the app wires into them. -->
+<script src="js/mobile.js"></script>
+<script type="module" src="js/daimond.js"></script>
+</body>
+</html>

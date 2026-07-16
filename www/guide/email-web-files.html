@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Email, Web &amp; files — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html" aria-current="page">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Email, Web &amp; files</h1>
+	<p class="lede">The sources a daimon works from: mail you can read and answer, web pages it can show or drive, files it can read and write, and the tools it does the work with.</p>
+
+	<h2>Email</h2>
+	<p>The Email panel lives in the dock, on the right. It holds your mailboxes and what is in them. A browser cannot open a mail connection on its own, so Daimond makes the connection through a gateway, which hands back the raw message and then forgets your credential. Your mail is written into the Workspace as ordinary files, so the agent's file tools already read it.</p>
+
+	<figure class="shot" data-shot="email">
+		<img alt="The Email panel: the mailboxes at the top and a list of messages below, with buttons to write, add a mailbox and sync." src="shots/email.png" loading="lazy">
+		<figcaption>The Email panel. Its header buttons write a message, add a mailbox, and sync.</figcaption>
+	</figure>
+
+	<h3>Adding a mailbox</h3>
+	<p>Choose <span class="ui">+</span> (add a mailbox) in the Email panel header. Type your address and Daimond guesses the server settings for common providers; every field stays editable, because a guess is not a fact. Most providers want an <strong>app password</strong> — a one-purpose password you generate in your mail account's security settings — rather than your account password. The panel tells you where to find it for your provider.</p>
+	<div class="note">Your mail credential is stored on this device, wrapped under your passphrase. It is handed to the gateway only for a single sync, held for one conversation with your mail server, and then forgotten. Daimond stores no mail on any server and never sees your account password.</div>
+
+	<h3>Reading and syncing</h3>
+	<p>Choose <span class="ui">⟳</span> (sync now) to fetch what has arrived. A sync asks only for messages newer than the last one held, so it stays quick. Click a message to open it onto the stage, beside the chat, so you can ask the daimon about it while you read.</p>
+
+	<h3>Writing a message</h3>
+	<p>Choose <span class="ui">✎</span> (write a message) to open the Compose panel on the stage. Fill in <strong>From</strong>, <strong>To</strong>, an optional <strong>Cc</strong>, a <strong>Subject</strong> and the body; attach files with <span class="ui">Attach…</span>; keep a draft with <span class="ui">Save draft</span>. Nothing sends by itself.</p>
+	<div class="note"><strong>Only you can send mail.</strong> The <span class="ui">Send</span> button is the one thing in Daimond that puts mail on the wire, and only a person can press it. The daimon can draft a message beside you, but it cannot send it.</div>
+
+	<h2>The Web panel</h2>
+	<p>Ask Daimond to open a web page — <em>“show me the Rust ownership chapter”</em> — or paste a link into the chat. There are three ways it can put a page on the stage, and which one works depends on the site.</p>
+
+	<figure class="shot" data-shot="web-panel">
+		<img alt="The Web panel showing a page on the stage, with back, reload and open-in-a-tab controls in its header." src="shots/web-panel.png" loading="lazy">
+		<figcaption>The Web panel. A page shown here sits beside the chat, so the daimon can be asked about it.</figcaption>
+	</figure>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Show it</h3>
+			<p>The page appears in the panel — but most sites refuse to be embedded (it is the web's clickjacking defence, the same in every browser), so this works only for the minority that allow it.</p>
+		</div>
+		<div class="card">
+			<h3>Read it</h3>
+			<p>Daimond fetches the page and reads its text, so it works when showing does not. It reads the words, not pictures or anything drawn by JavaScript, and you do not see the page — Daimond does.</p>
+		</div>
+		<div class="card">
+			<h3>Drive it</h3>
+			<p>With <strong>Daimond Hands</strong>, a browser add-on, Daimond opens a real page in a real tab, signed in as you, and works it while you watch. This is the only way to work a live, logged-in site.</p>
+		</div>
+	</div>
+
+	<div class="note"><strong>Signing in stays yours.</strong> When you sign in on a driven page, Daimond stops watching entirely — no text, no picture, no keystrokes — and never sees your password. You hand the wheel back with <strong>Resume Daimond</strong>, and that button is in the browser tab, not in Daimond, so a page can never take the wheel from you.</div>
+
+	<h2>The Workspace</h2>
+	<p>The Workspace panel, in the dock, is your files as an ordinary tree of folders. This is where the agent reads and writes: uploads, mail, documents and anything it produces all live here.</p>
+
+	<figure class="shot" data-shot="workspace">
+		<img alt="The Workspace panel showing a file tree, with buttons to add a file or folder, upload, go up a level and refresh." src="shots/workspace.png" loading="lazy">
+		<figcaption>The Workspace. Its header buttons add a file or folder, upload, go up a level, and refresh.</figcaption>
+	</figure>
+
+	<h3>The sandbox, and a real folder</h3>
+	<p>By default your files live in this browser's own private storage, kept on your device and reachable by nothing outside Daimond. Where the browser allows it, Daimond can also open a <strong>real folder on your device</strong>, so the agent works directly with files you can see in your own file manager. The admin panel's storage rows show how much space each is using; the real-folder row appears only when the browser can open one.</p>
+
+	<h3>Working with files</h3>
+	<p>The Workspace header carries buttons to add a <span class="ui">🗋</span> file, add a <span class="ui">🗀</span> folder, <span class="ui">⤒</span> upload files, go <span class="ui">↑</span> up a level, and <span class="ui">⟳</span> refresh the view. A filter box narrows a long list.</p>
+
+	<h2>Tools</h2>
+	<p>Open the <span class="ui">Tools · N of M</span> row in the admin panel to see what Daimond can do. It is called Tools, not Upgrades, because most of what it lists is free and already yours.</p>
+
+	<figure class="shot" data-shot="tools-panel">
+		<img alt="The Tools panel listing the built-in tools the agent can use and the unlockable tools with their prices." src="shots/tools-panel.png" loading="lazy">
+		<figcaption>The Tools panel: the built-ins you already have, and the unlockable tools with their prices.</figcaption>
+	</figure>
+
+	<p>Two kinds of tool appear:</p>
+	<ul>
+		<li><strong>Built-in tools</strong> — the ones the agent is already handed, free. The panel lists exactly what the agent actually holds, so it cannot promise a tool that is not there.</li>
+		<li><strong>Unlockable tools</strong> — extras with a price. The panel shows the price and whether this account already holds the unlock.</li>
+	</ul>
+	<p>To add an unlockable tool, choose it in the panel and confirm the unlock; the cost is drawn from your credits, and once unlocked it stays available to the agent.</p>
+
+	<div class="next">
+		<a href="chats-and-foci.html">&larr; Chats &amp; Foci</a>
+		<a href="accounts.html">Next: Accounts &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Daimond Hands</title>
+	<style>
+		:root { color-scheme: light dark; }
+		body {
+			font:		14px/1.5 system-ui, sans-serif;
+			margin:		0;
+			padding:	16px;
+			width:		320px;
+			background:	Canvas;
+			color:		CanvasText;
+		}
+		h1 { font-size: 15px; margin: 0 0 2px; }
+		.ver { opacity: .6; font-size: 12px; margin-bottom: 12px; }
+		.mode {
+			padding:	10px 12px;
+			border-radius:	8px;
+			font-weight:	600;
+			margin-bottom:	12px;
+			border:		1px solid color-mix(in srgb, CanvasText 20%, transparent);
+		}
+		.mode.user  { background: color-mix(in srgb, #e2b02b 22%, transparent); }
+		.mode.agent { background: color-mix(in srgb, #2f6fed 20%, transparent); }
+		.mode small { display: block; font-weight: 400; opacity: .8; margin-top: 3px; }
+		.url { font: 12px/1.4 ui-monospace, monospace; opacity: .75; word-break: break-all; margin-bottom: 14px; }
+		h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; margin: 0 0 6px; }
+		ul { list-style: none; margin: 0; padding: 0; }
+		li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font: 12px ui-monospace, monospace; }
+		li span { flex: 1; word-break: break-all; }
+		button {
+			font:		inherit;
+			padding:	4px 8px;
+			border-radius:	6px;
+			border:		1px solid color-mix(in srgb, CanvasText 25%, transparent);
+			background:	transparent;
+			color:		inherit;
+			cursor:		pointer;
+		}
+		#take, #mirror { width: 100%; padding: 9px; font-weight: 600; margin-bottom: 14px; }
+		.none { opacity: .6; font-size: 12px; }
+	</style>
+</head>
+<body>
+	<h1>Daimond Hands</h1>
+	<div class="ver" id="ver"></div>
+	<div class="mode" id="mode">…</div>
+	<div class="url" id="url"></div>
+	<button id="take" hidden>Hand the wheel back to Daimond</button>
+	<button id="mirror" hidden>Allow the live mirror of the tab</button>
+	<h2>Sites you have allowed</h2>
+	<ul id="granted"></ul>
+	<script src="popup.js"></script>
+</body>
+</html>

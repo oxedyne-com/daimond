@@ -1,0 +1,14 @@
+{
+  "workflow": "multi-agent",
+  "model": "accounts/fireworks/models/gpt-oss-120b",
+  "elapsedS": "6.8",
+  "workerTiles": 3,
+  "files": {
+    "alpha.txt": "ALPHA",
+    "beta.txt": "BETA",
+    "gamma.txt": "GAMMA"
+  },
+  "filesCreated": 3,
+  "spendUsd": 0.0025,
+  "consoleErrors": []
+}

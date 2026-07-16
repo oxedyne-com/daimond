@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>The interface — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html" aria-current="page">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>The interface</h1>
+	<p class="lede">A tour of the screen: three zones, and what each part does. Once you know the zones, everything in Daimond has a place.</p>
+
+	<figure class="shot" data-shot="three-zones">
+		<img alt="The three zones of Daimond: the rail on the left, the stage in the centre, and the dock on the right." src="shots/three-zones.png" loading="lazy">
+		<figcaption>The three zones. The rail (left) holds what you work on; the stage (centre) holds the conversation; the dock (right) holds your sources.</figcaption>
+	</figure>
+
+	<h2>The rail — left</h2>
+	<p>The rail is split by a divider you can drag but not remove. Above the divider is what you are working on; below it is the admin panel.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Foci</h3>
+			<p>Your saved methods. A Focus is a chat you have folded down into a repeatable way of working. Add one with the <strong>＋</strong> beside <strong>Foci</strong>.</p>
+		</div>
+		<div class="card">
+			<h3>Chats</h3>
+			<p>Your conversations. Start one with the <strong>＋</strong> beside <strong>Chats</strong>; click any chat to bring it back to the centre.</p>
+		</div>
+	</div>
+	<p>Foci and chats are covered in full on <a href="chats-and-foci.html">Chats &amp; Foci</a>.</p>
+
+	<h3>The admin panel</h3>
+	<p>Below the divider, the admin panel is the state of the machine at a glance. Settings live here rather than in a pop-up, so a chat stays live beside them — you can ask Daimond what an app password is while the box asking for one is still on screen. Each row that can be acted on is a button that opens the thing it names:</p>
+	<ul>
+		<li>An <strong>identity row</strong> — who you are on this device — with a settings cog beside it.</li>
+		<li>A <span class="ui">Models</span> row, which counts the providers you have connected and opens the Models form.</li>
+		<li>A <span class="ui">Credits</span> row, showing your balance and opening the Credits view.</li>
+		<li>A <span class="ui">Tools · N of M</span> row, showing how many tools are available and opening the Tools panel.</li>
+		<li><strong>Workspace storage</strong> rows, showing how much space your files use, and — where the browser can open one — a real folder on your device.</li>
+	</ul>
+
+	<h2>The stage — centre</h2>
+	<p>The stage is the middle zone. Its occupants take the stage on their own or two side by side, and never dock at the right. The point of two seats is that you never leave the conversation to do a thing: read the message, watch the page, read the document, with the daimon still beside it to be asked about it.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>AI — the daimon</h3>
+			<p>The conversation. This is the default occupant and it returns whenever the stage would otherwise be empty. Your messages, the answers, and any tool steps appear here.</p>
+		</div>
+		<div class="card">
+			<h3>Web</h3>
+			<p>A web page, where a page can be shown or driven. Opened from the header or when Daimond follows a link.</p>
+		</div>
+		<div class="card">
+			<h3>Doc</h3>
+			<p>A compiled document (such as a PDF), given room to read.</p>
+		</div>
+		<div class="card">
+			<h3>Message</h3>
+			<p>A single mail message, opened from Email, read beside the chat.</p>
+		</div>
+		<div class="card">
+			<h3>Tools</h3>
+			<p>What Daimond can do, and what the rest would cost. Opened from the <span class="ui">Tools</span> row.</p>
+		</div>
+		<div class="card">
+			<h3>Compose</h3>
+			<p>Writing a mail message. Nothing here sends by itself — only the <span class="ui">Send</span> button puts mail on the wire, and only you can press it.</p>
+		</div>
+	</div>
+
+	<p>Each stage guest has a header with a close button. A closed panel does not vanish: it becomes a tag in the top bar, and clicking the tag brings it back.</p>
+
+	<h2>The dock — right</h2>
+	<p>The dock holds the sources you pull from. A closed dock panel is a tag in the header; clicking the tag docks it again. A second column opens only when there is genuinely room for one.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Email</h3>
+			<p>Your mailboxes and what is in them. Add a mailbox, sync, and open a message onto the stage.</p>
+		</div>
+		<div class="card">
+			<h3>Workspace</h3>
+			<p>Your files, as an ordinary tree. The agent's file tools read and write here.</p>
+		</div>
+		<div class="card">
+			<h3>Agents</h3>
+			<p>Live agent runs, as they happen, with a count of how many are working.</p>
+		</div>
+	</div>
+
+	<h2>The top bar</h2>
+	<p>Across the top sit the brand mark, a meter, the tags for any closed panels, and a <strong>theme toggle</strong> that switches between light and dark. This guide follows the same theme when it is shown inside Daimond.</p>
+
+	<h2>On a narrow screen</h2>
+	<p>When the window is too narrow for three zones, Daimond shows one panel at a time and a row of buttons along the bottom — <span class="ui">Chats</span>, <span class="ui">Chat</span>, <span class="ui">Web</span>, <span class="ui">Agents</span>, <span class="ui">Email</span>, <span class="ui">Files</span> — to move between them. Nothing is lost; it is the same panels, shown one at a time.</p>
+
+	<div class="next">
+		<a href="index.html">&larr; Getting started</a>
+		<a href="models.html">Next: Models &amp; credits &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

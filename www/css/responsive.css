@@ -1,0 +1,117 @@
+/* ============================================================
+   Daimond — mobile responsive layer
+   ------------------------------------------------------------
+   Loaded AFTER app.css. On small screens the four desktop
+   panels become one panel at a time, switched with the bottom
+   nav (.mnav). The active panel is chosen by body[data-mpanel].
+   Everything here is confined to `@media (max-width: 760px)`
+   so desktop (>760px) is untouched.
+   ============================================================ */
+
+@media (max-width: 760px) {
+
+	/* The page itself never scrolls or drags: it is pinned to the DYNAMIC
+	   viewport (dvh — the space actually visible, excluding the browser's
+	   address bar, which `100vh` wrongly includes so the app spilled below the
+	   fold and you had to drag to reach the bar). Panels scroll internally. */
+	html, body {
+		height: 100vh;			/* fallback for engines without dvh */
+		height: 100dvh;
+		overflow: hidden;
+		overscroll-behavior: none;
+		max-width: 100%;
+	}
+
+	#app {
+		height: 100vh;
+		height: 100dvh;
+		padding: 8px 8px 0;
+		gap: 6px;
+		overflow: hidden;
+	}
+	/* The top bar must never push the layout wider than the screen. */
+	.topbar { overflow: hidden; }
+	.top-meter { min-width: 0; overflow: hidden; }
+
+	/* Desktop-only machinery disappears. */
+	.phandle { display: none !important; }
+	.panel-close { display: none !important; }
+	/* The header tags are how a DESKTOP grows its layout; a phone reaches the
+	   rail through the hamburger and raises a thing as a sheet instead. */
+	.panel-tags { display: none !important; }
+
+	/* One DESTINATION at a time, full width. The dwellable panels — Chat, Email,
+	   Files, Agents — take the whole screen and are chosen from the bottom bar.
+	   The desktop zones collapse (`display: contents` lets their panels lay out
+	   against .main directly) and the inline widths/heights the desktop resizers
+	   set must lose, hence !important. The rail (a drawer) and the stage guests
+	   (a sheet) are positioned by mobile.css and are excluded here. */
+	.main { position: relative; }
+	.pcol, .stage, .dock { display: contents !important; width: auto !important; }
+	.main .panel:not(.rail) { height: auto !important; }
+	.main .panel:not(.rail) { display: none !important; width: 100% !important; min-width: 0 !important; flex: 1 !important; }
+	body[data-mpanel="ai"]     .main .ai     { display: flex !important; }
+	body[data-mpanel="agents"] .main .agents { display: flex !important; }
+	body[data-mpanel="mail"]   .main .mail   { display: flex !important; }
+	body[data-mpanel="work"]   .main .work   { display: flex !important; }
+
+	/* Bottom nav. */
+	.mnav {
+		display: flex;
+		align-items: stretch;
+		gap: 4px;
+		flex: none;
+		border-top: 1px solid var(--border);
+		background: var(--bg-primary);
+		padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+		margin: 0 -8px;
+	}
+	.mnav button {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 3px;
+		padding: 5px 0 3px;
+		background: none;
+		border: none;
+		border-radius: var(--radius);
+		color: var(--text-muted);
+		font-size: 11px;
+	}
+	.mnav button .ic { width: 19px; height: 19px; }
+	.mnav button.on { color: var(--accent); background: var(--accent-soft); }
+
+	/* Comfortable chat input row. */
+	.chat-output { padding: 12px 14px; }
+	.chat-msg-user .chat-msg-content,
+	.chat-msg-assistant .chat-msg-content { max-width: 100%; }
+	.chat-msg-content pre,
+	.chat-msg-content table,
+	.tool-args,
+	.tool-result { max-width: 100%; overflow-x: auto; }
+	.chat-input-bar { gap: 8px; padding: 8px 10px; }
+	/* 16px avoids iOS Safari's auto-zoom on focus. */
+	#chat-input { font-size: 16px; padding: 11px 13px; }
+	#chat-send { min-width: 46px; height: 46px; font-size: 18px; }
+
+	/* Give lists a little more row height for touch. */
+	.session-box { padding: 10px 11px; }
+	.files-row { padding: 8px 12px; }
+}
+
+/* Touch tap targets: secondary controls default to ~22px which is under the
+   24px WCAG floor; enlarge on small screens, and reveal hover-only close
+   buttons (there is no hover on touch). */
+@media (max-width: 760px), (pointer: coarse) {
+	.addbtn { width: 34px; height: 34px; font-size: 16px; }
+	.icon-btn { padding: 8px 10px; font-size: 18px; }
+	.session-box-close { opacity: 1; font-size: 20px; padding: 4px 8px; }
+	/* These named classes that do not exist (`.files-row-del`, `.focus-box-close`),
+	   so on touch the file buttons stayed hidden and could not be reached at all.
+	   The real classes are `.files-del` and `.session-box-close`, and the file
+	   buttons hide with `visibility`, not `opacity`. */
+	.files-row .files-del { visibility: visible; opacity: 1; }
+	.session-box .session-box-close { opacity: 1; }
+}

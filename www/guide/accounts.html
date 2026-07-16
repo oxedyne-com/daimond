@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Accounts &amp; privacy — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html" aria-current="page">Accounts</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Accounts &amp; privacy</h1>
+	<p class="lede">An account in Daimond is a passphrase held on this device. There is no account on a server: your identity, your keys and your files live only in this browser. This page covers the passphrase, sharing a browser with other people, and what stays private.</p>
+
+	<h2>Your account is a passphrase</h2>
+	<p>On first run Daimond offers to <strong>protect this device</strong>. You give a name and a passphrase, and that passphrase becomes your account. It does two jobs: it encrypts your stored provider key and mail credentials so an onlooker cannot read them, and it is the identity that signs you in for credits. Nothing about it leaves the browser.</p>
+
+	<div class="note"><strong>The passphrase is never stored and cannot be recovered.</strong> Daimond keeps only the encrypted data, not the passphrase that unlocks it. If you forget it, the encrypted keys and credentials are gone — so keep it somewhere safe. You can carry on without one by choosing <span class="ui">Skip for now</span>, but a provider key is best added once a passphrase is protecting it.</div>
+
+	<h2>The account controls</h2>
+	<p>Your identity sits at the top of the admin panel, bottom-left. The admin home lists the controls for it:</p>
+
+	<figure class="shot" data-shot="accounts-switch">
+		<img alt="The account controls in the admin panel: change name, change passphrase, export or import a backup, log out, and forget this identity." src="shots/accounts-switch.png" loading="lazy">
+		<figcaption>The account controls: change your name or passphrase, back up or restore, log out, or forget the identity entirely.</figcaption>
+	</figure>
+
+	<ul>
+		<li><span class="ui">Change name…</span> — rename the identity.</li>
+		<li><span class="ui">Change passphrase…</span> — set a new passphrase; your encrypted data is re-wrapped under it.</li>
+		<li><span class="ui">Export a backup</span> — save your identity so you can restore it on another browser or device.</li>
+		<li><span class="ui">Import a backup…</span> — bring an exported identity into this browser.</li>
+		<li><span class="ui">Log out</span> — lock the app. Your data stays on the device, encrypted, until the passphrase is entered again.</li>
+		<li><span class="ui">Forget this identity…</span> — remove the identity and its encrypted data from this browser for good.</li>
+	</ul>
+
+	<h2>More than one person on one browser</h2>
+	<p>Daimond holds one account at a time in a browser, so sharing a computer is a matter of locking and, if needed, replacing:</p>
+	<ul>
+		<li><strong>Stepping away.</strong> Choose <span class="ui">Log out</span> to lock the app. Your chats, keys and files remain on the device but cannot be read without your passphrase, so the next person cannot see your work.</li>
+		<li><strong>Returning.</strong> Enter your passphrase to unlock and pick up exactly where you left off.</li>
+		<li><strong>Handing the browser to someone else for good.</strong> Choose <span class="ui">Forget this identity…</span> to clear your account, and the next person chooses <span class="ui">Create an account…</span> to make their own.</li>
+	</ul>
+
+	<h2>Moving your account between devices</h2>
+	<p>Because there is no server, your account does not follow you automatically. To use it on another browser or machine, <span class="ui">Export a backup</span> here and <span class="ui">Import a backup…</span> there.</p>
+	<div class="note"><strong>A backup contains your identity.</strong> Anyone who imports it becomes you, so treat the backup file like the passphrase itself — keep it private and do not send it over a channel you would not trust with the passphrase.</div>
+
+	<h2>What stays private</h2>
+	<p>Daimond is browser-only by design. Your passphrase, provider keys, mail credentials, chats, Foci and files live in this browser and are not sent to us. Data leaves the device only where you direct it: to a model provider when you connect a key, to the credits service when you buy credits, and to your mail server when you sync mail.</p>
+	<p>The protection has honest limits. The passphrase guards against casual local inspection and shared-device snooping — someone who opens the browser's developer tools finds only encrypted data, not your keys. It does not protect against a compromised browser, a malicious extension, or a keylogger watching the passphrase as you type it. Those defeat any in-browser scheme and are out of scope, so keep the device itself trustworthy.</p>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; Email, Web &amp; files</a>
+		<a href="index.html">Back to Getting started &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -1,0 +1,327 @@
+/* mail.css — the Email panel, and one message in the centre.
+ *
+ * Follows the Workspace panel's shape: a head with actions, a card beneath.
+ * Nothing here is new furniture; it is the same furniture, holding mail. */
+
+.mail-actions { display: flex; gap: 4px; align-items: center; }
+
+.mail-card {
+	display: flex; flex-direction: column;
+	flex: 1; min-height: 0;
+	overflow: hidden;
+}
+
+.mail-state {
+	display: flex; flex-direction: column; gap: 8px;
+	padding: 10px;
+	flex: none;
+}
+
+/* The unlock, shown only while the account does not hold the tool. */
+.mail-pitch {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-secondary);
+	padding: 12px;
+}
+.mail-pitch p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
+.mail-fine { font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.mail-pitch .mail-fine { margin-bottom: 10px; }
+.mail-unlock {
+	width: 100%;
+	background: var(--accent); color: #fff;
+	border: 1px solid var(--accent); border-radius: var(--radius-sm);
+	padding: 9px 16px; font-size: 14px;
+}
+.mail-unlock:hover { filter: brightness(1.08); }
+.mail-unlock:disabled { opacity: 0.6; cursor: default; }
+
+.mail-note, .mail-err {
+	font-size: 12px; line-height: 1.45;
+	padding: 7px 9px; border-radius: var(--radius-sm);
+}
+.mail-note { color: var(--text-secondary); background: var(--bg-tertiary); }
+.mail-err  { color: var(--accent-text);   background: var(--accent-soft); }
+
+/* ── The mailboxes ───────────────────────────────────────────── */
+
+.mail-accounts {
+	display: flex; flex-direction: column; gap: 2px;
+	padding: 0 6px 6px;
+	flex: none;
+}
+.mail-accounts .mail-fine { padding: 4px 4px 0; }
+.mail-acct {
+	display: flex; align-items: center; gap: 6px;
+	padding: 6px 8px;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	font-size: 13px;
+}
+.mail-acct:hover { background: var(--bg-hover); }
+.mail-acct.on {
+	background: var(--bg-tertiary);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.mail-addr {
+	flex: 1; min-width: 0;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-when { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.mail-del {
+	border: 0; background: none; color: var(--text-muted);
+	font-size: 15px; line-height: 1; padding: 0 2px;
+	opacity: 0;
+}
+.mail-acct:hover .mail-del { opacity: 1; }
+.mail-del:hover { color: var(--danger); }
+
+/* ── The messages ────────────────────────────────────────────── */
+
+.mail-list {
+	flex: 1; min-height: 0; overflow-y: auto;
+	border-top: 1px solid var(--border);
+}
+.mail-list .mail-fine { padding: 10px; }
+
+/* The foot of the list: what the cap held back, and the way to go and get it.
+ * It sits below the last message and belongs to the list, not to the messages,
+ * so it is set apart rather than looking like one more row. */
+.mail-more {
+	display: flex; flex-direction: column; gap: 8px;
+	padding: 12px 10px 14px;
+	border-top: 1px solid var(--border);
+	background: var(--bg-tertiary);
+}
+.mail-more .mail-fine { padding: 0; }
+.mail-more-btns { display: flex; gap: 8px; }
+.mail-more-btns > button { flex: 1; }
+.mail-stop {
+	background: var(--accent-soft); color: var(--accent-text);
+	border: 1px solid var(--accent); border-radius: var(--radius-sm);
+	padding: 8px 14px; font-size: 13px;
+}
+.mail-all {
+	background: var(--bg-secondary); color: var(--text-secondary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	padding: 8px 14px; font-size: 13px;
+}
+.mail-all:hover { border-color: var(--border-2); color: var(--text-primary); }
+.mail-all:disabled { opacity: 0.5; cursor: default; }
+.mail-older {
+	align-self: stretch;
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	padding: 8px 14px;
+	font-size: 13px;
+}
+.mail-older:hover { border-color: var(--accent); color: var(--accent-text); }
+.mail-older:disabled { opacity: 0.5; cursor: default; }
+.mail-older:disabled:hover { border-color: var(--border-2); color: var(--text-primary); }
+.mail-msg {
+	padding: 8px 10px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--border);
+}
+.mail-msg:hover { background: var(--bg-hover); }
+.mail-from {
+	font-size: 12px; color: var(--text-secondary);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-subj {
+	font-size: 13px; margin: 2px 0;
+	color: var(--text-primary);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-msg.unread .mail-subj { font-weight: 600; }
+.mail-date {
+	font-size: 11px; color: var(--text-muted);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── One message, in the centre ──────────────────────────────── */
+
+/* The message is a STAGE panel: it opens beside the chat, not in place of it,
+   so a message can be read and asked about at the same time. */
+/* ── One message ─────────────────────────────────────────────────
+ * A header you can read the sender out of at a glance, then the body. HTML mail
+ * is a stranger's markup, so it is rendered inside a sandboxed frame with its
+ * own white page — not styled into ours, and never able to touch it. */
+.msg-head {
+	flex: none;
+	padding: 12px 16px 10px;
+	border-bottom: 1px solid var(--border);
+}
+.msg-subject { font-size: 17px; font-weight: 600; line-height: 1.35; margin-bottom: 8px; }
+
+.msg-who { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.msg-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.msg-addr { font-size: 12.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.msg-date { font-size: 12.5px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+
+.msg-line { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+.msg-lbl { flex: none; width: 58px; color: var(--text-muted); }
+.msg-val { color: var(--text-secondary); word-break: break-word; }
+
+/* The files that came with the message. Clicking one writes it into the workspace,
+ * which is the only place a file ever lands. */
+.msg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.msg-att {
+	max-width: 100%;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+	padding: 5px 10px; font-size: 12px;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msg-att:hover { border-color: var(--accent); color: var(--text-primary); }
+.msg-att.done { border-color: var(--ok); color: var(--ok); }
+.msg-att:disabled { cursor: default; }
+
+.msg-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+
+/* Plain-text mail: the newlines are the layout, so keep them. */
+.msg-text {
+	padding: 14px 16px 16px;
+	white-space: pre-wrap; word-break: break-word;
+	font-size: 14px; line-height: 1.6;
+	color: var(--text-primary);
+}
+
+/* HTML mail, in its own document. */
+.msg-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.msg-blocked {
+	flex: none;
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 12px;
+	background: var(--bg-tertiary);
+	border-bottom: 1px solid var(--border);
+	font-size: 12px; line-height: 1.45;
+	color: var(--text-secondary);
+}
+.msg-blocked span { flex: 1; }
+.msg-blocked button {
+	flex: none;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 5px 10px; font-size: 12px;
+}
+.msg-blocked button:hover { border-color: var(--accent); color: var(--accent-text); }
+
+/* The verbs, on the message. They sit under the addresses and above the
+ * attachments — after you know who sent it and before you know what came with it,
+ * which is where the decision to answer is actually made. */
+.msg-acts { display: flex; gap: 6px; margin-top: 10px; }
+.msg-act {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 5px 12px; font-size: 12.5px;
+}
+.msg-act:hover { border-color: var(--accent); color: var(--accent-text); }
+
+/* ── Drafts ──────────────────────────────────────────────────────
+ * Above the inbox, because a draft is the only thing in the panel waiting on the
+ * user — and because a draft the daimon wrote for them to check would otherwise
+ * sit in a folder nobody opens. */
+.mail-drafts { border-bottom: 1px solid var(--border-2); background: var(--bg-tertiary); }
+.mail-drafts-head {
+	padding: 6px 10px;
+	font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+.mail-draft {
+	padding: 7px 10px;
+	cursor: pointer;
+	border-top: 1px solid var(--border);
+}
+.mail-draft:hover { background: var(--bg-hover); }
+.mail-draft .mail-subj { font-weight: 600; }
+
+/* ── Writing one ─────────────────────────────────────────────────
+ * A stage panel, so the daimon stays beside the draft while it is written. The
+ * body takes every pixel the head and the foot do not: a message is mostly the
+ * thing you are typing into it. */
+.compose-head {
+	flex: none;
+	padding: 10px 14px 6px;
+	border-bottom: 1px solid var(--border);
+}
+.compose-row {
+	display: flex; align-items: center; gap: 8px;
+	padding: 3px 0;
+}
+.compose-row > span {
+	flex: none; width: 58px;
+	font-size: 12.5px; color: var(--text-muted);
+}
+.compose-row > input, .compose-row > select {
+	flex: 1; min-width: 0;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 6px 9px; font-size: 13px;
+}
+.compose-row > input:focus, .compose-row > select:focus {
+	outline: none; border-color: var(--accent);
+}
+.compose-text {
+	flex: 1; min-height: 0;
+	width: 100%;
+	resize: none;
+	background: transparent;
+	border: 0; outline: none;
+	color: var(--text-primary);
+	padding: 14px 16px;
+	font: 14px/1.6 inherit;
+}
+.compose-atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px; }
+.compose-atts:not(:empty) { padding: 8px 14px 2px; }
+.compose-att {
+	max-width: 100%;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+	padding: 5px 10px; font-size: 12px;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.compose-att:hover { border-color: var(--danger); color: var(--danger); }
+
+.compose-foot {
+	flex: none;
+	display: flex; align-items: center; gap: 8px;
+	padding: 10px 14px;
+	border-top: 1px solid var(--border);
+}
+.compose-send {
+	background: var(--accent); color: #fff;
+	border: 1px solid var(--accent); border-radius: var(--radius-sm);
+	padding: 8px 18px; font-size: 13px;
+}
+.compose-send:hover { filter: brightness(1.08); }
+.compose-btn {
+	background: var(--bg-secondary); color: var(--text-secondary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	padding: 8px 12px; font-size: 13px;
+}
+.compose-btn:hover { border-color: var(--border-2); color: var(--text-primary); }
+.compose-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.compose-send:disabled, .compose-btn:disabled { opacity: 0.5; cursor: default; }
+.compose-note {
+	margin-left: auto;
+	font-size: 12px; color: var(--text-secondary);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.compose-note.err { color: var(--accent-text); }
+
+/* The form dialog's guidance line, under the fields. */
+.dlg-note { font-size: 12px; line-height: 1.45; color: var(--text-secondary); margin-top: 8px; }
+.dlg-note.err { color: var(--accent-text); }
+/* The shared field label carries a negative bottom margin, which suits the dense
+ * settings panel and pulls a dialog's box up hard against its label. In a form
+ * the user is typing a credential into, give the label room to breathe and the
+ * fields room to separate. */
+.dlg-card .cfg-fieldlabel { margin-top: 14px; margin-bottom: 6px; }

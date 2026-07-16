@@ -1,0 +1,12 @@
+{
+  "workflow": "foci",
+  "model": "accounts/fireworks/models/gpt-oss-120b",
+  "elapsedS": "8.2",
+  "briefWritten": true,
+  "briefV1_len": 98,
+  "foldAccepted": true,
+  "briefChangedAfterFold": true,
+  "briefMentionsDecision": true,
+  "spendUsd": 0.0005,
+  "consoleErrors": []
+}

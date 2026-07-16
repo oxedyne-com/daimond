@@ -1,0 +1,22 @@
+{
+  "workflow": "file-conflict",
+  "llmCost": 0,
+  "editDisjointRegion_merged": true,
+  "editDestroyedAnchor_failedSafe": true,
+  "writeFromStale_clobberedSilently": true,
+  "raw": {
+    "editDisjointRegion": {
+      "ok": true,
+      "fileAfter": "alpha\nBRAVO-B\nCHARLIE-A\nDELTA-B\n"
+    },
+    "editDestroyedAnchor": {
+      "ok": false,
+      "reason": "old_string not found",
+      "fileAfter": "alpha\nbravo\nGONE\ndelta\n"
+    },
+    "writeFromStale": {
+      "fileAfter": "alpha\nbravo\ncharlie\ndelta\n",
+      "bDataSurvived": false
+    }
+  }
+}

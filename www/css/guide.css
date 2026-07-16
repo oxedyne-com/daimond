@@ -1,0 +1,365 @@
+/* guide.css — the Daimond user guide.
+ *
+ * One stylesheet for the whole guide site. It reuses Daimond's own palette
+ * (see css/variables.css) so the guide reads as part of the app, whether it is
+ * opened directly at /guide/ or shown inside Daimond's Web panel.
+ *
+ * Theme: the app sets data-theme="dark|light" on <html>. When the guide is
+ * framed same-origin, a small inline script mirrors that attribute onto the
+ * guide's own root. When the attribute is absent (the guide opened on its own),
+ * the prefers-colour-scheme media query decides. Both paths are handled below.
+ */
+
+/* ── Palette (dark by default, matching the app) ─────────────────────────── */
+:root {
+	--bg-primary:     #15120F;
+	--bg-secondary:   #1E1A16;
+	--bg-tertiary:    #241F1A;
+	--bg-hover:       #2B251E;
+	--border:         #332C25;
+	--border-2:       #3F372E;
+	--text-primary:   #ECE6DC;
+	--text-secondary: #A79E92;
+	--text-muted:     #736A5F;
+	--accent:         #D2604F;
+	--accent-hover:   #E07A67;
+	--accent-soft:    #3A211B;
+	--accent-text:    #E9A392;
+	--ok:             #66B98C;
+	--warn:           #D6A24A;
+	--radius:         8px;
+	--radius-sm:      6px;
+	--radius-lg:      12px;
+	--font:           system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+	--font-mono:      ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+	--maxw:           760px;
+}
+
+/* Light values, shared by the explicit toggle and the OS preference. */
+:root[data-theme="light"],
+:root.theme-light {
+	--bg-primary:     #FBF9F5;
+	--bg-secondary:   #FFFFFF;
+	--bg-tertiary:    #F4F1EA;
+	--bg-hover:       #EDE9E0;
+	--border:         #E7E1D6;
+	--border-2:       #D6CEBF;
+	--text-primary:   #211C18;
+	--text-secondary: #6B635A;
+	--text-muted:     #9A9187;
+	--accent:         #A6322A;
+	--accent-hover:   #C24A38;
+	--accent-soft:    #F6E7E2;
+	--accent-text:    #7E2A20;
+	--ok:             #2F7A54;
+	--warn:           #9A6410;
+}
+
+/* When no explicit theme is set, follow the operating system. */
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) {
+		--bg-primary:     #FBF9F5;
+		--bg-secondary:   #FFFFFF;
+		--bg-tertiary:    #F4F1EA;
+		--bg-hover:       #EDE9E0;
+		--border:         #E7E1D6;
+		--border-2:       #D6CEBF;
+		--text-primary:   #211C18;
+		--text-secondary: #6B635A;
+		--text-muted:     #9A9187;
+		--accent:         #A6322A;
+		--accent-hover:   #C24A38;
+		--accent-soft:    #F6E7E2;
+		--accent-text:    #7E2A20;
+		--ok:             #2F7A54;
+		--warn:           #9A6410;
+	}
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+	margin: 0;
+	font-family: var(--font);
+	font-size: 16px;
+	line-height: 1.6;
+	color: var(--text-primary);
+	background: var(--bg-primary);
+	overflow-x: hidden;                 /* no horizontal page scroll */
+}
+
+img { max-width: 100%; height: auto; }
+
+a {
+	color: var(--accent-text);
+	text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* ── Header and navigation ───────────────────────────────────────────────── */
+.site-head {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	background: var(--bg-secondary);
+	border-bottom: 1px solid var(--border);
+}
+
+.site-head-inner {
+	max-width: var(--maxw);
+	margin: 0 auto;
+	padding: 0.75rem 1.25rem;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 1.25rem;
+}
+
+.brand {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	flex: none;
+}
+.brand:hover { text-decoration: none; }
+
+.wordmark { height: 22px; width: auto; display: block; }
+.wm-light { display: none; }
+
+/* Show the light-background wordmark under a light theme. */
+:root[data-theme="light"] .wm-dark,
+:root.theme-light .wm-dark { display: none; }
+:root[data-theme="light"] .wm-light,
+:root.theme-light .wm-light { display: block; }
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) .wm-dark { display: none; }
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) .wm-light { display: block; }
+}
+
+.brand-sub {
+	font-size: 0.8rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.site-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.9rem;
+	font-size: 0.9rem;
+}
+.site-nav a {
+	color: var(--text-secondary);
+	padding: 0.15rem 0;
+	border-bottom: 2px solid transparent;
+}
+.site-nav a:hover { color: var(--text-primary); text-decoration: none; }
+.site-nav a[aria-current="page"] {
+	color: var(--text-primary);
+	border-bottom-color: var(--accent);
+}
+
+/* ── Main column ─────────────────────────────────────────────────────────── */
+main {
+	max-width: var(--maxw);
+	margin: 0 auto;
+	padding: 1.5rem 1.25rem 4rem;
+}
+
+.lede {
+	font-size: 1.1rem;
+	color: var(--text-secondary);
+}
+
+h1 {
+	font-size: 1.9rem;
+	line-height: 1.2;
+	margin: 0.5rem 0 0.75rem;
+	letter-spacing: -0.01em;
+}
+h2 {
+	font-size: 1.35rem;
+	margin: 2.25rem 0 0.5rem;
+	padding-top: 0.5rem;
+	border-top: 1px solid var(--border);
+}
+h3 {
+	font-size: 1.05rem;
+	margin: 1.5rem 0 0.35rem;
+}
+
+p { margin: 0.6rem 0; }
+
+strong, b { color: var(--text-primary); font-weight: 650; }
+
+ul, ol { margin: 0.6rem 0; padding-left: 1.4rem; }
+li { margin: 0.35rem 0; }
+
+/* A control the reader must find on screen: a small pill that stands in for a
+   button or a row label in the app. */
+.ui {
+	font-family: var(--font);
+	font-weight: 600;
+	color: var(--accent-text);
+	background: var(--accent-soft);
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	padding: 0.05em 0.4em;
+	white-space: nowrap;
+	font-size: 0.92em;
+}
+
+code, kbd {
+	font-family: var(--font-mono);
+	font-size: 0.88em;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	padding: 0.05em 0.35em;
+}
+
+/* Numbered getting-started steps. */
+ol.steps {
+	list-style: none;
+	counter-reset: step;
+	padding-left: 0;
+}
+ol.steps > li {
+	counter-increment: step;
+	position: relative;
+	padding: 0.9rem 0.9rem 0.9rem 3.2rem;
+	margin: 0.75rem 0;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+ol.steps > li::before {
+	content: counter(step);
+	position: absolute;
+	left: 0.9rem;
+	top: 0.9rem;
+	width: 1.6rem;
+	height: 1.6rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 700;
+	font-size: 0.95rem;
+	color: #fff;
+	background: var(--accent);
+	border-radius: 50%;
+}
+ol.steps > li h3 { margin-top: 0; }
+
+/* Callout for honest limits and notes. */
+.note {
+	margin: 1rem 0;
+	padding: 0.75rem 1rem;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-left: 3px solid var(--accent);
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+.note strong { color: var(--text-primary); }
+
+/* Card grid for panel tours. */
+.cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 0.75rem;
+	margin: 1rem 0;
+}
+.card {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.85rem 1rem;
+}
+.card h3 { margin: 0 0 0.25rem; font-size: 1rem; }
+.card p { margin: 0; font-size: 0.92rem; color: var(--text-secondary); }
+
+/* ── Screenshot slots ─────────────────────────────────────────────────────
+   The main agent will set a real src on each img later. Until then the figure
+   shows a dashed placeholder box labelled with its data-shot name, and the
+   caption sits below. */
+.shot {
+	margin: 1.5rem 0;
+	position: relative;
+}
+.shot img {
+	display: block;
+	width: 100%;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-secondary);
+}
+.shot img[data-src]:not([src]) {
+	min-height: 210px;
+	border: 2px dashed var(--border-2);
+	background: var(--bg-tertiary);
+}
+.shot:has(img[data-src]:not([src]))::before {
+	content: "Screenshot: " attr(data-shot);
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	height: 210px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	letter-spacing: 0.03em;
+	pointer-events: none;
+}
+.shot figcaption {
+	margin-top: 0.4rem;
+	font-size: 0.85rem;
+	color: var(--text-muted);
+	text-align: center;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
+.site-foot {
+	max-width: var(--maxw);
+	margin: 0 auto;
+	padding: 1.5rem 1.25rem 3rem;
+	border-top: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.25rem;
+	justify-content: space-between;
+	align-items: center;
+}
+.site-foot nav { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.site-foot a { color: var(--text-muted); }
+
+/* Onward links between pages. */
+.next {
+	margin-top: 2.5rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--border);
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	justify-content: space-between;
+	font-size: 0.95rem;
+}
+
+/* ── Narrow screens ──────────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+	body { font-size: 15px; }
+	h1 { font-size: 1.6rem; }
+	.site-head-inner { padding: 0.6rem 1rem; }
+	main { padding: 1.25rem 1rem 3rem; }
+	.site-nav { font-size: 0.85rem; gap: 0.3rem 0.7rem; }
+}

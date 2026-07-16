@@ -1,0 +1,84 @@
+/* updater.css — the version chip in the header.
+ *
+ * Quiet by default: a muted dot that says "up to date" and asks nothing. It lights up only when
+ * there is something to say -- an update ready (accent, gently pulsing), one waiting on a running
+ * turn (amber), or one just applied (a brief green tick that fades). The states are driven by
+ * data-state on the button, set from updater.js. */
+
+.update-chip {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	color: var(--text-secondary);
+	padding: 5px 7px;
+	border-radius: var(--radius-sm);
+	cursor: default;
+	transition: color 0.2s ease, opacity 0.2s ease;
+}
+.update-chip .ic {
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Two glyphs, one shown at a time: a refresh mark for every state but "done", a tick for it. */
+.update-chip .ic-check { display: none; }
+.update-chip[data-state="done"] .ic-refresh { display: none; }
+.update-chip[data-state="done"] .ic-check   { display: block; }
+
+/* Up to date: present but faint -- a reassurance, not a prompt. */
+.update-chip[data-state="current"] {
+	opacity: 0.4;
+	cursor: default;
+}
+.update-chip[data-state="current"]:hover { opacity: 0.7; background: var(--bg-hover); }
+
+/* Ready: the one state that invites a click. */
+.update-chip[data-state="ready"] {
+	color: var(--accent);
+	opacity: 1;
+	cursor: pointer;
+	animation: update-pulse 2.2s ease-in-out infinite;
+}
+.update-chip[data-state="ready"]:hover { background: var(--bg-hover); color: var(--accent-hover); }
+
+/* Waiting on a running turn: amber, clickable to force, but not urgent. */
+.update-chip[data-state="busy"] {
+	color: var(--warn);
+	opacity: 1;
+	cursor: pointer;
+}
+.update-chip[data-state="busy"]:hover { background: var(--bg-hover); }
+
+/* Out of date and refused by the gateway: red, insistent, clickable to reload now. */
+.update-chip[data-state="stale"] {
+	color: var(--danger);
+	opacity: 1;
+	cursor: pointer;
+	animation: update-pulse 1.4s ease-in-out infinite;
+}
+.update-chip[data-state="stale"]:hover { background: var(--bg-hover); }
+
+/* Just applied: a brief green tick, then it settles back to "current" from updater.js. */
+.update-chip[data-state="done"] {
+	color: var(--ok);
+	opacity: 1;
+	cursor: default;
+}
+
+@keyframes update-pulse {
+	0%, 100% { opacity: 0.55; }
+	50%      { opacity: 1; }
+}
+
+/* Respect a reduced-motion preference: keep the colour, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+	.update-chip[data-state="ready"],
+	.update-chip[data-state="stale"] { animation: none; opacity: 1; }
+}

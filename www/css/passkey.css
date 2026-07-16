@@ -1,0 +1,58 @@
+/* passkey.css — the passkey unlock button and its notes.
+ *
+ * Theme-aware throughout: every colour is a real variable from variables.css
+ * (there is no --surface or --bg — those never existed), so the control reads
+ * correctly in dark, light and lollypop without a single hard-coded literal.
+ */
+
+/* "Use a passkey" on the unlock screen: a full-width secondary button that sits
+   below the primary Unlock, offered only when a passkey is enrolled. It borrows
+   the accent as an outline so it reads as an alternative, not the main action. */
+.id-passkey {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	background: var(--bg-tertiary);
+	color: var(--accent-text);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 10px 16px;
+	font-size: 14px;
+	margin-top: 10px;
+	cursor: pointer;
+}
+.id-passkey:hover {
+	background: var(--accent-soft);
+	color: var(--text-primary);
+}
+.id-passkey:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+/* The little key glyph inside the button. */
+.id-passkey .ic {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* A short status line under the passkey button on the unlock screen — a
+   fallback message when a passkey read fails, so the reason shows without
+   displacing the passphrase field below it. */
+.id-passkey-note {
+	color: var(--text-muted);
+	font-size: 12px;
+	margin-top: 6px;
+	min-height: 16px;
+	text-align: center;
+}
+.id-passkey-note.err {
+	color: var(--danger);
+}
