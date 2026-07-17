@@ -30,10 +30,10 @@
 		<button id="drawer-btn" title="Menu" aria-label="Open menu">
 			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 		</button>
-		<div class="brand">
-			<img class="brand-logo" src="assets/daimond_mark.svg" alt="" aria-hidden="true">
-			<b>Daimond</b>
-		</div>
+		<a class="brand" href="https://daimond.app" aria-label="Daimond — the daimond.app home page">
+			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
+			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
+		</a>
 		<div class="top-meter" id="top-meter"></div>
 		<div class="top-actions">
 			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
@@ -72,6 +72,13 @@
 					<button class="addbtn panel-close" data-close="rail" title="Close panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
+				</div>
+				<!-- Find a Focus by name or by tag. Always on show: Foci
+				     accumulate, and a search box that only appears past some
+				     count is a search box nobody ever discovers. -->
+				<div class="focus-find">
+					<input type="search" class="focus-search" id="focus-search" placeholder="Search Foci" aria-label="Search Foci by name or tag" autocomplete="off">
+					<div class="focus-filter" id="focus-filter" style="display:none"></div>
 				</div>
 				<div class="focus-list" id="focus-list"></div>
 				<div class="railhead"><span>Chats</span>
@@ -506,6 +513,8 @@
 <script src="js/render.js"></script>
 <script src="js/pricing.js"></script>
 <script src="js/ledger.js"></script>
+<script src="js/governor.js"></script>
+<script src="js/verify.js"></script>
 <script src="js/identity.js"></script>
 <!-- passkey.js AFTER identity.js: it builds on DaimondIdentity to seal and
      recover the passphrase behind a WebAuthn PRF credential. -->

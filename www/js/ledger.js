@@ -224,11 +224,21 @@
 		try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
 	}
 
+	/// The raw priced turns, `[{ t, u }]` (epoch-ms and USD), for a
+	/// consumer that needs the samples themselves rather than a
+	/// rolled-up total — the spend governor learns a baseline from
+	/// them. A thin projection of the store, so the storage key
+	/// stays owned here and is never read twice.
+	function samples() {
+		return load().map(function (e) { return { t: e.t, u: e.u || 0 }; });
+	}
+
 	window.DaimondLedger = {
 		record:   record,
 		totals:   totals,
 		perModel: perModel,
 		series:   series,
+		samples:  samples,
 		clear:    clear,
 	};
 })();

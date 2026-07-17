@@ -999,6 +999,111 @@ pub fn extract_json_bool(json: &str, key: &str) -> Option<bool> {
     }
 }
 
+/// Extract an array of strings for a key from a JSON string.
+///
+/// `None` when the key is absent or its value is not an array, which is what
+/// lets a caller tell a field that was never written from one written empty.
+pub(crate) fn extract_json_string_array(json: &str, key: &str) -> Option<Vec<String>> {
+    let arr = match find_json_array(json, key) {
+        Some(a) => a,
+        None    => return None,
+    };
+    Some(parse_json_string_array(&arr))
+}
+
+/// Parse a JSON array's text into its string elements, ignoring any element
+/// that is not a string.
+///
+/// Handles the escapes [`json_escape`] emits, `\uXXXX` among them, so a value
+/// survives the round trip out to storage and back.
+pub(crate) fn parse_json_string_array(arr: &str) -> Vec<String> {
+    let bytes = arr.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Anything outside a quoted element -- brackets, commas, a number --
+        // is not a string, and is stepped over.
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        i += 1; // past the opening quote
+        // Collect as bytes, then decode as UTF-8, so multi-byte characters survive.
+        let mut buf: Vec<u8> = Vec::new();
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\\' && i + 1 < bytes.len() {
+                match bytes[i + 1] {
+                    b'"'  => { buf.push(b'"');  i += 2; }
+                    b'\\' => { buf.push(b'\\'); i += 2; }
+                    b'n'  => { buf.push(b'\n'); i += 2; }
+                    b't'  => { buf.push(b'\t'); i += 2; }
+                    b'r'  => { buf.push(b'\r'); i += 2; }
+                    b'/'  => { buf.push(b'/');  i += 2; }
+                    b'b'  => { buf.push(0x08);  i += 2; }
+                    b'f'  => { buf.push(0x0c);  i += 2; }
+                    b'u'  => match decode_json_unicode(bytes, i + 2) {
+                        Some((c, next)) => {
+                            let mut enc = [0u8; 4];
+                            buf.extend_from_slice(c.encode_utf8(&mut enc).as_bytes());
+                            i = next;
+                        }
+                        // Not a well-formed escape; keep it as written rather
+                        // than lose the characters.
+                        None => { buf.push(b'\\'); buf.push(b'u'); i += 2; }
+                    },
+                    other => { buf.push(b'\\'); buf.push(other); i += 2; }
+                }
+            } else if b == b'"' {
+                i += 1; // past the closing quote
+                break;
+            } else {
+                buf.push(b);
+                i += 1;
+            }
+        }
+        out.push(String::from_utf8_lossy(&buf).to_string());
+    }
+    out
+}
+
+/// Decode a `\uXXXX` escape whose first hex digit is at `i`, pairing a leading
+/// surrogate with the trailing one that follows it.
+///
+/// Returns the character and the index just past the escape, or `None` when the
+/// escape is malformed or a surrogate is left unpaired.
+fn decode_json_unicode(bytes: &[u8], i: usize) -> Option<(char, usize)> {
+    // Four hex digits at `s`, as a code unit.
+    let unit = |s: usize| -> Option<u32> {
+        if s + 4 > bytes.len() {
+            return None;
+        }
+        match std::str::from_utf8(&bytes[s..s + 4]) {
+            Ok(txt) => u32::from_str_radix(txt, 16).ok(),
+            Err(_)  => None,
+        }
+    };
+    let first = match unit(i) {
+        Some(v) => v,
+        None    => return None,
+    };
+    // A leading surrogate is only half a character: its pair follows as a
+    // second `\uXXXX`, and the two combine into one code point.
+    if (0xD800..0xDC00).contains(&first) {
+        let j = i + 4;
+        if j + 6 <= bytes.len() && bytes[j] == b'\\' && bytes[j + 1] == b'u' {
+            if let Some(second) = unit(j + 2) {
+                if (0xDC00..0xE000).contains(&second) {
+                    let cp = 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00);
+                    return char::from_u32(cp).map(|c| (c, j + 6));
+                }
+            }
+        }
+        return None;
+    }
+    char::from_u32(first).map(|c| (c, i + 4))
+}
+
 
 /// Handles `\"`, `\\`, `\n`, `\t` escapes.
 ///

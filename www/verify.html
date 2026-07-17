@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify Daimond</title>
+<style>
+	:root { color-scheme: dark light; --bg:#17130F; --fg:#ECE6DC; --dim:#A79E92; --line:#332C25;
+		--ok:#7FB069; --no:#E07A67; --warn:#D6A24A; --acc:#D2604F; }
+	* { box-sizing: border-box; }
+	body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui, sans-serif; }
+	main { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; }
+	h1 { font-size: 22px; margin: 0 0 6px; }
+	.lede { color: var(--dim); margin: 0 0 24px; }
+	.card { border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:14px 0; }
+	.verdict { font-size:18px; font-weight:600; display:flex; align-items:center; gap:10px; }
+	.dot { width:12px; height:12px; border-radius:50%; background:var(--dim); flex:0 0 auto; }
+	.dot.ok{background:var(--ok);} .dot.no{background:var(--no);} .dot.warn{background:var(--warn);}
+	ul.checks { list-style:none; margin:14px 0 0; padding:0; }
+	ul.checks li { display:flex; gap:10px; padding:7px 0; border-top:1px solid var(--line); align-items:baseline; }
+	.mark { font-weight:700; flex:0 0 auto; width:16px; }
+	.mark.ok{color:var(--ok);} .mark.no{color:var(--no);} .mark.warn{color:var(--warn);}
+	.name { flex:0 0 auto; }
+	.detail { color:var(--dim); font-size:13px; }
+	.mono { font-family: ui-monospace, monospace; font-size:12px; color:var(--dim); word-break:break-all; }
+	.caveat { color:var(--warn); background:rgba(214,162,74,0.08); border:1px solid rgba(214,162,74,0.3);
+		border-radius:8px; padding:12px 14px; font-size:13.5px; }
+	pre { background:#100D0A; border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow:auto; font-size:12.5px; }
+	a { color: var(--acc); }
+	button { font:inherit; background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 16px; cursor:pointer; }
+	button:disabled { opacity:.6; cursor:default; }
+	.prog { color:var(--dim); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Verify Daimond</h1>
+	<p class="lede">Check that the Daimond this page came from is the published, open source — not our word for it, a hash you can reproduce.</p>
+
+	<div class="card">
+		<div id="verdict" class="verdict"><span class="dot" id="dot"></span><span id="headline">Checking this build…</span></div>
+		<div id="ids" class="mono" style="margin-top:8px"></div>
+		<ul class="checks" id="checks"></ul>
+		<p class="prog" id="prog"></p>
+		<p style="margin-top:14px"><button id="recheck" disabled>Check again</button></p>
+	</div>
+
+	<div class="card caveat" id="caveat"></div>
+
+	<div class="card">
+		<b>The check that actually counts.</b>
+		<p class="lede" style="margin:8px 0 6px">A page can't fully vouch for itself. For an independent verdict, build the public source and run the verifier — nothing this server controls is in the loop:</p>
+		<pre>git clone https://github.com/oxedyne-com/daimond
+cd daimond
+rustup target add wasm32-unknown-unknown
+wasm-pack build --target web --out-dir www/pkg
+node verify/check.mjs --url <span id="origin">this site</span></pre>
+		<p class="lede" style="margin:6px 0 0">Green means the bytes this site served are the source you just built, and that build is a sealed entry in the public <a href="https://github.com/oxedyne-com/daimond/blob/main/verify/transparency.jsonl">transparency log</a>.</p>
+	</div>
+</main>
+
+<script src="js/verify.js"></script>
+<script>
+(function () {
+	var dot = document.getElementById('dot'), headline = document.getElementById('headline');
+	var checksEl = document.getElementById('checks'), idsEl = document.getElementById('ids');
+	var progEl = document.getElementById('prog'), caveatEl = document.getElementById('caveat');
+	var btn = document.getElementById('recheck');
+	try { document.getElementById('origin').textContent = location.origin; } catch (e) {}
+
+	function mark(c) { return c.ok === true ? ['ok', '✓'] : c.ok === false ? ['no', '✗'] : ['warn', '?']; }
+
+	async function run() {
+		btn.disabled = true; checksEl.innerHTML = ''; idsEl.textContent = '';
+		dot.className = 'dot'; headline.textContent = 'Checking this build…';
+		progEl.textContent = '';
+		var v = await window.DaimondVerify.check({
+			onProgress: function (d, t) { progEl.textContent = 'hashing served files… ' + d + ' / ' + t; },
+		});
+		progEl.textContent = '';
+		dot.className = 'dot ' + (v.ok ? 'ok' : v.failed ? 'no' : 'warn');
+		headline.textContent = v.ok ? 'This build is the published source, and it was sealed.'
+			: v.failed ? 'This build does NOT match the published source.'
+			: 'Could not fully verify — see below.';
+		if (v.build) idsEl.textContent = 'build ' + v.build + '  ·  bundle ' + v.bundle;
+		v.checks.forEach(function (c) {
+			var m = mark(c);
+			var li = document.createElement('li');
+			li.innerHTML = '<span class="mark ' + m[0] + '">' + m[1] + '</span>'
+				+ '<span class="name">' + c.name + '</span>'
+				+ (c.detail ? '<span class="detail">— ' + c.detail + '</span>' : '');
+			checksEl.appendChild(li);
+		});
+		caveatEl.textContent = v.caveat;
+		btn.disabled = false;
+	}
+	btn.addEventListener('click', run);
+	run();
+})();
+</script>
+</body>
+</html>

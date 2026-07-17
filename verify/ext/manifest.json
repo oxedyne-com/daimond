@@ -1,0 +1,28 @@
+{
+	"manifest_version":	3,
+	"name":			"Daimond Verify",
+	"version":		"0.1.0",
+	"description":		"Confirms the Daimond in your browser is the published, open source — automatically, on every load. A badge you can trust because this checker is installed, not served.",
+
+	"background": {
+		"service_worker":	"background.js",
+		"type":			"module"
+	},
+
+	"permissions": [
+		"tabs",
+		"storage"
+	],
+
+	"host_permissions": [
+		"https://daimond.oxedyne.com/*",
+		"http://127.0.0.1:8777/*",
+		"http://localhost:8777/*",
+		"https://raw.githubusercontent.com/*"
+	],
+
+	"action": {
+		"default_title":	"Daimond Verify",
+		"default_popup":	"popup.html"
+	}
+}

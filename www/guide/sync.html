@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cross-device sync — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+			<a href="sync.html" aria-current="page">Cross-device sync</a>
+			<a href="spending.html">Spending</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Cross-device sync</h1>
+	<p class="lede">Daimond is local-first, so a second device starts empty. Cross-device sync carries your chats and workspace files between your own devices without the server ever reading them.</p>
+
+	<p>What travels through the gateway is one encrypted parcel that only your devices hold the key to. The key comes from your passphrase and never leaves the browser, so the server stores the parcel but cannot open it. Nothing readable crosses between devices.</p>
+
+	<h2>Linking a second device</h2>
+	<p>On the device you already use, choose <span class="ui">Link another device</span>. It shows a one-time code and a QR code. You then have two ways to bring the new device in:</p>
+	<ul>
+		<li><strong>Scan the QR.</strong> On the new phone, point its camera at the QR code. It opens Daimond and links the device in one step, using the phone's own camera, with no in-app scanner to install.</li>
+		<li><strong>Type the code.</strong> Open Daimond on the new device, choose <span class="ui">Have a pairing code?</span>, and type the one-time code shown on the first device.</li>
+	</ul>
+	<p>Either way, you then unlock the new device with your usual passphrase, and your chats and files appear. A passkey can unlock it faster afterwards, once you add one there.</p>
+
+	<h2>What it costs</h2>
+	<p>Sync is free for now. When it is switched on it comes bundled into the one-time Pro unlock, not a subscription, so it stays bought once like the rest of Daimond.</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; Accounts</a>
+		<a href="spending.html">Next: Spending &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
+	</nav>
+</footer>
+</body>
+</html>

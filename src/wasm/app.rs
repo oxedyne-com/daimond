@@ -14,7 +14,7 @@
 //! tools are backed by the OPFS edge (see [`crate::tools`]).
 
 use crate::agent::Agent;
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, parse_json_string_array};
 use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
@@ -275,7 +275,8 @@ impl DaimondApp {
     }
 
     /// List every Focus as a JSON array of
-    /// `{ id, name, brief_version, updated }`, most-recently updated first.
+    /// `{ id, name, brief_version, updated, tags }`, most-recently updated
+    /// first.
     pub async fn list_foci(&self) -> Result<String, JsValue> {
         focus::list().await.map_err(to_js_err)
     }
@@ -283,6 +284,18 @@ impl DaimondApp {
     /// Rename a Focus.
     pub async fn rename_focus(&self, id: String, name: String) -> Result<(), JsValue> {
         focus::rename(&id, &name).await.map_err(to_js_err)
+    }
+
+    /// Set a Focus's tags, replacing whatever it held.  `tags_json` is a JSON
+    /// array of strings, e.g. `["work","urgent"]`.
+    ///
+    /// The tags are normalised on this side of the boundary -- trimmed,
+    /// lowercased, deduped, capped at 24 characters each and 8 in all -- so the
+    /// caller need not, and cannot dirty the store by not doing so.  Which tags
+    /// to offer is the interface's business: none is known here.
+    pub async fn set_tags(&self, id: String, tags_json: String) -> Result<(), JsValue> {
+        let tags = parse_json_string_array(&tags_json);
+        focus::set_tags(&id, &tags).await.map_err(to_js_err)
     }
 
     /// Delete a Focus and all its stored state.

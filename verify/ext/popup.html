@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daimond Verify</title>
+<style>
+	:root { color-scheme: light dark; }
+	body { font: 13.5px/1.5 system-ui, sans-serif; margin: 0; padding: 14px 16px; width: 320px; background: Canvas; color: CanvasText; }
+	h1 { font-size: 14px; margin: 0 0 2px; }
+	.sub { opacity: .6; font-size: 12px; margin: 0 0 12px; }
+	.verdict { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+		border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+	.dot { width: 11px; height: 11px; border-radius: 50%; background: #888; flex: 0 0 auto; }
+	.dot.ok { background: #3a7d54; } .dot.no { background: #c0392b; } .dot.warn { background: #c98a12; }
+	ul { list-style: none; margin: 0; padding: 0; }
+	li { display: flex; gap: 8px; padding: 5px 0; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); align-items: baseline; }
+	.mk { flex: 0 0 auto; width: 14px; font-weight: 700; }
+	.mk.ok { color: #3a7d54; } .mk.no { color: #c0392b; } .mk.warn { color: #c98a12; }
+	.dt { opacity: .6; font-size: 12px; }
+	.ids { font: 11px/1.4 ui-monospace, monospace; opacity: .6; margin: 10px 0 0; word-break: break-all; }
+	button { font: inherit; margin-top: 12px; padding: 7px 12px; border-radius: 7px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); background: transparent; color: CanvasText; cursor: pointer; }
+</style>
+</head>
+<body>
+	<h1>Daimond Verify</h1>
+	<p class="sub">Is the code this tab is running the published source?</p>
+	<div class="verdict"><span class="dot" id="dot"></span><span id="headline">Checking…</span></div>
+	<ul id="checks"></ul>
+	<div class="ids" id="ids"></div>
+	<button id="recheck">Check again</button>
+<script src="popup.js"></script>
+</body>
+</html>

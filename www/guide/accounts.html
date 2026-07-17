@@ -39,6 +39,8 @@
 			<a href="chats-and-foci.html">Chats &amp; Foci</a>
 			<a href="email-web-files.html">Email, Web &amp; files</a>
 			<a href="accounts.html" aria-current="page">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="spending.html">Spending</a>
 		</nav>
 	</div>
 </header>
@@ -51,6 +53,9 @@
 	<p>On first run Daimond offers to <strong>protect this device</strong>. You give a name and a passphrase, and that passphrase becomes your account. It does two jobs: it encrypts your stored provider key and mail credentials so an onlooker cannot read them, and it is the identity that signs you in for credits. Nothing about it leaves the browser.</p>
 
 	<div class="note"><strong>The passphrase is never stored and cannot be recovered.</strong> Daimond keeps only the encrypted data, not the passphrase that unlocks it. If you forget it, the encrypted keys and credentials are gone — so keep it somewhere safe. You can carry on without one by choosing <span class="ui">Skip for now</span>, but a provider key is best added once a passphrase is protecting it.</div>
+
+	<h2>A faster unlock with a passkey</h2>
+	<p>Once a passphrase is protecting the app, you can add a <strong>passkey</strong> for a faster unlock: a face, a fingerprint, or a security key, the same passwordless sign-in your device already offers. A passkey does not replace the passphrase, it unseals it for you, so the passphrase stays the root and the always-available fallback, and a lost passkey costs you nothing as long as you still hold the passphrase. None of this reaches a server: the unlock happens entirely on the device, and the credits service only ever sees a public key.</p>
 
 	<h2>The account controls</h2>
 	<p>Your identity sits at the top of the admin panel, bottom-left. The admin home lists the controls for it:</p>
@@ -82,12 +87,14 @@
 	<div class="note"><strong>A backup contains your identity.</strong> Anyone who imports it becomes you, so treat the backup file like the passphrase itself — keep it private and do not send it over a channel you would not trust with the passphrase.</div>
 
 	<h2>What stays private</h2>
-	<p>Daimond is browser-only by design. Your passphrase, provider keys, mail credentials, chats, Foci and files live in this browser and are not sent to us. Data leaves the device only where you direct it: to a model provider when you connect a key, to the credits service when you buy credits, and to your mail server when you sync mail.</p>
-	<p>The protection has honest limits. The passphrase guards against casual local inspection and shared-device snooping — someone who opens the browser's developer tools finds only encrypted data, not your keys. It does not protect against a compromised browser, a malicious extension, or a keylogger watching the passphrase as you type it. Those defeat any in-browser scheme and are out of scope, so keep the device itself trustworthy.</p>
+	<p>Your passphrase, provider keys, mail credentials, chats, Foci and files live in this browser and are not sent to us. What we hold on the gateway is money and ciphertext: your credit balance and licences, and, for cross-device sync, one encrypted parcel we cannot open. We do not have the key, so we cannot read your work.</p>
+	<p>It helps to know exactly where data goes. Your messages go to a model provider when you connect your own key, or through our metered service when you spend credits on a model. Fetching a web page to read, and syncing or sending mail, pass through the gateway to reach the outside world. And a sync carries an encrypted parcel between your own devices. So the honest claim is not that nothing ever leaves, but this: with your own key, your chats and files never leave in the clear, and you can watch only ciphertext leave for our servers.</p>
+	<div class="note"><strong>You need not take that on trust.</strong> Daimond's client — the code that runs in this browser and decides what is sent — is open source. You can read it, build it, and open your browser's network panel to confirm for yourself that only ciphertext leaves. The one claim every private tool makes, we let you check: the source is at <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>
+	<p>The protection has honest limits. The passphrase guards against casual local inspection and shared-device snooping — someone who opens the browser's developer tools finds only encrypted data, not your keys. It does not protect against a compromised browser, a malicious extension, or a keylogger watching the passphrase as you type it. Those defeat any in-browser scheme and are out of scope, so keep the device itself trustworthy. And what a remote server does inside itself, ours or anyone's, cannot be proven from the outside: the few operations that pass through the gateway rest on that openness and on our stated policy, which is exactly why it is the client, the part you can check, that we open to you.</p>
 
 	<div class="next">
 		<a href="email-web-files.html">&larr; Email, Web &amp; files</a>
-		<a href="index.html">Back to Getting started &rarr;</a>
+		<a href="sync.html">Next: Cross-device sync &rarr;</a>
 	</div>
 </main>
 
@@ -100,6 +107,8 @@
 		<a href="chats-and-foci.html">Chats &amp; Foci</a>
 		<a href="email-web-files.html">Email, Web &amp; files</a>
 		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
 	</nav>
 </footer>
 </body>

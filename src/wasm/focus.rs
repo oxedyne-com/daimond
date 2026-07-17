@@ -13,7 +13,7 @@
 //! ```text
 //! foci/<id>/brief.md                  the reduced state (agent writes, user may edit)
 //! foci/<id>/versions/NNNN.md          a snapshot per brief version (0-padded)
-//! foci/<id>/.daimond/meta.json        { name, brief_version, updated }
+//! foci/<id>/.daimond/meta.json        { name, brief_version, updated, tags }
 //! foci/<id>/.daimond/log              append-only, one JSON record per line
 //! foci/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
 //! ```
@@ -28,7 +28,8 @@
 //! synchronous single-writer OPFS path is deferred); single-user,
 //! single-Focus-at-a-time makes that sufficient for this stage.
 
-use crate::llm::{extract_json_number, extract_json_string, json_escape};
+use crate::focus_meta::{Meta, normalise_tags};
+use crate::llm::json_escape;
 use crate::protocol::generate_session_id;
 use crate::tools::FileRoot;
 use crate::wasm::opfs;
@@ -185,36 +186,6 @@ pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
 // │ Metadata                                                       │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Per-Focus metadata held in `meta.json`.
-struct Meta {
-    /// Human-readable Focus name.
-    name:    String,
-    /// Current brief version (the latest snapshot).
-    version: u64,
-    /// Last-updated wall-clock time in whole milliseconds.
-    updated: u64,
-}
-
-impl Meta {
-
-    /// Serialise to a compact single-line JSON object.
-    fn to_json(&self) -> String {
-        fmt!(
-            "{{\"name\":\"{}\",\"brief_version\":{},\"updated\":{}}}",
-            json_escape(&self.name), self.version, self.updated,
-        )
-    }
-
-    /// Parse from the stored JSON, tolerating missing fields.
-    fn from_json(s: &str) -> Self {
-        Self {
-            name:    extract_json_string(s, "name").unwrap_or_default(),
-            version: extract_json_number(s, "brief_version").unwrap_or(0),
-            updated: extract_json_number(s, "updated").unwrap_or(0),
-        }
-    }
-}
-
 /// Read a Focus's metadata.
 async fn read_meta(id: &str) -> Outcome<Meta> {
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &meta_path(id)).await);
@@ -295,7 +266,7 @@ pub async fn create(name: &str) -> Outcome<String> {
     res!(opfs::write_file(FileRoot::Opfs, &brief_path(&id), b"").await);
     res!(opfs::write_file(FileRoot::Opfs, &version_path(&id, 0), b"").await);
 
-    let meta = Meta { name: name.to_string(), version: 0, updated: now };
+    let meta = Meta { name: name.to_string(), version: 0, updated: now, tags: Vec::new() };
     res!(write_meta(&id, &meta).await);
 
     let rec = LogRecord {
@@ -322,13 +293,34 @@ pub async fn rename(id: &str, name: &str) -> Outcome<()> {
     Ok(())
 }
 
+/// Set a Focus's tags, replacing whatever it held, and stamp it updated.
+///
+/// The tags are normalised here rather than taken on trust, so the store stays
+/// clean whatever the caller sends (see
+/// [`normalise_tags`](crate::focus_meta::normalise_tags)).
+///
+/// Nothing is appended to the log, because the log is the brief's audit trail
+/// and a tag is not brief state.  Tagging leaves the version alone.
+///
+/// It leaves `updated` alone too, which is deliberate.  The rail is ordered by
+/// `updated`, meaning most recently worked on; filing is not working on it, so
+/// tagging must not reorder the rail.  Otherwise tidying a few Foci in one
+/// sitting would shuffle them all to the top and lose the order that was the
+/// point of the sort.  This is why it differs from `rename`, which does stamp.
+pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.tags = normalise_tags(tags);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
 /// Delete a Focus: remove its whole directory (brief, versions, log, meta).
 pub async fn delete(id: &str) -> Outcome<()> {
     opfs::delete_entry(FileRoot::Opfs, &focus_dir(id), true).await
 }
 
 /// List every Focus, returning a JSON array of
-/// `{ id, name, brief_version, updated }` ordered by most-recently
+/// `{ id, name, brief_version, updated, tags }` ordered by most-recently
 /// updated first.
 ///
 /// This is the one door every Focus passes through before it can be opened, so it is where
@@ -342,7 +334,7 @@ pub async fn list() -> Outcome<String> {
         Ok(e)  => e,
         Err(_) => return Ok("[]".to_string()),
     };
-    let mut rows: Vec<(String, String, u64, u64)> = Vec::new();
+    let mut rows: Vec<(String, Meta)> = Vec::new();
     for (name, is_dir, _size) in entries {
         if !is_dir {
             continue;
@@ -355,14 +347,14 @@ pub async fn list() -> Outcome<String> {
             Ok(m)  => m,
             Err(_) => continue, // not a Focus dir / no metadata
         };
-        rows.push((name, meta.name, meta.version, meta.updated));
+        rows.push((name, meta));
     }
     // Most-recently updated first.
-    rows.sort_by(|a, b| b.3.cmp(&a.3));
-    let items: Vec<String> = rows.iter().map(|(id, nm, ver, upd)| {
+    rows.sort_by(|a, b| b.1.updated.cmp(&a.1.updated));
+    let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
-            "{{\"id\":\"{}\",\"name\":\"{}\",\"brief_version\":{},\"updated\":{}}}",
-            json_escape(id), json_escape(nm), ver, upd,
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"brief_version\":{},\"updated\":{},\"tags\":{}}}",
+            json_escape(id), json_escape(&m.name), m.version, m.updated, m.tags_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))

@@ -39,13 +39,15 @@
 			<a href="chats-and-foci.html" aria-current="page">Chats &amp; Foci</a>
 			<a href="email-web-files.html">Email, Web &amp; files</a>
 			<a href="accounts.html">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="spending.html">Spending</a>
 		</nav>
 	</div>
 </header>
 
 <main>
 	<h1>Chats &amp; Foci</h1>
-	<p class="lede">A chat is a conversation with the daimon. A Focus is a chat you have distilled into a repeatable method. This page covers starting and reading chats, the turn controls, and folding a chat into a Focus.</p>
+	<p class="lede">A chat is a conversation with the daimon. A Focus is a durable container for a pursuit — where what you have worked out about a piece of work is kept, so that later work starts from it. This page covers starting and reading chats, the turn controls, folding a chat into a Focus, and organising the Foci you accumulate.</p>
 
 	<h2>Starting and returning to a chat</h2>
 	<p>Choose <span class="ui">New chat</span> — the <strong>＋</strong> beside <strong>Chats</strong> at the top of the rail. Type in the box at the bottom of the centre panel and send with <span class="ui">➤</span>. Every chat you start is listed under <strong>Chats</strong> in the rail; click one to bring it back to the centre. A new chat starts on your default model; you can change the model for just that chat from the selector in its header.</p>
@@ -74,12 +76,12 @@
 	</figure>
 
 	<h2>Folding a chat into a Focus</h2>
-	<p>When a conversation has found a good way of doing something, you fold it: you keep the method and drop the back-and-forth that produced it. The result is a <strong>Focus</strong> — a saved, repeatable method you can return to and run again.</p>
+	<p>When a conversation has worked something out, you fold it: you keep what you learnt and drop the back-and-forth that produced it. What accumulates is a <strong>Focus</strong>.</p>
 
 	<p>Two units make up a Focus:</p>
 	<ul>
-		<li>A <strong>fold</strong> is one improvement — a single step forward in the method.</li>
-		<li>A <strong>brief</strong> is the accumulated method: the field schema, the ordered steps, and the checks you found the hard way. A Focus is a brief together with the chain of folds that produced it.</li>
+		<li>A <strong>fold</strong> is one improvement — a single step forward.</li>
+		<li>A <strong>brief</strong> is what the folds have accumulated: the shape of the work, the steps in their order, and the checks you found the hard way. A Focus is a brief together with the chain of folds that produced it.</li>
 	</ul>
 
 	<h3>Selecting turns and folding them</h3>
@@ -89,7 +91,9 @@
 		<li><span class="ui">Deselect all</span> — clear the selection.</li>
 		<li><span class="ui">Fold selected</span> — fold the chosen turns into the Focus.</li>
 	</ul>
-	<p>You fold a step you have <em>adopted</em>, not a passing remark: folding keeps the reduced method, not the transcript.</p>
+	<p>You fold a step you have <em>adopted</em>, not a passing remark: folding keeps what you learnt, not the transcript.</p>
+
+	<div class="note"><strong>Nothing is absorbed on its own.</strong> A brief never grows in the background: you choose the turns that are offered, and the fold itself is a proposal — the agent rewrites the brief and shows you the result, which you accept or reject. A brief only changes because you said so.</div>
 
 	<figure class="shot" data-shot="focus-fold">
 		<img alt="The Focus command surface shown in place of the chat, with controls to steer and fold the method." src="shots/focus-fold.png" loading="lazy">
@@ -97,7 +101,40 @@
 	</figure>
 
 	<h2>Working a Focus</h2>
-	<p>Foci are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Foci</strong>. Selecting a Focus replaces the chat in the centre with its command surface — a compact view where you steer the method and fold further improvements into it. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
+	<p>Foci are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Foci</strong>. Selecting a Focus replaces the chat in the centre with its command surface — a compact view where you steer the work and fold further improvements into it. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
+
+	<h3>What a Focus does, and what it does not</h3>
+	<p>A Focus retains; it does not run. Nothing executes a brief. There is no workflow engine behind a Focus, nothing schedules it, nothing chains one Focus to another, and there is no saved job waiting to fire. Returning to a Focus does not set it going — and neither does leaving it alone, since a Focus at rest stays exactly as you left it.</p>
+
+	<p>So <em>picking it up again</em> means you steer it again, with everything it has learnt already in hand. That is the whole of the claim, and it is worth more than it sounds. The brief is prose, and prose is what a model reads best: it is handed to the daimon as context when you work the Focus, and to every worker dispatched from it. What you worked out once reaches the work again without you retyping it — or remembering that you should.</p>
+
+	<h2>The brief and its history</h2>
+	<p>The brief is a real file — <strong>brief.md</strong>, in the Focus's own folder in your workspace. You can open it, read it, and edit it yourself, like any other file.</p>
+
+	<p>Every write to a brief snapshots a version, so a brief has a history and nothing is written over. The history lists every version, newest first, each with what produced it:</p>
+	<ul>
+		<li><span class="ui">View</span> — read that version.</li>
+		<li><span class="ui">Restore</span> — make that version current again.</li>
+		<li><span class="ui">Delta</span> — see the raw input a fold consumed, the material the agent was given to reduce.</li>
+	</ul>
+
+	<div class="note"><strong>Restore is not destructive.</strong> The text that was current is kept in the history first, so restoring an older version adds to the history rather than replacing it — a restore you did not mean can itself be undone.</div>
+
+	<h2>Dispatching workers</h2>
+	<p>Some tasks want work done rather than merely recorded. For those, the Focus's conductor dispatches a <strong>worker agent</strong>. Each worker runs in its own context with the workspace file tools, and is given the standing instructions and this Focus's brief. That brief is the whole of what it knows about your pursuit — a worker cannot see your conversation, so the task it is handed must say everything else it needs.</p>
+
+	<p>Up to <strong>four</strong> workers run at once. The conductor dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a brief yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
+
+	<p>Two limits are worth knowing. A worker cannot dispatch another worker, so delegation goes one level and stops. And one Focus is steered at a time, so there is no second Focus working away while your back is turned.</p>
+
+	<h2>Tags</h2>
+	<p>Foci accumulate, so they can be tagged. A tag is a short label you choose. The editor suggests four to start from — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> and <strong>org</strong> — but Daimond imposes no taxonomy on you, and you can type whatever suits your work.</p>
+
+	<p>What you type is tidied: a tag is lowercased, trimmed and deduplicated, with up to <strong>8</strong> tags on a Focus and up to <strong>24</strong> characters in each. Tags are stored in the Focus's own meta, on this device, like everything else.</p>
+
+	<div class="note"><strong>Tags are inert, and that is the point of them.</strong> A tag is your filing system and nothing else. It is never sent to a model, it never enters the brief, and it never changes what any agent does. Tagging a Focus <em>urgent</em> changes nothing about how it is treated.</div>
+
+	<p>Above the list is a search box, which matches on the <strong>name</strong> of a Focus and on its <strong>tags</strong>. It does not search brief content. Clicking a tag chip filters the list to that tag, and the list is ordered by most recently touched, so what you last worked on sits at the top.</p>
 
 	<div class="next">
 		<a href="models.html">&larr; Models &amp; credits</a>
@@ -114,6 +151,8 @@
 		<a href="chats-and-foci.html">Chats &amp; Foci</a>
 		<a href="email-web-files.html">Email, Web &amp; files</a>
 		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
 	</nav>
 </footer>
 </body>

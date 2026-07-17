@@ -1,14 +1,9 @@
-//! Daimond, the browser-first agentic workspace client.
+//! Daimond — AI agent and web chatbot for the Hematite Steel server.
 //!
-//! This crate is the Daimond client.  The same source compiles two ways: to
-//! WebAssembly (`wasm32`), which is the code that runs in the browser and does
-//! the work on the user's device, and to a native library used by the smoke
-//! example and by server-side integration.  It talks to any OpenAI-compatible
-//! model with the user's own key and can act through a small set of tools.
-//!
-//! It is published as source-available so the privacy claim can be verified:
-//! the client encrypts on the device and only ciphertext crosses the wire.  See
-//! the repository README for what that does and does not let you verify.
+//! Daimond provides a web-based chat interface to an LLM (via an OpenAI-compatible
+//! API) with tool-calling capability.  It replaces the tmux/PTY terminal
+//! bridge approach with a structured WebSocket protocol using JDAT
+//! serialisation.
 //!
 //! Key components:
 //!
@@ -27,6 +22,10 @@ pub mod executor;
 /// gated out of the wasm target.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod handler;
+/// The pure core of a Focus's `meta.json` — its shape, its parse/serialise
+/// pair, and tag normalisation.  Target-agnostic, so it is tested natively
+/// while the OPFS edge over it stays in [`wasm::focus`].
+pub mod focus_meta;
 pub mod llm;
 pub mod protocol;
 pub mod session;

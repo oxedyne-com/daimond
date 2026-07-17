@@ -35,9 +35,18 @@ svg { display: block; }
 #app { display: flex; flex-direction: column; height: 100vh; padding: 10px 12px 12px; gap: 8px; }
 
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px; }
-.brand { display: flex; align-items: center; gap: 9px; }
-.brand-logo { height: var(--logo-h); }
-.brand b { color: var(--accent); font-size: 17px; letter-spacing: 0.02em; font-weight: 600; }
+.brand { display: flex; align-items: center; text-decoration: none; transition: opacity 0.15s ease; }
+.brand:hover { opacity: 0.82; }
+/* The integrated wordmark (mark + word as one vector), the same asset the unlock
+   screen uses, in place of the mark plus a UI-font "Daimond". Two variants swap
+   by theme because the topbar sits on the theme background: white lettering on
+   the dark theme, dark grey on the light and lollypop themes. */
+.brand-wordmark { height: var(--logo-h); width: auto; display: block; }
+.brand-wordmark.wm-on-light { display: none; }
+:root[data-theme="light"] .brand-wordmark.wm-on-dark,
+:root[data-theme="lollypop"] .brand-wordmark.wm-on-dark { display: none; }
+:root[data-theme="light"] .brand-wordmark.wm-on-light,
+:root[data-theme="lollypop"] .brand-wordmark.wm-on-light { display: block; }
 .top-meter { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); overflow: hidden; white-space: nowrap; }
 .top-meter .sep { color: var(--text-muted); }
 .top-actions { display: flex; align-items: center; gap: 4px; }
@@ -291,6 +300,15 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    list scrolls rather than squeezing the chats out of the pane above it. */
 .focus-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 
+/* Find a Focus: a search box that is always there, and the active tag filter
+   shown beneath it as one removable chip. */
+.focus-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
+.focus-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12px; padding: 4px 8px; }
+.focus-search:focus { outline: none; border-color: var(--accent); }
+.focus-search::placeholder { color: var(--text-muted); }
+.focus-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.focus-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+
 /* Brief view — the Focus command surface (steer + fold). */
 .brief-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .brief-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 14px; line-height: 1.6; color: var(--text-primary); word-break: break-word; }
@@ -483,6 +501,14 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .spend-cell { flex: 1; display: flex; flex-direction: column; gap: 1px; align-items: center; padding: 2px 4px; border-radius: var(--radius-sm); }
 .spend-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
 .spend-amt { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+/* The spend governor's quiet "faster than usual" note: a full-width row
+   below the three figures, warm amber, never shouting. It appears only when
+   the live rate runs well above the user's own normal, and says nothing at
+   all the rest of the time. */
+.spend-governor { flex-basis: 100%; margin-top: 3px; padding: 3px 6px; border-radius: var(--radius-sm);
+	font-size: 10.5px; text-align: center; letter-spacing: 0.01em; }
+.spend-governor.amber { color: var(--warn); background: var(--warn-bg); }
+.spend-governor.tripped { color: var(--danger); background: var(--warn-bg); font-weight: 600; }
 
 /* User identity row (foot of the rail). */
 .user-row { flex: 1; display: flex; align-items: center; gap: 7px; background: none; border: none; padding: 4px; border-radius: var(--radius-sm); overflow: hidden; text-align: left; }
@@ -673,6 +699,40 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .hist-when { font-size: 11px; color: var(--text-muted); }
 .hist-acts { display: flex; gap: 6px; flex: none; }
 
+/* ── Tags ────────────────────────────────────────────────────────
+   The user's filing system for Foci, and nothing more: a tag never reaches a
+   model, a brief or a prompt. A chip's hue is hashed from the tag name in JS
+   and arrives as --tag-h, so one tag is one colour everywhere; saturation and
+   lightness come from the theme, so the dark theme gets a deep chip with light
+   lettering and the light themes get the reverse, and neither has to know
+   which tags exist. */
+.tag-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 110px; font-family: var(--font); font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	background: hsl(var(--tag-h, 0) 30% 20%); color: hsl(var(--tag-h, 0) 55% 78%); border: 1px solid hsl(var(--tag-h, 0) 28% 34%); }
+button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: hsl(var(--tag-h, 0) 40% 48%); }
+:root[data-theme="light"] .tag-chip,
+:root[data-theme="lollypop"] .tag-chip { background: hsl(var(--tag-h, 0) 70% 94%); color: hsl(var(--tag-h, 0) 55% 30%); border-color: hsl(var(--tag-h, 0) 45% 80%); }
+:root[data-theme="light"] button.tag-chip:hover,
+:root[data-theme="lollypop"] button.tag-chip:hover { background: hsl(var(--tag-h, 0) 74% 88%); border-color: hsl(var(--tag-h, 0) 50% 66%); }
+
+/* On a Focus box, beside v{n} and the time. The +N stands for the tags that
+   did not fit and names them on hover. */
+.tag-more { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); cursor: default; }
+.tag-active { padding-right: 3px; }
+.tag-x { background: none; border: none; color: inherit; font-size: 12px; line-height: 1; padding: 0 2px; opacity: 0.65; }
+.tag-x:hover { opacity: 1; }
+
+/* The tag editor, reached from the brief bar. */
+.tag-editor { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+.tag-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 20px; }
+.tag-none { font-size: 12px; color: var(--text-muted); font-style: italic; }
+.tag-add { display: flex; gap: 6px; }
+.tag-input { flex: 1; max-width: 200px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 13px; padding: 4px 8px; }
+.tag-input:focus { outline: none; border-color: var(--accent); }
+.tag-input::placeholder { color: var(--text-muted); }
+.tag-sug-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.tag-editor .tag-chip { font-size: 12px; padding: 2px 9px; }
+
 
 /* ── Credits ─────────────────────────────────────────────────────
    Buying credits is a plain one-time purchase: four amounts, no plans, no
@@ -685,6 +745,48 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    accent kept for hover, where it means "this is the one you are choosing". */
 .settings-section .credit-pack { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 6px; font-size: 14px; font-family: var(--font-mono); }
 .settings-section .credit-pack:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--text-primary); }
+
+/* ── Credits, in the Models panel ─────────────────────────────────
+   Credits are a provider row like any other, with one difference the user must
+   see before they pick and not after: this row spends money they are holding
+   HERE, and every other row spends money they hold with somebody else. So the
+   row is tinted, its balance sits on its name, and each of its models carries
+   the word. The rest stay unmarked, which is how a reader knows they are not
+   this — except where two rows serve one model name, where both say whose is
+   whose, because there the name alone cannot. Nothing shouts: the accent is a
+   quiet edge, not a banner. Money is stated, not sold. */
+/* No per-theme rules below: every colour is a variable, so the tint follows the
+   theme the way the rest of the panel does, and a fourth theme needs nothing
+   here. Specificity, not order, is what beats models.css's plain head. */
+.models-prov.paid { border-color: var(--accent-soft); }
+.models-prov.paid .models-prov-head { background: var(--accent-soft); }
+.models-prov.paid .models-prov-name { color: var(--accent-text); }
+
+/* Name, balance and host are three units on one line that cannot hold three:
+   the rail is 220px, and this row must survive it. So they wrap as WHOLES --
+   the break falls between facts, never through one. "$8.40 / left" puts a
+   number on one line and its meaning on the next, and "Daimond / credits"
+   hyphenates the product. */
+.models-prov .models-prov-name { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 7px; }
+.models-nm  { white-space: nowrap; }
+/* A balance is a fact about the row, not a status, so it rides on the name. */
+.models-bal { font-family: var(--font-mono); font-weight: 400; font-size: 11px; color: var(--text-primary); white-space: nowrap; }
+/* Whose machine actually runs it. Subdued, and never the headline: the user
+   bought Daimond credits, not an OpenRouter account -- but they are still owed
+   the name of the company their words are sent to. */
+.models-via { font-weight: 400; font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+
+/* The economy a model belongs to, on the model. `credits` draws down the
+   balance; `your key` marks a model whose name also appears on another row, so
+   the pair is never a coin toss over who gets paid. */
+.models-econ { flex: none; font-family: var(--font); font-size: 9px; letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 5px; border-radius: 20px; border: 1px solid var(--border-2); color: var(--text-muted); background: var(--bg-tertiary); }
+.models-econ.paid { border-color: var(--accent-soft); color: var(--accent-text); background: var(--accent-soft); }
+.models-model.on .models-econ.paid { border-color: var(--accent); }
+
+/* The gateway's own words about why it cannot sell inference. It writes better
+   advice than this panel can ("bring your own model key to keep working"), so
+   it is shown rather than flattened into a one-word state. */
+.models-why { padding: 6px 8px 2px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
 .settings-section .credit-pack:disabled { opacity: 0.5; }
 /* Credits are a BALANCE, not a spend period, so they take their own line rather
    than squeezing in as a fourth column and clipping the rail. */

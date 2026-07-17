@@ -34,6 +34,11 @@
 	/// gateway's GATEWAY_API/MIN_CLIENT_API (gateway/src/handlers/common.rs)
 	/// whenever the HTTP contract changes in a way an old tab cannot survive.
 	/// Sent on every call so the gateway can refuse a tab too old to serve.
+	///
+	/// Exported as `clientApi()`, because a caller outside this file needs the
+	/// number and must not carry its own copy: two constants that have to match
+	/// are two constants that will eventually not. `models.js` mints inference
+	/// keys against `/api/inference-key` and reads it from here.
 	var CLIENT_API = 1;
 
 	/// Every gateway reply advertises the gateway's version and the oldest client
@@ -297,5 +302,8 @@
 		fmtMoney:       fmtMoney,
 		packs:          function () { return PACKS.slice(); },
 		state:          function () { return Object.assign({}, state); },
+		/// The contract version this build speaks, for a caller making its own
+		/// gateway request. There is one copy of this number and it lives here.
+		clientApi:      function () { return CLIENT_API; },
 	};
 })();

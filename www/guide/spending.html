@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Spending — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/guide.css">
+<script>
+(function () {
+	function apply(t) {
+		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			var root = window.parent.document.documentElement;
+			apply(root.getAttribute('data-theme'));
+			new MutationObserver(function () {
+				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+		}
+	} catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-foci.html">Chats &amp; Foci</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="spending.html" aria-current="page">Spending</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Spending</h1>
+	<p class="lede">The Spending view shows where your money goes, and it keeps the two pots apart. They are different accounts in different currencies, so Daimond shows them as two tracks and never adds them together.</p>
+
+	<h2>Two pots, kept apart</h2>
+	<ul>
+		<li><strong>Inference.</strong> The model calls themselves, billed to your own provider key. Daimond prices and records them on this device, per turn, so you can see the cost of your own key spend without any of it passing through us.</li>
+		<li><strong>Credits.</strong> The prepaid balance the gateway spends on the few things that leave the browser: fetching a page, syncing or sending mail, and cross-device sync.</li>
+	</ul>
+
+	<h2>Opening it</h2>
+	<p>Open the Spending view from the <strong>spend meter</strong> in the top bar, or from a link in the <span class="ui">Credits</span> view. It shows each pot with a headline figure, a daily graph, a breakdown by category, and a plain table of movements, so a charge is never a mystery.</p>
+
+	<div class="next">
+		<a href="sync.html">&larr; Cross-device sync</a>
+		<a href="index.html">Back to Getting started &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-foci.html">Chats &amp; Foci</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
+	</nav>
+</footer>
+</body>
+</html>

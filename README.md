@@ -120,13 +120,27 @@ server at all. The gateway-backed features (metered credits, mail, web fetch)
 call an `/api` endpoint; without a gateway running, those calls simply fail and
 the rest carries on.
 
-## Reproducing the delivery check
+## Verifying the running site
 
-The claim "the code my browser runs is the code in this repository" is checked
-by the extension in `ext/`, which compares the served bundle against a build of
-this source. This is the client-side half of a longer verifiability roadmap
-(third-party audit, reproducible wasm builds, and a public transparency log of
-shipped hashes).
+The claim "the code my browser runs is the source in this repository" is
+checkable, not asked on trust. The build is byte-reproducible: rebuild the wasm
+and it matches, hash for hash.
+
+    wasm-pack build --target web --out-dir www/pkg
+    node verify/check.mjs --url https://daimond.oxedyne.com
+
+Green means every file the site served hashes to `www/manifest.json`, and that
+bundle is a sealed entry in the append-only, hash-chained
+`verify/transparency.jsonl` — so a build cannot be slipped to one person without
+appearing in the public record. `node verify/check.mjs --dir www` checks a local
+build instead; `/verify.html` runs the check in the browser; and the
+`verify/ext/` extension does it automatically on every load, from installed code
+the server cannot tamper with. (`ext/`, separately, is Daimond Hands, the
+extension that lets the agent drive a real page.) The fingerprint is defined once
+in `verify/lib.mjs`, and `node verify/verify.test.mjs` proves the three
+implementations agree. See `verify/README.md`.
+
+An independent third-party audit is the remaining step.
 
 ## About
 

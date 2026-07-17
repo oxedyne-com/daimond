@@ -672,7 +672,7 @@ import init, {
 	}
 
 	// ── Foci state ─────────────────────────────────────────────
-	var foci = [];              // [{ id, name, brief_version, updated }]
+	var foci = [];              // [{ id, name, brief_version, updated, tags }]
 	var currentFocus = null;    // selected Focus meta, or null
 	var centreMode = 'chat';    // 'chat' | 'focus' — what the Centre shows
 	var briefBusy = false;      // a steer or fold turn is in flight
@@ -681,6 +681,16 @@ import init, {
 	// unconditionally, so clicking the chat to re-read it before deciding
 	// silently threw away a real (and paid-for) reducer round trip.
 	var pendingFolds = {};      // focusId -> { base, proposed, delta, chatId, chatName }
+
+	// Tags are the user's filing system and nothing more. A tag is never sent
+	// to a model, never written into a brief, and never changes a prompt; no
+	// behaviour anywhere reads what a tag says. These four are a nudge for an
+	// empty tag editor, offered by this screen alone -- the store normalises
+	// tags but knows nothing of these, and holds no tag to be special.
+	var DEFAULT_TAG_SUGGESTIONS = ['person', 'project', 'topic', 'org'];
+	var TAG_CHIPS_SHOWN = 3;    // chips on a Focus box before the +N overflow
+	var focusQuery = '';        // the search box, trimmed and lowercased
+	var tagFilter  = null;      // the tag the rail is filtered to, or null
 
 	// ── DOM refs ───────────────────────────────────────────────
 	var appEl         = document.getElementById('app');
@@ -698,6 +708,8 @@ import init, {
 	var agentsList    = document.getElementById('agents-list');
 	var agentsCount   = document.getElementById('agents-count');
 	var focusList     = document.getElementById('focus-list');
+	var focusSearch   = document.getElementById('focus-search');
+	var focusFilter   = document.getElementById('focus-filter');
 	var newFocusBtn   = document.getElementById('new-focus-btn');
 	var briefView     = document.getElementById('brief-view');
 	var briefBody     = document.getElementById('brief-body');
@@ -3008,6 +3020,12 @@ import init, {
 		// A chat runs on the provider and model it was started with, and falls back to the
 		// default. Both travel with the chat, so a later change of default leaves it alone.
 		var a = appCfgFor(chat);
+		// A DaimondApp's key is fixed at construction, so record WHICH minted key it froze. A
+		// chat built before somebody else re-minted holds a revoked key and will 401 on its next
+		// turn; the generation is how the retry tells that apart from a key that is genuinely
+		// spent, and takes the live key instead of buying another. Not persisted: `slimChat`
+		// keeps a whitelist, and this belongs to the app object, which does not survive a reload.
+		chat._gen = creditsGen();
 		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model, cfg.maxTokens || 4096,
 			Instructions.compose(SYSTEM_PROMPT, ''), cfg.tools !== false);
 		chat.model    = a.model;
@@ -3028,6 +3046,44 @@ import init, {
 			chat.prevCompletion = chat.completionTokens || 0;
 		}
 		return chat.app;
+	}
+
+	/// Is this failure a provider refusing the key it was sent?
+	function keyRefused(raw) {
+		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
+		return /\b401\b|\b403\b/.test(s);
+	}
+
+	/// Which minted key is live, so a thing built around one can say which it froze.
+	function creditsGen() {
+		return window.DaimondModels ? DaimondModels.creditsGen() : 0;
+	}
+
+	/// Can this chat's key simply be replaced by asking for another one?
+	///
+	/// Only the credits row's can. It is the only key Daimond mints, and the only one whose
+	/// refusal is ordinary rather than a mistake: a minted key is capped at the balance it was
+	/// minted against, so exhausting that cap looks, from the provider's side of the wire,
+	/// exactly like a bad key. A key the user typed and had refused is a key the user has to
+	/// look at, so that one is reported and not quietly retried.
+	function canRemint(chat) {
+		return !!(window.DaimondModels && chat && chat.provider === DaimondModels.CREDITS);
+	}
+
+	/// Rebuild a chat's agent on a fresh key, WITHOUT the message this turn is sending.
+	///
+	/// `ensureApp` restores the whole persisted history, and by now that history already holds
+	/// the message the turn is about: `runTurn` persists first, before a single token comes
+	/// back, so that a crash in the next moment cannot eat what the user typed. Seeding it into
+	/// the new session AND handing it to `run_turn` again would ask the model the same question
+	/// twice, so it is held out of the restore and left to `run_turn`, which is where it was
+	/// always going.
+	function rebuildAppWithout(chat, mid) {
+		var keep = chat.messages;
+		chat.messages = keep.filter(function (m) { return m.mid !== mid; });
+		chat.app = null;
+		try { return ensureApp(chat); }
+		finally { chat.messages = keep; }
 	}
 
 	/// Is the CURRENT chat mid-turn? Generation is per-chat now, so a turn
@@ -3127,6 +3183,11 @@ import init, {
 
 		var sawText = false, sawError = false;
 		var turnText = '';
+		// A minted credits key is capped at the balance behind it, so it can be refused
+		// part-way through a session for a reason the user did not cause and cannot check.
+		// That refusal is held back rather than written into the conversation, and answered
+		// with a fresh key below; only a SECOND refusal is real, and only that one is shown.
+		var authFail = false, reminted = false;
 		var pendingTool = null, toolSeq = 0, pendingCallId = null;
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
@@ -3154,6 +3215,11 @@ import init, {
 				if (!owns()) return;
 				renderToolResult(ev.name || '', ev.content || '');
 			} else if (ev.type === 'error') {
+				// The refusal of a spent minted key is not news to the user: it is a key to
+				// replace, and the retry below does that. Nothing is written down until that
+				// retry has had its go, or a turn that goes on to succeed leaves a failure
+				// standing in the transcript underneath its own answer.
+				if (!reminted && canRemint(chat) && keyRefused(ev.content)) { authFail = true; return; }
 				chat.messages.push({ role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
 				if (J) J.turnError(umid, chat.id, friendlyError(ev.content || 'Error'));
 				if (!owns()) return;
@@ -3165,7 +3231,26 @@ import init, {
 
 		await withTurnLock(chat.id, async function () {
 			try {
-				await app.run_turn(text, onEvent);
+				try {
+					await app.run_turn(text, onEvent);
+				} catch (e) {
+					if (!authFail) throw e;
+					// One shot at a fresh key, then the same turn again. The key is fixed at a
+					// DaimondApp's construction, so the agent is rebuilt rather than told.
+					reminted = true; authFail = false;
+					// The generation this app froze, so a key already replaced by another agent's
+					// mint is simply taken rather than bought again.
+					try { await DaimondModels.remint(chat._gen); }
+					catch (e2) {
+						// The key could not be replaced, so the balance is gone rather than merely
+						// capped. Say the thing the user can act on: a raw 401 would send them
+						// hunting for a key they never had.
+						throw new Error('Your Daimond credits have run out. Top up in Credits, or '
+							+ 'switch this chat to a provider key of your own.');
+					}
+					app = rebuildAppWithout(chat, umid);
+					await app.run_turn(text, onEvent);
+				}
 				if (chats.indexOf(chat) === -1) { if (J) J.clearTurn(umid); return; }
 				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ts: Date.now() });
 				stampMessages(chat.messages);
@@ -3177,9 +3262,7 @@ import init, {
 				chat.prevPrompt = pCum; chat.prevCompletion = cCum;
 				chat.promptTokens = pCum; chat.completionTokens = cCum;
 				chat.lastPrompt = turnP;
-				if (window.DaimondLedger && (turnP + turnC) > 0) {
-					try { DaimondLedger.record({ ts: Date.now(), model: chat.model, promptTokens: turnP, completionTokens: turnC, cachedTokens: 0 }); } catch (e) { /* best-effort */ }
-				}
+				recordSpend(chat.model, turnP, turnC);
 				// The turn is complete and now lives in the snapshot; fold it out of the journal.
 				if (J) J.turnClose(umid, chat.id, pCum, cCum);
 			} catch (e) {
@@ -3217,6 +3300,23 @@ import init, {
 		});
 	}
 
+	// Record a completed turn's cost and feed the spend governor in one
+	// step, so the ledger (the total) and the governor (the rate) can
+	// never fall out of step. The governor learns the user's normal from
+	// exactly these entries, so every metered turn — chat, worker or
+	// conductor — must come through here.
+	function recordSpend(model, promptTokens, completionTokens) {
+		if (!window.DaimondLedger || (promptTokens + completionTokens) <= 0) return;
+		var entry = null;
+		try {
+			entry = DaimondLedger.record({ ts: Date.now(), model: model,
+				promptTokens: promptTokens, completionTokens: completionTokens, cachedTokens: 0 });
+		} catch (e) { /* ledger is best-effort */ }
+		if (entry && window.DaimondGovernor) {
+			try { DaimondGovernor.observe(entry); } catch (e) { /* governor is best-effort */ }
+		}
+	}
+
 	// The global spend readout at the foot of the Foci/Chats panel: session
 	// (usage since a ≥15-min idle gap) · this week · this month. Precise but
 	// calm — a quiet reassurance, not a running total shouting in dollars.
@@ -3243,6 +3343,21 @@ import init, {
 		el.appendChild(cell('Session', t.session));
 		el.appendChild(cell('Week', t.week));
 		el.appendChild(cell('Month', t.month));
+		// A quiet "faster than usual" note when the live rate runs well
+		// above the user's own normal. It informs; it never blocks — the
+		// only thing that blocks is a big fan-out, at the dispatch gate.
+		try {
+			var g = window.DaimondGovernor && DaimondGovernor.status();
+			if (g && (g.level === 'amber' || g.level === 'tripped')) {
+				var note = document.createElement('div');
+				note.className = 'spend-governor ' + g.level;
+				note.textContent = (g.level === 'tripped' ? 'Well past your run budget' : 'Spending faster than usual')
+					+ ' · ' + fmtUsd(g.rateUsdMin) + '/min';
+				note.title = 'This run has spent ' + fmtUsd(g.burstSpent) + ' of a '
+					+ fmtUsd(g.budget) + ' pace budget. A large fan-out asks before it runs.';
+				el.appendChild(note);
+			}
+		} catch (e) { /* the note is best-effort */ }
 		// The credit balance is NOT a fourth cell here. Session / Week / Month are three windows
 		// on the same thing -- what has been spent -- and a balance is not a window on it; it sat
 		// among them saying "Credits" beside three times, and read as a fourth period. It has its
@@ -3276,12 +3391,54 @@ import init, {
 	// rate limit — hence a small pool, with the rest queued.
 	var WORKERS_KEY = 'daimond-workers';
 
+	// The predictive spend gate on a fan-out. The cost of dispatching N
+	// workers is known BEFORE any of them runs — N times what a worker
+	// typically costs — so a batch that would run this burst past its
+	// pace budget is paused here and shown, once, with the number on it. A
+	// few agents of ordinary cost never reach the modal; a big fan-out
+	// does. This is the one thing in the governor that blocks rather than
+	// merely notes, and it exists for exactly the "fifty agents in a
+	// blink" case. It fails open: if the governor is somehow absent, the
+	// dispatch proceeds as it always did.
+	async function governorClearsDispatch(n) {
+		if (!window.DaimondGovernor) return true;
+		var a;
+		try { a = DaimondGovernor.assessDispatch(n); } catch (e) { return true; }
+		if (!a || !a.needsConfirm) return true;
+		var each = (n === 1) ? '' : 's';
+		var msg = 'This Focus is about to run ' + n + ' agent' + each
+			+ ', at about ' + fmtUsd(a.predicted) + ' (' + fmtUsd(a.perWorker) + ' each).'
+			+ (a.runSpent > 0 ? ' This burst has spent ' + fmtUsd(a.runSpent) + ' already.' : '')
+			+ ' That would pass your ' + fmtUsd(a.budget) + ' pace budget for one run.';
+		return await confirmDialog(msg, 'Run ' + n + ' agent' + each,
+			{ title: 'Faster than usual', danger: false });
+	}
+
 	var Workers = {
 		runs: [],
 		queue: [],
 		active: 0,
-		MAX: 4,
+		// Each concurrent worker runs on its OWN minted key — its "slot" — so
+		// parallel workers never share a key and their requests cannot race a
+		// shared cap into an overspend. The pool is still bounded so a fan-out does
+		// not hammer the provider's rate limit; with a key per slot the balance
+		// also self-limits it, since each slot's cap is a share of the balance.
+		MAX: 8,
 		seq: 0,
+
+		// Slots 1..MAX, handed to a worker when it starts and returned when it
+		// ends. Slot 0 is the chat's own key, and never a worker's.
+		slotFree: null,
+		takeSlot: function () {
+			if (!this.slotFree) {
+				this.slotFree = [];
+				for (var i = 1; i <= this.MAX; i++) this.slotFree.push(i);
+			}
+			return this.slotFree.length ? this.slotFree.shift() : 0;
+		},
+		giveSlot: function (n) {
+			if (n > 0 && this.slotFree && this.slotFree.indexOf(n) === -1) this.slotFree.push(n);
+		},
 
 		/// Keep a record of every run. The live DaimondApp cannot survive a reload —
 		/// its fetch dies with the page — but the RECORD must, so an agent that
@@ -3329,6 +3486,11 @@ import init, {
 					focusId: focusId,
 					focusName: focusName,
 					model: cfg.model,
+					// A worker runs on the starred default, which is what `cfg` is a view of. It
+					// was implicit before, read straight out of `cfg` at construction; naming it
+					// lets a worker be asked the same question a chat is asked -- whose key is
+					// this, and can it be replaced -- and answered the same way.
+					provider: (window.DaimondModels ? DaimondModels.getDefault().provider : '') || '',
 					status: 'queued',
 					tools: [],
 					text: '',
@@ -3366,28 +3528,102 @@ import init, {
 			// brief of the Focus it is working for.
 			var brief = '';
 			try { brief = await focusApp().read_brief(run.focusId); } catch (e) { brief = ''; }
+
+			// A worker's key, like a chat's, is frozen when its agent is built. A worker spends
+			// the same minted key a chat does, and must survive it being spent the same way --
+			// Daimond's claim is a team, not a chat, and a team whose chat heals while its agents
+			// die on the same exhausted key is the worst of both.
+			var onCredits = !!(window.DaimondModels && run.provider === DaimondModels.CREDITS);
+			var authFail = false, reminted = false;
+			var build = function () {
+				if (onCredits) {
+					var s = DaimondModels.slotConfig(run.slot);
+					if (!s || !s.key) throw new Error('This worker has no key to run on.');
+					run._gen = s.gen;
+					run.app = new DaimondApp(s.url, s.key, run.model, cfg.maxTokens || 4096,
+						Instructions.compose(worker_prompt(), brief), true);
+				} else {
+					var a = appCfgFor(run);
+					run._gen = creditsGen();
+					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, cfg.maxTokens || 4096,
+						Instructions.compose(worker_prompt(), brief), true);
+				}
+			};
+			// On credits, take a slot and mint its own key before building. A slot the
+			// account cannot afford (its siblings have reserved the balance) fails here
+			// as "no credits" rather than falling back to a shared key.
+			if (onCredits) {
+				run.slot = self.takeSlot();
+				try {
+					await DaimondModels.mintSlot(run.slot);
+				} catch (e) {
+					run.status = 'error';
+					run.text = friendlyError(e);
+					self.giveSlot(run.slot); DaimondModels.forgetSlot(run.slot);
+					this.active--; this.render(); this.pump();
+					return;
+				}
+			}
 			try {
-				run.app = new DaimondApp(cfg.baseUrl, cfg.apiKey, run.model, cfg.maxTokens || 4096,
-					Instructions.compose(worker_prompt(), brief), true);
+				build();
 			} catch (e) {
 				run.status = 'error';
 				run.text = friendlyError(e);
+				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				this.active--; this.render(); this.pump();
 				return;
 			}
+			var sink = function (ev) {
+				if (!ev || !ev.type) return;
+				if (ev.type === 'text') { run.text += (ev.content || ''); if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || ''); }
+				else if (ev.type === 'tool_call') { run.tools.push({ name: ev.name || '', status: 'running' }); }
+				else if (ev.type === 'tool_result') {
+					var failed = toolFailed(ev.content || '');
+					for (var i = run.tools.length - 1; i >= 0; i--) {
+						if (run.tools[i].status === 'running') { run.tools[i].status = failed ? 'failed' : 'done'; break; }
+					}
+				} else if (ev.type === 'error') {
+					// Held back while a fresh key is still worth trying, exactly as a chat holds
+					// it back: an agent that goes on to succeed must not carry the wreckage of
+					// the attempt that did not.
+					if (!reminted && canRemint(run) && keyRefused(ev.content)) { authFail = true; return; }
+					run.text += '\n' + friendlyError(ev.content || '');
+				}
+				self.render();
+			};
 			try {
-				await run.app.run_turn(run.task, function (ev) {
-					if (!ev || !ev.type) return;
-					if (ev.type === 'text') { run.text += (ev.content || ''); if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || ''); }
-					else if (ev.type === 'tool_call') { run.tools.push({ name: ev.name || '', status: 'running' }); }
-					else if (ev.type === 'tool_result') {
-						var failed = toolFailed(ev.content || '');
-						for (var i = run.tools.length - 1; i >= 0; i--) {
-							if (run.tools[i].status === 'running') { run.tools[i].status = failed ? 'failed' : 'done'; break; }
-						}
-					} else if (ev.type === 'error') { run.text += '\n' + friendlyError(ev.content || ''); }
+				try {
+					await run.app.run_turn(run.task, sink);
+				} catch (e) {
+					if (!authFail || run.status === 'stopped') throw e;
+					reminted = true; authFail = false;
+					// This worker owns its slot, so it re-mints ITS OWN key — told which
+					// generation it froze, so a key already replaced by its own retry is
+					// taken rather than bought a second time.
+					try { await DaimondModels.remintSlot(run.slot, run._gen); }
+					catch (e2) {
+						throw new Error('Your Daimond credits have run out. Top up in Credits, or '
+							+ 'switch to a provider key of your own, then dispatch this agent again.');
+					}
+					// The task starts over, and that is the right trade rather than a regrettable
+					// one. A worker keeps no restorable transcript -- `text` and `tools` are for
+					// display, not for seeding a session -- so the alternative to re-running it is
+					// failing it, and a failed agent is re-dispatched by hand and re-runs anyway.
+					// The user is spared only the noticing. What was shown of the dead attempt is
+					// cleared so the retry does not append to it, and its journal rows go with it,
+					// since the recovery fold sums deltas and would otherwise show both attempts.
+					run.text = ''; run.tools = [];
+					if (window.DaimondJournal) {
+						try {
+							await DaimondJournal.clearAgent(run.id);
+							DaimondJournal.agentOpen(run.id, { name: run.name, task: run.task,
+								focusId: run.focusId, focusName: run.focusName, model: run.model });
+						} catch (e3) { /* the journal is best-effort; the retry is not. */ }
+					}
 					self.render();
-				});
+					build();
+					await run.app.run_turn(run.task, sink);
+				}
 				// A stopped worker keeps whatever it managed to do; it did not fail.
 				if (run.status !== 'stopped') run.status = 'done';
 			} catch (e) {
@@ -3397,13 +3633,9 @@ import init, {
 				run.completionTokens = (run.app && run.app.completion_tokens) || 0;
 				// A worker spends the user's money like anything else, so it is
 				// metered like anything else.
-				if (window.DaimondLedger && (run.promptTokens + run.completionTokens) > 0) {
-					try {
-						DaimondLedger.record({ ts: Date.now(), model: run.model,
-							promptTokens: run.promptTokens, completionTokens: run.completionTokens, cachedTokens: 0 });
-					} catch (e) { /* ledger is best-effort */ }
-				}
+				recordSpend(run.model, run.promptTokens, run.completionTokens);
 				this.active--;
+				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				updateSpend();
 				Files.refresh();          // a worker may have written files
 				this.persist();
@@ -3746,12 +3978,43 @@ import init, {
 
 	/// Attach to the gateway once the identity is unlocked (its auth is a signed
 	/// challenge, so it cannot run while locked), then show what came back.
+	/// Turn a credit balance into models to run.
+	///
+	/// Credits bought everything the app does except the thing the app is for: a user with $10
+	/// in their account could fetch pages, send mail and sync with it, and the model picker
+	/// still said "no model connected". A balance is now a provider row like any other -- the
+	/// key is minted by the gateway instead of pasted by the user, and the browser calls the
+	/// provider directly with it exactly as it does with a key of the user's own. Daimond is
+	/// not in the inference path here either, which is the entire point of the product and the
+	/// reason this is a minted key rather than a proxy.
+	///
+	/// Fire-and-forget, like everything hanging off the gateway: a credits row that cannot be
+	/// built must never disturb a user who only ever wanted their own key.
+	async function syncCredits() {
+		if (!window.DaimondModels || !window.DaimondGateway) return;
+		var st = DaimondGateway.state();
+		try {
+			await DaimondModels.syncCredits({
+				authed:   st.authed,
+				credits:  st.credits,
+				currency: st.currency,
+				offline:  st.offline,
+			});
+		} catch (e) { /* the row says why; nothing else needs to know. */ }
+		syncCfgFromModels();
+		DaimondAdmin.status();
+	}
+
 	async function connectGateway() {
 		if (!window.DaimondGateway) return;
 		await DaimondGateway.bootstrap();
 		renderCredits();
 		updateSpend();
 		DaimondAdmin.status();          // the credits and the account dot just changed
+		// bootstrap() has just read the balance, so this is the first moment the models a
+		// balance buys can be known. A first-time user with credits and no key of their own
+		// goes from "no model connected" to several hundred models here, and nowhere else.
+		syncCredits();
 		// The Email panel's entitlement is a signed read, so it could not have
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
@@ -3782,10 +4045,7 @@ import init, {
 		var dp = Math.max(0, p - prev.p), dc = Math.max(0, c - prev.c);
 		_focusMeter.set(app, { p: p, c: c });
 		if (dp + dc === 0) return;
-		try {
-			DaimondLedger.record({ ts: Date.now(), model: _focusAppModel.get(app) || cfg.model,
-				promptTokens: dp, completionTokens: dc, cachedTokens: 0 });
-		} catch (e) { /* ledger is best-effort */ }
+		recordSpend(_focusAppModel.get(app) || cfg.model, dp, dc);
 		updateSpend();
 	}
 
@@ -4663,8 +4923,83 @@ import init, {
 		renderFocusList();
 	}
 
+	/// A Focus's tags, tolerating the Foci written before tags existed.
+	function tagsOf(f) {
+		return Array.isArray(f && f.tags) ? f.tags : [];
+	}
+
+	// The hues a tag chip can take: a fixed spread rather than the raw hash,
+	// so two tags rarely land on near-indistinguishable colours.
+	var TAG_HUES = [10, 40, 75, 145, 190, 220, 265, 315];
+
+	/// A tag's hue, hashed from its name, so one tag is one colour everywhere
+	/// and stays that colour across reloads. Only the hue is chosen here; the
+	/// theme supplies saturation and lightness (see `.tag-chip` in app.css),
+	/// so each theme keeps its own contrast.
+	function tagHue(tag) {
+		var h = 0;
+		for (var i = 0; i < tag.length; i++) {
+			h = ((h << 5) - h + tag.charCodeAt(i)) | 0;   // 31*h + c, 32-bit
+		}
+		// The low bits of that hash barely move between short similar strings,
+		// and a remainder takes exactly those bits -- unmixed, 'project' and
+		// 'topic' come out the same colour. Stir the high bits down first.
+		h ^= h >>> 15;
+		h = Math.imul(h, 0x85ebca6b) | 0;
+		h ^= h >>> 13;
+		return TAG_HUES[Math.abs(h) % TAG_HUES.length];
+	}
+
+	/// One tag chip. With an `onclick` it is a button, otherwise inert text.
+	/// The caller sets the title, because what a chip does depends on where
+	/// it sits: the rail filters, the editor adds.
+	function tagChip(tag, cls, onclick) {
+		var el = document.createElement(onclick ? 'button' : 'span');
+		el.className = 'tag-chip' + (cls ? ' ' + cls : '');
+		el.style.setProperty('--tag-h', tagHue(tag));
+		el.textContent = tag;                      // escaped via textContent (H5)
+		if (onclick) {
+			el.addEventListener('click', function (e) { e.stopPropagation(); onclick(tag); });
+		}
+		return el;
+	}
+
+	/// Does a Focus survive the search box and the tag filter? Names and tags
+	/// only -- the brief itself is deliberately not searched.
+	function focusMatches(f) {
+		var tags = tagsOf(f);
+		if (tagFilter && tags.indexOf(tagFilter) === -1) return false;
+		if (!focusQuery) return true;
+		if ((f.name || '').toLowerCase().indexOf(focusQuery) !== -1) return true;
+		return tags.some(function (t) { return t.toLowerCase().indexOf(focusQuery) !== -1; });
+	}
+
+	/// Filter the rail to one tag. Clicking the tag that is already filtering
+	/// clears it, so the chip that turns the filter on turns it off again.
+	function setTagFilter(tag) {
+		tagFilter = (tagFilter === tag) ? null : tag;
+		renderFocusList();
+	}
+
+	/// The active filter, as one removable chip beside the search box. A
+	/// filter you cannot see is a list quietly lying about what it holds.
+	function renderTagFilter() {
+		if (!focusFilter) return;
+		focusFilter.innerHTML = '';
+		if (!tagFilter) { focusFilter.style.display = 'none'; return; }
+		focusFilter.style.display = '';
+		var chip = tagChip(tagFilter, 'tag-active', function () { setTagFilter(null); });
+		chip.title = 'Clear the "' + tagFilter + '" filter';
+		var x = document.createElement('span');
+		x.className = 'tag-x';
+		x.textContent = '×';
+		chip.appendChild(x);
+		focusFilter.appendChild(chip);
+	}
+
 	function renderFocusList() {
 		focusList.innerHTML = '';
+		renderTagFilter();
 		if (foci.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
@@ -4672,7 +5007,16 @@ import init, {
 			focusList.appendChild(note);
 			return;
 		}
-		foci.forEach(function (f) { focusList.appendChild(focusBox(f)); });
+		// Already most-recently-updated first: `list_foci` sorts on `updated`.
+		var shown = foci.filter(focusMatches);
+		if (shown.length === 0) {
+			var none = document.createElement('div');
+			none.className = 'rail-note';
+			none.textContent = 'No Foci match.';
+			focusList.appendChild(none);
+			return;
+		}
+		shown.forEach(function (f) { focusList.appendChild(focusBox(f)); });
 		updateActiveFocus();
 	}
 
@@ -4720,6 +5064,23 @@ import init, {
 			upd.className = 'session-box-time';
 			upd.textContent = relTime(f.updated);
 			meta.appendChild(upd);
+		}
+		// Tags sit with the other plain facts of the Focus. Only the first few
+		// show, so one heavily-filed Focus cannot push the rest off the rail;
+		// a Focus with no tags adds nothing here and looks exactly as it did
+		// before tags existed.
+		var tags = tagsOf(f);
+		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
+			var chip = tagChip(t, 'tag-sm', setTagFilter);
+			chip.title = 'Show only Foci tagged "' + t + '"';
+			meta.appendChild(chip);
+		});
+		if (tags.length > TAG_CHIPS_SHOWN) {
+			var more = document.createElement('span');
+			more.className = 'tag-more';
+			more.textContent = '+' + (tags.length - TAG_CHIPS_SHOWN);
+			more.title = tags.slice(TAG_CHIPS_SHOWN).join(', ');
+			meta.appendChild(more);
 		}
 		box.appendChild(header); box.appendChild(meta);
 		box.addEventListener('click', function () {
@@ -5260,7 +5621,12 @@ import init, {
 		hist.className = 'brief-act';
 		hist.textContent = '↺ History';
 		hist.addEventListener('click', showBriefHistory);
-		bar.appendChild(edit); bar.appendChild(hist);
+		var tagsBtn = document.createElement('button');
+		tagsBtn.className = 'brief-act';
+		tagsBtn.textContent = '# Tags';
+		tagsBtn.title = 'File this Focus in the rail';
+		tagsBtn.addEventListener('click', showTagEditor);
+		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
 		briefBody.appendChild(bar);
 
 		var content = document.createElement('div');
@@ -5402,6 +5768,118 @@ import init, {
 			list.appendChild(row);
 		});
 		briefBody.appendChild(list);
+		renderBriefControls();
+	}
+
+	/// The Focus's tags: the user's own filing system, edited here.
+	///
+	/// Tags only sort the rail. Nothing here is read by an agent, and no tag
+	/// reaches a brief or a prompt -- which is why this sits beside the brief
+	/// rather than in it.
+	async function showTagEditor() {
+		if (!currentFocus) return;
+		var f = foci.find(function (x) { return x.id === currentFocus.id; }) || currentFocus;
+		var tags = tagsOf(f).slice();
+
+		briefBody.innerHTML = '';
+		var bar = document.createElement('div');
+		bar.className = 'brief-bar';
+		var back = document.createElement('button');
+		back.className = 'brief-act';
+		back.textContent = '← Back to the brief';
+		back.addEventListener('click', function () { renderBrief(); });
+		bar.appendChild(back);
+		briefBody.appendChild(bar);
+
+		var wrap = document.createElement('div');
+		wrap.className = 'tag-editor';
+		var note = document.createElement('div');
+		note.className = 'tag-note';
+		note.textContent = 'Tags file this Focus in the rail. They are never sent to a model and never enter the brief.';
+		wrap.appendChild(note);
+
+		var current = document.createElement('div');
+		current.className = 'tag-row';
+		wrap.appendChild(current);
+
+		var addRow = document.createElement('div');
+		addRow.className = 'tag-add';
+		var input = document.createElement('input');
+		input.className = 'tag-input';
+		input.type = 'text';
+		input.placeholder = 'Add a tag';
+		input.maxLength = 24;
+		var add = document.createElement('button');
+		add.className = 'brief-act';
+		add.textContent = '+ Add';
+		addRow.appendChild(input); addRow.appendChild(add);
+		wrap.appendChild(addRow);
+
+		var sug = document.createElement('div');
+		sug.className = 'tag-row tag-sug';
+		wrap.appendChild(sug);
+		briefBody.appendChild(wrap);
+
+		/// Persist, then repaint from what came back. The store owns
+		/// normalisation -- it lowercases, trims, dedupes and caps -- so its
+		/// answer is the truth, not what was typed here.
+		async function commit(next) {
+			try { await focusApp().set_tags(f.id, JSON.stringify(next)); }
+			catch (e) { noticeDialog('Could not save the tags', friendlyError(e)); return; }
+			await loadFoci();
+			var g = foci.find(function (x) { return x.id === f.id; });
+			if (g) { tags = tagsOf(g).slice(); currentFocus = g; }
+			else tags = next;
+			paint();
+		}
+
+		function paint() {
+			current.innerHTML = '';
+			if (!tags.length) {
+				var none = document.createElement('span');
+				none.className = 'tag-none';
+				none.textContent = 'No tags yet.';
+				current.appendChild(none);
+			}
+			tags.forEach(function (t) {
+				var chip = tagChip(t, 'tag-edit', null);
+				var x = document.createElement('button');
+				x.className = 'tag-x';
+				x.textContent = '×';
+				x.title = 'Remove "' + t + '"';
+				x.addEventListener('click', function () {
+					commit(tags.filter(function (u) { return u !== t; }));
+				});
+				chip.appendChild(x);
+				current.appendChild(chip);
+			});
+
+			sug.innerHTML = '';
+			var offer = DEFAULT_TAG_SUGGESTIONS.filter(function (t) { return tags.indexOf(t) === -1; });
+			if (!offer.length) return;
+			var lbl = document.createElement('span');
+			lbl.className = 'tag-sug-label';
+			lbl.textContent = 'Suggestions';
+			sug.appendChild(lbl);
+			offer.forEach(function (t) {
+				var chip = tagChip(t, 'tag-offer', function () { commit(tags.concat([t])); });
+				chip.title = 'Add "' + t + '"';
+				sug.appendChild(chip);
+			});
+		}
+
+		function addTyped() {
+			var t = input.value.trim().toLowerCase();
+			input.value = '';
+			if (!t || tags.indexOf(t) !== -1) return;
+			commit(tags.concat([t]));
+		}
+		add.addEventListener('click', addTyped);
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); addTyped(); }
+		});
+
+		paint();
 		renderBriefControls();
 	}
 
@@ -5576,10 +6054,19 @@ import init, {
 		}
 		setBriefBusy(false);
 		if (dispatched.length) {
-			setBriefStatus(dispatched.length === 1
-				? 'Dispatched 1 agent.'
-				: 'Dispatched ' + dispatched.length + ' agents.');
-			Workers.dispatch(focusId, focusName, dispatched);
+			// The spend gate: a large fan-out pauses here for a look before
+			// a single worker is enqueued. A normal dispatch clears silently.
+			var cleared = await governorClearsDispatch(dispatched.length);
+			if (!cleared) {
+				setBriefStatus(dispatched.length === 1
+					? 'Agent not started.'
+					: 'Agents not started.');
+			} else {
+				setBriefStatus(dispatched.length === 1
+					? 'Dispatched 1 agent.'
+					: 'Dispatched ' + dispatched.length + ' agents.');
+				Workers.dispatch(focusId, focusName, dispatched);
+			}
 		} else if (rejected) {
 			setBriefStatus(rejected === 1
 				? 'An agent was requested with no task, so nothing was started.'
@@ -6346,7 +6833,9 @@ import init, {
 			for (var i = 0; i < arr.length; i++) {
 				var brief = '';
 				try { brief = await focusApp().read_brief(arr[i].id); } catch (e) { brief = ''; }
-				out.foci.push({ id: arr[i].id, name: arr[i].name, brief: brief });
+				// Tags travel with the Focus. Without them a restore silently
+				// drops the user's whole filing system while looking like it worked.
+				out.foci.push({ id: arr[i].id, name: arr[i].name, brief: brief, tags: tagsOf(arr[i]) });
 			}
 		} catch (e) { /* export what we have */ }
 		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
@@ -6392,6 +6881,8 @@ import init, {
 				try {
 					var id = await focusApp().create_focus(f.name || 'Restored Focus');
 					if (f.brief) await focusApp().write_brief(id, f.brief);
+					// A backup written before tags existed simply has none.
+					if (f.tags && f.tags.length) await focusApp().set_tags(id, JSON.stringify(f.tags));
 				} catch (e) { /* skip one focus */ }
 			}
 			try { loadFoci(); } catch (e) { /* best effort */ }
@@ -6705,6 +7196,10 @@ import init, {
 	});
 	newSessionBtn.addEventListener('click', newChat);
 	if (newFocusBtn) newFocusBtn.addEventListener('click', createFocus);
+	if (focusSearch) focusSearch.addEventListener('input', function () {
+		focusQuery = focusSearch.value.trim().toLowerCase();
+		renderFocusList();
+	});
 	var agentsClearBtn = document.getElementById('agents-clear');
 	if (agentsClearBtn) agentsClearBtn.addEventListener('click', function () { Workers.clearFinished(); });
 
@@ -6782,14 +7277,20 @@ import init, {
 		if (window.DaimondModels) {
 			// The store is loaded (and the old single-provider config carried into it) before
 			// anything asks what model to run on.
-			DaimondModels.init({ onChange: function () {
-				syncCfgFromModels();
-				DaimondAdmin.status();
-				// The panel is a view of the store, so it follows the store. Without this it only
-				// redrew when the thing that changed the store happened to remember to ask -- so
-				// unlocking with the Models panel open left every provider still reading "sealed".
-				DaimondModels.render();
-			} });
+			DaimondModels.init({
+				onChange: function () {
+					syncCfgFromModels();
+					DaimondAdmin.status();
+					// The panel is a view of the store, so it follows the store. Without this it only
+					// redrew when the thing that changed the store happened to remember to ask -- so
+					// unlocking with the Models panel open left every provider still reading "sealed".
+					DaimondModels.render();
+				},
+				// The one thing a credits row can offer that a key row cannot: the way to fix it.
+				// The models panel does not own the credits form, so it asks for it rather than
+				// growing a second copy.
+				onTopUp: function () { openCredits('Top up to keep using these models.'); },
+			});
 			syncCfgFromModels();
 		}
 		if (window.DaimondTools) {
@@ -6910,11 +7411,16 @@ import init, {
 			var now = DaimondGateway.state().credits;
 			if (now !== null && now !== before) {
 				renderCredits(); updateSpend();
+				// The balance moved, so the key minted against the old one is worth less than the
+				// account now is -- and a user who has just topped up from nothing has no key at
+				// all. Mint against what they actually have before telling them it is theirs.
+				await syncCredits();
 				noticeDialog('Credits added', 'Your balance is now ' + DaimondGateway.fmtMoney(now, DaimondGateway.state().currency) + '.');
 				return;
 			}
 		}
 		renderCredits(); updateSpend();
+		syncCredits();
 		noticeDialog('Payment received', 'Your credits are still being confirmed. They will appear here shortly.');
 	}
 	// The document used to REPLACE the chat, so closing it had to put the chat
