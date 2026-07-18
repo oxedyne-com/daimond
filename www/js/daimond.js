@@ -710,6 +710,11 @@ import init, {
 	var focusList     = document.getElementById('focus-list');
 	var focusSearch   = document.getElementById('focus-search');
 	var focusFilter   = document.getElementById('focus-filter');
+	var agentSearch   = document.getElementById('agent-search');
+	var agentFilter   = document.getElementById('agent-filter');
+	var agentQuery       = '';   // the agents panel search text, lower-cased
+	var agentFocusFilter = null; // filter agents to one Focus id, or null
+	var agentTagFilter   = null; // filter agents to one tag, or null
 	var newFocusBtn   = document.getElementById('new-focus-btn');
 	var briefView     = document.getElementById('brief-view');
 	var briefBody     = document.getElementById('brief-body');
@@ -3693,11 +3698,14 @@ import init, {
 		render: function () {
 			if (!agentsList) return;
 			agentsList.innerHTML = '';
+			renderAgentFilter();
 			var live = 0, self = this;
-			var finished = 0;
+			var finished = 0, shown = 0;
 			this.runs.forEach(function (run) {
 				if (run.status === 'running' || run.status === 'queued') live++;
 				else finished++;
+				if (!agentMatches(run)) return;
+				shown++;
 				agentsList.appendChild(self.tile(run));
 			});
 			if (agentsCount) agentsCount.textContent = live > 0 ? live + ' live' : '';
@@ -3710,6 +3718,11 @@ import init, {
 				empty.className = 'agents-empty';
 				empty.textContent = 'No agents yet. Ask a Focus to start one and it appears here.';
 				agentsList.appendChild(empty);
+			} else if (shown === 0) {
+				var none = document.createElement('div');
+				none.className = 'agents-empty';
+				none.textContent = 'No agents match. Clear the search or filter.';
+				agentsList.appendChild(none);
 			}
 		},
 
@@ -3737,11 +3750,26 @@ import init, {
 			task.textContent = run.task;
 			card.appendChild(task);
 
+			// Chips carry where the run came from without a tree: its Focus, that
+			// Focus's inherited tags, and the model. The Focus and tag chips filter.
+			var chips = document.createElement('div'); chips.className = 'achips';
+			chips.appendChild(agentFocusChip(run));
+			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
+				var c = tagChip(t, 'tag-sm' + (agentTagFilter === t ? ' tag-active' : ''), setAgentTagFilter);
+				c.title = 'Show only agents tagged "' + t + '"';
+				chips.appendChild(c);
+			});
+			if (run.model) {
+				var mc = document.createElement('span'); mc.className = 'achip-model';
+				mc.textContent = shortModel(run.model); mc.title = run.model;
+				chips.appendChild(mc);
+			}
+			card.appendChild(chips);
+
 			var arow = document.createElement('div'); arow.className = 'arow';
 			var left = document.createElement('span');
 			var toks = run.promptTokens + run.completionTokens;
 			var bits = [];
-			if (run.focusName) bits.push('↳ ' + run.focusName);
 			if (toks) bits.push(fmtCtx(toks) + ' tok');
 			left.textContent = bits.join(' · ');
 			var right = document.createElement('span');
@@ -4979,6 +5007,89 @@ import init, {
 	function setTagFilter(tag) {
 		tagFilter = (tagFilter === tag) ? null : tag;
 		renderFocusList();
+	}
+
+	// ── Agents panel: find and filter, mirroring the Foci rail ──────────
+	// A flat list with chips, deliberately not a Focus→children tree: the
+	// tree's height is more than the dock can spare, and the parent a run
+	// belongs to already rides on the run, as a chip.
+
+	/// The Focus a run belongs to, looked up live, or null.
+	function agentFocusOf(run) {
+		if (!run || !run.focusId) return null;
+		for (var i = 0; i < foci.length; i++) if (foci[i].id === run.focusId) return foci[i];
+		return null;
+	}
+
+	/// A run's tags: the tags of the Focus that started it. A worker has none
+	/// of its own, so it borrows its Focus's -- which is what lets one tag
+	/// vocabulary filter both rails.
+	function agentTagsOf(run) {
+		return tagsOf(agentFocusOf(run));
+	}
+
+	/// One Focus chip on a run's tile: names the parent, and filters to it.
+	function agentFocusChip(run) {
+		var el = document.createElement('button');
+		el.className = 'tag-chip focus-chip' + (agentFocusFilter === run.focusId ? ' tag-active' : '');
+		el.style.setProperty('--tag-h', tagHue(run.focusName || ''));
+		el.textContent = '↳ ' + (run.focusName || 'no Focus');
+		el.title = run.focusId ? ('Show only agents from "' + run.focusName + '"') : 'This run has no Focus';
+		if (run.focusId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentFocusFilter(run.focusId); });
+		return el;
+	}
+
+	/// Does a run survive the agents search box and its filter chip? Name,
+	/// task, Focus name, model and inherited tags are searched.
+	function agentMatches(run) {
+		if (agentFocusFilter && run.focusId !== agentFocusFilter) return false;
+		if (agentTagFilter && agentTagsOf(run).indexOf(agentTagFilter) === -1) return false;
+		if (!agentQuery) return true;
+		var hay = [run.name, run.task, run.focusName, shortModel(run.model)]
+			.concat(agentTagsOf(run)).join(' ').toLowerCase();
+		return hay.indexOf(agentQuery) !== -1;
+	}
+
+	/// Filter the panel to one Focus (toggles off if it is already the filter).
+	function setAgentFocusFilter(focusId) {
+		agentFocusFilter = (agentFocusFilter === focusId) ? null : focusId;
+		agentTagFilter = null;   // one filter at a time, as the rail has one
+		Workers.render();
+	}
+
+	/// Filter the panel to one tag (toggles off if it is already the filter).
+	function setAgentTagFilter(tag) {
+		agentTagFilter = (agentTagFilter === tag) ? null : tag;
+		agentFocusFilter = null;
+		Workers.render();
+	}
+
+	/// The active agents filter, as one removable chip beside the search box,
+	/// so the list never quietly hides a run without saying why.
+	function renderAgentFilter() {
+		if (!agentFilter) return;
+		agentFilter.innerHTML = '';
+		if (!agentFocusFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
+		agentFilter.style.display = '';
+		var chip;
+		if (agentFocusFilter) {
+			var f = null, id = agentFocusFilter;
+			for (var i = 0; i < foci.length; i++) if (foci[i].id === id) { f = foci[i]; break; }
+			var label = f ? f.name : 'Focus';
+			chip = document.createElement('button');
+			chip.className = 'tag-chip tag-active focus-chip';
+			chip.style.setProperty('--tag-h', tagHue(label));
+			chip.textContent = '↳ ' + label;
+			chip.title = 'Clear the Focus filter';
+			chip.addEventListener('click', function () { setAgentFocusFilter(id); });
+		} else {
+			var tag = agentTagFilter;
+			chip = tagChip(tag, 'tag-active', function () { setAgentTagFilter(tag); });
+			chip.title = 'Clear the "' + tag + '" filter';
+		}
+		var x = document.createElement('span'); x.className = 'tag-x'; x.textContent = '×';
+		chip.appendChild(x);
+		agentFilter.appendChild(chip);
 	}
 
 	/// The active filter, as one removable chip beside the search box. A
@@ -7199,6 +7310,10 @@ import init, {
 	if (focusSearch) focusSearch.addEventListener('input', function () {
 		focusQuery = focusSearch.value.trim().toLowerCase();
 		renderFocusList();
+	});
+	if (agentSearch) agentSearch.addEventListener('input', function () {
+		agentQuery = agentSearch.value.trim().toLowerCase();
+		Workers.render();
 	});
 	var agentsClearBtn = document.getElementById('agents-clear');
 	if (agentsClearBtn) agentsClearBtn.addEventListener('click', function () { Workers.clearFinished(); });

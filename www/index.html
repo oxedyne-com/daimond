@@ -363,6 +363,14 @@
 					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 				</button>
 			</div>
+			<!-- Find a run among many by name, task, Focus or tag. A flat list
+			     with chips, not a Focus-and-children tree: the parent a run
+			     belongs to rides on the run as a chip, so the tree's height is
+			     not spent on it. -->
+			<div class="focus-find agent-find">
+				<input type="search" class="focus-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Focus or tag" autocomplete="off">
+				<div class="focus-filter" id="agent-filter" style="display:none"></div>
+			</div>
 			<div class="agents-list" id="agents-list"></div>
 		</aside>
 

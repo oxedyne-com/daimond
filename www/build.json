@@ -1,1 +1,1 @@
-{"build":"3f6cc6fa4d07","note":"Publish the verification tooling, and bring the client current"}
+{"build":"14d15bc2956b","note":"Guard the delivery check against a roll-back, and drop dead code"}

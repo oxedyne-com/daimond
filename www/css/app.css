@@ -400,6 +400,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* ── Agents panel ────────────────────────────────────────────── */
 .agents-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .agents-empty { font-size: 12px; color: var(--text-muted); padding: 2px 6px; }
+.agent-find { padding-top: 2px; padding-bottom: 2px; }
+/* Chips on an agent tile: parent Focus, its inherited tags, the model. */
+.acard .achips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 2px; }
+.acard .focus-chip { font-weight: 500; }
+.acard .achip-model { font-family: var(--font-mono); font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 20px; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); background: var(--bg-tertiary); border: 1px solid var(--border); }
 
 .acard { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; padding: 8px 9px; flex: none; }
 .acard.running { border-color: var(--border-2); }
