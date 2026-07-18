@@ -49,9 +49,142 @@
 	<h1>The interface</h1>
 	<p class="lede">A tour of the screen: three zones, and what each part does. Once you know the zones, everything in Daimond has a place.</p>
 
-	<figure class="shot" data-shot="three-zones">
-		<img alt="The three zones of Daimond: the rail on the left, the stage in the centre, and the dock on the right." src="shots/three-zones.png" loading="lazy">
-		<figcaption>The three zones. The rail (left) holds what you work on; the stage (centre) holds the conversation; the dock (right) holds your sources.</figcaption>
+	<figure class="diagram">
+		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
+			<title id="rm-title">The named regions of the Daimond window</title>
+			<desc id="rm-desc">A schematic of the window. Across the top is the top bar. Below it, three zones side by side: the rail on the left (what you work on above a divider, the admin panel below it), the stage in the centre (the conversation), and the dock on the right (Email, Workspace and Agents).</desc>
+			<style>
+				.regionmap text { font-family: var(--font); }
+				.rm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+				.rm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+				.rm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-name { fill: var(--accent); font-weight: 700; }
+				.rm-title{ fill: var(--text-secondary); font-weight: 600; }
+				.rm-sub  { fill: var(--text-muted); }
+				.rm-fill { fill: var(--accent); }
+				.rm-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+				.rm-rule { stroke: var(--accent); stroke-width: 2; }
+				.rm-div  { stroke: var(--border-2); stroke-width: 1.5; }
+				.rm-divf { fill: var(--border-2); }
+				.rm-skel { fill: var(--text-muted); opacity: .30; }
+			</style>
+
+			<!-- window + top bar -->
+			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
+			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+			<!-- top-bar furniture: brand, name pill, meter, tags, theme toggle -->
+			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
+			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">The top bar</text>
+			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
+			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
+			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
+			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
+			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
+			<path class="rm-fill" d="M716,24 a9,9 0 0 1 0,18 z" opacity=".5"/>
+
+			<!-- ── rail ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="22" y="66" width="196" height="382" rx="10"/>
+			<text class="rm-name" x="36" y="93" font-size="15">The rail</text>
+			<text class="rm-sub"  x="112" y="93" font-size="11">left</text>
+			<line class="rm-rule" x1="36" y1="100" x2="70" y2="100"/>
+			<text class="rm-title" x="36" y="120" font-size="10.5">What you work on</text>
+			<!-- Foci -->
+			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">FOCI</text>
+			<text class="rm-sub" x="204" y="137" text-anchor="end" font-size="12">+</text>
+			<rect class="rm-cell" x="36" y="142" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="149" width="70" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="148" width="20" height="9" rx="4.5"/>
+			<rect class="rm-soft" x="174" y="148" width="28" height="9" rx="4.5"/>
+			<rect class="rm-cell" x="36" y="172" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="179" width="58" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="178" width="24" height="9" rx="4.5"/>
+			<!-- Chats -->
+			<text class="rm-sub" x="36" y="219" font-size="9" letter-spacing="1">CHATS</text>
+			<rect class="rm-cell" x="36" y="224" width="170" height="18" rx="6"/>
+			<rect class="rm-skel" x="44" y="230" width="96" height="6" rx="3"/>
+			<!-- divider between the two halves of the rail -->
+			<line class="rm-div" x1="30" y1="258" x2="198" y2="258"/>
+			<rect class="rm-divf" x="106" y="255.5" width="16" height="5" rx="2.5"/>
+			<text class="rm-sub" x="36" y="274" font-size="9.5">divider — drag it</text>
+			<!-- Admin panel -->
+			<text class="rm-title" x="36" y="294" font-size="10.5">Admin panel</text>
+			<g>
+				<rect class="rm-cell" x="36" y="300" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="307.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="304.5" width="66" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="304.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="320" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="327.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="324.5" width="54" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="324.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="340" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="347.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="344.5" width="72" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="344.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="360" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="367.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="364.5" width="60" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="364.5" width="26" height="6" rx="3"/>
+			</g>
+
+			<!-- ── stage ──────────────────────────────────────────── -->
+			<rect class="rm-pan" x="228" y="66" width="300" height="382" rx="10"/>
+			<text class="rm-name" x="244" y="93" font-size="15">The stage</text>
+			<text class="rm-sub"  x="330" y="93" font-size="11">centre</text>
+			<line class="rm-rule" x1="244" y1="100" x2="290" y2="100"/>
+			<text class="rm-title" x="244" y="119" font-size="10.5">The daimon — your conversation</text>
+			<text class="rm-sub"   x="244" y="133" font-size="9.5">one on the stage, or two side by side</text>
+			<rect class="rm-cell" x="244" y="146" width="196" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="153" width="176" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="164" width="120" height="6" rx="3"/>
+			<rect class="rm-soft" x="344" y="184" width="168" height="26" rx="8"/>
+			<rect class="rm-skel" x="354" y="194" width="148" height="6" rx="3"/>
+			<rect class="rm-cell" x="244" y="218" width="212" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="225" width="192" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="236" width="150" height="6" rx="3"/>
+			<!-- composer -->
+			<rect class="rm-cell" x="244" y="410" width="268" height="28" rx="8"/>
+			<rect class="rm-skel" x="256" y="421" width="150" height="6" rx="3"/>
+			<circle class="rm-fill" cx="498" cy="424" r="9"/>
+
+			<!-- ── dock ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="538" y="66" width="200" height="382" rx="10"/>
+			<text class="rm-name" x="552" y="93" font-size="15">The dock</text>
+			<text class="rm-sub"  x="642" y="93" font-size="11">right</text>
+			<line class="rm-rule" x1="552" y1="100" x2="596" y2="100"/>
+			<!-- Email -->
+			<rect class="rm-cell" x="552" y="112" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="131" font-size="11">Email</text>
+			<rect class="rm-skel" x="564" y="142" width="148" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="156" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="170" width="134" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="184" width="96" height="6" rx="3"/>
+			<!-- Workspace -->
+			<rect class="rm-cell" x="552" y="210" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="229" font-size="11">Workspace</text>
+			<rect class="rm-skel" x="564" y="240" width="110" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="254" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="268" width="98" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="282" width="88" height="6" rx="3"/>
+			<!-- Agents, with a mini tile that shows the chips -->
+			<rect class="rm-cell" x="552" y="308" width="172" height="132" rx="8"/>
+			<text class="rm-title" x="564" y="327" font-size="11">Agents</text>
+			<rect class="rm-pan" x="562" y="336" width="152" height="96" rx="6"/>
+			<rect class="rm-skel" x="570" y="346" width="66" height="7" rx="3.5"/>
+			<circle class="rm-fill" cx="704" cy="350" r="4"/>
+			<rect class="rm-soft" x="570" y="362" width="50" height="12" rx="6"/>
+			<text class="rm-name" x="577" y="371" font-size="8">↳</text>
+			<rect class="rm-cell" x="626" y="362" width="26" height="12" rx="6"/>
+			<rect class="rm-cell" x="658" y="362" width="36" height="12" rx="6"/>
+			<rect class="rm-skel" x="570" y="384" width="128" height="6" rx="3"/>
+			<rect class="rm-skel" x="570" y="396" width="96" height="6" rx="3"/>
+			<rect class="rm-cell" x="570" y="410" width="52" height="13" rx="6"/>
+			<rect class="rm-cell" x="628" y="410" width="40" height="13" rx="6"/>
+		</svg>
+		<figcaption>The named regions. The <strong>top bar</strong> runs across the top; below it, three zones: the <strong>rail</strong> (left) — what you work on, above a divider, with the admin panel below — the <strong>stage</strong> (centre) for the conversation, and the <strong>dock</strong> (right) holding Email, Workspace and Agents.</figcaption>
 	</figure>
 
 	<h2>The rail — left</h2>
