@@ -28,6 +28,12 @@ exactly what differs. The verifier trusts nothing the server says beyond the
 bytes it serves — the authority is the source you cloned and the log in this
 repo.
 
+Being in the chain proves a bundle was published at some point, not that it is
+the one meant to be live now — so a server could serve an older, still-sealed,
+still-green build (a roll-back). By default that is reported as a warning; add
+`--latest` to fail unless the served build is the chain's tip, or `--expect
+<bundlehash>` to fail unless it is exactly the build you name.
+
 You can also check a local build directly (`node verify/check.mjs --dir www`),
 and there is an in-browser check at `/verify.html` on the running site — handy,
 but weaker, because a tampered server could tamper with that page too. Its one

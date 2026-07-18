@@ -17,6 +17,12 @@
 // is the manifest's own, and that bundle is a sealed entry in an unbroken chain.
 // Red names exactly what differs. Exit 0 on green, 1 on red — so CI can gate on
 // it. No dependencies; Node's fetch and crypto only.
+//
+//   Guard against a roll-back (an older, still-sealed build served in place of a
+//   newer one). By default a served bundle that is sealed but not the chain's tip
+//   is a warning; make it strict, or pin an exact build:
+//     node verify/check.mjs --url … --latest              # fail if not the tip
+//     node verify/check.mjs --url … --expect <bundlehash>  # fail if not this one
 
 import { readFile } from 'node:fs/promises';
 import { join, normalize } from 'node:path';
@@ -28,8 +34,19 @@ const args = process.argv.slice(2);
 const opt  = (name, def = null) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : def; };
 const LOG  = normalize(opt('--log', join(HERE, 'transparency.jsonl')));
 
-const green = (s) => `\x1b[32m${s}\x1b[0m`;
-const red   = (s) => `\x1b[31m${s}\x1b[0m`;
+// The build the caller expects to be served, if they name one. Being in the
+// chain proves a bundle was published SOMETIME; it does not prove it is the
+// build meant to be live now, so a server (or a stale CDN) could serve an older,
+// still-sealed, still-green build -- a rollback. `--expect <bundle>` closes that
+// for a caller who knows the current hash (fail on anything else); with no
+// `--expect`, a served bundle that is sealed but NOT the chain's tip is reported
+// as a warning, and `--latest` promotes that warning to a failure.
+const EXPECT = opt('--expect');
+const STRICT_LATEST = args.includes('--latest');
+
+const green  = (s) => `\x1b[32m${s}\x1b[0m`;
+const red    = (s) => `\x1b[31m${s}\x1b[0m`;
+const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 
 /// Read and chain-verify the local transparency log. A broken chain is fatal on
 /// its own: if the history is not self-consistent, nothing it contains can be
@@ -68,6 +85,7 @@ async function fromUrl(origin) {
 
 function report(where, manifest, actual, chain, entries) {
 	const problems = [];
+	const warnings = [];
 
 	// 1. The manifest's own bundle hash must be the hash of its file list.
 	const recomputed = bundleHash(manifest.files);
@@ -75,23 +93,34 @@ function report(where, manifest, actual, chain, entries) {
 		problems.push(`the manifest's bundle hash does not match its own file list`);
 	}
 
-	// 2. Every served file must hash to what the manifest says.
+	// 2. Every served file must hash to what the manifest says. With (1) holding
+	//    and no file missing, changed or unexpected, the served bundle IS the
+	//    manifest's bundle -- the single figure the chain is keyed on -- so it is
+	//    established here rather than recomputed separately.
 	const diff = diffFiles(manifest.files, actual);
 	for (const f of diff.changed)    problems.push(`changed: ${f}`);
 	for (const f of diff.missing)    problems.push(`missing: ${f}`);
 	for (const f of diff.unexpected) problems.push(`unexpected (not in manifest): ${f}`);
 
-	// 3. The bundle actually served must equal the manifest's bundle. (Redundant
-	//    with (2) when nothing is missing, but it is the single figure the chain
-	//    is keyed on, so it is checked directly.)
-	const servedBundle = bundleHash({ ...manifest.files, ...actual });
-	const servedMatches = diff.changed.length === 0 && diff.missing.length === 0;
-
-	// 4. That bundle must be a sealed entry in an unbroken chain.
+	// 3. That bundle must be a sealed entry in an unbroken chain.
+	const sealedAt = chain.ok ? entries.findIndex(e => e.bundle === manifest.bundle) : -1;
 	if (!chain.ok) {
 		problems.push(`transparency chain: ${chain.error}`);
-	} else if (!entries.some(e => e.bundle === manifest.bundle)) {
+	} else if (sealedAt === -1) {
 		problems.push(`the manifest's bundle is not in the transparency log — it was never sealed`);
+	}
+
+	// 4. Freshness. A sealed build that is not the chain's tip is an OLDER
+	//    published build being served in place of a newer one -- legitimate for a
+	//    deliberate roll-back, but indistinguishable from a malicious one, so it
+	//    is surfaced. `--expect` pins the exact bundle; `--latest` demands the tip.
+	if (EXPECT && manifest.bundle !== EXPECT) {
+		problems.push(`served bundle is not the expected one\n        expected ${EXPECT}\n        served   ${manifest.bundle}`);
+	}
+	if (chain.ok && sealedAt !== -1 && sealedAt !== entries.length - 1) {
+		const tip = entries[entries.length - 1];
+		const msg = `a newer build has been sealed since this one — you are being served seq ${sealedAt}, but the chain tip is seq ${tip.seq} (bundle ${tip.bundle.slice(0, 16)}…). This is a roll-back unless it was intended.`;
+		if (STRICT_LATEST) problems.push(msg); else warnings.push(msg);
 	}
 
 	console.log(`\nDaimond delivery check — ${where}`);
@@ -99,6 +128,8 @@ function report(where, manifest, actual, chain, entries) {
 	console.log(`  bundle      ${manifest.bundle}`);
 	console.log(`  files       ${Object.keys(manifest.files).length} covered`);
 	console.log(`  chain       ${chain.ok ? green(entries.length + ' entries, intact') : red(chain.error)}`);
+	if (EXPECT) console.log(`  expect      ${EXPECT === manifest.bundle ? green('matches') : red('MISMATCH')}`);
+	for (const w of warnings) console.log(yellow(`  warning     ${w}`));
 	if (problems.length === 0) {
 		console.log(green(`\n  OK — this build is the published source, and it was sealed.\n`));
 		return true;
