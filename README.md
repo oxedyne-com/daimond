@@ -84,9 +84,14 @@ verifiability without handing a copycat a ready-made competitor.
 
 Prerequisites:
 
-- A recent stable Rust toolchain (`rustup`).
-- The WebAssembly target: `rustup target add wasm32-unknown-unknown`.
-- [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
+- `rustup`. The exact toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml)
+  (stable `1.90.0`, with the `wasm32-unknown-unknown` target), and rustup selects
+  it automatically -- no manual `rustup override` needed.
+- [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) `0.13.1`.
+
+The toolchain matters for verification: the sealed bundle is byte-reproducible
+only *within* a toolchain version, so building with the pinned versions above is
+what lets your rebuild match the published hash.
 
 The client depends on the [Hematite (fe2o3) library](https://github.com/oxedyne-com/fe2o3),
 which is pulled in automatically as a git dependency pinned to a fixed revision,
@@ -123,8 +128,13 @@ the rest carries on.
 ## Verifying the running site
 
 The claim "the code my browser runs is the source in this repository" is
-checkable, not asked on trust. The build is byte-reproducible: rebuild the wasm
-and it matches, hash for hash.
+checkable, not asked on trust. Built with the pinned toolchain
+([`rust-toolchain.toml`](rust-toolchain.toml) + wasm-pack `0.13.1`), the wasm is
+byte-reproducible: rebuild it and it matches the published bundle, hash for hash.
+A *different* rustc or wasm-pack version may emit different bytes from the same
+source, so match the pinned versions before concluding a mismatch is anything but
+toolchain skew. (Reproducibility across toolchain versions is not yet proven; it
+is on the roadmap.)
 
     wasm-pack build --target web --out-dir www/pkg
     node verify/check.mjs --url https://daimond.oxedyne.com

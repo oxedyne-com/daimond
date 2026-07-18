@@ -1,0 +1,12 @@
+# The toolchain the published Daimond bundle is built and sealed with.
+#
+# Reproducibility is only byte-for-byte within one toolchain version: two
+# machines that build the wasm with THIS channel get the same hash, which is what
+# `verify/check.mjs` compares against the sealed manifest. A different rustc or
+# wasm-pack version may emit different wasm from identical source -- an honest
+# build that would nonetheless fail the check -- so the channel is pinned here
+# and rustup selects it automatically for any `cargo`/`wasm-pack` run in this
+# tree. The matching wasm-pack version is recorded in the README.
+[toolchain]
+channel = "1.90.0"
+targets = ["wasm32-unknown-unknown"]

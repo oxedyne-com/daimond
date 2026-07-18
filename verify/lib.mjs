@@ -38,11 +38,13 @@ export const EXCLUDE = new Set([
 	'build.json', 'manifest.json',
 	// wasm-pack packaging metadata, not executed browser code: `pkg/LICENSE` is
 	// copied from the crate (so it differs between the proprietary dev build and
-	// the FSL public build), and `pkg/package.json` carries the wasm-pack version
-	// (so it differs between toolchain versions). Covering either would false-fail
-	// an honest rebuild. What runs in the browser — the wasm and its .js glue — is
-	// covered; these are not.
-	'pkg/LICENSE', 'pkg/package.json',
+	// the FSL public build), `pkg/package.json` carries the wasm-pack version (so
+	// it differs between toolchain versions), and `pkg/README.md` is a copy of the
+	// crate README (so it changes whenever the README is edited, coupling a prose
+	// change to the sealed bundle and false-failing an honest rebuild built after
+	// one). Covering any of them would false-fail an honest rebuild. What runs in
+	// the browser — the wasm and its .js glue — is covered; these are not.
+	'pkg/LICENSE', 'pkg/package.json', 'pkg/README.md',
 ]);
 
 /// File suffixes left out of the fingerprint: TypeScript type stubs, which the
