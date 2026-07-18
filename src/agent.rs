@@ -6,6 +6,8 @@
 
 use oxedyne_fe2o3_core::prelude::*;
 
+use std::cell::Cell;
+
 use crate::llm::LlmClient;
 use crate::protocol::{AgentEvent, ChatMessage, Session};
 use crate::tools::ToolRegistry;
@@ -35,6 +37,14 @@ const MAX_TOOL_ROUNDS: usize = 25;
 pub struct Agent {
     pub llm:           LlmClient,
     pub system_prompt: String,
+    /// Cumulative prompt tokens for the turn in flight, updated round by round
+    /// alongside the session total. Held here, outside the session, so the
+    /// browser can read a running agent's spend without borrowing the session
+    /// the turn already holds mutably -- reading it there would panic the
+    /// `RefCell`, so a running tile could not show its cost.
+    pub live_prompt:     Cell<u64>,
+    /// Cumulative completion tokens for the turn in flight; see `live_prompt`.
+    pub live_completion: Cell<u64>,
 }
 
 impl Agent {
@@ -43,6 +53,8 @@ impl Agent {
         Self {
             llm,
             system_prompt: system_prompt.to_string(),
+            live_prompt:     Cell::new(0),
+            live_completion: Cell::new(0),
         }
     }
 
@@ -112,6 +124,8 @@ impl Agent {
                 session.prompt_tokens += resp.prompt_tokens;
                 session.completion_tokens += resp.completion_tokens;
                 if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
+                self.live_prompt.set(session.prompt_tokens);
+                self.live_completion.set(session.completion_tokens);
                 on_event(AgentEvent::Done);
                 Ok(())
             }
@@ -154,6 +168,8 @@ impl Agent {
             session.prompt_tokens += resp.prompt_tokens;
             session.completion_tokens += resp.completion_tokens;
             if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
+            self.live_prompt.set(session.prompt_tokens);
+            self.live_completion.set(session.completion_tokens);
 
             // Cancelled mid-stream: keep the partial answer already
             // streamed and end the turn cleanly, without an error.

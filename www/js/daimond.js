@@ -3911,13 +3911,25 @@ import init, {
 
 			var arow = document.createElement('div'); arow.className = 'arow';
 			var left = document.createElement('span');
-			var toks = run.promptTokens + run.completionTokens;
+			// A worker's stored token counts are only written when its turn ends, so a
+			// running tile would show nothing until it finished. Read the live counters
+			// straight from its engine while it runs, so the cost climbs on the tile as
+			// it works -- which is what tells you whether it is worth pausing. A resumed
+			// worker adds what it had already spent before it paused.
+			var pt = run.promptTokens, ct = run.completionTokens;
+			if (run.status === 'running' && run.app) {
+				// The live counters, NOT prompt_tokens: that getter borrows the session
+				// the running turn holds, so reading it here would panic the engine.
+				pt = (run.priorPrompt || 0) + (run.app.live_prompt_tokens || 0);
+				ct = (run.priorCompletion || 0) + (run.app.live_completion_tokens || 0);
+			}
+			var toks = pt + ct;
 			var bits = [];
 			if (toks) bits.push(fmtCtx(toks) + ' tok');
 			left.textContent = bits.join(' · ');
 			var right = document.createElement('span');
 			if (toks && window.DaimondPricing) {
-				var pr = DaimondPricing.priceFor(run.model, run.promptTokens, run.completionTokens, 0);
+				var pr = DaimondPricing.priceFor(run.model, pt, ct, 0);
 				if (pr) right.textContent = (pr.estimated ? '≈' : '') + fmtUsd(pr.usd);
 			}
 			arow.appendChild(left); arow.appendChild(right);

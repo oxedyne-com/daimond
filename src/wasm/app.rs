@@ -380,6 +380,26 @@ impl DaimondApp {
     pub fn completion_tokens(&self) -> f64 {
         self.session.borrow().completion_tokens as f64
     }
+
+    /// Cumulative prompt tokens for the turn IN FLIGHT, safe to read while it
+    /// runs.
+    ///
+    /// The plain [`DaimondApp::prompt_tokens`] getter borrows the session, which
+    /// [`DaimondApp::run_turn`] holds mutably for the whole turn, so reading it
+    /// mid-turn panics the `RefCell`. These live counters sit on the agent,
+    /// outside that borrow, and are updated round by round, so the browser can
+    /// show a running worker's cost climbing on its tile.
+    #[wasm_bindgen(getter)]
+    pub fn live_prompt_tokens(&self) -> f64 {
+        self.agent.live_prompt.get() as f64
+    }
+
+    /// Cumulative completion tokens for the turn in flight; see
+    /// [`DaimondApp::live_prompt_tokens`].
+    #[wasm_bindgen(getter)]
+    pub fn live_completion_tokens(&self) -> f64 {
+        self.agent.live_completion.get() as f64
+    }
 }
 
 /// Inner helpers for the brief and reducer turns.  Kept in a plain
