@@ -322,7 +322,7 @@
 	/// It is our own trusted page, not something the agent drives, so it needs none of the
 	/// sandbox-bridge machinery an external site gets: it is loaded straight into the frame and
 	/// navigates between its own pages by itself. Reachable directly at `/guide` too.
-	function guide(sub) {
+	function guide(sub, noShow) {
 		stopMirror();
 		state.driver = 'guide';
 		state.url    = 'guide/';
@@ -332,7 +332,10 @@
 		els.frame.style.visibility = '';
 		els.frame.src = 'guide/' + (sub || 'index.html');
 		render();
-		if (window.DaimondPanels) DaimondPanels.show('web');
+		// `noShow` is set when the guide is loaded as the panel's own resting
+		// content (see render), where forcing the panel open would be wrong. The
+		// header "?" and an explicit request leave it unset, and do open the panel.
+		if (!noShow && window.DaimondPanels) DaimondPanels.show('web');
 		return { ok: true };
 	}
 
@@ -759,8 +762,15 @@
 		// An empty iframe is a blank white rectangle, which reads as a broken panel
 		// rather than an idle one. Say what the panel is for instead.
 		var idle = (state.driver === 'none');
-		els.frame.style.visibility = idle ? 'hidden' : '';
-		if (idle) helpView();
+		if (idle) {
+			// The panel opens straight onto the guide, not a prompt to open it.
+			// guide() flips the driver off 'none', so the follow-up render is not
+			// idle and this does not recurse; noShow keeps a background render from
+			// forcing the panel open.
+			guide('index.html', true);
+			return;
+		}
+		els.frame.style.visibility = '';
 		// The header names what is on screen. Our own guide says "Guide"; an external page shows
 		// its host and path; an idle panel says what the panel is FOR, rather than "No page",
 		// which read as broken.
@@ -796,44 +806,6 @@
 		var p = document.createElement('div');
 		p.innerHTML = html;                 // built here, from our own strings
 		els.note.appendChild(p);
-	}
-
-	/// What the panel shows when nothing is open — which, on a first run, is the
-	/// first thing a user sees of it. It is help, not a shrug: it says plainly
-	/// what the panel can and cannot do, because the honest limits (most sites
-	/// will not embed; reading is text-only; driving needs the extension) are
-	/// exactly what a newcomer needs told before they are surprised by them.
-	function helpView() {
-		els.note.className = 'web-note on web-help';
-		els.note.innerHTML =
-			'<div class="web-help-guide">'
-			+   '<div><div class="web-help-title">New to Daimond?</div>'
-			+     '<p class="web-help-sub">The guide walks through the screen, connecting a model, '
-			+     'and your first chat.</p></div>'
-			+   '<button type="button" class="web-guide-btn" id="web-open-guide">Open the guide</button>'
-			+ '</div>'
-			+ '<div class="web-help-title">The Web panel</div>'
-			+ '<p>Ask Daimond to open a web page — <i>“show me the Rust ownership chapter”</i> '
-			+ '— or paste a link into the chat. There are three ways it can put a page here, '
-			+ 'and which one works depends on the site:</p>'
-			+ '<div class="web-help-rows">'
-			+   '<div class="web-help-row"><b>Show it</b><span>A page appears in this panel — '
-			+     'but most sites refuse to be embedded (it is the web’s clickjacking defence, the '
-			+     'same in every browser), so this works only for the minority that allow it.</span></div>'
-			+   '<div class="web-help-row"><b>Read it</b><span>Daimond fetches any page and reads its '
-			+     'text, so it works when showing does not. It reads the page’s words, not pictures or '
-			+     'anything drawn by JavaScript, and you do not see the page — Daimond does.</span></div>'
-			+   '<div class="web-help-row"><b>Drive it</b><span>With <b>Daimond Hands</b> — a browser '
-			+     'add-on — Daimond opens a real page in a real tab, signed in as you, and operates it '
-			+     'while you watch. When you sign in, it stops watching entirely; it never sees your '
-			+     'password. This is the only way to work a live, logged-in site.</span></div>'
-			+ '</div>'
-			+ '<p class="web-help-foot">' + (hasExt()
-				? 'Daimond Hands is installed — Daimond can drive live pages.'
-				: 'Daimond Hands is not installed yet, so <b>Drive it</b> is unavailable. '
-					+ 'Show and Read work now.') + '</p>';
-		var gb = document.getElementById('web-open-guide');
-		if (gb) gb.addEventListener('click', function () { guide(); });
 	}
 
 	/// A site that will not be embedded — which is MOST of them. This is not an

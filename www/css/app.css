@@ -883,23 +883,6 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .web-note b { color: var(--text-primary); }
 .web-note button { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 8px 14px; font-size: 13px; }
 
-/* The help view: what the panel shows when empty — proper documentation, so a
-   first-time user meets the panel's real powers and honest limits at once. */
-.web-note.web-help { align-items: stretch; justify-content: flex-start; text-align: left; overflow-y: auto; gap: 12px; padding: 24px 26px; }
-.web-help .web-help-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.web-help p { margin: 0; }
-.web-help-foot { color: var(--text-muted); font-size: 12.5px; border-top: 1px solid var(--border); padding-top: 12px; }
-.web-help-rows { display: flex; flex-direction: column; gap: 10px; }
-.web-help-row { display: grid; grid-template-columns: 68px 1fr; gap: 10px; align-items: start; }
-.web-help-row > b { color: var(--accent-text); font-size: 13px; }
-.web-help-row > span { color: var(--text-secondary); }
-/* The invitation to the full guide, above the panel's own help. */
-.web-help-guide { display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 14px 16px; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius); }
-.web-help-guide .web-help-title { margin-bottom: 2px; }
-.web-help-sub { color: var(--text-secondary); font-size: 12.5px; }
-.web-guide-btn { flex: none; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); font-size: 13px; padding: 8px 14px; white-space: nowrap; }
-.web-guide-btn:hover { background: var(--accent-hover); }
-
 /* Who is driving, said in the header rather than buried. */
 .web-mode { flex: none; font-size: 10.5px; letter-spacing: 0.03em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
 .web-mode.agent { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
