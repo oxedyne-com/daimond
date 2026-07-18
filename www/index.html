@@ -118,6 +118,11 @@
 				</div>
 
 				<div class="admin-body" id="admin-body">
+					<div class="admin-drawer-head">
+						<span class="admin-title" id="admin-drawer-title">Admin</span>
+						<button class="admin-back" id="admin-close" title="Close">×</button>
+					</div>
+					<div class="admin-scroll" id="admin-scroll">
 
 					<!-- Home: what the panel rests on. Built in JS, because what it
 					     offers depends on whether there is an identity to offer it to. -->
@@ -126,10 +131,6 @@
 					<!-- Models: a key per provider, and the one model a new chat starts on.
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
-						<div class="admin-view-head">
-							<div class="admin-title">Models</div>
-							<button class="admin-back" id="settings-done" title="Done">×</button>
-						</div>
 						<div class="settings-section">
 							<p class="cfg-lead">A key for each provider you use. One model is the default that new chats and Foci start on; any of them can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
@@ -168,10 +169,6 @@
 
 					<!-- Credits: reached from the "Credits" status row. -->
 					<div class="admin-view" id="admin-credits" style="display:none">
-						<div class="admin-view-head">
-							<div class="admin-title">Credits</div>
-							<button class="admin-back" id="credits-done" title="Done">×</button>
-						</div>
 						<div class="settings-section" id="credits-section">
 							<p class="cfg-lead">Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.</p>
 							<div class="credits-balance" id="credits-balance"></div>
@@ -183,6 +180,7 @@
 
 					<!-- A form, built on demand: a mailbox to add, a thing to configure. -->
 					<div class="admin-view" id="admin-form" style="display:none"></div>
+					</div>
 				</div>
 			</div>
 		</aside>

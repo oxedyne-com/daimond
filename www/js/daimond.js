@@ -939,17 +939,10 @@ import init, {
 		/// fraction, not a pixel count, so the split survives a resize — but
 		/// neither pane may fall below the height it needs to be usable.
 		function applySplit() {
-			var railEl = elOf('rail');
-			var bot    = document.getElementById('admin');
-			var handle = document.getElementById('handle-split');
-			if (!railEl || !bot || !handle) return;
-			var h = railEl.clientHeight;
-			if (!h) return;                          // not laid out (or hidden) yet
-			var room = h - handle.offsetHeight;
-			var want = Math.round(split * h);
-			want = Math.min(want, room - MIN_H.top);
-			want = Math.max(want, Math.min(MIN_H.pane, room));   // a tiny rail gives it all
-			bot.style.height = want + 'px';
+			// The rail no longer splits: the Status strip is fixed and the Admin panel
+			// overlays it, so there is no pane to size. Clear any height a split left.
+			var bot = document.getElementById('admin');
+			if (bot) bot.style.height = '';
 		}
 
 		/// Share the stage between its two occupants. Solo takes it all.
@@ -1784,6 +1777,8 @@ import init, {
 	// dialog. One settings form exists in the document; it changes host.
 	var DaimondAdmin = (function () {
 		var body, homeView, settingsView, creditsView, formView, modal, slot, closeBtn;
+		var adminWrap, titleEl;   // #admin (toggles .admin-open) and the drawer title
+		var drawerOpen = false;
 		// Which of the two forms is on screen. The panel used to hold one view (Settings, which
 		// carried both the model and the credits); it now holds two, each reached from the status
 		// row that names it, so the mover has to be told which one it is moving.
@@ -1816,19 +1811,58 @@ import init, {
 			formView.style.display = 'none';
 		}
 
-		/// What the panel rests on. Every other view comes back here, and a view
-		/// that has done its job does not stay on screen — which is the one thing
-		/// a modal got for free and a panel has to be told.
+		/// Bring the Admin drawer into view on `title`. In form mode the drawer's
+		/// own header is hidden, because the form supplies its own. Opening arms the
+		/// click-away close.
+		function showDrawer(title, formMode) {
+			if (adminWrap) {
+				adminWrap.classList.add('admin-open');
+				adminWrap.classList.toggle('admin-form-mode', !!formMode);
+			}
+			if (titleEl) titleEl.textContent = title || 'Admin';
+			if (!drawerOpen) {
+				drawerOpen = true;
+				// Defer, so the very click that opened the drawer does not close it.
+				setTimeout(function () {
+					if (drawerOpen) document.addEventListener('mousedown', outsideClose, true);
+				}, 0);
+			}
+		}
+
+		/// A click outside #admin dismisses the drawer. The Status rows and the cog
+		/// are INSIDE #admin, so acting on them never trips this.
+		function outsideClose(e) {
+			if (!adminWrap || adminWrap.contains(e.target)) return;
+			closeAdmin();
+		}
+
+		/// Take the Admin drawer away — "finished". The rail is just the list and
+		/// the Status strip again.
+		function closeAdmin() {
+			endForm();
+			toPanel();                       // if it was in the modal, bring it back + drop it
+			settingsView.style.display = 'none';
+			if (creditsView) creditsView.style.display = 'none';
+			if (homeView) homeView.style.display = 'none';
+			curView = null;
+			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
+			drawerOpen = false;
+			document.removeEventListener('mousedown', outsideClose, true);
+		}
+
+		/// The resting menu, shown IN the open drawer: the account's controls and
+		/// the way to connect a model. Reached by the cog, the identity row, or Back.
 		function home() {
 			endForm();
-			toPanel();                       // brings the views back, drops the modal
+			toPanel();
 			settingsView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
+			showDrawer('Admin', false);
 		}
-		var closeModal = home;
+		var closeModal = closeAdmin;
 
 		/// Show the models. `note` is the reason the user was sent here — the message that used to
 		/// be the modal's subtitle ("Connect a provider to start this chat").
@@ -1840,7 +1874,7 @@ import init, {
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
 			if (window.DaimondModels) DaimondModels.render();
-			if (available()) toPanel();
+			if (available()) { toPanel(); showDrawer('Models'); }
 			else toModal();
 		}
 
@@ -1860,13 +1894,13 @@ import init, {
 			// settings page of its own: the question "what happens when these run out" is asked
 			// while looking at how many are left.
 			if (window.DaimondAutoReload) DaimondAutoReload.render();
-			if (available()) toPanel();
+			if (available()) { toPanel(); showDrawer('Credits'); }
 			else toModal();
 		}
 
-		/// The cog: into the models, and back out of them.
+		/// The cog: open the Admin drawer on its menu, or close it if it is open.
 		function toggleSettings() {
-			if (settingsView.style.display === 'none') openSettings('');
+			if (drawerOpen) closeAdmin();
 			else home();
 		}
 
@@ -1876,6 +1910,7 @@ import init, {
 		function form(opts) {
 			if (!available()) return dialog(opts);
 			toPanel();
+			showDrawer(opts.title || 'Admin', true);
 			return new Promise(function (resolve) {
 				homeView.style.display = 'none';
 				settingsView.style.display = 'none';
@@ -1922,7 +1957,7 @@ import init, {
 				row.appendChild(ok);
 				formView.appendChild(row);
 
-				function done(v) { home(); resolve(v); }
+				function done(v) { closeAdmin(); resolve(v); }
 				async function submit() {
 					var vals = f.read();
 					var bad = opts.validate ? await opts.validate(vals) : '';
@@ -2276,13 +2311,12 @@ import init, {
 			document.getElementById('byok-note').textContent = '';
 			document.getElementById('credits-balance').textContent = '';
 			document.getElementById('credits-packs').innerHTML = '';
-			closeModal();
-			home();
+			closeAdmin();
 			status();
 		}
 
 		function init() {
-			body         = document.getElementById('admin-body');
+			body         = document.getElementById('admin-scroll');   // the views' container
 			homeView     = document.getElementById('admin-home');
 			settingsView = document.getElementById('admin-models');
 			creditsView  = document.getElementById('admin-credits');
@@ -2291,9 +2325,10 @@ import init, {
 			slot         = document.getElementById('settings-slot');
 			closeBtn     = document.getElementById('settings-close');
 			closeBtn.addEventListener('click', closeModal);
-			document.getElementById('settings-done').addEventListener('click', home);
-			var cdone = document.getElementById('credits-done');
-			if (cdone) cdone.addEventListener('click', home);
+			adminWrap = document.getElementById('admin');
+			titleEl   = document.getElementById('admin-drawer-title');
+			var acl = document.getElementById('admin-close');
+			if (acl) acl.addEventListener('click', closeAdmin);
 			// Each status row opens the thing it names, and nothing else.
 			document.getElementById('astat-model').addEventListener('click', function () { openSettings(''); });
 			document.getElementById('astat-account').addEventListener('click', function () { openCredits(''); });
@@ -2304,18 +2339,18 @@ import init, {
 			});
 			modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
 			document.addEventListener('keydown', function (e) {
-				if (e.key === 'Escape' && modal.style.display !== 'none') closeModal();
+				if (e.key === 'Escape' && (drawerOpen || modal.style.display !== 'none')) closeAdmin();
 			});
 			// A window that grows past the fold gives the rail back, so the
 			// settings belong in it again.
 			window.addEventListener('resize', function () {
 				if (modal.style.display === 'none') return;
-				if (available()) { toPanel(); settingsView.style.display = ''; homeView.style.display = 'none'; }
+				if (available()) { toPanel(); showDrawer(curView === creditsView ? 'Credits' : 'Models'); }
 			});
 			// The dots are only true while they are true.
 			window.addEventListener('online',  status);
 			window.addEventListener('offline', status);
-			home();
+			closeAdmin();   // the drawer starts hidden; only the Status strip shows
 			status();
 		}
 
@@ -2323,6 +2358,7 @@ import init, {
 			init: init, available: available, settings: settings, credits: credits,
 			toggle: toggleSettings,
 			home: home, form: form, closeModal: closeModal, clear: clear, status: status,
+			close: closeAdmin,
 		};
 	})();
 
