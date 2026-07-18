@@ -3431,6 +3431,13 @@ import init, {
 	// genuinely faster, but an unbounded fan-out would hammer the provider's
 	// rate limit — hence a small pool, with the rest queued.
 	var WORKERS_KEY = 'daimond-workers';
+	var WORKERS_PAUSED_KEY = 'daimond-workers-paused';
+	// The user-authored "carry on" line for a resumed worker: a paused worker
+	// was hung up mid-task, and resuming seeds a fresh session with its
+	// transcript so far plus this nudge, so the model continues rather than
+	// starts over. See Workers.resume.
+	var RESUME_NUDGE = 'Continue the task from where you left off. Do not repeat work already done above.';
+	function savePausedFlag(v) { try { localStorage.setItem(WORKERS_PAUSED_KEY, v ? '1' : ''); } catch (e) { /* storage full */ } }
 
 	// The predictive spend gate on a fan-out. The cost of dispatching N
 	// workers is known BEFORE any of them runs — N times what a worker
@@ -3459,6 +3466,7 @@ import init, {
 		runs: [],
 		queue: [],
 		active: 0,
+		paused: false,			// global hold: while set, pump launches nothing new
 		// Each concurrent worker runs on its OWN minted key — its "slot" — so
 		// parallel workers never share a key and their requests cannot race a
 		// shared cap into an overspend. The pool is still bounded so a fan-out does
@@ -3497,6 +3505,7 @@ import init, {
 		},
 
 		load: function () {
+			try { this.paused = localStorage.getItem(WORKERS_PAUSED_KEY) === '1'; } catch (e) { /* storage blocked */ }
 			var stored = readJson(WORKERS_KEY, []);
 			if (!stored.length) return;
 			var self = this;
@@ -3554,6 +3563,7 @@ import init, {
 		},
 
 		pump: function () {
+			if (this.paused) return;	// a global pause launches nothing new
 			while (this.active < this.MAX && this.queue.length) {
 				this.start(this.queue.shift());
 			}
@@ -3614,6 +3624,14 @@ import init, {
 				this.active--; this.render(); this.pump();
 				return;
 			}
+			// A resumed worker runs a fresh session seeded with its transcript so
+			// far, so the model continues rather than restarts. Its earlier spend
+			// was billed when it paused, so this session's counters start at zero.
+			if (run.resume) {
+				var seed = [{ role: 'user', content: run.task }];
+				if (run.text && run.text.trim()) seed.push({ role: 'assistant', content: run.text });
+				try { run.app.restore(seed, 0, 0, 0); } catch (e) { /* restore is best-effort; worst case it restarts */ }
+			}
 			var sink = function (ev) {
 				if (!ev || !ev.type) return;
 				if (ev.type === 'text') { run.text += (ev.content || ''); if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || ''); }
@@ -3634,9 +3652,9 @@ import init, {
 			};
 			try {
 				try {
-					await run.app.run_turn(run.task, sink);
+					await run.app.run_turn(run.resume ? RESUME_NUDGE : run.task, sink);
 				} catch (e) {
-					if (!authFail || run.status === 'stopped') throw e;
+					if (!authFail || run.status === 'stopped' || run.status === 'paused') throw e;
 					reminted = true; authFail = false;
 					// This worker owns its slot, so it re-mints ITS OWN key — told which
 					// generation it froze, so a key already replaced by its own retry is
@@ -3666,15 +3684,19 @@ import init, {
 					await run.app.run_turn(run.task, sink);
 				}
 				// A stopped worker keeps whatever it managed to do; it did not fail.
-				if (run.status !== 'stopped') run.status = 'done';
+				if (run.status !== 'stopped' && run.status !== 'paused') run.status = 'done';
 			} catch (e) {
-				if (run.status !== 'stopped') { run.status = 'error'; run.text = friendlyError(e); }
+				if (run.status !== 'stopped' && run.status !== 'paused') { run.status = 'error'; run.text = friendlyError(e); }
 			} finally {
-				run.promptTokens = (run.app && run.app.prompt_tokens) || 0;
-				run.completionTokens = (run.app && run.app.completion_tokens) || 0;
+				var _pt = (run.app && run.app.prompt_tokens) || 0;
+				var _ct = (run.app && run.app.completion_tokens) || 0;
 				// A worker spends the user's money like anything else, so it is
-				// metered like anything else.
-				recordSpend(run.model, run.promptTokens, run.completionTokens);
+				// metered like anything else. A resumed worker bills only its own
+				// session here -- the paused session was billed already -- and the
+				// tile shows the running total across both.
+				recordSpend(run.model, _pt, _ct);
+				run.promptTokens = (run.priorPrompt || 0) + _pt;
+				run.completionTokens = (run.priorCompletion || 0) + _ct;
 				this.active--;
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				updateSpend();
@@ -3698,9 +3720,88 @@ import init, {
 				this.render();
 				return;
 			}
+			if (run.status === 'paused') {	// already hung up; just finalise it
+				run.status = 'stopped';
+				this.persist();
+				this.render();
+				return;
+			}
 			if (run.status !== 'running') return;
 			run.status = 'stopped';
 			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
+			this.persist();
+			this.render();
+		},
+
+		/// Hang up a worker's live session but keep its transcript, so it can be
+		/// resumed. A queued worker is simply held; a running one is aborted with
+		/// its partial output kept. There is no provider pause primitive: the only
+		/// lever over a live request is to close it, so pause aborts and marks the
+		/// run resumable rather than done. Resume (Play) continues it -- see resume().
+		pause: function (run) {
+			if (run.status === 'queued') {
+				this.queue = this.queue.filter(function (r) { return r !== run; });
+				run.status = 'paused';
+				this.persist(); this.render();
+				return;
+			}
+			if (run.status !== 'running') return;
+			run.status = 'paused';
+			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
+			this.persist(); this.render();
+		},
+
+		/// Resume a paused worker by starting a fresh session seeded with its task
+		/// and whatever it had produced, plus a "carry on" nudge. The transcript
+		/// rides on the run itself, not a live object, so this works even after a
+		/// reload: the session is always rebuilt from scratch in start().
+		resume: function (run) {
+			if (run.status !== 'paused') return;
+			// Carry the accumulated spend and text across into the new session.
+			run.priorPrompt = run.promptTokens || 0;
+			run.priorCompletion = run.completionTokens || 0;
+			run.resume = true;
+			run.app = null;			// a fresh session is built in start()
+			run.status = 'queued';
+			this.queue.push(run);
+			this.persist();
+			this.render();
+			this.pump();
+		},
+
+		/// Pause every worker still in flight or waiting, and hold the pool so
+		/// nothing new launches until resumed. The one action that stems a runaway
+		/// fan-out at a stroke: latent work stops spending immediately.
+		pauseAll: function () {
+			this.paused = true;
+			savePausedFlag(true);
+			var self = this;
+			this.runs.slice().forEach(function (r) {
+				if (r.status === 'running' || r.status === 'queued') self.pause(r);
+			});
+			this.render();
+		},
+
+		/// Resume every paused worker and release the pool.
+		resumeAll: function () {
+			this.paused = false;
+			savePausedFlag(false);
+			var self = this;
+			this.runs.slice().forEach(function (r) {
+				if (r.status === 'paused') self.resume(r);
+			});
+			this.render();
+		},
+
+		/// Stop every worker in flight, waiting or paused -- the kill switch. Each
+		/// keeps whatever it managed to do, as a stopped tile; Clear removes them.
+		stopAll: function () {
+			this.paused = false;
+			savePausedFlag(false);
+			var self = this;
+			this.runs.slice().forEach(function (r) {
+				if (r.status === 'running' || r.status === 'queued' || r.status === 'paused') self.stop(r);
+			});
 			this.persist();
 			this.render();
 		},
@@ -3737,14 +3838,19 @@ import init, {
 			renderAgentFilter();
 			var live = 0, self = this;
 			var finished = 0, shown = 0;
+			var nRun = 0, nQueue = 0, nPause = 0;
 			this.runs.forEach(function (run) {
-				if (run.status === 'running' || run.status === 'queued') live++;
+				if (run.status === 'running') { live++; nRun++; }
+				else if (run.status === 'queued') { live++; nQueue++; }
+				else if (run.status === 'paused') { nPause++; }
 				else finished++;
 				if (!agentMatches(run)) return;
 				shown++;
 				agentsList.appendChild(self.tile(run));
 			});
 			if (agentsCount) agentsCount.textContent = live > 0 ? live + ' live' : '';
+			updateAgentStat(nRun, nPause, nQueue);
+			updateAgentControls(nRun, nPause, nQueue);
 			// The clear control appears only when there is something finished to
 			// clear, so the panel does not grow without bound with no way to prune.
 			var clearBtn = document.getElementById('agents-clear');
@@ -3774,6 +3880,7 @@ import init, {
 			var pill = document.createElement('span');
 			pill.className = 'pill ' + (run.status === 'running' ? 'run'
 				: run.status === 'queued' ? 'queued'
+				: run.status === 'paused' ? 'paused'
 				: run.status === 'error' ? 'err'
 				: (run.status === 'stopped' || run.status === 'interrupted') ? 'stopped' : 'ok');
 			pill.textContent = run.status;
@@ -3834,11 +3941,11 @@ import init, {
 			// read. Previously the panel offered neither.
 			var acts = document.createElement('div'); acts.className = 'aacts';
 			if (run.status === 'running' || run.status === 'queued') {
-				var stop = document.createElement('button');
-				stop.className = 'abtn stop';
-				stop.textContent = '■ Stop';
-				stop.addEventListener('click', function () { self.stop(run); });
-				acts.appendChild(stop);
+				acts.appendChild(actBtn('pause', 'Pause', 'Hang up this agent, keeping its work so far; resume it later.', function () { self.pause(run); }));
+				acts.appendChild(actBtn('cross', 'Stop', 'Stop this agent for good. It keeps whatever it managed to do.', function () { self.stop(run); }));
+			} else if (run.status === 'paused') {
+				acts.appendChild(actBtn('play', 'Resume', 'Continue this agent from where it left off.', function () { self.resume(run); }));
+				acts.appendChild(actBtn('cross', 'Stop', 'Discard this paused agent.', function () { self.stop(run); }));
 			} else {
 				if (run.text.trim()) {
 					// A failed agent's "summary" is an error message, not a result,
@@ -5102,6 +5209,48 @@ import init, {
 
 	/// The active agents filter, as one removable chip beside the search box,
 	/// so the list never quietly hides a run without saying why.
+	/// A small pause / resume / stop button for an agent tile, echoing the
+	/// header controls: a glyph and a label, wired to the given action.
+	function actBtn(kind, label, title, fn) {
+		var b = document.createElement('button');
+		b.className = 'abtn a-' + kind;
+		var glyph = kind === 'pause' ? '⏸' : kind === 'play' ? '▶' : '✕';
+		b.textContent = glyph + ' ' + label;
+		b.title = title;
+		b.addEventListener('click', fn);
+		return b;
+	}
+
+	/// Show a plain-language tally of what the agents are doing, so a fan-out's
+	/// cost is legible at a glance: how many are running, paused and queued.
+	function updateAgentStat(nRun, nPause, nQueue) {
+		var el = document.getElementById('agents-stat');
+		if (!el) return;
+		var parts = [];
+		if (nRun)   parts.push(nRun + ' running');
+		if (nPause) parts.push(nPause + ' paused');
+		if (nQueue) parts.push(nQueue + ' queued');
+		el.textContent = parts.join(' · ');
+		el.style.display = parts.length ? '' : 'none';
+	}
+
+	/// Enable each header control only when it has something to act on, and hide
+	/// the group when there are no live or paused agents at all.
+	function updateAgentControls(nRun, nPause, nQueue) {
+		var grp = document.getElementById('agents-ctl');
+		if (!grp) return;
+		var active = nRun + nQueue;
+		setAgc('agents-pause', active > 0);
+		setAgc('agents-play',  nPause > 0);
+		setAgc('agents-stop',  active + nPause > 0);
+		grp.classList.toggle('holding', Workers.paused && nPause > 0);
+		grp.style.display = (active + nPause) > 0 ? '' : 'none';
+	}
+	function setAgc(id, on) {
+		var b = document.getElementById(id);
+		if (b) b.disabled = !on;
+	}
+
 	function renderAgentFilter() {
 		if (!agentFilter) return;
 		agentFilter.innerHTML = '';
@@ -7353,6 +7502,12 @@ import init, {
 	});
 	var agentsClearBtn = document.getElementById('agents-clear');
 	if (agentsClearBtn) agentsClearBtn.addEventListener('click', function () { Workers.clearFinished(); });
+	var agentsPauseBtn = document.getElementById('agents-pause');
+	if (agentsPauseBtn) agentsPauseBtn.addEventListener('click', function () { Workers.pauseAll(); });
+	var agentsPlayBtn = document.getElementById('agents-play');
+	if (agentsPlayBtn) agentsPlayBtn.addEventListener('click', function () { Workers.resumeAll(); });
+	var agentsStopBtn = document.getElementById('agents-stop');
+	if (agentsStopBtn) agentsStopBtn.addEventListener('click', function () { Workers.stopAll(); });
 
 	// Show/hide tool blocks in the thread.
 	var toolsHidden = localStorage.getItem('daimond-hide-tools') === '1';

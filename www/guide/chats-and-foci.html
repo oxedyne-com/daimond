@@ -123,7 +123,16 @@
 	<h2>Dispatching workers</h2>
 	<p>Some tasks want work done rather than merely recorded. For those, the Focus's conductor dispatches a <strong>worker agent</strong>. Each worker runs in its own context with the workspace file tools, and is given the standing instructions and this Focus's brief. That brief is the whole of what it knows about your pursuit — a worker cannot see your conversation, so the task it is handed must say everything else it needs.</p>
 
-	<p>Up to <strong>four</strong> workers run at once. The conductor dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a brief yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
+	<p>Up to <strong>eight</strong> workers run at once; the rest queue. The conductor dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a brief yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
+
+	<h3>Holding and stopping agents</h3>
+	<p>The Agents panel header carries three controls that act on <em>every</em> agent at once, and the same three ride on each tile so you can act on one:</p>
+	<ul>
+		<li><strong>Pause</strong> <span class="ui">⏸</span> — hang up what is running and hold the queue. A running agent keeps whatever it had produced; a waiting one simply does not start. Nothing new launches until you resume. This is the brake for a fan-out that is spending faster than you meant.</li>
+		<li><strong>Resume</strong> <span class="ui">▶</span> — continue every paused agent from where it left off. It picks up its own work rather than starting over, so a pause costs you nothing but the wait.</li>
+		<li><strong>Stop</strong> <span class="ui">✕</span> — end agents outright. Each keeps what it managed to do, as a stopped tile; <span class="ui">Clear</span> removes them. This is the instant kill switch.</li>
+	</ul>
+	<p>Under the header a line reads how many agents are <strong>running</strong>, <strong>paused</strong> and <strong>queued</strong>, so the size — and the cost — of a fan-out is legible at a glance. Together these are your defence against a runaway; the measures Daimond takes on its own are on the <a href="spending.html">Spending</a> page.</p>
 
 	<p>Two limits are worth knowing. A worker cannot dispatch another worker, so delegation goes one level and stops. And one Focus is steered at a time, so there is no second Focus working away while your back is turned.</p>
 
