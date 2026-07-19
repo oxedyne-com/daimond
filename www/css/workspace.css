@@ -168,6 +168,17 @@
 .grid-opt .cells i.maybe { background: none; box-shadow: inset 0 0 0 1px currentColor; }
 .grid-opt .cap { font-size: var(--fs-4xs); letter-spacing: 0.02em; }
 
+/* Keyboard focus, themed. The browser's own ring is drawn in a colour of its
+   choosing -- black, on a pale theme -- which on a segmented control reads as a
+   second kind of "selected" beside the one that means it. */
+.seg button:focus-visible,
+.size-row button:focus-visible,
+.ptag:focus-visible,
+.gal-pin:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
 /* ── The gallery: every panel, searchable ────────────────────────────────── */
 .gal-search {
 	width: 100%;
