@@ -3,8 +3,8 @@ import { open, errors } from './harness.mjs';
 
 const s = await open({ name: 'folddelta' });
 
-// New Facet, seed a brief so a fold has something to change.
-await s.page.click('#new-facet-btn');
+// New Diamond, seed a crystal so a fold has something to change.
+await s.page.click('#new-diamond-btn');
 await s.page.waitForSelector('.dlg-input', { timeout: 8000 });
 await s.page.fill('.dlg-input', 'Delta Test');
 await s.page.click('.dlg-ok');
@@ -18,9 +18,9 @@ const accept = await s.page.$('.diff-accept');
 if (accept && !(await accept.isDisabled())) { await accept.click(); await s.page.waitForTimeout(2000); }
 
 // Open History and click the fold record's Delta button.
-await s.page.click('button.brief-act:has-text("History")');
+await s.page.click('button.crystal-act:has-text("History")');
 await s.page.waitForTimeout(600);
-const deltaBtn = await s.page.$('button.brief-act:has-text("Delta")');
+const deltaBtn = await s.page.$('button.crystal-act:has-text("Delta")');
 let shown = '';
 if (deltaBtn) {
 	await deltaBtn.click();

@@ -6,7 +6,7 @@
    left; a "thing" (Web, Doc, Message, Compose, Tools) rises as a
    draggable bottom SHEET over it, and at its half detent you see
    the thing AND the tail of the chat at once — the daimon still
-   beside the thing, only stacked instead of splayed. Facets and
+   beside the thing, only stacked instead of splayed. Diamonds and
    Chats live in a left DRAWER; the four dwellable destinations
    (Chat, Email, Files, Agents) sit on the bottom bar.
 
@@ -43,9 +43,9 @@
 	#drawer-btn .ic { width: 22px; height: 22px; }
 	#drawer-btn:active { background: var(--accent-soft); }
 
-	/* ── The left drawer: Facets + Chats + Admin ─────────────────
+	/* ── The left drawer: Diamonds + Chats + Admin ─────────────────
 	   The whole rail, slid in from the left over a scrim. It keeps
-	   its own internal split (Facets/Chats above, Admin below), so
+	   its own internal split (Diamonds/Chats above, Admin below), so
 	   nothing about the rail's contents changes — only where it is. */
 	.panel.rail {
 		position: fixed !important;

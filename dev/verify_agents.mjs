@@ -5,8 +5,8 @@ import { open, shot, errors } from './harness.mjs';
 
 const s = await open({ name: 'agents' });
 
-// New Facet.
-await s.page.click('#new-facet-btn');
+// New Diamond.
+await s.page.click('#new-diamond-btn');
 await s.page.waitForSelector('.dlg-input', { timeout: 8000 });
 await s.page.fill('.dlg-input', 'Dispatch Test');
 await s.page.click('.dlg-ok');

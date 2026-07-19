@@ -19,7 +19,7 @@ use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
 use crate::workspace::Workspace;
-use crate::wasm::{facet, js_prop, to_js_err};
+use crate::wasm::{diamond, js_prop, to_js_err};
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -191,9 +191,9 @@ impl DaimondApp {
     /// Roll an ephemeral session's token usage into this app's cumulative
     /// counters.
     ///
-    /// The Facet surface (steer, fold) runs each turn in its own throwaway
+    /// The Diamond surface (steer, fold) runs each turn in its own throwaway
     /// [`Session`], so its usage never reached [`DaimondApp::prompt_tokens`] and the
-    /// browser could not bill it: steering a Facet twenty times showed nothing
+    /// browser could not bill it: steering a Diamond twenty times showed nothing
     /// spent.  The caller meters by the growth of these counters, so adding to
     /// them is all that is needed.
     fn absorb_usage(&self, session: &Session) {
@@ -265,35 +265,35 @@ impl DaimondApp {
         self.registry.dispatch(&name, &args_json).await
     }
 
-    // ── Facet / brief / fold surface ─────────────────────────────────
+    // ── Diamond / crystal / fold surface ─────────────────────────────────
 
-    /// Create a Facet named `name`, returning its id.  Creates the Facet
-    /// directory, an empty `brief.md`, version `0`, a `meta.json`, and a
+    /// Create a Diamond named `name`, returning its id.  Creates the Diamond
+    /// directory, an empty `crystal.md`, version `0`, a `meta.json`, and a
     /// `create` log record.
-    pub async fn create_facet(&self, name: String) -> Result<String, JsValue> {
-        facet::create(&name).await.map_err(to_js_err)
+    pub async fn create_diamond(&self, name: String) -> Result<String, JsValue> {
+        diamond::create(&name).await.map_err(to_js_err)
     }
 
-    /// List every Facet as a JSON array of
-    /// `{ id, name, brief_version, updated, tags }`, most-recently updated
+    /// List every Diamond as a JSON array of
+    /// `{ id, name, crystal_version, updated, tags }`, most-recently updated
     /// first.
-    pub async fn list_facets(&self) -> Result<String, JsValue> {
-        facet::list().await.map_err(to_js_err)
+    pub async fn list_diamonds(&self) -> Result<String, JsValue> {
+        diamond::list().await.map_err(to_js_err)
     }
 
     /// Every link touching a node, as a JSON array.
     ///
-    /// The node is a `kind:rest` reference -- `facet:<id>`, `file:<path>`,
+    /// The node is a `kind:rest` reference -- `diamond:<id>`, `file:<path>`,
     /// `url:<url>`, `chat:<id>` -- and a link is found whichever end names it,
     /// so this answers both "what does this point at" and "what points at
     /// this" from the one stored record.
     pub async fn links_touching(&self, node_ref: String) -> Result<String, JsValue> {
-        facet::links_json(&node_ref).await.map_err(to_js_err)
+        diamond::links_json(&node_ref).await.map_err(to_js_err)
     }
 
     /// Assert a link, returning its id.
     ///
-    /// `owner` is the Facet whose sidecar holds the record; `rel` and `note`
+    /// `owner` is the Diamond whose sidecar holds the record; `rel` and `note`
     /// may both be empty, and `by` names who asserted it (`user`, or
     /// `agent:<name>`) so a later reader can tell a drawn line from a
     /// suggested one.
@@ -308,20 +308,20 @@ impl DaimondApp {
     )
         -> Result<String, JsValue>
     {
-        facet::add_link(&owner, &from, &to, &rel, &note, &by).await.map_err(to_js_err)
+        diamond::add_link(&owner, &from, &to, &rel, &note, &by).await.map_err(to_js_err)
     }
 
-    /// Remove a link from a Facet's sidecar.  True when one went.
+    /// Remove a link from a Diamond's sidecar.  True when one went.
     pub async fn remove_link(&self, owner: String, link_id: String) -> Result<bool, JsValue> {
-        facet::remove_link(&owner, &link_id).await.map_err(to_js_err)
+        diamond::remove_link(&owner, &link_id).await.map_err(to_js_err)
     }
 
-    /// Rename a Facet.
-    pub async fn rename_facet(&self, id: String, name: String) -> Result<(), JsValue> {
-        facet::rename(&id, &name).await.map_err(to_js_err)
+    /// Rename a Diamond.
+    pub async fn rename_diamond(&self, id: String, name: String) -> Result<(), JsValue> {
+        diamond::rename(&id, &name).await.map_err(to_js_err)
     }
 
-    /// Set a Facet's tags, replacing whatever it held.  `tags_json` is a JSON
+    /// Set a Diamond's tags, replacing whatever it held.  `tags_json` is a JSON
     /// array of strings, e.g. `["work","urgent"]`.
     ///
     /// The tags are normalised on this side of the boundary -- trimmed,
@@ -330,45 +330,45 @@ impl DaimondApp {
     /// to offer is the interface's business: none is known here.
     pub async fn set_tags(&self, id: String, tags_json: String) -> Result<(), JsValue> {
         let tags = parse_json_string_array(&tags_json);
-        facet::set_tags(&id, &tags).await.map_err(to_js_err)
+        diamond::set_tags(&id, &tags).await.map_err(to_js_err)
     }
 
-    /// Delete a Facet and all its stored state.
-    pub async fn delete_facet(&self, id: String) -> Result<(), JsValue> {
-        facet::delete(&id).await.map_err(to_js_err)
+    /// Delete a Diamond and all its stored state.
+    pub async fn delete_diamond(&self, id: String) -> Result<(), JsValue> {
+        diamond::delete(&id).await.map_err(to_js_err)
     }
 
-    /// Read a Facet's current brief markdown.
-    pub async fn read_brief(&self, id: String) -> Result<String, JsValue> {
-        facet::read_brief(&id).await.map_err(to_js_err)
+    /// Read a Diamond's current crystal markdown.
+    pub async fn read_crystal(&self, id: String) -> Result<String, JsValue> {
+        diamond::read_crystal(&id).await.map_err(to_js_err)
     }
 
-    /// Apply a user hand-edit to a Facet's brief: snapshots a new version
+    /// Apply a user hand-edit to a Diamond's crystal: snapshots a new version
     /// and logs an `edit` record.
-    pub async fn write_brief(&self, id: String, md: String) -> Result<(), JsValue> {
-        facet::write_brief(&id, &md).await.map_err(to_js_err)
+    pub async fn write_crystal(&self, id: String, md: String) -> Result<(), JsValue> {
+        diamond::write_crystal(&id, &md).await.map_err(to_js_err)
     }
 
-    /// Read a Facet's append-only log as a JSON array of records.
+    /// Read a Diamond's append-only log as a JSON array of records.
     pub async fn log_read(&self, id: String) -> Result<String, JsValue> {
-        facet::log_read(&id).await.map_err(to_js_err)
+        diamond::log_read(&id).await.map_err(to_js_err)
     }
 
-    /// Read the brief as it stood at `version`, so a past state can be shown
+    /// Read the crystal as it stood at `version`, so a past state can be shown
     /// and, if the user wants it back, written to the head with
-    /// [`DaimondApp::write_brief`].
+    /// [`DaimondApp::write_crystal`].
     pub async fn read_version(&self, id: String, version: f64) -> Result<String, JsValue> {
-        facet::read_version(&id, version as u64).await.map_err(to_js_err)
+        diamond::read_version(&id, version as u64).await.map_err(to_js_err)
     }
 
-    /// Steer a Facet's brief: run one brief-agent turn for `instruction`,
+    /// Steer a Diamond's crystal: run one crystal-agent turn for `instruction`,
     /// streaming [`AgentEvent`]s to `on_event`.  The agent's file tools
-    /// are scoped to `facets/<id>/`, so `file_read` / `file_write` on
-    /// `brief.md` address the Facet's brief; it is stateless per
-    /// instruction, reconstructing context from the current brief passed
-    /// in its system prompt.  When the turn leaves `brief.md` changed, a
+    /// are scoped to `diamonds/<id>/`, so `file_read` / `file_write` on
+    /// `crystal.md` address the Diamond's crystal; it is stateless per
+    /// instruction, reconstructing context from the current crystal passed
+    /// in its system prompt.  When the turn leaves `crystal.md` changed, a
     /// new version is snapshotted and an `edit` record logged.
-    pub async fn steer_brief(
+    pub async fn steer_crystal(
         &self,
         id:          String,
         instruction: String,
@@ -379,15 +379,15 @@ impl DaimondApp {
         self.steer_inner(&id, instruction, on_event).await.map_err(to_js_err)
     }
 
-    /// Propose a fold: run a fresh reducer over the current brief plus one
-    /// `delta`, returning the PROPOSED new brief markdown.  Writes
+    /// Propose a fold: run a fresh reducer over the current crystal plus one
+    /// `delta`, returning the PROPOSED new crystal markdown.  Writes
     /// nothing — the advisory half of the fold (H2); the delta is applied
     /// only on explicit confirm via [`DaimondApp::fold_apply`].
     pub async fn fold_propose(&self, id: String, delta: String) -> Result<String, JsValue> {
         self.fold_propose_inner(&id, &delta).await.map_err(to_js_err)
     }
 
-    /// Apply a confirmed fold: write the accepted `new_brief`, snapshot a
+    /// Apply a confirmed fold: write the accepted `new_crystal`, snapshot a
     /// version, retain the raw `delta` under `.daimond/deltas/`, and append a
     /// `fold` record referencing it.  Called only after the user accepts
     /// the proposed diff, so a fold never auto-applies and never discards
@@ -395,13 +395,13 @@ impl DaimondApp {
     pub async fn fold_apply(
         &self,
         id:        String,
-        new_brief: String,
+        new_crystal: String,
         delta:     String,
         note:      String,
     )
         -> Result<(), JsValue>
     {
-        facet::fold_apply(&id, &new_brief, &delta, &note).await.map_err(to_js_err)
+        diamond::fold_apply(&id, &new_crystal, &delta, &note).await.map_err(to_js_err)
     }
 
     /// Cumulative prompt tokens billed to this session.
@@ -437,14 +437,14 @@ impl DaimondApp {
     }
 }
 
-/// Inner helpers for the brief and reducer turns.  Kept in a plain
+/// Inner helpers for the crystal and reducer turns.  Kept in a plain
 /// `impl` (not `#[wasm_bindgen]`) so they can take Rust-only types and
 /// return [`Outcome`], using the error macros throughout; the exported
 /// wrappers above map the result to the JS boundary.
 impl DaimondApp {
 
-    /// Drive the brief agent for one instruction (see
-    /// [`DaimondApp::steer_brief`]).
+    /// Drive the crystal agent for one instruction (see
+    /// [`DaimondApp::steer_crystal`]).
     async fn steer_inner(
         &self,
         id:          &str,
@@ -453,20 +453,20 @@ impl DaimondApp {
     )
         -> Outcome<()>
     {
-        // Stateless per instruction: reconstruct context from the brief.
-        let before = facet::read_brief(id).await.unwrap_or_default();
-        let mut system = facet::BRIEF_AGENT_PROMPT.to_string();
-        system.push_str("\n\nCurrent brief.md:\n");
+        // Stateless per instruction: reconstruct context from the crystal.
+        let before = diamond::read_crystal(id).await.unwrap_or_default();
+        let mut system = diamond::CRYSTAL_AGENT_PROMPT.to_string();
+        system.push_str("\n\nCurrent crystal.md:\n");
         system.push_str(&before);
 
-        // File tools scoped to this Facet's directory.
+        // File tools scoped to this Diamond's directory.
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
             cwd:         String::new(),
-            path_prefix: facet::facet_dir(id),
-            // Daimond's own brief lives in the OPFS sandbox, never the user's
-            // real folder, so the brief agent pins the OPFS root.
+            path_prefix: diamond::diamond_dir(id),
+            // Daimond's own crystal lives in the OPFS sandbox, never the user's
+            // real folder, so the crystal agent pins the OPFS root.
             root:        crate::tools::FileRoot::Opfs,
             read_seen:   crate::tools::new_read_cache(),
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
@@ -491,7 +491,7 @@ impl DaimondApp {
         let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&system));
         let mut session = Session::new(
             generate_session_id(),
-            fmt!("brief:{}", id),
+            fmt!("crystal:{}", id),
             self.session.borrow().model.clone(),
         );
         let mut sink = |ev: AgentEvent| {
@@ -501,22 +501,22 @@ impl DaimondApp {
         res!(agent.run_turn(&mut session, instruction.clone(), &registry, &mut sink).await);
         self.absorb_usage(&session);
 
-        // If the brief changed, snapshot a version and log the edit so
-        // every brief mutation stays versioned and auditable.
-        let after = facet::read_brief(id).await.unwrap_or_default();
+        // If the crystal changed, snapshot a version and log the edit so
+        // every crystal mutation stays versioned and auditable.
+        let after = diamond::read_crystal(id).await.unwrap_or_default();
         if after != before {
-            res!(facet::record_steer(id, &after, &instruction).await);
+            res!(diamond::record_steer(id, &after, &instruction).await);
         }
         Ok(())
     }
 
-    /// Drive the reducer for one delta, returning the proposed brief (see
+    /// Drive the reducer for one delta, returning the proposed crystal (see
     /// [`DaimondApp::fold_propose`]).
     async fn fold_propose_inner(&self, id: &str, delta: &str) -> Outcome<String> {
-        let brief = res!(facet::read_brief(id).await);
+        let crystal = res!(diamond::read_crystal(id).await);
         let user_msg = fmt!(
-            "Current brief:\n{}\n\n---\nDelta to fold in:\n{}",
-            brief, delta,
+            "Current crystal:\n{}\n\n---\nDelta to fold in:\n{}",
+            crystal, delta,
         );
         // The reducer only emits text — no tools, so it cannot write.
         let ctx = ToolContext {
@@ -525,7 +525,7 @@ impl DaimondApp {
             cwd:         String::new(),
             path_prefix: String::new(),
             // The reducer is tool-less; pin OPFS for consistency with the
-            // other Facet contexts.
+            // other Diamond contexts.
             root:        crate::tools::FileRoot::Opfs,
             read_seen:   crate::tools::new_read_cache(),
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
@@ -533,7 +533,7 @@ impl DaimondApp {
             no_write:    Vec::new(),
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
-        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(facet::REDUCER_PROMPT));
+        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(diamond::REDUCER_PROMPT));
         let mut session = Session::new(
             generate_session_id(),
             fmt!("reducer:{}", id),

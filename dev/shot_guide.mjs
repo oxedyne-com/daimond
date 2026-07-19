@@ -2,7 +2,7 @@
 //
 // Only the shots that carry the renamed word need remaking: the two full-window ones, the
 // rail crop of a fold in progress, and the Models blurb that names what a new chat starts
-// on. The other guide shots are panel crops with no Facet in them and are left alone.
+// on. The other guide shots are panel crops with no Diamond in them and are left alone.
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs up. Writes straight into www/guide/shots/.
 import { open, signInAs, connectMock, newChat, chat } from './harness.mjs';
@@ -52,7 +52,7 @@ await p.evaluate(async () => {
 await p.waitForTimeout(900);
 await grab('models-form.png', '#admin-models');
 
-// ── facet-fold.png — the rail, mid-fold, with the picker open ──
+// ── diamond-fold.png — the rail, mid-fold, with the picker open ──
 await p.evaluate(async () => {
 	const close = document.getElementById('admin-close');
 	if (close) close.click();
@@ -70,7 +70,7 @@ await p.evaluate(async () => {
 	await new Promise(r => setTimeout(r, 800));
 });
 await p.waitForTimeout(800);
-await grab('facet-fold.png', '#panel-rail');
+await grab('diamond-fold.png', '#panel-rail');
 
 // ── accounts-switch.png — the whole window with the account list showing ──
 await p.evaluate(async () => {

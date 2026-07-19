@@ -73,7 +73,7 @@
 
 	var checking = false;
 	/// A user-initiated check. If a newer build turns up it becomes "ready"; if
-	/// not, a brief tick confirms the tab is current, so the click always answers.
+	/// not, a crystal tick confirms the tab is current, so the click always answers.
 	function manualCheck() {
 		if (checking || stale) return;
 		checking = true;
@@ -130,7 +130,7 @@
 	/// The gateway has refused this tab as too old (426, or it advertised a floor above our version).
 	/// This is not "an update is available", it is "you cannot keep working" -- so it reloads as soon
 	/// as the tab is idle, in the foreground too, but still never over a running turn. A once-per-build
-	/// guard stops a reload loop during the brief window where a new gateway is live but the new bundle
+	/// guard stops a reload loop during the crystal window where a new gateway is live but the new bundle
 	/// is not yet on disk: after one try from a given build, it leaves the chip red for the user.
 	function onStale() {
 		stale = true;

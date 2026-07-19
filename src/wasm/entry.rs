@@ -92,7 +92,7 @@ pub async fn read_file(path: String) -> Result<String, JsValue> {
 /// in JS, already permission-granted for read/write.  Once set, every
 /// [`FileRoot::Workspace`] file tool (`file_read`/`write`/`list`/`edit`/
 /// `delete`/`search`) resolves against the real folder.  Daimond's own
-/// Facet/brief/`.daimond` storage is unaffected — it pins the OPFS sandbox.
+/// Diamond/crystal/`.daimond` storage is unaffected — it pins the OPFS sandbox.
 #[wasm_bindgen]
 pub fn set_workspace_dir(handle: FileSystemDirectoryHandle) {
     opfs::set_override(handle);
@@ -214,11 +214,11 @@ fn parse_url(url: &str) -> Outcome<(bool, String, u16, String)> {
 ///
 /// The browser builds each worker as a plain [`DaimondApp`] with the workspace
 /// file tools, so it needs the prompt text; exporting it here keeps the one
-/// definition in [`crate::wasm::facet`] rather than duplicating the wording
+/// definition in [`crate::wasm::diamond`] rather than duplicating the wording
 /// in JavaScript, where it would drift.
 #[wasm_bindgen]
 pub fn worker_prompt() -> String {
-    crate::wasm::facet::WORKER_PROMPT.to_string()
+    crate::wasm::diamond::WORKER_PROMPT.to_string()
 }
 
 /// The tools this build gives a chat, as JSON: `[{"tool":…,"blurb":…}]`.

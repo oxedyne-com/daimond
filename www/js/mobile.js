@@ -3,7 +3,7 @@
    ------------------------------------------------------------
    Two surfaces beyond the chat floor and the bottom bar:
 
-     the DRAWER   the rail (Facets / Chats / Admin), slid in from
+     the DRAWER   the rail (Diamonds / Chats / Admin), slid in from
                   the left. Opened by the hamburger, closed by a
                   tap on the scrim, a swipe, or picking a chat.
 
@@ -202,11 +202,11 @@
 		var scrim = document.getElementById('scrim');
 		if (scrim) scrim.addEventListener('click', closeDrawer);
 
-		// Picking a chat or a Facet is "go work on this" — the drawer's job
+		// Picking a chat or a Diamond is "go work on this" — the drawer's job
 		// is done, so it steps out of the way.
 		var rail = document.getElementById('panel-rail');
 		if (rail) rail.addEventListener('click', function (e) {
-			if (e.target.closest('.session-box, .facet-box')) closeDrawer();
+			if (e.target.closest('.session-box, .diamond-box')) closeDrawer();
 		});
 
 		// A left-edge swipe opens the drawer; a swipe on the open drawer's

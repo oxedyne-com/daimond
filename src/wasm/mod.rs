@@ -9,9 +9,9 @@
 //! - [`app`] — the [`DaimondApp`](app::DaimondApp) agent surface: runs a real
 //!   [`Agent`](crate::agent::Agent) turn and streams
 //!   [`AgentEvent`](crate::protocol::AgentEvent)s to a JS callback, and
-//!   hosts the Facet / brief / fold surface.
-//! - [`facet`] — the Facet / brief / fold substrate: the OPFS layout and
-//!   store operations behind the durable brief and the advisory fold.
+//!   hosts the Diamond / crystal / fold surface.
+//! - [`diamond`] — the Diamond / crystal / fold substrate: the OPFS layout and
+//!   store operations behind the durable crystal and the advisory fold.
 //! - [`opfs`] — an async filesystem edge over the Origin Private File
 //!   System (OPFS), reached through `navigator.storage.getDirectory()`.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
@@ -24,7 +24,7 @@
 
 pub mod app;
 pub mod entry;
-pub mod facet;
+pub mod diamond;
 pub mod opfs;
 pub mod web;
 

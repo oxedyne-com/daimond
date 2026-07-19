@@ -1,35 +1,35 @@
-//! Facet / brief / fold substrate — the durable core of Daimond in the
+//! Diamond / crystal / fold substrate — the durable core of Daimond in the
 //! browser.
 //!
-//! A **Facet** is a durable container for a pursuit.  Its reduced state is
-//! the **brief** (`brief.md`); a **fold** re-reduces a delta into the
-//! brief; the **log** is per-Facet and append-only.  This module owns the
+//! A **Diamond** is a durable container for a pursuit.  Its reduced state is
+//! the **crystal** (`crystal.md`); a **fold** re-reduces a delta into the
+//! crystal; the **log** is per-Diamond and append-only.  This module owns the
 //! OPFS layout and the pure store operations; the `#[wasm_bindgen]`
-//! surface that drives the brief and reducer agents lives on
+//! surface that drives the crystal and reducer agents lives on
 //! [`DaimondApp`](crate::wasm::app::DaimondApp) in [`crate::wasm::app`].
 //!
-//! OPFS layout, per Facet id:
+//! OPFS layout, per Diamond id:
 //!
 //! ```text
-//! facets/<id>/brief.md                  the reduced state (agent writes, user may edit)
-//! facets/<id>/versions/NNNN.md          a snapshot per brief version (0-padded)
-//! facets/<id>/.daimond/meta.json        { name, brief_version, updated, tags }
-//! facets/<id>/.daimond/log              append-only, one JSON record per line
-//! facets/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
+//! diamonds/<id>/crystal.md                  the reduced state (agent writes, user may edit)
+//! diamonds/<id>/versions/NNNN.md          a snapshot per crystal version (0-padded)
+//! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, tags }
+//! diamonds/<id>/.daimond/log              append-only, one JSON record per line
+//! diamonds/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
 //! ```
 //!
 //! Each log record is a single-line JSON object:
-//! `{ id, ts, kind, agent, task, parent_brief_version, brief_version,
+//! `{ id, ts, kind, agent, task, parent_crystal_version, crystal_version,
 //!    delta_ref, note }` with `kind` one of `create`, `edit`, `fold`.
 //!
 //! The store is app-local for now (a candidate for extraction into
 //! `fe2o3_data` once its shape settles, per the v1 plan's D22); it is not
 //! extracted here.  Whole-file read-modify-write backs the append (the
 //! synchronous single-writer OPFS path is deferred); single-user,
-//! single-Facet-at-a-time makes that sufficient for this stage.
+//! single-Diamond-at-a-time makes that sufficient for this stage.
 
-use crate::facet_link::{Link, Node, normalise_note, normalise_rel, parse_links, write_links};
-use crate::facet_meta::{Meta, normalise_tags};
+use crate::diamond_link::{Link, Node, normalise_note, normalise_rel, parse_links, write_links};
+use crate::diamond_meta::{Meta, normalise_tags};
 use crate::llm::json_escape;
 use crate::protocol::generate_session_id;
 use crate::tools::FileRoot;
@@ -39,12 +39,12 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
 
 
-/// The brief agent's role: it maintains one Facet's brief, resolving an
+/// The crystal agent's role: it maintains one Diamond's crystal, resolving an
 /// instruction to a file edit or to one or more errors, never to chat.
-pub const BRIEF_AGENT_PROMPT: &str =
-    "You are the conductor of this Facet. You take instructions from the user \
+pub const CRYSTAL_AGENT_PROMPT: &str =
+    "You are the conductor of this Diamond. You take instructions from the user \
      and act; you do not converse. Two things are yours to do.\n\n\
-     First, the brief. `brief.md` is the reduced state of this Facet. Edit it \
+     First, the crystal. `crystal.md` is the reduced state of this Diamond. Edit it \
      with your file tools when the user tells you something worth keeping.\n\n\
      Second, agents. When a task needs work done rather than merely recorded, \
      dispatch a worker with `spawn_agent`. Each worker runs in its OWN context \
@@ -52,7 +52,7 @@ pub const BRIEF_AGENT_PROMPT: &str =
      the `task` you give it must say everything it needs to know. To run \
      several agents at once, call `spawn_agent` several times in the SAME turn \
      — they then run in parallel. If the user asks for two agents, call it \
-     twice. Each reports back a summary the user can fold into the brief.\n\n\
+     twice. Each reports back a summary the user can fold into the crystal.\n\n\
      Use the tools you have. If an instruction cannot be carried out, say why, \
      briefly.";
 
@@ -64,64 +64,72 @@ pub const WORKER_PROMPT: &str =
      get, so use your judgement and finish it.\n\n\
      When you are done, end with a short summary of what you found or changed: \
      what a colleague would need to know, and nothing else. That summary is \
-     folded into a shared brief, so keep it dense and free of filler.";
+     folded into a shared crystal, so keep it dense and free of filler.";
 
-/// The reducer's role: fold exactly one delta into the current brief and
-/// emit only the new brief markdown.  A fresh reducer holds no history,
+/// The reducer's role: fold exactly one delta into the current crystal and
+/// emit only the new crystal markdown.  A fresh reducer holds no history,
 /// so it cannot itself rot.
 pub const REDUCER_PROMPT: &str =
-    "Given the current brief and one delta, output the new brief. Keep the \
+    "Given the current crystal and one delta, output the new crystal. Keep the \
      goal, decisions and open threads; drop what the delta supersedes; \
-     output only the new brief markdown.";
+     output only the new crystal markdown.";
 
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Path helpers                                                   │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Daimond's own directory inside a Facet: the metadata, the log, the deltas.
+/// Daimond's own directory inside a Diamond: the metadata, the log, the deltas.
 const STORE_DIR: &str = ".daimond";
 
 /// What that directory was called before the Red -> Daimond rename, and still is in
 /// every workspace made before it.  See [`migrate`].
 const LEGACY_STORE_DIR: &str = ".red";
 
-/// The Facet root directory.
-const ROOT_DIR: &str = "facets";
+/// The Diamond root directory.
+const ROOT_DIR: &str = "diamonds";
 
-/// What the root was called before the Focus -> Facet rename.  A workspace made
-/// before it still holds `foci/` on disk.  See [`migrate_root`].
-const LEGACY_ROOT_DIR: &str = "foci";
+/// What the root has been called before, oldest first.
+///
+/// The noun has moved twice: `foci` -> `facets` -> `diamonds`. A workspace is
+/// migrated straight to the current root from whichever it holds, rather than
+/// hop by hop, because a user who has not opened Daimond since before the first
+/// rename would otherwise need two passes and there is no reason to make them
+/// take one at a time. Order matters only for the message it lets us give.
+const LEGACY_ROOT_DIRS: [&str; 2] = ["foci", "facets"];
 
-/// The Facet directory, `facets/<id>`.
-pub fn facet_dir(id: &str) -> String {
-    fmt!("facets/{}", id)
+/// What a Diamond's content file was called before the brief -> crystal rename.
+const LEGACY_CRYSTAL_FILE: &str = "brief.md";
+
+/// The Diamond directory, `diamonds/<id>`.
+pub fn diamond_dir(id: &str) -> String {
+    fmt!("diamonds/{}", id)
 }
 
-/// The brief content file, `facets/<id>/brief.md`.
-fn brief_path(id: &str) -> String {
-    fmt!("facets/{}/brief.md", id)
+/// The crystal content file, `diamonds/<id>/crystal.md`.
+fn crystal_path(id: &str) -> String {
+    fmt!("diamonds/{}/crystal.md", id)
 }
 
-/// The append-only log, `facets/<id>/.daimond/log`.
+/// The append-only log, `diamonds/<id>/.daimond/log`.
 fn log_path(id: &str) -> String {
-    fmt!("facets/{}/{}/log", id, STORE_DIR)
+    fmt!("diamonds/{}/{}/log", id, STORE_DIR)
 }
 
-/// The metadata file, `facets/<id>/.daimond/meta.json`.
+/// The metadata file, `diamonds/<id>/.daimond/meta.json`.
 fn meta_path(id: &str) -> String {
-    fmt!("facets/{}/{}/meta.json", id, STORE_DIR)
+    fmt!("diamonds/{}/{}/meta.json", id, STORE_DIR)
 }
 
-/// A brief-version snapshot, `facets/<id>/versions/NNNN.md`.
+/// A crystal-version snapshot, `diamonds/<id>/versions/NNNN.md`.
 fn version_path(id: &str, version: u64) -> String {
-    fmt!("facets/{}/versions/{:04}.md", id, version)
+    fmt!("diamonds/{}/versions/{:04}.md", id, version)
 }
 
-/// A stored raw delta, `facets/<id>/.daimond/deltas/NNNN.md`, keyed by the
-/// brief version the fold produced.
+/// A stored raw delta, `diamonds/<id>/.daimond/deltas/NNNN.md`, keyed by the
+/// crystal version the fold produced.
 fn delta_path(id: &str, version: u64) -> String {
-    fmt!("facets/{}/{}/deltas/{:04}.md", id, STORE_DIR, version)
+    fmt!("diamonds/{}/{}/deltas/{:04}.md", id, STORE_DIR, version)
 }
 
 
@@ -129,18 +137,18 @@ fn delta_path(id: &str, version: u64) -> String {
 // │ Migration                                                      │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Move the whole Facet root from `foci/` to `facets/`, so a workspace made before the
-/// Focus -> Facet rename opens with every pursuit intact.
+/// Move the whole Diamond root from `foci/` to `diamonds/`, so a workspace made before the
+/// Focus -> Diamond rename opens with every pursuit intact.
 ///
-/// This runs before [`list`] reads the root, and before the per-Facet [`migrate`], because
+/// This runs before [`list`] reads the root, and before the per-Diamond [`migrate`], because
 /// everything below depends on the new root existing.  Without it a user's Foci would
-/// simply not be found: `list_dir("facets")` would fail, the rail would come up empty, and
-/// every brief, version and fold record would read as though it had never existed.
+/// simply not be found: `list_dir("diamonds")` would fail, the rail would come up empty, and
+/// every crystal, version and fold record would read as though it had never existed.
 ///
 /// The logs are rewritten too.  A log record's `delta_ref` holds a *path* written when the
 /// fold was applied, so every historical record still points into `foci/`; left alone,
 /// "view this delta" would fail on every fold the user has.  The rewrite is `foci/<id>/`
-/// to `facets/<id>/`, which covers both the `.red/` and `.daimond/` store layouts, so a
+/// to `diamonds/<id>/`, which covers both the `.red/` and `.daimond/` store layouts, so a
 /// workspace old enough to need both migrations gets this one first and the store move
 /// second.
 ///
@@ -148,13 +156,23 @@ fn delta_path(id: &str, version: u64) -> String {
 /// and one holding both roots is left entirely alone rather than merged.  Returns whether
 /// anything moved.
 async fn migrate_root() -> Outcome<bool> {
-    if !res!(opfs::exists(FileRoot::Opfs, LEGACY_ROOT_DIR).await) {
-        return Ok(false);       // nothing to move: a new workspace, or one already migrated
-    }
     if res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
-        return Ok(false);       // both present: not ours to reconcile, and not ours to destroy
+        return Ok(false);       // already on the current root
     }
-    res!(opfs::move_entry(FileRoot::Opfs, LEGACY_ROOT_DIR, ROOT_DIR).await);
+    // Whichever earlier root this workspace holds, taken newest-first so that a
+    // workspace somehow holding both is moved from the one nearer to current.
+    let mut from: Option<&str> = None;
+    for legacy in LEGACY_ROOT_DIRS.iter().rev() {
+        if res!(opfs::exists(FileRoot::Opfs, legacy).await) {
+            from = Some(legacy);
+            break;
+        }
+    }
+    let legacy = match from {
+        Some(l) => l,
+        None    => return Ok(false),    // a new workspace: nothing to move
+    };
+    res!(opfs::move_entry(FileRoot::Opfs, legacy, ROOT_DIR).await);
 
     // Every log points at its deltas by a path that has just moved.
     let entries = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
@@ -165,12 +183,13 @@ async fn migrate_root() -> Outcome<bool> {
         if !is_dir {
             continue;
         }
-        // The log is wherever this Facet's store currently is, and a workspace old enough to
-        // predate this rename may still be on `.red/` -- [`migrate`] has not run yet, and
-        // cannot, because it addresses the new root this function is only now creating. So
-        // both are tried: looking only at `.daimond/` would skip exactly the oldest
-        // workspaces, leaving their `delta_ref` paths pointing at a root that no longer
-        // exists, which no later migration would match either.
+        // The log is wherever this Diamond's store currently is, and a workspace
+        // old enough to predate the Red -> Daimond rename may still be on
+        // `.red/` -- [`migrate`] has not run yet, and cannot, because it
+        // addresses the new root this function is only now creating. So both are
+        // tried: looking only at `.daimond/` would skip exactly the oldest
+        // workspaces, leaving their `delta_ref` paths pointing at a root that no
+        // longer exists, which no later migration would match either.
         for store in [STORE_DIR, LEGACY_STORE_DIR] {
             let log = fmt!("{}/{}/{}/log", ROOT_DIR, id, store);
             if !res!(opfs::exists(FileRoot::Opfs, &log).await) {
@@ -179,7 +198,7 @@ async fn migrate_root() -> Outcome<bool> {
             let bytes = res!(opfs::read_file(FileRoot::Opfs, &log).await);
             let text  = String::from_utf8_lossy(&bytes).to_string();
             let fixed = text.replace(
-                &fmt!("{}/{}/", LEGACY_ROOT_DIR, id),
+                &fmt!("{}/{}/", legacy, id),
                 &fmt!("{}/{}/", ROOT_DIR, id),
             );
             if fixed != text {
@@ -190,13 +209,37 @@ async fn migrate_root() -> Outcome<bool> {
     Ok(true)
 }
 
-/// Move a Facet's store from `.red/` to `.daimond/`, so a workspace made before the
+
+/// Rename a Diamond's content file from `brief.md` to `crystal.md`.
+///
+/// The file holds the whole of what a Diamond knows, so this is the single most
+/// destructive thing in the migration to get wrong: a Diamond whose crystal is not
+/// found reads as an empty one, and an agent handed an empty crystal will happily
+/// write a new one over the top of work it never saw.
+///
+/// Idempotent, and it never clobbers: a Diamond already migrated has no
+/// `brief.md`, and one holding both files is left alone rather than merged.
+async fn migrate_crystal_file(id: &str) -> Outcome<bool> {
+    let old = fmt!("{}/{}/{}", ROOT_DIR, id, LEGACY_CRYSTAL_FILE);
+    let new = crystal_path(id);
+    if !res!(opfs::exists(FileRoot::Opfs, &old).await) {
+        return Ok(false);
+    }
+    if res!(opfs::exists(FileRoot::Opfs, &new).await) {
+        return Ok(false);
+    }
+    res!(opfs::move_entry(FileRoot::Opfs, &old, &new).await);
+    Ok(true)
+}
+
+
+/// Move a Diamond's store from `.red/` to `.daimond/`, so a workspace made before the
 /// rename opens with its history intact.
 ///
 /// Without this a renamed Daimond simply would not find the old directory: [`read_meta`]
-/// would fail, [`list`] would skip the Facet, and a real pursuit -- its brief versions, its
-/// whole fold history -- would read as though it had never existed.  The brief itself
-/// (`brief.md`) and its snapshots sit *outside* the store directory and are untouched
+/// would fail, [`list`] would skip the Diamond, and a real pursuit -- its crystal versions, its
+/// whole fold history -- would read as though it had never existed.  The crystal itself
+/// (`crystal.md`) and its snapshots sit *outside* the store directory and are untouched
 /// either way; what moves here is the metadata, the log and the retained deltas.
 ///
 /// The log's `delta_ref` field holds a *path*, written when the fold was applied, so the
@@ -204,17 +247,17 @@ async fn migrate_root() -> Outcome<bool> {
 /// still point into `.red/` and "view this delta" would fail on exactly the folds the user
 /// has had longest.
 ///
-/// Idempotent, and it never clobbers: a Facet already migrated has no `.red/` to move, and
+/// Idempotent, and it never clobbers: a Diamond already migrated has no `.red/` to move, and
 /// one that somehow holds both directories is left entirely alone rather than merged.
 /// Returns whether anything moved.
 ///
 /// # Arguments
-/// * `id` - The Facet whose store is to be migrated.
+/// * `id` - The Diamond whose store is to be migrated.
 async fn migrate(id: &str) -> Outcome<bool> {
-    let old = fmt!("facets/{}/{}", id, LEGACY_STORE_DIR);
-    let new = fmt!("facets/{}/{}", id, STORE_DIR);
+    let old = fmt!("diamonds/{}/{}", id, LEGACY_STORE_DIR);
+    let new = fmt!("diamonds/{}/{}", id, STORE_DIR);
     if !res!(opfs::exists(FileRoot::Opfs, &old).await) {
-        return Ok(false);       // nothing to move: a new Facet, or one already migrated
+        return Ok(false);       // nothing to move: a new Diamond, or one already migrated
     }
     if res!(opfs::exists(FileRoot::Opfs, &new).await) {
         return Ok(false);       // both present: not ours to reconcile, and not ours to destroy
@@ -227,8 +270,8 @@ async fn migrate(id: &str) -> Outcome<bool> {
         let bytes = res!(opfs::read_file(FileRoot::Opfs, &log).await);
         let text  = String::from_utf8_lossy(&bytes).to_string();
         let fixed = text.replace(
-            &fmt!("facets/{}/{}/deltas/", id, LEGACY_STORE_DIR),
-            &fmt!("facets/{}/{}/deltas/", id, STORE_DIR),
+            &fmt!("diamonds/{}/{}/deltas/", id, LEGACY_STORE_DIR),
+            &fmt!("diamonds/{}/{}/deltas/", id, STORE_DIR),
         );
         if fixed != text {
             res!(opfs::write_file(FileRoot::Opfs, &log, fixed.as_bytes()).await);
@@ -238,10 +281,10 @@ async fn migrate(id: &str) -> Outcome<bool> {
 }
 
 
-/// Read the brief as it stood at `version`.
+/// Read the crystal as it stood at `version`.
 ///
-/// Every fold and every hand-edit snapshots the brief, but nothing has ever
-/// read one back, so an accepted fold that mangled the brief could not be
+/// Every fold and every hand-edit snapshots the crystal, but nothing has ever
+/// read one back, so an accepted fold that mangled the crystal could not be
 /// undone.  This is what makes the history recoverable rather than merely
 /// recorded.
 pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
@@ -255,14 +298,14 @@ pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
 // │ Metadata                                                       │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Read a Facet's metadata.
+/// Read a Diamond's metadata.
 async fn read_meta(id: &str) -> Outcome<Meta> {
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &meta_path(id)).await);
     let s = String::from_utf8_lossy(&bytes).to_string();
     Ok(Meta::from_json(&s))
 }
 
-/// Write a Facet's metadata.
+/// Write a Diamond's metadata.
 async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
     opfs::write_file(FileRoot::Opfs, &meta_path(id), meta.to_json().as_bytes()).await
 }
@@ -292,8 +335,8 @@ impl LogRecord {
     fn to_json(&self) -> String {
         fmt!(
             "{{\"id\":\"{}\",\"ts\":{},\"kind\":\"{}\",\"agent\":\"{}\",\
-              \"task\":\"{}\",\"parent_brief_version\":{},\
-              \"brief_version\":{},\"delta_ref\":\"{}\",\"note\":\"{}\"}}",
+              \"task\":\"{}\",\"parent_crystal_version\":{},\
+              \"crystal_version\":{},\"delta_ref\":\"{}\",\"note\":\"{}\"}}",
             json_escape(&self.id), self.ts, self.kind, json_escape(&self.agent),
             json_escape(&self.task), self.parent, self.version,
             json_escape(&self.delta_ref), json_escape(&self.note),
@@ -301,10 +344,10 @@ impl LogRecord {
     }
 }
 
-/// Append a record to a Facet's log.
+/// Append a record to a Diamond's log.
 ///
 /// OPFS exposes whole-file writes only, so the append is read-modify-write
-/// (single-user, single-Facet makes that safe for this stage; the
+/// (single-user, single-Diamond makes that safe for this stage; the
 /// synchronous single-writer WAL is deferred).
 async fn append_log(id: &str, rec: &LogRecord) -> Outcome<()> {
     let path = log_path(id);
@@ -322,17 +365,17 @@ async fn append_log(id: &str, rec: &LogRecord) -> Outcome<()> {
 
 
 // ┌───────────────────────────────────────────────────────────────┐
-// │ Facet operations                                               │
+// │ Diamond operations                                               │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Create a Facet: its directory, an empty `brief.md`, version `0000`, a
-/// `meta.json`, and a `create` log record.  Returns the new Facet id.
+/// Create a Diamond: its directory, an empty `crystal.md`, version `0000`, a
+/// `meta.json`, and a `create` log record.  Returns the new Diamond id.
 pub async fn create(name: &str) -> Outcome<String> {
     let id = generate_session_id();
     let now = now_ms() as u64;
 
-    // Empty brief plus its version-0 snapshot.
-    res!(opfs::write_file(FileRoot::Opfs, &brief_path(&id), b"").await);
+    // Empty crystal plus its version-0 snapshot.
+    res!(opfs::write_file(FileRoot::Opfs, &crystal_path(&id), b"").await);
     res!(opfs::write_file(FileRoot::Opfs, &version_path(&id, 0), b"").await);
 
     let meta = Meta { name: name.to_string(), version: 0, updated: now, tags: Vec::new() };
@@ -343,7 +386,7 @@ pub async fn create(name: &str) -> Outcome<String> {
         ts:        now,
         kind:      "create",
         agent:     "user".to_string(),
-        task:      "create facet".to_string(),
+        task:      "create diamond".to_string(),
         parent:    -1,
         version:   0,
         delta_ref: String::new(),
@@ -353,7 +396,7 @@ pub async fn create(name: &str) -> Outcome<String> {
     Ok(id)
 }
 
-/// Rename a Facet, updating `meta.json`'s name and its `updated` stamp.
+/// Rename a Diamond, updating `meta.json`'s name and its `updated` stamp.
 pub async fn rename(id: &str, name: &str) -> Outcome<()> {
     let mut meta = res!(read_meta(id).await);
     meta.name = name.to_string();
@@ -362,18 +405,18 @@ pub async fn rename(id: &str, name: &str) -> Outcome<()> {
     Ok(())
 }
 
-/// Set a Facet's tags, replacing whatever it held, and stamp it updated.
+/// Set a Diamond's tags, replacing whatever it held, and stamp it updated.
 ///
 /// The tags are normalised here rather than taken on trust, so the store stays
 /// clean whatever the caller sends (see
-/// [`normalise_tags`](crate::facet_meta::normalise_tags)).
+/// [`normalise_tags`](crate::diamond_meta::normalise_tags)).
 ///
-/// Nothing is appended to the log, because the log is the brief's audit trail
-/// and a tag is not brief state.  Tagging leaves the version alone.
+/// Nothing is appended to the log, because the log is the crystal's audit trail
+/// and a tag is not crystal state.  Tagging leaves the version alone.
 ///
 /// It leaves `updated` alone too, which is deliberate.  The rail is ordered by
 /// `updated`, meaning most recently worked on; filing is not working on it, so
-/// tagging must not reorder the rail.  Otherwise tidying a few Facets in one
+/// tagging must not reorder the rail.  Otherwise tidying a few Diamonds in one
 /// sitting would shuffle them all to the top and lose the order that was the
 /// point of the sort.  This is why it differs from `rename`, which does stamp.
 pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
@@ -383,26 +426,26 @@ pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
     Ok(())
 }
 
-/// Delete a Facet: remove its whole directory (brief, versions, log, meta).
+/// Delete a Diamond: remove its whole directory (crystal, versions, log, meta).
 pub async fn delete(id: &str) -> Outcome<()> {
-    opfs::delete_entry(FileRoot::Opfs, &facet_dir(id), true).await
+    opfs::delete_entry(FileRoot::Opfs, &diamond_dir(id), true).await
 }
 
-/// List every Facet, returning a JSON array of
-/// `{ id, name, brief_version, updated, tags }` ordered by most-recently
+/// List every Diamond, returning a JSON array of
+/// `{ id, name, crystal_version, updated, tags }` ordered by most-recently
 /// updated first.
 ///
-/// This is the one door every Facet passes through before it can be opened, so it is where
-/// a workspace made before the rename is migrated (see [`migrate`]).  A Facet that fails to
+/// This is the one door every Diamond passes through before it can be opened, so it is where
+/// a workspace made before the rename is migrated (see [`migrate`]).  A Diamond that fails to
 /// migrate is left in the list rather than dropped from it: the metadata read below decides
-/// that, and a Facet the user can see and cannot open is a bug they can report, while one
+/// that, and a Diamond the user can see and cannot open is a bug they can report, while one
 /// that has silently vanished is a bug they can only mourn.
 pub async fn list() -> Outcome<String> {
     // Before the root is read, because before the rename the root itself was elsewhere.
     if let Err(e) = migrate_root().await {
-        console_log(&fmt!("The facets/ root could not be migrated from foci/: {}", e));
+        console_log(&fmt!("The diamonds/ root could not be migrated from an earlier one: {}", e));
     }
-    // A missing `facets/` root simply means no Facets yet.
+    // A missing `diamonds/` root simply means no Diamonds yet.
     let entries = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
         Ok(e)  => e,
         Err(_) => return Ok("[]".to_string()),
@@ -414,11 +457,15 @@ pub async fn list() -> Outcome<String> {
         }
         // Before the metadata is read, because before the rename it was somewhere else.
         if let Err(e) = migrate(&name).await {
-            console_log(&fmt!("Facet '{}' could not be migrated to .daimond/: {}", name, e));
+            console_log(&fmt!("Diamond '{}' could not be migrated to .daimond/: {}", name, e));
+        }
+        // And before the crystal is read, because it was called brief.md.
+        if let Err(e) = migrate_crystal_file(&name).await {
+            console_log(&fmt!("Diamond '{}' could not have its crystal renamed: {}", name, e));
         }
         let meta = match read_meta(&name).await {
             Ok(m)  => m,
-            Err(_) => continue, // not a Facet dir / no metadata
+            Err(_) => continue, // not a Diamond dir / no metadata
         };
         rows.push((name, meta));
     }
@@ -426,28 +473,28 @@ pub async fn list() -> Outcome<String> {
     rows.sort_by(|a, b| b.1.updated.cmp(&a.1.updated));
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
-            "{{\"id\":\"{}\",\"name\":\"{}\",\"brief_version\":{},\"updated\":{},\"tags\":{}}}",
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"tags\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated, m.tags_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
 }
 
-/// Read a Facet's current brief markdown.
-pub async fn read_brief(id: &str) -> Outcome<String> {
-    let bytes = res!(opfs::read_file(FileRoot::Opfs, &brief_path(id)).await);
+/// Read a Diamond's current crystal markdown.
+pub async fn read_crystal(id: &str) -> Outcome<String> {
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await);
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
-/// Snapshot a new brief version and return its number.
+/// Snapshot a new crystal version and return its number.
 ///
-/// Writes `brief.md`, bumps the version, writes the `versions/NNNN.md`
+/// Writes `crystal.md`, bumps the version, writes the `versions/NNNN.md`
 /// snapshot and updates `meta.json`.  The caller appends the matching log
 /// record.
 async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
     let mut meta = res!(read_meta(id).await);
     let next = meta.version + 1;
-    res!(opfs::write_file(FileRoot::Opfs, &brief_path(id), md.as_bytes()).await);
+    res!(opfs::write_file(FileRoot::Opfs, &crystal_path(id), md.as_bytes()).await);
     res!(opfs::write_file(FileRoot::Opfs, &version_path(id, next), md.as_bytes()).await);
     meta.version = next;
     meta.updated = now;
@@ -455,9 +502,9 @@ async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
     Ok(next)
 }
 
-/// Apply a user hand-edit to the brief: snapshot a new version and log an
+/// Apply a user hand-edit to the crystal: snapshot a new version and log an
 /// `edit` record.
-pub async fn write_brief(id: &str, md: &str) -> Outcome<()> {
+pub async fn write_crystal(id: &str, md: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
     let version = res!(snapshot(id, md, now).await);
@@ -466,7 +513,7 @@ pub async fn write_brief(id: &str, md: &str) -> Outcome<()> {
         ts:        now,
         kind:      "edit",
         agent:     "user".to_string(),
-        task:      "edit brief".to_string(),
+        task:      "edit crystal".to_string(),
         parent:    parent as i64,
         version:   version,
         delta_ref: String::new(),
@@ -475,10 +522,10 @@ pub async fn write_brief(id: &str, md: &str) -> Outcome<()> {
     append_log(id, &rec).await
 }
 
-/// Record a brief change made by the brief agent (a steer that edited
-/// `brief.md`): snapshot a version and log an `edit` record whose task is
+/// Record a crystal change made by the crystal agent (a steer that edited
+/// `crystal.md`): snapshot a version and log an `edit` record whose task is
 /// the instruction.  Called by [`crate::wasm::app`] after the agent turn,
-/// only when the brief content actually changed.
+/// only when the crystal content actually changed.
 pub async fn record_steer(id: &str, md: &str, instruction: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
@@ -487,7 +534,7 @@ pub async fn record_steer(id: &str, md: &str, instruction: &str) -> Outcome<()> 
         id:        generate_session_id(),
         ts:        now,
         kind:      "edit",
-        agent:     "brief-agent".to_string(),
+        agent:     "crystal-agent".to_string(),
         task:      instruction.to_string(),
         parent:    parent as i64,
         version:   version,
@@ -497,15 +544,15 @@ pub async fn record_steer(id: &str, md: &str, instruction: &str) -> Outcome<()> 
     append_log(id, &rec).await
 }
 
-/// Apply a confirmed fold: write the new brief, snapshot a version, store
+/// Apply a confirmed fold: write the new crystal, snapshot a version, store
 /// the raw delta under `.daimond/deltas/`, and append a `fold` record that
 /// references the stored delta.  Advisory-fold discipline: this runs only
-/// after the user accepts the proposed brief; the raw delta is always
+/// after the user accepts the proposed crystal; the raw delta is always
 /// retained.
-pub async fn fold_apply(id: &str, new_brief: &str, delta: &str, note: &str) -> Outcome<()> {
+pub async fn fold_apply(id: &str, new_crystal: &str, delta: &str, note: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
-    let version = res!(snapshot(id, new_brief, now).await);
+    let version = res!(snapshot(id, new_crystal, now).await);
 
     // Retain the raw delta, referenced by the log record.
     let dref = delta_path(id, version);
@@ -525,7 +572,7 @@ pub async fn fold_apply(id: &str, new_brief: &str, delta: &str, note: &str) -> O
     append_log(id, &rec).await
 }
 
-/// Read a Facet's log as a JSON array of records (each stored line is
+/// Read a Diamond's log as a JSON array of records (each stored line is
 /// already a JSON object).
 pub async fn log_read(id: &str) -> Outcome<String> {
     let path = log_path(id);
@@ -543,42 +590,56 @@ pub async fn log_read(id: &str) -> Outcome<String> {
 // │ Links                                                          │
 // └───────────────────────────────────────────────────────────────┘
 
-/// A Facet's link sidecar, `facets/<id>/.daimond/links.jsonl`.
+/// A Diamond's link sidecar, `diamonds/<id>/.daimond/links.jsonl`.
 ///
-/// It sits beside the log rather than inside `brief.md` for two reasons.  A
-/// fold rewrites the brief wholesale -- the reducer is asked for the new brief
+/// It sits beside the log rather than inside `crystal.md` for two reasons.  A
+/// fold rewrites the crystal wholesale -- the reducer is asked for the new crystal
 /// and returns the whole of it -- so anything structural kept in that prose is
-/// at a model's mercy on every fold.  And the brief is handed to the conductor
+/// at a model's mercy on every fold.  And the crystal is handed to the conductor
 /// and to every worker it dispatches, so a growing list of links would be paid
 /// for in tokens on every turn, by agents that have the file tools anyway.
 fn links_path(id: &str) -> String {
     fmt!("{}/{}/{}/links.jsonl", ROOT_DIR, id, STORE_DIR)
 }
 
-/// Read one Facet's links.  A missing sidecar is no links, not a failure.
+/// Read one Diamond's links.  A missing sidecar is no links, not a failure.
 pub async fn read_links(id: &str) -> Outcome<Vec<Link>> {
     let path = links_path(id);
     if !res!(opfs::exists(FileRoot::Opfs, &path).await) {
         return Ok(Vec::new());
     }
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &path).await);
-    Ok(parse_links(&String::from_utf8_lossy(&bytes)))
+    let text  = String::from_utf8_lossy(&bytes).to_string();
+
+    // A sidecar written before the rename names its ends `facet:<id>` -- what a
+    // Diamond was called when the link substrate shipped. The
+    // substrate keeps an unknown kind rather than refusing it, so those links
+    // would survive -- but they would survive pointing at a kind nothing
+    // resolves any more, which is a link that renders as a dead end rather than
+    // as the Diamond it means. Rewriting on read is enough: the file is
+    // rewritten whenever a link is added or removed, and until then the
+    // in-memory view is already correct.
+    let fixed = text.replace("\"facet:", "\"diamond:");
+    if fixed != text {
+        res!(opfs::write_file(FileRoot::Opfs, &path, fixed.as_bytes()).await);
+    }
+    Ok(parse_links(&fixed))
 }
 
-/// Write one Facet's links, replacing the sidecar.
+/// Write one Diamond's links, replacing the sidecar.
 async fn write_links_for(id: &str, links: &[Link]) -> Outcome<()> {
     opfs::write_file(FileRoot::Opfs, &links_path(id), write_links(links).as_bytes()).await
 }
 
 /// Assert a link from one node to another, and return its id.
 ///
-/// The record is stored once, on the Facet named by `from` when that end is a
-/// Facet, and otherwise on `owner`.  It is never written twice: a link is found
+/// The record is stored once, on the Diamond named by `from` when that end is a
+/// Diamond, and otherwise on `owner`.  It is never written twice: a link is found
 /// from either end by [`links_touching`], which is what makes the graph two-way
 /// without a second copy to keep consistent.
 ///
 /// # Arguments
-/// * `owner` - The Facet whose sidecar holds the record.
+/// * `owner` - The Diamond whose sidecar holds the record.
 /// * `from`  - The end the link is asserted from, as `kind:rest`.
 /// * `to`    - The end it points at, as `kind:rest`.
 /// * `rel`   - What kind of relation it is; may be empty.
@@ -623,7 +684,7 @@ pub async fn add_link(
     Ok(id)
 }
 
-/// Remove a link from a Facet's sidecar.  Returns whether one went.
+/// Remove a link from a Diamond's sidecar.  Returns whether one went.
 pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
     let links = res!(read_links(owner).await);
     let kept: Vec<Link> = links.iter().filter(|l| l.id != link_id).cloned().collect();
@@ -634,14 +695,14 @@ pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
     Ok(true)
 }
 
-/// Every link touching `node`, from whichever Facet's sidecar holds it.
+/// Every link touching `node`, from whichever Diamond's sidecar holds it.
 ///
 /// This is the read that makes the links two-way.  A record is stored once, in
 /// one direction, so what points AT something is found by scanning rather than
 /// by keeping a mirrored copy -- there is no second copy to fall out of step,
 /// and a link hand-written into either end's sidecar counts just the same.
 ///
-/// The scan walks every Facet, which is the same walk [`list`] already does on
+/// The scan walks every Diamond, which is the same walk [`list`] already does on
 /// each load of the rail.
 pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
     let node = match Node::parse(node_ref) {
@@ -657,11 +718,11 @@ pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
         if !is_dir {
             continue;
         }
-        // One unreadable sidecar must not hide every other Facet's links.
+        // One unreadable sidecar must not hide every other Diamond's links.
         let links = match read_links(&id).await {
             Ok(l)  => l,
             Err(e) => {
-                console_log(&fmt!("Facet '{}' has an unreadable link sidecar: {}", id, e));
+                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
                 continue;
             }
         };
@@ -676,7 +737,7 @@ pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
 
 /// Every link touching `node`, as the JSON array the surface returns.
 ///
-/// Each entry carries the Facet whose sidecar holds the record, so a caller can
+/// Each entry carries the Diamond whose sidecar holds the record, so a caller can
 /// delete it without searching for it again, and `other` -- the end that is not
 /// the one asked about -- so a view has what it draws without re-deriving the
 /// direction.

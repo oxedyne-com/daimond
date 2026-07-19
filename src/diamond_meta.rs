@@ -1,29 +1,29 @@
-//! The target-agnostic core of a Facet's metadata: the `meta.json` shape, its
+//! The target-agnostic core of a Diamond's metadata: the `meta.json` shape, its
 //! parse/serialise pair, and tag normalisation.
 //!
 //! The OPFS edge that reads and writes the file lives in
-//! [`crate::wasm::facet`], which is compiled only for wasm32 and so cannot be
+//! [`crate::wasm::diamond`], which is compiled only for wasm32 and so cannot be
 //! reached by the native test suite.  What is pure sits here instead, where it
 //! is tested: the parse in particular, because a `meta.json` written before a
-//! field existed must still open the Facet it describes.
+//! field existed must still open the Diamond it describes.
 
 use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array, json_escape};
 
 use oxedyne_fe2o3_core::prelude::*;
 
 
-/// The most tags one Facet may carry; the excess is dropped.
+/// The most tags one Diamond may carry; the excess is dropped.
 const MAX_TAGS: usize = 8;
 
 /// The most characters one tag may carry; the excess is truncated.
 const MAX_TAG_LEN: usize = 24;
 
 
-/// Per-Facet metadata held in `meta.json`.
+/// Per-Diamond metadata held in `meta.json`.
 pub struct Meta {
-	/// Human-readable Facet name.
+	/// Human-readable Diamond name.
 	pub name:    String,
-	/// Current brief version (the latest snapshot).
+	/// Current crystal version (the latest snapshot).
 	pub version: u64,
 	/// Last-updated wall-clock time in whole milliseconds.
 	pub updated: u64,
@@ -36,14 +36,14 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"brief_version\":{},\"updated\":{},\"tags\":{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"tags\":{}}}",
 			json_escape(&self.name), self.version, self.updated, self.tags_json(),
 		)
 	}
 
 	/// The tags as a JSON array of strings, `[]` when there are none.
 	///
-	/// Shared with the Facet list, which carries the same array per Facet.
+	/// Shared with the Diamond list, which carries the same array per Diamond.
 	pub fn tags_json(&self) -> String {
 		let items: Vec<String> = self.tags.iter()
 			.map(|t| fmt!("\"{}\"", json_escape(t)))
@@ -53,13 +53,20 @@ impl Meta {
 
 	/// Parse from the stored JSON, tolerating missing fields.
 	///
-	/// `tags` postdates every Facet already on a user's device, so a `meta.json`
+	/// `tags` postdates every Diamond already on a user's device, so a `meta.json`
 	/// without the field parses to no tags rather than failing: a strict parse
-	/// here would shut every Facet made before tags existed.
+	/// here would shut every Diamond made before tags existed.
 	pub fn from_json(s: &str) -> Self {
 		Self {
 			name:    extract_json_string(s, "name").unwrap_or_default(),
-			version: extract_json_number(s, "brief_version").unwrap_or(0),
+			// `brief_version` is what this field was called before the rename.
+			// A workspace written by an older build still says that, and reading
+			// only the new name would report every Diamond as being at version 0
+			// -- which is not a cosmetic error: the next fold would then snapshot
+			// over `versions/0000.md` and the real history would be overwritten.
+			version: extract_json_number(s, "crystal_version")
+				.or_else(|| extract_json_number(s, "brief_version"))
+				.unwrap_or(0),
 			updated: extract_json_number(s, "updated").unwrap_or(0),
 			tags:    extract_json_string_array(s, "tags").unwrap_or_default(),
 		}
@@ -109,15 +116,31 @@ pub fn normalise_tags(tags: &[String]) -> Vec<String> {
 mod tests {
 	use super::*;
 
-	// ── The parse: what an existing Facet depends on ─────────────────
+	// ── The parse: what an existing Diamond depends on ─────────────────
 
 	#[test]
-	fn test_meta_without_tags_still_opens_its_facet() {
-		// Every Facet on a user's device predates the tags field. Its meta.json
+	fn test_meta_written_before_the_rename_keeps_its_version() {
+		// The version field was called `brief_version` until the brief became a
+		// crystal. Every Diamond on a device that has not been opened since then
+		// still says so, and reading only the new name would report version 0 --
+		// which is not cosmetic: the next fold would snapshot over
+		// `versions/0000.md` and overwrite the real history.
+		let old = Meta::from_json(r#"{"name":"Old","brief_version":7,"updated":123}"#);
+		assert_eq!(7, old.version);
+		assert_eq!("Old", old.name);
+
+		// And the current name still wins where both somehow appear.
+		let both = Meta::from_json(r#"{"name":"X","crystal_version":9,"brief_version":7}"#);
+		assert_eq!(9, both.version);
+	}
+
+	#[test]
+	fn test_meta_without_tags_still_opens_its_diamond() {
+		// Every Diamond on a user's device predates the tags field. Its meta.json
 		// says nothing about tags, and it must still parse -- with its name,
 		// version and stamp intact, and simply no tags. A strict parse here
-		// would brick every Facet anyone already has.
-		let old = r#"{"name":"X","brief_version":3,"updated":123}"#;
+		// would brick every Diamond anyone already has.
+		let old = r#"{"name":"X","crystal_version":3,"updated":123}"#;
 		let meta = Meta::from_json(old);
 		assert_eq!("X", meta.name);
 		assert_eq!(3, meta.version);
@@ -255,7 +278,7 @@ mod tests {
 	fn test_normalised_tags_round_trip_through_the_stored_json() {
 		// The two halves have to agree: what normalisation produces is exactly
 		// what the file gives back, or the store drifts from the interface.
-		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tFacet"), fmt!("work")]);
+		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
 		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, tags: tags.clone() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}

@@ -362,26 +362,26 @@
 		});
 		menuEl.appendChild(gseg);
 
-		// This Facet's arrangement, when there is a Facet to hang it on.
-		var facet = window.DaimondFacet && DaimondFacet.current && DaimondFacet.current();
-		if (facet && facet.id) {
-			menuEl.appendChild(el('div', 'pop-head', 'This Facet'));
-			var saved = P().hasArrangement(facet.id);
+		// This Diamond's arrangement, when there is a Diamond to hang it on.
+		var diamond = window.DaimondDiamond && DaimondDiamond.current && DaimondDiamond.current();
+		if (diamond && diamond.id) {
+			menuEl.appendChild(el('div', 'pop-head', 'This Diamond'));
+			var saved = P().hasArrangement(diamond.id);
 			var save = el('button', 'gal-row');
-			save.appendChild(el('span', 'nm', saved ? 'Update the saved arrangement' : 'Keep this arrangement with ' + (facet.name || 'this Facet')));
+			save.appendChild(el('span', 'nm', saved ? 'Update the saved arrangement' : 'Keep this arrangement with ' + (diamond.name || 'this Diamond')));
 			save.addEventListener('click', function () {
-				P().saveArrangement(facet.id);
+				P().saveArrangement(diamond.id);
 				renderMenu();
 			});
 			menuEl.appendChild(save);
 			if (saved) {
 				var drop = el('button', 'gal-row');
 				drop.appendChild(el('span', 'nm', 'Forget it'));
-				drop.addEventListener('click', function () { P().forgetArrangement(facet.id); renderMenu(); });
+				drop.addEventListener('click', function () { P().forgetArrangement(diamond.id); renderMenu(); });
 				menuEl.appendChild(drop);
 			}
 			var n = el('div', 'pop-note');
-			n.textContent = 'Opening this Facet again restores the panels it was worked in. Nothing is remembered until you ask for it.';
+			n.textContent = 'Opening this Diamond again restores the panels it was worked in. Nothing is remembered until you ask for it.';
 			menuEl.appendChild(n);
 		}
 	}

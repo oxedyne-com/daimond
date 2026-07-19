@@ -1,4 +1,4 @@
-// verify_pickers.mjs — a chat and a Facet each run on the model they were started with.
+// verify_pickers.mjs — a chat and a Diamond each run on the model they were started with.
 //
 // With one provider, "which model" and "whose key" were the same question. With a key per
 // provider they are two, and a picker that answers only the first is worse than none: it lets a
@@ -152,11 +152,11 @@ check('the chat records its provider, so a reload does not move it to the defaul
 
 await shot(s, 'picker-chat');
 
-// ── A Facet is created on a model the user chose ───────────────────────
+// ── A Diamond is created on a model the user chose ───────────────────────
 
 const before = { a: A.seen.length, b: B.seen.length };
 
-await p.click('#new-facet-btn');
+await p.click('#new-diamond-btn');
 await p.waitForSelector('.dlg-select', { timeout: 8000 });
 
 const dlg = await p.evaluate(() => {
@@ -167,13 +167,13 @@ const dlg = await p.evaluate(() => {
 		selProv: sel.selectedOptions[0].dataset.provider,
 	};
 });
-check('New Facet asks which model it should think with',
+check('New Diamond asks which model it should think with',
 	dlg.groups.length === 2, dlg.groups.join(' | '));
 check('and offers the starred default first', dlg.selected === 'alpha-large' && dlg.selProv === 'provA',
 	dlg.selProv + ':' + dlg.selected);
 
 // Name it, and put it on Provider B — deliberately NOT the default.
-await p.fill('.dlg-input:not(.dlg-select)', 'Facet on B');
+await p.fill('.dlg-input:not(.dlg-select)', 'Diamond on B');
 await p.evaluate(() => {
 	const sel = document.querySelector('.dlg-select');
 	[...sel.querySelectorAll('option')]
@@ -183,7 +183,7 @@ await p.evaluate(() => {
 await p.click('.dlg-ok');
 await p.waitForTimeout(2000);
 
-// Steering is a paid turn. It must go to the Facet's OWN provider.
+// Steering is a paid turn. It must go to the Diamond's OWN provider.
 const steered = await p.evaluate(() => {
 	const box = document.getElementById('steer-input');
 	const go  = document.getElementById('steer-send');
@@ -197,15 +197,15 @@ check('the steer control is there to drive', steered === true);
 await p.waitForTimeout(6000);
 
 const dA = A.seen.length - before.a, dB = B.seen.length - before.b;
-check('a Facet created on Provider B thinks on Provider B',
+check('a Diamond created on Provider B thinks on Provider B',
 	dB > 0 && dA === 0, `A +${dA}, B +${dB}`);
-// Only the requests made SINCE the Facet was created count — the chat's earlier request also
-// went to B, and would otherwise let this pass without the Facet having done anything at all.
-const sinceFacet = B.seen.slice(before.b);
+// Only the requests made SINCE the Diamond was created count — the chat's earlier request also
+// went to B, and would otherwise let this pass without the Diamond having done anything at all.
+const sinceDiamond = B.seen.slice(before.b);
 check('with that provider\'s key and model',
-	sinceFacet.length > 0
-		&& sinceFacet.every(r => r.auth.includes('key-for-B') && r.model === 'beta-small'),
-	sinceFacet.length ? sinceFacet[0].model + ' / ' + sinceFacet[0].auth.replace('Bearer ', '') : '(no steer request)');
+	sinceDiamond.length > 0
+		&& sinceDiamond.every(r => r.auth.includes('key-for-B') && r.model === 'beta-small'),
+	sinceDiamond.length ? sinceDiamond[0].model + ' / ' + sinceDiamond[0].auth.replace('Bearer ', '') : '(no steer request)');
 
 await shot(s, 'picker-focus');
 

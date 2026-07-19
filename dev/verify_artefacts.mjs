@@ -1,4 +1,4 @@
-// verify_artefacts.mjs — what a Facet produced, derived rather than declared.
+// verify_artefacts.mjs — what a Diamond produced, derived rather than declared.
 //
 // Nobody maintains this list. Every tool call is already recorded on the turn as a
 // `tool_log` carrying its name and arguments, so the artefacts of a stretch of work can be
@@ -23,16 +23,16 @@ const s = await open({ name: 'artefacts', connect: false });
 const p = s.page;
 await p.waitForTimeout(2500);
 
-// ── A Facet, and a chat whose turns carry tool calls ─────────────────────
-const facetId = await p.evaluate(async () => {
+// ── A Diamond, and a chat whose turns carry tool calls ─────────────────────
+const diamondId = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	return await app.create_facet('Ship the launch');
+	return await app.create_diamond('Ship the launch');
 });
-check('a Facet was created', !!facetId, facetId);
+check('a Diamond was created', !!diamondId, diamondId);
 
 // The harvest reads `tool_log` messages, so this is exactly the shape a real turn leaves.
-const harvested = await p.evaluate(async ({ facetId }) => {
+const harvested = await p.evaluate(async ({ diamondId }) => {
 	const tl = (name, args) => ({ role: 'tool_log', name, args: JSON.stringify(args) });
 	const messages = [
 		{ role: 'user', content: 'do the thing' },
@@ -46,11 +46,11 @@ const harvested = await p.evaluate(async ({ facetId }) => {
 		{ role: 'assistant', content: 'done' },
 	];
 	// Drive the harvest the way an accepted fold does.
-	await window.DaimondArtefacts.harvest(facetId, { sourceRun: { messages } });
+	await window.DaimondArtefacts.harvest(diamondId, { sourceRun: { messages } });
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	return JSON.parse(await app.links_touching('facet:' + facetId) || '[]');
-}, { facetId });
+	return JSON.parse(await app.links_touching('diamond:' + diamondId) || '[]');
+}, { diamondId });
 
 const refs = harvested.map(l => l.to);
 check('a written file became an artefact', refs.includes('file:notes/pricing.md'));
@@ -71,24 +71,24 @@ check('exactly the three artefacts, and nothing else', harvested.length === 3,
 	`${harvested.length}: ${refs.join(', ')}`);
 
 // ── Re-folding must not stack duplicates ────────────────────────────────
-const again = await p.evaluate(async ({ facetId }) => {
+const again = await p.evaluate(async ({ diamondId }) => {
 	const tl = (name, args) => ({ role: 'tool_log', name, args: JSON.stringify(args) });
 	const messages = [
 		tl('file_write', { path: 'notes/pricing.md', content: 'third time' }),
 		tl('file_write', { path: 'notes/new-thing.md', content: 'new' }),
 	];
-	await window.DaimondArtefacts.harvest(facetId, { sourceRun: { messages } });
+	await window.DaimondArtefacts.harvest(diamondId, { sourceRun: { messages } });
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	return JSON.parse(await app.links_touching('facet:' + facetId) || '[]');
-}, { facetId });
+	return JSON.parse(await app.links_touching('diamond:' + diamondId) || '[]');
+}, { diamondId });
 check('folding again does not stack a duplicate', again.length === 4,
 	`${again.length} artefact(s)`);
 check('but a genuinely new artefact is added',
 	again.some(l => l.to === 'file:notes/new-thing.md'));
 
 // ── A malformed tool call is skipped, not thrown on ─────────────────────
-const malformed = await p.evaluate(async ({ facetId }) => {
+const malformed = await p.evaluate(async ({ diamondId }) => {
 	const messages = [
 		{ role: 'tool_log', name: 'file_write', args: 'not json at all{' },
 		{ role: 'tool_log', name: 'file_write', args: JSON.stringify({ nopath: 1 }) },
@@ -96,12 +96,12 @@ const malformed = await p.evaluate(async ({ facetId }) => {
 		{ role: 'tool_log', name: 'file_write', args: JSON.stringify({ path: 'notes/fine.md' }) },
 	];
 	try {
-		await window.DaimondArtefacts.harvest(facetId, { sourceRun: { messages } });
+		await window.DaimondArtefacts.harvest(diamondId, { sourceRun: { messages } });
 	} catch (e) { return { threw: String(e) }; }
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	return { links: JSON.parse(await app.links_touching('facet:' + facetId) || '[]') };
-}, { facetId });
+	return { links: JSON.parse(await app.links_touching('diamond:' + diamondId) || '[]') };
+}, { diamondId });
 check('a malformed tool call does not throw inside an accepted fold', !malformed.threw,
 	malformed.threw);
 check('and the good one beside it still lands',
@@ -109,15 +109,15 @@ check('and the good one beside it still lands',
 
 // ── The strip: hidden at zero, and a count when there is something ──────
 //
-// The Facets above were made through a fresh app instance, which the running rail knows
+// The Diamonds above were made through a fresh app instance, which the running rail knows
 // nothing about, so it is reloaded here before anything is clicked.
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'artefacts');      // a reload puts the identity gate back
 await p.waitForTimeout(3000);
 
-const strip = await p.evaluate(async ({ facetId }) => {
+const strip = await p.evaluate(async ({ diamondId }) => {
 	// Select it the way a user does: click its row in the rail.
-	const row = Array.from(document.querySelectorAll('#facet-list .facet-box'))
+	const row = Array.from(document.querySelectorAll('#diamond-list .diamond-box'))
 		.find(e => /Ship the launch/.test(e.textContent));
 	if (row) row.click();
 	await new Promise(r => setTimeout(r, 1200));
@@ -128,7 +128,7 @@ const strip = await p.evaluate(async ({ facetId }) => {
 		text:  el ? el.textContent.trim() : null,
 		listShown: list ? list.style.display !== 'none' : null,
 	};
-}, { facetId });
+}, { diamondId });
 check('the strip is shown once there are artefacts', strip.shown === true, String(strip.shown));
 check('it is a count, not a list', /^◈ \d+ artefacts?$/.test(strip.text || ''), strip.text);
 check('the list stays closed until it is clicked', strip.listShown === false,
@@ -160,18 +160,18 @@ const inserted = await p.evaluate(async () => {
 check('a row can put its reference in the steer box',
 	/notes\/|https:/.test(inserted || ''), inserted);
 
-// ── An empty Facet gets no empty shelf ──────────────────────────────────
+// ── An empty Diamond gets no empty shelf ──────────────────────────────────
 await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	await app.create_facet('Nothing done yet');
+	await app.create_diamond('Nothing done yet');
 });
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'artefacts');
 await p.waitForTimeout(3000);
 
 const empty = await p.evaluate(async () => {
-	const row = Array.from(document.querySelectorAll('#facet-list .facet-box'))
+	const row = Array.from(document.querySelectorAll('#diamond-list .diamond-box'))
 		.find(e => /Nothing done yet/.test(e.textContent));
 	if (!row) return 'no such row';
 	row.click();
@@ -179,7 +179,7 @@ const empty = await p.evaluate(async () => {
 	const el = document.getElementById('arte-strip');
 	return el ? el.style.display : 'absent';
 });
-check('a Facet with no artefacts shows no strip at all',
+check('a Diamond with no artefacts shows no strip at all',
 	empty === 'none' || empty === 'absent', empty);
 
 await s.close();

@@ -2,14 +2,14 @@
 //! pair, and node-reference normalisation.
 //!
 //! A **link** joins one thing to another and says, in a word and a sentence,
-//! how they are related.  The things are not only Facets: a link may name a
-//! file, a page, a chat or a Facet, because the substrate is meant to outlive
-//! the first use anyone puts it to, and a link space that can only join Facets
-//! to Facets would need replacing the first time a Facet had to point at a
+//! how they are related.  The things are not only Diamonds: a link may name a
+//! file, a page, a chat or a Diamond, because the substrate is meant to outlive
+//! the first use anyone puts it to, and a link space that can only join Diamonds
+//! to Diamonds would need replacing the first time a Diamond had to point at a
 //! file.
 //!
 //! The OPFS edge that reads and writes the sidecar lives in
-//! [`crate::wasm::facet`], which is compiled only for wasm32 and so cannot be
+//! [`crate::wasm::diamond`], which is compiled only for wasm32 and so cannot be
 //! reached by the native test suite.  What is pure sits here instead, where it
 //! is tested -- the parse in particular, because a link written by a hand or by
 //! an older build must still open.
@@ -31,13 +31,13 @@ const MAX_NOTE_LEN: usize = 2_000;
 /// rather than rejecting it, so a link written by a later build -- or by a hand
 /// naming something not yet modelled -- survives a round trip through this one
 /// instead of being silently dropped.
-pub const KNOWN_KINDS: [&str; 4] = ["facet", "file", "url", "chat"];
+pub const KNOWN_KINDS: [&str; 4] = ["diamond", "file", "url", "chat"];
 
 
 /// One end of a link: a kind and the thing it names, spelled `kind:rest`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Node {
-	/// The kind, lowercased. // e.g. `facet`
+	/// The kind, lowercased. // e.g. `diamond`
 	pub kind: String,
 	/// Whatever the kind uses to name one of its own. // an id, a path, a URL
 	pub rest: String,
@@ -81,7 +81,7 @@ impl Node {
 }
 
 
-/// One link, as held on a line of a Facet's `links.jsonl`.
+/// One link, as held on a line of a Diamond's `links.jsonl`.
 ///
 /// Direction is recorded -- `from` and `to` are not interchangeable -- but
 /// nothing here implies that anything flows along it.  A reader that wants
@@ -176,7 +176,7 @@ fn res_opt(o: Option<String>) -> Option<String> {
 /// that the link exists.
 ///
 /// Nothing here knows any relation by name.  Which ones to suggest is the
-/// interface's business alone, exactly as it is for a Facet's tags.
+/// interface's business alone, exactly as it is for a Diamond's tags.
 pub fn normalise_rel(rel: &str) -> String {
 	let mut out = String::new();
 	for (i, word) in rel.split_whitespace().enumerate() {
@@ -298,10 +298,10 @@ mod tests {
 
 	#[test]
 	fn test_a_link_round_trips() {
-		let mut l = link("facet:abc", "file:notes/report.md", "produced");
+		let mut l = link("diamond:abc", "file:notes/report.md", "produced");
 		l.note = fmt!("The figures came out of this run.");
 		let back = Link::from_json(&l.to_json()).expect("must parse back");
-		assert_eq!("facet:abc", back.from.to_ref());
+		assert_eq!("diamond:abc", back.from.to_ref());
 		assert_eq!("file:notes/report.md", back.to.to_ref());
 		assert_eq!("produced", back.rel);
 		assert_eq!("The figures came out of this run.", back.note);
@@ -313,19 +313,19 @@ mod tests {
 	fn test_a_record_missing_the_newer_fields_still_opens() {
 		// The two ends are the link. Everything else postdates something, and a
 		// strict parse would shut every link written before whatever came last.
-		let old = r#"{"from":"facet:a","to":"facet:b"}"#;
+		let old = r#"{"from":"diamond:a","to":"diamond:b"}"#;
 		let l = Link::from_json(old).expect("a two-ended record is a link");
-		assert_eq!("facet:a", l.from.to_ref());
-		assert_eq!("facet:b", l.to.to_ref());
+		assert_eq!("diamond:a", l.from.to_ref());
+		assert_eq!("diamond:b", l.to.to_ref());
 		assert!(l.rel.is_empty() && l.note.is_empty() && l.by.is_empty());
 		assert_eq!(0, l.ts);
 	}
 
 	#[test]
 	fn test_a_record_missing_an_end_is_not_a_link() {
-		assert!(Link::from_json(r#"{"from":"facet:a"}"#).is_none());
-		assert!(Link::from_json(r#"{"to":"facet:b"}"#).is_none());
-		assert!(Link::from_json(r#"{"from":"facet:a","to":"not a ref"}"#).is_none());
+		assert!(Link::from_json(r#"{"from":"diamond:a"}"#).is_none());
+		assert!(Link::from_json(r#"{"to":"diamond:b"}"#).is_none());
+		assert!(Link::from_json(r#"{"from":"diamond:a","to":"not a ref"}"#).is_none());
 	}
 
 	#[test]
@@ -333,7 +333,7 @@ mod tests {
 		// A note is arbitrary prose, so it can hold the characters the JSON it
 		// is written into uses. Written naively it closes the string early and
 		// the whole sidecar stops parsing.
-		let mut l = link("facet:a", "facet:b", "relates to");
+		let mut l = link("diamond:a", "diamond:b", "relates to");
 		l.note = fmt!("he said \"use this\"\nand a back\\slash, caf\u{e9} \u{65e5}\u{672c}");
 		let back = Link::from_json(&l.to_json()).expect("must parse back");
 		assert_eq!(l.note, back.note);
@@ -343,7 +343,7 @@ mod tests {
 	fn test_a_note_holding_a_field_key_does_not_become_that_field() {
 		// The parse is a scan, not a grammar, so a value that reads like a
 		// field is worth pinning.
-		let mut l = link("facet:a", "facet:b", "");
+		let mut l = link("diamond:a", "diamond:b", "");
 		l.note = fmt!("\"rel\":\"fake\"");
 		let back = Link::from_json(&l.to_json()).expect("must parse back");
 		assert_eq!("", back.rel, "the real field is the one that follows a comma");
@@ -353,18 +353,18 @@ mod tests {
 
 	#[test]
 	fn test_a_link_is_found_from_either_end() {
-		let l = link("facet:a", "facet:b", "informs");
-		assert!(l.touches(&node("facet:a")));
-		assert!(l.touches(&node("facet:b")));
-		assert!(!l.touches(&node("facet:c")));
+		let l = link("diamond:a", "diamond:b", "informs");
+		assert!(l.touches(&node("diamond:a")));
+		assert!(l.touches(&node("diamond:b")));
+		assert!(!l.touches(&node("diamond:c")));
 	}
 
 	#[test]
 	fn test_the_other_end_is_whichever_one_you_did_not_ask_from() {
-		let l = link("facet:a", "file:x.md", "produced");
-		assert_eq!(Some(&node("file:x.md")), l.other(&node("facet:a")));
-		assert_eq!(Some(&node("facet:a")),   l.other(&node("file:x.md")));
-		assert_eq!(None, l.other(&node("facet:zzz")));
+		let l = link("diamond:a", "file:x.md", "produced");
+		assert_eq!(Some(&node("file:x.md")), l.other(&node("diamond:a")));
+		assert_eq!(Some(&node("diamond:a")),   l.other(&node("file:x.md")));
+		assert_eq!(None, l.other(&node("diamond:zzz")));
 	}
 
 	#[test]
@@ -372,10 +372,10 @@ mod tests {
 		// Two-way means traversable from either end, NOT that the ends are
 		// interchangeable. A later reader may care which way `supersedes` ran,
 		// and it cannot recover a direction that was never stored.
-		let l = link("facet:new", "facet:old", "supersedes");
+		let l = link("diamond:new", "diamond:old", "supersedes");
 		let back = Link::from_json(&l.to_json()).expect("must parse back");
-		assert_eq!("facet:new", back.from.to_ref());
-		assert_eq!("facet:old", back.to.to_ref());
+		assert_eq!("diamond:new", back.from.to_ref());
+		assert_eq!("diamond:old", back.to.to_ref());
 	}
 
 	// ── Normalisation: what the store is spared ──────────────────────
@@ -412,12 +412,12 @@ mod tests {
 	#[test]
 	fn test_a_sidecar_round_trips() {
 		let links = vec![
-			link("facet:a", "facet:b", "informs"),
-			link("facet:a", "file:notes/x.md", "produced"),
+			link("diamond:a", "diamond:b", "informs"),
+			link("diamond:a", "file:notes/x.md", "produced"),
 		];
 		let back = parse_links(&write_links(&links));
 		assert_eq!(2, back.len());
-		assert_eq!("facet:b", back[0].to.to_ref());
+		assert_eq!("diamond:b", back[0].to.to_ref());
 		assert_eq!("file:notes/x.md", back[1].to.to_ref());
 	}
 
@@ -427,15 +427,15 @@ mod tests {
 		// normal event. Failing the whole read would make every other link in
 		// the file vanish -- the worst possible answer to a typo.
 		let text = concat!(
-			"{\"from\":\"facet:a\",\"to\":\"facet:b\"}\n",
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:b\"}\n",
 			"this line is not JSON at all\n",
 			"\n",
-			"{\"from\":\"facet:a\",\"to\":\"facet:c\"}\n",
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:c\"}\n",
 		);
 		let links = parse_links(text);
 		assert_eq!(2, links.len(), "the readable lines still read");
-		assert_eq!("facet:b", links[0].to.to_ref());
-		assert_eq!("facet:c", links[1].to.to_ref());
+		assert_eq!("diamond:b", links[0].to.to_ref());
+		assert_eq!("diamond:c", links[1].to.to_ref());
 	}
 
 	#[test]

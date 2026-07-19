@@ -4,11 +4,11 @@
 		{
 			"name": "Albany",
 			"from": 0,
-			"blurb": "The first named release. Daimond became checkable against its own source, learned to hold its spending down, renamed Foci to Facets, and gained the controls that arrange it."
+			"blurb": "The first named release. Daimond became checkable against its own source, learned to hold its spending down, renamed its central noun from Foci to Facets and then to Diamonds, and gained the controls that arrange it."
 		}
 	],
 	"planned": {
 		"name": "Broome",
-		"blurb": "A view of how a Facet's work connects, and a way to carry one Facet's context into another."
+		"blurb": "A view of how a Diamond's work connects, and a way to carry one Diamond's context into another."
 	}
 }

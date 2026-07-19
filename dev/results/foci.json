@@ -1,5 +1,5 @@
 {
-  "workflow": "foci",
+  "workflow": "facets",
   "model": "accounts/fireworks/models/gpt-oss-120b",
   "elapsedS": "8.2",
   "briefWritten": true,

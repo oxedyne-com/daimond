@@ -22,11 +22,11 @@ pub mod executor;
 /// gated out of the wasm target.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod handler;
-/// The pure core of a Facet's `meta.json` — its shape, its parse/serialise
+/// The pure core of a Diamond's `meta.json` — its shape, its parse/serialise
 /// pair, and tag normalisation.  Target-agnostic, so it is tested natively
-/// while the OPFS edge over it stays in [`wasm::facet`].
-pub mod facet_link;
-pub mod facet_meta;
+/// while the OPFS edge over it stays in [`wasm::diamond`].
+pub mod diamond_link;
+pub mod diamond_meta;
 pub mod llm;
 pub mod protocol;
 pub mod session;

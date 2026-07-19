@@ -71,14 +71,14 @@ await stubGateway(page);
 await signInAs(s, 'slots');
 await page.waitForTimeout(2500);   // unlock → bootstrap → mint slot 0 → list catalogue
 
-// Start new chats and Facets on credits, so the conductor and its workers all run
+// Start new chats and Diamonds on credits, so the conductor and its workers all run
 // on the minted key path (slot 0 for the chat/conductor, ≥1 for workers).
 await page.evaluate(() => window.DaimondModels.setDefault('credits', 'anthropic/claude-opus-4.5'));
 
 check('unlock minted slot 0 (the chat/conductor key)', gw.mintedSlots.includes(0), 'slots ' + JSON.stringify(gw.mintedSlots));
 
-// A Facet, and a conductor turn that dispatches three workers at once.
-await page.click('#new-facet-btn');
+// A Diamond, and a conductor turn that dispatches three workers at once.
+await page.click('#new-diamond-btn');
 await page.waitForSelector('.dlg-input', { timeout: 8000 });
 await page.fill('.dlg-input', 'Audit');
 await page.click('.dlg-ok');

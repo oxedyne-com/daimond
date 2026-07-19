@@ -213,7 +213,7 @@ export async function resetView(page) {
 		document.querySelectorAll('.pair-scrim').forEach(e => e.remove());	// pairing dialog
 		// Close every open guest panel, so a view is captured/audited in isolation
 		// rather than stacked on the panels the previous view left open. The rail
-		// (Facets/Chats/Admin) and the chat floor stay.
+		// (Diamonds/Chats/Admin) and the chat floor stay.
 		document.querySelectorAll('[data-close]').forEach(b => {
 			var t = b.getAttribute('data-close');
 			if (t && t !== 'rail' && b.offsetParent !== null) { try { b.click(); } catch (e) {} }

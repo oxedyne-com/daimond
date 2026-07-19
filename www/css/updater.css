@@ -2,7 +2,7 @@
  *
  * Quiet by default: a muted dot that says "up to date" and asks nothing. It lights up only when
  * there is something to say -- an update ready (accent, gently pulsing), one waiting on a running
- * turn (amber), or one just applied (a brief green tick that fades). The states are driven by
+ * turn (amber), or one just applied (a crystal green tick that fades). The states are driven by
  * data-state on the button, set from updater.js. */
 
 .update-chip {
@@ -65,7 +65,7 @@
 }
 .update-chip[data-state="stale"]:hover { background: var(--bg-hover); }
 
-/* Just applied: a brief green tick, then it settles back to "current" from updater.js. */
+/* Just applied: a crystal green tick, then it settles back to "current" from updater.js. */
 .update-chip[data-state="done"] {
 	color: var(--ok);
 	opacity: 1;

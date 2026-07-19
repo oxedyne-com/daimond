@@ -7,7 +7,7 @@
 //
 // The check that matters most is the last one. It is easy to build a tick-box that LOOKS like it
 // chose a turn and then quietly fold the whole chat anyway; the UI would be indistinguishable.
-// So the delta is not inspected in the page that produced it — it is read back out of the Facet
+// So the delta is not inspected in the page that produced it — it is read back out of the Diamond
 // history, which is the reducer's own record of what it was handed. If the tick did not narrow
 // the fold, the marker from an unticked turn shows up there and the test fails.
 //
@@ -29,8 +29,8 @@ const MARKS = ['MARK-ALPHA', 'MARK-BETA', 'MARK-GAMMA', 'MARK-DELTA'];
 const s = await open({ name: 'turns' });
 const p = s.page;
 
-// The Facet first, so folding into it later needs no navigation away from the chat.
-await p.click('#new-facet-btn');
+// The Diamond first, so folding into it later needs no navigation away from the chat.
+await p.click('#new-diamond-btn');
 await p.waitForSelector('.dlg-input', { timeout: 8000 });
 await p.fill('.dlg-input', 'Turns Test');
 await p.click('.dlg-ok');
@@ -193,7 +193,7 @@ check('and again, so a long thread is walked by its questions',
 
 // ── Fold selected really folds only what was selected ──────────────────
 //
-// The oracle is not the page: it is the Facet history, which records the delta the reducer was
+// The oracle is not the page: it is the Diamond history, which records the delta the reducer was
 // handed. Turn 2 (MARK-BETA) is ticked; the other three are not.
 
 const menuHead = await p.evaluate(async () => {
@@ -221,9 +221,9 @@ const accept = await p.$('.diff-accept');
 if (accept && !(await accept.isDisabled())) { await accept.click(); await p.waitForTimeout(3000); }
 
 // Read the delta back out of the history — the reducer's own record of what it got.
-await p.click('button.brief-act:has-text("History")');
+await p.click('button.crystal-act:has-text("History")');
 await p.waitForTimeout(900);
-const deltaBtn = await p.$('button.brief-act:has-text("Delta")');
+const deltaBtn = await p.$('button.crystal-act:has-text("Delta")');
 let delta = '';
 if (deltaBtn) {
 	await deltaBtn.click();

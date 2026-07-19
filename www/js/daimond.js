@@ -412,7 +412,7 @@ import init, {
 	var SYNC_FILE_MAX        = 128 * 1024;		// skip a single file above this.
 	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all synced file bytes.
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
-	var SYNC_SKIP_ROOT_DIRS  = { facets: 1 };		// Daimond's own per-facet store.
+	var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 
 	/// A cheap, non-cryptographic content fingerprint — enough to tell whether a
 	/// file changed, which is all the 3-way merge asks of it.
@@ -446,7 +446,7 @@ import init, {
 	}
 
 	/// Walk the OPFS workspace and read every syncable text file into
-	/// `{ path: content }`, skipping dotfiles, Daimond's own `facets` store, binary
+	/// `{ path: content }`, skipping dotfiles, Daimond's own `diamonds` store, binary
 	/// files, and anything over the per-file or total budget.
 	async function collectFiles() {
 		var out = { files: {}, skipped: 0, oversize: [] };
@@ -602,16 +602,20 @@ import init, {
 		return 'Chat-' + ('000' + chatCounter).slice(-4);
 	}
 
-	// Two localStorage keys were named for Foci and are now named for Facets. A
-	// user who has been running Daimond since before the rename still holds the
-	// old ones, and a straight read of the new names would silently lose their
-	// Facet numbering and every per-Facet model choice — so the old keys are
-	// moved across once, before anything reads them. Never clobbers: a new key
-	// already present wins, and the old one is simply dropped.
-	(function migrateFocusKeys() {
+	// Two localStorage keys have been renamed twice, following the noun: focus ->
+	// facet -> diamond. A user who has been running Daimond since before either
+	// rename still holds an older name, and a straight read of the current one
+	// would silently lose their Diamond numbering and every per-Diamond model
+	// choice — so the old keys are moved across once, before anything reads them.
+	// Both older generations are listed rather than chained, so a workspace that
+	// skipped a rename entirely still arrives. Never clobbers: a key already
+	// present at the new name wins, and the old one is simply dropped.
+	(function migrateOldKeys() {
 		var moved = [
-			['daimond-focus-counter', 'daimond-facet-counter'],
-			['daimond-focus-models',  'daimond-facet-models'],
+			['daimond-facet-counter', 'daimond-diamond-counter'],
+			['daimond-facet-models',  'daimond-diamond-models'],
+			['daimond-focus-counter', 'daimond-diamond-counter'],
+			['daimond-focus-models',  'daimond-diamond-models'],
 		];
 		for (var i = 0; i < moved.length; i++) {
 			var was = moved[i][0], now = moved[i][1];
@@ -624,19 +628,19 @@ import init, {
 		}
 	})();
 
-	// Facets get the same auto-incrementing default name as chats, so creating
+	// Diamonds get the same auto-incrementing default name as chats, so creating
 	// one needs no typing at all — the name is pre-filled and editable.
-	var facetCounter = parseInt(localStorage.getItem('daimond-facet-counter') || '0', 10) || 0;
-	/// The name the next Facet would take. Only a peek: cancelling the dialog
+	var diamondCounter = parseInt(localStorage.getItem('daimond-diamond-counter') || '0', 10) || 0;
+	/// The name the next Diamond would take. Only a peek: cancelling the dialog
 	/// must not burn a number, or a user who changes their mind twice finds
-	/// their first Facet is called Facet-0003.
-	function peekFacetLabel() {
-		return 'Facet-' + ('000' + (facetCounter + 1)).slice(-4);
+	/// their first Diamond is called Diamond-0003.
+	function peekDiamondLabel() {
+		return 'Diamond-' + ('000' + (diamondCounter + 1)).slice(-4);
 	}
-	/// Commit the number, once a Facet really exists.
-	function takeFacetLabel() {
-		facetCounter += 1;
-		localStorage.setItem('daimond-facet-counter', '' + facetCounter);
+	/// Commit the number, once a Diamond really exists.
+	function takeDiamondLabel() {
+		diamondCounter += 1;
+		localStorage.setItem('daimond-diamond-counter', '' + diamondCounter);
 	}
 
 	// Short, readable model name for a tile chip (drops the provider path).
@@ -693,25 +697,25 @@ import init, {
 		return '$' + u.toFixed(2);
 	}
 
-	// ── Facets state ─────────────────────────────────────────────
-	var facets = [];              // [{ id, name, brief_version, updated, tags }]
-	var currentFacet = null;    // selected Facet meta, or null
+	// ── Diamonds state ─────────────────────────────────────────────
+	var diamonds = [];              // [{ id, name, crystal_version, updated, tags }]
+	var currentDiamond = null;    // selected Diamond meta, or null
 	var centreMode = 'chat';    // 'chat' | 'focus' — what the Centre shows
-	var briefBusy = false;      // a steer or fold turn is in flight
-	// A pending fold proposal belongs to its Facet, not to whatever is on
-	// screen. It used to live in one global that `selectFacet` cleared
+	var crystalBusy = false;      // a steer or fold turn is in flight
+	// A pending fold proposal belongs to its Diamond, not to whatever is on
+	// screen. It used to live in one global that `selectDiamond` cleared
 	// unconditionally, so clicking the chat to re-read it before deciding
 	// silently threw away a real (and paid-for) reducer round trip.
-	var pendingFolds = {};      // facetId -> { base, proposed, delta, chatId, chatName }
+	var pendingFolds = {};      // diamondId -> { base, proposed, delta, chatId, chatName }
 
 	// Tags are the user's filing system and nothing more. A tag is never sent
-	// to a model, never written into a brief, and never changes a prompt; no
+	// to a model, never written into a crystal, and never changes a prompt; no
 	// behaviour anywhere reads what a tag says. These four are a nudge for an
 	// empty tag editor, offered by this screen alone -- the store normalises
 	// tags but knows nothing of these, and holds no tag to be special.
 	var DEFAULT_TAG_SUGGESTIONS = ['person', 'project', 'topic', 'org'];
-	var TAG_CHIPS_SHOWN = 3;    // chips on a Facet box before the +N overflow
-	var facetQuery = '';        // the search box, trimmed and lowercased
+	var TAG_CHIPS_SHOWN = 3;    // chips on a Diamond box before the +N overflow
+	var diamondQuery = '';        // the search box, trimmed and lowercased
 	var tagFilter  = null;      // the tag the rail is filtered to, or null
 
 	// ── DOM refs ───────────────────────────────────────────────
@@ -728,18 +732,18 @@ import init, {
 	var aiMeter       = document.getElementById('ai-meter');
 	var agentsList    = document.getElementById('agents-list');
 	var agentsCount   = document.getElementById('agents-count');
-	var facetList     = document.getElementById('facet-list');
-	var facetSearch   = document.getElementById('facet-search');
-	var facetFilter   = document.getElementById('facet-filter');
+	var diamondList     = document.getElementById('diamond-list');
+	var diamondSearch   = document.getElementById('diamond-search');
+	var diamondFilter   = document.getElementById('diamond-filter');
 	var agentSearch   = document.getElementById('agent-search');
 	var agentFilter   = document.getElementById('agent-filter');
 	var agentQuery       = '';   // the agents panel search text, lower-cased
-	var agentFacetFilter = null; // filter agents to one Facet id, or null
+	var agentDiamondFilter = null; // filter agents to one Diamond id, or null
 	var agentTagFilter   = null; // filter agents to one tag, or null
-	var newFacetBtn   = document.getElementById('new-facet-btn');
-	var briefView     = document.getElementById('brief-view');
-	var briefBody     = document.getElementById('brief-body');
-	var briefControls = document.getElementById('brief-controls');
+	var newDiamondBtn   = document.getElementById('new-diamond-btn');
+	var crystalView     = document.getElementById('crystal-view');
+	var crystalBody     = document.getElementById('crystal-body');
+	var crystalControls = document.getElementById('crystal-controls');
 	var chatOutputEl  = document.getElementById('chat-output');
 	var chatInputBar  = document.querySelector('.chat-input-bar');
 
@@ -842,7 +846,7 @@ import init, {
 	// so a new panel is markup plus its own code — the layout engine needs no
 	// edit, and a panel that does not exist cannot be advertised as a tag.
 	//
-	//   rail   the left column. Permanent. Two panes (Facets/Chats above, Admin
+	//   rail   the left column. Permanent. Two panes (Diamonds/Chats above, Admin
 	//          below) split by a handle that moves but does not go away.
 	//
 	//   stage  the middle. Its occupants are EXCLUSIVE to it: they take the
@@ -919,7 +923,7 @@ import init, {
 		var railForced = false; // a folded rail the user re-opened via its tag
 		var grid   = 'auto';    // which of GRIDS the dock is tiled on
 		var pinned = null;      // panel ids kept on the chip row; null means all of them
-		var arrangements = {};  // facet id -> a saved arrangement, restored on switch
+		var arrangements = {};  // diamond id -> a saved arrangement, restored on switch
 		var tagsEl, stageEl, dockEl, mainEl;
 
 		/// The dock's shape right now, with `auto` resolved against the window.
@@ -1082,7 +1086,7 @@ import init, {
 				// content room. A folded rail is not a LOST rail, though — the band
 				// between the fold and the mobile breakpoint has no bottom nav, so a
 				// folded-but-open rail is offered as a header tag (see renderTags), and
-				// clicking it forces it back for this width. Without that, Facets and
+				// clicking it forces it back for this width. Without that, Diamonds and
 				// Chats were unreachable on a small laptop.
 				var railEl = elOf('rail');
 				var railOn = open.rail && (window.innerWidth >= NARROW || railForced);
@@ -1358,15 +1362,15 @@ import init, {
 		}
 
 		// ── Arrangements ──────────────────────────────────────
-		// A Facet can carry the arrangement it is worked in, so that returning to a
+		// A Diamond can carry the arrangement it is worked in, so that returning to a
 		// piece of work restores the panels it needs rather than making them be
 		// reassembled by hand. It is saved DELIBERATELY and never inferred: a
 		// switch that silently closed panels would read as work being lost.
 
-		/// Capture the current arrangement under a Facet's id.
-		function saveArrangement(facetId) {
-			if (!facetId) return false;
-			arrangements[facetId] = {
+		/// Capture the current arrangement under a Diamond's id.
+		function saveArrangement(diamondId) {
+			if (!diamondId) return false;
+			arrangements[diamondId] = {
 				open: JSON.parse(JSON.stringify(open)),
 				stage: stage.slice(), dock: dock.slice(),
 				widths: { rail: widths.rail, dock: widths.dock },
@@ -1376,19 +1380,19 @@ import init, {
 			return true;
 		}
 
-		function hasArrangement(facetId) { return !!(facetId && arrangements[facetId]); }
+		function hasArrangement(diamondId) { return !!(diamondId && arrangements[diamondId]); }
 
-		function forgetArrangement(facetId) {
-			if (!facetId || !arrangements[facetId]) return false;
-			delete arrangements[facetId];
+		function forgetArrangement(diamondId) {
+			if (!diamondId || !arrangements[diamondId]) return false;
+			delete arrangements[diamondId];
 			save();
 			return true;
 		}
 
 		/// Put a saved arrangement back. Anything it names that no longer exists is
 		/// skipped, so an arrangement saved before a panel was removed still opens.
-		function restoreArrangement(facetId) {
-			var a = facetId && arrangements[facetId];
+		function restoreArrangement(diamondId) {
+			var a = diamondId && arrangements[diamondId];
 			if (!a) return false;
 			if (a.open) { open = {}; Object.keys(a.open).forEach(function (k) { if (def(k)) open[k] = !!a.open[k]; }); }
 			if (typeof a.grid === 'string' && (a.grid === 'auto' || GRIDS[a.grid])) grid = a.grid;
@@ -1477,12 +1481,12 @@ import init, {
 	// so the layout engine is the one piece of this module that is shared.
 	window.DaimondPanels = DaimondPanels;
 
-	// Which Facet is being worked, for the surfaces that offer to act on it.
-	window.DaimondFacet = {
-		current: function () { return currentFacet ? { id: currentFacet.id, name: currentFacet.name } : null; },
+	// Which Diamond is being worked, for the surfaces that offer to act on it.
+	window.DaimondDiamond = {
+		current: function () { return currentDiamond ? { id: currentDiamond.id, name: currentDiamond.name } : null; },
 	};
 
-	// The Agents panel is for Facet-brief-dispatched agents, not chats, so it
+	// The Agents panel is for Diamond-crystal-dispatched agents, not chats, so it
 	// stays hidden until the first such agent runs. Once revealed it behaves
 	// like any other panel (closable, resizable) and the reveal is remembered.
 	function revealAgents() {
@@ -1521,7 +1525,7 @@ import init, {
 	// tool steps along the way. The thread is a flat list of messages, so the grouping is carried
 	// as a number on each node -- every output written after a question belongs to that question,
 	// until the next one. That number is what lets an answer be folded away behind the thing that
-	// prompted it, and what lets a selected few turns be folded into a Facet.
+	// prompted it, and what lets a selected few turns be folded into a Diamond.
 	var _turn = 0;
 
 	// Where the walk back through the questions has got to. -1 means "at the bottom, not walking",
@@ -2834,7 +2838,7 @@ import init, {
 	}
 	// The centre header no longer carries chat token/cost readouts — those live
 	// in the chat's tile (per-chat) and the spend row (global). Kept clear for
-	// chats; the Facet brief view sets its own centre meter directly.
+	// chats; the Diamond crystal view sets its own centre meter directly.
 	function updateMeters() {
 		topMeter.textContent = '';
 		if (!current) { aiMeter.textContent = ''; return; }
@@ -2939,10 +2943,10 @@ import init, {
 		renderSessionList();
 	}
 
-	// ── Fold a chat into a Facet (§7.2) ────────────────────────
+	// ── Fold a chat into a Diamond (§7.2) ────────────────────────
 	// A finished chat is itself a delta: folding it proposes an advisory update
-	// to a chosen Facet brief, which the user then accepts or vetoes. The Fold
-	// control opens a small picker of the user's Facets (plus "New Facet…").
+	// to a chosen Diamond crystal, which the user then accepts or vetoes. The Fold
+	// control opens a small picker of the user's Diamonds (plus "New Diamond…").
 	/// The chat as text for the reducer, optionally narrowed to a few turns.
 	///
 	/// `turns` is a list of turn numbers, counted the way the thread counts them: the nth question
@@ -2965,11 +2969,11 @@ import init, {
 	}
 	function onFoldOutside(e) { if (_foldMenu && !_foldMenu.contains(e.target)) closeFoldMenu(); }
 
-	/// Offer the Facets to fold into. `turns`, when given, narrows the fold to those turns.
+	/// Offer the Diamonds to fold into. `turns`, when given, narrows the fold to those turns.
 	function openFoldPicker(chat, anchor, turns) {
 		closeFoldMenu();
 		if (!(chat.messages && chat.messages.length)) {
-			noticeDialog('Nothing to fold', 'This chat is empty. Send a message first, then fold it into a Facet.');
+			noticeDialog('Nothing to fold', 'This chat is empty. Send a message first, then fold it into a Diamond.');
 			return;
 		}
 		var menu = document.createElement('div');
@@ -2982,12 +2986,12 @@ import init, {
 			? 'Fold ' + turns.length + (turns.length === 1 ? ' turn into…' : ' turns into…')
 			: 'Fold into…';
 		menu.appendChild(head);
-		if (facets.length === 0) {
+		if (diamonds.length === 0) {
 			var none = document.createElement('div');
-			none.className = 'fold-menu-empty'; none.textContent = 'No Facets yet — create one:';
+			none.className = 'fold-menu-empty'; none.textContent = 'No Diamonds yet — create one:';
 			menu.appendChild(none);
 		}
-		facets.forEach(function (f) {
+		diamonds.forEach(function (f) {
 			var item = document.createElement('button');
 			item.className = 'fold-menu-item';
 			item.textContent = f.name;                 // escaped via textContent (H5)
@@ -2995,7 +2999,7 @@ import init, {
 			menu.appendChild(item);
 		});
 		var neww = document.createElement('button');
-		neww.className = 'fold-menu-item new'; neww.textContent = '＋ New Facet…';
+		neww.className = 'fold-menu-item new'; neww.textContent = '＋ New Diamond…';
 		neww.addEventListener('click', function () { closeFoldMenu(); foldChatIntoNew(chat, turns); });
 		menu.appendChild(neww);
 
@@ -3009,26 +3013,26 @@ import init, {
 	}
 
 	async function foldChatIntoNew(chat, turns) {
-		if (!cfgReady(cfg)) { openSettings('Connect a provider to fold into a Facet.'); return; }
-		var name = await promptDialog('New Facet', { value: peekFacetLabel(), okLabel: 'Create and fold' });
+		if (!cfgReady(cfg)) { openSettings('Connect a provider to fold into a Diamond.'); return; }
+		var name = await promptDialog('New Diamond', { value: peekDiamondLabel(), okLabel: 'Create and fold' });
 		if (name === null) return; name = name.trim(); if (!name) return;
 		var id;
-		try { id = await facetApp().create_facet(name); takeFacetLabel(); }
-		catch (e) { noticeDialog('Could not create Facet', friendlyError(e)); return; }
-		// A Facet made out of a chat inherits that chat's model. It is not asked for here because
-		// the user has already answered it, when they started the chat this Facet is made of.
-		setFacetModel(id, { provider: chat.provider || '', model: chat.model || '' });
-		await loadFacets();
+		try { id = await diamondApp().create_diamond(name); takeDiamondLabel(); }
+		catch (e) { noticeDialog('Could not create Diamond', friendlyError(e)); return; }
+		// A Diamond made out of a chat inherits that chat's model. It is not asked for here because
+		// the user has already answered it, when they started the chat this Diamond is made of.
+		setDiamondModel(id, { provider: chat.provider || '', model: chat.model || '' });
+		await loadDiamonds();
 		foldChatInto(chat, id, turns);
 	}
 
-	/// Fold a chat into a Facet. `turns`, when given, folds only those turns.
-	async function foldChatInto(chat, facetId, turns) {
-		var f = facets.find(function (x) { return x.id === facetId; });
+	/// Fold a chat into a Diamond. `turns`, when given, folds only those turns.
+	async function foldChatInto(chat, diamondId, turns) {
+		var f = diamonds.find(function (x) { return x.id === diamondId; });
 		if (!f) return;
-		// The reducer runs on the TARGET Facet's model, so that is the key that must be readable.
-		if (!facetCanRun(facetId)) {
-			openSettings('That Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+		// The reducer runs on the TARGET Diamond's model, so that is the key that must be readable.
+		if (!diamondCanRun(diamondId)) {
+			openSettings('That Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
 			return;
 		}
 		// The reducer is a real, paid round trip. Folding a chat that has not
@@ -3037,40 +3041,40 @@ import init, {
 		//
 		// A fold of chosen turns is exempt: the user has just said which turns they mean, and
 		// "nothing has changed since you folded the whole chat" is no answer to that.
-		if (!turns && chat.foldedInto && chat.foldedInto.id === facetId
+		if (!turns && chat.foldedInto && chat.foldedInto.id === diamondId
 			&& chat.foldedInto.at_len === (chat.messages || []).length) {
 			noticeDialog('Nothing new to fold',
 				'"' + chat.name + '" has not changed since it was folded into "' + f.name + '".');
 			return;
 		}
-		await selectFacet(f);                          // switch the centre to the Facet brief
-		setBriefBusy(true); setBriefStatus('Proposing fold…');
+		await selectDiamond(f);                          // switch the centre to the Diamond crystal
+		setCrystalBusy(true); setCrystalStatus('Proposing fold…');
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
-			setBriefStatus(''); setBriefBusy(false);
+			setCrystalStatus(''); setCrystalBusy(false);
 			noticeDialog('Nothing to fold', 'The turns you chose have no content to fold in.');
 			return;
 		}
-		// The reducer runs on the Facet's OWN model -- the one it was created with -- not on
+		// The reducer runs on the Diamond's OWN model -- the one it was created with -- not on
 		// whatever happens to be starred now.
-		var fa = facetApp(facetId);
+		var fa = diamondApp(diamondId);
 		try {
-			cur = await fa.read_brief(facetId);
-			proposed = await fa.fold_propose(facetId, delta);
+			cur = await fa.read_crystal(diamondId);
+			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
-			meterFacetTurn(fa);
-			setBriefStatus(friendlyError(e)); setBriefBusy(false); return;
+			meterDiamondTurn(fa);
+			setCrystalStatus(friendlyError(e)); setCrystalBusy(false); return;
 		}
-		meterFacetTurn(fa);
-		setBriefStatus(''); setBriefBusy(false);
-		pendingFolds[facetId] = {
+		meterDiamondTurn(fa);
+		setCrystalStatus(''); setCrystalBusy(false);
+		pendingFolds[diamondId] = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: chat.id, chatName: chat.name,
 			// Some of a chat is not the chat. Marking the tile "Folded" on a partial fold would
 			// claim the rest went in too, and would then refuse to fold the rest as unchanged.
 			partial: !!turns,
 		};
-		renderFoldDiff(facetId);
+		renderFoldDiff(diamondId);
 	}
 
 	function timeLabel() {
@@ -3080,7 +3084,7 @@ import init, {
 
 	function selectChat(chat) {
 		current = chat;
-		currentFacet = null;                       // a chat is not a Facet
+		currentDiamond = null;                       // a chat is not a Diamond
 		// The streaming refs point into the outgoing chat's DOM, which is about
 		// to be rebuilt. Left dangling, a turn still in flight would resume
 		// appending into a detached node and its text would vanish.
@@ -3088,7 +3092,7 @@ import init, {
 		curAsstText = '';
 		lastToolBlock = null;
 		if (typeof showCentre === 'function') showCentre('chat');
-		if (typeof updateActiveFacet === 'function') updateActiveFacet();
+		if (typeof updateActiveDiamond === 'function') updateActiveDiamond();
 		sessionNameEl.textContent = chat.name;     // read-only mirror of the tile label
 		if ((chat.status || 'active') === 'pending') {
 			renderPendingCentre(chat);
@@ -3150,7 +3154,7 @@ import init, {
 	///
 	/// This used to list the models of the ONE provider the app held. With a key per provider, a
 	/// bare model id no longer says which key to send it with, so the picker is grouped and the
-	/// provider rides on the option. `DaimondModels` owns both, because the tile and the New Facet
+	/// provider rides on the option. `DaimondModels` owns both, because the tile and the New Diamond
 	/// dialog must not each grow their own idea of what a model is.
 	function populateModelSelect(sel, selected, provider) {
 		if (!window.DaimondModels) { sel.innerHTML = ''; sel.disabled = true; return; }
@@ -3231,7 +3235,7 @@ import init, {
 		closeBtn.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			// Deleting a chat destroys its whole history with no undo, so it is
-			// confirmed — as deleting a Facet already was.
+			// confirmed — as deleting a Diamond already was.
 			var n = (s.messages || []).length;
 			var msg = n
 				? 'Delete "' + s.name + '" and its ' + n + ' message' + (n === 1 ? '' : 's') + '? This cannot be undone.'
@@ -3286,7 +3290,7 @@ import init, {
 			fold.textContent = s.foldedInto ? 'Folded' : 'Fold all';
 			fold.title = s.foldedInto
 				? 'Already folded into "' + s.foldedInto.name + '" — fold again to add anything new since.'
-				: 'Fold this whole chat into a Facet';
+				: 'Fold this whole chat into a Diamond';
 			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
 			top.appendChild(fold);
 			meta.appendChild(top);
@@ -3605,7 +3609,7 @@ import init, {
 		}
 	}
 
-	// The global spend readout at the foot of the Facets/Chats panel: session
+	// The global spend readout at the foot of the Diamonds/Chats panel: session
 	// (usage since a ≥15-min idle gap) · this week · this month. Precise but
 	// calm — a quiet reassurance, not a running total shouting in dollars.
 	function updateSpend() {
@@ -3701,7 +3705,7 @@ import init, {
 		try { a = DaimondGovernor.assessDispatch(n); } catch (e) { return true; }
 		if (!a || !a.needsConfirm) return true;
 		var each = (n === 1) ? '' : 's';
-		var msg = 'This Facet is about to run ' + n + ' agent' + each
+		var msg = 'This Diamond is about to run ' + n + ' agent' + each
 			+ ', at about ' + fmtUsd(a.predicted) + ' (' + fmtUsd(a.perWorker) + ' each).'
 			+ (a.runSpent > 0 ? ' This burst has spent ' + fmtUsd(a.runSpent) + ' already.' : '')
 			+ ' That would pass your ' + fmtUsd(a.budget) + ' pace budget for one run.';
@@ -3743,7 +3747,7 @@ import init, {
 			try {
 				localStorage.setItem(WORKERS_KEY, JSON.stringify(this.runs.slice(0, 12).map(function (r) {
 					return {
-						id: r.id, name: r.name, task: r.task, facetId: r.facetId, facetName: r.facetName,
+						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
 						model: r.model, status: r.status, text: r.text, tools: r.tools,
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
 					};
@@ -3771,7 +3775,7 @@ import init, {
 		},
 
 		/// Dispatch every agent the conductor asked for in one turn.
-		dispatch: function (facetId, facetName, specs) {
+		dispatch: function (diamondId, diamondName, specs) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
@@ -3780,8 +3784,8 @@ import init, {
 					id: 'w' + (++self.seq),
 					name: spec.name || ('agent-' + self.seq),
 					task: spec.task || '',
-					facetId: facetId,
-					facetName: facetName,
+					diamondId: diamondId,
+					diamondName: diamondName,
 					model: cfg.model,
 					// A worker runs on the starred default, which is what `cfg` is a view of. It
 					// was implicit before, read straight out of `cfg` at construction; naming it
@@ -3800,8 +3804,8 @@ import init, {
 				// Open the agent in the write-ahead log, so a tab that dies while it works recovers
 				// it — with its partial output — instead of only its name.
 				if (window.DaimondJournal) DaimondJournal.agentOpen(run.id, {
-					name: run.name, task: run.task, facetId: run.facetId,
-					facetName: run.facetName, model: run.model,
+					name: run.name, task: run.task, diamondId: run.diamondId,
+					diamondName: run.diamondName, model: run.model,
 				});
 			});
 			this.persist();
@@ -3823,9 +3827,9 @@ import init, {
 			var self = this;
 			// The worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
-			// brief of the Facet it is working for.
-			var brief = '';
-			try { brief = await facetApp().read_brief(run.facetId); } catch (e) { brief = ''; }
+			// crystal of the Diamond it is working for.
+			var crystal = '';
+			try { crystal = await diamondApp().read_crystal(run.diamondId); } catch (e) { crystal = ''; }
 
 			// A worker's key, like a chat's, is frozen when its agent is built. A worker spends
 			// the same minted key a chat does, and must survive it being spent the same way --
@@ -3839,12 +3843,12 @@ import init, {
 					if (!s || !s.key) throw new Error('This worker has no key to run on.');
 					run._gen = s.gen;
 					run.app = new DaimondApp(s.url, s.key, run.model, cfg.maxTokens || 4096,
-						Instructions.compose(worker_prompt(), brief), true);
+						Instructions.compose(worker_prompt(), crystal), true);
 				} else {
 					var a = appCfgFor(run);
 					run._gen = creditsGen();
 					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, cfg.maxTokens || 4096,
-						Instructions.compose(worker_prompt(), brief), true);
+						Instructions.compose(worker_prompt(), crystal), true);
 				}
 			};
 			// On credits, take a slot and mint its own key before building. A slot the
@@ -3923,7 +3927,7 @@ import init, {
 						try {
 							await DaimondJournal.clearAgent(run.id);
 							DaimondJournal.agentOpen(run.id, { name: run.name, task: run.task,
-								facetId: run.facetId, facetName: run.facetName, model: run.model });
+								diamondId: run.diamondId, diamondName: run.diamondName, model: run.model });
 						} catch (e3) { /* the journal is best-effort; the retry is not. */ }
 					}
 					self.render();
@@ -4053,7 +4057,7 @@ import init, {
 			this.render();
 		},
 
-		/// Fold a finished worker's summary into the Facet that dispatched it.
+		/// Fold a finished worker's summary into the Diamond that dispatched it.
 		foldIn: async function (run) {
 			if (!run.text.trim()) {
 				noticeDialog('Nothing to fold', 'This agent produced no summary to fold.');
@@ -4061,13 +4065,13 @@ import init, {
 			}
 			if (run.folded) {
 				noticeDialog('Already folded',
-					'This agent\'s summary has already been folded into the brief.');
+					'This agent\'s summary has already been folded into the crystal.');
 				return;
 			}
 			// The run is marked folded when the proposed fold is ACCEPTED, not
 			// here -- the user may still reject the diff. Passing the run lets the
 			// accept handler mark it, so the same summary is never offered twice.
-			await foldDeltaInto(run.facetId, run.text.trim(), run.name, run);
+			await foldDeltaInto(run.diamondId, run.text.trim(), run.name, run);
 		},
 
 		clearFinished: function () {
@@ -4105,7 +4109,7 @@ import init, {
 			if (this.runs.length === 0) {
 				var empty = document.createElement('div');
 				empty.className = 'agents-empty';
-				empty.textContent = 'No agents yet. Ask a Facet to start one and it appears here.';
+				empty.textContent = 'No agents yet. Ask a Diamond to start one and it appears here.';
 				agentsList.appendChild(empty);
 			} else if (shown === 0) {
 				var none = document.createElement('div');
@@ -4140,10 +4144,10 @@ import init, {
 			task.textContent = run.task;
 			card.appendChild(task);
 
-			// Chips carry where the run came from without a tree: its Facet, that
-			// Facet's inherited tags, and the model. The Facet and tag chips filter.
+			// Chips carry where the run came from without a tree: its Diamond, that
+			// Diamond's inherited tags, and the model. The Diamond and tag chips filter.
 			var chips = document.createElement('div'); chips.className = 'achips';
-			chips.appendChild(agentFacetChip(run));
+			chips.appendChild(agentDiamondChip(run));
 			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
 				var c = tagChip(t, 'tag-sm' + (agentTagFilter === t ? ' tag-active' : ''), setAgentTagFilter);
 				c.title = 'Show only agents tagged "' + t + '"';
@@ -4208,7 +4212,7 @@ import init, {
 			} else {
 				if (run.text.trim()) {
 					// A failed agent's "summary" is an error message, not a result,
-					// so folding it would write the error into the brief. Offer the
+					// so folding it would write the error into the crystal. Offer the
 					// fold only for an agent that actually finished its work, and
 					// only once -- a folded summary is not offered again.
 					var foldable = run.status !== 'error' && !run.folded;
@@ -4216,7 +4220,7 @@ import init, {
 						var fold = document.createElement('button');
 						fold.className = 'abtn';
 						fold.textContent = 'Fold in';
-						fold.title = 'Fold this agent\'s summary into "' + run.facetName + '"';
+						fold.title = 'Fold this agent\'s summary into "' + run.diamondName + '"';
 						fold.addEventListener('click', function () { self.foldIn(run); });
 						acts.appendChild(fold);
 					} else if (run.folded) {
@@ -4254,7 +4258,7 @@ import init, {
 	// ── Standing instructions (DAIMOND.md) ─────────────────────
 	//
 	// A dispatched worker gets its task and nothing else: it cannot see the
-	// conversation that dispatched it, it does not know the Facet's brief, and it
+	// conversation that dispatched it, it does not know the Diamond's crystal, and it
 	// does not know the user's house rules. So it starts from zero every time.
 	//
 	// `DAIMOND.md` at the workspace root fixes that. A plain file, editable in the
@@ -4308,24 +4312,24 @@ import init, {
 			if (this.md !== prev) {
 				chats.forEach(function (c) { c.app = null; });
 				var md = this.md;
-				Object.keys(_facetApps).forEach(function (k) {
-					try { _facetApps[k].set_instructions(md); } catch (e) { /* ignore */ }
+				Object.keys(_diamondApps).forEach(function (k) {
+					try { _diamondApps[k].set_instructions(md); } catch (e) { /* ignore */ }
 				});
 			}
 			this.render();
 			return this.md;
 		},
 
-		/// The role prompt, plus the house rules, plus (for a worker) the brief of
-		/// the Facet that dispatched it.
-		compose: function (role, brief) {
+		/// The role prompt, plus the house rules, plus (for a worker) the crystal of
+		/// the Diamond that dispatched it.
+		compose: function (role, crystal) {
 			var out = role;
 			if (this.md.trim()) {
 				out += '\n\n## Standing instructions from the user\n\n' + this.md.trim();
 			}
-			if (brief && brief.trim()) {
-				out += '\n\n## The brief of the Facet that dispatched you\n\n'
-					+ 'This is what the work is for. Act consistently with it.\n\n' + brief.trim();
+			if (crystal && crystal.trim()) {
+				out += '\n\n## The crystal of the Diamond that dispatched you\n\n'
+					+ 'This is what the work is for. Act consistently with it.\n\n' + crystal.trim();
 			}
 			return out;
 		},
@@ -4460,53 +4464,53 @@ import init, {
 		try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* best effort */ }
 	}
 
-	// A Facet DaimondApp's counters are cumulative across every steer and fold IT has run, so a
+	// A Diamond DaimondApp's counters are cumulative across every steer and fold IT has run, so a
 	// turn's cost is the growth since that app was last read.
 	//
 	// There is now one app per model, so the previous reading is kept per app, not in a pair of
 	// module variables. With a single pair, a fold on a cheap model followed by a steer on an
 	// expensive one would have billed the difference between two unrelated counters -- and priced
 	// the turn at whatever the starred model happened to cost.
-	var _facetMeter = new Map();       // app -> { p, c } at the last reading
-	function meterFacetTurn(app) {
+	var _diamondMeter = new Map();       // app -> { p, c } at the last reading
+	function meterDiamondTurn(app) {
 		if (!app || !window.DaimondLedger) return;
-		var prev = _facetMeter.get(app) || { p: 0, c: 0 };
+		var prev = _diamondMeter.get(app) || { p: 0, c: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
 		var dp = Math.max(0, p - prev.p), dc = Math.max(0, c - prev.c);
-		_facetMeter.set(app, { p: p, c: c });
+		_diamondMeter.set(app, { p: p, c: c });
 		if (dp + dc === 0) return;
-		recordSpend(_facetAppModel.get(app) || cfg.model, dp, dc);
+		recordSpend(_diamondAppModel.get(app) || cfg.model, dp, dc);
 		updateSpend();
 	}
 
-	/// Fold an arbitrary delta (an agent's summary, say) into a Facet, through
+	/// Fold an arbitrary delta (an agent's summary, say) into a Diamond, through
 	/// the same advisory path a chat fold takes: propose, show the diff, and let
 	/// the user accept or veto.
-	async function foldDeltaInto(facetId, delta, sourceName, sourceRun) {
-		var f = facets.find(function (x) { return x.id === facetId; });
-		if (!f) { noticeDialog('Facet is gone', 'The Facet that dispatched this agent no longer exists.'); return; }
-		if (!facetCanRun(facetId)) {
-			openSettings('That Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+	async function foldDeltaInto(diamondId, delta, sourceName, sourceRun) {
+		var f = diamonds.find(function (x) { return x.id === diamondId; });
+		if (!f) { noticeDialog('Diamond is gone', 'The Diamond that dispatched this agent no longer exists.'); return; }
+		if (!diamondCanRun(diamondId)) {
+			openSettings('That Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
 			return;
 		}
-		await selectFacet(f);
-		setBriefBusy(true); setBriefStatus('Proposing fold…');
+		await selectDiamond(f);
+		setCrystalBusy(true); setCrystalStatus('Proposing fold…');
 		var cur, proposed;
-		var fa = facetApp(facetId);            // the Facet's own model, not the starred one
+		var fa = diamondApp(diamondId);            // the Diamond's own model, not the starred one
 		try {
-			cur = await fa.read_brief(facetId);
-			proposed = await fa.fold_propose(facetId, delta);
+			cur = await fa.read_crystal(diamondId);
+			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
-			meterFacetTurn(fa);
-			setBriefStatus(friendlyError(e)); setBriefBusy(false); return;
+			meterDiamondTurn(fa);
+			setCrystalStatus(friendlyError(e)); setCrystalBusy(false); return;
 		}
-		meterFacetTurn(fa);
-		setBriefStatus(''); setBriefBusy(false);
-		pendingFolds[facetId] = {
+		meterDiamondTurn(fa);
+		setCrystalStatus(''); setCrystalBusy(false);
+		pendingFolds[diamondId] = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: null, chatName: sourceName, sourceRun: sourceRun || null,
 		};
-		renderFoldDiff(facetId);
+		renderFoldDiff(diamondId);
 	}
 
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
@@ -4546,7 +4550,7 @@ import init, {
 				parseListing(res).forEach(function (e) {
 					if (e.name.charAt(0) === '.') return;
 					var full = joinPath(dir, e.name);
-					if (!dir && e.name === 'facets' && e.dir) return;      // Daimond's own store
+					if (!dir && e.name === 'diamonds' && e.dir) return;      // Daimond's own store
 					if (e.dir) { todo.push(full); return; }
 					if (e.name.toLowerCase().indexOf(filter) !== -1) {
 						hits.push({ name: full, dir: false, size: e.size, deep: true });
@@ -4615,7 +4619,7 @@ import init, {
 		// The OPFS root and an FSA folder are both a FileSystemDirectory-
 		// Handle with the same interface, so "open a real folder" simply
 		// swaps the root handle the file tools resolve against (in wasm).
-		// Facet/brief/`.daimond` storage pins OPFS and is never affected.
+		// Diamond/crystal/`.daimond` storage pins OPFS and is never affected.
 
 		// Render the mode row: which files the agent is touching, and the ways to change that.
 		//
@@ -4860,7 +4864,7 @@ import init, {
 			var atRoot = !curDir || curDir === '.' || curDir === '/';
 			entries = entries.filter(function (e) {
 				if (e.name.charAt(0) === '.') return false;          // `.daimond` and any other dotfile
-				if (atRoot && e.name === 'facets' && e.dir) return false;
+				if (atRoot && e.name === 'diamonds' && e.dir) return false;
 				return true;
 			});
 			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
@@ -5097,7 +5101,7 @@ import init, {
 			if (p === INSTRUCTIONS_FILE) {
 				seed = '# Standing instructions\n\n'
 					+ 'Everything written here is given to every agent Daimond runs — chats, the\n'
-					+ 'conductor of each Facet, and every worker it dispatches.\n\n'
+					+ 'conductor of each Diamond, and every worker it dispatches.\n\n'
 					+ '## House rules\n\n'
 					+ '- \n';
 			}
@@ -5261,51 +5265,51 @@ import init, {
 		};
 	})();
 
-	// ── Facets / brief / fold ────────────────────────────────────
-	// A Facet is a durable brief the user steers and folds deltas into.
-	// ── A Facet runs on the model it was created with ──────────────
+	// ── Diamonds / crystal / fold ────────────────────────────────────
+	// A Diamond is a durable crystal the user steers and folds deltas into.
+	// ── A Diamond runs on the model it was created with ──────────────
 	//
-	// Which model a Facet thinks with is a browser-side choice about how to RUN it, not part of
-	// the brief it holds, so it lives in localStorage beside the app rather than in the Facet's
+	// Which model a Diamond thinks with is a browser-side choice about how to RUN it, not part of
+	// the crystal it holds, so it lives in localStorage beside the app rather than in the Diamond's
 	// own OPFS record -- and no Rust has to learn about it.
-	var FACET_MODELS_KEY = 'daimond-facet-models';
+	var DIAMOND_MODELS_KEY = 'daimond-diamond-models';
 
-	function facetModels() { return readJson(FACET_MODELS_KEY, {}) || {}; }
+	function diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }
 
-	function setFacetModel(id, pick) {
+	function setDiamondModel(id, pick) {
 		if (!id || !pick || !pick.model) return;
-		var all = facetModels();
+		var all = diamondModels();
 		all[id] = { provider: pick.provider || '', model: pick.model };
-		try { localStorage.setItem(FACET_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
-	/// The model a Facet runs on. A Facet made before Facets had models falls back to the default,
+	/// The model a Diamond runs on. A Diamond made before Diamonds had models falls back to the default,
 	/// which is exactly what it was silently doing already.
-	function facetModel(id) {
-		var m = facetModels()[id];
+	function diamondModel(id) {
+		var m = diamondModels()[id];
 		return m && m.model ? m : (window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' });
 	}
 
-	/// Can this Facet actually think? That is a question about ITS provider's key, not the starred
+	/// Can this Diamond actually think? That is a question about ITS provider's key, not the starred
 	/// provider's -- and they are not always the same one.
-	function facetCanRun(id) {
-		var m = facetModel(id);
+	function diamondCanRun(id) {
+		var m = diamondModel(id);
 		return !!(window.DaimondModels && DaimondModels.resolve(m.provider, m.model));
 	}
 
-	// The brief agent and reducer run through a DaimondApp per model configuration. The pure OPFS
+	// The crystal agent and reducer run through a DaimondApp per model configuration. The pure OPFS
 	// operations (create/list/read/write/log/fold_apply) work on any instance, so a placeholder
 	// provider is fine when none is configured.
 	//
-	// Cached by the configuration rather than by the Facet: two Facets on the same model are the
+	// Cached by the configuration rather than by the Diamond: two Diamonds on the same model are the
 	// same client, and DaimondApp has no setter for its model -- changing one means building one.
-	var _facetApps     = {};           // "provider model" -> DaimondApp
-	var _facetAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
-	function facetApp(facetId, pick) {
-		var m = pick && pick.model ? pick : facetModel(facetId);
+	var _diamondApps     = {};           // "provider model" -> DaimondApp
+	var _diamondAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
+	function diamondApp(diamondId, pick) {
+		var m = pick && pick.model ? pick : diamondModel(diamondId);
 		var a = appCfgFor(m);
 		var k = (a.provider || '') + ' ' + (a.model || '');
-		if (_facetApps[k]) return _facetApps[k];
+		if (_diamondApps[k]) return _diamondApps[k];
 
 		var app;
 		var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
@@ -5319,17 +5323,17 @@ import init, {
 		// The conductor's and the reducer's system prompts are composed in Rust,
 		// so the house rules are handed across rather than baked into the ctor.
 		try { app.set_instructions(Instructions.md); } catch (e) { /* ignore */ }
-		_facetApps[k] = app;
-		_facetAppModel.set(app, a.model || '');
+		_diamondApps[k] = app;
+		_diamondAppModel.set(app, a.model || '');
 		return app;
 	}
 
 	/// Forget the built clients. A key that has just changed -- or been locked away -- must not go
 	/// on being used by a client that closed over the old one.
-	function resetFacetApps() {
-		_facetApps = {};
-		_facetAppModel = new Map();
-		_facetMeter = new Map();
+	function resetDiamondApps() {
+		_diamondApps = {};
+		_diamondAppModel = new Map();
+		_diamondMeter = new Map();
 	}
 
 	/// A short relative-time label from an epoch-ms value.
@@ -5344,16 +5348,16 @@ import init, {
 		return Math.round(h / 24) + 'd ago';
 	}
 
-	/// Reload the Facets list from the store and re-render the rail.
-	async function loadFacets() {
+	/// Reload the Diamonds list from the store and re-render the rail.
+	async function loadDiamonds() {
 		try {
-			var json = await facetApp().list_facets();
-			facets = JSON.parse(json);
-		} catch (e) { facets = []; }
-		renderFacetList();
+			var json = await diamondApp().list_diamonds();
+			diamonds = JSON.parse(json);
+		} catch (e) { diamonds = []; }
+		renderDiamondList();
 	}
 
-	/// A Facet's tags, tolerating the Facets written before tags existed.
+	/// A Diamond's tags, tolerating the Diamonds written before tags existed.
 	function tagsOf(f) {
 		return Array.isArray(f && f.tags) ? f.tags : [];
 	}
@@ -5394,67 +5398,67 @@ import init, {
 		return el;
 	}
 
-	/// Does a Facet survive the search box and the tag filter? Names and tags
-	/// only -- the brief itself is deliberately not searched.
-	function facetMatches(f) {
+	/// Does a Diamond survive the search box and the tag filter? Names and tags
+	/// only -- the crystal itself is deliberately not searched.
+	function diamondMatches(f) {
 		var tags = tagsOf(f);
 		if (tagFilter && tags.indexOf(tagFilter) === -1) return false;
-		if (!facetQuery) return true;
-		if ((f.name || '').toLowerCase().indexOf(facetQuery) !== -1) return true;
-		return tags.some(function (t) { return t.toLowerCase().indexOf(facetQuery) !== -1; });
+		if (!diamondQuery) return true;
+		if ((f.name || '').toLowerCase().indexOf(diamondQuery) !== -1) return true;
+		return tags.some(function (t) { return t.toLowerCase().indexOf(diamondQuery) !== -1; });
 	}
 
 	/// Filter the rail to one tag. Clicking the tag that is already filtering
 	/// clears it, so the chip that turns the filter on turns it off again.
 	function setTagFilter(tag) {
 		tagFilter = (tagFilter === tag) ? null : tag;
-		renderFacetList();
+		renderDiamondList();
 	}
 
-	// ── Agents panel: find and filter, mirroring the Facets rail ──────────
-	// A flat list with chips, deliberately not a Facet→children tree: the
+	// ── Agents panel: find and filter, mirroring the Diamonds rail ──────────
+	// A flat list with chips, deliberately not a Diamond→children tree: the
 	// tree's height is more than the dock can spare, and the parent a run
 	// belongs to already rides on the run, as a chip.
 
-	/// The Facet a run belongs to, looked up live, or null.
-	function agentFacetOf(run) {
-		if (!run || !run.facetId) return null;
-		for (var i = 0; i < facets.length; i++) if (facets[i].id === run.facetId) return facets[i];
+	/// The Diamond a run belongs to, looked up live, or null.
+	function agentDiamondOf(run) {
+		if (!run || !run.diamondId) return null;
+		for (var i = 0; i < diamonds.length; i++) if (diamonds[i].id === run.diamondId) return diamonds[i];
 		return null;
 	}
 
-	/// A run's tags: the tags of the Facet that started it. A worker has none
-	/// of its own, so it borrows its Facet's -- which is what lets one tag
+	/// A run's tags: the tags of the Diamond that started it. A worker has none
+	/// of its own, so it borrows its Diamond's -- which is what lets one tag
 	/// vocabulary filter both rails.
 	function agentTagsOf(run) {
-		return tagsOf(agentFacetOf(run));
+		return tagsOf(agentDiamondOf(run));
 	}
 
-	/// One Facet chip on a run's tile: names the parent, and filters to it.
-	function agentFacetChip(run) {
+	/// One Diamond chip on a run's tile: names the parent, and filters to it.
+	function agentDiamondChip(run) {
 		var el = document.createElement('button');
-		el.className = 'tag-chip facet-chip' + (agentFacetFilter === run.facetId ? ' tag-active' : '');
-		el.style.setProperty('--tag-h', tagHue(run.facetName || ''));
-		el.textContent = '↳ ' + (run.facetName || 'no Facet');
-		el.title = run.facetId ? ('Show only agents from "' + run.facetName + '"') : 'This run has no Facet';
-		if (run.facetId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentFacetFilter(run.facetId); });
+		el.className = 'tag-chip diamond-chip' + (agentDiamondFilter === run.diamondId ? ' tag-active' : '');
+		el.style.setProperty('--tag-h', tagHue(run.diamondName || ''));
+		el.textContent = '↳ ' + (run.diamondName || 'no Diamond');
+		el.title = run.diamondId ? ('Show only agents from "' + run.diamondName + '"') : 'This run has no Diamond';
+		if (run.diamondId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentDiamondFilter(run.diamondId); });
 		return el;
 	}
 
 	/// Does a run survive the agents search box and its filter chip? Name,
-	/// task, Facet name, model and inherited tags are searched.
+	/// task, Diamond name, model and inherited tags are searched.
 	function agentMatches(run) {
-		if (agentFacetFilter && run.facetId !== agentFacetFilter) return false;
+		if (agentDiamondFilter && run.diamondId !== agentDiamondFilter) return false;
 		if (agentTagFilter && agentTagsOf(run).indexOf(agentTagFilter) === -1) return false;
 		if (!agentQuery) return true;
-		var hay = [run.name, run.task, run.facetName, shortModel(run.model)]
+		var hay = [run.name, run.task, run.diamondName, shortModel(run.model)]
 			.concat(agentTagsOf(run)).join(' ').toLowerCase();
 		return hay.indexOf(agentQuery) !== -1;
 	}
 
-	/// Filter the panel to one Facet (toggles off if it is already the filter).
-	function setAgentFacetFilter(facetId) {
-		agentFacetFilter = (agentFacetFilter === facetId) ? null : facetId;
+	/// Filter the panel to one Diamond (toggles off if it is already the filter).
+	function setAgentDiamondFilter(diamondId) {
+		agentDiamondFilter = (agentDiamondFilter === diamondId) ? null : diamondId;
 		agentTagFilter = null;   // one filter at a time, as the rail has one
 		Workers.render();
 	}
@@ -5462,7 +5466,7 @@ import init, {
 	/// Filter the panel to one tag (toggles off if it is already the filter).
 	function setAgentTagFilter(tag) {
 		agentTagFilter = (agentTagFilter === tag) ? null : tag;
-		agentFacetFilter = null;
+		agentDiamondFilter = null;
 		Workers.render();
 	}
 
@@ -5513,19 +5517,19 @@ import init, {
 	function renderAgentFilter() {
 		if (!agentFilter) return;
 		agentFilter.innerHTML = '';
-		if (!agentFacetFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
+		if (!agentDiamondFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
 		agentFilter.style.display = '';
 		var chip;
-		if (agentFacetFilter) {
-			var f = null, id = agentFacetFilter;
-			for (var i = 0; i < facets.length; i++) if (facets[i].id === id) { f = facets[i]; break; }
-			var label = f ? f.name : 'Facet';
+		if (agentDiamondFilter) {
+			var f = null, id = agentDiamondFilter;
+			for (var i = 0; i < diamonds.length; i++) if (diamonds[i].id === id) { f = diamonds[i]; break; }
+			var label = f ? f.name : 'Diamond';
 			chip = document.createElement('button');
-			chip.className = 'tag-chip tag-active facet-chip';
+			chip.className = 'tag-chip tag-active diamond-chip';
 			chip.style.setProperty('--tag-h', tagHue(label));
 			chip.textContent = '↳ ' + label;
-			chip.title = 'Clear the Facet filter';
-			chip.addEventListener('click', function () { setAgentFacetFilter(id); });
+			chip.title = 'Clear the Diamond filter';
+			chip.addEventListener('click', function () { setAgentDiamondFilter(id); });
 		} else {
 			var tag = agentTagFilter;
 			chip = tagChip(tag, 'tag-active', function () { setAgentTagFilter(tag); });
@@ -5539,46 +5543,46 @@ import init, {
 	/// The active filter, as one removable chip beside the search box. A
 	/// filter you cannot see is a list quietly lying about what it holds.
 	function renderTagFilter() {
-		if (!facetFilter) return;
-		facetFilter.innerHTML = '';
-		if (!tagFilter) { facetFilter.style.display = 'none'; return; }
-		facetFilter.style.display = '';
+		if (!diamondFilter) return;
+		diamondFilter.innerHTML = '';
+		if (!tagFilter) { diamondFilter.style.display = 'none'; return; }
+		diamondFilter.style.display = '';
 		var chip = tagChip(tagFilter, 'tag-active', function () { setTagFilter(null); });
 		chip.title = 'Clear the "' + tagFilter + '" filter';
 		var x = document.createElement('span');
 		x.className = 'tag-x';
 		x.textContent = '×';
 		chip.appendChild(x);
-		facetFilter.appendChild(chip);
+		diamondFilter.appendChild(chip);
 	}
 
-	function renderFacetList() {
-		facetList.innerHTML = '';
+	function renderDiamondList() {
+		diamondList.innerHTML = '';
 		renderTagFilter();
-		if (facets.length === 0) {
+		if (diamonds.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
-			note.textContent = 'No Facets yet.';
-			facetList.appendChild(note);
+			note.textContent = 'No Diamonds yet.';
+			diamondList.appendChild(note);
 			return;
 		}
-		// Already most-recently-updated first: `list_facets` sorts on `updated`.
-		var shown = facets.filter(facetMatches);
+		// Already most-recently-updated first: `list_diamonds` sorts on `updated`.
+		var shown = diamonds.filter(diamondMatches);
 		if (shown.length === 0) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = 'No Facets match.';
-			facetList.appendChild(none);
+			none.textContent = 'No Diamonds match.';
+			diamondList.appendChild(none);
 			return;
 		}
-		shown.forEach(function (f) { facetList.appendChild(facetBox(f)); });
-		updateActiveFacet();
+		shown.forEach(function (f) { diamondList.appendChild(diamondBox(f)); });
+		updateActiveDiamond();
 	}
 
-	function facetBox(f) {
-		var active = currentFacet && f.id === currentFacet.id;
+	function diamondBox(f) {
+		var active = currentDiamond && f.id === currentDiamond.id;
 		var box = document.createElement('div');
-		box.className = 'session-box facet-box' + (active ? ' active' : '');
+		box.className = 'session-box diamond-box' + (active ? ' active' : '');
 		box.dataset.id = f.id;
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
@@ -5588,23 +5592,23 @@ import init, {
 		name.title = 'Double-click to rename';
 		name.addEventListener('dblclick', async function (e) {
 			e.stopPropagation();
-			var nn = await promptDialog('Rename Facet', { value: f.name, okLabel: 'Rename' });
+			var nn = await promptDialog('Rename Diamond', { value: f.name, okLabel: 'Rename' });
 			if (nn === null) return; nn = nn.trim();
 			if (!nn || nn === f.name) return;
-			facetApp().rename_facet(f.id, nn).then(function () { f.name = nn; loadFacets(); })
+			diamondApp().rename_diamond(f.id, nn).then(function () { f.name = nn; loadDiamonds(); })
 				.catch(function (e2) { noticeDialog('Rename failed', friendlyError(e2)); });
 		});
 		header.appendChild(name);
 		var del = document.createElement('button');
 		del.className = 'session-box-close';
 		del.textContent = '×';
-		del.title = 'Delete Facet';
+		del.title = 'Delete Diamond';
 		del.addEventListener('click', async function (e) {
 			e.stopPropagation();
-			if (!await confirmDialog('Delete the Facet "' + f.name + '" and all of its brief, history and deltas? This cannot be undone.', 'Delete Facet', { title: 'Delete Facet' })) return;
-			facetApp().delete_facet(f.id).then(function () {
-				if (currentFacet && currentFacet.id === f.id) { currentFacet = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
-				loadFacets();
+			if (!await confirmDialog('Delete the Diamond "' + f.name + '" — its crystal, its history and its deltas? This cannot be undone.', 'Delete Diamond', { title: 'Delete Diamond' })) return;
+			diamondApp().delete_diamond(f.id).then(function () {
+				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
+				loadDiamonds();
 			}).catch(function (e2) { noticeDialog('Delete failed', friendlyError(e2)); });
 		});
 		header.appendChild(del);
@@ -5612,7 +5616,7 @@ import init, {
 		meta.className = 'session-box-meta';
 		var ver = document.createElement('span');
 		ver.className = 'session-box-ctx';
-		ver.textContent = 'v' + (f.brief_version || 0);
+		ver.textContent = 'v' + (f.crystal_version || 0);
 		meta.appendChild(ver);
 		if (f.updated) {
 			var upd = document.createElement('span');
@@ -5620,14 +5624,14 @@ import init, {
 			upd.textContent = relTime(f.updated);
 			meta.appendChild(upd);
 		}
-		// Tags sit with the other plain facts of the Facet. Only the first few
-		// show, so one heavily-filed Facet cannot push the rest off the rail;
-		// a Facet with no tags adds nothing here and looks exactly as it did
+		// Tags sit with the other plain facts of the Diamond. Only the first few
+		// show, so one heavily-filed Diamond cannot push the rest off the rail;
+		// a Diamond with no tags adds nothing here and looks exactly as it did
 		// before tags existed.
 		var tags = tagsOf(f);
 		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
 			var chip = tagChip(t, 'tag-sm', setTagFilter);
-			chip.title = 'Show only Facets tagged "' + t + '"';
+			chip.title = 'Show only Diamonds tagged "' + t + '"';
 			meta.appendChild(chip);
 		});
 		if (tags.length > TAG_CHIPS_SHOWN) {
@@ -5639,29 +5643,29 @@ import init, {
 		}
 		box.appendChild(header); box.appendChild(meta);
 		box.addEventListener('click', function () {
-			selectFacet(f);
+			selectDiamond(f);
 			if (isMobile()) mshow('ai');
 		});
 		return box;
 	}
 
-	function updateActiveFacet() {
-		facetList.querySelectorAll('.facet-box').forEach(function (box) {
-			box.classList.toggle('active', currentFacet && box.dataset.id === currentFacet.id);
+	function updateActiveDiamond() {
+		diamondList.querySelectorAll('.diamond-box').forEach(function (box) {
+			box.classList.toggle('active', currentDiamond && box.dataset.id === currentDiamond.id);
 		});
 	}
 
-	/// The AI panel's own two faces: the chat thread, and a Facet's brief.
+	/// The AI panel's own two faces: the chat thread, and a Diamond's crystal.
 	///
 	/// A document and a message used to be shown HERE, in place of the chat —
 	/// so reading your mail meant leaving the conversation. They are stage
 	/// panels now, and open beside it.
 	function showCentre(mode) {
 		centreMode = mode;
-		var facetOn = (mode === 'focus');
-		briefView.style.display    = facetOn ? 'flex' : 'none';
-		chatOutputEl.style.display = facetOn ? 'none' : '';
-		chatInputBar.style.display = facetOn ? 'none' : '';
+		var diamondOn = (mode === 'focus');
+		crystalView.style.display    = diamondOn ? 'flex' : 'none';
+		chatOutputEl.style.display = diamondOn ? 'none' : '';
+		chatInputBar.style.display = diamondOn ? 'none' : '';
 	}
 
 	/// Show one mail message on the stage, beside the chat — so it can be read
@@ -6091,25 +6095,25 @@ import init, {
 		DaimondPanels.reflow();
 	}
 
-	/// Create a Facet, on a model the user chose.
+	/// Create a Diamond, on a model the user chose.
 	///
-	/// A Facet runs the conductor and the reducer -- it thinks, and it is billed for thinking --
+	/// A Diamond runs the conductor and the reducer -- it thinks, and it is billed for thinking --
 	/// so which model it runs is as much a decision as it is for a chat. It used to be no decision
-	/// at all: a Facet silently took whichever model happened to be starred, and starring a
-	/// different one later moved every Facet onto it.
-	async function createFacet() {
+	/// at all: a Diamond silently took whichever model happened to be starred, and starring a
+	/// different one later moved every Diamond onto it.
+	async function createDiamond() {
 		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
 		var vals = await dialog({
 			kind: 'form',
-			title: 'New Facet',
+			title: 'New Diamond',
 			okLabel: 'Create',
 			fields: [
-				{ name: 'name',  label: 'Name',  value: peekFacetLabel() },
+				{ name: 'name',  label: 'Name',  value: peekDiamondLabel() },
 				{ name: 'model', label: 'Model', kind: 'models', provider: d.provider, value: d.model },
 			],
 			validate: function (v) {
-				if (!v.name) return 'Give the Facet a name.';
-				if (!v.model || !v.model.model) return 'Choose a model for this Facet to think with.';
+				if (!v.name) return 'Give the Diamond a name.';
+				if (!v.model || !v.model.model) return 'Choose a model for this Diamond to think with.';
 				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
 					return 'That provider has no readable key yet — unlock, or add one.';
 				}
@@ -6121,72 +6125,72 @@ import init, {
 
 		var id;
 		try {
-			// create_facet is a pure OPFS write -- no model is consulted -- so any instance will
-			// do. The model matters from the Facet's first *thought*, which is why it is recorded
-			// against the Facet rather than handed to this call.
-			id = await facetApp().create_facet(name);
-			takeFacetLabel();
+			// create_diamond is a pure OPFS write -- no model is consulted -- so any instance will
+			// do. The model matters from the Diamond's first *thought*, which is why it is recorded
+			// against the Diamond rather than handed to this call.
+			id = await diamondApp().create_diamond(name);
+			takeDiamondLabel();
 		} catch (e) {
-			noticeDialog('Could not create Facet', friendlyError(e));
+			noticeDialog('Could not create Diamond', friendlyError(e));
 			return;
 		}
-		setFacetModel(id, vals.model);
-		await loadFacets();
-		var f = facets.find(function (x) { return x.id === id; });
-		if (f) selectFacet(f);
+		setDiamondModel(id, vals.model);
+		await loadDiamonds();
+		var f = diamonds.find(function (x) { return x.id === id; });
+		if (f) selectDiamond(f);
 		if (isMobile()) mshow('ai');
 	}
 
-	async function selectFacet(f) {
-		currentFacet = f;
-		current = null;                            // a Facet is not a chat
+	async function selectDiamond(f) {
+		currentDiamond = f;
+		current = null;                            // a Diamond is not a chat
 		updateActiveSession();                     // clear chat highlight
-		updateActiveFacet();
+		updateActiveDiamond();
 		sessionNameEl.textContent = f.name;
-		aiMeter.textContent = 'brief v' + (f.brief_version || 0)
+		aiMeter.textContent = 'crystal v' + (f.crystal_version || 0)
 			+ (f.updated ? ' · ' + relTime(f.updated) : '');
 		showCentre('focus');
-		// A Facet that carries an arrangement is worked in it. Only an arrangement
+		// A Diamond that carries an arrangement is worked in it. Only an arrangement
 		// the user deliberately saved exists, so this never closes a panel behind
-		// their back on a Facet they never arranged.
+		// their back on a Diamond they never arranged.
 		DaimondPanels.restoreArrangement(f.id);
-		// A proposal left pending on this Facet is restored rather than lost.
+		// A proposal left pending on this Diamond is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
-		else await renderBrief();
+		else await renderCrystal();
 	}
 
-	/// Read the current brief and render it (markdown) plus the steer and
-	/// fold controls.  H5: brief markdown passes through DaimondRender.md's
+	/// Read the current crystal and render it (markdown) plus the steer and
+	/// fold controls.  H5: crystal markdown passes through DaimondRender.md's
 	/// sanitiser; no untrusted string reaches innerHTML unescaped.
-	async function renderBrief() {
-		if (!currentFacet) return;
+	async function renderCrystal() {
+		if (!currentDiamond) return;
 		var md = '';
-		try { md = await facetApp().read_brief(currentFacet.id); }
+		try { md = await diamondApp().read_crystal(currentDiamond.id); }
 		catch (e) { md = ''; }
-		briefBody.innerHTML = '';
+		crystalBody.innerHTML = '';
 
-		// The brief is the user's own document, so it carries the two things a
+		// The crystal is the user's own document, so it carries the two things a
 		// document needs: a way to edit it by hand, and a way back. An accepted
-		// fold overwrites the brief wholesale, and until now that was final —
+		// fold overwrites the crystal wholesale, and until now that was final —
 		// no undo, no history, no hand-edit, though every version was being
 		// snapshotted to disk all along.
 		var bar = document.createElement('div');
-		bar.className = 'brief-bar';
+		bar.className = 'crystal-bar';
 		var edit = document.createElement('button');
-		edit.className = 'brief-act';
+		edit.className = 'crystal-act';
 		edit.textContent = '✎ Edit';
-		edit.addEventListener('click', function () { editBrief(md); });
+		edit.addEventListener('click', function () { editCrystal(md); });
 		var hist = document.createElement('button');
-		hist.className = 'brief-act';
+		hist.className = 'crystal-act';
 		hist.textContent = '↺ History';
-		hist.addEventListener('click', showBriefHistory);
+		hist.addEventListener('click', showCrystalHistory);
 		var tagsBtn = document.createElement('button');
-		tagsBtn.className = 'brief-act';
+		tagsBtn.className = 'crystal-act';
 		tagsBtn.textContent = '# Tags';
-		tagsBtn.title = 'File this Facet in the rail';
+		tagsBtn.title = 'File this Diamond in the rail';
 		tagsBtn.addEventListener('click', showTagEditor);
 		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
-		briefBody.appendChild(bar);
+		crystalBody.appendChild(bar);
 
 		var content = document.createElement('div');
 		content.className = 'chat-msg-content';
@@ -6194,74 +6198,78 @@ import init, {
 			content.innerHTML = DaimondRender.md(md);  // sanitised (H5)
 		} else {
 			var empty = document.createElement('div');
-			empty.className = 'brief-empty';
-			empty.textContent = 'The brief is empty. Steer it below to begin.';
+			empty.className = 'crystal-empty';
+			empty.textContent = 'The crystal is empty. Steer it below to begin.';
 			content.appendChild(empty);
 		}
-		briefBody.appendChild(content);
-		renderBriefControls();
+		crystalBody.appendChild(content);
+		renderCrystalControls();
 		renderArtefacts();          // fills the strip, or leaves it hidden at zero
 	}
 
-	/// Hand-edit the brief. `write_brief` snapshots a version and logs the edit,
+	/// Hand-edit the crystal. `write_crystal` snapshots a version and logs the edit,
 	/// so a hand-edit is as recoverable as a fold.
-	function editBrief(md) {
-		briefBody.innerHTML = '';
+	function editCrystal(md) {
+		crystalBody.innerHTML = '';
 		var ta = document.createElement('textarea');
-		ta.className = 'brief-edit';
+		ta.className = 'crystal-edit';
 		ta.value = md || '';
 		ta.spellcheck = false;
 
 		var bar = document.createElement('div');
-		bar.className = 'brief-bar';
+		bar.className = 'crystal-bar';
 		var save = document.createElement('button');
-		save.className = 'brief-act primary';
+		save.className = 'crystal-act primary';
 		save.textContent = '✔ Save';
 		var cancel = document.createElement('button');
-		cancel.className = 'brief-act';
+		cancel.className = 'crystal-act';
 		cancel.textContent = 'Cancel';
 		save.addEventListener('click', async function () {
 			save.disabled = true; save.textContent = 'Saving…';
-			try { await facetApp().write_brief(currentFacet.id, ta.value); }
-			catch (e) { noticeDialog('Could not save the brief', friendlyError(e)); save.disabled = false; save.textContent = '✔ Save'; return; }
-			await refreshFacetAfterChange();
+			try { await diamondApp().write_crystal(currentDiamond.id, ta.value); }
+			catch (e) { noticeDialog('Could not save the crystal', friendlyError(e)); save.disabled = false; save.textContent = '✔ Save'; return; }
+			await refreshDiamondAfterChange();
 		});
-		cancel.addEventListener('click', function () { renderBrief(); });
+		cancel.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(save); bar.appendChild(cancel);
 
-		briefBody.appendChild(bar);
-		briefBody.appendChild(ta);
+		crystalBody.appendChild(bar);
+		crystalBody.appendChild(ta);
 		ta.focus();
 	}
 
-	/// The Facet's history: every version, with what produced it, and a way back.
-	async function showBriefHistory() {
-		if (!currentFacet) return;
+	/// The Diamond's history: every version, with what produced it, and a way back.
+	async function showCrystalHistory() {
+		if (!currentDiamond) return;
 		var recs = [];
-		try { recs = JSON.parse(await facetApp().log_read(currentFacet.id) || '[]'); }
+		try { recs = JSON.parse(await diamondApp().log_read(currentDiamond.id) || '[]'); }
 		catch (e) { recs = []; }
 
-		briefBody.innerHTML = '';
+		crystalBody.innerHTML = '';
 		var bar = document.createElement('div');
-		bar.className = 'brief-bar';
+		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
-		back.className = 'brief-act';
-		back.textContent = '← Back to the brief';
-		back.addEventListener('click', function () { renderBrief(); });
+		back.className = 'crystal-act';
+		back.textContent = '← Back to the crystal';
+		back.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(back);
-		briefBody.appendChild(bar);
+		crystalBody.appendChild(bar);
 
 		var list = document.createElement('div');
 		list.className = 'hist-list';
 		if (!recs.length) {
 			var none = document.createElement('div');
-			none.className = 'brief-empty';
+			none.className = 'crystal-empty';
 			none.textContent = 'No history yet.';
 			list.appendChild(none);
 		}
 		// Newest first: the version you most likely want back is the last good one.
 		recs.slice().reverse().forEach(function (r) {
-			var v = r.brief_version;
+			// A record written before the rename says `brief_version`. Reading only
+			// the new name would drop every historical fold out of this list -- the
+			// history would look as though it began today.
+			var v = (r.crystal_version !== undefined && r.crystal_version !== null)
+				? r.crystal_version : r.brief_version;
 			if (v === undefined || v === null) return;
 			var row = document.createElement('div');
 			row.className = 'hist-row';
@@ -6283,28 +6291,28 @@ import init, {
 			var acts = document.createElement('div');
 			acts.className = 'hist-acts';
 			var view = document.createElement('button');
-			view.className = 'brief-act';
+			view.className = 'crystal-act';
 			view.textContent = 'View';
 			view.addEventListener('click', async function () {
 				var md = '';
-				try { md = await facetApp().read_version(currentFacet.id, v); }
+				try { md = await diamondApp().read_version(currentDiamond.id, v); }
 				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
-				noticeDialog('Brief at v' + v, md || '(empty)', { pre: true });
+				noticeDialog('Crystal at v' + v, md || '(empty)', { pre: true });
 			});
 			var revert = document.createElement('button');
-			revert.className = 'brief-act';
+			revert.className = 'crystal-act';
 			revert.textContent = 'Restore';
 			revert.addEventListener('click', async function () {
 				var md = '';
-				try { md = await facetApp().read_version(currentFacet.id, v); }
+				try { md = await diamondApp().read_version(currentDiamond.id, v); }
 				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
 				var ok = await confirmDialog(
-					'Restore the brief to v' + v + '? The current text is kept in the history, so this can itself be undone.',
+					'Restore the crystal to v' + v + '? The current text is kept in the history, so this can itself be undone.',
 					'Restore v' + v, { title: 'Restore a version', danger: false });
 				if (!ok) return;
-				try { await facetApp().write_brief(currentFacet.id, md); }
+				try { await diamondApp().write_crystal(currentDiamond.id, md); }
 				catch (e) { noticeDialog('Could not restore', friendlyError(e)); return; }
-				await refreshFacetAfterChange();
+				await refreshDiamondAfterChange();
 			});
 			acts.appendChild(view); acts.appendChild(revert);
 			// A fold retains the raw delta it consumed, in a file the log record
@@ -6313,7 +6321,7 @@ import init, {
 			if (r.delta_ref) {
 				var dref = r.delta_ref;
 				var seeDelta = document.createElement('button');
-				seeDelta.className = 'brief-act';
+				seeDelta.className = 'crystal-act';
 				seeDelta.textContent = 'Delta';
 				seeDelta.title = 'The raw input this fold was made from';
 				seeDelta.addEventListener('click', async function () {
@@ -6327,35 +6335,35 @@ import init, {
 			row.appendChild(acts);
 			list.appendChild(row);
 		});
-		briefBody.appendChild(list);
-		renderBriefControls();
+		crystalBody.appendChild(list);
+		renderCrystalControls();
 	}
 
-	/// The Facet's tags: the user's own filing system, edited here.
+	/// The Diamond's tags: the user's own filing system, edited here.
 	///
 	/// Tags only sort the rail. Nothing here is read by an agent, and no tag
-	/// reaches a brief or a prompt -- which is why this sits beside the brief
+	/// reaches a crystal or a prompt -- which is why this sits beside the crystal
 	/// rather than in it.
 	async function showTagEditor() {
-		if (!currentFacet) return;
-		var f = facets.find(function (x) { return x.id === currentFacet.id; }) || currentFacet;
+		if (!currentDiamond) return;
+		var f = diamonds.find(function (x) { return x.id === currentDiamond.id; }) || currentDiamond;
 		var tags = tagsOf(f).slice();
 
-		briefBody.innerHTML = '';
+		crystalBody.innerHTML = '';
 		var bar = document.createElement('div');
-		bar.className = 'brief-bar';
+		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
-		back.className = 'brief-act';
-		back.textContent = '← Back to the brief';
-		back.addEventListener('click', function () { renderBrief(); });
+		back.className = 'crystal-act';
+		back.textContent = '← Back to the crystal';
+		back.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(back);
-		briefBody.appendChild(bar);
+		crystalBody.appendChild(bar);
 
 		var wrap = document.createElement('div');
 		wrap.className = 'tag-editor';
 		var note = document.createElement('div');
 		note.className = 'tag-note';
-		note.textContent = 'Tags file this Facet in the rail. They are never sent to a model and never enter the brief.';
+		note.textContent = 'Tags file this Diamond in the rail. They are never sent to a model and never enter the crystal.';
 		wrap.appendChild(note);
 
 		var current = document.createElement('div');
@@ -6370,7 +6378,7 @@ import init, {
 		input.placeholder = 'Add a tag';
 		input.maxLength = 24;
 		var add = document.createElement('button');
-		add.className = 'brief-act';
+		add.className = 'crystal-act';
 		add.textContent = '+ Add';
 		addRow.appendChild(input); addRow.appendChild(add);
 		wrap.appendChild(addRow);
@@ -6378,17 +6386,17 @@ import init, {
 		var sug = document.createElement('div');
 		sug.className = 'tag-row tag-sug';
 		wrap.appendChild(sug);
-		briefBody.appendChild(wrap);
+		crystalBody.appendChild(wrap);
 
 		/// Persist, then repaint from what came back. The store owns
 		/// normalisation -- it lowercases, trims, dedupes and caps -- so its
 		/// answer is the truth, not what was typed here.
 		async function commit(next) {
-			try { await facetApp().set_tags(f.id, JSON.stringify(next)); }
+			try { await diamondApp().set_tags(f.id, JSON.stringify(next)); }
 			catch (e) { noticeDialog('Could not save the tags', friendlyError(e)); return; }
-			await loadFacets();
-			var g = facets.find(function (x) { return x.id === f.id; });
-			if (g) { tags = tagsOf(g).slice(); currentFacet = g; }
+			await loadDiamonds();
+			var g = diamonds.find(function (x) { return x.id === f.id; });
+			if (g) { tags = tagsOf(g).slice(); currentDiamond = g; }
 			else tags = next;
 			paint();
 		}
@@ -6440,30 +6448,30 @@ import init, {
 		});
 
 		paint();
-		renderBriefControls();
+		renderCrystalControls();
 	}
 
 	/// Fill the artefact strip and, when it is open, the list under it.
 	///
-	/// Reads the Facet's links and keeps the ones pointing at something that is not another
-	/// Facet: those are the things this pursuit produced or consulted, as against the Facets
+	/// Reads the Diamond's links and keeps the ones pointing at something that is not another
+	/// Diamond: those are the things this pursuit produced or consulted, as against the Diamonds
 	/// it relates to.
 	async function renderArtefacts() {
 		var strip = document.getElementById('arte-strip');
 		var list  = document.getElementById('arte-list');
-		if (!strip || !list || !currentFacet) return;
-		var facetId = currentFacet.id;
+		if (!strip || !list || !currentDiamond) return;
+		var diamondId = currentDiamond.id;
 
 		var links = [];
 		try {
-			links = JSON.parse(await facetApp().links_touching('facet:' + facetId) || '[]')
-				.filter(function (l) { return l.other && l.other.indexOf('facet:') !== 0; });
+			links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]')
+				.filter(function (l) { return l.other && l.other.indexOf('diamond:') !== 0; });
 		} catch (e) { links = []; }
 
 		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
 		strip.style.display = '';
 		strip.textContent = '\u25c8 ' + links.length + ' artefact' + (links.length === 1 ? '' : 's');
-		strip.title = 'What this Facet produced or consulted';
+		strip.title = 'What this Diamond produced or consulted';
 		if (!strip.dataset.open) { list.style.display = 'none'; return; }
 
 		// Most recent first: what was last touched is what is being worked on.
@@ -6503,9 +6511,9 @@ import init, {
 			var drop = document.createElement('button');
 			drop.className = 'arte-drop';
 			drop.textContent = '\u00d7';
-			drop.title = 'Not an artefact of this Facet';
+			drop.title = 'Not an artefact of this Diamond';
 			drop.addEventListener('click', async function () {
-				try { await facetApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+				try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
 				renderArtefacts();
 			});
 
@@ -6534,10 +6542,10 @@ import init, {
 		}
 		if (kind === 'file') {
 			try {
-				await facetApp().run_tool('file_read', JSON.stringify({ path: rest }));
+				await diamondApp().run_tool('file_read', JSON.stringify({ path: rest }));
 			} catch (e) {
 				noticeDialog('That file is not there any more',
-					'\u201c' + rest + '\u201d was recorded as an artefact of this Facet, but it '
+					'\u201c' + rest + '\u201d was recorded as an artefact of this Diamond, but it '
 					+ 'cannot be read now \u2014 it may have been renamed, moved or deleted.');
 				return;
 			}
@@ -6561,27 +6569,27 @@ import init, {
 	};
 
 	/// Render the steer command line and the fold-a-delta control.
-	function renderBriefControls() {
-		briefControls.innerHTML = '';
+	function renderCrystalControls() {
+		crystalControls.innerHTML = '';
 
 		var status = document.createElement('div');
-		status.className = 'brief-status';
-		status.id = 'brief-status';
+		status.className = 'crystal-status';
+		status.id = 'crystal-status';
 
-		// A one-shot answer from the brief agent — a question it asked, or what it
-		// did when it did not touch the brief. Shown here rather than lost, and
+		// A one-shot answer from the crystal agent — a question it asked, or what it
+		// did when it did not touch the crystal. Shown here rather than lost, and
 		// dismissible, because a steer that only produced words used to leave the
-		// user staring at an unchanged brief with no idea it had run (yet billed).
+		// user staring at an unchanged crystal with no idea it had run (yet billed).
 		var reply = document.createElement('div');
-		reply.className = 'brief-reply';
-		reply.id = 'brief-reply';
+		reply.className = 'crystal-reply';
+		reply.id = 'crystal-reply';
 		reply.style.display = 'none';
 
 		// The artefact strip: a count, above the steer box, that hides at zero.
 		//
-		// A count rather than a list, because the brief already scrolls and a scrollable
+		// A count rather than a list, because the crystal already scrolls and a scrollable
 		// region inside a scrollable one makes the wheel ambiguous. Hidden while empty, so a
-		// new Facet is not given a permanently empty shelf to explain.
+		// new Diamond is not given a permanently empty shelf to explain.
 		var arte = document.createElement('button');
 		arte.className = 'arte-strip';
 		arte.id = 'arte-strip';
@@ -6604,7 +6612,7 @@ import init, {
 		steer.className = 'steer-input';
 		steer.id = 'steer-input';
 		steer.rows = 1;
-		steer.placeholder = 'Steer the brief (an instruction, not a chat)…';
+		steer.placeholder = 'Steer the crystal (an instruction, not a chat)…';
 		steer.addEventListener('input', function () {
 			steer.style.height = 'auto';
 			steer.style.height = Math.min(steer.scrollHeight, 120) + 'px';
@@ -6639,85 +6647,85 @@ import init, {
 		foldBtn.addEventListener('click', doFoldPropose);
 		foldRow.appendChild(delta); foldRow.appendChild(foldBtn);
 
-		briefControls.appendChild(status);
-		briefControls.appendChild(reply);
-		briefControls.appendChild(arte);
-		briefControls.appendChild(arteList);
-		briefControls.appendChild(steerRow);
-		briefControls.appendChild(foldRow);
+		crystalControls.appendChild(status);
+		crystalControls.appendChild(reply);
+		crystalControls.appendChild(arte);
+		crystalControls.appendChild(arteList);
+		crystalControls.appendChild(steerRow);
+		crystalControls.appendChild(foldRow);
 	}
 
-	function setBriefStatus(text) {
-		var s = document.getElementById('brief-status');
+	function setCrystalStatus(text) {
+		var s = document.getElementById('crystal-status');
 		if (s) s.textContent = text || '';
 	}
 
-	/// Show (or clear) the brief agent's one-shot reply. Rendered as markdown,
+	/// Show (or clear) the crystal agent's one-shot reply. Rendered as markdown,
 	/// with a dismiss control, and never accumulated — each steer replaces it.
-	function setBriefReply(text) {
-		var r = document.getElementById('brief-reply');
+	function setCrystalReply(text) {
+		var r = document.getElementById('crystal-reply');
 		if (!r) return;
 		if (!text || !text.trim()) { r.style.display = 'none'; r.innerHTML = ''; return; }
 		r.innerHTML = '';
 		var x = document.createElement('button');
-		x.className = 'brief-reply-x';
+		x.className = 'crystal-reply-x';
 		x.textContent = '×';
 		x.title = 'Dismiss';
 		x.addEventListener('click', function () { r.style.display = 'none'; r.innerHTML = ''; });
 		var body = document.createElement('div');
-		body.className = 'brief-reply-body';
+		body.className = 'crystal-reply-body';
 		body.innerHTML = DaimondRender.md(text);   // escaped + sanitised by the renderer
 		r.appendChild(x);
 		r.appendChild(body);
 		r.style.display = '';
 	}
 
-	function setBriefBusy(busy) {
-		briefBusy = busy;
+	function setCrystalBusy(busy) {
+		crystalBusy = busy;
 		['steer-send', 'fold-propose'].forEach(function (id) {
 			var el = document.getElementById(id);
 			if (el) el.disabled = busy;
 		});
 	}
 
-	/// After any brief mutation: refresh the meta row in the rail and the
-	/// Centre meter, then re-render the brief.
-	async function refreshFacetAfterChange() {
-		await loadFacets();
-		var f = facets.find(function (x) { return currentFacet && x.id === currentFacet.id; });
+	/// After any crystal mutation: refresh the meta row in the rail and the
+	/// Centre meter, then re-render the crystal.
+	async function refreshDiamondAfterChange() {
+		await loadDiamonds();
+		var f = diamonds.find(function (x) { return currentDiamond && x.id === currentDiamond.id; });
 		if (f) {
-			currentFacet = f;
-			aiMeter.textContent = 'brief v' + (f.brief_version || 0)
+			currentDiamond = f;
+			aiMeter.textContent = 'crystal v' + (f.crystal_version || 0)
 				+ (f.updated ? ' · ' + relTime(f.updated) : '');
 		}
-		await renderBrief();
+		await renderCrystal();
 	}
 
-	/// Steer the brief: run one brief-agent turn, streaming its tool
-	/// activity to the Agents panel, then re-render the changed brief.
+	/// Steer the crystal: run one crystal-agent turn, streaming its tool
+	/// activity to the Agents panel, then re-render the changed crystal.
 	async function doSteer() {
-		if (briefBusy || !currentFacet) return;
+		if (crystalBusy || !currentDiamond) return;
 		var input = document.getElementById('steer-input');
 		if (!input) return;
 		var instruction = input.value.trim();
 		if (!instruction) return;
-		// Can THIS Facet's model run? Asking whether the *default* provider is configured is the
-		// wrong question: it would stop a perfectly good Facet steering because some other
+		// Can THIS Diamond's model run? Asking whether the *default* provider is configured is the
+		// wrong question: it would stop a perfectly good Diamond steering because some other
 		// provider -- the starred one -- had lost its key.
-		if (!facetCanRun(currentFacet.id)) {
-			openSettings('This Facet’s provider has no readable key — unlock, or add one, to steer it.');
+		if (!diamondCanRun(currentDiamond.id)) {
+			openSettings('This Diamond’s provider has no readable key — unlock, or add one, to steer it.');
 			return;
 		}
 		input.value = ''; input.style.height = 'auto';
-		setBriefBusy(true);
-		setBriefStatus('Steering…');
+		setCrystalBusy(true);
+		setCrystalStatus('Steering…');
 
 		// Every `spawn_agent` call the conductor makes in this turn becomes a
 		// worker. Several calls in one turn is how it starts several agents at
 		// once — the whole point of a conductor.
-		var facetId = currentFacet.id, facetName = currentFacet.name;
+		var diamondId = currentDiamond.id, diamondName = currentDiamond.name;
 		var dispatched = [], rejected = 0, replyText = '';
-		setBriefReply('');   // clear any previous one-shot answer
+		setCrystalReply('');   // clear any previous one-shot answer
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
 			if (ev.type === 'text') {
@@ -6733,93 +6741,93 @@ import init, {
 					// see nothing at all: no agent, no error, no explanation.
 					else rejected += 1;
 				} else {
-					setBriefStatus('Steering… (' + ev.name + ')');
+					setCrystalStatus('Steering… (' + ev.name + ')');
 				}
 			} else if (ev.type === 'error') {
-				setBriefStatus('Error: ' + (ev.content || ''));
+				setCrystalStatus('Error: ' + (ev.content || ''));
 			}
 		};
-		var fa = facetApp(facetId);            // the Facet steers with its own model
+		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
 		try {
-			await fa.steer_brief(facetId, instruction, onEvent);
-			meterFacetTurn(fa);
-			setBriefStatus('');
-			await refreshFacetAfterChange();
+			await fa.steer_crystal(diamondId, instruction, onEvent);
+			meterDiamondTurn(fa);
+			setCrystalStatus('');
+			await refreshDiamondAfterChange();
 			Files.refresh();
 		} catch (e) {
-			setBriefStatus(friendlyError(e));
-			setBriefBusy(false);
+			setCrystalStatus(friendlyError(e));
+			setCrystalBusy(false);
 			return;
 		}
-		setBriefBusy(false);
+		setCrystalBusy(false);
 		if (dispatched.length) {
 			// The spend gate: a large fan-out pauses here for a look before
 			// a single worker is enqueued. A normal dispatch clears silently.
 			var cleared = await governorClearsDispatch(dispatched.length);
 			if (!cleared) {
-				setBriefStatus(dispatched.length === 1
+				setCrystalStatus(dispatched.length === 1
 					? 'Agent not started.'
 					: 'Agents not started.');
 			} else {
-				setBriefStatus(dispatched.length === 1
+				setCrystalStatus(dispatched.length === 1
 					? 'Dispatched 1 agent.'
 					: 'Dispatched ' + dispatched.length + ' agents.');
-				Workers.dispatch(facetId, facetName, dispatched);
+				Workers.dispatch(diamondId, diamondName, dispatched);
 			}
 		} else if (rejected) {
-			setBriefStatus(rejected === 1
+			setCrystalStatus(rejected === 1
 				? 'An agent was requested with no task, so nothing was started.'
 				: rejected + ' agents were requested with no task, so nothing was started.');
 		} else if (replyText.trim()) {
 			// The turn neither dispatched nor edited its way to a visible change;
 			// it answered in words. Show them, so the steer was not for nothing.
-			setBriefReply(replyText);
+			setCrystalReply(replyText);
 		}
 	}
 
-	/// Propose a fold: run the reducer over the current brief plus the
+	/// Propose a fold: run the reducer over the current crystal plus the
 	/// delta, then show the diff for the user to Accept or Reject.  Writes
 	/// nothing — the advisory half of the fold.
 	async function doFoldPropose() {
-		if (briefBusy || !currentFacet) return;
+		if (crystalBusy || !currentDiamond) return;
 		var deltaEl = document.getElementById('fold-delta');
 		if (!deltaEl) return;
 		var delta = deltaEl.value.trim();
 		if (!delta) return;
-		if (!facetCanRun(currentFacet.id)) {
-			openSettings('This Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold a delta.');
+		if (!diamondCanRun(currentDiamond.id)) {
+			openSettings('This Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold a delta.');
 			return;
 		}
-		setBriefBusy(true);
-		setBriefStatus('Proposing fold…');
+		setCrystalBusy(true);
+		setCrystalStatus('Proposing fold…');
 		var current_md, proposed;
-		var fa = facetApp(currentFacet.id);   // this Facet's model, not the starred one
+		var fa = diamondApp(currentDiamond.id);   // this Diamond's model, not the starred one
 		try {
-			current_md = await fa.read_brief(currentFacet.id);
-			proposed = await fa.fold_propose(currentFacet.id, delta);
+			current_md = await fa.read_crystal(currentDiamond.id);
+			proposed = await fa.fold_propose(currentDiamond.id, delta);
 		} catch (e) {
-			meterFacetTurn(fa);
-			setBriefStatus(friendlyError(e));
-			setBriefBusy(false);
+			meterDiamondTurn(fa);
+			setCrystalStatus(friendlyError(e));
+			setCrystalBusy(false);
 			return;
 		}
-		meterFacetTurn(fa);
-		setBriefStatus('');
-		setBriefBusy(false);
-		pendingFolds[currentFacet.id] = {
+		meterDiamondTurn(fa);
+		setCrystalStatus('');
+		setCrystalBusy(false);
+		pendingFolds[currentDiamond.id] = {
 			base: current_md, proposed: proposed, delta: delta, chatId: null, chatName: null,
 		};
-		renderFoldDiff(currentFacet.id);
+		renderFoldDiff(currentDiamond.id);
 	}
 
 	/// Show the fold diff (current vs proposed) with Accept and Reject.
 	/// Every line is escaped via textContent (H5); nothing is written
 	/// until the user accepts.
-	function renderFoldDiff(facetId) {
-		var st = pendingFolds[facetId];
-		if (!st) { renderBrief(); return; }
-		var f = facets.find(function (x) { return x.id === facetId; });
-		briefBody.innerHTML = '';
+	function renderFoldDiff(diamondId) {
+		var st = pendingFolds[diamondId];
+		if (!st) { renderCrystal(); return; }
+		var f = diamonds.find(function (x) { return x.id === diamondId; });
+		crystalBody.innerHTML = '';
 		var diff = lineDiff(st.base || '', st.proposed || '');
 		var changed = diff.some(function (d) { return d.kind === 'add' || d.kind === 'del'; });
 
@@ -6831,8 +6839,8 @@ import init, {
 		head.textContent = changed
 			? (st.chatName ? 'Folding "' + st.chatName + '"' + into + ' — review the change, then Accept or Reject.'
 				: 'Proposed fold' + into + ' — review the change, then Accept or Reject.')
-			: 'No change proposed' + into + ' — the brief already covers this.';
-		briefBody.appendChild(head);
+			: 'No change proposed' + into + ' — the crystal already covers this.';
+		crystalBody.appendChild(head);
 
 		var lines = document.createElement('div');
 		lines.className = 'diff-lines';
@@ -6846,31 +6854,31 @@ import init, {
 			row.appendChild(document.createTextNode(d.text));  // escaped (H5)
 			lines.appendChild(row);
 		});
-		briefBody.appendChild(lines);
+		crystalBody.appendChild(lines);
 
 		// Controls become Accept / Reject for the duration of the diff.
-		briefControls.innerHTML = '';
+		crystalControls.innerHTML = '';
 		var status = document.createElement('div');
-		status.className = 'brief-status';
-		status.id = 'brief-status';
+		status.className = 'crystal-status';
+		status.id = 'crystal-status';
 		var actions = document.createElement('div');
 		actions.className = 'diff-actions';
 		var accept = document.createElement('button');
 		accept.className = 'diff-accept';
 		accept.textContent = 'Accept fold';
-		// Accepting a no-op fold used to bump the brief version and write a
+		// Accepting a no-op fold used to bump the crystal version and write a
 		// duplicate delta, so re-folding the same chat quietly grew the history
 		// with nothing in it.
 		accept.disabled = !changed;
-		if (!changed) accept.title = 'Nothing to apply — the proposal matches the current brief.';
+		if (!changed) accept.title = 'Nothing to apply — the proposal matches the current crystal.';
 		accept.addEventListener('click', doFoldAccept);
 		var reject = document.createElement('button');
 		reject.className = 'diff-reject';
 		reject.textContent = changed ? 'Reject' : 'Close';
-		reject.addEventListener('click', function () { delete pendingFolds[facetId]; renderBrief(); });
+		reject.addEventListener('click', function () { delete pendingFolds[diamondId]; renderCrystal(); });
 		actions.appendChild(accept); actions.appendChild(reject);
-		briefControls.appendChild(status);
-		briefControls.appendChild(actions);
+		crystalControls.appendChild(status);
+		crystalControls.appendChild(actions);
 	}
 
 	// ── Artefacts ───────────────────────────────────────────────────────
@@ -6920,12 +6928,12 @@ import init, {
 		return out;
 	}
 
-	/// Record what a just-accepted fold produced, as links on the Facet.
+	/// Record what a just-accepted fold produced, as links on the Diamond.
 	///
-	/// Never throws and never blocks the fold: the brief is already written by the time this
+	/// Never throws and never blocks the fold: the crystal is already written by the time this
 	/// runs, so a failure here costs a list, not the user's work. Links that already exist
 	/// are skipped, so re-folding the same chat does not stack duplicates.
-	async function harvestArtefacts(facetId, st) {
+	async function harvestArtefacts(diamondId, st) {
 		try {
 			var msgs = [];
 			if (st.sourceRun && st.sourceRun.messages) msgs = st.sourceRun.messages;
@@ -6936,43 +6944,43 @@ import init, {
 			var found = artefactsIn(msgs);
 			if (!found.length) return;
 
-			var self = 'facet:' + facetId;
+			var self = 'diamond:' + diamondId;
 			var have = {};
 			try {
-				JSON.parse(await facetApp().links_touching(self) || '[]')
+				JSON.parse(await diamondApp().links_touching(self) || '[]')
 					.forEach(function (l) { have[l.to] = 1; });
 			} catch (e) { /* no links yet, or unreadable: treat as none */ }
 
 			for (var i = 0; i < found.length; i++) {
 				if (have[found[i].ref]) continue;
 				try {
-					await facetApp().add_link(facetId, self, found[i].ref, found[i].rel, '', 'fold');
+					await diamondApp().add_link(diamondId, self, found[i].ref, found[i].rel, '', 'fold');
 				} catch (e) { /* one bad ref must not stop the rest */ }
 			}
-			if (currentFacet && currentFacet.id === facetId) renderBrief();
+			if (currentDiamond && currentDiamond.id === diamondId) renderCrystal();
 		} catch (e) { /* an artefact list is never worth failing a fold over */ }
 	}
 
-	/// Accept the proposed fold: write the new brief, retain the raw
+	/// Accept the proposed fold: write the new crystal, retain the raw
 	/// delta, log the fold, then re-render.  A fold never auto-applies.
 	async function doFoldAccept() {
-		if (!currentFacet) return;
-		var facetId = currentFacet.id;
-		var st = pendingFolds[facetId];
+		if (!currentDiamond) return;
+		var diamondId = currentDiamond.id;
+		var st = pendingFolds[diamondId];
 		if (!st) return;
 		// Belt and braces beside the disabled button: applying a fold that
 		// changes nothing would still bump the version and write a duplicate
 		// delta, quietly growing the history with nothing in it.
-		if ((st.base || '') === (st.proposed || '')) { delete pendingFolds[facetId]; renderBrief(); return; }
-		delete pendingFolds[facetId];
-		setBriefStatus('Applying fold…');
+		if ((st.base || '') === (st.proposed || '')) { delete pendingFolds[diamondId]; renderCrystal(); return; }
+		delete pendingFolds[diamondId];
+		setCrystalStatus('Applying fold…');
 		try {
-			await facetApp().fold_apply(facetId, st.proposed, st.delta, 'fold via UI');
+			await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
 		} catch (e) {
-			setBriefStatus(friendlyError(e));
+			setCrystalStatus(friendlyError(e));
 			return;
 		}
-		await harvestArtefacts(facetId, st);
+		await harvestArtefacts(diamondId, st);
 
 		// Record where the chat went, so the tile can say so and the user is
 		// not left wondering whether the fold took. A fold of a few chosen turns is not the
@@ -6980,7 +6988,7 @@ import init, {
 		if (st.chatId && !st.partial) {
 			var chat = chats.find(function (c) { return c.id === st.chatId; });
 			if (chat) {
-				chat.foldedInto = { id: facetId, name: currentFacet.name, at: Date.now(),
+				chat.foldedInto = { id: diamondId, name: currentDiamond.name, at: Date.now(),
 					at_len: (chat.messages || []).length };
 				touchChat(chat);
 				persistChats();
@@ -6994,12 +7002,12 @@ import init, {
 			Workers.persist();
 			Workers.render();
 		}
-		await refreshFacetAfterChange();
+		await refreshDiamondAfterChange();
 	}
 
 	/// A minimal LCS line diff, producing tagged lines (same / add / del).
 	/// Used only for display, so a straightforward dynamic-programming
-	/// table is more than adequate for brief-sized inputs.
+	/// table is more than adequate for crystal-sized inputs.
 	function lineDiff(a, b) {
 		var A = a.split('\n'), B = b.split('\n');
 		var n = A.length, m = B.length;
@@ -7040,7 +7048,7 @@ import init, {
 		Instructions.refresh();
 		renderSessionList();
 		if (chats.length) { selectChat(chats[0]); } else { renderEmptyState(); }
-		loadFacets();
+		loadDiamonds();
 		updateSpend();
 		DaimondPanels.reflow();
 		if (!isMobile() && DaimondPanels.isOpen('work')) Files.onOpen();
@@ -7075,25 +7083,25 @@ import init, {
 
 		// A locked Daimond holds no readable key. Clearing `cfg.apiKey` used to be the whole of
 		// that, because there was one key and it lived there. There are now a key per provider,
-		// held in memory by DaimondModels, and a built agent for every chat and Facet with its
+		// held in memory by DaimondModels, and a built agent for every chat and Diamond with its
 		// key already inside the wasm -- so locking must forget all three, or it locks the door
 		// and leaves the keys in it.
 		cfg.apiKey = '';
 		if (window.DaimondModels) DaimondModels.lock();
 		chats.forEach(function (c) { c.app = null; });
-		resetFacetApps();
+		resetDiamondApps();
 
 		locked = true;
 		current = null;
-		currentFacet = null;
+		currentDiamond = null;
 
 		document.body.classList.add('locked');
 		sessionList.innerHTML = '';
-		facetList.innerHTML   = '';
+		diamondList.innerHTML   = '';
 		chatOutput.innerHTML  = '';
-		briefBody.innerHTML   = '';
+		crystalBody.innerHTML   = '';
 		agentsList.innerHTML  = '';
-		briefControls.innerHTML = '';       // the steer line and the fold control
+		crystalControls.innerHTML = '';       // the steer line and the fold control
 		aiMeter.textContent = '';
 		Workers.runs = [];
 		sessionNameEl.textContent = '';
@@ -7407,11 +7415,11 @@ import init, {
 		var acct = A ? A.account() : null;
 		var others = A ? A.list().length - 1 : 0;
 		var lead = 'This erases your passphrase, your encrypted API key, and all of your chats, '
-			+ 'Facets and spend history on this device. There is no recovery and no backup. '
+			+ 'Diamonds and spend history on this device. There is no recovery and no backup. '
 			+ 'Everything is gone.';
 		if (acct && !acct.primary) {
 			lead = 'This removes the account “' + (acct.name || 'Unnamed account') + '” from this '
-				+ 'browser — its passphrase, keys, chats, Facets, spend and files. There is no recovery. '
+				+ 'browser — its passphrase, keys, chats, Diamonds, spend and files. There is no recovery. '
 				+ 'Other accounts here are untouched.';
 		}
 		var ok = await confirmDialog(lead, 'Erase everything', { title: 'Forget this account?' });
@@ -7424,8 +7432,8 @@ import init, {
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
 		// here; the explicit list is what the old, single-account reset erased.
 		try {
-			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-facet-counter',
-			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-facet-models',
+			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-diamond-counter',
+			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-diamond-models',
 			 'daimond-agents-revealed', 'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
 			 'daimond-mail', 'daimond-hands'].forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
@@ -7518,7 +7526,7 @@ import init, {
 		noticeDialog('Passphrase changed', 'Your new passphrase is active. Your saved API key was re-encrypted under it.');
 	}
 
-	/// A brief status line, floated centre-bottom, for actions that happen away
+	/// A crystal status line, floated centre-bottom, for actions that happen away
 	/// from any one panel (a backup export or restore). It fades and removes
 	/// itself; a top-level helper because the account menu that triggers these
 	/// is not inside a panel with its own message area.
@@ -7605,18 +7613,18 @@ import init, {
 			name: DaimondIdentity.displayName(),
 			chats: readJson(CHATS_KEY, []),
 			ledger: readJson('daimond-ledger', []),
-			facets: [],
+			diamonds: [],
 			workspace: await collectOpfsFiles(),
 		};
 		try {
-			var list = await facetApp().list_facets();
+			var list = await diamondApp().list_diamonds();
 			var arr = JSON.parse(list || '[]');
 			for (var i = 0; i < arr.length; i++) {
-				var brief = '';
-				try { brief = await facetApp().read_brief(arr[i].id); } catch (e) { brief = ''; }
-				// Tags travel with the Facet. Without them a restore silently
+				var crystal = '';
+				try { crystal = await diamondApp().read_crystal(arr[i].id); } catch (e) { crystal = ''; }
+				// Tags travel with the Diamond. Without them a restore silently
 				// drops the user's whole filing system while looking like it worked.
-				out.facets.push({ id: arr[i].id, name: arr[i].name, brief: brief, tags: tagsOf(arr[i]) });
+				out.diamonds.push({ id: arr[i].id, name: arr[i].name, crystal: crystal, tags: tagsOf(arr[i]) });
 			}
 		} catch (e) { /* export what we have */ }
 		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
@@ -7628,7 +7636,7 @@ import init, {
 	}
 
 	/// Restore a backup written by `doExport`. Chats and the ledger are merged
-	/// into local storage, facets are recreated with their briefs, and every
+	/// into local storage, diamonds are recreated with their crystals, and every
 	/// workspace file is written back into OPFS. Existing files of the same path
 	/// are overwritten; nothing already present is deleted, so a restore adds to
 	/// the tab rather than replacing it.
@@ -7657,18 +7665,18 @@ import init, {
 			if (Array.isArray(data.ledger) && data.ledger.length) {
 				try { localStorage.setItem('daimond-ledger', JSON.stringify(data.ledger)); } catch (e) { /* keep */ }
 			}
-			for (var j = 0; j < (data.facets || []).length; j++) {
-				var f = data.facets[j];
+			for (var j = 0; j < (data.diamonds || []).length; j++) {
+				var f = data.diamonds[j];
 				try {
-					var id = await facetApp().create_facet(f.name || 'Restored Facet');
-					if (f.brief) await facetApp().write_brief(id, f.brief);
+					var id = await diamondApp().create_diamond(f.name || 'Restored Diamond');
+					if (f.crystal) await diamondApp().write_crystal(id, f.crystal);
 					// A backup written before tags existed simply has none.
-					if (f.tags && f.tags.length) await facetApp().set_tags(id, JSON.stringify(f.tags));
-				} catch (e) { /* skip one facet */ }
+					if (f.tags && f.tags.length) await diamondApp().set_tags(id, JSON.stringify(f.tags));
+				} catch (e) { /* skip one diamond */ }
 			}
-			try { loadFacets(); } catch (e) { /* best effort */ }
+			try { loadDiamonds(); } catch (e) { /* best effort */ }
 			toast('Backup restored: ' + restored + ' workspace file'
-				+ (restored === 1 ? '' : 's') + ' and ' + (data.facets || []).length + ' facets.', false);
+				+ (restored === 1 ? '' : 's') + ' and ' + (data.diamonds || []).length + ' diamonds.', false);
 		});
 		inp.click();
 	}
@@ -7918,9 +7926,9 @@ import init, {
 		syncCfgFromModels();
 		note.textContent = 'Saved.';
 		// New settings imply fresh app instances for existing chats and
-		// for every Facet app built on the old key.
+		// for every Diamond app built on the old key.
 		chats.forEach(function (c) { c.app = null; });
-		resetFacetApps();
+		resetDiamondApps();
 		// A form that has done its job leaves. The confirmation is not a word in
 		// a box that stays open — it is the status header now naming the model
 		// Daimond is running on.
@@ -7976,10 +7984,10 @@ import init, {
 		sendUserMessage();
 	});
 	newSessionBtn.addEventListener('click', newChat);
-	if (newFacetBtn) newFacetBtn.addEventListener('click', createFacet);
-	if (facetSearch) facetSearch.addEventListener('input', function () {
-		facetQuery = facetSearch.value.trim().toLowerCase();
-		renderFacetList();
+	if (newDiamondBtn) newDiamondBtn.addEventListener('click', createDiamond);
+	if (diamondSearch) diamondSearch.addEventListener('input', function () {
+		diamondQuery = diamondSearch.value.trim().toLowerCase();
+		renderDiamondList();
 	});
 	if (agentSearch) agentSearch.addEventListener('input', function () {
 		agentQuery = agentSearch.value.trim().toLowerCase();
@@ -8040,7 +8048,7 @@ import init, {
 		['cfg-api-key', 'id-pass', 'id-pass2'].forEach(function (fid) {
 			installSecretMask(document.getElementById(fid), '');
 		});
-		// The Agents panel stays hidden until the first Facet-dispatched agent.
+		// The Agents panel stays hidden until the first Diamond-dispatched agent.
 		if (localStorage.getItem('daimond-agents-revealed') !== '1') document.body.classList.add('agents-hidden');
 		DaimondPanels.init();
 		DaimondAdmin.init();

@@ -9,7 +9,7 @@ await p.waitForTimeout(2500);
 await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	await app.create_facet('Ship the launch');
+	await app.create_diamond('Ship the launch');
 });
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'workspace-shot');
