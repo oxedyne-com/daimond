@@ -34,6 +34,14 @@ const ROOT = rootArg ? normalize(rootArg) : normalize(join(HERE, '..', 'www'));
 const LOG  = join(HERE, 'transparency.jsonl');
 const noLog = args.includes('--no-log');
 
+/// The one-line "what changed" from build.json, if it carries one.
+async function buildNote() {
+	try {
+		const j = JSON.parse(await readFile(join(ROOT, 'build.json'), 'utf8'));
+		return typeof j.note === 'string' ? j.note.trim() : '';
+	} catch (e) { return ''; }
+}
+
 /// The staleness id from build.json, so the manifest and the update chip name
 /// the same build. Falls back to the head of the bundle hash if it is absent —
 /// a seal without a stamp is still a valid seal.
@@ -66,6 +74,10 @@ if (entries.length && entries[entries.length - 1].bundle === bundle) {
 	process.exit(0);
 }
 const ts    = new Date().toISOString();
-const entry = nextEntry(entries, { ts, build, bundle });
+// The "what changed" line comes from build.json, where dev/stamp-build.mjs put
+// it. build.json is overwritten by the next deploy, so the log is where that
+// line has to end up if it is to survive -- and the log being the changelog is
+// what keeps there from being a second file to maintain and forget.
+const entry = nextEntry(entries, { ts, build, bundle, note: await buildNote() });
 await writeFile(LOG, text + (text && !text.endsWith('\n') ? '\n' : '') + JSON.stringify(entry) + '\n');
 console.log(`transparency: appended seq ${entry.seq} (entry ${entry.entry.slice(0, 16)}…)`);

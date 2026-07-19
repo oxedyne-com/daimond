@@ -158,11 +158,19 @@ export function verifyChain(entries) {
 }
 
 /// The next entry to append to a chain, given the current entries.
-export function nextEntry(entries, { ts, build, bundle }) {
+export function nextEntry(entries, { ts, build, bundle, note }) {
 	const seq  = entries.length;
 	const prev = entries.length ? entries[entries.length - 1].entry : GENESIS_PREV;
 	const base = { seq, ts, build, bundle, prev };
-	return { ...base, entry: entryHash(base) };
+	// The note rides OUTSIDE the hashed preimage, deliberately. `entryHash`
+	// covers seq|ts|build|bundle|prev and nothing else, so a note can be added
+	// to an entry -- including one sealed long ago -- without moving its hash,
+	// and every entry after it stays valid. What the chain attests is what was
+	// shipped; the note is only what a human called it, and it must never be
+	// able to invalidate the attestation.
+	const out = { ...base, entry: entryHash(base) };
+	if (note) out.note = String(note).slice(0, 200);
+	return out;
 }
 
 /// Compare an expected file map against an actual one, returning the

@@ -1,0 +1,14 @@
+{
+	"_comment": "Named releases, and what is coming. Daimond ships several builds a day, so a name per build would be noise -- a name marks a MILESTONE, and the builds under it carry their own dates and notes. Names are Western Australian places, in alphabetical order, so their sequence is legible without a lookup. `from` is the transparency sequence a milestone begins at. `planned` is editorial, not sealed: it is a statement of intent and the interface must never let it read as history.",
+	"milestones": [
+		{
+			"name": "Albany",
+			"from": 0,
+			"blurb": "The first named release. Daimond became checkable against its own source, learned to hold its spending down, renamed Foci to Facets, and gained the controls that arrange it."
+		}
+	],
+	"planned": {
+		"name": "Broome",
+		"blurb": "A view of how a Facet's work connects, and a way to carry one Facet's context into another."
+	}
+}

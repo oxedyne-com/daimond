@@ -1,0 +1,67 @@
+/* release.css — which Daimond you are running, and what came before it.
+ *
+ * The list has one job beyond being readable: it must never let the planned
+ * entry read as history. Everything below the first row is sealed and
+ * checkable; the first row is an intention. So the planned row is drawn as an
+ * outline rather than a card, and says in words that it is not built yet.
+ */
+
+.rel-list { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 10px; }
+
+.rel-row {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	padding: 10px 12px;
+}
+
+.rel-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rel-name { font-size: var(--fs-base); font-weight: 600; color: var(--text-primary); }
+.rel-when { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
+
+.rel-tag {
+	font-size: var(--fs-4xs);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: 2px 7px;
+	border-radius: 999px;
+	border: 1px solid var(--border-2);
+	color: var(--text-muted);
+}
+.rel-here { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+
+.rel-blurb { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; margin-top: 6px; }
+.rel-note  { font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.5; margin-top: 4px; }
+
+.rel-meta {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 6px;
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+}
+.rel-meta code { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); }
+
+/* You are here: the one row that is neither past nor promise. */
+.rel-current { border-color: var(--accent); background: var(--bg-secondary); }
+
+/* What is coming. Drawn as an outline on nothing, so it cannot be mistaken for
+   one of the sealed cards below it -- a promise must not borrow the authority
+   of a record. */
+.rel-planned {
+	background: none;
+	border-style: dashed;
+	opacity: 0.75;
+}
+.rel-planned .rel-name { color: var(--text-secondary); font-weight: 500; }
+
+.rel-empty { padding: 18px 8px; text-align: center; color: var(--text-muted); font-size: var(--fs-sm); }
+.rel-foot {
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	line-height: 1.5;
+	padding: 8px 2px 0;
+	border-top: 1px solid var(--border);
+	margin-top: 2px;
+}

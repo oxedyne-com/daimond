@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="css/spend.css">
 <link rel="stylesheet" href="css/passkey.css">
 <link rel="stylesheet" href="css/workspace.css">
+	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
 </head>
@@ -130,6 +131,7 @@
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
 					<button class="astat-row astat-btn" id="astat-tools"></button>
+					<button class="astat-row astat-btn" id="astat-release" title="Version history"></button>
 					<div class="astat-row" id="astat-store"></div>
 					<!-- The real folder, when the browser can open one. Its size is not a thing the
 					     browser will tell us, so it is asked for rather than assumed. -->
@@ -201,6 +203,11 @@
 
 					<!-- A form, built on demand: a mailbox to add, a thing to configure. -->
 					<div class="admin-view" id="admin-form" style="display:none"></div>
+
+					<!-- What you are running, and what came before. -->
+					<div class="admin-view" id="admin-release" style="display:none">
+						<div class="rel-list" id="rel-list"></div>
+					</div>
 					</div>
 				</div>
 			</div>
@@ -568,6 +575,7 @@
 <script src="js/spend.js"></script>
 <script src="js/updater.js"></script>
 <script src="js/workspace.js"></script>
+<script src="js/release.js"></script>
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>
