@@ -24,6 +24,43 @@
 	--radius-lg:         12px;
 	--font:              system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 	--font-mono:         ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+
+	/* ── The type scale ──────────────────────────────────────────────
+	   Every font size in the app comes from here, so that text can be made
+	   larger without the frame growing with it: the user's choice moves
+	   --fs-scale, and only the type responds. Padding, icons and panel
+	   widths are deliberately left alone -- this is a reading control, not
+	   a zoom.
+
+	   The steps are anchored on --fs-base, which is the body size, and the
+	   px values are exactly what the stylesheets used before the scale
+	   existed, so at scale 1 nothing moves by a pixel. */
+	--fs-scale:          1;
+	--fs-4xs:            calc(9px  * var(--fs-scale));
+	--fs-3xs:            calc(10px * var(--fs-scale));
+	--fs-2xs:            calc(11px * var(--fs-scale));	/* section headers, chips */
+	--fs-xs:             calc(12px * var(--fs-scale));	/* meta lines, the commonest */
+	--fs-sm:             calc(13px * var(--fs-scale));	/* secondary prose, controls */
+	--fs-base:           calc(14px * var(--fs-scale));	/* body */
+
+	/* Half steps. The dense monospace furniture -- tile meters, model chips,
+	   artefact kinds, the Web panel's mode pill, the mail rows -- was drawn on
+	   a rung between these sizes, consistently enough that it is plainly a
+	   choice rather than an accident. Rounding them away moved the pill and
+	   shifted its neighbours, so the rungs are kept. */
+	--fs-3xs-2xs:        calc(10.5px * var(--fs-scale));
+	--fs-2xs-xs:         calc(11.5px * var(--fs-scale));
+	--fs-xs-sm:          calc(12.5px * var(--fs-scale));
+	--fs-sm-base:        calc(13.5px * var(--fs-scale));
+	--fs-lg:             calc(15px * var(--fs-scale));
+	--fs-xl:             calc(16px * var(--fs-scale));
+	--fs-xl-2xl:         calc(17px * var(--fs-scale));
+	--fs-2xl:            calc(18px * var(--fs-scale));
+	--fs-3xl:            calc(20px * var(--fs-scale));
+	--fs-4xl:            calc(22px * var(--fs-scale));
+	--fs-5xl:            calc(26px * var(--fs-scale));
+	--fs-6xl:            calc(34px * var(--fs-scale));
+
 	--header-h:          44px;
 	--logo-h:            24px;
 	/* Default panel widths (user-pullable, persisted). */

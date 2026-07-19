@@ -78,7 +78,7 @@
 		border: none;
 		border-radius: var(--radius);
 		color: var(--text-muted);
-		font-size: 11px;
+		font-size: var(--fs-2xs);
 	}
 	.mnav button .ic { width: 19px; height: 19px; }
 	.mnav button.on { color: var(--accent); background: var(--accent-soft); }
@@ -93,8 +93,8 @@
 	.tool-result { max-width: 100%; overflow-x: auto; }
 	.chat-input-bar { gap: 8px; padding: 8px 10px; }
 	/* 16px avoids iOS Safari's auto-zoom on focus. */
-	#chat-input { font-size: 16px; padding: 11px 13px; }
-	#chat-send { min-width: 46px; height: 46px; font-size: 18px; }
+	#chat-input { font-size: var(--fs-xl); padding: 11px 13px; }
+	#chat-send { min-width: 46px; height: 46px; font-size: var(--fs-2xl); }
 
 	/* Give lists a little more row height for touch. */
 	.session-box { padding: 10px 11px; }
@@ -105,9 +105,9 @@
    24px WCAG floor; enlarge on small screens, and reveal hover-only close
    buttons (there is no hover on touch). */
 @media (max-width: 760px), (pointer: coarse) {
-	.addbtn { width: 34px; height: 34px; font-size: 16px; }
-	.icon-btn { padding: 8px 10px; font-size: 18px; }
-	.session-box-close { opacity: 1; font-size: 20px; padding: 4px 8px; }
+	.addbtn { width: 34px; height: 34px; font-size: var(--fs-xl); }
+	.icon-btn { padding: 8px 10px; font-size: var(--fs-2xl); }
+	.session-box-close { opacity: 1; font-size: var(--fs-3xl); padding: 4px 8px; }
 	/* These named classes that do not exist (`.files-row-del`, `.facet-box-close`),
 	   so on touch the file buttons stayed hidden and could not be reached at all.
 	   The real classes are `.files-del` and `.session-box-close`, and the file

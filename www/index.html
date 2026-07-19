@@ -16,7 +16,8 @@
 <link rel="stylesheet" href="css/updater.css">
 <link rel="stylesheet" href="css/spend.css">
 <link rel="stylesheet" href="css/passkey.css">
-<link rel="stylesheet" href="css/responsive.css">
+<link rel="stylesheet" href="css/workspace.css">
+	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
 </head>
 <body data-mpanel="ai">
@@ -30,7 +31,7 @@
 		<button id="drawer-btn" title="Menu" aria-label="Open menu">
 			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 		</button>
-		<a class="brand" href="https://daimond.app" aria-label="Daimond — the daimond.app home page">
+		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond — the daimond.app home page">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
 		</a>
@@ -48,11 +49,29 @@
 			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
 			</button>
-			<select class="theme-select" id="theme-select" title="Theme" aria-label="Theme">
-				<option value="light">Light</option>
-				<option value="dark">Dark</option>
-				<option value="lollypop">Lollypop</option>
-			</select>
+			<button class="icon-btn menu-btn" id="settings-menu-btn" title="Appearance and layout"
+				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu">
+				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
+			</button>
+		</div>
+	</div>
+
+	<!-- Every panel there is, searchable, for when the chip row cannot hold
+	     them all. Rows carry a pin, which is what decides the row's contents:
+	     the user says what sits in the header and nothing reorders itself. -->
+	<div class="pop" id="panel-gallery" hidden role="dialog" aria-label="Panels"></div>
+
+	<!-- Appearance and layout: theme, reading size, dock tiling. -->
+	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout"></div>
+
+	<!-- The keyboard's way in. Complete at any fleet size, which is what lets
+	     the visible surfaces be selective. -->
+	<div class="pal-scrim" id="palette" hidden>
+		<div class="pal-box" role="dialog" aria-modal="true" aria-label="Go to">
+			<input class="pal-input" id="pal-input" type="text" role="combobox" autocomplete="off"
+				aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list"
+				placeholder="Go to a panel, or a setting…">
+			<ul class="pal-list" id="pal-list" role="listbox" aria-label="Results"></ul>
 		</div>
 	</div>
 
@@ -548,6 +567,7 @@
 <script src="js/web.js"></script>
 <script src="js/spend.js"></script>
 <script src="js/updater.js"></script>
+<script src="js/workspace.js"></script>
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>

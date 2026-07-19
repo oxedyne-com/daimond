@@ -152,7 +152,7 @@
 		flex: 1;
 		min-width: 0;
 		margin-top: 6px;
-		font-size: 13px;
+		font-size: var(--fs-sm);
 		font-weight: 600;
 		color: var(--text-muted);
 		white-space: nowrap;
@@ -171,7 +171,7 @@
 		border: none;
 		border-radius: var(--radius);
 		color: var(--text-muted);
-		font-size: 20px;
+		font-size: var(--fs-3xl);
 		line-height: 1;
 		cursor: pointer;
 	}
@@ -211,7 +211,7 @@
 	#msheet-ask-input {
 		flex: 1;
 		min-width: 0;
-		font-size: 16px;			/* 16px keeps iOS Safari from zooming on focus */
+		font-size: var(--fs-xl);			/* 16px keeps iOS Safari from zooming on focus */
 		padding: 10px 13px;
 		border: 1px solid var(--border);
 		border-radius: 20px;
@@ -227,7 +227,7 @@
 		border-radius: 50%;
 		background: var(--accent);
 		color: #fff;
-		font-size: 17px;
+		font-size: var(--fs-xl-2xl);
 		cursor: pointer;
 	}
 	#msheet-ask-send:disabled { opacity: .4; }
@@ -247,7 +247,7 @@
 	   name box, a filter, or a dialog field never jerks the view. */
 	input, textarea, select,
 	.settings-select, .dlg-input, .dlg-select, .files-filter-input {
-		font-size: 16px !important;
+		font-size: var(--fs-xl) !important;
 	}
 
 	/* ── Modals fit the phone ──────────────────────────────────
@@ -269,7 +269,7 @@
 	#settings-modal > .modal-card > h2 { display: none; }
 	#settings-modal #settings-close { display: none; }
 	/* The view's own × sits top-right and is the close. Make it a clear target. */
-	#settings-slot .admin-back { font-size: 22px; padding: 4px 10px; }
+	#settings-slot .admin-back { font-size: var(--fs-4xl); padding: 4px 10px; }
 }
 
 /* A wider phone / small tablet in landscape gets a roomier sheet and

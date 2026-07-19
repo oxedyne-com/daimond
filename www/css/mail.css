@@ -24,20 +24,20 @@
 	background: var(--bg-secondary);
 	padding: 12px;
 }
-.mail-pitch p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
-.mail-fine { font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.mail-pitch p { margin: 0 0 10px; font-size: var(--fs-sm); line-height: 1.5; }
+.mail-fine { font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary); }
 .mail-pitch .mail-fine { margin-bottom: 10px; }
 .mail-unlock {
 	width: 100%;
 	background: var(--accent); color: #fff;
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
-	padding: 9px 16px; font-size: 14px;
+	padding: 9px 16px; font-size: var(--fs-base);
 }
 .mail-unlock:hover { filter: brightness(1.08); }
 .mail-unlock:disabled { opacity: 0.6; cursor: default; }
 
 .mail-note, .mail-err {
-	font-size: 12px; line-height: 1.45;
+	font-size: var(--fs-xs); line-height: 1.45;
 	padding: 7px 9px; border-radius: var(--radius-sm);
 }
 .mail-note { color: var(--text-secondary); background: var(--bg-tertiary); }
@@ -56,7 +56,7 @@
 	padding: 6px 8px;
 	border-radius: var(--radius-sm);
 	cursor: pointer;
-	font-size: 13px;
+	font-size: var(--fs-sm);
 }
 .mail-acct:hover { background: var(--bg-hover); }
 .mail-acct.on {
@@ -67,10 +67,10 @@
 	flex: 1; min-width: 0;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.mail-when { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.mail-when { font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 .mail-del {
 	border: 0; background: none; color: var(--text-muted);
-	font-size: 15px; line-height: 1; padding: 0 2px;
+	font-size: var(--fs-lg); line-height: 1; padding: 0 2px;
 	opacity: 0;
 }
 .mail-acct:hover .mail-del { opacity: 1; }
@@ -99,12 +99,12 @@
 .mail-stop {
 	background: var(--accent-soft); color: var(--accent-text);
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
-	padding: 8px 14px; font-size: 13px;
+	padding: 8px 14px; font-size: var(--fs-sm);
 }
 .mail-all {
 	background: var(--bg-secondary); color: var(--text-secondary);
 	border: 1px solid var(--border); border-radius: var(--radius-sm);
-	padding: 8px 14px; font-size: 13px;
+	padding: 8px 14px; font-size: var(--fs-sm);
 }
 .mail-all:hover { border-color: var(--border-2); color: var(--text-primary); }
 .mail-all:disabled { opacity: 0.5; cursor: default; }
@@ -115,7 +115,7 @@
 	border: 1px solid var(--border-2);
 	border-radius: var(--radius-sm);
 	padding: 8px 14px;
-	font-size: 13px;
+	font-size: var(--fs-sm);
 }
 .mail-older:hover { border-color: var(--accent); color: var(--accent-text); }
 .mail-older:disabled { opacity: 0.5; cursor: default; }
@@ -127,17 +127,17 @@
 }
 .mail-msg:hover { background: var(--bg-hover); }
 .mail-from {
-	font-size: 12px; color: var(--text-secondary);
+	font-size: var(--fs-xs); color: var(--text-secondary);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mail-subj {
-	font-size: 13px; margin: 2px 0;
+	font-size: var(--fs-sm); margin: 2px 0;
 	color: var(--text-primary);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mail-msg.unread .mail-subj { font-weight: 600; }
 .mail-date {
-	font-size: 11px; color: var(--text-muted);
+	font-size: var(--fs-2xs); color: var(--text-muted);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -154,14 +154,14 @@
 	padding: 12px 16px 10px;
 	border-bottom: 1px solid var(--border);
 }
-.msg-subject { font-size: 17px; font-weight: 600; line-height: 1.35; margin-bottom: 8px; }
+.msg-subject { font-size: var(--fs-xl-2xl); font-weight: 600; line-height: 1.35; margin-bottom: 8px; }
 
 .msg-who { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.msg-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
-.msg-addr { font-size: 12.5px; color: var(--text-muted); font-family: var(--font-mono); }
-.msg-date { font-size: 12.5px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+.msg-name { font-size: var(--fs-sm-base); font-weight: 600; color: var(--text-primary); }
+.msg-addr { font-size: var(--fs-xs-sm); color: var(--text-muted); font-family: var(--font-mono); }
+.msg-date { font-size: var(--fs-xs-sm); color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 
-.msg-line { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+.msg-line { display: flex; gap: 8px; font-size: var(--fs-xs-sm); line-height: 1.5; }
 .msg-lbl { flex: none; width: 58px; color: var(--text-muted); }
 .msg-val { color: var(--text-secondary); word-break: break-word; }
 
@@ -173,7 +173,7 @@
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border); border-radius: var(--radius-sm);
 	color: var(--text-secondary);
-	padding: 5px 10px; font-size: 12px;
+	padding: 5px 10px; font-size: var(--fs-xs);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .msg-att:hover { border-color: var(--accent); color: var(--text-primary); }
@@ -186,7 +186,7 @@
 .msg-text {
 	padding: 14px 16px 16px;
 	white-space: pre-wrap; word-break: break-word;
-	font-size: 14px; line-height: 1.6;
+	font-size: var(--fs-base); line-height: 1.6;
 	color: var(--text-primary);
 }
 
@@ -198,7 +198,7 @@
 	padding: 8px 12px;
 	background: var(--bg-tertiary);
 	border-bottom: 1px solid var(--border);
-	font-size: 12px; line-height: 1.45;
+	font-size: var(--fs-xs); line-height: 1.45;
 	color: var(--text-secondary);
 }
 .msg-blocked span { flex: 1; }
@@ -207,7 +207,7 @@
 	background: var(--bg-secondary);
 	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	padding: 5px 10px; font-size: 12px;
+	padding: 5px 10px; font-size: var(--fs-xs);
 }
 .msg-blocked button:hover { border-color: var(--accent); color: var(--accent-text); }
 
@@ -219,7 +219,7 @@
 	background: var(--bg-secondary);
 	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	padding: 5px 12px; font-size: 12.5px;
+	padding: 5px 12px; font-size: var(--fs-xs-sm);
 }
 .msg-act:hover { border-color: var(--accent); color: var(--accent-text); }
 
@@ -230,7 +230,7 @@
 .mail-drafts { border-bottom: 1px solid var(--border-2); background: var(--bg-tertiary); }
 .mail-drafts-head {
 	padding: 6px 10px;
-	font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+	font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em;
 	color: var(--text-muted);
 }
 .mail-draft {
@@ -256,14 +256,14 @@
 }
 .compose-row > span {
 	flex: none; width: 58px;
-	font-size: 12.5px; color: var(--text-muted);
+	font-size: var(--fs-xs-sm); color: var(--text-muted);
 }
 .compose-row > input, .compose-row > select {
 	flex: 1; min-width: 0;
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border); border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	padding: 6px 9px; font-size: 13px;
+	padding: 6px 9px; font-size: var(--fs-sm);
 }
 .compose-row > input:focus, .compose-row > select:focus {
 	outline: none; border-color: var(--accent);
@@ -285,7 +285,7 @@
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border); border-radius: var(--radius-sm);
 	color: var(--text-secondary);
-	padding: 5px 10px; font-size: 12px;
+	padding: 5px 10px; font-size: var(--fs-xs);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .compose-att:hover { border-color: var(--danger); color: var(--danger); }
@@ -299,26 +299,26 @@
 .compose-send {
 	background: var(--accent); color: #fff;
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
-	padding: 8px 18px; font-size: 13px;
+	padding: 8px 18px; font-size: var(--fs-sm);
 }
 .compose-send:hover { filter: brightness(1.08); }
 .compose-btn {
 	background: var(--bg-secondary); color: var(--text-secondary);
 	border: 1px solid var(--border); border-radius: var(--radius-sm);
-	padding: 8px 12px; font-size: 13px;
+	padding: 8px 12px; font-size: var(--fs-sm);
 }
 .compose-btn:hover { border-color: var(--border-2); color: var(--text-primary); }
 .compose-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .compose-send:disabled, .compose-btn:disabled { opacity: 0.5; cursor: default; }
 .compose-note {
 	margin-left: auto;
-	font-size: 12px; color: var(--text-secondary);
+	font-size: var(--fs-xs); color: var(--text-secondary);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .compose-note.err { color: var(--accent-text); }
 
 /* The form dialog's guidance line, under the fields. */
-.dlg-note { font-size: 12px; line-height: 1.45; color: var(--text-secondary); margin-top: 8px; }
+.dlg-note { font-size: var(--fs-xs); line-height: 1.45; color: var(--text-secondary); margin-top: 8px; }
 .dlg-note.err { color: var(--accent-text); }
 /* The shared field label carries a negative bottom margin, which suits the dense
  * settings panel and pulls a dialog's box up hard against its label. In a form

@@ -10,6 +10,12 @@
  * the prefers-colour-scheme media query decides. Both paths are handled below.
  */
 
+/* Reading size. The guide is framed inside the app as often as it is opened on
+ * its own, so it carries the reader's chosen text size the same way it carries
+ * the theme: mirrored onto this root by the inline script in each page, with a
+ * standalone default of 1 when there is no app to mirror from. */
+html { font-size: calc(16px * var(--fs-scale, 1)); }
+
 /* ── Palette (dark by default, matching the app) ─────────────────────────── */
 :root {
 	--bg-primary:     #15120F;
@@ -84,7 +90,7 @@ html { -webkit-text-size-adjust: 100%; }
 body {
 	margin: 0;
 	font-family: var(--font);
-	font-size: 16px;
+	font-size: 1rem;
 	line-height: 1.6;
 	color: var(--text-primary);
 	background: var(--bg-primary);
@@ -379,7 +385,7 @@ ol.steps > li h3 { margin-top: 0; }
 
 /* ── Narrow screens ──────────────────────────────────────────────────────── */
 @media (max-width: 560px) {
-	body { font-size: 15px; }
+	body { font-size: 0.9375rem; }
 	h1 { font-size: 1.6rem; }
 	.site-head-inner { padding: 0.6rem 1rem; }
 	main { padding: 1.25rem 1rem 3rem; }

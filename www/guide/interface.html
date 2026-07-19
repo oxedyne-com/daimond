@@ -8,16 +8,48 @@
 <link rel="stylesheet" href="../css/guide.css">
 <script>
 (function () {
-	function apply(t) {
+	// The guide is framed inside Daimond's Web panel, which deliberately withholds
+	// `allow-same-origin` so that a page written by an agent cannot reach the
+	// user's keys. That sandbox blocks this document from reading window.parent
+	// at all, so the theme and the reading size arrive over postMessage instead --
+	// the one channel an opaque origin still has. Both are cosmetic and are
+	// validated on arrival, so accepting them from any framer costs nothing.
+	function paint(theme, scale) {
+		if (theme === 'lollypop') theme = 'light';   // a light background either way
+		if (theme === 'dark' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
+		var n = parseFloat(scale);
+		if (n >= 0.5 && n <= 2) document.documentElement.style.setProperty('--fs-scale', String(n));
+	}
+	window.addEventListener('message', function (e) {
+		var d = e && e.data;
+		if (!d || d.daimondGuide !== 'style') return;
+		paint(d.theme, d.scale);
+	});
+	try {
+		if (window.parent && window.parent !== window) {
+			window.parent.postMessage({ daimondGuide: 'ready' }, '*');
+		}
+	} catch (e) {}
+
+	// The direct path, for the case where the guide is framed WITHOUT a sandbox
+	// and can simply read the app's root. Harmless where it is blocked.
+	function apply(root) {
+		var t = root.getAttribute('data-theme');
+		// Lollypop is a light background, so the guide reads it as light rather
+		// than staying dark against a pale app.
+		if (t === 'lollypop') t = 'light';
 		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+		// The reader's text size travels the same path as the theme.
+		var s = root.style.getPropertyValue('--fs-scale');
+		if (s) document.documentElement.style.setProperty('--fs-scale', s);
 	}
 	try {
 		if (window.parent && window.parent !== window) {
 			var root = window.parent.document.documentElement;
-			apply(root.getAttribute('data-theme'));
+			apply(root);
 			new MutationObserver(function () {
-				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
-			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+				try { apply(window.parent.document.documentElement); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme', 'style'] });
 		}
 	} catch (e) {}
 })();
@@ -73,7 +105,7 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, tags, theme toggle -->
+			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
@@ -92,7 +124,7 @@
 			<line class="rm-rule" x1="36" y1="100" x2="70" y2="100"/>
 			<text class="rm-title" x="36" y="120" font-size="10.5">What you work on</text>
 			<!-- Facets -->
-			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">FOCI</text>
+			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">FACETS</text>
 			<text class="rm-sub" x="204" y="137" text-anchor="end" font-size="12">+</text>
 			<rect class="rm-cell" x="36" y="142" width="170" height="26" rx="6"/>
 			<rect class="rm-skel" x="44" y="149" width="70" height="6" rx="3"/>
@@ -242,10 +274,10 @@
 		</div>
 	</div>
 
-	<p>Each stage guest has a header with a close button. A closed panel does not vanish: it becomes a tag in the top bar, and clicking the tag brings it back.</p>
+	<p>Each stage guest has a header with a close button. A closed panel does not vanish: its chip stays in the top bar, unfilled, and clicking the chip brings it back.</p>
 
 	<h2>The dock — right</h2>
-	<p>The dock holds the sources you pull from. A closed dock panel is a tag in the header; clicking the tag docks it again. A second column opens only when there is genuinely room for one.</p>
+	<p>The dock holds the sources you pull from. Closing one leaves its chip in the top bar; clicking the chip docks it again. How the dock tiles, and therefore how many panels it will hold at once, is yours to set under <strong>Dock tiling</strong> in the appearance menu, described below.</p>
 
 	<div class="cards">
 		<div class="card">
@@ -260,13 +292,43 @@
 			<h3>Agents</h3>
 			<p>Live agent runs, as they happen, with a count of how many are working.</p>
 		</div>
+		<div class="card">
+			<h3>Spending</h3>
+			<p>What you have spent, and on what. Covered in full on <a href="spending.html">Spending</a>.</p>
+		</div>
 	</div>
 
 	<h2>The top bar</h2>
-	<p>Across the top sit the brand mark, a meter, the tags for any closed panels, and a <strong>theme toggle</strong> that switches between light and dark. This guide follows the same theme when it is shown inside Daimond.</p>
+	<p>Across the top sit the brand mark, a meter, a row of <strong>panel chips</strong>, and a button at the far right that opens the <strong>appearance and layout</strong> menu.</p>
+
+	<h3>The chips</h3>
+	<p>Every panel has a chip, whether it is open or shut, and clicking one toggles that panel. An open panel's chip is filled in, so the row reads as a map of what is on screen. The chips are toggles rather than summons for a reason: if only the closed panels had one, the row would be longest when the app was emptiest, and every chip would shift sideways each time one was used. A chip that stays put is one you can learn the position of. (Agents is the exception to <em>every</em>: it keeps out of the way until the first agent runs.)</p>
+	<p>The chips are grouped by zone — rail, then stage, then dock — with a thin divider between the groups, running left to right in the same order the zones do on screen. So a chip sits on the side the panel it opens will appear on. Two marks are worth knowing:</p>
+	<ul>
+		<li>A closed stage chip whose panel would <strong>displace the guest currently beside the chat</strong> is drawn with a dashed outline. The stage seats two, and the daimon keeps its seat, so opening a third guest means the other one leaves. The outline warns rather than refuses, because that is a real choice — and it is an outline rather than an added mark so that the chip keeps its width, and its neighbours do not shift.</li>
+		<li>A closed dock chip is <strong>greyed out when the dock is full</strong>. Its tooltip points at the fix: choose a larger tiling in the appearance menu, or close a dock panel.</li>
+	</ul>
+
+	<h3>Pinned panels, and the gallery</h3>
+	<p>You decide which chips sit in the top bar. Any panel can be <strong>pinned</strong> or unpinned; the unpinned ones live behind a <span class="ui">⋯</span> chip at the end of the row, with a count of how many are back there. Clicking it opens the <strong>gallery</strong>: every panel there is, searchable by name, grouped by zone, each row carrying a pin control and saying whether that panel is open. Clicking a row opens or closes the panel as a chip would.</p>
+	<p>The row is allowed to be incomplete only because the gallery is not. Nothing is ranked by how often you use it, either: a row that reorders itself would destroy the muscle memory that fixed positions exist to build.</p>
+
+	<h3>The palette</h3>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> on a Mac — opens a search box that reaches any panel or any setting by typing. Arrow keys move through the results, <span class="ui">Enter</span> runs the highlighted one, and <span class="ui">Esc</span> closes it. It lists the panels, the three themes, the four text sizes and the dock tilings. It is never the fastest route to a panel you can see a chip for; it is the route that stays complete however many panels there are.</p>
+
+	<h3>Appearance and layout</h3>
+	<p>The button at the top right opens one menu holding the choices about how Daimond looks and sits, as opposed to what it does:</p>
+	<ul>
+		<li><strong>Theme</strong> — <span class="ui">Light</span>, <span class="ui">Dark</span> or <span class="ui">Lollypop</span>. This guide follows the app's theme when it is shown inside Daimond, reading Lollypop as a light background.</li>
+		<li><strong>Text size</strong> — four steps, <span class="ui">Small</span>, <span class="ui">Normal</span>, <span class="ui">Large</span> and <span class="ui">Larger</span>. Only the type responds: the frame, the padding and the panel widths stay where they are, because this is a control for reading rather than a zoom. If you want the whole interface bigger, the browser's own zoom does that. The sample in the menu is set in the size being chosen, so the control shows the change rather than naming it.</li>
+		<li><strong>Dock tiling</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> column, <span class="ui">2×2</span>, <span class="ui">2×3</span> or <span class="ui">3×2</span>, each drawn as the grid it selects. The tiling also decides <em>how many panels the dock can hold</em>, which is its columns times its rows: four in one column, four at 2×2, six at either 2×3 or 3×2. <span class="ui">Auto</span> lets the window decide, taking a second column once there is genuinely room for one. Moving to a smaller grid closes whichever panels no longer fit, most recently opened first — they are closed rather than dropped quietly, so each goes back to being a chip you can see and click.</li>
+	</ul>
+
+	<h3>Keeping an arrangement with a Facet</h3>
+	<p>When a Facet is selected, the appearance menu offers to keep the current arrangement of panels with it. Opening that Facet again puts the arrangement back, so returning to a piece of work does not mean reassembling by hand the panels it needs. It is saved only when you ask — never inferred, and never in the background — because a switch that silently closed panels would read as work being lost. The menu also lets you update a saved arrangement, or forget it.</p>
 
 	<h2>On a narrow screen</h2>
-	<p>When the window is too narrow for three zones, Daimond shows one panel at a time and a row of buttons along the bottom — <span class="ui">Chats</span>, <span class="ui">Chat</span>, <span class="ui">Web</span>, <span class="ui">Agents</span>, <span class="ui">Email</span>, <span class="ui">Files</span> — to move between them. Nothing is lost; it is the same panels, shown one at a time.</p>
+	<p>Below the phone width the chips and the gallery give way to the phone shell, which answers the same question with less room: the chat is the floor, a panel rises over it as a sheet you can drag, and the rail becomes a drawer opened by the button at the top left. A row along the bottom — <span class="ui">Chat</span>, <span class="ui">Email</span>, <span class="ui">Files</span>, <span class="ui">Agents</span> — moves between them. Nothing is lost; it is the same panels, shown one at a time.</p>
 
 	<div class="next">
 		<a href="index.html">&larr; Getting started</a>

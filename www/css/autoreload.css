@@ -7,18 +7,18 @@
 
 #autoreload { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 
-.ar-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.ar-title { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
 
 /* The card on file. */
 .ar-card { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
-.ar-card-has  { font-size: 13px; color: var(--text-primary); }
-.ar-card-none { font-size: 13px; color: var(--text-muted); }
+.ar-card-has  { font-size: var(--fs-sm); color: var(--text-primary); }
+.ar-card-none { font-size: var(--fs-sm); color: var(--text-muted); }
 #autoreload .ar-card-btn {
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border);
 	color: var(--text-secondary);
 	border-radius: var(--radius-sm);
-	font-size: 12px;
+	font-size: var(--fs-xs);
 	padding: 4px 10px;
 }
 #autoreload .ar-card-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-2); }
@@ -26,7 +26,7 @@
 #autoreload .ar-card-btn.accent:hover { background: var(--accent-hover); }
 
 /* The switch. Disabled without a card, and dimmed so it reads as unavailable rather than off. */
-.ar-switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); margin-bottom: 14px; }
+.ar-switch { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-primary); margin-bottom: 14px; }
 .ar-switch input { accent-color: var(--accent); width: 15px; height: 15px; }
 .ar-switch input:disabled { opacity: 0.5; }
 .ar-switch input:disabled + span { color: var(--text-muted); }
@@ -34,7 +34,7 @@
 /* The three numbers. When auto-reload is off they are greyed, because they configure a thing
    that is not running -- but they stay editable, so it can be set up and then switched on. */
 .ar-field { margin-bottom: 12px; }
-.ar-label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.ar-label { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 4px; }
 .ar-input-row { display: flex; align-items: center; gap: 0; }
 .ar-ccy {
 	background: var(--bg-tertiary);
@@ -42,7 +42,7 @@
 	border-right: none;
 	border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 	color: var(--text-muted);
-	font-size: 13px;
+	font-size: var(--fs-sm);
 	padding: 7px 9px;
 }
 #autoreload .ar-input {
@@ -52,12 +52,12 @@
 	border: 1px solid var(--border);
 	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 	color: var(--text-primary);
-	font-size: 13px;
+	font-size: var(--fs-sm);
 	padding: 7px 10px;
 	font-family: var(--font-mono);
 }
 #autoreload .ar-input:focus { outline: none; border-color: var(--accent); }
-.ar-hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
+.ar-hint { font-size: var(--fs-2xs); color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
 
 #autoreload.ar-off .ar-field { opacity: 0.55; }
 
@@ -66,7 +66,7 @@
 .ar-spent { margin: 14px 0 4px; }
 .ar-bar { height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden; margin-bottom: 5px; }
 .ar-bar-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
-.ar-spent-txt { font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); }
+.ar-spent-txt { font-size: var(--fs-2xs); color: var(--text-secondary); font-family: var(--font-mono); }
 
 /* A card that has expired or been declined must be said out loud, BEFORE the balance runs out. */
 .ar-last-error {
@@ -75,7 +75,7 @@
 	border: 1px solid var(--danger);
 	border-radius: var(--radius-sm);
 	color: var(--danger);
-	font-size: 12px;
+	font-size: var(--fs-xs);
 	line-height: 1.45;
 }
 
@@ -85,11 +85,11 @@
 	border: none;
 	color: #fff;
 	border-radius: var(--radius-sm);
-	font-size: 13px;
+	font-size: var(--fs-sm);
 	padding: 7px 16px;
 }
 #autoreload .ar-save:hover { background: var(--accent-hover); }
 #autoreload .ar-save:disabled { opacity: 0.5; }
 
-.ar-note { margin-top: 8px; font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.ar-note { margin-top: 8px; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.45; }
 .ar-note.bad { color: var(--danger); }

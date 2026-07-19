@@ -4,7 +4,7 @@
 
 .models-empty {
 	padding: 12px; border: 1px dashed var(--border-2); border-radius: 8px;
-	color: var(--text-secondary); font-size: 12px; text-align: center;
+	color: var(--text-secondary); font-size: var(--fs-xs); text-align: center;
 }
 
 .models-prov { border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
@@ -13,13 +13,13 @@
 	display: flex; align-items: center; gap: 8px; width: 100%;
 	padding: 8px 10px; cursor: pointer; text-align: left;
 	background: var(--bg-tertiary); border: 0; color: var(--text-primary);
-	font-size: 12px;
+	font-size: var(--fs-xs);
 }
 .settings-section .models-prov-head:hover { background: var(--bg-hover); }
 .models-caret     { width: 10px; color: var(--text-secondary); }
 .models-prov-name { font-weight: 600; flex: 1; }
-.models-prov-key  { font-size: 11px; color: var(--text-secondary); }
-.models-prov-count{ font-size: 11px; color: var(--text-secondary); min-width: 68px; text-align: right; }
+.models-prov-key  { font-size: var(--fs-2xs); color: var(--text-secondary); }
+.models-prov-count{ font-size: var(--fs-2xs); color: var(--text-secondary); min-width: 68px; text-align: right; }
 
 .models-prov-body { display: flex; flex-direction: column; padding: 4px; gap: 2px; }
 
@@ -27,20 +27,20 @@
 	display: flex; align-items: center; gap: 8px; width: 100%;
 	padding: 5px 8px; border-radius: 6px; cursor: pointer; text-align: left;
 	background: transparent; border: 0; color: var(--text-secondary);
-	font-family: var(--font-mono); font-size: 11px;
+	font-family: var(--font-mono); font-size: var(--fs-2xs);
 }
 .settings-section .models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
 .models-model.on    { color: var(--accent-text); background: var(--accent-soft); }
 .models-star { width: 12px; }
 .models-id   { flex: 1; word-break: break-all; }
 .models-def  {
-	font-family: var(--font-sans); font-size: 10px; font-weight: 600;
+	font-family: var(--font-sans); font-size: var(--fs-3xs); font-weight: 600;
 	padding: 1px 6px; border-radius: 999px;
 	background: var(--accent); color: #fff;
 }
 
 .settings-section .models-refetch, .settings-section .models-remove, .settings-section .models-add {
-	padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 11px;
+	padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: var(--fs-2xs);
 	background: var(--bg-tertiary); border: 1px solid var(--border-2);
 	color: var(--text-secondary);
 }
@@ -53,6 +53,6 @@
 
 .models-default {
 	margin-top: 6px; padding: 6px 2px;
-	font-size: 11px; color: var(--text-secondary);
+	font-size: var(--fs-2xs); color: var(--text-secondary);
 	border-top: 1px solid var(--border);
 }

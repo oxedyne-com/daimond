@@ -10,16 +10,48 @@
 /* Mirror the app's theme when the guide is framed same-origin; otherwise the
    prefers-colour-scheme media query in guide.css decides. */
 (function () {
-	function apply(t) {
+	// The guide is framed inside Daimond's Web panel, which deliberately withholds
+	// `allow-same-origin` so that a page written by an agent cannot reach the
+	// user's keys. That sandbox blocks this document from reading window.parent
+	// at all, so the theme and the reading size arrive over postMessage instead --
+	// the one channel an opaque origin still has. Both are cosmetic and are
+	// validated on arrival, so accepting them from any framer costs nothing.
+	function paint(theme, scale) {
+		if (theme === 'lollypop') theme = 'light';   // a light background either way
+		if (theme === 'dark' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
+		var n = parseFloat(scale);
+		if (n >= 0.5 && n <= 2) document.documentElement.style.setProperty('--fs-scale', String(n));
+	}
+	window.addEventListener('message', function (e) {
+		var d = e && e.data;
+		if (!d || d.daimondGuide !== 'style') return;
+		paint(d.theme, d.scale);
+	});
+	try {
+		if (window.parent && window.parent !== window) {
+			window.parent.postMessage({ daimondGuide: 'ready' }, '*');
+		}
+	} catch (e) {}
+
+	// The direct path, for the case where the guide is framed WITHOUT a sandbox
+	// and can simply read the app's root. Harmless where it is blocked.
+	function apply(root) {
+		var t = root.getAttribute('data-theme');
+		// Lollypop is a light background, so the guide reads it as light rather
+		// than staying dark against a pale app.
+		if (t === 'lollypop') t = 'light';
 		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+		// The reader's text size travels the same path as the theme.
+		var s = root.style.getPropertyValue('--fs-scale');
+		if (s) document.documentElement.style.setProperty('--fs-scale', s);
 	}
 	try {
 		if (window.parent && window.parent !== window) {
 			var root = window.parent.document.documentElement;
-			apply(root.getAttribute('data-theme'));
+			apply(root);
 			new MutationObserver(function () {
-				try { apply(window.parent.document.documentElement.getAttribute('data-theme')); } catch (e) {}
-			}).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+				try { apply(window.parent.document.documentElement); } catch (e) {}
+			}).observe(root, { attributes: true, attributeFilter: ['data-theme', 'style'] });
 		}
 	} catch (e) { /* cross-origin or opened directly: the media query handles it. */ }
 })();
@@ -83,7 +115,8 @@
 	</ol>
 
 	<h2>What you are looking at</h2>
-	<p>The screen has three zones. The <strong>rail</strong> on the left lists what you are working on and, below a movable divider, the <strong>admin panel</strong>. The <strong>stage</strong> in the centre holds the conversation and anything you are reading beside it. The <strong>dock</strong> on the right holds the sources you pull from — Email, the Workspace and live agent runs.</p>
+	<p>The screen has three zones. The <strong>rail</strong> on the left lists what you are working on and, below a movable divider, the <strong>admin panel</strong>. The <strong>stage</strong> in the centre holds the conversation and anything you are reading beside it. The <strong>dock</strong> on the right holds the sources you pull from — Email, the Workspace, live agent runs and your spending.</p>
+	<p>Across the top, every panel has a chip you can click to open or close it, and a button at the far right sets the theme, the text size and how the dock tiles. Neither is anything you need on the way to a first answer; both are laid out on <a href="interface.html">The interface</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
 		<img alt="The admin panel at the bottom-left: an identity row, a Models row, a Credits row, a Tools row, and workspace storage rows." src="shots/admin-panel.png" loading="lazy">

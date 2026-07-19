@@ -75,20 +75,20 @@
 			'.pair-box{background:var(--bg-secondary,#1b1b1f);color:var(--text-primary,#eee);' +
 			'border:1px solid var(--border,#333);border-radius:12px;max-width:380px;width:100%;' +
 			'padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.5)}' +
-			'.pair-box h3{margin:0 0 8px;font-size:1.05rem}' +
-			'.pair-box p{margin:0 0 12px;font-size:.9rem;line-height:1.4;opacity:.85}' +
-			'.pair-code{font-family:ui-monospace,monospace;font-size:1.6rem;letter-spacing:.15em;' +
+			'.pair-box h3{margin:0 0 8px;font-size:var(--fs-xl)}' +
+			'.pair-box p{margin:0 0 12px;font-size:var(--fs-base);line-height:1.4;opacity:.85}' +
+			'.pair-code{font-family:ui-monospace,monospace;font-size:var(--fs-5xl);letter-spacing:.15em;' +
 			'text-align:center;padding:12px;border:1px dashed var(--border,#444);border-radius:8px;' +
 			'margin:0 0 12px;user-select:all}' +
 			'.pair-input{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;' +
-			'font-size:1.2rem;letter-spacing:.1em;text-align:center;padding:10px;border-radius:8px;' +
+			'font-size:var(--fs-3xl);letter-spacing:.1em;text-align:center;padding:10px;border-radius:8px;' +
 			'border:1px solid var(--border,#444);background:var(--bg-primary,#111);color:inherit;margin:0 0 12px}' +
 			'.pair-row{display:flex;gap:8px;justify-content:flex-end}' +
 			'.pair-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border,#444);' +
-			'background:var(--accent,#4a7);color:#fff;cursor:pointer;font-size:.9rem}' +
+			'background:var(--accent,#4a7);color:#fff;cursor:pointer;font-size:var(--fs-base)}' +
 			'.pair-btn.ghost{background:transparent;color:inherit}' +
-			'.pair-err{color:#e66;font-size:.85rem;min-height:1.1em;margin:0 0 8px}' +
-			'.pair-note{font-size:.8rem;opacity:.7;margin:8px 0 0}' +
+			'.pair-err{color:#e66;font-size:var(--fs-sm);min-height:1.1em;margin:0 0 8px}' +
+			'.pair-note{font-size:var(--fs-xs);opacity:.7;margin:8px 0 0}' +
 			'.pair-qr{display:block;margin:0 auto 12px;width:220px;height:220px;max-width:80%;' +
 			'image-rendering:pixelated;border-radius:8px;background:#fff;padding:8px;box-sizing:border-box}';
 		document.head.appendChild(s);

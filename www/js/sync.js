@@ -108,7 +108,7 @@
 			var st = document.createElement('style');
 			st.id = 'sync-status-styles';
 			st.textContent =
-				'#sync-chip{display:none;align-items:center;gap:5px;font-size:.75rem;padding:3px 9px;' +
+				'#sync-chip{display:none;align-items:center;gap:5px;font-size:var(--fs-xs);padding:3px 9px;' +
 				'border-radius:999px;border:1px solid var(--border,#333);color:var(--text-secondary,#9aa);' +
 				'background:var(--surface,#1b1b1f);white-space:nowrap}' +
 				'#sync-chip[data-state="syncing"]{color:var(--accent,#4a7)}' +

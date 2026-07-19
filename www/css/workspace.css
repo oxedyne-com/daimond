@@ -1,0 +1,287 @@
+/* workspace.css — the controls that arrange Daimond rather than run it.
+ *
+ * Three surfaces live here, and they are deliberately layered so that no one of
+ * them has to carry everything:
+ *
+ *   the chip row      what is on screen, and one click to change it,
+ *   the gallery       every panel there is, searchable, for when the row cannot
+ *                     hold them all,
+ *   the palette       the same reach from the keyboard, at any fleet size.
+ *
+ * The row is allowed to be incomplete precisely because the other two are not.
+ */
+
+/* ── The chip row ────────────────────────────────────────────────────────────
+   Chips are TOGGLES, not summons: every panel keeps a chip whether it is open
+   or shut, so a chip never moves when its neighbour opens. An earlier design
+   showed only the closed panels, which meant the row was longest when the app
+   was emptiest and every chip shifted sideways each time one was used. */
+.panel-tags { display: flex; align-items: center; gap: 5px; margin-right: 6px; min-width: 0; overflow: hidden; }
+.ptag-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
+
+/* Zone is legible by position first -- rail, stage and dock groups run
+   left to right in the order the zones themselves do -- and the divider only
+   confirms it. Position matters more than colour here because the two zones
+   behave differently: opening a dock panel ADDS one, while opening a stage
+   panel evicts whichever guest is sitting beside the daimon. */
+.ptag-div { width: 1px; height: 16px; background: var(--border-2); margin: 0 3px; flex: none; }
+
+.ptag {
+	font-size: var(--fs-2xs);
+	letter-spacing: 0.02em;
+	padding: 4px 10px;
+	border-radius: 999px;
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
+	border: 1px solid var(--border);
+	white-space: nowrap;
+}
+.ptag:hover { color: var(--text-primary); border-color: var(--accent); }
+.ptag:disabled { opacity: 0.4; cursor: not-allowed; }
+.ptag:disabled:hover { color: var(--text-secondary); border-color: var(--border); }
+
+/* An open panel's chip. Filled rather than outlined, so the row reads as a map
+   of what is on screen at a glance. */
+.ptag.on {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent-text);
+}
+.ptag.on:hover { color: var(--text-primary); }
+
+/* A stage chip that would displace the guest beside the chat says so before it
+   is clicked -- but it must do so WITHOUT changing its own width. A glyph
+   appended here re-flowed every chip to its right the moment a stage seat
+   filled, which is exactly the shifting the toggle row exists to prevent. A
+   border style costs no layout. */
+.ptag-stage.will-evict { border-style: dashed; }
+
+.ptag-more { font-family: var(--font); letter-spacing: 0.08em; padding: 4px 9px; }
+.ptag-more .n { font-size: var(--fs-4xs); opacity: 0.8; margin-left: 3px; letter-spacing: 0; }
+
+/* ── Popover furniture, shared by the gallery and the settings menu ───────── */
+.pop {
+	position: fixed;
+	z-index: 3000;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+	padding: 10px;
+	min-width: 260px;
+	max-width: min(92vw, 380px);
+	max-height: min(72vh, 620px);
+	overflow-y: auto;
+}
+.pop[hidden] { display: none; }
+.pop-head {
+	font-size: var(--fs-2xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+	padding: 6px 6px 4px;
+}
+.pop-head:not(:first-child) { margin-top: 6px; border-top: 1px solid var(--border); }
+.pop-note {
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	padding: 8px 6px 2px;
+	border-top: 1px solid var(--border);
+	margin-top: 6px;
+	line-height: 1.5;
+}
+.pop-note kbd {
+	font-family: var(--font-mono);
+	font-size: var(--fs-4xs);
+	border: 1px solid var(--border-2);
+	border-radius: 4px;
+	padding: 1px 4px;
+	color: var(--text-secondary);
+}
+
+/* ── The settings menu ───────────────────────────────────────────────────────
+   Theme, reading size and the dock's tiling, in one place. They belong together
+   because they are the same kind of decision: how the app should look and sit,
+   as opposed to what it should do. */
+.menu-btn { gap: 5px; }
+.menu-btn .ic { width: 18px; height: 18px; }
+
+.set-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; }
+.set-row > .lbl { flex: 1; font-size: var(--fs-sm); color: var(--text-primary); }
+
+/* A segmented control: the options of one setting, side by side, so the choice
+   and what else was available are one glance rather than two. */
+.seg { display: flex; gap: 3px; flex-wrap: wrap; padding: 2px 6px 8px; }
+.seg button {
+	flex: 1 1 auto;
+	min-width: 54px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	color: var(--text-secondary);
+	border-radius: var(--radius-sm);
+	padding: 6px 8px;
+	font-size: var(--fs-xs);
+	white-space: nowrap;
+}
+.seg button:hover { border-color: var(--accent); color: var(--text-primary); }
+.seg button[aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent-text);
+}
+
+/* The reading size, shown as the thing it changes: the sample is set in the
+   size being chosen, so the control demonstrates rather than describes. */
+.size-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; }
+.size-row button {
+	width: 32px; height: 30px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	color: var(--text-secondary);
+	border-radius: var(--radius-sm);
+}
+.size-row button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+.size-row button:disabled { opacity: 0.35; cursor: not-allowed; }
+.size-row .sample {
+	flex: 1;
+	text-align: center;
+	color: var(--text-primary);
+	font-size: var(--fs-base);
+	line-height: 1.2;
+	overflow: hidden;
+	white-space: nowrap;
+}
+.size-row .pct { font-size: var(--fs-2xs); color: var(--text-muted); font-family: var(--font-mono); min-width: 38px; text-align: right; }
+
+/* A grid option drawn as the grid it selects, because "2 x 3" is a description
+   of a picture and the picture is smaller than the sentence. */
+.grid-opt { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.grid-opt .cells { display: grid; gap: 2px; }
+.grid-opt .cells i {
+	display: block;
+	width: 9px; height: 6px;
+	border-radius: 1px;
+	background: currentColor;
+	opacity: 0.55;
+}
+.grid-opt[aria-pressed="true"] .cells i { opacity: 1; }
+.grid-opt .cells i.maybe { background: none; box-shadow: inset 0 0 0 1px currentColor; }
+.grid-opt .cap { font-size: var(--fs-4xs); letter-spacing: 0.02em; }
+
+/* ── The gallery: every panel, searchable ────────────────────────────────── */
+.gal-search {
+	width: 100%;
+	box-sizing: border-box;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	padding: 7px 10px;
+	margin-bottom: 6px;
+}
+.gal-search:focus { outline: none; border-color: var(--accent); }
+
+.gal-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 7px 8px;
+	border-radius: var(--radius-sm);
+	background: none;
+	border: 1px solid transparent;
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	text-align: left;
+}
+.gal-row:hover, .gal-row:focus-visible { background: var(--bg-hover); outline: none; }
+.gal-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.gal-row .state { font-size: var(--fs-2xs); color: var(--text-muted); flex: none; }
+.gal-row.is-open .state { color: var(--ok); }
+
+/* Pinning is what keeps the row predictable: the user says what sits in the
+   header, and nothing reorders itself behind their back. */
+.gal-pin {
+	flex: none;
+	width: 26px; height: 26px;
+	display: flex; align-items: center; justify-content: center;
+	background: none; border: none; border-radius: var(--radius-sm);
+	color: var(--text-muted);
+}
+.gal-pin:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.gal-pin[aria-pressed="true"] { color: var(--accent); }
+.gal-pin .ic { width: 15px; height: 15px; }
+
+.gal-empty { padding: 14px 8px; font-size: var(--fs-sm); color: var(--text-muted); text-align: center; }
+
+/* ── The palette ─────────────────────────────────────────────────────────────
+   Invisible until asked for, and complete when it arrives. It exists so the
+   visible surfaces are free NOT to be complete. */
+.pal-scrim {
+	position: fixed; inset: 0;
+	background: rgba(0, 0, 0, 0.45);
+	z-index: 4000;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding: 12vh 16px 16px;
+}
+.pal-scrim[hidden] { display: none; }
+.pal-box {
+	width: 100%;
+	max-width: 520px;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	max-height: 70vh;
+}
+.pal-input {
+	width: 100%;
+	box-sizing: border-box;
+	background: none;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--text-primary);
+	font-size: var(--fs-xl);
+	padding: 14px 16px;
+}
+.pal-input:focus { outline: none; }
+.pal-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.pal-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 9px 10px;
+	border-radius: var(--radius-sm);
+	font-size: var(--fs-sm);
+	color: var(--text-primary);
+	cursor: pointer;
+}
+.pal-item .kind {
+	font-size: var(--fs-4xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: 2px 7px;
+	flex: none;
+}
+.pal-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pal-item .hint { font-size: var(--fs-2xs); color: var(--text-muted); flex: none; }
+.pal-item[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.pal-item[aria-selected="true"] .hint { color: var(--accent-text); }
+.pal-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: var(--fs-sm); }
+
+/* Below the phone breakpoint the drawer and the bottom nav own panel access,
+   so none of this appears: a chip row on a 380px screen is a scrolling mess,
+   and the mobile shell already answers the question it would answer. */
+@media (max-width: 760px) {
+	.panel-tags, .ptag-more { display: none; }
+	.pal-scrim { padding-top: 6vh; }
+}

@@ -723,7 +723,6 @@ import init, {
 	var chatSend      = document.getElementById('chat-send');
 	var sessionNameEl = document.getElementById('current-session-name');
 	var settingsBtn   = document.getElementById('settings-btn');
-	var themeSelect   = document.getElementById('theme-select');
 	var brandLogo     = document.querySelector('.brand-logo');
 	var topMeter      = document.getElementById('top-meter');
 	var aiMeter       = document.getElementById('ai-meter');
@@ -754,7 +753,6 @@ import init, {
 		if (!THEMES[theme]) theme = 'dark';
 		document.documentElement.setAttribute('data-theme', theme);
 		localStorage.setItem('daimond-theme', theme);
-		if (themeSelect) themeSelect.value = theme;
 		// A word logo drawn for a dark background needs its dark-ink twin on any LIGHT background —
 		// which lollypop is, as much as light itself. Only true dark keeps the light-ink logo.
 		var lightBg = theme !== 'dark';
@@ -764,7 +762,14 @@ import init, {
 		var el = chatOutput && chatOutput.querySelector('.empty-logo.full');
 		if (el) el.src = lightBg ? 'assets/daimond_word_dark.svg' : 'assets/daimond_word.svg';
 	}
-	if (themeSelect) themeSelect.addEventListener('change', function () { setTheme(themeSelect.value); });
+	// The theme used to be a pulldown of its own in the header. It is now one
+	// setting among several in the appearance menu, so it is published as a
+	// service rather than bound to a control.
+	window.DaimondTheme = {
+		list: function () { return Object.keys(THEMES); },
+		get:  function () { return document.documentElement.getAttribute('data-theme') || 'dark'; },
+		set:  setTheme,
+	};
 
 	// ── Durability: lifecycle hooks ────────────────────────────
 	// These are INSURANCE, not the mechanism. The journal is kept current as work happens, so
@@ -883,7 +888,21 @@ import init, {
 
 		var KEY      = 'daimond-layout';
 		var STAGE_MAX = 2;      // two seats. A third would make each unreadable.
-		var DOCK_MAX  = 4;
+
+		/// How the dock tiles, and therefore how many panels it can hold.
+		///
+		/// The cap used to be the constant 4, which was the number of dock panels
+		/// that happened to exist. Deriving it from the grid is what lets a wide
+		/// screen hold more than a tall one, and what makes 2 x 3 mean anything.
+		/// `auto` keeps the behaviour the app shipped with: a second column once
+		/// the window is wide enough to mean it.
+		var GRIDS = {
+			auto:  null,
+			'1':   { cols: 1, rows: 4, label: 'One column' },
+			'2x2': { cols: 2, rows: 2, label: '2 by 2' },
+			'2x3': { cols: 2, rows: 3, label: '2 by 3' },
+			'3x2': { cols: 3, rows: 2, label: '3 by 2' },
+		};
 		// The rail holds the settings forms, so it needs a width a form can be
 		// filled in at, not the width of a list of names.
 		var MIN_W    = { rail: 260, stage: 380, dock: 260 };
@@ -898,7 +917,20 @@ import init, {
 		var split  = 0.5;       // the Admin panel's share of the rail's height
 		var seat   = 0.5;       // the first stage occupant's share of the stage
 		var railForced = false; // a folded rail the user re-opened via its tag
-		var tagsEl, stageEl, dockEl, dockA, dockB, mainEl;
+		var grid   = 'auto';    // which of GRIDS the dock is tiled on
+		var pinned = null;      // panel ids kept on the chip row; null means all of them
+		var arrangements = {};  // facet id -> a saved arrangement, restored on switch
+		var tagsEl, stageEl, dockEl, mainEl;
+
+		/// The dock's shape right now, with `auto` resolved against the window.
+		function gridOf() {
+			var g = GRIDS[grid];
+			if (g) return g;
+			return { cols: (window.innerWidth >= TWO_COLS) ? 2 : 1, rows: 4, label: 'Automatic' };
+		}
+		/// How many panels the dock can seat on the current grid.
+		function dockMax() { var g = gridOf(); return g.cols * g.rows; }
+		function isPinned(id) { return pinned === null || pinned.indexOf(id) !== -1; }
 
 		function def(id)    { return PANELS.find(function (p) { return p.id === id; }); }
 		function elOf(id)   { var d = def(id); return d ? document.getElementById(d.el) : null; }
@@ -910,6 +942,7 @@ import init, {
 				localStorage.setItem(KEY, JSON.stringify({
 					open: open, stage: stage, dock: dock,
 					widths: widths, split: split, seat: seat,
+					grid: grid, pinned: pinned, arrangements: arrangements,
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
 		}
@@ -926,9 +959,16 @@ import init, {
 				stage = st.stage.filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; })
 					.slice(0, STAGE_MAX);
 			}
+			if (typeof st.grid === 'string' && (st.grid === 'auto' || GRIDS[st.grid])) grid = st.grid;
+			// A pin list is filtered against the panels that actually exist, so a
+			// panel that has since been removed does not hold a place on the row,
+			// and one that did not exist when the list was saved is simply absent
+			// from it rather than lost -- the gallery still has it.
+			if (Array.isArray(st.pinned)) pinned = st.pinned.filter(def);
+			if (st.arrangements && typeof st.arrangements === 'object') arrangements = st.arrangements;
 			if (Array.isArray(st.dock)) {
 				dock = st.dock.filter(function (id) { return def(id) && zoneOf(id) === 'dock' && open[id]; })
-					.slice(0, DOCK_MAX);
+					.slice(0, dockMax());
 			}
 		}
 
@@ -940,7 +980,7 @@ import init, {
 			PANELS.forEach(function (p) {
 				if (!open[p.id]) return;
 				if (p.zone === 'stage' && stage.indexOf(p.id) === -1 && stage.length < STAGE_MAX) stage.push(p.id);
-				if (p.zone === 'dock'  && dock.indexOf(p.id)  === -1 && dock.length  < DOCK_MAX)  dock.push(p.id);
+				if (p.zone === 'dock'  && dock.indexOf(p.id)  === -1 && dock.length  < dockMax()) dock.push(p.id);
 			});
 			normaliseStage();
 		}
@@ -991,6 +1031,43 @@ import init, {
 			});
 		}
 
+		/// The dock's columns, grown to `n`. Columns are never destroyed while they
+		/// hold a panel -- emptying a container by innerHTML would destroy the very
+		/// panels living in it -- so a surplus column is left in place and hidden by
+		/// `.pcol:empty` once its occupants have been moved out.
+		function dockColumns(n) {
+			var out = [];
+			for (var i = 0; i < n; i++) {
+				var id = 'dock-' + String.fromCharCode(97 + i);      // dock-a, dock-b, ...
+				var el = document.getElementById(id);
+				if (!el) {
+					el = document.createElement('div');
+					el.className = 'pcol';
+					el.id = id;
+					dockEl.appendChild(el);
+				}
+				out.push(el);
+			}
+			return out;
+		}
+
+		/// Move the dock onto a different grid, shedding whatever no longer fits.
+		///
+		/// A smaller grid can leave panels with nowhere to sit. They are CLOSED
+		/// rather than dropped silently, so each goes back to being a chip the user
+		/// can see and click, and the newest go first: the ones opened most recently
+		/// are the ones the user is least likely to have arranged deliberately.
+		function setGrid(next) {
+			if (next !== 'auto' && !GRIDS[next]) return;
+			grid = next;
+			var max = dockMax();
+			while (dock.length > max) {
+				var id = dock.pop();
+				open[id] = false;
+			}
+			apply();
+		}
+
 		function apply() {
 			normaliseStage();
 
@@ -1025,20 +1102,23 @@ import init, {
 					if (i === 0 && handleStage) stageEl.appendChild(handleStage);
 				});
 
-				// Dock: one column, or two where the window is wide enough to mean it.
-				var cols = (dock.length > 2 && window.innerWidth >= TWO_COLS) ? 2 : 1;
+				// Dock: tiled on the chosen grid. Never more columns than there are
+				// panels to put in them, or a lone panel would sit in a half-width
+				// column with dead space beside it.
+				var want = Math.min(gridOf().cols, Math.max(1, dock.length));
+				var cols = dockColumns(want);
 				dock.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
 					el.style.display = '';
 					el.style.width = '';                           // a stacked panel fills its column
-					(cols === 2 && i % 2 === 1 ? dockB : dockA).appendChild(el);
+					// Round robin rather than filling each column in turn, so four
+					// panels across two columns come out two and two.
+					cols[i % cols.length].appendChild(el);
 				});
-				dockA.style.display = dock.length ? '' : 'none';
-				dockB.style.display = (cols === 2) ? '' : 'none';
 				dockEl.style.display = dock.length ? '' : 'none';
 				document.getElementById('handle-dock').style.display = dock.length ? '' : 'none';
-				if (dock.length) dockEl.style.width = Math.max(MIN_W.dock, widths.dock) * cols + 'px';
+				if (dock.length) dockEl.style.width = Math.max(MIN_W.dock, widths.dock) * cols.length + 'px';
 			}
 
 			// Anything closed is hidden, and shows up as a tag instead. A guest
@@ -1054,34 +1134,86 @@ import init, {
 			save();
 		}
 
-		/// The header tags: one per CLOSED panel. Opening removes the tag; closing
-		/// puts it back. A full zone says so rather than silently doing nothing.
+		/// Everything the chip row needs to draw itself, without the renderer
+		/// having to know how the engine seats anything.
+		///
+		/// The row shows EVERY panel, open or shut, rather than only the closed
+		/// ones as it first did. Showing only the absent made the row longest when
+		/// the app was emptiest, and shifted every chip sideways each time one was
+		/// used, so a chip was never twice in the same place.
+		function tagModel() {
+			// The rail is a special case: it may be OPEN yet folded away by NARROW,
+			// in which case it still needs a chip so it can be reached.
+			var railFolded = open.rail && window.innerWidth < NARROW && !railForced;
+			var g = gridOf();
+			return {
+				grid: grid, cols: g.cols, rows: g.rows, gridLabel: g.label, dockMax: dockMax(),
+				panels: PANELS.map(function (p) {
+					var isOpenNow = !!open[p.id];
+					var folded = (p.id === 'rail' && railFolded);
+					return {
+						id: p.id, label: p.label, zone: p.zone,
+						open: isOpenNow && !folded,
+						folded: folded,
+						pinned: isPinned(p.id),
+						// The Agents panel stays out of the chip row until the first
+						// agent runs, so a newcomer is not shown a panel with nothing
+						// in it. It is NOT hidden from the gallery or the palette:
+						// those are the complete surfaces, and a fleet you cannot
+						// enumerate is one you end up guessing at.
+						unrevealed: (p.id === 'agents' && document.body.classList.contains('agents-hidden')),
+						hidden: (p.id === 'agents' && document.body.classList.contains('agents-hidden')),
+						// A dock chip that cannot be honoured says so before it is
+						// clicked; a stage chip that would displace the current guest
+						// warns rather than refuses, since that is a real choice.
+						full: (p.zone === 'dock' && !isOpenNow && dock.length >= dockMax()),
+						evicts: (p.zone === 'stage' && !isOpenNow && p.id !== 'ai'
+							&& stage.length >= STAGE_MAX),
+					};
+				}),
+			};
+		}
+
+		/// What a chip's click means. A folded rail is forced back rather than
+		/// toggled, since it is open already and merely out of sight.
+		function activate(id) {
+			var railFolded = (id === 'rail') && open.rail
+				&& window.innerWidth < NARROW && !railForced;
+			if (railFolded) { railForced = true; apply(); return; }
+			// Reaching for a panel that has not revealed itself yet IS the event the
+			// reveal was waiting for. It SHOWS rather than toggles: the panel was
+			// off screen whatever the engine believed about it, so the only thing
+			// the request can mean is "let me see it".
+			if (id === 'agents' && document.body.classList.contains('agents-hidden')) {
+				try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
+				document.body.classList.remove('agents-hidden');
+				open[id] = false;                              // so show() seats it afresh
+				dock = dock.filter(function (x) { return x !== id; });
+				show(id);
+				return;
+			}
+			toggle(id);
+		}
+
+		/// Draw the row. The renderer lives in workspace.js, which owns the chip
+		/// row, the gallery and the palette together; the engine keeps only the
+		/// fallback, so a failure to load that file costs the chips their grouping
+		/// rather than the ability to reach a panel at all.
 		function renderTags() {
 			if (!tagsEl) return;
+			if (window.DaimondWorkspace && DaimondWorkspace.renderTags) {
+				DaimondWorkspace.renderTags(tagModel());
+				return;
+			}
 			tagsEl.innerHTML = '';
-			// The rail is a special case: it may be OPEN yet folded away by NARROW,
-			// in which case it still needs a tag so it can be reached.
-			var railFolded = open.rail && window.innerWidth < NARROW && !railForced;
-			PANELS.forEach(function (p) {
-				var folded = (p.id === 'rail' && railFolded);
-				if (open[p.id] && !folded) return;
+			tagModel().panels.forEach(function (p) {
+				if (p.hidden || (p.open && !p.folded)) return;
 				var b = document.createElement('button');
 				b.className = 'ptag ptag-' + p.zone;
 				b.textContent = p.label;
 				b.dataset.panel = p.id;
-				var full = (p.zone === 'dock' && dock.length >= DOCK_MAX);
-				if (full) {
-					b.disabled = true;
-					b.title = 'Close a panel to make room.';
-				} else {
-					b.title = folded ? 'Show ' + p.label
-						: p.zone === 'stage' ? 'Take the stage with ' + p.label
-						: 'Open the ' + p.label + ' panel';
-				}
-				b.addEventListener('click', function () {
-					if (folded) { railForced = true; apply(); }
-					else show(p.id);
-				});
+				b.disabled = p.full;
+				b.addEventListener('click', function () { activate(p.id); });
 				tagsEl.appendChild(b);
 			});
 		}
@@ -1104,7 +1236,7 @@ import init, {
 				}
 				stage.push(id);
 			} else if (zone === 'dock') {
-				if (dock.length >= DOCK_MAX) return;           // no room; the tag says so
+				if (dock.length >= dockMax()) return;          // no room; the chip says so
 				dock.push(id);
 			}
 			open[id] = true;
@@ -1225,13 +1357,57 @@ import init, {
 			handle.addEventListener('dblclick', function () { split = 0.5; applySplit(); save(); });
 		}
 
+		// ── Arrangements ──────────────────────────────────────
+		// A Facet can carry the arrangement it is worked in, so that returning to a
+		// piece of work restores the panels it needs rather than making them be
+		// reassembled by hand. It is saved DELIBERATELY and never inferred: a
+		// switch that silently closed panels would read as work being lost.
+
+		/// Capture the current arrangement under a Facet's id.
+		function saveArrangement(facetId) {
+			if (!facetId) return false;
+			arrangements[facetId] = {
+				open: JSON.parse(JSON.stringify(open)),
+				stage: stage.slice(), dock: dock.slice(),
+				widths: { rail: widths.rail, dock: widths.dock },
+				seat: seat, grid: grid,
+			};
+			save();
+			return true;
+		}
+
+		function hasArrangement(facetId) { return !!(facetId && arrangements[facetId]); }
+
+		function forgetArrangement(facetId) {
+			if (!facetId || !arrangements[facetId]) return false;
+			delete arrangements[facetId];
+			save();
+			return true;
+		}
+
+		/// Put a saved arrangement back. Anything it names that no longer exists is
+		/// skipped, so an arrangement saved before a panel was removed still opens.
+		function restoreArrangement(facetId) {
+			var a = facetId && arrangements[facetId];
+			if (!a) return false;
+			if (a.open) { open = {}; Object.keys(a.open).forEach(function (k) { if (def(k)) open[k] = !!a.open[k]; }); }
+			if (typeof a.grid === 'string' && (a.grid === 'auto' || GRIDS[a.grid])) grid = a.grid;
+			stage = (a.stage || []).filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; })
+				.slice(0, STAGE_MAX);
+			dock  = (a.dock  || []).filter(function (id) { return def(id) && zoneOf(id) === 'dock'  && open[id]; })
+				.slice(0, dockMax());
+			if (a.widths) { if (a.widths.rail) widths.rail = a.widths.rail; if (a.widths.dock) widths.dock = a.widths.dock; }
+			if (typeof a.seat === 'number' && a.seat >= 0 && a.seat <= 1) seat = a.seat;
+			seatOpenPanels();
+			apply();
+			return true;
+		}
+
 		function init() {
 			mainEl  = document.getElementById('main');
 			tagsEl  = document.getElementById('panel-tags');
 			stageEl = document.getElementById('stage');
 			dockEl  = document.getElementById('dock');
-			dockA   = document.getElementById('dock-a');
-			dockB   = document.getElementById('dock-b');
 			// The stage's divider is built here rather than in the markup, because
 			// it belongs between two occupants and only exists when there are two.
 			var hs = document.createElement('div');
@@ -1273,11 +1449,38 @@ import init, {
 			init: init, show: show, hide: hide, toggle: toggle, isOpen: isOpen,
 			reflow: apply, panels: function () { return PANELS.slice(); },
 			zone: zoneOf,
+			// The chip row, the gallery and the palette are all views of this.
+			model: tagModel, activate: activate,
+			grids: function () { return GRIDS; },
+			grid: function () { return grid; },
+			setGrid: setGrid,
+			pins: function () { return pinned === null ? null : pinned.slice(); },
+			isPinned: isPinned,
+			/// Pin or unpin a panel. The first change turns the implicit "all of
+			/// them" into a real list, so that unpinning one panel does not read as
+			/// unpinning every panel at once.
+			setPinned: function (id, on) {
+				if (!def(id)) return;
+				if (pinned === null) pinned = PANELS.map(function (p) { return p.id; });
+				var i = pinned.indexOf(id);
+				if (on && i === -1) pinned.push(id);
+				if (!on && i !== -1) pinned.splice(i, 1);
+				apply();
+			},
+			saveArrangement: saveArrangement,
+			restoreArrangement: restoreArrangement,
+			forgetArrangement: forgetArrangement,
+			hasArrangement: hasArrangement,
 		};
 	})();
 	// The Web driver is a separate script and has to be able to take the stage,
 	// so the layout engine is the one piece of this module that is shared.
 	window.DaimondPanels = DaimondPanels;
+
+	// Which Facet is being worked, for the surfaces that offer to act on it.
+	window.DaimondFacet = {
+		current: function () { return currentFacet ? { id: currentFacet.id, name: currentFacet.name } : null; },
+	};
 
 	// The Agents panel is for Facet-brief-dispatched agents, not chats, so it
 	// stays hidden until the first such agent runs. Once revealed it behaves
@@ -5921,6 +6124,10 @@ import init, {
 		aiMeter.textContent = 'brief v' + (f.brief_version || 0)
 			+ (f.updated ? ' · ' + relTime(f.updated) : '');
 		showCentre('focus');
+		// A Facet that carries an arrangement is worked in it. Only an arrangement
+		// the user deliberately saved exists, so this never closes a panel behind
+		// their back on a Facet they never arranged.
+		DaimondPanels.restoreArrangement(f.id);
 		// A proposal left pending on this Facet is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderBrief();
@@ -7298,7 +7505,7 @@ import init, {
 		t.className = 'daimond-toast' + (isErr ? ' err' : '');
 		t.textContent = text;
 		t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'
-			+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:13px;max-width:80vw;'
+			+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:var(--fs-sm);max-width:80vw;'
 			+ 'background:' + (isErr ? '#5a1f1f' : '#1f3a2a') + ';color:#eee;'
 			+ 'box-shadow:0 4px 16px rgba(0,0,0,.4);';
 		document.body.appendChild(t);
