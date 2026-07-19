@@ -6,7 +6,7 @@ const s = await open({ name: 'wf-multi', connect: false });
 const model = await connectReal(s, 'value');
 const t0 = Date.now();
 
-await s.page.click('#new-focus-btn', { force: true });
+await s.page.click('#new-facet-btn', { force: true });
 await s.page.waitForSelector('.dlg-input', { timeout: 10000 });
 await s.page.fill('.dlg-input', 'Three files');
 await s.page.click('.dlg-ok', { force: true });

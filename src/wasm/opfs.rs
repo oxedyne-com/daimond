@@ -27,7 +27,7 @@
 //! [`FileRoot::Workspace`](crate::tools::FileRoot::Workspace) honours the
 //! override (the file tools / Workspace edit the real folder), while
 //! [`FileRoot::Opfs`](crate::tools::FileRoot::Opfs) always pins the OPFS
-//! root so Daimond's own Focus/brief/`.daimond` state can never pollute the user's
+//! root so Daimond's own Facet/brief/`.daimond` state can never pollute the user's
 //! real repo.
 //!
 //! The synchronous `createSyncAccessHandle` path (single-writer Worker,

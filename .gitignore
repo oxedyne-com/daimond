@@ -1,24 +1,46 @@
-# Rust build output.
-/target/
+# Browser wasm harness: build output and headless-test scratch.
+# Proven headlessly, not part of the crate build.
+/wasmtest/
 
-# wasm-pack build output for the browser UI. Regenerated from source with
-#   wasm-pack build --target web --out-dir www/pkg
+# wasm-pack build output for the browser UI (regenerated from source).
 /www/pkg/
 
-# Vendored runtime tool artefacts (the Typst compiler wasm + fonts, etc.).
-# Large downloadable binaries served at runtime, not part of the source.
+# Vendored wasm tools (Typst compiler + fonts, etc.).  These are large
+# downloadable artefacts served at runtime, not committed to the repo
+# (they become signed tool-library/registry downloads).
 /www/vendor/
 
-# Test-harness scratch: screenshots, logs, and per-run audit scripts/results.
-# The reusable harness itself (verify_*.mjs, harness.mjs, mockllm.mjs, …) is kept.
+# Native build output.
+/target/
+
+# The Daimond Hands signing key never belongs in the repo.
+*.pem
+
+# The operator-console token is a live secret: created per-deployment, never
+# committed. Production writes its own; this dev token stays local.
+/gateway/keys/admin_token.txt
+gateway/o3db.stale.*/
+
+# Browser test harness scratch: screenshots, provider logs, and the
+# per-run audit scripts/results. The reusable harness itself is kept.
 /dev/shots/
-/dev/results/*.png
 /dev/*.log
 /dev/*.out
 /dev/audit_*.mjs
 /dev/audit_result_*.json
+/dev/*.out
+
+# Local gateway run log.
+/gateway/gateway.out
+
+# Local test secrets (API keys) — never committed.
 /dev/.secrets/
 
-# Editor / OS noise.
-*.swp
-.DS_Store
+# The local gateway store, and the copies taken while repairing it.
+/gateway/o3db*
+
+# Landing/mobile screenshot scratch.
+/shots/
+
+# Research agents once downloaded network pricelists in here; keep them out.
+gateway/*.pdf

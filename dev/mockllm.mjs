@@ -168,6 +168,14 @@ const plan = (messages) => {
 			return { text: 'Chain done.' };
 		}
 
+		case 'toolslow': {
+			// One tool call, then a slow stream — so a running tile has booked
+			// usage from round one (the meter) while still streaming round two.
+			// Exercises live per-tile cost on a worker that is still running.
+			if (rounds === 0) return { calls: [toolCall('call_1', 'file_list', { path: '.' })] };
+			return { text: Array.from({ length: 60 }, (_, i) => `chunk-${i + 1}`).join(' '), slowChunks: true };
+		}
+
 		default:
 			if (rounds > 0) return { text: 'Done.' };
 			return { text: `Mock reply to: ${d.text || d.rest || '(empty)'}` };

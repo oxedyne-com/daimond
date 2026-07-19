@@ -156,15 +156,15 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex 1.3.0",
- "syn 2.0.119",
+ "syn 2.0.118",
  "which",
 ]
 
 [[package]]
 name = "bitflags"
-version = "2.13.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "blake2b_simd"
@@ -222,9 +222,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cc"
-version = "1.2.67"
+version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17dd265a7d0f31ef544e1b20e03add05d3b45b491b633b10d67145d2acc1a38"
+checksum = "f5d6cac793997bd970000024b2934968efe83b382de4fdcf4fcb46b6ee4ad996"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -417,13 +417,12 @@ checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
 name = "dat_map"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "proc-macro2",
@@ -861,9 +860,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.2"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
+checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
 dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
@@ -882,7 +881,6 @@ dependencies = [
 [[package]]
 name = "new"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -997,7 +995,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_bot"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_jdat",
@@ -1006,7 +1003,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_core"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "base64 0.13.1",
  "flate2",
@@ -1016,7 +1012,7 @@ dependencies = [
  "js-sys",
  "new",
  "once_cell",
- "rand 0.8.7",
+ "rand 0.8.6",
  "rand_core 0.6.4",
  "tokio",
  "wasm-bindgen",
@@ -1026,7 +1022,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_crypto"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "aes-gcm",
  "arrayref",
@@ -1047,7 +1042,7 @@ dependencies = [
  "pqcrypto-dilithium",
  "pqcrypto-traits",
  "rand 0.7.3",
- "rand 0.8.7",
+ "rand 0.8.6",
  "rand_core 0.5.1",
  "rand_core 0.6.4",
  "secrecy",
@@ -1060,7 +1055,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_data"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_jdat",
@@ -1070,7 +1064,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_geom"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
 ]
@@ -1078,7 +1071,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_graphics"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "flate2",
  "oxedyne_fe2o3_core",
@@ -1087,7 +1079,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "base64 0.13.1",
  "crc32fast",
@@ -1104,7 +1095,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_crypto"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_namex",
@@ -1113,7 +1103,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_db"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_crypto",
@@ -1128,7 +1117,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_iop_hash"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_namex",
@@ -1137,7 +1125,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_jdat"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "bigdecimal",
  "dat_map",
@@ -1152,7 +1139,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_namex"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "base64 0.13.1",
  "num-derive",
@@ -1167,7 +1153,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_net"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "base64 0.13.1",
  "chrono",
@@ -1195,7 +1180,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_num"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "bigdecimal",
  "num-bigint",
@@ -1205,7 +1189,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_o3db_sync"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "crossbeam-utils",
  "hostname",
@@ -1228,7 +1211,7 @@ dependencies = [
  "oxedyne_fe2o3_syntax",
  "oxedyne_fe2o3_test",
  "oxedyne_fe2o3_text",
- "rand 0.8.7",
+ "rand 0.8.6",
  "rand_core 0.6.4",
  "regex",
  "seahash",
@@ -1238,7 +1221,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_stds"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "strum 0.25.0",
@@ -1247,7 +1229,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_syntax"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "levenshtein",
  "oxedyne_fe2o3_core",
@@ -1261,16 +1242,14 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_test"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
- "rand 0.8.7",
+ "rand 0.8.6",
 ]
 
 [[package]]
 name = "oxedyne_fe2o3_text"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_geom",
@@ -1280,7 +1259,6 @@ dependencies = [
 [[package]]
 name = "oxedyne_fe2o3_units"
 version = "0.5.0"
-source = "git+https://github.com/oxedyne-com/fe2o3?rev=6444a9678f9c75c269a03dc0013eb5d450bfd622#6444a9678f9c75c269a03dc0013eb5d450bfd622"
 dependencies = [
  "oxedyne_fe2o3_core",
  "oxedyne_fe2o3_num",
@@ -1342,7 +1320,7 @@ checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1432,7 +1410,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1480,9 +1458,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.7"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -1579,9 +1557,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.1"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1591,9 +1569,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.16"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
+checksum = "1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1661,9 +1639,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -1764,7 +1742,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1834,9 +1812,9 @@ dependencies = [
 
 [[package]]
 name = "simd-adler32"
-version = "0.3.10"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
+checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "slab"
@@ -1852,9 +1830,9 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "socket2"
-version = "0.6.5"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1862,9 +1840,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.9"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
 ]
@@ -1920,7 +1898,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1942,9 +1920,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.119"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2004,7 +1982,7 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2114,7 +2092,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
  "wasm-bindgen-shared",
 ]
 
@@ -2192,7 +2170,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2203,7 +2181,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2353,7 +2331,7 @@ checksum = "e2e817b7b52d0c7358d3246da9d69935ebb18116b2b102b4230dac079b4862f5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2373,5 +2351,5 @@ checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 2.0.118",
 ]

@@ -19,7 +19,7 @@ use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
 use crate::workspace::Workspace;
-use crate::wasm::{focus, js_prop, to_js_err};
+use crate::wasm::{facet, js_prop, to_js_err};
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -191,9 +191,9 @@ impl DaimondApp {
     /// Roll an ephemeral session's token usage into this app's cumulative
     /// counters.
     ///
-    /// The Focus surface (steer, fold) runs each turn in its own throwaway
+    /// The Facet surface (steer, fold) runs each turn in its own throwaway
     /// [`Session`], so its usage never reached [`DaimondApp::prompt_tokens`] and the
-    /// browser could not bill it: steering a Focus twenty times showed nothing
+    /// browser could not bill it: steering a Facet twenty times showed nothing
     /// spent.  The caller meters by the growth of these counters, so adding to
     /// them is all that is needed.
     fn absorb_usage(&self, session: &Session) {
@@ -265,28 +265,63 @@ impl DaimondApp {
         self.registry.dispatch(&name, &args_json).await
     }
 
-    // ── Focus / brief / fold surface ─────────────────────────────────
+    // ── Facet / brief / fold surface ─────────────────────────────────
 
-    /// Create a Focus named `name`, returning its id.  Creates the Focus
+    /// Create a Facet named `name`, returning its id.  Creates the Facet
     /// directory, an empty `brief.md`, version `0`, a `meta.json`, and a
     /// `create` log record.
-    pub async fn create_focus(&self, name: String) -> Result<String, JsValue> {
-        focus::create(&name).await.map_err(to_js_err)
+    pub async fn create_facet(&self, name: String) -> Result<String, JsValue> {
+        facet::create(&name).await.map_err(to_js_err)
     }
 
-    /// List every Focus as a JSON array of
+    /// List every Facet as a JSON array of
     /// `{ id, name, brief_version, updated, tags }`, most-recently updated
     /// first.
-    pub async fn list_foci(&self) -> Result<String, JsValue> {
-        focus::list().await.map_err(to_js_err)
+    pub async fn list_facets(&self) -> Result<String, JsValue> {
+        facet::list().await.map_err(to_js_err)
     }
 
-    /// Rename a Focus.
-    pub async fn rename_focus(&self, id: String, name: String) -> Result<(), JsValue> {
-        focus::rename(&id, &name).await.map_err(to_js_err)
+    /// Every link touching a node, as a JSON array.
+    ///
+    /// The node is a `kind:rest` reference -- `facet:<id>`, `file:<path>`,
+    /// `url:<url>`, `chat:<id>` -- and a link is found whichever end names it,
+    /// so this answers both "what does this point at" and "what points at
+    /// this" from the one stored record.
+    pub async fn links_touching(&self, node_ref: String) -> Result<String, JsValue> {
+        facet::links_json(&node_ref).await.map_err(to_js_err)
     }
 
-    /// Set a Focus's tags, replacing whatever it held.  `tags_json` is a JSON
+    /// Assert a link, returning its id.
+    ///
+    /// `owner` is the Facet whose sidecar holds the record; `rel` and `note`
+    /// may both be empty, and `by` names who asserted it (`user`, or
+    /// `agent:<name>`) so a later reader can tell a drawn line from a
+    /// suggested one.
+    pub async fn add_link(
+        &self,
+        owner: String,
+        from:  String,
+        to:    String,
+        rel:   String,
+        note:  String,
+        by:    String,
+    )
+        -> Result<String, JsValue>
+    {
+        facet::add_link(&owner, &from, &to, &rel, &note, &by).await.map_err(to_js_err)
+    }
+
+    /// Remove a link from a Facet's sidecar.  True when one went.
+    pub async fn remove_link(&self, owner: String, link_id: String) -> Result<bool, JsValue> {
+        facet::remove_link(&owner, &link_id).await.map_err(to_js_err)
+    }
+
+    /// Rename a Facet.
+    pub async fn rename_facet(&self, id: String, name: String) -> Result<(), JsValue> {
+        facet::rename(&id, &name).await.map_err(to_js_err)
+    }
+
+    /// Set a Facet's tags, replacing whatever it held.  `tags_json` is a JSON
     /// array of strings, e.g. `["work","urgent"]`.
     ///
     /// The tags are normalised on this side of the boundary -- trimmed,
@@ -295,41 +330,41 @@ impl DaimondApp {
     /// to offer is the interface's business: none is known here.
     pub async fn set_tags(&self, id: String, tags_json: String) -> Result<(), JsValue> {
         let tags = parse_json_string_array(&tags_json);
-        focus::set_tags(&id, &tags).await.map_err(to_js_err)
+        facet::set_tags(&id, &tags).await.map_err(to_js_err)
     }
 
-    /// Delete a Focus and all its stored state.
-    pub async fn delete_focus(&self, id: String) -> Result<(), JsValue> {
-        focus::delete(&id).await.map_err(to_js_err)
+    /// Delete a Facet and all its stored state.
+    pub async fn delete_facet(&self, id: String) -> Result<(), JsValue> {
+        facet::delete(&id).await.map_err(to_js_err)
     }
 
-    /// Read a Focus's current brief markdown.
+    /// Read a Facet's current brief markdown.
     pub async fn read_brief(&self, id: String) -> Result<String, JsValue> {
-        focus::read_brief(&id).await.map_err(to_js_err)
+        facet::read_brief(&id).await.map_err(to_js_err)
     }
 
-    /// Apply a user hand-edit to a Focus's brief: snapshots a new version
+    /// Apply a user hand-edit to a Facet's brief: snapshots a new version
     /// and logs an `edit` record.
     pub async fn write_brief(&self, id: String, md: String) -> Result<(), JsValue> {
-        focus::write_brief(&id, &md).await.map_err(to_js_err)
+        facet::write_brief(&id, &md).await.map_err(to_js_err)
     }
 
-    /// Read a Focus's append-only log as a JSON array of records.
+    /// Read a Facet's append-only log as a JSON array of records.
     pub async fn log_read(&self, id: String) -> Result<String, JsValue> {
-        focus::log_read(&id).await.map_err(to_js_err)
+        facet::log_read(&id).await.map_err(to_js_err)
     }
 
     /// Read the brief as it stood at `version`, so a past state can be shown
     /// and, if the user wants it back, written to the head with
     /// [`DaimondApp::write_brief`].
     pub async fn read_version(&self, id: String, version: f64) -> Result<String, JsValue> {
-        focus::read_version(&id, version as u64).await.map_err(to_js_err)
+        facet::read_version(&id, version as u64).await.map_err(to_js_err)
     }
 
-    /// Steer a Focus's brief: run one brief-agent turn for `instruction`,
+    /// Steer a Facet's brief: run one brief-agent turn for `instruction`,
     /// streaming [`AgentEvent`]s to `on_event`.  The agent's file tools
-    /// are scoped to `foci/<id>/`, so `file_read` / `file_write` on
-    /// `brief.md` address the Focus's brief; it is stateless per
+    /// are scoped to `facets/<id>/`, so `file_read` / `file_write` on
+    /// `brief.md` address the Facet's brief; it is stateless per
     /// instruction, reconstructing context from the current brief passed
     /// in its system prompt.  When the turn leaves `brief.md` changed, a
     /// new version is snapshotted and an `edit` record logged.
@@ -366,7 +401,7 @@ impl DaimondApp {
     )
         -> Result<(), JsValue>
     {
-        focus::fold_apply(&id, &new_brief, &delta, &note).await.map_err(to_js_err)
+        facet::fold_apply(&id, &new_brief, &delta, &note).await.map_err(to_js_err)
     }
 
     /// Cumulative prompt tokens billed to this session.
@@ -419,17 +454,17 @@ impl DaimondApp {
         -> Outcome<()>
     {
         // Stateless per instruction: reconstruct context from the brief.
-        let before = focus::read_brief(id).await.unwrap_or_default();
-        let mut system = focus::BRIEF_AGENT_PROMPT.to_string();
+        let before = facet::read_brief(id).await.unwrap_or_default();
+        let mut system = facet::BRIEF_AGENT_PROMPT.to_string();
         system.push_str("\n\nCurrent brief.md:\n");
         system.push_str(&before);
 
-        // File tools scoped to this Focus's directory.
+        // File tools scoped to this Facet's directory.
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
             cwd:         String::new(),
-            path_prefix: focus::focus_dir(id),
+            path_prefix: facet::facet_dir(id),
             // Daimond's own brief lives in the OPFS sandbox, never the user's
             // real folder, so the brief agent pins the OPFS root.
             root:        crate::tools::FileRoot::Opfs,
@@ -468,9 +503,9 @@ impl DaimondApp {
 
         // If the brief changed, snapshot a version and log the edit so
         // every brief mutation stays versioned and auditable.
-        let after = focus::read_brief(id).await.unwrap_or_default();
+        let after = facet::read_brief(id).await.unwrap_or_default();
         if after != before {
-            res!(focus::record_steer(id, &after, &instruction).await);
+            res!(facet::record_steer(id, &after, &instruction).await);
         }
         Ok(())
     }
@@ -478,7 +513,7 @@ impl DaimondApp {
     /// Drive the reducer for one delta, returning the proposed brief (see
     /// [`DaimondApp::fold_propose`]).
     async fn fold_propose_inner(&self, id: &str, delta: &str) -> Outcome<String> {
-        let brief = res!(focus::read_brief(id).await);
+        let brief = res!(facet::read_brief(id).await);
         let user_msg = fmt!(
             "Current brief:\n{}\n\n---\nDelta to fold in:\n{}",
             brief, delta,
@@ -490,7 +525,7 @@ impl DaimondApp {
             cwd:         String::new(),
             path_prefix: String::new(),
             // The reducer is tool-less; pin OPFS for consistency with the
-            // other Focus contexts.
+            // other Facet contexts.
             root:        crate::tools::FileRoot::Opfs,
             read_seen:   crate::tools::new_read_cache(),
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
@@ -498,7 +533,7 @@ impl DaimondApp {
             no_write:    Vec::new(),
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
-        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(focus::REDUCER_PROMPT));
+        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(facet::REDUCER_PROMPT));
         let mut session = Session::new(
             generate_session_id(),
             fmt!("reducer:{}", id),

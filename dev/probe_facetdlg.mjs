@@ -1,4 +1,4 @@
-// A look at the New Focus dialog, with two providers seeded.
+// A look at the New Facet dialog, with two providers seeded.
 import { open, shot } from './harness.mjs';
 import http from 'node:http';
 
@@ -37,7 +37,7 @@ await p.evaluate(async () => {
 	M.setDefault('fireworks', 'llama-3.3-70b-instruct');
 });
 await p.waitForTimeout(500);
-await p.click('#new-focus-btn');
+await p.click('#new-facet-btn');
 await p.waitForSelector('.dlg-select', { timeout: 8000 });
 // Open the pulldown so the grouping is visible in the shot.
 await p.click('.dlg-select');

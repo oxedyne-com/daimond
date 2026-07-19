@@ -65,24 +65,24 @@
 		     that configure Daimond live there rather than in a popup, so a chat
 		     stays live beside them: the user can ask Daimond what an app password is
 		     while the box asking for one is still on screen. -->
-		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Foci">
+		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Facets">
 			<div class="rail-top" id="rail-top">
-				<div class="railhead"><span>Foci</span>
-					<button class="addbtn" id="new-focus-btn" title="New Focus">
+				<div class="railhead"><span>Facets</span>
+					<button class="addbtn" id="new-facet-btn" title="New Facet">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
 					<button class="addbtn panel-close" data-close="rail" title="Close panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
-				<!-- Find a Focus by name or by tag. Always on show: Foci
+				<!-- Find a Facet by name or by tag. Always on show: Facets
 				     accumulate, and a search box that only appears past some
 				     count is a search box nobody ever discovers. -->
-				<div class="focus-find">
-					<input type="search" class="focus-search" id="focus-search" placeholder="Search Foci" aria-label="Search Foci by name or tag" autocomplete="off">
-					<div class="focus-filter" id="focus-filter" style="display:none"></div>
+				<div class="facet-find">
+					<input type="search" class="facet-search" id="facet-search" placeholder="Search Facets" aria-label="Search Facets by name or tag" autocomplete="off">
+					<div class="facet-filter" id="facet-filter" style="display:none"></div>
 				</div>
-				<div class="focus-list" id="focus-list"></div>
+				<div class="facet-list" id="facet-list"></div>
 				<div class="railhead"><span>Chats</span>
 					<button class="addbtn" id="new-session-btn" title="New chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -134,7 +134,7 @@
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead">A key for each provider you use. One model is the default that new chats and Foci start on; any of them can be picked for a single chat.</p>
+							<p class="cfg-lead">A key for each provider you use. One model is the default that new chats and Facets start on; any of them can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
 							<button type="button" id="models-add" class="models-add">+ Add provider</button>
 
@@ -224,8 +224,8 @@
 					<button id="chat-send" title="Send">➤</button>
 					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it.">↑</button>
 				</div>
-				<!-- Brief view: the Focus command surface (steer + fold), shown in
-				     place of the chat when a Focus is selected. Built in JS. -->
+				<!-- Brief view: the Facet command surface (steer + fold), shown in
+				     place of the chat when a Facet is selected. Built in JS. -->
 				<div class="brief-view" id="brief-view" style="display:none">
 					<div class="brief-body" id="brief-body"></div>
 					<div class="brief-controls" id="brief-controls"></div>
@@ -374,13 +374,13 @@
 			</div>
 			<!-- How many agents are running, paused and queued: the fan-out's cost made legible. -->
 			<div class="agents-stat" id="agents-stat" style="display:none"></div>
-			<!-- Find a run among many by name, task, Focus or tag. A flat list
-			     with chips, not a Focus-and-children tree: the parent a run
+			<!-- Find a run among many by name, task, Facet or tag. A flat list
+			     with chips, not a Facet-and-children tree: the parent a run
 			     belongs to rides on the run as a chip, so the tree's height is
 			     not spent on it. -->
-			<div class="focus-find agent-find">
-				<input type="search" class="focus-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Focus or tag" autocomplete="off">
-				<div class="focus-filter" id="agent-filter" style="display:none"></div>
+			<div class="facet-find agent-find">
+				<input type="search" class="facet-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Facet or tag" autocomplete="off">
+				<div class="facet-filter" id="agent-filter" style="display:none"></div>
 			</div>
 			<div class="agents-list" id="agents-list"></div>
 		</aside>
@@ -462,7 +462,7 @@
 
 	<!-- Mobile: the dwellable destinations. The chat is the floor; "things"
 	     (Web, Doc, Message, Compose, Tools) rise as a sheet over it, and the
-	     rail (Foci/Chats/Admin) is the left drawer behind the hamburger. -->
+	     rail (Facets/Chats/Admin) is the left drawer behind the hamburger. -->
 	<nav class="mnav" id="mnav">
 		<button data-mp="ai" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-4 4v-4H4z"/></svg><span>Chat</span></button>
 		<button data-mp="mail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span>Email</span></button>

@@ -3,8 +3,8 @@ import { open, errors } from './harness.mjs';
 
 const s = await open({ name: 'folddelta' });
 
-// New Focus, seed a brief so a fold has something to change.
-await s.page.click('#new-focus-btn');
+// New Facet, seed a brief so a fold has something to change.
+await s.page.click('#new-facet-btn');
 await s.page.waitForSelector('.dlg-input', { timeout: 8000 });
 await s.page.fill('.dlg-input', 'Delta Test');
 await s.page.click('.dlg-ok');

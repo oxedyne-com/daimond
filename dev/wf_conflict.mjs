@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { open } from './harness.mjs';
 
 const s = await open({ name: 'wf-conflict', connect: false });
-// The file tools need an app instance; a chat's app or the focus app. Easiest:
+// The file tools need an app instance; a chat's app or the facet app. Easiest:
 // use the workspace's own tool runner, which daimond.js exposes as tools().
 const run = (name, args) => s.page.evaluate(
   ([n, a]) => window.__daimondTools ? window.__daimondTools(n, a) :

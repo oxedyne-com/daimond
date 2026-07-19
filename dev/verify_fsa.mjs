@@ -14,7 +14,7 @@
 // is covered here.
 //
 // The claim that matters most is the last one. Real-folder mode points the *file tools* at the
-// user's directory, and Daimond's own state -- the Foci, their logs, the .daimond store -- pins
+// user's directory, and Daimond's own state -- the Facets, their logs, the .daimond store -- pins
 // OPFS on purpose (FileRoot::Opfs, src/wasm/opfs.rs). If that pin ever slipped, opening a folder
 // would strew the app's internals through the user's repository. That is the test that earns its
 // keep.
@@ -93,7 +93,7 @@ check('and lists it there', /notes\.md/.test(swap.listed || ''));
 
 // ── B. The invariant: Daimond's own state must not follow the root ──────
 //
-// A Focus keeps its brief, its log and its deltas under FileRoot::Opfs. With a folder open, that
+// A Facet keeps its brief, its log and its deltas under FileRoot::Opfs. With a folder open, that
 // state must still be in the sandbox — if it followed the swap, opening a repository would write
 // Daimond's internals into it.
 
@@ -103,26 +103,26 @@ const pinned = await p.evaluate(async ({ folder }) => {
 	const dir  = await root.getDirectoryHandle(folder, { create: true });
 
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	const id  = await app.create_focus('A Focus made while a folder is open');
+	const id  = await app.create_facet('A Facet made while a folder is open');
 
 	const has = async (d, name) => {
 		try { await d.getDirectoryHandle(name); return true; } catch (e) { return false; }
 	};
 	return {
 		id,
-		fociInSandbox: await has(root, 'foci'),
-		fociInFolder:  await has(dir,  'foci'),
+		facetsInSandbox: await has(root, 'facets'),
+		facetsInFolder:  await has(dir,  'facets'),
 		mode:          mod.workspace_mode(),
-		listed:        JSON.parse(await app.list_foci() || '[]').length,
+		listed:        JSON.parse(await app.list_facets() || '[]').length,
 	};
 }, { folder: FOLDER });
 
-check('a Focus made with a folder open still lives in the sandbox',
-	pinned.fociInSandbox === true, 'foci/ in OPFS: ' + pinned.fociInSandbox);
+check('a Facet made with a folder open still lives in the sandbox',
+	pinned.facetsInSandbox === true, 'facets/ in OPFS: ' + pinned.facetsInSandbox);
 check("Daimond's own state never lands in the user's folder",
-	pinned.fociInFolder === false, 'foci/ in the folder: ' + pinned.fociInFolder);
-check('and the Focus is readable while the folder is open', pinned.listed >= 1,
-	pinned.listed + ' foci');
+	pinned.facetsInFolder === false, 'facets/ in the folder: ' + pinned.facetsInFolder);
+check('and the Facet is readable while the folder is open', pinned.listed >= 1,
+	pinned.listed + ' facets');
 
 // ── C. Switching back ───────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@
    way:
 
      1. A predictive gate on the conductor's fan-out. When a
-        Focus dispatches N workers, the cost of that batch is
+        Facet dispatches N workers, the cost of that batch is
         known BEFORE a single one runs (N times what a worker
         typically costs). If that would push a burst past its
         budget, the gate pauses and asks — once, at the one

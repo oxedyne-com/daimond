@@ -7,7 +7,7 @@
 //
 // The check that matters most is the last one. It is easy to build a tick-box that LOOKS like it
 // chose a turn and then quietly fold the whole chat anyway; the UI would be indistinguishable.
-// So the delta is not inspected in the page that produced it — it is read back out of the Focus
+// So the delta is not inspected in the page that produced it — it is read back out of the Facet
 // history, which is the reducer's own record of what it was handed. If the tick did not narrow
 // the fold, the marker from an unticked turn shows up there and the test fails.
 //
@@ -29,8 +29,8 @@ const MARKS = ['MARK-ALPHA', 'MARK-BETA', 'MARK-GAMMA', 'MARK-DELTA'];
 const s = await open({ name: 'turns' });
 const p = s.page;
 
-// The Focus first, so folding into it later needs no navigation away from the chat.
-await p.click('#new-focus-btn');
+// The Facet first, so folding into it later needs no navigation away from the chat.
+await p.click('#new-facet-btn');
 await p.waitForSelector('.dlg-input', { timeout: 8000 });
 await p.fill('.dlg-input', 'Turns Test');
 await p.click('.dlg-ok');
@@ -193,7 +193,7 @@ check('and again, so a long thread is walked by its questions',
 
 // ── Fold selected really folds only what was selected ──────────────────
 //
-// The oracle is not the page: it is the Focus history, which records the delta the reducer was
+// The oracle is not the page: it is the Facet history, which records the delta the reducer was
 // handed. Turn 2 (MARK-BETA) is ticked; the other three are not.
 
 const menuHead = await p.evaluate(async () => {

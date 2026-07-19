@@ -328,20 +328,20 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .chat-msg-content ul, .chat-msg-content ol { margin: 8px 0; padding-left: 24px; }
 .chat-msg-content h1, .chat-msg-content h2, .chat-msg-content h3 { margin: 12px 0 6px; }
 
-/* Foci rail list — reuses .session-box styling via the shared class. A long
+/* Facets rail list — reuses .session-box styling via the shared class. A long
    list scrolls rather than squeezing the chats out of the pane above it. */
-.focus-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.facet-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 
-/* Find a Focus: a search box that is always there, and the active tag filter
+/* Find a Facet: a search box that is always there, and the active tag filter
    shown beneath it as one removable chip. */
-.focus-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
-.focus-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12px; padding: 4px 8px; }
-.focus-search:focus { outline: none; border-color: var(--accent); }
-.focus-search::placeholder { color: var(--text-muted); }
-.focus-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-.focus-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+.facet-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
+.facet-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 12px; padding: 4px 8px; }
+.facet-search:focus { outline: none; border-color: var(--accent); }
+.facet-search::placeholder { color: var(--text-muted); }
+.facet-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.facet-filter { display: flex; flex-wrap: wrap; gap: 4px; }
 
-/* Brief view — the Focus command surface (steer + fold). */
+/* Brief view — the Facet command surface (steer + fold). */
 .brief-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .brief-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: 14px; line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .brief-body .brief-empty { color: var(--text-muted); font-style: italic; }
@@ -355,6 +355,29 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .steer-send { background: var(--accent); color: #fff; border: none; border-radius: var(--radius); padding: 9px 13px; font-size: 16px; flex-shrink: 0; }
 .steer-send:hover { background: var(--accent-hover); }
 .steer-send:disabled { opacity: 0.4; cursor: default; }
+
+/* Artefact strip: what this Facet produced or consulted. A count that hides at
+   zero and opens a list, rather than a list that is always there taking room
+   from the brief above it and the steer box below. */
+.arte-strip { display: block; width: 100%; text-align: left; background: none; border: none;
+	color: var(--text-muted); font-size: 12px; font-family: var(--font-mono);
+	padding: 4px 2px; margin: 2px 0; cursor: pointer; }
+.arte-strip:hover { color: var(--text-secondary); }
+.arte-list { max-height: 30vh; overflow-y: auto; margin: 0 0 6px;
+	border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
+.arte-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+	border-bottom: 1px solid var(--border); }
+.arte-row:last-child { border-bottom: none; }
+.arte-kind { flex-shrink: 0; font-size: 10.5px; font-family: var(--font-mono);
+	color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; min-width: 34px; }
+.arte-open { flex: 1; min-width: 0; text-align: left; background: none; border: none;
+	color: var(--text-primary); font-size: 12.5px; font-family: var(--font-mono);
+	padding: 2px 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arte-open:hover { color: var(--accent); }
+.arte-use, .arte-drop { flex-shrink: 0; background: none; border: none; cursor: pointer;
+	color: var(--text-muted); font-size: 13px; line-height: 1; padding: 2px 5px; }
+.arte-use:hover { color: var(--accent); }
+.arte-drop:hover { color: var(--danger, #e5534b); }
 
 /* Fold-a-delta control: enter a delta, propose a fold (writes nothing). */
 .fold-row { display: flex; align-items: flex-end; gap: 8px; }
@@ -433,9 +456,9 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .agents-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .agents-empty { font-size: 12px; color: var(--text-muted); padding: 2px 6px; }
 .agent-find { padding-top: 2px; padding-bottom: 2px; }
-/* Chips on an agent tile: parent Focus, its inherited tags, the model. */
+/* Chips on an agent tile: parent Facet, its inherited tags, the model. */
 .acard .achips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 2px; }
-.acard .focus-chip { font-weight: 500; }
+.acard .facet-chip { font-weight: 500; }
 .acard .achip-model { font-family: var(--font-mono); font-size: 10px; line-height: 1.6; padding: 0 6px; border-radius: 20px; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); background: var(--bg-tertiary); border: 1px solid var(--border); }
 
 .acard { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; padding: 8px 9px; flex: none; }
@@ -525,7 +548,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .tile-fold { background: none; border: 1px solid var(--border-2); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 11px; padding: 2px 9px; white-space: nowrap; }
 .tile-fold:hover { border-color: var(--accent); color: var(--accent-text); }
 
-/* Fold-into picker (a small anchored menu of Foci). */
+/* Fold-into picker (a small anchored menu of Facets). */
 .fold-menu { position: fixed; z-index: 1200; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px; min-width: 180px; max-width: 260px; display: flex; flex-direction: column; gap: 2px; }
 .fold-menu-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 4px 8px 2px; }
 .fold-menu-empty { font-size: 12px; color: var(--text-muted); padding: 2px 8px; }
@@ -615,8 +638,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .empty-state .empty-logo.full { width: auto; height: 76px; opacity: 0.95; margin-bottom: 6px; }
 .pending-centre h2 { color: var(--text-primary); }
 
-/* Agents panel: hidden until the first Focus-dispatched agent runs. */
-/* Until a Focus dispatches its first agent, the Agents panel does not exist —
+/* Agents panel: hidden until the first Facet-dispatched agent runs. */
+/* Until a Facet dispatches its first agent, the Agents panel does not exist —
    so neither does its tag. It reveals itself when there is something to show. */
 body.agents-hidden #panel-agents { display: none !important; }
 body.agents-hidden .ptag[data-panel="agents"] { display: none; }
@@ -754,7 +777,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .hist-acts { display: flex; gap: 6px; flex: none; }
 
 /* ── Tags ────────────────────────────────────────────────────────
-   The user's filing system for Foci, and nothing more: a tag never reaches a
+   The user's filing system for Facets, and nothing more: a tag never reaches a
    model, a brief or a prompt. A chip's hue is hashed from the tag name in JS
    and arrives as --tag-h, so one tag is one colour everywhere; saturation and
    lightness come from the theme, so the dark theme gets a deep chip with light
@@ -768,7 +791,7 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 :root[data-theme="light"] button.tag-chip:hover,
 :root[data-theme="lollypop"] button.tag-chip:hover { background: hsl(var(--tag-h, 0) 74% 88%); border-color: hsl(var(--tag-h, 0) 50% 66%); }
 
-/* On a Focus box, beside v{n} and the time. The +N stands for the tags that
+/* On a Facet box, beside v{n} and the time. The +N stands for the tags that
    did not fit and names them on hover. */
 .tag-more { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); cursor: default; }
 .tag-active { padding-right: 3px; }

@@ -2,7 +2,7 @@
 # Run every functional verify script, record pass/fail by exit code, tail detail.
 cd "$(dirname "$0")/.."
 rm -rf /tmp/daimond-durability-profile   # memory: durability uses a fixed profile
-LOG=/tmp/claude-1000/-home-jason-usr/585c8821-05c0-46df-a9d3-d607765f3c58/scratchpad/suite.log
+LOG=${LOG:-/tmp/daimond-suite.log}   # override with LOG=... ; session-independent
 : > "$LOG"
 pass=0; fail=0; failed=""
 for f in dev/verify_*.mjs; do

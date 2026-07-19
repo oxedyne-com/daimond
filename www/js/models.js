@@ -10,7 +10,7 @@
  *
  *   {
  *     v: 2,
- *     def: { provider, model },              the default a new chat or Focus starts with
+ *     def: { provider, model },              the default a new chat or Facet starts with
  *     providers: {
  *       <id>: { name, url, key|keyEnc, models: [id…], fetched }
  *     }
@@ -781,8 +781,8 @@
 						+ (p.paid ? '<span class="models-econ paid">credits</span>'
 							: twin ? '<span class="models-econ">your key</span>' : '')
 						+ (isDef ? '<span class="models-def">default</span>' : '');
-					mr.title = (isDef ? 'New chats and Foci start on this model.\n'
-						: 'Make this the model new chats and Foci start on.\n')
+					mr.title = (isDef ? 'New chats and Facets start on this model.\n'
+						: 'Make this the model new chats and Facets start on.\n')
 						+ (p.paid ? 'Spends your Daimond balance, via ' + (p.via || 'the provider') + '.'
 							: 'Billed to your own ' + p.name + ' account.')
 						+ (twin ? '\nAnother provider serves a model of this name — this is the ' + p.name + ' one.' : '');

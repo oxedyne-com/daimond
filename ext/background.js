@@ -148,7 +148,7 @@ async function ask(params) {
 	// one surface the whole flow turns on must land where the user is looking.
 	let place = {};
 	try {
-		const cur = await chrome.windows.getLastFocused();
+		const cur = await chrome.windows.getLastFaceted();
 		if (cur && cur.width) {
 			place = {
 				left: Math.max(0, Math.round(cur.left + (cur.width  - W) / 2)),

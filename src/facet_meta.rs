@@ -1,27 +1,27 @@
-//! The target-agnostic core of a Focus's metadata: the `meta.json` shape, its
+//! The target-agnostic core of a Facet's metadata: the `meta.json` shape, its
 //! parse/serialise pair, and tag normalisation.
 //!
 //! The OPFS edge that reads and writes the file lives in
-//! [`crate::wasm::focus`], which is compiled only for wasm32 and so cannot be
+//! [`crate::wasm::facet`], which is compiled only for wasm32 and so cannot be
 //! reached by the native test suite.  What is pure sits here instead, where it
 //! is tested: the parse in particular, because a `meta.json` written before a
-//! field existed must still open the Focus it describes.
+//! field existed must still open the Facet it describes.
 
 use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array, json_escape};
 
 use oxedyne_fe2o3_core::prelude::*;
 
 
-/// The most tags one Focus may carry; the excess is dropped.
+/// The most tags one Facet may carry; the excess is dropped.
 const MAX_TAGS: usize = 8;
 
 /// The most characters one tag may carry; the excess is truncated.
 const MAX_TAG_LEN: usize = 24;
 
 
-/// Per-Focus metadata held in `meta.json`.
+/// Per-Facet metadata held in `meta.json`.
 pub struct Meta {
-	/// Human-readable Focus name.
+	/// Human-readable Facet name.
 	pub name:    String,
 	/// Current brief version (the latest snapshot).
 	pub version: u64,
@@ -43,7 +43,7 @@ impl Meta {
 
 	/// The tags as a JSON array of strings, `[]` when there are none.
 	///
-	/// Shared with the Focus list, which carries the same array per Focus.
+	/// Shared with the Facet list, which carries the same array per Facet.
 	pub fn tags_json(&self) -> String {
 		let items: Vec<String> = self.tags.iter()
 			.map(|t| fmt!("\"{}\"", json_escape(t)))
@@ -53,9 +53,9 @@ impl Meta {
 
 	/// Parse from the stored JSON, tolerating missing fields.
 	///
-	/// `tags` postdates every Focus already on a user's device, so a `meta.json`
+	/// `tags` postdates every Facet already on a user's device, so a `meta.json`
 	/// without the field parses to no tags rather than failing: a strict parse
-	/// here would shut every Focus made before tags existed.
+	/// here would shut every Facet made before tags existed.
 	pub fn from_json(s: &str) -> Self {
 		Self {
 			name:    extract_json_string(s, "name").unwrap_or_default(),
@@ -109,14 +109,14 @@ pub fn normalise_tags(tags: &[String]) -> Vec<String> {
 mod tests {
 	use super::*;
 
-	// ── The parse: what an existing Focus depends on ─────────────────
+	// ── The parse: what an existing Facet depends on ─────────────────
 
 	#[test]
-	fn test_meta_without_tags_still_opens_its_focus() {
-		// Every Focus on a user's device predates the tags field. Its meta.json
+	fn test_meta_without_tags_still_opens_its_facet() {
+		// Every Facet on a user's device predates the tags field. Its meta.json
 		// says nothing about tags, and it must still parse -- with its name,
 		// version and stamp intact, and simply no tags. A strict parse here
-		// would brick every Focus anyone already has.
+		// would brick every Facet anyone already has.
 		let old = r#"{"name":"X","brief_version":3,"updated":123}"#;
 		let meta = Meta::from_json(old);
 		assert_eq!("X", meta.name);
@@ -255,7 +255,7 @@ mod tests {
 	fn test_normalised_tags_round_trip_through_the_stored_json() {
 		// The two halves have to agree: what normalisation produces is exactly
 		// what the file gives back, or the store drifts from the interface.
-		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tFocus"), fmt!("work")]);
+		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tFacet"), fmt!("work")]);
 		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, tags: tags.clone() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}

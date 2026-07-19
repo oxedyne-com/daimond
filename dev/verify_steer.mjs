@@ -4,10 +4,10 @@ import { open, shot, errors } from './harness.mjs';
 
 const s = await open({ name: 'steer' });
 
-// Create a Focus via the real button + prompt dialog.
-await s.page.click('#new-focus-btn');
+// Create a Facet via the real button + prompt dialog.
+await s.page.click('#new-facet-btn');
 await s.page.waitForSelector('.dlg-input', { timeout: 8000 });
-await s.page.fill('.dlg-input', 'Test Focus');
+await s.page.fill('.dlg-input', 'Test Facet');
 await s.page.click('.dlg-ok');
 await s.page.waitForTimeout(1200);
 await shot(s, 'steer-0-after-newfocus');
@@ -16,7 +16,7 @@ const state = await s.page.evaluate(() => ({
 	steer: !!document.getElementById('steer-input'),
 	reply: !!document.getElementById('brief-reply'),
 }));
-console.log('state after new focus:', JSON.stringify(state));
+console.log('state after new facet:', JSON.stringify(state));
 
 // If we have a steer input, drive a text-only steer.
 if (state.steer) {

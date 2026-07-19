@@ -2,7 +2,7 @@
 //
 // That is the contract, and it used to be kept by one line: `cfg.apiKey = ''`, because there was
 // one key and it lived there. There are now a key per PROVIDER, held in memory by DaimondModels,
-// and a built agent for every chat and every Focus with its key already handed to the wasm.
+// and a built agent for every chat and every Facet with its key already handed to the wasm.
 // `DaimondModels.lock()` was written to forget the first of those -- and never called.
 //
 // So the lock is tested from the outside: after locking, can anything still name a key, and can

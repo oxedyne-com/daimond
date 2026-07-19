@@ -1,13 +1,13 @@
-// Workflow 2 — the Foci brief -> steer -> fold loop with a REAL model.
+// Workflow 2 — the Facets brief -> steer -> fold loop with a REAL model.
 import fs from 'node:fs';
 import { open, connectReal, spend, errors } from './harness.mjs';
 
-const s = await open({ name: 'wf-foci', connect: false });
+const s = await open({ name: 'wf-facets', connect: false });
 const model = await connectReal(s, 'value');
 const t0 = Date.now();
 
-// Create a Focus.
-await s.page.click('#new-focus-btn', { force: true });
+// Create a Facet.
+await s.page.click('#new-facet-btn', { force: true });
 await s.page.waitForSelector('.dlg-input', { timeout: 10000 });
 await s.page.fill('.dlg-input', 'Ship a CSV parser');
 await s.page.click('.dlg-ok', { force: true });
@@ -25,7 +25,7 @@ async function steer(text, wait = 60000) {
   }
   await s.page.waitForTimeout(400);
 }
-await steer('Set the brief for this Focus: goal is a small Rust CSV parser. Record the goal, and list three open threads: parse a line, handle quoted fields, and write tests. Edit brief.md to contain this.');
+await steer('Set the brief for this Facet: goal is a small Rust CSV parser. Record the goal, and list three open threads: parse a line, handle quoted fields, and write tests. Edit brief.md to contain this.');
 const briefV1 = await s.page.evaluate(() => (document.querySelector('.chat-msg-content')||document.getElementById('brief-body')||{}).innerText || '');
 
 // Fold a delta in (a finished piece of work) and accept it.
@@ -40,7 +40,7 @@ if (accept && !(await accept.isDisabled())) { await accept.click({ force: true }
 const briefV2 = await s.page.evaluate(() => (document.querySelector('.chat-msg-content')||{}).innerText || '');
 
 const result = {
-  workflow: 'foci', model, elapsedS: ((Date.now()-t0)/1000).toFixed(1),
+  workflow: 'facets', model, elapsedS: ((Date.now()-t0)/1000).toFixed(1),
   briefWritten: /csv|parser|thread/i.test(briefV1),
   briefV1_len: briefV1.length,
   foldAccepted: folded,
@@ -49,7 +49,7 @@ const result = {
   spendUsd: +(await spend(s)).toFixed(4),
   consoleErrors: errors(s),
 };
-fs.writeFileSync('dev/results/foci.json', JSON.stringify(result, null, 2));
+fs.writeFileSync('dev/results/facets.json', JSON.stringify(result, null, 2));
 console.log(JSON.stringify(result, null, 2));
 console.log('--- brief after fold (first 400) ---\n' + briefV2.slice(0, 400));
 await s.close();

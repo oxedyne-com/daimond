@@ -22,10 +22,11 @@ pub mod executor;
 /// gated out of the wasm target.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod handler;
-/// The pure core of a Focus's `meta.json` — its shape, its parse/serialise
+/// The pure core of a Facet's `meta.json` — its shape, its parse/serialise
 /// pair, and tag normalisation.  Target-agnostic, so it is tested natively
-/// while the OPFS edge over it stays in [`wasm::focus`].
-pub mod focus_meta;
+/// while the OPFS edge over it stays in [`wasm::facet`].
+pub mod facet_link;
+pub mod facet_meta;
 pub mod llm;
 pub mod protocol;
 pub mod session;

@@ -412,7 +412,7 @@ import init, {
 	var SYNC_FILE_MAX        = 128 * 1024;		// skip a single file above this.
 	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all synced file bytes.
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
-	var SYNC_SKIP_ROOT_DIRS  = { foci: 1 };		// Daimond's own per-focus store.
+	var SYNC_SKIP_ROOT_DIRS  = { facets: 1 };		// Daimond's own per-facet store.
 
 	/// A cheap, non-cryptographic content fingerprint — enough to tell whether a
 	/// file changed, which is all the 3-way merge asks of it.
@@ -446,7 +446,7 @@ import init, {
 	}
 
 	/// Walk the OPFS workspace and read every syncable text file into
-	/// `{ path: content }`, skipping dotfiles, Daimond's own `foci` store, binary
+	/// `{ path: content }`, skipping dotfiles, Daimond's own `facets` store, binary
 	/// files, and anything over the per-file or total budget.
 	async function collectFiles() {
 		var out = { files: {}, skipped: 0, oversize: [] };
@@ -602,19 +602,41 @@ import init, {
 		return 'Chat-' + ('000' + chatCounter).slice(-4);
 	}
 
-	// Foci get the same auto-incrementing default name as chats, so creating
+	// Two localStorage keys were named for Foci and are now named for Facets. A
+	// user who has been running Daimond since before the rename still holds the
+	// old ones, and a straight read of the new names would silently lose their
+	// Facet numbering and every per-Facet model choice — so the old keys are
+	// moved across once, before anything reads them. Never clobbers: a new key
+	// already present wins, and the old one is simply dropped.
+	(function migrateFocusKeys() {
+		var moved = [
+			['daimond-focus-counter', 'daimond-facet-counter'],
+			['daimond-focus-models',  'daimond-facet-models'],
+		];
+		for (var i = 0; i < moved.length; i++) {
+			var was = moved[i][0], now = moved[i][1];
+			try {
+				var old = localStorage.getItem(was);
+				if (old === null) continue;                       // nothing to move
+				if (localStorage.getItem(now) === null) localStorage.setItem(now, old);
+				localStorage.removeItem(was);
+			} catch (e) { /* private mode or quota: the defaults still work */ }
+		}
+	})();
+
+	// Facets get the same auto-incrementing default name as chats, so creating
 	// one needs no typing at all — the name is pre-filled and editable.
-	var focusCounter = parseInt(localStorage.getItem('daimond-focus-counter') || '0', 10) || 0;
-	/// The name the next Focus would take. Only a peek: cancelling the dialog
+	var facetCounter = parseInt(localStorage.getItem('daimond-facet-counter') || '0', 10) || 0;
+	/// The name the next Facet would take. Only a peek: cancelling the dialog
 	/// must not burn a number, or a user who changes their mind twice finds
-	/// their first Focus is called Focus-0003.
-	function peekFocusLabel() {
-		return 'Focus-' + ('000' + (focusCounter + 1)).slice(-4);
+	/// their first Facet is called Facet-0003.
+	function peekFacetLabel() {
+		return 'Facet-' + ('000' + (facetCounter + 1)).slice(-4);
 	}
-	/// Commit the number, once a Focus really exists.
-	function takeFocusLabel() {
-		focusCounter += 1;
-		localStorage.setItem('daimond-focus-counter', '' + focusCounter);
+	/// Commit the number, once a Facet really exists.
+	function takeFacetLabel() {
+		facetCounter += 1;
+		localStorage.setItem('daimond-facet-counter', '' + facetCounter);
 	}
 
 	// Short, readable model name for a tile chip (drops the provider path).
@@ -671,16 +693,16 @@ import init, {
 		return '$' + u.toFixed(2);
 	}
 
-	// ── Foci state ─────────────────────────────────────────────
-	var foci = [];              // [{ id, name, brief_version, updated, tags }]
-	var currentFocus = null;    // selected Focus meta, or null
+	// ── Facets state ─────────────────────────────────────────────
+	var facets = [];              // [{ id, name, brief_version, updated, tags }]
+	var currentFacet = null;    // selected Facet meta, or null
 	var centreMode = 'chat';    // 'chat' | 'focus' — what the Centre shows
 	var briefBusy = false;      // a steer or fold turn is in flight
-	// A pending fold proposal belongs to its Focus, not to whatever is on
-	// screen. It used to live in one global that `selectFocus` cleared
+	// A pending fold proposal belongs to its Facet, not to whatever is on
+	// screen. It used to live in one global that `selectFacet` cleared
 	// unconditionally, so clicking the chat to re-read it before deciding
 	// silently threw away a real (and paid-for) reducer round trip.
-	var pendingFolds = {};      // focusId -> { base, proposed, delta, chatId, chatName }
+	var pendingFolds = {};      // facetId -> { base, proposed, delta, chatId, chatName }
 
 	// Tags are the user's filing system and nothing more. A tag is never sent
 	// to a model, never written into a brief, and never changes a prompt; no
@@ -688,8 +710,8 @@ import init, {
 	// empty tag editor, offered by this screen alone -- the store normalises
 	// tags but knows nothing of these, and holds no tag to be special.
 	var DEFAULT_TAG_SUGGESTIONS = ['person', 'project', 'topic', 'org'];
-	var TAG_CHIPS_SHOWN = 3;    // chips on a Focus box before the +N overflow
-	var focusQuery = '';        // the search box, trimmed and lowercased
+	var TAG_CHIPS_SHOWN = 3;    // chips on a Facet box before the +N overflow
+	var facetQuery = '';        // the search box, trimmed and lowercased
 	var tagFilter  = null;      // the tag the rail is filtered to, or null
 
 	// ── DOM refs ───────────────────────────────────────────────
@@ -707,15 +729,15 @@ import init, {
 	var aiMeter       = document.getElementById('ai-meter');
 	var agentsList    = document.getElementById('agents-list');
 	var agentsCount   = document.getElementById('agents-count');
-	var focusList     = document.getElementById('focus-list');
-	var focusSearch   = document.getElementById('focus-search');
-	var focusFilter   = document.getElementById('focus-filter');
+	var facetList     = document.getElementById('facet-list');
+	var facetSearch   = document.getElementById('facet-search');
+	var facetFilter   = document.getElementById('facet-filter');
 	var agentSearch   = document.getElementById('agent-search');
 	var agentFilter   = document.getElementById('agent-filter');
 	var agentQuery       = '';   // the agents panel search text, lower-cased
-	var agentFocusFilter = null; // filter agents to one Focus id, or null
+	var agentFacetFilter = null; // filter agents to one Facet id, or null
 	var agentTagFilter   = null; // filter agents to one tag, or null
-	var newFocusBtn   = document.getElementById('new-focus-btn');
+	var newFacetBtn   = document.getElementById('new-facet-btn');
 	var briefView     = document.getElementById('brief-view');
 	var briefBody     = document.getElementById('brief-body');
 	var briefControls = document.getElementById('brief-controls');
@@ -815,7 +837,7 @@ import init, {
 	// so a new panel is markup plus its own code — the layout engine needs no
 	// edit, and a panel that does not exist cannot be advertised as a tag.
 	//
-	//   rail   the left column. Permanent. Two panes (Foci/Chats above, Admin
+	//   rail   the left column. Permanent. Two panes (Facets/Chats above, Admin
 	//          below) split by a handle that moves but does not go away.
 	//
 	//   stage  the middle. Its occupants are EXCLUSIVE to it: they take the
@@ -983,7 +1005,7 @@ import init, {
 				// content room. A folded rail is not a LOST rail, though — the band
 				// between the fold and the mobile breakpoint has no bottom nav, so a
 				// folded-but-open rail is offered as a header tag (see renderTags), and
-				// clicking it forces it back for this width. Without that, Foci and
+				// clicking it forces it back for this width. Without that, Facets and
 				// Chats were unreachable on a small laptop.
 				var railEl = elOf('rail');
 				var railOn = open.rail && (window.innerWidth >= NARROW || railForced);
@@ -1257,7 +1279,7 @@ import init, {
 	// so the layout engine is the one piece of this module that is shared.
 	window.DaimondPanels = DaimondPanels;
 
-	// The Agents panel is for Focus-brief-dispatched agents, not chats, so it
+	// The Agents panel is for Facet-brief-dispatched agents, not chats, so it
 	// stays hidden until the first such agent runs. Once revealed it behaves
 	// like any other panel (closable, resizable) and the reveal is remembered.
 	function revealAgents() {
@@ -1296,7 +1318,7 @@ import init, {
 	// tool steps along the way. The thread is a flat list of messages, so the grouping is carried
 	// as a number on each node -- every output written after a question belongs to that question,
 	// until the next one. That number is what lets an answer be folded away behind the thing that
-	// prompted it, and what lets a selected few turns be folded into a Focus.
+	// prompted it, and what lets a selected few turns be folded into a Facet.
 	var _turn = 0;
 
 	// Where the walk back through the questions has got to. -1 means "at the bottom, not walking",
@@ -2587,7 +2609,7 @@ import init, {
 	}
 	// The centre header no longer carries chat token/cost readouts — those live
 	// in the chat's tile (per-chat) and the spend row (global). Kept clear for
-	// chats; the Focus brief view sets its own centre meter directly.
+	// chats; the Facet brief view sets its own centre meter directly.
 	function updateMeters() {
 		topMeter.textContent = '';
 		if (!current) { aiMeter.textContent = ''; return; }
@@ -2692,10 +2714,10 @@ import init, {
 		renderSessionList();
 	}
 
-	// ── Fold a chat into a Focus (§7.2) ────────────────────────
+	// ── Fold a chat into a Facet (§7.2) ────────────────────────
 	// A finished chat is itself a delta: folding it proposes an advisory update
-	// to a chosen Focus brief, which the user then accepts or vetoes. The Fold
-	// control opens a small picker of the user's Foci (plus "New Focus…").
+	// to a chosen Facet brief, which the user then accepts or vetoes. The Fold
+	// control opens a small picker of the user's Facets (plus "New Facet…").
 	/// The chat as text for the reducer, optionally narrowed to a few turns.
 	///
 	/// `turns` is a list of turn numbers, counted the way the thread counts them: the nth question
@@ -2718,11 +2740,11 @@ import init, {
 	}
 	function onFoldOutside(e) { if (_foldMenu && !_foldMenu.contains(e.target)) closeFoldMenu(); }
 
-	/// Offer the Foci to fold into. `turns`, when given, narrows the fold to those turns.
+	/// Offer the Facets to fold into. `turns`, when given, narrows the fold to those turns.
 	function openFoldPicker(chat, anchor, turns) {
 		closeFoldMenu();
 		if (!(chat.messages && chat.messages.length)) {
-			noticeDialog('Nothing to fold', 'This chat is empty. Send a message first, then fold it into a Focus.');
+			noticeDialog('Nothing to fold', 'This chat is empty. Send a message first, then fold it into a Facet.');
 			return;
 		}
 		var menu = document.createElement('div');
@@ -2735,12 +2757,12 @@ import init, {
 			? 'Fold ' + turns.length + (turns.length === 1 ? ' turn into…' : ' turns into…')
 			: 'Fold into…';
 		menu.appendChild(head);
-		if (foci.length === 0) {
+		if (facets.length === 0) {
 			var none = document.createElement('div');
-			none.className = 'fold-menu-empty'; none.textContent = 'No Foci yet — create one:';
+			none.className = 'fold-menu-empty'; none.textContent = 'No Facets yet — create one:';
 			menu.appendChild(none);
 		}
-		foci.forEach(function (f) {
+		facets.forEach(function (f) {
 			var item = document.createElement('button');
 			item.className = 'fold-menu-item';
 			item.textContent = f.name;                 // escaped via textContent (H5)
@@ -2748,7 +2770,7 @@ import init, {
 			menu.appendChild(item);
 		});
 		var neww = document.createElement('button');
-		neww.className = 'fold-menu-item new'; neww.textContent = '＋ New Focus…';
+		neww.className = 'fold-menu-item new'; neww.textContent = '＋ New Facet…';
 		neww.addEventListener('click', function () { closeFoldMenu(); foldChatIntoNew(chat, turns); });
 		menu.appendChild(neww);
 
@@ -2762,26 +2784,26 @@ import init, {
 	}
 
 	async function foldChatIntoNew(chat, turns) {
-		if (!cfgReady(cfg)) { openSettings('Connect a provider to fold into a Focus.'); return; }
-		var name = await promptDialog('New Focus', { value: peekFocusLabel(), okLabel: 'Create and fold' });
+		if (!cfgReady(cfg)) { openSettings('Connect a provider to fold into a Facet.'); return; }
+		var name = await promptDialog('New Facet', { value: peekFacetLabel(), okLabel: 'Create and fold' });
 		if (name === null) return; name = name.trim(); if (!name) return;
 		var id;
-		try { id = await focusApp().create_focus(name); takeFocusLabel(); }
-		catch (e) { noticeDialog('Could not create Focus', friendlyError(e)); return; }
-		// A Focus made out of a chat inherits that chat's model. It is not asked for here because
-		// the user has already answered it, when they started the chat this Focus is made of.
-		setFocusModel(id, { provider: chat.provider || '', model: chat.model || '' });
-		await loadFoci();
+		try { id = await facetApp().create_facet(name); takeFacetLabel(); }
+		catch (e) { noticeDialog('Could not create Facet', friendlyError(e)); return; }
+		// A Facet made out of a chat inherits that chat's model. It is not asked for here because
+		// the user has already answered it, when they started the chat this Facet is made of.
+		setFacetModel(id, { provider: chat.provider || '', model: chat.model || '' });
+		await loadFacets();
 		foldChatInto(chat, id, turns);
 	}
 
-	/// Fold a chat into a Focus. `turns`, when given, folds only those turns.
-	async function foldChatInto(chat, focusId, turns) {
-		var f = foci.find(function (x) { return x.id === focusId; });
+	/// Fold a chat into a Facet. `turns`, when given, folds only those turns.
+	async function foldChatInto(chat, facetId, turns) {
+		var f = facets.find(function (x) { return x.id === facetId; });
 		if (!f) return;
-		// The reducer runs on the TARGET Focus's model, so that is the key that must be readable.
-		if (!focusCanRun(focusId)) {
-			openSettings('That Focus\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+		// The reducer runs on the TARGET Facet's model, so that is the key that must be readable.
+		if (!facetCanRun(facetId)) {
+			openSettings('That Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
 			return;
 		}
 		// The reducer is a real, paid round trip. Folding a chat that has not
@@ -2790,13 +2812,13 @@ import init, {
 		//
 		// A fold of chosen turns is exempt: the user has just said which turns they mean, and
 		// "nothing has changed since you folded the whole chat" is no answer to that.
-		if (!turns && chat.foldedInto && chat.foldedInto.id === focusId
+		if (!turns && chat.foldedInto && chat.foldedInto.id === facetId
 			&& chat.foldedInto.at_len === (chat.messages || []).length) {
 			noticeDialog('Nothing new to fold',
 				'"' + chat.name + '" has not changed since it was folded into "' + f.name + '".');
 			return;
 		}
-		await selectFocus(f);                          // switch the centre to the Focus brief
+		await selectFacet(f);                          // switch the centre to the Facet brief
 		setBriefBusy(true); setBriefStatus('Proposing fold…');
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
@@ -2804,26 +2826,26 @@ import init, {
 			noticeDialog('Nothing to fold', 'The turns you chose have no content to fold in.');
 			return;
 		}
-		// The reducer runs on the Focus's OWN model -- the one it was created with -- not on
+		// The reducer runs on the Facet's OWN model -- the one it was created with -- not on
 		// whatever happens to be starred now.
-		var fa = focusApp(focusId);
+		var fa = facetApp(facetId);
 		try {
-			cur = await fa.read_brief(focusId);
-			proposed = await fa.fold_propose(focusId, delta);
+			cur = await fa.read_brief(facetId);
+			proposed = await fa.fold_propose(facetId, delta);
 		} catch (e) {
-			meterFocusTurn(fa);
+			meterFacetTurn(fa);
 			setBriefStatus(friendlyError(e)); setBriefBusy(false); return;
 		}
-		meterFocusTurn(fa);
+		meterFacetTurn(fa);
 		setBriefStatus(''); setBriefBusy(false);
-		pendingFolds[focusId] = {
+		pendingFolds[facetId] = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: chat.id, chatName: chat.name,
 			// Some of a chat is not the chat. Marking the tile "Folded" on a partial fold would
 			// claim the rest went in too, and would then refuse to fold the rest as unchanged.
 			partial: !!turns,
 		};
-		renderFoldDiff(focusId);
+		renderFoldDiff(facetId);
 	}
 
 	function timeLabel() {
@@ -2833,7 +2855,7 @@ import init, {
 
 	function selectChat(chat) {
 		current = chat;
-		currentFocus = null;                       // a chat is not a Focus
+		currentFacet = null;                       // a chat is not a Facet
 		// The streaming refs point into the outgoing chat's DOM, which is about
 		// to be rebuilt. Left dangling, a turn still in flight would resume
 		// appending into a detached node and its text would vanish.
@@ -2841,7 +2863,7 @@ import init, {
 		curAsstText = '';
 		lastToolBlock = null;
 		if (typeof showCentre === 'function') showCentre('chat');
-		if (typeof updateActiveFocus === 'function') updateActiveFocus();
+		if (typeof updateActiveFacet === 'function') updateActiveFacet();
 		sessionNameEl.textContent = chat.name;     // read-only mirror of the tile label
 		if ((chat.status || 'active') === 'pending') {
 			renderPendingCentre(chat);
@@ -2903,7 +2925,7 @@ import init, {
 	///
 	/// This used to list the models of the ONE provider the app held. With a key per provider, a
 	/// bare model id no longer says which key to send it with, so the picker is grouped and the
-	/// provider rides on the option. `DaimondModels` owns both, because the tile and the New Focus
+	/// provider rides on the option. `DaimondModels` owns both, because the tile and the New Facet
 	/// dialog must not each grow their own idea of what a model is.
 	function populateModelSelect(sel, selected, provider) {
 		if (!window.DaimondModels) { sel.innerHTML = ''; sel.disabled = true; return; }
@@ -2984,7 +3006,7 @@ import init, {
 		closeBtn.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			// Deleting a chat destroys its whole history with no undo, so it is
-			// confirmed — as deleting a Focus already was.
+			// confirmed — as deleting a Facet already was.
 			var n = (s.messages || []).length;
 			var msg = n
 				? 'Delete "' + s.name + '" and its ' + n + ' message' + (n === 1 ? '' : 's') + '? This cannot be undone.'
@@ -3039,7 +3061,7 @@ import init, {
 			fold.textContent = s.foldedInto ? 'Folded' : 'Fold all';
 			fold.title = s.foldedInto
 				? 'Already folded into "' + s.foldedInto.name + '" — fold again to add anything new since.'
-				: 'Fold this whole chat into a Focus';
+				: 'Fold this whole chat into a Facet';
 			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
 			top.appendChild(fold);
 			meta.appendChild(top);
@@ -3358,7 +3380,7 @@ import init, {
 		}
 	}
 
-	// The global spend readout at the foot of the Foci/Chats panel: session
+	// The global spend readout at the foot of the Facets/Chats panel: session
 	// (usage since a ≥15-min idle gap) · this week · this month. Precise but
 	// calm — a quiet reassurance, not a running total shouting in dollars.
 	function updateSpend() {
@@ -3454,7 +3476,7 @@ import init, {
 		try { a = DaimondGovernor.assessDispatch(n); } catch (e) { return true; }
 		if (!a || !a.needsConfirm) return true;
 		var each = (n === 1) ? '' : 's';
-		var msg = 'This Focus is about to run ' + n + ' agent' + each
+		var msg = 'This Facet is about to run ' + n + ' agent' + each
 			+ ', at about ' + fmtUsd(a.predicted) + ' (' + fmtUsd(a.perWorker) + ' each).'
 			+ (a.runSpent > 0 ? ' This burst has spent ' + fmtUsd(a.runSpent) + ' already.' : '')
 			+ ' That would pass your ' + fmtUsd(a.budget) + ' pace budget for one run.';
@@ -3496,7 +3518,7 @@ import init, {
 			try {
 				localStorage.setItem(WORKERS_KEY, JSON.stringify(this.runs.slice(0, 12).map(function (r) {
 					return {
-						id: r.id, name: r.name, task: r.task, focusId: r.focusId, focusName: r.focusName,
+						id: r.id, name: r.name, task: r.task, facetId: r.facetId, facetName: r.facetName,
 						model: r.model, status: r.status, text: r.text, tools: r.tools,
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
 					};
@@ -3524,7 +3546,7 @@ import init, {
 		},
 
 		/// Dispatch every agent the conductor asked for in one turn.
-		dispatch: function (focusId, focusName, specs) {
+		dispatch: function (facetId, facetName, specs) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
@@ -3533,8 +3555,8 @@ import init, {
 					id: 'w' + (++self.seq),
 					name: spec.name || ('agent-' + self.seq),
 					task: spec.task || '',
-					focusId: focusId,
-					focusName: focusName,
+					facetId: facetId,
+					facetName: facetName,
 					model: cfg.model,
 					// A worker runs on the starred default, which is what `cfg` is a view of. It
 					// was implicit before, read straight out of `cfg` at construction; naming it
@@ -3553,8 +3575,8 @@ import init, {
 				// Open the agent in the write-ahead log, so a tab that dies while it works recovers
 				// it — with its partial output — instead of only its name.
 				if (window.DaimondJournal) DaimondJournal.agentOpen(run.id, {
-					name: run.name, task: run.task, focusId: run.focusId,
-					focusName: run.focusName, model: run.model,
+					name: run.name, task: run.task, facetId: run.facetId,
+					facetName: run.facetName, model: run.model,
 				});
 			});
 			this.persist();
@@ -3576,9 +3598,9 @@ import init, {
 			var self = this;
 			// The worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
-			// brief of the Focus it is working for.
+			// brief of the Facet it is working for.
 			var brief = '';
-			try { brief = await focusApp().read_brief(run.focusId); } catch (e) { brief = ''; }
+			try { brief = await facetApp().read_brief(run.facetId); } catch (e) { brief = ''; }
 
 			// A worker's key, like a chat's, is frozen when its agent is built. A worker spends
 			// the same minted key a chat does, and must survive it being spent the same way --
@@ -3676,7 +3698,7 @@ import init, {
 						try {
 							await DaimondJournal.clearAgent(run.id);
 							DaimondJournal.agentOpen(run.id, { name: run.name, task: run.task,
-								focusId: run.focusId, focusName: run.focusName, model: run.model });
+								facetId: run.facetId, facetName: run.facetName, model: run.model });
 						} catch (e3) { /* the journal is best-effort; the retry is not. */ }
 					}
 					self.render();
@@ -3806,7 +3828,7 @@ import init, {
 			this.render();
 		},
 
-		/// Fold a finished worker's summary into the Focus that dispatched it.
+		/// Fold a finished worker's summary into the Facet that dispatched it.
 		foldIn: async function (run) {
 			if (!run.text.trim()) {
 				noticeDialog('Nothing to fold', 'This agent produced no summary to fold.');
@@ -3820,7 +3842,7 @@ import init, {
 			// The run is marked folded when the proposed fold is ACCEPTED, not
 			// here -- the user may still reject the diff. Passing the run lets the
 			// accept handler mark it, so the same summary is never offered twice.
-			await foldDeltaInto(run.focusId, run.text.trim(), run.name, run);
+			await foldDeltaInto(run.facetId, run.text.trim(), run.name, run);
 		},
 
 		clearFinished: function () {
@@ -3858,7 +3880,7 @@ import init, {
 			if (this.runs.length === 0) {
 				var empty = document.createElement('div');
 				empty.className = 'agents-empty';
-				empty.textContent = 'No agents yet. Ask a Focus to start one and it appears here.';
+				empty.textContent = 'No agents yet. Ask a Facet to start one and it appears here.';
 				agentsList.appendChild(empty);
 			} else if (shown === 0) {
 				var none = document.createElement('div');
@@ -3893,10 +3915,10 @@ import init, {
 			task.textContent = run.task;
 			card.appendChild(task);
 
-			// Chips carry where the run came from without a tree: its Focus, that
-			// Focus's inherited tags, and the model. The Focus and tag chips filter.
+			// Chips carry where the run came from without a tree: its Facet, that
+			// Facet's inherited tags, and the model. The Facet and tag chips filter.
 			var chips = document.createElement('div'); chips.className = 'achips';
-			chips.appendChild(agentFocusChip(run));
+			chips.appendChild(agentFacetChip(run));
 			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
 				var c = tagChip(t, 'tag-sm' + (agentTagFilter === t ? ' tag-active' : ''), setAgentTagFilter);
 				c.title = 'Show only agents tagged "' + t + '"';
@@ -3969,7 +3991,7 @@ import init, {
 						var fold = document.createElement('button');
 						fold.className = 'abtn';
 						fold.textContent = 'Fold in';
-						fold.title = 'Fold this agent\'s summary into "' + run.focusName + '"';
+						fold.title = 'Fold this agent\'s summary into "' + run.facetName + '"';
 						fold.addEventListener('click', function () { self.foldIn(run); });
 						acts.appendChild(fold);
 					} else if (run.folded) {
@@ -4007,7 +4029,7 @@ import init, {
 	// ── Standing instructions (DAIMOND.md) ─────────────────────
 	//
 	// A dispatched worker gets its task and nothing else: it cannot see the
-	// conversation that dispatched it, it does not know the Focus's brief, and it
+	// conversation that dispatched it, it does not know the Facet's brief, and it
 	// does not know the user's house rules. So it starts from zero every time.
 	//
 	// `DAIMOND.md` at the workspace root fixes that. A plain file, editable in the
@@ -4061,8 +4083,8 @@ import init, {
 			if (this.md !== prev) {
 				chats.forEach(function (c) { c.app = null; });
 				var md = this.md;
-				Object.keys(_focusApps).forEach(function (k) {
-					try { _focusApps[k].set_instructions(md); } catch (e) { /* ignore */ }
+				Object.keys(_facetApps).forEach(function (k) {
+					try { _facetApps[k].set_instructions(md); } catch (e) { /* ignore */ }
 				});
 			}
 			this.render();
@@ -4070,14 +4092,14 @@ import init, {
 		},
 
 		/// The role prompt, plus the house rules, plus (for a worker) the brief of
-		/// the Focus that dispatched it.
+		/// the Facet that dispatched it.
 		compose: function (role, brief) {
 			var out = role;
 			if (this.md.trim()) {
 				out += '\n\n## Standing instructions from the user\n\n' + this.md.trim();
 			}
 			if (brief && brief.trim()) {
-				out += '\n\n## The brief of the Focus that dispatched you\n\n'
+				out += '\n\n## The brief of the Facet that dispatched you\n\n'
 					+ 'This is what the work is for. Act consistently with it.\n\n' + brief.trim();
 			}
 			return out;
@@ -4213,53 +4235,53 @@ import init, {
 		try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* best effort */ }
 	}
 
-	// A Focus DaimondApp's counters are cumulative across every steer and fold IT has run, so a
+	// A Facet DaimondApp's counters are cumulative across every steer and fold IT has run, so a
 	// turn's cost is the growth since that app was last read.
 	//
 	// There is now one app per model, so the previous reading is kept per app, not in a pair of
 	// module variables. With a single pair, a fold on a cheap model followed by a steer on an
 	// expensive one would have billed the difference between two unrelated counters -- and priced
 	// the turn at whatever the starred model happened to cost.
-	var _focusMeter = new Map();       // app -> { p, c } at the last reading
-	function meterFocusTurn(app) {
+	var _facetMeter = new Map();       // app -> { p, c } at the last reading
+	function meterFacetTurn(app) {
 		if (!app || !window.DaimondLedger) return;
-		var prev = _focusMeter.get(app) || { p: 0, c: 0 };
+		var prev = _facetMeter.get(app) || { p: 0, c: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
 		var dp = Math.max(0, p - prev.p), dc = Math.max(0, c - prev.c);
-		_focusMeter.set(app, { p: p, c: c });
+		_facetMeter.set(app, { p: p, c: c });
 		if (dp + dc === 0) return;
-		recordSpend(_focusAppModel.get(app) || cfg.model, dp, dc);
+		recordSpend(_facetAppModel.get(app) || cfg.model, dp, dc);
 		updateSpend();
 	}
 
-	/// Fold an arbitrary delta (an agent's summary, say) into a Focus, through
+	/// Fold an arbitrary delta (an agent's summary, say) into a Facet, through
 	/// the same advisory path a chat fold takes: propose, show the diff, and let
 	/// the user accept or veto.
-	async function foldDeltaInto(focusId, delta, sourceName, sourceRun) {
-		var f = foci.find(function (x) { return x.id === focusId; });
-		if (!f) { noticeDialog('Focus is gone', 'The Focus that dispatched this agent no longer exists.'); return; }
-		if (!focusCanRun(focusId)) {
-			openSettings('That Focus\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+	async function foldDeltaInto(facetId, delta, sourceName, sourceRun) {
+		var f = facets.find(function (x) { return x.id === facetId; });
+		if (!f) { noticeDialog('Facet is gone', 'The Facet that dispatched this agent no longer exists.'); return; }
+		if (!facetCanRun(facetId)) {
+			openSettings('That Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
 			return;
 		}
-		await selectFocus(f);
+		await selectFacet(f);
 		setBriefBusy(true); setBriefStatus('Proposing fold…');
 		var cur, proposed;
-		var fa = focusApp(focusId);            // the Focus's own model, not the starred one
+		var fa = facetApp(facetId);            // the Facet's own model, not the starred one
 		try {
-			cur = await fa.read_brief(focusId);
-			proposed = await fa.fold_propose(focusId, delta);
+			cur = await fa.read_brief(facetId);
+			proposed = await fa.fold_propose(facetId, delta);
 		} catch (e) {
-			meterFocusTurn(fa);
+			meterFacetTurn(fa);
 			setBriefStatus(friendlyError(e)); setBriefBusy(false); return;
 		}
-		meterFocusTurn(fa);
+		meterFacetTurn(fa);
 		setBriefStatus(''); setBriefBusy(false);
-		pendingFolds[focusId] = {
+		pendingFolds[facetId] = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: null, chatName: sourceName, sourceRun: sourceRun || null,
 		};
-		renderFoldDiff(focusId);
+		renderFoldDiff(facetId);
 	}
 
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
@@ -4299,7 +4321,7 @@ import init, {
 				parseListing(res).forEach(function (e) {
 					if (e.name.charAt(0) === '.') return;
 					var full = joinPath(dir, e.name);
-					if (!dir && e.name === 'foci' && e.dir) return;      // Daimond's own store
+					if (!dir && e.name === 'facets' && e.dir) return;      // Daimond's own store
 					if (e.dir) { todo.push(full); return; }
 					if (e.name.toLowerCase().indexOf(filter) !== -1) {
 						hits.push({ name: full, dir: false, size: e.size, deep: true });
@@ -4368,7 +4390,7 @@ import init, {
 		// The OPFS root and an FSA folder are both a FileSystemDirectory-
 		// Handle with the same interface, so "open a real folder" simply
 		// swaps the root handle the file tools resolve against (in wasm).
-		// Focus/brief/`.daimond` storage pins OPFS and is never affected.
+		// Facet/brief/`.daimond` storage pins OPFS and is never affected.
 
 		// Render the mode row: which files the agent is touching, and the ways to change that.
 		//
@@ -4613,7 +4635,7 @@ import init, {
 			var atRoot = !curDir || curDir === '.' || curDir === '/';
 			entries = entries.filter(function (e) {
 				if (e.name.charAt(0) === '.') return false;          // `.daimond` and any other dotfile
-				if (atRoot && e.name === 'foci' && e.dir) return false;
+				if (atRoot && e.name === 'facets' && e.dir) return false;
 				return true;
 			});
 			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
@@ -4850,7 +4872,7 @@ import init, {
 			if (p === INSTRUCTIONS_FILE) {
 				seed = '# Standing instructions\n\n'
 					+ 'Everything written here is given to every agent Daimond runs — chats, the\n'
-					+ 'conductor of each Focus, and every worker it dispatches.\n\n'
+					+ 'conductor of each Facet, and every worker it dispatches.\n\n'
 					+ '## House rules\n\n'
 					+ '- \n';
 			}
@@ -5014,35 +5036,35 @@ import init, {
 		};
 	})();
 
-	// ── Foci / brief / fold ────────────────────────────────────
-	// A Focus is a durable brief the user steers and folds deltas into.
-	// ── A Focus runs on the model it was created with ──────────────
+	// ── Facets / brief / fold ────────────────────────────────────
+	// A Facet is a durable brief the user steers and folds deltas into.
+	// ── A Facet runs on the model it was created with ──────────────
 	//
-	// Which model a Focus thinks with is a browser-side choice about how to RUN it, not part of
-	// the brief it holds, so it lives in localStorage beside the app rather than in the Focus's
+	// Which model a Facet thinks with is a browser-side choice about how to RUN it, not part of
+	// the brief it holds, so it lives in localStorage beside the app rather than in the Facet's
 	// own OPFS record -- and no Rust has to learn about it.
-	var FOCUS_MODELS_KEY = 'daimond-focus-models';
+	var FACET_MODELS_KEY = 'daimond-facet-models';
 
-	function focusModels() { return readJson(FOCUS_MODELS_KEY, {}) || {}; }
+	function facetModels() { return readJson(FACET_MODELS_KEY, {}) || {}; }
 
-	function setFocusModel(id, pick) {
+	function setFacetModel(id, pick) {
 		if (!id || !pick || !pick.model) return;
-		var all = focusModels();
+		var all = facetModels();
 		all[id] = { provider: pick.provider || '', model: pick.model };
-		try { localStorage.setItem(FOCUS_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+		try { localStorage.setItem(FACET_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
-	/// The model a Focus runs on. A Focus made before Foci had models falls back to the default,
+	/// The model a Facet runs on. A Facet made before Facets had models falls back to the default,
 	/// which is exactly what it was silently doing already.
-	function focusModel(id) {
-		var m = focusModels()[id];
+	function facetModel(id) {
+		var m = facetModels()[id];
 		return m && m.model ? m : (window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' });
 	}
 
-	/// Can this Focus actually think? That is a question about ITS provider's key, not the starred
+	/// Can this Facet actually think? That is a question about ITS provider's key, not the starred
 	/// provider's -- and they are not always the same one.
-	function focusCanRun(id) {
-		var m = focusModel(id);
+	function facetCanRun(id) {
+		var m = facetModel(id);
 		return !!(window.DaimondModels && DaimondModels.resolve(m.provider, m.model));
 	}
 
@@ -5050,15 +5072,15 @@ import init, {
 	// operations (create/list/read/write/log/fold_apply) work on any instance, so a placeholder
 	// provider is fine when none is configured.
 	//
-	// Cached by the configuration rather than by the Focus: two Foci on the same model are the
+	// Cached by the configuration rather than by the Facet: two Facets on the same model are the
 	// same client, and DaimondApp has no setter for its model -- changing one means building one.
-	var _focusApps     = {};           // "provider model" -> DaimondApp
-	var _focusAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
-	function focusApp(focusId, pick) {
-		var m = pick && pick.model ? pick : focusModel(focusId);
+	var _facetApps     = {};           // "provider model" -> DaimondApp
+	var _facetAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
+	function facetApp(facetId, pick) {
+		var m = pick && pick.model ? pick : facetModel(facetId);
 		var a = appCfgFor(m);
 		var k = (a.provider || '') + ' ' + (a.model || '');
-		if (_focusApps[k]) return _focusApps[k];
+		if (_facetApps[k]) return _facetApps[k];
 
 		var app;
 		var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
@@ -5072,17 +5094,17 @@ import init, {
 		// The conductor's and the reducer's system prompts are composed in Rust,
 		// so the house rules are handed across rather than baked into the ctor.
 		try { app.set_instructions(Instructions.md); } catch (e) { /* ignore */ }
-		_focusApps[k] = app;
-		_focusAppModel.set(app, a.model || '');
+		_facetApps[k] = app;
+		_facetAppModel.set(app, a.model || '');
 		return app;
 	}
 
 	/// Forget the built clients. A key that has just changed -- or been locked away -- must not go
 	/// on being used by a client that closed over the old one.
-	function resetFocusApps() {
-		_focusApps = {};
-		_focusAppModel = new Map();
-		_focusMeter = new Map();
+	function resetFacetApps() {
+		_facetApps = {};
+		_facetAppModel = new Map();
+		_facetMeter = new Map();
 	}
 
 	/// A short relative-time label from an epoch-ms value.
@@ -5097,16 +5119,16 @@ import init, {
 		return Math.round(h / 24) + 'd ago';
 	}
 
-	/// Reload the Foci list from the store and re-render the rail.
-	async function loadFoci() {
+	/// Reload the Facets list from the store and re-render the rail.
+	async function loadFacets() {
 		try {
-			var json = await focusApp().list_foci();
-			foci = JSON.parse(json);
-		} catch (e) { foci = []; }
-		renderFocusList();
+			var json = await facetApp().list_facets();
+			facets = JSON.parse(json);
+		} catch (e) { facets = []; }
+		renderFacetList();
 	}
 
-	/// A Focus's tags, tolerating the Foci written before tags existed.
+	/// A Facet's tags, tolerating the Facets written before tags existed.
 	function tagsOf(f) {
 		return Array.isArray(f && f.tags) ? f.tags : [];
 	}
@@ -5147,67 +5169,67 @@ import init, {
 		return el;
 	}
 
-	/// Does a Focus survive the search box and the tag filter? Names and tags
+	/// Does a Facet survive the search box and the tag filter? Names and tags
 	/// only -- the brief itself is deliberately not searched.
-	function focusMatches(f) {
+	function facetMatches(f) {
 		var tags = tagsOf(f);
 		if (tagFilter && tags.indexOf(tagFilter) === -1) return false;
-		if (!focusQuery) return true;
-		if ((f.name || '').toLowerCase().indexOf(focusQuery) !== -1) return true;
-		return tags.some(function (t) { return t.toLowerCase().indexOf(focusQuery) !== -1; });
+		if (!facetQuery) return true;
+		if ((f.name || '').toLowerCase().indexOf(facetQuery) !== -1) return true;
+		return tags.some(function (t) { return t.toLowerCase().indexOf(facetQuery) !== -1; });
 	}
 
 	/// Filter the rail to one tag. Clicking the tag that is already filtering
 	/// clears it, so the chip that turns the filter on turns it off again.
 	function setTagFilter(tag) {
 		tagFilter = (tagFilter === tag) ? null : tag;
-		renderFocusList();
+		renderFacetList();
 	}
 
-	// ── Agents panel: find and filter, mirroring the Foci rail ──────────
-	// A flat list with chips, deliberately not a Focus→children tree: the
+	// ── Agents panel: find and filter, mirroring the Facets rail ──────────
+	// A flat list with chips, deliberately not a Facet→children tree: the
 	// tree's height is more than the dock can spare, and the parent a run
 	// belongs to already rides on the run, as a chip.
 
-	/// The Focus a run belongs to, looked up live, or null.
-	function agentFocusOf(run) {
-		if (!run || !run.focusId) return null;
-		for (var i = 0; i < foci.length; i++) if (foci[i].id === run.focusId) return foci[i];
+	/// The Facet a run belongs to, looked up live, or null.
+	function agentFacetOf(run) {
+		if (!run || !run.facetId) return null;
+		for (var i = 0; i < facets.length; i++) if (facets[i].id === run.facetId) return facets[i];
 		return null;
 	}
 
-	/// A run's tags: the tags of the Focus that started it. A worker has none
-	/// of its own, so it borrows its Focus's -- which is what lets one tag
+	/// A run's tags: the tags of the Facet that started it. A worker has none
+	/// of its own, so it borrows its Facet's -- which is what lets one tag
 	/// vocabulary filter both rails.
 	function agentTagsOf(run) {
-		return tagsOf(agentFocusOf(run));
+		return tagsOf(agentFacetOf(run));
 	}
 
-	/// One Focus chip on a run's tile: names the parent, and filters to it.
-	function agentFocusChip(run) {
+	/// One Facet chip on a run's tile: names the parent, and filters to it.
+	function agentFacetChip(run) {
 		var el = document.createElement('button');
-		el.className = 'tag-chip focus-chip' + (agentFocusFilter === run.focusId ? ' tag-active' : '');
-		el.style.setProperty('--tag-h', tagHue(run.focusName || ''));
-		el.textContent = '↳ ' + (run.focusName || 'no Focus');
-		el.title = run.focusId ? ('Show only agents from "' + run.focusName + '"') : 'This run has no Focus';
-		if (run.focusId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentFocusFilter(run.focusId); });
+		el.className = 'tag-chip facet-chip' + (agentFacetFilter === run.facetId ? ' tag-active' : '');
+		el.style.setProperty('--tag-h', tagHue(run.facetName || ''));
+		el.textContent = '↳ ' + (run.facetName || 'no Facet');
+		el.title = run.facetId ? ('Show only agents from "' + run.facetName + '"') : 'This run has no Facet';
+		if (run.facetId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentFacetFilter(run.facetId); });
 		return el;
 	}
 
 	/// Does a run survive the agents search box and its filter chip? Name,
-	/// task, Focus name, model and inherited tags are searched.
+	/// task, Facet name, model and inherited tags are searched.
 	function agentMatches(run) {
-		if (agentFocusFilter && run.focusId !== agentFocusFilter) return false;
+		if (agentFacetFilter && run.facetId !== agentFacetFilter) return false;
 		if (agentTagFilter && agentTagsOf(run).indexOf(agentTagFilter) === -1) return false;
 		if (!agentQuery) return true;
-		var hay = [run.name, run.task, run.focusName, shortModel(run.model)]
+		var hay = [run.name, run.task, run.facetName, shortModel(run.model)]
 			.concat(agentTagsOf(run)).join(' ').toLowerCase();
 		return hay.indexOf(agentQuery) !== -1;
 	}
 
-	/// Filter the panel to one Focus (toggles off if it is already the filter).
-	function setAgentFocusFilter(focusId) {
-		agentFocusFilter = (agentFocusFilter === focusId) ? null : focusId;
+	/// Filter the panel to one Facet (toggles off if it is already the filter).
+	function setAgentFacetFilter(facetId) {
+		agentFacetFilter = (agentFacetFilter === facetId) ? null : facetId;
 		agentTagFilter = null;   // one filter at a time, as the rail has one
 		Workers.render();
 	}
@@ -5215,7 +5237,7 @@ import init, {
 	/// Filter the panel to one tag (toggles off if it is already the filter).
 	function setAgentTagFilter(tag) {
 		agentTagFilter = (agentTagFilter === tag) ? null : tag;
-		agentFocusFilter = null;
+		agentFacetFilter = null;
 		Workers.render();
 	}
 
@@ -5266,19 +5288,19 @@ import init, {
 	function renderAgentFilter() {
 		if (!agentFilter) return;
 		agentFilter.innerHTML = '';
-		if (!agentFocusFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
+		if (!agentFacetFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
 		agentFilter.style.display = '';
 		var chip;
-		if (agentFocusFilter) {
-			var f = null, id = agentFocusFilter;
-			for (var i = 0; i < foci.length; i++) if (foci[i].id === id) { f = foci[i]; break; }
-			var label = f ? f.name : 'Focus';
+		if (agentFacetFilter) {
+			var f = null, id = agentFacetFilter;
+			for (var i = 0; i < facets.length; i++) if (facets[i].id === id) { f = facets[i]; break; }
+			var label = f ? f.name : 'Facet';
 			chip = document.createElement('button');
-			chip.className = 'tag-chip tag-active focus-chip';
+			chip.className = 'tag-chip tag-active facet-chip';
 			chip.style.setProperty('--tag-h', tagHue(label));
 			chip.textContent = '↳ ' + label;
-			chip.title = 'Clear the Focus filter';
-			chip.addEventListener('click', function () { setAgentFocusFilter(id); });
+			chip.title = 'Clear the Facet filter';
+			chip.addEventListener('click', function () { setAgentFacetFilter(id); });
 		} else {
 			var tag = agentTagFilter;
 			chip = tagChip(tag, 'tag-active', function () { setAgentTagFilter(tag); });
@@ -5292,46 +5314,46 @@ import init, {
 	/// The active filter, as one removable chip beside the search box. A
 	/// filter you cannot see is a list quietly lying about what it holds.
 	function renderTagFilter() {
-		if (!focusFilter) return;
-		focusFilter.innerHTML = '';
-		if (!tagFilter) { focusFilter.style.display = 'none'; return; }
-		focusFilter.style.display = '';
+		if (!facetFilter) return;
+		facetFilter.innerHTML = '';
+		if (!tagFilter) { facetFilter.style.display = 'none'; return; }
+		facetFilter.style.display = '';
 		var chip = tagChip(tagFilter, 'tag-active', function () { setTagFilter(null); });
 		chip.title = 'Clear the "' + tagFilter + '" filter';
 		var x = document.createElement('span');
 		x.className = 'tag-x';
 		x.textContent = '×';
 		chip.appendChild(x);
-		focusFilter.appendChild(chip);
+		facetFilter.appendChild(chip);
 	}
 
-	function renderFocusList() {
-		focusList.innerHTML = '';
+	function renderFacetList() {
+		facetList.innerHTML = '';
 		renderTagFilter();
-		if (foci.length === 0) {
+		if (facets.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
-			note.textContent = 'No Foci yet.';
-			focusList.appendChild(note);
+			note.textContent = 'No Facets yet.';
+			facetList.appendChild(note);
 			return;
 		}
-		// Already most-recently-updated first: `list_foci` sorts on `updated`.
-		var shown = foci.filter(focusMatches);
+		// Already most-recently-updated first: `list_facets` sorts on `updated`.
+		var shown = facets.filter(facetMatches);
 		if (shown.length === 0) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = 'No Foci match.';
-			focusList.appendChild(none);
+			none.textContent = 'No Facets match.';
+			facetList.appendChild(none);
 			return;
 		}
-		shown.forEach(function (f) { focusList.appendChild(focusBox(f)); });
-		updateActiveFocus();
+		shown.forEach(function (f) { facetList.appendChild(facetBox(f)); });
+		updateActiveFacet();
 	}
 
-	function focusBox(f) {
-		var active = currentFocus && f.id === currentFocus.id;
+	function facetBox(f) {
+		var active = currentFacet && f.id === currentFacet.id;
 		var box = document.createElement('div');
-		box.className = 'session-box focus-box' + (active ? ' active' : '');
+		box.className = 'session-box facet-box' + (active ? ' active' : '');
 		box.dataset.id = f.id;
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
@@ -5341,23 +5363,23 @@ import init, {
 		name.title = 'Double-click to rename';
 		name.addEventListener('dblclick', async function (e) {
 			e.stopPropagation();
-			var nn = await promptDialog('Rename Focus', { value: f.name, okLabel: 'Rename' });
+			var nn = await promptDialog('Rename Facet', { value: f.name, okLabel: 'Rename' });
 			if (nn === null) return; nn = nn.trim();
 			if (!nn || nn === f.name) return;
-			focusApp().rename_focus(f.id, nn).then(function () { f.name = nn; loadFoci(); })
+			facetApp().rename_facet(f.id, nn).then(function () { f.name = nn; loadFacets(); })
 				.catch(function (e2) { noticeDialog('Rename failed', friendlyError(e2)); });
 		});
 		header.appendChild(name);
 		var del = document.createElement('button');
 		del.className = 'session-box-close';
 		del.textContent = '×';
-		del.title = 'Delete Focus';
+		del.title = 'Delete Facet';
 		del.addEventListener('click', async function (e) {
 			e.stopPropagation();
-			if (!await confirmDialog('Delete the Focus "' + f.name + '" and all of its brief, history and deltas? This cannot be undone.', 'Delete Focus', { title: 'Delete Focus' })) return;
-			focusApp().delete_focus(f.id).then(function () {
-				if (currentFocus && currentFocus.id === f.id) { currentFocus = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
-				loadFoci();
+			if (!await confirmDialog('Delete the Facet "' + f.name + '" and all of its brief, history and deltas? This cannot be undone.', 'Delete Facet', { title: 'Delete Facet' })) return;
+			facetApp().delete_facet(f.id).then(function () {
+				if (currentFacet && currentFacet.id === f.id) { currentFacet = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
+				loadFacets();
 			}).catch(function (e2) { noticeDialog('Delete failed', friendlyError(e2)); });
 		});
 		header.appendChild(del);
@@ -5373,14 +5395,14 @@ import init, {
 			upd.textContent = relTime(f.updated);
 			meta.appendChild(upd);
 		}
-		// Tags sit with the other plain facts of the Focus. Only the first few
-		// show, so one heavily-filed Focus cannot push the rest off the rail;
-		// a Focus with no tags adds nothing here and looks exactly as it did
+		// Tags sit with the other plain facts of the Facet. Only the first few
+		// show, so one heavily-filed Facet cannot push the rest off the rail;
+		// a Facet with no tags adds nothing here and looks exactly as it did
 		// before tags existed.
 		var tags = tagsOf(f);
 		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
 			var chip = tagChip(t, 'tag-sm', setTagFilter);
-			chip.title = 'Show only Foci tagged "' + t + '"';
+			chip.title = 'Show only Facets tagged "' + t + '"';
 			meta.appendChild(chip);
 		});
 		if (tags.length > TAG_CHIPS_SHOWN) {
@@ -5392,29 +5414,29 @@ import init, {
 		}
 		box.appendChild(header); box.appendChild(meta);
 		box.addEventListener('click', function () {
-			selectFocus(f);
+			selectFacet(f);
 			if (isMobile()) mshow('ai');
 		});
 		return box;
 	}
 
-	function updateActiveFocus() {
-		focusList.querySelectorAll('.focus-box').forEach(function (box) {
-			box.classList.toggle('active', currentFocus && box.dataset.id === currentFocus.id);
+	function updateActiveFacet() {
+		facetList.querySelectorAll('.facet-box').forEach(function (box) {
+			box.classList.toggle('active', currentFacet && box.dataset.id === currentFacet.id);
 		});
 	}
 
-	/// The AI panel's own two faces: the chat thread, and a Focus's brief.
+	/// The AI panel's own two faces: the chat thread, and a Facet's brief.
 	///
 	/// A document and a message used to be shown HERE, in place of the chat —
 	/// so reading your mail meant leaving the conversation. They are stage
 	/// panels now, and open beside it.
 	function showCentre(mode) {
 		centreMode = mode;
-		var focusOn = (mode === 'focus');
-		briefView.style.display    = focusOn ? 'flex' : 'none';
-		chatOutputEl.style.display = focusOn ? 'none' : '';
-		chatInputBar.style.display = focusOn ? 'none' : '';
+		var facetOn = (mode === 'focus');
+		briefView.style.display    = facetOn ? 'flex' : 'none';
+		chatOutputEl.style.display = facetOn ? 'none' : '';
+		chatInputBar.style.display = facetOn ? 'none' : '';
 	}
 
 	/// Show one mail message on the stage, beside the chat — so it can be read
@@ -5844,25 +5866,25 @@ import init, {
 		DaimondPanels.reflow();
 	}
 
-	/// Create a Focus, on a model the user chose.
+	/// Create a Facet, on a model the user chose.
 	///
-	/// A Focus runs the conductor and the reducer -- it thinks, and it is billed for thinking --
+	/// A Facet runs the conductor and the reducer -- it thinks, and it is billed for thinking --
 	/// so which model it runs is as much a decision as it is for a chat. It used to be no decision
-	/// at all: a Focus silently took whichever model happened to be starred, and starring a
-	/// different one later moved every Focus onto it.
-	async function createFocus() {
+	/// at all: a Facet silently took whichever model happened to be starred, and starring a
+	/// different one later moved every Facet onto it.
+	async function createFacet() {
 		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
 		var vals = await dialog({
 			kind: 'form',
-			title: 'New Focus',
+			title: 'New Facet',
 			okLabel: 'Create',
 			fields: [
-				{ name: 'name',  label: 'Name',  value: peekFocusLabel() },
+				{ name: 'name',  label: 'Name',  value: peekFacetLabel() },
 				{ name: 'model', label: 'Model', kind: 'models', provider: d.provider, value: d.model },
 			],
 			validate: function (v) {
-				if (!v.name) return 'Give the Focus a name.';
-				if (!v.model || !v.model.model) return 'Choose a model for this Focus to think with.';
+				if (!v.name) return 'Give the Facet a name.';
+				if (!v.model || !v.model.model) return 'Choose a model for this Facet to think with.';
 				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
 					return 'That provider has no readable key yet — unlock, or add one.';
 				}
@@ -5874,32 +5896,32 @@ import init, {
 
 		var id;
 		try {
-			// create_focus is a pure OPFS write -- no model is consulted -- so any instance will
-			// do. The model matters from the Focus's first *thought*, which is why it is recorded
-			// against the Focus rather than handed to this call.
-			id = await focusApp().create_focus(name);
-			takeFocusLabel();
+			// create_facet is a pure OPFS write -- no model is consulted -- so any instance will
+			// do. The model matters from the Facet's first *thought*, which is why it is recorded
+			// against the Facet rather than handed to this call.
+			id = await facetApp().create_facet(name);
+			takeFacetLabel();
 		} catch (e) {
-			noticeDialog('Could not create Focus', friendlyError(e));
+			noticeDialog('Could not create Facet', friendlyError(e));
 			return;
 		}
-		setFocusModel(id, vals.model);
-		await loadFoci();
-		var f = foci.find(function (x) { return x.id === id; });
-		if (f) selectFocus(f);
+		setFacetModel(id, vals.model);
+		await loadFacets();
+		var f = facets.find(function (x) { return x.id === id; });
+		if (f) selectFacet(f);
 		if (isMobile()) mshow('ai');
 	}
 
-	async function selectFocus(f) {
-		currentFocus = f;
-		current = null;                            // a Focus is not a chat
+	async function selectFacet(f) {
+		currentFacet = f;
+		current = null;                            // a Facet is not a chat
 		updateActiveSession();                     // clear chat highlight
-		updateActiveFocus();
+		updateActiveFacet();
 		sessionNameEl.textContent = f.name;
 		aiMeter.textContent = 'brief v' + (f.brief_version || 0)
 			+ (f.updated ? ' · ' + relTime(f.updated) : '');
 		showCentre('focus');
-		// A proposal left pending on this Focus is restored rather than lost.
+		// A proposal left pending on this Facet is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderBrief();
 	}
@@ -5908,9 +5930,9 @@ import init, {
 	/// fold controls.  H5: brief markdown passes through DaimondRender.md's
 	/// sanitiser; no untrusted string reaches innerHTML unescaped.
 	async function renderBrief() {
-		if (!currentFocus) return;
+		if (!currentFacet) return;
 		var md = '';
-		try { md = await focusApp().read_brief(currentFocus.id); }
+		try { md = await facetApp().read_brief(currentFacet.id); }
 		catch (e) { md = ''; }
 		briefBody.innerHTML = '';
 
@@ -5932,7 +5954,7 @@ import init, {
 		var tagsBtn = document.createElement('button');
 		tagsBtn.className = 'brief-act';
 		tagsBtn.textContent = '# Tags';
-		tagsBtn.title = 'File this Focus in the rail';
+		tagsBtn.title = 'File this Facet in the rail';
 		tagsBtn.addEventListener('click', showTagEditor);
 		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
 		briefBody.appendChild(bar);
@@ -5949,6 +5971,7 @@ import init, {
 		}
 		briefBody.appendChild(content);
 		renderBriefControls();
+		renderArtefacts();          // fills the strip, or leaves it hidden at zero
 	}
 
 	/// Hand-edit the brief. `write_brief` snapshots a version and logs the edit,
@@ -5970,9 +5993,9 @@ import init, {
 		cancel.textContent = 'Cancel';
 		save.addEventListener('click', async function () {
 			save.disabled = true; save.textContent = 'Saving…';
-			try { await focusApp().write_brief(currentFocus.id, ta.value); }
+			try { await facetApp().write_brief(currentFacet.id, ta.value); }
 			catch (e) { noticeDialog('Could not save the brief', friendlyError(e)); save.disabled = false; save.textContent = '✔ Save'; return; }
-			await refreshFocusAfterChange();
+			await refreshFacetAfterChange();
 		});
 		cancel.addEventListener('click', function () { renderBrief(); });
 		bar.appendChild(save); bar.appendChild(cancel);
@@ -5982,11 +6005,11 @@ import init, {
 		ta.focus();
 	}
 
-	/// The Focus's history: every version, with what produced it, and a way back.
+	/// The Facet's history: every version, with what produced it, and a way back.
 	async function showBriefHistory() {
-		if (!currentFocus) return;
+		if (!currentFacet) return;
 		var recs = [];
-		try { recs = JSON.parse(await focusApp().log_read(currentFocus.id) || '[]'); }
+		try { recs = JSON.parse(await facetApp().log_read(currentFacet.id) || '[]'); }
 		catch (e) { recs = []; }
 
 		briefBody.innerHTML = '';
@@ -6035,7 +6058,7 @@ import init, {
 			view.textContent = 'View';
 			view.addEventListener('click', async function () {
 				var md = '';
-				try { md = await focusApp().read_version(currentFocus.id, v); }
+				try { md = await facetApp().read_version(currentFacet.id, v); }
 				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
 				noticeDialog('Brief at v' + v, md || '(empty)', { pre: true });
 			});
@@ -6044,15 +6067,15 @@ import init, {
 			revert.textContent = 'Restore';
 			revert.addEventListener('click', async function () {
 				var md = '';
-				try { md = await focusApp().read_version(currentFocus.id, v); }
+				try { md = await facetApp().read_version(currentFacet.id, v); }
 				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
 				var ok = await confirmDialog(
 					'Restore the brief to v' + v + '? The current text is kept in the history, so this can itself be undone.',
 					'Restore v' + v, { title: 'Restore a version', danger: false });
 				if (!ok) return;
-				try { await focusApp().write_brief(currentFocus.id, md); }
+				try { await facetApp().write_brief(currentFacet.id, md); }
 				catch (e) { noticeDialog('Could not restore', friendlyError(e)); return; }
-				await refreshFocusAfterChange();
+				await refreshFacetAfterChange();
 			});
 			acts.appendChild(view); acts.appendChild(revert);
 			// A fold retains the raw delta it consumed, in a file the log record
@@ -6079,14 +6102,14 @@ import init, {
 		renderBriefControls();
 	}
 
-	/// The Focus's tags: the user's own filing system, edited here.
+	/// The Facet's tags: the user's own filing system, edited here.
 	///
 	/// Tags only sort the rail. Nothing here is read by an agent, and no tag
 	/// reaches a brief or a prompt -- which is why this sits beside the brief
 	/// rather than in it.
 	async function showTagEditor() {
-		if (!currentFocus) return;
-		var f = foci.find(function (x) { return x.id === currentFocus.id; }) || currentFocus;
+		if (!currentFacet) return;
+		var f = facets.find(function (x) { return x.id === currentFacet.id; }) || currentFacet;
 		var tags = tagsOf(f).slice();
 
 		briefBody.innerHTML = '';
@@ -6103,7 +6126,7 @@ import init, {
 		wrap.className = 'tag-editor';
 		var note = document.createElement('div');
 		note.className = 'tag-note';
-		note.textContent = 'Tags file this Focus in the rail. They are never sent to a model and never enter the brief.';
+		note.textContent = 'Tags file this Facet in the rail. They are never sent to a model and never enter the brief.';
 		wrap.appendChild(note);
 
 		var current = document.createElement('div');
@@ -6132,11 +6155,11 @@ import init, {
 		/// normalisation -- it lowercases, trims, dedupes and caps -- so its
 		/// answer is the truth, not what was typed here.
 		async function commit(next) {
-			try { await focusApp().set_tags(f.id, JSON.stringify(next)); }
+			try { await facetApp().set_tags(f.id, JSON.stringify(next)); }
 			catch (e) { noticeDialog('Could not save the tags', friendlyError(e)); return; }
-			await loadFoci();
-			var g = foci.find(function (x) { return x.id === f.id; });
-			if (g) { tags = tagsOf(g).slice(); currentFocus = g; }
+			await loadFacets();
+			var g = facets.find(function (x) { return x.id === f.id; });
+			if (g) { tags = tagsOf(g).slice(); currentFacet = g; }
 			else tags = next;
 			paint();
 		}
@@ -6191,6 +6214,123 @@ import init, {
 		renderBriefControls();
 	}
 
+	/// Fill the artefact strip and, when it is open, the list under it.
+	///
+	/// Reads the Facet's links and keeps the ones pointing at something that is not another
+	/// Facet: those are the things this pursuit produced or consulted, as against the Facets
+	/// it relates to.
+	async function renderArtefacts() {
+		var strip = document.getElementById('arte-strip');
+		var list  = document.getElementById('arte-list');
+		if (!strip || !list || !currentFacet) return;
+		var facetId = currentFacet.id;
+
+		var links = [];
+		try {
+			links = JSON.parse(await facetApp().links_touching('facet:' + facetId) || '[]')
+				.filter(function (l) { return l.other && l.other.indexOf('facet:') !== 0; });
+		} catch (e) { links = []; }
+
+		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
+		strip.style.display = '';
+		strip.textContent = '\u25c8 ' + links.length + ' artefact' + (links.length === 1 ? '' : 's');
+		strip.title = 'What this Facet produced or consulted';
+		if (!strip.dataset.open) { list.style.display = 'none'; return; }
+
+		// Most recent first: what was last touched is what is being worked on.
+		links.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+
+		list.innerHTML = '';
+		links.forEach(function (l) {
+			var kind = l.other.slice(0, l.other.indexOf(':'));
+			var rest = l.other.slice(l.other.indexOf(':') + 1);
+
+			var row = document.createElement('div');
+			row.className = 'arte-row';
+
+			// Opening it is the obvious click, and every kind already has a panel that knows
+			// how to show it — so this routes rather than rendering anything itself.
+			var openBtn = document.createElement('button');
+			openBtn.className = 'arte-open';
+			openBtn.textContent = rest;
+			openBtn.title = l.rel ? (l.rel + ' \u00b7 ' + l.other) : l.other;
+			openBtn.addEventListener('click', function () { openArtefact(kind, rest); });
+
+			// The quieter, more useful one: put a reference in the steer box. The hard part of
+			// steering is naming which thing you mean, and this is the picker for it.
+			var useBtn = document.createElement('button');
+			useBtn.className = 'arte-use';
+			useBtn.textContent = '\u21b3';
+			useBtn.title = 'Refer to this in the steer box';
+			useBtn.addEventListener('click', function () {
+				var box = document.getElementById('steer-input');
+				if (!box) return;
+				box.value = (box.value ? box.value.replace(/\s*$/, ' ') : '') + rest + ' ';
+				box.focus();
+				box.style.height = 'auto';
+				box.style.height = Math.min(box.scrollHeight, 120) + 'px';
+			});
+
+			var drop = document.createElement('button');
+			drop.className = 'arte-drop';
+			drop.textContent = '\u00d7';
+			drop.title = 'Not an artefact of this Facet';
+			drop.addEventListener('click', async function () {
+				try { await facetApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+				renderArtefacts();
+			});
+
+			var tag = document.createElement('span');
+			tag.className = 'arte-kind';
+			tag.textContent = kind;
+
+			row.appendChild(tag);
+			row.appendChild(openBtn);
+			row.appendChild(useBtn);
+			row.appendChild(drop);
+			list.appendChild(row);
+		});
+	}
+
+	/// Show an artefact in whichever panel already owns that kind of thing.
+	///
+	/// A file that has since been renamed or deleted is said to be missing rather than
+	/// quietly doing nothing: a list of dead links that pretends otherwise is worse than no
+	/// list at all.
+	async function openArtefact(kind, rest) {
+		if (kind === 'url') {
+			if (window.DaimondWeb && DaimondWeb.open) DaimondWeb.open(rest);
+			else window.open(rest, '_blank', 'noopener');
+			return;
+		}
+		if (kind === 'file') {
+			try {
+				await facetApp().run_tool('file_read', JSON.stringify({ path: rest }));
+			} catch (e) {
+				noticeDialog('That file is not there any more',
+					'\u201c' + rest + '\u201d was recorded as an artefact of this Facet, but it '
+					+ 'cannot be read now \u2014 it may have been renamed, moved or deleted.');
+				return;
+			}
+			Files.open(rest);
+			return;
+		}
+		if (kind === 'chat') {
+			var chat = chats.find(function (c) { return c.id === rest; });
+			if (chat) { selectChat(chat); return; }
+		}
+		noticeDialog('Nothing to open',
+			'This artefact is a \u201c' + kind + '\u201d, which this version has no viewer for.');
+	}
+
+	// A small surface for tests, and for anything that later wants to record an
+	// artefact from outside a fold.
+	window.DaimondArtefacts = {
+		harvest: harvestArtefacts,
+		render:  renderArtefacts,
+		of:      artefactsIn,        // pure: messages -> [{ref, rel}]
+	};
+
 	/// Render the steer command line and the fold-a-delta control.
 	function renderBriefControls() {
 		briefControls.innerHTML = '';
@@ -6207,6 +6347,26 @@ import init, {
 		reply.className = 'brief-reply';
 		reply.id = 'brief-reply';
 		reply.style.display = 'none';
+
+		// The artefact strip: a count, above the steer box, that hides at zero.
+		//
+		// A count rather than a list, because the brief already scrolls and a scrollable
+		// region inside a scrollable one makes the wheel ambiguous. Hidden while empty, so a
+		// new Facet is not given a permanently empty shelf to explain.
+		var arte = document.createElement('button');
+		arte.className = 'arte-strip';
+		arte.id = 'arte-strip';
+		arte.style.display = 'none';
+		var arteList = document.createElement('div');
+		arteList.className = 'arte-list';
+		arteList.id = 'arte-list';
+		arteList.style.display = 'none';
+		arte.addEventListener('click', function () {
+			var shown = arteList.style.display !== 'none';
+			arteList.style.display = shown ? 'none' : '';
+			arte.dataset.open = shown ? '' : '1';
+			renderArtefacts();
+		});
 
 		// Steer row — an instruction command surface, not a chat thread.
 		var steerRow = document.createElement('div');
@@ -6252,6 +6412,8 @@ import init, {
 
 		briefControls.appendChild(status);
 		briefControls.appendChild(reply);
+		briefControls.appendChild(arte);
+		briefControls.appendChild(arteList);
 		briefControls.appendChild(steerRow);
 		briefControls.appendChild(foldRow);
 	}
@@ -6291,11 +6453,11 @@ import init, {
 
 	/// After any brief mutation: refresh the meta row in the rail and the
 	/// Centre meter, then re-render the brief.
-	async function refreshFocusAfterChange() {
-		await loadFoci();
-		var f = foci.find(function (x) { return currentFocus && x.id === currentFocus.id; });
+	async function refreshFacetAfterChange() {
+		await loadFacets();
+		var f = facets.find(function (x) { return currentFacet && x.id === currentFacet.id; });
 		if (f) {
-			currentFocus = f;
+			currentFacet = f;
 			aiMeter.textContent = 'brief v' + (f.brief_version || 0)
 				+ (f.updated ? ' · ' + relTime(f.updated) : '');
 		}
@@ -6305,16 +6467,16 @@ import init, {
 	/// Steer the brief: run one brief-agent turn, streaming its tool
 	/// activity to the Agents panel, then re-render the changed brief.
 	async function doSteer() {
-		if (briefBusy || !currentFocus) return;
+		if (briefBusy || !currentFacet) return;
 		var input = document.getElementById('steer-input');
 		if (!input) return;
 		var instruction = input.value.trim();
 		if (!instruction) return;
-		// Can THIS Focus's model run? Asking whether the *default* provider is configured is the
-		// wrong question: it would stop a perfectly good Focus steering because some other
+		// Can THIS Facet's model run? Asking whether the *default* provider is configured is the
+		// wrong question: it would stop a perfectly good Facet steering because some other
 		// provider -- the starred one -- had lost its key.
-		if (!focusCanRun(currentFocus.id)) {
-			openSettings('This Focus’s provider has no readable key — unlock, or add one, to steer it.');
+		if (!facetCanRun(currentFacet.id)) {
+			openSettings('This Facet’s provider has no readable key — unlock, or add one, to steer it.');
 			return;
 		}
 		input.value = ''; input.style.height = 'auto';
@@ -6324,7 +6486,7 @@ import init, {
 		// Every `spawn_agent` call the conductor makes in this turn becomes a
 		// worker. Several calls in one turn is how it starts several agents at
 		// once — the whole point of a conductor.
-		var focusId = currentFocus.id, focusName = currentFocus.name;
+		var facetId = currentFacet.id, facetName = currentFacet.name;
 		var dispatched = [], rejected = 0, replyText = '';
 		setBriefReply('');   // clear any previous one-shot answer
 		var onEvent = function (ev) {
@@ -6348,12 +6510,12 @@ import init, {
 				setBriefStatus('Error: ' + (ev.content || ''));
 			}
 		};
-		var fa = focusApp(focusId);            // the Focus steers with its own model
+		var fa = facetApp(facetId);            // the Facet steers with its own model
 		try {
-			await fa.steer_brief(focusId, instruction, onEvent);
-			meterFocusTurn(fa);
+			await fa.steer_brief(facetId, instruction, onEvent);
+			meterFacetTurn(fa);
 			setBriefStatus('');
-			await refreshFocusAfterChange();
+			await refreshFacetAfterChange();
 			Files.refresh();
 		} catch (e) {
 			setBriefStatus(friendlyError(e));
@@ -6373,7 +6535,7 @@ import init, {
 				setBriefStatus(dispatched.length === 1
 					? 'Dispatched 1 agent.'
 					: 'Dispatched ' + dispatched.length + ' agents.');
-				Workers.dispatch(focusId, focusName, dispatched);
+				Workers.dispatch(facetId, facetName, dispatched);
 			}
 		} else if (rejected) {
 			setBriefStatus(rejected === 1
@@ -6390,44 +6552,44 @@ import init, {
 	/// delta, then show the diff for the user to Accept or Reject.  Writes
 	/// nothing — the advisory half of the fold.
 	async function doFoldPropose() {
-		if (briefBusy || !currentFocus) return;
+		if (briefBusy || !currentFacet) return;
 		var deltaEl = document.getElementById('fold-delta');
 		if (!deltaEl) return;
 		var delta = deltaEl.value.trim();
 		if (!delta) return;
-		if (!focusCanRun(currentFocus.id)) {
-			openSettings('This Focus\u2019s provider has no readable key \u2014 unlock, or add one, to fold a delta.');
+		if (!facetCanRun(currentFacet.id)) {
+			openSettings('This Facet\u2019s provider has no readable key \u2014 unlock, or add one, to fold a delta.');
 			return;
 		}
 		setBriefBusy(true);
 		setBriefStatus('Proposing fold…');
 		var current_md, proposed;
-		var fa = focusApp(currentFocus.id);   // this Focus's model, not the starred one
+		var fa = facetApp(currentFacet.id);   // this Facet's model, not the starred one
 		try {
-			current_md = await fa.read_brief(currentFocus.id);
-			proposed = await fa.fold_propose(currentFocus.id, delta);
+			current_md = await fa.read_brief(currentFacet.id);
+			proposed = await fa.fold_propose(currentFacet.id, delta);
 		} catch (e) {
-			meterFocusTurn(fa);
+			meterFacetTurn(fa);
 			setBriefStatus(friendlyError(e));
 			setBriefBusy(false);
 			return;
 		}
-		meterFocusTurn(fa);
+		meterFacetTurn(fa);
 		setBriefStatus('');
 		setBriefBusy(false);
-		pendingFolds[currentFocus.id] = {
+		pendingFolds[currentFacet.id] = {
 			base: current_md, proposed: proposed, delta: delta, chatId: null, chatName: null,
 		};
-		renderFoldDiff(currentFocus.id);
+		renderFoldDiff(currentFacet.id);
 	}
 
 	/// Show the fold diff (current vs proposed) with Accept and Reject.
 	/// Every line is escaped via textContent (H5); nothing is written
 	/// until the user accepts.
-	function renderFoldDiff(focusId) {
-		var st = pendingFolds[focusId];
+	function renderFoldDiff(facetId) {
+		var st = pendingFolds[facetId];
 		if (!st) { renderBrief(); return; }
-		var f = foci.find(function (x) { return x.id === focusId; });
+		var f = facets.find(function (x) { return x.id === facetId; });
 		briefBody.innerHTML = '';
 		var diff = lineDiff(st.base || '', st.proposed || '');
 		var changed = diff.some(function (d) { return d.kind === 'add' || d.kind === 'del'; });
@@ -6476,38 +6638,120 @@ import init, {
 		var reject = document.createElement('button');
 		reject.className = 'diff-reject';
 		reject.textContent = changed ? 'Reject' : 'Close';
-		reject.addEventListener('click', function () { delete pendingFolds[focusId]; renderBrief(); });
+		reject.addEventListener('click', function () { delete pendingFolds[facetId]; renderBrief(); });
 		actions.appendChild(accept); actions.appendChild(reject);
 		briefControls.appendChild(status);
 		briefControls.appendChild(actions);
 	}
 
+	// ── Artefacts ───────────────────────────────────────────────────────
+	//
+	// The things a stretch of work produced or consulted: files written, pages opened. They
+	// are not declared by anyone. Every tool call an agent makes is already recorded on the
+	// turn as a `tool_log` with its name and arguments, so the list is derivable — and a
+	// derived list cannot drift, because nobody has to remember to maintain it.
+	//
+	// Harvested at the FOLD, for two reasons. The fold is where the back-and-forth is
+	// deliberately dropped, so it is the last moment the tool calls still exist to read. And
+	// it is a moment the user has already blessed, so nothing is recorded behind their back.
+
+	/// Which tools make an artefact, and what the link says.
+	//
+	// WRITES only. An agent that reads forty files to find one thing has produced nothing,
+	// and forty links would drown the one that matters. `web_open` is the exception: putting
+	// a page on the screen is deliberate in a way a background fetch is not.
+	var ARTEFACT_TOOLS = {
+		file_write: { arg: 'path', kind: 'file', rel: 'produced' },
+		file_edit:  { arg: 'path', kind: 'file', rel: 'produced' },
+		file_move:  { arg: 'to',   kind: 'file', rel: 'produced' },
+		dir_create: { arg: 'path', kind: 'file', rel: 'produced' },
+		web_open:   { arg: 'url',  kind: 'url',  rel: 'consulted' },
+	};
+
+	/// The artefacts named by a run of messages, deduplicated, in first-seen order.
+	///
+	/// A malformed `args` is skipped rather than thrown on: this runs inside an accepted
+	/// fold, and a fold that has already been applied must not fail afterwards over a tool
+	/// call nobody will ever look at.
+	function artefactsIn(messages) {
+		var out = [], seen = {};
+		(messages || []).forEach(function (m) {
+			if (!m || m.role !== 'tool_log') return;
+			var spec = ARTEFACT_TOOLS[m.name];
+			if (!spec) return;
+			var args;
+			try { args = JSON.parse(m.args || '{}'); } catch (e) { return; }
+			var val = args && args[spec.arg];
+			if (typeof val !== 'string' || !val.trim()) return;
+			var ref = spec.kind + ':' + val.trim();
+			if (seen[ref]) return;
+			seen[ref] = 1;
+			out.push({ ref: ref, rel: spec.rel });
+		});
+		return out;
+	}
+
+	/// Record what a just-accepted fold produced, as links on the Facet.
+	///
+	/// Never throws and never blocks the fold: the brief is already written by the time this
+	/// runs, so a failure here costs a list, not the user's work. Links that already exist
+	/// are skipped, so re-folding the same chat does not stack duplicates.
+	async function harvestArtefacts(facetId, st) {
+		try {
+			var msgs = [];
+			if (st.sourceRun && st.sourceRun.messages) msgs = st.sourceRun.messages;
+			else if (st.chatId) {
+				var chat = chats.find(function (c) { return c.id === st.chatId; });
+				msgs = chat ? chat.messages : [];
+			}
+			var found = artefactsIn(msgs);
+			if (!found.length) return;
+
+			var self = 'facet:' + facetId;
+			var have = {};
+			try {
+				JSON.parse(await facetApp().links_touching(self) || '[]')
+					.forEach(function (l) { have[l.to] = 1; });
+			} catch (e) { /* no links yet, or unreadable: treat as none */ }
+
+			for (var i = 0; i < found.length; i++) {
+				if (have[found[i].ref]) continue;
+				try {
+					await facetApp().add_link(facetId, self, found[i].ref, found[i].rel, '', 'fold');
+				} catch (e) { /* one bad ref must not stop the rest */ }
+			}
+			if (currentFacet && currentFacet.id === facetId) renderBrief();
+		} catch (e) { /* an artefact list is never worth failing a fold over */ }
+	}
+
 	/// Accept the proposed fold: write the new brief, retain the raw
 	/// delta, log the fold, then re-render.  A fold never auto-applies.
 	async function doFoldAccept() {
-		if (!currentFocus) return;
-		var focusId = currentFocus.id;
-		var st = pendingFolds[focusId];
+		if (!currentFacet) return;
+		var facetId = currentFacet.id;
+		var st = pendingFolds[facetId];
 		if (!st) return;
 		// Belt and braces beside the disabled button: applying a fold that
 		// changes nothing would still bump the version and write a duplicate
 		// delta, quietly growing the history with nothing in it.
-		if ((st.base || '') === (st.proposed || '')) { delete pendingFolds[focusId]; renderBrief(); return; }
-		delete pendingFolds[focusId];
+		if ((st.base || '') === (st.proposed || '')) { delete pendingFolds[facetId]; renderBrief(); return; }
+		delete pendingFolds[facetId];
 		setBriefStatus('Applying fold…');
 		try {
-			await focusApp().fold_apply(focusId, st.proposed, st.delta, 'fold via UI');
+			await facetApp().fold_apply(facetId, st.proposed, st.delta, 'fold via UI');
 		} catch (e) {
 			setBriefStatus(friendlyError(e));
 			return;
 		}
+		await harvestArtefacts(facetId, st);
+
 		// Record where the chat went, so the tile can say so and the user is
 		// not left wondering whether the fold took. A fold of a few chosen turns is not the
 		// chat going anywhere, so it leaves no such mark.
 		if (st.chatId && !st.partial) {
 			var chat = chats.find(function (c) { return c.id === st.chatId; });
 			if (chat) {
-				chat.foldedInto = { id: focusId, name: currentFocus.name, at: Date.now(),
+				chat.foldedInto = { id: facetId, name: currentFacet.name, at: Date.now(),
 					at_len: (chat.messages || []).length };
 				touchChat(chat);
 				persistChats();
@@ -6521,7 +6765,7 @@ import init, {
 			Workers.persist();
 			Workers.render();
 		}
-		await refreshFocusAfterChange();
+		await refreshFacetAfterChange();
 	}
 
 	/// A minimal LCS line diff, producing tagged lines (same / add / del).
@@ -6567,7 +6811,7 @@ import init, {
 		Instructions.refresh();
 		renderSessionList();
 		if (chats.length) { selectChat(chats[0]); } else { renderEmptyState(); }
-		loadFoci();
+		loadFacets();
 		updateSpend();
 		DaimondPanels.reflow();
 		if (!isMobile() && DaimondPanels.isOpen('work')) Files.onOpen();
@@ -6602,21 +6846,21 @@ import init, {
 
 		// A locked Daimond holds no readable key. Clearing `cfg.apiKey` used to be the whole of
 		// that, because there was one key and it lived there. There are now a key per provider,
-		// held in memory by DaimondModels, and a built agent for every chat and Focus with its
+		// held in memory by DaimondModels, and a built agent for every chat and Facet with its
 		// key already inside the wasm -- so locking must forget all three, or it locks the door
 		// and leaves the keys in it.
 		cfg.apiKey = '';
 		if (window.DaimondModels) DaimondModels.lock();
 		chats.forEach(function (c) { c.app = null; });
-		resetFocusApps();
+		resetFacetApps();
 
 		locked = true;
 		current = null;
-		currentFocus = null;
+		currentFacet = null;
 
 		document.body.classList.add('locked');
 		sessionList.innerHTML = '';
-		focusList.innerHTML   = '';
+		facetList.innerHTML   = '';
 		chatOutput.innerHTML  = '';
 		briefBody.innerHTML   = '';
 		agentsList.innerHTML  = '';
@@ -6934,11 +7178,11 @@ import init, {
 		var acct = A ? A.account() : null;
 		var others = A ? A.list().length - 1 : 0;
 		var lead = 'This erases your passphrase, your encrypted API key, and all of your chats, '
-			+ 'Foci and spend history on this device. There is no recovery and no backup. '
+			+ 'Facets and spend history on this device. There is no recovery and no backup. '
 			+ 'Everything is gone.';
 		if (acct && !acct.primary) {
 			lead = 'This removes the account “' + (acct.name || 'Unnamed account') + '” from this '
-				+ 'browser — its passphrase, keys, chats, Foci, spend and files. There is no recovery. '
+				+ 'browser — its passphrase, keys, chats, Facets, spend and files. There is no recovery. '
 				+ 'Other accounts here are untouched.';
 		}
 		var ok = await confirmDialog(lead, 'Erase everything', { title: 'Forget this account?' });
@@ -6951,8 +7195,8 @@ import init, {
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
 		// here; the explicit list is what the old, single-account reset erased.
 		try {
-			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-focus-counter',
-			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-focus-models',
+			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-facet-counter',
+			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-facet-models',
 			 'daimond-agents-revealed', 'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
 			 'daimond-mail', 'daimond-hands'].forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
@@ -7132,18 +7376,18 @@ import init, {
 			name: DaimondIdentity.displayName(),
 			chats: readJson(CHATS_KEY, []),
 			ledger: readJson('daimond-ledger', []),
-			foci: [],
+			facets: [],
 			workspace: await collectOpfsFiles(),
 		};
 		try {
-			var list = await focusApp().list_foci();
+			var list = await facetApp().list_facets();
 			var arr = JSON.parse(list || '[]');
 			for (var i = 0; i < arr.length; i++) {
 				var brief = '';
-				try { brief = await focusApp().read_brief(arr[i].id); } catch (e) { brief = ''; }
-				// Tags travel with the Focus. Without them a restore silently
+				try { brief = await facetApp().read_brief(arr[i].id); } catch (e) { brief = ''; }
+				// Tags travel with the Facet. Without them a restore silently
 				// drops the user's whole filing system while looking like it worked.
-				out.foci.push({ id: arr[i].id, name: arr[i].name, brief: brief, tags: tagsOf(arr[i]) });
+				out.facets.push({ id: arr[i].id, name: arr[i].name, brief: brief, tags: tagsOf(arr[i]) });
 			}
 		} catch (e) { /* export what we have */ }
 		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
@@ -7155,7 +7399,7 @@ import init, {
 	}
 
 	/// Restore a backup written by `doExport`. Chats and the ledger are merged
-	/// into local storage, foci are recreated with their briefs, and every
+	/// into local storage, facets are recreated with their briefs, and every
 	/// workspace file is written back into OPFS. Existing files of the same path
 	/// are overwritten; nothing already present is deleted, so a restore adds to
 	/// the tab rather than replacing it.
@@ -7184,18 +7428,18 @@ import init, {
 			if (Array.isArray(data.ledger) && data.ledger.length) {
 				try { localStorage.setItem('daimond-ledger', JSON.stringify(data.ledger)); } catch (e) { /* keep */ }
 			}
-			for (var j = 0; j < (data.foci || []).length; j++) {
-				var f = data.foci[j];
+			for (var j = 0; j < (data.facets || []).length; j++) {
+				var f = data.facets[j];
 				try {
-					var id = await focusApp().create_focus(f.name || 'Restored Focus');
-					if (f.brief) await focusApp().write_brief(id, f.brief);
+					var id = await facetApp().create_facet(f.name || 'Restored Facet');
+					if (f.brief) await facetApp().write_brief(id, f.brief);
 					// A backup written before tags existed simply has none.
-					if (f.tags && f.tags.length) await focusApp().set_tags(id, JSON.stringify(f.tags));
-				} catch (e) { /* skip one focus */ }
+					if (f.tags && f.tags.length) await facetApp().set_tags(id, JSON.stringify(f.tags));
+				} catch (e) { /* skip one facet */ }
 			}
-			try { loadFoci(); } catch (e) { /* best effort */ }
+			try { loadFacets(); } catch (e) { /* best effort */ }
 			toast('Backup restored: ' + restored + ' workspace file'
-				+ (restored === 1 ? '' : 's') + ' and ' + (data.foci || []).length + ' foci.', false);
+				+ (restored === 1 ? '' : 's') + ' and ' + (data.facets || []).length + ' facets.', false);
 		});
 		inp.click();
 	}
@@ -7445,9 +7689,9 @@ import init, {
 		syncCfgFromModels();
 		note.textContent = 'Saved.';
 		// New settings imply fresh app instances for existing chats and
-		// for every Focus app built on the old key.
+		// for every Facet app built on the old key.
 		chats.forEach(function (c) { c.app = null; });
-		resetFocusApps();
+		resetFacetApps();
 		// A form that has done its job leaves. The confirmation is not a word in
 		// a box that stays open — it is the status header now naming the model
 		// Daimond is running on.
@@ -7503,10 +7747,10 @@ import init, {
 		sendUserMessage();
 	});
 	newSessionBtn.addEventListener('click', newChat);
-	if (newFocusBtn) newFocusBtn.addEventListener('click', createFocus);
-	if (focusSearch) focusSearch.addEventListener('input', function () {
-		focusQuery = focusSearch.value.trim().toLowerCase();
-		renderFocusList();
+	if (newFacetBtn) newFacetBtn.addEventListener('click', createFacet);
+	if (facetSearch) facetSearch.addEventListener('input', function () {
+		facetQuery = facetSearch.value.trim().toLowerCase();
+		renderFacetList();
 	});
 	if (agentSearch) agentSearch.addEventListener('input', function () {
 		agentQuery = agentSearch.value.trim().toLowerCase();
@@ -7567,7 +7811,7 @@ import init, {
 		['cfg-api-key', 'id-pass', 'id-pass2'].forEach(function (fid) {
 			installSecretMask(document.getElementById(fid), '');
 		});
-		// The Agents panel stays hidden until the first Focus-dispatched agent.
+		// The Agents panel stays hidden until the first Facet-dispatched agent.
 		if (localStorage.getItem('daimond-agents-revealed') !== '1') document.body.classList.add('agents-hidden');
 		DaimondPanels.init();
 		DaimondAdmin.init();
