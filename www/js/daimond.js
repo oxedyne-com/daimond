@@ -2001,7 +2001,7 @@ import init, {
 	// settings view is MOVED into a modal card and a form falls back to a
 	// dialog. One settings form exists in the document; it changes host.
 	var DaimondAdmin = (function () {
-		var body, homeView, settingsView, creditsView, formView, modal, slot, closeBtn;
+		var body, homeView, settingsView, creditsView, releaseView, formView, modal, slot, closeBtn;
 		var adminWrap, titleEl;   // #admin (toggles .admin-open) and the drawer title
 		var drawerOpen = false;
 		// Which of the two forms is on screen. The panel used to hold one view (Settings, which
@@ -2095,11 +2095,27 @@ import init, {
 			endForm();
 			homeView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
+			if (releaseView) releaseView.style.display = 'none';
 			curView = settingsView;
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
 			if (window.DaimondModels) DaimondModels.render();
 			if (available()) { toPanel(); showDrawer('Models'); }
+			else toModal();
+		}
+
+		/// Show what you are running, and what came before it. Reached from the
+		/// status row that names the release, in the panel rather than over the
+		/// top of the work, like everything else the Admin panel holds.
+		function release() {
+			endForm();
+			homeView.style.display = 'none';
+			settingsView.style.display = 'none';
+			if (creditsView) creditsView.style.display = 'none';
+			curView = releaseView;
+			releaseView.style.display = '';
+			if (window.DaimondRelease) DaimondRelease.render(document.getElementById('rel-list'));
+			if (available()) { toPanel(); showDrawer('Version'); }
 			else toModal();
 		}
 
@@ -2109,6 +2125,7 @@ import init, {
 			endForm();
 			homeView.style.display = 'none';
 			settingsView.style.display = 'none';
+			if (releaseView) releaseView.style.display = 'none';
 			curView = creditsView;
 			creditsView.style.display = '';
 			var n = document.getElementById('credits-note');
@@ -2545,6 +2562,7 @@ import init, {
 			homeView     = document.getElementById('admin-home');
 			settingsView = document.getElementById('admin-models');
 			creditsView  = document.getElementById('admin-credits');
+			releaseView  = document.getElementById('admin-release');
 			formView     = document.getElementById('admin-form');
 			modal        = document.getElementById('settings-modal');
 			slot         = document.getElementById('settings-slot');
@@ -2557,6 +2575,9 @@ import init, {
 			// Each status row opens the thing it names, and nothing else.
 			document.getElementById('astat-model').addEventListener('click', function () { openSettings(''); });
 			document.getElementById('astat-account').addEventListener('click', function () { openCredits(''); });
+			var relRow = document.getElementById('astat-release');
+			if (relRow) relRow.addEventListener('click', release);
+			if (window.DaimondRelease) DaimondRelease.paintRow();
 			var addBtn = document.getElementById('models-add');
 			if (addBtn) addBtn.addEventListener('click', function () {
 				var f = document.getElementById('byok-form');
@@ -2581,6 +2602,7 @@ import init, {
 
 		return {
 			init: init, available: available, settings: settings, credits: credits,
+			release: release,
 			toggle: toggleSettings,
 			home: home, form: form, closeModal: closeModal, clear: clear, status: status,
 			close: closeAdmin,
