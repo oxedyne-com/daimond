@@ -72,12 +72,44 @@
 	/// every named one.
 	function milestoneAt(seq) {
 		var ms = (state.releases && state.releases.milestones) || [];
+		// Sorted here rather than assumed: the lookup takes the LAST milestone a
+		// sequence falls into, which is only the right answer if they ascend. A
+		// file authored newest-first would otherwise return the wrong name, and
+		// silently.
+		var sorted = ms.slice().sort(function (a, b) { return (a.from || 0) - (b.from || 0); });
 		var found = null;
-		ms.forEach(function (m) { if (seq >= m.from) found = m; });
+		sorted.forEach(function (m) { if (seq >= m.from) found = m; });
 		return found;
 	}
 
+	/// The build THIS TAB is running, which is not the same thing as the newest
+	/// one published. A tab open since before the last deploy is running an older
+	/// build, and that is exactly the case this whole surface exists to make
+	/// visible.
+	function runningBuild() {
+		try {
+			if (window.DaimondUpdater && DaimondUpdater.booted()) return DaimondUpdater.booted();
+		} catch (e) { /* the updater may not have polled yet */ }
+		return null;
+	}
+
+	/// The log entry for the running build, or nothing if it is not in the log.
+	///
+	/// Taking the last entry instead -- the newest RELEASE -- was wrong, and
+	/// wrong in the direction that flatters: a user who had not refreshed since a
+	/// deploy would be told they were on the newest build, on the same screen
+	/// where the update chip was telling them a new one existed.
 	function current() {
+		var id = runningBuild();
+		if (!id) return null;
+		for (var i = state.entries.length - 1; i >= 0; i--) {
+			if (state.entries[i].build === id) return state.entries[i];
+		}
+		return null;                    // running something not in the published log
+	}
+
+	/// The newest published release, whether or not it is the one running.
+	function newest() {
 		return state.entries.length ? state.entries[state.entries.length - 1] : null;
 	}
 
@@ -86,12 +118,11 @@
 	function ago(iso) {
 		var then = new Date(iso), now = new Date();
 		if (isNaN(then)) return '';
-		var days = Math.floor((now - then) / 86400000);
 		// Compare calendar days, so a build from 23:50 last night reads as
 		// yesterday rather than as today.
 		var d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		var d1 = new Date(then.getFullYear(), then.getMonth(), then.getDate());
-		days = Math.round((d0 - d1) / 86400000);
+		var days = Math.round((d0 - d1) / 86400000);
 		if (days <= 0) return 'today';
 		if (days === 1) return 'yesterday';
 		if (days < 31) return days + ' days ago';
@@ -114,18 +145,25 @@
 		if (!r) return;
 		await load();
 		var cur = current();
+		var tip = newest();
 		var m = cur ? milestoneAt(cur.seq) : null;
-		var name = (m && m.name) || (state.build && state.build.build) || 'Unsealed';
+		// Behind means the tab is running something older than the tip. Saying so
+		// is the point: the alternative is a row that reassures a stale tab.
+		var behind = !!(cur && tip && cur.seq < tip.seq);
+		var name = cur ? ((m && m.name) || cur.build)
+			: (runningBuild() || 'Unsealed');
 		var when = cur ? ago(cur.ts) : '';
 
 		r.innerHTML = '';
-		r.appendChild(el('span', 'astat-dot ok'));
+		r.appendChild(el('span', 'astat-dot' + (cur ? (behind ? ' warn' : ' ok') : '')));
 		r.appendChild(el('span', 'astat-label', 'Version'));
 		r.appendChild(el('span', 'astat-val', name));
-		if (when) r.appendChild(el('span', 'astat-aside', when));
+		r.appendChild(el('span', 'astat-aside', cur ? (behind ? 'update ready' : when) : 'not published'));
 		r.title = cur
-			? name + ' — build ' + cur.build + ', published ' + dateOf(cur.ts) + '. Click for what changed.'
-			: 'Version history';
+			? name + ' — build ' + cur.build + ', published ' + dateOf(cur.ts)
+				+ (behind ? '. A newer release has been published; reload to take it.' : '.')
+				+ ' Click for what changed.'
+			: 'This build is not in the published log. Click for the history.';
 	}
 
 	// ── The timeline ────────────────────────────────────────────────────

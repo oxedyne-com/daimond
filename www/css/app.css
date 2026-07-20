@@ -61,19 +61,6 @@ svg { display: block; }
    responsive.css, keeping the label compact on a phone too. */
 .top-actions .readme-link { font-size: var(--fs-sm); letter-spacing: 0.01em; text-decoration: none; }
 
-/* The theme picker: a compact pulldown that carries its own colours, so it sits quietly in the
-   header until reached for. */
-.theme-select {
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
-	color: var(--text-secondary);
-	border-radius: var(--radius-sm);
-	font-size: var(--fs-xs);
-	padding: 4px 8px;
-	max-width: 130px;
-}
-.theme-select:hover { border-color: var(--accent); color: var(--text-primary); }
-.theme-select:focus { outline: none; border-color: var(--accent); }
 
 .main { display: flex; flex: 1; min-height: 0; }
 

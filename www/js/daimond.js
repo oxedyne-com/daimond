@@ -5606,6 +5606,10 @@ import init, {
 		del.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			if (!await confirmDialog('Delete the Diamond "' + f.name + '" — its crystal, its history and its deltas? This cannot be undone.', 'Delete Diamond', { title: 'Delete Diamond' })) return;
+			// A deleted Diamond's arrangement has nothing left to restore, and the
+			// layout blob is rewritten whole on every change, so leaving it would
+			// grow the write for ever.
+			DaimondPanels.forgetArrangement(f.id);
 			diamondApp().delete_diamond(f.id).then(function () {
 				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
 				loadDiamonds();
@@ -7526,7 +7530,7 @@ import init, {
 		noticeDialog('Passphrase changed', 'Your new passphrase is active. Your saved API key was re-encrypted under it.');
 	}
 
-	/// A crystal status line, floated centre-bottom, for actions that happen away
+	/// A brief status line, floated centre-bottom, for actions that happen away
 	/// from any one panel (a backup export or restore). It fades and removes
 	/// itself; a top-level helper because the account menu that triggers these
 	/// is not inside a panel with its own message area.

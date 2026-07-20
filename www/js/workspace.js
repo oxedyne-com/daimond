@@ -74,7 +74,6 @@
 	// ── The chip row ────────────────────────────────────────────────────
 
 	var tagsEl;
-	var overflowed = 0;     // chips the width squeezed off the row this render
 
 	function chip(p) {
 		var b = document.createElement('button');
@@ -132,17 +131,18 @@
 			more.id = 'panel-more';
 			more.setAttribute('aria-haspopup', 'dialog');
 			more.setAttribute('aria-expanded', 'false');
-			more.title = hidden + ' more panel' + (hidden === 1 ? '' : 's');
+			// Set after the second fit, below, once the true count is known.
 			more.innerHTML = '⋯<span class="n">' + hidden + '</span>';
 			more.addEventListener('click', function (e) { e.stopPropagation(); toggleGallery(more); });
 			tagsEl.appendChild(more);
 			// Adding the button costs width of its own, so anything it pushed out
 			// has to leave as well.
-			squeezed += fitRow(more);
+			squeezed += fitRow();
+			var total = spare.length + squeezed;
 			var n = more.querySelector('.n');
-			if (n) n.textContent = String(spare.length + squeezed);
+			if (n) n.textContent = String(total);
+			more.title = total + ' more panel' + (total === 1 ? '' : 's');
 		}
-		overflowed = squeezed;
 	}
 
 	/// Drop trailing chips until the row fits the space it has been given.
@@ -150,7 +150,7 @@
 	/// Taken from the END, so every chip that remains is exactly where it was.
 	/// A row that re-sorted itself to fit would be a row whose contents move
 	/// under the cursor, which is the failure this design exists to avoid.
-	function fitRow(keep) {
+	function fitRow() {
 		var gone = 0, guard = 0;
 		while (tagsEl.scrollWidth > tagsEl.clientWidth + 1 && guard++ < 60) {
 			var groups = tagsEl.querySelectorAll('.ptag-group');
@@ -337,9 +337,12 @@
 		menuEl.appendChild(el('div', 'pop-head', 'Dock tiling'));
 		var grids = P().grids();
 		var gseg = el('div', 'seg');
-		[['auto', 'Auto'], ['1', '1'], ['2x2', '2×2'], ['2x3', '2×3'], ['3x2', '3×2']].forEach(function (pair) {
-			var key = pair[0];
+		// Enumerated from the engine, not from a copy kept here: the palette
+		// already does this, and two lists of the same thing is one list too many.
+		var order = ['auto'].concat(Object.keys(grids).filter(function (k) { return k !== 'auto'; }));
+		order.forEach(function (key) {
 			var g = grids[key] || { cols: model.cols, rows: model.rows };
+			var label = key === 'auto' ? 'Auto' : key.replace('x', '×');
 			var b = el('button', 'grid-opt');
 			b.setAttribute('aria-pressed', P().grid() === key ? 'true' : 'false');
 			b.title = key === 'auto'
@@ -356,7 +359,7 @@
 				cells.appendChild(el('i', (key === 'auto' && i % 2 === 1) ? 'maybe' : null));
 			}
 			b.appendChild(cells);
-			b.appendChild(el('span', 'cap', pair[1]));
+			b.appendChild(el('span', 'cap', label));
 			b.addEventListener('click', function () { P().setGrid(key); renderMenu(); });
 			gseg.appendChild(b);
 		});
@@ -556,6 +559,11 @@
 			// Ctrl/Cmd-K is the convention users arrive already knowing, and it is
 			// not a browser binding on any platform we serve.
 			if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+				// Ctrl-K is kill-to-end-of-line in a text field on macOS, so it is
+				// left alone there; Cmd-K still opens the palette on that platform.
+				var t = e.target;
+				var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+				if (typing && e.ctrlKey && !e.metaKey) return;
 				e.preventDefault();
 				palEl && palEl.hidden ? openPalette() : closePalette();
 				return;

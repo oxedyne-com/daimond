@@ -44,12 +44,25 @@ const check = (name, pass, detail) => {
 }
 
 // ── A log of our own, so this test does not depend on the network ───────
+// The build this tab is running has to appear in the log, because the surface
+// reports what you are RUNNING rather than what has most recently been
+// published -- reporting the latter told a stale tab it was current.
+const running = await (async () => {
+	const r = await fetch('http://localhost:8777/build.json').catch(() => null);
+	const j = r && r.ok ? await r.json() : null;
+	return (j && j.build) || 'cccccccccccc';
+})();
+
+const mk = (seq, ts, build, note) => ({
+	seq, ts, build, note, bundle: 'x'.repeat(64), prev: '0'.repeat(64), entry: 'e'.repeat(64),
+});
 const LOG = [
-	{ seq: 0, ts: '2026-01-02T00:00:00.000Z', build: 'aaaaaaaaaaaa', note: 'The first one' },
-	{ seq: 1, ts: '2026-02-03T00:00:00.000Z', build: 'bbbbbbbbbbbb', note: 'The second one' },
-	{ seq: 2, ts: '2026-03-04T00:00:00.000Z', build: 'cccccccccccc', note: 'The newest one' },
-].map(e => ({ ...e, bundle: 'x'.repeat(64), prev: '0'.repeat(64), entry: 'e'.repeat(64) }));
-const LOG_URL = 'data:text/plain,' + encodeURIComponent(LOG.map(e => JSON.stringify(e)).join('\n'));
+	mk(0, '2026-01-02T00:00:00.000Z', 'aaaaaaaaaaaa', 'The first one'),
+	mk(1, '2026-02-03T00:00:00.000Z', 'bbbbbbbbbbbb', 'The second one'),
+	mk(2, '2026-03-04T00:00:00.000Z', running,        'The newest one'),
+];
+const asUrl = (rows) => 'data:text/plain,' + encodeURIComponent(rows.map(e => JSON.stringify(e)).join('\n'));
+const LOG_URL = asUrl(LOG);
 
 const s = await open({ name: 'release', connect: false });
 const p = s.page;
@@ -72,7 +85,7 @@ await p.evaluate((url) => {
 	check('and says how long you have been on it',
 		/(today|yesterday|days ago|months ago|years ago)/.test(txt), txt.trim());
 	const title = await p.$eval('#astat-release', e => e.title);
-	check('the build id is still available, in the tooltip', /cccccccccccc/.test(title), title);
+	check('the build id is still available, in the tooltip', title.includes(running), title);
 }
 
 // ── The history ─────────────────────────────────────────────────────────
@@ -89,11 +102,44 @@ await p.evaluate((url) => {
 	check('the planned one is first', rows[0] && rows[0].planned, rows[0] && rows[0].text.slice(0, 30));
 	check('exactly one row says you are here',
 		rows.filter(r => /you are here/i.test(r.text)).length === 1);
-	check('and it is the newest build, not the planned line',
-		rows[1] && rows[1].current && /cccccccccccc/.test(rows[1].text));
+	check('and it is the build this tab runs, not the planned line',
+		rows[1] && rows[1].current && rows[1].text.includes(running));
 	check('the newest is above the oldest',
-		rows[1].text.indexOf('cccccccccccc') >= 0 && rows[3].text.indexOf('aaaaaaaaaaaa') >= 0);
+		rows[1].text.includes(running) && rows[3].text.indexOf('aaaaaaaaaaaa') >= 0);
 	check('each build carries its own note', /The second one/.test(rows[2].text), rows[2].text.slice(0, 40));
+}
+
+// ── A tab running an OLDER build is told so, not flattered ─────────────
+// This is the defect the surface was built with: it reported the newest
+// PUBLISHED release as "you are here", so a tab open since before a deploy was
+// told it was current on the same screen where the update chip said otherwise.
+{
+	const ahead = LOG.concat([mk(3, '2026-04-05T00:00:00.000Z', 'ffffffffffff', 'Published after this tab loaded')]);
+	await p.evaluate((url) => {
+		document.querySelector('meta[name="daimond-log"]').content = url;
+		window.DaimondRelease.reset();
+	}, asUrl(ahead));
+	await p.evaluate(() => window.DaimondRelease.paintRow());
+	await p.waitForTimeout(400);
+	const txt = await p.$eval('#astat-release', e => e.textContent);
+	const tip = await p.$eval('#astat-release', e => e.title);
+	check('a tab behind the newest release says so', /update ready/i.test(txt), txt.trim());
+	check('and the tooltip says a newer one exists', /newer release/i.test(tip), tip);
+
+	await p.evaluate(() => window.DaimondRelease.render(document.getElementById('rel-list')));
+	await p.waitForTimeout(400);
+	const marked = await p.$$eval('#rel-list .rel-row', els =>
+		els.filter(e => /you are here/i.test(e.textContent)).map(e => e.textContent.slice(0, 60)));
+	check('"you are here" marks the running build, not the newest published',
+		marked.length === 1 && !marked[0].includes('ffffffffffff'), marked.join(' | '));
+
+	// Put the original log back for the checks below.
+	await p.evaluate((url) => {
+		document.querySelector('meta[name="daimond-log"]').content = url;
+		window.DaimondRelease.reset();
+	}, LOG_URL);
+	await p.evaluate(() => window.DaimondRelease.render(document.getElementById('rel-list')));
+	await p.waitForTimeout(400);
 }
 
 // ── A promise must not read as a record ─────────────────────────────────
