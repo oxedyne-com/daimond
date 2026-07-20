@@ -1330,6 +1330,10 @@
 
 	window.DaimondMail = {
 		init:    init,
+		/// Whether any account is configured. The Message and Compose panels are
+		/// held off the chip row until one is, since neither means anything
+		/// without somewhere for mail to come from.
+		hasAccounts: function () { return state.accounts.length > 0; },
 		onOpen:  onOpen,
 		clear:   clear,
 		sync:    function () { if (state.sel) syncAccount(state.sel); },

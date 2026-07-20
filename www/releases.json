@@ -1,14 +1,8 @@
 {
-	"_comment": "Named releases, and what is coming. Daimond ships several builds a day, so a name per build would be noise -- a name marks a MILESTONE, and the builds under it carry their own dates and notes. Names are Western Australian places, in alphabetical order, so their sequence is legible without a lookup. `from` is the transparency sequence a milestone begins at. `planned` is editorial, not sealed: it is a statement of intent and the interface must never let it read as history.",
-	"milestones": [
-		{
-			"name": "Albany",
-			"from": 0,
-			"blurb": "The first named release. Daimond became checkable against its own source, learned to hold its spending down, renamed its central noun from Foci to Facets and then to Diamonds, and gained the controls that arrange it."
-		}
-	],
+	"_comment": "Named releases. A release is DECLARED here, by hand and deliberately, when there is something worth telling people about. It is not the same thing as a deployment: Daimond seals a build on every deploy, several a day, and every one of those is recorded in verify/transparency.jsonl, which is the security record and cannot be pruned. This file is the other thing -- what a user is told they are running. While `milestones` is empty the app says it is pre-release and names the build, so nothing is announced before it has been announced. Names are Western Australian places, in alphabetical order, so their sequence is legible without a lookup. `from` is the transparency sequence a release begins at.",
+	"milestones": [],
 	"planned": {
-		"name": "Broome",
-		"blurb": "A view of how a Diamond's work connects, and a way to carry one Diamond's context into another."
+		"name": "Albany",
+		"blurb": "The first release: a private AI workspace that runs in your browser, keeps your keys on your device, and can be checked against its own published source."
 	}
 }

@@ -109,6 +109,9 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 
 /* Rail/agents/work section headers. */
 .railhead { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+/* The Spending header wraps its controls in a span; without this they lay out
+   as inline text rather than as the button row every other header has. */
+.spend-actions { display: flex; align-items: center; gap: 6px; }
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
@@ -169,7 +172,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    summoned and is gone again when finished. Hidden until #admin has .admin-open. */
 .admin-body {
 	position: absolute;
-	left: 0; right: 0;
+	/* Inset from the rail's edges rather than flush with them: the rail clips
+	   its overflow, so a drawer at left:0/right:0 has its side shadow cut away
+	   and only the top and bottom survive. */
+	left: 5px; right: 5px;
 	bottom: 100%;
 	margin-bottom: 6px;
 	display: none;

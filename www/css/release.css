@@ -20,10 +20,15 @@
 .rel-when { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 
 .rel-tag {
+	/* inline-flex with a unit line-height, so the label is centred by the box
+	   rather than left to sit wherever the inherited 1.5 line-height puts it. */
+	display: inline-flex;
+	align-items: center;
+	line-height: 1;
 	font-size: var(--fs-4xs);
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
-	padding: 2px 7px;
+	padding: 3px 7px;
 	border-radius: 999px;
 	border: 1px solid var(--border-2);
 	color: var(--text-muted);
@@ -65,3 +70,26 @@
 	border-top: 1px solid var(--border);
 	margin-top: 2px;
 }
+
+/* ── Sealed builds ───────────────────────────────────────────────────────────
+   The deployment record, behind a disclosure. It is the verifiable part and has
+   to stay reachable, but Daimond seals several builds a day and a reader
+   looking for "what changed" wants releases, not a deploy log. */
+.rel-builds { margin-top: 4px; }
+.rel-builds summary {
+	cursor: pointer;
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	padding: 6px 2px;
+	list-style: none;
+}
+.rel-builds summary::-webkit-details-marker { display: none; }
+.rel-builds summary::before { content: "▸ "; }
+.rel-builds[open] summary::before { content: "▾ "; }
+.rel-builds summary:hover { color: var(--text-secondary); }
+
+.rel-build { padding: 6px 8px; border-left: 2px solid var(--border); margin: 2px 0 2px 4px; }
+.rel-build-here { border-left-color: var(--accent); }
+.rel-build-head { display: flex; align-items: baseline; gap: 8px; }
+.rel-build-head code { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.rel-build-note { font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.45; margin-top: 2px; }

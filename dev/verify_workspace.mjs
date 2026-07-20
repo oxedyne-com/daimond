@@ -168,13 +168,13 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 // ── Pinning decides the row, and only pinning ───────────────────────────
 {
 	const before = (await chips()).length;
-	await p.evaluate(() => window.DaimondPanels.setPinned('compose', false));
+	await p.evaluate(() => window.DaimondPanels.setPinned('tools', false));
 	await p.waitForTimeout(350);
 	const after = await chips();
 	check('unpinning takes a chip off the row', after.length === before - 1,
 		`${before} then ${after.length}`);
 	check('the unpinned panel is gone from the row',
-		!after.some(x => x.id === 'compose'));
+		!after.some(x => x.id === 'tools'));
 	const more = await p.$$eval('#panel-more', e => e.map(x => x.textContent));
 	check('an overflow chip appears, carrying the count', more.length === 1, more[0]);
 
@@ -192,7 +192,7 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	const model = await p.evaluate(() => window.DaimondPanels.model().panels.length);
 	check('the gallery lists every panel, pinned or not', rows.length === model,
 		`${rows.length} rows for ${model} panels`);
-	check('including the one that is not on the row', rows.includes('Compose'));
+	check('including the one that is not on the row', rows.includes('Tools'));
 
 	await p.fill('#panel-gallery .gal-search', 'spend');
 	await p.waitForTimeout(300);
@@ -204,6 +204,34 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	check('escape closes the gallery', await p.$eval('#panel-gallery', e => e.hidden));
 }
 
+// ── A panel with nothing to hold waits before joining the row ──────────
+// Message and Compose mean nothing without an account for mail to arrive at or
+// be sent from, and a Doc panel means nothing before something is compiled into
+// it. Standing in the row from the first run they read as broken features
+// rather than as features not yet reached.
+{
+	const row = await chips();
+	const onRow = row.map(x => x.id);
+	check('Message stays off the row while no mail account exists',
+		!onRow.includes('msg'), onRow.join(', '));
+	check('and so does Compose, which needs somewhere to send from',
+		!onRow.includes('compose'));
+	check('and Doc, until something has been compiled into it',
+		!onRow.includes('doc'));
+
+	// But all three are still enumerable, which is the rule the row bends to.
+	await p.evaluate(() => window.DaimondRelease && 0);
+	const model = await p.evaluate(() => window.DaimondPanels.model().panels.map(x => x.id));
+	check('all three are still in the model, for the gallery and the palette',
+		['msg', 'compose', 'doc'].every(id => model.includes(id)), model.join(', '));
+
+	// Reaching for one is the event it was waiting for.
+	await p.evaluate(() => window.DaimondPanels.activate('doc'));
+	await p.waitForTimeout(400);
+	const after2 = (await chips()).map(x => x.id);
+	check('reaching for Doc puts it on the row for good', after2.includes('doc'), after2.join(', '));
+}
+
 // ── A panel that has not revealed itself is still enumerable ───────────
 // The Agents panel stays off the chip row until the first agent runs. It must
 // still be findable, or the dock reads as three panels and a user counting them
@@ -211,7 +239,16 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 {
 	await p.evaluate(() => {
 		localStorage.removeItem('daimond-agents-revealed');
+		// A panel that has ever been opened stays on the row, so a genuinely
+		// fresh state has to clear that too -- otherwise this seeds a state no
+		// new user is ever in.
+		try {
+			const u = JSON.parse(localStorage.getItem('daimond-used-panels') || '{}');
+			delete u.agents;
+			localStorage.setItem('daimond-used-panels', JSON.stringify(u));
+		} catch (e) {}
 		document.body.classList.add('agents-hidden');
+		window.DaimondPanels.hide('agents');
 		window.DaimondPanels.reflow();
 	});
 	await p.waitForTimeout(350);
@@ -247,8 +284,8 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	const grid = await p.evaluate(() => window.DaimondPanels.grid());
 	check('the chosen tiling outlives a reload', grid === '2x3', grid);
 	const c = await chips();
-	check('so does the pin list', !c.some(x => x.id === 'compose'),
-		`${c.length} chips, compose absent`);
+	check('so does the pin list', !c.some(x => x.id === 'tools'),
+		`${c.length} chips, tools absent`);
 }
 
 // ── The palette reaches what the row does not ───────────────────────────
@@ -256,14 +293,14 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	await p.keyboard.press('Control+k');
 	await p.waitForTimeout(400);
 	check('ctrl-k opens the palette', !(await p.$eval('#palette', e => e.hidden)));
-	await p.fill('#pal-input', 'compose');
+	await p.fill('#pal-input', 'tools');
 	await p.waitForTimeout(300);
 	const items = await p.$$eval('#pal-list .pal-item .nm', els => els.map(e => e.textContent));
-	check('an unpinned panel is still reachable by typing', items.includes('Compose'), items.join(', '));
+	check('an unpinned panel is still reachable by typing', items.includes('Tools'), items.join(', '));
 	await p.keyboard.press('Enter');
 	await p.waitForTimeout(500);
 	check('and opening it from the palette works',
-		await p.evaluate(() => window.DaimondPanels.isOpen('compose')));
+		await p.evaluate(() => window.DaimondPanels.isOpen('tools')));
 	check('the palette closes itself once it has acted',
 		await p.$eval('#palette', e => e.hidden));
 

@@ -33,7 +33,12 @@
 		var m = document.querySelector('meta[name="daimond-log"]');
 		return (m && m.content) || LOG_DEFAULT;
 	}
-	var RELEASES = 'releases.json';
+	/// Overridable the same way the log is, and resolved just as late, so a test
+	/// can declare a release without writing a file into the served tree.
+	function releasesUrl() {
+		var m = document.querySelector('meta[name="daimond-releases"]');
+		return (m && m.content) || 'releases.json';
+	}
 	var STAMP    = 'build.json';
 
 	var state = { entries: [], releases: null, build: null, loaded: false };
@@ -62,7 +67,7 @@
 				.map(function (l) { try { return JSON.parse(l); } catch (e) { return null; } })
 				.filter(Boolean);
 		} catch (e) { state.entries = []; }
-		try { state.releases = await getJson(RELEASES); } catch (e) { state.releases = null; }
+		try { state.releases = await getJson(releasesUrl()); } catch (e) { state.releases = null; }
 		try { state.build = await getJson(STAMP); } catch (e) { state.build = null; }
 		state.loaded = true;
 		return state;
@@ -150,18 +155,22 @@
 		// Behind means the tab is running something older than the tip. Saying so
 		// is the point: the alternative is a row that reassures a stale tab.
 		var behind = !!(cur && tip && cur.seq < tip.seq);
-		var name = cur ? ((m && m.name) || cur.build)
-			: (runningBuild() || 'Unsealed');
+		// Before any release is declared, the app says so and names the build. It
+		// must not present a deployment as a release: several are sealed a day,
+		// and none of them is an announcement.
+		var name = m ? m.name : (cur ? 'Pre-release' : (runningBuild() || 'Unsealed'));
 		var when = cur ? ago(cur.ts) : '';
 
 		r.innerHTML = '';
 		r.appendChild(el('span', 'astat-dot' + (cur ? (behind ? ' warn' : ' ok') : '')));
 		r.appendChild(el('span', 'astat-label', 'Version'));
 		r.appendChild(el('span', 'astat-val', name));
-		r.appendChild(el('span', 'astat-aside', cur ? (behind ? 'update ready' : when) : 'not published'));
+		r.appendChild(el('span', 'astat-aside',
+			cur ? (behind ? 'update ready' : (m ? when : cur.build)) : 'not published'));
 		r.title = cur
-			? name + ' — build ' + cur.build + ', published ' + dateOf(cur.ts)
-				+ (behind ? '. A newer release has been published; reload to take it.' : '.')
+			? (m ? name + ' — build ' + cur.build : 'Pre-release, build ' + cur.build)
+				+ ', published ' + dateOf(cur.ts)
+				+ (behind ? '. A newer build has been published; reload to take it.' : '.')
 				+ ' Click for what changed.'
 			: 'This build is not in the published log. Click for the history.';
 	}
@@ -180,16 +189,17 @@
 
 		var cur = current();
 		var planned = state.releases && state.releases.planned;
+		var ms = (state.releases && state.releases.milestones) || [];
 
 		if (planned) {
-			var p = el('div', 'rel-row rel-planned');
+			var pl = el('div', 'rel-row rel-planned');
 			var ph = el('div', 'rel-head');
 			ph.appendChild(el('span', 'rel-name', planned.name));
-			ph.appendChild(el('span', 'rel-tag', 'planned'));
-			p.appendChild(ph);
-			if (planned.blurb) p.appendChild(el('div', 'rel-blurb', planned.blurb));
-			p.appendChild(el('div', 'rel-meta', 'Not built yet, and not promised for a date.'));
-			into.appendChild(p);
+			ph.appendChild(el('span', 'rel-tag', ms.length ? 'planned' : 'next'));
+			pl.appendChild(ph);
+			if (planned.blurb) pl.appendChild(el('div', 'rel-blurb', planned.blurb));
+			pl.appendChild(el('div', 'rel-meta', 'Not released yet, and not promised for a date.'));
+			into.appendChild(pl);
 		}
 
 		if (!state.entries.length) {
@@ -197,39 +207,65 @@
 			return;
 		}
 
-		var seen = {};
-		state.entries.slice().reverse().forEach(function (e, i) {
-			var isCur = cur && e.seq === cur.seq;
-			var row = el('div', 'rel-row' + (isCur ? ' rel-current' : ''));
-
+		// Releases, newest first. A release is something declared, not something
+		// deployed: builds are sealed several times a day and listing them all
+		// would bury the few entries a reader actually wants.
+		var byNewest = ms.slice().sort(function (a, b) { return (b.from || 0) - (a.from || 0); });
+		byNewest.forEach(function (m) {
+			var first = state.entries.filter(function (e) { return e.seq >= m.from; })[0];
+			var here = !!(cur && milestoneAt(cur.seq) && milestoneAt(cur.seq).name === m.name);
+			var row = el('div', 'rel-row' + (here ? ' rel-current' : ''));
 			var head = el('div', 'rel-head');
-			var m = milestoneAt(e.seq);
-			// The milestone's name is written once, on the newest build that
-			// carries it, so a run of builds does not repeat one word twelve times.
-			if (m && !seen[m.name]) {
-				seen[m.name] = true;
-				head.appendChild(el('span', 'rel-name', m.name));
-			}
-			if (isCur) head.appendChild(el('span', 'rel-tag rel-here', 'you are here'));
-			head.appendChild(el('span', 'rel-when', dateOf(e.ts)));
+			head.appendChild(el('span', 'rel-name', m.name));
+			if (here) head.appendChild(el('span', 'rel-tag rel-here', 'you are here'));
+			if (first) head.appendChild(el('span', 'rel-when', dateOf(first.ts)));
 			row.appendChild(head);
-
-			if (e.note) row.appendChild(el('div', 'rel-note', e.note));
-			var meta = el('div', 'rel-meta');
-			meta.appendChild(el('code', null, e.build));
-			meta.appendChild(el('span', null, ' · sealed #' + e.seq));
-			row.appendChild(meta);
-
-			if (m && seen[m.name] && m.blurb && !seen[m.name + ':blurb'] ) {
-				seen[m.name + ':blurb'] = true;
-				row.insertBefore(el('div', 'rel-blurb', m.blurb), row.children[1] || null);
-			}
+			if (m.blurb) row.appendChild(el('div', 'rel-blurb', m.blurb));
 			into.appendChild(row);
 		});
 
+		if (!ms.length) {
+			var none = el('div', 'rel-row rel-current');
+			var nh = el('div', 'rel-head');
+			nh.appendChild(el('span', 'rel-name', 'Pre-release'));
+			nh.appendChild(el('span', 'rel-tag rel-here', 'you are here'));
+			if (cur) nh.appendChild(el('span', 'rel-when', dateOf(cur.ts)));
+			none.appendChild(nh);
+			none.appendChild(el('div', 'rel-blurb',
+				'No release has been declared yet. You are running a build ahead of the first one.'));
+			if (cur) {
+				var nm = el('div', 'rel-meta');
+				nm.appendChild(el('code', null, cur.build));
+				nm.appendChild(el('span', null, ' \u00b7 sealed #' + cur.seq));
+				none.appendChild(nm);
+			}
+			into.appendChild(none);
+		}
+
+		// Every sealed build, behind a disclosure. They are the verifiable part
+		// and must stay reachable, but they are a deployment record rather than
+		// a version history, so they do not lead.
+		var det = document.createElement('details');
+		det.className = 'rel-builds';
+		var sum = document.createElement('summary');
+		sum.textContent = state.entries.length + ' sealed build'
+			+ (state.entries.length === 1 ? '' : 's');
+		det.appendChild(sum);
+		state.entries.slice().reverse().forEach(function (e) {
+			var b = el('div', 'rel-build' + (cur && e.seq === cur.seq ? ' rel-build-here' : ''));
+			var bh = el('div', 'rel-build-head');
+			bh.appendChild(el('code', null, e.build));
+			bh.appendChild(el('span', 'rel-when', dateOf(e.ts)));
+			b.appendChild(bh);
+			if (e.note) b.appendChild(el('div', 'rel-build-note', e.note));
+			det.appendChild(b);
+		});
+		into.appendChild(det);
+
 		var foot = el('div', 'rel-foot');
-		foot.textContent = 'Every line below the first is a published build, recorded in a chain that '
-			+ 'cannot be rewritten without breaking. There is no way back to an older one, on purpose.';
+		foot.textContent = 'A release is declared; a build is deployed. Every build above is '
+			+ 'recorded in a chain that cannot be rewritten without breaking. There is no way '
+			+ 'back to an older one, on purpose.';
 		into.appendChild(foot);
 	}
 

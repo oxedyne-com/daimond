@@ -36,6 +36,15 @@ import { join, relative, sep } from 'node:path';
 /// wasm that is the privacy-critical code — is covered.
 export const EXCLUDE = new Set([
 	'build.json', 'manifest.json',
+	// `releases.json` says which release a user is told they are running. That is
+	// editorial, not attestation: the chain attests what CODE shipped, and this
+	// only carries the name someone chose for it. It is excluded so a release can
+	// be declared on the server -- by an operator pulling the trigger -- without
+	// a redeploy, and so that renaming one does not false-fail an honest rebuild.
+	// The security claim is untouched: an attacker who could rewrite this could
+	// change a label and nothing else, and every byte the browser EXECUTES is
+	// still covered.
+	'releases.json',
 	// wasm-pack packaging metadata, not executed browser code: `pkg/LICENSE` is
 	// copied from the crate (so it differs between the proprietary dev build and
 	// the FSL public build), `pkg/package.json` carries the wasm-pack version (so

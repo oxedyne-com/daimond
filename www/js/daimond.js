@@ -936,6 +936,53 @@ import init, {
 		function dockMax() { var g = gridOf(); return g.cols * g.rows; }
 		function isPinned(id) { return pinned === null || pinned.indexOf(id) !== -1; }
 
+		/// Panels that wait for something to hold before they join the chip row.
+		///
+		/// Some panels are SUMMONED -- you decide you want the Workspace and open
+		/// it. Others only mean anything once something has put something in them:
+		/// a Message needs mail, a Compose window needs an account to send from, a
+		/// Doc needs a document. Standing in the row from the first run, they read
+		/// as features that are broken rather than as features not yet reached.
+		///
+		/// This generalises what the Agents panel already did on its own. They are
+		/// held back from the ROW only: the gallery and the palette list the whole
+		/// fleet, because a panel you cannot enumerate is one you end up guessing
+		/// at, and reaching for one there is itself the event it was waiting for.
+		var USED_KEY = 'daimond-used-panels';
+		function usedPanels() {
+			try { return JSON.parse(localStorage.getItem(USED_KEY) || '{}') || {}; }
+			catch (e) { return {}; }
+		}
+		function markUsed(id) {
+			try {
+				var u = usedPanels();
+				if (u[id]) return;
+				u[id] = 1;
+				localStorage.setItem(USED_KEY, JSON.stringify(u));
+			} catch (e) { /* private mode: the panel simply shows every session */ }
+		}
+		/// Whether a mail account exists, which is what makes Message and Compose
+		/// mean anything at all.
+		function hasMail() {
+			try {
+				if (window.DaimondMail && DaimondMail.hasAccounts) return DaimondMail.hasAccounts();
+				var j = JSON.parse(localStorage.getItem('daimond-mail') || '{}');
+				return !!(j && Array.isArray(j.accounts) && j.accounts.length);
+			} catch (e) { return false; }
+		}
+		var WAITS_FOR = {
+			agents:  function () { return !document.body.classList.contains('agents-hidden'); },
+			msg:     hasMail,
+			compose: hasMail,
+			doc:     function () { return !!usedPanels().doc; },
+		};
+		/// Whether a panel has earned its place in the row yet.
+		function revealed(id) {
+			var f = WAITS_FOR[id];
+			if (!f) return true;                       // an ordinary, summonable panel
+			return !!(usedPanels()[id] || f());
+		}
+
 		function def(id)    { return PANELS.find(function (p) { return p.id === id; }); }
 		function elOf(id)   { var d = def(id); return d ? document.getElementById(d.el) : null; }
 		function zoneOf(id) { var d = def(id); return d ? d.zone : 'dock'; }
@@ -1160,13 +1207,10 @@ import init, {
 						open: isOpenNow && !folded,
 						folded: folded,
 						pinned: isPinned(p.id),
-						// The Agents panel stays out of the chip row until the first
-						// agent runs, so a newcomer is not shown a panel with nothing
-						// in it. It is NOT hidden from the gallery or the palette:
-						// those are the complete surfaces, and a fleet you cannot
-						// enumerate is one you end up guessing at.
-						unrevealed: (p.id === 'agents' && document.body.classList.contains('agents-hidden')),
-						hidden: (p.id === 'agents' && document.body.classList.contains('agents-hidden')),
+						// Off the row until it has something to hold; still listed in
+						// the gallery and the palette, which are the complete surfaces.
+						unrevealed: !revealed(p.id),
+						hidden: !revealed(p.id),
 						// A dock chip that cannot be honoured says so before it is
 						// clicked; a stage chip that would displace the current guest
 						// warns rather than refuses, since that is a real choice.
@@ -1188,11 +1232,15 @@ import init, {
 			// reveal was waiting for. It SHOWS rather than toggles: the panel was
 			// off screen whatever the engine believed about it, so the only thing
 			// the request can mean is "let me see it".
-			if (id === 'agents' && document.body.classList.contains('agents-hidden')) {
-				try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
-				document.body.classList.remove('agents-hidden');
+			if (!revealed(id)) {
+				markUsed(id);
+				if (id === 'agents') {
+					try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
+					document.body.classList.remove('agents-hidden');
+				}
 				open[id] = false;                              // so show() seats it afresh
-				dock = dock.filter(function (x) { return x !== id; });
+				stage = stage.filter(function (x) { return x !== id; });
+				dock  = dock.filter(function (x) { return x !== id; });
 				show(id);
 				return;
 			}
@@ -1244,6 +1292,7 @@ import init, {
 				dock.push(id);
 			}
 			open[id] = true;
+			markUsed(id);
 			apply();
 			if (id === 'work') Files.onOpen();
 			if (id === 'mail' && window.DaimondMail) DaimondMail.onOpen();
@@ -1455,6 +1504,7 @@ import init, {
 			zone: zoneOf,
 			// The chip row, the gallery and the palette are all views of this.
 			model: tagModel, activate: activate,
+			markUsed: markUsed,
 			grids: function () { return GRIDS; },
 			grid: function () { return grid; },
 			setGrid: setGrid,
@@ -6095,6 +6145,7 @@ import init, {
 		if (!e || !n) return;
 		e.src = url;
 		n.textContent = name;
+		DaimondPanels.markUsed('doc');       // it now has something to hold
 		DaimondPanels.show('doc');
 		DaimondPanels.reflow();
 	}

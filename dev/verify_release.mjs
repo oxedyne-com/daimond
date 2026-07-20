@@ -76,12 +76,42 @@ await p.evaluate((url) => {
 	window.DaimondRelease.reset();
 }, LOG_URL);
 
-// ── The status row names the release ────────────────────────────────────
+// ── Before a release is declared, nothing is announced ──────────────────
+// A deployment is not a release. Daimond seals several builds a day, and none
+// of them is an announcement; until one is declared the row has to say so
+// rather than dress a build up as a version.
 {
+	await p.evaluate((url) => {
+		const m = document.createElement('meta');
+		m.name = 'daimond-releases';
+		m.content = url;
+		document.head.appendChild(m);
+		window.DaimondRelease.reset();
+	}, 'data:application/json,' + encodeURIComponent(JSON.stringify(
+		{ milestones: [], planned: { name: 'Albany', blurb: 'The first release.' } })));
 	await p.evaluate(() => window.DaimondRelease.paintRow());
 	await p.waitForTimeout(500);
 	const txt = await p.$eval('#astat-release', e => e.textContent);
-	check('the row names the milestone, not a hex build id', /Albany/.test(txt), txt.trim());
+	check('with no release declared, the row says pre-release', /Pre-release/i.test(txt), txt.trim());
+	check('and names the build rather than inventing a version name',
+		txt.includes(running), txt.trim());
+	check('it does not present the planned release as the current one',
+		!/Albany/.test(txt), txt.trim());
+}
+
+// ── Once one IS declared, the row names it ──────────────────────────────
+{
+	await p.evaluate((url) => {
+		document.querySelector('meta[name="daimond-releases"]').content = url;
+		window.DaimondRelease.reset();
+	}, 'data:application/json,' + encodeURIComponent(JSON.stringify({
+		milestones: [{ name: 'Albany', from: 0, blurb: 'The first release.' }],
+		planned: { name: 'Broome', blurb: 'What comes next.' },
+	})));
+	await p.evaluate(() => window.DaimondRelease.paintRow());
+	await p.waitForTimeout(500);
+	const txt = await p.$eval('#astat-release', e => e.textContent);
+	check('the row names the release, not a hex build id', /Albany/.test(txt), txt.trim());
 	check('and says how long you have been on it',
 		/(today|yesterday|days ago|months ago|years ago)/.test(txt), txt.trim());
 	const title = await p.$eval('#astat-release', e => e.title);
@@ -97,16 +127,23 @@ await p.evaluate((url) => {
 		current: e.classList.contains('rel-current'),
 		text: e.textContent,
 	})));
-	check('every sealed build is listed, plus what is planned', rows.length === LOG.length + 1,
+	// The list is RELEASES, not deployments: one declared release plus what is
+	// planned, however many builds have been sealed underneath.
+	check('the list shows releases rather than every build', rows.length === 2,
 		`${rows.length} rows for ${LOG.length} builds`);
 	check('the planned one is first', rows[0] && rows[0].planned, rows[0] && rows[0].text.slice(0, 30));
 	check('exactly one row says you are here',
 		rows.filter(r => /you are here/i.test(r.text)).length === 1);
-	check('and it is the build this tab runs, not the planned line',
-		rows[1] && rows[1].current && rows[1].text.includes(running));
-	check('the newest is above the oldest',
-		rows[1].text.includes(running) && rows[3].text.indexOf('aaaaaaaaaaaa') >= 0);
-	check('each build carries its own note', /The second one/.test(rows[2].text), rows[2].text.slice(0, 40));
+	check('and it is the declared release', rows[1] && rows[1].current && /Albany/.test(rows[1].text));
+
+	// The builds stay reachable, because they are the verifiable part.
+	const builds = await p.$$eval('#rel-list .rel-builds .rel-build', els => els.map(e => e.textContent));
+	check('every sealed build is still there, behind a disclosure',
+		builds.length === LOG.length, `${builds.length} builds`);
+	check('each build carries its own note',
+		builds.some(t => /The second one/.test(t)), builds[1] && builds[1].slice(0, 44));
+	const summary = await p.$eval('#rel-list .rel-builds summary', e => e.textContent);
+	check('the disclosure says how many there are', /3 sealed builds/.test(summary), summary);
 }
 
 // ── A tab running an OLDER build is told so, not flattered ─────────────
@@ -124,14 +161,14 @@ await p.evaluate((url) => {
 	const txt = await p.$eval('#astat-release', e => e.textContent);
 	const tip = await p.$eval('#astat-release', e => e.title);
 	check('a tab behind the newest release says so', /update ready/i.test(txt), txt.trim());
-	check('and the tooltip says a newer one exists', /newer release/i.test(tip), tip);
+	check('and the tooltip says a newer build exists', /newer build/i.test(tip), tip);
 
 	await p.evaluate(() => window.DaimondRelease.render(document.getElementById('rel-list')));
 	await p.waitForTimeout(400);
 	const marked = await p.$$eval('#rel-list .rel-row', els =>
 		els.filter(e => /you are here/i.test(e.textContent)).map(e => e.textContent.slice(0, 60)));
-	check('"you are here" marks the running build, not the newest published',
-		marked.length === 1 && !marked[0].includes('ffffffffffff'), marked.join(' | '));
+	check('"you are here" marks where the running build sits, not the newest published',
+		marked.length >= 1 && !marked.some(t => t.includes('ffffffffffff')), marked.join(' | '));
 
 	// Put the original log back for the checks below.
 	await p.evaluate((url) => {
@@ -155,7 +192,7 @@ await p.evaluate((url) => {
 	check('it carries no seal number', !/sealed #/.test(planned.text));
 	check('it is drawn differently from a sealed one', planned.dashed === 'dashed', planned.dashed);
 	check('and it says so in words, not only in styling',
-		/not built yet/i.test(planned.text), planned.text.slice(-46).trim());
+		/not released yet/i.test(planned.text), planned.text.slice(-46).trim());
 	check('it is labelled planned', /planned/i.test(planned.text));
 }
 
