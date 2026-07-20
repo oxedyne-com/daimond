@@ -2340,7 +2340,7 @@ import init, {
 			// It opens in its own tab because it is a different job -- the app is
 			// where you work, the console is where you run the service.
 			if (window.DaimondGateway && DaimondGateway.operatorRole) {
-				var op = item('Operator console \u2197', function () {
+				var op = item('Daimond Dashboard \u2197', function () {
 					window.open('/console/', '_blank', 'noopener');
 				});
 				op.style.display = 'none';
