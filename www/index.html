@@ -305,7 +305,11 @@
 						</button>
 					</div>
 				</div>
-				<embed class="doc-embed" id="doc-embed" type="application/pdf">
+				<!-- One document, with room to read it. Text or PDF: which one is
+				     showing is decided by what was opened, not by which panel it
+				     was opened from. -->
+				<div class="doc-view" id="doc-view"></div>
+				<embed class="doc-embed" id="doc-embed" type="application/pdf" style="display:none">
 			</aside>
 
 			<!-- One mail message, where there is room to read it — and, now that
@@ -471,7 +475,6 @@
 				<div class="files-path"></div>
 				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false"></div>
 				<div class="files-tree"></div>
-				<div class="files-view" style="display:none"></div>
 			</div>
 		</aside>
 

@@ -938,6 +938,9 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 
 /* A stage panel's header reuses the AI panel's chrome. */
 .web .chead, .doc .chead, .msg .chead { gap: 8px; }
+/* The document panel holds one of two renderings: a text view or a PDF. Both
+   fill the panel; whichever is showing, the other is display:none. */
+.doc-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
 .doc-embed { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg-tertiary); }
 /* Main needs room to be Main — but only where there is room to give. On a phone
    one panel fills the screen, so a desktop minimum would just force an overflow. */

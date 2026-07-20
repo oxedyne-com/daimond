@@ -67,7 +67,10 @@
 .files-row:hover .files-del { visibility: visible; }
 .files-del:hover { color: var(--danger); }
 
-.files-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* The file VIEW now lives in the Doc panel (see app.css, .doc-view): a document
+   you have opened is something you are attending to, and belongs on the stage.
+   The inner .files-view-* rules below still apply -- they style the view itself,
+   wherever it is rendered. */
 .files-view-head {
 	display: flex; align-items: center; justify-content: space-between; gap: 8px;
 	padding: 7px 10px; border-bottom: 1px solid var(--border); flex: none; flex-wrap: wrap;
@@ -92,29 +95,36 @@
 	color: var(--text-secondary); word-break: break-word; white-space: pre-wrap;
 }
 .files-view-msg.err { color: var(--danger, #e5484d); }
-.files-view-pdf { flex: 1; min-height: 0; display: flex; background: var(--bg-primary); }
-.files-view-pdf embed { flex: 1; width: 100%; height: 100%; border: 0; }
 
 .files-view-body {
-	flex: 1; margin: 0; padding: 10px; overflow: auto;
+	flex: 1; margin: 0; padding: 12px 14px; overflow: auto;
 	white-space: pre-wrap; word-break: break-word;
-	font-family: var(--font-mono); font-size: var(--fs-xs);
+	font-family: var(--font-mono); font-size: var(--fs-sm);
 	color: var(--text-primary); background: var(--bg-primary);
 }
 
 /* Inline editor: swaps in for the <pre> while editing a file. */
 .files-edit {
-	flex: 1; margin: 0; padding: 10px; border: none; resize: none; outline: none;
+	flex: 1; margin: 0; padding: 12px 14px; border: none; resize: none; outline: none;
 	white-space: pre; overflow: auto;
-	font-family: var(--font-mono); font-size: var(--fs-xs);
+	font-family: var(--font-mono); font-size: var(--fs-sm);
 	color: var(--text-primary); background: var(--bg-primary);
 }
 .files-edit:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 
-/* File viewer line numbers */
-.files-view-body.with-lineno { padding-left: 4px; }
+/* File viewer line numbers.
+   A hanging indent, so a line that wraps continues past the gutter instead of
+   returning to the margin and reading as a new line. Invisible in a narrow
+   panel where little wrapped; obvious now the document has the stage. The two
+   measures must agree: the gutter is the .ln width plus its margin. */
+.files-view-body.with-lineno { padding-left: 14px; text-indent: 0; }
+/* The hanging indent lives on each line, not on the block: with pre-wrap the
+   whole file is one block, so an indent set there applies to its first line
+   only. The two measures must agree -- the gutter is the .ln width plus its
+   margin. */
+.files-view-body .lnrow { display: block; padding-left: 4em; text-indent: -4em; }
 .files-view-body .ln {
-	display: inline-block; width: 3.2em; margin-right: 10px;
+	display: inline-block; width: 3.2em; margin-right: 0.8em;
 	text-align: right; color: var(--text-secondary); opacity: 0.55;
 	user-select: none; -webkit-user-select: none;
 }

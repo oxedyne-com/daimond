@@ -4655,7 +4655,12 @@ import init, {
 			if (!panel) return;
 			pathEl = panel.querySelector('.files-path');
 			treeEl = panel.querySelector('.files-tree');
-			viewEl = panel.querySelector('.files-view');
+			// The document view is NOT in this panel. Workspace is the filing
+			// cabinet -- a tree you browse -- and a document you have opened is
+			// something you are attending to, which belongs on the stage beside
+			// the daimon. So the viewer renders into the Doc panel, and the tree
+			// stays put behind it instead of being hidden to make room.
+			viewEl = document.getElementById('doc-view');
 			modeEl = panel.querySelector('.files-mode');
 			panel.querySelector('[data-act="refresh"]').addEventListener('click', function () { list(curDir); });
 			var newBtn = panel.querySelector('[data-act="new-file"]');
@@ -4883,7 +4888,7 @@ import init, {
 		/// Empty the panel. Used by the lock, so a locked app shows no file names.
 		function clear() {
 			if (treeEl) treeEl.innerHTML = '';
-			if (viewEl) viewEl.style.display = 'none';
+			if (viewEl) { viewEl.style.display = 'none'; docEmbed(false); }
 		}
 
 		// Parse the plain-text file_list output into entries. Lines are
@@ -4908,7 +4913,7 @@ import init, {
 		async function list(dir) {
 			curDir = dir || '';
 			curFile = null; listed = true;
-			viewEl.style.display = 'none'; treeEl.style.display = '';
+			viewEl.style.display = 'none'; docEmbed(false);
 			pathEl.textContent = '/' + curDir;
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
 			var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir || '.' }));
@@ -4987,14 +4992,14 @@ import init, {
 		async function openFile(path) {
 			var content = await tools().run_tool('file_read', JSON.stringify({ path: path }));
 			curFile = path; curContent = content; editing = false;
-			treeEl.style.display = 'none'; viewEl.style.display = '';
+			docEmbed(false);
+			viewEl.style.display = '';
 			var isTypst = /\.typ$/i.test(path);
 			var compileBtn = isTypst
 				? '    <button class="files-btn" data-act="compile" title="Compile to PDF">⚙ Compile</button>'
 				: '';
 			viewEl.innerHTML =
 				'<div class="files-view-head">' +
-				'  <span class="files-view-name"></span>' +
 				'  <span>' +
 				compileBtn +
 				'    <button class="files-btn" data-act="edit" title="Edit">✎ Edit</button>' +
@@ -5004,10 +5009,13 @@ import init, {
 				'  </span>' +
 				'</div>' +
 				'<div class="files-view-msg" style="display:none"></div>' +
-				'<div class="files-view-pdf" style="display:none"></div>' +
 				'<pre class="files-view-body"></pre>';
-			viewEl.querySelector('.files-view-name').textContent = path;   // escaped
+			var nameEl = document.getElementById('doc-name');
+			if (nameEl) nameEl.textContent = path;                 // escaped
 			renderFileBody();
+			DaimondPanels.markUsed('doc');       // it now has something to hold
+			DaimondPanels.show('doc');
+			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
 			viewEl.querySelector('[data-act="lineno"]').addEventListener('click', function () {
 				showLineNos = !showLineNos;
@@ -5080,8 +5088,7 @@ import init, {
 		var _pdfUrl = null;   // live blob URL for the shown PDF
 		async function compileTypst(path, btn) {
 			var msgEl = viewEl.querySelector('.files-view-msg');
-			var pdfEl = viewEl.querySelector('.files-view-pdf');
-			if (!msgEl || !pdfEl) return;
+			if (!msgEl) return;
 			var label = btn ? btn.textContent : '';
 			if (btn) { btn.disabled = true; btn.textContent = '… compiling'; }
 			msgEl.style.display = ''; msgEl.classList.remove('err');
@@ -5094,7 +5101,6 @@ import init, {
 				if (out.error) {
 					msgEl.classList.add('err');
 					msgEl.textContent = out.error;               // escaped
-					pdfEl.style.display = 'none';
 					return;
 				}
 				var pdfPath = path.replace(/\.typ$/i, '.pdf');
@@ -5104,7 +5110,6 @@ import init, {
 				if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 				var blob = new Blob([out.pdf], { type: 'application/pdf' });
 				_pdfUrl = URL.createObjectURL(blob);
-				pdfEl.style.display = 'none';
 				showDoc(pdfPath, _pdfUrl);
 				msgEl.textContent = 'Compiled → ' + pdfPath + ' (' + fmtBytes(out.pdf.length) + ')';
 			} catch (e) {
@@ -5237,6 +5242,21 @@ import init, {
 			inp.click();
 		}
 
+		/// Show or hide the panel's PDF embed, and the text view with it.
+		///
+		/// One panel, two renderings: whichever is showing, the other is not.
+		/// Releasing the blob URL when the embed goes away keeps a long session
+		/// from holding every PDF it has ever compiled.
+		function docEmbed(on) {
+			var e = document.getElementById('doc-embed');
+			if (!e) return;
+			e.style.display = on ? '' : 'none';
+			if (!on) {
+				e.removeAttribute('src');
+				if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
+			}
+		}
+
 		function renderFileBody() {
 			var body = viewEl.querySelector('.files-view-body');
 			if (!body) return;
@@ -5246,7 +5266,13 @@ import init, {
 				var lines = curContent.split('\n');
 				var html = '';
 				for (var i = 0; i < lines.length; i++) {
-					html += '<span class="ln">' + (i + 1) + '</span>' + esc(lines[i]) + '\n';
+					// Each numbered line is its own block, so that a long line
+					// wrapping continues past the gutter instead of returning to
+					// the margin. A hanging indent needs a block to hang from,
+					// and `text-indent` on the <pre> indents only the first line
+					// of the whole file -- which is what it was doing.
+					html += '<span class="lnrow"><span class="ln">' + (i + 1) + '</span>'
+						+ esc(lines[i]) + '</span>';
 				}
 				body.innerHTML = html;        // only line numbers + escaped text
 				body.classList.add('with-lineno');
@@ -5258,7 +5284,9 @@ import init, {
 
 		function closeView() {
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
-			viewEl.style.display = 'none'; treeEl.style.display = ''; curFile = null; editing = false;
+			viewEl.style.display = 'none'; docEmbed(false);
+			curFile = null; editing = false;
+			DaimondPanels.hide('doc');
 		}
 		function onOpen() { if (!curFile) list(curDir); }
 		/// Re-sync the panel with the workspace after a turn or a worker may have
@@ -6160,7 +6188,13 @@ import init, {
 	function showDoc(name, url) {
 		var e = document.getElementById('doc-embed');
 		var n = document.getElementById('doc-name');
+		var v = document.getElementById('doc-view');
 		if (!e || !n) return;
+		// A PDF and a text file are two renderings of one panel, not two panels.
+		// The text view steps aside rather than being torn down, so closing the
+		// PDF does not lose the file it was compiled from.
+		if (v) v.style.display = 'none';
+		e.style.display = '';
 		e.src = url;
 		n.textContent = name;
 		DaimondPanels.markUsed('doc');       // it now has something to hold
