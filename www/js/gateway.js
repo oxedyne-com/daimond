@@ -312,6 +312,27 @@
 		return state.role;
 	}
 
+	/// End this device's session on the gateway.
+	///
+	/// Called when the app is locked or the identity forgotten. Best effort by
+	/// design: a gateway that cannot be reached must not stop a person locking
+	/// their own app, and the session expires on its own within the hour. But it
+	/// is awaited where the caller can afford to, because the whole point is that
+	/// the door is shut before the person walks away.
+	async function logout() {
+		state.authed = false;
+		state.role   = undefined;
+		state.credits = null;
+		try {
+			await fetch('/api/auth/logout', {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'x-daimond-api': String(CLIENT_API) },
+			});
+			return true;
+		} catch (e) { return false; }
+	}
+
 	window.DaimondGateway = {
 		bootstrap:      bootstrap,
 		refreshBalance: refreshBalance,
@@ -322,6 +343,7 @@
 		setAutoReload:  setAutoReload,
 		consumeReturn:  consumeReturn,
 		operatorRole:   operatorRole,
+		logout:         logout,
 		fmtMoney:       fmtMoney,
 		packs:          function () { return PACKS.slice(); },
 		state:          function () { return Object.assign({}, state); },

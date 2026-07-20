@@ -7154,6 +7154,15 @@ import init, {
 
 		try { DaimondIdentity.lock(); } catch (e) { /* already locked */ }
 
+		// And tell the gateway. Locking used to forget only the keys held here,
+		// which left the session opened at unlock alive for up to an hour -- and
+		// the operator console rides that session, so "Log out" shut the app and
+		// left the console open to whoever sat down next. Pressing it is a person
+		// saying they are done, and it has to mean it on both sides.
+		if (window.DaimondGateway && DaimondGateway.logout) {
+			DaimondGateway.logout().catch(function () {});
+		}
+
 		// A locked Daimond holds no readable key. Clearing `cfg.apiKey` used to be the whole of
 		// that, because there was one key and it lived there. There are now a key per provider,
 		// held in memory by DaimondModels, and a built agent for every chat and Diamond with its
@@ -7209,19 +7218,29 @@ import init, {
 
 	/// Switch to another existing account: lock this one, point storage at that one, and reload so
 	/// every module reads the new account from scratch.
-	function switchAccount(id) {
+	async function switchAccount(id) {
 		if (!window.DaimondAccounts) return;
 		if (id === DaimondAccounts.current()) return;
 		try { if (window.DaimondIdentity) DaimondIdentity.lock(); } catch (e) { /* already */ }
+		// Awaited, not fired and forgotten: the reload below would cancel it, and
+		// the session being ended is this account's. Until the next identity is
+		// unlocked the browser would otherwise still carry the previous
+		// account's cookie -- and open the console as them.
+		if (window.DaimondGateway && DaimondGateway.logout) {
+			try { await DaimondGateway.logout(); } catch (e) { /* go anyway */ }
+		}
 		DaimondAccounts.setCurrent(id);
 		location.reload();
 	}
 
 	/// Add a fresh account and reload into its create screen. The new account is empty, so boot
 	/// finds no identity for it and opens the create flow; the name given there names it.
-	function addAccount() {
+	async function addAccount() {
 		if (!window.DaimondAccounts) return;
 		try { if (window.DaimondIdentity) DaimondIdentity.lock(); } catch (e) { /* already */ }
+		if (window.DaimondGateway && DaimondGateway.logout) {
+			try { await DaimondGateway.logout(); } catch (e) { /* go anyway */ }
+		}
 		DaimondAccounts.add('');
 		location.reload();
 	}
@@ -7500,6 +7519,12 @@ import init, {
 
 		var ns = A ? A.opfsNs() : '';       // this account's OPFS subdir ('' for the primary)
 
+		// The session first, while the page is still alive to make the request.
+		// An erased identity whose session outlives it is the same door left
+		// open, and there is no key left here to close it with afterwards.
+		if (window.DaimondGateway && DaimondGateway.logout) {
+			try { await DaimondGateway.logout(); } catch (e) { /* erase anyway */ }
+		}
 		try { DaimondIdentity.reset(); } catch (e) { /* ignore */ }
 		// Sweep every store this account owns. removeItem is namespaced to the current account, so
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
