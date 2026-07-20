@@ -18,6 +18,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { signInFresh } from './session.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -38,7 +39,6 @@ const check = (name, pass, detail) => {
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const TOKEN = fs.readFileSync(path.join(GWDIR, 'keys/admin_token.txt'), 'utf8').trim();
 const WHSEC = fs.readFileSync(path.join(GWDIR, 'keys/stripe/sandbox/whsec'), 'utf8').trim();
 
 const procs = [];
@@ -122,10 +122,12 @@ async function seed() {
 }
 
 // ── Raw auth contract ───────────────────────────────────────
-async function adminRaw(auth) {
-	const headers = { 'x-daimond-api': '1' };
-	if (auth) headers['Authorization'] = auth;
-	const r = await fetch(`${GW_URL}/api/admin?view=summary`, { headers });
+// The console is reached with the app's own signed session, so an unauthenticated
+// call is the only thing Node can make on its own -- and it must be refused.
+async function adminRaw() {
+	const r = await fetch(`${GW_URL}/api/admin?view=summary`, {
+		headers: { 'x-daimond-api': '1' },
+	});
 	let j = null; try { j = await r.json(); } catch (e) {}
 	return { status: r.status, j };
 }
@@ -133,7 +135,9 @@ async function adminRaw(auth) {
 // ── Main ────────────────────────────────────────────────────
 (async () => {
 	// 1. Gateway.
-	const gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
+	// Pinned as an owner by account id, which is not known until an account
+	// exists -- so this suite starts the gateway twice, as verify_releases does.
+	let gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
 		cwd: GWDIR,
 		env: { ...process.env, APP_MODE: 'sandbox' },
 		stdio: ['ignore', 'pipe', 'pipe'],
@@ -144,32 +148,16 @@ async function adminRaw(auth) {
 	check('gateway starts and answers /api/health', gwUp);
 	if (!gwUp) { cleanup(); console.log(`\n${ok.length} passed, ${bad.length} failed`); process.exit(1); }
 
-	// 2. Auth contract.
-	const noTok = await adminRaw(null);
-	check('no token → 401', noTok.status === 401, 'status ' + noTok.status);
-	const wrong = await adminRaw('Bearer not-the-token');
-	check('wrong token → 401', wrong.status === 401, 'status ' + wrong.status);
-	const right = await adminRaw('Bearer ' + TOKEN);
-	check('right token → 200 with summary', right.status === 200
-		&& right.j && right.j.ok === true && typeof right.j.accounts === 'number',
-		'status ' + right.status);
+	// 2. Auth contract: no session, no console. There is no token to try.
+	const anon = await adminRaw();
+	check('no session → 401', anon.status === 401, 'status ' + anon.status);
 
 	// 3. Seed, then confirm the aggregates moved.
 	const seeded = await seed();
 	check('seeding registered accounts and credited top-ups',
 		seeded.made > 0 && seeded.credited > 0, JSON.stringify(seeded));
-	const sum = await adminRaw('Bearer ' + TOKEN);
-	check('summary counts the seeded accounts', sum.j && sum.j.accounts >= seeded.made,
-		'accounts ' + (sum.j && sum.j.accounts));
-	const revTotal = ((sum.j && sum.j.revenue) || []).reduce((a, r) => a + (r.total || 0), 0);
-	check('summary revenue reflects the credited top-ups', revTotal > 0, 'revenue ' + revTotal);
-	const geoRes = await fetch(`${GW_URL}/api/admin?view=geo`, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-	const geoJson = await geoRes.json();
-	check('geo view returns per-country rows',
-		geoJson.ok && Array.isArray(geoJson.countries) && geoJson.countries.length > 1,
-		(geoJson.countries || []).length + ' countries');
-
-	// 4. Dev server + browser.
+	// 4. Dev server + browser. The aggregates are checked from inside the page,
+	//    because the session that may read them lives in the browser.
 	launch('node', ['dev/serve.mjs'], { cwd: ROOT, stdio: ['ignore', 'ignore', 'ignore'] });
 	const serveUp = await waitFor(async () => (await fetch(`${APP}/console/`)).ok, 10000);
 	check('dev server serves /console/', serveUp);
@@ -183,10 +171,38 @@ async function adminRaw(auth) {
 			page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 			page.on('pageerror', e => errs.push('pageerror: ' + e.message));
 
+			// Sign in as the app does, then pin that account as an owner and
+			// restart, since an owner is named in configuration by account id.
+			const owner = await signInFresh(page, APP);
+			check('a fresh account signs in to the gateway', !!owner, owner || 'none');
+			try { gw.kill('SIGKILL'); } catch (e) {}
+			await sleep(1500);
+			gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
+				cwd: GWDIR,
+				env: { ...process.env, APP_MODE: 'sandbox', DAIMOND_OWNER_ACCOUNTS: owner },
+				stdio: ['ignore', 'ignore', 'ignore'],
+			});
+			check('gateway restarts with that account as owner',
+				await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok));
+
+			const agg = await page.evaluate(async () => {
+				const r = await fetch('/api/admin?view=summary', { credentials: 'same-origin' });
+				return { status: r.status, j: await r.json().catch(() => null) };
+			});
+			check('summary counts the seeded accounts',
+				agg.j && agg.j.accounts >= seeded.made, 'accounts ' + (agg.j && agg.j.accounts));
+			const revTotal = ((agg.j && agg.j.revenue) || []).reduce((a, r) => a + (r.total || 0), 0);
+			check('summary revenue reflects the credited top-ups', revTotal > 0, 'revenue ' + revTotal);
+			const geoJson = await page.evaluate(async () => {
+				const r = await fetch('/api/admin?view=geo', { credentials: 'same-origin' });
+				return await r.json().catch(() => null);
+			});
+			check('geo view returns per-country rows',
+				geoJson && geoJson.ok && Array.isArray(geoJson.countries) && geoJson.countries.length > 1,
+				((geoJson && geoJson.countries) || []).length + ' countries');
+			errs.length = 0;			// the pre-owner 403s were asked for
+
 			await page.goto(`${APP}/console/`, { waitUntil: 'domcontentloaded' });
-			await page.waitForSelector('#admin-token', { timeout: 8000 });
-			await page.fill('#admin-token', TOKEN);
-			await page.click('#admin-login-btn');
 			await page.waitForSelector('#admin-app:not([hidden])', { timeout: 10000 });
 			// Let the four parallel view fetches land and draw.
 			await page.waitForFunction(() =>

@@ -24,6 +24,10 @@
 		currency: 'usd',
 		entries:  [],
 		offline:  false,    // the gateway could not be reached
+		// The console role, once asked for. `undefined` means not yet asked;
+		// null means asked and the answer was no. Switching account clears it,
+		// because it is an answer about whoever is signed in now.
+		role:     undefined,
 	};
 
 	/// The credit packs the gateway will accept. The price is server-owned; this
@@ -166,6 +170,7 @@
 	/// off boot.
 	async function bootstrap() {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
+		state.role = undefined;			// a new unlock is a new question
 		var pub = DaimondIdentity.publicKeyB64url();
 		if (!pub) return false;
 		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
@@ -290,6 +295,23 @@
 		return buy || ('card:' + card);
 	}
 
+	/// The console role this account holds, or null if it holds none.
+	///
+	/// Asked once per unlock and remembered, so drawing the Home panel does not
+	/// hit the network. Every failure -- offline, no session, a gateway that
+	/// does not know the view -- is the same answer as "no role": the console
+	/// is offered only on a definite yes, because an entry that leads to a
+	/// locked door is worse than no entry at all.
+	async function operatorRole() {
+		if (state.role !== undefined) return state.role;
+		state.role = null;
+		try {
+			var j = await get('/api/admin?view=whoami');
+			state.role = (j && j.role) || null;
+		} catch (e) { state.role = null; }
+		return state.role;
+	}
+
 	window.DaimondGateway = {
 		bootstrap:      bootstrap,
 		refreshBalance: refreshBalance,
@@ -299,6 +321,7 @@
 		autoReload:     autoReload,
 		setAutoReload:  setAutoReload,
 		consumeReturn:  consumeReturn,
+		operatorRole:   operatorRole,
 		fmtMoney:       fmtMoney,
 		packs:          function () { return PACKS.slice(); },
 		state:          function () { return Object.assign({}, state); },

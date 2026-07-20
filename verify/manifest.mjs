@@ -53,7 +53,31 @@ async function buildId(bundle) {
 	return bundle.slice(0, 12);
 }
 
+/// Files that must never reach a served tree, matched by name.
+///
+/// A seal is not the place to quietly leave something out. If one of these is
+/// sitting in the bundle directory at seal time then `rsync` is about to ship
+/// it to production whatever the manifest says, so the only safe answer is to
+/// stop and say so.
+///
+/// `_vtest_*` are fixtures written into www/ by dev/verify_ext.mjs, including a
+/// SYNTHETIC TRANSPARENCY LOG. A run that dies before its cleanup leaves them
+/// behind. They were caught once by a review, gitignored, and sealed again the
+/// next day -- because gitignore governs what git tracks, and this reads the
+/// filesystem. Refusing is what actually stops it.
+const NEVER_SHIP = [/^_vtest_/, /\.tmp$/, /(^|\/)\.DS_Store$/];
+
 const files  = await hashTree(ROOT);
+
+const strays = Object.keys(files).filter(f => NEVER_SHIP.some(re => re.test(f)));
+if (strays.length) {
+	console.error('REFUSING TO SEAL — these must not be served:');
+	for (const f of strays) console.error(`  ${ROOT}/${f}`);
+	console.error('\nDelete them and seal again. They are test fixtures, and one of them is a\n'
+		+ 'synthetic transparency log; sealing them would ship both to production.');
+	process.exit(1);
+}
+
 const bundle = bundleHash(files);
 const build  = await buildId(bundle);
 

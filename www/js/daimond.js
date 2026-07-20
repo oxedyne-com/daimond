@@ -2333,6 +2333,24 @@ import init, {
 			item('Export a backup',       doExport);
 			item('Import a backup…',      doImport);
 
+			// The operator console, for the few accounts that hold a role on the
+			// gateway. Added hidden and revealed by the answer, never drawn and
+			// then removed: an item that appears and vanishes reads as a bug, and
+			// an item everyone can see that most people cannot open is worse.
+			// It opens in its own tab because it is a different job -- the app is
+			// where you work, the console is where you run the service.
+			if (window.DaimondGateway && DaimondGateway.operatorRole) {
+				var op = item('Operator console \u2197', function () {
+					window.open('/console/', '_blank', 'noopener');
+				});
+				op.style.display = 'none';
+				DaimondGateway.operatorRole().then(function (role) {
+					if (!role) return;
+					op.style.display = '';
+					op.title = 'You are signed in as ' + role + '.';
+				}).catch(function () {});
+			}
+
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
