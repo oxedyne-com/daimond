@@ -411,9 +411,17 @@ import init, {
 	// sandbox is synced — a real folder is the user's own disk, device-specific.
 	var SYNC_FILE_MAX        = 128 * 1024;		// carry inline in the blob up to here.
 	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all inline file bytes.
-	var SYNC_CHUNK_FILE_MAX  = 8 * 1024 * 1024;	// a file this big goes to the chunk store, not inline.
-	var SYNC_CHUNK_TOTAL_MAX = 512 * 1024 * 1024;	// budget for all chunk-offloaded file bytes.
+	// The ceiling on one offloaded file. The pipeline streams now -- a slice is
+	// read, sealed, sent and dropped -- so this is no longer a memory limit but a
+	// manifest one: every chunk becomes an entry inside the sync blob, and the
+	// blob has its own ceiling. The chunk size grows with the file to keep that
+	// entry count in hand (chunks.js chunkSizeFor).
+	var SYNC_CHUNK_FILE_MAX  = 1024 * 1024 * 1024;
+	var SYNC_CHUNK_TOTAL_MAX = 4 * 1024 * 1024 * 1024;	// budget for all offloaded bytes.
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
+	// The cloud index has its own fork point, kept apart from the inline one so
+	// the two 3-way merges can never read each other's hashes.
+	var SYNC_CLOUDBASE_KEY   = 'daimond-cloud-base';
 	var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 
 	/// A cheap, non-cryptographic content fingerprint — enough to tell whether a
@@ -432,6 +440,10 @@ import init, {
 		String(text).split('\n').forEach(function (line) {
 			if (!line) return;
 			if (line.charAt(line.length - 1) === '/') { out.push({ name: line.slice(0, -1), dir: true, size: 0 }); return; }
+			// A file the listing marks as in cloud storage is not on this device,
+			// so there is nothing here to read or to re-offload.
+			var c = /^(.*?)\s{2}\((\d+) bytes, in cloud storage\)$/.exec(line);
+			if (c) { out.push({ name: c[1], dir: false, size: parseInt(c[2], 10), cloud: true }); return; }
 			var m = /^(.*?)\s{2}\((\d+) bytes\)$/.exec(line);
 			if (m) out.push({ name: m[1], dir: false, size: parseInt(m[2], 10) });
 			else out.push({ name: line, dir: false, size: 0 });
@@ -467,24 +479,45 @@ import init, {
 				if (e.name.charAt(0) === '.') continue;					// dotfiles/dirs
 				var full = dir ? (dir + '/' + e.name) : e.name;
 				if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name])) todo.push(full); continue; }
-				var isLarge = e.size > SYNC_FILE_MAX;
-				if (isLarge && e.size > SYNC_CHUNK_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
-				if (!isLarge && total + e.size > SYNC_FILES_TOTAL_MAX) { out.skipped++; continue; }
-				if (isLarge && largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.skipped++; continue; }
-				var content;
-				if (isLarge) {
-					// A large file is read straight from OPFS: the file_read tool truncates
-					// at its context budget, which would corrupt an offload.
-					try { content = await readOpfsText(full); }
-					catch (e2) { out.skipped++; continue; }
-				} else {
-					try { content = await app.run_tool('file_read', JSON.stringify({ path: full })); }
-					catch (e2) { out.skipped++; continue; }
+				// In cloud storage but not on this device: already safe, and there
+				// are no local bytes to collect.
+				if (e.cloud) continue;
+				if (e.size > SYNC_CHUNK_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
+
+				// Anything past the inline ceiling is offloaded, and is NOT read here:
+				// the offload streams it from disk a chunk at a time, so a file far
+				// larger than this tab could hold still travels. Reading it in order to
+				// decide was the old ceiling, and it was the wrong one.
+				if (e.size > SYNC_FILE_MAX) {
+					if (largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.skipped++; continue; }
+					out.large[full] = { size: e.size };
+					largeTotal += e.size;
+					continue;
 				}
-				if (typeof content !== 'string' || /^\s*Error\b/i.test(content)) { out.skipped++; continue; }
-				if (content.indexOf('\u0000') !== -1) { out.skipped++; continue; }	// binary: skip
-				if (isLarge) { out.large[full] = content; largeTotal += content.length; }
-				else         { out.files[full] = content; total += content.length; }
+
+				// Small enough to ride inside the blob -- if it is text. Read the bytes
+				// and find out, rather than going through file_read, which lossily
+				// converts anything that is not.
+				var f = null;
+				try { f = await DaimondCloud.fileAt(full); } catch (e2) { f = null; }
+				if (!f) { out.skipped++; continue; }
+				var raw;
+				try { raw = new Uint8Array(await f.arrayBuffer()); } catch (e2) { out.skipped++; continue; }
+				var content = null;
+				try { content = new TextDecoder('utf-8', { fatal: true }).decode(raw); }
+				catch (e2) { content = null; }						// not text at all.
+				if (content !== null && content.indexOf('\u0000') !== -1) content = null;	// binary tell.
+				if (content === null) {
+					// A small binary file cannot ride in the blob, so it is offloaded like
+					// a large one. Being small is no longer the same question as being
+					// carryable.
+					if (largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.skipped++; continue; }
+					out.large[full] = { size: e.size };
+					largeTotal += e.size;
+					continue;
+				}
+				if (total + content.length > SYNC_FILES_TOTAL_MAX) { out.skipped++; continue; }
+				out.files[full] = content; total += content.length;
 			}
 		}
 		return out;
@@ -512,6 +545,15 @@ import init, {
 		var base = {};
 		Object.keys(col.files).forEach(function (p) { base[p] = fileHash(col.files[p]); });
 		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(base)); } catch (e) { /* best effort */ }
+		// The cloud index forked at the same moment, and its residency list is
+		// only true once the push that carried it has landed.
+		commitCloudBaseline();
+		if (window.DaimondCloud) {
+			try { await DaimondCloud.refreshPaths(); } catch (e) { /* best effort */ }
+			// A push is the safe moment to free space: everything held is now
+			// recorded in cloud storage, so anything evicted can be fetched back.
+			try { await DaimondCloud.reclaim(false); } catch (e) { /* best effort */ }
+		}
 	}
 
 	/// Merge pulled files into the workspace by a 3-way compare against the
@@ -559,40 +601,62 @@ import init, {
 	/// tombstone maps so a deletion travels as surely as a creation, and the
 	/// workspace files. In-memory chats are flushed to storage first so a turn
 	/// just finished is included. Async because reading the workspace is.
-	/// Offload the large workspace files to the content-addressed chunk store and
-	/// return their manifests, so the sync blob carries small references rather
-	/// than bodies. Needs an unlocked identity (the chunks are sealed with its key)
-	/// and the chunk module; without either, large files are left out this round,
-	/// exactly as they were skipped before.
+	/// Offload the large workspace files this device is holding, record their
+	/// manifests in the cloud index, and return THE WHOLE INDEX — not merely
+	/// what was found locally.
+	///
+	/// Returning the whole index is the point. The gateway sweeps every chunk
+	/// the committed index does not name, so a device that reported only what it
+	/// happened to be holding would delete every file resident elsewhere. The
+	/// index is merged state; this adds to it and never narrows it.
+	///
+	/// Needs an unlocked identity (a chunk is sealed with its key) and the chunk
+	/// module. Without either, nothing new is offloaded this round, but the
+	/// index still travels intact.
 	async function collectChunked(large) {
-		var chunked = {};
-		if (!window.DaimondChunks || !large) return chunked;
-		if (!(window.DaimondIdentity && DaimondIdentity.isUnlocked && DaimondIdentity.isUnlocked())) return chunked;
-		for (var p in large) {
+		if (!window.DaimondCloud) return {};
+		if (!window.DaimondChunks || !DaimondCloud.available()) return DaimondCloud.index();
+		for (var p in (large || {})) {
 			if (!Object.prototype.hasOwnProperty.call(large, p)) continue;
-			try { chunked[p] = await DaimondChunks.offload(p, large[p], fileHash(large[p])); }
-			catch (e) { /* offload failed: leave this file out, retry next sync */ }
+			var f = null;
+			try { f = await DaimondCloud.fileAt(p); } catch (e) { f = null; }
+			if (!f) continue;						// vanished since the walk.
+			// Offload streams the file and asks the gateway which of its pieces
+			// are missing, so an unchanged file costs one `have` call and a read,
+			// and a file whose chunks were swept is refilled rather than left
+			// unfetchable with the index still promising it. The only thing worth
+			// skipping outright is a file identical in length and untouched since
+			// its own upload.
+			var known = DaimondCloud.manifest(p);
+			if (known && known.bytes === f.size && known.mtime === f.lastModified && known.key) continue;
+			try {
+				var mani = await DaimondChunks.offloadFile(p, f);
+				await DaimondCloud.put(p, mani, mani.key);
+			} catch (e) { /* offload failed: retry next sync, index unharmed */ }
 		}
-		return chunked;
+		return DaimondCloud.index();
 	}
 
-	/// Reconstruct large files from their manifests: for a path the local
-	/// workspace does not already hold, fetch its chunks, unwrap and write it. A
-	/// present file is left alone (a large body is never clobbered), and a file
-	/// whose chunks the gateway no longer holds is left absent.
+	/// Merge a pulled cloud index into the local one. Nothing is downloaded: a
+	/// manifest is a reference, and adopting it costs no bytes.
+	///
+	/// This used to reconstruct every large file the device lacked, which meant
+	/// the smallest device still had to hold the whole workspace — the ceiling
+	/// the chunk store exists to lift. A file now stays in cloud storage until
+	/// it is asked for, by the user or by the agent through `file_fetch`.
 	async function applyChunked(remoteChunked) {
-		if (!remoteChunked || typeof remoteChunked !== 'object' || !filesSyncable()) return;
-		if (!window.DaimondChunks) return;
-		var app; try { app = tools(); } catch (e) { return; }
-		for (var p in remoteChunked) {
-			if (!Object.prototype.hasOwnProperty.call(remoteChunked, p)) continue;
-			var exists = false;
-			try { await readOpfsText(p); exists = true; } catch (e) { /* absent */ }
-			if (exists) continue;
-			var content = await DaimondChunks.materialise(remoteChunked[p]);
-			if (content == null) continue;			// unavailable on this device: leave absent.
-			try { await writeOpfsText(p, content); } catch (e) { /* leave absent */ }
-		}
+		if (!window.DaimondCloud || !filesSyncable()) return;
+		DaimondCloud.merge(remoteChunked, readJson(SYNC_CLOUDBASE_KEY, {}));
+		await DaimondCloud.refreshPaths();
+	}
+
+	/// Set the cloud index's fork point to what it holds now, alongside the
+	/// inline files' baseline, so the next merge can tell which side moved.
+	function commitCloudBaseline() {
+		if (!window.DaimondCloud) return;
+		var ix = DaimondCloud.index(), base = {};
+		Object.keys(ix).forEach(function (p) { base[p] = ix[p].hash; });
+		try { localStorage.setItem(SYNC_CLOUDBASE_KEY, JSON.stringify(base)); } catch (e) { /* best effort */ }
 	}
 
 	async function collectSync() {
@@ -638,8 +702,14 @@ import init, {
 		try { await applyFiles(remote.files); } catch (e) { /* files stay as they are */ }
 		// Then the large files held in the chunk store, reconstructed on demand.
 		try { await applyChunked(remote.chunked); } catch (e) { /* large files stay as they are */ }
-		// If the Workspace panel is open, show what just landed.
-		try { if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('work')) Files.refresh && Files.refresh(); } catch (e) {}
+		// If the Workspace panel is open, show what just landed — including any
+		// file that arrived as a cloud reference rather than as bytes.
+		try {
+			if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('work')) {
+				if (Files.refresh) Files.refresh();
+				if (Files.refreshResidency) Files.refreshResidency();
+			}
+		} catch (e) {}
 	}
 
 	var seq = 1;
@@ -4635,6 +4705,7 @@ import init, {
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
 	var Files = (function () {
 		var pathEl, treeEl, viewEl, modeEl;
+		var cloudChipEl = null;		// the Cloud chip, repainted as residency moves.
 		var curDir = '';
 		var curFile = null, curContent = '';
 		var editing = false;   // a file is open in the editor with unsaved changes possible
@@ -4745,6 +4816,104 @@ import init, {
 		// swaps the root handle the file tools resolve against (in wasm).
 		// Diamond/crystal/`.daimond` storage pins OPFS and is never affected.
 
+		// ── Transfers ──────────────────────────────────────────────
+		// Moving files in or out never changes where the agent works. A directory
+		// handle can be read or written without being promoted to the workspace
+		// root, so importing and exporting are ordinary verbs rather than a mode
+		// switch — which also makes the consequence explicit: what you import
+		// starts syncing, and one day starts costing.
+
+		/// Copy a folder from this machine into the workspace.
+		async function importFolder() {
+			if (typeof window.showDirectoryPicker !== 'function') {
+				showModeMsg('Importing a folder needs a Chromium-based browser.', true); return;
+			}
+			var handle;
+			try { handle = await window.showDirectoryPicker({ mode: 'read' }); }
+			catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg('Could not open that folder.', true); return; }
+			if (!await confirmDialog(
+				'Copy "' + handle.name + '" into the workspace? Everything in it will then sync to your ' +
+				'other devices, and count towards your storage.', 'Import')) return;
+
+			var app; try { app = tools(); } catch (e) { return; }
+			var copied = 0, skipped = 0;
+			async function walk(dir, prefix) {
+				for await (var ent of dir.entries()) {
+					var nm = ent[0], h = ent[1];
+					if (nm.charAt(0) === '.') continue;
+					var rel = prefix ? prefix + '/' + nm : nm;
+					if (h.kind === 'directory') { await walk(h, rel); continue; }
+					var src;
+					try { src = await h.getFile(); }
+					catch (e2) { skipped++; continue; }
+					showModeMsg('Importing ' + rel + '\u2026');
+					// The bytes, whatever they are. A picture imports as a picture; only
+					// the sync layer decides later whether it rides inline or as chunks.
+					try { await DaimondCloud.writeBlob(joinPath(handle.name, rel), src); copied++; }
+					catch (e3) { skipped++; }
+				}
+			}
+			try { await walk(handle, ''); }
+			catch (e) { showModeMsg('Import stopped: ' + (e && e.message ? e.message : e), true); }
+			showModeMsg('Imported ' + copied + ' files into "' + handle.name + '"' +
+				(skipped ? ('; skipped ' + skipped + ' (binary or unreadable).') : '.'));
+			list(curDir);
+			try { DaimondSync.nudge(); } catch (e) { /* sync is not up */ }
+		}
+
+		/// Write the workspace out to a folder on this machine.
+		async function exportFolder() {
+			if (typeof window.showDirectoryPicker !== 'function') {
+				showModeMsg('Saving a copy needs a Chromium-based browser.', true); return;
+			}
+			var dest;
+			try { dest = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+			catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg('Could not open that folder.', true); return; }
+			var app; try { app = tools(); } catch (e) { return; }
+			var wrote = 0, away = 0;
+			async function out(dir, rel) {
+				var res;
+				try { res = await app.run_tool('file_list', JSON.stringify({ path: rel || '.' })); }
+				catch (e) { return; }
+				if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) return;
+				var entries = parseListing(res);
+				for (var i = 0; i < entries.length; i++) {
+					var e = entries[i];
+					if (e.name.charAt(0) === '.') continue;
+					if (!rel && e.name === 'diamonds' && e.dir) continue;
+					var full = rel ? rel + '/' + e.name : e.name;
+					if (e.dir) {
+						var sub = await dir.getDirectoryHandle(e.name, { create: true });
+						await out(sub, full);
+						continue;
+					}
+					// A file in cloud storage is not here to copy. Fetching every one
+					// could be gigabytes and would be charged, so say so instead.
+					if (e.cloud) { away++; continue; }
+					// Copy the file itself, NOT its text through file_read: that tool
+					// truncates at its context budget, so anything over ~60 KB would
+					// land silently shortened — the one thing a "save a copy" must
+					// never do — and a binary file would not survive at all.
+					var src;
+					try { src = await DaimondCloud.fileAt(full); }
+					catch (e2) { src = null; }
+					if (!src) continue;
+					showModeMsg('Saving ' + full + '…');
+					try {
+						var fh = await dir.getFileHandle(e.name, { create: true });
+						var w = await fh.createWritable();
+						await w.write(src);			// the Blob itself: bytes, streamed.
+						await w.close();
+						wrote++;
+					} catch (e3) { /* skip this one */ }
+				}
+			}
+			try { await out(dest, ''); }
+			catch (e) { showModeMsg('Save stopped: ' + (e && e.message ? e.message : e), true); }
+			showModeMsg('Saved ' + wrote + ' files to "' + dest.name + '"' +
+				(away ? ('; ' + away + ' are in cloud storage and were not fetched.') : '.'));
+		}
+
 		// Render the mode row: which files the agent is touching, and the ways to change that.
 		//
 		// The row states the root, so the controls that CHANGE the root belong in it. "Open a
@@ -4758,44 +4927,210 @@ import init, {
 		function renderMode(reconnect) {
 			if (!modeEl) return;
 			modeEl.innerHTML = '';
-			var chip = document.createElement('span');
-			chip.className = 'files-mode-chip';
+			var onMachine = !!folderHandle;
+			var canPick   = (typeof window.showDirectoryPicker === 'function');
 
-			if (folderHandle) {
-				chip.classList.add('folder');
-				chip.textContent = '📂 ' + folderHandle.name;
-				chip.title = 'The agent reads and writes this real folder.';
-				modeEl.appendChild(chip);
-				modeEl.appendChild(modeBtn('🗄 Sandbox', 'Switch the agent back to the OPFS sandbox',
-					switchToOpfs));
-				modeChanged();
-				return;
-			}
+			// Browser — the in-app sandbox. What syncs, and what cloud storage backs.
+			modeEl.appendChild(modeChip('🗄 Browser', !onMachine,
+				onMachine
+					? 'Switch the agent back to the private in-browser workspace.'
+					: 'The agent works in a private in-browser workspace. This is what syncs.',
+				onMachine ? switchToOpfs : showBrowserInfo));
 
-			chip.classList.add('opfs');
-			chip.textContent = '🗄 OPFS (sandbox)';
-			chip.title = 'The agent works in a private, in-browser sandbox.';
-			modeEl.appendChild(chip);
+			// Machine — a real folder on this disk. A genuine alternative root, and
+			// mutually exclusive with the sandbox: the agent has exactly one.
+			var machineChip = modeChip(
+				onMachine ? ('💻 ' + folderHandle.name) : '💻 Machine',
+				onMachine,
+				canPick
+					? (onMachine
+						? 'The agent reads and writes this real folder. It does not sync.'
+						: 'Let the agent work in a real folder on this machine. It will not sync.')
+					: 'Real folders need a Chromium-based browser.',
+				!canPick ? null
+					: (reconnect ? function () { reconnectFolder(reconnect); } : openFolder));
+			if (!canPick) machineChip.classList.add('ghost');
+			if (reconnect) machineChip.textContent = '💻 Reconnect ' + reconnect.name;
+			modeEl.appendChild(machineChip);
 
-			if (reconnect) {
-				modeEl.appendChild(modeBtn('Reconnect ' + reconnect.name,
-					'Re-grant access to the folder from your last session',
-					function () { reconnectFolder(reconnect); }, true));
-			}
+			// Cloud — not a place but a residency: where the browser workspace's
+			// bytes live. A real folder is the user's own disk and has none.
+			var cloudChip = modeChip('☁ Cloud', false,
+				onMachine
+					? 'Cloud storage carries your browser workspace, not a folder on this machine.'
+					: 'Where your workspace lives, so it can be larger than this device.',
+				onMachine ? null : showCloudView);
+			cloudChip.classList.add('ghost');
+			modeEl.appendChild(cloudChip);
+			// Held so the chip can be repainted when residency changes, without
+			// rebuilding the row and losing a pending reconnect offer.
+			cloudChipEl = onMachine ? null : cloudChip;
+			if (!onMachine) paintCloudChip(cloudChip);
 
-			// Real files, offered beside the sandbox they are the alternative to — but only where
-			// the browser can actually do it. Elsewhere, say why rather than show a control that
-			// cannot work.
-			if (typeof window.showDirectoryPicker === 'function') {
-				modeEl.appendChild(modeBtn('📂 Open a folder…',
-					'Let the agent read and write a real folder on this machine', openFolder));
-			} else {
-				var note = document.createElement('span');
-				note.className = 'files-mode-msg';
-				note.textContent = 'Real folders need a Chromium browser.';
-				modeEl.appendChild(note);
+			// The two transfers, which never change where the agent works: a
+			// handle can be read or written without becoming the root.
+			if (canPick && !onMachine) {
+				modeEl.appendChild(modeBtn('Import a folder…',
+					'Copy a folder from this machine into the workspace, so it syncs', importFolder));
+				modeEl.appendChild(modeBtn('Save a copy…',
+					'Write the workspace out to a folder on this machine', exportFolder));
 			}
 			modeChanged();
+		}
+
+		/// Repaint the Cloud chip's numbers in place. Residency changes under the
+		/// user's feet — a sync lands, a fetch completes, space is reclaimed — and
+		/// a chip that still reads the old total is simply wrong.
+		function refreshResidency() {
+			if (cloudChipEl) paintCloudChip(cloudChipEl);
+		}
+
+		/// Fill in the Cloud chip's real numbers, and lift it out of ghosting when
+		/// cloud storage actually holds something.
+		async function paintCloudChip(chip) {
+			if (!window.DaimondCloud) return;
+			chip.classList.add('ghost');
+			chip.classList.remove('cloud');
+			chip.textContent = '☁ Cloud';
+			var s;
+			try { s = await DaimondCloud.summary(); } catch (e) { return; }
+			if (!s.files) {
+				chip.title = DaimondCloud.available()
+					? 'Nothing in cloud storage yet. Your workspace is limited to what this browser grants.'
+					: 'Unlock to use cloud storage. Without it your workspace is limited to what this browser grants.';
+				return;
+			}
+			chip.classList.remove('ghost');
+			chip.classList.add('cloud');
+			chip.textContent = '☁ ' + fmtBytes(s.bytes);
+			chip.title = s.awayFiles
+				? (s.files + ' files in cloud storage; ' + s.awayFiles + ' of them not on this device.')
+				: (s.files + ' files in cloud storage, all of them also on this device.');
+		}
+
+		/// One chip in the mode row. A chip states where things are; clicking it
+		/// opens that location's controls rather than toggling a mode.
+		function modeChip(text, active, title, onClick) {
+			var c = document.createElement('span');
+			c.className = 'files-mode-chip' + (active ? ' active' : '');
+			c.textContent = text;
+			c.title = title;
+			if (onClick) {
+				c.classList.add('act');
+				c.setAttribute('role', 'button');
+				c.setAttribute('tabindex', '0');
+				c.addEventListener('click', onClick);
+				c.addEventListener('keydown', function (ev) {
+					if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onClick(); }
+				});
+			}
+			return c;
+		}
+
+		/// Cloud storage, in full: what is held, what it is costing, what is not on
+		/// this device, and the way to pay for more. Rendered on the stage rather
+		/// than in a popup, because it is something to read, not to dismiss.
+		///
+		/// This doubles as the billing disclosure. Accounts here are keys with no
+		/// address, so there is no way to send someone a statement — the only
+		/// honest place to say what is stored and what it costs is where they can
+		/// see it, in the app.
+		async function showCloudView() {
+			if (!window.DaimondCloud) return;
+			curFile = null;
+			docEmbed(false);
+			viewEl.style.display = '';
+			var s  = await DaimondCloud.summary();
+			var ix = DaimondCloud.index();
+			var away = DaimondCloud.awayPaths();
+			var paths = Object.keys(ix).sort(function (a, b) { return (ix[b].size | 0) - (ix[a].size | 0); });
+
+			viewEl.innerHTML =
+				'<div class="files-view-head">' +
+				'  <span class="files-view-name">☁ Cloud storage</span>' +
+				'  <span>' +
+				'    <button class="files-btn" data-act="cloud-reclaim" title="Free up space on this device now">Free up space</button>' +
+				'    <button class="files-btn" data-act="cloud-credits">Credits</button>' +
+				'    <button class="files-btn" data-act="back">← Back</button>' +
+				'  </span>' +
+				'</div>' +
+				'<div class="files-view-body cloud-view"></div>';
+
+			var body = viewEl.querySelector('.cloud-view');
+			var intro = document.createElement('p');
+			intro.className = 'cloud-intro';
+			intro.textContent = s.files
+				? ('Your workspace lives in cloud storage, and this device holds as much of it as it can. ' +
+					s.files + ' files, ' + fmtBytes(s.bytes) + ' in total; ' +
+					(s.awayFiles
+						? (s.awayFiles + ' of them (' + fmtBytes(s.awayBytes) + ') are not on this device.')
+						: 'all of them are also on this device.'))
+				: ('Nothing is in cloud storage yet. Without it your workspace is limited to what this ' +
+					'browser grants you' + (s.quota ? (' — ' + fmtBytes(s.quota) + ' here') : '') + '.');
+			body.appendChild(intro);
+
+			if (s.quota) {
+				var bar = document.createElement('div');
+				bar.className = 'cloud-bar';
+				var fill = document.createElement('span');
+				fill.style.width = Math.min(100, Math.round(s.ratio * 100)) + '%';
+				if (s.ratio >= 0.85) fill.className = 'hot';
+				bar.appendChild(fill);
+				body.appendChild(bar);
+				var cap = document.createElement('p');
+				cap.className = 'cloud-cap';
+				cap.textContent = 'This browser has granted ' + fmtBytes(s.quota) + ', of which ' +
+					fmtBytes(s.usage) + ' is used. Files are freed automatically as it fills, ' +
+					'unless you have pinned them.';
+				body.appendChild(cap);
+			}
+
+			paths.forEach(function (p) {
+				var isAway = Object.prototype.hasOwnProperty.call(away, p);
+				var r = document.createElement('div');
+				r.className = 'cloud-row' + (isAway ? ' away' : '');
+				var n = document.createElement('span');
+				n.className = 'cloud-path';
+				n.textContent = (isAway ? '☁ ' : '📄 ') + p;
+				var z = document.createElement('span');
+				z.className = 'cloud-size';
+				z.textContent = fmtBytes(ix[p].size | 0);
+				r.appendChild(n); r.appendChild(z);
+				if (DaimondCloud.isPinned(p)) {
+					var pin = document.createElement('span');
+					pin.className = 'cloud-pin'; pin.textContent = '📌'; pin.title = 'Pinned to this device';
+					r.appendChild(pin);
+				}
+				body.appendChild(r);
+			});
+
+			viewEl.querySelector('[data-act="back"]').addEventListener('click', function () {
+				closeView(); list(curDir);
+			});
+			viewEl.querySelector('[data-act="cloud-credits"]').addEventListener('click', function () {
+				try {
+					DaimondAdmin.credits('Cloud storage is paid for with credits, like everything else ' +
+						'that leaves your browser.');
+				} catch (e) { /* the panel is not up */ }
+			});
+			viewEl.querySelector('[data-act="cloud-reclaim"]').addEventListener('click', async function () {
+				var r = await DaimondCloud.reclaim(true);
+				showModeMsg(r.evicted.length
+					? ('Freed ' + fmtBytes(r.freed) + ' from ' + r.evicted.length + ' files; they stay in cloud storage.')
+					: 'Nothing to free — everything here is either pinned or not in cloud storage.');
+				showCloudView();
+			});
+		}
+
+		/// What the browser has granted this workspace, which is the ceiling when
+		/// there is no cloud storage.
+		async function showBrowserInfo() {
+			if (!window.DaimondCloud) return;
+			var p = await DaimondCloud.pressure();
+			showModeMsg(p.quota
+				? ('This browser has granted ' + fmtBytes(p.quota) + ', of which ' +
+					fmtBytes(p.usage) + ' is used.')
+				: 'This browser does not report how much storage it has granted.');
 		}
 
 		/// The status rows report which files the agent is touching, so they are stale the moment
@@ -4837,7 +5172,21 @@ import init, {
 
 		// "Open folder": pick a real directory, grant read/write, and make
 		// it the workspace root.  Degrades cleanly off Chromium.
+		/// Changing the root swaps the workspace out from under whatever is
+		/// running: the agent resolves every path against one root, so a switch
+		/// mid-turn leaves it reading and writing somewhere else entirely. It
+		/// used to happen silently.
+		function rootSwitchBlocked() {
+			var busy = false;
+			try { busy = !!(window.DaimondCore && DaimondCore.busy()); } catch (e) { busy = false; }
+			if (busy) {
+				showModeMsg('The agent is working. Wait for it to finish before changing where it works.', true);
+			}
+			return busy;
+		}
+
 		async function openFolder() {
+			if (rootSwitchBlocked()) return;
 			if (typeof window.showDirectoryPicker !== 'function') {
 				showModeMsg('Real-folder mode needs a Chromium-based browser. Staying on OPFS.', true);
 				return;
@@ -4874,6 +5223,7 @@ import init, {
 
 		// Switch the agent back to the OPFS sandbox and forget the folder.
 		async function switchToOpfs() {
+			if (rootSwitchBlocked()) return;
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
 			folderHandle = null;
 			try { await FsaDB.clear(); } catch (e) { /* ignore */ }
@@ -4943,8 +5293,9 @@ import init, {
 		}
 
 		// Parse the plain-text file_list output into entries. Lines are
-		// "name/" for a directory and "name  (N bytes)" for a file; an
-		// empty directory yields "<path> is empty.".
+		// "name/" for a directory, "name  (N bytes)" for a file, and
+		// "name  (N bytes, in cloud storage)" for one this device is not
+		// holding; an empty directory yields "<path> is empty.".
 		function parseListing(text) {
 			var out = [];
 			if (/ is empty\.$/.test(text.trim())) return out;
@@ -4953,6 +5304,8 @@ import init, {
 				if (line.charAt(line.length - 1) === '/') {
 					out.push({ name: line.slice(0, -1), dir: true, size: 0 });
 				} else {
+					var c = /^(.*?)\s{2}\((\d+) bytes, in cloud storage\)$/.exec(line);
+					if (c) { out.push({ name: c[1], dir: false, size: parseInt(c[2], 10), cloud: true }); return; }
 					var m = /^(.*?)\s{2}\((\d+) bytes\)$/.exec(line);
 					if (m) out.push({ name: m[1], dir: false, size: parseInt(m[2], 10) });
 					else out.push({ name: line, dir: false, size: 0 });
@@ -4979,6 +5332,7 @@ import init, {
 				return;
 			}
 			renderTree(parseListing(res));
+			refreshResidency();
 		}
 
 		function renderTree(entries) {
@@ -4996,16 +5350,47 @@ import init, {
 			if (entries.length === 0) { treeEl.innerHTML = '<div class="files-empty">empty</div>'; return; }
 			entries.forEach(function (e) {
 				var row = document.createElement('div');
-				row.className = 'files-row' + (e.dir ? ' dir' : '');
+				var full = joinPath(curDir, e.name);
+				// Residency, not location: a cloud row is the user's file, safe,
+				// simply not on this device at the moment.
+				var backed = !e.dir && !e.cloud && !!(window.DaimondCloud && DaimondCloud.manifest(full));
+				row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
 				var name = document.createElement('span');
 				name.className = 'files-name';
-				name.textContent = (e.dir ? '📁 ' : '📄 ') + e.name;   // escaped
+				name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;   // escaped
 				row.appendChild(name);
 				if (!e.dir) {
 					var size = document.createElement('span');
 					size.className = 'files-size';
 					size.textContent = fmtBytes(e.size || 0);
 					row.appendChild(size);
+				}
+				if (e.cloud) {
+					var get = document.createElement('button');
+					get.className = 'files-res files-get'; get.textContent = '⤓';
+					get.title = 'Bring this file onto this device (' + fmtBytes(e.size || 0) + ')';
+					get.addEventListener('click', function (ev) { ev.stopPropagation(); fetchEntry(full, e.size || 0); });
+					row.appendChild(get);
+				} else if (backed) {
+					var pinned = DaimondCloud.isPinned(full);
+					var pinB = document.createElement('button');
+					pinB.className = 'files-res files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
+					pinB.title = pinned
+						? 'Pinned: always kept on this device. Click to release.'
+						: 'Pin: never free this one to make room.';
+					pinB.addEventListener('click', function (ev) {
+						ev.stopPropagation();
+						DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
+						list(curDir);
+					});
+					row.appendChild(pinB);
+					if (!pinned) {
+						var freeB = document.createElement('button');
+						freeB.className = 'files-res files-free'; freeB.textContent = '⤒';
+						freeB.title = 'Free up space: keep it in cloud storage, drop the copy here';
+						freeB.addEventListener('click', function (ev) { ev.stopPropagation(); freeEntry(full); });
+						row.appendChild(freeB);
+					}
 				}
 				var ren = document.createElement('button');
 				ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = 'Rename or move';
@@ -5034,13 +5419,93 @@ import init, {
 				row.appendChild(del);
 				row.addEventListener('click', function () {
 					var p = joinPath(curDir, e.name);
-					if (e.dir) list(p); else openFile(p);
+					if (e.dir) list(p);
+					else if (e.cloud) fetchEntry(p, e.size || 0, true);
+					else openFile(p);
 				});
 				treeEl.appendChild(row);
 			});
 		}
 
+		/// Bring a cloud-only file down. A fetch moves real bytes and, once
+		/// storage is priced, spends the user's credits, so a large one is
+		/// confirmed rather than assumed — the same reason the agent must ask
+		/// for it by name instead of having it appear under a read.
+		var FETCH_CONFIRM_OVER = 8 * 1024 * 1024;
+		async function fetchEntry(path, size, thenOpen) {
+			if (!window.DaimondCloud) return;
+			if (size > FETCH_CONFIRM_OVER) {
+				var ok = await confirmDialog(
+					'Bring "' + path + '" onto this device? That downloads ' + fmtBytes(size) + '.',
+					'Fetch');
+				if (!ok) return;
+			}
+			fileMsg('Fetching ' + path + '…');
+			var res = await DaimondCloud.fetch(path);
+			if (res.indexOf('OK') !== 0) { fileMsg(res, true); return; }
+			await list(curDir);
+			if (thenOpen) openFile(path);
+		}
+
+		/// Drop this device's copy, keeping the file in cloud storage.
+		async function freeEntry(path) {
+			if (!window.DaimondCloud) return;
+			var res = await DaimondCloud.evict(path);
+			fileMsg(res, res.indexOf('OK') !== 0);
+			list(curDir);
+		}
+
+		/// Show a binary file as what it is: something to save, not something to
+		/// read. The workspace carries these now, so the panel has to meet one
+		/// without spilling a screen of replacement characters.
+		async function openBinaryFile(path, file) {
+			curFile = path; curContent = null; editing = false;
+			docEmbed(false);
+			viewEl.style.display = '';
+			viewEl.innerHTML =
+				'<div class="files-view-head">' +
+				'  <span class="files-view-name"></span>' +
+				'  <span>' +
+				'    <button class="files-btn" data-act="download" title="Save to this machine">⤓ Download</button>' +
+				'    <button class="files-btn" data-act="back">← Back</button>' +
+				'  </span>' +
+				'</div>' +
+				'<div class="files-view-body"><p class="cloud-intro"></p></div>';
+			viewEl.querySelector('.files-view-name').textContent = path;
+			viewEl.querySelector('.cloud-intro').textContent =
+				'This is a binary file of ' + fmtBytes(file.size) + '. It is stored and synced ' +
+				'like everything else here, but there is nothing to show — download it to open ' +
+				'it in something that understands it.';
+			var nameEl = document.getElementById('doc-name');
+			if (nameEl) nameEl.textContent = path;
+			DaimondPanels.markUsed('doc');
+			DaimondPanels.show('doc');
+			DaimondPanels.reflow();
+			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
+			viewEl.querySelector('[data-act="download"]').addEventListener('click', async function () {
+				var a = document.createElement('a');
+				a.href = URL.createObjectURL(file);
+				a.download = path.split('/').pop() || 'file';
+				a.click(); URL.revokeObjectURL(a.href);
+			});
+		}
+
 		async function openFile(path) {
+			// Ask the file itself before asking the tool: file_read is for text and
+			// refuses anything else, which is right for the agent and useless as a
+			// way to find out.
+			var f = null;
+			try { f = await DaimondCloud.fileAt(path); } catch (e) { f = null; }
+			if (f) {
+				var head = new Uint8Array(await f.slice(0, Math.min(f.size, 4096)).arrayBuffer());
+				var binary = false;
+				for (var bi = 0; bi < head.length; bi++) { if (head[bi] === 0) { binary = true; break; } }
+				if (!binary) {
+					try { new TextDecoder('utf-8', { fatal: true }).decode(head); }
+					catch (e) { binary = (f.size <= 4096); }	// a cut multi-byte char is not proof.
+				}
+				if (binary) { await openBinaryFile(path, f); return; }
+			}
 			var content = await tools().run_tool('file_read', JSON.stringify({ path: path }));
 			curFile = path; curContent = content; editing = false;
 			docEmbed(false);
@@ -5367,6 +5832,8 @@ import init, {
 			init:          bind,
 			onOpen:        onOpen,
 			refresh:       refresh,
+			// Repaint what the Cloud chip claims, after a sync has moved residency.
+			refreshResidency: refreshResidency,
 			tryReconnect:  tryReconnect,
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
@@ -7744,23 +8211,6 @@ import init, {
 		await w.close();
 	}
 
-	/// Read a file's full text straight from the OPFS sandbox, bypassing the
-	/// file_read tool, which truncates at its context budget. Sync needs every
-	/// byte of a large file, so it must not go through that cap.
-	async function readOpfsText(path) {
-		var parts = String(path).split('/').filter(function (x) { return x && x !== '.' && x !== '..'; });
-		if (parts.length === 0) throw new Error('Empty path.');
-		var dir = await navigator.storage.getDirectory();
-		for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
-		var fh = await dir.getFileHandle(parts[parts.length - 1]);
-		return await (await fh.getFile()).text();
-	}
-
-	/// Write text to a path in the OPFS sandbox, the counterpart of readOpfsText
-	/// for reconstructing a large file pulled from the chunk store.
-	async function writeOpfsText(path, content) {
-		await writeOpfsBytes(path, new TextEncoder().encode(content));
-	}
 
 	/// Base64 of a byte array, chunked so a large file does not overflow the
 	/// argument stack of `String.fromCharCode`.

@@ -24,8 +24,16 @@
 	font-size: var(--fs-2xs); font-weight: 600;
 	border: 1px solid var(--border-2);
 }
-.files-mode-chip.opfs   { color: var(--text-secondary); background: var(--bg-tertiary); }
-.files-mode-chip.folder { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+/* A chip states where things are. Two of them name the workspace root and are
+   mutually exclusive; the third names a residency and is additive -- so the
+   lit one is not "the selected tab", it is simply what is true. */
+.files-mode-chip        { color: var(--text-secondary); background: var(--bg-tertiary); }
+.files-mode-chip.active { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+.files-mode-chip.cloud  { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+.files-mode-chip.ghost  { opacity: 0.55; }
+.files-mode-chip.act    { cursor: pointer; }
+.files-mode-chip.act:hover  { background: var(--bg-hover); border-color: var(--accent); }
+.files-mode-chip.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .files-mode-btn {
 	padding: 2px 8px; border-radius: 6px;
 	font-size: var(--fs-2xs); cursor: pointer;
@@ -48,6 +56,21 @@
 	border-bottom: 1px solid var(--border); word-break: break-all;
 	flex: none;
 }
+
+/* Residency controls on a row: fetch, pin, free up space. Like .files-del they
+   stay out of the way until the row is under the pointer -- except a pin, which
+   is a standing state and must be visible without hunting for it. */
+.files-res {
+	background: transparent; border: none; color: var(--text-secondary);
+	cursor: pointer; font-size: var(--fs-sm); padding: 0 3px; visibility: hidden;
+}
+.files-row:hover .files-res { visibility: visible; }
+.files-res:hover { color: var(--accent); }
+.files-res.files-pin.on { visibility: visible; opacity: 0.9; }
+/* A cloud row is the user's file, safe, and simply not here at the moment --
+   so it is quieter than a held file, never struck through or greyed to junk. */
+.files-row.cloud .files-name { color: var(--text-secondary); }
+.files-row.cloud .files-size { font-style: italic; }
 
 .files-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
 .files-empty { padding: 16px; text-align: center; color: var(--text-secondary); }
@@ -128,3 +151,31 @@
 	text-align: right; color: var(--text-secondary); opacity: 0.55;
 	user-select: none; -webkit-user-select: none;
 }
+
+/* ── Cloud storage view (the stage, not a popup) ──────────────
+   What is stored, what it is costing, and what is not on this device. With
+   accounts that are keys and have no address, there is nowhere to send a
+   statement, so this is the only honest place to say it. */
+.cloud-view { white-space: normal; font-family: inherit; }
+.cloud-intro { margin: 0 0 12px; color: var(--text-primary); line-height: 1.5; }
+.cloud-cap   { margin: 6px 0 16px; color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.5; }
+
+.cloud-bar {
+	height: 8px; border-radius: 999px; overflow: hidden;
+	background: var(--bg-tertiary); border: 1px solid var(--border-2);
+}
+.cloud-bar span { display: block; height: 100%; background: var(--accent); }
+.cloud-bar span.hot { background: var(--danger, #e5484d); }
+
+.cloud-row {
+	display: flex; align-items: center; gap: 8px;
+	padding: 5px 0; border-bottom: 1px solid var(--border);
+	font-size: var(--fs-sm);
+}
+.cloud-path {
+	flex: 1; font-family: var(--font-mono); font-size: var(--fs-xs);
+	color: var(--text-primary); word-break: break-all;
+}
+.cloud-row.away .cloud-path { color: var(--text-secondary); }
+.cloud-size { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-2xs); }
+.cloud-pin  { font-size: var(--fs-2xs); }

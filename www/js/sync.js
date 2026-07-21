@@ -205,8 +205,17 @@
 					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(); }
 					catch (e) { /* baseline advances next time */ }
 					// Declare the live chunk set that this state references and let
-					// the gateway sweep everything it no longer does.
-					try { if (window.DaimondChunks && state.chunked) await DaimondChunks.commit(state.chunked); }
+					// the gateway sweep everything it no longer does. The version
+					// is named because the gateway refuses to sweep on behalf of a
+					// device working from a stale view of the world — an index
+					// built without knowing about someone else's file would
+					// otherwise delete it.
+					try {
+						if (window.DaimondChunks && state.chunked) {
+							var tiers = window.DaimondCloud ? DaimondCloud.tierPlan(DaimondCloud.allowance()) : null;
+							await DaimondChunks.commit(state.chunked, serverVersion, tiers);
+						}
+					}
 					catch (e) { /* the next successful push commits and sweeps */ }
 					setStatus('synced', 'Synced', 2200);
 					log('pushed version', serverVersion);

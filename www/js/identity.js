@@ -478,6 +478,34 @@
 		return fromUtf8(pt);
 	}
 
+	/// Encrypt raw bytes, returning raw bytes `IV(12) || ciphertext(+tag)`.
+	///
+	/// The string-shaped `wrap`/`unwrap` above go through UTF-8 and base64, which
+	/// is right for a small secret and wrong for a large file: base64 inflates by
+	/// a third, and a file that is not text does not survive the round trip at
+	/// all. This is the seal a byte pipeline uses, one piece at a time, so
+	/// nothing ever holds a whole file.
+	async function wrapBytes(plainBytes) {
+		requireUnlocked();
+		var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+		var ct = new Uint8Array(await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv: iv }, _wrapKey, plainBytes));
+		var out = new Uint8Array(iv.length + ct.length);
+		out.set(iv, 0);
+		out.set(ct, iv.length);
+		return out;
+	}
+
+	/// Decrypt what wrapBytes produced. Throws on a wrong key or tampered
+	/// ciphertext, as the GCM tag requires.
+	async function unwrapBytes(bytes) {
+		requireUnlocked();
+		var buf = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		var pt = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES) }, _wrapKey, buf.slice(IV_BYTES));
+		return new Uint8Array(pt);
+	}
+
 	// ── Moving an identity to another device ───────────────────
 
 	/// Export the identity as a portable bundle, for carrying it to a second
@@ -545,6 +573,9 @@
 		publicKeyB64url: publicKeyB64url,
 		wrap:         wrap,
 		unwrap:       unwrap,
+		// The byte-shaped seal, for the file pipeline.
+		wrapBytes:    wrapBytes,
+		unwrapBytes:  unwrapBytes,
 		reset:        reset,
 		exportBundle: exportBundle,
 		importBundle: importBundle,

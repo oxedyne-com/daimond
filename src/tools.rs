@@ -52,6 +52,25 @@ fn content_hash(bytes: &[u8]) -> u64 {
     h
 }
 
+/// Whether these bytes are binary: not valid UTF-8, or carrying a NUL byte.
+///
+/// The NUL test earns its place because some binary formats are accidentally valid UTF-8, and a
+/// NUL is the conventional tell that a file is not text.
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
+}
+
+/// Refuse a binary file, naming it, its size, and what to do instead.
+///
+/// Lossy-decoding a PNG or an MP3 yields a wall of replacement characters, which burns the model's
+/// context and reads like a corrupted text file rather than a binary one.
+fn binary_refusal(path: &str, len: usize) -> Error<ErrTag> {
+    err!(
+        "file_read: '{}' is a binary file, {} bytes. The file tools handle text; open or \
+        download a binary file from the workspace panel instead.", path, len;
+        Invalid, Input, Binary)
+}
+
 
 /// Which filesystem root the wasm file tools resolve a path against.
 ///
@@ -130,7 +149,7 @@ fn under(path: &str, prefix: &str) -> bool {
 /// Separators are unified, `.` and empty segments dropped, and `..` resolved lexically -- the last
 /// of these matters most: without it, `.daimond/skills/mine/../theirs/SKILL.md` sits under the
 /// carve-out for `.daimond/skills/mine` and reads another skill's files.
-fn normalise(path: &str) -> String {
+pub(crate) fn normalise(path: &str) -> String {
     let repl = path.replace('\\', "/");
     let mut parts: Vec<&str> = Vec::new();
     for seg in repl.split('/') {
@@ -249,6 +268,8 @@ pub enum Tool {
     FileDelete,
     FileMove,
     DirCreate,
+    /// Bring one file down from cloud storage onto this device.
+    FileFetch,
     Shell,
     /// Dispatch a worker agent to carry out a bounded task in its own
     /// context.  Only the conductor (a Diamond's crystal agent) is given this.
@@ -302,6 +323,7 @@ impl Tool {
             Tool::FileDelete,
             Tool::FileMove,
             Tool::DirCreate,
+            Tool::FileFetch,
         ];
         t.extend(Tool::web());
         t
@@ -336,7 +358,10 @@ impl Tool {
     /// * `args_json` - Its arguments, as the model sent them.
     fn write_targets(tool: &Tool, args_json: &str) -> Outcome<Vec<String>> {
         Ok(match tool {
-            Tool::FileWrite | Tool::FileEdit | Tool::FileDelete | Tool::DirCreate =>
+            // `file_fetch` counts as a write: it puts bytes at a path, and a bounded turn that
+            // could materialise a file inside Daimond's own directory has written one.
+            Tool::FileWrite | Tool::FileEdit | Tool::FileDelete | Tool::DirCreate
+            | Tool::FileFetch =>
                 vec![res!(Self::arg(args_json, "path"))],
             Tool::FileMove =>
                 vec![res!(Self::arg(args_json, "path")), res!(Self::arg(args_json, "to"))],
@@ -406,6 +431,7 @@ impl Tool {
             Tool::FileDelete  => "file_delete",
             Tool::FileMove    => "file_move",
             Tool::DirCreate   => "dir_create",
+            Tool::FileFetch   => "file_fetch",
             Tool::Shell       => "shell",
             Tool::SpawnAgent  => "spawn_agent",
             Tool::WebOpen     => "web_open",
@@ -430,6 +456,7 @@ impl Tool {
             "file_delete"  => Some(Tool::FileDelete),
             "file_move"    => Some(Tool::FileMove),
             "dir_create"   => Some(Tool::DirCreate),
+            "file_fetch"   => Some(Tool::FileFetch),
             "shell"        => Some(Tool::Shell),
             "spawn_agent"  => Some(Tool::SpawnAgent),
             "web_open"     => Some(Tool::WebOpen),
@@ -455,6 +482,7 @@ impl Tool {
             Tool::FileDelete  => "Delete a file, or a directory when recursive is true, from the workspace.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
+            Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
             Tool::WebOpen     => "Show a web page to the user in Daimond's Web panel. This makes the page VISIBLE; it does not mean you can operate it. Most sites refuse to be shown inside another page at all, and a page that is shown can still be beyond your reach unless a browser driver is attached. To READ a page's text, use web_fetch, which always works. To find out whether you can act on this one, call web_snapshot: if it refuses, believe the refusal and say so rather than guessing at clicks.",
@@ -483,6 +511,7 @@ impl Tool {
             Tool::FileDelete  => "Delete a file or a folder.",
             Tool::FileMove    => "Move or rename a file.",
             Tool::DirCreate   => "Make a folder.",
+            Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
             Tool::WebOpen     => "Show you a web page beside the chat.",
@@ -507,6 +536,7 @@ impl Tool {
             Tool::FileDelete => r#"{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"string","description":"Pass true to delete a directory and everything inside it"}},"required":["path"]}"#,
             Tool::FileMove => r#"{"type":"object","properties":{"path":{"type":"string","description":"Existing workspace-relative path"},"to":{"type":"string","description":"New workspace-relative path; must not already exist"}},"required":["path","to"]}"#,
             Tool::DirCreate => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory to create"}},"required":["path"]}"#,
+            Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
@@ -548,6 +578,7 @@ impl Tool {
             Tool::FileDelete => Self::file_delete(args_json, ctx),
             Tool::FileMove   => Self::file_move(args_json, ctx),
             Tool::DirCreate  => Self::dir_create(args_json, ctx),
+            Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Self::shell(args_json, ctx).await,
             Tool::SpawnAgent => Self::spawn_agent(args_json),
             Tool::WebOpen
@@ -566,6 +597,17 @@ impl Tool {
     #[cfg(not(target_arch = "wasm32"))]
     fn web_unavailable() -> Outcome<String> {
         Err(err!("The web tools need a browser; this is the native build."; Unimplemented))
+    }
+
+    /// Answer `file_fetch` on the native build, where every workspace file is already on the
+    /// filesystem and there is no cloud storage to bring one down from.
+    ///
+    /// This answers rather than erroring: nothing has gone wrong, there is simply nothing to
+    /// fetch, and the file the model wanted is there to be read.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cloud_unavailable() -> Outcome<String> {
+        Ok("Cloud storage is not available on this build; every workspace file is already on \
+            this device. Read it directly with file_read.".to_string())
     }
 
     /// Move or rename a path (native).
@@ -657,7 +699,24 @@ impl Tool {
             }
             Tool::FileRead => {
                 let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
-                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
+                let read = crate::wasm::opfs::read_file(ctx.root, &path).await;
+                // A file the device does not hold is not a missing file: the workspace is one set
+                // of files, and this one is in cloud storage. Saying so plainly, with its size, is
+                // what lets the agent decide whether it is worth the transfer -- a generic "cannot
+                // read" would send it hunting for a file that is exactly where it should be.
+                if read.is_err() {
+                    if let Some(size) = crate::wasm::cloud::size_of(&path) {
+                        return Err(err!(
+                            "file_read: '{}' is in cloud storage, not on this device. It is {} \
+                            bytes. Use file_fetch to bring it here first.", path, size;
+                            IO, File, Read, Missing));
+                    }
+                }
+                let bytes = res!(read);
+                // Checked after the cloud case, which has no bytes to test.
+                if is_binary(&bytes) {
+                    return Err(binary_refusal(&path, bytes.len()));
+                }
                 // Remember what was seen here, so a later write can tell if the
                 // file moved underneath this agent.
                 {
@@ -699,16 +758,38 @@ impl Tool {
             Tool::FileList => {
                 let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
                 let path = Self::scoped(ctx, &raw);
-                let mut entries = res!(crate::wasm::opfs::list_dir(ctx.root, &path).await);
+                // What is in cloud storage is part of the workspace, so it belongs in the
+                // listing -- a directory that holds nothing but cloud-only files is not empty,
+                // and a directory that exists only in cloud storage still lists.
+                let cloud = crate::wasm::cloud::children_of(&path);
+                let listed = crate::wasm::opfs::list_dir(ctx.root, &path).await;
+                let on_disk = match listed {
+                    Ok(e)                          => e,
+                    Err(_) if !cloud.is_empty()    => Vec::new(),
+                    Err(e)                         => return Err(e),
+                };
+                // `(name, is_dir, size, in_cloud)` -- the flag is what tells the agent which
+                // entries it must fetch before it can read them.
+                let mut entries: Vec<(String, bool, u64, bool)> = on_disk.into_iter()
+                    .map(|(n, d, s)| (n, d, s, false))
+                    .collect();
+                for (name, is_dir, size) in cloud {
+                    if entries.iter().any(|(n, _, _, _)| *n == name) {
+                        continue; // already here on disk; the resident copy is the one to report
+                    }
+                    entries.push((name, is_dir, size, !is_dir));
+                }
                 // Dirs first, then by name — matching the native ordering.
                 entries.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
                 if entries.is_empty() {
                     return Ok(fmt!("{} is empty.", path));
                 }
                 let mut out = String::new();
-                for (name, is_dir, size) in entries {
+                for (name, is_dir, size, in_cloud) in entries {
                     if is_dir {
                         out.push_str(&fmt!("{}/\n", name));
+                    } else if in_cloud {
+                        out.push_str(&fmt!("{}  ({} bytes, in cloud storage)\n", name, size));
                     } else {
                         out.push_str(&fmt!("{}  ({} bytes)\n", name, size));
                     }
@@ -782,8 +863,32 @@ impl Tool {
                     extract_json_string(args_json, "recursive").as_deref(),
                     Some("true"),
                 );
-                res!(crate::wasm::opfs::delete_entry(ctx.root, &path, recursive).await);
-                Ok(fmt!("Deleted {}.", path))
+                // Absence from this device means "not here"; removal from the cloud index means
+                // "gone". Those are different things, and only an explicit delete does the
+                // second -- which is exactly why it must do it. A file the user can see must be
+                // deletable whether or not it happens to be resident.
+                if let Err(e) = crate::wasm::opfs::delete_entry(ctx.root, &path, recursive).await {
+                    if crate::wasm::cloud::size_of(&path).is_some() {
+                        res!(crate::wasm::cloud::forget(&path).await);
+                        return Ok(fmt!("Deleted {} from cloud storage.", path));
+                    }
+                    return Err(e);
+                }
+                let mut msg = fmt!("Deleted {}.", path);
+                // The index lists only what is NOT on this device, so a resident file's cloud
+                // copy is invisible to it; forget unconditionally, or deleting a file that was
+                // synced would leave the copy behind to reappear.
+                match crate::wasm::cloud::forget(&path).await {
+                    Ok(s) if s.starts_with("Error") =>
+                        msg.push_str(&fmt!(" Its cloud copy was not removed: {}", s)),
+                    Ok(_)  => {},
+                    Err(e) => msg.push_str(&fmt!(" Its cloud copy was not removed: {}", e)),
+                }
+                Ok(msg)
+            }
+            Tool::FileFetch => {
+                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                crate::wasm::cloud::fetch(&path).await
             }
             Tool::FileMove => {
                 let from = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
@@ -897,6 +1002,9 @@ impl Tool {
         let abs = res!(ctx.workspace.resolve(&path));
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "file_read: cannot read '{}'.", path; IO, File, Read)));
+        if is_binary(&data) {
+            return Err(binary_refusal(&path, data.len()));
+        }
         let mut s = String::from_utf8_lossy(&data).to_string();
         if s.len() > MAX_OUTPUT {
             s.truncate(MAX_OUTPUT);
@@ -1188,6 +1296,49 @@ mod tests {
         assert_eq!(r2, "hello Daimond");
     }
 
+    /// A file carrying a NUL byte is refused as binary, and the refusal names the path, says it is
+    /// binary, gives the size, and points at the workspace panel.
+    #[test]
+    fn test_read_refuses_nul_bytes() {
+        let c = ctx();
+        let abs = c.workspace.resolve("logo.png").expect("resolve");
+        // A PNG signature: valid-looking header, NUL byte, high bytes.
+        let bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+        std::fs::write(&abs, bytes).expect("write bytes");
+        let e = Tool::FileRead.execute_sync(r#"{"path":"logo.png"}"#, &c)
+            .expect_err("a binary file must be refused");
+        let msg = fmt!("{}", e);
+        assert!(msg.contains("logo.png"), "refusal must name the path: {}", msg);
+        assert!(msg.contains("binary file"), "refusal must say it is binary: {}", msg);
+        assert!(msg.contains(&fmt!("{} bytes", bytes.len())),
+            "refusal must give the size: {}", msg);
+        assert!(msg.contains("workspace panel"),
+            "refusal must say what to do instead: {}", msg);
+    }
+
+    /// Bytes that are not valid UTF-8 are refused even without a NUL, rather than lossily decoded
+    /// into a wall of replacement characters.
+    #[test]
+    fn test_read_refuses_invalid_utf8() {
+        let c = ctx();
+        let abs = c.workspace.resolve("blob.bin").expect("resolve");
+        std::fs::write(&abs, [0x41u8, 0xff, 0xfe, 0x42]).expect("write bytes");
+        let e = Tool::FileRead.execute_sync(r#"{"path":"blob.bin"}"#, &c)
+            .expect_err("invalid UTF-8 must be refused");
+        assert!(fmt!("{}", e).contains("binary file"));
+    }
+
+    /// Text with high code points and no NUL still reads, so the binary test does not catch
+    /// ordinary UTF-8 prose.
+    #[test]
+    fn test_read_accepts_non_ascii_text() {
+        let c = ctx();
+        let abs = c.workspace.resolve("note.md").expect("resolve");
+        std::fs::write(&abs, "colour — naïve — ✓\n".as_bytes()).expect("write text");
+        let r = Tool::FileRead.execute_sync(r#"{"path":"note.md"}"#, &c).expect("read");
+        assert_eq!(r, "colour — naïve — ✓\n");
+    }
+
     #[test]
     fn test_edit_ambiguous_rejected() {
         let c = ctx();
@@ -1289,6 +1440,68 @@ mod tests {
         let out2 = bare.dispatch("web_open", r#"{"url":"https://example.com"}"#).await;
         assert!(out2.contains("not available here"), "{}", out2);
     }
+    // ── Cloud storage: the workspace files this device does not hold ─
+    //
+    // The OPFS side of this and the `window.__daimondCloud*` globals only exist in a browser, so
+    // what a cloud-only read, list, fetch or delete actually DOES is not covered here -- only the
+    // parts that are decided before any of that: the enum, the declaration, and the bound.
+
+    #[test]
+    fn test_file_fetch_round_trip() {
+        assert_eq!("file_fetch", Tool::FileFetch.name());
+        assert_eq!(Some(Tool::FileFetch), Tool::from_name("file_fetch"));
+        // The browser holds part of the workspace and the cloud holds the rest, so the browser
+        // belt carries the tool that moves between them; the native build has one filesystem and
+        // no use for it.
+        assert!(Tool::browser().contains(&Tool::FileFetch));
+        assert!(!Tool::defaults().contains(&Tool::FileFetch));
+    }
+
+    #[test]
+    fn test_file_fetch_is_declared_to_the_model() {
+        let reg = ToolRegistry::new(Tool::browser(), ctx());
+        let defs = reg.definitions_json().expect("defs");
+        assert!(defs.contains("file_read"));
+        assert!(defs.contains("file_fetch"));
+
+        let def = Tool::FileFetch.definition_json();
+        Dat::decode_string(def.as_str()).expect("file_fetch schema"); // JSON the LLM can read
+        assert_eq!(extract_json_string(&def, "name").as_deref(), Some("file_fetch"));
+        // A fetch spends the user's money, so the model is told so where it will read it.
+        assert!(Tool::FileFetch.description().contains("cloud storage"));
+        assert!(Tool::FileFetch.description().contains("expense"));
+    }
+
+    #[tokio::test]
+    async fn test_file_fetch_says_there_is_no_cloud_on_native() {
+        let reg = ToolRegistry::new(Tool::browser(), ctx());
+        let out = reg.dispatch("file_fetch", r#"{"path":"projects/interviews.wav"}"#).await;
+        assert!(!out.starts_with("Error:"), "{}", out);
+        assert!(out.contains("not available on this build"), "{}", out);
+    }
+
+    #[tokio::test]
+    async fn test_a_skill_that_did_not_ask_for_file_fetch_does_not_get_it() {
+        let narrowed = ToolRegistry::new(Tool::browser(), ctx()).narrowed(&[fmt!("file_read")]);
+        assert!(!narrowed.tools.contains(&Tool::FileFetch));
+        // Not merely refused at dispatch -- never offered, so it cannot be called at all.
+        let defs = narrowed.definitions_json().expect("some tools");
+        assert!(!defs.contains("file_fetch"));
+        let out = narrowed.dispatch("file_fetch", r#"{"path":"a.wav"}"#).await;
+        assert!(out.contains("not available here"), "{}", out);
+    }
+
+    #[test]
+    fn test_a_bounded_skill_cannot_fetch_into_daimonds_directory() {
+        // Fetching puts bytes at a path, which is a write however it is spelled: a skill that
+        // could land a file in Daimond's own directory has written one.
+        let c = bounded(vec![Tool::FileFetch]).ctx;
+        let out = Tool::FileFetch.execute_sync_guarded(
+            r#"{"path":".daimond/skills/evil.md"}"#, &c)
+            .expect("the tool answers rather than erroring");
+        assert!(out.starts_with("Refused:"), "the fetch was allowed: {}", out);
+    }
+
     // ── The declared toolbelt: what actually bounds a skill ─────────
 
     /// A registry over a throwaway workspace. These cases ask what the registry *offers*, which
@@ -1521,6 +1734,7 @@ impl Tool {
             Tool::FileDelete => Self::file_delete(args, ctx),
             Tool::FileMove   => Self::file_move(args, ctx),
             Tool::DirCreate  => Self::dir_create(args, ctx),
+            Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args),
             Tool::WebOpen

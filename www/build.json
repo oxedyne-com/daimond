@@ -1,1 +1,1 @@
-{"build":"649fd06354d1","note":"Store a chunk as BU64, so more than 255 bytes of it survive"}
+{"build":"85e2d6d9a5d4","note":"Tag the free tier, so a lapse takes the overflow and not the whole store"}

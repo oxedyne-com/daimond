@@ -63,6 +63,8 @@ web-sys = { version = "0.3", features = [
 	"Response",
 	"Window",
 	"WorkerGlobalScope",
+	# The cloud-storage index, which JS keeps in `localStorage` (see `wasm::cloud`).
+	"Storage",
 	# OPFS filesystem edge (main-thread async path).
 	"Navigator",
 	"StorageManager",

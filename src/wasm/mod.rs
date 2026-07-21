@@ -12,6 +12,8 @@
 //!   hosts the Diamond / crystal / fold surface.
 //! - [`diamond`] — the Diamond / crystal / fold substrate: the OPFS layout and
 //!   store operations behind the durable crystal and the advisory fold.
+//! - [`cloud`] — the cloud storage edge: the workspace files that are not
+//!   on this device, and the deliberate fetch that brings one down.
 //! - [`opfs`] — an async filesystem edge over the Origin Private File
 //!   System (OPFS), reached through `navigator.storage.getDirectory()`.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
@@ -23,6 +25,7 @@
 //! first browser vertical.
 
 pub mod app;
+pub mod cloud;
 pub mod entry;
 pub mod diamond;
 pub mod opfs;

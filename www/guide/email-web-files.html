@@ -129,15 +129,58 @@
 	<p>The Workspace panel, in the dock, is your files as an ordinary tree of folders. This is where the agent reads and writes: uploads, mail, documents and anything it produces all live here.</p>
 
 	<figure class="shot" data-shot="workspace">
-		<img alt="The Workspace panel showing a file tree, with buttons to add a file or folder, upload, go up a level and refresh." src="shots/workspace.png" loading="lazy">
-		<figcaption>The Workspace. Its header buttons add a file or folder, upload, go up a level, and refresh.</figcaption>
+		<img alt="The Workspace panel: three chips reading Browser, Machine and Cloud, buttons to import a folder or save a copy, and a file tree in which one file is marked as being in cloud storage and another is pinned." src="shots/workspace.png" loading="lazy">
+		<figcaption>The Workspace. The chips name where the workspace lives; below them, <em>interviews.txt</em> is in cloud storage rather than on this device, and <em>report-draft.txt</em> is pinned so it is always kept here.</figcaption>
 	</figure>
-
-	<h3>The sandbox, and a real folder</h3>
-	<p>By default your files live in this browser's own private storage, kept on your device and reachable by nothing outside Daimond. Where the browser allows it, Daimond can also open a <strong>real folder on your device</strong>, so the agent works directly with files you can see in your own file manager. The admin panel's storage rows show how much space each is using; the real-folder row appears only when the browser can open one.</p>
 
 	<h3>Working with files</h3>
 	<p>The Workspace header carries buttons to add a <span class="ui">🗋</span> file, add a <span class="ui">🗀</span> folder, <span class="ui">⤒</span> upload files, go <span class="ui">↑</span> up a level, and <span class="ui">⟳</span> refresh the view. A filter box narrows a long list.</p>
+
+	<h3>Where a workspace lives</h3>
+	<p>Three chips at the top of the panel name the places a workspace involves. Clicking one opens that place's controls.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Browser</h3>
+			<p>This browser's own private storage, kept on your device and reachable by nothing outside Daimond. It is where a workspace lives unless you say otherwise. Its size is whatever the browser is willing to grant — which on an iPhone is not much — and a browser may clear it without warning.</p>
+		</div>
+		<div class="card">
+			<h3>Machine</h3>
+			<p>A real folder on this computer's disk. The agent works in it directly, so you see the same files in your own file manager, and it is roomier than what a browser grants. But it stays on that one computer and does not travel to your other devices, and only a Chromium-based browser can open one.</p>
+		</div>
+		<div class="card">
+			<h3>Cloud</h3>
+			<p>Not a third place to work, but where the workspace is kept. It is what allows a workspace to be far larger than any one device can hold. Its chip opens a view of what is stored, what is not on this device, a <span class="ui">Free up space</span> button and a <span class="ui">Credits</span> button.</p>
+		</div>
+	</div>
+
+	<p>The first two are alternatives: the agent works in one or the other. The third is not an alternative — it is where the bytes are kept. The admin panel's storage rows show how much space each place is using.</p>
+
+	<div class="note">What is kept in cloud storage is <strong>encrypted before it leaves</strong>, as a sync parcel is, so we hold bytes we cannot read.</div>
+
+	<h3>Held, in cloud storage, or pinned</h3>
+	<p>A file is in one of three states, and the tree shows which:</p>
+	<ul>
+		<li><strong>Held on this device</strong> — it opens at once.</li>
+		<li><strong>In cloud storage only</strong> — shown with a cloud mark. It is still your file, still listed, still safe, simply not on this device at the moment. Clicking it brings it down, and so does the fetch control on its row.</li>
+		<li><strong>Pinned</strong> — kept on this device always, and never freed automatically. The pin sits on the row, beside a control that frees a held file's space.</li>
+	</ul>
+	<p>As the browser's storage fills, the files you have gone longest without using are freed back to cloud storage on their own; a pinned file never is.</p>
+
+	<div class="note"><strong>Freeing a file is not deleting it.</strong> It stays in cloud storage, the tree still lists it, and it comes back when it is asked for. Only a deliberate delete removes a file.</div>
+
+	<h3>Any kind of file</h3>
+	<p>Any file travels between your devices and is stored, whatever kind it is: a photograph, a recording, a PDF, a spreadsheet, up to a gigabyte for one file. Opening a file that is not text shows its size and a download button rather than trying to display it.</p>
+
+	<h3>Moving files in and out</h3>
+	<p>Two buttons sit beside the chips. <span class="ui">Import a folder…</span> copies a folder from this computer into the workspace, after which it syncs and is stored like everything else. <span class="ui">Save a copy…</span> writes the workspace out to a folder on this computer. Neither changes where the agent is working, and both need a Chromium-based browser. A copy out does not fetch a file that is in cloud storage only, and says how many it left behind.</p>
+
+	<h3>What the agent may fetch</h3>
+	<p>When the agent needs a file that is in cloud storage, it is told so plainly and has to fetch it deliberately. Nothing is downloaded quietly behind a read, because a download can be large and, once storage is priced, costs you money. There is also a cap on how much the agent may bring down on its own initiative, after which it comes back and asks.</p>
+
+	<h3>What cloud storage costs</h3>
+	<p>Cloud storage is not a subscription. Like everything else that leaves the browser it is paid for from <a href="models.html">credits</a>, and the one-time Pro unlock stays a one-time unlock. At present it is free and unmetered, until it can be sold properly.</p>
+	<div class="note">If a storage charge ever cannot be covered, <strong>nothing is deleted straight away</strong>. Reading and downloading stay free for six months, so everything can be retrieved, and only then is the paid overflow removed. The free working set is never removed.</div>
 
 	<h2>Tools</h2>
 	<p>Open the <span class="ui">Tools · N of M</span> row in the admin panel to see what Daimond can do. It is called Tools, not Upgrades, because most of what it lists is free and already yours.</p>
