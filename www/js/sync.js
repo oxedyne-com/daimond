@@ -204,6 +204,10 @@
 					// The pushed state is now the shared fork point for the file merge.
 					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(); }
 					catch (e) { /* baseline advances next time */ }
+					// Declare the live chunk set that this state references and let
+					// the gateway sweep everything it no longer does.
+					try { if (window.DaimondChunks && state.chunked) await DaimondChunks.commit(state.chunked); }
+					catch (e) { /* the next successful push commits and sweeps */ }
 					setStatus('synced', 'Synced', 2200);
 					log('pushed version', serverVersion);
 					return;

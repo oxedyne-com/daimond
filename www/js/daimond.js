@@ -409,8 +409,10 @@ import init, {
 	// none), and it NEVER clobbers: a file changed on both sides differently is
 	// preserved as a `.synced` sidecar rather than overwritten. Only the OPFS
 	// sandbox is synced — a real folder is the user's own disk, device-specific.
-	var SYNC_FILE_MAX        = 128 * 1024;		// skip a single file above this.
-	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all synced file bytes.
+	var SYNC_FILE_MAX        = 128 * 1024;		// carry inline in the blob up to here.
+	var SYNC_FILES_TOTAL_MAX = 8 * 1024 * 1024;	// budget for all inline file bytes.
+	var SYNC_CHUNK_FILE_MAX  = 8 * 1024 * 1024;	// a file this big goes to the chunk store, not inline.
+	var SYNC_CHUNK_TOTAL_MAX = 512 * 1024 * 1024;	// budget for all chunk-offloaded file bytes.
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
 	var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 
@@ -449,10 +451,10 @@ import init, {
 	/// `{ path: content }`, skipping dotfiles, Daimond's own `diamonds` store, binary
 	/// files, and anything over the per-file or total budget.
 	async function collectFiles() {
-		var out = { files: {}, skipped: 0, oversize: [] };
+		var out = { files: {}, large: {}, skipped: 0, oversize: [] };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
-		var total = 0, todo = [''], guard = 0;
+		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
 			var dir = todo.shift();
 			var res;
@@ -465,15 +467,24 @@ import init, {
 				if (e.name.charAt(0) === '.') continue;					// dotfiles/dirs
 				var full = dir ? (dir + '/' + e.name) : e.name;
 				if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name])) todo.push(full); continue; }
-				if (e.size > SYNC_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
-				if (total + e.size > SYNC_FILES_TOTAL_MAX) { out.skipped++; continue; }
+				var isLarge = e.size > SYNC_FILE_MAX;
+				if (isLarge && e.size > SYNC_CHUNK_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
+				if (!isLarge && total + e.size > SYNC_FILES_TOTAL_MAX) { out.skipped++; continue; }
+				if (isLarge && largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.skipped++; continue; }
 				var content;
-				try { content = await app.run_tool('file_read', JSON.stringify({ path: full })); }
-				catch (e2) { out.skipped++; continue; }
+				if (isLarge) {
+					// A large file is read straight from OPFS: the file_read tool truncates
+					// at its context budget, which would corrupt an offload.
+					try { content = await readOpfsText(full); }
+					catch (e2) { out.skipped++; continue; }
+				} else {
+					try { content = await app.run_tool('file_read', JSON.stringify({ path: full })); }
+					catch (e2) { out.skipped++; continue; }
+				}
 				if (typeof content !== 'string' || /^\s*Error\b/i.test(content)) { out.skipped++; continue; }
 				if (content.indexOf('\u0000') !== -1) { out.skipped++; continue; }	// binary: skip
-				out.files[full] = content;
-				total += content.length;
+				if (isLarge) { out.large[full] = content; largeTotal += content.length; }
+				else         { out.files[full] = content; total += content.length; }
 			}
 		}
 		return out;
@@ -548,15 +559,53 @@ import init, {
 	/// tombstone maps so a deletion travels as surely as a creation, and the
 	/// workspace files. In-memory chats are flushed to storage first so a turn
 	/// just finished is included. Async because reading the workspace is.
+	/// Offload the large workspace files to the content-addressed chunk store and
+	/// return their manifests, so the sync blob carries small references rather
+	/// than bodies. Needs an unlocked identity (the chunks are sealed with its key)
+	/// and the chunk module; without either, large files are left out this round,
+	/// exactly as they were skipped before.
+	async function collectChunked(large) {
+		var chunked = {};
+		if (!window.DaimondChunks || !large) return chunked;
+		if (!(window.DaimondIdentity && DaimondIdentity.isUnlocked && DaimondIdentity.isUnlocked())) return chunked;
+		for (var p in large) {
+			if (!Object.prototype.hasOwnProperty.call(large, p)) continue;
+			try { chunked[p] = await DaimondChunks.offload(p, large[p], fileHash(large[p])); }
+			catch (e) { /* offload failed: leave this file out, retry next sync */ }
+		}
+		return chunked;
+	}
+
+	/// Reconstruct large files from their manifests: for a path the local
+	/// workspace does not already hold, fetch its chunks, unwrap and write it. A
+	/// present file is left alone (a large body is never clobbered), and a file
+	/// whose chunks the gateway no longer holds is left absent.
+	async function applyChunked(remoteChunked) {
+		if (!remoteChunked || typeof remoteChunked !== 'object' || !filesSyncable()) return;
+		if (!window.DaimondChunks) return;
+		var app; try { app = tools(); } catch (e) { return; }
+		for (var p in remoteChunked) {
+			if (!Object.prototype.hasOwnProperty.call(remoteChunked, p)) continue;
+			var exists = false;
+			try { await readOpfsText(p); exists = true; } catch (e) { /* absent */ }
+			if (exists) continue;
+			var content = await DaimondChunks.materialise(remoteChunked[p]);
+			if (content == null) continue;			// unavailable on this device: leave absent.
+			try { await writeOpfsText(p, content); } catch (e) { /* leave absent */ }
+		}
+	}
+
 	async function collectSync() {
 		persistChats();
 		var fileCol = await collectFiles();
+		var chunked = await collectChunked(fileCol.large);
 		return {
 			v:        1,
 			chats:    readJson(CHATS_KEY, []),
 			tombs:    readJson(TOMBS_KEY, {}),
 			msgTombs: readJson(MSG_TOMBS_KEY, {}),
 			files:    fileCol.files,
+			chunked:  chunked,
 		};
 	}
 
@@ -587,6 +636,8 @@ import init, {
 		onChatsChangedElsewhere();
 		// Then the workspace files (best-effort; a file failure never blocks chats).
 		try { await applyFiles(remote.files); } catch (e) { /* files stay as they are */ }
+		// Then the large files held in the chunk store, reconstructed on demand.
+		try { await applyChunked(remote.chunked); } catch (e) { /* large files stay as they are */ }
 		// If the Workspace panel is open, show what just landed.
 		try { if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('work')) Files.refresh && Files.refresh(); } catch (e) {}
 	}
@@ -7691,6 +7742,24 @@ import init, {
 		var w = await fh.createWritable();
 		await w.write(bytes);
 		await w.close();
+	}
+
+	/// Read a file's full text straight from the OPFS sandbox, bypassing the
+	/// file_read tool, which truncates at its context budget. Sync needs every
+	/// byte of a large file, so it must not go through that cap.
+	async function readOpfsText(path) {
+		var parts = String(path).split('/').filter(function (x) { return x && x !== '.' && x !== '..'; });
+		if (parts.length === 0) throw new Error('Empty path.');
+		var dir = await navigator.storage.getDirectory();
+		for (var i = 0; i < parts.length - 1; i++) dir = await dir.getDirectoryHandle(parts[i]);
+		var fh = await dir.getFileHandle(parts[parts.length - 1]);
+		return await (await fh.getFile()).text();
+	}
+
+	/// Write text to a path in the OPFS sandbox, the counterpart of readOpfsText
+	/// for reconstructing a large file pulled from the chunk store.
+	async function writeOpfsText(path, content) {
+		await writeOpfsBytes(path, new TextEncoder().encode(content));
 	}
 
 	/// Base64 of a byte array, chunked so a large file does not overflow the
