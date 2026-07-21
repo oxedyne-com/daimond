@@ -170,6 +170,24 @@ impl DaimondApp {
         self.agent.llm.abort();
     }
 
+    /// Whether this app's turn has taken in content from outside the user — a fetched page, a
+    /// mail message, a command's output.
+    ///
+    /// The conductor reads this after a steering turn to find out whether the tasks it is about to
+    /// hand out derive from a stranger's words.
+    pub fn is_tainted(&self) -> bool {
+        self.registry.ctx.is_tainted()
+    }
+
+    /// Mark this app's turn as carrying content from outside the user, without reading any.
+    ///
+    /// One-way, like the flag itself.  A worker starts with a clean flag, so instructions absorbed
+    /// from a stranger could be laundered through a worker that does not know it is carrying them;
+    /// the conductor closes that by setting this on each worker it starts.
+    pub fn set_tainted(&self) {
+        self.registry.ctx.set_tainted();
+    }
+
     /// Set the user's standing instructions — the contents of their `DAIMOND.md`.
     ///
     /// A dispatched agent starts from nothing: it cannot see the conversation
@@ -468,7 +486,10 @@ impl DaimondApp {
             // Daimond's own crystal lives in the OPFS sandbox, never the user's
             // real folder, so the crystal agent pins the OPFS root.
             root:        crate::tools::FileRoot::Opfs,
-            read_seen:   crate::tools::new_read_cache(),
+            // Shared with this app's own context, not fresh: a steering turn is stateless per
+            // instruction, so a fresh cache would drop the taint the moment the turn ended and
+            // `is_tainted` would answer no to the very question the conductor asks it.
+            read_seen:   self.registry.ctx.read_seen.clone(),
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
             // A skill turn narrows this in the handler, where the declaration is known.
             no_write:    Vec::new(),

@@ -2153,6 +2153,137 @@ import init, {
 			.then(function () { return true; });
 	}
 
+	// ── Reaching out, after reading a stranger's words ─────────
+	// The agent reads web pages and email, and a page can carry instructions
+	// aimed at the agent rather than at the reader. Marking that content as
+	// untrusted tells the model what it is; it does not stop a model that goes
+	// along with it anyway. What actually stops it is this: once a turn has taken
+	// in content from outside, reaching a NEW destination needs the user.
+	//
+	// The channel being closed is a URL. Anything the agent knows can be written
+	// into a path or a query string, so a fetch of
+	// `https://somewhere/?notes=<your file>` is an exfiltration whatever the page
+	// at the other end does with it.
+	//
+	// The gate is deliberately narrow. An untainted turn is never asked — the
+	// wasm side does not even call this. A destination already approved is not
+	// asked again. So ordinary browsing is untouched, and the prompt appears at
+	// the one moment it means something.
+	var _egressOk = Object.create(null);		// hosts approved for READING, this session.
+	var _egressAct = Object.create(null);	// hosts approved for ACTING on, this session.
+
+	function egressHost(url) {
+		try { return new URL(String(url), location.href).host || ''; }
+		catch (e) { return ''; }
+	}
+
+	// Approving a host cannot be the end of it. The channel being closed is the
+	// URL itself, so "yes, you may read example.com" would otherwise license
+	// every later `example.com/?everything-I-know=…` — the same exfiltration,
+	// waved through on the strength of an answer about something else.
+	//
+	// But asking per exact URL would prompt on every page of a documentation
+	// site, and a question asked that often stops being read. So the host is
+	// approved for ORDINARY addresses, and an address carrying a payload is
+	// asked about on its own terms, however familiar the host.
+	var EGRESS_PAYLOAD_MAX = 120;			// characters of path, query and fragment.
+	var EGRESS_BLOB = /[A-Za-z0-9+/=_-]{60,}/;	// one long unbroken run: encoded, not typed.
+
+	/// The part of a URL that could be carrying data out, and whether it is more
+	/// than an address plausibly needs.
+	function egressPayload(url) {
+		var u;
+		try { u = new URL(String(url), location.href); }
+		catch (e) { return { text: '', heavy: false }; }
+		var tail = (u.pathname || '') + (u.search || '') + (u.hash || '');
+		return {
+			text:  tail,
+			heavy: tail.length > EGRESS_PAYLOAD_MAX || EGRESS_BLOB.test(tail),
+		};
+	}
+
+	/// Whether the agent may reach `url` now that this turn has read untrusted
+	/// content. Resolves the string the wasm side expects.
+	async function egressAllowed(payloadJson) {
+		var req = {};
+		try { req = JSON.parse(String(payloadJson || '{}')) || {}; } catch (e) { req = {}; }
+		var url  = String(req.url || '');
+		// An empty address must not be read as "here". `new URL('', href)` resolves
+		// to the current page, whose host matches ours, so a missing url would have
+		// been waved through as same-origin.
+		if (!url.trim()) return 'deny';
+		var host = egressHost(url);
+		if (!host) return 'deny';						// unparseable: nothing to show the user.
+		if (host === location.host) return 'allow';		// Daimond's own pages.
+
+		// Typing into a page is not reading it. The text is the thing being sent, so
+		// it is shown, and consent is for this one act — a form post is exactly the
+		// exfiltration the gate exists to catch, and it must not become routine.
+		if (req.tool === 'web_type') {
+			var typed = String(req.detail || '');
+			var shownText = typed.length > 300 ? (typed.slice(0, 300) + '…') : typed;
+			var okType = await confirmDialog(
+				'This turn has read content from outside your workspace, and Daimond now wants to ' +
+				'type into the page at ' + host + ' — which may send it.\n\n' +
+				'What it wants to enter:\n\n' + (shownText || '(nothing)') + '\n\n' +
+				'If you did not expect that, decline.',
+				'Type it',
+				{ title: 'Type into ' + host + '?', danger: true });
+			return okType ? 'allow' : 'deny';		// never remembered.
+		}
+		// Clicking navigates, and a link's address is written by whoever wrote the
+		// page. Acting on a page is approved separately from reading it: a yes about
+		// reading a site is not a yes about operating it.
+		if (req.tool === 'web_click') {
+			if (_egressAct[host]) return 'allow';
+			var okAct = await confirmDialog(
+				'This turn has read content from outside your workspace, and Daimond now wants to ' +
+				'act on the page at ' + host + '.\n\n' +
+				'A link on a page is written by whoever wrote the page, and following one can ' +
+				'carry information away with it.\n\n' +
+				'Allow it, only if you expected this.',
+				'Allow acting on ' + host,
+				{ title: 'Act on ' + host + '?', danger: true });
+			if (!okAct) return 'deny';
+			_egressAct[host] = 1;
+			return 'allow';
+		}
+
+		var load = egressPayload(url);
+		if (_egressOk[host] && !load.heavy) return 'allow';	// approved, and nothing riding along.
+
+		var ok;
+		if (load.heavy) {
+			// The address itself is the thing to look at, so show it — trimmed, but
+			// enough of it to recognise a file's worth of text where a page name
+			// should be.
+			var shown = load.text.length > 300 ? (load.text.slice(0, 300) + '…') : load.text;
+			ok = await confirmDialog(
+				'This turn has read content from outside your workspace, and Daimond now wants to ' +
+				'reach ' + host + ' with an unusually long address.\n\n' +
+				'An address can carry information out. This one is carrying:\n\n' + shown + '\n\n' +
+				'If you did not expect that, decline — nothing is lost but this one request.',
+				'Send it anyway',
+				{ title: 'Send this to ' + host + '?', danger: true });
+			return ok ? 'allow' : 'deny';		// deliberately NOT remembered.
+		}
+		ok = await confirmDialog(
+			'This turn has read content from outside your workspace — a web page, or a message. ' +
+			'Something in it may be trying to steer Daimond.\n\n' +
+			'It now wants to reach ' + host + ', which it has not visited before. Anything it ' +
+			'knows could be carried in that address.\n\n' +
+			'Allow it, only if you expected this.',
+			'Allow ' + host,
+			{ title: 'Reach ' + host + '?', danger: true });
+		if (!ok) return 'deny';
+		_egressOk[host] = 1;
+		return 'allow';
+	}
+
+	// The wasm tools call this by name, exactly as the cloud bridge is called: an
+	// agent's own tool calls are dispatched inside Rust, not through JS.
+	window.__daimondEgressAllowed = function (payloadJson) { return egressAllowed(payloadJson); };
+
 	// ── The Admin panel ────────────────────────────────────────
 	// The lower pane of the rail: who you are, how Daimond is set up, and what it is
 	// costing. Configuring Daimond is not a popup — the forms that ask the user for
@@ -3964,7 +4095,7 @@ import init, {
 		},
 
 		/// Dispatch every agent the conductor asked for in one turn.
-		dispatch: function (diamondId, diamondName, specs) {
+		dispatch: function (diamondId, diamondName, specs, tainted) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
@@ -3982,6 +4113,12 @@ import init, {
 					// this, and can it be replaced -- and answered the same way.
 					provider: (window.DaimondModels ? DaimondModels.getDefault().provider : '') || '',
 					status: 'queued',
+					// A worker starts with a clean context, which is exactly how an
+					// instruction absorbed from a stranger could be laundered through
+					// one: the conductor reads the poisoned page, dispatches a worker
+					// carrying its wishes, and the worker reaches out believing the
+					// task came from the user. Taint crosses the boundary with it.
+					tainted: !!tainted,
 					tools: [],
 					text: '',
 					promptTokens: 0,
@@ -4033,11 +4170,13 @@ import init, {
 					run._gen = s.gen;
 					run.app = new DaimondApp(s.url, s.key, run.model, cfg.maxTokens || 4096,
 						Instructions.compose(worker_prompt(), crystal), true);
+					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				} else {
 					var a = appCfgFor(run);
 					run._gen = creditsGen();
 					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, cfg.maxTokens || 4096,
 						Instructions.compose(worker_prompt(), crystal), true);
+					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				}
 			};
 			// On credits, take a slot and mint its own key before building. A slot the
@@ -7397,7 +7536,10 @@ import init, {
 				setCrystalStatus(dispatched.length === 1
 					? 'Dispatched 1 agent.'
 					: 'Dispatched ' + dispatched.length + ' agents.');
-				Workers.dispatch(diamondId, diamondName, dispatched);
+				// Whether the steering turn itself read anything from outside.
+				var conductorTainted = false;
+				try { conductorTainted = !!(fa.is_tainted && fa.is_tainted()); } catch (e) { conductorTainted = false; }
+				Workers.dispatch(diamondId, diamondName, dispatched, conductorTainted);
 			}
 		} else if (rejected) {
 			setCrystalStatus(rejected === 1
