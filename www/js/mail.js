@@ -820,33 +820,20 @@
 			state.unlocked = !!j.unlocked;
 			state.cap = j.max_accounts || state.cap;
 
-			// The price is the gateway's to state, not the client's to assume:
-			// a copy here would eventually disagree with what is charged.
-			if (!state.unlocked && state.price === null) {
-				try {
-					var c = await fetch('/api/checkout/pack', { credentials: 'same-origin' });
-					var cj = await c.json();
-					var t = (cj.tools || []).find(function (x) { return x.tool === 'email'; });
-					if (t) state.price = t.price_minor;
-				} catch (e2) { /* the pitch reads without a price */ }
-			}
+			// Email is part of Pro now, not a separate purchase, so there is no
+			// à la carte price to fetch: the pitch points at Pro instead.
 		} catch (e) {
 			state.unlocked = null;               // unknown, not "locked"
 		}
 		render();
 	}
 
-	async function unlock() {
-		try {
-			state.busy = true; state.err = ''; render();
-			var j = await post('/api/checkout/pack', { pack: 'email' });
-			if (!j.url) throw new Error('The checkout session came back without a URL.');
-			window.location = j.url;
-		} catch (e) {
-			state.err = friendly(e);
-			state.busy = false;
-			render();
-		}
+	/// Email rides Pro now, so the button opens the Pro surface in Credits
+	/// rather than a checkout of its own. The purchase, the return handling and
+	/// the "you own it" confirmation all live in one place.
+	function unlock() {
+		if (window.DaimondAdmin && DaimondAdmin.credits) DaimondAdmin.credits(
+			'Email is part of Pro. Own Daimond once to turn it on, along with sync and cloud storage.');
 	}
 
 	function friendly(e) {
@@ -877,12 +864,12 @@
 				'<div class="mail-pitch">'
 				+ '<p><b>Daimond can read your mail.</b> Your inbox lands in the workspace as ordinary '
 				+ 'files, so every agent can read it, search it, and work from it.</p>'
-				+ '<p class="mail-fine">Bought once, kept for good. Covers ' + state.cap + ' mailboxes. '
-				+ 'Syncing is metered against credits, like inference. Nothing renews.</p>'
+				+ '<p class="mail-fine">Email is part of Pro — one payment, kept for good, alongside '
+				+ 'cross-device sync and cloud storage. Covers ' + state.cap + ' mailboxes. Sending and '
+				+ 'fetching are metered against credits, like inference. Nothing renews.</p>'
 				+ '<p class="mail-fine">Daimond’s gateway makes the connection and forgets your password. '
 				+ 'No mail is ever stored on our side.</p>'
-				+ '<button class="mail-unlock"' + (state.busy ? ' disabled' : '') + '>Unlock Email'
-				+ (state.price ? ' — ' + esc(fmtMinor(state.price)) : '') + '</button>'
+				+ '<button class="mail-unlock"' + (state.busy ? ' disabled' : '') + '>Own Daimond</button>'
 				+ '</div>'));
 			var ub = els.state.querySelector('.mail-unlock');
 			if (ub) ub.addEventListener('click', unlock);

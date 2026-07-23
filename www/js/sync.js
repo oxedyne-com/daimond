@@ -299,10 +299,20 @@
 	}
 
 	// ── Public surface ─────────────────────────────────────────
+	/// Re-enable sync after a tier change -- a Pro purchase just landed -- and
+	/// reconcile at once. A 402 earlier set `entitled = false` and stopped the
+	/// pushes; this lifts that without waiting for the next unlock.
+	function recheck() {
+		if (!ready()) return;
+		entitled = true;
+		onAuthed();
+	}
+
 	window.DaimondSync = {
 		pull:    pull,
 		push:    function () { return push(); },
 		nudge:   schedule,
+		recheck: recheck,
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },
 	};

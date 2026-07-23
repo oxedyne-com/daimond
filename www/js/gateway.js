@@ -24,6 +24,8 @@
 		currency: 'usd',
 		entries:  [],
 		offline:  false,    // the gateway could not be reached
+		pro:      null,     // holds a Pro licence? null until asked.
+		proPriceMinor: null,// the one-time Pro price, from the gateway.
 		// The console role, once asked for. `undefined` means not yet asked;
 		// null means asked and the answer was no. Switching account clears it,
 		// because it is an answer about whoever is signed in now.
@@ -171,6 +173,7 @@
 	async function bootstrap() {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
 		state.role = undefined;			// a new unlock is a new question
+		state.pro  = null;			// re-asked for whoever unlocked now
 		var pub = DaimondIdentity.publicKeyB64url();
 		if (!pub) return false;
 		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
@@ -195,6 +198,7 @@
 			state.authed = true;
 			state.offline = false;
 			await refreshBalance();
+			await refreshLicence();
 			return true;
 		} catch (e) {
 			// The gateway is optional: Daimond is fully usable on a BYOK key with no
@@ -245,6 +249,43 @@
 		var j = await post('/api/card/setup', {});
 		if (!j.url) throw new Error('The card session came back without a URL.');
 		window.location = j.url;
+	}
+
+	/// Start a hosted Stripe Checkout for the one-time Pro unlock. The gateway
+	/// owns the price and refuses a second purchase, so the client sends nothing
+	/// but the intent to buy.
+	async function buyPro() {
+		if (!state.authed) {
+			var ok = await bootstrap();
+			if (!ok) throw new Error('Could not reach the Daimond account service. Try again shortly.');
+		}
+		var r = await fetch('/api/checkout/pro', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			body: '{}',
+		});
+		var j = null; try { j = await r.json(); } catch (e) {}
+		// Already held is not an error to shout about: reflect it and stop.
+		if (r.status === 409) { state.pro = true; return { held: true }; }
+		if (!r.ok || !j || !j.url) throw new Error((j && j.error) || 'The checkout session came back without a URL.');
+		window.location = j.url;
+		return { held: false };
+	}
+
+	/// Whether this account holds Pro, asked of the gateway. Sets `state.pro`
+	/// and returns it, or leaves it null when the gateway cannot be reached.
+	async function refreshLicence() {
+		if (!state.authed) { state.pro = null; return null; }
+		try {
+			var j = await get('/api/licence');
+			state.pro = !!(j && j.licence);
+			if (j && typeof j.pro_price_minor === 'number') state.proPriceMinor = j.pro_price_minor;
+			if (j && j.currency) state.currency = j.currency;
+		} catch (e) {
+			state.pro = null;
+		}
+		return state.pro;
 	}
 
 	/// The whole categorised credit ledger, for the spending view: every
@@ -323,6 +364,7 @@
 		state.authed = false;
 		state.role   = undefined;
 		state.credits = null;
+		state.pro    = null;
 		try {
 			await fetch('/api/auth/logout', {
 				method: 'POST',
@@ -338,6 +380,8 @@
 		refreshBalance: refreshBalance,
 		ledger:         ledger,
 		buyCredits:     buyCredits,
+		buyPro:         buyPro,
+		refreshLicence: refreshLicence,
 		saveCard:       saveCard,
 		autoReload:     autoReload,
 		setAutoReload:  setAutoReload,

@@ -4678,12 +4678,61 @@ import init, {
 	// Daimond is free and BYOK by default; credits are for the user who does not want
 	// to hold a provider key at all. The gateway is optional — if it is down, the
 	// app carries on exactly as before and simply offers nothing here.
+	/// The Pro block at the top of the Credits drawer: an offer to own Daimond,
+	/// or the confirmation that it is owned. Pro is the one-time unlock that
+	/// turns on cross-device sync, cloud storage and Email; credits are separate
+	/// and pay for metered use (inference, bandwidth), whether or not Pro is held.
+	function renderPro() {
+		var host = document.getElementById('credits-pro');
+		if (!host || !window.DaimondGateway) return;
+		var st = DaimondGateway.state();
+		host.innerHTML = '';
+		// No account, or the gateway is unreachable: the Pro offer needs one, so
+		// say nothing here rather than a dead button. The packs area below
+		// already carries the "create an account" path.
+		if (st.offline || !st.authed || st.pro === null) return;
+
+		if (st.pro) {
+			host.appendChild(html(
+				'<div class="pro-owned">'
+				+ '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and Email are on. '
+				+ 'Nothing renews.</div>'));
+			return;
+		}
+		var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
+		host.appendChild(html(
+			'<div class="pro-offer">'
+			+ '<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, '
+			+ 'cloud storage, and Email — reading and sending your own mail in the workspace.</p>'
+			+ '<p class="pro-fine">No subscription. Metered use (inference, bandwidth, storage beyond '
+			+ 'the free tier) is paid from credits, whether or not you own Pro.</p>'
+			+ '<button class="pro-buy" id="pro-buy">Own Daimond' + (price ? ' — ' + price : '') + '</button>'
+			+ '<div class="pro-err" id="pro-err"></div>'
+			+ '</div>'));
+		var btn = document.getElementById('pro-buy');
+		if (btn) btn.addEventListener('click', async function () {
+			btn.disabled = true;
+			try {
+				var r = await DaimondGateway.buyPro();      // navigates to Stripe, or returns {held}
+				if (r && r.held) { await DaimondGateway.refreshLicence(); renderPro(); }
+			} catch (e) {
+				var err = document.getElementById('pro-err');
+				if (err) err.textContent = friendlyError(e);
+				btn.disabled = false;
+			}
+		});
+	}
+
 	function renderCredits() {
 		var sec  = document.getElementById('credits-section');
 		var bal  = document.getElementById('credits-balance');
 		var wrap = document.getElementById('credits-packs');
 		var note = document.getElementById('credits-note');
 		if (!sec || !bal || !wrap || !window.DaimondGateway) return;
+		// The Pro block is a self-contained offer at the top of the drawer. It
+		// must never take the rest of Credits down with it, so a fault in it is
+		// contained here rather than left to break the balance and the packs.
+		try { renderPro(); } catch (e) { /* the offer is absent; Credits still works. */ }
 		var st = DaimondGateway.state();
 
 		if (st.offline || !st.authed) {
@@ -8996,6 +9045,27 @@ import init, {
 				+ 'shortly. Nothing has been charged.');
 			return;
 		}
+		// Pro came back from Stripe. The licence is minted by WEBHOOK, so it may
+		// lag the redirect by a moment; poll the licence rather than read it once.
+		if (buy === 'pro') {
+			openCredits('');
+			for (var pk = 0; pk < 12; pk++) {
+				await new Promise(function (r) { setTimeout(r, 900); });
+				var held = await DaimondGateway.refreshLicence();
+				renderCredits();
+				if (held) {
+					if (window.DaimondSync && DaimondSync.recheck) DaimondSync.recheck();  // sync is on now
+					noticeDialog('Pro unlocked',
+						'You own Daimond. Cross-device sync, cloud storage and Email are on. '
+						+ 'Nothing renews.');
+					return;
+				}
+			}
+			noticeDialog('Payment received',
+				'Your Pro unlock is being confirmed and will appear here shortly. '
+				+ 'Reopen Credits in a moment.');
+			return;
+		}
 		var before = DaimondGateway.state().credits;
 		for (var i = 0; i < 10; i++) {
 			await new Promise(function (r) { setTimeout(r, 1000); });
@@ -9024,6 +9094,22 @@ import init, {
 		if (!Workers.busy()) return;
 		e.preventDefault();
 		e.returnValue = '';
+	});
+
+	// Sync just refused this device (402): cross-device sync is a Pro
+	// capability, and this account does not hold it. Say so once, and point at
+	// the one place to fix it, rather than letting sync fail in silence. Once
+	// per session -- a nag on every idle push would be its own bug.
+	var _syncLockedTold = false;
+	window.addEventListener('daimond:sync-locked', function () {
+		if (_syncLockedTold) return;
+		var st = window.DaimondGateway && DaimondGateway.state();
+		if (st && st.pro) return;             // already Pro; a stale event, ignore.
+		_syncLockedTold = true;
+		noticeDialog('Sync is part of Pro',
+			'Cross-device sync keeps your workspace on every device you unlock. It is one '
+			+ 'of the things Pro turns on. We\'ll open Credits so you can own Daimond — one '
+			+ 'payment, kept for good.').then(function () { openCredits(''); });
 	});
 
 	boot().then(handleCheckoutReturn);

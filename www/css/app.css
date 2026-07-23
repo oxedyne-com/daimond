@@ -816,6 +816,23 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .settings-section .credit-pack { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 6px; font-size: var(--fs-base); font-family: var(--font-mono); }
 .settings-section .credit-pack:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--text-primary); }
 
+/* ── Pro, at the top of Credits ───────────────────────────────────
+   The one deliberate sell in the drawer: owning Daimond. It gets a bordered
+   card so it reads as an offer rather than a note, and its button IS accent
+   filled -- unlike the quiet money buttons below, this is the action the panel
+   is steering toward, and there is only one of it. Owned, it becomes a calm
+   confirmation with no button at all. */
+.pro-block { margin-bottom: 14px; }
+.pro-block:empty { margin: 0; }
+.pro-offer, .pro-owned { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; background: var(--bg-secondary); }
+.pro-offer p { margin: 0 0 8px; font-size: var(--fs-base); color: var(--text-primary); line-height: 1.45; }
+.pro-offer .pro-fine { font-size: var(--fs-sm); color: var(--text-secondary); }
+.pro-buy { width: 100%; margin-top: 4px; padding: 10px; background: var(--accent); color: var(--accent-fg, #fff); border: none; border-radius: var(--radius-sm); font-size: var(--fs-base); font-weight: 600; cursor: pointer; }
+.pro-buy:hover:not(:disabled) { filter: brightness(1.08); }
+.pro-buy:disabled { opacity: 0.6; cursor: default; }
+.pro-err { margin-top: 6px; font-size: var(--fs-sm); color: var(--danger, #c0392b); }
+.pro-owned { color: var(--text-primary); font-size: var(--fs-base); line-height: 1.45; }
+
 /* ── Credits, in the Models panel ─────────────────────────────────
    Credits are a provider row like any other, with one difference the user must
    see before they pick and not after: this row spends money they are holding
