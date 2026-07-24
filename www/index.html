@@ -545,21 +545,42 @@
 		<!-- Several accounts on one browser: pick whose to unlock, or add another. Built in JS, and
 		     shown only when there is more than one account or one to add. -->
 		<div class="id-accounts" id="id-accounts" style="display:none"></div>
-		<div class="id-fields">
-			<div id="id-name-row">
-				<input type="text" id="id-name" placeholder="Your name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
+		<!-- A REAL form with REAL password fields, so the browser and the OS
+		     keychain recognise a credential and offer to keep it. The passphrase
+		     is generated (see wordlist.js), which is what makes accepting that
+		     offer safe: there is nothing weak or reused to save. The name doubles
+		     as the username a manager files the entry under, so several accounts
+		     in one browser stay distinguishable. -->
+		<form id="id-form" autocomplete="on">
+			<div class="id-fields">
+				<div id="id-name-row">
+					<input type="text" id="id-name" name="username" placeholder="Your name" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
+				</div>
+				<!-- The generated passphrase, shown so it can be written down. It
+				     mirrors the field below rather than holding a second copy, so a
+				     browser-suggested password cannot diverge from what is displayed. -->
+				<div class="pass-gen" id="id-genbox" style="display:none">
+					<div class="pass-gen-words" id="id-genwords"></div>
+					<div class="pass-gen-acts">
+						<button type="button" class="pass-gen-btn" id="id-regen">Generate another</button>
+						<button type="button" class="pass-gen-btn" id="id-gencopy">Copy</button>
+					</div>
+					<p class="pass-gen-note" id="id-gennote"></p>
+					<label class="pass-gen-ack"><input type="checkbox" id="id-wrote"><span>I have written this down somewhere safe</span></label>
+				</div>
+				<div class="pass-wrap" id="id-pass-row">
+					<input type="password" id="id-pass" name="password" placeholder="Passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+					<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+				</div>
+				<div class="pass-wrap" id="id-pass2-row">
+					<input type="password" id="id-pass2" placeholder="Confirm passphrase" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+					<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+				</div>
 			</div>
-			<div class="pass-wrap">
-				<input type="text" id="id-pass" placeholder="Passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-				<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase"></button>
-			</div>
-			<div class="pass-wrap">
-				<input type="text" id="id-pass2" placeholder="Confirm passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-				<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase"></button>
-			</div>
-		</div>
-		<div id="id-error" class="login-error"></div>
-		<button type="button" id="id-primary">Create passphrase</button>
+			<div id="id-error" class="login-error"></div>
+			<button type="submit" id="id-primary">Create passphrase</button>
+		</form>
+		<button type="button" id="id-choose" class="id-choose" style="display:none">Choose my own passphrase instead</button>
 		<button type="button" id="id-skip" class="modal-close">Skip for now</button>
 	</div>
 </div>
@@ -576,6 +597,9 @@
 <script src="js/ledger.js"></script>
 <script src="js/governor.js"></script>
 <script src="js/verify.js"></script>
+<!-- wordlist.js before identity.js: the create screen generates a passphrase
+     before any identity exists to hold it. -->
+<script src="js/wordlist.js"></script>
 <script src="js/identity.js"></script>
 <!-- passkey.js AFTER identity.js: it builds on DaimondIdentity to seal and
      recover the passphrase behind a WebAuthn PRF credential. -->

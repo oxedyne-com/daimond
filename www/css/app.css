@@ -663,6 +663,11 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 .id-fields { display: flex; flex-direction: column; gap: 10px; }
 .id-fields input { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 12px; font-size: var(--fs-base); }
 .id-fields input:focus { outline: none; border-color: var(--accent); }
+/* Unlocking: the name is not a field to fill but a statement of whose account is
+   being opened. It stays a real input because that is what lets a password
+   manager file the entry under a username, but it reads as information. */
+.id-fields input[readonly] { color: var(--text-muted); border-style: dashed; }
+.id-fields input[readonly]:focus { border-color: var(--border); }
 /* The passphrase field carries a reveal toggle inside its right edge, so a long
    passphrase typed on a phone can be checked. The input reserves room for it. */
 .pass-wrap { position: relative; display: flex; }
@@ -675,6 +680,33 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 .pass-eye .ic { width: 20px; height: 20px; }
 #id-primary { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); margin-top: 12px; }
 #id-primary:hover { background: var(--accent-hover); }
+#id-primary:disabled { opacity: .5; cursor: not-allowed; }
+#id-primary:disabled:hover { background: var(--accent); }
+
+/* The generated passphrase. It is READ here, not typed, so it is set in the
+   mono face at a size that survives being copied onto paper, and given room to
+   wrap across three lines rather than scrolling sideways in a one-line box. */
+/* The create screen carries more than any other modal — a name, the generated
+   passphrase with its note and acknowledgement, the field, and two ways out — so
+   it is given more of the window than the shared 80vh before it starts scrolling.
+   A short window still scrolls, which is correct; this only stops a full-height
+   one from hiding the button and the escape hatch under the fold. */
+#identity-modal .modal-card { max-height: 92vh; }
+.pass-gen { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pass-gen-words { font-family: var(--font-mono); font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-spacing: .25em; overflow-wrap: break-word; }
+.pass-gen-acts { display: flex; gap: 8px; }
+.pass-gen-btn { flex: 1; background: none; border: 1px solid var(--border-2); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: var(--fs-xs); cursor: pointer; }
+.pass-gen-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.pass-gen-note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; }
+.pass-gen-ack { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.4; cursor: pointer; }
+.pass-gen-ack input { flex: none; margin-top: 1px; accent-color: var(--accent); }
+
+/* The passkey button and its note are styled in passkey.css, which owns them. */
+
+/* "Choose my own passphrase instead" — a way out of the generated phrase that
+   is deliberately quieter than the button that accepts it. */
+.id-choose { width: 100%; background: none; border: none; color: var(--text-muted); font-size: var(--fs-xs); padding: 10px 0 0; cursor: pointer; text-decoration: underline; }
+.id-choose:hover { color: var(--text-primary); }
 
 /* Chat input: grow to ~12 lines, scrollbar only on hover/focus. */
 /* The placeholder and a single line of text sit CENTRED in the box. The old rule

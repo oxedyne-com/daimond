@@ -815,14 +815,44 @@ import init, {
 			el.value = v;
 		}
 	}
-	/// Show or hide a masked secret's real text. Reading and typing keep working
+	/// Show or hide a secret field's real text. Reading and typing keep working
 	/// in both states; only the display changes.
+	///
+	/// Two kinds of field reach this. A real `type="password"` input reveals by
+	/// swapping its type, which is the ordinary web pattern and keeps the browser
+	/// treating it as a credential. The JS-masked text input (the API key) has no
+	/// type to swap, so it exchanges bullets for the value it is holding.
 	function setSecretRevealed(el, show) {
-		if (!el || el._real == null) return;
+		if (!el) return;
 		el._revealed = !!show;
-		el.value = show ? el._real : new Array(el._real.length + 1).join(BULLET);
+		if (el._real == null) {
+			el.type = show ? 'text' : 'password';
+		} else {
+			el.value = show ? el._real : new Array(el._real.length + 1).join(BULLET);
+		}
 		var caret = el.value.length;
 		try { el.setSelectionRange(caret, caret); } catch (e) { /* not focusable yet */ }
+	}
+
+	// The reveal toggle's two faces: an open eye to show, a struck-through one to
+	// hide. Module-level because the create screen reveals a generated passphrase
+	// on its own initiative, and the icon has to agree with what the field is doing.
+	var EYE_OPEN = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+		+ '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>'
+		+ '<circle cx="12" cy="12" r="2.6"/></svg>';
+	var EYE_OFF = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+		+ '<path d="M2 12s3.5-6.5 10-6.5c1.8 0 3.4.5 4.8 1.2M22 12s-3.5 6.5-10 6.5c-1.8 0-3.4-.5-4.8-1.2"/>'
+		+ '<path d="M9.5 9.7a2.6 2.6 0 003.6 3.6M4 4l16 16"/></svg>';
+
+	/// Redraw a field's reveal toggle to match whether the field is revealed.
+	function syncEyeIcon(fid) {
+		var eye = document.getElementById(fid + '-eye');
+		var inp = document.getElementById(fid);
+		if (!eye || !inp) return;
+		var show = !!inp._revealed;
+		eye.innerHTML = show ? EYE_OFF : EYE_OPEN;
+		eye.title = show ? 'Hide passphrase' : 'Show passphrase';
+		eye.setAttribute('aria-label', eye.title);
 	}
 
 	// Format a USD cost calmly: precise but never dollar-signs-screaming.
@@ -8100,6 +8130,103 @@ import init, {
 		box.appendChild(add);
 	}
 
+	// ── The generated passphrase ───────────────────────────────
+	// The passphrase is the crypto root: PBKDF2(passphrase, salt) is the wrapping
+	// key, and it must stay reproducible from the passphrase alone or sync breaks.
+	// So one string decrypts the whole synced workspace. A string a person chooses
+	// is guessable, and is usually one they have used somewhere else -- which puts
+	// the root of the account into another site's breach corpus. Generating it
+	// removes both, and is what makes it safe to let a keychain hold a copy.
+	// Typing your own is still allowed; it is just no longer the default.
+
+	/// How many words a generated passphrase carries. Eight, matching Oxegen's
+	/// login design, which is ~103 bits from the 7776-word list.
+	var GEN_WORDS = 8;
+	/// Whether the create screen is offering a generated passphrase.
+	var idGenMode = false;
+
+	/// True when a passphrase can be generated at all -- the wordlist module is
+	/// part of the sealed build, so this is only false if that build is broken.
+	function canGenerate() {
+		return !!(window.DaimondWords && DaimondWords.generate);
+	}
+
+	/// Mirror whatever the passphrase field holds into the readout above it.
+	///
+	/// The readout deliberately owns no copy of its own. A browser that offers
+	/// its own strong password on a `new-password` field would otherwise leave
+	/// the words on screen disagreeing with the words in the field, and the user
+	/// would write down the wrong secret.
+	function syncGenReadout() {
+		var inp  = document.getElementById('id-pass');
+		var out  = document.getElementById('id-genwords');
+		if (!inp || !out) return;
+		out.textContent = getSecret(inp);
+	}
+
+	/// Put a freshly generated passphrase in the field and show it.
+	function regenerate() {
+		if (!canGenerate()) return false;
+		var inp = document.getElementById('id-pass');
+		if (!inp) return false;
+		setSecret(inp, DaimondWords.generate(GEN_WORDS));
+		syncGenReadout();
+		return true;
+	}
+
+	/// Switch the create screen between the generated passphrase and a typed one.
+	///
+	/// Generated hides the confirm field: there is nothing to confirm, because
+	/// the words are on screen to be read. Typed restores it, since a passphrase
+	/// entered blind into a masked box does need checking against a second one.
+	function setGenMode(on) {
+		idGenMode = !!on && canGenerate();
+		var box    = document.getElementById('id-genbox');
+		var pass2  = document.getElementById('id-pass2-row');
+		var choose = document.getElementById('id-choose');
+		var note   = document.getElementById('id-gennote');
+		var wrote  = document.getElementById('id-wrote');
+		var inp    = document.getElementById('id-pass');
+		if (box)    box.style.display    = idGenMode ? '' : 'none';
+		if (pass2)  pass2.style.display  = idGenMode ? 'none' : '';
+		if (choose) choose.style.display = idGenMode ? '' : 'none';
+		if (wrote)  wrote.checked = false;
+		// Only when generating: the note names the entropy, and reading it off the
+		// wordlist means the figure cannot drift from the list actually shipped.
+		if (note && idGenMode) {
+			note.textContent = 'Eight words picked at random by this device — about '
+				+ Math.round(DaimondWords.bits(GEN_WORDS)) + ' bits, far past anything that can be '
+				+ 'guessed. It is the key to everything you store here, and nobody can reset it '
+				+ 'for you. Write it on paper. Your password manager may also offer to keep it, '
+				+ 'which is safe with a passphrase this strong.';
+		}
+		if (inp) {
+			// The field stays a masked `type="password"` in BOTH modes, including
+			// while a generated passphrase is on screen. The readout above is where
+			// the words are read from -- it sits with the note and the written-it-down
+			// tick, which is where a person is already looking. Revealing the field
+			// as well would leave it as `type="text"` at the moment the form is
+			// submitted, and Firefox and Safari decide whether to offer to save a
+			// credential largely on there being a real password field at that moment.
+			// The eye is still there for anyone who wants it.
+			setSecretRevealed(inp, false);
+			syncEyeIcon('id-pass');
+		}
+		syncPrimaryEnabled();
+	}
+
+	/// Enable the create button only once a generated passphrase is acknowledged
+	/// as written down. The acknowledgement is the only guard between a user and
+	/// an unrecoverable account, so it gates the button rather than warning after.
+	function syncPrimaryEnabled() {
+		var btn   = document.getElementById('id-primary');
+		var wrote = document.getElementById('id-wrote');
+		var m     = document.getElementById('identity-modal');
+		if (!btn || !m) return;
+		var creating = m.dataset.mode === 'create';
+		btn.disabled = !!(creating && idGenMode && wrote && !wrote.checked);
+	}
+
 	function showIdentity(mode) {           // 'create' | 'unlock'
 		var m = document.getElementById('identity-modal');
 		var unlock = mode === 'unlock';
@@ -8122,19 +8249,48 @@ import init, {
 					+ '. Enter the SAME passphrase you use on your other device — not a new one — to '
 					+ 'bring your chats and files here.'
 				: 'Enter your passphrase to unlock this device and decrypt your saved key.')
-			: 'Choose a name and a passphrase. The passphrase encrypts your saved API key and unlocks your identity on this device — it never leaves your browser, and there is no recovery, so write it down. Already use Daimond on another device? Don’t make a new account here — use “Have a pairing code?” below to link this one instead. (Opening a real folder for agents to edit needs a Chromium-based browser: Chrome, Edge or Brave.)';
-		document.getElementById('id-name-row').style.display = unlock ? 'none' : '';
+			// Deliberately short: the passphrase box below carries the part that
+			// matters (what it is, that nothing can reset it, write it down), and
+			// repeating it here pushed the button and the escape hatch off screen.
+			: 'Choose a name — Daimond generates the passphrase itself, below. Already use Daimond on another device? Don’t make a new account here: use “Have a pairing code?” to link this one instead. (Opening a real folder for agents to edit needs Chrome, Edge or Brave.)';
+		// The name doubles as the username a password manager files the entry
+		// under, so it stays in the form when unlocking rather than being hidden.
+		// It is read-only there: it names the account being opened, not a choice.
+		var nameInp = document.getElementById('id-name');
+		document.getElementById('id-name-row').style.display = '';
+		nameInp.readOnly = unlock;
+		nameInp.value = unlock ? name : '';
 		// Hide the whole confirm-passphrase field, its reveal eye included, when
 		// unlocking -- hiding only the input would leave the eye button orphaned.
-		var pass2wrap = document.getElementById('id-pass2').closest('.pass-wrap') || document.getElementById('id-pass2');
-		pass2wrap.style.display = unlock ? 'none' : '';
+		document.getElementById('id-pass2-row').style.display = unlock ? 'none' : '';
+		// The autocomplete token is the strongest hint a manager takes: it says
+		// which field holds the credential and whether this is a sign-in or a
+		// sign-up, which decides between offering to fill and offering to save.
+		document.getElementById('id-pass').setAttribute('autocomplete',
+			unlock ? 'current-password' : 'new-password');
 		document.getElementById('id-primary').textContent    = unlock ? 'Unlock' : 'Create account';
 		document.getElementById('id-skip').textContent       = unlock ? 'Forget this identity…' : 'Skip for now';
 		document.getElementById('id-error').textContent = '';
-		document.getElementById('id-name').value = '';
 		setSecret(document.getElementById('id-pass'), '');
 		setSecret(document.getElementById('id-pass2'), '');
+		setSecretRevealed(document.getElementById('id-pass'), false);
+		setSecretRevealed(document.getElementById('id-pass2'), false);
+		syncEyeIcon('id-pass');
+		syncEyeIcon('id-pass2');
 		m.dataset.mode = mode;
+		// Creating starts from a generated passphrase; unlocking never generates,
+		// so the readout and its acknowledgement stay out of the way.
+		if (unlock) {
+			setGenMode(false);
+			document.getElementById('id-choose').style.display = 'none';
+		} else if (canGenerate() && regenerate()) {
+			setGenMode(true);
+		} else {
+			// The wordlist is part of the sealed build, so this only happens if
+			// that build is broken. Fall back to a typed passphrase rather than
+			// leave the user unable to make an account at all.
+			setGenMode(false);
+		}
 		m.style.display = 'flex';
 		(unlock ? document.getElementById('id-pass') : document.getElementById('id-name')).focus();
 	}
@@ -8169,20 +8325,85 @@ import init, {
 		if (mode === 'create') {
 			var name = document.getElementById('id-name').value.trim();
 			if (!name) { err.textContent = 'Choose a name.'; return; }
-			if (pass.length < 8) { err.textContent = 'Use a passphrase of at least 8 characters.'; return; }
-			if (pass !== getSecret(document.getElementById('id-pass2'))) { err.textContent = 'The passphrases do not match.'; return; }
+			if (idGenMode) {
+				// A generated passphrase is on screen to be read, so there is no
+				// confirm field to match. The only thing standing between the user
+				// and an account nobody can recover is having written it down, and
+				// the button is disabled until they say they have -- so reaching
+				// here without the tick means the DOM was tampered with.
+				var wrote = document.getElementById('id-wrote');
+				if (wrote && !wrote.checked) {
+					err.textContent = 'Confirm you have written the passphrase down first.';
+					return;
+				}
+				// Canonical spelling, so a stray space cannot produce a different
+				// key from the same words.
+				pass = DaimondWords.normalise(pass);
+				// The generated phrase is far longer than this, so the floor only
+				// ever catches a field that was edited down to something weak while
+				// the generated-passphrase copy was still on screen.
+				if (pass.length < 8) {
+					err.textContent = 'That passphrase is too short. Generate another, or choose your own.';
+					return;
+				}
+			} else {
+				if (pass.length < 8) { err.textContent = 'Use a passphrase of at least 8 characters.'; return; }
+				if (pass !== getSecret(document.getElementById('id-pass2'))) { err.textContent = 'The passphrases do not match.'; return; }
+			}
 			try { await DaimondIdentity.create(name, pass); } catch (e) { err.textContent = 'Could not create the account.'; return; }
 			// Encrypt any key already held in memory under the new passphrase.
 			if (cfg.apiKey) { try { cfg.apiKeyEnc = await DaimondIdentity.wrap(cfg.apiKey); saveCfg(cfg); } catch (e) { /* keep plaintext */ } }
 		} else {
 			var r;
 			try { r = await DaimondIdentity.unlock(pass); } catch (e) { r = { ok: false }; }
+			// A generated passphrase is words separated by spaces, and a phone
+			// keyboard readily appends one after the last. Retry the canonical
+			// spelling before calling it wrong -- but only AFTER the raw attempt
+			// failed, so an existing passphrase that genuinely carries padding
+			// still opens, and the second (expensive) derivation only ever runs
+			// on an unlock that was going to be refused anyway.
+			if ((!r || !r.ok) && window.DaimondWords) {
+				var canon = DaimondWords.normalise(pass);
+				if (canon !== pass) {
+					try { r = await DaimondIdentity.unlock(canon); } catch (e) { r = { ok: false }; }
+					if (r && r.ok) pass = canon;
+				}
+			}
 			if (!r || !r.ok) { err.textContent = 'That passphrase did not match. Try again.'; return; }
 		}
+		// Hand the credential to the browser explicitly where it supports the
+		// Credential Management API. The real form and its password field are what
+		// make Safari and Firefox offer to save; this makes Chromium deterministic
+		// about it rather than leaving it to heuristics.
+		offerToSaveCredential(document.getElementById('id-name').value.trim(), pass);
 		await completeUnlock();
 		// The Models form no longer springs open on unlock. With no model the "No model connected"
 		// row pulses (see status()), which points at the same task without burying the whole panel
 		// under a form the moment the app opens.
+		//
+		// The app is on screen before this asks, so the offer reads as an aside
+		// rather than one more gate between the user and their workspace.
+		await maybeOfferPasskey(pass);
+	}
+
+	/// Ask the browser to remember the passphrase, where it offers a way to ask.
+	///
+	/// This is safe to do because the passphrase is GENERATED (see wordlist.js):
+	/// there is nothing guessable or reused to hand over, and a keychain entry is
+	/// what stops it being retyped on a phone several times a day -- which is what
+	/// drives people to short, reused passphrases in the first place. Best-effort
+	/// throughout: `PasswordCredential` is Chromium-only, and a browser that
+	/// declines is no worse off than before, since the form itself still prompts.
+	function offerToSaveCredential(name, pass) {
+		try {
+			if (!window.PasswordCredential || !navigator.credentials || !navigator.credentials.store) return;
+			var cred = new window.PasswordCredential({
+				id:       name || 'Daimond',
+				password: pass,
+				name:     name || 'Daimond',
+			});
+			navigator.credentials.store(cred).catch(function () { /* the user declined. */ });
+		} catch (e) { /* unsupported shape; the form-based offer still stands. */ }
 	}
 
 	/// The shared tail of every successful create or unlock, whether the passphrase
@@ -8232,9 +8453,13 @@ import init, {
 		btn.parentNode.insertBefore(note, btn.nextSibling);
 	}
 
-	/// Show or hide the passkey button for the current identity-modal mode. Only
-	/// unlock mode with an enrolled, still-supported passkey reveals it; the async
-	/// support check hides it again where the platform cannot honour it.
+	/// Show or hide the passkey button for the current identity-modal mode.
+	///
+	/// Two quite different offers share one button. On the UNLOCK screen with a
+	/// passkey enrolled here, it opens this device's own sealed copy. On the
+	/// CREATE screen — a device holding no identity at all — it offers to bring an
+	/// account across from the user's synced passkey, which is the case that used
+	/// to need a pairing code typed from a device already open.
 	function renderPasskeyOption(unlock) {
 		ensurePasskeyEls();
 		var btn = document.getElementById('id-passkey');
@@ -8243,15 +8468,54 @@ import init, {
 		btn.style.display = 'none';
 		btn.disabled = false;
 		if (note) { note.style.display = 'none'; note.textContent = ''; note.className = 'id-passkey-note'; }
-		if (!(unlock && window.DaimondPasskey && DaimondPasskey.isEnrolled())) return;
+		if (!window.DaimondPasskey) return;
+
+		var enrolled = DaimondPasskey.isEnrolled();
+		var adopting = !unlock && !enrolled;
+		if (unlock && !enrolled) return;		// nothing sealed here to open.
+		btn.querySelector('span').textContent = adopting
+			? 'I have a passkey for Daimond'
+			: 'Use a passkey';
+		btn._adopt = adopting;
+
 		DaimondPasskey.available().then(function (ok) {
-			if (!ok) return;
-			// Reveal only if the user is still on the unlock screen.
 			var m = document.getElementById('identity-modal');
-			if (!m || m.dataset.mode !== 'unlock') return;
+			if (!m) return;
+			// Only reveal if the user is still on the screen this was decided for.
+			if ((m.dataset.mode === 'unlock') !== !!unlock) return;
+			if (!ok) {
+				// A silent absence reads as "this feature does not exist". Where a
+				// passkey IS enrolled and the platform has stopped honouring it,
+				// say so, rather than leaving the user wondering where it went.
+				if (enrolled && note) {
+					note.className = 'id-passkey-note';
+					note.style.display = '';
+					note.textContent = 'This browser cannot use your passkey, so the passphrase is the way in here.';
+				}
+				return;
+			}
 			btn.style.display = '';
+			if (adopting && note) {
+				note.className = 'id-passkey-note';
+				note.style.display = '';
+				note.textContent = 'Already have Daimond elsewhere? If you added a passkey there, it brings '
+					+ 'the account here — no pairing code, no passphrase.';
+			}
+			// An enrolled passkey on the unlock screen is what the user came to
+			// use, so ask for it straight away rather than making them press a
+			// button first. A cancelled prompt just leaves the passphrase field,
+			// and the button stays there to try again.
+			if (unlock && enrolled && !passkeyAutoTried) {
+				passkeyAutoTried = true;
+				passkeyUnlock();
+			}
 		}).catch(function () { /* leave it hidden. */ });
 	}
+
+	/// Whether the automatic passkey prompt has already fired this page load.
+	/// Once only: re-prompting after a cancel would trap the user in a loop of
+	/// biometric dialogs with no way to reach the passphrase field.
+	var passkeyAutoTried = false;
 
 	/// Unlock with the enrolled passkey. On success runs the same tail as a typed
 	/// passphrase; on any failure it explains why and leaves the passphrase field
@@ -8260,17 +8524,25 @@ import init, {
 		var btn = document.getElementById('id-passkey');
 		var note = document.getElementById('id-passkey-note');
 		var err = document.getElementById('id-error');
+		var adopt = !!(btn && btn._adopt);
 		if (err) err.textContent = '';
 		if (btn) btn.disabled = true;
-		if (note) { note.className = 'id-passkey-note'; note.style.display = ''; note.textContent = 'Waiting for your passkey…'; }
+		if (note) {
+			note.className = 'id-passkey-note';
+			note.style.display = '';
+			note.textContent = adopt ? 'Looking for your passkey…' : 'Waiting for your passkey…';
+		}
 		var r;
-		try { r = await DaimondPasskey.unlockWithPasskey(); }
-		catch (e) { r = { ok: false, error: 'The passkey could not be used.' }; }
+		try {
+			r = adopt
+				? await DaimondPasskey.adoptWithPasskey()
+				: await DaimondPasskey.unlockWithPasskey();
+		} catch (e) { r = { ok: false, error: 'The passkey could not be used.' }; }
 		if (!r || !r.ok) {
 			if (note) { note.className = 'id-passkey-note err'; note.textContent = (r && r.error) || 'That passkey did not work. Use your passphrase.'; }
 			if (btn) btn.disabled = false;
 			var pass = document.getElementById('id-pass');
-			if (pass) pass.focus();
+			if (pass && !adopt) pass.focus();
 			return;
 		}
 		await completeUnlock();
@@ -8295,23 +8567,73 @@ import init, {
 		try { r = await DaimondPasskey.enrol(pass); }
 		catch (e) { r = { ok: false, error: friendlyError(e) }; }
 		if (!r || !r.ok) { noticeDialog('Passkey not added', (r && r.error) || 'The passkey could not be created.'); return; }
-		noticeDialog('Passkey added', 'You can now unlock Daimond on this device with your passkey. '
-			+ 'Your passphrase still works and remains the fallback.');
+		// Whether the sealed copy reached the gateway decides what this passkey can
+		// do, so it is stated rather than glossed: with it, the passkey brings the
+		// account to a new device; without it, the passkey only opens this one.
+		noticeDialog('Passkey added', r.synced
+			? 'You can now unlock Daimond with your passkey. Because your passkey syncs between '
+				+ 'your own devices, it will bring this account to a new phone or laptop as well — '
+				+ 'no pairing code needed. Your passphrase still works and remains the fallback.'
+			: 'You can now unlock Daimond on this device with your passkey. The account service could '
+				+ 'not be reached, so for now the passkey works here only; add it again once you are '
+				+ 'online to have it carry the account to your other devices. Your passphrase still '
+				+ 'works and remains the fallback.');
 		DaimondAdmin.home();	// re-render so the control flips to "Remove passkey".
 	}
 
-	/// Remove the enrolled passkey. Only the local sealed blob goes; the credential
-	/// stays in the authenticator, inert, for the user to delete there.
+	/// Remove the enrolled passkey: this device's sealed copy and the one held for
+	/// it by the account service. The credential stays in the authenticator, inert
+	/// with nothing left to open, for the user to delete there.
 	async function doRemovePasskey() {
 		var ok = await confirmDialog(
-			'This removes the passkey from this device — you will unlock with your passphrase. The '
-			+ 'passkey itself stays in your authenticator until you delete it there.',
+			'This removes the passkey from this device and stops it opening your account anywhere '
+			+ 'else — you will unlock with your passphrase. The passkey itself stays in your '
+			+ 'authenticator until you delete it there.',
 			'Remove passkey',
 			{ title: 'Remove passkey?', danger: false });
 		if (!ok) return;
-		try { DaimondPasskey.remove(); } catch (e) { /* nothing to remove */ }
+		try { await DaimondPasskey.remove(); } catch (e) { /* nothing to remove */ }
 		noticeDialog('Passkey removed', 'This device will ask for your passphrase from now on.');
 		DaimondAdmin.home();
+	}
+
+	/// Offer a passkey once, just after an unlock, on a device that could hold one
+	/// and does not.
+	///
+	/// This is the missing step that left the whole feature unused: enrolling was
+	/// only ever reachable from a Settings item that nothing pointed at, so a phone
+	/// arrived with no passkey and stayed that way, and the user retyped a
+	/// passphrase every time the browser discarded the tab. The moment just after
+	/// an unlock is the one moment the passphrase is in hand and enrolment is free.
+	/// Asked once per device, and never again whatever the answer.
+	var K_PASSKEY_ASKED = 'daimond-passkey-asked';
+	async function maybeOfferPasskey(passphrase) {
+		if (!passphrase || !window.DaimondPasskey) return;
+		try {
+			if (localStorage.getItem(K_PASSKEY_ASKED) === '1') return;
+			if (DaimondPasskey.isEnrolled()) return;
+			if (!(await DaimondPasskey.available())) return;
+		} catch (e) { return; }
+		// Mark it asked BEFORE asking: a user who dismisses the dialog by
+		// reloading should not meet it again on the next unlock.
+		try { localStorage.setItem(K_PASSKEY_ASKED, '1'); } catch (e) { /* private mode */ }
+		var yes = await confirmDialog(
+			'Daimond can unlock with Face ID, Touch ID or your device PIN instead of the passphrase. '
+			+ 'It also carries this account to your other devices, since your passkey syncs between '
+			+ 'them. Your passphrase keeps working either way.',
+			'Add a passkey',
+			{ title: 'Unlock with your face?', danger: false, cancelLabel: 'Not now' });
+		if (!yes) return;
+		var r;
+		try { r = await DaimondPasskey.enrol(passphrase); }
+		catch (e) { r = { ok: false, error: friendlyError(e) }; }
+		if (!r || !r.ok) {
+			noticeDialog('Passkey not added', (r && r.error)
+				|| 'The passkey could not be created. You can try again from Settings.');
+			return;
+		}
+		noticeDialog('Passkey added', 'Next time, Daimond will ask for your passkey instead of your '
+			+ 'passphrase. You can remove it from Settings at any time.');
 	}
 
 	/// The secondary button: "Skip for now" on create, "Forget this identity…"
@@ -8484,7 +8806,19 @@ import init, {
 			try { cfg.apiKeyEnc = await DaimondIdentity.wrap(plain); saveCfg(cfg); }
 			catch (e) { noticeDialog('Careful', 'The passphrase changed, but your API key could not be re-encrypted. Re-enter it in Settings.'); return; }
 		}
-		noticeDialog('Passphrase changed', 'Your new passphrase is active. Your saved API key was re-encrypted under it.');
+		// The passkey seals a copy of the passphrase and of the wrapped key, both
+		// of which have just changed, so it opens onto something that no longer
+		// works until it is re-sealed. One biometric gesture, right here, rather
+		// than a passkey that fails silently the next time it is reached for.
+		var resealed = true;
+		if (window.DaimondPasskey && DaimondPasskey.isEnrolled()) {
+			var pk;
+			try { pk = await DaimondPasskey.reseal(next); } catch (e) { pk = { ok: false }; }
+			resealed = !!(pk && pk.ok);
+		}
+		noticeDialog('Passphrase changed', 'Your new passphrase is active. Your saved API key was '
+			+ 're-encrypted under it.' + (resealed ? '' : ' Your passkey could not be updated, so it '
+			+ 'will ask for the new passphrase — re-add it from Settings.'));
 	}
 
 	/// A brief status line, floated centre-bottom, for actions that happen away
@@ -8668,14 +9002,23 @@ import init, {
 		}
 	}
 
-	document.getElementById('id-primary').addEventListener('click', idPrimary);
+	// The form owns submission now (see its submit handler in boot), so the button
+	// and Enter both reach idPrimary without a listener here -- adding one would
+	// run the unlock twice. What is left only advances the caret, in the one mode
+	// where a further field still has to be filled.
 	document.getElementById('id-skip').addEventListener('click', idSkip);
-	document.getElementById('id-name').addEventListener('keydown', function (e) { if (e.key === 'Enter') document.getElementById('id-pass').focus(); });
-	document.getElementById('id-pass2').addEventListener('keydown', function (e) { if (e.key === 'Enter') idPrimary(); });
+	document.getElementById('id-name').addEventListener('keydown', function (e) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		document.getElementById('id-pass').focus();
+	});
 	document.getElementById('id-pass').addEventListener('keydown', function (e) {
 		if (e.key !== 'Enter') return;
-		if (document.getElementById('identity-modal').dataset.mode === 'unlock') idPrimary();
-		else document.getElementById('id-pass2').focus();
+		var m = document.getElementById('identity-modal');
+		if (m.dataset.mode === 'create' && !idGenMode) {
+			e.preventDefault();
+			document.getElementById('id-pass2').focus();
+		}
 	});
 	document.getElementById('user-row').addEventListener('click', function () {
 		if (window.DaimondIdentity && DaimondIdentity.exists()) {
@@ -9005,33 +9348,67 @@ import init, {
 	// ── Boot ───────────────────────────────────────────────────
 	async function boot() {
 		initTheme();
-		// Mask the secret fields (API key, passphrase) as text-with-bullets so
-		// no browser treats them as saveable credentials.
-		['cfg-api-key', 'id-pass', 'id-pass2'].forEach(function (fid) {
-			installSecretMask(document.getElementById(fid), '');
-		});
+		// Only the provider API key is masked as text-with-bullets now. It is
+		// somebody else's bearer credential against somebody else's billing, so
+		// there is no reason for it to reach a personal keychain. The passphrase
+		// fields are REAL password inputs (see index.html): the passphrase is
+		// generated, so there is nothing weak or reused to save, and a manager
+		// holding it is what stops it being retyped on a phone all day.
+		installSecretMask(document.getElementById('cfg-api-key'), '');
 		// The eye toggles reveal a passphrase field, so a long one typed on a
 		// phone can be checked. Each remembers its own state; the icon swaps
 		// between an open and a struck-through eye.
-		var EYE_OPEN = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
-			+ '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>'
-			+ '<circle cx="12" cy="12" r="2.6"/></svg>';
-		var EYE_OFF = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
-			+ '<path d="M2 12s3.5-6.5 10-6.5c1.8 0 3.4.5 4.8 1.2M22 12s-3.5 6.5-10 6.5c-1.8 0-3.4-.5-4.8-1.2"/>'
-			+ '<path d="M9.5 9.7a2.6 2.6 0 003.6 3.6M4 4l16 16"/></svg>';
 		['id-pass', 'id-pass2'].forEach(function (fid) {
 			var eye = document.getElementById(fid + '-eye');
 			var inp = document.getElementById(fid);
 			if (!eye || !inp) return;
-			eye.innerHTML = EYE_OPEN;
+			syncEyeIcon(fid);
 			eye.addEventListener('click', function () {
-				var show = !inp._revealed;
-				setSecretRevealed(inp, show);
-				eye.innerHTML = show ? EYE_OFF : EYE_OPEN;
-				eye.title = show ? 'Hide passphrase' : 'Show passphrase';
-				eye.setAttribute('aria-label', eye.title);
+				setSecretRevealed(inp, !inp._revealed);
+				syncEyeIcon(fid);
 				try { inp.focus(); } catch (e) { /* ignore */ }
 			});
+		});
+		// The create screen's own controls: regenerate, copy, the written-it-down
+		// acknowledgement, and the way out to a typed passphrase.
+		var regenBtn = document.getElementById('id-regen');
+		if (regenBtn) regenBtn.addEventListener('click', function () { regenerate(); });
+		var copyBtn = document.getElementById('id-gencopy');
+		if (copyBtn) copyBtn.addEventListener('click', async function () {
+			var v = getSecret(document.getElementById('id-pass'));
+			try {
+				await navigator.clipboard.writeText(v);
+				copyBtn.textContent = 'Copied';
+				setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+			} catch (e) {
+				// No clipboard permission (or an insecure context): the words are
+				// on screen anyway, which is the path that matters.
+				copyBtn.textContent = 'Select it above';
+				setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+			}
+		});
+		var wroteBox = document.getElementById('id-wrote');
+		if (wroteBox) wroteBox.addEventListener('change', syncPrimaryEnabled);
+		var chooseBtn = document.getElementById('id-choose');
+		if (chooseBtn) chooseBtn.addEventListener('click', function () {
+			setGenMode(false);
+			var inp = document.getElementById('id-pass');
+			if (inp) { setSecret(inp, ''); try { inp.focus(); } catch (e) {} }
+			setSecret(document.getElementById('id-pass2'), '');
+		});
+		// A browser may fill its own suggested password into the field. The
+		// readout follows the field so the words shown are always the words used.
+		var passInp = document.getElementById('id-pass');
+		if (passInp) passInp.addEventListener('input', function () {
+			if (idGenMode) syncGenReadout();
+		});
+		// The form is a real form so the browser sees a real submission, which is
+		// what makes it offer to save the credential. Enter and the button both
+		// arrive here.
+		var idForm = document.getElementById('id-form');
+		if (idForm) idForm.addEventListener('submit', function (ev) {
+			ev.preventDefault();
+			idPrimary();
 		});
 		// The Agents panel stays hidden until the first Diamond-dispatched agent.
 		if (localStorage.getItem('daimond-agents-revealed') !== '1') document.body.classList.add('agents-hidden');

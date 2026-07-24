@@ -43,15 +43,18 @@
 	stroke-linejoin: round;
 }
 
-/* A short status line under the passkey button on the unlock screen — a
-   fallback message when a passkey read fails, so the reason shows without
-   displacing the passphrase field below it. */
+/* The line under the passkey button. It began as a one-line status for a failed
+   read, where centring suited it. It now also carries the explanation on the
+   CREATE screen — that a passkey from another device brings the account across —
+   which runs to two or three lines, so it is left-aligned with everything else
+   in the card and given a readable line height. */
 .id-passkey-note {
 	color: var(--text-muted);
 	font-size: var(--fs-xs);
+	line-height: 1.45;
 	margin-top: 6px;
 	min-height: 16px;
-	text-align: center;
+	text-align: left;
 }
 .id-passkey-note.err {
 	color: var(--danger);
