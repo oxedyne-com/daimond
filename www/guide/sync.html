@@ -84,19 +84,39 @@
 	<p>What travels through the gateway is one encrypted parcel that only your devices hold the key to. The key comes from your passphrase and never leaves the browser, so the server stores the parcel but cannot open it. Nothing readable crosses between devices.</p>
 
 	<h2>Linking a second device</h2>
-	<p>On the device you already use, choose <span class="ui">Link another device</span>. It shows a one-time code and a QR code. You then have two ways to bring the new device in:</p>
-	<ul>
-		<li><strong>Scan the QR.</strong> On the new phone, point its camera at the QR code. It opens Daimond and links the device in one step, using the phone's own camera, with no in-app scanner to install.</li>
-		<li><strong>Type the code.</strong> Open Daimond on the new device, choose <span class="ui">Have a pairing code?</span>, and type the one-time code shown on the first device.</li>
-	</ul>
-	<p>Either way, you then unlock the new device with your usual passphrase, and your chats and files appear. A passkey can unlock it faster afterwards, once you add one there.</p>
+	<p>Each device makes its own identity, so typing your passphrase on a new device would start a <em>separate</em>, empty account — not bring your existing one across. To use the account you already have, you <strong>link</strong> the new device to it. It takes three steps.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>On the device you already use, open the link dialog</h3>
+			<p>Click the <span class="ui">Link another device</span> button in the top bar. It shows a QR code and a one-time pairing code.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="The Link another device dialog, showing a QR code and a one-time pairing code that expires in about ten minutes.">
+				<figcaption>Your first device shows a QR and a code.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>On the new device, scan the QR — or type the code</h3>
+			<p>Point the new phone's camera at the QR code: it opens Daimond and fills the code in for you, so you only tap <span class="ui">Link this device</span>. No camera? Open Daimond there, choose <span class="ui">Have a pairing code?</span>, and type the code. The code shown is only so you can check it matches the first device.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="The Link this device dialog on a phone after scanning, with the pairing code already filled in and a Link this device button.">
+				<figcaption>After scanning, just tap <span class="ui">Link this device</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Unlock with the same passphrase</h3>
+			<p>The new device now holds your account. Unlock it with the <strong>same passphrase you use on your first device</strong> — not a new one — and your chats and files appear. A passkey can unlock it faster afterwards, once you add one there.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>The passphrase is the same everywhere.</strong> One account, one passphrase, on every device you link. If a device asks you to <em>create</em> a passphrase rather than <em>enter</em> one, it is about to start a new account — link it instead.</div>
 
 	<h2>What travels</h2>
 	<p>Any file travels, whatever kind it is. A photograph, a recording, a PDF or a spreadsheet reaches your other devices as text does, up to a gigabyte for one file.</p>
 	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device you are reading it on. A file that is not on this device at the moment still shows in the tree, marked with a cloud, and comes down when you ask for it. <a href="email-web-files.html">The Workspace</a> sets out the three states a file can be in, how space is freed as the browser fills, and what cloud storage costs.</p>
 
 	<h2>What it costs</h2>
-	<p>Sync is free for now. When it is switched on it comes bundled into the one-time Pro unlock, not a subscription, so it stays bought once like the rest of Daimond. Cloud storage is paid for from credits rather than by subscription, and is free and unmetered at present.</p>
+	<p>Cross-device sync is part of <strong>Pro</strong>, the one-time unlock — not a subscription, so it stays bought once like the rest of Daimond. Without Pro a device works on its own; with it, your devices stay in step. Pro also turns on cloud storage and Email. The larger file bodies that sync carries are kept in cloud storage, paid for from credits rather than by subscription, with a free allowance before anything is metered.</p>
 
 	<div class="next">
 		<a href="accounts.html">&larr; Accounts</a>
