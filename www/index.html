@@ -549,8 +549,14 @@
 			<div id="id-name-row">
 				<input type="text" id="id-name" placeholder="Your name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
 			</div>
-			<input type="text" id="id-pass" placeholder="Passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-			<input type="text" id="id-pass2" placeholder="Confirm passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+			<div class="pass-wrap">
+				<input type="text" id="id-pass" placeholder="Passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+				<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+			</div>
+			<div class="pass-wrap">
+				<input type="text" id="id-pass2" placeholder="Confirm passphrase" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+				<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+			</div>
 		</div>
 		<div id="id-error" class="login-error"></div>
 		<button type="button" id="id-primary">Create passphrase</button>

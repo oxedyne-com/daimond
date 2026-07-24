@@ -196,16 +196,34 @@
 	/// QR), so a scan lands here with the field already filled and only the tap
 	/// to confirm left.
 	function showRedeem(prefill) {
+		var scanned = typeof prefill === 'string' && !!prefill;
 		overlay(function (box, close) {
 			box.appendChild(el('h3', null, 'Link this device'));
-			box.appendChild(el('p', null, 'On the device you already use, choose “Link another device” and type the code it shows here.'));
+			if (scanned) {
+				// Arrived by scanning the QR: the code is already filled in, so the
+				// only thing left is to tap the button. Say exactly that, and that
+				// the code is shown only so it can be checked against the other
+				// device -- otherwise a code and a button read as "type this
+				// somewhere", which is what confused people.
+				box.appendChild(el('p', null,
+					'Scanned from your other device. Just tap “Link this device” below to bring '
+					+ 'your account here.'));
+			} else {
+				box.appendChild(el('p', null,
+					'On the device you already use, choose “Link another device” and type the code '
+					+ 'it shows here.'));
+			}
 			var input = el('input', 'pair-input');
 			input.setAttribute('placeholder', 'pairing code');
 			input.setAttribute('autocapitalize', 'off');
 			input.setAttribute('autocomplete', 'off');
 			input.setAttribute('spellcheck', 'false');
-			if (typeof prefill === 'string' && prefill) input.value = prefill;
+			if (scanned) { input.value = prefill; input.readOnly = true; }
 			box.appendChild(input);
+			if (scanned) {
+				box.appendChild(el('p', 'pair-note',
+					'This is the code from your other device — it should match the one shown there.'));
+			}
 			var err = el('div', 'pair-err');
 			box.appendChild(err);
 			var row = el('div', 'pair-row');
@@ -220,9 +238,19 @@
 				err.textContent = '';
 				go.disabled = true;
 				redeem(input.value).then(function () {
+					// Name the account, and leave a note the unlock screen picks up
+					// after the reload -- on a phone the passphrase box reappears
+					// with a different name on it, and it must be clear that the
+					// passphrase to type is the ONE FROM THE OTHER DEVICE, not a new
+					// one for this phone.
+					var who = '';
+					try { who = (window.DaimondIdentity && DaimondIdentity.displayName()) || ''; } catch (e) { /* none */ }
+					try { sessionStorage.setItem('daimond-just-linked', who || '1'); } catch (e) { /* private mode */ }
 					box.innerHTML = '';
 					box.appendChild(el('h3', null, 'This device is linked'));
-					box.appendChild(el('p', null, 'It now holds your identity. Unlock it with your usual passphrase to see your chats and files here.'));
+					box.appendChild(el('p', null,
+						'It now holds your account' + (who ? ' “' + who + '”' : '') + '. Tap Unlock, then '
+						+ 'enter the SAME passphrase you use on your other device — not a new one.'));
 					var r2 = el('div', 'pair-row');
 					var ok = el('button', 'pair-btn', 'Unlock');
 					ok.addEventListener('click', function () { close(); location.reload(); });
@@ -263,7 +291,13 @@
 		// Device A: a link button in the top actions, shown once there is a session.
 		var actions = document.getElementById('top-actions') || document.querySelector('.top-actions');
 		if (actions && !document.getElementById('pair-link-btn')) {
-			var l = el('button', 'icon-btn', '🔗');
+			var l = el('button', 'icon-btn');
+			// A line icon matching the header's own (a phone, with a small arc to
+			// a second device), rather than an emoji that clashes with them.
+			l.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+				+ '<rect x="3" y="7" width="9" height="14" rx="1.6"/>'
+				+ '<path d="M7.5 18h0"/>'
+				+ '<path d="M15 4.2a6 6 0 015 5M15 8a2.4 2.4 0 012 2"/></svg>';
 			l.id = 'pair-link-btn';
 			l.type = 'button';
 			l.title = 'Link another device';

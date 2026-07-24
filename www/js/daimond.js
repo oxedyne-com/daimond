@@ -784,8 +784,11 @@ import init, {
 		el.setAttribute('data-lpignore', 'true');
 		el.setAttribute('spellcheck', 'false');
 		el._real = initial || '';
+		el._revealed = false;
 		el.value = new Array(el._real.length + 1).join(BULLET);
 		el.addEventListener('input', function () {
+			// Revealed: the field shows the real text, so it IS the value.
+			if (el._revealed) { el._real = el.value; return; }
 			var old = el._real;
 			var cur = el.value;
 			// Common leading run of bullets (unchanged prefix).
@@ -805,8 +808,21 @@ import init, {
 	function setSecret(el, v) {
 		if (!el) return;
 		v = v || '';
-		if (el._real != null) { el._real = v; el.value = new Array(v.length + 1).join(BULLET); }
-		else el.value = v;
+		if (el._real != null) {
+			el._real = v;
+			el.value = el._revealed ? v : new Array(v.length + 1).join(BULLET);
+		} else {
+			el.value = v;
+		}
+	}
+	/// Show or hide a masked secret's real text. Reading and typing keep working
+	/// in both states; only the display changes.
+	function setSecretRevealed(el, show) {
+		if (!el || el._real == null) return;
+		el._revealed = !!show;
+		el.value = show ? el._real : new Array(el._real.length + 1).join(BULLET);
+		var caret = el.value.length;
+		try { el.setSelectionRange(caret, caret); } catch (e) { /* not focusable yet */ }
 	}
 
 	// Format a USD cost calmly: precise but never dollar-signs-screaming.
@@ -2806,7 +2822,7 @@ import init, {
 
 				r.style.display = '';
 				row('astat-store', kept ? 'ok' : 'off', '',
-					'Workspace · OPFS' + (kept ? '' : ' · evictable'),
+					'Workspace · Browser' + (kept ? '' : ' · evictable'),
 					fmtBytes(used) + (pctTxt ? ' · ' + pctTxt : ''));
 				r.title = (quota ? fmtBytes(used) + ' of ' + fmtBytes(quota) + ' this browser allows. ' : '')
 					+ (kept
@@ -8090,14 +8106,28 @@ import init, {
 		var name = (window.DaimondIdentity && DaimondIdentity.displayName()) || '';
 		renderAccountPicker(unlock);
 		renderPasskeyOption(unlock);
+		// A device that just redeemed a pairing code reloads into unlock mode. The
+		// passphrase box then reappears with the linked account's name, and it must
+		// be unmistakable that the passphrase to type is the one from the OTHER
+		// device, not a new one for this device -- the flag carries that across
+		// the reload, and is consumed here so it shows once.
+		var linked = '';
+		try { linked = sessionStorage.getItem('daimond-just-linked') || ''; sessionStorage.removeItem('daimond-just-linked'); } catch (e) { /* private mode */ }
 		document.getElementById('id-title').textContent = unlock
-			? (name ? 'Welcome back, ' + name : 'Unlock Daimond')
+			? (linked ? 'Linked — now unlock it' : (name ? 'Welcome back, ' + name : 'Unlock Daimond'))
 			: 'Create your account';
 		document.getElementById('id-lead').textContent = unlock
-			? 'Enter your passphrase to unlock this device and decrypt your saved key.'
-			: 'Choose a name and a passphrase. The passphrase encrypts your saved API key and unlocks your identity on this device — it never leaves your browser, and there is no recovery, so write it down. (Opening a real folder for agents to edit needs a Chromium-based browser: Chrome, Edge or Brave.)';
+			? (linked
+				? 'This device is linked to your account' + (linked !== '1' ? ' “' + linked + '”' : '')
+					+ '. Enter the SAME passphrase you use on your other device — not a new one — to '
+					+ 'bring your chats and files here.'
+				: 'Enter your passphrase to unlock this device and decrypt your saved key.')
+			: 'Choose a name and a passphrase. The passphrase encrypts your saved API key and unlocks your identity on this device — it never leaves your browser, and there is no recovery, so write it down. Already use Daimond on another device? Don’t make a new account here — use “Have a pairing code?” below to link this one instead. (Opening a real folder for agents to edit needs a Chromium-based browser: Chrome, Edge or Brave.)';
 		document.getElementById('id-name-row').style.display = unlock ? 'none' : '';
-		document.getElementById('id-pass2').style.display    = unlock ? 'none' : '';
+		// Hide the whole confirm-passphrase field, its reveal eye included, when
+		// unlocking -- hiding only the input would leave the eye button orphaned.
+		var pass2wrap = document.getElementById('id-pass2').closest('.pass-wrap') || document.getElementById('id-pass2');
+		pass2wrap.style.display = unlock ? 'none' : '';
 		document.getElementById('id-primary').textContent    = unlock ? 'Unlock' : 'Create account';
 		document.getElementById('id-skip').textContent       = unlock ? 'Forget this identity…' : 'Skip for now';
 		document.getElementById('id-error').textContent = '';
@@ -8979,6 +9009,29 @@ import init, {
 		// no browser treats them as saveable credentials.
 		['cfg-api-key', 'id-pass', 'id-pass2'].forEach(function (fid) {
 			installSecretMask(document.getElementById(fid), '');
+		});
+		// The eye toggles reveal a passphrase field, so a long one typed on a
+		// phone can be checked. Each remembers its own state; the icon swaps
+		// between an open and a struck-through eye.
+		var EYE_OPEN = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+			+ '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>'
+			+ '<circle cx="12" cy="12" r="2.6"/></svg>';
+		var EYE_OFF = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+			+ '<path d="M2 12s3.5-6.5 10-6.5c1.8 0 3.4.5 4.8 1.2M22 12s-3.5 6.5-10 6.5c-1.8 0-3.4-.5-4.8-1.2"/>'
+			+ '<path d="M9.5 9.7a2.6 2.6 0 003.6 3.6M4 4l16 16"/></svg>';
+		['id-pass', 'id-pass2'].forEach(function (fid) {
+			var eye = document.getElementById(fid + '-eye');
+			var inp = document.getElementById(fid);
+			if (!eye || !inp) return;
+			eye.innerHTML = EYE_OPEN;
+			eye.addEventListener('click', function () {
+				var show = !inp._revealed;
+				setSecretRevealed(inp, show);
+				eye.innerHTML = show ? EYE_OFF : EYE_OPEN;
+				eye.title = show ? 'Hide passphrase' : 'Show passphrase';
+				eye.setAttribute('aria-label', eye.title);
+				try { inp.focus(); } catch (e) { /* ignore */ }
+			});
 		});
 		// The Agents panel stays hidden until the first Diamond-dispatched agent.
 		if (localStorage.getItem('daimond-agents-revealed') !== '1') document.body.classList.add('agents-hidden');
