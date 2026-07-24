@@ -2125,6 +2125,7 @@ import init, {
 			title: opts.title || 'Are you sure?',
 			message: message,
 			okLabel: okLabel || 'OK',
+			cancelLabel: opts.cancelLabel,        // a caller may rename the second button.
 			danger: opts.danger !== false,
 		});
 	}
@@ -8253,13 +8254,44 @@ import init, {
 		var A = window.DaimondAccounts;
 		var acct = A ? A.account() : null;
 		var others = A ? A.list().length - 1 : 0;
+
+		// What is bound to this identity on the SERVER, which the local-data
+		// warning never covered: the credit balance and a Pro licence are held
+		// gateway-side and unlocked only by this key. Erase the key with no
+		// backup and they are stranded for good -- real money, gone. State is
+		// from the last successful bootstrap, so a balance seen this session is
+		// known even if the gateway is momentarily unreachable now.
+		var gw    = window.DaimondGateway ? DaimondGateway.state() : null;
+		var bal   = gw && typeof gw.credits === 'number' ? gw.credits : 0;
+		var pro   = !!(gw && gw.pro);
+		var money = '';
+		if (bal > 0 && pro)  money = 'a balance of ' + DaimondGateway.fmtMoney(bal, gw.currency) + ' and Daimond Pro';
+		else if (bal > 0)    money = 'a balance of ' + DaimondGateway.fmtMoney(bal, gw.currency);
+		else if (pro)        money = 'Daimond Pro';
+
+		// When money rides on this identity, offer to save it before anything is
+		// destroyed. A backup file re-imports the identity elsewhere, so the
+		// credits and Pro are reachable again from the restored key.
+		if (money) {
+			var save = await confirmDialog(
+				'This account holds ' + money + '. That is kept on Daimond’s server and unlocked only by '
+				+ 'this identity, so forgetting it loses it for good — there is no way to get it back without '
+				+ 'a backup. Export one now?',
+				'Export a backup', { title: 'Save your credits first?', danger: false, cancelLabel: 'Skip' });
+			if (save) {
+				try { await doExport(); }
+				catch (e) { /* the user asked to; a failed export must not block the choice below. */ }
+			}
+		}
+
+		var owned = money ? ' It also abandons ' + money + ' held on the server, which cannot be recovered '
+			+ 'without a backup.' : '';
 		var lead = 'This erases your passphrase, your encrypted API key, and all of your chats, '
-			+ 'Diamonds and spend history on this device. There is no recovery and no backup. '
-			+ 'Everything is gone.';
+			+ 'Diamonds and spend history on this device.' + owned + ' There is no recovery. Everything is gone.';
 		if (acct && !acct.primary) {
 			lead = 'This removes the account “' + (acct.name || 'Unnamed account') + '” from this '
-				+ 'browser — its passphrase, keys, chats, Diamonds, spend and files. There is no recovery. '
-				+ 'Other accounts here are untouched.';
+				+ 'browser — its passphrase, keys, chats, Diamonds, spend and files.' + owned
+				+ ' There is no recovery. Other accounts here are untouched.';
 		}
 		var ok = await confirmDialog(lead, 'Erase everything', { title: 'Forget this account?' });
 		if (!ok) return;
