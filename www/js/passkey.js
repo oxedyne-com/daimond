@@ -251,7 +251,7 @@
 					],
 					authenticatorSelection: {
 						residentKey:      'preferred',
-						userVerification: 'preferred',
+						userVerification: 'required',	// Force the biometric/PIN gesture — the whole point.
 					},
 					timeout:    60000,
 					extensions: { prf: {} },
@@ -300,7 +300,7 @@
 					rpId:      location.hostname,
 					challenge: crypto.getRandomValues(new Uint8Array(CHAL_BYTES)),
 					allowCredentials: [{ type: 'public-key', id: credIdBytes }],
-					userVerification: 'preferred',
+					userVerification: 'required',	// Demand Face ID / Touch ID / device PIN on every unlock.
 					timeout:   60000,
 					extensions: { prf: { eval: { first: saltBytes } } },
 				},
