@@ -4693,22 +4693,26 @@ import init, {
 		if (st.offline || !st.authed || st.pro === null) return;
 
 		if (st.pro) {
-			host.appendChild(html(
-				'<div class="pro-owned">'
-				+ '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and Email are on. '
-				+ 'Nothing renews.</div>'));
+			var owned = document.createElement('div');
+			owned.className = 'pro-owned';
+			owned.innerHTML = '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and '
+				+ 'Email are on. Nothing renews.';
+			host.appendChild(owned);
 			return;
 		}
 		var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
-		host.appendChild(html(
-			'<div class="pro-offer">'
-			+ '<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, '
+		var box = document.createElement('div');
+		box.className = 'pro-offer';
+		// Static copy plus the gateway-formatted price (a number); no user text,
+		// so innerHTML is safe here and reads better than a pile of createElement.
+		box.innerHTML =
+			'<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, '
 			+ 'cloud storage, and Email — reading and sending your own mail in the workspace.</p>'
 			+ '<p class="pro-fine">No subscription. Metered use (inference, bandwidth, storage beyond '
 			+ 'the free tier) is paid from credits, whether or not you own Pro.</p>'
 			+ '<button class="pro-buy" id="pro-buy">Own Daimond' + (price ? ' — ' + price : '') + '</button>'
-			+ '<div class="pro-err" id="pro-err"></div>'
-			+ '</div>'));
+			+ '<div class="pro-err" id="pro-err"></div>';
+		host.appendChild(box);
 		var btn = document.getElementById('pro-buy');
 		if (btn) btn.addEventListener('click', async function () {
 			btn.disabled = true;
