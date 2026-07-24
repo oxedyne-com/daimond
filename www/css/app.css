@@ -162,6 +162,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	0%, 100% { background: var(--bg-hover); box-shadow: 0 0 0 0 rgba(210, 96, 79, 0.0); }
 	50%      { background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(210, 96, 79, 0.28); }
 }
+/* The Pro row reads its value as a link when there is an upgrade to take, so
+   "Upgrade to Pro" invites a click the way a bare status figure would not. */
+.astat-row.astat-pro-upgrade .astat-val { color: var(--accent); text-decoration: underline; }
+.astat-row.astat-pro-upgrade:hover .astat-val { filter: brightness(1.1); }
 .astat-row.astat-pulse { animation: astat-pulse 2.2s ease-in-out infinite; }
 .astat-row.astat-pulse .astat-val { color: var(--text-primary); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {

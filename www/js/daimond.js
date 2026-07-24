@@ -2702,6 +2702,11 @@ import init, {
 			}
 			arow.title = 'Buy credits, or connect your own provider key';
 
+			// Pro: whether this identity owns the one-time unlock, and a way in if
+			// not. It sits on its own row, next to credits but distinct from them --
+			// Pro is a capability you own, credits are money you spend.
+			proRow();
+
 			// What Daimond can do. A user who does not know it can read a page or answer an
 			// email will never ask it to, so the count sits in the rail and the panel is one
 			// click from it.
@@ -2710,6 +2715,53 @@ import init, {
 			// The workspace: OPFS is evictable, and a user who cannot see it
 			// filling up cannot know to get anything out of it.
 			storage();
+		}
+
+		/// The Pro row: owned, or an invitation to own it. Shown only when the
+		/// gateway has answered for an account, since Pro is a fact about that
+		/// account -- a locked or unconnected app cannot say, so it says nothing.
+		function proRow() {
+			var r = document.getElementById('astat-pro');
+			if (!r) return;
+			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
+			if (locked || !st.authed || st.pro === null) { r.style.display = 'none'; return; }
+			r.style.display = '';
+			if (st.pro) {
+				row('astat-pro', 'ok', 'Pro', 'Owned');
+				r.title = 'You own Daimond Pro — sync, cloud storage and Email are on.';
+			} else {
+				row('astat-pro', 'off', 'Pro', 'Upgrade to Pro');
+				r.title = 'Own Daimond once to turn on sync, cloud storage and Email.';
+			}
+			// The value reads as a link when there is an upgrade to take.
+			r.classList.toggle('astat-pro-upgrade', !st.pro);
+		}
+
+		/// The Pro popup: own it, or the confirmation that it is owned. Its own
+		/// surface rather than the Credits drawer, because Pro is a single
+		/// decision -- one payment -- not a balance to watch.
+		async function showPro() {
+			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
+			if (st.pro) {
+				noticeDialog('Daimond Pro',
+					'You own Daimond Pro. Cross-device sync, cloud storage and Email are on. '
+					+ 'Nothing renews.');
+				return;
+			}
+			var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
+			var ok = await confirmDialog(
+				'Own Daimond with one payment, kept for good. Pro turns on cross-device sync, cloud '
+				+ 'storage, and Email — reading and sending your own mail in the workspace. No '
+				+ 'subscription; metered use like inference and bandwidth is still paid from credits.',
+				'Own Daimond' + (price ? ' — ' + price : ''),
+				{ title: 'Upgrade to Pro', danger: false, cancelLabel: 'Not now' });
+			if (!ok) return;
+			try {
+				var r = await DaimondGateway.buyPro();       // navigates to Stripe, or returns {held}
+				if (r && r.held) { await DaimondGateway.refreshLicence(); status(); }
+			} catch (e) {
+				noticeDialog('Could not start checkout', friendlyError(e));
+			}
 		}
 
 		/// The Tools row: how many tools this Daimond holds, of how many exist.
@@ -2900,6 +2952,8 @@ import init, {
 			// Each status row opens the thing it names, and nothing else.
 			document.getElementById('astat-model').addEventListener('click', function () { openSettings(''); });
 			document.getElementById('astat-account').addEventListener('click', function () { openCredits(''); });
+			var proRowEl = document.getElementById('astat-pro');
+			if (proRowEl) proRowEl.addEventListener('click', showPro);
 			var relRow = document.getElementById('astat-release');
 			if (relRow) relRow.addEventListener('click', release);
 			if (window.DaimondRelease) DaimondRelease.paintRow();
