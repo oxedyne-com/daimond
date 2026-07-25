@@ -11,13 +11,23 @@
    break sync.
 
    The mechanism is the WebAuthn PRF extension (the same primitive
-   Bitwarden uses). A passkey, when asserted with a per-identity
-   salt, yields a stable pseudo-random secret that never leaves the
-   authenticator. We HKDF that secret into an AES-GCM key and seal
-   the passphrase under it. Unlocking with the passkey re-derives the
-   same secret, opens the sealed passphrase, and feeds it straight to
-   `DaimondIdentity.unlock()` — the identical code path a typed
-   passphrase takes. The passphrase is the always-present fallback.
+   Bitwarden uses). A passkey, when asserted with a FIXED salt label
+   (`daimond-prf-salt-v2`, not a per-identity random value), yields a
+   stable pseudo-random secret that never leaves the authenticator.
+   We HKDF that secret into an AES-GCM key and seal BOTH the exported
+   identity bundle AND the passphrase under it. Unlocking with the
+   passkey re-derives the same secret, opens the sealed passphrase,
+   and feeds it straight to `DaimondIdentity.unlock()` — the identical
+   code path a typed passphrase takes. The passphrase is the always-
+   present fallback.
+
+   The fixed salt is what lets a passkey carry the account to a device
+   that holds NOTHING: one discoverable assertion yields the credential
+   id and the PRF secret together (a random salt would have to be in
+   hand first, which a bare device does not have). The sealed bundle
+   is also kept by the gateway under a hash of the credential id (see
+   passkey_blob.rs), so `adoptWithPasskey()` can stand a new device up
+   in a single biometric gesture, with no pairing code.
 
    Everything here uses browser-native WebAuthn (`navigator.creden-
    tials`) and WebCrypto (`crypto.subtle`) only — no dependencies, no
@@ -26,12 +36,14 @@
 
    ZERO-KNOWLEDGE
    --------------
-   There is no server in this flow. The passphrase, the PRF secret
-   and every derived key exist only in memory during an operation.
-   What is persisted (namespaced per account, see accounts.js) is a
-   credential id, a random salt, and the passphrase sealed under a
-   key that only the authenticator can reconstitute. An onlooker who
-   reads localStorage learns nothing they could unlock with.
+   The passphrase, the PRF secret and every derived key exist only in
+   memory during an operation. What is persisted locally (namespaced
+   per account, see accounts.js) is a credential id and the identity
+   bundle + passphrase sealed under a key that only the authenticator
+   can reconstitute. The gateway's copy is the same sealed blob under
+   a hashed handle and nothing more — it names no account and is inert
+   without the authenticator. An onlooker who reads localStorage, or
+   the gateway store, learns nothing they could unlock with.
 
    THREAT MODEL
    ------------
