@@ -1,9 +1,22 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-skin="sharp">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Daimond</title>
+<!-- Apply the saved theme (palette) and skin (shape) before the first paint, so
+     a returning user never sees the default flash to their own choice. The full
+     services (DaimondTheme / DaimondSkin) take over once the app boots. -->
+<script>
+(function () {
+	try {
+		var t = localStorage.getItem('daimond-theme');
+		if (t === 'light' || t === 'lollypop' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+		var s = localStorage.getItem('daimond-skin');
+		if (s === 'soft' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);
+	} catch (e) { /* private mode: the default attributes stand. */ }
+})();
+</script>
 <link rel="icon" type="image/svg+xml" href="assets/daimond_mark.svg">
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/app.css">
@@ -20,6 +33,7 @@
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
+<link rel="stylesheet" href="css/skin-soft.css">
 </head>
 <body data-mpanel="ai">
 

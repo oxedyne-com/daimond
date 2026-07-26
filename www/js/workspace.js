@@ -292,6 +292,33 @@
 		menuEl.innerHTML = '';
 		var model = P().model();
 
+		// Skin -- the overall shape (corners, typeface, spacing), orthogonal to
+		// the palette chosen below.
+		if (window.DaimondSkin) {
+			menuEl.appendChild(el('div', 'pop-head', 'Skin'));
+			var skinNow = DaimondSkin.get();
+			var sseg = el('div', 'seg');
+			[['sharp', 'Sharp'], ['soft', 'Approachable']].forEach(function (pair) {
+				var sb = el('button', null, pair[1]);
+				sb.setAttribute('aria-pressed', pair[0] === skinNow ? 'true' : 'false');
+				sb.title = pair[0] === 'soft'
+					? 'Rounder, roomier and friendlier -- in the manner of Google or Canva.'
+					: 'The precise, information-dense original.';
+				sb.addEventListener('click', function () {
+					DaimondSkin.set(pair[0]);
+					// Approachable reads as a light, airy look; if the user is on the
+					// dark palette when they choose it, move them to light so it lands
+					// as intended. The palette is still theirs to change, just below.
+					if (pair[0] === 'soft' && window.DaimondTheme && DaimondTheme.get() === 'dark') {
+						DaimondTheme.set('light');
+					}
+					renderMenu();
+				});
+				sseg.appendChild(sb);
+			});
+			menuEl.appendChild(sseg);
+		}
+
 		// Theme.
 		menuEl.appendChild(el('div', 'pop-head', 'Theme'));
 		var themes = window.DaimondTheme ? DaimondTheme.list() : ['dark'];

@@ -1,0 +1,194 @@
+/* ============================================================
+   skin-soft.css — the "Approachable" skin.
+   ------------------------------------------------------------
+   Everything here is scoped to :root[data-skin="soft"], so the
+   default (sharp) skin is not affected by a single rule -- the
+   whole file is dormant until a user chooses Approachable.
+
+   It carries the two halves a token swap cannot: the DENSITY
+   (Tier 2 -- paddings and gaps loosened, driven by --space-scale
+   so the whole skin breathes from one number) and the CALMER
+   CHROME (Tier 3 -- the monospace telemetry de-teched, section
+   headers softened, cards lifted on soft shadows rather than
+   ruled with hard borders, buttons rounded toward pills, the
+   primary Start surface made inviting).
+
+   The shape tokens (radius, font, shadows, --space-scale) are in
+   variables.css under the same selector; this file spends them.
+   ============================================================ */
+
+/* The friendly typeface. One variable file covers 400..800; it is
+   only fetched when an element actually renders in it, i.e. when the
+   soft skin is active, so the sharp skin pays nothing for it. */
+@font-face {
+	font-family: 'Nunito';
+	font-style: normal;
+	font-weight: 400 800;
+	font-display: swap;
+	src: url('../fonts/nunito-var-latin.woff2') format('woff2');
+}
+
+/* ── Base tone ─────────────────────────────────────────────── */
+:root[data-skin="soft"] body {
+	line-height: 1.55;
+	-webkit-font-smoothing: antialiased;
+}
+/* The dense monospace furniture is what most reads as "developer tool".
+   Under the soft skin the small telemetry speaks in the friendly face
+   instead, which de-techs the whole surface in one stroke. The real
+   monospace is kept for actual code (pre/code), where it belongs. */
+:root[data-skin="soft"] .top-meter,
+:root[data-skin="soft"] .rail-count,
+:root[data-skin="soft"] .astat-aside,
+:root[data-skin="soft"] .session-box-meta,
+:root[data-skin="soft"] .session-box-ctx,
+:root[data-skin="soft"] .session-box-cost,
+:root[data-skin="soft"] .session-box-time,
+:root[data-skin="soft"] .tile-meter {
+	font-family: var(--font);
+	letter-spacing: 0;
+}
+/* The always-on stats bar is telemetry, not a task. Kept, but quietened,
+   so the eye lands on the work rather than the numbers. */
+:root[data-skin="soft"] .top-meter { opacity: 0.6; }
+:root[data-skin="soft"] .top-meter:hover { opacity: 1; }
+
+/* Section headers lose the ALL-CAPS engineering shout for a friendly weight. */
+:root[data-skin="soft"] .railhead > span:first-child,
+:root[data-skin="soft"] .pop-head,
+:root[data-skin="soft"] .admin-sec {
+	text-transform: none;
+	letter-spacing: 0;
+	font-weight: 700;
+	font-size: var(--fs-sm);
+	color: var(--text-secondary);
+}
+
+/* ── Panels: lift, don't rule ──────────────────────────────── */
+:root[data-skin="soft"] .ai,
+:root[data-skin="soft"] .web,
+:root[data-skin="soft"] .doc,
+:root[data-skin="soft"] .msg,
+:root[data-skin="soft"] .compose,
+:root[data-skin="soft"] .tools {
+	border-color: transparent;
+	box-shadow: var(--shadow-1);
+}
+
+/* ── Cards and dialogs: more room, a soft lift ─────────────── */
+:root[data-skin="soft"] .login-card,
+:root[data-skin="soft"] .modal-card,
+:root[data-skin="soft"] .dlg-card {
+	border-color: transparent;
+	box-shadow: var(--shadow-2);
+	padding: calc(24px * var(--space-scale));
+}
+:root[data-skin="soft"] .pass-gen {
+	padding: calc(12px * var(--space-scale));
+	border-color: transparent;
+	box-shadow: var(--shadow-1);
+}
+
+/* ── Buttons: rounded toward pills, roomier hit targets ────── */
+:root[data-skin="soft"] .dlg-ok,
+:root[data-skin="soft"] .dlg-cancel,
+:root[data-skin="soft"] .modal-close,
+:root[data-skin="soft"] #id-primary,
+:root[data-skin="soft"] .id-passkey,
+:root[data-skin="soft"] .compose-send,
+:root[data-skin="soft"] .compose-btn,
+:root[data-skin="soft"] .admin-btn,
+:root[data-skin="soft"] .pass-gen-btn,
+:root[data-skin="soft"] .empty-new-session,
+:root[data-skin="soft"] .login-card button {
+	border-radius: 999px;
+	padding: calc(9px * var(--space-scale)) calc(18px * var(--space-scale));
+	font-weight: 600;
+}
+/* The primary calls to action carry the accent as a fill, the way an
+   approachable UI makes the one next step obvious. */
+:root[data-skin="soft"] .empty-new-session,
+:root[data-skin="soft"] #id-primary,
+:root[data-skin="soft"] .dlg-ok {
+	box-shadow: var(--shadow-1);
+}
+/* Small icon and add buttons just round off; they stay compact. */
+:root[data-skin="soft"] .icon-btn,
+:root[data-skin="soft"] .addbtn {
+	border-radius: var(--radius);
+}
+
+/* ── Inputs: rounder, with room to type ────────────────────── */
+:root[data-skin="soft"] .dlg-input,
+:root[data-skin="soft"] .login-card input,
+:root[data-skin="soft"] .compose-row input,
+:root[data-skin="soft"] .compose-text,
+:root[data-skin="soft"] #chat-input,
+:root[data-skin="soft"] textarea,
+:root[data-skin="soft"] input[type="text"],
+:root[data-skin="soft"] input[type="password"] {
+	border-radius: var(--radius);
+	padding: calc(9px * var(--space-scale)) calc(13px * var(--space-scale));
+}
+
+/* ── The rail: roomier rows, calmer boxes ──────────────────── */
+:root[data-skin="soft"] .session-box {
+	padding: calc(9px * var(--space-scale)) calc(11px * var(--space-scale));
+	border-color: transparent;
+	box-shadow: var(--shadow-1);
+}
+:root[data-skin="soft"] .session-box.active {
+	box-shadow: 0 0 0 2px var(--accent);
+}
+:root[data-skin="soft"] .admin-item {
+	border-radius: var(--radius);
+	padding: calc(8px * var(--space-scale)) calc(10px * var(--space-scale));
+}
+:root[data-skin="soft"] .admin-item:hover {
+	background: var(--bg-hover);
+}
+:root[data-skin="soft"] .astat-row {
+	padding: calc(4px * var(--space-scale)) calc(6px * var(--space-scale));
+}
+
+/* ── Chat: friendlier bubbles, more breathing room ─────────── */
+:root[data-skin="soft"] .chat-output {
+	padding: calc(14px * var(--space-scale));
+}
+:root[data-skin="soft"] .chat-msg-user .chat-msg-content {
+	border-radius: 20px 20px 6px 20px;
+	padding: calc(9px * var(--space-scale)) calc(14px * var(--space-scale));
+}
+:root[data-skin="soft"] .chat-msg-assistant .chat-msg-content {
+	line-height: 1.6;
+}
+:root[data-skin="soft"] .chat-input-bar {
+	padding: calc(10px * var(--space-scale)) calc(12px * var(--space-scale));
+	border-top-color: transparent;
+	gap: 10px;
+}
+
+/* ── Chips and tags: soft pills ────────────────────────────── */
+:root[data-skin="soft"] .tag-chip,
+:root[data-skin="soft"] .seg button {
+	border-radius: 999px;
+}
+
+/* ── The empty state: an inviting Start, not a placeholder ─── */
+:root[data-skin="soft"] .empty-state {
+	gap: calc(12px * var(--space-scale));
+	padding: calc(24px * var(--space-scale));
+}
+:root[data-skin="soft"] .empty-state h2 {
+	font-weight: 800;
+	letter-spacing: -0.01em;
+}
+:root[data-skin="soft"] .empty-state .empty-logo {
+	width: 64px;
+	height: 64px;
+	opacity: 1;
+}
+:root[data-skin="soft"] .empty-new-session {
+	font-size: var(--fs-lg);
+	padding: calc(11px * var(--space-scale)) calc(24px * var(--space-scale));
+}

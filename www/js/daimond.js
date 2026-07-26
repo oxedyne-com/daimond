@@ -942,6 +942,27 @@ import init, {
 		set:  setTheme,
 	};
 
+	// ── Skin ───────────────────────────────────────────────────
+	// Orthogonal to the theme: the theme picks the palette, the skin picks the
+	// shape -- corners, typeface, spacing, how loud the furniture is. "sharp" is
+	// the original precise, dense look; "soft" is the approachable one, all of it
+	// in skin-soft.css and dormant until chosen (see that file's header).
+	var SKINS = { sharp: 1, soft: 1 };
+	function initSkin() {
+		var saved = localStorage.getItem('daimond-skin');
+		setSkin(SKINS[saved] ? saved : 'sharp');
+	}
+	function setSkin(skin) {
+		if (!SKINS[skin]) skin = 'sharp';
+		document.documentElement.setAttribute('data-skin', skin);
+		localStorage.setItem('daimond-skin', skin);
+	}
+	window.DaimondSkin = {
+		list: function () { return Object.keys(SKINS); },
+		get:  function () { return document.documentElement.getAttribute('data-skin') || 'sharp'; },
+		set:  setSkin,
+	};
+
 	// ── Durability: lifecycle hooks ────────────────────────────
 	// These are INSURANCE, not the mechanism. The journal is kept current as work happens, so
 	// nothing here is load-bearing — but a tab about to be hidden or frozen is a tab that might be
@@ -9589,6 +9610,7 @@ import init, {
 	// ── Boot ───────────────────────────────────────────────────
 	async function boot() {
 		initTheme();
+		initSkin();
 		// Only the provider API key is masked as text-with-bullets now. It is
 		// somebody else's bearer credential against somebody else's billing, so
 		// there is no reason for it to reach a personal keychain. The passphrase
