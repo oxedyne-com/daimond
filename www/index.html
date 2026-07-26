@@ -13,7 +13,8 @@
 		var t = localStorage.getItem('daimond-theme');
 		if (t === 'light' || t === 'lollypop' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
 		var s = localStorage.getItem('daimond-skin');
-		if (s === 'soft' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);
+		if (s === 'soft') s = 'warm';   // the warm skin was briefly called "soft".
+		if (s === 'warm' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);
 	} catch (e) { /* private mode: the default attributes stand. */ }
 })();
 </script>
@@ -33,7 +34,7 @@
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
-<link rel="stylesheet" href="css/skin-soft.css">
+<link rel="stylesheet" href="css/skin-warm.css">
 </head>
 <body data-mpanel="ai">
 

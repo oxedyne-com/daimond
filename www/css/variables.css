@@ -101,15 +101,15 @@
    The skin is ORTHOGONAL to the theme (palette). The theme decides the
    colours; the skin decides the shape -- corners, typeface, spacing and
    how loud the furniture is. "sharp" (no data-skin, or data-skin="sharp")
-   is the original precise, dense, developer-facing look. "soft" is an
+   is the original precise, dense, developer-facing look. "warm" is an
    approachable skin in the manner of Google or Canva: rounder, a friendly
    rounded typeface, more room to breathe, and the dense telemetry calmed.
 
    Only the shape tokens live here; the density and the calmer chrome are in
-   skin-soft.css, all of it scoped to :root[data-skin="soft"], so the sharp
+   skin-warm.css, all of it scoped to :root[data-skin="warm"], so the sharp
    skin is not touched by a single rule. Type SIZE is left to the reading
    control (--fs-scale is the user's, set inline) and is not moved here. */
-:root[data-skin="soft"] {
+:root[data-skin="warm"] {
 	--radius:            14px;
 	--radius-sm:         10px;
 	--radius-lg:         22px;
@@ -117,7 +117,7 @@
 	   gives Apple platforms SF Pro Rounded even before the webfont lands, and
 	   the rest fall back to the cleanest available system sans. */
 	--font:              'Nunito', ui-rounded, 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
-	/* How much the soft skin loosens spacing. skin-soft.css multiplies its
+	/* How much the warm skin loosens spacing. skin-warm.css multiplies its
 	   paddings and gaps by this, so the whole skin can breathe more or less
 	   from one number. 1 would match the sharp skin; 1.4 is a clear loosening. */
 	--space-scale:       1.4;

@@ -1,9 +1,9 @@
 /* ============================================================
-   skin-soft.css — the "Approachable" skin.
+   skin-warm.css — the "Warm" skin.
    ------------------------------------------------------------
-   Everything here is scoped to :root[data-skin="soft"], so the
+   Everything here is scoped to :root[data-skin="warm"], so the
    default (sharp) skin is not affected by a single rule -- the
-   whole file is dormant until a user chooses Approachable.
+   whole file is dormant until a user chooses Warm.
 
    It carries the two halves a token swap cannot: the DENSITY
    (Tier 2 -- paddings and gaps loosened, driven by --space-scale
@@ -19,7 +19,7 @@
 
 /* The friendly typeface. One variable file covers 400..800; it is
    only fetched when an element actually renders in it, i.e. when the
-   soft skin is active, so the sharp skin pays nothing for it. */
+   warm skin is active, so the sharp skin pays nothing for it. */
 @font-face {
 	font-family: 'Nunito';
 	font-style: normal;
@@ -29,7 +29,7 @@
 }
 
 /* ── Base tone ─────────────────────────────────────────────── */
-:root[data-skin="soft"] body {
+:root[data-skin="warm"] body {
 	line-height: 1.55;
 	-webkit-font-smoothing: antialiased;
 }
@@ -37,26 +37,26 @@
    Under the soft skin the small telemetry speaks in the friendly face
    instead, which de-techs the whole surface in one stroke. The real
    monospace is kept for actual code (pre/code), where it belongs. */
-:root[data-skin="soft"] .top-meter,
-:root[data-skin="soft"] .rail-count,
-:root[data-skin="soft"] .astat-aside,
-:root[data-skin="soft"] .session-box-meta,
-:root[data-skin="soft"] .session-box-ctx,
-:root[data-skin="soft"] .session-box-cost,
-:root[data-skin="soft"] .session-box-time,
-:root[data-skin="soft"] .tile-meter {
+:root[data-skin="warm"] .top-meter,
+:root[data-skin="warm"] .rail-count,
+:root[data-skin="warm"] .astat-aside,
+:root[data-skin="warm"] .session-box-meta,
+:root[data-skin="warm"] .session-box-ctx,
+:root[data-skin="warm"] .session-box-cost,
+:root[data-skin="warm"] .session-box-time,
+:root[data-skin="warm"] .tile-meter {
 	font-family: var(--font);
 	letter-spacing: 0;
 }
 /* The always-on stats bar is telemetry, not a task. Kept, but quietened,
    so the eye lands on the work rather than the numbers. */
-:root[data-skin="soft"] .top-meter { opacity: 0.6; }
-:root[data-skin="soft"] .top-meter:hover { opacity: 1; }
+:root[data-skin="warm"] .top-meter { opacity: 0.6; }
+:root[data-skin="warm"] .top-meter:hover { opacity: 1; }
 
 /* Section headers lose the ALL-CAPS engineering shout for a friendly weight. */
-:root[data-skin="soft"] .railhead > span:first-child,
-:root[data-skin="soft"] .pop-head,
-:root[data-skin="soft"] .admin-sec {
+:root[data-skin="warm"] .railhead > span:first-child,
+:root[data-skin="warm"] .pop-head,
+:root[data-skin="warm"] .admin-sec {
 	text-transform: none;
 	letter-spacing: 0;
 	font-weight: 700;
@@ -65,130 +65,130 @@
 }
 
 /* ── Panels: lift, don't rule ──────────────────────────────── */
-:root[data-skin="soft"] .ai,
-:root[data-skin="soft"] .web,
-:root[data-skin="soft"] .doc,
-:root[data-skin="soft"] .msg,
-:root[data-skin="soft"] .compose,
-:root[data-skin="soft"] .tools {
+:root[data-skin="warm"] .ai,
+:root[data-skin="warm"] .web,
+:root[data-skin="warm"] .doc,
+:root[data-skin="warm"] .msg,
+:root[data-skin="warm"] .compose,
+:root[data-skin="warm"] .tools {
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }
 
 /* ── Cards and dialogs: more room, a soft lift ─────────────── */
-:root[data-skin="soft"] .login-card,
-:root[data-skin="soft"] .modal-card,
-:root[data-skin="soft"] .dlg-card {
+:root[data-skin="warm"] .login-card,
+:root[data-skin="warm"] .modal-card,
+:root[data-skin="warm"] .dlg-card {
 	border-color: transparent;
 	box-shadow: var(--shadow-2);
 	padding: calc(24px * var(--space-scale));
 }
-:root[data-skin="soft"] .pass-gen {
+:root[data-skin="warm"] .pass-gen {
 	padding: calc(12px * var(--space-scale));
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }
 
 /* ── Buttons: rounded toward pills, roomier hit targets ────── */
-:root[data-skin="soft"] .dlg-ok,
-:root[data-skin="soft"] .dlg-cancel,
-:root[data-skin="soft"] .modal-close,
-:root[data-skin="soft"] #id-primary,
-:root[data-skin="soft"] .id-passkey,
-:root[data-skin="soft"] .compose-send,
-:root[data-skin="soft"] .compose-btn,
-:root[data-skin="soft"] .admin-btn,
-:root[data-skin="soft"] .pass-gen-btn,
-:root[data-skin="soft"] .empty-new-session,
-:root[data-skin="soft"] .login-card button {
+:root[data-skin="warm"] .dlg-ok,
+:root[data-skin="warm"] .dlg-cancel,
+:root[data-skin="warm"] .modal-close,
+:root[data-skin="warm"] #id-primary,
+:root[data-skin="warm"] .id-passkey,
+:root[data-skin="warm"] .compose-send,
+:root[data-skin="warm"] .compose-btn,
+:root[data-skin="warm"] .admin-btn,
+:root[data-skin="warm"] .pass-gen-btn,
+:root[data-skin="warm"] .empty-new-session,
+:root[data-skin="warm"] .login-card button {
 	border-radius: 999px;
 	padding: calc(9px * var(--space-scale)) calc(18px * var(--space-scale));
 	font-weight: 600;
 }
 /* The primary calls to action carry the accent as a fill, the way an
    approachable UI makes the one next step obvious. */
-:root[data-skin="soft"] .empty-new-session,
-:root[data-skin="soft"] #id-primary,
-:root[data-skin="soft"] .dlg-ok {
+:root[data-skin="warm"] .empty-new-session,
+:root[data-skin="warm"] #id-primary,
+:root[data-skin="warm"] .dlg-ok {
 	box-shadow: var(--shadow-1);
 }
 /* Small icon and add buttons just round off; they stay compact. */
-:root[data-skin="soft"] .icon-btn,
-:root[data-skin="soft"] .addbtn {
+:root[data-skin="warm"] .icon-btn,
+:root[data-skin="warm"] .addbtn {
 	border-radius: var(--radius);
 }
 
 /* ── Inputs: rounder, with room to type ────────────────────── */
-:root[data-skin="soft"] .dlg-input,
-:root[data-skin="soft"] .login-card input,
-:root[data-skin="soft"] .compose-row input,
-:root[data-skin="soft"] .compose-text,
-:root[data-skin="soft"] #chat-input,
-:root[data-skin="soft"] textarea,
-:root[data-skin="soft"] input[type="text"],
-:root[data-skin="soft"] input[type="password"] {
+:root[data-skin="warm"] .dlg-input,
+:root[data-skin="warm"] .login-card input,
+:root[data-skin="warm"] .compose-row input,
+:root[data-skin="warm"] .compose-text,
+:root[data-skin="warm"] #chat-input,
+:root[data-skin="warm"] textarea,
+:root[data-skin="warm"] input[type="text"],
+:root[data-skin="warm"] input[type="password"] {
 	border-radius: var(--radius);
 	padding: calc(9px * var(--space-scale)) calc(13px * var(--space-scale));
 }
 
 /* ── The rail: roomier rows, calmer boxes ──────────────────── */
-:root[data-skin="soft"] .session-box {
+:root[data-skin="warm"] .session-box {
 	padding: calc(9px * var(--space-scale)) calc(11px * var(--space-scale));
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }
-:root[data-skin="soft"] .session-box.active {
+:root[data-skin="warm"] .session-box.active {
 	box-shadow: 0 0 0 2px var(--accent);
 }
-:root[data-skin="soft"] .admin-item {
+:root[data-skin="warm"] .admin-item {
 	border-radius: var(--radius);
 	padding: calc(8px * var(--space-scale)) calc(10px * var(--space-scale));
 }
-:root[data-skin="soft"] .admin-item:hover {
+:root[data-skin="warm"] .admin-item:hover {
 	background: var(--bg-hover);
 }
-:root[data-skin="soft"] .astat-row {
+:root[data-skin="warm"] .astat-row {
 	padding: calc(4px * var(--space-scale)) calc(6px * var(--space-scale));
 }
 
 /* ── Chat: friendlier bubbles, more breathing room ─────────── */
-:root[data-skin="soft"] .chat-output {
+:root[data-skin="warm"] .chat-output {
 	padding: calc(14px * var(--space-scale));
 }
-:root[data-skin="soft"] .chat-msg-user .chat-msg-content {
+:root[data-skin="warm"] .chat-msg-user .chat-msg-content {
 	border-radius: 20px 20px 6px 20px;
 	padding: calc(9px * var(--space-scale)) calc(14px * var(--space-scale));
 }
-:root[data-skin="soft"] .chat-msg-assistant .chat-msg-content {
+:root[data-skin="warm"] .chat-msg-assistant .chat-msg-content {
 	line-height: 1.6;
 }
-:root[data-skin="soft"] .chat-input-bar {
+:root[data-skin="warm"] .chat-input-bar {
 	padding: calc(10px * var(--space-scale)) calc(12px * var(--space-scale));
 	border-top-color: transparent;
 	gap: 10px;
 }
 
 /* ── Chips and tags: soft pills ────────────────────────────── */
-:root[data-skin="soft"] .tag-chip,
-:root[data-skin="soft"] .seg button {
+:root[data-skin="warm"] .tag-chip,
+:root[data-skin="warm"] .seg button {
 	border-radius: 999px;
 }
 
 /* ── The empty state: an inviting Start, not a placeholder ─── */
-:root[data-skin="soft"] .empty-state {
+:root[data-skin="warm"] .empty-state {
 	gap: calc(12px * var(--space-scale));
 	padding: calc(24px * var(--space-scale));
 }
-:root[data-skin="soft"] .empty-state h2 {
+:root[data-skin="warm"] .empty-state h2 {
 	font-weight: 800;
 	letter-spacing: -0.01em;
 }
-:root[data-skin="soft"] .empty-state .empty-logo {
+:root[data-skin="warm"] .empty-state .empty-logo {
 	width: 64px;
 	height: 64px;
 	opacity: 1;
 }
-:root[data-skin="soft"] .empty-new-session {
+:root[data-skin="warm"] .empty-new-session {
 	font-size: var(--fs-lg);
 	padding: calc(11px * var(--space-scale)) calc(24px * var(--space-scale));
 }

@@ -16,12 +16,12 @@ async function grab(skin, theme, label) {
   console.log('shot', label);
 }
 await grab('sharp', 'dark',  'sharp_dark');
-await grab('soft',  'light', 'soft_light');
-await grab('soft',  'dark',  'soft_dark');
+await grab('warm',  'light', 'warm_light');
+await grab('warm',  'dark',  'warm_dark');
 await grab('sharp', 'light', 'sharp_light');
 // Mobile width
 await page.setViewportSize({ width: 390, height: 780 });
 await page.waitForTimeout(400);
-await grab('soft', 'light', 'soft_light_mobile');
+await grab('warm', 'light', 'warm_light_mobile');
 await grab('sharp', 'dark', 'sharp_dark_mobile');
 await s.close();

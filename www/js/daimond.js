@@ -945,11 +945,12 @@ import init, {
 	// ── Skin ───────────────────────────────────────────────────
 	// Orthogonal to the theme: the theme picks the palette, the skin picks the
 	// shape -- corners, typeface, spacing, how loud the furniture is. "sharp" is
-	// the original precise, dense look; "soft" is the approachable one, all of it
-	// in skin-soft.css and dormant until chosen (see that file's header).
-	var SKINS = { sharp: 1, soft: 1 };
+	// the original precise, dense look; "warm" is the approachable one, all of it
+	// in skin-warm.css and dormant until chosen (see that file's header).
+	var SKINS = { sharp: 1, warm: 1 };
 	function initSkin() {
 		var saved = localStorage.getItem('daimond-skin');
+		if (saved === 'soft') saved = 'warm';   // the warm skin was briefly called "soft".
 		setSkin(SKINS[saved] ? saved : 'sharp');
 	}
 	function setSkin(skin) {
