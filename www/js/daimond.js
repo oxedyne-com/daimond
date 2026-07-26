@@ -2399,8 +2399,38 @@ import init, {
 			});
 			modal.style.display = 'none';
 		}
-		function toModal() {
+		/// The head the hosted view wears in the modal: what it is, and a × to close it.
+		///
+		/// The phone hides the modal's own heading and Close (mobile.css) because the
+		/// view inside used to carry a header; the rail split moved that head outside
+		/// the slot, leaving an untitled modal with no visible way out. This puts one
+		/// back where the phone CSS already styles it.
+		var modalHeadEl = null, modalHeadTitle = null;
+		function modalHead(title) {
+			if (!modalHeadEl) {
+				modalHeadEl = document.createElement('div');
+				modalHeadEl.className = 'admin-view-head';
+				modalHeadTitle = document.createElement('div');
+				modalHeadTitle.className = 'admin-title';
+				var x = document.createElement('button');
+				x.type = 'button';
+				x.className = 'admin-back';
+				x.title = 'Close';
+				x.setAttribute('aria-label', 'Close');
+				x.textContent = '×';
+				x.addEventListener('click', closeAdmin);
+				modalHeadEl.appendChild(modalHeadTitle);
+				modalHeadEl.appendChild(x);
+			}
+			modalHeadTitle.textContent = title || 'Admin';
+			// Always first: the view is appended after it, and a re-open must not
+			// leave the head stranded below the view it names.
+			if (slot.firstChild !== modalHeadEl) slot.insertBefore(modalHeadEl, slot.firstChild);
+		}
+
+		function toModal(title) {
 			var v = curView || settingsView;
+			modalHead(title);
 			slot.appendChild(v);
 			v.style.display = '';
 			modal.style.display = 'flex';
@@ -2476,7 +2506,7 @@ import init, {
 			document.getElementById('byok-note').textContent = note || '';
 			if (window.DaimondModels) DaimondModels.render();
 			if (available()) { toPanel(); showDrawer('Models'); }
-			else toModal();
+			else toModal('Models');
 		}
 
 		/// Show what you are running, and what came before it. Reached from the
@@ -2491,7 +2521,7 @@ import init, {
 			releaseView.style.display = '';
 			if (window.DaimondRelease) DaimondRelease.render(document.getElementById('rel-list'));
 			if (available()) { toPanel(); showDrawer('Version'); }
-			else toModal();
+			else toModal('Version');
 		}
 
 		/// Show the credits. They used to sit under the model settings, in one form that answered
@@ -2512,7 +2542,7 @@ import init, {
 			// while looking at how many are left.
 			if (window.DaimondAutoReload) DaimondAutoReload.render();
 			if (available()) { toPanel(); showDrawer('Credits'); }
-			else toModal();
+			else toModal('Credits');
 		}
 
 		/// The cog: open the Admin drawer on its menu, or close it if it is open.
