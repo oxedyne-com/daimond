@@ -128,13 +128,17 @@
 		_statusChip = c;
 		return c;
 	}
-	function setStatus(state, text, holdMs) {
+	/// Show the chip. `title` is the hover explanation, cleared unless given --
+	/// carried here because the chip is the only place a state like "off" is
+	/// reported, so its reason has to travel with it rather than into a dialog.
+	function setStatus(state, text, holdMs, title) {
 		var c = statusChip();
 		if (!c) return;
 		if (_statusTimer) { clearTimeout(_statusTimer); _statusTimer = null; }
 		if (!state) { c.style.display = 'none'; return; }
 		c.dataset.state = state;
 		c.querySelector('.stext').textContent = text;
+		c.title = title || '';
 		c.style.display = 'inline-flex';
 		if (holdMs) _statusTimer = setTimeout(function () { c.style.display = 'none'; }, holdMs);
 	}
@@ -231,11 +235,15 @@
 					continue;
 				}
 				if (res.status === 402) {
-					entitled = false;			// not on the sync tier; stop trying until re-checked.
-					setStatus('off', 'Sync off');
+					// Not on the sync tier. Nobody asked for this push -- it is the
+					// engine's own idle round -- so the refusal is reported where a
+					// user can find it and nowhere else. It used to raise a dialog
+					// over the whole app and open Credits, which interrupted people
+					// who had one device and had never wanted sync.
+					entitled = false;			// stop trying until re-checked.
+					setStatus('off', 'Sync off', 0,
+						'Cross-device sync is part of Pro, which this account does not hold.');
 					log('sync not entitled (402); pausing pushes');
-					try { window.dispatchEvent(new CustomEvent('daimond:sync-locked',
-						{ detail: res.json || {} })); } catch (e) { /* ignore */ }
 					return;
 				}
 				if (res.status === 413) {

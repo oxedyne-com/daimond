@@ -9918,21 +9918,5 @@ import init, {
 		e.returnValue = '';
 	});
 
-	// Sync just refused this device (402): cross-device sync is a Pro
-	// capability, and this account does not hold it. Say so once, and point at
-	// the one place to fix it, rather than letting sync fail in silence. Once
-	// per session -- a nag on every idle push would be its own bug.
-	var _syncLockedTold = false;
-	window.addEventListener('daimond:sync-locked', function () {
-		if (_syncLockedTold) return;
-		var st = window.DaimondGateway && DaimondGateway.state();
-		if (st && st.pro) return;             // already Pro; a stale event, ignore.
-		_syncLockedTold = true;
-		noticeDialog('Sync is part of Pro',
-			'Cross-device sync keeps your workspace on every device you unlock. It is one '
-			+ 'of the things Pro turns on. We\'ll open Credits so you can own Daimond — one '
-			+ 'payment, kept for good.').then(function () { openCredits(''); });
-	});
-
 	boot().then(handleCheckoutReturn);
 })();
