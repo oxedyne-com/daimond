@@ -9177,8 +9177,21 @@ import init, {
 			if (Array.isArray(data.ledger) && data.ledger.length) {
 				try { localStorage.setItem('daimond-ledger', JSON.stringify(data.ledger)); } catch (e) { /* keep */ }
 			}
+			// A Diamond is stored in full under `diamonds/<id>/` -- the crystal, every
+			// version, the append-only log, and `.daimond/meta.json` (its name and
+			// tags) -- so restoring the workspace files above already brings each one
+			// back with its whole history. Re-creating it from the `diamonds` summary
+			// as well is what made a restore duplicate every Diamond (two ids for one).
+			// So the summary is now only a FALLBACK, used for a Diamond whose raw store
+			// is somehow absent from the workspace files (e.g. an older partial export).
+			var restoredIds = {};
+			for (var w = 0; w < files.length; w++) {
+				var m = /(?:^|\/)diamonds\/([^/]+)\//.exec(files[w].path);
+				if (m) restoredIds[m[1]] = true;
+			}
 			for (var j = 0; j < (data.diamonds || []).length; j++) {
 				var f = data.diamonds[j];
+				if (f.id && restoredIds[f.id]) continue;    // already restored, history and all.
 				try {
 					var id = await diamondApp().create_diamond(f.name || 'Restored Diamond');
 					if (f.crystal) await diamondApp().write_crystal(id, f.crystal);
@@ -9187,8 +9200,20 @@ import init, {
 				} catch (e) { /* skip one diamond */ }
 			}
 			try { loadDiamonds(); } catch (e) { /* best effort */ }
-			toast('Backup restored: ' + restored + ' workspace file'
-				+ (restored === 1 ? '' : 's') + ' and ' + (data.diamonds || []).length + ' diamonds.', false);
+			var nDiamonds = (data.diamonds || []).length;
+			// A restore rewrites four things at once -- workspace files (into OPFS,
+			// out from under the running engine), chats and the ledger (localStorage),
+			// and diamonds -- and the live session still holds the pre-restore chat and
+			// its file view. Reloading is the one move that brings every one of them
+			// back consistent, rather than half-refreshing some and leaving the agent
+			// reading a workspace the page cannot see. The user acknowledges first, so
+			// the reload is expected rather than a surprise.
+			var nFiles = restored;
+			await noticeDialog('Backup restored',
+				'Restored ' + nFiles + ' workspace file' + (nFiles === 1 ? '' : 's')
+				+ ' and ' + nDiamonds + ' diamond' + (nDiamonds === 1 ? '' : 's')
+				+ '. Daimond will reload to open your restored workspace.');
+			location.reload();
 		});
 		inp.click();
 	}

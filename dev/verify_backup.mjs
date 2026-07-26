@@ -2,7 +2,7 @@
 // file via the agent, exports a backup, and we read the download. Session B (a
 // fresh profile) imports it and we confirm the file is back.
 import fs from 'node:fs';
-import { open, chat, errors } from './harness.mjs';
+import { open, chat, errors, signInAs, connectMock } from './harness.mjs';
 
 // ── Session A: write a file, export ──────────────────────────────────────
 const a = await open({ name: 'backupA' });
@@ -38,7 +38,15 @@ const chooser = b.page.waitForEvent('filechooser', { timeout: 15000 });
 await b.page.click('button.admin-item:has-text("Import a backup")');
 const fc = await chooser;
 await fc.setFiles(path);
-await b.page.waitForTimeout(1500);
+
+// A restore rewrites the workspace out from under the running engine, so the app
+// confirms and then reloads to bring every restored surface back consistent.
+// Acknowledge the notice, let it reload, and unlock the fresh session.
+await b.page.waitForSelector('.dlg-ok', { timeout: 15000 });
+await b.page.click('.dlg-ok');
+await b.page.waitForSelector('#id-primary', { timeout: 15000 });
+await signInAs(b, 'backupB');       // unlock the reloaded session
+await connectMock(b);               // reconnect the mock provider for the read
 
 // Ask the agent to read it back — the truest check the file is really in OPFS.
 const t = await chat(b, '@tool file_read {"path":"keep/important.txt"}');

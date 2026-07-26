@@ -176,7 +176,17 @@ async function adminRaw() {
 			const owner = await signInFresh(page, APP);
 			check('a fresh account signs in to the gateway', !!owner, owner || 'none');
 			try { gw.kill('SIGKILL'); } catch (e) {}
-			await sleep(1500);
+			// Wait for the port to actually free before rebinding. A health
+			// check alone cannot tell the new gateway from an older one still
+			// holding :9002 -- and when one is, the replacement exits with
+			// AddrInUse while every check goes on passing against the process
+			// that has no owner configured. That failure reads as "the owner
+			// pin does not work", which is a long way from the truth.
+			check('port 9002 is free for the restart',
+				await waitFor(async () => {
+					try { await fetch(`${GW_URL}/api/health`); return false; }
+					catch (e) { return true; }
+				}, 15000));
 			gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
 				cwd: GWDIR,
 				env: { ...process.env, APP_MODE: 'sandbox', DAIMOND_OWNER_ACCOUNTS: owner },
@@ -184,13 +194,24 @@ async function adminRaw() {
 			});
 			check('gateway restarts with that account as owner',
 				await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok));
+			// And prove it is the RIGHT gateway: the account that just signed
+			// in must now read as an owner. Without this the suite cannot tell
+			// which process answered.
+			const who = await page.evaluate(async () => {
+				const r = await fetch('/api/admin?view=whoami', { credentials: 'same-origin' });
+				return await r.json().catch(() => null);
+			});
+			check('the restarted gateway knows that account as the owner',
+				who && who.role === 'owner', 'role ' + (who && who.role));
 
 			const agg = await page.evaluate(async () => {
 				const r = await fetch('/api/admin?view=summary', { credentials: 'same-origin' });
 				return { status: r.status, j: await r.json().catch(() => null) };
 			});
 			check('summary counts the seeded accounts',
-				agg.j && agg.j.accounts >= seeded.made, 'accounts ' + (agg.j && agg.j.accounts));
+				agg.j && agg.j.accounts >= seeded.made,
+				'status ' + agg.status + ', accounts ' + (agg.j && agg.j.accounts)
+					+ (agg.j && agg.j.error ? ', ' + agg.j.error : ''));
 			const revTotal = ((agg.j && agg.j.revenue) || []).reduce((a, r) => a + (r.total || 0), 0);
 			check('summary revenue reflects the credited top-ups', revTotal > 0, 'revenue ' + revTotal);
 			const geoJson = await page.evaluate(async () => {
@@ -224,12 +245,130 @@ async function adminRaw() {
 				document.querySelectorAll('#admin-revenue .admin-bar').length);
 			check('revenue chart draws bars', revBars > 0, revBars + ' bars');
 
+			// The accounts and ledger views scan every account's ledger, so on a
+			// database several test runs deep they land well after the charts.
+			// Wait for them rather than sampling at a fixed moment.
+			await page.waitForFunction(() =>
+				document.querySelectorAll('#admin-accounts table tbody tr').length > 0,
+				null, { timeout: 20000 }).catch(() => {});
 			const acctRows = await page.evaluate(() =>
 				document.querySelectorAll('#admin-accounts table tbody tr').length);
 			check('accounts table has rows', acctRows > 0, acctRows + ' rows');
+			await page.waitForFunction(() =>
+				document.querySelectorAll('#admin-ledger table tbody tr').length > 0,
+				null, { timeout: 20000 }).catch(() => {});
 			const ledRows = await page.evaluate(() =>
 				document.querySelectorAll('#admin-ledger table tbody tr').length);
 			check('ledger table has rows', ledRows > 0, ledRows + ' rows');
+
+			// ── Capacity: the growth picture ──
+			await page.waitForFunction(() =>
+				document.querySelectorAll('#admin-cap-card .admin-meter').length > 0,
+				null, { timeout: 15000 }).catch(() => {});
+			const caps = await page.evaluate(() => ({
+				meters:  document.querySelectorAll('#admin-cap-card .admin-meter').length,
+				storage: (document.getElementById('admin-cap-storage') || {}).textContent || '',
+				egress:  (document.getElementById('admin-cap-egress')  || {}).textContent  || '',
+			}));
+			check('capacity draws a bar for storage and one for transfer',
+				caps.meters >= 2, caps.meters + ' meters');
+			// It must say what happens AT the limit, not merely how full it is:
+			// the two limits behave differently and the difference is the point.
+			check('capacity says uploads are refused at the storage ceiling',
+				/refus|paus/i.test(caps.storage), caps.storage.slice(0, 90));
+			check('capacity says transfer past the allowance is billed, not throttled',
+				/bill/i.test(caps.egress), caps.egress.slice(0, 90));
+
+			// ── Settings: the knobs, and one price actually moving ──
+			await page.waitForFunction(() =>
+				document.querySelectorAll('#admin-set-card .admin-set-knob').length > 0,
+				null, { timeout: 15000 }).catch(() => {});
+			const knobs = await page.evaluate(() => ({
+				rows:   document.querySelectorAll('#admin-set-card .admin-set-knob').length,
+				groups: document.querySelectorAll('#admin-set-card .admin-set-group').length,
+				editors: document.querySelectorAll('#admin-set-card .admin-set-edit').length,
+			}));
+			check('settings lists the knobs, grouped', knobs.rows > 10 && knobs.groups > 5,
+				knobs.rows + ' knobs in ' + knobs.groups + ' groups');
+			check('an owner gets an editor on every knob',
+				knobs.editors === knobs.rows, knobs.editors + ' editors');
+
+			// Drive the real control: type a price, Save, confirm.
+			const priced = await page.evaluate(async () => {
+				const rows = Array.from(document.querySelectorAll('#admin-set-card .admin-set-knob'));
+				const row = rows.find(r => (r.querySelector('.admin-set-label') || {}).textContent
+					=== 'Price per GiB-month');
+				if (!row) return { found: false };
+				const input = row.querySelector('.admin-set-input');
+				// Must differ from the configured value (25): the console refuses to
+				// "save" a value equal to the current one, so an equal value would
+				// never set an override and the test would prove nothing.
+				input.value = '30';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				Array.from(row.querySelectorAll('button'))
+					.find(b => /save/i.test(b.textContent)).click();
+				await new Promise(r => setTimeout(r, 200));
+				// The confirm step is the guard: a price must not move on one click.
+				// The element always exists; the real check is that Save revealed it.
+				const q = row.querySelector('.admin-set-confirm');
+				const asked = !!q && !q.hidden;
+				if (q) {
+					Array.from(q.querySelectorAll('button'))
+						.find(b => /confirm|yes/i.test(b.textContent)).click();
+				}
+				await new Promise(r => setTimeout(r, 1200));
+				const j = await (await fetch('/api/admin?view=settings',
+					{ credentials: 'same-origin' })).json();
+				const g = (j.groups || []).find(x => x.route === '/api/chunk') || {};
+				const k = (g.knobs || []).find(x => x.key === 'storage_per_gib_month_minor') || {};
+				return { found: true, asked, value: k.value, overridden: k.overridden, by: k.set_by };
+			});
+			check('changing a price asks for confirmation first', priced.found && priced.asked);
+			check('and the confirmed price reaches the gateway',
+				priced.value === '30' && priced.overridden === true,
+				'value ' + priced.value + ', overridden ' + priced.overridden);
+			check('the change is attributed to the account that made it',
+				priced.by === owner, priced.by);
+
+			// And it must be reversible, or an operator cannot safely try one.
+			const reset = await page.evaluate(async () => {
+				const r = await fetch('/api/admin?view=settings', {
+					method: 'POST',
+					credentials: 'same-origin',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ route: '/api/chunk',
+						key: 'storage_per_gib_month_minor', value: '' }),
+				});
+				const j = await r.json().catch(() => null);
+				return { status: r.status, knob: j && j.knob };
+			});
+			check('clearing an override puts the configured value back',
+				reset.status === 200 && reset.knob && reset.knob.value === '25'
+					&& reset.knob.overridden === false,
+				'status ' + reset.status + ', value ' + (reset.knob && reset.knob.value));
+
+			// The allowlist, exercised through the live surface rather than only
+			// in a unit test: an owner is the most privileged caller there is,
+			// and a secret must still be out of reach.
+			const forbidden = await page.evaluate(async () => {
+				const out = [];
+				for (const [route, key] of [
+					['/api/checkout/pro', 'stripe_key'],
+					['/api/admin', 'owner_accounts'],
+				]) {
+					const r = await fetch('/api/admin?view=settings', {
+						method: 'POST',
+						credentials: 'same-origin',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ route, key, value: 'x' }),
+					});
+					out.push(r.status);
+				}
+				return out;
+			});
+			check('an owner still cannot set a key or the owner list from the console',
+				forbidden.every(s => s === 400), forbidden.join(', '));
+			errs.length = 0;			// those two 400s were asked for
 
 			fs.mkdirSync(SHOTS, { recursive: true });
 			await page.screenshot({ path: path.join(SHOTS, 'admin-desktop.png'), fullPage: true }).catch(() => {});
