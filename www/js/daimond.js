@@ -8208,9 +8208,17 @@ import init, {
 		var note   = document.getElementById('id-gennote');
 		var wrote  = document.getElementById('id-wrote');
 		var inp    = document.getElementById('id-pass');
+		// The confirm field and the "choose my own" escape hatch belong to the
+		// CREATE screen only. On the UNLOCK screen there is nothing to generate and
+		// nothing to confirm -- and, crucially, leaving the confirm field (an
+		// autocomplete="new-password" input) visible there makes the browser offer
+		// to GENERATE a passphrase in the middle of an unlock, next to a box asking
+		// the user to confirm a passphrase they are only trying to re-enter. So both
+		// are gated on actually creating an account, not merely on gen mode.
+		var creating = document.getElementById('identity-modal').dataset.mode === 'create';
 		if (box)    box.style.display    = idGenMode ? '' : 'none';
-		if (pass2)  pass2.style.display  = idGenMode ? 'none' : '';
-		if (choose) choose.style.display = idGenMode ? '' : 'none';
+		if (pass2)  pass2.style.display  = (creating && !idGenMode) ? '' : 'none';
+		if (choose) choose.style.display = (creating && idGenMode) ? '' : 'none';
 		if (wrote)  wrote.checked = false;
 		// Only when generating: the note names the entropy, and reading it off the
 		// wordlist means the figure cannot drift from the list actually shipped.
