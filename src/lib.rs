@@ -28,6 +28,9 @@ pub mod handler;
 pub mod diamond_link;
 pub mod diamond_meta;
 pub mod llm;
+/// The system prompt each kind of agent runs under, and the part of it a user
+/// may replace from their workspace.
+pub mod prompts;
 pub mod protocol;
 pub mod session;
 pub mod skills;

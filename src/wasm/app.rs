@@ -15,6 +15,7 @@
 
 use crate::agent::Agent;
 use crate::llm::{LlmClient, parse_json_string_array};
+use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
@@ -49,6 +50,16 @@ pub struct DaimondApp {
     /// constructed with their system prompt already composed, but the
     /// conductor's and the reducer's are built here, so they read it from this.
     instructions: RefCell<String>,
+    /// The user's replacement for the conductor's role prompt, if they have
+    /// written one (`prompts/conductor.md`).  Empty means the default.
+    ///
+    /// Only these two roles are held here.  A chat and a worker are constructed
+    /// with their prompt already composed by the caller, so their file is read
+    /// in the browser; the conductor and the reducer are built inside this
+    /// module, where the file is not in reach.
+    conductor_prompt: RefCell<String>,
+    /// The same, for the reducer (`prompts/reducer.md`).
+    reducer_prompt: RefCell<String>,
 }
 
 #[wasm_bindgen]
@@ -134,7 +145,9 @@ impl DaimondApp {
             agent,
             session: RefCell::new(session),
             registry,
-            instructions: RefCell::new(String::new()),
+            instructions:     RefCell::new(String::new()),
+            conductor_prompt: RefCell::new(String::new()),
+            reducer_prompt:   RefCell::new(String::new()),
         })
     }
 
@@ -195,6 +208,36 @@ impl DaimondApp {
     /// what the work is for, and begins from zero every time.
     pub fn set_instructions(&self, md: String) {
         *self.instructions.borrow_mut() = md;
+    }
+
+    /// Set the user's replacement for a role's prompt, from `prompts/<role>.md`.
+    ///
+    /// Only `conductor` and `reducer` are held here — a chat and a worker are
+    /// constructed with their prompt already composed (see the field docs). An
+    /// empty `text` means "use the default", which is how deleting the file puts
+    /// the shipped prompt back.
+    ///
+    /// # Arguments
+    /// * `role` - The role's name: `conductor` or `reducer`.
+    /// * `text` - What the user wrote, or empty for the default.
+    ///
+    /// # Errors
+    /// Rejects a role this app does not build, rather than silently ignoring it:
+    /// a prompt the user has edited and that never reaches a model is worse than
+    /// an error saying so.
+    pub fn set_role_prompt(&self, role: &str, text: String) -> Result<(), JsValue> {
+        let which = match Role::parse(role) {
+            Ok(r)  => r,
+            Err(e) => return Err(to_js_err(e)),
+        };
+        match which {
+            Role::Conductor => *self.conductor_prompt.borrow_mut() = text,
+            Role::Reducer   => *self.reducer_prompt.borrow_mut() = text,
+            other => return Err(to_js_err(err!(
+                "The {} prompt is composed in the browser, not here; pass it to the \
+                 constructor instead.", other.name(); Invalid, Input))),
+        }
+        Ok(())
     }
 
     /// Compose a system prompt: the role, then the user's standing instructions.
@@ -473,7 +516,7 @@ impl DaimondApp {
     {
         // Stateless per instruction: reconstruct context from the crystal.
         let before = diamond::read_crystal(id).await.unwrap_or_default();
-        let mut system = diamond::CRYSTAL_AGENT_PROMPT.to_string();
+        let mut system = Role::Conductor.compose(&self.conductor_prompt.borrow());
         system.push_str("\n\nCurrent crystal.md:\n");
         system.push_str(&before);
 
@@ -554,7 +597,8 @@ impl DaimondApp {
             no_write:    Vec::new(),
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
-        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(diamond::REDUCER_PROMPT));
+        let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());
+        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&reducer));
         let mut session = Session::new(
             generate_session_id(),
             fmt!("reducer:{}", id),

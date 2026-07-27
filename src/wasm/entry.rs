@@ -210,15 +210,42 @@ fn parse_url(url: &str) -> Outcome<(bool, String, u16, String)> {
     Ok((secure, host, port, path.to_string()))
 }
 
-/// The system prompt a dispatched worker agent runs under.
+/// What a role is told when the user has not written a prompt of their own.
 ///
-/// The browser builds each worker as a plain [`DaimondApp`] with the workspace
-/// file tools, so it needs the prompt text; exporting it here keeps the one
-/// definition in [`crate::wasm::diamond`] rather than duplicating the wording
-/// in JavaScript, where it would drift.
+/// The browser needs these for two jobs: composing the prompt of a chat or a
+/// worker (both of which it constructs), and seeding `prompts/<role>.md` with
+/// the real text the first time a user opens it to edit. Exporting them keeps
+/// the one definition in [`crate::prompts`] rather than a copy in JavaScript,
+/// where the wording would drift from what the model is actually sent.
+///
+/// An unknown role yields an empty string rather than an error: the caller is
+/// building a prompt, and there is no useful half-measure to return.
 #[wasm_bindgen]
-pub fn worker_prompt() -> String {
-    crate::wasm::diamond::WORKER_PROMPT.to_string()
+pub fn default_prompt(role: &str) -> String {
+    match crate::prompts::Role::parse(role) {
+        Ok(r)  => r.default_prompt().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+/// A role's whole system prompt: the user's text (or the default, when it is
+/// empty), plus the rules an edit cannot remove.
+///
+/// This is what the browser hands to a chat or a worker, so the composition is
+/// done in the one place for every role rather than half here and half there.
+#[wasm_bindgen]
+pub fn compose_prompt(role: &str, text: &str) -> String {
+    match crate::prompts::Role::parse(role) {
+        Ok(r)  => r.compose(text),
+        Err(_) => text.to_string(),
+    }
+}
+
+/// The rules appended to every tool-holding role, which a user's edit cannot
+/// take away.  Shown above the editor so it is plain what is fixed and why.
+#[wasm_bindgen]
+pub fn safety_clause() -> String {
+    crate::prompts::SAFETY_CLAUSE.to_string()
 }
 
 /// The tools this build gives a chat, as JSON: `[{"tool":…,"blurb":…}]`.
