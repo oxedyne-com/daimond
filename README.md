@@ -101,8 +101,14 @@ separately.
 Build the browser bundle:
 
 ```bash
-wasm-pack build --target web --out-dir www/pkg
+bash dev/build-wasm.sh
 ```
+
+Use the script rather than calling `wasm-pack` yourself. Rust bakes the path of
+every source file into the binary, so a plain build stamps *your* home directory
+into the wasm, and its hashes then match nobody else's -- including the published
+ones. The script remaps those paths to fixed stand-ins first, which is what makes
+two people's builds of the same source come out identical. It is short; read it.
 
 Build and check the native library (validates the non-browser half of the
 crate):
@@ -129,14 +135,19 @@ the rest carries on.
 
 The claim "the code my browser runs is the source in this repository" is
 checkable, not asked on trust. Built with the pinned toolchain
-([`rust-toolchain.toml`](rust-toolchain.toml) + wasm-pack `0.13.1`), the wasm is
-byte-reproducible: rebuild it and it matches the published bundle, hash for hash.
-A *different* rustc or wasm-pack version may emit different bytes from the same
-source, so match the pinned versions before concluding a mismatch is anything but
-toolchain skew. (Reproducibility across toolchain versions is not yet proven; it
-is on the roadmap.)
+([`rust-toolchain.toml`](rust-toolchain.toml) + wasm-pack `0.13.1`) via
+`dev/build-wasm.sh`, the wasm is byte-reproducible: rebuild it and it matches the
+published bundle, hash for hash. This is checked the only way that means
+anything -- by building the same source in two different directories under two
+different cargo homes and confirming the bytes agree -- so it does not depend on
+where you keep your files.
 
-    wasm-pack build --target web --out-dir www/pkg
+A *different* rustc or wasm-pack version may still emit different bytes from the
+same source, so match the pinned versions before concluding a mismatch is
+anything but toolchain skew. (Reproducibility across toolchain versions is not
+claimed.)
+
+    bash dev/build-wasm.sh
     node verify/check.mjs --url https://daimond.oxedyne.com
 
 Green means every file the site served hashes to `www/manifest.json`, and that

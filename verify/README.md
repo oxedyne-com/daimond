@@ -17,9 +17,15 @@ This directory is the machinery for (2) and (3).
 git clone https://github.com/oxedyne-com/daimond
 cd daimond
 rustup target add wasm32-unknown-unknown
-wasm-pack build --target web --out-dir www/pkg   # rebuilds the wasm from source
+bash dev/build-wasm.sh                           # rebuilds the wasm from source
 node verify/check.mjs --url https://daimond.oxedyne.com
 ```
+
+Use `dev/build-wasm.sh`, not `wasm-pack` directly. Rust bakes the path of every
+source file into the binary, so a plain build stamps your own home directory
+into the wasm and the hashes then cannot match anyone else's. The script maps
+those paths to fixed stand-ins first, which is what makes your rebuild and the
+published build comparable at all. It is a two-line script -- read it.
 
 Green means: every file the site served hashes to what the manifest says, the
 manifest's bundle hash is the hash of its own file list, and that bundle is a
@@ -61,11 +67,18 @@ not control.
 Run after building the wasm and before the files leave for the server:
 
 ```sh
-wasm-pack build --target web --out-dir www/pkg
+bash dev/build-wasm.sh        # in the PUBLIC tree — see below
 node dev/stamp-build.mjs      # www/build.json  — the staleness id + a note
 node verify/manifest.mjs      # www/manifest.json + a transparency-log entry
 # commit verify/transparency.jsonl and www/manifest.json, then deploy www/
 ```
+
+**Seal the build a stranger can reproduce, which is the one built in the public
+tree.** Development builds fe2o3 as a path dependency out of a neighbouring
+working copy; the public tree pins it by git revision. The two are different
+builds of the same source and they do not agree hash for hash, so a bundle
+sealed from a development build is one that nobody outside can ever match. Build
+the wasm in the public tree, copy `www/pkg/` from there, and seal that.
 
 `manifest.json` is a pure function of the bundle (no timestamps), so an
 identical build seals identically; redeploying an unchanged bundle does not add
@@ -82,7 +95,18 @@ published policy and audit, not of this cryptographic check. "With your own key,
 your chats and files never leave in the clear, and you can watch only ciphertext
 leave" is the client-side claim this makes checkable.
 
-Reproducibility is verified on the pinned toolchain (fe2o3 at a fixed revision).
-Byte-identical output across widely different Rust/wasm-pack versions is not
-guaranteed and is the next hardening step; today, build with the toolchain the
-`README` pins.
+## What reproducibility here does and does not cover
+
+Verified, by building the same source twice in two different directories with
+two different cargo homes and comparing: **the output does not depend on where
+it is built, or by whom.** That is the property the claim needs, and until
+2026-07-27 it did not hold -- absolute build paths went into the wasm, so the
+hashes only ever matched for someone rebuilding on the machine that sealed them.
+Anyone else who checked would have seen a mismatch and had no way to tell it
+from a tampered server.
+
+Not covered: **different toolchain versions.** Byte-identical output is
+established only within one rustc and wasm-pack version, so build with the ones
+`rust-toolchain.toml` and the `README` pin before concluding that a mismatch
+means anything. Making the build stable across toolchain versions is a further
+step, and is not claimed.
