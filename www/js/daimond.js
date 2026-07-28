@@ -8356,7 +8356,18 @@ import init, {
 		var creating = document.getElementById('identity-modal').dataset.mode === 'create';
 		if (box)    box.style.display    = idGenMode ? '' : 'none';
 		if (pass2)  pass2.style.display  = (creating && !idGenMode) ? '' : 'none';
-		if (choose) choose.style.display = (creating && idGenMode) ? '' : 'none';
+		// The escape hatch swings BOTH ways. It used to be shown only in generated
+		// mode, so choosing your own passphrase was a one-way door: the button that
+		// got you there vanished behind you, and the only way back to the generated
+		// words was to cancel out of making an account altogether. Anyone who
+		// clicked it to see what it did was stuck. It is offered whenever a
+		// passphrase could be generated, and its label says where it leads.
+		if (choose) {
+			choose.style.display = (creating && canGenerate()) ? '' : 'none';
+			choose.textContent   = idGenMode
+				? 'Choose my own passphrase instead'
+				: 'Use a generated passphrase instead';
+		}
 		if (wrote)  wrote.checked = false;
 		// Only when generating: the note names the entropy, and reading it off the
 		// wordlist means the figure cannot drift from the list actually shipped.
@@ -9800,10 +9811,21 @@ import init, {
 		if (wroteBox) wroteBox.addEventListener('change', syncPrimaryEnabled);
 		var chooseBtn = document.getElementById('id-choose');
 		if (chooseBtn) chooseBtn.addEventListener('click', function () {
-			setGenMode(false);
-			var inp = document.getElementById('id-pass');
-			if (inp) { setSecret(inp, ''); try { inp.focus(); } catch (e) {} }
-			setSecret(document.getElementById('id-pass2'), '');
+			if (idGenMode) {
+				// Generated → typed. Clear the generated words rather than leave
+				// them sitting in a box the user is now meant to type their own into.
+				setGenMode(false);
+				var inp = document.getElementById('id-pass');
+				if (inp) { setSecret(inp, ''); try { inp.focus(); } catch (e) {} }
+				setSecret(document.getElementById('id-pass2'), '');
+			} else {
+				// Typed → generated. A FRESH passphrase, never whatever was typed:
+				// the readout must show words this device picked, and the tick below
+				// it says they were written down. Showing a half-typed secret there
+				// would invite writing down something the user was still editing.
+				setSecret(document.getElementById('id-pass2'), '');
+				if (regenerate()) setGenMode(true);
+			}
 		});
 		// A browser may fill its own suggested password into the field. The
 		// readout follows the field so the words shown are always the words used.
