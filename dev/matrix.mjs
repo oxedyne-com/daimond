@@ -190,7 +190,24 @@ export const VIEWS = [
 	{ name: 'agents',   needsAuth: true,  setup: async (p) => open(p, () => window.DaimondPanels && window.DaimondPanels.show('agents'), '#panel-agents') },
 	{ name: 'tools',    needsAuth: true,  setup: async (p) => open(p, () => (window.DaimondTools && window.DaimondTools.show()) || (window.DaimondPanels && window.DaimondPanels.show('tools')), '#panel-tools') },
 	{ name: 'compose',  needsAuth: true,  setup: async (p) => open(p, () => window.DaimondPanels && window.DaimondPanels.show('compose'), '#panel-compose') },
-	{ name: 'settings', needsAuth: true,  setup: async (p) => open(p, () => { const b = document.getElementById('settings-btn'); if (b) b.click(); }, '#cfg-provider,#byok-form') },
+	// The provider form lives in the admin drawer's Models view, reached from
+	// the "Models" status row, with the add-a-provider form folded away when a
+	// provider already exists. Walk that path -- drawer, Models row, unfold --
+	// state-aware at each step, because connectMock may have left the drawer
+	// open and #settings-btn is a toggle: a blind click shot "home" for every
+	// settings cell.
+	{ name: 'settings', needsAuth: true,  setup: async (p) => open(p, async () => {
+		const vis = (el) => el && el.offsetParent !== null;
+		const row = document.getElementById('astat-model');
+		if (!vis(row)) { const b = document.getElementById('settings-btn'); if (b) b.click(); }
+		await new Promise(r => setTimeout(r, 250));
+		const row2 = document.getElementById('astat-model');
+		if (vis(row2)) row2.click();
+		await new Promise(r => setTimeout(r, 250));
+		const form = document.getElementById('byok-form');
+		const add = document.getElementById('models-add');
+		if (form && form.style.display === 'none' && vis(add)) add.click();
+	}, '#byok-form') },
 ];
 
 /// Drive one real chat turn against the mock model, so the transcript, the

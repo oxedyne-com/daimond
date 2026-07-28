@@ -33,8 +33,10 @@
 .models-model.on    { color: var(--accent-text); background: var(--accent-soft); }
 .models-star { width: 12px; }
 .models-id   { flex: 1; word-break: break-all; }
+/* var(--font-sans) does not exist, so the badge inherited the row's monospace
+   -- the one thing it is meant NOT to look like. */
 .models-def  {
-	font-family: var(--font-sans); font-size: var(--fs-3xs); font-weight: 600;
+	font-family: var(--font); font-size: var(--fs-3xs); font-weight: 600;
 	padding: 1px 6px; border-radius: 999px;
 	background: var(--accent); color: #fff;
 }

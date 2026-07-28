@@ -61,9 +61,34 @@ html { font-size: calc(16px * var(--fs-scale, 1)); }
 	--warn:           #9A6410;
 }
 
-/* When no explicit theme is set, follow the operating system. */
+/* Lollypop, so the guide does not arrive as a dark page in front of a reader
+   whose app is candy-pink. The guide's own inline script only forwards
+   dark|light today, so this waits on that (see the report); with the attribute
+   absent the media query below still lands the reader on a light page. */
+:root[data-theme="lollypop"] {
+	--bg-primary:     #FDEFF7;
+	--bg-secondary:   #FFFFFF;
+	--bg-tertiary:    #FBE6F2;
+	--bg-hover:       #F7D8EC;
+	--border:         #F3D3E6;
+	--border-2:       #E7B4D3;
+	--text-primary:   #3A1E3E;
+	--text-secondary: #7C5578;
+	--text-muted:     #8A5E85;
+	--accent:         #E23E93;
+	--accent-hover:   #F45FAB;
+	--accent-soft:    #FBDDEF;
+	--accent-text:    #AE1E6E;
+	--ok:             #12B26E;
+	--warn:           #E88C0A;
+}
+:root[data-theme="lollypop"] .wm-dark  { display: none; }
+:root[data-theme="lollypop"] .wm-light { display: block; }
+
+/* When no explicit theme is set, follow the operating system. Lollypop is
+   excluded, or this fallback out-specifies its palette on a light-OS machine. */
 @media (prefers-color-scheme: light) {
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) {
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) {
 		--bg-primary:     #FBF9F5;
 		--bg-secondary:   #FFFFFF;
 		--bg-tertiary:    #F4F1EA;
@@ -144,8 +169,8 @@ a:hover { text-decoration: underline; }
 :root.theme-light .wm-light { display: block; }
 
 @media (prefers-color-scheme: light) {
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) .wm-dark { display: none; }
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not(.theme-dark) .wm-light { display: block; }
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) .wm-dark { display: none; }
+	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) .wm-light { display: block; }
 }
 
 .brand-sub {

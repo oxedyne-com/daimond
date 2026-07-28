@@ -87,7 +87,10 @@
 			'.pair-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border,#444);' +
 			'background:var(--accent,#4a7);color:#fff;cursor:pointer;font-size:var(--fs-base)}' +
 			'.pair-btn.ghost{background:transparent;color:inherit}' +
-			'.pair-err{color:#e66;font-size:var(--fs-sm);min-height:1.1em;margin:0 0 8px}' +
+			// --danger, not a literal: #e66 was chosen against a dark card and reads
+			// at about 3:1 on the light and lollypop ones, which is under the floor
+			// for the one line on this dialog that says something went wrong.
+			'.pair-err{color:var(--danger);font-size:var(--fs-sm);min-height:1.1em;margin:0 0 8px}' +
 			'.pair-note{font-size:var(--fs-xs);opacity:.7;margin:8px 0 0}' +
 			'.pair-qr{display:block;margin:0 auto 12px;width:220px;height:220px;max-width:80%;' +
 			'image-rendering:pixelated;border-radius:8px;background:#fff;padding:8px;box-sizing:border-box}';
@@ -136,10 +139,41 @@
 		var box = document.createElement('div');
 		box.className = 'pair-box';
 		scrim.appendChild(box);
-		function close() { try { document.body.removeChild(scrim); } catch (e) {} }
+		// Where the keyboard was before this went up, so it can be given back.
+		var prev = document.activeElement;
+		function close() {
+			document.removeEventListener('keydown', onKey, true);
+			try { document.body.removeChild(scrim); } catch (e) { /* already gone */ }
+			if (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {
+				try { prev.focus(); } catch (e) { /* gone with the redraw */ }
+			}
+		}
+		/// The controls in here that can actually take focus.
+		function stops() {
+			return [].filter.call(box.querySelectorAll('button,input,a[href],[tabindex]:not([tabindex="-1"])'),
+				function (n) { return !n.disabled && n.getClientRects().length; });
+		}
+		// Escape, and a Tab that stays put. This dialog answered only to the scrim
+		// and to Done: a keyboard user had no way to put it down, and Tab walked
+		// straight past it into an app they could not see behind the scrim.
+		function onKey(e) {
+			if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+			if (e.key !== 'Tab') return;
+			var f = stops();
+			if (!f.length) return;
+			var first = f[0], last = f[f.length - 1];
+			if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+			if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+			else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+		}
+		document.addEventListener('keydown', onKey, true);
 		scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
 		build(box, close);
 		document.body.appendChild(scrim);
+		// Once it is in the document and can be focused: the first control in it,
+		// so the keyboard starts inside the thing covering the screen.
+		var f0 = stops()[0];
+		if (f0) { try { f0.focus(); } catch (e) { /* not focusable */ } }
 		return close;
 	}
 

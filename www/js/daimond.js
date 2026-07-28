@@ -860,7 +860,10 @@ import init, {
 	var chatSend      = document.getElementById('chat-send');
 	var sessionNameEl = document.getElementById('current-session-name');
 	var settingsBtn   = document.getElementById('settings-btn');
-	var brandLogo     = document.querySelector('.brand-logo');
+	// The word logo on the identity gate. It was looked up by `.brand-logo`, a
+	// class the markup no longer carries, so the lookup found nothing and the
+	// dark-ink/light-ink swap below had been dead for as long as that class was.
+	var brandLogo     = document.getElementById('id-logo');
 	var topMeter      = document.getElementById('top-meter');
 	var aiMeter       = document.getElementById('ai-meter');
 	var agentsList    = document.getElementById('agents-list');
@@ -1311,12 +1314,28 @@ import init, {
 				// Dock: tiled on the chosen grid. Never more columns than there are
 				// panels to put in them, or a lone panel would sit in a half-width
 				// column with dead space beside it.
+				//
+				// And never a column for a panel that cannot be drawn. A seat is only
+				// worth reserving if something appears in it, so the engine's own
+				// inline hiding is cleared FIRST and then the STYLESHEET is asked --
+				// only the computed style knows whether a rule elsewhere has put the
+				// panel away. One that has is dropped from the dock and closed, which
+				// both collapses the gutter and heals a layout that arrived carrying
+				// this state, since an open panel nobody can see is not open.
+				dock.forEach(function (id) { var el = elOf(id); if (el) el.style.display = ''; });
+				var unseen = dock.filter(function (id) {
+					var el = elOf(id);
+					return !el || getComputedStyle(el).display === 'none';
+				});
+				if (unseen.length) {
+					unseen.forEach(function (id) { open[id] = false; });
+					dock = dock.filter(function (id) { return unseen.indexOf(id) === -1; });
+				}
 				var want = Math.min(gridOf().cols, Math.max(1, dock.length));
 				var cols = dockColumns(want);
 				dock.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
-					el.style.display = '';
 					el.style.width = '';                           // a stacked panel fills its column
 					// Round robin rather than filling each column in turn, so four
 					// panels across two columns come out two and two.
@@ -1365,7 +1384,10 @@ import init, {
 						// Off the row until it has something to hold; still listed in
 						// the gallery and the palette, which are the complete surfaces.
 						unrevealed: !revealed(p.id),
-						hidden: !revealed(p.id),
+						// An OPEN panel always gets a chip, revealed or not: a chipless
+						// open panel would be unclosable by construction (its own × sits
+						// inside the element a rule may be hiding).
+						hidden: !revealed(p.id) && !isOpenNow,
 						// A dock chip that cannot be honoured says so before it is
 						// clicked; a stage chip that would displace the current guest
 						// warns rather than refuses, since that is a real choice.
@@ -1379,20 +1401,36 @@ import init, {
 
 		/// What a chip's click means. A folded rail is forced back rather than
 		/// toggled, since it is open already and merely out of sight.
+		/// Let a panel that has been waiting out of the way take its place.
+		///
+		/// Reaching for a panel IS the event its reveal was waiting for. Answers
+		/// true when it had to do something, so a caller can re-seat.
+		///
+		/// This used to live inside `activate` -- the chip row's path alone -- so
+		/// every OTHER way of asking for a panel (the API, the mobile nav, the
+		/// guide button, a saved layout) could seat one the stylesheet still
+		/// suppresses. `body.agents-hidden #panel-agents{display:none!important}`
+		/// then beat the engine's own `display:''`, and the dock reserved a 300px
+		/// column for a panel that could render nothing: a dead gutter beside the
+		/// chat, with no chip to close it, because an unrevealed panel draws none.
+		function reveal(id) {
+			if (revealed(id)) return false;
+			markUsed(id);
+			if (id === 'agents') {
+				try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
+				document.body.classList.remove('agents-hidden');
+			}
+			return true;
+		}
+
 		function activate(id) {
 			var railFolded = (id === 'rail') && open.rail
 				&& window.innerWidth < NARROW && !railForced;
 			if (railFolded) { railForced = true; apply(); return; }
-			// Reaching for a panel that has not revealed itself yet IS the event the
-			// reveal was waiting for. It SHOWS rather than toggles: the panel was
-			// off screen whatever the engine believed about it, so the only thing
-			// the request can mean is "let me see it".
-			if (!revealed(id)) {
-				markUsed(id);
-				if (id === 'agents') {
-					try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
-					document.body.classList.remove('agents-hidden');
-				}
+			// It SHOWS rather than toggles: the panel was off screen whatever the
+			// engine believed about it, so the only thing the request can mean is
+			// "let me see it".
+			if (reveal(id)) {
 				open[id] = false;                              // so show() seats it afresh
 				stage = stage.filter(function (x) { return x !== id; });
 				dock  = dock.filter(function (x) { return x !== id; });
@@ -1429,6 +1467,12 @@ import init, {
 		/// evicts the other guest — never the AI, which is what one is talking to.
 		function show(id) {
 			if (!def(id)) return;
+			// Before anything else, and before the already-open shortcut below: an
+			// asked-for panel that is still suppressed must be let out first, or it
+			// is seated where nothing can be seen. Ahead of the shortcut so that a
+			// layout ALREADY carrying this state -- saved by a version that had the
+			// bug -- heals the first time anything asks for the panel again.
+			reveal(id);
 			// Already open in the engine, but on a phone that does not mean it is on
 			// screen: a guest is only visible while it is the one in the sheet. So
 			// re-present it — this is why the guide "?" (which shows the Web panel,
@@ -1860,10 +1904,22 @@ import init, {
 		div.appendChild(pick);
 
 		addMsgCopy(div, text);
-		chatOutput.appendChild(div);
+		postToChat(div);
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 		// A new question is a new place to jump back to, so the walk starts again from the bottom.
 		_jumpAt = -1;
+	}
+
+	/// Put something into the thread, taking the placeholder away first.
+	///
+	/// `.empty-state` is `height:100%`, so anything appended while one is still
+	/// on screen lands BELOW a full-height box: the thread opens scrolled past
+	/// its own first message, with a screen of nothing above it. Every render
+	/// path goes through here, so a path added later cannot forget.
+	function postToChat(node) {
+		var ph = chatOutput.querySelector('.empty-state');
+		if (ph) ph.remove();
+		chatOutput.appendChild(node);
 	}
 
 	// True when the thread is scrolled to (near) the bottom, so streaming
@@ -1886,7 +1942,7 @@ import init, {
 			curAsstDiv.className = 'chat-msg chat-msg-assistant';
 			curAsstDiv.innerHTML = '<div class="chat-msg-content"></div>';
 			tagTurn(curAsstDiv);
-			chatOutput.appendChild(curAsstDiv);
+			postToChat(curAsstDiv);
 			curAsstText = '';
 		}
 		curAsstText += text;
@@ -1926,7 +1982,7 @@ import init, {
 		resPre.style.display = 'none';
 		block.appendChild(head); block.appendChild(argsPre); block.appendChild(resPre);
 		tagTurn(block);
-		chatOutput.appendChild(block);
+		postToChat(block);
 		lastToolBlock = block;
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
@@ -1945,7 +2001,9 @@ import init, {
 			lastToolBlock.classList.remove('running');
 			lastToolBlock.classList.toggle('failed', failed);
 			var resPre = lastToolBlock.querySelector('.tool-result');
-			resPre.textContent = failed ? friendlyError(result) : result;   // escaped via textContent
+			// A tool that SUCCEEDS can be colourful too, so the plain path is
+			// stripped as well; only the failing path went through friendlyError.
+			resPre.textContent = failed ? friendlyError(result) : stripAnsi(result);   // escaped via textContent
 			resPre.style.display = '';
 		}
 		chatOutput.scrollTop = chatOutput.scrollHeight;
@@ -1957,7 +2015,7 @@ import init, {
 		div.innerHTML = '<div class="chat-msg-content" style="color: var(--danger);"></div>';
 		div.querySelector('.chat-msg-content').textContent = friendlyError(msg);
 		tagTurn(div);
-		chatOutput.appendChild(div);
+		postToChat(div);
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
 
@@ -2037,6 +2095,25 @@ import init, {
 				return vals;
 			},
 		};
+	}
+
+	/// Keep Tab inside `card`, and pull it back if it is already outside.
+	///
+	/// Only controls that can ACTUALLY take focus count as stops on the way
+	/// round: a disabled button, or one in the half of the card the current mode
+	/// hides, is not one. Treating those as the last stop is what let Tab walk out
+	/// of the change-passphrase dialog and into the app behind it.
+	function keepFocusIn(card, e) {
+		var f = [].filter.call(
+			card.querySelectorAll('input,button,select,textarea,a[href],[tabindex]:not([tabindex="-1"])'),
+			function (n) { return !n.disabled && n.getClientRects().length; });
+		if (!f.length) return;
+		var first = f[0], last = f[f.length - 1];
+		// Outside already -- because whatever was focused on opening could not take
+		// it. The next Tab belongs in the dialog, not behind it.
+		if (!card.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+		if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+		else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 	}
 
 	function dialog(opts) {
@@ -2128,14 +2205,7 @@ import init, {
 				else if (e.key === 'Enter' && (opts.kind === 'prompt' || opts.kind === 'form')) {
 					e.preventDefault(); submit();
 				}
-				else if (e.key === 'Tab') {
-					// Keep focus inside the dialog.
-					var f = card.querySelectorAll('input,button');
-					if (!f.length) return;
-					var first = f[0], last = f[f.length - 1];
-					if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-					else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-				}
+				else if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
 			back.addEventListener('mousedown', function (e) {
@@ -2359,8 +2429,15 @@ import init, {
 		}
 
 		/// Put the open view back in the panel, and take the modal down.
+		///
+		/// Every view the modal can host, not just the two it started with: Version
+		/// and a built form can be in there too, and one left behind in the slot is
+		/// a view the panel can no longer show. The form goes back FIRST, because
+		/// the others are inserted relative to it and `insertBefore` needs it to be
+		/// a child of `body` already.
 		function toPanel() {
-			[settingsView, creditsView].forEach(function (v) {
+			if (formView && formView.parentNode !== body) body.appendChild(formView);
+			[settingsView, creditsView, releaseView].forEach(function (v) {
 				if (v && v.parentNode !== body) body.insertBefore(v, formView);
 			});
 			modal.style.display = 'none';
@@ -2372,7 +2449,11 @@ import init, {
 		/// the slot, leaving an untitled modal with no visible way out. This puts one
 		/// back where the phone CSS already styles it.
 		var modalHeadEl = null, modalHeadTitle = null;
-		function modalHead(title) {
+		/// What the modal head's × does. Closing the drawer is right for a view; for
+		/// a FORM it would abandon a promise the caller is still waiting on, so the
+		/// form's own cancel is used instead and the answer is delivered.
+		var headClose = null;
+		function modalHead(title, onClose) {
 			if (!modalHeadEl) {
 				modalHeadEl = document.createElement('div');
 				modalHeadEl.className = 'admin-view-head';
@@ -2384,22 +2465,37 @@ import init, {
 				x.title = 'Close';
 				x.setAttribute('aria-label', 'Close');
 				x.textContent = '×';
-				x.addEventListener('click', closeAdmin);
+				x.addEventListener('click', function () { (headClose || closeAdmin)(); });
 				modalHeadEl.appendChild(modalHeadTitle);
 				modalHeadEl.appendChild(x);
 			}
+			headClose = onClose || null;
 			modalHeadTitle.textContent = title || 'Admin';
 			// Always first: the view is appended after it, and a re-open must not
 			// leave the head stranded below the view it names.
 			if (slot.firstChild !== modalHeadEl) slot.insertBefore(modalHeadEl, slot.firstChild);
 		}
 
-		function toModal(title) {
-			var v = curView || settingsView;
-			modalHead(title);
+		/// Host the open view in the modal card, for a window with no rail in it.
+		///
+		/// A form brings a head of its own, but `#settings-slot .admin-view-head` is
+		/// hidden by the desktop stylesheet, so in the modal the form would be
+		/// nameless. The modal's head carries the name instead, with its × pointed
+		/// at the form's cancel so backing out still answers the caller.
+		function toModal(title, formMode) {
+			var v = formMode ? formView : (curView || settingsView);
+			modalHead(title, formMode ? cancelForm : null);
 			slot.appendChild(v);
 			v.style.display = '';
 			modal.style.display = 'flex';
+		}
+
+		/// Back out of the built form the way its own × does, so the promise the
+		/// caller is waiting on resolves to "cancelled" rather than never resolving.
+		function cancelForm() {
+			var back = formView && formView.querySelector('.admin-back');
+			if (back) back.click();
+			else closeAdmin();
 		}
 		function endForm() {
 			if (escaper) { document.removeEventListener('keydown', escaper, true); escaper = null; }
@@ -2427,8 +2523,16 @@ import init, {
 
 		/// A click outside #admin dismisses the drawer. The Status rows and the cog
 		/// are INSIDE #admin, so acting on them never trips this.
+		///
+		/// A dialog is not "outside". Dialogs are appended to `document.body`, so
+		/// the drawer counted every click in one as a click away from itself: the
+		/// user opened Admin, chose "Change name…", pressed Cancel, and the Admin
+		/// drawer they had come from was gone behind it — along with the focus,
+		/// since the button that opened the dialog was now inside a hidden view and
+		/// could no longer take it back.
 		function outsideClose(e) {
 			if (!adminWrap || adminWrap.contains(e.target)) return;
+			if (e.target && e.target.closest && e.target.closest('.modal, .pair-scrim, .pal-scrim')) return;
 			closeAdmin();
 		}
 
@@ -2439,6 +2543,10 @@ import init, {
 			toPanel();                       // if it was in the modal, bring it back + drop it
 			settingsView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
+			// Version too. It was the one view nothing put away: the drawer closed
+			// on it and re-opened with the whole release history still hanging below
+			// whatever was asked for next.
+			if (releaseView) releaseView.style.display = 'none';
 			if (homeView) homeView.style.display = 'none';
 			curView = null;
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
@@ -2453,6 +2561,7 @@ import init, {
 			toPanel();
 			settingsView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
+			if (releaseView) releaseView.style.display = 'none';
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
@@ -2522,6 +2631,7 @@ import init, {
 		/// is the dialog itself.
 		function form(opts) {
 			if (!available()) return dialog(opts);
+			var opener = document.activeElement;   // captured before anything moves it
 			toPanel();
 			showDrawer(opts.title || 'Admin', true);
 			return new Promise(function (resolve) {
@@ -2570,7 +2680,16 @@ import init, {
 				row.appendChild(ok);
 				formView.appendChild(row);
 
-				function done(v) { closeAdmin(); resolve(v); }
+				// Whatever opened this form is where the keyboard belongs when the
+				// form is finished with. Left alone, focus fell to the document body
+				// and the next Tab started again from the top of the app.
+				function done(v) {
+					closeAdmin();
+					if (opener && opener.focus && opener.getClientRects().length) {
+						try { opener.focus(); } catch (e) { /* gone with the drawer */ }
+					}
+					resolve(v);
+				}
 				async function submit() {
 					var vals = f.read();
 					var bad = opts.validate ? await opts.validate(vals) : '';
@@ -3050,11 +3169,22 @@ import init, {
 			document.addEventListener('keydown', function (e) {
 				if (e.key === 'Escape' && (drawerOpen || modal.style.display !== 'none')) closeAdmin();
 			});
-			// A window that grows past the fold gives the rail back, so the
-			// settings belong in it again.
+			// The rail comes and goes with the window width, and whatever is open has
+			// to follow it. BOTH ways: only modal-to-panel was handled, so a window
+			// shrinking past the fold took the rail away and left the open view with
+			// nowhere to be. A half-filled form was the bad case — it vanished with
+			// everything typed into it, re-opening the rail did not bring it back,
+			// and nothing had said a word.
 			window.addEventListener('resize', function () {
-				if (modal.style.display === 'none') return;
-				if (available()) { toPanel(); showDrawer(curView === creditsView ? 'Credits' : 'Models'); }
+				var inModal  = modal.style.display !== 'none';
+				if (!drawerOpen && !inModal) return;
+				var formOpen = !!(formView && formView.style.display !== 'none');
+				var title    = (titleEl && titleEl.textContent) || 'Admin';
+				if (available()) {
+					if (inModal) { toPanel(); showDrawer(title, formOpen); }
+				} else if (!inModal) {
+					toModal(title, formOpen);
+				}
 			});
 			// The dots are only true while they are true.
 			window.addEventListener('online',  status);
@@ -3072,9 +3202,28 @@ import init, {
 		};
 	})();
 
+	/// Strip terminal control sequences from anything on its way to the DOM.
+	///
+	/// fe2o3 colours its `Outcome` chains for a terminal, and those bytes cross
+	/// the tool boundary intact. A browser has no terminal to interpret them, so
+	/// an SGR introducer lands in the middle of a sentence as a replacement box
+	/// followed by the literal text "[91m". This was done for chat errors only,
+	/// inside friendlyError -- the Workspace panel prints tool output straight
+	/// through, which is where those codes reached the user.
+	///
+	/// Wider than SGR alone: a CSI sequence may end in any byte from @ to ~, and
+	/// an OSC title sequence left half-matched would swallow the rest of the line.
+	function stripAnsi(raw) {
+		var s = String(raw == null ? '' : raw);
+		s = s.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '');	// OSC ... BEL | ST
+		s = s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '');		// CSI ... final
+		s = s.replace(/\x9b[0-9;?]*[ -\/]*[@-~]/g, '');		// the 8-bit introducer takes no '['
+		return s.replace(/[\x1b\x9b]/g, '');			// a lone introducer
+	}
+
 	function friendlyError(raw) {
 		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
-		s = s.replace(/\x1b\[[0-9;]*m/g, '');				// strip ANSI colour codes
+		s = stripAnsi(s);
 		// Strip the fe2o3 source frames BEFORE reading any status code out of
 		// the text. They carry line numbers, and a frame like `src/llm.rs:507`
 		// otherwise matches the 5xx test — so an unreachable endpoint was being
@@ -3096,9 +3245,14 @@ import init, {
 		s = s.replace(/^\s*Error:\s*/i, '')
 			.replace(/[A-Za-z]+Err\{/g, ' ')
 			.replace(/JsValue\(/g, ' ')
-			.replace(/\[[A-Z][a-z]+(?: [A-Z][a-z]+)*\]/g, ' ')
+			// `[A-Z][a-z]+` missed an all-caps kind word, so `[IO Missing]` -- the
+			// commonest one there is -- survived into the user's sentence.
+			.replace(/\[[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\]/g, ' ')
 			.replace(/\bundefined\b/g, ' ')
-			.replace(/["{}()]/g, ' ')
+			// Parentheses are kept: `JsValue(` has its own rule above, and stripping
+			// every bracket turned "(an older Safari, or Private Browsing)" into a
+			// clause floating loose in the middle of the sentence.
+			.replace(/["{}]/g, ' ')
 			.replace(/\s*:\s*$/, '')
 			.replace(/\s+/g, ' ')
 			.replace(/\s+([.,;:])/g, '$1')
@@ -3278,7 +3432,7 @@ import init, {
 		spinnerEl.className = 'chat-spinner';
 		spinnerEl.innerHTML = '<span class="chat-spinner-dot"></span>'
 			+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
-		chatOutput.appendChild(spinnerEl);
+		postToChat(spinnerEl);
 		chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
 	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; } }
@@ -5380,7 +5534,7 @@ import init, {
 			var canPick   = (typeof window.showDirectoryPicker === 'function');
 
 			// Browser — the in-app sandbox. What syncs, and what cloud storage backs.
-			modeEl.appendChild(modeChip('🗄 Browser', !onMachine,
+			modeEl.appendChild(modeChip('browser', 'Browser', !onMachine,
 				onMachine
 					? 'Switch the agent back to the private in-browser workspace.'
 					: 'The agent works in a private in-browser workspace. This is what syncs.',
@@ -5388,8 +5542,8 @@ import init, {
 
 			// Machine — a real folder on this disk. A genuine alternative root, and
 			// mutually exclusive with the sandbox: the agent has exactly one.
-			var machineChip = modeChip(
-				onMachine ? ('💻 ' + folderHandle.name) : '💻 Machine',
+			var machineChip = modeChip('machine',
+				onMachine ? folderHandle.name : 'Machine',
 				onMachine,
 				canPick
 					? (onMachine
@@ -5399,12 +5553,12 @@ import init, {
 				!canPick ? null
 					: (reconnect ? function () { reconnectFolder(reconnect); } : openFolder));
 			if (!canPick) machineChip.classList.add('ghost');
-			if (reconnect) machineChip.textContent = '💻 Reconnect ' + reconnect.name;
+			if (reconnect) setChip(machineChip, 'machine', 'Reconnect ' + reconnect.name);
 			modeEl.appendChild(machineChip);
 
 			// Cloud — not a place but a residency: where the browser workspace's
 			// bytes live. A real folder is the user's own disk and has none.
-			var cloudChip = modeChip('☁ Cloud', false,
+			var cloudChip = modeChip('cloud', 'Cloud', false,
 				onMachine
 					? 'Cloud storage carries your browser workspace, not a folder on this machine.'
 					: 'Where your workspace lives, so it can be larger than this device.',
@@ -5440,7 +5594,7 @@ import init, {
 			if (!window.DaimondCloud) return;
 			chip.classList.add('ghost');
 			chip.classList.remove('cloud');
-			chip.textContent = '☁ Cloud';
+			setChip(chip, 'cloud', 'Cloud');
 			var s;
 			try { s = await DaimondCloud.summary(); } catch (e) { return; }
 			if (!s.files) {
@@ -5451,18 +5605,43 @@ import init, {
 			}
 			chip.classList.remove('ghost');
 			chip.classList.add('cloud');
-			chip.textContent = '☁ ' + fmtBytes(s.bytes);
+			setChip(chip, 'cloud', fmtBytes(s.bytes));
 			chip.title = s.awayFiles
 				? (s.files + ' files in cloud storage; ' + s.awayFiles + ' of them not on this device.')
 				: (s.files + ' files in cloud storage, all of them also on this device.');
 		}
 
+		/// The mode row's glyphs, in the toolbar's idiom: 24-unit outlines stroked
+		/// in `currentColor`, not emoji. Emoji are a second typeface with its own
+		/// colours, weight and vertical rhythm, and three of them sat in a row of
+		/// controls drawn entirely in thin outline.
+		var MODE_ICONS = {
+			browser: '<rect x="3" y="4.5" width="18" height="6" rx="1.5"/>'
+				+ '<rect x="3" y="13.5" width="18" height="6" rx="1.5"/>'
+				+ '<path d="M6.75 7.5h.01M6.75 16.5h.01"/>',
+			machine: '<rect x="3.5" y="5" width="17" height="11" rx="1.5"/><path d="M2 19h20"/>',
+			cloud:   '<path d="M7.2 18.5h9.3a4.2 4.2 0 00.5-8.37 6.2 6.2 0 00-11.75-1.4A3.7 3.7 0 007.2 18.5z"/>',
+		};
+
+		/// Give a chip its glyph and its words together.
+		///
+		/// One call, because they are one thing: setting `textContent` on a chip
+		/// that carries an icon silently deletes the icon, which is how the row
+		/// came to lose its glyphs whenever a folder was reconnected or the cloud
+		/// total was repainted. The label goes in as a text node, never as markup —
+		/// it can be a folder name off the user's disk.
+		function setChip(chip, icon, label) {
+			chip.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+				+ (MODE_ICONS[icon] || '') + '</svg>';
+			chip.appendChild(document.createTextNode(label));
+		}
+
 		/// One chip in the mode row. A chip states where things are; clicking it
 		/// opens that location's controls rather than toggling a mode.
-		function modeChip(text, active, title, onClick) {
+		function modeChip(icon, label, active, title, onClick) {
 			var c = document.createElement('span');
 			c.className = 'files-mode-chip' + (active ? ' active' : '');
-			c.textContent = text;
+			setChip(c, icon, label);
 			c.title = title;
 			if (onClick) {
 				c.classList.add('act');
@@ -5553,8 +5732,12 @@ import init, {
 				body.appendChild(r);
 			});
 
-			viewEl.querySelector('[data-act="back"]').addEventListener('click', function () {
-				closeView(); list(curDir);
+			// Awaited: closing may now ask before discarding an unsaved edit, and
+			// re-listing the folder behind a question the user has not answered
+			// would pull the view out from under it.
+			viewEl.querySelector('[data-act="back"]').addEventListener('click', async function () {
+				await closeView();
+				list(curDir);
 			});
 			viewEl.querySelector('[data-act="cloud-credits"]').addEventListener('click', function () {
 				try {
@@ -5605,7 +5788,7 @@ import init, {
 			if (old) old.remove();
 			var msg = document.createElement('div');
 			msg.className = 'files-mode-msg' + (isErr ? ' err' : '');
-			msg.textContent = text;                 // escaped
+			msg.textContent = stripAnsi(text);      // escaped, and free of terminal codes
 			modeEl.appendChild(msg);
 		}
 
@@ -5776,7 +5959,11 @@ import init, {
 				treeEl.innerHTML = '';
 				var err = document.createElement('div');
 				err.className = 'files-empty';
-				err.textContent = res;         // escaped
+				// friendlyError, not the raw string. This is where a failed listing
+				// is reported, and it was printing the tool's answer verbatim: on a
+				// browser with no OPFS the whole panel filled with terminal colour
+				// codes and `src/wasm/opfs.rs:210` around one readable sentence.
+				err.textContent = friendlyError(res);         // escaped
 				treeEl.appendChild(err);
 				return;
 			}
@@ -5891,7 +6078,9 @@ import init, {
 			}
 			fileMsg('Fetching ' + path + '…');
 			var res = await DaimondCloud.fetch(path);
-			if (res.indexOf('OK') !== 0) { fileMsg(res, true); return; }
+			// The tool's own answer, which on a failure is an fe2o3 chain. Through
+			// friendlyError so it arrives as a sentence rather than as frames.
+			if (res.indexOf('OK') !== 0) { fileMsg(friendlyError(res), true); return; }
 			await list(curDir);
 			if (thenOpen) openFile(path);
 		}
@@ -5900,7 +6089,8 @@ import init, {
 		async function freeEntry(path) {
 			if (!window.DaimondCloud) return;
 			var res = await DaimondCloud.evict(path);
-			fileMsg(res, res.indexOf('OK') !== 0);
+			var bad = res.indexOf('OK') !== 0;
+			fileMsg(bad ? friendlyError(res) : res, bad);
 			list(curDir);
 		}
 
@@ -5968,6 +6158,10 @@ import init, {
 				'  <span>' +
 				compileBtn +
 				'    <button class="files-btn" data-act="edit" title="Edit">✎ Edit</button>' +
+				// Edit used to have no way out but Save. Backing out meant closing the
+				// whole document and opening it again, which threw the edit away
+				// without a word -- a one-way door into a mode that writes.
+				'    <button class="files-btn" data-act="cancel-edit" title="Stop editing" style="display:none">✕ Cancel</button>' +
 				'    <button class="files-btn" data-act="lineno" title="Line numbers">#</button>' +
 				'    <button class="files-btn" data-act="download" title="Download">⤓</button>' +
 				'    <button class="files-btn" data-act="back">← Back</button>' +
@@ -5996,7 +6190,36 @@ import init, {
 			});
 			// Edit ⇄ Save: swap the <pre> for a textarea; Save writes via the
 			// file_write tool (honouring the active workspace root — OPFS or FSA).
-			var editBtn = viewEl.querySelector('[data-act="edit"]');
+			var editBtn   = viewEl.querySelector('[data-act="edit"]');
+			var cancelBtn = viewEl.querySelector('[data-act="cancel-edit"]');
+
+			/// Leave edit mode without writing, putting the read view back.
+			function stopEditing() {
+				var ta = viewEl.querySelector('.files-edit');
+				if (ta) {
+					var pre = document.createElement('pre');
+					pre.className = 'files-view-body';
+					ta.replaceWith(pre);
+				}
+				editing = false;
+				editBtn.textContent = '✎ Edit';
+				editBtn.disabled = false;
+				cancelBtn.style.display = 'none';
+				renderFileBody();
+			}
+			cancelBtn.addEventListener('click', async function () {
+				var ta = viewEl.querySelector('.files-edit');
+				// Typed work is only thrown away on purpose. An untouched editor
+				// closes without a question, because there is nothing to lose.
+				if (ta && ta.value !== curContent) {
+					var go = await confirmDialog(
+						'Your changes to ' + path + ' have not been saved. Close the editor and lose them?',
+						'Discard', { title: 'Discard your changes?', danger: true, cancelLabel: 'Keep editing' });
+					if (!go) return;
+				}
+				stopEditing();
+				fileMsg('Editing stopped — nothing was written.');
+			});
 			editBtn.addEventListener('click', async function () {
 				if (!editing) {
 					editing = true;
@@ -6004,7 +6227,15 @@ import init, {
 					ta.className = 'files-edit'; ta.value = curContent; ta.spellcheck = false;
 					viewEl.querySelector('.files-view-body').replaceWith(ta);
 					ta.focus();
+					// At the TOP, not the end. Focusing a textarea leaves the caret past
+					// the last character, and the box does not wrap -- so pressing Edit
+					// scrolled five thousand pixels right, to the end of the longest line
+					// in the file, and the document looked empty.
+					ta.setSelectionRange(0, 0);
+					ta.scrollTop = 0;
+					ta.scrollLeft = 0;
 					editBtn.textContent = '✔ Save';
+					cancelBtn.style.display = '';
 				} else {
 					var ta2 = viewEl.querySelector('.files-edit'), content = ta2.value;
 					editBtn.disabled = true; editBtn.textContent = 'Saving…';
@@ -6016,9 +6247,15 @@ import init, {
 					try { disk = await tools().run_tool('file_read', JSON.stringify({ path: path })); }
 					catch (e) { /* new file, or unreadable; treat as no conflict */ }
 					if (disk !== null && disk !== curContent && disk !== content) {
-						if (!window.confirm('This file changed on disk since you opened it — '
-							+ 'most likely an agent edited it. Save anyway and overwrite '
-							+ 'those changes?')) {
+						// In-app, not window.confirm: a native box is an OS dialog with
+						// the origin in its title, styled nothing like the app, and it
+						// blocks the page. This file says so at the top of its dialog
+						// section, and this was the one place still doing it.
+						var over = await confirmDialog(
+							'This file changed on disk since you opened it — most likely an agent '
+							+ 'edited it. Save anyway and overwrite those changes?',
+							'Overwrite', { title: 'It changed while you were editing', danger: true });
+						if (!over) {
 							editBtn.disabled = false; editBtn.textContent = '✔ Save';
 							fileMsg('Save cancelled — the file changed on disk.', true);
 							return;
@@ -6030,6 +6267,7 @@ import init, {
 						ta2.replaceWith(pre);
 						renderFileBody();
 						editBtn.textContent = '✎ Edit'; editBtn.disabled = false;
+						cancelBtn.style.display = 'none';
 						fileMsg('Saved.'); refresh();
 						if (path === INSTRUCTIONS_FILE) Instructions.refresh();
 						else if (path.indexOf(PROMPTS_DIR + '/') === 0) Prompts.refresh();
@@ -6119,7 +6357,7 @@ import init, {
 				showModeMsg(text, !!isErr);
 				return;
 			}
-			el.textContent = text; el.style.display = '';
+			el.textContent = stripAnsi(text); el.style.display = '';
 			el.classList.toggle('err', !!isErr);
 			// An error stays until the next action; a success fades.
 			clearTimeout(el._t);
@@ -6249,7 +6487,18 @@ import init, {
 			}
 		}
 
-		function closeView() {
+		/// Close the document. Typed work is never thrown away in silence: leaving
+		/// the view mid-edit used to discard it without a word, which made Back the
+		/// only exit from edit mode AND a destructive one.
+		async function closeView() {
+			var ta = viewEl.querySelector('.files-edit');
+			if (editing && ta && ta.value !== curContent) {
+				var go = await confirmDialog(
+					'Your changes to ' + (curFile || 'this file') + ' have not been saved. '
+					+ 'Close it and lose them?',
+					'Discard', { title: 'Discard your changes?', danger: true, cancelLabel: 'Keep editing' });
+				if (!go) return;
+			}
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 			viewEl.style.display = 'none'; docEmbed(false);
 			curFile = null; editing = false;
@@ -8472,7 +8721,29 @@ import init, {
 		m.style.display = 'flex';
 		(unlock ? document.getElementById('id-pass') : document.getElementById('id-name')).focus();
 	}
-	function hideIdentity() { document.getElementById('identity-modal').style.display = 'none'; }
+	/// Take the gate away, and hand the keyboard to the app behind it.
+	///
+	/// Without the hand-over the focus stayed on `<body>`, so the first Tab after
+	/// signing in (or skipping) started again at the very top of the document
+	/// rather than at the thing the user had just been let through to.
+	function hideIdentity() {
+		document.getElementById('identity-modal').style.display = 'none';
+		// After the redraw, not before it. Getting past the gate is followed
+		// immediately by renderAll(), which rebuilds the rail and the stage -- so a
+		// control focused here is a control that no longer exists a moment later,
+		// and the focus falls back to the body.
+		setTimeout(function () {
+			if (document.activeElement && document.activeElement !== document.body) return;
+			// The first candidate that is actually ON SCREEN. `chat-input` is in the
+			// document from the start but hidden until a chat exists, and focusing a
+			// hidden element does nothing at all -- so naming it first meant the
+			// keyboard was handed to something invisible, which is to say nowhere.
+			var next = ['chat-input', 'new-session-btn', 'new-diamond-btn']
+				.map(function (id) { return document.getElementById(id); })
+				.filter(function (el) { return el && el.getClientRects().length; })[0];
+			if (next) { try { next.focus(); } catch (e) { /* gone */ } }
+		}, 60);
+	}
 
 	// After a successful create/unlock: decrypt the stored key into memory and
 	// request durable storage (now that the login has explained on-device data).
@@ -9066,7 +9337,6 @@ import init, {
 			// Generated by default where the wordlist is present; otherwise the typed
 			// view is all there is. `genMode` gates which validation runs on submit.
 			var genMode = canGen;
-			if (!canGen) typed.style.display = '';
 
 			/// The change button stays disabled until a generated passphrase is
 			/// acknowledged as written down -- the one guard against an unrecoverable
@@ -9074,7 +9344,25 @@ import init, {
 			function syncOk() {
 				ok.disabled = !!(genMode && !ack.checked);
 			}
-			syncOk();
+
+			/// Swing between the generated passphrase and a typed one.
+			///
+			/// The escape hatch swings BOTH ways, and its label says where it leads.
+			/// It used to hide itself on the way through, which made choosing your own
+			/// a one-way door: the only route back to the generated words was to
+			/// cancel the passphrase change altogether. That is the very defect the
+			/// create screen carried, copied here with it.
+			function setGen(on) {
+				genMode = !!on && canGen;
+				gen.style.display   = genMode ? '' : 'none';
+				typed.style.display = genMode ? 'none' : '';
+				choose.textContent  = genMode
+					? 'Choose my own passphrase instead'
+					: 'Use a generated passphrase instead';
+				err.textContent = '';
+				syncOk();
+			}
+			setGen(canGen);
 
 			var prev = document.activeElement;
 			function close(value) {
@@ -9111,13 +9399,7 @@ import init, {
 			function onKey(e) {
 				if (e.key === 'Escape') { e.preventDefault(); close(null); }
 				else if (e.key === 'Enter') { e.preventDefault(); submit(); }
-				else if (e.key === 'Tab') {
-					var f = card.querySelectorAll('input,button');
-					if (!f.length) return;
-					var first = f[0], last = f[f.length - 1];
-					if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-					else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-				}
+				else if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
 			back.addEventListener('mousedown', function (e) { if (e.target === back) close(null); });
@@ -9143,19 +9425,19 @@ import init, {
 				}
 			});
 			ack.addEventListener('change', syncOk);
-			// One way out only, matching the create screen: once a person elects to
-			// type their own, cancelling is the way back to a generated one.
+			// Both ways, matching the create screen: a person who clicks this to see
+			// what it does can click it again to come back.
 			choose.addEventListener('click', function () {
-				genMode = false;
-				gen.style.display = 'none';
-				choose.style.display = 'none';
-				typed.style.display = '';
-				err.textContent = '';
-				syncOk();
-				try { newInp.focus(); } catch (e) { /* not focusable yet */ }
+				setGen(!genMode);
+				try { (genMode ? choose : newInp).focus(); } catch (e) { /* not focusable yet */ }
 			});
 
-			(genMode ? ok : newInp).focus();
+			// Not `ok` unconditionally: it starts DISABLED until the passphrase is
+			// acknowledged as written down, and focusing a disabled button leaves the
+			// focus on the document body -- outside the dialog, where Tab then walks
+			// straight into the app behind it. The tick is what the user has to do
+			// next anyway.
+			(genMode ? (ok.disabled ? ack : ok) : newInp).focus();
 		});
 	}
 
@@ -9223,10 +9505,17 @@ import init, {
 		var t = document.createElement('div');
 		t.className = 'daimond-toast' + (isErr ? ' err' : '');
 		t.textContent = text;
+		// Themed, not literal. The two backgrounds were picked against the dark
+		// palette, so every toast — including "Backup restored" — arrived as a
+		// near-black box with pale grey text on the light and lollypop themes.
+		// There is no --danger-bg token, so the failure case takes --warn-bg and
+		// leans on a --danger border and heading colour to read as a failure.
+		var edge = isErr ? 'var(--danger)' : 'var(--ok)';
 		t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'
 			+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:var(--fs-sm);max-width:80vw;'
-			+ 'background:' + (isErr ? '#5a1f1f' : '#1f3a2a') + ';color:#eee;'
-			+ 'box-shadow:0 4px 16px rgba(0,0,0,.4);';
+			+ 'background:' + (isErr ? 'var(--warn-bg)' : 'var(--ok-bg)') + ';'
+			+ 'color:var(--text-primary);border:1px solid ' + edge + ';'
+			+ 'box-shadow:0 4px 16px rgba(0,0,0,.28);';
 		document.body.appendChild(t);
 		setTimeout(function () { t.style.transition = 'opacity .4s'; t.style.opacity = '0'; }, 3600);
 		setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 4200);
@@ -9426,6 +9715,17 @@ import init, {
 	// run the unlock twice. What is left only advances the caret, in the one mode
 	// where a further field still has to be filled.
 	document.getElementById('id-skip').addEventListener('click', idSkip);
+	// The gate covers the whole app, so Tab must not walk behind it. Without this
+	// the ninth Tab left the card and went on into the rail and the composer --
+	// controls the user can neither see nor reach past the scrim, with the caret
+	// landing in a chat box hidden under it.
+	document.addEventListener('keydown', function (e) {
+		if (e.key !== 'Tab') return;
+		var m = document.getElementById('identity-modal');
+		if (!m || m.style.display === 'none') return;
+		var card = m.querySelector('.modal-card');
+		if (card) keepFocusIn(card, e);
+	}, true);
 	document.getElementById('id-name').addEventListener('keydown', function (e) {
 		if (e.key !== 'Enter') return;
 		e.preventDefault();
@@ -9618,6 +9918,16 @@ import init, {
 		var note = document.getElementById('byok-note');
 		if (!document.getElementById('cfg-provider').value) { note.textContent = 'Choose a provider first.'; return; }
 		if (!next.baseUrl) { note.textContent = 'Enter the provider base URL.'; return; }
+		// PRESENT is not the same as USABLE. The shape was never checked, so a typed
+		// address like "htp://api.x/v1" got as far as trying to list models from it,
+		// failed, and the refusal that reached the user read "Choose a model, or wait
+		// a moment for the list to load" — naming the one box they had got right.
+		if (!/^https?:\/\/[^\s/?#]+\.?(:\d+)?(\/|$)/i.test(next.baseUrl)) {
+			note.textContent = 'That base URL is not a web address — it should start with https:// '
+				+ 'and name the provider’s host.';
+			document.getElementById('cfg-base-url').focus();
+			return;
+		}
 		if (!next.apiKey) { note.textContent = 'Paste your API key.'; document.getElementById('cfg-api-key').focus(); return; }
 		// Fall back to the provider's default model if the live list has not
 		// loaded (it shows "Loading…" with an empty value) so a quick save is

@@ -188,12 +188,24 @@
 	}
 	#msheet .panel {
 		display: flex !important;
+		flex-direction: column;
 		height: 100% !important;
 		width: 100% !important;
 		min-width: 0 !important;
 		border: none;
 		border-radius: 0;
 	}
+	/* The sheet already names what it is holding, in the grabber. A guest that
+	   carries its own head then said it twice, one line apart and in two
+	   different cases -- "Spending" over "SPENDING". The guest keeps its
+	   controls; the sheet keeps the title. */
+	#msheet .panel > .railhead { justify-content: flex-end; }
+	#msheet .panel > .railhead > span:first-child { display: none; }
+	/* Tools is the one stage panel whose .chead repeats the sheet label
+	   verbatim and holds nothing else but a second close button -- drop the
+	   row. The other stage heads carry live titles (the doc name, the URL,
+	   the message subject) and stay. */
+	#msheet .panel.tools > .chead { display: none; }
 
 	/* The ask pill: the composer, relocated. "Ask about THIS" is the
 	   whole thesis — read the thing, and the daimon is still there to
@@ -265,9 +277,15 @@
 		max-height: calc(100dvh - 24px);
 		padding: 16px;
 	}
-	#settings-slot .admin-view-head { display: flex !important; }
-	#settings-modal > .modal-card > h2 { display: none; }
-	#settings-modal #settings-close { display: none; }
+	/* The create screen asks for more room than the shared 80vh (see app.css) and
+	   takes 92vh -- but `vh` counts the strip behind the address bar, which a
+	   phone does not show, so on a phone the card ran past the fold and cut
+	   "Create account" in half. The dynamic viewport is the honest measure, and
+	   the card scrolls inside it. */
+	#identity-modal .modal-card { max-height: calc(100dvh - 24px); }
+	/* The hosted view's own head is the card's heading everywhere now, and the
+	   bottom Close is hidden everywhere with it (both in app.css), so nothing
+	   about the settings card needs saying twice here. */
 	/* The view's own × sits top-right and is the close. Make it a clear target. */
 	#settings-slot .admin-back { font-size: var(--fs-4xl); padding: 4px 10px; }
 }

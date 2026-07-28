@@ -60,6 +60,10 @@ svg { display: block; }
    descendant selector outweighs the touch-size .icon-btn override in
    responsive.css, keeping the label compact on a phone too. */
 .top-actions .readme-link { font-size: var(--fs-sm); letter-spacing: 0.01em; text-decoration: none; }
+/* One icon size across the top bar. The update chip and the appearance menu
+   already drew at 18px while the guide "?" and the pairing glyph took the
+   .icon-btn default of 16, so the row of five read as two different sets. */
+.top-actions .icon-btn .ic { width: 18px; height: 18px; }
 
 
 .main { display: flex; flex: 1; min-height: 0; }
@@ -92,7 +96,16 @@ svg { display: block; }
 }
 
 .panel { min-height: 0; }
-.rail, .agents, .work, .mail { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* Spending belongs in this list with its dock siblings. Left out, it stayed a
+   block -- which reads correctly only for as long as nothing sets `display:
+   flex` on it. The phone sheet does exactly that (`#msheet .panel`), and the
+   panel's head and its body then laid out side by SIDE: a stranded "SPENDING"
+   column on the left and the figures squeezed into what was left. */
+.rail, .agents, .work, .mail, .spend { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* Now that the panel is a flex column, the view is its flexible child: its own
+   `height: 100%` would otherwise sit BESIDE the head in the height budget and
+   push its own last rows out under the clip. */
+.spend > .spend-view { flex: 1 1 auto; min-height: 0; }
 .rail { width: var(--rail-w); gap: 0; }
 .panel.nt { transition: none; }
 .panel.closed { display: none; }
@@ -213,8 +226,23 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 
 /* A view in the Admin body: the same furniture as a dialog, without the backdrop. */
 .admin-view-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
-/* In the modal the card has its own heading, and the × is the Close button. */
-#settings-slot .admin-view-head { display: none; }
+/* In the modal the hosted view names itself. The card used to carry a static
+   "Settings" heading instead, which was wrong the moment anything but the
+   settings view was hosted -- "Settings" sat over an "Add a mailbox" form. The
+   head travels with the view, so it is always the right words, and it wears the
+   card's heading size rather than the drawer's. */
+#settings-slot .admin-view-head { margin-bottom: 16px; }
+#settings-slot .admin-title { font-size: var(--fs-2xl); }
+#settings-slot .admin-back { font-size: var(--fs-2xl); padding: 2px 10px; }
+/* A built form brings a head of its own, which the slot's head already repeats
+   -- "Add a mailbox" twice, one above the other. The slot's own head wins: it is
+   the card's heading, and its × is wired to the form's cancel, so the promise
+   the caller is waiting on is still answered. */
+#settings-slot .admin-view .admin-view-head { display: none; }
+/* One way out, not three. The head's × closes the card (and cancels a form
+   properly); the trailing Close underneath said the same thing less well, and
+   sat below the fold of a long form. The phone has always hidden it. */
+#settings-modal #settings-close { display: none; }
 .admin-title { font-size: var(--fs-base); font-weight: 600; color: var(--text-primary); }
 .admin-back { background: none; border: none; color: var(--text-muted); font-size: var(--fs-lg); line-height: 1; padding: 2px 6px; border-radius: var(--radius-sm); }
 .admin-back:hover { background: var(--bg-hover); color: var(--text-primary); }
@@ -227,6 +255,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-sec { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding: 2px 4px 4px; }
 .admin-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); }
 .admin-item:hover { background: var(--bg-hover); }
+/* Keyboard focus, themed, matching the app's ring elsewhere (workspace.css).
+   These rows take real focus when a dialog closes and hands it back, and a
+   borderless button on a borderless panel showed nothing at all -- the caret was
+   somewhere in a list of eight identical lines. The accent is defined in all
+   three palettes, so the ring survives the light themes; a dark-only colour
+   would not. The offset stays inside the scroller's 8px padding. */
+.admin-item:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+	background: var(--bg-hover);
+}
 .admin-item.danger { color: var(--danger); }
 .admin-item.danger:hover { background: var(--danger); color: #fff; }
 .admin-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 4px 6px 8px; line-height: 1.5; }
@@ -384,14 +423,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .fold-btn:hover { border-color: var(--accent); }
 .fold-btn:disabled { opacity: 0.4; cursor: default; }
 .crystal-status { font-size: var(--fs-xs); color: var(--text-muted); font-family: var(--font-mono); min-height: 14px; }
+/* --panel-2 and --text were never declared, so this box fell back to a white
+   wash and a white hover: invisible surface on the light themes, invisible × on
+   both of them. Every colour here is a real token now. */
 .crystal-reply { position: relative; margin: 6px 0; padding: 8px 26px 8px 10px; border-radius: 8px;
-	background: var(--panel-2, rgba(255,255,255,.04)); border: 1px solid var(--border, rgba(255,255,255,.08));
+	background: var(--bg-tertiary); border: 1px solid var(--border);
 	font-size: var(--fs-sm); line-height: 1.45; max-height: 40vh; overflow-y: auto; }
 .crystal-reply-body > :first-child { margin-top: 0; }
 .crystal-reply-body > :last-child { margin-bottom: 0; }
 .crystal-reply-x { position: absolute; top: 4px; right: 6px; border: none; background: none;
 	color: var(--text-muted); cursor: pointer; font-size: var(--fs-xl); line-height: 1; padding: 2px 4px; }
-.crystal-reply-x:hover { color: var(--text, #eee); }
+.crystal-reply-x:hover { color: var(--text-primary); }
 
 /* Fold diff — added / removed lines, all text escaped. */
 .diff-head { font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 10px; }
@@ -647,6 +689,13 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 
 /* Identity modal (create / unlock). */
 #identity-modal .login-logo { height: 54px; margin: 0 auto 14px; display: block; }
+/* The wordmark ships white-lettered. The script swaps it per theme too (via
+   #id-logo), but CSS `content` applies at first paint and outranks the src
+   attribute, so the light and candy themes are right before any script runs. */
+:root[data-theme="light"] #identity-modal .login-logo,
+:root[data-theme="lollypop"] #identity-modal .login-logo {
+	content: url("../assets/daimond_word_dark.svg");
+}
 #identity-modal h2 { margin-bottom: 8px; }
 #identity-modal .cfg-lead { margin: 0 0 12px; }
 /* The account switcher on the unlock screen: whose passphrase to enter, or add another. */
@@ -734,7 +783,10 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
    form reads as one form. A long model id is allowed to be long -- truncating it
    would hide the very part that tells two of them apart. */
 .dlg-select { font-family: var(--font-mono); font-size: var(--fs-sm); }
-.dlg-select optgroup { font-family: var(--font-sans); font-style: normal; font-weight: 600; color: var(--text-secondary); }
+/* The UI face, not --font-sans: that token does not exist, so the declaration
+   was invalid and the group heading inherited the mono face of the options it
+   was meant to stand apart from. */
+.dlg-select optgroup { font-family: var(--font); font-style: normal; font-weight: 600; color: var(--text-secondary); }
 .dlg-select option { font-family: var(--font-mono); color: var(--text-primary); }
 .dlg-select option:disabled { color: var(--text-muted); }
 .dlg-ok { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); }

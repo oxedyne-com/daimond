@@ -24,6 +24,9 @@
 	font-size: var(--fs-2xs); font-weight: 600;
 	border: 1px solid var(--border-2);
 }
+/* The .ic default of 16px belongs to toolbar buttons; on a --fs-2xs chip the
+   glyph must sit at cap height. */
+.files-mode-chip .ic { width: 13px; height: 13px; }
 /* A chip states where things are. Two of them name the workspace root and are
    mutually exclusive; the third names a residency and is additive -- so the
    lit one is not "the selected tab", it is simply what is true. */
@@ -126,10 +129,14 @@
 	color: var(--text-primary); background: var(--bg-primary);
 }
 
-/* Inline editor: swaps in for the <pre> while editing a file. */
+/* Inline editor: swaps in for the <pre> while editing a file.
+   Wrapped, like the viewer beside it. `pre` meant every prose line ran off the
+   right edge of a ~400px panel and had to be scrolled to be read, one line at a
+   time; you cannot edit what you cannot see. Only the EDITOR wraps -- a
+   read-only <pre> presentation keeps whatever measure its content asks for. */
 .files-edit {
 	flex: 1; margin: 0; padding: 12px 14px; border: none; resize: none; outline: none;
-	white-space: pre; overflow: auto;
+	white-space: pre-wrap; word-break: break-word; overflow: auto;
 	font-family: var(--font-mono); font-size: var(--fs-sm);
 	color: var(--text-primary); background: var(--bg-primary);
 }

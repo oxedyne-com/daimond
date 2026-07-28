@@ -8,7 +8,11 @@
 	--border-2:          #3F372E;
 	--text-primary:      #ECE6DC;
 	--text-secondary:    #A79E92;
-	--text-muted:        #736A5F;
+	/* The muted rung, matched across the three palettes. At #736A5F this cleared
+	   only 3.1:1 on the tertiary surface -- fine by the audit's floor, but once
+	   the light and candy palettes were lifted to ~4.5 the dark theme became the
+	   hardest of the three to read, which is the incoherence the other way. */
+	--text-muted:        #877D70;
 	--accent:            #D2604F;
 	--accent-hover:      #E07A67;
 	--accent-soft:       #3A211B;
@@ -84,12 +88,16 @@
 	--border-2:          #E7B4D3;
 	--text-primary:      #3A1E3E;
 	--text-secondary:    #7C5578;
-	--text-muted:        #B08AAA;
+	/* Same reasoning as the light theme's muted rung: #B08AAA read at 2.5-3.0:1
+	   on the candy surfaces. This keeps the mauve and clears 4.4:1. */
+	--text-muted:        #8A5E85;
 	--accent:            #E23E93;
 	--accent-hover:      #F45FAB;
 	--accent-soft:       #FBDDEF;
 	--accent-text:       #AE1E6E;
-	--ok:                #12B26E;
+	/* Dark enough to read AS TEXT on the candy surfaces (4.5:1 on tertiary);
+	   the brighter #12B26E sat at 2.3:1, fine for a dot but not for words. */
+	--ok:                #0C7A4C;
 	--ok-bg:             #DAF6EA;
 	--warn:              #E88C0A;
 	--warn-bg:           #FCEDD1;
@@ -137,7 +145,12 @@
 	--border-2:          #D6CEBF;
 	--text-primary:      #211C18;
 	--text-secondary:    #6B635A;
-	--text-muted:        #9A9187;
+	/* Muted is the quietest text in the app, not the least readable: it carries
+	   whole explanatory paragraphs (the Prompts note), the section headers and
+	   the spend labels. At #9A9187 those sat at 2.75-3.1:1 on these surfaces --
+	   below every legibility floor -- so the muted rung is set where it clears
+	   4.3:1 everywhere while staying plainly lighter than --text-secondary. */
+	--text-muted:        #787068;
 	--accent:            #A6322A;
 	--accent-hover:      #C24A38;
 	--accent-soft:       #F6E7E2;

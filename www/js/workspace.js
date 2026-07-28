@@ -143,6 +143,7 @@
 			if (n) n.textContent = String(total);
 			more.title = total + ' more panel' + (total === 1 ? '' : 's');
 		}
+		watchRow();
 	}
 
 	/// Drop trailing chips until the row fits the space it has been given.
@@ -150,9 +151,53 @@
 	/// Taken from the END, so every chip that remains is exactly where it was.
 	/// A row that re-sorted itself to fit would be a row whose contents move
 	/// under the cursor, which is the failure this design exists to avoid.
+	/// Is the row longer than the box it has to live in?
+	///
+	/// Not the container's own overflow alone. The chips are flex items, so when
+	/// the row runs short of room they SHRINK before they overflow: the container
+	/// can report a clean fit while each chip clips its own label mid-glyph
+	/// against `.panel-tags{overflow:hidden}`. A chip whose text no longer fits
+	/// inside it is the honest signal, so both are asked.
+	function rowOverflows() {
+		if (tagsEl.scrollWidth > tagsEl.clientWidth + 1) return true;
+		var chips = tagsEl.querySelectorAll('.ptag');
+		for (var i = 0; i < chips.length; i++) {
+			if (chips[i].scrollWidth > chips[i].clientWidth + 1) return true;
+		}
+		return false;
+	}
+
+	/// Re-fit when the room the row actually has changes.
+	///
+	/// The fit is a measurement, and a measurement taken once is taken at
+	/// whatever moment the page happened to be in. On an iPad the row was
+	/// measured before the header had settled, came out 21px too long, and — a
+	/// fixed viewport firing no resize event ever after — stayed that way, with
+	/// "Spending" sliced mid-word and no ⋯ to fold it into. So the row watches
+	/// its own box, and takes the fit again when the answer would differ.
+	var _fitW = -1;
+	function watchRow() {
+		if (!tagsEl || tagsEl._fitWatched) return;
+		tagsEl._fitWatched = true;
+		// Webfont metrics arrive after first paint, and every chip is text.
+		if (document.fonts && document.fonts.ready) {
+			document.fonts.ready
+				.then(function () { try { P().reflow(); } catch (e) {} })
+				.catch(function () {});
+		}
+		if (typeof ResizeObserver === 'undefined') return;
+		// Only a CHANGE of available width re-fits: re-fitting rewrites the row's
+		// children, not its box, so this cannot chase its own tail.
+		new ResizeObserver(function () {
+			if (!tagsEl.clientWidth || tagsEl.clientWidth === _fitW) return;
+			_fitW = tagsEl.clientWidth;
+			try { P().reflow(); } catch (e) {}
+		}).observe(tagsEl);
+	}
+
 	function fitRow() {
 		var gone = 0, guard = 0;
-		while (tagsEl.scrollWidth > tagsEl.clientWidth + 1 && guard++ < 60) {
+		while (rowOverflows() && guard++ < 60) {
 			var groups = tagsEl.querySelectorAll('.ptag-group');
 			var g = null;
 			for (var i = groups.length - 1; i >= 0; i--) {
@@ -578,6 +623,11 @@
 				else if (e.key === 'ArrowUp') { e.preventDefault(); palAt = Math.max(palAt - 1, 0); renderPalette(); }
 				else if (e.key === 'Enter') { e.preventDefault(); runAt(palAt); }
 				else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+				// The palette is one box and a list walked with the arrows, and it
+				// covers the app. Tab had nowhere to go inside it, so it went behind
+				// it instead -- leaving the caret on a rail button under the scrim,
+				// with the palette still up and no longer taking what was typed.
+				else if (e.key === 'Tab') { e.preventDefault(); }
 			});
 		}
 		if (palEl) palEl.addEventListener('mousedown', function (e) { if (e.target === palEl) closePalette(); });

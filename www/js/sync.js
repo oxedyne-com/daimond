@@ -110,9 +110,13 @@
 			st.textContent =
 				'#sync-chip{display:none;align-items:center;gap:5px;font-size:var(--fs-xs);padding:3px 9px;' +
 				'border-radius:999px;border:1px solid var(--border,#333);color:var(--text-secondary,#9aa);' +
-				'background:var(--surface,#1b1b1f);white-space:nowrap}' +
-				'#sync-chip[data-state="syncing"]{color:var(--accent,#4a7)}' +
-				'#sync-chip[data-state="synced"]{color:#4a7}' +
+				// --surface has never been a token in variables.css, so this always
+				// fell through to the literal and the chip was a near-black pill on
+				// the light and lollypop themes. --bg-tertiary is the raised surface
+				// the rest of the app uses, and it is defined in all three.
+				'background:var(--bg-tertiary);white-space:nowrap}' +
+				'#sync-chip[data-state="syncing"]{color:var(--accent)}' +
+				'#sync-chip[data-state="synced"]{color:var(--ok)}' +
 				'#sync-chip[data-state="off"]{color:var(--text-secondary,#888)}' +
 				'#sync-chip .sdot{width:6px;height:6px;border-radius:50%;background:currentColor}' +
 				'#sync-chip[data-state="syncing"] .sdot{animation:syncpulse 1s ease-in-out infinite}' +

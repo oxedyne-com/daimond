@@ -32,6 +32,14 @@
 	/* The top bar must never push the layout wider than the screen. */
 	.topbar { overflow: hidden; }
 	.top-meter { min-width: 0; overflow: hidden; }
+	/* ...and `overflow: hidden` is not a fit, it is a guillotine. Signed in, the
+	   row ran 22-40px past a phone's width, so the appearance-and-layout button
+	   -- theme, skin, reading size -- was CLIPPED OFF the screen on every phone
+	   tested, and on an iPhone SE the guide "?" went with it. The README link is
+	   the one item here that leaves the app entirely (the Oxedyne blog), and it
+	   costs more room than the two controls it was pushing off, so on a phone it
+	   stands down. */
+	.top-actions .readme-link { display: none; }
 
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }
@@ -94,11 +102,41 @@
 	.chat-input-bar { gap: 8px; padding: 8px 10px; }
 	/* 16px avoids iOS Safari's auto-zoom on focus. */
 	#chat-input { font-size: var(--fs-xl); padding: 11px 13px; }
-	#chat-send { min-width: 46px; height: 46px; font-size: var(--fs-2xl); }
+	/* Send and the walk-back sit in one row and are one control on desktop, both
+	   32px square. Only Send was grown for touch, so the pair read as a large
+	   button beside a small one, bottom-aligned and mismatched. They grow together. */
+	#chat-send, #chat-jump { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
 
 	/* Give lists a little more row height for touch. */
 	.session-box { padding: 10px 11px; }
 	.files-row { padding: 8px 12px; }
+
+	/* A thumb's floor. The shared touch block below lifts the small controls to
+	   ~34px, which suits a dense tablet dock; on a phone, where these are the
+	   only controls in the bar, they get the full 40px box. Confined to the
+	   phone breakpoint on purpose -- 40px each would burst the Workspace
+	   panel's six-button head in a 260px dock column on a tablet. */
+	.top-actions .icon-btn,
+	.top-actions .update-chip,
+	#drawer-btn { min-width: 40px; min-height: 40px; }
+	.railhead .addbtn { width: 40px; height: 40px; }
+	/* The search box was 29px tall: legible, but nothing like a target. */
+	.diamond-search { padding: 9px 10px; }
+
+	/* The rail is the DRAWER here, and every row in it is something a thumb has
+	   to land on: the status rows were 23px tall, the account row 26, the drawer's
+	   own close 21 square. Dense is right on a desktop, where these are read with
+	   a pointer over them; in a drawer they need a finger's worth of height.
+	   (The drawer scrolls, so the extra height costs nothing that matters.) */
+	.astat-row.astat-btn { padding-top: 9px; padding-bottom: 9px; }
+	.astat-id .user-row { padding: 9px 4px; }
+	.astat-id #settings-btn { min-width: 40px; min-height: 40px; }
+	.admin-item { padding-top: 10px; padding-bottom: 10px; }
+	#admin-close { min-width: 40px; min-height: 40px; }
+	.tile-label { padding-top: 6px; padding-bottom: 6px; }
+	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not
+	   a thumb's. */
+	.chead .chip-btn { padding: 8px 10px; }
 }
 
 /* Touch tap targets: secondary controls default to ~22px which is under the
@@ -114,4 +152,25 @@
 	   buttons hide with `visibility`, not `opacity`. */
 	.files-row .files-del { visibility: visible; opacity: 1; }
 	.session-box .session-box-close { opacity: 1; }
+
+	/* A tablet keeps the desktop bar and its chip row, where the controls were
+	   23-36px tall. They grow in HEIGHT only: the chip row already has more
+	   chips than it can show, so nothing here may take a pixel of width. */
+	.top-actions .icon-btn,
+	.top-actions .update-chip { min-height: 40px; }
+	.ptag { padding-top: 8px; padding-bottom: 8px; }
+}
+
+/* ── The smallest screens ────────────────────────────────────────────────────
+   320px (an iPhone SE / iPhone 5) has 304px of usable bar, and the phone layout
+   above wants 343. Rather than drop another control -- the appearance menu is
+   the one that was being lost, and it is the way to the theme, the skin and the
+   reading size -- the bar itself gets smaller: a shorter wordmark, tighter gaps
+   and the compact 34px touch box. Everything stays reachable. */
+@media (max-width: 360px) {
+	.topbar { gap: 8px; }
+	.brand-wordmark { height: 20px; }
+	.top-actions .icon-btn,
+	.top-actions .update-chip,
+	#drawer-btn { min-width: 34px; min-height: 34px; }
 }

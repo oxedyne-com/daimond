@@ -17,8 +17,13 @@
 	// the one channel an opaque origin still has. Both are cosmetic and are
 	// validated on arrival, so accepting them from any framer costs nothing.
 	function paint(theme, scale) {
-		if (theme === 'lollypop') theme = 'light';   // a light background either way
-		if (theme === 'dark' || theme === 'light') document.documentElement.setAttribute('data-theme', theme);
+		// All three, lollypop included. It used to be flattened to light on the
+		// grounds that both are light backgrounds -- but guide.css carries a
+		// lollypop palette of its own, so flattening it meant a candy reader's
+		// guide came out plain cream while the app around it stayed pink.
+		if (theme === 'dark' || theme === 'light' || theme === 'lollypop') {
+			document.documentElement.setAttribute('data-theme', theme);
+		}
 		var n = parseFloat(scale);
 		if (n >= 0.5 && n <= 2) document.documentElement.style.setProperty('--fs-scale', String(n));
 	}
@@ -37,10 +42,10 @@
 	// and can simply read the app's root. Harmless where it is blocked.
 	function apply(root) {
 		var t = root.getAttribute('data-theme');
-		// Lollypop is a light background, so the guide reads it as light rather
-		// than staying dark against a pale app.
-		if (t === 'lollypop') t = 'light';
-		if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+		// The app's own theme, whichever of the three it is.
+		if (t === 'dark' || t === 'light' || t === 'lollypop') {
+			document.documentElement.setAttribute('data-theme', t);
+		}
 		// The reader's text size travels the same path as the theme.
 		var s = root.style.getPropertyValue('--fs-scale');
 		if (s) document.documentElement.style.setProperty('--fs-scale', s);

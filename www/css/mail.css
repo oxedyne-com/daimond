@@ -276,7 +276,11 @@
 	border: 0; outline: none;
 	color: var(--text-primary);
 	padding: 14px 16px;
-	font: 14px/1.6 inherit;
+	/* Was `font: 14px/1.6 inherit` -- the one hard pixel size left in the app, so
+	   the reading control moved every word on screen EXCEPT the message being
+	   written, and the shorthand took "inherit" as a family name besides. */
+	font-size: var(--fs-base);
+	line-height: 1.6;
 }
 .compose-atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px; }
 .compose-atts:not(:empty) { padding: 8px 14px 2px; }
