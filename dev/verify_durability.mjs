@@ -9,7 +9,7 @@
 //
 // It also checks the other side of the ledger: a turn that COMPLETED normally leaves nothing
 // behind — its journal is pruned — so a completed turn never masquerades as interrupted.
-import { open, signInAs, connectMock, chat, errors } from './harness.mjs';
+import { open, signInAs, connectMock, chat, errors, scratch } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -28,7 +28,7 @@ async function until(page, fn, ms = 12000, step = 150) {
 	return false;
 }
 
-const s = await open({ name: 'durability', connect: false, signIn: false, profile: '/tmp/daimond-durability-profile' });
+const s = await open({ name: 'durability', connect: false, signIn: false, profile: scratch('durability-profile') });
 const p = s.page;
 p.on('dialog', d => d.accept().catch(() => {}));   // a beforeunload warning must not block the reload
 await p.waitForTimeout(1500);

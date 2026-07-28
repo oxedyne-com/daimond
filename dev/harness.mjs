@@ -38,6 +38,25 @@ export const CHROME = process.env.DAIMOND_CHROME
 
 const MOCK_LOG = path.join(HERE, 'mockllm.log');
 
+/// Scratch root for browser profiles and test artefacts.
+///
+/// NOT `/tmp`: that is a tmpfs, so anything left there is RAM, charged to the
+/// cgroup of whichever agent ran the suite.  tmpfs pages are shmem and cannot be
+/// dropped under pressure -- only swapped -- so stale profiles silently consume
+/// the agent fleet's whole swap budget and unrelated sessions are OOM-killed for
+/// it.  That has now happened three times (2026-07-24, 2026-07-27, 2026-07-28:
+/// 803 profile dirs, 5.1 GB, five of six gigabytes of fleet swap).  Disk is
+/// where this belongs.  Override with DAIMOND_SCRATCH.
+export const SCRATCH = process.env.DAIMOND_SCRATCH
+	|| path.join(os.homedir(), '.cache/daimond');
+
+/// A path under the scratch root, with its parent created.
+export function scratch(...parts) {
+	const p = path.join(SCRATCH, ...parts);
+	fs.mkdirSync(path.dirname(p), { recursive: true });
+	return p;
+}
+
 /// Everything the model was sent, since `clearMockLog()` was last called.
 export const mockLog = () => {
 	if (!fs.existsSync(MOCK_LOG)) return [];
@@ -73,7 +92,7 @@ export async function open(opts = {}) {
 
 	// A persistent context per session, on its own profile: OPFS, localStorage
 	// and identity are that session's alone, so sessions may run in parallel.
-	const profileDir = profile || path.join('/tmp/daimond-pw', `${name}-${process.pid}`);
+	const profileDir = profile || scratch('pw', `${name}-${process.pid}`);
 	fs.mkdirSync(profileDir, { recursive: true });
 	const browser = await chromium.launchPersistentContext(profileDir, {
 		executablePath: CHROME,
@@ -107,11 +126,24 @@ export async function open(opts = {}) {
 export async function signInAs(s, name) {
 	const { page } = s;
 	await page.waitForSelector('#id-primary', { timeout: 15000 });
+	// The name field is present in BOTH modes now — it doubles as the username a
+	// password manager files the entry under — but it is readonly when unlocking,
+	// where it names the account rather than choosing one. isEditable, not
+	// isVisible: fill() throws on a readonly input.
 	const nameBox = await page.$('#id-name');
-	if (nameBox && await nameBox.isVisible()) await nameBox.fill(name);
+	if (nameBox && await nameBox.isVisible() && await nameBox.isEditable()) await nameBox.fill(name);
 	await page.fill('#id-pass', PASS);
 	const confirm = await page.$('#id-pass2');
 	if (confirm && await confirm.isVisible()) await confirm.fill(PASS);	// first run only
+	// Creating an account now starts from a GENERATED passphrase, and the create
+	// button stays disabled until the user says they have written it down. The
+	// harness overwrites the generated phrase with its own fixed one (so a run can
+	// reproduce the account), then ticks the acknowledgement the same way a person
+	// would. Absent on the unlock screen, hence the visibility check.
+	const wrote = await page.$('#id-wrote');
+	if (wrote && await wrote.isVisible() && !(await wrote.isChecked())) {
+		await wrote.check({ force: true });
+	}
 	// A direct DOM click, not page.click: the modal's fade keeps failing
 	// Playwright's "stable" actionability check, so the normal click can hang
 	// on a button that is perfectly clickable. The gate has no interception to
@@ -138,7 +170,12 @@ export async function newChat(s) {
 	// "stable" actionability check, hanging otherwise-fine clicks.
 	await page.click('#new-session-btn', { force: true });
 	await page.waitForTimeout(500);
-	const start = page.locator('button:has-text("Start")').first();
+	// `.tile-start` by class, NOT `button:has-text("Start")`: has-text is a
+	// case-insensitive SUBSTRING match, so it also matches the BYOK form's
+	// "Save & start" -- which sits earlier in the document, so `.first()`
+	// returned that hidden button and the click failed as "not visible" in any
+	// test whose settings form happened to be in the DOM.
+	const start = page.locator('.tile-start').first();
 	if (await start.count()) {
 		await start.click({ force: true });
 	}

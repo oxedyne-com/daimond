@@ -39,19 +39,26 @@ await p.waitForTimeout(1500);
 // rather than on a file, which read as "make a folder" and left the mode chip looking like a
 // label with no switch. It belongs beside the chip that says which files the agent is touching.
 
+// The switch is now the Machine CHIP itself: a chip states where things are, and
+// clicking the one that is not current is what moves the agent there. So what has
+// to be true is that the row carries an actionable Machine chip -- not that it
+// carries a button reading "Open a folder…", which is what it was before the
+// chips took over.
 const where = await p.evaluate(() => {
 	const row    = document.querySelector('.files-mode');
 	const header = document.querySelector('.files-actions');
 	const btns   = [...(row ? row.querySelectorAll('.files-mode-btn') : [])].map(b => b.textContent);
+	const chips  = [...(row ? row.querySelectorAll('.files-mode-chip') : [])];
+	const machine = chips.find(c => /Machine|💻/.test(c.textContent));
 	return {
-		inRow:    btns.some(t => /Open a folder/i.test(t)),
+		inRow:    !!(machine && machine.classList.contains('act')),
 		inHeader: !!(header && header.querySelector('[data-act="open-folder"]')),
-		chip:     (row && row.querySelector('.files-mode-chip') || {}).textContent || '',
+		chips:    chips.map(c => c.textContent.trim()).join(' | '),
 		buttons:  btns,
 	};
 });
-check('the switch to a real folder sits beside the sandbox chip',
-	where.inRow === true, `${where.chip} · ${where.buttons.join(' | ')}`);
+check('the switch to a real folder sits in the mode row, as the Machine chip',
+	where.inRow === true, `${where.chips} · ${where.buttons.join(' | ')}`);
 check('and no longer hides among the file buttons in the header',
 	where.inHeader === false);
 
@@ -165,15 +172,28 @@ await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'fsa');
 await p.waitForTimeout(2500);
 
+/// The mode row carries THREE chips -- Browser, Machine and Cloud -- and the one
+/// that answers "where is the agent working" is whichever carries `active`.
+/// Reading the first chip in the row would always read "🗄 Browser" and say
+/// nothing about the folder.
+const chips = () => p.evaluate(() => {
+	const cs = [...document.querySelectorAll('.files-mode-chip')];
+	const on = cs.find(c => c.classList.contains('active'));
+	return {
+		active: on ? on.textContent.trim() : '(none)',
+		all:    cs.map(c => c.textContent.trim()).join(' | '),
+	};
+});
+
 const reconnected = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
-	const chip = document.querySelector('.files-mode-chip');
-	return { mode: mod.workspace_mode(), chip: chip ? chip.textContent.trim() : '(none)' };
+	return { mode: mod.workspace_mode() };
 });
+reconnected.chips = await chips();
 check('the folder is reconnected on the next visit, with no prompt',
 	reconnected.mode === 'folder', reconnected.mode);
 check('and the panel says which folder the agent is touching',
-	reconnected.chip.includes(FOLDER), reconnected.chip);
+	reconnected.chips.active.includes(FOLDER), reconnected.chips.all);
 
 // ── E. A grant that is taken away ───────────────────────────────────────
 //
@@ -188,13 +208,12 @@ const ordinary = await p.evaluate(async () => {
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 	const res = await app.run_tool('file_read', JSON.stringify({ path: 'no-such-file.md' }));
 	await new Promise(r => setTimeout(r, 300));
-	const chip = document.querySelector('.files-mode-chip');
-	return { res: (res || '').slice(0, 30), mode: mod.workspace_mode(),
-	         chip: chip ? chip.textContent.trim() : '(none)' };
+	return { res: (res || '').slice(0, 30), mode: mod.workspace_mode() };
 });
+ordinary.chips = await chips();
 check('an ordinary tool error does not tear the folder down',
-	ordinary.mode === 'folder' && ordinary.chip.includes(FOLDER),
-	`mode: ${ordinary.mode}, chip: ${ordinary.chip}`);
+	ordinary.mode === 'folder' && ordinary.chips.active.includes(FOLDER),
+	`mode: ${ordinary.mode}, chips: ${ordinary.chips.all}`);
 
 // And the positive: the edge raises `daimond:folder-lost`, and the app must drop to the sandbox
 // and say so rather than carry on against a folder it no longer has.
@@ -202,20 +221,26 @@ const lost = await p.evaluate(async () => {
 	window.dispatchEvent(new CustomEvent('daimond:folder-lost'));
 	await new Promise(r => setTimeout(r, 600));
 	const mod  = await import('../pkg/oxedyne_daimond.js');
-	const chip = document.querySelector('.files-mode-chip');
 	const msg  = document.querySelector('.files-mode-msg');
-	const rc   = document.querySelector('.files-mode-btn.accent');
+	// The way back is the Machine chip itself, relabelled "💻 Reconnect <name>"
+	// by renderMode(lost) -- an offer that needs the user's gesture, never a
+	// prompt on load. It is not a separate button.
+	const back = [...document.querySelectorAll('.files-mode-chip')]
+		.some(c => /Reconnect/i.test(c.textContent));
 	return {
 		mode:    mod.workspace_mode(),
-		chip:    chip ? chip.textContent.trim() : '(none)',
 		msg:     msg ? msg.textContent.trim() : '(none)',
-		reconnect: !!rc,
+		reconnect: back,
 	};
 });
+lost.chips = await chips();
 check('a withdrawn grant drops the agent back to the sandbox',
 	lost.mode === 'opfs', lost.mode);
+// The row still NAMES the folder, in the reconnect offer -- what it must not do
+// is go on claiming the agent is working there, so it is the ACTIVE chip that
+// has to have moved back to the browser sandbox.
 check('and the panel stops claiming a folder it cannot reach',
-	!lost.chip.includes(FOLDER), lost.chip);
+	!lost.chips.active.includes(FOLDER), lost.chips.all);
 check('and the user is told, and offered a way back',
 	/Lost access/i.test(lost.msg) && lost.reconnect === true,
 	`${lost.msg} · reconnect offered: ${lost.reconnect}`);

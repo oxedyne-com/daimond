@@ -13,7 +13,7 @@
 //   node dev/fsa_disk_check.mjs            (then pick ~/daimond-fsa-test in the dialog)
 //
 // The browser profile is kept, so the grant persists and a later run reconnects with no gesture.
-import { open, signInAs } from './harness.mjs';
+import { open, signInAs, scratch } from './harness.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +31,7 @@ const s = await open({
 	name:    'fsa-real',
 	headed:  true,                       // a native dialog needs a real window
 	connect: false,
-	profile: '/tmp/daimond-fsa-real',    // keep the grant, so the next run needs no gesture
+	profile: scratch('fsa-real'),    // keep the grant, so the next run needs no gesture
 });
 const p = s.page;
 await p.waitForTimeout(1500);

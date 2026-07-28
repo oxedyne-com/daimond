@@ -105,7 +105,9 @@ const stored = await page.evaluate(() => {
 	try { rec = JSON.parse(localStorage.getItem('daimond-passkey') || 'null'); } catch (e) {}
 	return { rawKeys, rec };
 });
-const enrolled = !!(stored.rec && stored.rec.cred && stored.rec.salt && stored.rec.blob);
+// v2 records carry no salt: the PRF salt is a fixed label now, so one
+// discoverable assertion can yield the credential and its secret together.
+const enrolled = !!(stored.rec && stored.rec.cred && stored.rec.blob && stored.rec.v === 2);
 
 if (!enrolled) {
 	// PRF was not exercisable through this virtual authenticator — a documented
@@ -124,7 +126,7 @@ if (!enrolled) {
 	process.exit(failures ? 1 : 0);
 }
 
-check(enrolled, 'enrol wrote a sealed passphrase blob { cred, salt, blob }');
+check(enrolled, 'enrol wrote a v2 sealed blob { v, cred, blob }');
 check(stored.rawKeys.length === 1 && stored.rawKeys[0] === 'daimond-passkey',
 	'blob is under the primary namespace (raw key "daimond-passkey"): ' + JSON.stringify(stored.rawKeys));
 const isEnrolled = await page.evaluate(() => window.DaimondPasskey.isEnrolled());
@@ -150,9 +152,13 @@ check(lockedNow, 'Log out locks the app and shows the unlock screen');
 await page.waitForSelector('#id-passkey', { state: 'visible', timeout: 8000 });
 check(true, 'unlock screen shows the "Use a passkey" button');
 
-await page.click('#id-passkey');
-// unlockWithPasskey() = get() for the PRF secret + open + DaimondIdentity.unlock.
-await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: 10000 }).catch(() => {});
+// The unlock screen now ASKS for the passkey by itself rather than waiting to be
+// told to. That is the whole point of the change: resuming should be one
+// biometric gesture, not a button press and then a gesture. So the modal is
+// expected to close with no click from here.
+const autoClosed = await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: 12000 })
+	.then(() => true).catch(() => false);
+check(autoClosed, 'the unlock screen asks for the passkey by itself, with no click');
 await sleep(400);
 const unlocked = await page.evaluate(() => ({
 	hidden:   document.getElementById('identity-modal').style.display === 'none',
@@ -164,16 +170,20 @@ check(unlocked.notLocked, 'app is no longer locked after passkey unlock');
 check(unlocked.idUnlocked, 'DaimondIdentity is unlocked after passkey unlock');
 
 // ── Remove clears the blob ──
-const afterRemove = await page.evaluate(() => {
-	window.DaimondPasskey.remove();
+const afterRemove = await page.evaluate(async () => {
+	await window.DaimondPasskey.remove();
 	return { enrolled: window.DaimondPasskey.isEnrolled(), rec: localStorage.getItem('daimond-passkey') };
 });
 check(afterRemove.enrolled === false && !afterRemove.rec, 'remove() clears the stored passkey blob');
 
-// The gateway is not running in dev, so unlock's fire-and-forget connect logs
-// 502s. That is environmental, unrelated to passkeys — filter it out.
-const errs = errors(s).filter(e => !/502|Bad Gateway|gateway/i.test(e));
-console.log('console errors (gateway 502s filtered):', errs);
+// "Failed to load resource" lines are the browser reporting an HTTP status, not
+// a script fault, and this run makes several requests that are SUPPOSED to be
+// refused: no gateway session here, so the sealed-blob upload is 401, and a
+// passkey with nothing stored for it reads 404. Neither is a passkey defect, and
+// both paths are best-effort by design. Real script errors still surface.
+const errs = errors(s).filter(e =>
+	!/Failed to load resource/i.test(e) && !/502|Bad Gateway|gateway/i.test(e));
+console.log('console errors (HTTP status noise filtered):', errs);
 check(errs.length === 0, 'no unexpected console errors during the passkey flow');
 
 await s.close();

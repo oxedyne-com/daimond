@@ -34,8 +34,12 @@ const sandbox = await p.evaluate(async () => {
 		persisted: await navigator.storage.persisted(),
 	};
 });
-check('the sandbox row names OPFS, connecting it to the chip in the panel',
-	/OPFS/.test(sandbox.text), sandbox.text);
+// The word is "Browser", not "OPFS": the mode chip in the files panel reads
+// "🗄 Browser", and the row has to name the same place in the same words or the
+// two read as two different stores. (The row said "OPFS" until the chips were
+// de-jargoned; this asserts the current word, and that it matches the chip.)
+check('the sandbox row names the browser store, in the chip’s own words',
+	/Browser/.test(sandbox.text), sandbox.text);
 check('and says how much of what it is allowed',
 	/%/.test(sandbox.text) && /of/.test(sandbox.title),
 	sandbox.text + ' · ' + sandbox.title.slice(0, 48));

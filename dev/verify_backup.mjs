@@ -2,7 +2,7 @@
 // file via the agent, exports a backup, and we read the download. Session B (a
 // fresh profile) imports it and we confirm the file is back.
 import fs from 'node:fs';
-import { open, chat, errors, signInAs, connectMock } from './harness.mjs';
+import { open, chat, errors, signInAs, connectMock, scratch } from './harness.mjs';
 
 // ── Session A: write a file, export ──────────────────────────────────────
 const a = await open({ name: 'backupA' });
@@ -15,7 +15,7 @@ await a.page.waitForTimeout(400);
 const dl = a.page.waitForEvent('download', { timeout: 15000 });
 await a.page.click('button.admin-item:has-text("Export a backup")');
 const download = await dl;
-const path = '/tmp/daimond-backup-test.json';
+const path = scratch('backup-test.json');
 await download.saveAs(path);
 const backup = JSON.parse(fs.readFileSync(path, 'utf8'));
 

@@ -34,11 +34,15 @@ grab() {  # component pooldir debprefix
 	curl -s -O "$base$deb"
 }
 
-echo "Fetching the four libs 25.10 is missing (ICU 74, libxml2, libmanette, libwoff)…"
+echo "Fetching the libs 25.10 is missing (ICU 74, libxml2, libmanette, libwoff, libevent)…"
 grab main     i/icu           libicu74
 grab main     libx/libxml2    libxml2
 grab universe libm/libmanette libmanette-0.2-0
 grab main     w/woff2         libwoff1
+# 25.10 ships libevent's split libraries (libevent_core/_extra/_pthreads) but not
+# the monolithic libevent-2.1.so.7 that WebKit's MiniBrowser links against, so it
+# dies with "cannot open shared object file" before it can even load a page.
+grab main     libe/libevent   libevent-2.1-7
 
 for d in *.deb; do dpkg-deb -x "$d" "$STAGE/x/"; done
 find "$STAGE/x" -name "*.so*" -exec cp -av {} "$STAGE/lib/" \; >/dev/null

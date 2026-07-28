@@ -9,7 +9,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { signInAs, connectMock, APP } from './harness.mjs';
+import { signInAs, connectMock, APP, scratch } from './harness.mjs';
 
 // This host (Ubuntu 25.10) is newer than Playwright's WebKit build targets, so
 // its dependency preflight refuses to launch; the real runtime libs are supplied
@@ -28,12 +28,29 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // The iPhone descriptor, minus `isMobile` (Chromium-only; WebKit rejects it).
 const iph = devices['iPhone 13'];
-const ctx = await webkit.launchPersistentContext(`/tmp/daimond-wk-${process.pid}`, {
-	viewport:          iph.viewport,
-	deviceScaleFactor: iph.deviceScaleFactor,
-	userAgent:         iph.userAgent,
-	hasTouch:          iph.hasTouch,
-});
+// WebKit is the one engine this host cannot be relied on to run: the WPE build
+// is compiled for an older Ubuntu, and even with its runtime libraries supplied
+// out-of-band the MiniBrowser sometimes launches and never completes
+// Playwright's handshake. That is a missing ENGINE, not a failing product, so it
+// SKIPS rather than fails -- a red suite that means "the host lacks a browser"
+// teaches everyone to ignore red. `verify_style` reports the same absence the
+// same way.
+let ctx;
+try {
+	ctx = await webkit.launchPersistentContext(scratch(`wk-${process.pid}`), {
+		viewport:          iph.viewport,
+		deviceScaleFactor: iph.deviceScaleFactor,
+		userAgent:         iph.userAgent,
+		hasTouch:          iph.hasTouch,
+		timeout:           45000,
+	});
+} catch (e) {
+	console.log('SKIPPED: WebKit could not be launched on this host — '
+		+ (e && e.message ? e.message.split('\n')[0] : e));
+	console.log('  (run dev/setup-webkit-libs.sh after any `playwright install webkit`;'
+		+ ' Safari coverage is unverified until this launches)');
+	process.exit(0);
+}
 const page = ctx.pages()[0] || await ctx.newPage();
 const errs = [];
 page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
@@ -100,8 +117,11 @@ check('safari: drawer opaque', await page.evaluate(() => {
 // Credits modal
 await page.evaluate(() => document.getElementById('astat-account').click());
 await sleep(400);
+// The title and the × belong to the modal's own head, built into
+// #settings-slot when a view is hosted there -- the views stopped carrying
+// heads of their own when the rail split into a Status strip and one drawer head.
 check('safari: credits titled "Credits"', await page.evaluate(() => {
-	const t = document.querySelector('#admin-credits .admin-title');
+	const t = document.querySelector('#settings-slot .admin-view-head .admin-title');
 	return t && /credit/i.test(t.textContent) && t.offsetParent !== null;
 }));
 check('safari: credits card fits viewport', await page.evaluate(() => {
@@ -109,10 +129,10 @@ check('safari: credits card fits viewport', await page.evaluate(() => {
 	return r.top >= -1 && r.bottom <= window.innerHeight + 1;
 }), await page.evaluate(() => { const r = document.querySelector('#settings-modal .modal-card').getBoundingClientRect(); return `bottom=${Math.round(r.bottom)} vh=${window.innerHeight}`; }));
 check('safari: credits has top-right ×', await page.evaluate(() => {
-	const x = document.getElementById('credits-done');
+	const x = document.querySelector('#settings-slot .admin-view-head .admin-back');
 	return x && x.offsetParent !== null;
 }));
-await page.evaluate(() => document.getElementById('credits-done').click());
+await page.evaluate(() => document.querySelector('#settings-slot .admin-view-head .admin-back').click());
 await sleep(300);
 
 // A thing rises as a sheet, at a real height (Safari's flexbox/height engine)

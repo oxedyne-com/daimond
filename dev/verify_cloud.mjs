@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open } from './harness.mjs';
+import { makePagePro } from './pro.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
@@ -58,6 +59,13 @@ await page.waitForFunction(
 try {
 	check('the cloud module and an authed session are live',
 		await page.evaluate(() => !!window.DaimondCloud && DaimondGateway.state().authed));
+
+	// Cloud storage is a Pro capability: without the licence every push is a
+	// 402, nothing is ever offloaded, and the residency assertions below would
+	// be measuring the gate instead of the feature.
+	const lic = await makePagePro(page, GWDIR, GW_URL);
+	check('the account holds Pro, so cloud storage is allowed to run',
+		lic.pro === true, `webhook ${lic.status}, pro=${lic.pro}`);
 
 	// Two large files, so one can be evicted while the other is pinned.
 	const MARK = 'CLOUDMARK-7788';
@@ -272,9 +280,28 @@ try {
 		for (let i = 0; i < N; i++) src[i] = (i * 7 + (i >> 8)) & 0xff;
 		await window.DaimondCloud.writeBlob('media/pattern.bin', new Blob([src]));
 
-		await window.DaimondSync.push();
+		// The server version may have moved under this page earlier in the run,
+		// so the first push can come back 409: sync pulls, merges and leaves the
+		// send for the next round rather than clobbering. That is the design, so
+		// the test pushes the way the app does -- again -- instead of asserting
+		// that one attempt must always win a race.
+		for (let i = 0; i < 3; i++) {
+			await window.DaimondSync.push();
+			if (window.DaimondCloud.manifest('media/pattern.bin')) break;
+			await new Promise(r => setTimeout(r, 400));
+		}
 		const m = window.DaimondCloud.manifest('media/pattern.bin');
-		if (!m) return { offloaded: false };
+		// A bare `false` here says nothing about WHY, and this has failed for two
+		// different reasons already. Carry back what the modules know.
+		if (!m) {
+			let summary = null;
+			try { summary = await window.DaimondCloud.summary(); } catch (e) { /* none */ }
+			return { offloaded: false, why: JSON.stringify({
+				indexed: Object.keys(window.DaimondCloud.index() || {}),
+				allowance: window.DaimondCloud.allowance ? window.DaimondCloud.allowance() : null,
+				summary,
+			}) };
+		}
 
 		// Drop it locally and bring it back down from cloud storage.
 		await window.DaimondCloud.evict('media/pattern.bin');
@@ -286,7 +313,8 @@ try {
 		if (same) for (let i = 0; i < src.length; i++) { if (back[i] !== src[i]) { same = false; break; } }
 		return { offloaded: true, v: m.v, chunks: m.chunks.length, away, res, size: back.length, same };
 	});
-	check('a binary file is offloaded to cloud storage rather than skipped', binary.offloaded);
+	check('a binary file is offloaded to cloud storage rather than skipped', binary.offloaded,
+		binary.why || '');
 	check('it is sealed chunk by chunk, not as one whole-file blob', binary.v === 2,
 		'v=' + binary.v + ' chunks=' + binary.chunks);
 	check('it can be freed like any other file', binary.away);

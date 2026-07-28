@@ -9,7 +9,7 @@
 // Needs: the gateway with `dev_insecure` on the mail routes, the fixture, the
 // stand-in, and the `email` entitlement granted to the harness's account.
 import fs from 'node:fs';
-import { open, shot } from './harness.mjs';
+import { open, shot, scratch } from './harness.mjs';
 
 const SENT = process.env.SENT_EML || '/tmp/sent.eml';
 const ok = [], bad = [];
@@ -20,7 +20,7 @@ const check = (name, pass, detail) => {
 
 // A fixed profile, so the identity — and therefore the gateway account holding the
 // email unlock and the credits — is the same one every run.
-const s = await open({ name: 'compose', connect: false, profile: '/tmp/daimond-compose-profile' });
+const s = await open({ name: 'compose', connect: false, profile: scratch('compose-profile') });
 const p = s.page;
 
 // ── Clear the drafts this run is about to make claims about.

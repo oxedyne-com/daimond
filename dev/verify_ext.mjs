@@ -19,7 +19,11 @@ const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
 const EXT = `${ROOT}/verify/ext`;
-const PROFILE = '/tmp/daimond-verify-ext';
+// Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
+// imported, so this stays standalone and does not load the harness.
+const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
+const PROFILE = path.join(SCRATCH, 'verify-ext');
+fs.mkdirSync(PROFILE, { recursive: true });
 const APP = 'http://localhost:8777';
 
 const ok = [], bad = [];

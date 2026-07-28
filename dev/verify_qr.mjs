@@ -89,8 +89,12 @@ try {
 	check('the one-time code is stripped from the URL', !/pair=/.test(hashCleared), `hash="${hashCleared}"`);
 	await page2.close();
 
-	const errs = errors(s).filter(e => !/status of 401/.test(e));
-	check('no console errors (other than ambient sign-in 401s)', errs.length === 0, errs.slice(0, 3).join(' | '));
+	// A free account's idle sync push is refused with 402 -- cross-device sync is
+	// a Pro capability -- and the browser logs the failed request. That is the
+	// product working, not this feature failing, so it is ambient here too.
+	const errs = errors(s).filter(e => !/status of 401|status of 402/.test(e));
+	check('no console errors (other than ambient sign-in 401s and the free-tier sync 402)',
+		errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) {
 	check('run completed without throwing', false, e.message);
 }

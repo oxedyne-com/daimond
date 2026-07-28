@@ -20,7 +20,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { signInAs, connectMock } from './harness.mjs';
+import { signInAs, connectMock, scratch } from './harness.mjs';
 
 // This host (Ubuntu 25.10) is newer than WebKit's build target, so the launch
 // preflight refuses; the runtime libs are supplied out-of-band (setup-webkit-libs.sh).
@@ -128,7 +128,7 @@ export async function openCell(cell, opts = {}) {
 	// Pin the theme before any script runs, so the very first paint is themed.
 	ctxOpts.colorScheme = cell.theme === 'dark' ? 'dark' : 'light';
 
-	const profileDir = path.join('/tmp/daimond-matrix', `${cellLabel(cell)}-${process.pid}`);
+	const profileDir = path.join(scratch('matrix'), `${cellLabel(cell)}-${process.pid}`);
 	const context = await eng.type.launchPersistentContext(profileDir, {
 		...eng.launch,
 		headless: true,

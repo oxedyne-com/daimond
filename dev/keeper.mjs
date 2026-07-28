@@ -16,7 +16,12 @@ const cfg = JSON.parse(fs.readFileSync(path.join(HERE, '.secrets/testcfg.json'),
 const MODEL = cfg.models.value;
 const CDP_PORT = 9223;
 
-const browser = await chromium.launchPersistentContext('/tmp/daimond-real-profile', {
+// Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
+// imported, so this stays standalone and does not load the harness.
+const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
+fs.mkdirSync(SCRATCH, { recursive: true });
+
+const browser = await chromium.launchPersistentContext(path.join(SCRATCH, 'real-profile'), {
 	executablePath: CHROME,
 	headless: false,
 	args: [

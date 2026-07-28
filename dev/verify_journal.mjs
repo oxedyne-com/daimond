@@ -6,7 +6,7 @@
 // across a tool boundary, per-turn pruning, and account isolation. Events are keyed per TURN (not
 // per chat), so successive turns of one chat never conflate and one turn's prune never wipes
 // another's.
-import { open, signInAs, errors } from './harness.mjs';
+import { open, signInAs, errors, scratch } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -14,7 +14,7 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const s = await open({ name: 'journal', connect: false, signIn: false, profile: '/tmp/daimond-journal-profile' });
+const s = await open({ name: 'journal', connect: false, signIn: false, profile: scratch('journal-profile') });
 const p = s.page;
 await p.waitForTimeout(1500);
 await signInAs(s, 'Jo');

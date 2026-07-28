@@ -94,10 +94,22 @@ async function grantPro(accountId) {
 }
 
 // Refund that Pro purchase, the event that should revoke the licence.
+//
+// The payload is shaped as Stripe really sends it: the top-level `type` comes
+// AFTER `data`, and the nested charge carries an `outcome.type` of "authorized".
+// A hand-written {type, data} order would pass even a broken parser -- this
+// ordering is what catches a scan that grabs the first `type` it sees.
 async function refundPro(accountId) {
 	const payload = JSON.stringify({
-		id: `evt_refund_${accountId}`, type: 'charge.refunded',
-		data: { object: { payment_intent: `pi_pro_${accountId}`, amount_refunded: 4500 } },
+		id: `evt_refund_${accountId}`,
+		object: 'event',
+		data: { object: {
+			id: `ch_${accountId}`, object: 'charge',
+			outcome: { network_status: 'approved_by_network', type: 'authorized' },
+			payment_method_details: { type: 'card' },
+			payment_intent: `pi_pro_${accountId}`, amount_refunded: 4500,
+		} },
+		type: 'charge.refunded',
 	});
 	const t = Math.floor(Date.now() / 1000);
 	const mac = crypto.createHmac('sha256', WHSEC).update(`${t}.${payload}`).digest('hex');

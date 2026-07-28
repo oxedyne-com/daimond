@@ -14,6 +14,9 @@
 //   4. The identity export bundle carries the salt, without which a second device
 //      could never derive the key to open any of this.
 import { open, chat } from './harness.mjs';
+import { makePagePro } from './pro.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -34,6 +37,21 @@ await page.waitForFunction(
 try {
 	const authed = await page.evaluate(() => DaimondGateway.state().authed);
 	check('gateway session is authed (sync can reach its mailbox)', authed);
+
+	// Sync IS the Pro capability under test, so the account has to hold Pro:
+	// without it the gateway answers 402 and there is nothing below to measure.
+	const GWDIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'gateway');
+	const lic = await makePagePro(page, GWDIR);
+	check('the account holds Pro, so sync may run at all',
+		lic.pro === true, `webhook ${lic.status}, pro=${lic.pro}`);
+	// A refusal must never put anything over the app -- that dialog is gone, and
+	// this is what keeps it gone.
+	const overlay = await page.evaluate(() =>
+		[...document.querySelectorAll('.modal')]
+			.filter(m => getComputedStyle(m).display !== 'none')
+			.map(m => (m.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60)));
+	check('no dialog was raised over the app on the way here', overlay.length === 0,
+		overlay.join(' | '));
 
 	// A distinctive codeword, carried in a real message so it lands in the synced
 	// transcript. We then hunt for it in the ciphertext to prove it is sealed.

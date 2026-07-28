@@ -5,7 +5,7 @@
 // matters most is the one proving a tag never reaches the model.
 
 import fs from 'node:fs';
-import { open, shot, errors, signInAs, mockLog, clearMockLog } from './harness.mjs';
+import { open, shot, errors, signInAs, mockLog, clearMockLog, scratch } from './harness.mjs';
 
 const s = await open({ name: 'tags' });
 const { page } = s;
@@ -295,7 +295,7 @@ await page.click('#user-row');
 await page.waitForTimeout(400);
 const dl = page.waitForEvent('download', { timeout: 15000 });
 await page.click('button.admin-item:has-text("Export a backup")');
-const bpath = '/tmp/daimond-tags-backup.json';
+const bpath = scratch('tags-backup.json');
 await (await dl).saveAs(bpath);
 const backup = JSON.parse(fs.readFileSync(bpath, 'utf8'));
 const bmum = (backup.diamonds || []).find(f => f.name === 'Mum birthday plan');

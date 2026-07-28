@@ -58,10 +58,16 @@ check('drawer: opaque background', await page.evaluate(() => {
 await page.evaluate(() => document.getElementById('astat-account').click());
 await sleep(400);
 check('credits: modal is open', await page.evaluate(() => getComputedStyle(document.getElementById('settings-modal')).display !== 'none'));
+// The title belongs to the modal's own head, built into #settings-slot when a
+// view is hosted there -- the view no longer carries one of its own (the rail
+// split took the per-view heads away on 2026-07-18).
 check('credits: titled "Credits", not "Settings"', await page.evaluate(() => {
-	const t = document.querySelector('#admin-credits .admin-title');
+	const t = document.querySelector('#settings-slot .admin-view-head .admin-title');
 	return t && /credit/i.test(t.textContent) && t.offsetParent !== null;
-}), await page.evaluate(() => { const t = document.querySelector('#admin-credits .admin-title'); return t ? t.textContent : 'none'; }));
+}), await page.evaluate(() => {
+	const t = document.querySelector('#settings-slot .admin-view-head .admin-title');
+	return t ? t.textContent : 'none';
+}));
 check('credits: no stray "Settings" heading', await page.evaluate(() => {
 	const h = document.querySelector('#settings-modal > .modal-card > h2');
 	return !h || getComputedStyle(h).display === 'none';
@@ -71,12 +77,12 @@ check('credits: card fits within the viewport', await page.evaluate(() => {
 	return r.top >= -1 && r.bottom <= window.innerHeight + 1 && r.height <= window.innerHeight;
 }), await page.evaluate(() => { const r = document.querySelector('#settings-modal .modal-card').getBoundingClientRect(); return `h=${Math.round(r.height)} vh=${window.innerHeight} bottom=${Math.round(r.bottom)}`; }));
 check('credits: has a top-right × close', await page.evaluate(() => {
-	const x = document.getElementById('credits-done');
+	const x = document.querySelector('#settings-slot .admin-view-head .admin-back');
 	if (!x || x.offsetParent === null) return false;
 	const r = x.getBoundingClientRect(), card = document.querySelector('#settings-modal .modal-card').getBoundingClientRect();
 	return r.right > card.right - 80 && r.top < card.top + 80;		// upper-right region
 }));
-await page.evaluate(() => document.getElementById('credits-done').click());
+await page.evaluate(() => document.querySelector('#settings-slot .admin-view-head .admin-back').click());
 await sleep(300);
 check('credits: × closes the modal', await page.evaluate(() => getComputedStyle(document.getElementById('settings-modal')).display === 'none'));
 
@@ -86,8 +92,11 @@ await sleep(200);
 await page.evaluate(() => document.getElementById('astat-model').click());
 await sleep(400);
 check('models: titled "Models"', await page.evaluate(() => {
-	const t = document.querySelector('#admin-models .admin-title');
+	const t = document.querySelector('#settings-slot .admin-view-head .admin-title');
 	return t && /model/i.test(t.textContent) && t.offsetParent !== null;
+}), await page.evaluate(() => {
+	const t = document.querySelector('#settings-slot .admin-view-head .admin-title');
+	return t ? t.textContent : 'none';
 }));
 await page.evaluate(() => { const b = document.getElementById('settings-done'); if (b) b.click(); });
 await sleep(300);

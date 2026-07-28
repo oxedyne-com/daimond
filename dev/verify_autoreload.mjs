@@ -149,7 +149,9 @@ check('the panel shows the saved numbers, in whole units',
 
 // The 422s are the refusals this test went looking for, so they are not faults — the browser logs
 // every non-2xx fetch as a console error.
-const errs = errors(s).filter(e => !/favicon|404|401|422|Unprocessable|net::ERR/.test(e));
+// 402 joins the ambient list: a free account's idle sync push is refused
+// (sync is Pro), which the browser logs while this test is about auto-reload.
+const errs = errors(s).filter(e => !/favicon|404|401|402|422|Unprocessable|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 check('nothing throws', errs.length === 0, errs[0] || '');
 
