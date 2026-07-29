@@ -28,6 +28,7 @@
 <link rel="stylesheet" href="css/render.css">
 <link rel="stylesheet" href="css/files.css">
 <link rel="stylesheet" href="css/mail.css">
+<link rel="stylesheet" href="css/graph.css">
 <link rel="stylesheet" href="css/tools.css">
 <link rel="stylesheet" href="css/autoreload.css">
 <link rel="stylesheet" href="css/models.css">
@@ -115,6 +116,11 @@
 				<div class="railhead"><span title="What you have brought up and cut: a repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
 					<button class="addbtn" id="new-diamond-btn" title="New Diamond" data-i18n-title="rail.new_diamond">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+					</button>
+					<!-- The Diamonds and the links between them, drawn. It belongs on
+					     the rail head because the rail is the list the picture is of. -->
+					<button class="addbtn" id="link-graph-btn" title="Graph" aria-label="Graph" data-i18n-title="link.graph_open" data-i18n-aria-label="link.graph_open">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5.5" r="2.5"/><circle cx="5.5" cy="18" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M10.6 7.6L6.9 15.9M13.4 7.6l3.7 8.3M8 18h8"/></svg>
 					</button>
 					<button class="addbtn panel-close" data-close="rail" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -395,6 +401,21 @@
 					<span class="compose-note" id="compose-note"></span>
 				</div>
 			</aside>
+
+			<!-- The graph: the Diamonds and the links between them, drawn as one
+			     still, layered picture. A stage guest because it is an instrument
+			     for checking the association structure, and checking needs room. -->
+			<aside class="panel graph" id="panel-graph" data-panel="graph" data-zone="stage" data-label="Graph" data-i18n-label="panel.graph">
+				<div class="chead">
+					<span class="ctitle" data-i18n="panel.graph">Graph</span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="graph" title="Close panel" data-i18n-title="common.close_panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="graph-body" id="graph-body"></div>
+			</aside>
 		</div>
 
 		<div class="phandle" id="handle-dock" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
@@ -649,6 +670,7 @@
 <script src="js/updater.js"></script>
 <script src="js/workspace.js"></script>
 <script src="js/release.js"></script>
+<script src="js/graph.js"></script>
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>

@@ -1,0 +1,146 @@
+/* graph.css — the Graph pane. Rules for #panel-graph and its SVG picture only.
+ *
+ * Every colour comes from the palette variables, never from a literal, so the
+ * picture holds up in the dark, light and candy themes without a rule per
+ * theme. The one thing that is not a palette colour is the halo behind an edge
+ * label, which is painted in the panel's own background so a word can sit on a
+ * line and still be read; that too is a variable.
+ */
+
+/* The panel is a stage card like the AI, the Web page and a message, but it is
+   not in app.css's list of them -- so it is given the same card here. */
+.graph {
+	min-width: 0;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+/* The picture is drawn at a fixed scale and panned by scrolling, rather than
+   shrunk to fit: a verification instrument that quietly rescaled itself would
+   make two stores of different sizes look alike. */
+.graph-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	padding: 4px 4px 0;
+}
+
+.graph-svg {
+	display: block;
+	/* SVG text inherits nothing from the page by default. */
+	font-family: var(--font);
+}
+
+/* ── Nodes ──────────────────────────────────────────────────── */
+
+.graph-node { cursor: pointer; }
+
+.graph-node-box {
+	fill: var(--bg-tertiary);
+	stroke: var(--border-2);
+	stroke-width: 1;
+}
+.graph-node:hover .graph-node-box {
+	fill: var(--bg-hover);
+	stroke: var(--accent);
+}
+
+/* An unlinked Diamond is stated, not hidden: the same box, drawn quieter. */
+.graph-node.isolate .graph-node-box {
+	fill: var(--bg-primary);
+	stroke: var(--border);
+	stroke-dasharray: 3 3;
+}
+
+/* A Diamond on a cycle is worth noticing without being alarming, so the box is
+   outlined in the warning colour rather than filled with it. */
+.graph-node.cycled .graph-node-box {
+	stroke: var(--warn);
+	stroke-width: 1.5;
+}
+
+.graph-node-name {
+	fill: var(--text-primary);
+	font-size: var(--fs-sm);
+	dominant-baseline: alphabetic;
+}
+.graph-node.isolate .graph-node-name { fill: var(--text-secondary); }
+
+/* The artefact count: files, pages and chats this Diamond is linked to, which
+   are counted rather than drawn so they cannot crowd out the structure. */
+.graph-badge-text {
+	fill: var(--text-muted);
+	font-size: var(--fs-3xs);
+	text-anchor: end;
+}
+.graph-cycle-text {
+	fill: var(--warn);
+	font-size: var(--fs-2xs);
+	text-anchor: end;
+}
+
+/* ── Edges ──────────────────────────────────────────────────── */
+
+.graph-edge-line {
+	fill: none;
+	stroke: var(--text-muted);
+	stroke-width: 1.4;
+}
+.graph-edge:hover .graph-edge-line { stroke: var(--accent); }
+
+/* A closing edge -- the one that makes a cycle a cycle. Dashed and in the
+   warning colour, because the instrument's job is to make it visible, not to
+   pretend the graph is a tree. */
+.graph-edge.back .graph-edge-line {
+	stroke: var(--warn);
+	stroke-dasharray: 6 4;
+}
+
+.graph-arrow      { fill: var(--text-muted); }
+.graph-arrow.back { fill: var(--warn); }
+
+/* The relation, sitting on its own line. `paint-order` puts the stroke down
+   first, so the halo is painted UNDER the glyphs rather than over them. */
+.graph-edge-label {
+	fill: var(--text-secondary);
+	font-size: var(--fs-2xs);
+	text-anchor: middle;
+	dominant-baseline: middle;
+	paint-order: stroke;
+	stroke: var(--bg-secondary);
+	stroke-width: 3px;
+	stroke-linejoin: round;
+	pointer-events: none;
+}
+
+/* ── Furniture ──────────────────────────────────────────────── */
+
+.graph-band {
+	fill: var(--text-muted);
+	font-size: var(--fs-2xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.graph-empty {
+	margin: 0;
+	padding: 14px 16px;
+	color: var(--text-secondary);
+	font-size: var(--fs-sm);
+	line-height: 1.5;
+}
+
+.graph-stats {
+	flex: none;
+	padding: 6px 14px 8px;
+	border-top: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: var(--fs-2xs);
+	font-family: var(--font-mono);
+}
+/* The stats line is the panel's foot, not part of what scrolls. */
+.graph-body > .graph-stats { position: sticky; bottom: 0; background: var(--bg-secondary); }

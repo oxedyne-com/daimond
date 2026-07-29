@@ -415,6 +415,101 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .arte-use:hover { color: var(--accent); }
 .arte-drop:hover { color: var(--danger, #e5534b); }
 
+/* Links: how this Diamond stands to the other Diamonds. The artefact strip
+   above holds the links pointing at a file, a page or a chat; these are the
+   ones pointing at another Diamond, which is a different question. Unlike the
+   strip this header never hides, because it is also the only way in to making
+   a link, and a control that appears once there is already one of the thing it
+   makes is a control nobody finds. */
+.link-sec { margin: 2px 0 6px; }
+.link-strip { display: block; width: 100%; text-align: left; background: none; border: none;
+	color: var(--text-muted); font-size: var(--fs-xs); font-family: var(--font-mono);
+	padding: 4px 2px; cursor: pointer; }
+.link-strip:hover { color: var(--text-secondary); }
+.link-body { border: 1px solid var(--border); border-radius: var(--radius);
+	background: var(--bg-tertiary); padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.link-list { max-height: 30vh; overflow-y: auto; }
+.link-row { border-bottom: 1px solid var(--border); padding: 3px 2px; }
+.link-row:last-child { border-bottom: none; }
+/* The direction is what a row is FOR, so it is said twice over: by the order of
+   the two ends in the phrase, and by which side the coloured edge sits on. */
+.link-row-out { border-left: 2px solid var(--accent); padding-left: 6px; }
+.link-row-in { border-right: 2px solid var(--border-2); padding-right: 6px; }
+.link-line { display: flex; align-items: center; gap: 6px; }
+.link-phrase { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.link-self { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted);
+	text-transform: uppercase; letter-spacing: .04em; }
+.link-arrow { color: var(--text-muted); font-size: var(--fs-xs); }
+.link-rel { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary);
+	background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 20px;
+	padding: 1px 8px; white-space: nowrap; }
+.link-other { background: none; border: none; padding: 2px 0; cursor: pointer;
+	color: var(--text-primary); font-size: var(--fs-xs-sm); text-align: left;
+	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-other:hover { color: var(--accent); }
+.link-acts { flex: none; display: flex; gap: 2px; }
+.link-note-btn, .link-drop { background: none; border: none; cursor: pointer;
+	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1; padding: 2px 5px;
+	min-width: 26px; min-height: 26px; }
+.link-note-btn:hover, .link-note-btn.on { color: var(--accent); }
+.link-drop:hover { color: var(--danger, #e5534b); }
+.link-note { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5;
+	padding: 2px 2px 4px 6px; }
+.link-none { font-size: var(--fs-xs); color: var(--text-muted); font-style: italic; padding: 4px 2px; }
+.link-add { align-self: flex-start; font-size: var(--fs-xs); padding: 6px 11px; min-height: 34px;
+	background: var(--bg-secondary); color: var(--text-secondary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.link-add:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* The add form. Every value it holds lives in JS rather than in these fields,
+   so a repaint under a half-filled form restores it instead of emptying it. */
+.link-form { display: flex; flex-direction: column; gap: 8px;
+	border-top: 1px solid var(--border); padding-top: 8px; }
+.link-field { display: flex; flex-direction: column; gap: 4px; }
+.link-label { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: .04em;
+	text-transform: uppercase; color: var(--text-muted); }
+.link-pick, .link-rel-input, .link-note-input { background: var(--bg-secondary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary);
+	font-size: var(--fs-sm); padding: 6px 8px; min-height: 34px; width: 100%; }
+.link-pick:focus, .link-rel-input:focus, .link-note-input:focus { outline: none; border-color: var(--accent); }
+.link-pick::placeholder, .link-rel-input::placeholder, .link-note-input::placeholder { color: var(--text-muted); }
+.link-picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.link-pick-hit { font-size: var(--fs-xs); padding: 6px 10px; min-height: 34px; cursor: pointer;
+	background: var(--bg-secondary); color: var(--text-primary);
+	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-pick-hit:hover { border-color: var(--accent); background: var(--bg-hover); }
+.link-chosen { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.link-chosen-name { font-size: var(--fs-sm); color: var(--text-primary); }
+.link-change { font-size: var(--fs-xs); padding: 6px 10px; min-height: 34px; cursor: pointer;
+	background: none; color: var(--text-secondary); border: 1px solid var(--border);
+	border-radius: var(--radius-sm); }
+.link-change:hover { color: var(--text-primary); border-color: var(--border-2); }
+.link-rel-sug { display: flex; flex-wrap: wrap; gap: 4px; }
+.link-sug { font-family: var(--font-mono); font-size: var(--fs-2xs); padding: 5px 9px;
+	min-height: 28px; cursor: pointer; background: none; color: var(--text-muted);
+	border: 1px dashed var(--border); border-radius: 20px; }
+.link-sug:hover { color: var(--text-primary); border-style: solid; border-color: var(--accent); }
+.link-says { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.5; }
+.link-err { font-size: var(--fs-xs); color: var(--danger, #e5534b); }
+.link-err:empty { display: none; }
+.link-form-acts { display: flex; gap: 6px; }
+.link-save, .link-cancel { font-size: var(--fs-xs); padding: 7px 13px; min-height: 34px;
+	border-radius: var(--radius-sm); cursor: pointer; }
+.link-save { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+.link-save:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.link-save:disabled { opacity: .5; cursor: default; }
+.link-cancel { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border); }
+.link-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* At a phone's width every target is a thumb's target, and the phrase wraps
+   rather than pushing a row's controls off the edge. */
+@media (max-width: 420px) {
+	.link-note-btn, .link-drop { min-width: 34px; min-height: 34px; font-size: var(--fs-base); }
+	.link-sug { min-height: 34px; padding: 7px 11px; }
+	.link-body { padding: 6px 5px; }
+}
+
 /* Fold-a-delta control: enter a delta, propose a fold (writes nothing). */
 .fold-row { display: flex; align-items: flex-end; gap: 8px; }
 .fold-delta { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 8px 12px; font-size: var(--fs-sm); resize: none; max-height: 100px; line-height: 1.5; }

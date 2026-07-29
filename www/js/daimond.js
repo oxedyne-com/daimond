@@ -903,6 +903,22 @@ import init, {
 	var diamondQuery = '';        // the search box, trimmed and lowercased
 	var tagFilter  = null;      // the tag the rail is filtered to, or null
 
+	// Diamond-to-Diamond links: the relations a Diamond has with the other
+	// Diamonds, as against the files and pages the artefact strip holds. Three
+	// words are offered as a nudge for an empty section; the store knows none of
+	// them and holds no relation to be special, exactly as it is for tags.
+	var DEFAULT_REL_SUGGESTIONS = ['part-of', 'relates-to', 'derives-from'];
+	var REL_MAX = 32;           // what the store caps a relation at
+	// The section's own state lives here rather than in the DOM: the controls are
+	// rebuilt whole on every crystal repaint, and a half-typed link form must
+	// survive one -- a resize, a steer, a fold -- rather than vanishing with
+	// everything typed into it.
+	var linkOpen  = false;      // the section is expanded
+	var linkForm  = null;       // { target, query, rel, note } while adding, else null
+	var linkNotes = {};         // link id -> its note is expanded
+	var linkFor   = null;       // the Diamond id the three above belong to
+	var linkPaint = 0;          // paint token, so a slow read cannot overwrite a fresh one
+
 	// ── DOM refs ───────────────────────────────────────────────
 	var appEl         = document.getElementById('app');
 	var sessionList   = document.getElementById('session-list');
@@ -8000,6 +8016,8 @@ import init, {
 			drop.title = t('arte.drop_help');
 			drop.addEventListener('click', async function () {
 				try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+				// Dropping an artefact removes a link, so it is a link change too.
+				signalLinksChanged();
 				renderArtefacts();
 			});
 
@@ -8051,6 +8069,456 @@ import init, {
 		of:      artefactsIn,        // pure: messages -> [{ref, rel}]
 	};
 
+	// ── Links: Diamond to Diamond ──────────────────────────────────
+	// A link says, in one word, how two pursuits stand to each other. The record
+	// is stored once -- on the Diamond it was asserted from -- and found from both
+	// of its ends, so the same link shows on both Diamonds and which way round it
+	// was asserted is part of what it says rather than an accident of where it
+	// happens to live.
+
+	/// Say that the links changed, to the graph and to anything else watching.
+	function signalLinksChanged() {
+		document.dispatchEvent(new CustomEvent('daimond-links-changed'));
+		if (window.DaimondGraph && DaimondGraph.refresh) DaimondGraph.refresh();
+	}
+
+	/// The Diamond a `diamond:<id>` reference names, or nothing if it has gone.
+	function diamondOfRef(ref) {
+		if (!ref) return null;
+		var i = ref.indexOf(':');
+		var id = i === -1 ? ref : ref.slice(i + 1);
+		return diamonds.find(function (x) { return x.id === id; }) || null;
+	}
+
+	/// What to call the far end of a link: its name, or that it is no longer there.
+	function linkOtherName(ref) {
+		var f = diamondOfRef(ref);
+		return f ? f.name : t('link.gone_name');
+	}
+
+	/// One arrow between the parts of a link phrase.
+	function linkArrow() {
+		var a = document.createElement('span');
+		a.className = 'link-arrow';
+		a.setAttribute('aria-hidden', 'true');
+		a.textContent = '→';
+		return a;
+	}
+
+	/// Fill the Links section for the Diamond on screen.
+	///
+	/// The artefact strip above takes the links pointing at a file, a page or a
+	/// chat. These are the ones pointing at another Diamond, which answers a
+	/// different question -- not what this pursuit used, but where it sits among
+	/// the rest of them.
+	async function renderLinks() {
+		var sec = document.getElementById('link-sec');
+		if (!sec || !currentDiamond) return;
+		var diamondId = currentDiamond.id;
+		// The open state and any half-typed form belong to the Diamond they were
+		// started on, not to whatever the Centre shows next.
+		if (linkFor !== diamondId) {
+			linkFor = diamondId; linkOpen = false; linkForm = null; linkNotes = {};
+		}
+		var token = ++linkPaint;
+		var selfRef = 'diamond:' + diamondId;
+
+		var links = [];
+		try {
+			links = JSON.parse(await diamondApp().links_touching(selfRef) || '[]')
+				.filter(function (l) { return l.other && l.other.indexOf('diamond:') === 0; });
+		} catch (e) { links = []; }
+		// A slow read that started first must not paint over a fresher one, and a
+		// Diamond swapped under the await must not be painted at all.
+		if (token !== linkPaint) return;
+		if (!currentDiamond || currentDiamond.id !== diamondId) return;
+
+		var strip = document.getElementById('link-strip');
+		var body  = document.getElementById('link-body');
+		if (!strip || !body) return;
+		strip.textContent = (linkOpen ? '▾ ' : '▸ ') + tn('link.count', links.length);
+		strip.title = t('link.strip_help');
+		strip.setAttribute('aria-expanded', linkOpen ? 'true' : 'false');
+		body.style.display = linkOpen ? '' : 'none';
+		body.innerHTML = '';
+		if (!linkOpen) return;
+
+		var list = document.createElement('div');
+		list.className = 'link-list';
+		list.id = 'link-list';
+		// Most recent first, as everything else about a Diamond is ordered.
+		links.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+		if (!links.length) {
+			var none = document.createElement('div');
+			none.className = 'link-none';
+			none.textContent = t('link.none');
+			list.appendChild(none);
+		}
+		links.forEach(function (l) { list.appendChild(linkRow(l, selfRef)); });
+		body.appendChild(list);
+
+		// The way in to making one, which becomes the form in place of itself.
+		if (linkForm) {
+			body.appendChild(linkAddForm(diamondId, selfRef));
+			return;
+		}
+		var add = document.createElement('button');
+		add.className = 'link-add';
+		add.id = 'link-add';
+		add.type = 'button';
+		add.textContent = '+ ' + t('link.add_btn');
+		add.title = t('link.add_title');
+		add.addEventListener('click', function () {
+			linkForm = { target: null, query: '', rel: '', note: '' };
+			renderLinks();
+		});
+		body.appendChild(add);
+	}
+
+	/// One link, laid out left to right in the direction it was asserted.
+	///
+	/// The two ends sit in their stored order -- this Diamond first when it is the
+	/// `from`, the other first when it is not -- so which way a relation runs is
+	/// read straight off the row rather than inferred from an arrowhead.
+	function linkRow(l, selfRef) {
+		var out  = (l.from === selfRef);
+		var name = linkOtherName(l.other);
+		var rel  = l.rel || t('link.rel_blank');
+
+		var row = document.createElement('div');
+		row.className = 'link-row ' + (out ? 'link-row-out' : 'link-row-in');
+		row.dataset.linkId = l.id;
+		row.dataset.dir    = out ? 'out' : 'in';
+		row.dataset.other  = l.other;
+
+		var noteEl = document.createElement('div');
+		noteEl.className = 'link-note';
+		noteEl.textContent = l.note || '';
+		noteEl.style.display = (l.note && linkNotes[l.id]) ? '' : 'none';
+
+		var self = document.createElement('span');
+		self.className = 'link-self';
+		self.textContent = t('link.this');
+		var relEl = document.createElement('span');
+		relEl.className = 'link-rel';
+		relEl.textContent = rel;
+		var other = document.createElement('button');
+		other.className = 'link-other';
+		other.type = 'button';
+		other.textContent = name;                  // escaped via textContent (H5)
+		other.title = t('link.open_other', { name: name });
+		other.addEventListener('click', function () {
+			var f = diamondOfRef(l.other);
+			if (!f) { noticeDialog(t('link.gone'), t('link.gone_body', { ref: l.other })); return; }
+			selectDiamond(f);
+			if (isMobile()) mshow('ai');
+		});
+
+		var phrase = document.createElement('div');
+		phrase.className = 'link-phrase';
+		if (out) {
+			phrase.appendChild(self);  phrase.appendChild(linkArrow());
+			phrase.appendChild(relEl); phrase.appendChild(linkArrow());
+			phrase.appendChild(other);
+		} else {
+			phrase.appendChild(other); phrase.appendChild(linkArrow());
+			phrase.appendChild(relEl); phrase.appendChild(linkArrow());
+			phrase.appendChild(self);
+		}
+		var said = out ? t('link.out_help', { rel: rel, name: name })
+		               : t('link.in_help',  { rel: rel, name: name });
+		phrase.title = l.note ? (said + ' — ' + l.note) : said;
+		phrase.setAttribute('aria-label', said);
+
+		var acts = document.createElement('div');
+		acts.className = 'link-acts';
+		if (l.note) {
+			var noteBtn = document.createElement('button');
+			noteBtn.className = 'link-note-btn';
+			noteBtn.type = 'button';
+			noteBtn.textContent = '≡';
+			noteBtn.title = l.note;                // the note on hover, as well as on click
+			noteBtn.setAttribute('aria-label', t('link.note_help'));
+			noteBtn.addEventListener('click', function () {
+				linkNotes[l.id] = !linkNotes[l.id];
+				noteEl.style.display = linkNotes[l.id] ? '' : 'none';
+				noteBtn.classList.toggle('on', !!linkNotes[l.id]);
+			});
+			if (linkNotes[l.id]) noteBtn.classList.add('on');
+			acts.appendChild(noteBtn);
+		}
+		var drop = document.createElement('button');
+		drop.className = 'link-drop';
+		drop.type = 'button';
+		drop.textContent = '×';
+		drop.title = t('link.drop_help');
+		drop.setAttribute('aria-label', t('link.drop_help'));
+		drop.addEventListener('click', async function () {
+			var ok = await confirmDialog(t('link.drop_confirm', { rel: rel, name: name }),
+				t('link.drop'), { title: t('link.drop') });
+			if (!ok) return;
+			try { await diamondApp().remove_link(l.owner, l.id); }
+			catch (e) { noticeDialog(t('link.drop_failed'), friendlyError(e)); return; }
+			signalLinksChanged();
+			bumpDiamonds();
+			renderLinks();
+		});
+		acts.appendChild(drop);
+
+		var line = document.createElement('div');
+		line.className = 'link-line';
+		line.appendChild(phrase);
+		line.appendChild(acts);
+		row.appendChild(line);
+		row.appendChild(noteEl);
+		return row;
+	}
+
+	/// The add-a-link form: which Diamond, in what relation, and optionally why.
+	///
+	/// Everything typed is held in `linkForm` rather than read back out of the
+	/// DOM, so a repaint under a half-filled form restores it instead of emptying
+	/// it. Escape closes the form; a blur does not, because moving between the
+	/// fields of a form is not leaving it.
+	function linkAddForm(diamondId, selfRef) {
+		var wrap = document.createElement('div');
+		wrap.className = 'link-form';
+		wrap.id = 'link-form';
+		wrap.addEventListener('keydown', function (e) {
+			if (e.key !== 'Escape') return;
+			e.preventDefault();
+			e.stopPropagation();
+			linkForm = null;
+			renderLinks();
+		});
+
+		var err = document.createElement('div');
+		err.className = 'link-err';
+		err.id = 'link-err';
+
+		// 1. Which Diamond, found the way the rail is found: by typing part of
+		//    its name. Every Diamond but this one is offered, because the store
+		//    rejects a link from a thing to itself.
+		var pickField = document.createElement('div');
+		pickField.className = 'link-field';
+		var pickLbl = document.createElement('div');
+		pickLbl.className = 'link-label';
+		pickLbl.textContent = t('link.pick_label');
+		var pick = document.createElement('input');
+		pick.className = 'link-pick';
+		pick.id = 'link-pick';
+		pick.type = 'text';
+		pick.autocomplete = 'off';
+		pick.spellcheck = false;
+		pick.placeholder = t('link.pick_ph');
+		pick.value = linkForm.query || '';
+		pick.setAttribute('aria-label', t('link.pick_label'));
+		var picks = document.createElement('div');
+		picks.className = 'link-picks';
+		picks.id = 'link-picks';
+		var chosen = document.createElement('div');
+		chosen.className = 'link-chosen';
+		chosen.id = 'link-chosen';
+		pickField.appendChild(pickLbl);
+		pickField.appendChild(pick);
+		pickField.appendChild(picks);
+		pickField.appendChild(chosen);
+
+		/// Redraw the picker alone, so typing never rebuilds the form under the
+		/// cursor.
+		function paintPicks() {
+			chosen.innerHTML = '';
+			picks.innerHTML = '';
+			if (linkForm.target) {
+				pick.style.display = 'none';
+				picks.style.display = 'none';
+				chosen.style.display = '';
+				var lbl = document.createElement('span');
+				lbl.className = 'link-chosen-name';
+				lbl.textContent = linkForm.target.name;
+				var change = document.createElement('button');
+				change.className = 'link-change';
+				change.id = 'link-change';
+				change.type = 'button';
+				change.textContent = t('link.change_pick');
+				change.addEventListener('click', function () {
+					linkForm.target = null;
+					paintPicks();
+					pick.focus();
+				});
+				chosen.appendChild(lbl);
+				chosen.appendChild(change);
+				return;
+			}
+			pick.style.display = '';
+			picks.style.display = '';
+			chosen.style.display = 'none';
+			var q = (linkForm.query || '').trim().toLowerCase();
+			var pool = diamonds.filter(function (x) { return x.id !== diamondId; });
+			if (!pool.length) {
+				var bare = document.createElement('div');
+				bare.className = 'link-none';
+				bare.textContent = t('link.pick_empty');
+				picks.appendChild(bare);
+				return;
+			}
+			var hits = pool.filter(function (x) {
+				return !q || (x.name || '').toLowerCase().indexOf(q) !== -1;
+			}).slice(0, 8);
+			if (!hits.length) {
+				var no = document.createElement('div');
+				no.className = 'link-none';
+				no.textContent = t('link.pick_none');
+				picks.appendChild(no);
+				return;
+			}
+			hits.forEach(function (f) {
+				var b = document.createElement('button');
+				b.className = 'link-pick-hit';
+				b.type = 'button';
+				b.dataset.id = f.id;
+				b.textContent = f.name;            // escaped via textContent (H5)
+				b.addEventListener('click', function () {
+					linkForm.target = { id: f.id, name: f.name };
+					err.textContent = '';
+					paintPicks();
+					var relBox = document.getElementById('link-rel');
+					if (relBox) relBox.focus();
+				});
+				picks.appendChild(b);
+			});
+		}
+		pick.addEventListener('input', function () {
+			linkForm.query = pick.value;
+			paintPicks();
+		});
+
+		// 2. The relation. Three words are offered and none is enforced: what a
+		//    relation may say is the user's business, exactly as a tag is.
+		var relField = document.createElement('div');
+		relField.className = 'link-field';
+		var relLbl = document.createElement('div');
+		relLbl.className = 'link-label';
+		relLbl.textContent = t('link.rel_label');
+		var relIn = document.createElement('input');
+		relIn.className = 'link-rel-input';
+		relIn.id = 'link-rel';
+		relIn.type = 'text';
+		relIn.autocomplete = 'off';
+		relIn.spellcheck = false;
+		relIn.maxLength = REL_MAX;
+		relIn.placeholder = t('link.rel_ph');
+		relIn.value = linkForm.rel || '';
+		relIn.setAttribute('aria-label', t('link.rel_label'));
+		relIn.addEventListener('input', function () { linkForm.rel = relIn.value; });
+		var sug = document.createElement('div');
+		sug.className = 'link-rel-sug';
+		sug.id = 'link-rel-sug';
+		sug.title = t('link.rel_sug_help');
+		DEFAULT_REL_SUGGESTIONS.forEach(function (word) {
+			var b = document.createElement('button');
+			b.className = 'link-sug';
+			b.type = 'button';
+			b.dataset.rel = word;
+			b.textContent = word;
+			b.title = t('link.rel_use', { rel: word });
+			b.addEventListener('click', function () {
+				linkForm.rel = word;
+				relIn.value = word;
+				relIn.focus();
+			});
+			sug.appendChild(b);
+		});
+		relField.appendChild(relLbl);
+		relField.appendChild(relIn);
+		relField.appendChild(sug);
+
+		// 3. The note: whatever the one word does not say.
+		var noteField = document.createElement('div');
+		noteField.className = 'link-field';
+		var noteLbl = document.createElement('div');
+		noteLbl.className = 'link-label';
+		noteLbl.textContent = t('link.note_label');
+		var noteIn = document.createElement('input');
+		noteIn.className = 'link-note-input';
+		noteIn.id = 'link-note';
+		noteIn.type = 'text';
+		noteIn.autocomplete = 'off';
+		noteIn.maxLength = 2000;
+		noteIn.placeholder = t('link.note_ph');
+		noteIn.value = linkForm.note || '';
+		noteIn.setAttribute('aria-label', t('link.note_label'));
+		noteIn.addEventListener('input', function () { linkForm.note = noteIn.value; });
+		noteField.appendChild(noteLbl);
+		noteField.appendChild(noteIn);
+
+		// The direction is not a choice: a link is asserted FROM the Diamond you
+		// are looking at, which is the only reading of "link this to that" that
+		// does not need explaining.
+		var says = document.createElement('div');
+		says.className = 'link-says';
+		says.id = 'link-says';
+		says.textContent = t('link.direction_note');
+
+		var acts = document.createElement('div');
+		acts.className = 'link-form-acts';
+		var save = document.createElement('button');
+		save.className = 'link-save';
+		save.id = 'link-save';
+		save.type = 'button';
+		save.textContent = t('link.save');
+		save.addEventListener('click', async function () {
+			if (!linkForm || !linkForm.target) {
+				err.textContent = t('link.need_target');
+				pick.focus();
+				return;
+			}
+			save.disabled = true;
+			try {
+				await diamondApp().add_link(diamondId, selfRef, 'diamond:' + linkForm.target.id,
+					linkForm.rel || '', linkForm.note || '', 'user');
+			} catch (e) {
+				save.disabled = false;
+				err.textContent = friendlyError(e);
+				return;
+			}
+			linkForm = null;
+			signalLinksChanged();
+			bumpDiamonds();
+			renderLinks();
+		});
+		var cancel = document.createElement('button');
+		cancel.className = 'link-cancel';
+		cancel.id = 'link-cancel';
+		cancel.type = 'button';
+		cancel.textContent = t('common.cancel');
+		cancel.addEventListener('click', function () { linkForm = null; renderLinks(); });
+		acts.appendChild(save);
+		acts.appendChild(cancel);
+
+		wrap.appendChild(pickField);
+		wrap.appendChild(relField);
+		wrap.appendChild(noteField);
+		wrap.appendChild(says);
+		wrap.appendChild(err);
+		wrap.appendChild(acts);
+		paintPicks();
+		return wrap;
+	}
+
+	// A small surface for tests, and for the graph, which wants to know when a
+	// link changed without reaching into this file for it.
+	window.DaimondLinks = {
+		render: renderLinks,
+		/// Open or close the section, then repaint it.
+		toggle: function (open) {
+			linkOpen = (open === undefined) ? !linkOpen : !!open;
+			if (!linkOpen) linkForm = null;
+			return renderLinks();
+		},
+		changed: signalLinksChanged,
+	};
+
 	/// Render the steer command line and the fold-a-delta control.
 	function renderCrystalControls() {
 		crystalControls.innerHTML = '';
@@ -8067,6 +8535,33 @@ import init, {
 		reply.className = 'crystal-reply';
 		reply.id = 'crystal-reply';
 		reply.style.display = 'none';
+
+		// The Links section: which other Diamonds this one is related to, and how.
+		//
+		// A header that carries the count and opens the list, so a Diamond with no
+		// links costs one line rather than a permanently empty shelf -- but unlike
+		// the artefact strip it never hides, because this is also the only way in
+		// to making a link, and a control that appears once there is already one of
+		// the thing it makes is a control nobody finds.
+		var linkSec = document.createElement('div');
+		linkSec.className = 'link-sec';
+		linkSec.id = 'link-sec';
+		var linkStrip = document.createElement('button');
+		linkStrip.className = 'link-strip';
+		linkStrip.id = 'link-strip';
+		linkStrip.type = 'button';
+		linkStrip.setAttribute('aria-expanded', 'false');
+		linkStrip.addEventListener('click', function () {
+			linkOpen = !linkOpen;
+			if (!linkOpen) linkForm = null;   // closing the section closes the form with it
+			renderLinks();
+		});
+		var linkBody = document.createElement('div');
+		linkBody.className = 'link-body';
+		linkBody.id = 'link-body';
+		linkBody.style.display = 'none';
+		linkSec.appendChild(linkStrip);
+		linkSec.appendChild(linkBody);
 
 		// The artefact strip: a count, above the steer box, that hides at zero.
 		//
@@ -8132,10 +8627,16 @@ import init, {
 
 		crystalControls.appendChild(status);
 		crystalControls.appendChild(reply);
+		crystalControls.appendChild(linkSec);
 		crystalControls.appendChild(arte);
 		crystalControls.appendChild(arteList);
 		crystalControls.appendChild(steerRow);
 		crystalControls.appendChild(foldRow);
+		// The header the section was just given is empty until this fills it, and
+		// the controls are rebuilt by the tag editor and the history view as well
+		// as by the crystal -- so it is filled from here, where every one of them
+		// passes, rather than from the crystal alone.
+		renderLinks();
 	}
 
 	function setCrystalStatus(text) {
@@ -8443,12 +8944,17 @@ import init, {
 					.forEach(function (l) { have[l.to] = 1; });
 			} catch (e) { /* no links yet, or unreadable: treat as none */ }
 
+			var made = 0;
 			for (var i = 0; i < found.length; i++) {
 				if (have[found[i].ref]) continue;
 				try {
 					await diamondApp().add_link(diamondId, self, found[i].ref, found[i].rel, '', 'fold');
+					made++;
 				} catch (e) { /* one bad ref must not stop the rest */ }
 			}
+			// A fold makes links like any other writer, so whatever draws them is
+			// told the same way.
+			if (made) signalLinksChanged();
 			if (currentDiamond && currentDiamond.id === diamondId) renderCrystal();
 		} catch (e) { /* an artefact list is never worth failing a fold over */ }
 	}
@@ -10153,6 +10659,13 @@ import init, {
 	});
 	newSessionBtn.addEventListener('click', newChat);
 	if (newDiamondBtn) newDiamondBtn.addEventListener('click', createDiamond);
+	var linkGraphBtn = document.getElementById('link-graph-btn');
+	if (linkGraphBtn) linkGraphBtn.addEventListener('click', function () {
+		DaimondPanels.show('graph');
+		// Showing an already-open panel changes no attribute, so ask for the
+		// redraw explicitly rather than relying on the visibility observer.
+		if (window.DaimondGraph) DaimondGraph.refresh();
+	});
 	if (diamondSearch) diamondSearch.addEventListener('input', function () {
 		diamondQuery = diamondSearch.value.trim().toLowerCase();
 		renderDiamondList();

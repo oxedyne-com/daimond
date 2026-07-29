@@ -48,6 +48,7 @@
 	'panel.msg':     'Message',
 	'panel.tools':   'Tools',
 	'panel.compose': 'Compose',
+	'panel.graph':   'Graph',
 	'panel.agents':  'Agents',
 	'panel.mail':    'Email',
 	'panel.work':    'Workspace',
@@ -888,6 +889,42 @@
 	'arte.nothing_to_open': 'Nothing to open',
 	'arte.no_viewer':      'This artefact is a \u201c{kind}\u201d, which this version has no viewer for.',
 
+	// \u2500\u2500 Links between Diamonds \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+	'link.count.one':      '{n} linked Diamond',
+	'link.count.other':    '{n} linked Diamonds',
+	'link.strip_help':     'How this Diamond stands to your other Diamonds',
+	'link.none':           'No links to another Diamond yet.',
+	'link.this':           'this',
+	'link.rel_blank':      'linked',
+	'link.out_help':       'This Diamond \u2192 {rel} \u2192 \u201c{name}\u201d',
+	'link.in_help':        '\u201c{name}\u201d \u2192 {rel} \u2192 this Diamond',
+	'link.open_other':     'Show \u201c{name}\u201d',
+	'link.note_help':      'Show the note on this link',
+	'link.drop':           'Remove link',
+	'link.drop_help':      'Remove this link',
+	'link.drop_confirm':   'Remove the \u201c{rel}\u201d link with \u201c{name}\u201d? Both Diamonds stay; only the link goes.',
+	'link.drop_failed':    'Could not remove the link',
+	'link.gone':           'That Diamond is not there any more',
+	'link.gone_body':      '\u201c{ref}\u201d is linked from this Diamond, but no Diamond of that id can be read now \u2014 it may have been deleted.',
+	'link.gone_name':      '(deleted Diamond)',
+	'link.add_btn':        'Link',
+	'link.add_title':      'Link this Diamond to another',
+	'link.pick_label':     'Diamond',
+	'link.pick_ph':        'Find a Diamond by name',
+	'link.pick_none':      'No Diamond matches that.',
+	'link.pick_empty':     'There is no other Diamond to link to yet.',
+	'link.change_pick':    'Change',
+	'link.rel_label':      'Relation',
+	'link.rel_ph':         'How are they related?',
+	'link.rel_sug_help':   'Suggestions only \u2014 any word will do',
+	'link.rel_use':        'Use \u201c{rel}\u201d',
+	'link.note_label':     'Note',
+	'link.note_ph':        'Why, in a sentence (optional)',
+	'link.direction_note': 'The link runs from this Diamond to the one you pick.',
+	'link.need_target':    'Choose the Diamond to link to first.',
+	'link.save':           'Add link',
+	'link.graph_open':     'Graph',
+
 	// ── Agents ─────────────────────────────────────────────────
 	'agents.none_yet':            'No agents yet. Ask a Diamond to start one and it appears here.',
 	'agents.no_match':            'No agents match. Clear the search or filter.',
@@ -1205,6 +1242,30 @@
 	// ── Toasts ─────────────────────────────────────────────────
 	'toast.copied': 'Copied',
 	'render.copy_failed': 'Failed',
+
+	// ── The Graph pane ─────────────────────────────────────────
+	// One still picture of the Diamonds and the links between them. It is an
+	// instrument for checking the structure, so the wording states what is
+	// there rather than praising it.
+	'graph.no_diamonds':        'There are no Diamonds yet, so there is nothing to draw.',
+	'graph.empty':              'No Diamond is linked to another yet. Link two Diamonds and the picture appears here.',
+	'graph.isolated':           'Not linked',
+	'graph.unnamed':            'Untitled',
+	'graph.in_cycle':           'This Diamond is on a cycle.',
+	'graph.back_edge':          'This link closes a cycle. Cycles are allowed; it is drawn dashed so it can be seen.',
+	'graph.edge_tip':           '{from} → {to}',
+	'graph.edge_rel':           'Relation: {rel}',
+	'graph.failed':             'The graph could not be read: {err}',
+	'graph.artefacts.one':      '{n} link to a file, page or chat',
+	'graph.artefacts.other':    '{n} links to files, pages or chats',
+	'graph.stat_diamonds.one':  '{n} Diamond',
+	'graph.stat_diamonds.other': '{n} Diamonds',
+	'graph.stat_links.one':     '{n} link between Diamonds',
+	'graph.stat_links.other':   '{n} links between Diamonds',
+	'graph.stat_cycles.one':    '{n} link closes a cycle',
+	'graph.stat_cycles.other':  '{n} links close cycles',
+	'graph.stat_dangling.one':  '{n} link points at a Diamond that is gone',
+	'graph.stat_dangling.other': '{n} links point at Diamonds that are gone',
 
 	});
 })();

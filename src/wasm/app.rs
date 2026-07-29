@@ -352,6 +352,15 @@ impl DaimondApp {
         diamond::links_json(&node_ref).await.map_err(to_js_err)
     }
 
+    /// Every link in the store, as a JSON array.
+    ///
+    /// The whole graph in one read, for a view that draws all of it at once:
+    /// each entry carries the Diamond whose sidecar holds the record, and both
+    /// ends as `kind:rest` references, so nothing has to be asked for twice.
+    pub async fn all_links(&self) -> Result<String, JsValue> {
+        diamond::all_links().await.map_err(to_js_err)
+    }
+
     /// Assert a link, returning its id.
     ///
     /// `owner` is the Diamond whose sidecar holds the record; `rel` and `note`

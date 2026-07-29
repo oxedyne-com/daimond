@@ -699,6 +699,47 @@ pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
     Ok(out)
 }
 
+/// Every link in the store, as the JSON array the surface returns.
+///
+/// One walk of `diamonds/` answers the whole graph, where asking node by node
+/// would walk the store once per Diamond and read every sidecar as many times
+/// over.  The walk is [`links_touching`]'s, with the node test dropped.
+///
+/// Each entry carries the Diamond whose sidecar holds the record, exactly as
+/// [`links_json`] does, so a caller can delete a link without searching for it.
+/// There is no `other` field: no one end was asked about, so neither end is the
+/// other one.
+pub async fn all_links() -> Outcome<String> {
+    let entries = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => return Ok("[]".to_string()),
+    };
+    let mut items: Vec<String> = Vec::new();
+    for (id, is_dir, _size) in entries {
+        if !is_dir {
+            continue;
+        }
+        // One unreadable sidecar must not hide every other Diamond's links.
+        let links = match read_links(&id).await {
+            Ok(l)  => l,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
+                continue;
+            }
+        };
+        for l in links {
+            items.push(fmt!(
+                "{{\"owner\":\"{}\",\"id\":\"{}\",\"ts\":{},\"from\":\"{}\",\"to\":\"{}\",\
+                  \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\"}}",
+                json_escape(&id), json_escape(&l.id), l.ts,
+                json_escape(&l.from.to_ref()), json_escape(&l.to.to_ref()),
+                json_escape(&l.rel), json_escape(&l.note), json_escape(&l.by),
+            ));
+        }
+    }
+    Ok(fmt!("[{}]", items.join(",")))
+}
+
 /// Every link touching `node`, as the JSON array the surface returns.
 ///
 /// Each entry carries the Diamond whose sidecar holds the record, so a caller can
