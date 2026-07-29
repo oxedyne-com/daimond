@@ -33,9 +33,14 @@
 			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
 		});
 	}
-	function fmtMinor(n, cur) {
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// An unlock is a charge, so its price is quoted the way it will be taken:
+	/// in US dollars, with the converted figure beside it when the user is
+	/// reading in something else.
+	function fmtPrice(n, cur) {
 		return window.DaimondGateway
-			? DaimondGateway.fmtMoney(n, cur || 'usd')
+			? DaimondGateway.fmtBilled(n, cur || 'usd')
 			: ('$' + (n / 100).toFixed(2));
 	}
 
@@ -67,7 +72,7 @@
 			state.err     = '';
 		} catch (e) {
 			state.packs = [];
-			state.err   = 'The account service could not be reached, so what is unlocked here is unknown.';
+			state.err   = t('tools.unreachable');
 		}
 		state.loaded = true;
 		render();
@@ -81,7 +86,7 @@
 		state.busy = true;
 		render();
 		try {
-			if (!window.DaimondGateway) throw new Error('The account service is unavailable.');
+			if (!window.DaimondGateway) throw new Error(t('tools.no_service'));
 			var r = await fetch('/api/checkout/pack', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -98,21 +103,22 @@
 		}
 	}
 
-	function card(t, kind) {
+	function card(tool, kind) {
 		var d = document.createElement('div');
 		d.className = 'tools-card' + (kind === 'locked' ? ' locked' : '');
-		d.innerHTML = '<div class="tools-name">' + esc(t.name || t.tool) + '</div>'
-			+ '<div class="tools-blurb">' + esc(t.blurb) + '</div>';
+		d.innerHTML = '<div class="tools-name">' + esc(tool.name || tool.tool) + '</div>'
+			+ '<div class="tools-blurb">' + esc(tool.blurb) + '</div>';
 		if (kind === 'builtin') {
-			d.appendChild(html('<span class="tools-tag">Built in</span>'));
+			d.appendChild(html('<span class="tools-tag">' + esc(t('tools.built_in')) + '</span>'));
 		} else if (kind === 'owned') {
-			d.appendChild(html('<span class="tools-tag on">Unlocked</span>'));
+			d.appendChild(html('<span class="tools-tag on">' + esc(t('tools.unlocked')) + '</span>'));
 		} else {
 			var b = document.createElement('button');
 			b.className = 'tools-buy';
 			b.disabled  = state.busy;
-			b.textContent = 'Unlock — ' + fmtMinor(t.price_minor, t.currency);
-			b.addEventListener('click', function () { unlock(t.tool); });
+			b.textContent = t('tools.unlock_price', { price: fmtPrice(tool.price_minor, tool.currency) });
+			b.title = t('billing.usd_note');
+			b.addEventListener('click', function () { unlock(tool.tool); });
 			d.appendChild(b);
 		}
 		return d;
@@ -130,10 +136,7 @@
 		var c = counts();
 		els.body.appendChild(html(
 			'<div class="tools-head">'
-			+ '<b>' + c.have + ' of ' + c.all + '</b> tools. '
-			+ 'Most of what Daimond can do it can do for nothing — the tools below are simply '
-			+ 'what it is. A few reach the world outside the browser, and those cost what they '
-			+ 'cost to run.'
+			+ t('tools.head', { have: c.have, all: c.all })
 			+ '</div>'));
 
 		if (state.err) els.body.appendChild(html('<div class="tools-err">' + esc(state.err) + '</div>'));
@@ -142,21 +145,21 @@
 		var shop  = state.packs.filter(function (p) { return !p.unlocked; });
 
 		if (owned.length) {
-			els.body.appendChild(html('<div class="tools-sec">Unlocked on this account</div>'));
-			owned.forEach(function (t) { els.body.appendChild(card(t, 'owned')); });
+			els.body.appendChild(html('<div class="tools-sec">' + esc(t('tools.sec_unlocked')) + '</div>'));
+			owned.forEach(function (tool) { els.body.appendChild(card(tool, 'owned')); });
 		}
 
 		if (shop.length) {
-			els.body.appendChild(html('<div class="tools-sec">Get more tools</div>'));
-			shop.forEach(function (t) { els.body.appendChild(card(t, 'locked')); });
-			els.body.appendChild(html(
-				'<div class="tools-fine">Bought once, kept for good. Nothing renews. What a tool '
-				+ 'costs to run — a mailbox synced, a page fetched — is metered against credits, '
-				+ 'so ongoing cost tracks ongoing use.</div>'));
+			els.body.appendChild(html('<div class="tools-sec">' + esc(t('tools.sec_shop')) + '</div>'));
+			shop.forEach(function (tool) { els.body.appendChild(card(tool, 'locked')); });
+			els.body.appendChild(html('<div class="tools-fine">' + t('tools.shop_fine') + '</div>'));
+			if (window.DaimondI18n && DaimondI18n.currency() !== 'USD') {
+				els.body.appendChild(html('<div class="tools-fine">' + esc(t('billing.usd_note')) + '</div>'));
+			}
 		}
 
-		els.body.appendChild(html('<div class="tools-sec">Built in</div>'));
-		state.builtin.forEach(function (t) { els.body.appendChild(card(t, 'builtin')); });
+		els.body.appendChild(html('<div class="tools-sec">' + esc(t('tools.built_in')) + '</div>'));
+		state.builtin.forEach(function (tool) { els.body.appendChild(card(tool, 'builtin')); });
 	}
 
 	/// Show the panel, on the stage: the dock holds a noun as a list, the stage holds the
@@ -182,4 +185,8 @@
 		reload: load,
 		counts: counts,
 	};
+
+	// The panel is drawn from state already in hand, so a language or currency
+	// change can simply draw it again.
+	if (window.DaimondI18n) DaimondI18n.onChange(function () { if (els.body) render(); });
 })();

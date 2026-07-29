@@ -16,7 +16,16 @@
 	// Four steps, and no free slider. A slider invites a size nobody chose and
 	// makes a layout bug impossible to reproduce; four named steps do not.
 	var STEPS = [0.85, 1, 1.15, 1.3];
-	var STEP_NAMES = ['Small', 'Normal', 'Large', 'Larger'];
+	var STEP_KEYS = ['size.small', 'size.normal', 'size.large', 'size.larger'];
+
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
+	function stepName(i) { return t(STEP_KEYS[i]); }
+
+	// The dock's grids are named in the layout engine, which holds no strings.
+	// The mapping from a grid's key to what it is called lives here, with the
+	// rest of the text.
+	var GRID_KEYS = { '1': 'dock.one_column', '2x2': 'dock.2x2', '2x3': 'dock.2x3', '3x2': 'dock.3x2' };
 
 	var P = function () { return window.DaimondPanels; };
 
@@ -83,15 +92,15 @@
 		b.setAttribute('aria-pressed', p.open ? 'true' : 'false');
 		if (p.full) {
 			b.disabled = true;
-			b.title = 'The dock is full — choose a larger tiling in the appearance menu, or close a panel.';
+			b.title = t('chip.dock_full');
 		} else if (p.folded) {
-			b.title = 'Show ' + p.label;
+			b.title = t('chip.show', { name: p.label });
 		} else if (p.open) {
-			b.title = 'Close ' + p.label;
+			b.title = t('chip.close', { name: p.label });
 		} else if (p.evicts) {
-			b.title = 'Open ' + p.label + ', in place of the panel beside the chat';
+			b.title = t('chip.open_instead', { name: p.label });
 		} else {
-			b.title = 'Open ' + p.label;
+			b.title = t('chip.open', { name: p.label });
 		}
 		b.addEventListener('click', function () { P().activate(p.id); });
 		return b;
@@ -141,7 +150,7 @@
 			var total = spare.length + squeezed;
 			var n = more.querySelector('.n');
 			if (n) n.textContent = String(total);
-			more.title = total + ' more panel' + (total === 1 ? '' : 's');
+			more.title = tn('chip.more', total);
 		}
 		watchRow();
 	}
@@ -236,8 +245,8 @@
 		var input = document.createElement('input');
 		input.className = 'gal-search';
 		input.type = 'search';
-		input.placeholder = 'Search panels';
-		input.setAttribute('aria-label', 'Search panels');
+		input.placeholder = t('gallery.search_ph');
+		input.setAttribute('aria-label', t('gallery.search_ph'));
 		input.value = galQuery;
 		input.addEventListener('input', function () { galQuery = input.value; renderGallery(); focusSearch(); });
 		galEl.appendChild(input);
@@ -248,20 +257,19 @@
 		});
 
 		if (!hits.length) {
-			galEl.appendChild(el('div', 'gal-empty', 'No panel by that name.'));
+			galEl.appendChild(el('div', 'gal-empty', t('gallery.no_match')));
 			return;
 		}
 
-		var ZONES = { rail: 'The rail', stage: 'Beside the chat', dock: 'The dock' };
 		['rail', 'stage', 'dock'].forEach(function (zone) {
 			var inZone = hits.filter(function (p) { return p.zone === zone; });
 			if (!inZone.length) return;
-			galEl.appendChild(el('div', 'pop-head', ZONES[zone]));
+			galEl.appendChild(el('div', 'pop-head', t('gallery.zone_' + zone)));
 			inZone.forEach(function (p) { galEl.appendChild(galleryRow(p)); });
 		});
 
 		var note = el('div', 'pop-note');
-		note.innerHTML = 'Pinned panels sit in the top bar. Press <kbd>Ctrl</kbd> <kbd>K</kbd> to reach any panel from the keyboard.';
+		note.innerHTML = t('gallery.note');
 		galEl.appendChild(note);
 	}
 
@@ -275,10 +283,10 @@
 		go.appendChild(el('span', 'nm', p.label));
 		var onRow = !!document.querySelector('#panel-tags .ptag[data-panel="' + p.id + '"]');
 		go.appendChild(el('span', 'state',
-			p.unrevealed ? 'not in use yet'
-			: p.full && !p.open ? 'dock full'
-			: p.open ? 'open'
-			: (p.pinned && !onRow) ? 'no room in the bar' : ''));
+			p.unrevealed ? t('gallery.state_unrevealed')
+			: p.full && !p.open ? t('gallery.state_full')
+			: p.open ? t('gallery.state_open')
+			: (p.pinned && !onRow) ? t('gallery.state_no_room') : ''));
 		go.disabled = !!(p.full && !p.open);
 		go.addEventListener('click', function () { P().activate(p.id); closeGallery(); });
 
@@ -288,7 +296,7 @@
 		var pin = document.createElement('button');
 		pin.className = 'gal-pin';
 		pin.setAttribute('aria-pressed', p.pinned ? 'true' : 'false');
-		pin.title = p.pinned ? 'Remove ' + p.label + ' from the top bar' : 'Keep ' + p.label + ' in the top bar';
+		pin.title = p.pinned ? t('gallery.unpin', { name: p.label }) : t('gallery.pin', { name: p.label });
 		pin.setAttribute('aria-label', pin.title);
 		pin.innerHTML = p.pinned
 			? '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 5.6L20 9.2l-4.2 3.6 1.3 5.7L12 15.6 6.9 18.5l1.3-5.7L4 9.2l5.8-.6z" fill="currentColor" stroke="none"/></svg>'
@@ -340,15 +348,14 @@
 		// Skin -- the overall shape (corners, typeface, spacing), orthogonal to
 		// the palette chosen below.
 		if (window.DaimondSkin) {
-			menuEl.appendChild(el('div', 'pop-head', 'Skin'));
+			menuEl.appendChild(el('div', 'pop-head', t('menu.skin')));
 			var skinNow = DaimondSkin.get();
 			var sseg = el('div', 'seg');
-			[['sharp', 'Sharp'], ['warm', 'Warm']].forEach(function (pair) {
-				var sb = el('button', null, pair[1]);
+			['sharp', 'warm'].forEach(function (id) {
+				var pair = [id];
+				var sb = el('button', null, t('menu.skin_' + id));
 				sb.setAttribute('aria-pressed', pair[0] === skinNow ? 'true' : 'false');
-				sb.title = pair[0] === 'warm'
-					? 'Rounder, roomier and friendlier -- in the manner of Google or Canva.'
-					: 'The precise, information-dense original.';
+				sb.title = t('menu.skin_' + id + '_help');
 				sb.addEventListener('click', function () {
 					DaimondSkin.set(pair[0]);
 					// The warm skin reads as a light, airy look; if the user is on the
@@ -365,37 +372,37 @@
 		}
 
 		// Theme.
-		menuEl.appendChild(el('div', 'pop-head', 'Theme'));
+		menuEl.appendChild(el('div', 'pop-head', t('menu.theme')));
 		var themes = window.DaimondTheme ? DaimondTheme.list() : ['dark'];
 		var now = window.DaimondTheme ? DaimondTheme.get() : 'dark';
 		var seg = el('div', 'seg');
-		themes.forEach(function (t) {
-			var b = el('button', null, t.charAt(0).toUpperCase() + t.slice(1));
-			b.setAttribute('aria-pressed', t === now ? 'true' : 'false');
-			b.addEventListener('click', function () { DaimondTheme.set(t); renderMenu(); });
+		themes.forEach(function (name) {
+			var b = el('button', null, t('menu.theme_' + name));
+			b.setAttribute('aria-pressed', name === now ? 'true' : 'false');
+			b.addEventListener('click', function () { DaimondTheme.set(name); renderMenu(); });
 			seg.appendChild(b);
 		});
 		menuEl.appendChild(seg);
 
 		// Reading size. The sample is set in the size being chosen, so the control
 		// shows the change rather than naming it.
-		menuEl.appendChild(el('div', 'pop-head', 'Text size'));
+		menuEl.appendChild(el('div', 'pop-head', t('menu.text_size')));
 		var cur = STEPS.indexOf(scale());
 		var row = el('div', 'size-row');
 		var down = el('button', null, 'A');
 		down.style.fontSize = 'var(--fs-xs)';
-		down.title = 'Smaller text';
-		down.setAttribute('aria-label', 'Smaller text');
+		down.title = t('menu.smaller');
+		down.setAttribute('aria-label', down.title);
 		down.disabled = cur <= 0;
 		down.addEventListener('click', function () { setScale(STEPS[cur - 1]); renderMenu(); });
 
-		var sample = el('div', 'sample', STEP_NAMES[cur]);
+		var sample = el('div', 'sample', stepName(cur));
 		sample.setAttribute('aria-live', 'polite');
 
 		var up = el('button', null, 'A');
 		up.style.fontSize = 'var(--fs-2xl)';
-		up.title = 'Larger text';
-		up.setAttribute('aria-label', 'Larger text');
+		up.title = t('menu.larger');
+		up.setAttribute('aria-label', up.title);
 		up.disabled = cur >= STEPS.length - 1;
 		up.addEventListener('click', function () { setScale(STEPS[cur + 1]); renderMenu(); });
 
@@ -406,7 +413,7 @@
 		menuEl.appendChild(row);
 
 		// The dock's tiling.
-		menuEl.appendChild(el('div', 'pop-head', 'Dock tiling'));
+		menuEl.appendChild(el('div', 'pop-head', t('menu.dock_tiling')));
 		var grids = P().grids();
 		var gseg = el('div', 'seg');
 		// Enumerated from the engine, not from a copy kept here: the palette
@@ -414,12 +421,12 @@
 		var order = ['auto'].concat(Object.keys(grids).filter(function (k) { return k !== 'auto'; }));
 		order.forEach(function (key) {
 			var g = grids[key] || { cols: model.cols, rows: model.rows };
-			var label = key === 'auto' ? 'Auto' : key.replace('x', '×');
+			var label = key === 'auto' ? t('menu.dock_auto') : key.replace('x', '×');
 			var b = el('button', 'grid-opt');
 			b.setAttribute('aria-pressed', P().grid() === key ? 'true' : 'false');
 			b.title = key === 'auto'
-				? 'A second column once the window is wide enough for it'
-				: g.cols + ' column' + (g.cols === 1 ? '' : 's') + ', up to ' + (g.cols * g.rows) + ' panels';
+				? t('menu.dock_auto_help')
+				: tn('menu.dock_grid_help', g.cols, { cols: g.cols, cells: g.cols * g.rows });
 			var cells = el('div', 'cells');
 			var cols = (key === 'auto') ? 2 : g.cols;
 			var rows = (key === 'auto') ? 2 : g.rows;
@@ -440,10 +447,12 @@
 		// This Diamond's arrangement, when there is a Diamond to hang it on.
 		var diamond = window.DaimondDiamond && DaimondDiamond.current && DaimondDiamond.current();
 		if (diamond && diamond.id) {
-			menuEl.appendChild(el('div', 'pop-head', 'This Diamond'));
+			menuEl.appendChild(el('div', 'pop-head', t('menu.this_diamond')));
 			var saved = P().hasArrangement(diamond.id);
 			var save = el('button', 'gal-row');
-			save.appendChild(el('span', 'nm', saved ? 'Update the saved arrangement' : 'Keep this arrangement with ' + (diamond.name || 'this Diamond')));
+			save.appendChild(el('span', 'nm', saved ? t('menu.arrangement_update')
+				: (diamond.name ? t('menu.arrangement_keep', { name: diamond.name })
+					: t('menu.arrangement_keep_this'))));
 			save.addEventListener('click', function () {
 				P().saveArrangement(diamond.id);
 				renderMenu();
@@ -451,14 +460,106 @@
 			menuEl.appendChild(save);
 			if (saved) {
 				var drop = el('button', 'gal-row');
-				drop.appendChild(el('span', 'nm', 'Forget it'));
+				drop.appendChild(el('span', 'nm', t('menu.arrangement_forget')));
 				drop.addEventListener('click', function () { P().forgetArrangement(diamond.id); renderMenu(); });
 				menuEl.appendChild(drop);
 			}
 			var n = el('div', 'pop-note');
-			n.textContent = 'Opening this Diamond again restores the panels it was worked in. Nothing is remembered until you ask for it.';
+			n.textContent = t('menu.arrangement_note');
 			menuEl.appendChild(n);
 		}
+
+		renderLanguage(menuEl);
+	}
+
+	// ── Language and currency ───────────────────────────────────────────
+	//
+	// Two more ways the app can be made to fit the person using it, so they sit
+	// with the theme and the text size rather than in a settings form of their
+	// own. Currency is DISPLAY only: the note under it says so, because a price
+	// shown in euros that is charged in dollars is a surprise nobody should get
+	// at the card statement.
+
+	var localesReady = null;   // the codes that actually have a table, once probed
+
+	/// Find out which locale files exist, by trying to load them. Once only,
+	/// and the picker is redrawn with the answer.
+	function probeLocales() {
+		if (localesReady !== null || !window.DaimondI18n) return;
+		localesReady = [];
+		DaimondI18n.available().then(function (codes) {
+			localesReady = codes;
+			if (menuEl && !menuEl.hidden) renderMenu();
+		});
+	}
+
+	function renderLanguage(box) {
+		if (!window.DaimondI18n) return;
+
+		box.appendChild(el('div', 'pop-head', t('menu.language')));
+		// A full-width select and a note under it, which is how everything else
+		// in this menu explains itself. A label beside the control would leave
+		// each of them too narrow to read.
+		var lrow = el('div', 'set-pick');
+		var lsel = document.createElement('select');
+		lsel.className = 'settings-select';
+		lsel.setAttribute('aria-label', t('menu.language'));
+		DaimondI18n.locales().forEach(function (l) {
+			var o = document.createElement('option');
+			o.value = l.code;
+			o.textContent = l.name;
+			// Until the probe has answered, only the table already in hand is
+			// known to exist. A language with no file is offered but not
+			// selectable, so the picker shows what is coming without pretending
+			// it has arrived.
+			if (localesReady && localesReady.indexOf(l.code) === -1) {
+				o.disabled = true;
+				o.textContent = l.name + ' — ' + t('menu.language_pending');
+			}
+			if (l.code === DaimondI18n.locale()) o.selected = true;
+			lsel.appendChild(o);
+		});
+		// A language with no file falls back to English, and the picker is drawn
+		// again so it shows what actually happened rather than what was asked.
+		lsel.addEventListener('change', function () {
+			var want = lsel.value;
+			DaimondI18n.setLocale(want).then(function (ok) {
+				if (!ok && localesReady && localesReady.indexOf(want) === -1) probeLocales();
+				if (menuEl && !menuEl.hidden) renderMenu();
+			});
+		});
+		// Probed once per page, and only when someone reaches for the picker: the
+		// probe is a load of each file, so what is offered is what is on disk
+		// rather than what a list here claims -- but merely opening the
+		// appearance menu should not fetch eight files to find out.
+		lsel.addEventListener('focus', probeLocales);
+		lsel.addEventListener('pointerdown', probeLocales);
+		lrow.appendChild(lsel);
+		box.appendChild(lrow);
+		box.appendChild(el('div', 'pop-note', t('menu.language_help')));
+
+		box.appendChild(el('div', 'pop-head', t('menu.currency')));
+		var crow = el('div', 'set-pick');
+		var csel = document.createElement('select');
+		csel.className = 'settings-select';
+		csel.setAttribute('aria-label', t('menu.currency'));
+		DaimondI18n.currencies().forEach(function (c) {
+			var o = document.createElement('option');
+			o.value = c.code;
+			o.textContent = c.code + ' — ' + c.name;
+			if (c.code === DaimondI18n.currency()) o.selected = true;
+			csel.appendChild(o);
+		});
+		csel.addEventListener('change', function () { DaimondI18n.setCurrency(csel.value); renderMenu(); });
+		crow.appendChild(csel);
+		box.appendChild(crow);
+
+		var cn = el('div', 'pop-note');
+		cn.textContent = DaimondI18n.currency() === 'USD'
+			? t('menu.currency_help')
+			: t('menu.currency_help') + ' ' + t('billing.usd_note')
+				+ ' ' + t('billing.rates_as_of', { date: DaimondI18n.ratesAsOf() });
+		box.appendChild(cn);
 	}
 
 	function toggleMenu(anchor) {
@@ -498,22 +599,22 @@
 		var out = [];
 		P().model().panels.forEach(function (p) {
 			out.push({
-				kind: 'Panel', name: p.label,
-				hint: p.open ? 'open' : (p.full ? 'dock full' : ''),
+				kind: t('pal.kind_panel'), name: p.label,
+				hint: p.open ? t('pal.hint_open') : (p.full ? t('pal.hint_full') : ''),
 				run: function () { P().activate(p.id); },
 				off: !!(p.full && !p.open),
 			});
 		});
-		(window.DaimondTheme ? DaimondTheme.list() : []).forEach(function (t) {
+		(window.DaimondTheme ? DaimondTheme.list() : []).forEach(function (name) {
 			out.push({
-				kind: 'Theme', name: t.charAt(0).toUpperCase() + t.slice(1),
-				hint: DaimondTheme.get() === t ? 'current' : '',
-				run: function () { DaimondTheme.set(t); },
+				kind: t('pal.kind_theme'), name: t('menu.theme_' + name),
+				hint: DaimondTheme.get() === name ? t('pal.hint_current') : '',
+				run: function () { DaimondTheme.set(name); },
 			});
 		});
 		STEPS.forEach(function (v, i) {
 			out.push({
-				kind: 'Text size', name: STEP_NAMES[i],
+				kind: t('pal.kind_size'), name: stepName(i),
 				hint: Math.round(v * 100) + '%',
 				run: function () { setScale(v); },
 			});
@@ -524,13 +625,31 @@
 			// the window rather than fixed; it is offered below on its own terms.
 			if (!grids[k]) return;
 			out.push({
-				kind: 'Dock', name: grids[k].label,
-				hint: P().grid() === k ? 'current' : '',
+				kind: t('pal.kind_dock'), name: t(GRID_KEYS[k] || 'dock.automatic'),
+				hint: P().grid() === k ? t('pal.hint_current') : '',
 				run: function () { P().setGrid(k); },
 			});
 		});
-		out.push({ kind: 'Dock', name: 'Automatic', hint: P().grid() === 'auto' ? 'current' : '',
+		out.push({ kind: t('pal.kind_dock'), name: t('dock.automatic'), hint: P().grid() === 'auto' ? t('pal.hint_current') : '',
 			run: function () { P().setGrid('auto'); } });
+		// Every language and every currency, reachable without opening a menu --
+		// which is what makes the appearance menu free to stay short.
+		if (window.DaimondI18n) {
+			DaimondI18n.locales().forEach(function (l) {
+				out.push({
+					kind: t('pal.kind_lang'), name: l.name,
+					hint: DaimondI18n.locale() === l.code ? t('pal.hint_current') : '',
+					run: function () { DaimondI18n.setLocale(l.code); },
+				});
+			});
+			DaimondI18n.currencies().forEach(function (c) {
+				out.push({
+					kind: t('pal.kind_ccy'), name: c.code + ' — ' + c.name,
+					hint: DaimondI18n.currency() === c.code ? t('pal.hint_current') : '',
+					run: function () { DaimondI18n.setCurrency(c.code); },
+				});
+			});
+		}
 		return out;
 	}
 
@@ -542,7 +661,7 @@
 		if (palAt >= palItems.length) palAt = 0;
 		palList.innerHTML = '';
 		if (!palItems.length) {
-			var e = el('li', 'pal-empty', 'Nothing matches.');
+			var e = el('li', 'pal-empty', t('pal.nothing'));
 			palList.appendChild(e);
 			return;
 		}
@@ -605,12 +724,24 @@
 		// daimond.js -- so the service is wrapped rather than duplicated.
 		if (window.DaimondTheme && !DaimondTheme._wrapped) {
 			var inner = DaimondTheme.set;
-			DaimondTheme.set = function (t) { inner(t); tellFrames(); };
+			DaimondTheme.set = function (name) { inner(name); tellFrames(); };
 			DaimondTheme._wrapped = true;
 		}
 
 		var menuBtn = document.getElementById('settings-menu-btn');
 		if (menuBtn) menuBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(menuBtn); });
+
+		// A language or currency change repaints what this file draws. The chip
+		// row and the gallery are redrawn from the model, which is re-read from
+		// the DOM first, because a panel's name is an attribute on it.
+		if (window.DaimondI18n) {
+			DaimondI18n.onChange(function () {
+				if (P() && P().relabel) P().relabel();
+				else if (P()) P().reflow();
+				if (galEl && !galEl.hidden) renderGallery();
+				if (menuEl && !menuEl.hidden) renderMenu();
+			});
+		}
 
 		palEl = document.getElementById('palette');
 		palInput = document.getElementById('pal-input');
@@ -638,8 +769,8 @@
 			if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
 				// Ctrl-K is kill-to-end-of-line in a text field on macOS, so it is
 				// left alone there; Cmd-K still opens the palette on that platform.
-				var t = e.target;
-				var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+				var tgt = e.target;
+				var typing = tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable);
 				if (typing && e.ctrlKey && !e.metaKey) return;
 				e.preventDefault();
 				palEl && palEl.hidden ? openPalette() : closePalette();

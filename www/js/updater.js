@@ -23,6 +23,9 @@
 (function () {
 	'use strict';
 
+	/// What the app says.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	var SRC      = 'build.json';   // the version stamp, at the site root
 	var POLL_MS  = 120000;         // re-check on this timer while in the foreground
 	var KEY      = 'daimond-updated-to';
@@ -77,13 +80,13 @@
 	function manualCheck() {
 		if (checking || stale) return;
 		checking = true;
-		chip.title = 'Checking for updates…';
+		chip.title = t('update.checking');
 		readStamp().then(function (j) {
 			checking = false;
 			onFound(j);
 			if (!pending && !stale) {
 				chip.dataset.state = 'done';
-				chip.title = 'You are on the latest version';
+				chip.title = t('update.latest');
 				chip.hidden = false;
 				setTimeout(reflect, 1400);
 			}
@@ -94,11 +97,12 @@
 		if (!chip) return;
 		chip.dataset.state = state;
 		var label = {
-			current: 'Daimond is up to date',
-			ready:   'Update ready' + (note ? ' — ' + note : '') + '. Click to update now.',
-			busy:    'Update ready — it will apply when this finishes, or click to force it.',
-			done:    'Daimond updated' + (note ? ' — ' + note : ''),
-			stale:   'Daimond is out of date and must reload to keep working. Click to reload.',
+			current: t('topbar.up_to_date'),
+			// {note} is the new version's own label, when the gateway named one.
+			ready:   t('update.ready') + (note ? ' — ' + note : '') + ' ' + t('update.click_now'),
+			busy:    t('update.ready_help'),
+			done:    t('update.updated') + (note ? ' — ' + note : ''),
+			stale:   t('update.stale'),
 		}[state] || '';
 		chip.title = label;
 		chip.setAttribute('aria-label', label);

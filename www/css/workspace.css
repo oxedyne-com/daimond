@@ -90,6 +90,21 @@
 	margin-top: 6px;
 	line-height: 1.5;
 }
+/* The language/currency pickers in the appearance menu. Sized to the popover,
+   not to a form -- .settings-select reads oversized at 380px. */
+.pop .set-pick { padding: 2px 6px 8px; }
+.pop .set-pick select {
+	width: 100%;
+	font-size: var(--fs-xs);
+	padding: 6px 8px;
+	background: var(--bg-tertiary);
+	color: var(--text-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+/* A note explaining the picker directly above it is one thought, not a new
+   section -- no divider. */
+.pop .set-pick + .pop-note { border-top: none; margin-top: 0; padding-top: 2px; }
 .pop-note kbd {
 	font-family: var(--font-mono);
 	font-size: var(--fs-4xs);

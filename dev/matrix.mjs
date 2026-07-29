@@ -196,6 +196,16 @@ export const VIEWS = [
 	// state-aware at each step, because connectMock may have left the drawer
 	// open and #settings-btn is a toggle: a blind click shot "home" for every
 	// settings cell.
+	// A BUILT form, not a static panel: the add-a-mailbox dialog exercises the
+	// shared buildForm path (labels, inputs, selects) that no static view
+	// contains. Found missing when a label-spacing defect shipped unseen --
+	// forms constructed on demand were absent from this enumeration entirely.
+	{ name: 'mail-add',  needsAuth: true, setup: async (p) => open(p, async () => {
+		if (window.DaimondPanels) DaimondPanels.show('mail');
+		await new Promise(r => setTimeout(r, 300));
+		const b = document.querySelector('[data-act="mail-add"]');
+		if (b) b.click();
+	}, '.cfg-fieldlabel') },
 	{ name: 'settings', needsAuth: true,  setup: async (p) => open(p, async () => {
 		const vis = (el) => el && el.offsetParent !== null;
 		const row = document.getElementById('astat-model');

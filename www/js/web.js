@@ -33,6 +33,12 @@
 (function () {
 	'use strict';
 
+	/// What the app says. Model-facing strings -- the notes a tool call returns,
+	/// which the daimon reads and acts on -- are NOT here: they stay in the
+	/// language the system prompt is written in. These are the ones a person
+	/// reads in the panel.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	var state = {
 		driver: 'none',      // 'none' | 'frame' | 'local' | 'ext'
 		url:    '',
@@ -216,20 +222,16 @@
 			// blank wait while an approval window sits unnoticed behind it.
 			state.driver = 'ext';
 			state.url = url;
-			note('<b>Opening ' + esc(hostOf(url)) + '…</b><br>'
-				+ 'A <b>Daimond Hands</b> window is opening in front — approve the site there, '
-				+ 'and Chrome will then ask once to confirm. Both happen only the first time '
-				+ 'for a site.');
+			note(t('web.opening', { host: esc(hostOf(url)) }));
 			render();
 			var r;
 			try {
 				r = await ext('open', { url: url });
 			} catch (e) {
 				// Declined, closed, or timed out: say what to do, not just the raw error.
-				note('<b>' + esc(hostOf(url)) + ' was not approved.</b><br>'
+				note(t('web.not_approved', { host: esc(hostOf(url)) })
 					+ (/not approved|declined/i.test(e.message)
-						? 'The approval window was closed or declined. Ask me to open it again and click '
-							+ '<b>Allow this site</b> in the Daimond Hands window (it may open behind this one).'
+						? t('web.approval_closed')
 						: esc(e.message)));
 				render();
 				throw e;
@@ -500,8 +502,8 @@
 			}
 			function inter(el) { return /^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName); }
 			function secret(el) {
-				var t = (el.type || '').toLowerCase();
-				if (t === 'password' || t === 'hidden') return true;
+				var ty = (el.type || '').toLowerCase();
+				if (ty === 'password' || ty === 'hidden') return true;
 				var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
 				return /^cc-|password|one-time-code/.test(ac);
 			}
@@ -519,11 +521,11 @@
 					case 'H1': case 'H2': case 'H3': case 'H4': return 'heading';
 					case 'LABEL': return 'label';
 					case 'INPUT':
-						var t = (el.type || 'text').toLowerCase();
-						if (t === 'submit' || t === 'button') return 'button';
-						if (t === 'checkbox') return 'checkbox';
-						if (t === 'radio') return 'radio';
-						if (t === 'password') return 'password';
+						var ty = (el.type || 'text').toLowerCase();
+						if (ty === 'submit' || ty === 'button') return 'button';
+						if (ty === 'checkbox') return 'checkbox';
+						if (ty === 'radio') return 'radio';
+						if (ty === 'password') return 'password';
 						return 'textbox';
 				}
 				return '';
@@ -726,11 +728,10 @@
 		els.note.className = 'web-note on';
 		els.note.innerHTML = '';
 		var msg = document.createElement('div');
-		msg.innerHTML = '<b>Daimond is driving ' + esc(hostOf(state.url)) + '</b> in a browser tab. '
-			+ 'Watch it there, or pull a live picture into this panel.';
+		msg.innerHTML = t('web.driving_tab', { host: esc(hostOf(state.url)) });
 		els.note.appendChild(msg);
 		var btn = document.createElement('button');
-		btn.textContent = 'Show live view here';
+		btn.textContent = t('web.show_live');
 		btn.addEventListener('click', function () {
 			mirrorOff = false;              // the next tick asks for the mirror permission, once
 			note('');
@@ -774,19 +775,20 @@
 		// The header names what is on screen. Our own guide says "Guide"; an external page shows
 		// its host and path; an idle panel says what the panel is FOR, rather than "No page",
 		// which read as broken.
-		els.url.textContent = state.driver === 'guide' ? 'Guide'
+		els.url.textContent = state.driver === 'guide' ? t('web.guide')
 			: state.url ? hostOf(state.url) + pathOf(state.url)
-			: 'The Web panel';
-		els.url.title = state.driver === 'guide' ? 'Daimond’s user guide' : (state.url || '');
+			: t('web.panel_for');
+		els.url.title = state.driver === 'guide' ? t('web.guide_title') : (state.url || '');
 		var m = els.mode;
 		m.className = 'web-mode' + (state.mode === 'user' ? ' user' : state.mode === 'agent' ? ' agent' : '');
-		m.textContent = state.mode === 'user' ? 'You' : state.mode === 'agent' ? 'Daimond' : (hasExt() ? 'Ready' : 'View only');
+		m.textContent = state.mode === 'user' ? t('web.who_you')
+			: state.mode === 'agent' ? t('web.who_daimond')
+			: (hasExt() ? t('web.who_ready') : t('web.who_view_only'));
 		m.title = state.mode === 'user'
-			? 'You are driving. Daimond is not watching this page.'
+			? t('web.who_you_help')
 			: state.mode === 'agent'
-				? 'Daimond is driving. You can take the wheel at any time.'
-				: hasExt() ? 'Daimond Hands is installed.'
-					: 'This page can be shown, but not operated. Install Daimond Hands to drive it.';
+				? t('web.who_daimond_help')
+				: hasExt() ? t('web.who_ready_help') : t('web.who_view_only_help');
 		els.blind.style.display = (state.mode === 'user') ? 'flex' : 'none';
 		// Name why the wheel is with the user, when the broker told us. A specific
 		// cause ("stopped at the sign-in page for …") reassures far more than the
@@ -794,8 +796,8 @@
 		if (state.mode === 'user') {
 			var bt = els.blind.querySelector('.web-blind-title');
 			if (bt) bt.textContent = state.reason
-				? 'You’re driving. I stopped at ' + state.reason + '.'
-				: 'You’re driving. I’m not watching.';
+				? t('web.blind_title_at', { where: state.reason })
+				: t('web.blind_title');
 		}
 	}
 
@@ -817,24 +819,23 @@
 		els.note.innerHTML = '';
 		els.note.className = 'web-note on';
 		var msg = document.createElement('div');
-		msg.innerHTML = '<b>' + esc(hostOf(url)) + '</b> will not display inside another page. '
-			+ 'Most sites block this — it is the web’s protection against clickjacking, not a fault. '
-			+ (hasExt() ? 'Daimond Hands can drive it in a real tab.' : 'Install Daimond Hands to drive it live.');
+		msg.innerHTML = t('web.blocked', { host: esc(hostOf(url)) }) + ' '
+			+ (hasExt() ? t('web.blocked_hands') : t('web.blocked_install'));
 		els.note.appendChild(msg);
 
 		var row = document.createElement('div');
 		row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;justify-content:center';
 
 		var tab = document.createElement('button');
-		tab.textContent = 'Open in a new tab';       // free, no gateway, no extension
+		tab.textContent = t('web.open_new_tab');     // free, no gateway, no extension
 		tab.addEventListener('click', function () { window.open(url, '_blank', 'noopener'); });
 		row.appendChild(tab);
 
 		var read = document.createElement('button');
-		read.textContent = 'Read it as text';
+		read.textContent = t('web.read_as_text');
 		read.addEventListener('click', async function () {
 			read.disabled = true;
-			read.textContent = 'Reading…';
+			read.textContent = t('web.reading');
 			try {
 				var j = await fetchPage(url);
 				note('');
@@ -842,8 +843,8 @@
 				showText(j.title, j.text);
 			} catch (e) {
 				read.disabled = false;
-				read.textContent = 'Read it as text';
-				msg.innerHTML = 'That page could not be read: ' + esc(e.message);
+				read.textContent = t('web.read_as_text');
+				msg.innerHTML = t('web.read_failed', { reason: esc(e.message) });
 			}
 		});
 		row.appendChild(read);
@@ -877,7 +878,7 @@
 		pre.innerHTML = '';
 		var badge = document.createElement('div');
 		badge.className = 'web-readonly';
-		badge.textContent = 'Read-only copy — not the live site. Do not sign in here.';
+		badge.textContent = t('web.readonly_badge');
 		var b = document.createElement('div');
 		b.className = 'web-text-body';
 		b.textContent = text || '';         // text, never markup
@@ -934,6 +935,12 @@
 		});
 		detect();
 		render();
+	}
+
+	// The panel's header names what is on screen and who has the wheel, and it
+	// stays on screen, so a language change has to redraw it where it stands.
+	if (window.DaimondI18n) {
+		DaimondI18n.onChange(function () { if (els.url) render(); });
 	}
 
 	window.DaimondWeb = {

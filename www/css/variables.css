@@ -26,7 +26,7 @@
 	--radius:            8px;
 	--radius-sm:         6px;
 	--radius-lg:         12px;
-	--font:              system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+	--font:              system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, var(--font-cjk, sans-serif), sans-serif;
 	--font-mono:         ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 
 	/* ── The type scale ──────────────────────────────────────────────
@@ -124,7 +124,7 @@
 	/* A rounded, friendly sans. Nunito (self-hosted, OFL) leads; ui-rounded
 	   gives Apple platforms SF Pro Rounded even before the webfont lands, and
 	   the rest fall back to the cleanest available system sans. */
-	--font:              'Nunito', ui-rounded, 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+	--font:              'Nunito', ui-rounded, 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, Roboto, var(--font-cjk, sans-serif), sans-serif;
 	/* How much the warm skin loosens spacing. skin-warm.css multiplies its
 	   paddings and gaps by this, so the whole skin can breathe more or less
 	   from one number. 1 would match the sharp skin; 1.4 is a clear loosening. */
@@ -162,3 +162,15 @@
 	--danger:            #A33227;
 	--success:           #2F7A54;
 }
+
+/* ── CJK faces ─────────────────────────────────────────────────
+   The Latin stacks above name no CJK family, so ideographs fell to the
+   browser's generic fallback -- a mismatched face mid-string beside Nunito,
+   and Japanese kanji drawn in Chinese glyph forms wherever that fallback is
+   an SC face (Han unification). Naming the regional families per language
+   makes the glyphs deterministic; the Latin runs keep their own face because
+   the Latin families still come first in each stack. `zh-Hans` matches
+   `:lang(zh)` by prefix. */
+:root:lang(zh) { --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC'; }
+:root:lang(ja) { --font-cjk: 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans CJK JP', 'Noto Sans JP'; }
+:root:lang(ko) { --font-cjk: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK KR', 'Noto Sans KR'; }

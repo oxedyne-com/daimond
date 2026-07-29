@@ -13,8 +13,8 @@
  * at load, so the clean way to hand them a different account is to start them again.
  *
  * What is NOT namespaced (browser-wide, shared by everyone at this browser): the account registry
- * itself, the theme, the panel layout, and the line-number toggle. These are preferences of the
- * device, not facts about a person.
+ * itself, the theme, the language, the display currency, the panel layout, and the line-number
+ * toggle. These are preferences of the device, not facts about a person.
  */
 (function () {
 	'use strict';
@@ -26,6 +26,9 @@
 	var GLOBAL = {
 		'daimond-accounts': 1, 'daimond-current': 1,
 		'daimond-theme': 1, 'daimond-layout': 1, 'daimond-files-lineno': 1,
+		// The language and the display currency sit with the theme: they say how
+		// this browser presents Daimond, not who is using it.
+		'daimond-locale': 1, 'daimond-currency': 1,
 	};
 
 	// The unshimmed methods, captured before the shim shadows them. All raw access below goes

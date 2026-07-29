@@ -33,6 +33,9 @@
 (function () {
 	'use strict';
 
+	/// What the app says.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	// ── Parameters ─────────────────────────────────────────────
 	// PBKDF2 work factor. High by design so an offline guess against
 	// the stored ciphertexts is expensive. Exposed as a constant so
@@ -242,7 +245,7 @@
 	/// secret-free error when called while locked.
 	function requireUnlocked() {
 		if (!isUnlocked()) {
-			throw new Error('Daimond identity is locked.');
+			throw new Error(t('identity.err_locked'));
 		}
 	}
 
@@ -255,7 +258,7 @@
 	/// callers should confirm with the user or call reset() first.
 	async function create(name, passphrase) {
 		if (!available()) {
-			throw new Error('WebCrypto is unavailable in this browser.');
+			throw new Error(t('identity.err_no_webcrypto'));
 		}
 
 		// Fresh per-install salt.

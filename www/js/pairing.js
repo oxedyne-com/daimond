@@ -28,17 +28,17 @@
 	/// { code, expires_in }. Throws with a readable message on any failure.
 	async function create() {
 		if (!window.DaimondIdentity || !DaimondIdentity.exists()) {
-			throw new Error('There is no identity on this device to link.');
+			throw new Error(t('pair.err_no_identity'));
 		}
 		var bundle = DaimondIdentity.exportBundle();
-		if (!bundle) throw new Error('Could not read this device’s identity.');
+		if (!bundle) throw new Error(t('pair.err_unreadable_local'));
 		var r = await fetch('/api/pair', {
 			method: 'POST', credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			body: JSON.stringify({ bundle: JSON.stringify(bundle) }),
 		});
 		var j = null; try { j = await r.json(); } catch (e) {}
-		if (r.status === 401) throw new Error('Sign in on this device before linking another.');
+		if (r.status === 401) throw new Error(t('pair.err_sign_in_first'));
 		if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
 		return { code: j.code, expiresIn: j.expires_in || 600 };
 	}
@@ -48,18 +48,18 @@
 	/// success. The caller then prompts for the passphrase to unlock.
 	async function redeem(code) {
 		code = String(code || '').trim();
-		if (!code) throw new Error('Enter the pairing code from your other device.');
+		if (!code) throw new Error(t('pair.err_enter_code'));
 		var r = await fetch('/api/pair/redeem', {
 			method: 'POST', credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			body: JSON.stringify({ code: code }),
 		});
 		var j = null; try { j = await r.json(); } catch (e) {}
-		if (r.status === 404) throw new Error('That code is invalid or has expired. Make a new one on your other device.');
+		if (r.status === 404) throw new Error(t('pair.err_bad_code'));
 		if (!r.ok || !j || j.ok === false || !j.bundle) throw new Error((j && j.error) || ('HTTP ' + r.status));
 		var bundle;
-		try { bundle = JSON.parse(j.bundle); } catch (e) { throw new Error('The linked identity was unreadable.'); }
-		if (!DaimondIdentity.importBundle(bundle)) throw new Error('The linked identity could not be imported.');
+		try { bundle = JSON.parse(j.bundle); } catch (e) { throw new Error(t('pair.err_bundle_unreadable')); }
+		if (!DaimondIdentity.importBundle(bundle)) throw new Error(t('pair.err_bundle_import'));
 		return true;
 	}
 
@@ -177,6 +177,8 @@
 		return close;
 	}
 
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	function el(tag, cls, text) {
 		var e = document.createElement(tag);
 		if (cls) e.className = cls;
@@ -187,13 +189,13 @@
 	/// Device A: create a pairing and show the code to carry to the other device.
 	function showLink() {
 		overlay(function (box, close) {
-			box.appendChild(el('h3', null, 'Link another device'));
-			var p = el('p', null, 'Making a one-time code…');
+			box.appendChild(el('h3', null, t('pair.link_another')));
+			var p = el('p', null, t('pair.making_code'));
 			box.appendChild(p);
 			var err = el('div', 'pair-err');
 			box.appendChild(err);
 			var row = el('div', 'pair-row');
-			var done = el('button', 'pair-btn ghost', 'Done');
+			var done = el('button', 'pair-btn ghost', t('pair.done'));
 			done.addEventListener('click', close);
 			row.appendChild(done);
 			box.appendChild(row);
@@ -205,21 +207,21 @@
 				var url = location.origin + '/#pair=' + encodeURIComponent(res.code);
 				var qr = qrCanvas(url);
 				if (qr) {
-					p.textContent = 'On your other phone, point its camera at this to open Daimond and link it:';
+					p.textContent = t('pair.scan_lead');
 					box.insertBefore(qr, err);
-					var or = el('p', 'pair-note', 'No camera? Open Daimond there, choose “Have a pairing code?”, and enter:');
+					var or = el('p', 'pair-note', t('pair.no_camera'));
 					box.insertBefore(or, err);
 				} else {
-					p.textContent = 'On your other device, open Daimond, choose “Have a pairing code?”, and enter:';
+					p.textContent = t('pair.type_lead');
 				}
 				var code = el('div', 'pair-code', res.code);
 				box.insertBefore(code, err);
 				var mins = Math.round((res.expiresIn || 600) / 60);
-				var note = el('p', 'pair-note', 'This code works once and expires in about ' + mins + ' minutes. You will unlock the other device with your usual passphrase.');
+				var note = el('p', 'pair-note', t('pair.code_expiry', { mins: mins }));
 				box.insertBefore(note, err);
 			}).catch(function (e) {
 				p.textContent = '';
-				err.textContent = e.message || 'Could not create a pairing code.';
+				err.textContent = e.message || t('pair.err_create');
 			});
 		});
 	}
@@ -232,38 +234,33 @@
 	function showRedeem(prefill) {
 		var scanned = typeof prefill === 'string' && !!prefill;
 		overlay(function (box, close) {
-			box.appendChild(el('h3', null, 'Link this device'));
+			box.appendChild(el('h3', null, t('pair.link_this')));
 			if (scanned) {
 				// Arrived by scanning the QR: the code is already filled in, so the
 				// only thing left is to tap the button. Say exactly that, and that
 				// the code is shown only so it can be checked against the other
 				// device -- otherwise a code and a button read as "type this
 				// somewhere", which is what confused people.
-				box.appendChild(el('p', null,
-					'Scanned from your other device. Just tap “Link this device” below to bring '
-					+ 'your account here.'));
+				box.appendChild(el('p', null, t('pair.scanned_lead')));
 			} else {
-				box.appendChild(el('p', null,
-					'On the device you already use, choose “Link another device” and type the code '
-					+ 'it shows here.'));
+				box.appendChild(el('p', null, t('pair.manual_lead')));
 			}
 			var input = el('input', 'pair-input');
-			input.setAttribute('placeholder', 'pairing code');
+			input.setAttribute('placeholder', t('pair.code_ph'));
 			input.setAttribute('autocapitalize', 'off');
 			input.setAttribute('autocomplete', 'off');
 			input.setAttribute('spellcheck', 'false');
 			if (scanned) { input.value = prefill; input.readOnly = true; }
 			box.appendChild(input);
 			if (scanned) {
-				box.appendChild(el('p', 'pair-note',
-					'This is the code from your other device — it should match the one shown there.'));
+				box.appendChild(el('p', 'pair-note', t('pair.code_check')));
 			}
 			var err = el('div', 'pair-err');
 			box.appendChild(err);
 			var row = el('div', 'pair-row');
-			var cancel = el('button', 'pair-btn ghost', 'Cancel');
+			var cancel = el('button', 'pair-btn ghost', t('common.cancel'));
 			cancel.addEventListener('click', close);
-			var go = el('button', 'pair-btn', 'Link this device');
+			var go = el('button', 'pair-btn', t('pair.link_this'));
 			row.appendChild(cancel);
 			row.appendChild(go);
 			box.appendChild(row);
@@ -281,18 +278,18 @@
 					try { who = (window.DaimondIdentity && DaimondIdentity.displayName()) || ''; } catch (e) { /* none */ }
 					try { sessionStorage.setItem('daimond-just-linked', who || '1'); } catch (e) { /* private mode */ }
 					box.innerHTML = '';
-					box.appendChild(el('h3', null, 'This device is linked'));
-					box.appendChild(el('p', null,
-						'It now holds your account' + (who ? ' “' + who + '”' : '') + '. Tap Unlock, then '
-						+ 'enter the SAME passphrase you use on your other device — not a new one.'));
+					box.appendChild(el('h3', null, t('pair.linked')));
+					box.appendChild(el('p', null, who
+						? t('pair.linked_named', { name: who })
+						: t('pair.linked_note')));
 					var r2 = el('div', 'pair-row');
-					var ok = el('button', 'pair-btn', 'Unlock');
+					var ok = el('button', 'pair-btn', t('identity.unlock'));
 					ok.addEventListener('click', function () { close(); location.reload(); });
 					r2.appendChild(ok);
 					box.appendChild(r2);
 				}).catch(function (e) {
 					go.disabled = false;
-					err.textContent = e.message || 'Could not link this device.';
+					err.textContent = e.message || t('pair.err_link');
 				});
 			}
 			go.addEventListener('click', submit);
@@ -310,7 +307,7 @@
 		// Device B: a way in from the locked identity screen.
 		var modal = document.getElementById('identity-modal');
 		if (modal && !document.getElementById('pair-redeem-entry')) {
-			var b = el('button', 'pair-btn ghost', 'Have a pairing code?');
+			var b = el('button', 'pair-btn ghost', t('pair.have_code'));
 			b.id = 'pair-redeem-entry';
 			b.type = 'button';
 			b.style.cssText = 'margin-top:12px;width:100%';
@@ -334,8 +331,8 @@
 				+ '<path d="M15 4.2a6 6 0 015 5M15 8a2.4 2.4 0 012 2"/></svg>';
 			l.id = 'pair-link-btn';
 			l.type = 'button';
-			l.title = 'Link another device';
-			l.setAttribute('aria-label', 'Link another device');
+			l.title = t('pair.link_another');
+			l.setAttribute('aria-label', l.title);
 			l.style.display = 'none';
 			l.addEventListener('click', function () {
 				if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;

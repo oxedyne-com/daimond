@@ -135,6 +135,8 @@
 	/// Show the chip. `title` is the hover explanation, cleared unless given --
 	/// carried here because the chip is the only place a state like "off" is
 	/// reported, so its reason has to travel with it rather than into a dialog.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	function setStatus(state, text, holdMs, title) {
 		var c = statusChip();
 		if (!c) return;
@@ -155,7 +157,7 @@
 	/// state than to clobber it with something we cannot read.
 	async function pull() {
 		if (!ready()) return -1;
-		setStatus('syncing', 'Syncing…');
+		setStatus('syncing', t('sync.syncing'));
 		var res;
 		try { res = await call('GET'); }
 		catch (e) { log('pull network error', e); setStatus(''); return -1; }
@@ -175,7 +177,7 @@
 		try { await DaimondCore.applySync(state); } catch (e) { log('applySync failed', e); }
 		serverVersion = j.version | 0;
 		saveVersion();
-		setStatus('synced', 'Synced', 1800);
+		setStatus('synced', t('sync.synced'), 1800);
 		log('pulled version', serverVersion, 'from', j.device || '?');
 		return serverVersion;
 	}
@@ -200,7 +202,7 @@
 				try { blob = await DaimondIdentity.wrap(plain); }
 				catch (e) { log('encrypt failed', e); return; }
 
-				setStatus('syncing', 'Syncing…');
+				setStatus('syncing', t('sync.syncing'));
 				var res;
 				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob }); }
 				catch (e) { log('push network error', e); setStatus(''); return; }
@@ -225,7 +227,7 @@
 						}
 					}
 					catch (e) { /* the next successful push commits and sweeps */ }
-					setStatus('synced', 'Synced', 2200);
+					setStatus('synced', t('sync.synced'), 2200);
 					log('pushed version', serverVersion);
 					return;
 				}
@@ -245,8 +247,7 @@
 					// over the whole app and open Credits, which interrupted people
 					// who had one device and had never wanted sync.
 					entitled = false;			// stop trying until re-checked.
-					setStatus('off', 'Sync off', 0,
-						'Cross-device sync is part of Pro, which this account does not hold.');
+					setStatus('off', t('sync.off'), 0, t('sync.off_reason'));
 					log('sync not entitled (402); pausing pushes');
 					return;
 				}

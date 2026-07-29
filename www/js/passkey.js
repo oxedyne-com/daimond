@@ -58,6 +58,11 @@
 (function () {
 	'use strict';
 
+	/// What the app says. Every message here reaches a person: a passkey that
+	/// will not open is a dead end, and the sentence explaining it is the only
+	/// way out of it.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	// ── Parameters ─────────────────────────────────────────────
 	var UID_BYTES   = 16;	// Random WebAuthn user handle length.
 	var CHAL_BYTES  = 32;	// WebAuthn challenge length (unverified: no server).
@@ -295,19 +300,19 @@
 	/// The passphrase and the PRF secret are never stored and are dropped on
 	/// return. Resolves `{ ok:true }`, or `{ ok:false, error }` with a safe message.
 	async function enrol(passphrase) {
-		if (!passphrase) return { ok: false, error: 'A passphrase is required to enrol a passkey.' };
+		if (!passphrase) return { ok: false, error: t('passkey.err_need_passphrase') };
 		if (!window.DaimondIdentity || !DaimondIdentity.exists()) {
-			return { ok: false, error: 'There is no identity to protect with a passkey.' };
+			return { ok: false, error: t('passkey.err_no_identity') };
 		}
 		// Prove the passphrase before cutting a second door. identity.js keeps no
 		// copy, so the caller must supply it and we check it here.
 		var good = false;
 		try { good = await DaimondIdentity.verify(passphrase); } catch (e) { good = false; }
-		if (!good) return { ok: false, error: 'That passphrase did not match.' };
+		if (!good) return { ok: false, error: t('passkey.err_bad_passphrase') };
 
 		var cap = false;
 		try { cap = await available(); } catch (e) { cap = false; }
-		if (!cap) return { ok: false, error: 'This browser or device cannot create a passkey.' };
+		if (!cap) return { ok: false, error: t('passkey.err_cannot_create') };
 
 		var salt = await prfSalt();
 		var uid  = crypto.getRandomValues(new Uint8Array(UID_BYTES));
@@ -338,9 +343,9 @@
 				},
 			});
 		} catch (e) {
-			return { ok: false, error: 'Passkey creation was cancelled or failed.' };
+			return { ok: false, error: t('passkey.err_create_failed') };
 		}
-		if (!cred) return { ok: false, error: 'No passkey was created.' };
+		if (!cred) return { ok: false, error: t('passkey.err_none_created') };
 
 		var credId = new Uint8Array(cred.rawId);
 
@@ -351,13 +356,13 @@
 		if (!got || !got.prf) {
 			return {
 				ok: false,
-				error: 'This authenticator does not support the PRF extension, so it cannot unlock Daimond.',
+				error: t('passkey.err_no_prf'),
 			};
 		}
 
 		var sealed = await sealIdentity(got.prf, salt, passphrase);
 		if (!sealed) {
-			return { ok: false, error: 'The passkey could not be sealed. Nothing was saved.' };
+			return { ok: false, error: t('passkey.err_not_sealed') };
 		}
 		try {
 			localStorage.setItem(K_PASSKEY, JSON.stringify({
@@ -366,7 +371,7 @@
 				blob: sealed,
 			}));
 		} catch (e) {
-			return { ok: false, error: 'The passkey could not be saved on this device.' };
+			return { ok: false, error: t('passkey.err_not_saved') };
 		}
 		// And a copy on the gateway, so the SAME passkey opens the account on a
 		// device that has never seen it. Best-effort: without it the passkey
@@ -518,7 +523,7 @@
 	/// lives only for the duration of this call.
 	async function unlockWithPasskey() {
 		var r = record();
-		if (!r) return { ok: false, error: 'No passkey is enrolled on this device.' };
+		if (!r) return { ok: false, error: t('passkey.err_not_enrolled') };
 
 		var credId = b64urlDec(r.cred);
 		// A v1 record carries its own random salt; v2 uses the fixed one.
@@ -526,12 +531,12 @@
 
 		var got = await assertPrf(credId, salt);
 		if (!got || !got.prf) {
-			return { ok: false, error: 'The passkey could not be read. Use your passphrase.' };
+			return { ok: false, error: t('passkey.err_unreadable_use_pass') };
 		}
 
 		var opened = await openIdentity(got.prf, salt, r.blob);
 		if (!opened) {
-			return { ok: false, error: 'The passkey did not match this identity. Use your passphrase.' };
+			return { ok: false, error: t('passkey.err_wrong_identity') };
 		}
 
 		var res;
@@ -539,7 +544,7 @@
 		if (!res || !res.ok) {
 			// The sealed passphrase no longer opens the identity — the passphrase
 			// was changed since enrolment. The passkey is stale; say so plainly.
-			return { ok: false, error: 'This passkey is out of date. Unlock with your passphrase, then re-add it.' };
+			return { ok: false, error: t('passkey.err_out_of_date') };
 		}
 		// A v1 record opens once more and is then quietly brought up to v2, which
 		// is what puts a copy on the gateway and makes this passkey work on the
@@ -590,36 +595,35 @@
 	async function adoptWithPasskey() {
 		var cap = false;
 		try { cap = await available(); } catch (e) { cap = false; }
-		if (!cap) return { ok: false, error: 'This browser or device cannot use a passkey.' };
-		if (!window.DaimondIdentity) return { ok: false, error: 'Identity support is unavailable.' };
+		if (!cap) return { ok: false, error: t('passkey.err_cannot_use') };
+		if (!window.DaimondIdentity) return { ok: false, error: t('passkey.err_no_identity_support') };
 
 		var salt = await prfSalt();
 		var got  = await assertPrf(null, salt);		// discoverable: no credential named.
 		if (!got || !got.prf) {
-			return { ok: false, error: 'No Daimond passkey was offered, or it carried no PRF secret.' };
+			return { ok: false, error: t('passkey.err_no_offer') };
 		}
 
 		var blob = await getBlob(await handleFor(got.credId));
 		if (!blob) {
 			return {
 				ok: false,
-				error: 'That passkey is not set up to carry an account. On the device that has '
-					+ 'your account, open Settings and add the passkey again.',
+				error: t('passkey.err_no_account_carried'),
 			};
 		}
 
 		var opened = await openIdentity(got.prf, salt, blob);
 		if (!opened || !opened.bundle) {
-			return { ok: false, error: 'That passkey did not open the account.' };
+			return { ok: false, error: t('passkey.err_did_not_open') };
 		}
 		if (!DaimondIdentity.importBundle(opened.bundle)) {
-			return { ok: false, error: 'The stored account could not be read.' };
+			return { ok: false, error: t('passkey.err_stored_unreadable') };
 		}
 		var res;
 		try { res = await DaimondIdentity.unlock(opened.pass); } catch (e) { res = { ok: false }; }
 		opened.pass = null;
 		if (!res || !res.ok) {
-			return { ok: false, error: 'The stored account did not open. Use your passphrase.' };
+			return { ok: false, error: t('passkey.err_stored_locked') };
 		}
 		// Now that the identity is here, keep a local copy of the sealed blob so
 		// the next unlock on this device needs no gateway at all.
@@ -639,18 +643,18 @@
 	/// called straight after a successful change.
 	async function reseal(passphrase) {
 		var r = record();
-		if (!r) return { ok: false, error: 'No passkey is enrolled on this device.' };
+		if (!r) return { ok: false, error: t('passkey.err_not_enrolled') };
 		var salt = await prfSalt();
 		var got  = await assertPrf(b64urlDec(r.cred), salt);
-		if (!got || !got.prf) return { ok: false, error: 'The passkey could not be read.' };
+		if (!got || !got.prf) return { ok: false, error: t('passkey.err_unreadable') };
 		var sealed = await sealIdentity(got.prf, salt, passphrase);
-		if (!sealed) return { ok: false, error: 'The passkey could not be re-sealed.' };
+		if (!sealed) return { ok: false, error: t('passkey.err_not_resealed') };
 		try {
 			localStorage.setItem(K_PASSKEY, JSON.stringify({
 				v: 2, cred: b64urlEnc(got.credId), blob: sealed,
 			}));
 		} catch (e) {
-			return { ok: false, error: 'The passkey could not be saved on this device.' };
+			return { ok: false, error: t('passkey.err_not_saved') };
 		}
 		await putBlob(await handleFor(got.credId), sealed);
 		return { ok: true };

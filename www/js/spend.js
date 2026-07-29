@@ -40,18 +40,17 @@
 
 	// Inference costs are provider USD, often sub-cent, so show enough figures
 	// to be honest about a small number without a wall of zeros on a large one.
+	// The `fine` cascade in i18n.js is this rule; the display currency rides
+	// along with it.
 	function fmtUsd(v) {
-		v = v || 0;
-		if (v > 0 && v < 0.0995) return '$' + v.toFixed(4);
-		if (v > 0 && v < 0.995)  return '$' + v.toFixed(3);
-		return '$' + v.toFixed(2);
+		return DaimondI18n.money(v, 'fine');
 	}
 
 	// Credits are gateway minor units; reuse the gateway's own formatter.
 	function fmtCredits(minor) {
 		var g = window.DaimondGateway;
 		var cur = (g && g.state && g.state().currency) || 'usd';
-		return (g && g.fmtMoney) ? g.fmtMoney(minor, cur) : ('$' + ((minor || 0) / 100).toFixed(2));
+		return DaimondI18n.moneyMinor(minor, cur);
 	}
 
 	function fmtTokens(n) {
@@ -70,18 +69,14 @@
 		} catch (e) { return ''; }
 	}
 
-	// A friendly label for a credit category / kind.
-	var CAT_LABEL = {
-		web:    'Web pages',
-		mail:   'Mail',
-		sync:   'Cross-device sync',
-		other:  'Other services',
-		topup:  'Credits bought',
-		refund: 'Refunds',
-		grant:  'Gifts & grants',
-		adjust: 'Adjustments',
-	};
-	function catLabel(c) { return CAT_LABEL[c] || c || 'Other'; }
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	// A friendly label for a credit category / kind. An unknown category is
+	// shown as the gateway named it, which is better than hiding it.
+	var CATS = ['web', 'mail', 'sync', 'other', 'topup', 'refund', 'grant', 'adjust'];
+	function catLabel(c) {
+		return CATS.indexOf(c) !== -1 ? t('spend.cat_' + c) : (c || t('spend.cat_fallback'));
+	}
 
 	// ── The SVG bar chart ──────────────────────────────────────
 	// Bars are laid out in a 0..100 × 0..100 viewBox and stretched to the
@@ -92,7 +87,7 @@
 		opts = opts || {};
 		var W = 100, H = 100, n = bars.length;
 		var wrap = el('div', 'spend-chart');
-		if (!n) { wrap.appendChild(el('div', 'spend-empty', opts.empty || 'Nothing yet.')); return wrap; }
+		if (!n) { wrap.appendChild(el('div', 'spend-empty', opts.empty || t('spend.nothing_yet'))); return wrap; }
 
 		var max = 0;
 		for (var i = 0; i < n; i++) max = Math.max(max, bars[i].value || 0);
@@ -126,9 +121,9 @@
 				r.setAttribute('width', bw.toFixed(2));
 				r.setAttribute('height', h.toFixed(2));
 				r.setAttribute('class', 'spend-bar');
-				var t = document.createElementNS(svg.namespaceURI, 'title');
-				t.textContent = (bars[k].label ? bars[k].label + ': ' : '') + (opts.fmt ? opts.fmt(v) : v);
-				r.appendChild(t);
+				var tip = document.createElementNS(svg.namespaceURI, 'title');
+				tip.textContent = (bars[k].label ? bars[k].label + ': ' : '') + (opts.fmt ? opts.fmt(v) : v);
+				r.appendChild(tip);
 				svg.appendChild(r);
 			}
 		}
@@ -150,7 +145,7 @@
 		var wrap = el('div', 'spend-breakdown');
 		var total = 0, i;
 		for (i = 0; i < rows.length; i++) total += Math.abs(rows[i].value || 0);
-		if (total <= 0) { wrap.appendChild(el('div', 'spend-empty', 'Nothing spent here yet.')); return wrap; }
+		if (total <= 0) { wrap.appendChild(el('div', 'spend-empty', t('spend.nothing_spent'))); return wrap; }
 		for (i = 0; i < rows.length; i++) {
 			var v = Math.abs(rows[i].value || 0);
 			if (v <= 0) continue;
@@ -178,10 +173,10 @@
 
 	function inferenceSection() {
 		var sec = el('section', 'spend-sec');
-		sec.appendChild(sectionHead('Inference', 'billed to your own provider key'));
+		sec.appendChild(sectionHead(t('spend.inference'), t('spend.inference_hint')));
 
 		var L = window.DaimondLedger;
-		if (!L) { sec.appendChild(el('div', 'spend-empty', 'No usage recorded.')); return sec; }
+		if (!L) { sec.appendChild(el('div', 'spend-empty', t('spend.no_usage'))); return sec; }
 
 		var totals = {};
 		try { totals = L.totals() || {}; } catch (e) { totals = {}; }
@@ -189,20 +184,24 @@
 
 		// The headline: this period's spend, plus session for immediacy.
 		var head = el('div', 'spend-totals');
+		var periodLbl = period === 'week' ? t('spend.this_week') : t('spend.this_month');
+		// A converted figure already carries its own ≈, so the estimate mark is
+		// not added a second time.
+		var approx = (window.DaimondI18n && DaimondI18n.converted()) ? '' : '≈ ';
 		head.appendChild(bigStat(
-			(win.estimated ? '≈ ' : '') + fmtUsd(win.usd),
-			period === 'week' ? 'this week' : 'this month'));
+			(win.estimated ? approx : '') + fmtUsd(win.usd), periodLbl));
 		if (totals.session) {
 			head.appendChild(bigStat(
-				(totals.session.estimated ? '≈ ' : '') + fmtUsd(totals.session.usd), 'this session'));
+				(totals.session.estimated ? approx : '') + fmtUsd(totals.session.usd), t('spend.session')));
 		}
-		head.appendChild(bigStat(fmtTokens(win.tokens) + ' tok', period === 'week' ? 'this week' : 'this month'));
+		head.appendChild(bigStat(fmtTokens(win.tokens) + ' ' + t('spend.tok'), periodLbl));
 		sec.appendChild(head);
 
 		// The period toggle.
 		var toggle = el('div', 'spend-toggle');
-		[['week', 'Week'], ['month', 'Month']].forEach(function (p) {
-			var b = el('button', 'spend-toggle-btn' + (period === p[0] ? ' on' : ''), p[1]);
+		['week', 'month'].forEach(function (key) {
+			var p = [key];
+			var b = el('button', 'spend-toggle-btn' + (period === p[0] ? ' on' : ''), t('spend.period_' + key));
 			b.onclick = function () { period = p[0]; render(); };
 			toggle.appendChild(b);
 		});
@@ -216,7 +215,7 @@
 			var dd = new Date(d.ts);
 			return { value: d.usd, label: dd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
 		});
-		sec.appendChild(barChart(bars, { fmt: fmtUsd, empty: 'No turns in this window yet.' }));
+		sec.appendChild(barChart(bars, { fmt: fmtUsd, empty: t('spend.no_turns') }));
 
 		// The by-model table.
 		var byModel = [];
@@ -224,14 +223,14 @@
 		if (byModel.length) {
 			var tbl = el('table', 'spend-table');
 			var thead = el('tr');
-			['Model', 'Turns', 'Tokens', 'Cost'].forEach(function (h, i) {
+			[t('spend.col_model'), t('spend.col_turns'), t('spend.col_tokens'), t('spend.col_cost')].forEach(function (h, i) {
 				var th = el('th', i > 0 ? 'num' : null, h); thead.appendChild(th);
 			});
 			var thd = el('thead'); thd.appendChild(thead); tbl.appendChild(thd);
 			var tb = el('tbody');
 			byModel.forEach(function (m) {
 				var tr = el('tr');
-				tr.appendChild(el('td', 'spend-model', m.model || '(unknown)'));
+				tr.appendChild(el('td', 'spend-model', m.model || t('spend.unknown_model')));
 				tr.appendChild(el('td', 'num', String(m.turns)));
 				tr.appendChild(el('td', 'num', fmtTokens(m.tokens)));
 				tr.appendChild(el('td', 'num', fmtUsd(m.usd)));
@@ -254,23 +253,21 @@
 
 	function creditsSection() {
 		var sec = el('section', 'spend-sec');
-		sec.appendChild(sectionHead('Credits', 'gateway services — web, mail, sync'));
+		sec.appendChild(sectionHead(t('spend.credits'), t('spend.credits_hint')));
 
 		var g = window.DaimondGateway;
 		var st = (g && g.state) ? g.state() : { authed: false };
 
 		if (!st.authed) {
 			var note = el('div', 'spend-note');
-			note.textContent = 'No gateway account yet. Credits pay for the few things that leave the '
-				+ 'browser — fetching a web page, syncing or sending mail, cross-device sync. Add a '
-				+ 'passphrase and credits to begin.';
+			note.textContent = t('spend.no_account');
 			sec.appendChild(note);
 			return sec;
 		}
 
 		// Balance headline.
 		var head = el('div', 'spend-totals');
-		head.appendChild(bigStat(fmtCredits(st.credits || 0), 'balance'));
+		head.appendChild(bigStat(fmtCredits(st.credits || 0), t('spend.balance')));
 		sec.appendChild(head);
 
 		// Category breakdown of spends only (debits are negative deltas).
@@ -287,14 +284,14 @@
 		var catRows = Object.keys(byCat)
 			.map(function (c) { return { label: catLabel(c), value: byCat[c] }; })
 			.sort(function (a, b) { return b.value - a.value; });
-		sec.appendChild(el('div', 'spend-sub', 'Where credits went'));
+		sec.appendChild(el('div', 'spend-sub', t('spend.where_credits_went')));
 		sec.appendChild(breakdown(catRows, fmtCredits));
 
 		// The movements table: the ledger itself, plainly.
 		if (movements) {
 			var tbl = el('table', 'spend-table');
 			var thead = el('tr');
-			['When', 'What', 'Amount', 'Balance'].forEach(function (h, i) {
+			[t('spend.col_when'), t('spend.col_what'), t('spend.col_amount'), t('spend.col_balance')].forEach(function (h, i) {
 				thead.appendChild(el('th', i > 1 ? 'num' : null, h));
 			});
 			var thd = el('thead'); thd.appendChild(thead); tbl.appendChild(thd);
@@ -313,7 +310,7 @@
 			tbl.appendChild(tb);
 			sec.appendChild(tbl);
 		} else {
-			sec.appendChild(el('div', 'spend-empty', 'No credit movements yet.'));
+			sec.appendChild(el('div', 'spend-empty', t('spend.no_movements')));
 		}
 		return sec;
 	}
@@ -325,12 +322,16 @@
 		if (!host) return;
 		host.innerHTML = '';
 		// Frame the two pots before the numbers, so nobody reads them as one sum.
-		host.appendChild(el('div', 'spend-intro',
-			'Two pots, kept apart: inference runs on your own provider key, and '
-			+ 'credits pay the gateway for the few things that leave the browser.'));
+		host.appendChild(el('div', 'spend-intro', t('spend.intro')));
 		host.appendChild(inferenceSection());
 		host.appendChild(el('div', 'spend-divider'));
 		host.appendChild(creditsSection());
+		// A meter is an estimate either way, but a converted one is an estimate
+		// twice over, so it says which rates it used.
+		if (window.DaimondI18n && DaimondI18n.currency() !== 'USD') {
+			host.appendChild(el('div', 'spend-note',
+				t('spend.rates_note', { date: DaimondI18n.ratesAsOf() })));
+		}
 	}
 
 	function wireActions() {
@@ -349,7 +350,7 @@
 		if (row) {
 			row.setAttribute('role', 'button');
 			row.setAttribute('tabindex', '0');
-			row.title = 'See where your spending goes';
+			row.title = t('spend.meter_help');
 			row.addEventListener('click', show);
 			row.addEventListener('keydown', function (ev) {
 				if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); show(); }
@@ -389,6 +390,14 @@
 		refresh: onOpen,
 		show:    show,
 	};
+
+	// A language or currency change redraws the panel if it is on screen; a
+	// closed one is rebuilt from scratch when it next opens.
+	if (window.DaimondI18n) {
+		DaimondI18n.onChange(function () {
+			if (document.getElementById('spend-view')) render();
+		});
+	}
 
 	// Wire the header meter at load, so it opens the view the first time it is
 	// clicked, before the panel has ever been shown.

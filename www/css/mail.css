@@ -329,3 +329,41 @@
  * the user is typing a credential into, give the label room to breathe and the
  * fields room to separate. */
 .dlg-card .cfg-fieldlabel { margin-top: 14px; margin-bottom: 6px; }
+
+/* ── The folder picker ─────────────────────────────────────────
+   One level below the mailbox list: a folder is the same kind of choice as
+   a mailbox, so `.mail-folder` borrows `.mail-acct`'s shape and `.on`; only
+   what differs is stated here. Nesting depth arrives as a CSS variable so
+   the indent needs no inline style. */
+.mail-folders { flex: none; padding: 0 6px 6px; }
+.mail-folders-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 8px 4px;
+	font-size: var(--fs-2xs);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+.mail-refresh {
+	margin-left: auto;
+	border: 0;
+	background: none;
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	line-height: 1;
+	padding: 0 2px;
+	cursor: pointer;
+}
+.mail-refresh:hover { color: var(--text-primary); }
+.mail-refresh:disabled { opacity: 0.5; cursor: default; }
+.mail-folder-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 168px;
+	overflow-y: auto;
+}
+.mail-folder { padding-left: calc(8px + var(--folder-depth, 0) * 10px); }
+.mail-folder[aria-disabled="true"] { opacity: 0.55; cursor: default; }

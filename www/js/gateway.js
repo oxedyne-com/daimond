@@ -124,13 +124,16 @@
 		return undefined;
 	}
 
+	/// Minor units as money. The display currency is applied in i18n.js, which
+	/// is the only place in the app that decides what a figure looks like.
 	function fmtMoney(minor, currency) {
-		var v = (minor || 0) / 100;
-		try {
-			return v.toLocaleString(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() });
-		} catch (e) {
-			return '$' + v.toFixed(2);
-		}
+		return DaimondI18n.moneyMinor(minor, currency);
+	}
+
+	/// The same figure at a point where the user is actually charged: US
+	/// dollars, said out loud, with the converted figure beside it.
+	function fmtBilled(minor, currency) {
+		return DaimondI18n.billedMinor(minor, currency);
 	}
 
 	async function post(path, body) {
@@ -389,6 +392,7 @@
 		operatorRole:   operatorRole,
 		logout:         logout,
 		fmtMoney:       fmtMoney,
+		fmtBilled:      fmtBilled,
 		packs:          function () { return PACKS.slice(); },
 		state:          function () { return Object.assign({}, state); },
 		/// The contract version this build speaks, for a caller making its own

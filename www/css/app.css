@@ -554,7 +554,12 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .byok-form input::placeholder { color: var(--text-muted); }
 #byok-save { width: 100%; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); margin-top: 2px; }
 #byok-save:hover { filter: brightness(1.08); }
-.cfg-fieldlabel { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: -4px; }
+/* The default suits a plain block host (the admin card's built forms). The
+   BYOK form spaces rows with a flex gap instead, so it compensates below --
+   a negative default here put every OTHER form's label flush on its box. */
+.cfg-fieldlabel { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin: 12px 0 6px; }
+.cfg-fieldlabel:first-child { margin-top: 0; }
+.byok-form .cfg-fieldlabel { margin: 0 0 -4px; }
 .cfg-fieldnote { font-size: var(--fs-xs); color: var(--text-muted); margin: -4px 0 0; line-height: 1.5; }
 .cfg-advanced summary { font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer; user-select: none; padding: 2px 0; }
 .cfg-advanced[open] { display: flex; flex-direction: column; gap: 10px; }
@@ -907,6 +912,9 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
    auto-renew. The balance sits beside the spend figures, where the user
    already looks for what things cost. */
 .credits-balance { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-primary); margin-bottom: 10px; }
+/* Inserted between the balance and the pack buttons; without its own bottom
+   margin it sat flush on the packs row. */
+#credits-see-spend { margin: 2px 0 12px; }
 .credits-packs { display: flex; gap: 8px; }
 /* `.settings-section button` is accent-filled, which would make four money
    buttons shout in red. Money is stated, not sold: quiet by default, and the
@@ -973,6 +981,22 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
    it is shown rather than flattened into a one-word state. */
 .models-why { padding: 6px 8px 2px; font-size: var(--fs-2xs); line-height: 1.5; color: var(--text-secondary); }
 .settings-section .credit-pack:disabled { opacity: 0.5; }
+/* A pack in a non-USD display currency: the round local figure leads, the
+   exact billed dollars recede beside it. */
+.credit-pack .pack-local  { font-weight: 600; }
+.credit-pack .pack-billed { opacity: 0.72; font-size: var(--fs-2xs); }
+/* The billing sentence under the pack grid spans the full row of the flex
+   container it sits in. */
+.credits-packs .pack-note {
+	flex: 1 1 100%;
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	line-height: 1.45;
+	margin-top: 2px;
+}
+/* The billing note after the Pro buy button breathes like the fine print
+   above it. */
+.pro-offer .pro-fine + .pro-fine, .pro-offer button + .pro-fine { margin-top: 8px; }
 /* Credits are a BALANCE, not a spend period, so they take their own line rather
    than squeezing in as a fourth column and clipping the rail. */
 .credit-cell { flex-basis: 100%; flex-direction: row; align-items: baseline; justify-content: space-between; margin-top: 4px; padding-top: 5px; border-top: 1px dashed var(--border); }

@@ -18,6 +18,10 @@
 
 // Vendored assets, resolved relative to this module's own URL so
 // the paths hold wherever `www/` is served from.
+/// What the app says. A module, not a script, so the engine is reached through
+/// the window rather than through a shared closure.
+function tt(k, v) { return window.DaimondI18n ? window.DaimondI18n.t(k, v) : k; }
+
 const VENDOR = new URL('../vendor/typst/', import.meta.url);
 const GLUE   = new URL('typst_ts_web_compiler.mjs', VENDOR);
 const WASM   = new URL('typst_ts_web_compiler_bg.wasm', VENDOR);
@@ -106,7 +110,7 @@ export async function compilePdf(source) {
 	try {
 		compiler = await getCompiler();
 	} catch (e) {
-		return { error: 'Typst compiler failed to load: ' + (e && e.message ? e.message : e) };
+		return { error: tt('typst.load_failed', { reason: (e && e.message ? e.message : e) }) };
 	}
 	try {
 		// Start from a clean shadow filesystem each time.
@@ -118,8 +122,8 @@ export async function compilePdf(source) {
 			return { pdf: pdf };
 		}
 		const diag = diagText(ret);
-		return { error: diag || 'Typst produced no PDF (unknown compile error).' };
+		return { error: diag || tt('typst.no_pdf') };
 	} catch (e) {
-		return { error: 'Typst compile error: ' + (e && e.message ? e.message : e) };
+		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
 	}
 }

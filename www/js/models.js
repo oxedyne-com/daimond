@@ -30,6 +30,10 @@
 (function () {
 	'use strict';
 
+	/// What the app says. The table lives in i18n/en.js.
+	function t(k, v)     { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
+
 	var KEY     = 'daimond-models-v2';
 	var OLD_KEY = 'daimond-byok';           // the single-provider config this replaces
 	var deps    = null;                     // { onChange, onTopUp }
@@ -142,9 +146,19 @@
 		var p = store.providers[id];
 		return (p && p.url) || (KNOWN[id] && KNOWN[id].url) || '';
 	}
+	/// A provider's name for the screen.
+	///
+	/// A vendor's name is a proper noun and is never translated; the two names
+	/// this app made up for itself -- the credits row and the catch-all for a
+	/// provider it does not know -- are phrases, and are. They are matched on
+	/// the stored English because that is what a store written before the
+	/// interface spoke anything else holds.
 	function providerName(id) {
 		var p = store.providers[id];
-		return (p && p.name) || (KNOWN[id] && KNOWN[id].name) || id;
+		var n = (p && p.name) || (KNOWN[id] && KNOWN[id].name) || id;
+		if (id === CREDITS || n === 'Daimond credits') return t('models.credits_row');
+		if (n === 'Custom provider') return t('models.custom_provider_name');
+		return n;
 	}
 
 	/// Derive the model-listing endpoint from a chat-completions one.
@@ -252,7 +266,7 @@
 	/// whoever this file was written expecting.
 	function hostOf(url) {
 		var id = idForUrl(url);
-		if (id && KNOWN[id]) return KNOWN[id].name;
+		if (id && KNOWN[id]) return providerName(id);
 		try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
 	}
 
@@ -299,7 +313,8 @@
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (!r.ok || !j || j.ok === false) {
-			var err = new Error((j && (j.error || j.message)) || ('The account service refused (HTTP ' + r.status + ').'));
+			var err = new Error((j && (j.error || j.message))
+				|| t('models.err_refused', { status: r.status }));
 			// An empty account is not a fault, it is a thing to do, and the row offers the doing
 			// of it rather than reporting an error at somebody who has done nothing wrong. `402
 			// Payment Required` is the gateway saying exactly that; the balance is checked too,
@@ -307,7 +322,7 @@
 			err.noCredits = r.status === 402 || !!(j && j.credits_minor === 0);
 			throw err;
 		}
-		if (!j.key || !j.url) throw new Error('The account service sent a key Daimond cannot use.');
+		if (!j.key || !j.url) throw new Error(t('models.err_bad_key'));
 		return j;
 	}
 
@@ -490,9 +505,9 @@
 	async function fetchModels(id) {
 		var url = providerUrl(id);
 		var key = keyFor(id);
-		if (!url || !key) throw new Error('That provider has no key yet.');
+		if (!url || !key) throw new Error(t('models.err_no_key'));
 		var r = await fetch(modelsUrl(url), { headers: { authorization: 'Bearer ' + key } });
-		if (!r.ok) throw new Error('The provider refused the key (HTTP ' + r.status + ').');
+		if (!r.ok) throw new Error(t('models.err_key_refused', { status: r.status }));
 		var j = await r.json();
 		var ids = (j.data || j.models || [])
 			.map(function (m) { return typeof m === 'string' ? m : (m.id || m.name); })
@@ -671,14 +686,17 @@
 	/// not "is there a key" but "is there money" — so it answers that one, and the balance is
 	/// the answer when there is one.
 	function keyLabel(p) {
-		if (!p.minted) return p.sealed ? '🔒 sealed' : p.hasKey ? '🔑 key set' : '⚠ no key';
+		if (!p.minted) {
+			return p.sealed ? '🔒 ' + t('models.sealed')
+				: p.hasKey ? '🔑 ' + t('models.key_set') : '⚠ ' + t('models.no_key');
+		}
 		switch (p.state) {
 			case 'ready':     return '';                              // the balance says it better
-			case 'minting':   return '✦ connecting…';
-			case 'nocredits': return '⚠ no credits';
-			case 'offline':   return '⚠ account service unreachable';
-			case 'failed':    return '⚠ could not connect';
-			default:          return '🔒 unlock to use';
+			case 'minting':   return '✦ ' + t('models.connecting');
+			case 'nocredits': return '⚠ ' + t('models.no_credits');
+			case 'offline':   return '⚠ ' + t('models.offline');
+			case 'failed':    return '⚠ ' + t('models.could_not_connect');
+			default:          return '🔒 ' + t('models.unlock_to_use');
 		}
 	}
 
@@ -700,7 +718,7 @@
 
 		var list = providers();
 		if (!list.length) {
-			el.appendChild(html('<div class="models-empty">No provider yet. Add one to give Daimond a model to think with.</div>'));
+			el.appendChild(html('<div class="models-empty">' + esc(t('models.empty')) + '</div>'));
 			return;
 		}
 
@@ -719,15 +737,16 @@
 				  '<span class="models-caret">' + (open[p.id] ? '▾' : '▸') + '</span>'
 				+ '<span class="models-prov-name">'
 				+   '<span class="models-nm">' + esc(p.name) + '</span>'
-				+   (p.balance ? '<span class="models-bal">' + esc(p.balance) + ' left</span>' : '')
-				+   (p.via ? '<span class="models-via">via ' + esc(p.via) + '</span>' : '')
+				+   (p.balance ? '<span class="models-bal">'
+						+ esc(t('models.balance_left', { amount: p.balance })) + '</span>' : '')
+				+   (p.via ? '<span class="models-via">'
+						+ esc(t('models.via', { provider: p.via })) + '</span>' : '')
 				+ '</span>'
 				+ '<span class="models-prov-key">' + esc(keyLabel(p)) + '</span>'
-				+ '<span class="models-prov-count">' + p.count + (p.count === 1 ? ' model' : ' models') + '</span>';
+				+ '<span class="models-prov-count">' + esc(tn('models.count', p.count)) + '</span>';
 			head.title = p.paid
-				? 'These models spend your Daimond balance. Your browser calls ' + (p.via || 'the provider')
-					+ ' directly — the key is minted for you, and nothing goes through Daimond.'
-				: 'These models are billed to your own ' + p.name + ' account. They do not touch your Daimond balance.';
+				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })
+				: t('models.row_own_help', { provider: p.name });
 			head.addEventListener('click', function () { open[p.id] = !open[p.id]; render(); });
 			row.appendChild(head);
 
@@ -746,7 +765,7 @@
 				if (p.paid && p.state === 'nocredits') {
 					var top = document.createElement('button');
 					top.className = 'models-refetch';
-					top.textContent = 'Top up your credits →';
+					top.textContent = t('models.top_up');
 					top.addEventListener('click', function () { if (deps && deps.onTopUp) deps.onTopUp(); });
 					body.appendChild(top);
 				}
@@ -754,12 +773,12 @@
 				if (!p.count) {
 					var refetch = document.createElement('button');
 					refetch.className = 'models-refetch';
-					refetch.textContent = p.hasKey ? 'Ask this provider what it can run'
-						: p.minted ? 'Waiting for your credits…' : 'Add a key first';
+					refetch.textContent = p.hasKey ? t('models.ask_provider')
+						: p.minted ? t('models.waiting_credits') : t('models.add_key_first');
 					refetch.disabled = !p.ready;
 					refetch.addEventListener('click', async function () {
 						refetch.disabled = true;
-						refetch.textContent = 'Asking…';
+						refetch.textContent = t('models.asking');
 						try { await fetchModels(p.id); }
 						catch (e) { note(e && e.message ? e.message : String(e)); }
 						render();
@@ -778,14 +797,13 @@
 					// person's wallet is precisely the case a picker must not stay quiet about.
 					mr.innerHTML = '<span class="models-star">' + (isDef ? '★' : '☆') + '</span>'
 						+ '<span class="models-id">' + esc(m) + '</span>'
-						+ (p.paid ? '<span class="models-econ paid">credits</span>'
-							: twin ? '<span class="models-econ">your key</span>' : '')
-						+ (isDef ? '<span class="models-def">default</span>' : '');
-					mr.title = (isDef ? 'New chats and Diamonds start on this model.\n'
-						: 'Make this the model new chats and Diamonds start on.\n')
-						+ (p.paid ? 'Spends your Daimond balance, via ' + (p.via || 'the provider') + '.'
-							: 'Billed to your own ' + p.name + ' account.')
-						+ (twin ? '\nAnother provider serves a model of this name — this is the ' + p.name + ' one.' : '');
+						+ (p.paid ? '<span class="models-econ paid">' + esc(t('models.econ_credits')) + '</span>'
+							: twin ? '<span class="models-econ">' + esc(t('models.econ_own')) + '</span>' : '')
+						+ (isDef ? '<span class="models-def">' + esc(t('models.is_default')) + '</span>' : '');
+					mr.title = t(isDef ? 'models.model_is_default' : 'models.model_make_default') + '\n'
+						+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
+							: t('models.model_own', { provider: p.name }))
+						+ (twin ? '\n' + t('models.model_twin', { provider: p.name }) : '');
 					mr.addEventListener('click', function () { setDefault(p.id, m); render(); });
 					body.appendChild(mr);
 				});
@@ -796,7 +814,7 @@
 				if (!p.minted) {
 					var rm = document.createElement('button');
 					rm.className = 'models-remove';
-					rm.textContent = 'Remove ' + p.name;
+					rm.textContent = t('models.remove', { provider: p.name });
 					rm.addEventListener('click', function () {
 						removeProvider(p.id);
 						render();
@@ -811,8 +829,8 @@
 		var foot = document.createElement('div');
 		foot.className = 'models-default';
 		foot.textContent = d.provider && d.model
-			? 'New chats start on: ' + providerName(d.provider) + ' · ' + d.model
-			: 'No default model yet — star one above.';
+			? t('models.starts_on', { model: providerName(d.provider) + ' · ' + d.model })
+			: t('models.no_default');
 		el.appendChild(foot);
 	}
 
@@ -846,7 +864,7 @@
 		if (!list.length) {
 			var o = document.createElement('option');
 			o.value = '';
-			o.textContent = 'No models yet — add a provider key in Models';
+			o.textContent = t('models.none_yet');
 			sel.appendChild(o);
 			sel.disabled = true;
 			return;
@@ -863,10 +881,12 @@
 			// the mark has to be the exception to read as one.
 			g.label = p.paid
 				? p.name
-					+ (p.balance ? ' · ' + p.balance + ' left' : '')
-					+ (p.via ? ' — via ' + p.via : '')
-					+ (p.ready ? '' : p.state === 'nocredits' ? ' (top up to use)' : ' (connecting…)')
-				: p.name + (p.sealed ? ' (sealed — unlock to use)' : p.hasKey ? '' : ' (no key)');
+					+ (p.balance ? ' · ' + t('models.balance_left', { amount: p.balance }) : '')
+					+ (p.via ? ' — ' + t('models.via', { provider: p.via }) : '')
+					+ (p.ready ? '' : ' (' + t(p.state === 'nocredits'
+						? 'models.top_up_to_use' : 'models.connecting') + ')')
+				: p.name + (p.sealed ? ' (' + t('models.sealed_unlock') + ')'
+					: p.hasKey ? '' : ' (' + t('models.no_key') + ')');
 			p.models.forEach(function (m) {
 				var twin = !!dup[baseName(m)];
 				var o = document.createElement('option');
@@ -874,11 +894,11 @@
 				o.dataset.provider = p.id;
 				o.dataset.paid     = p.paid ? '1' : '';
 				o.textContent = m
-					+ (p.paid ? ' · credits' : twin ? ' · your key' : '')
+					+ (p.paid ? ' · ' + t('models.econ_credits') : twin ? ' · ' + t('models.econ_own') : '')
 					+ (d.provider === p.id && d.model === m ? '  ★' : '');
-				o.title = p.paid
-					? p.name + ' · ' + m + ' — spends your Daimond balance, via ' + (p.via || 'the provider') + '.'
-					: p.name + ' · ' + m + ' — billed to your own ' + p.name + ' account.';
+				o.title = p.name + ' · ' + m + ' — '
+					+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
+						: t('models.model_own', { provider: p.name }));
 				o.disabled = !p.ready;
 				g.appendChild(o);
 			});
@@ -916,6 +936,13 @@
 	function init(d) {
 		deps = d || {};
 		load();
+	}
+
+	// The panel stays mounted, so a language change redraws it where it stands.
+	if (window.DaimondI18n) {
+		DaimondI18n.onChange(function () {
+			if (document.getElementById('models-list')) render();
+		});
 	}
 
 	window.DaimondModels = {

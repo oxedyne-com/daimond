@@ -58,6 +58,8 @@
 }
 #autoreload .ar-input:focus { outline: none; border-color: var(--accent); }
 .ar-hint { font-size: var(--fs-2xs); color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
+/* The billing note is a direct child of the panel, not of a field. */
+#autoreload > .ar-hint { margin-top: 8px; }
 
 #autoreload.ar-off .ar-field { opacity: 0.55; }
 

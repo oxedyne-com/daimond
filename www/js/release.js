@@ -20,6 +20,10 @@
 (function () {
 	'use strict';
 
+	/// What the app says.
+	function t(k, v)     { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
+
 	// The same public log the delivery check reads, on an origin this server does
 	// not control, and overridable by the same meta tag so a fork points at its
 	// own. It is NOT served from inside the bundle: the log entry for a build is
@@ -128,11 +132,11 @@
 		var d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 		var d1 = new Date(then.getFullYear(), then.getMonth(), then.getDate());
 		var days = Math.round((d0 - d1) / 86400000);
-		if (days <= 0) return 'today';
-		if (days === 1) return 'yesterday';
-		if (days < 31) return days + ' days ago';
-		if (days < 365) return Math.round(days / 30) + ' months ago';
-		return Math.round(days / 365) + ' years ago';
+		if (days <= 0) return t('rel.today');
+		if (days === 1) return t('rel.yesterday');
+		if (days < 31) return tn('rel.days_ago', days);
+		if (days < 365) return tn('rel.months_ago', Math.round(days / 30));
+		return tn('rel.years_ago', Math.round(days / 365));
 	}
 
 	function dateOf(iso) {
@@ -158,21 +162,21 @@
 		// Before any release is declared, the app says so and names the build. It
 		// must not present a deployment as a release: several are sealed a day,
 		// and none of them is an announcement.
-		var name = m ? m.name : (cur ? 'Pre-release' : (runningBuild() || 'Unsealed'));
+		var name = m ? m.name : (cur ? t('rel.prerelease') : (runningBuild() || t('rel.unsealed')));
 		var when = cur ? ago(cur.ts) : '';
 
 		r.innerHTML = '';
 		r.appendChild(el('span', 'astat-dot' + (cur ? (behind ? ' warn' : ' ok') : '')));
-		r.appendChild(el('span', 'astat-label', 'Version'));
+		r.appendChild(el('span', 'astat-label', t('rel.version')));
 		r.appendChild(el('span', 'astat-val', name));
 		r.appendChild(el('span', 'astat-aside',
-			cur ? (behind ? 'update ready' : (m ? when : cur.build)) : 'not published'));
+			cur ? (behind ? t('rel.update_ready') : (m ? when : cur.build)) : t('rel.not_published')));
 		r.title = cur
-			? (m ? name + ' — build ' + cur.build : 'Pre-release, build ' + cur.build)
-				+ ', published ' + dateOf(cur.ts)
-				+ (behind ? '. A newer build has been published; reload to take it.' : '.')
-				+ ' Click for what changed.'
-			: 'This build is not in the published log. Click for the history.';
+			? t(m ? 'rel.title_named' : 'rel.title_prerelease',
+					{ name: name, build: cur.build, date: dateOf(cur.ts) })
+				+ (behind ? ' ' + t('rel.title_behind') : '')
+				+ ' ' + t('rel.title_click')
+			: t('rel.title_unlogged');
 	}
 
 	// ── The timeline ────────────────────────────────────────────────────
@@ -195,15 +199,15 @@
 			var pl = el('div', 'rel-row rel-planned');
 			var ph = el('div', 'rel-head');
 			ph.appendChild(el('span', 'rel-name', planned.name));
-			ph.appendChild(el('span', 'rel-tag', ms.length ? 'planned' : 'next'));
+			ph.appendChild(el('span', 'rel-tag', ms.length ? t('rel.planned') : t('rel.next')));
 			pl.appendChild(ph);
 			if (planned.blurb) pl.appendChild(el('div', 'rel-blurb', planned.blurb));
-			pl.appendChild(el('div', 'rel-meta', 'Not released yet, and not promised for a date.'));
+			pl.appendChild(el('div', 'rel-meta', t('rel.no_date')));
 			into.appendChild(pl);
 		}
 
 		if (!state.entries.length) {
-			into.appendChild(el('div', 'rel-empty', 'No published history could be read.'));
+			into.appendChild(el('div', 'rel-empty', t('rel.no_history')));
 			return;
 		}
 
@@ -217,7 +221,7 @@
 			var row = el('div', 'rel-row' + (here ? ' rel-current' : ''));
 			var head = el('div', 'rel-head');
 			head.appendChild(el('span', 'rel-name', m.name));
-			if (here) head.appendChild(el('span', 'rel-tag rel-here', 'you are here'));
+			if (here) head.appendChild(el('span', 'rel-tag rel-here', t('rel.you_are_here')));
 			if (first) head.appendChild(el('span', 'rel-when', dateOf(first.ts)));
 			row.appendChild(head);
 			if (m.blurb) row.appendChild(el('div', 'rel-blurb', m.blurb));
@@ -227,16 +231,15 @@
 		if (!ms.length) {
 			var none = el('div', 'rel-row rel-current');
 			var nh = el('div', 'rel-head');
-			nh.appendChild(el('span', 'rel-name', 'Pre-release'));
-			nh.appendChild(el('span', 'rel-tag rel-here', 'you are here'));
+			nh.appendChild(el('span', 'rel-name', t('rel.prerelease')));
+			nh.appendChild(el('span', 'rel-tag rel-here', t('rel.you_are_here')));
 			if (cur) nh.appendChild(el('span', 'rel-when', dateOf(cur.ts)));
 			none.appendChild(nh);
-			none.appendChild(el('div', 'rel-blurb',
-				'No release has been declared yet. You are running a build ahead of the first one.'));
+			none.appendChild(el('div', 'rel-blurb', t('rel.none_declared')));
 			if (cur) {
 				var nm = el('div', 'rel-meta');
 				nm.appendChild(el('code', null, cur.build));
-				nm.appendChild(el('span', null, ' \u00b7 sealed #' + cur.seq));
+				nm.appendChild(el('span', null, ' \u00b7 ' + t('rel.sealed_no', { n: cur.seq })));
 				none.appendChild(nm);
 			}
 			into.appendChild(none);
@@ -248,8 +251,7 @@
 		var det = document.createElement('details');
 		det.className = 'rel-builds';
 		var sum = document.createElement('summary');
-		sum.textContent = state.entries.length + ' sealed build'
-			+ (state.entries.length === 1 ? '' : 's');
+		sum.textContent = tn('rel.sealed_builds', state.entries.length);
 		det.appendChild(sum);
 		state.entries.slice().reverse().forEach(function (e) {
 			var b = el('div', 'rel-build' + (cur && e.seq === cur.seq ? ' rel-build-here' : ''));
@@ -263,9 +265,7 @@
 		into.appendChild(det);
 
 		var foot = el('div', 'rel-foot');
-		foot.textContent = 'A release is declared; a build is deployed. Every build above is '
-			+ 'recorded in a chain that cannot be rewritten without breaking. There is no way '
-			+ 'back to an older one, on purpose.';
+		foot.textContent = t('rel.foot');
 		into.appendChild(foot);
 	}
 

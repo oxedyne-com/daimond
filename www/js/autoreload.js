@@ -27,9 +27,21 @@
 	var cur = null;            // the last settings read back from the gateway
 	var busy = false;
 
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+	/// Whether figures are being shown in the currency they are billed in.
+	function usdDisplay() { return !window.DaimondI18n || DaimondI18n.currency() === 'USD'; }
+
 	function money(minor, ccy) {
 		if (window.DaimondGateway && DaimondGateway.fmtMoney) return DaimondGateway.fmtMoney(minor, ccy);
 		return ((minor || 0) / 100).toFixed(2);
+	}
+
+	/// A standing instruction to charge a card is the sharpest end of the
+	/// billing question, so every amount here is a US dollar amount and the
+	/// panel says so when the user is reading in something else.
+	function billed(minor, ccy) {
+		if (window.DaimondGateway && DaimondGateway.fmtBilled) return DaimondGateway.fmtBilled(minor, ccy);
+		return money(minor, ccy);
 	}
 
 	function el(tag, cls, text) {
@@ -72,25 +84,23 @@
 		cur = s;
 		host.innerHTML = '';
 
-		host.appendChild(el('div', 'ar-title', 'Auto-reload'));
-		host.appendChild(el('p', 'cfg-lead',
-			'Daimond can buy its own credits when they run low, so a long job does not stop halfway. '
-			+ 'It charges the card below, without asking, up to a limit you set here.'));
+		host.appendChild(el('div', 'ar-title', t('autoreload.title')));
+		host.appendChild(el('p', 'cfg-lead', t('autoreload.lead')));
 
 		// ── The card ────────────────────────────────────────────────
 		var cardRow = el('div', 'ar-card');
 		var card = s.card || {};
 		if (card.saved) {
 			cardRow.appendChild(el('span', 'ar-card-has',
-				'💳 ' + (card.brand || 'card') + ' ending ' + (card.last4 || '••••')));
-			var replace = el('button', 'ar-card-btn', 'Replace…');
-			replace.title = 'Save a different card. Stripe collects it; Daimond never sees it.';
+				'💳 ' + t('autoreload.card_has', { brand: card.brand || t('autoreload.card_word'), last4: card.last4 || '••••' })));
+			var replace = el('button', 'ar-card-btn', t('autoreload.replace'));
+			replace.title = t('autoreload.replace_help');
 			replace.addEventListener('click', startCard);
 			cardRow.appendChild(replace);
 		} else {
-			cardRow.appendChild(el('span', 'ar-card-none', 'No card saved.'));
-			var save = el('button', 'ar-card-btn accent', 'Save a card');
-			save.title = 'Opens Stripe’s own page. Nothing is charged, and no card detail reaches Daimond.';
+			cardRow.appendChild(el('span', 'ar-card-none', t('autoreload.no_card')));
+			var save = el('button', 'ar-card-btn accent', t('autoreload.save_card'));
+			save.title = t('autoreload.save_card_help');
 			save.addEventListener('click', startCard);
 			cardRow.appendChild(save);
 		}
@@ -109,20 +119,18 @@
 		box.addEventListener('change', function () { paintFields(); });
 		onRow.appendChild(box);
 		onRow.appendChild(el('span', null, card.saved
-			? 'Buy credits automatically'
-			: 'Buy credits automatically — save a card first'));
+			? t('autoreload.switch_on')
+			: t('autoreload.switch_no_card')));
 		host.appendChild(onRow);
 
 		// ── The three numbers ───────────────────────────────────────
 		var ccy = s.currency || 'usd';
-		host.appendChild(field('ar-threshold', 'When the balance falls below',
-			s.threshold_minor, ccy, 'A reload fires the moment a turn takes the balance under this.'));
-		host.appendChild(field('ar-topup', 'Buy this much',
-			s.topup_minor, ccy, 'One top-up. The gateway will not sell more than ' + money(20000, ccy) + ' at a time.'));
-		host.appendChild(field('ar-budget', 'Never spend more, per month, than',
-			s.monthly_budget_minor, ccy,
-			'A hard ceiling on what auto-reload may spend in a calendar month. It cannot be exceeded, '
-			+ 'only raised here.'));
+		host.appendChild(field('ar-threshold', t('autoreload.when_below'),
+			s.threshold_minor, ccy, t('autoreload.when_below_hint')));
+		host.appendChild(field('ar-topup', t('autoreload.buy_amount'),
+			s.topup_minor, ccy, t('autoreload.buy_amount_hint', { max: billed(20000, ccy) })));
+		host.appendChild(field('ar-budget', t('autoreload.monthly_cap'),
+			s.monthly_budget_minor, ccy, t('autoreload.monthly_cap_hint')));
 
 		// What it has spent against that ceiling, this month. The number that answers "is this
 		// thing running away with my money", which is the only question that matters.
@@ -136,20 +144,27 @@
 			spent.appendChild(bar);
 		}
 		spent.appendChild(el('span', 'ar-spent-txt',
-			'Spent this month: ' + money(s.spent_this_month_minor || 0, ccy)
-			+ (s.monthly_budget_minor > 0 ? ' of ' + money(s.monthly_budget_minor, ccy) : '')));
+			s.monthly_budget_minor > 0
+				? t('autoreload.spent_of', {
+					spent: money(s.spent_this_month_minor || 0, ccy),
+					cap:   money(s.monthly_budget_minor, ccy) })
+				: t('autoreload.spent', { spent: money(s.spent_this_month_minor || 0, ccy) })));
 		host.appendChild(spent);
 
 		// The gateway's last complaint, said plainly. A card that has expired or been declined is
 		// something the user must be told BEFORE the balance runs out, not after.
 		if (s.last_error) {
 			var err = el('div', 'ar-last-error');
-			err.appendChild(el('span', null, '⚠ The last automatic top-up failed: ' + s.last_error));
+			err.appendChild(el('span', null, '⚠ ' + t('autoreload.last_error', { reason: s.last_error })));
 			host.appendChild(err);
 		}
 
+		// The amounts above are charged, not merely shown, so a user reading in
+		// another currency is told which currency the card will see.
+		if (!usdDisplay()) host.appendChild(el('p', 'ar-hint', t('billing.usd_note')));
+
 		var actions = el('div', 'ar-actions');
-		var saveBtn = el('button', 'ar-save accent', 'Save');
+		var saveBtn = el('button', 'ar-save accent', t('common.save'));
 		saveBtn.id = 'ar-save';
 		saveBtn.addEventListener('click', save);
 		actions.appendChild(saveBtn);
@@ -165,7 +180,10 @@
 		var lab = el('label', 'ar-label', label);
 		lab.setAttribute('for', id);
 		var row = el('div', 'ar-input-row');
-		row.appendChild(el('span', 'ar-ccy', (ccy || 'usd').toUpperCase() === 'GBP' ? '£' : '$'));
+		// The unit the number is typed in, which is the unit it is billed in.
+		// It only spells out "US" when that is not what the user is reading in.
+		var unit = (ccy || 'usd').toUpperCase();
+		row.appendChild(el('span', 'ar-ccy', unit === 'GBP' ? '£' : (usdDisplay() ? '$' : 'US$')));
 		var inp = document.createElement('input');
 		inp.type = 'number';
 		inp.id = id;
@@ -197,14 +215,12 @@
 		if (busy) return;
 		busy = true;
 		var btn = document.getElementById('ar-save');
-		if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+		if (btn) { btn.disabled = true; btn.textContent = t('autoreload.saving'); }
 		note('');
 		try {
 			var next = await DaimondGateway.setAutoReload(readForm());
 			cur = next;
-			note(next.enabled
-				? 'On. Daimond will keep itself topped up, within your monthly limit.'
-				: 'Off. Nothing will be charged.');
+			note(next.enabled ? t('autoreload.on_note') : t('autoreload.off_note'));
 			await render();
 		} catch (e) {
 			// The gateway's refusals are written for a person to read -- "the monthly budget is
@@ -214,7 +230,7 @@
 		} finally {
 			busy = false;
 			var b = document.getElementById('ar-save');
-			if (b) { b.disabled = false; b.textContent = 'Save'; }
+			if (b) { b.disabled = false; b.textContent = t('common.save'); }
 		}
 	}
 

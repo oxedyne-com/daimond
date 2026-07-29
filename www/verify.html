@@ -59,6 +59,13 @@ node verify/check.mjs --url <span id="origin">this site</span></pre>
 	</div>
 </main>
 
+<!-- The delivery check speaks the interface's language too. The engine and the
+     English baseline are loaded before the checker, and the user's own choice
+     (kept beside the theme, in localStorage) is loaded after -- so a page whose
+     verdict a person has to read arrives in a language they read. Guarded
+     throughout: without these two files the checker still runs, in English. -->
+<script src="js/i18n.js"></script>
+<script src="i18n/en.js"></script>
 <script src="js/verify.js"></script>
 <script>
 (function () {
@@ -67,6 +74,15 @@ node verify/check.mjs --url <span id="origin">this site</span></pre>
 	var progEl = document.getElementById('prog'), caveatEl = document.getElementById('caveat');
 	var btn = document.getElementById('recheck');
 	try { document.getElementById('origin').textContent = location.origin; } catch (e) {}
+	// Bring in the chosen language, if there is one, and redraw when it lands.
+	if (window.DaimondI18n) {
+		try {
+			DaimondI18n.load(DaimondI18n.locale()).then(function () {
+				DaimondI18n.apply();
+				if (!btn.disabled) run();
+			});
+		} catch (e) { /* English is already here */ }
+	}
 
 	function mark(c) { return c.ok === true ? ['ok', '✓'] : c.ok === false ? ['no', '✗'] : ['warn', '?']; }
 

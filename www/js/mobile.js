@@ -42,6 +42,8 @@
 	var detent = 'half';		// full | half | peek
 	var closing = false;		// re-entrancy guard against DaimondPanels.hide
 
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	function label(id) {
 		var el = document.getElementById('panel-' + id);
 		return (el && el.getAttribute('data-label')) || id;
@@ -87,7 +89,7 @@
 		if (NO_ASK[id]) askWrap.classList.add('hidden');
 		else {
 			askWrap.classList.remove('hidden');
-			askInput.placeholder = 'Ask about this ' + label(id).toLowerCase() + '…';
+			askInput.placeholder = t('sheet.ask_about', { thing: label(id).toLowerCase() });
 		}
 		// Size to the detent instantly (still slid off-screen), then add `.open`
 		// on the next frame so the transform slides it up into view.

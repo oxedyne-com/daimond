@@ -16,6 +16,10 @@
 (function () {
 	'use strict';
 
+	/// What the app says. Only the copy button on a code block: everything else
+	/// in this file is markup or a syntax-highlighter keyword.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	// ── HTML entity helpers ────────────────────────────────────
 
 	/// Escape the five significant HTML characters.
@@ -279,7 +283,8 @@
 				return '<div class="code-block" data-lang="' + escapeHtml(label) + '">' +
 					'<div class="code-block-head">' +
 					'<span class="code-block-lang">' + escapeHtml(label) + '</span>' +
-					'<button class="code-copy-btn" type="button" data-code="' + enc + '">Copy</button>' +
+					'<button class="code-copy-btn" type="button" data-code="' + enc + '">'
+						+ escapeHtml(t('common.copy')) + '</button>' +
 					'</div>' +
 					'<pre><code>' + hi + '</code></pre>' +
 					'</div>';
@@ -425,15 +430,15 @@
 		var restore = function (label) {
 			btn.textContent = label;
 			setTimeout(function () {
-				btn.textContent = 'Copy';
+				btn.textContent = t('common.copy');
 				btn.classList.remove('copied');
 			}, 1400);
 		};
 		copyText(code).then(function () {
 			btn.classList.add('copied');
-			restore('Copied');
+			restore(t('toast.copied'));
 		}, function () {
-			restore('Failed');
+			restore(t('render.copy_failed'));
 		});
 	});
 

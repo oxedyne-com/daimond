@@ -23,6 +23,10 @@
 (function () {
 	'use strict';
 
+	/// What the app says. The check names and their details are read by a
+	/// person deciding whether to trust the page they are on.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
 	// The transparency log in the PUBLIC repo, on an origin this server does not
 	// control. Overridable with <meta name="daimond-log" content="..."> so a fork
 	// or a mirror can point at its own. The default is the canonical repo.
@@ -58,9 +62,9 @@
 		var prev = GENESIS_PREV;
 		for (var i = 0; i < entries.length; i++) {
 			var e = entries[i];
-			if (e.seq !== i)       return { ok: false, error: 'entry ' + i + ' out of order' };
-			if (e.prev !== prev)   return { ok: false, error: 'entry ' + i + ' does not chain on ' + (i - 1) };
-			if (e.entry !== await entryHash(e)) return { ok: false, error: 'entry ' + i + ' hash mismatch' };
+			if (e.seq !== i)       return { ok: false, error: t('verify.chain_order', { n: i }) };
+			if (e.prev !== prev)   return { ok: false, error: t('verify.chain_break', { n: i, prev: i - 1 }) };
+			if (e.entry !== await entryHash(e)) return { ok: false, error: t('verify.chain_hash', { n: i }) };
 			prev = e.entry;
 		}
 		return { ok: true, error: '' };
@@ -88,7 +92,7 @@
 		try {
 			manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
 		} catch (e) {
-			add('manifest', false, 'this build was served without a manifest.json — it cannot be checked');
+			add(t('verify.check_manifest'), false, t('verify.no_manifest'));
 			return verdict(checks, null);
 		}
 
@@ -96,8 +100,8 @@
 		//    its own file list. (Weak on its own — the server wrote both — but a
 		//    fast, necessary sanity gate.)
 		var recomputed = await bundleHash(manifest.files);
-		add('manifest self-consistent', recomputed === manifest.bundle,
-			recomputed === manifest.bundle ? '' : 'the manifest bundle hash does not match its file list');
+		add(t('verify.check_self'), recomputed === manifest.bundle,
+			recomputed === manifest.bundle ? '' : t('verify.self_mismatch'));
 
 		// 2. THE one that matters: the served bundle is a sealed entry in the
 		//    public, hash-chained log on an origin this server does not control.
@@ -106,16 +110,15 @@
 			var entries = text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).map(JSON.parse);
 			var chain = await verifyChain(entries);
 			if (!chain.ok) {
-				add('public transparency log', false, 'the public log is not an intact chain: ' + chain.error);
+				add(t('verify.check_log'), false, t('verify.log_broken', { reason: chain.error }));
 			} else {
 				var sealed = entries.some(function (e) { return e.bundle === manifest.bundle; });
-				add('sealed in the public log', sealed,
-					sealed ? entries.length + ' releases on record'
-						: 'this served bundle is NOT in the public history — it was never published');
+				add(t('verify.check_sealed'), sealed,
+					sealed ? t('verify.on_record', { n: entries.length })
+						: t('verify.never_published'));
 			}
 		} catch (e) {
-			add('public transparency log', null,
-				'could not reach the public log (offline, or blocked by policy) — run verify/check.mjs to be sure');
+			add(t('verify.check_log'), null, t('verify.log_unreachable'));
 		}
 
 		// 3. Optionally, every served file hashes to what the manifest says. This
@@ -130,12 +133,13 @@
 					var res = await fetch(rel, { cache: 'no-store' });
 					var got = await sha256(new Uint8Array(await res.arrayBuffer()));
 					if (got !== manifest.files[rel]) bad.push(rel);
-				} catch (e) { bad.push(rel + ' (unreadable)'); }
+				} catch (e) { bad.push(rel + ' ' + t('verify.unreadable')); }
 				done++;
 				if (opts.onProgress) try { opts.onProgress(done, rels.length); } catch (e) {}
 			}
-			add('every served file matches the manifest', bad.length === 0,
-				bad.length ? bad.length + ' differ: ' + bad.slice(0, 8).join(', ') : rels.length + ' files');
+			add(t('verify.check_files'), bad.length === 0,
+				bad.length ? t('verify.files_differ', { n: bad.length, list: bad.slice(0, 8).join(', ') })
+					: t('verify.files_ok', { n: rels.length }));
 		}
 
 		return verdict(checks, manifest);
@@ -152,10 +156,7 @@
 			build:  manifest ? manifest.build : '',
 			bundle: manifest ? manifest.bundle : '',
 			checks: checks,
-			caveat: 'A page cannot fully vouch for itself: a tampered server could tamper with this '
-				+ 'very check. For an independent verdict, build the public source and run '
-				+ 'verify/check.mjs, or use the delivery-verify browser extension — neither of which '
-				+ 'this server can touch.',
+			caveat: t('verify.caveat'),
 		};
 	}
 

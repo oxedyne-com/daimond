@@ -48,9 +48,9 @@ SMTPD=${SMTPD:-dev/smtpd.mjs}
 # One line, and matched with a space either side: a newline in this list would
 # make the last name on a line never match, and that test would run in the wrong
 # phase without saying so.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_tools verify_compose verify_pairing verify_passkey_adopt verify_passkey_blob"
+NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob"
 # Of those, the two that also need an entitled account (and, for compose, mail).
-NEEDS_GRANT="verify_tools verify_compose"
+NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
 
 # The extension flows load a real unpacked extension, which Chromium will only
 # do HEADED -- and a headed browser needs a display. Never the user's: an X
@@ -147,10 +147,10 @@ fi
 # ── Phase 2: a gateway, and what the entitled tests need ────────────────
 if [ -n "$PHASE2" ]; then
 	say ""
-	# compose talks to loopback mail fixtures, which the shipped config refuses.
+	# compose and mailfolders talk to loopback mail fixtures, which the shipped config refuses.
 	# Run the gateway from the generated dev CWD for the whole of phase 2: it is
 	# the same binary over the same store, one flag different.
-	case " $PHASE2 " in *" verify_compose "*)
+	case " $PHASE2 " in *" verify_compose "*|*" verify_mailfolders "*)
 		if bash dev/devgw.sh >/dev/null 2>&1; then GW_CWD=dev/devgw; fi ;;
 	esac
 	if ! start_gateway; then
@@ -188,10 +188,10 @@ if [ -n "$PHASE2" ]; then
 			fi
 		fi
 
-		# compose also needs the mail fixtures: an IMAP server to read, and a
-		# submission stand-in to catch what is sent.
+		# compose and mailfolders need the mail fixtures: an IMAP server to read,
+		# and a submission stand-in to catch what is sent.
 		MAIL=no
-		case " $PHASE2 " in *" verify_compose "*)
+		case " $PHASE2 " in *" verify_compose "*|*" verify_mailfolders "*)
 			if [ -x "$IMAP_FIXTURE" ]; then
 				nohup "$IMAP_FIXTURE" >"$SCRATCH/suite-imap.log" 2>&1 &
 				nohup node "$SMTPD"   >"$SCRATCH/suite-smtpd.log" 2>&1 &
@@ -206,7 +206,7 @@ if [ -n "$PHASE2" ]; then
 			case " $NEEDS_GRANT " in
 				*" $name "*) [ "$GRANTED" = yes ] || { skip_one "$name" "no entitled account (see above)"; continue; } ;;
 			esac
-			if [ "$name" = verify_compose ] && [ "$MAIL" != yes ]; then
+			if { [ "$name" = verify_compose ] || [ "$name" = verify_mailfolders ]; } && [ "$MAIL" != yes ]; then
 				skip_one "$name" "mail fixtures absent (build fe2o3's imap_test_server example)"
 				continue
 			fi

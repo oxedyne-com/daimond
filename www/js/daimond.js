@@ -177,6 +177,13 @@ import init, {
 	// ones this tab deleted on purpose.
 	var CHATS_KEY = 'daimond-chats';
 	var TOMBS_KEY = 'daimond-chats-deleted';
+	// Diamonds live in OPFS, which fires no event when another tab writes to it,
+	// so two windows of the same account went on showing two different rails for
+	// ever -- a Diamond made in one was invisible in the other, and re-making it
+	// there looked like nothing happening. localStorage DOES fire across tabs, so
+	// a nonce bumped on every Diamond mutation is the signal OPFS does not give:
+	// the value means nothing, the CHANGE is the whole message.
+	var DIAMONDS_KEY = 'daimond-diamonds-rev';
 	var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
 	var TOMB_TTL  = 7 * 24 * 3600 * 1000;   // a deletion outlives any live tab
 
@@ -332,15 +339,52 @@ import init, {
 		}
 		if (current && !chats.some(function (c) { return c.id === current.id; })) {
 			current = null;
-			sessionNameEl.textContent = 'No chat';
+			sessionNameEl.textContent = t('chat.no_chat');
 			renderEmptyState();
 			chatInputBar.style.display = 'none';
 			updateMeters();
 		}
 		renderSessionList();
 	}
+	// Another tab changed the Diamonds. Re-read the rail from the store, which
+	// is the truth; a turn in flight here is not disturbed, because nothing but
+	// the list is touched. A Diamond deleted elsewhere while it was the one on
+	// screen leaves the Centre showing something that no longer exists, so the
+	// Centre goes back to the empty state rather than to a ghost.
+	async function onDiamondsChangedElsewhere() {
+		var had = currentDiamond && currentDiamond.id;
+		await loadDiamonds();
+		if (!had) return;
+		var still = diamonds.find(function (x) { return x.id === had; });
+		if (still) {
+			// Renamed or re-cut elsewhere: adopt the fresh record without
+			// disturbing what is on screen.
+			currentDiamond = still;
+			if (centreMode === 'focus') {
+				sessionNameEl.textContent = still.name;
+				aiMeter.textContent = 'crystal v' + (still.crystal_version || 0)
+					+ (still.updated ? ' · ' + relTime(still.updated) : '');
+			}
+			return;
+		}
+		// Gone. A steer or fold running against it has nothing left to write to.
+		currentDiamond = null;
+		delete pendingFolds[had];
+		sessionNameEl.textContent = t('chat.no_chat');
+		showCentre('chat');
+		renderEmptyState();
+	}
+
+	/// Say that the Diamonds changed, to whatever other tabs are open. Called
+	/// after every mutation; the value is a nonce and is never read back.
+	function bumpDiamonds() {
+		try { localStorage.setItem(DIAMONDS_KEY, String(Date.now()) + '.' + Math.random()); }
+		catch (e) { /* private mode: this tab is the only one that can see them anyway */ }
+	}
+
 	window.addEventListener('storage', function (e) {
 		if (e.key === CHATS_KEY || e.key === TOMBS_KEY) onChatsChangedElsewhere();
+		else if (e.key === DIAMONDS_KEY) onDiamondsChangedElsewhere();
 	});
 
 	// ── Cross-device sync (sync.js is the transport; this is the state) ──
@@ -817,17 +861,25 @@ import init, {
 		if (!eye || !inp) return;
 		var show = !!inp._revealed;
 		eye.innerHTML = show ? EYE_OFF : EYE_OPEN;
-		eye.title = show ? 'Hide passphrase' : 'Show passphrase';
+		eye.title = show ? t('identity.hide_passphrase') : t('identity.show_passphrase');
 		eye.setAttribute('aria-label', eye.title);
 	}
 
-	// Format a USD cost calmly: precise but never dollar-signs-screaming.
+	// ── What the app says ──────────────────────────────────────
+	// The table lives in i18n/en.js and the engine in i18n.js; these are the
+	// two names the rest of this file uses.
+	function t(k, vars)     { return DaimondI18n.t(k, vars); }
+	function tn(k, n, vars) { return DaimondI18n.tn(k, n, vars); }
+	/// Whether figures are being shown in the currency they are billed in.
+	/// When they are not, a purchase point owes the user a sentence.
+	function usdDisplay()   { return DaimondI18n.currency() === 'USD'; }
+
+	// Format a USD cost calmly: precise but never dollar-signs-screaming. The
+	// cascade now lives in i18n.js, which is also where a display currency is
+	// applied -- one formatter, so a figure cannot be converted on one screen
+	// and left in dollars on the next.
 	function fmtUsd(u) {
-		u = +u || 0;
-		if (u <= 0) return '$0';
-		if (u < 0.01) return '$' + u.toFixed(4);
-		if (u < 1) return '$' + u.toFixed(3);
-		return '$' + u.toFixed(2);
+		return DaimondI18n.money(u);
 	}
 
 	// ── Diamonds state ─────────────────────────────────────────────
@@ -932,6 +984,39 @@ import init, {
 		get:  function () { return document.documentElement.getAttribute('data-skin') || 'sharp'; },
 		set:  setSkin,
 	};
+
+	// ── Repainting after a language or currency change ─────────
+	// The surfaces that are ALWAYS on screen are redrawn at once: the admin
+	// status header, the spend readout at the foot of the rail, and the Credits
+	// drawer if it is the one open. Everything built on open (a dialog, a form,
+	// the tools panel) is next-open, which is when it is next built anyway.
+	if (window.DaimondI18n) {
+		DaimondI18n.onChange(function () {
+			try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
+			try { updateSpend(); } catch (e) { /* no ledger yet */ }
+			try {
+				var cv = document.getElementById('admin-credits');
+				if (cv && cv.style.display !== 'none') renderCredits();
+			} catch (e) { /* the drawer is not open */ }
+			try { updateUserRow(); } catch (e) { /* not signed in */ }
+			// The chat header when nothing is open. It is not a dialog waiting to be
+			// built again -- it is on screen the whole time an empty app is, so a
+			// language change has to reach it where it stands.
+			try {
+				if (!current && !currentDiamond && sessionNameEl) {
+					sessionNameEl.textContent = t('chat.no_chat');
+				}
+			} catch (e) { /* the header is not up yet */ }
+			// Likewise the version row in the rail's status block, which release.js
+			// draws from its own strings.
+			try { if (window.DaimondRelease) DaimondRelease.paintRow(); } catch (e) { /* no log */ }
+			// And the two lists in the rail, which say "No Diamonds yet." and "No
+			// chats yet." to an empty account -- as permanently on screen as
+			// anything in the app, and for a new user the FIRST words they read.
+			try { renderDiamondList(); } catch (e) { /* the rail is not up yet */ }
+			try { renderSessionList(); } catch (e) { /* the rail is not up yet */ }
+		});
+	}
 
 	// ── Durability: lifecycle hooks ────────────────────────────
 	// These are INSURANCE, not the mechanism. The journal is kept current as work happens, so
@@ -1665,7 +1750,7 @@ import init, {
 			var hs = document.createElement('div');
 			hs.className = 'phandle';
 			hs.id = 'handle-stage';
-			hs.title = 'Drag to resize, double-click to reset';
+			hs.title = t('layout.handle');
 			stageEl.appendChild(hs);
 
 			scan();
@@ -1700,6 +1785,16 @@ import init, {
 		return {
 			init: init, show: show, hide: hide, toggle: toggle, isOpen: isOpen,
 			reflow: apply, panels: function () { return PANELS.slice(); },
+			/// Re-read every panel's name from the DOM and redraw what shows it.
+			/// The names are markup, so a language change rewrites the attribute
+			/// and this picks the new one up -- one registry, still the DOM.
+			relabel: function () {
+				PANELS.forEach(function (p) {
+					var el = document.getElementById(p.el);
+					if (el) p.label = el.dataset.label || el.dataset.panel;
+				});
+				apply();
+			},
 			zone: zoneOf,
 			// The chip row, the gallery and the palette are all views of this.
 			model: tagModel, activate: activate,
@@ -1757,7 +1852,7 @@ import init, {
 	function addMsgCopy(div, text) {
 		var btn = document.createElement('button');
 		btn.className = 'msg-copy';
-		btn.title = 'Copy'; btn.setAttribute('aria-label', 'Copy message');
+		btn.title = t('common.copy'); btn.setAttribute('aria-label', t('chat.copy_message'));
 		btn.innerHTML = COPY_SVG;
 		btn.addEventListener('click', function (e) {
 			e.stopPropagation();
@@ -1896,7 +1991,7 @@ import init, {
 		var pick = document.createElement('label');
 		pick.className = 'turn-pick';
 		pick.innerHTML = '<input type="checkbox">';
-		pick.title = 'Include this turn when folding';
+		pick.title = t('chat.include_turn');
 		pick.querySelector('input').addEventListener('click', function (e) {
 			e.stopPropagation();                  // ticking a box is not a click on the box below it
 			div.classList.toggle('picked', e.target.checked);
@@ -2226,9 +2321,9 @@ import init, {
 		opts = opts || {};
 		return dialog({
 			kind: 'confirm',
-			title: opts.title || 'Are you sure?',
+			title: opts.title || t('dlg.are_you_sure'),
 			message: message,
-			okLabel: okLabel || 'OK',
+			okLabel: okLabel || t('dlg.ok'),
 			cancelLabel: opts.cancelLabel,        // a caller may rename the second button.
 			danger: opts.danger !== false,
 		});
@@ -2328,12 +2423,9 @@ import init, {
 			var typed = String(req.detail || '');
 			var shownText = typed.length > 300 ? (typed.slice(0, 300) + '…') : typed;
 			var okType = await confirmDialog(
-				'This turn has read content from outside your workspace, and Daimond now wants to ' +
-				'type into the page at ' + host + ' — which may send it.\n\n' +
-				'What it wants to enter:\n\n' + (shownText || '(nothing)') + '\n\n' +
-				'If you did not expect that, decline.',
-				'Type it',
-				{ title: 'Type into ' + host + '?', danger: true });
+				t('egress.type_body', { host: host, text: shownText || t('egress.nothing') }),
+				t('egress.type_ok'),
+				{ title: t('egress.type_title', { host: host }), danger: true });
 			return okType ? 'allow' : 'deny';		// never remembered.
 		}
 		// Clicking navigates, and a link's address is written by whoever wrote the
@@ -2342,13 +2434,9 @@ import init, {
 		if (req.tool === 'web_click') {
 			if (_egressAct[host]) return 'allow';
 			var okAct = await confirmDialog(
-				'This turn has read content from outside your workspace, and Daimond now wants to ' +
-				'act on the page at ' + host + '.\n\n' +
-				'A link on a page is written by whoever wrote the page, and following one can ' +
-				'carry information away with it.\n\n' +
-				'Allow it, only if you expected this.',
-				'Allow acting on ' + host,
-				{ title: 'Act on ' + host + '?', danger: true });
+				t('egress.act_body', { host: host }),
+				t('egress.act_ok', { host: host }),
+				{ title: t('egress.act_title', { host: host }), danger: true });
 			if (!okAct) return 'deny';
 			_egressAct[host] = 1;
 			return 'allow';
@@ -2364,22 +2452,15 @@ import init, {
 			// should be.
 			var shown = load.text.length > 300 ? (load.text.slice(0, 300) + '…') : load.text;
 			ok = await confirmDialog(
-				'This turn has read content from outside your workspace, and Daimond now wants to ' +
-				'reach ' + host + ' with an unusually long address.\n\n' +
-				'An address can carry information out. This one is carrying:\n\n' + shown + '\n\n' +
-				'If you did not expect that, decline — nothing is lost but this one request.',
-				'Send it anyway',
-				{ title: 'Send this to ' + host + '?', danger: true });
+				t('egress.heavy_body', { host: host, text: shown }),
+				t('egress.heavy_ok'),
+				{ title: t('egress.heavy_title', { host: host }), danger: true });
 			return ok ? 'allow' : 'deny';		// deliberately NOT remembered.
 		}
 		ok = await confirmDialog(
-			'This turn has read content from outside your workspace — a web page, or a message. ' +
-			'Something in it may be trying to steer Daimond.\n\n' +
-			'It now wants to reach ' + host + ', which it has not visited before. Anything it ' +
-			'knows could be carried in that address.\n\n' +
-			'Allow it, only if you expected this.',
-			'Allow ' + host,
-			{ title: 'Reach ' + host + '?', danger: true });
+			t('egress.reach_body', { host: host }),
+			t('egress.reach_ok', { host: host }),
+			{ title: t('egress.reach_title', { host: host }), danger: true });
 		if (!ok) return 'deny';
 		_egressOk[host] = 1;
 		return 'allow';
@@ -2565,7 +2646,7 @@ import init, {
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
-			showDrawer('Admin', false);
+			showDrawer(t('drawer.admin'), false);
 		}
 		var closeModal = closeAdmin;
 
@@ -2580,8 +2661,8 @@ import init, {
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
 			if (window.DaimondModels) DaimondModels.render();
-			if (available()) { toPanel(); showDrawer('Models'); }
-			else toModal('Models');
+			if (available()) { toPanel(); showDrawer(t('drawer.models')); }
+			else toModal(t('drawer.models'));
 		}
 
 		/// Show what you are running, and what came before it. Reached from the
@@ -2595,8 +2676,8 @@ import init, {
 			curView = releaseView;
 			releaseView.style.display = '';
 			if (window.DaimondRelease) DaimondRelease.render(document.getElementById('rel-list'));
-			if (available()) { toPanel(); showDrawer('Version'); }
-			else toModal('Version');
+			if (available()) { toPanel(); showDrawer(t('drawer.version')); }
+			else toModal(t('drawer.version'));
 		}
 
 		/// Show the credits. They used to sit under the model settings, in one form that answered
@@ -2616,8 +2697,8 @@ import init, {
 			// settings page of its own: the question "what happens when these run out" is asked
 			// while looking at how many are left.
 			if (window.DaimondAutoReload) DaimondAutoReload.render();
-			if (available()) { toPanel(); showDrawer('Credits'); }
-			else toModal('Credits');
+			if (available()) { toPanel(); showDrawer(t('drawer.credits')); }
+			else toModal(t('drawer.credits'));
 		}
 
 		/// The cog: open the Admin drawer on its menu, or close it if it is open.
@@ -2633,7 +2714,7 @@ import init, {
 			if (!available()) return dialog(opts);
 			var opener = document.activeElement;   // captured before anything moves it
 			toPanel();
-			showDrawer(opts.title || 'Admin', true);
+			showDrawer(opts.title || t('drawer.admin'), true);
 			return new Promise(function (resolve) {
 				homeView.style.display = 'none';
 				settingsView.style.display = 'none';
@@ -2647,7 +2728,7 @@ import init, {
 				title.textContent = opts.title || '';
 				var back = document.createElement('button');
 				back.className = 'admin-back';
-				back.title = 'Cancel';
+				back.title = t('common.cancel');
 				back.textContent = '×';
 				head.appendChild(title);
 				head.appendChild(back);
@@ -2723,51 +2804,47 @@ import init, {
 			if (!cfgReady(cfg)) {
 				var cta = document.createElement('button');
 				cta.className = 'admin-cta';
-				cta.textContent = 'Connect a model';
+				cta.textContent = t('home.connect_model');
 				cta.addEventListener('click', function () { openSettings(''); });
 				homeView.appendChild(cta);
-				homeView.appendChild(el('div', 'admin-note',
-					'Daimond needs a provider key, or credits, before it can answer anything.'));
+				homeView.appendChild(el('div', 'admin-note', t('home.connect_note')));
 			}
 
 			if (!idOn) {
 				// An account that exists but is locked is not an account that
 				// needs creating — the unlock card is already over the app.
 				if (window.DaimondIdentity && DaimondIdentity.exists()) {
-					homeView.appendChild(el('div', 'admin-note',
-						'Locked. Enter your passphrase to unlock this device.'));
+					homeView.appendChild(el('div', 'admin-note', t('home.locked')));
 				} else if (identityAvailable()) {
-					homeView.appendChild(el('div', 'admin-sec', 'Account'));
-					item('Create an account…', function () { showIdentity('create'); });
-					homeView.appendChild(el('div', 'admin-note',
-						'An account is a passphrase held on this device. It encrypts your API key '
-						+ 'and signs you in for credits. Nothing leaves the browser.'));
+					homeView.appendChild(el('div', 'admin-sec', t('home.sec_account')));
+					item(t('home.create_account'), function () { showIdentity('create'); });
+					homeView.appendChild(el('div', 'admin-note', t('home.account_note')));
 				}
 				return;
 			}
 
-			homeView.appendChild(el('div', 'admin-sec', 'Account'));
+			homeView.appendChild(el('div', 'admin-sec', t('home.sec_account')));
 			var fp = DaimondIdentity.fingerprint();
 			if (fp) {
 				var f = el('div', 'account-fp', fp);
-				f.title = 'Your device identity fingerprint';
+				f.title = t('home.fingerprint');
 				homeView.appendChild(f);
 			}
-			item('Change name…',          doRename);
-			item('Change passphrase…',    doChangePassphrase);
+			item(t('home.change_name'),       doRename);
+			item(t('home.change_passphrase'), doChangePassphrase);
 			// A passkey unlocks this device without the passphrase. Offer to add one
 			// only where the platform supports it; offer to remove one once enrolled.
 			if (window.DaimondPasskey) {
 				if (DaimondPasskey.isEnrolled()) {
-					item('Remove passkey',    doRemovePasskey);
+					item(t('home.remove_passkey'), doRemovePasskey);
 				} else {
-					var pk = item('Add a passkey…', doAddPasskey);
+					var pk = item(t('home.add_passkey'), doAddPasskey);
 					pk.style.display = 'none';
 					DaimondPasskey.available().then(function (ok) { if (ok) pk.style.display = ''; }).catch(function () {});
 				}
 			}
-			item('Export a backup',       doExport);
-			item('Import a backup…',      doImport);
+			item(t('home.export_backup'), doExport);
+			item(t('home.import_backup'), doImport);
 
 			// The operator console, for the few accounts that hold a role on the
 			// gateway. Added hidden and revealed by the answer, never drawn and
@@ -2776,14 +2853,14 @@ import init, {
 			// It opens in its own tab because it is a different job -- the app is
 			// where you work, the console is where you run the service.
 			if (window.DaimondGateway && DaimondGateway.operatorRole) {
-				var op = item('Daimond Dashboard \u2197', function () {
+				var op = item(t('home.dashboard'), function () {
 					window.open('/console/', '_blank', 'noopener');
 				});
 				op.style.display = 'none';
 				DaimondGateway.operatorRole().then(function (role) {
 					if (!role) return;
 					op.style.display = '';
-					op.title = 'You are signed in as ' + role + '.';
+					op.title = t('home.signed_in_as', { role: role });
 				}).catch(function () {});
 			}
 
@@ -2792,40 +2869,37 @@ import init, {
 			// Only buttons here: this drawer is narrow, and a system prompt is a
 			// page of prose. Each opens its file in the Doc panel, which is where
 			// the app already edits text, with the room to do it in.
-			homeView.appendChild(el('div', 'admin-sec', 'Prompts'));
+			homeView.appendChild(el('div', 'admin-sec', t('home.sec_prompts')));
 			Prompts.roles.forEach(function (r) {
-				var b = item('Edit the ' + r.label.toLowerCase() + ' prompt…', function () {
+				// The role label is substituted as-is: lower-casing it mangled the
+				// product noun ("diamond conductor") in every language at once,
+				// and a locale table cannot defend itself against a transform.
+				var b = item(t('home.edit_prompt', { role: t(r.label) }), function () {
 					closeAdmin();                     // the Doc panel is behind this drawer
 					Prompts.edit(r.id);
 				});
-				b.title = r.blurb + ' Opens ' + Prompts.path(r.id) + ' in the Doc panel.';
+				b.title = t(r.blurb) + ' ' + t('home.prompt_opens', { path: Prompts.path(r.id) });
 			});
-			homeView.appendChild(el('div', 'admin-note',
-				'These are the instructions each agent runs under, kept as files in your '
-				+ 'workspace. Edit one and it applies from the next turn; delete it and the '
-				+ 'original comes back. Two rules always hold whatever you write: what a page '
-				+ 'or an email says is data and never an instruction, and nothing you cannot '
-				+ 'undo happens without asking you first.'));
+			homeView.appendChild(el('div', 'admin-note', t('home.prompts_note')));
 
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
-				homeView.appendChild(el('div', 'admin-sec', 'Accounts'));
+				homeView.appendChild(el('div', 'admin-sec', t('home.sec_accounts')));
 				var accts = DaimondAccounts.list();
 				var cur = DaimondAccounts.current();
 				accts.forEach(function (a) {
 					if (a.id === cur) return;
-					item((a.name || 'Unnamed account') + ' — switch', function () { switchAccount(a.id); });
+					item(t('home.switch_to', { name: a.name || t('home.unnamed_account') }),
+						function () { switchAccount(a.id); });
 				});
-				item('＋ Add another account', addAccount);
-				homeView.appendChild(el('div', 'admin-note',
-					'Each account has its own chats, keys, credits and files. Switching locks this '
-					+ 'one and opens the other; nobody sees another account’s data.'));
+				item(t('home.add_account'), addAccount);
+				homeView.appendChild(el('div', 'admin-note', t('home.accounts_note')));
 				homeView.appendChild(el('div', 'admin-sec', ''));
 			}
 
-			item('Log out',               lockApp);
-			item('Forget this identity…', forgetIdentity, true);
+			item(t('home.log_out'),         lockApp);
+			item(t('identity.forget'),      forgetIdentity, true);
 
 			function item(label, fn, danger) {
 				var b = document.createElement('button');
@@ -2879,14 +2953,14 @@ import init, {
 				row('astat-model', 'off', '', 'Locked');
 			} else if (ready) {
 				var n = M.count();
-				row('astat-model', 'ok', '', 'Models', String(n));
+				row('astat-model', 'ok', '', t('drawer.models'), String(n));
 			} else if (M && M.providers().length) {
 				// A key is held but nothing is starred, or the key cannot be read.
-				row('astat-model', 'warn', '', 'Models', String(M.count()));
+				row('astat-model', 'warn', '', t('drawer.models'), String(M.count()));
 			} else {
-				row('astat-model', 'warn', '', 'No model connected');
+				row('astat-model', 'warn', '', t('astat.no_model'));
 			}
-			mrow.title = 'The models Daimond can run, and the keys behind them';
+			mrow.title = t('astat.model_help');
 			// Until there is a model to think with, Daimond cannot answer anything, so this row is
 			// the one thing to do — and it pulses to say so, rather than a form springing open over
 			// the whole panel the moment the app loads.
@@ -2896,14 +2970,15 @@ import init, {
 			var arow = document.getElementById('astat-account');
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
 			if (!navigator.onLine) {
-				row('astat-account', 'off', '', 'Offline');
+				row('astat-account', 'off', '', t('astat.offline'));
 			} else if (locked || !st.authed) {
-				row('astat-account', 'off', '', st.offline ? 'Account service unreachable' : 'No credits account');
+				row('astat-account', 'off', '',
+					st.offline ? t('astat.service_unreachable') : t('astat.no_account'));
 			} else {
-				row('astat-account', 'ok', '', 'Credits',
+				row('astat-account', 'ok', '', t('astat.credits'),
 					st.credits === null ? '—' : DaimondGateway.fmtMoney(st.credits, st.currency));
 			}
-			arow.title = 'Buy credits, or connect your own provider key';
+			arow.title = t('astat.credits_help');
 
 			// Pro: whether this identity owns the one-time unlock, and a way in if
 			// not. It sits on its own row, next to credits but distinct from them --
@@ -2930,11 +3005,11 @@ import init, {
 			if (locked || !st.authed || st.pro === null) { r.style.display = 'none'; return; }
 			r.style.display = '';
 			if (st.pro) {
-				row('astat-pro', 'ok', 'Pro', 'Owned');
-				r.title = 'You own Daimond Pro — sync, cloud storage and Email are on.';
+				row('astat-pro', 'ok', 'Pro', t('astat.pro_owned'));
+				r.title = t('astat.pro_owned_help');
 			} else {
-				row('astat-pro', 'off', 'Pro', 'Upgrade to Pro');
-				r.title = 'Own Daimond once to turn on sync, cloud storage and Email.';
+				row('astat-pro', 'off', 'Pro', t('astat.pro_upgrade'));
+				r.title = t('astat.pro_upgrade_help');
 			}
 			// The value reads as a link when there is an upgrade to take.
 			r.classList.toggle('astat-pro-upgrade', !st.pro);
@@ -2946,24 +3021,20 @@ import init, {
 		async function showPro() {
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
 			if (st.pro) {
-				noticeDialog('Daimond Pro',
-					'You own Daimond Pro. Cross-device sync, cloud storage and Email are on. '
-					+ 'Nothing renews.');
+				noticeDialog('Daimond Pro', t('pro.owned_plain'));
 				return;
 			}
 			var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
 			var ok = await confirmDialog(
-				'Own Daimond with one payment, kept for good. Pro turns on cross-device sync, cloud '
-				+ 'storage, and Email — reading and sending your own mail in the workspace. No '
-				+ 'subscription; metered use like inference and bandwidth is still paid from credits.',
-				'Own Daimond' + (price ? ' — ' + price : ''),
-				{ title: 'Upgrade to Pro', danger: false, cancelLabel: 'Not now' });
+				t('pro.offer_plain'),
+				price ? t('pro.buy_priced', { price: price }) : t('pro.buy'),
+				{ title: t('astat.pro_upgrade'), danger: false, cancelLabel: t('dlg.not_now') });
 			if (!ok) return;
 			try {
 				var r = await DaimondGateway.buyPro();       // navigates to Stripe, or returns {held}
 				if (r && r.held) { await DaimondGateway.refreshLicence(); status(); }
 			} catch (e) {
-				noticeDialog('Could not start checkout', friendlyError(e));
+				noticeDialog(t('pro.checkout_failed'), friendlyError(e));
 			}
 		}
 
@@ -2976,9 +3047,11 @@ import init, {
 			var c = DaimondTools.counts();
 			// Before the gateway has answered, the total is only what is built in, and a row
 			// reading "16 of 16" would quietly claim there is nothing else to have.
-			var val = c.all > c.have ? ('Tools · ' + c.have + ' of ' + c.all) : ('Tools · ' + c.have);
+			var val = c.all > c.have
+				? t('astat.tools_of', { have: c.have, all: c.all })
+				: t('astat.tools', { have: c.have });
 			row('astat-tools', 'ok', '', val);
-			r.title = 'What Daimond can do, and what the rest would cost.';
+			r.title = t('astat.tools_help');
 			r.onclick = function () { DaimondTools.show(); };
 		}
 
@@ -3009,12 +3082,13 @@ import init, {
 
 				r.style.display = '';
 				row('astat-store', kept ? 'ok' : 'off', '',
-					'Workspace · Browser' + (kept ? '' : ' · evictable'),
+					kept ? t('astat.workspace_browser')
+						: t('astat.workspace_browser') + ' · ' + t('astat.evictable'),
 					fmtBytes(used) + (pctTxt ? ' · ' + pctTxt : ''));
-				r.title = (quota ? fmtBytes(used) + ' of ' + fmtBytes(quota) + ' this browser allows. ' : '')
-					+ (kept
-						? 'Marked persistent, so the browser will not evict it.'
-						: 'NOT persistent: the browser may evict this workspace under storage pressure. Click to ask for permanent storage.');
+				r.title = (quota
+						? t('astat.store_of', { used: fmtBytes(used), quota: fmtBytes(quota) }) + ' '
+						: '')
+					+ t(kept ? 'astat.store_persistent' : 'astat.store_evictable');
 				// The fix for evictable is one call, and it is the user's to make.
 				r.onclick = kept ? null : async function () {
 					try { await navigator.storage.persist(); } catch (x) { /* refused */ }
@@ -3046,31 +3120,30 @@ import init, {
 			r.style.display = '';
 
 			if (!handle) {
-				row('astat-store-native', 'off', '', 'Workspace · native', 'not connected');
-				r.title = 'Let the agents work on a real folder on this machine.';
+				row('astat-store-native', 'off', '', t('astat.workspace_native'), t('astat.not_connected'));
+				r.title = t('astat.native_help');
 				r.style.cursor = 'pointer';
 				r.onclick = function () { DaimondPanels.show('work'); };
 				return;
 			}
 
 			if (_walk) {
-				row('astat-store-native', 'warn', '', 'Workspace · native',
-					fmtCount(_walk.files) + ' files · ' + fmtBytes(_walk.bytes));
-				r.title = 'Counting. Click to stop.';
+				row('astat-store-native', 'warn', '', t('astat.workspace_native'),
+					t('astat.n_files', { n: fmtCount(_walk.files) }) + ' · ' + fmtBytes(_walk.bytes));
+				r.title = t('astat.counting');
 				r.style.cursor = 'pointer';
 				r.onclick = function () { _walk.stop = true; };
 				return;
 			}
 
 			var done = _walked && _walked.name === handle.name;
-			row('astat-store-native', 'ok', '', 'Workspace · native',
-				done ? fmtBytes(_walked.bytes) + (_walked.partial ? ' (part)' : '') : handle.name);
+			row('astat-store-native', 'ok', '', t('astat.workspace_native'),
+				done ? fmtBytes(_walked.bytes) + (_walked.partial ? ' ' + t('astat.part') : '') : handle.name);
 			r.title = done
-				? fmtCount(_walked.files) + ' files under ' + handle.name
-					+ (_walked.partial ? ', counted until you stopped it.' : '.')
-					+ ' Click to count again.'
-				: 'The browser will not say how big a real folder is. Click to count it — on a large '
-					+ 'tree this reads every file and can take a while; you can stop it at any point.';
+				? t(_walked.partial ? 'astat.counted_partial' : 'astat.counted',
+						{ n: fmtCount(_walked.files), folder: handle.name })
+					+ ' ' + t('astat.count_again')
+				: t('astat.count_offer');
 			r.style.cursor = 'pointer';
 			r.onclick = function () { estimate(handle); };
 		}
@@ -3231,14 +3304,14 @@ import init, {
 		s = s.replace(/src\/[^\s":]+\.rs:\d+:?/g, ' ');
 		// A transport failure is not a provider response, so test it first.
 		if (/Failed to fetch|NetworkError|ERR_CONNECTION|ENOTFOUND|ECONNREFUSED|refused|dns/i.test(s)) {
-			return 'Could not reach that endpoint. Check the base URL in Settings, and your connection.';
+			return t('err.unreachable');
 		}
 		// Map the common upstream-provider HTTP statuses to actionable copy.
-		if (/\bHTTP (error )?401\b|\b401\b/.test(s)) return 'Your API key was rejected (401). Open Settings and check it.';
-		if (/\b403\b/.test(s)) return 'The provider denied access (403). Check your key and plan.';
-		if (/\b404\b/.test(s)) return 'That endpoint was not found (404). Check the base URL in Settings.';
-		if (/\b429\b/.test(s)) return 'The provider is rate-limiting you (429). Wait a moment and retry.';
-		if (/\b5\d\d\b/.test(s)) return 'The provider had a server error. Please try again shortly.';
+		if (/\bHTTP (error )?401\b|\b401\b/.test(s)) return t('err.rejected_401');
+		if (/\b403\b/.test(s)) return t('err.denied_403');
+		if (/\b404\b/.test(s)) return t('err.notfound_404');
+		if (/\b429\b/.test(s)) return t('err.ratelimit_429');
+		if (/\b5\d\d\b/.test(s)) return t('err.server_5xx');
 		// Otherwise, strip the remaining fe2o3 framing and return what is left:
 		// the error kind (`[IO File]`), the wrapper struct, the JsValue box, and
 		// the trailing `undefined` a missing DOMException message leaves behind.
@@ -3258,7 +3331,7 @@ import init, {
 			.replace(/\s+([.,;:])/g, '$1')
 			.trim()
 			.replace(/[\s.:;,-]+$/, '');
-		return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : 'Something went wrong. Please try again.';
+		return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : t('err.generic');
 	}
 
 	function clearChat() {
@@ -3280,7 +3353,7 @@ import init, {
 		wrap.className = 'empty-state bare';
 		var btn = document.createElement('button');
 		btn.className = 'empty-new-session';
-		btn.textContent = '+ New chat';
+		btn.textContent = t('chat.new');
 		btn.addEventListener('click', function () { newChat(); });
 		wrap.appendChild(btn);
 		chatOutput.appendChild(wrap);
@@ -3319,12 +3392,11 @@ import init, {
 		foot.className = 'turn-interrupted';
 		var label = document.createElement('span');
 		label.className = 'ti-label';
-		label.textContent = m.content ? '⚠ Interrupted — the browser closed before this finished.'
-			: '⚠ Interrupted before it could answer.';
+		label.textContent = '⚠ ' + t(m.content ? 'turn.interrupted' : 'turn.interrupted_early');
 		var btn = document.createElement('button');
 		btn.className = 'ti-continue';
-		btn.textContent = 'Continue';
-		btn.title = 'Run this turn again from your message.';
+		btn.textContent = t('turn.continue');
+		btn.title = t('turn.continue_help');
 		btn.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext); });
 		foot.appendChild(label); foot.appendChild(btn);
 		div.appendChild(foot);
@@ -3439,8 +3511,8 @@ import init, {
 
 	function setSendMode(mode) {
 		chatSend.disabled = false;
-		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); chatSend.title = 'Stop'; }
-		else { chatSend.innerHTML = '➤'; chatSend.classList.remove('stop'); chatSend.title = 'Send'; }
+		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); chatSend.title = t('chat.stop'); }
+		else { chatSend.innerHTML = '➤'; chatSend.classList.remove('stop'); chatSend.title = t('chat.send'); }
 	}
 
 	// ── Meters ─────────────────────────────────────────────────
@@ -3502,15 +3574,13 @@ import init, {
 	function startChat(chat, model, provider) {
 		model    = (model    || chat.model    || cfg.model || '').trim();
 		provider = (provider || chat.provider || '').trim();
-		if (!model) { openSettings('Choose a model to start this chat.'); return; }
+		if (!model) { openSettings(t('chat.choose_model')); return; }
 		// Ask whether THIS model can actually run, not whether the default provider can. A chat
 		// on a provider whose key is sealed must say so, rather than quietly starting on someone
 		// else's key -- which is what checking `cfg` alone did.
 		var r = window.DaimondModels && DaimondModels.resolve(provider, model);
 		if (!r) {
-			openSettings(provider
-				? 'That provider has no readable key yet — unlock, or add one, to start this chat.'
-				: 'Connect a provider to start this chat.');
+			openSettings(t(provider ? 'chat.no_key_start' : 'chat.connect_start'));
 			return;
 		}
 		chat.model    = r.model;
@@ -3551,7 +3621,7 @@ import init, {
 		if (current === chat) {
 			current = chats[0] || null;
 			if (current) selectChat(current);
-			else { sessionNameEl.textContent = 'No chat'; renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
+			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
 		renderSessionList();
 	}
@@ -3586,7 +3656,7 @@ import init, {
 	function openFoldPicker(chat, anchor, turns) {
 		closeFoldMenu();
 		if (!(chat.messages && chat.messages.length)) {
-			noticeDialog('Nothing to fold', 'This chat is empty. Send a message first, then fold it into a Diamond.');
+			noticeDialog(t('fold.nothing'), t('fold.chat_empty'));
 			return;
 		}
 		var menu = document.createElement('div');
@@ -3595,13 +3665,11 @@ import init, {
 		head.className = 'fold-menu-head';
 		// Say how much is going in. Folding three turns and folding the whole chat are different
 		// acts with the same button, and the menu is the last place to tell them apart.
-		head.textContent = turns
-			? 'Fold ' + turns.length + (turns.length === 1 ? ' turn into…' : ' turns into…')
-			: 'Fold into…';
+		head.textContent = turns ? tn('fold.n_turns_into', turns.length) : t('fold.into');
 		menu.appendChild(head);
 		if (diamonds.length === 0) {
 			var none = document.createElement('div');
-			none.className = 'fold-menu-empty'; none.textContent = 'No Diamonds yet — create one:';
+			none.className = 'fold-menu-empty'; none.textContent = t('fold.no_diamonds');
 			menu.appendChild(none);
 		}
 		diamonds.forEach(function (f) {
@@ -3612,7 +3680,7 @@ import init, {
 			menu.appendChild(item);
 		});
 		var neww = document.createElement('button');
-		neww.className = 'fold-menu-item new'; neww.textContent = '＋ New Diamond…';
+		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
 		neww.addEventListener('click', function () { closeFoldMenu(); foldChatIntoNew(chat, turns); });
 		menu.appendChild(neww);
 
@@ -3626,12 +3694,13 @@ import init, {
 	}
 
 	async function foldChatIntoNew(chat, turns) {
-		if (!cfgReady(cfg)) { openSettings('Connect a provider to fold into a Diamond.'); return; }
-		var name = await promptDialog('New Diamond', { value: peekDiamondLabel(), okLabel: 'Create and fold' });
+		if (!cfgReady(cfg)) { openSettings(t('fold.connect_first')); return; }
+		var name = await promptDialog(t('rail.new_diamond'),
+			{ value: peekDiamondLabel(), okLabel: t('fold.create_and_fold') });
 		if (name === null) return; name = name.trim(); if (!name) return;
 		var id;
-		try { id = await diamondApp().create_diamond(name); takeDiamondLabel(); }
-		catch (e) { noticeDialog('Could not create Diamond', friendlyError(e)); return; }
+		try { id = await diamondApp().create_diamond(name); takeDiamondLabel(); bumpDiamonds(); }
+		catch (e) { noticeDialog(t('rail.create_failed'), friendlyError(e)); return; }
 		// A Diamond made out of a chat inherits that chat's model. It is not asked for here because
 		// the user has already answered it, when they started the chat this Diamond is made of.
 		setDiamondModel(id, { provider: chat.provider || '', model: chat.model || '' });
@@ -3645,7 +3714,7 @@ import init, {
 		if (!f) return;
 		// The reducer runs on the TARGET Diamond's model, so that is the key that must be readable.
 		if (!diamondCanRun(diamondId)) {
-			openSettings('That Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+			openSettings(t('fold.no_key'));
 			return;
 		}
 		// The reducer is a real, paid round trip. Folding a chat that has not
@@ -3656,16 +3725,16 @@ import init, {
 		// "nothing has changed since you folded the whole chat" is no answer to that.
 		if (!turns && chat.foldedInto && chat.foldedInto.id === diamondId
 			&& chat.foldedInto.at_len === (chat.messages || []).length) {
-			noticeDialog('Nothing new to fold',
-				'"' + chat.name + '" has not changed since it was folded into "' + f.name + '".');
+			noticeDialog(t('fold.nothing_new'),
+				t('fold.nothing_new_body', { chat: chat.name, diamond: f.name }));
 			return;
 		}
 		await selectDiamond(f);                          // switch the centre to the Diamond crystal
-		setCrystalBusy(true); setCrystalStatus('Proposing fold…');
+		setCrystalBusy(true); setCrystalStatus(t('fold.proposing'));
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
 			setCrystalStatus(''); setCrystalBusy(false);
-			noticeDialog('Nothing to fold', 'The turns you chose have no content to fold in.');
+			noticeDialog(t('fold.nothing'), t('fold.turns_empty'));
 			return;
 		}
 		// The reducer runs on the Diamond's OWN model -- the one it was created with -- not on
@@ -3727,12 +3796,12 @@ import init, {
 		wrap.className = 'empty-state pending-centre';
 		var h = document.createElement('h2'); h.textContent = chat.name;
 		var p = document.createElement('p');
-		p.textContent = 'Pick a model in this chat’s tile and press ▶ Start to begin.';
+		p.textContent = t('chat.pending_hint');
 		wrap.appendChild(h); wrap.appendChild(p);
 		var btn = document.createElement('button');
 		btn.className = 'empty-new-session';
-		btn.innerHTML = '▶ Start';
-		btn.title = 'Start with the selected model';
+		btn.textContent = '▶ ' + t('tile.start');
+		btn.title = t('chat.start_selected');
 		btn.addEventListener('click', function () { startChat(chat, chat.model); });
 		wrap.appendChild(btn);
 		chatOutput.appendChild(wrap);
@@ -3753,7 +3822,7 @@ import init, {
 		if (chats.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
-			note.textContent = 'No chats yet.';
+			note.textContent = t('rail.no_chats');
 			sessionList.appendChild(note);
 			return;
 		}
@@ -3785,7 +3854,7 @@ import init, {
 			var pct = Math.min(100, Math.round(last / cw * 100));
 			var ctx = document.createElement('span');
 			ctx.className = 'tile-ctx';
-			ctx.title = 'Context window used: ' + fmtCtx(last) + ' / ' + fmtCtx(cw);
+			ctx.title = t('tile.context_used', { used: fmtCtx(last), all: fmtCtx(cw) });
 			var bar = document.createElement('span'); bar.className = 'tile-ctx-bar';
 			var fill = document.createElement('span'); fill.className = 'tile-ctx-fill' + (pct >= 80 ? ' high' : '');
 			fill.style.width = pct + '%';
@@ -3800,8 +3869,8 @@ import init, {
 		if (window.DaimondPricing && total > 0) {
 			var pr = DaimondPricing.priceFor(s.model, s.promptTokens || 0, s.completionTokens || 0, 0);
 			var cost = document.createElement('span'); cost.className = 'tile-cost';
-			cost.textContent = (pr.estimated ? '≈' : '') + fmtUsd(pr.usd);
-			cost.title = pr.estimated ? 'Estimated — this model is not in the price table.' : 'Cost so far for this chat.';
+			cost.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
+			cost.title = t(pr.estimated ? 'tile.cost_estimated' : 'tile.cost_so_far');
 			wrap.appendChild(cost);
 		}
 		return wrap;
@@ -3823,7 +3892,7 @@ import init, {
 		label.setAttribute('autocomplete', 'off');
 		label.setAttribute('data-1p-ignore', '');
 		label.setAttribute('data-lpignore', 'true');
-		label.title = 'Click to open, double-click to rename';
+		label.title = t('tile.click_to_open');
 		label.readOnly = true;                    // a click opens the chat...
 		label.addEventListener('click', function (e) {
 			if (label.readOnly) { e.stopPropagation(); selectChat(s); }
@@ -3844,16 +3913,16 @@ import init, {
 		header.appendChild(label);
 		var closeBtn = document.createElement('button');
 		closeBtn.className = 'session-box-close';
-		closeBtn.textContent = '×'; closeBtn.title = 'Remove chat';
+		closeBtn.textContent = '×'; closeBtn.title = t('tile.remove_chat');
 		closeBtn.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			// Deleting a chat destroys its whole history with no undo, so it is
 			// confirmed — as deleting a Diamond already was.
 			var n = (s.messages || []).length;
 			var msg = n
-				? 'Delete "' + s.name + '" and its ' + n + ' message' + (n === 1 ? '' : 's') + '? This cannot be undone.'
-				: 'Delete "' + s.name + '"?';
-			if (!await confirmDialog(msg, 'Delete chat', { title: 'Delete chat' })) return;
+				? tn('tile.delete_chat_body', n, { name: s.name })
+				: t('tile.delete_chat_empty', { name: s.name });
+			if (!await confirmDialog(msg, t('tile.delete_chat'), { title: t('tile.delete_chat') })) return;
 			removeChat(s);
 		});
 		header.appendChild(closeBtn);
@@ -3875,8 +3944,8 @@ import init, {
 			});
 			var start = document.createElement('button');
 			start.className = 'tile-start';
-			start.innerHTML = '▶ Start';
-			start.title = 'Confirm the model and start this chat';
+			start.textContent = '▶ ' + t('tile.start');
+			start.title = t('tile.start_help');
 			start.addEventListener('click', function (e) {
 				e.stopPropagation();
 				var p = DaimondModels.pick(sel);
@@ -3900,10 +3969,10 @@ import init, {
 			// and inviting the same fold again and again.
 			// "Fold all", because the chat panel now also folds a chosen few turns, and a button
 			// that says only "Fold" no longer says which of the two it does.
-			fold.textContent = s.foldedInto ? 'Folded' : 'Fold all';
+			fold.textContent = t(s.foldedInto ? 'tile.folded' : 'tile.fold_all');
 			fold.title = s.foldedInto
-				? 'Already folded into "' + s.foldedInto.name + '" — fold again to add anything new since.'
-				: 'Fold this whole chat into a Diamond';
+				? t('tile.folded_help', { name: s.foldedInto.name })
+				: t('tile.fold_all_help');
 			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
 			top.appendChild(fold);
 			meta.appendChild(top);
@@ -4041,7 +4110,7 @@ import init, {
 		var can = current
 			? !!(window.DaimondModels && DaimondModels.resolve(current.provider, current.model))
 			: cfgReady(cfg);
-		if (!can) { openSettings('Connect a provider, or unlock, to chat on this model.'); return; }
+		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
 		chatInput.value = ''; chatInput.style.height = 'auto';
@@ -4231,9 +4300,13 @@ import init, {
 		if (!el || !window.DaimondLedger) return;
 		if (locked) { el.innerHTML = ''; el.style.display = 'none'; return; }
 		el.dataset.hasCredits = (window.DaimondGateway && DaimondGateway.state().authed) ? '1' : '';
-		var t;
-		try { t = DaimondLedger.totals(); } catch (e) { el.style.display = 'none'; return; }
-		if ((t.session.usd || 0) <= 0 && (t.month.usd || 0) <= 0) { el.style.display = 'none'; return; }
+		// NOT `t`: that is this file's translation function, and a `var t` here
+		// shadows it for the whole function -- including the `cell` below, which
+		// calls it. `var` hoists, so the shadow is in force before the assignment
+		// and the call throws "t is not a function".
+		var tot;
+		try { tot = DaimondLedger.totals(); } catch (e) { el.style.display = 'none'; return; }
+		if ((tot.session.usd || 0) <= 0 && (tot.month.usd || 0) <= 0) { el.style.display = 'none'; return; }
 		el.style.display = '';
 		el.innerHTML = '';
 		function cell(label, part) {
@@ -4242,13 +4315,13 @@ import init, {
 			var a = document.createElement('span'); a.className = 'spend-amt';
 			// An "≈" where a model outside the price table was used, so a total
 			// resting partly on an estimate is not presented as an exact figure.
-			a.textContent = (part.estimated ? '≈' : '') + fmtUsd(part.usd);
-			if (part.estimated) a.title = 'Includes a model not in the price table — estimated.';
+			a.textContent = (part.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(part.usd);
+			if (part.estimated) a.title = t('spend.includes_estimate');
 			c.appendChild(l); c.appendChild(a); return c;
 		}
-		el.appendChild(cell('Session', t.session));
-		el.appendChild(cell('Week', t.week));
-		el.appendChild(cell('Month', t.month));
+		el.appendChild(cell(t('spend.session_short'), tot.session));
+		el.appendChild(cell(t('spend.period_week'),   tot.week));
+		el.appendChild(cell(t('spend.period_month'),  tot.month));
 		// A quiet "faster than usual" note when the live rate runs well
 		// above the user's own normal. It informs; it never blocks — the
 		// only thing that blocks is a big fan-out, at the dispatch gate.
@@ -4257,10 +4330,10 @@ import init, {
 			if (g && (g.level === 'amber' || g.level === 'tripped')) {
 				var note = document.createElement('div');
 				note.className = 'spend-governor ' + g.level;
-				note.textContent = (g.level === 'tripped' ? 'Well past your run budget' : 'Spending faster than usual')
-					+ ' · ' + fmtUsd(g.rateUsdMin) + '/min';
-				note.title = 'This run has spent ' + fmtUsd(g.burstSpent) + ' of a '
-					+ fmtUsd(g.budget) + ' pace budget. A large fan-out asks before it runs.';
+				note.textContent = t(g.level === 'tripped' ? 'gov.past_budget' : 'gov.faster')
+					+ ' · ' + t('gov.per_min', { rate: fmtUsd(g.rateUsdMin) });
+				note.title = t('gov.run_spent',
+					{ spent: fmtUsd(g.burstSpent), budget: fmtUsd(g.budget) });
 				el.appendChild(note);
 			}
 		} catch (e) { /* the note is best-effort */ }
@@ -4318,13 +4391,12 @@ import init, {
 		var a;
 		try { a = DaimondGovernor.assessDispatch(n); } catch (e) { return true; }
 		if (!a || !a.needsConfirm) return true;
-		var each = (n === 1) ? '' : 's';
-		var msg = 'This Diamond is about to run ' + n + ' agent' + each
-			+ ', at about ' + fmtUsd(a.predicted) + ' (' + fmtUsd(a.perWorker) + ' each).'
-			+ (a.runSpent > 0 ? ' This burst has spent ' + fmtUsd(a.runSpent) + ' already.' : '')
-			+ ' That would pass your ' + fmtUsd(a.budget) + ' pace budget for one run.';
-		return await confirmDialog(msg, 'Run ' + n + ' agent' + each,
-			{ title: 'Faster than usual', danger: false });
+		var msg = tn('gov.fanout_body', n,
+				{ total: fmtUsd(a.predicted), each: fmtUsd(a.perWorker) })
+			+ (a.runSpent > 0 ? ' ' + t('gov.burst_spent', { spent: fmtUsd(a.runSpent) }) : '')
+			+ ' ' + t('gov.would_pass', { budget: fmtUsd(a.budget) });
+		return await confirmDialog(msg, tn('gov.run_n', n),
+			{ title: t('gov.faster'), danger: false });
 	}
 
 	var Workers = {
@@ -4682,12 +4754,11 @@ import init, {
 		/// Fold a finished worker's summary into the Diamond that dispatched it.
 		foldIn: async function (run) {
 			if (!run.text.trim()) {
-				noticeDialog('Nothing to fold', 'This agent produced no summary to fold.');
+				noticeDialog(t('fold.nothing'), t('fold.agent_empty'));
 				return;
 			}
 			if (run.folded) {
-				noticeDialog('Already folded',
-					'This agent\'s summary has already been folded into the crystal.');
+				noticeDialog(t('agents.already_folded'), t('agents.already_folded_body'));
 				return;
 			}
 			// The run is marked folded when the proposed fold is ACCEPTED, not
@@ -4731,12 +4802,12 @@ import init, {
 			if (this.runs.length === 0) {
 				var empty = document.createElement('div');
 				empty.className = 'agents-empty';
-				empty.textContent = 'No agents yet. Ask a Diamond to start one and it appears here.';
+				empty.textContent = t('agents.none_yet');
 				agentsList.appendChild(empty);
 			} else if (shown === 0) {
 				var none = document.createElement('div');
 				none.className = 'agents-empty';
-				none.textContent = 'No agents match. Clear the search or filter.';
+				none.textContent = t('agents.no_match');
 				agentsList.appendChild(none);
 			}
 		},
@@ -4770,9 +4841,9 @@ import init, {
 			// Diamond's inherited tags, and the model. The Diamond and tag chips filter.
 			var chips = document.createElement('div'); chips.className = 'achips';
 			chips.appendChild(agentDiamondChip(run));
-			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
-				var c = tagChip(t, 'tag-sm' + (agentTagFilter === t ? ' tag-active' : ''), setAgentTagFilter);
-				c.title = 'Show only agents tagged "' + t + '"';
+			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
+				var c = tagChip(tag, 'tag-sm' + (agentTagFilter === tag ? ' tag-active' : ''), setAgentTagFilter);
+				c.title = t('tag.only_agents', { tag: tag });
 				chips.appendChild(c);
 			});
 			if (run.model) {
@@ -4803,7 +4874,7 @@ import init, {
 			var right = document.createElement('span');
 			if (toks && window.DaimondPricing) {
 				var pr = DaimondPricing.priceFor(run.model, pt, ct, 0);
-				if (pr) right.textContent = (pr.estimated ? '≈' : '') + fmtUsd(pr.usd);
+				if (pr) right.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
 			}
 			arow.appendChild(left); arow.appendChild(right);
 			card.appendChild(arow);
@@ -4841,14 +4912,14 @@ import init, {
 					if (foldable) {
 						var fold = document.createElement('button');
 						fold.className = 'abtn';
-						fold.textContent = 'Fold in';
-						fold.title = 'Fold this agent\'s summary into "' + run.diamondName + '"';
+						fold.textContent = t('agents.fold_in');
+						fold.title = t('agents.fold_in_help', { name: run.diamondName });
 						fold.addEventListener('click', function () { self.foldIn(run); });
 						acts.appendChild(fold);
 					} else if (run.folded) {
 						var done = document.createElement('span');
 						done.className = 'afolded';
-						done.textContent = '✓ folded';
+						done.textContent = '✓ ' + t('agents.folded');
 						acts.appendChild(done);
 					}
 
@@ -4964,7 +5035,7 @@ import init, {
 			if (!this.md.trim()) { el.style.display = 'none'; return; }
 			el.style.display = '';
 			el.textContent = '✦ ' + INSTRUCTIONS_FILE;
-			el.title = 'Your standing instructions, given to every agent. Click to open.';
+			el.title = t('instructions.chip_help');
 		},
 	};
 
@@ -4993,15 +5064,13 @@ import init, {
 
 		/// Every role, with what to call it and what it is for -- the source for
 		/// the buttons in the Admin panel.
+		// `label` and `blurb` are KEYS, read when the menu is built, so a role
+		// reads in whatever language is in force at that moment.
 		roles: [
-			{ id: 'chat',      label: 'Chat',
-			  blurb: 'The agent you talk to.' },
-			{ id: 'conductor', label: 'Diamond conductor',
-			  blurb: 'Keeps a Diamond’s crystal, and dispatches workers.' },
-			{ id: 'worker',    label: 'Dispatched worker',
-			  blurb: 'One task, its own context, reports back.' },
-			{ id: 'reducer',   label: 'Crystal fold',
-			  blurb: 'Folds one delta into the crystal.' },
+			{ id: 'chat',      label: 'role.chat',      blurb: 'role.chat_help' },
+			{ id: 'conductor', label: 'role.conductor', blurb: 'role.conductor_help' },
+			{ id: 'worker',    label: 'role.worker',    blurb: 'role.worker_help' },
+			{ id: 'reducer',   label: 'role.reducer',   blurb: 'role.reducer_help' },
 		],
 
 		path: function (id) { return PROMPTS_DIR + '/' + id + '.md'; },
@@ -5106,22 +5175,23 @@ import init, {
 		if (st.pro) {
 			var owned = document.createElement('div');
 			owned.className = 'pro-owned';
-			owned.innerHTML = '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and '
-				+ 'Email are on. Nothing renews.';
+			owned.innerHTML = t('pro.owned');
 			host.appendChild(owned);
 			return;
 		}
-		var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
+		// Pro is a real charge, so the price says US dollars out loud and hangs
+		// the converted figure off it. See `billing.usd_note` below.
+		var price = st.proPriceMinor ? DaimondGateway.fmtBilled(st.proPriceMinor, st.currency) : '';
 		var box = document.createElement('div');
 		box.className = 'pro-offer';
-		// Static copy plus the gateway-formatted price (a number); no user text,
-		// so innerHTML is safe here and reads better than a pile of createElement.
+		// Static copy plus the formatted price (a number); no user text, so
+		// innerHTML is safe here and reads better than a pile of createElement.
 		box.innerHTML =
-			'<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, '
-			+ 'cloud storage, and Email — reading and sending your own mail in the workspace.</p>'
-			+ '<p class="pro-fine">No subscription. Metered use (inference, bandwidth, storage beyond '
-			+ 'the free tier) is paid from credits, whether or not you own Pro.</p>'
-			+ '<button class="pro-buy" id="pro-buy">Own Daimond' + (price ? ' — ' + price : '') + '</button>'
+			t('pro.offer')
+			+ '<p class="pro-fine">' + t('pro.fine') + '</p>'
+			+ '<button class="pro-buy" id="pro-buy">'
+			+ (price ? t('pro.buy_priced', { price: price }) : t('pro.buy')) + '</button>'
+			+ (usdDisplay() ? '' : '<p class="pro-fine">' + t('billing.usd_note') + '</p>')
 			+ '<div class="pro-err" id="pro-err"></div>';
 		host.appendChild(box);
 		var btn = document.getElementById('pro-buy');
@@ -5154,17 +5224,15 @@ import init, {
 			bal.textContent = '';
 			wrap.innerHTML = '';
 			if (st.offline) {
-				note.textContent = 'The Daimond account service is unreachable, so credits are '
-					+ 'unavailable right now. Your own provider key still works.';
+				note.textContent = t('credits.offline');
 			} else {
 				// A stranger with no account was told to "create an account" with no
 				// way to do so from here. The way forward is now a button, not a
 				// sentence: buying credits needs an account, so offer to make one.
-				note.textContent = 'Credits let you use Daimond without holding a provider key. '
-					+ 'They need an account — a passphrase kept on this device.';
+				note.textContent = t('credits.need_account');
 				var make = document.createElement('button');
 				make.className = 'credit-pack';
-				make.textContent = 'Create an account';
+				make.textContent = t('credits.create_account');
 				make.addEventListener('click', function () { showIdentity('create'); });
 				wrap.appendChild(make);
 			}
@@ -5172,34 +5240,67 @@ import init, {
 		}
 
 		note.textContent = '';
+		// The balance is a meter, not a charge: it converts like any other
+		// figure, with the ≈ the conversion earns.
 		bal.textContent = st.credits === null
-			? 'Balance unavailable.'
-			: 'Balance: ' + DaimondGateway.fmtMoney(st.credits, st.currency);
+			? t('credits.balance_unavailable')
+			: t('credits.balance', { amount: DaimondGateway.fmtMoney(st.credits, st.currency) });
 
 		// A door to the full breakdown of where credits (and inference) go. The
 		// header spend meter is the other door, but it hides when there is no
 		// inference spend, so a credits-only user needs this one. Added once.
-		if (!document.getElementById('credits-see-spend')) {
-			var seeSpend = document.createElement('button');
+		// Made once, but LABELLED every time: built inside the creation guard, the
+		// text kept whatever language the drawer was first opened in and every
+		// later language change went past it.
+		var seeSpend = document.getElementById('credits-see-spend');
+		if (!seeSpend) {
+			seeSpend = document.createElement('button');
 			seeSpend.id = 'credits-see-spend';
 			seeSpend.className = 'admin-item';
-			seeSpend.textContent = 'See where your spending goes →';
 			seeSpend.addEventListener('click', function () { if (window.DaimondSpend) DaimondSpend.show(); });
 			bal.insertAdjacentElement('afterend', seeSpend);
 		}
+		seeSpend.textContent = t('credits.see_spend');
 
 		wrap.innerHTML = '';
-		DaimondGateway.packs().forEach(function (minor) {
+		// A shop offers €10, not €9.26. The tiers are snapped to round prices in
+		// whatever currency is on show, and the dollar amount that will actually
+		// reach the card is printed beside each one. With dollars selected these
+		// are the gateway's own tiers, unchanged.
+		var tiers = DaimondI18n.niceTiers(DaimondGateway.packs());
+		tiers.forEach(function (tier) {
 			var b = document.createElement('button');
 			b.className = 'credit-pack';
-			b.textContent = DaimondGateway.fmtMoney(minor, st.currency);
+			if (usdDisplay()) {
+				b.textContent = tier.localText;
+			} else {
+				var loc = document.createElement('span');
+				loc.className = 'pack-local';
+				loc.textContent = tier.localText;
+				var bil = document.createElement('span');
+				bil.className = 'pack-billed';
+				// The separator is in the text rather than the stylesheet, so the
+				// two figures never run together whatever the skin does with them.
+				bil.textContent = ' · ' + tier.billedText;
+				b.appendChild(loc);
+				b.appendChild(bil);
+				b.title = t('billing.usd_note');
+			}
 			b.addEventListener('click', async function () {
 				b.disabled = true;
-				try { await DaimondGateway.buyCredits(minor); }     // navigates to Stripe
+				// The charge is the DOLLAR figure. The round local price is what
+				// was chosen; what is billed is what is shown beside it.
+				try { await DaimondGateway.buyCredits(tier.billedMinor); }   // navigates to Stripe
 				catch (e) { note.textContent = friendlyError(e); b.disabled = false; }
 			});
 			wrap.appendChild(b);
 		});
+		if (!usdDisplay()) {
+			var pn = document.createElement('p');
+			pn.className = 'cfg-fieldnote pack-note';
+			pn.textContent = t('billing.usd_note') + ' ' + t('billing.rates_as_of', { date: DaimondI18n.ratesAsOf() });
+			wrap.appendChild(pn);
+		}
 	}
 
 	/// Attach to the gateway once the identity is unlocked (its auth is a signed
@@ -5280,9 +5381,9 @@ import init, {
 	/// the user accept or veto.
 	async function foldDeltaInto(diamondId, delta, sourceName, sourceRun) {
 		var f = diamonds.find(function (x) { return x.id === diamondId; });
-		if (!f) { noticeDialog('Diamond is gone', 'The Diamond that dispatched this agent no longer exists.'); return; }
+		if (!f) { noticeDialog(t('fold.diamond_gone'), t('fold.diamond_gone_body')); return; }
 		if (!diamondCanRun(diamondId)) {
-			openSettings('That Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold into it.');
+			openSettings(t('fold.no_key'));
 			return;
 		}
 		await selectDiamond(f);
@@ -5359,7 +5460,7 @@ import init, {
 			if (!hits.length) {
 				var none = document.createElement('div');
 				none.className = 'files-empty';
-				none.textContent = 'Nothing matches "' + filter + '".';
+				none.textContent = t('files.no_match', { filter: filter });
 				treeEl.appendChild(none);
 				return;
 			}
@@ -5433,10 +5534,9 @@ import init, {
 			}
 			var handle;
 			try { handle = await window.showDirectoryPicker({ mode: 'read' }); }
-			catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg('Could not open that folder.', true); return; }
+			catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg(t('files.folder_open_failed'), true); return; }
 			if (!await confirmDialog(
-				'Copy "' + handle.name + '" into the workspace? Everything in it will then sync to your ' +
-				'other devices, and count towards your storage.', 'Import')) return;
+				t('files.import_body', { name: handle.name }), t('files.import'))) return;
 
 			var app; try { app = tools(); } catch (e) { return; }
 			var copied = 0, skipped = 0;
@@ -5594,21 +5694,19 @@ import init, {
 			if (!window.DaimondCloud) return;
 			chip.classList.add('ghost');
 			chip.classList.remove('cloud');
-			setChip(chip, 'cloud', 'Cloud');
+			setChip(chip, 'cloud', t('files.cloud'));
 			var s;
 			try { s = await DaimondCloud.summary(); } catch (e) { return; }
 			if (!s.files) {
-				chip.title = DaimondCloud.available()
-					? 'Nothing in cloud storage yet. Your workspace is limited to what this browser grants.'
-					: 'Unlock to use cloud storage. Without it your workspace is limited to what this browser grants.';
+				chip.title = t(DaimondCloud.available() ? 'files.cloud_empty' : 'files.cloud_locked');
 				return;
 			}
 			chip.classList.remove('ghost');
 			chip.classList.add('cloud');
 			setChip(chip, 'cloud', fmtBytes(s.bytes));
 			chip.title = s.awayFiles
-				? (s.files + ' files in cloud storage; ' + s.awayFiles + ' of them not on this device.')
-				: (s.files + ' files in cloud storage, all of them also on this device.');
+				? t('files.cloud_some_away', { n: s.files, away: s.awayFiles })
+				: t('files.cloud_all_here', { n: s.files });
 		}
 
 		/// The mode row's glyphs, in the toolbar's idiom: 24-unit outlines stroked
@@ -5675,11 +5773,12 @@ import init, {
 
 			viewEl.innerHTML =
 				'<div class="files-view-head">' +
-				'  <span class="files-view-name">☁ Cloud storage</span>' +
+				'  <span class="files-view-name">☁ ' + esc(t('files.cloud_storage')) + '</span>' +
 				'  <span>' +
-				'    <button class="files-btn" data-act="cloud-reclaim" title="Free up space on this device now">Free up space</button>' +
-				'    <button class="files-btn" data-act="cloud-credits">Credits</button>' +
-				'    <button class="files-btn" data-act="back">← Back</button>' +
+				'    <button class="files-btn" data-act="cloud-reclaim" title="' + esc(t('files.reclaim_help')) + '">'
+					+ esc(t('files.reclaim')) + '</button>' +
+				'    <button class="files-btn" data-act="cloud-credits">' + esc(t('drawer.credits')) + '</button>' +
+				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
 				'<div class="files-view-body cloud-view"></div>';
@@ -5688,13 +5787,13 @@ import init, {
 			var intro = document.createElement('p');
 			intro.className = 'cloud-intro';
 			intro.textContent = s.files
-				? ('Your workspace lives in cloud storage, and this device holds as much of it as it can. ' +
-					s.files + ' files, ' + fmtBytes(s.bytes) + ' in total; ' +
-					(s.awayFiles
-						? (s.awayFiles + ' of them (' + fmtBytes(s.awayBytes) + ') are not on this device.')
-						: 'all of them are also on this device.'))
-				: ('Nothing is in cloud storage yet. Without it your workspace is limited to what this ' +
-					'browser grants you' + (s.quota ? (' — ' + fmtBytes(s.quota) + ' here') : '') + '.');
+				? (t('files.cloud_intro', { n: s.files, total: fmtBytes(s.bytes) }) + ' '
+					+ (s.awayFiles
+						? t('files.cloud_away', { n: s.awayFiles, bytes: fmtBytes(s.awayBytes) })
+						: t('files.cloud_here')))
+				: (s.quota
+					? t('files.cloud_none_quota', { quota: fmtBytes(s.quota) })
+					: t('files.cloud_none'));
 			body.appendChild(intro);
 
 			if (s.quota) {
@@ -5707,9 +5806,8 @@ import init, {
 				body.appendChild(bar);
 				var cap = document.createElement('p');
 				cap.className = 'cloud-cap';
-				cap.textContent = 'This browser has granted ' + fmtBytes(s.quota) + ', of which ' +
-					fmtBytes(s.usage) + ' is used. Files are freed automatically as it fills, ' +
-					'unless you have pinned them.';
+				cap.textContent = t('files.cloud_cap',
+					{ quota: fmtBytes(s.quota), used: fmtBytes(s.usage) });
 				body.appendChild(cap);
 			}
 
@@ -5726,7 +5824,7 @@ import init, {
 				r.appendChild(n); r.appendChild(z);
 				if (DaimondCloud.isPinned(p)) {
 					var pin = document.createElement('span');
-					pin.className = 'cloud-pin'; pin.textContent = '📌'; pin.title = 'Pinned to this device';
+					pin.className = 'cloud-pin'; pin.textContent = '📌'; pin.title = t('files.pinned_short');
 					r.appendChild(pin);
 				}
 				body.appendChild(r);
@@ -6004,16 +6102,14 @@ import init, {
 				if (e.cloud) {
 					var get = document.createElement('button');
 					get.className = 'files-res files-get'; get.textContent = '⤓';
-					get.title = 'Bring this file onto this device (' + fmtBytes(e.size || 0) + ')';
+					get.title = t('files.get_help', { size: fmtBytes(e.size || 0) });
 					get.addEventListener('click', function (ev) { ev.stopPropagation(); fetchEntry(full, e.size || 0); });
 					row.appendChild(get);
 				} else if (backed) {
 					var pinned = DaimondCloud.isPinned(full);
 					var pinB = document.createElement('button');
 					pinB.className = 'files-res files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
-					pinB.title = pinned
-						? 'Pinned: always kept on this device. Click to release.'
-						: 'Pin: never free this one to make room.';
+					pinB.title = t(pinned ? 'files.pinned_help' : 'files.pin_help');
 					pinB.addEventListener('click', function (ev) {
 						ev.stopPropagation();
 						DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
@@ -6023,23 +6119,22 @@ import init, {
 					if (!pinned) {
 						var freeB = document.createElement('button');
 						freeB.className = 'files-res files-free'; freeB.textContent = '⤒';
-						freeB.title = 'Free up space: keep it in cloud storage, drop the copy here';
+						freeB.title = t('files.free_help');
 						freeB.addEventListener('click', function (ev) { ev.stopPropagation(); freeEntry(full); });
 						row.appendChild(freeB);
 					}
 				}
 				var ren = document.createElement('button');
-				ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = 'Rename or move';
+				ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = t('files.rename_move');
 				ren.addEventListener('click', function (ev) { ev.stopPropagation(); renameEntry(e); });
 				row.appendChild(ren);
 				var del = document.createElement('button');
-				del.className = 'files-del'; del.textContent = '×'; del.title = 'Delete';
+				del.className = 'files-del'; del.textContent = '×'; del.title = t('files.delete');
 				del.addEventListener('click', async function (ev) {
 					ev.stopPropagation();
-					var msg = e.dir
-						? 'Delete the folder "' + e.name + '" and everything inside it? This cannot be undone.'
-						: 'Delete "' + e.name + '"? This cannot be undone.';
-					if (!await confirmDialog(msg, 'Delete')) return;
+					var msg = t(e.dir ? 'files.delete_folder_body' : 'files.delete_file_body',
+						{ name: e.name });
+					if (!await confirmDialog(msg, t('files.delete'))) return;
 					// The result used to be discarded, so a failed directory
 					// delete looked exactly like a successful one: the user
 					// confirmed a destructive action and was told nothing.
@@ -6048,7 +6143,7 @@ import init, {
 						recursive: e.dir ? 'true' : 'false',
 					}));
 					if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-						fileMsg('Could not delete ' + e.name + ': ' + friendlyError(res), true);
+						fileMsg(t('files.delete_failed', { name: e.name, reason: friendlyError(res) }), true);
 					}
 					list(curDir);
 				});
@@ -6072,11 +6167,11 @@ import init, {
 			if (!window.DaimondCloud) return;
 			if (size > FETCH_CONFIRM_OVER) {
 				var ok = await confirmDialog(
-					'Bring "' + path + '" onto this device? That downloads ' + fmtBytes(size) + '.',
-					'Fetch');
+					t('files.fetch_body', { path: path, size: fmtBytes(size) }),
+					t('files.fetch'));
 				if (!ok) return;
 			}
-			fileMsg('Fetching ' + path + '…');
+			fileMsg(t('files.fetching', { path: path }));
 			var res = await DaimondCloud.fetch(path);
 			// The tool's own answer, which on a failure is an fe2o3 chain. Through
 			// friendlyError so it arrives as a sentence rather than as frames.
@@ -6105,16 +6200,15 @@ import init, {
 				'<div class="files-view-head">' +
 				'  <span class="files-view-name"></span>' +
 				'  <span>' +
-				'    <button class="files-btn" data-act="download" title="Save to this machine">⤓ Download</button>' +
-				'    <button class="files-btn" data-act="back">← Back</button>' +
+				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download_help')) + '">⤓ '
+					+ esc(t('files.download')) + '</button>' +
+				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
 				'<div class="files-view-body"><p class="cloud-intro"></p></div>';
 			viewEl.querySelector('.files-view-name').textContent = path;
 			viewEl.querySelector('.cloud-intro').textContent =
-				'This is a binary file of ' + fmtBytes(file.size) + '. It is stored and synced ' +
-				'like everything else here, but there is nothing to show — download it to open ' +
-				'it in something that understands it.';
+				t('files.binary_note', { size: fmtBytes(file.size) });
 			var nameEl = document.getElementById('doc-name');
 			if (nameEl) nameEl.textContent = path;
 			DaimondPanels.markUsed('doc');
@@ -6157,14 +6251,16 @@ import init, {
 				'<div class="files-view-head">' +
 				'  <span>' +
 				compileBtn +
-				'    <button class="files-btn" data-act="edit" title="Edit">✎ Edit</button>' +
+				'    <button class="files-btn" data-act="edit" title="' + esc(t('files.edit')) + '">✎ '
+					+ esc(t('files.edit')) + '</button>' +
 				// Edit used to have no way out but Save. Backing out meant closing the
 				// whole document and opening it again, which threw the edit away
 				// without a word -- a one-way door into a mode that writes.
-				'    <button class="files-btn" data-act="cancel-edit" title="Stop editing" style="display:none">✕ Cancel</button>' +
-				'    <button class="files-btn" data-act="lineno" title="Line numbers">#</button>' +
-				'    <button class="files-btn" data-act="download" title="Download">⤓</button>' +
-				'    <button class="files-btn" data-act="back">← Back</button>' +
+				'    <button class="files-btn" data-act="cancel-edit" title="' + esc(t('files.stop_editing'))
+					+ '" style="display:none">✕ ' + esc(t('common.cancel')) + '</button>' +
+				'    <button class="files-btn" data-act="lineno" title="' + esc(t('files.line_numbers')) + '">#</button>' +
+				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">⤓</button>' +
+				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
 				'<div class="files-view-msg" style="display:none"></div>' +
@@ -6202,7 +6298,7 @@ import init, {
 					ta.replaceWith(pre);
 				}
 				editing = false;
-				editBtn.textContent = '✎ Edit';
+				editBtn.textContent = '✎ ' + t('files.edit');
 				editBtn.disabled = false;
 				cancelBtn.style.display = 'none';
 				renderFileBody();
@@ -6213,12 +6309,13 @@ import init, {
 				// closes without a question, because there is nothing to lose.
 				if (ta && ta.value !== curContent) {
 					var go = await confirmDialog(
-						'Your changes to ' + path + ' have not been saved. Close the editor and lose them?',
-						'Discard', { title: 'Discard your changes?', danger: true, cancelLabel: 'Keep editing' });
+						t('files.unsaved_body', { path: path }),
+						t('files.discard'),
+						{ title: t('files.discard_title'), danger: true, cancelLabel: t('files.keep_editing') });
 					if (!go) return;
 				}
 				stopEditing();
-				fileMsg('Editing stopped — nothing was written.');
+				fileMsg(t('files.editing_stopped'));
 			});
 			editBtn.addEventListener('click', async function () {
 				if (!editing) {
@@ -6234,11 +6331,11 @@ import init, {
 					ta.setSelectionRange(0, 0);
 					ta.scrollTop = 0;
 					ta.scrollLeft = 0;
-					editBtn.textContent = '✔ Save';
+					editBtn.textContent = '✔ ' + t('common.save');
 					cancelBtn.style.display = '';
 				} else {
 					var ta2 = viewEl.querySelector('.files-edit'), content = ta2.value;
-					editBtn.disabled = true; editBtn.textContent = 'Saving…';
+					editBtn.disabled = true; editBtn.textContent = t('files.saving');
 					// The agent may have rewritten this file since it was opened.
 					// Saving the editor's stale copy would silently erase that work,
 					// so a disk that no longer matches the edit's base is confirmed
@@ -6252,12 +6349,11 @@ import init, {
 						// blocks the page. This file says so at the top of its dialog
 						// section, and this was the one place still doing it.
 						var over = await confirmDialog(
-							'This file changed on disk since you opened it — most likely an agent '
-							+ 'edited it. Save anyway and overwrite those changes?',
-							'Overwrite', { title: 'It changed while you were editing', danger: true });
+							t('files.conflict_body'), t('files.overwrite'),
+							{ title: t('files.conflict_title'), danger: true });
 						if (!over) {
-							editBtn.disabled = false; editBtn.textContent = '✔ Save';
-							fileMsg('Save cancelled — the file changed on disk.', true);
+							editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+							fileMsg(t('files.save_cancelled'), true);
 							return;
 						}
 					}
@@ -6266,14 +6362,14 @@ import init, {
 						var pre = document.createElement('pre'); pre.className = 'files-view-body';
 						ta2.replaceWith(pre);
 						renderFileBody();
-						editBtn.textContent = '✎ Edit'; editBtn.disabled = false;
+						editBtn.textContent = '✎ ' + t('files.edit'); editBtn.disabled = false;
 						cancelBtn.style.display = 'none';
-						fileMsg('Saved.'); refresh();
+						fileMsg(t('files.saved')); refresh();
 						if (path === INSTRUCTIONS_FILE) Instructions.refresh();
 						else if (path.indexOf(PROMPTS_DIR + '/') === 0) Prompts.refresh();
 					}).catch(function (e) {
-						editBtn.disabled = false; editBtn.textContent = '✔ Save';
-						fileMsg('Save failed: ' + friendlyError(e));
+						editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
+						fileMsg(t('files.save_failed', { reason: friendlyError(e) }));
 					});
 				}
 			});
@@ -6294,9 +6390,9 @@ import init, {
 			var msgEl = viewEl.querySelector('.files-view-msg');
 			if (!msgEl) return;
 			var label = btn ? btn.textContent : '';
-			if (btn) { btn.disabled = true; btn.textContent = '… compiling'; }
+			if (btn) { btn.disabled = true; btn.textContent = '… ' + t('files.compiling'); }
 			msgEl.style.display = ''; msgEl.classList.remove('err');
-			msgEl.textContent = 'Compiling ' + path + ' …';   // escaped
+			msgEl.textContent = t('files.compiling_path', { path: path });   // escaped
 			try {
 				if (!_typstMod) _typstMod = await import('./typst.js');
 				// Always compile the freshest source from OPFS.
@@ -6315,12 +6411,13 @@ import init, {
 				var blob = new Blob([out.pdf], { type: 'application/pdf' });
 				_pdfUrl = URL.createObjectURL(blob);
 				showDoc(pdfPath, _pdfUrl);
-				msgEl.textContent = 'Compiled → ' + pdfPath + ' (' + fmtBytes(out.pdf.length) + ')';
+				msgEl.textContent = t('files.compiled',
+					{ path: pdfPath, size: fmtBytes(out.pdf.length) });
 			} catch (e) {
 				msgEl.classList.add('err');
-				msgEl.textContent = 'Compile failed: ' + (e && e.message ? e.message : e);
+				msgEl.textContent = t('files.compile_failed', { reason: (e && e.message ? e.message : e) });
 			} finally {
-				if (btn) { btn.disabled = false; btn.textContent = label || '⚙ Compile'; }
+				if (btn) { btn.disabled = false; btn.textContent = label || ('⚙ ' + t('files.compile')); }
 			}
 		}
 
@@ -6367,10 +6464,9 @@ import init, {
 		// Create a new empty file in the current directory and open it to edit.
 		async function newFile() {
 			var atRoot = !curDir || curDir === '.' || curDir === '/';
-			var hint = (atRoot && !Instructions.md.trim())
-				? 'Name it DAIMOND.md to write standing instructions every agent will follow.'
-				: '';
-			var name = await promptDialog('New file', { message: hint, placeholder: 'notes.md', okLabel: 'Create' });
+			var hint = (atRoot && !Instructions.md.trim()) ? t('files.new_file_hint') : '';
+			var name = await promptDialog(t('work.new_file'),
+				{ message: hint, placeholder: 'notes.md', okLabel: t('rail.create') });
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
 			var p = joinPath(curDir, name);
@@ -6388,18 +6484,19 @@ import init, {
 				await Instructions.refresh();
 				await Prompts.refresh();
 				openFile(p);
-			} catch (e) { fileMsg('Could not create file: ' + friendlyError(e), true); }
+			} catch (e) { fileMsg(t('files.create_failed', { reason: friendlyError(e) }), true); }
 		}
 
 		/// Create a folder. Only an agent could make one before — and only as a
 		/// side effect of writing a file into it. The user had no way at all.
 		async function newDir() {
-			var name = await promptDialog('New folder', { placeholder: 'notes', okLabel: 'Create' });
+			var name = await promptDialog(t('work.new_folder'),
+				{ placeholder: 'notes', okLabel: t('rail.create') });
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
 			var res = await tools().run_tool('dir_create', JSON.stringify({ path: joinPath(curDir, name) }));
 			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-				fileMsg('Could not create the folder: ' + friendlyError(res), true);
+				fileMsg(t('files.create_folder_failed', { reason: friendlyError(res) }), true);
 			}
 			await list(curDir);
 		}
@@ -6407,10 +6504,10 @@ import init, {
 		/// Rename or move an entry. `to` may carry a path, so this is also how a
 		/// file is moved into another folder.
 		async function renameEntry(e) {
-			var name = await promptDialog('Rename', {
-				message: 'A name, or a path, to move it somewhere else.',
-				value: e.name, okLabel: 'Rename',
-				validate: function (v) { return v ? '' : 'Enter a name.'; },
+			var name = await promptDialog(t('rail.rename'), {
+				message: t('files.rename_hint'),
+				value: e.name, okLabel: t('rail.rename'),
+				validate: function (v) { return v ? '' : t('files.err_name'); },
 			});
 			if (name === null) return;
 			name = name.trim();
@@ -6418,7 +6515,7 @@ import init, {
 			var to = name.indexOf('/') === -1 ? joinPath(curDir, name) : name;
 			var res = await tools().run_tool('file_move', JSON.stringify({ path: joinPath(curDir, e.name), to: to }));
 			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-				fileMsg('Could not rename: ' + friendlyError(res), true);
+				fileMsg(t('files.rename_failed', { reason: friendlyError(res) }), true);
 			}
 			await list(curDir);
 		}
@@ -6438,11 +6535,11 @@ import init, {
 						var buf = new Uint8Array(await f.arrayBuffer());
 						await writeWorkspaceBytes(joinPath(curDir, f.name), buf);
 					} catch (err) {
-						fileMsg('Could not upload ' + f.name + ': ' + friendlyError(err), true);
+						fileMsg(t('files.upload_failed', { name: f.name, reason: friendlyError(err) }), true);
 					}
 				}
 				await list(curDir);
-				fileMsg(files.length === 1 ? 'Uploaded 1 file.' : 'Uploaded ' + files.length + ' files.');
+				fileMsg(tn('files.uploaded', files.length));
 			});
 			inp.click();
 		}
@@ -6494,9 +6591,9 @@ import init, {
 			var ta = viewEl.querySelector('.files-edit');
 			if (editing && ta && ta.value !== curContent) {
 				var go = await confirmDialog(
-					'Your changes to ' + (curFile || 'this file') + ' have not been saved. '
-					+ 'Close it and lose them?',
-					'Discard', { title: 'Discard your changes?', danger: true, cancelLabel: 'Keep editing' });
+					t('files.unsaved_close', { path: curFile || t('files.this_file') }),
+					t('files.discard'),
+					{ title: t('files.discard_title'), danger: true, cancelLabel: t('files.keep_editing') });
 				if (!go) return;
 			}
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
@@ -6519,12 +6616,11 @@ import init, {
 			catch (e) { return; }   // gone or unreadable; leave the view as it is
 			if (disk === curContent) return;
 			if (editing) {
-				fileMsg('This file changed on disk — an agent edited it. Your edits are '
-					+ 'kept; saving will ask before overwriting.', true);
+				fileMsg(t('files.changed_while_editing'), true);
 			} else {
 				curContent = disk;
 				renderFileBody();
-				fileMsg('Reloaded — the file changed on disk.');
+				fileMsg(t('files.reloaded'));
 			}
 		}
 
@@ -6753,8 +6849,10 @@ import init, {
 		var el = document.createElement('button');
 		el.className = 'tag-chip diamond-chip' + (agentDiamondFilter === run.diamondId ? ' tag-active' : '');
 		el.style.setProperty('--tag-h', tagHue(run.diamondName || ''));
-		el.textContent = '↳ ' + (run.diamondName || 'no Diamond');
-		el.title = run.diamondId ? ('Show only agents from "' + run.diamondName + '"') : 'This run has no Diamond';
+		el.textContent = '↳ ' + (run.diamondName || t('agents.no_diamond'));
+		el.title = run.diamondId
+			? t('agents.only_from', { name: run.diamondName })
+			: t('agents.no_diamond_help');
 		if (run.diamondId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentDiamondFilter(run.diamondId); });
 		return el;
 	}
@@ -6837,17 +6935,17 @@ import init, {
 		if (agentDiamondFilter) {
 			var f = null, id = agentDiamondFilter;
 			for (var i = 0; i < diamonds.length; i++) if (diamonds[i].id === id) { f = diamonds[i]; break; }
-			var label = f ? f.name : 'Diamond';
+			var label = f ? f.name : t('agents.a_diamond');
 			chip = document.createElement('button');
 			chip.className = 'tag-chip tag-active diamond-chip';
 			chip.style.setProperty('--tag-h', tagHue(label));
 			chip.textContent = '↳ ' + label;
-			chip.title = 'Clear the Diamond filter';
+			chip.title = t('agents.clear_diamond_filter');
 			chip.addEventListener('click', function () { setAgentDiamondFilter(id); });
 		} else {
 			var tag = agentTagFilter;
 			chip = tagChip(tag, 'tag-active', function () { setAgentTagFilter(tag); });
-			chip.title = 'Clear the "' + tag + '" filter';
+			chip.title = t('tag.clear_filter', { tag: tag });
 		}
 		var x = document.createElement('span'); x.className = 'tag-x'; x.textContent = '×';
 		chip.appendChild(x);
@@ -6862,7 +6960,7 @@ import init, {
 		if (!tagFilter) { diamondFilter.style.display = 'none'; return; }
 		diamondFilter.style.display = '';
 		var chip = tagChip(tagFilter, 'tag-active', function () { setTagFilter(null); });
-		chip.title = 'Clear the "' + tagFilter + '" filter';
+		chip.title = t('tag.clear_filter', { tag: tagFilter });
 		var x = document.createElement('span');
 		x.className = 'tag-x';
 		x.textContent = '×';
@@ -6876,7 +6974,7 @@ import init, {
 		if (diamonds.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
-			note.textContent = 'No Diamonds yet.';
+			note.textContent = t('rail.no_diamonds');
 			diamondList.appendChild(note);
 			return;
 		}
@@ -6885,7 +6983,7 @@ import init, {
 		if (shown.length === 0) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = 'No Diamonds match.';
+			none.textContent = t('rail.no_match');
 			diamondList.appendChild(none);
 			return;
 		}
@@ -6903,31 +7001,33 @@ import init, {
 		var name = document.createElement('span');
 		name.className = 'session-box-name';
 		name.textContent = f.name;                 // escaped via textContent (H5)
-		name.title = 'Double-click to rename';
+		name.title = t('rail.dblclick_rename');
 		name.addEventListener('dblclick', async function (e) {
 			e.stopPropagation();
-			var nn = await promptDialog('Rename Diamond', { value: f.name, okLabel: 'Rename' });
+			var nn = await promptDialog(t('rail.rename_diamond'), { value: f.name, okLabel: t('rail.rename') });
 			if (nn === null) return; nn = nn.trim();
 			if (!nn || nn === f.name) return;
-			diamondApp().rename_diamond(f.id, nn).then(function () { f.name = nn; loadDiamonds(); })
-				.catch(function (e2) { noticeDialog('Rename failed', friendlyError(e2)); });
+			diamondApp().rename_diamond(f.id, nn).then(function () { f.name = nn; bumpDiamonds(); loadDiamonds(); })
+				.catch(function (e2) { noticeDialog(t('rail.rename_failed'), friendlyError(e2)); });
 		});
 		header.appendChild(name);
 		var del = document.createElement('button');
 		del.className = 'session-box-close';
 		del.textContent = '×';
-		del.title = 'Delete Diamond';
+		del.title = t('rail.delete_diamond');
 		del.addEventListener('click', async function (e) {
 			e.stopPropagation();
-			if (!await confirmDialog('Delete the Diamond "' + f.name + '" — its crystal, its history and its deltas? This cannot be undone.', 'Delete Diamond', { title: 'Delete Diamond' })) return;
+			if (!await confirmDialog(t('rail.delete_diamond_body', { name: f.name }),
+				t('rail.delete_diamond'), { title: t('rail.delete_diamond') })) return;
 			// A deleted Diamond's arrangement has nothing left to restore, and the
 			// layout blob is rewritten whole on every change, so leaving it would
 			// grow the write for ever.
 			DaimondPanels.forgetArrangement(f.id);
 			diamondApp().delete_diamond(f.id).then(function () {
-				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = 'No chat'; showCentre('chat'); renderEmptyState(); }
+				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = t('chat.no_chat'); showCentre('chat'); renderEmptyState(); }
+				bumpDiamonds();
 				loadDiamonds();
-			}).catch(function (e2) { noticeDialog('Delete failed', friendlyError(e2)); });
+			}).catch(function (e2) { noticeDialog(t('rail.delete_failed'), friendlyError(e2)); });
 		});
 		header.appendChild(del);
 		var meta = document.createElement('div');
@@ -6947,9 +7047,9 @@ import init, {
 		// a Diamond with no tags adds nothing here and looks exactly as it did
 		// before tags existed.
 		var tags = tagsOf(f);
-		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (t) {
-			var chip = tagChip(t, 'tag-sm', setTagFilter);
-			chip.title = 'Show only Diamonds tagged "' + t + '"';
+		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
+			var chip = tagChip(tag, 'tag-sm', setTagFilter);
+			chip.title = t('tag.only_diamonds', { tag: tag });
 			meta.appendChild(chip);
 		});
 		if (tags.length > TAG_CHIPS_SHOWN) {
@@ -7006,13 +7106,13 @@ import init, {
 		if (!head || !body) return;
 
 		var title = document.getElementById('msg-title');
-		if (title) title.textContent = v.subject || 'Message';
+		if (title) title.textContent = v.subject || t('panel.msg');
 
 		// ── The header block ───────────────────────────────────
 		head.innerHTML = '';
 		var subj = document.createElement('div');
 		subj.className = 'msg-subject';
-		subj.textContent = v.subject || '(no subject)';
+		subj.textContent = v.subject || t('mail.no_subject');
 		head.appendChild(subj);
 
 		var who = document.createElement('div');
@@ -7020,7 +7120,7 @@ import init, {
 		var from = v.from || { name: '', addr: '' };
 		var nm = document.createElement('span');
 		nm.className = 'msg-name';
-		nm.textContent = from.name || from.addr || '(unknown sender)';
+		nm.textContent = from.name || from.addr || t('msg.unknown_sender');
 		who.appendChild(nm);
 		if (from.name && from.addr) {
 			var ad = document.createElement('span');
@@ -7036,7 +7136,7 @@ import init, {
 		}
 		head.appendChild(who);
 
-		[['To', v.to], ['Cc', v.cc], ['Reply-to', v.replyTo]].forEach(function (row) {
+		[[t('compose.to'), v.to], [t('compose.cc'), v.cc], [t('msg.reply_to'), v.replyTo]].forEach(function (row) {
 			if (!row[1]) return;
 			var d = document.createElement('div');
 			d.className = 'msg-line';
@@ -7050,9 +7150,9 @@ import init, {
 		if (v.reply) {
 			var acts = document.createElement('div');
 			acts.className = 'msg-acts';
-			var verbs = [['Reply', v.reply]];
-			if (v.canReplyAll) verbs.push(['Reply all', v.replyAll]);
-			verbs.push(['Forward', v.forward]);
+			var verbs = [[t('msg.reply'), v.reply]];
+			if (v.canReplyAll) verbs.push([t('msg.reply_all'), v.replyAll]);
+			verbs.push([t('msg.forward'), v.forward]);
 			verbs.forEach(function (verb) {
 				var b = document.createElement('button');
 				b.className = 'msg-act';
@@ -7069,16 +7169,16 @@ import init, {
 			v.attachments.forEach(function (att) {
 				var chip = document.createElement('button');
 				chip.className = 'msg-att';
-				chip.title = 'Save into the workspace';
+				chip.title = t('msg.save_help');
 				chip.textContent = att.name + ' · ' + fmtBytes(att.size);
 				chip.addEventListener('click', async function () {
 					chip.disabled = true;
 					try {
 						var path = await v.save(att);
-						chip.textContent = 'Saved · ' + path;
+						chip.textContent = t('msg.saved_to', { path: path });
 						chip.classList.add('done');
 					} catch (e) {
-						chip.textContent = 'Could not save ' + att.name;
+						chip.textContent = t('msg.save_failed', { name: att.name });
 						chip.disabled = false;
 					}
 				});
@@ -7092,10 +7192,9 @@ import init, {
 		if (v.html) {
 			var bar = document.createElement('div');
 			bar.className = 'msg-blocked';
-			bar.innerHTML = '<span>Pictures and other remote content are blocked. '
-				+ 'Loading them tells the sender you opened this.</span>';
+			bar.innerHTML = '<span>' + esc(t('msg.pictures_blocked')) + '</span>';
 			var btn = document.createElement('button');
-			btn.textContent = 'Load pictures';
+			btn.textContent = t('msg.load_pictures');
 			bar.appendChild(btn);
 
 			var frame = document.createElement('iframe');
@@ -7127,7 +7226,7 @@ import init, {
 		} else {
 			var pre = document.createElement('div');
 			pre.className = 'msg-text';
-			pre.textContent = v.text || '(This message has no readable text part.)';
+			pre.textContent = v.text || t('msg.no_text');
 			body.appendChild(pre);
 		}
 
@@ -7176,8 +7275,8 @@ import init, {
 		note.textContent = '';
 		note.className = 'compose-note';
 		title.textContent = d.subject
-			? (d.inReplyTo ? 'Reply' : 'Draft') + ' · ' + d.subject
-			: 'New message';
+			? t(d.inReplyTo ? 'msg.reply' : 'compose.draft') + ' · ' + d.subject
+			: t('compose.new_message');
 
 		function fields() {
 			return {
@@ -7198,7 +7297,7 @@ import init, {
 			atts.forEach(function (att, i) {
 				var chip = document.createElement('button');
 				chip.className = 'compose-att';
-				chip.title = 'Remove this attachment';
+				chip.title = t('compose.remove_attachment');
 				chip.textContent = att.name + ' · ' + fmtBytes(att.size) + ' ×';
 				chip.addEventListener('click', function () {
 					atts.splice(i, 1);
@@ -7232,10 +7331,10 @@ import init, {
 
 		send.addEventListener('click', async function () {
 			var f = fields();
-			if (!f.to.trim()) { say('Say who it is going to.', true); return; }
+			if (!f.to.trim()) { say(t('compose.err_no_to'), true); return; }
 			var ok = await confirmDialog(
-				'It will be posted through ' + f.from + ', and cannot be recalled.',
-				'Send', { title: 'Send this message?', danger: false });
+				t('compose.send_body', { from: f.from }),
+				t('compose.send'), { title: t('compose.send_title'), danger: false });
 			if (!ok) return;
 			busy(true);
 			say('Sending…');
@@ -7283,8 +7382,8 @@ import init, {
 		});
 
 		discard.addEventListener('click', async function () {
-			var ok = await confirmDialog('The draft is deleted and what is written in it is lost.',
-				'Discard', { title: 'Discard this draft?', danger: true });
+			var ok = await confirmDialog(t('compose.discard_body'),
+				t('compose.discard'), { title: t('compose.discard_title'), danger: true });
 			if (!ok) return;
 			await v.discard();
 			DaimondPanels.hide('compose');
@@ -7326,7 +7425,7 @@ import init, {
 			if (!dom) return;
 			if (unreachable[dom]) {
 				note.className = 'dlg-note err';
-				note.textContent = unreachable[dom];
+				note.textContent = t(unreachable[dom]);
 				return;
 			}
 			var p = presets[dom];
@@ -7344,10 +7443,9 @@ import init, {
 				set('smtpPort', p.smtpPort);
 				// The note is provider guidance, from a table in this file — not
 				// anything the user or a server said.
-				note.innerHTML = p.note || '';
+				note.innerHTML = p.note ? t(p.note) : '';
 			} else {
-				note.textContent = 'Daimond will need this provider\u2019s server names '
-					+ '(often imap.' + dom + ' for reading, smtp.' + dom + ' for sending).';
+				note.textContent = t('mail.add.guess', { domain: dom });
 				set('host', 'imap.' + dom);
 				set('smtpHost', 'smtp.' + dom);
 			}
@@ -7356,19 +7454,17 @@ import init, {
 		// the answer \u2014 while the box asking for one is still on screen.
 		return DaimondAdmin.form({
 			kind:  'form',
-			title: 'Add a mailbox',
-			message: 'Daimond\u2019s gateway connects to your mail server, hands the messages '
-				+ 'back, and forgets your password. The password is encrypted on this '
-				+ 'device under your passphrase.',
-			okLabel: 'Add and sync',
+			title: t('mail.add.title'),
+			message: t('mail.add.lead'),
+			okLabel: t('mail.add.ok'),
 			fields: [
-				{ name: 'address',  label: 'Email address', placeholder: 'you@example.com',
+				{ name: 'address',  label: t('mail.add.address'), placeholder: 'you@example.com',
 				  hint: function (v, inputs, note) { apply(v, inputs, note); } },
-				{ name: 'password', label: 'App password',  placeholder: 'The app password from your provider', secret: true },
-				{ name: 'host',     label: 'IMAP server',   placeholder: 'imap.example.com' },
-				{ name: 'port',     label: 'Port',          placeholder: '993', value: '993' },
-				{ name: 'smtpHost', label: 'SMTP server',   placeholder: 'smtp.example.com' },
-				{ name: 'smtpPort', label: 'Port',          placeholder: '587', value: '587' },
+				{ name: 'password', label: t('mail.add.password'), placeholder: t('mail.add.password_ph'), secret: true },
+				{ name: 'host',     label: t('mail.add.imap'),    placeholder: 'imap.example.com' },
+				{ name: 'port',     label: t('mail.add.port'),    placeholder: '993', value: '993' },
+				{ name: 'smtpHost', label: t('mail.add.smtp'),    placeholder: 'smtp.example.com' },
+				{ name: 'smtpPort', label: t('mail.add.port'),    placeholder: '587', value: '587' },
 			],
 			onInit: function (inputs, note) {
 				noteEl = note;
@@ -7379,17 +7475,17 @@ import init, {
 				});
 			},
 			validate: function (v) {
-				if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.address)) return 'That is not an email address.';
+				if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.address)) return t('mail.add.err_address');
 				var dom = v.address.slice(v.address.lastIndexOf('@') + 1).toLowerCase();
-				if (unreachable[dom]) return unreachable[dom];
-				if (!v.password) return 'The app password is required.';
-				if (!v.host) return 'Daimond needs the IMAP server name.';
+				if (unreachable[dom]) return t(unreachable[dom]);
+				if (!v.password) return t('mail.add.err_password');
+				if (!v.host) return t('mail.add.err_imap');
 				var p = parseInt(v.port, 10);
-				if (p !== 993 && p !== 143) return 'IMAP runs on port 993 (TLS) or 143.';
+				if (p !== 993 && p !== 143) return t('mail.add.err_port');
 				v.port = p;
-				if (!v.smtpHost) return 'Daimond needs the SMTP server name to send from this mailbox.';
+				if (!v.smtpHost) return t('mail.add.err_smtp');
 				var s = parseInt(v.smtpPort, 10);
-				if (s !== 587 && s !== 465) return 'Mail is submitted on port 587 or 465.';
+				if (s !== 587 && s !== 465) return t('mail.add.err_smtp_port');
 				v.smtpPort = s;
 				return '';
 			},
@@ -7430,17 +7526,17 @@ import init, {
 		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
 		var vals = await dialog({
 			kind: 'form',
-			title: 'New Diamond',
-			okLabel: 'Create',
+			title: t('rail.new_diamond'),
+			okLabel: t('rail.create'),
 			fields: [
-				{ name: 'name',  label: 'Name',  value: peekDiamondLabel() },
-				{ name: 'model', label: 'Model', kind: 'models', provider: d.provider, value: d.model },
+				{ name: 'name',  label: t('rail.name'),  value: peekDiamondLabel() },
+				{ name: 'model', label: t('rail.model'), kind: 'models', provider: d.provider, value: d.model },
 			],
 			validate: function (v) {
-				if (!v.name) return 'Give the Diamond a name.';
-				if (!v.model || !v.model.model) return 'Choose a model for this Diamond to think with.';
+				if (!v.name) return t('rail.err_name');
+				if (!v.model || !v.model.model) return t('rail.err_model');
 				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
-					return 'That provider has no readable key yet — unlock, or add one.';
+					return t('rail.err_no_key');
 				}
 				return '';
 			},
@@ -7456,14 +7552,36 @@ import init, {
 			id = await diamondApp().create_diamond(name);
 			takeDiamondLabel();
 		} catch (e) {
-			noticeDialog('Could not create Diamond', friendlyError(e));
+			noticeDialog(t('rail.create_failed'), friendlyError(e));
 			return;
 		}
 		setDiamondModel(id, vals.model);
+		bumpDiamonds();
+		// Creating something is the user saying "show me this now". A search
+		// string or a tag filter left over from a moment ago can hide the new
+		// Diamond behind "No Diamonds match", which reads exactly like the
+		// create having done nothing -- so the rail is cleared to show it.
+		clearDiamondFilters();
 		await loadDiamonds();
 		var f = diamonds.find(function (x) { return x.id === id; });
-		if (f) selectDiamond(f);
+		if (f) { selectDiamond(f); }
+		else {
+			// The store took the write and then would not read it back. That is
+			// storage trouble, not a no-op, and saying nothing is how a user comes
+			// to believe their Diamond vanished and makes it again.
+			noticeDialog(t('rail.created_unreadable'),
+				t('rail.created_unreadable_body', { name: name }));
+		}
 		if (isMobile()) mshow('ai');
+	}
+
+	/// Empty the rail's search box and tag filter, and repaint the controls that
+	/// show them. Nothing is remembered: a filter is a way of looking, not a
+	/// setting.
+	function clearDiamondFilters() {
+		diamondQuery = '';
+		tagFilter    = null;
+		if (diamondSearch) diamondSearch.value = '';
 	}
 
 	async function selectDiamond(f) {
@@ -7503,16 +7621,16 @@ import init, {
 		bar.className = 'crystal-bar';
 		var edit = document.createElement('button');
 		edit.className = 'crystal-act';
-		edit.textContent = '✎ Edit';
+		edit.textContent = '✎ ' + t('files.edit');
 		edit.addEventListener('click', function () { editCrystal(md); });
 		var hist = document.createElement('button');
 		hist.className = 'crystal-act';
-		hist.textContent = '↺ History';
+		hist.textContent = '↺ ' + t('crystal.history');
 		hist.addEventListener('click', showCrystalHistory);
 		var tagsBtn = document.createElement('button');
 		tagsBtn.className = 'crystal-act';
-		tagsBtn.textContent = '# Tags';
-		tagsBtn.title = 'File this Diamond in the rail';
+		tagsBtn.textContent = '# ' + t('crystal.tags');
+		tagsBtn.title = t('crystal.tags_help');
 		tagsBtn.addEventListener('click', showTagEditor);
 		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
 		crystalBody.appendChild(bar);
@@ -7524,7 +7642,7 @@ import init, {
 		} else {
 			var empty = document.createElement('div');
 			empty.className = 'crystal-empty';
-			empty.textContent = 'The crystal is empty. Steer it below to begin.';
+			empty.textContent = t('crystal.empty');
 			content.appendChild(empty);
 		}
 		crystalBody.appendChild(content);
@@ -7545,14 +7663,18 @@ import init, {
 		bar.className = 'crystal-bar';
 		var save = document.createElement('button');
 		save.className = 'crystal-act primary';
-		save.textContent = '✔ Save';
+		save.textContent = '✔ ' + t('common.save');
 		var cancel = document.createElement('button');
 		cancel.className = 'crystal-act';
-		cancel.textContent = 'Cancel';
+		cancel.textContent = t('common.cancel');
 		save.addEventListener('click', async function () {
-			save.disabled = true; save.textContent = 'Saving…';
+			save.disabled = true; save.textContent = t('files.saving');
 			try { await diamondApp().write_crystal(currentDiamond.id, ta.value); }
-			catch (e) { noticeDialog('Could not save the crystal', friendlyError(e)); save.disabled = false; save.textContent = '✔ Save'; return; }
+			catch (e) {
+				noticeDialog(t('crystal.save_failed'), friendlyError(e));
+				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				return;
+			}
 			await refreshDiamondAfterChange();
 		});
 		cancel.addEventListener('click', function () { renderCrystal(); });
@@ -7575,7 +7697,7 @@ import init, {
 		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
 		back.className = 'crystal-act';
-		back.textContent = '← Back to the crystal';
+		back.textContent = '← ' + t('crystal.back');
 		back.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(back);
 		crystalBody.appendChild(bar);
@@ -7585,7 +7707,7 @@ import init, {
 		if (!recs.length) {
 			var none = document.createElement('div');
 			none.className = 'crystal-empty';
-			none.textContent = 'No history yet.';
+			none.textContent = t('crystal.no_history');
 			list.appendChild(none);
 		}
 		// Newest first: the version you most likely want back is the last good one.
@@ -7617,26 +7739,27 @@ import init, {
 			acts.className = 'hist-acts';
 			var view = document.createElement('button');
 			view.className = 'crystal-act';
-			view.textContent = 'View';
+			view.textContent = t('crystal.view');
 			view.addEventListener('click', async function () {
 				var md = '';
 				try { md = await diamondApp().read_version(currentDiamond.id, v); }
-				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
-				noticeDialog('Crystal at v' + v, md || '(empty)', { pre: true });
+				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
+				noticeDialog(t('crystal.at_version', { v: v }), md || t('crystal.empty_paren'), { pre: true });
 			});
 			var revert = document.createElement('button');
 			revert.className = 'crystal-act';
-			revert.textContent = 'Restore';
+			revert.textContent = t('crystal.restore');
 			revert.addEventListener('click', async function () {
 				var md = '';
 				try { md = await diamondApp().read_version(currentDiamond.id, v); }
-				catch (e) { noticeDialog('Could not read that version', friendlyError(e)); return; }
+				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
 				var ok = await confirmDialog(
-					'Restore the crystal to v' + v + '? The current text is kept in the history, so this can itself be undone.',
-					'Restore v' + v, { title: 'Restore a version', danger: false });
+					t('crystal.restore_body', { v: v }),
+					t('crystal.restore_v', { v: v }),
+					{ title: t('crystal.restore_title'), danger: false });
 				if (!ok) return;
 				try { await diamondApp().write_crystal(currentDiamond.id, md); }
-				catch (e) { noticeDialog('Could not restore', friendlyError(e)); return; }
+				catch (e) { noticeDialog(t('crystal.restore_failed'), friendlyError(e)); return; }
 				await refreshDiamondAfterChange();
 			});
 			acts.appendChild(view); acts.appendChild(revert);
@@ -7647,13 +7770,13 @@ import init, {
 				var dref = r.delta_ref;
 				var seeDelta = document.createElement('button');
 				seeDelta.className = 'crystal-act';
-				seeDelta.textContent = 'Delta';
-				seeDelta.title = 'The raw input this fold was made from';
+				seeDelta.textContent = t('crystal.delta');
+				seeDelta.title = t('crystal.delta_help');
 				seeDelta.addEventListener('click', async function () {
 					var d = '';
 					try { d = await tools().run_tool('file_read', JSON.stringify({ path: dref })); }
-					catch (e) { noticeDialog('Could not read the delta', friendlyError(e)); return; }
-					noticeDialog('Delta folded at v' + v, d || '(empty)', { pre: true });
+					catch (e) { noticeDialog(t('crystal.read_delta_failed'), friendlyError(e)); return; }
+					noticeDialog(t('crystal.delta_at', { v: v }), d || t('crystal.empty_paren'), { pre: true });
 				});
 				acts.appendChild(seeDelta);
 			}
@@ -7679,7 +7802,7 @@ import init, {
 		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
 		back.className = 'crystal-act';
-		back.textContent = '← Back to the crystal';
+		back.textContent = '← ' + t('crystal.back');
 		back.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(back);
 		crystalBody.appendChild(bar);
@@ -7688,7 +7811,7 @@ import init, {
 		wrap.className = 'tag-editor';
 		var note = document.createElement('div');
 		note.className = 'tag-note';
-		note.textContent = 'Tags file this Diamond in the rail. They are never sent to a model and never enter the crystal.';
+		note.textContent = t('tag.editor_note');
 		wrap.appendChild(note);
 
 		var current = document.createElement('div');
@@ -7700,11 +7823,11 @@ import init, {
 		var input = document.createElement('input');
 		input.className = 'tag-input';
 		input.type = 'text';
-		input.placeholder = 'Add a tag';
+		input.placeholder = t('tag.add_ph');
 		input.maxLength = 24;
 		var add = document.createElement('button');
 		add.className = 'crystal-act';
-		add.textContent = '+ Add';
+		add.textContent = '+ ' + t('tag.add_btn');
 		addRow.appendChild(input); addRow.appendChild(add);
 		wrap.appendChild(addRow);
 
@@ -7718,7 +7841,8 @@ import init, {
 		/// answer is the truth, not what was typed here.
 		async function commit(next) {
 			try { await diamondApp().set_tags(f.id, JSON.stringify(next)); }
-			catch (e) { noticeDialog('Could not save the tags', friendlyError(e)); return; }
+			catch (e) { noticeDialog(t('tag.save_failed'), friendlyError(e)); return; }
+			bumpDiamonds();
 			await loadDiamonds();
 			var g = diamonds.find(function (x) { return x.id === f.id; });
 			if (g) { tags = tagsOf(g).slice(); currentDiamond = g; }
@@ -7731,41 +7855,41 @@ import init, {
 			if (!tags.length) {
 				var none = document.createElement('span');
 				none.className = 'tag-none';
-				none.textContent = 'No tags yet.';
+				none.textContent = t('tag.none_yet');
 				current.appendChild(none);
 			}
-			tags.forEach(function (t) {
-				var chip = tagChip(t, 'tag-edit', null);
+			tags.forEach(function (tag) {
+				var chip = tagChip(tag, 'tag-edit', null);
 				var x = document.createElement('button');
 				x.className = 'tag-x';
 				x.textContent = '×';
-				x.title = 'Remove "' + t + '"';
+				x.title = t('tag.remove', { tag: tag });
 				x.addEventListener('click', function () {
-					commit(tags.filter(function (u) { return u !== t; }));
+					commit(tags.filter(function (u) { return u !== tag; }));
 				});
 				chip.appendChild(x);
 				current.appendChild(chip);
 			});
 
 			sug.innerHTML = '';
-			var offer = DEFAULT_TAG_SUGGESTIONS.filter(function (t) { return tags.indexOf(t) === -1; });
+			var offer = DEFAULT_TAG_SUGGESTIONS.filter(function (x) { return tags.indexOf(x) === -1; });
 			if (!offer.length) return;
 			var lbl = document.createElement('span');
 			lbl.className = 'tag-sug-label';
-			lbl.textContent = 'Suggestions';
+			lbl.textContent = t('tag.suggestions');
 			sug.appendChild(lbl);
-			offer.forEach(function (t) {
-				var chip = tagChip(t, 'tag-offer', function () { commit(tags.concat([t])); });
-				chip.title = 'Add "' + t + '"';
+			offer.forEach(function (tag) {
+				var chip = tagChip(tag, 'tag-offer', function () { commit(tags.concat([tag])); });
+				chip.title = t('tag.add', { tag: tag });
 				sug.appendChild(chip);
 			});
 		}
 
 		function addTyped() {
-			var t = input.value.trim().toLowerCase();
+			var typed = input.value.trim().toLowerCase();
 			input.value = '';
-			if (!t || tags.indexOf(t) !== -1) return;
-			commit(tags.concat([t]));
+			if (!typed || tags.indexOf(typed) !== -1) return;
+			commit(tags.concat([typed]));
 		}
 		add.addEventListener('click', addTyped);
 		input.addEventListener('keydown', function (e) {
@@ -7795,8 +7919,8 @@ import init, {
 
 		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
 		strip.style.display = '';
-		strip.textContent = '\u25c8 ' + links.length + ' artefact' + (links.length === 1 ? '' : 's');
-		strip.title = 'What this Diamond produced or consulted';
+		strip.textContent = '\u25c8 ' + tn('arte.count', links.length);
+		strip.title = t('arte.strip_help');
 		if (!strip.dataset.open) { list.style.display = 'none'; return; }
 
 		// Most recent first: what was last touched is what is being worked on.
@@ -7823,7 +7947,7 @@ import init, {
 			var useBtn = document.createElement('button');
 			useBtn.className = 'arte-use';
 			useBtn.textContent = '\u21b3';
-			useBtn.title = 'Refer to this in the steer box';
+			useBtn.title = t('arte.refer_help');
 			useBtn.addEventListener('click', function () {
 				var box = document.getElementById('steer-input');
 				if (!box) return;
@@ -7836,7 +7960,7 @@ import init, {
 			var drop = document.createElement('button');
 			drop.className = 'arte-drop';
 			drop.textContent = '\u00d7';
-			drop.title = 'Not an artefact of this Diamond';
+			drop.title = t('arte.drop_help');
 			drop.addEventListener('click', async function () {
 				try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
 				renderArtefacts();
@@ -7869,9 +7993,7 @@ import init, {
 			try {
 				await diamondApp().run_tool('file_read', JSON.stringify({ path: rest }));
 			} catch (e) {
-				noticeDialog('That file is not there any more',
-					'\u201c' + rest + '\u201d was recorded as an artefact of this Diamond, but it '
-					+ 'cannot be read now \u2014 it may have been renamed, moved or deleted.');
+				noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: rest }));
 				return;
 			}
 			Files.open(rest);
@@ -7881,8 +8003,7 @@ import init, {
 			var chat = chats.find(function (c) { return c.id === rest; });
 			if (chat) { selectChat(chat); return; }
 		}
-		noticeDialog('Nothing to open',
-			'This artefact is a \u201c' + kind + '\u201d, which this version has no viewer for.');
+		noticeDialog(t('arte.nothing_to_open'), t('arte.no_viewer', { kind: kind }));
 	}
 
 	// A small surface for tests, and for anything that later wants to record an
@@ -7937,7 +8058,7 @@ import init, {
 		steer.className = 'steer-input';
 		steer.id = 'steer-input';
 		steer.rows = 1;
-		steer.placeholder = 'Steer the crystal (an instruction, not a chat)…';
+		steer.placeholder = t('crystal.steer_ph');
 		steer.addEventListener('input', function () {
 			steer.style.height = 'auto';
 			steer.style.height = Math.min(steer.scrollHeight, 120) + 'px';
@@ -7948,7 +8069,7 @@ import init, {
 		var steerSend = document.createElement('button');
 		steerSend.className = 'steer-send';
 		steerSend.id = 'steer-send';
-		steerSend.title = 'Steer';
+		steerSend.title = t('crystal.steer');
 		steerSend.textContent = '➤';
 		steerSend.addEventListener('click', doSteer);
 		steerRow.appendChild(steer); steerRow.appendChild(steerSend);
@@ -7960,7 +8081,7 @@ import init, {
 		delta.className = 'fold-delta';
 		delta.id = 'fold-delta';
 		delta.rows = 1;
-		delta.placeholder = 'Fold a delta (a finished agent/worker result)…';
+		delta.placeholder = t('crystal.fold_ph');
 		delta.addEventListener('input', function () {
 			delta.style.height = 'auto';
 			delta.style.height = Math.min(delta.scrollHeight, 100) + 'px';
@@ -7968,7 +8089,7 @@ import init, {
 		var foldBtn = document.createElement('button');
 		foldBtn.className = 'fold-btn';
 		foldBtn.id = 'fold-propose';
-		foldBtn.textContent = 'Fold in';
+		foldBtn.textContent = t('agents.fold_in');
 		foldBtn.addEventListener('click', doFoldPropose);
 		foldRow.appendChild(delta); foldRow.appendChild(foldBtn);
 
@@ -8016,6 +8137,7 @@ import init, {
 	/// After any crystal mutation: refresh the meta row in the rail and the
 	/// Centre meter, then re-render the crystal.
 	async function refreshDiamondAfterChange() {
+		bumpDiamonds();
 		await loadDiamonds();
 		var f = diamonds.find(function (x) { return currentDiamond && x.id === currentDiamond.id; });
 		if (f) {
@@ -8038,12 +8160,12 @@ import init, {
 		// wrong question: it would stop a perfectly good Diamond steering because some other
 		// provider -- the starred one -- had lost its key.
 		if (!diamondCanRun(currentDiamond.id)) {
-			openSettings('This Diamond’s provider has no readable key — unlock, or add one, to steer it.');
+			openSettings(t('crystal.no_key_steer'));
 			return;
 		}
 		input.value = ''; input.style.height = 'auto';
 		setCrystalBusy(true);
-		setCrystalStatus('Steering…');
+		setCrystalStatus(t('crystal.steering'));
 
 		// Every `spawn_agent` call the conductor makes in this turn becomes a
 		// worker. Several calls in one turn is how it starts several agents at
@@ -8123,11 +8245,11 @@ import init, {
 		var delta = deltaEl.value.trim();
 		if (!delta) return;
 		if (!diamondCanRun(currentDiamond.id)) {
-			openSettings('This Diamond\u2019s provider has no readable key \u2014 unlock, or add one, to fold a delta.');
+			openSettings(t('crystal.no_key_fold'));
 			return;
 		}
 		setCrystalBusy(true);
-		setCrystalStatus('Proposing fold…');
+		setCrystalStatus(t('fold.proposing'));
 		var current_md, proposed;
 		var fa = diamondApp(currentDiamond.id);   // this Diamond's model, not the starred one
 		try {
@@ -8163,11 +8285,16 @@ import init, {
 		head.className = 'diff-head';
 		// Say what is being folded into what: by this point the centre has
 		// already switched away from the chat, so its name is nowhere on screen.
-		var into = f ? ' into "' + f.name + '"' : '';
-		head.textContent = changed
-			? (st.chatName ? 'Folding "' + st.chatName + '"' + into + ' — review the change, then Accept or Reject.'
-				: 'Proposed fold' + into + ' — review the change, then Accept or Reject.')
-			: 'No change proposed' + into + ' — the crystal already covers this.';
+		// Say what is going into what. The Diamond's name is an optional half of
+		// the sentence, so each shape is its own string rather than a fragment
+		// glued on: a language that puts the target first cannot reorder glue.
+		var into = f ? f.name : '';
+		head.textContent = !changed
+			? (into ? t('diff.no_change_into', { diamond: into }) : t('diff.no_change'))
+			: st.chatName
+				? (into ? t('diff.folding_chat_into', { chat: st.chatName, diamond: into })
+					: t('diff.folding_chat', { chat: st.chatName }))
+				: (into ? t('diff.proposed_into', { diamond: into }) : t('diff.proposed'));
 		crystalBody.appendChild(head);
 
 		var lines = document.createElement('div');
@@ -8193,16 +8320,16 @@ import init, {
 		actions.className = 'diff-actions';
 		var accept = document.createElement('button');
 		accept.className = 'diff-accept';
-		accept.textContent = 'Accept fold';
+		accept.textContent = t('diff.accept');
 		// Accepting a no-op fold used to bump the crystal version and write a
 		// duplicate delta, so re-folding the same chat quietly grew the history
 		// with nothing in it.
 		accept.disabled = !changed;
-		if (!changed) accept.title = 'Nothing to apply — the proposal matches the current crystal.';
+		if (!changed) accept.title = t('diff.nothing_to_apply');
 		accept.addEventListener('click', doFoldAccept);
 		var reject = document.createElement('button');
 		reject.className = 'diff-reject';
-		reject.textContent = changed ? 'Reject' : 'Close';
+		reject.textContent = changed ? t('diff.reject') : t('common.close');
 		reject.addEventListener('click', function () { delete pendingFolds[diamondId]; renderCrystal(); });
 		actions.appendChild(accept); actions.appendChild(reject);
 		crystalControls.appendChild(status);
@@ -8614,18 +8741,14 @@ import init, {
 		if (choose) {
 			choose.style.display = (creating && canGenerate()) ? '' : 'none';
 			choose.textContent   = idGenMode
-				? 'Choose my own passphrase instead'
-				: 'Use a generated passphrase instead';
+				? t('identity.choose_own')
+				: t('identity.use_generated');
 		}
 		if (wrote)  wrote.checked = false;
 		// Only when generating: the note names the entropy, and reading it off the
 		// wordlist means the figure cannot drift from the list actually shipped.
 		if (note && idGenMode) {
-			note.textContent = 'Eight words picked at random by this device — about '
-				+ Math.round(DaimondWords.bits(GEN_WORDS)) + ' bits, far past anything that can be '
-				+ 'guessed. It is the key to everything you store here, and nobody can reset it '
-				+ 'for you. Write it on paper. Your password manager may also offer to keep it, '
-				+ 'which is safe with a passphrase this strong.';
+			note.textContent = t('identity.gen_note', { bits: Math.round(DaimondWords.bits(GEN_WORDS)) });
 		}
 		if (inp) {
 			// The field stays a masked `type="password"` in BOTH modes, including
@@ -8668,18 +8791,17 @@ import init, {
 		var linked = '';
 		try { linked = sessionStorage.getItem('daimond-just-linked') || ''; sessionStorage.removeItem('daimond-just-linked'); } catch (e) { /* private mode */ }
 		document.getElementById('id-title').textContent = unlock
-			? (linked ? 'Linked — now unlock it' : (name ? 'Welcome back, ' + name : 'Unlock Daimond'))
-			: 'Create your account';
+			? (linked ? t('identity.title_linked')
+				: (name ? t('identity.title_welcome', { name: name }) : t('identity.title_unlock')))
+			: t('identity.title_create');
 		document.getElementById('id-lead').textContent = unlock
 			? (linked
-				? 'This device is linked to your account' + (linked !== '1' ? ' “' + linked + '”' : '')
-					+ '. Enter the SAME passphrase you use on your other device — not a new one — to '
-					+ 'bring your chats and files here.'
-				: 'Enter your passphrase to unlock this device and decrypt your saved key.')
+				? (linked !== '1' ? t('identity.lead_linked_named', { name: linked }) : t('identity.lead_linked'))
+				: t('identity.lead_unlock'))
 			// Deliberately short: the passphrase box below carries the part that
 			// matters (what it is, that nothing can reset it, write it down), and
 			// repeating it here pushed the button and the escape hatch off screen.
-			: 'Choose a name — Daimond generates the passphrase itself, below. Already use Daimond on another device? Don’t make a new account here: use “Have a pairing code?” to link this one instead. (Opening a real folder for agents to edit needs Chrome, Edge or Brave.)';
+			: t('identity.lead_create');
 		// The name doubles as the username a password manager files the entry
 		// under, so it stays in the form when unlocking rather than being hidden.
 		// It is read-only there: it names the account being opened, not a choice.
@@ -8695,8 +8817,8 @@ import init, {
 		// sign-up, which decides between offering to fill and offering to save.
 		document.getElementById('id-pass').setAttribute('autocomplete',
 			unlock ? 'current-password' : 'new-password');
-		document.getElementById('id-primary').textContent    = unlock ? 'Unlock' : 'Create account';
-		document.getElementById('id-skip').textContent       = unlock ? 'Forget this identity…' : 'Skip for now';
+		document.getElementById('id-primary').textContent    = unlock ? t('identity.unlock') : t('identity.create_account');
+		document.getElementById('id-skip').textContent       = unlock ? t('identity.forget') : t('identity.skip');
 		document.getElementById('id-error').textContent = '';
 		setSecret(document.getElementById('id-pass'), '');
 		setSecret(document.getElementById('id-pass2'), '');
@@ -8770,10 +8892,10 @@ import init, {
 		var mode = document.getElementById('identity-modal').dataset.mode;
 		var err = document.getElementById('id-error');
 		var pass = getSecret(document.getElementById('id-pass'));
-		if (!pass) { err.textContent = 'Enter a passphrase.'; return; }
+		if (!pass) { err.textContent = t('identity.err_enter_pass'); return; }
 		if (mode === 'create') {
 			var name = document.getElementById('id-name').value.trim();
-			if (!name) { err.textContent = 'Choose a name.'; return; }
+			if (!name) { err.textContent = t('identity.err_choose_name'); return; }
 			if (idGenMode) {
 				// A generated passphrase is on screen to be read, so there is no
 				// confirm field to match. The only thing standing between the user
@@ -8782,7 +8904,7 @@ import init, {
 				// here without the tick means the DOM was tampered with.
 				var wrote = document.getElementById('id-wrote');
 				if (wrote && !wrote.checked) {
-					err.textContent = 'Confirm you have written the passphrase down first.';
+					err.textContent = t('identity.err_confirm_written');
 					return;
 				}
 				// Canonical spelling, so a stray space cannot produce a different
@@ -8792,14 +8914,14 @@ import init, {
 				// ever catches a field that was edited down to something weak while
 				// the generated-passphrase copy was still on screen.
 				if (pass.length < 8) {
-					err.textContent = 'That passphrase is too short. Generate another, or choose your own.';
+					err.textContent = t('identity.err_too_short_gen');
 					return;
 				}
 			} else {
-				if (pass.length < 8) { err.textContent = 'Use a passphrase of at least 8 characters.'; return; }
-				if (pass !== getSecret(document.getElementById('id-pass2'))) { err.textContent = 'The passphrases do not match.'; return; }
+				if (pass.length < 8) { err.textContent = t('identity.err_too_short'); return; }
+				if (pass !== getSecret(document.getElementById('id-pass2'))) { err.textContent = t('identity.err_mismatch'); return; }
 			}
-			try { await DaimondIdentity.create(name, pass); } catch (e) { err.textContent = 'Could not create the account.'; return; }
+			try { await DaimondIdentity.create(name, pass); } catch (e) { err.textContent = t('identity.err_create'); return; }
 			// Encrypt any key already held in memory under the new passphrase.
 			if (cfg.apiKey) { try { cfg.apiKeyEnc = await DaimondIdentity.wrap(cfg.apiKey); saveCfg(cfg); } catch (e) { /* keep plaintext */ } }
 		} else {
@@ -8818,7 +8940,7 @@ import init, {
 					if (r && r.ok) pass = canon;
 				}
 			}
-			if (!r || !r.ok) { err.textContent = 'That passphrase did not match. Try again.'; return; }
+			if (!r || !r.ok) { err.textContent = t('identity.err_wrong_pass'); return; }
 		}
 		// Hand the credential to the browser explicitly where it supports the
 		// Credential Management API. The real form and its password field are what
@@ -8922,9 +9044,7 @@ import init, {
 		var enrolled = DaimondPasskey.isEnrolled();
 		var adopting = !unlock && !enrolled;
 		if (unlock && !enrolled) return;		// nothing sealed here to open.
-		btn.querySelector('span').textContent = adopting
-			? 'I have a passkey for Daimond'
-			: 'Use a passkey';
+		btn.querySelector('span').textContent = t(adopting ? 'passkey.have_one' : 'passkey.use_one');
 		btn._adopt = adopting;
 
 		DaimondPasskey.available().then(function (ok) {
@@ -8939,7 +9059,7 @@ import init, {
 				if (enrolled && note) {
 					note.className = 'id-passkey-note';
 					note.style.display = '';
-					note.textContent = 'This browser cannot use your passkey, so the passphrase is the way in here.';
+					note.textContent = t('passkey.browser_cannot');
 				}
 				return;
 			}
@@ -8947,8 +9067,7 @@ import init, {
 			if (adopting && note) {
 				note.className = 'id-passkey-note';
 				note.style.display = '';
-				note.textContent = 'Already have Daimond elsewhere? If you added a passkey there, it brings '
-					+ 'the account here — no pairing code, no passphrase.';
+				note.textContent = t('passkey.adopt_note');
 			}
 			// An enrolled passkey on the unlock screen is what the user came to
 			// use, so ask for it straight away rather than making them press a
@@ -8979,16 +9098,16 @@ import init, {
 		if (note) {
 			note.className = 'id-passkey-note';
 			note.style.display = '';
-			note.textContent = adopt ? 'Looking for your passkey…' : 'Waiting for your passkey…';
+			note.textContent = t(adopt ? 'passkey.looking' : 'passkey.waiting');
 		}
 		var r;
 		try {
 			r = adopt
 				? await DaimondPasskey.adoptWithPasskey()
 				: await DaimondPasskey.unlockWithPasskey();
-		} catch (e) { r = { ok: false, error: 'The passkey could not be used.' }; }
+		} catch (e) { r = { ok: false, error: t('passkey.err_unusable') }; }
 		if (!r || !r.ok) {
-			if (note) { note.className = 'id-passkey-note err'; note.textContent = (r && r.error) || 'That passkey did not work. Use your passphrase.'; }
+			if (note) { note.className = 'id-passkey-note err'; note.textContent = (r && r.error) || t('passkey.err_did_not_work'); }
 			if (btn) btn.disabled = false;
 			var pass = document.getElementById('id-pass');
 			if (pass && !adopt) pass.focus();
@@ -9000,33 +9119,26 @@ import init, {
 	/// Add a passkey from Settings: confirm the passphrase (identity.js keeps no
 	/// copy), then enrol it against the WebAuthn PRF credential.
 	async function doAddPasskey() {
-		var pass = await promptDialog('Add a passkey', {
-			message: 'Confirm your passphrase to protect it with a passkey. Your device will then ask '
-				+ 'you to create the passkey — Face ID, Touch ID, Windows Hello or a security key.',
-			okLabel: 'Continue',
+		var pass = await promptDialog(t('passkey.add_title'), {
+			message: t('passkey.add_body'),
+			okLabel: t('passkey.continue'),
 			secret: true,
 			validate: async function (v) {
-				if (!v) return 'Enter your passphrase.';
+				if (!v) return t('passkey.err_enter_pass');
 				var ok = await DaimondIdentity.verify(v);
-				return ok ? '' : 'That passphrase did not match.';
+				return ok ? '' : t('passkey.err_bad_passphrase');
 			},
 		});
 		if (!pass) return;
 		var r;
 		try { r = await DaimondPasskey.enrol(pass); }
 		catch (e) { r = { ok: false, error: friendlyError(e) }; }
-		if (!r || !r.ok) { noticeDialog('Passkey not added', (r && r.error) || 'The passkey could not be created.'); return; }
+		if (!r || !r.ok) { noticeDialog(t('passkey.not_added'), (r && r.error) || t('passkey.err_create_failed2')); return; }
 		// Whether the sealed copy reached the gateway decides what this passkey can
 		// do, so it is stated rather than glossed: with it, the passkey brings the
 		// account to a new device; without it, the passkey only opens this one.
-		noticeDialog('Passkey added', r.synced
-			? 'You can now unlock Daimond with your passkey. Because your passkey syncs between '
-				+ 'your own devices, it will bring this account to a new phone or laptop as well — '
-				+ 'no pairing code needed. Your passphrase still works and remains the fallback.'
-			: 'You can now unlock Daimond on this device with your passkey. The account service could '
-				+ 'not be reached, so for now the passkey works here only; add it again once you are '
-				+ 'online to have it carry the account to your other devices. Your passphrase still '
-				+ 'works and remains the fallback.');
+		noticeDialog(t('passkey.added'),
+			t(r.synced ? 'passkey.added_synced' : 'passkey.added_local'));
 		DaimondAdmin.home();	// re-render so the control flips to "Remove passkey".
 	}
 
@@ -9035,14 +9147,12 @@ import init, {
 	/// with nothing left to open, for the user to delete there.
 	async function doRemovePasskey() {
 		var ok = await confirmDialog(
-			'This removes the passkey from this device and stops it opening your account anywhere '
-			+ 'else — you will unlock with your passphrase. The passkey itself stays in your '
-			+ 'authenticator until you delete it there.',
-			'Remove passkey',
-			{ title: 'Remove passkey?', danger: false });
+			t('passkey.remove_body'),
+			t('home.remove_passkey'),
+			{ title: t('passkey.remove_title'), danger: false });
 		if (!ok) return;
 		try { await DaimondPasskey.remove(); } catch (e) { /* nothing to remove */ }
-		noticeDialog('Passkey removed', 'This device will ask for your passphrase from now on.');
+		noticeDialog(t('passkey.removed'), t('passkey.removed_body'));
 		DaimondAdmin.home();
 	}
 
@@ -9067,22 +9177,18 @@ import init, {
 		// reloading should not meet it again on the next unlock.
 		try { localStorage.setItem(K_PASSKEY_ASKED, '1'); } catch (e) { /* private mode */ }
 		var yes = await confirmDialog(
-			'Daimond can unlock with Face ID, Touch ID or your device PIN instead of the passphrase. '
-			+ 'It also carries this account to your other devices, since your passkey syncs between '
-			+ 'them. Your passphrase keeps working either way.',
-			'Add a passkey',
-			{ title: 'Unlock with your face?', danger: false, cancelLabel: 'Not now' });
+			t('passkey.offer_body'),
+			t('passkey.add_title'),
+			{ title: t('passkey.offer_title'), danger: false, cancelLabel: t('dlg.not_now') });
 		if (!yes) return;
 		var r;
 		try { r = await DaimondPasskey.enrol(passphrase); }
 		catch (e) { r = { ok: false, error: friendlyError(e) }; }
 		if (!r || !r.ok) {
-			noticeDialog('Passkey not added', (r && r.error)
-				|| 'The passkey could not be created. You can try again from Settings.');
+			noticeDialog(t('passkey.not_added'), (r && r.error) || t('passkey.err_create_retry'));
 			return;
 		}
-		noticeDialog('Passkey added', 'Next time, Daimond will ask for your passkey instead of your '
-			+ 'passphrase. You can remove it from Settings at any time.');
+		noticeDialog(t('passkey.added'), t('passkey.added_offer'));
 	}
 
 	/// The secondary button: "Skip for now" on create, "Forget this identity…"
@@ -9129,26 +9235,21 @@ import init, {
 		// credits and Pro are reachable again from the restored key.
 		if (money) {
 			var save = await confirmDialog(
-				'This account holds ' + money + '. That is kept on Daimond’s server and unlocked only by '
-				+ 'this identity, so forgetting it loses it for good — there is no way to get it back without '
-				+ 'a backup. Export one now?',
-				'Export a backup', { title: 'Save your credits first?', danger: false, cancelLabel: 'Skip' });
+				t('forget.credits_body', { amount: money }),
+				t('home.export_backup'),
+				{ title: t('forget.credits_title'), danger: false, cancelLabel: t('forget.skip') });
 			if (save) {
 				try { await doExport(); }
 				catch (e) { /* the user asked to; a failed export must not block the choice below. */ }
 			}
 		}
 
-		var owned = money ? ' It also abandons ' + money + ' held on the server, which cannot be recovered '
-			+ 'without a backup.' : '';
-		var lead = 'This erases your passphrase, your encrypted API key, and all of your chats, '
-			+ 'Diamonds and spend history on this device.' + owned + ' There is no recovery. Everything is gone.';
-		if (acct && !acct.primary) {
-			lead = 'This removes the account “' + (acct.name || 'Unnamed account') + '” from this '
-				+ 'browser — its passphrase, keys, chats, Diamonds, spend and files.' + owned
-				+ ' There is no recovery. Other accounts here are untouched.';
-		}
-		var ok = await confirmDialog(lead, 'Erase everything', { title: 'Forget this account?' });
+		var owned = money ? ' ' + t('forget.abandons', { amount: money }) : '';
+		var lead = (acct && !acct.primary)
+			? t('forget.body_secondary', { name: acct.name || t('home.unnamed_account') }) + owned
+				+ ' ' + t('forget.tail_secondary')
+			: t('forget.body') + owned + ' ' + t('forget.tail');
+		var ok = await confirmDialog(lead, t('forget.ok'), { title: t('forget.title') });
 		if (!ok) return;
 
 		var ns = A ? A.opfsNs() : '';       // this account's OPFS subdir ('' for the primary)
@@ -9200,12 +9301,12 @@ import init, {
 	// beats a popup that has to be dismissed. DaimondAdmin.renderHome builds them.
 
 	async function doRename() {
-		var name = await promptDialog('Change name', {
-			value: DaimondIdentity.displayName(), okLabel: 'Save',
-			validate: function (v) { return v ? '' : 'Choose a name.'; },
+		var name = await promptDialog(t('rename.title'), {
+			value: DaimondIdentity.displayName(), okLabel: t('common.save'),
+			validate: function (v) { return v ? '' : t('identity.err_choose_name'); },
 		});
 		if (!name) return;
-		try { DaimondIdentity.rename(name); } catch (e) { noticeDialog('Could not rename', friendlyError(e)); return; }
+		try { DaimondIdentity.rename(name); } catch (e) { noticeDialog(t('rename.failed'), friendlyError(e)); return; }
 		updateUserRow();
 	}
 
@@ -9233,13 +9334,12 @@ import init, {
 			card.className = 'modal-card dlg-card';
 
 			var h = document.createElement('h2');
-			h.textContent = 'Change passphrase';
+			h.textContent = t('changepass.title');
 			card.appendChild(h);
 
 			var msg = document.createElement('p');
 			msg.className = 'dlg-msg';
-			msg.textContent = 'This replaces your current passphrase. There is no recovery, '
-				+ 'so write the new one down before you continue.';
+			msg.textContent = t('changepass.lead');
 			card.appendChild(msg);
 
 			// ── Generated view ──
@@ -9256,22 +9356,19 @@ import init, {
 			var regen = document.createElement('button');
 			regen.type = 'button';
 			regen.className = 'pass-gen-btn';
-			regen.textContent = 'Generate another';
+			regen.textContent = t('identity.generate_another');
 			var copy = document.createElement('button');
 			copy.type = 'button';
 			copy.className = 'pass-gen-btn';
-			copy.textContent = 'Copy';
+			copy.textContent = t('common.copy');
 			acts.appendChild(regen);
 			acts.appendChild(copy);
 			gen.appendChild(acts);
 			var note = document.createElement('p');
 			note.className = 'pass-gen-note';
 			if (canGen) {
-				note.textContent = 'Eight words picked at random by this device — about '
-					+ Math.round(DaimondWords.bits(GEN_WORDS)) + ' bits, far past anything that can '
-					+ 'be guessed. It becomes the key to everything you store here, and nobody can '
-					+ 'reset it for you. Write it on paper. Your password manager may also offer to '
-					+ 'update it, which is safe with a passphrase this strong.';
+				note.textContent = t('changepass.gen_note',
+					{ bits: Math.round(DaimondWords.bits(GEN_WORDS)) });
 			}
 			gen.appendChild(note);
 			var ackLab = document.createElement('label');
@@ -9280,7 +9377,7 @@ import init, {
 			ack.type = 'checkbox';
 			ack.id = 'cp-wrote';
 			var ackTxt = document.createElement('span');
-			ackTxt.textContent = 'I have written this down somewhere safe';
+			ackTxt.textContent = t('identity.wrote_it_down');
 			ackLab.appendChild(ack);
 			ackLab.appendChild(ackTxt);
 			gen.appendChild(ackLab);
@@ -9294,13 +9391,13 @@ import init, {
 			newInp.id = 'cp-pass';
 			newInp.type = 'password';
 			newInp.autocomplete = 'new-password';
-			newInp.placeholder = 'New passphrase';
+			newInp.placeholder = t('changepass.new_ph');
 			var againInp = document.createElement('input');
 			againInp.className = 'dlg-input';
 			againInp.id = 'cp-pass2';
 			againInp.type = 'password';
 			againInp.autocomplete = 'new-password';
-			againInp.placeholder = 'Type it once more';
+			againInp.placeholder = t('changepass.again_ph');
 			againInp.style.marginTop = '8px';
 			typed.appendChild(newInp);
 			typed.appendChild(againInp);
@@ -9310,7 +9407,7 @@ import init, {
 			choose.type = 'button';
 			choose.className = 'id-choose';
 			choose.style.display = canGen ? '' : 'none';
-			choose.textContent = 'Choose my own passphrase instead';
+			choose.textContent = t('identity.choose_own');
 			card.appendChild(choose);
 
 			var err = document.createElement('div');
@@ -9322,11 +9419,11 @@ import init, {
 			var cancel = document.createElement('button');
 			cancel.type = 'button';
 			cancel.className = 'modal-close dlg-cancel';
-			cancel.textContent = 'Cancel';
+			cancel.textContent = t('common.cancel');
 			var ok = document.createElement('button');
 			ok.type = 'button';
 			ok.className = 'dlg-ok';
-			ok.textContent = 'Change it';
+			ok.textContent = t('changepass.change_it');
 			row.appendChild(cancel);
 			row.appendChild(ok);
 			card.appendChild(row);
@@ -9356,9 +9453,7 @@ import init, {
 				genMode = !!on && canGen;
 				gen.style.display   = genMode ? '' : 'none';
 				typed.style.display = genMode ? 'none' : '';
-				choose.textContent  = genMode
-					? 'Choose my own passphrase instead'
-					: 'Use a generated passphrase instead';
+				choose.textContent  = t(genMode ? 'identity.choose_own' : 'identity.use_generated');
 				err.textContent = '';
 				syncOk();
 			}
@@ -9374,26 +9469,26 @@ import init, {
 			function submit() {
 				if (genMode) {
 					if (!ack.checked) {
-						err.textContent = 'Confirm you have written the passphrase down first.';
+						err.textContent = t('identity.err_confirm_written');
 						return;
 					}
 					// Canonical spelling, so a stray space cannot produce a different
 					// key from the same words.
 					var pass = DaimondWords.normalise(genPass);
 					if (pass.length < 8) {                     // generated phrases clear this by far.
-						err.textContent = 'That passphrase is too short. Generate another, or choose your own.';
+						err.textContent = t('identity.err_too_short_gen');
 						return;
 					}
 					if (pass === curPass) {
-						err.textContent = 'That matches your current passphrase. Generate another.';
+						err.textContent = t('changepass.err_same_gen');
 						return;
 					}
 					return close(pass);
 				}
 				var v = newInp.value;
-				if (v.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
-				if (v === curPass) { err.textContent = 'That is your current passphrase. Choose a different one.'; return; }
-				if (v !== againInp.value) { err.textContent = 'The passphrases do not match.'; return; }
+				if (v.length < 8) { err.textContent = t('changepass.err_short'); return; }
+				if (v === curPass) { err.textContent = t('changepass.err_same'); return; }
+				if (v !== againInp.value) { err.textContent = t('identity.err_mismatch'); return; }
 				close(v);
 			}
 			function onKey(e) {
@@ -9415,13 +9510,13 @@ import init, {
 			copy.addEventListener('click', async function () {
 				try {
 					await navigator.clipboard.writeText(genPass);
-					copy.textContent = 'Copied';
-					setTimeout(function () { copy.textContent = 'Copy'; }, 1500);
+					copy.textContent = t('toast.copied');
+					setTimeout(function () { copy.textContent = t('common.copy'); }, 1500);
 				} catch (e) {
 					// No clipboard permission (or an insecure context): the words are
 					// on screen anyway, which is the path that matters.
-					copy.textContent = 'Select it above';
-					setTimeout(function () { copy.textContent = 'Copy'; }, 2000);
+					copy.textContent = t('changepass.select_above');
+					setTimeout(function () { copy.textContent = t('common.copy'); }, 2000);
 				}
 			});
 			ack.addEventListener('change', syncOk);
@@ -9442,17 +9537,17 @@ import init, {
 	}
 
 	async function doChangePassphrase() {
-		var cur = await promptDialog('Change passphrase', {
-			message: 'Enter your current passphrase.',
-			okLabel: 'Next',
+		var cur = await promptDialog(t('changepass.title'), {
+			message: t('changepass.enter_current'),
+			okLabel: t('changepass.next'),
 			secret: true,
 			// Check it HERE. Accepting anything and only refusing at the end made
 			// the user choose and confirm a new passphrase before being told the
 			// old one was wrong.
 			validate: async function (v) {
-				if (!v) return 'Enter your current passphrase.';
+				if (!v) return t('changepass.enter_current');
 				var ok = await DaimondIdentity.verify(v);
-				return ok ? '' : 'That passphrase did not match.';
+				return ok ? '' : t('passkey.err_bad_passphrase');
 			},
 		});
 		if (!cur) return;
@@ -9467,11 +9562,11 @@ import init, {
 		var r;
 		try { r = await DaimondIdentity.changePassphrase(cur, next); }
 		catch (e) { r = { ok: false }; }
-		if (!r || !r.ok) { noticeDialog('That did not work', 'Your current passphrase did not match. Nothing was changed.'); return; }
+		if (!r || !r.ok) { noticeDialog(t('changepass.failed'), t('changepass.failed_body')); return; }
 
 		if (plain) {
 			try { cfg.apiKeyEnc = await DaimondIdentity.wrap(plain); saveCfg(cfg); }
-			catch (e) { noticeDialog('Careful', 'The passphrase changed, but your API key could not be re-encrypted. Re-enter it in Settings.'); return; }
+			catch (e) { noticeDialog(t('changepass.careful'), t('changepass.key_not_resealed')); return; }
 		}
 		// The passkey seals a copy of the passphrase and of the wrapped key, both
 		// of which have just changed, so it opens onto something that no longer
@@ -9492,9 +9587,8 @@ import init, {
 			var acct = (window.DaimondIdentity && DaimondIdentity.displayName()) || 'Daimond';
 			offerToSaveCredential(acct, next);
 		} catch (e) { /* best-effort; the passphrase changed regardless. */ }
-		noticeDialog('Passphrase changed', 'Your new passphrase is active. Your saved API key was '
-			+ 're-encrypted under it.' + (resealed ? '' : ' Your passkey could not be updated, so it '
-			+ 'will ask for the new passphrase — re-add it from Settings.'));
+		noticeDialog(t('changepass.changed'), t('changepass.changed_body')
+			+ (resealed ? '' : ' ' + t('changepass.passkey_stale')));
 	}
 
 	/// A brief status line, floated centre-bottom, for actions that happen away
@@ -9502,23 +9596,23 @@ import init, {
 	/// itself; a top-level helper because the account menu that triggers these
 	/// is not inside a panel with its own message area.
 	function toast(text, isErr) {
-		var t = document.createElement('div');
-		t.className = 'daimond-toast' + (isErr ? ' err' : '');
-		t.textContent = text;
+		var box = document.createElement('div');
+		box.className = 'daimond-toast' + (isErr ? ' err' : '');
+		box.textContent = text;
 		// Themed, not literal. The two backgrounds were picked against the dark
 		// palette, so every toast — including "Backup restored" — arrived as a
 		// near-black box with pale grey text on the light and lollypop themes.
 		// There is no --danger-bg token, so the failure case takes --warn-bg and
 		// leans on a --danger border and heading colour to read as a failure.
 		var edge = isErr ? 'var(--danger)' : 'var(--ok)';
-		t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'
+		box.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'
 			+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:var(--fs-sm);max-width:80vw;'
 			+ 'background:' + (isErr ? 'var(--warn-bg)' : 'var(--ok-bg)') + ';'
 			+ 'color:var(--text-primary);border:1px solid ' + edge + ';'
 			+ 'box-shadow:0 4px 16px rgba(0,0,0,.28);';
-		document.body.appendChild(t);
-		setTimeout(function () { t.style.transition = 'opacity .4s'; t.style.opacity = '0'; }, 3600);
-		setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 4200);
+		document.body.appendChild(box);
+		setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 3600);
+		setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 4200);
 	}
 
 	/// Write bytes to a path in the OPFS sandbox root, creating folders as
@@ -9628,9 +9722,9 @@ import init, {
 			if (!file) return;
 			var data;
 			try { data = JSON.parse(await file.text()); }
-			catch (e) { toast('That backup file could not be read.', true); return; }
+			catch (e) { toast(t('backup.unreadable'), true); return; }
 			if (data.format !== 'daimond-backup') {
-				toast('That is not a Daimond backup.', true); return;
+				toast(t('backup.not_a_backup'), true); return;
 			}
 			var files = data.workspace || [];
 			var restored = 0;
@@ -9666,6 +9760,7 @@ import init, {
 					if (f.tags && f.tags.length) await diamondApp().set_tags(id, JSON.stringify(f.tags));
 				} catch (e) { /* skip one diamond */ }
 			}
+			bumpDiamonds();
 			try { loadDiamonds(); } catch (e) { /* best effort */ }
 			var nDiamonds = (data.diamonds || []).length;
 			// A restore rewrites four things at once -- workspace files (into OPFS,
@@ -9676,10 +9771,11 @@ import init, {
 			// reading a workspace the page cannot see. The user acknowledges first, so
 			// the reload is expected rather than a surprise.
 			var nFiles = restored;
-			await noticeDialog('Backup restored',
-				'Restored ' + nFiles + ' workspace file' + (nFiles === 1 ? '' : 's')
-				+ ' and ' + nDiamonds + ' diamond' + (nDiamonds === 1 ? '' : 's')
-				+ '. Daimond will reload to open your restored workspace.');
+			await noticeDialog(t('backup.restored'),
+				t('backup.restored_body', {
+					files:    tn('backup.n_files', nFiles),
+					diamonds: tn('backup.n_diamonds', nDiamonds),
+				}));
 			location.reload();
 		});
 		inp.click();
@@ -9690,22 +9786,22 @@ import init, {
 		var av = document.getElementById('user-avatar');
 		if (!info) return;
 		if (window.DaimondIdentity && DaimondIdentity.exists() && DaimondIdentity.isUnlocked()) {
-			info.textContent = DaimondIdentity.displayName() || 'Local identity';
-			info.title = 'Your account — click for logout, passphrase and backup.';
+			info.textContent = DaimondIdentity.displayName() || t('admin.local_identity');
+			info.title = t('admin.account_help');
 			if (av) av.textContent = '◈';
 		} else if (window.DaimondIdentity && DaimondIdentity.exists()) {
-			info.textContent = 'Locked';
-			info.title = 'Locked — enter your passphrase to unlock.';
+			info.textContent = t('admin.locked');
+			info.title = t('admin.locked_help');
 			if (av) av.textContent = '◇';
 		} else if (identityAvailable()) {
-			info.textContent = 'No account';
+			info.textContent = t('admin.no_account');
 			// The old label was "Browser-only", which reads as a feature rather
 			// than as "your API key is sitting here unencrypted".
-			info.title = 'Your API key is stored unencrypted. Click to create an account and encrypt it.';
+			info.title = t('admin.no_account_help');
 			if (av) av.textContent = '○';
 		} else {
-			info.textContent = 'No account';
-			info.title = 'This browser has no WebCrypto, so keys cannot be encrypted here.';
+			info.textContent = t('admin.no_account');
+			info.title = t('admin.no_crypto_help');
 			if (av) av.textContent = '○';
 		}
 	}
@@ -9829,7 +9925,7 @@ import init, {
 				try { localStorage.setItem('daimond-models', JSON.stringify(ids)); } catch (e) {}
 				refreshChatModel();
 				var opts = ids.map(function (id) { return { value: id, label: id }; });
-				opts.push({ value: MODEL_OTHER, label: 'Other (type manually)…' });
+				opts.push({ value: MODEL_OTHER, label: t('models.other') });
 				var want = (prevSel && ids.indexOf(prevSel) !== -1) ? prevSel
 					: (cfg.model && ids.indexOf(cfg.model) !== -1) ? cfg.model
 					: (ids.length ? ids[0] : MODEL_OTHER);
@@ -9840,17 +9936,17 @@ import init, {
 			})
 			.catch(function (err) {
 				if (seq !== _modelFetchSeq) return;
-				setModelOptions([{ value: MODEL_OTHER, label: 'Other (type manually)…' }], MODEL_OTHER);
+				setModelOptions([{ value: MODEL_OTHER, label: t('models.other') }], MODEL_OTHER);
 				if (cfg.model) document.getElementById('cfg-model-custom').value = cfg.model;
 				var es = String(err && err.message ? err.message : err), note = document.getElementById('byok-note');
 				if (/\b401\b|\b403\b/.test(es)) {
 					// The real cause is the key, not model listing — say so, and
 					// remember it, so Save cannot then report this same key connected.
-					note.textContent = 'That API key was rejected — check it and try again.';
+					note.textContent = t('models.key_rejected');
 					document.getElementById('cfg-api-key').focus();
 					_keyRejectedFor = prov + ' ' + base + ' ' + key;
 				} else {
-					note.textContent = 'Could not load models automatically — pick "Other" and type a model id.';
+					note.textContent = t('models.list_failed');
 				}
 			});
 	}
@@ -9864,9 +9960,11 @@ import init, {
 		// Seed the model dropdown with the saved model, then refresh from the
 		// provider if we have a key.
 		if (cfg.model) {
-			setModelOptions([{ value: cfg.model, label: cfg.model }, { value: MODEL_OTHER, label: 'Other (type manually)…' }], cfg.model);
+			setModelOptions([{ value: cfg.model, label: cfg.model },
+				{ value: MODEL_OTHER, label: t('models.other') }], cfg.model);
 		} else {
-			setModelOptions([{ value: '', label: prov ? 'Enter your API key to load models…' : 'Choose a provider first…' }]);
+			setModelOptions([{ value: '',
+				label: t(prov ? 'models.enter_key_first' : 'models.choose_provider_first') }]);
 		}
 		if (prov && cfg.apiKey) fetchModels();
 	}
@@ -9916,19 +10014,18 @@ import init, {
 		};
 		// Validate before saving — never report success on an unusable config.
 		var note = document.getElementById('byok-note');
-		if (!document.getElementById('cfg-provider').value) { note.textContent = 'Choose a provider first.'; return; }
-		if (!next.baseUrl) { note.textContent = 'Enter the provider base URL.'; return; }
+		if (!document.getElementById('cfg-provider').value) { note.textContent = t('byok.err_provider'); return; }
+		if (!next.baseUrl) { note.textContent = t('byok.err_base_url'); return; }
 		// PRESENT is not the same as USABLE. The shape was never checked, so a typed
 		// address like "htp://api.x/v1" got as far as trying to list models from it,
 		// failed, and the refusal that reached the user read "Choose a model, or wait
 		// a moment for the list to load" — naming the one box they had got right.
 		if (!/^https?:\/\/[^\s/?#]+\.?(:\d+)?(\/|$)/i.test(next.baseUrl)) {
-			note.textContent = 'That base URL is not a web address — it should start with https:// '
-				+ 'and name the provider’s host.';
+			note.textContent = t('byok.err_bad_url');
 			document.getElementById('cfg-base-url').focus();
 			return;
 		}
-		if (!next.apiKey) { note.textContent = 'Paste your API key.'; document.getElementById('cfg-api-key').focus(); return; }
+		if (!next.apiKey) { note.textContent = t('byok.err_key'); document.getElementById('cfg-api-key').focus(); return; }
 		// Fall back to the provider's default model if the live list has not
 		// loaded (it shows "Loading…" with an empty value) so a quick save is
 		// never stuck for a curated provider.
@@ -9936,13 +10033,13 @@ import init, {
 			var _pv = document.getElementById('cfg-provider').value;
 			if (PROVIDERS[_pv] && PROVIDERS[_pv].model) next.model = PROVIDERS[_pv].model;
 		}
-		if (!next.model) { note.textContent = 'Choose a model, or wait a moment for the list to load.'; return; }
+		if (!next.model) { note.textContent = t('byok.err_model'); return; }
 		// The provider has already answered 401/403 to this very key while loading
 		// its models. Reporting it "Saved." and lighting the connected padlock
 		// would be a lie the first real turn exposes, so refuse it here.
 		var wantNow = document.getElementById('cfg-provider').value + ' ' + next.baseUrl + ' ' + next.apiKey;
 		if (_keyRejectedFor && wantNow === _keyRejectedFor) {
-			note.textContent = 'That API key was rejected by the provider — check it and try again.';
+			note.textContent = t('byok.err_rejected');
 			document.getElementById('cfg-api-key').focus();
 			return;
 		}
@@ -9958,7 +10055,7 @@ import init, {
 		try { await DaimondModels.fetchModels(pid); } catch (e) { /* the chosen model still stands */ }
 
 		syncCfgFromModels();
-		note.textContent = 'Saved.';
+		note.textContent = t('files.saved');
 		// New settings imply fresh app instances for existing chats and
 		// for every Diamond app built on the old key.
 		chats.forEach(function (c) { c.app = null; });
@@ -9979,7 +10076,7 @@ import init, {
 			// savable without waiting on the async list fetch; fetchModels then
 			// enriches it. This keeps onboarding from stalling on a slow list.
 			var def = PROVIDERS[this.value] && PROVIDERS[this.value].model;
-			if (def) setModelOptions([{ value: def, label: def }, { value: MODEL_OTHER, label: 'Other (type manually)…' }], def);
+			if (def) setModelOptions([{ value: def, label: def }, { value: MODEL_OTHER, label: t('models.other') }], def);
 			fetchModels();
 		});
 		// Auto-load the model list once a key (or a custom URL) is entered —
@@ -10064,7 +10161,7 @@ import init, {
 		if (!current) return;
 		var turns = pickedTurns();
 		if (!turns.length) {
-			noticeDialog('Nothing chosen', 'Tick the turns you want to fold, then press Fold selected.');
+			noticeDialog(t('fold.nothing_chosen'), t('fold.nothing_chosen_body'));
 			return;
 		}
 		// The picker is anchored on the button that opened it, and the turns ride along.
@@ -10108,13 +10205,13 @@ import init, {
 			var v = getSecret(document.getElementById('id-pass'));
 			try {
 				await navigator.clipboard.writeText(v);
-				copyBtn.textContent = 'Copied';
-				setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+				copyBtn.textContent = t('toast.copied');
+				setTimeout(function () { copyBtn.textContent = t('common.copy'); }, 1500);
 			} catch (e) {
 				// No clipboard permission (or an insecure context): the words are
 				// on screen anyway, which is the path that matters.
-				copyBtn.textContent = 'Select it above';
-				setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+				copyBtn.textContent = t('changepass.select_above');
+				setTimeout(function () { copyBtn.textContent = t('common.copy'); }, 2000);
 			}
 		});
 		var wroteBox = document.getElementById('id-wrote');
@@ -10208,8 +10305,8 @@ import init, {
 			// A consequential web action — a purchase, a send — is put to the USER,
 			// never confirmed by the model. Resolves true only on a real yes.
 			confirm: function (reason) {
-				return confirmDialog(reason, 'Yes, do it', {
-					title: 'Daimond wants to do something that cannot be undone',
+				return confirmDialog(reason, t('confirm.yes_do_it'), {
+					title: t('confirm.irreversible'),
 					danger: true,
 				});
 			},
@@ -10282,7 +10379,7 @@ import init, {
 		var buy = DaimondGateway.consumeReturn();
 		if (!buy) return;
 		if (buy === 'cancel' || buy === 'card:cancel') {
-			noticeDialog('Cancelled', 'Nothing was charged and your balance is unchanged.');
+			noticeDialog(t('checkout.cancelled'), t('checkout.cancelled_body'));
 			return;
 		}
 		// A card came back from Stripe. Nothing was charged, so there is no balance to wait on --
@@ -10295,15 +10392,11 @@ import init, {
 				if (window.DaimondAutoReload) await DaimondAutoReload.render();
 				var st = window.DaimondAutoReload && DaimondAutoReload.settings();
 				if (st && st.card && st.card.saved) {
-					noticeDialog('Card saved',
-						'Daimond can now top up your credits automatically. Set the limits below, '
-						+ 'then switch it on. Nothing has been charged.');
+					noticeDialog(t('checkout.card_saved'), t('checkout.card_saved_body'));
 					return;
 				}
 			}
-			noticeDialog('Card saved',
-				'Stripe has taken the card. It may take a moment to appear here — reopen Credits '
-				+ 'shortly. Nothing has been charged.');
+			noticeDialog(t('checkout.card_saved'), t('checkout.card_pending_body'));
 			return;
 		}
 		// Pro came back from Stripe. The licence is minted by WEBHOOK, so it may
@@ -10316,15 +10409,11 @@ import init, {
 				renderCredits();
 				if (held) {
 					if (window.DaimondSync && DaimondSync.recheck) DaimondSync.recheck();  // sync is on now
-					noticeDialog('Pro unlocked',
-						'You own Daimond. Cross-device sync, cloud storage and Email are on. '
-						+ 'Nothing renews.');
+					noticeDialog(t('checkout.pro_unlocked'), t('checkout.pro_unlocked_body'));
 					return;
 				}
 			}
-			noticeDialog('Payment received',
-				'Your Pro unlock is being confirmed and will appear here shortly. '
-				+ 'Reopen Credits in a moment.');
+			noticeDialog(t('checkout.received'), t('checkout.pro_pending_body'));
 			return;
 		}
 		var before = DaimondGateway.state().credits;
@@ -10338,13 +10427,14 @@ import init, {
 				// account now is -- and a user who has just topped up from nothing has no key at
 				// all. Mint against what they actually have before telling them it is theirs.
 				await syncCredits();
-				noticeDialog('Credits added', 'Your balance is now ' + DaimondGateway.fmtMoney(now, DaimondGateway.state().currency) + '.');
+				noticeDialog(t('credits.added'),
+					t('credits.now', { amount: DaimondGateway.fmtMoney(now, DaimondGateway.state().currency) }));
 				return;
 			}
 		}
 		renderCredits(); updateSpend();
 		syncCredits();
-		noticeDialog('Payment received', 'Your credits are still being confirmed. They will appear here shortly.');
+		noticeDialog(t('checkout.received'), t('checkout.credits_pending_body'));
 	}
 	// The document used to REPLACE the chat, so closing it had to put the chat
 	// back. It is a stage panel now and sits beside the chat, so its own closer

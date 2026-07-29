@@ -15,6 +15,10 @@
 		var s = localStorage.getItem('daimond-skin');
 		if (s === 'soft') s = 'warm';   // the warm skin was briefly called "soft".
 		if (s === 'warm' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);
+		// The language too, so the document declares itself before a screen
+		// reader or the browser's own translation offer looks at it.
+		var l = localStorage.getItem('daimond-locale');
+		if (l) document.documentElement.lang = l;
 	} catch (e) { /* private mode: the default attributes stand. */ }
 })();
 </script>
@@ -44,10 +48,10 @@
 	<!-- Top bar -->
 	<div class="topbar">
 		<!-- The hamburger: phone only, opens the rail as a left drawer. -->
-		<button id="drawer-btn" title="Menu" aria-label="Open menu">
+		<button id="drawer-btn" title="Menu" aria-label="Open menu" data-i18n-title="topbar.menu" data-i18n-aria-label="topbar.open_menu">
 			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 		</button>
-		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond — the daimond.app home page">
+		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond — the daimond.app home page" data-i18n-aria-label="topbar.brand">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
 		</a>
@@ -56,17 +60,18 @@
 			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
 			     closer sends it back here. -->
 			<div class="panel-tags" id="panel-tags"></div>
-			<button class="update-chip" id="update-chip" hidden title="Daimond is up to date" aria-label="Daimond is up to date">
+			<button class="update-chip" id="update-chip" hidden title="Daimond is up to date" aria-label="Daimond is up to date" data-i18n-title="topbar.up_to_date" data-i18n-aria-label="topbar.up_to_date">
 				<svg class="ic ic-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 				<svg class="ic ic-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
 			</button>
 			<!-- README: the Oxedyne dev-shop blog, opened in a new tab. -->
-			<a class="icon-btn readme-link" href="https://oxedyne.com/readme" target="_blank" rel="noopener noreferrer" title="README — the Oxedyne blog">README</a>
-			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide">
+			<a class="icon-btn readme-link" href="https://oxedyne.com/readme" target="_blank" rel="noopener noreferrer" title="README — the Oxedyne blog" data-i18n-title="topbar.readme">README</a>
+			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide" data-i18n-title="topbar.guide" data-i18n-aria-label="topbar.guide_short">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
 			</button>
 			<button class="icon-btn menu-btn" id="settings-menu-btn" title="Appearance and layout"
-				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu">
+				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"
+				data-i18n-title="topbar.appearance" data-i18n-aria-label="topbar.appearance">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
 			</button>
 		</div>
@@ -75,19 +80,19 @@
 	<!-- Every panel there is, searchable, for when the chip row cannot hold
 	     them all. Rows carry a pin, which is what decides the row's contents:
 	     the user says what sits in the header and nothing reorders itself. -->
-	<div class="pop" id="panel-gallery" hidden role="dialog" aria-label="Panels"></div>
+	<div class="pop" id="panel-gallery" hidden role="dialog" aria-label="Panels" data-i18n-aria-label="gallery.title"></div>
 
 	<!-- Appearance and layout: theme, reading size, dock tiling. -->
-	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout"></div>
+	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout" data-i18n-aria-label="topbar.appearance"></div>
 
 	<!-- The keyboard's way in. Complete at any fleet size, which is what lets
 	     the visible surfaces be selective. -->
 	<div class="pal-scrim" id="palette" hidden>
-		<div class="pal-box" role="dialog" aria-modal="true" aria-label="Go to">
+		<div class="pal-box" role="dialog" aria-modal="true" aria-label="Go to" data-i18n-aria-label="pal.title">
 			<input class="pal-input" id="pal-input" type="text" role="combobox" autocomplete="off"
 				aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list"
-				placeholder="Go to a panel, or a setting…">
-			<ul class="pal-list" id="pal-list" role="listbox" aria-label="Results"></ul>
+				placeholder="Go to a panel, or a setting…" data-i18n-placeholder="pal.placeholder">
+			<ul class="pal-list" id="pal-list" role="listbox" aria-label="Results" data-i18n-aria-label="pal.results"></ul>
 		</div>
 	</div>
 
@@ -100,18 +105,18 @@
 		     that configure Daimond live there rather than in a popup, so a chat
 		     stays live beside them: the user can ask Daimond what an app password is
 		     while the box asking for one is still on screen. -->
-		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Diamonds">
+		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Diamonds" data-i18n-label="panel.rail">
 			<div class="rail-top" id="rail-top">
 				<!-- Diamonds above, Chats below, which is the way the ground is:
 				     you mine in the conversation underneath and what you bring up
 				     is cut and polished above it. The order is not decoration --
 				     a chat is raw and a Diamond is worked, and the rail says so
 				     without needing a word of explanation. -->
-				<div class="railhead"><span title="What you have brought up and cut: a repeatable method, distilled from a conversation.">Diamonds</span>
-					<button class="addbtn" id="new-diamond-btn" title="New Diamond">
+				<div class="railhead"><span title="What you have brought up and cut: a repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
+					<button class="addbtn" id="new-diamond-btn" title="New Diamond" data-i18n-title="rail.new_diamond">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="rail" title="Close panel">
+					<button class="addbtn panel-close" data-close="rail" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
@@ -119,19 +124,19 @@
 				     accumulate, and a search box that only appears past some
 				     count is a search box nobody ever discovers. -->
 				<div class="diamond-find">
-					<input type="search" class="diamond-search" id="diamond-search" placeholder="Search Diamonds" aria-label="Search Diamonds by name or tag" autocomplete="off">
+					<input type="search" class="diamond-search" id="diamond-search" placeholder="Search Diamonds" aria-label="Search Diamonds by name or tag" autocomplete="off" data-i18n-placeholder="rail.search_diamonds" data-i18n-aria-label="rail.search_diamonds_help">
 					<div class="diamond-filter" id="diamond-filter" style="display:none"></div>
 				</div>
 				<div class="diamond-list" id="diamond-list"></div>
-				<div class="railhead"><span title="The seam you work in. Raw conversation, out of which a Diamond is cut.">Chats</span>
-					<button class="addbtn" id="new-session-btn" title="New chat">
+				<div class="railhead"><span title="The seam you work in. Raw conversation, out of which a Diamond is cut." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
+					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
 				</div>
 				<div class="session-list" id="session-list"></div>
 			</div>
 
-			<div class="rhandle" id="handle-split" title="Drag to resize, double-click to reset"></div>
+			<div class="rhandle" id="handle-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 
 			<!-- The Admin panel. -->
 			<div class="admin" id="admin">
@@ -142,17 +147,17 @@
 				     one that can be acted on is a button that goes there. -->
 				<div class="admin-status" id="admin-status">
 					<div class="astat-row astat-id">
-						<button class="user-row" id="user-row" title="Your Daimond identity">
+						<button class="user-row" id="user-row" title="Your Daimond identity" data-i18n-title="admin.identity">
 							<span class="user-avatar" id="user-avatar" aria-hidden="true">◈</span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
-						<button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings">⚙</button>
 					</div>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
 					<button class="astat-row astat-btn" id="astat-pro"></button>
 					<button class="astat-row astat-btn" id="astat-tools"></button>
-					<button class="astat-row astat-btn" id="astat-release" title="Version history"></button>
+					<button class="astat-row astat-btn" id="astat-release" title="Version history" data-i18n-title="admin.version_history"></button>
 					<div class="astat-row" id="astat-store"></div>
 					<!-- The real folder, when the browser can open one. Its size is not a thing the
 					     browser will tell us, so it is asked for rather than assumed. -->
@@ -164,7 +169,7 @@
 				<div class="admin-body" id="admin-body">
 					<div class="admin-drawer-head">
 						<span class="admin-title" id="admin-drawer-title">Admin</span>
-						<button class="admin-back" id="admin-close" title="Close">×</button>
+						<button class="admin-back" id="admin-close" title="Close" data-i18n-title="common.close">×</button>
 					</div>
 					<div class="admin-scroll" id="admin-scroll">
 
@@ -176,45 +181,45 @@
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead">A key for each provider you use. One model is the default that new chats and Diamonds start on; any of them can be picked for a single chat.</p>
+							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. One model is the default that new chats and Diamonds start on; any of them can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
-							<button type="button" id="models-add" class="models-add">+ Add provider</button>
+							<button type="button" id="models-add" class="models-add" data-i18n="models.add">+ Add provider</button>
 
 							<!-- Adding one: the same three questions, whoever the provider is. -->
 							<div id="byok-form" class="byok-form" style="display:none">
-								<label class="cfg-fieldlabel" for="cfg-provider">Provider</label>
+								<label class="cfg-fieldlabel" for="cfg-provider" data-i18n="models.provider">Provider</label>
 								<select id="cfg-provider" class="settings-select">
-									<option value="">Choose a provider…</option>
+									<option value="" data-i18n="models.choose_provider">Choose a provider…</option>
 									<option value="fireworks">Fireworks AI</option>
 									<option value="openrouter">OpenRouter</option>
 									<option value="together">Together AI</option>
 									<option value="groq">Groq</option>
 									<option value="deepinfra">DeepInfra</option>
-									<option value="custom">Custom (advanced)…</option>
+									<option value="custom" data-i18n="models.custom_provider">Custom (advanced)…</option>
 								</select>
 								<div id="cfg-url-row" style="display:none;">
-									<label class="cfg-fieldlabel" for="cfg-base-url">Base URL</label>
+									<label class="cfg-fieldlabel" for="cfg-base-url" data-i18n="models.base_url">Base URL</label>
 									<input type="text" id="cfg-base-url" placeholder="https://…/v1/chat/completions" spellcheck="false" autocomplete="off">
 								</div>
-								<label class="cfg-fieldlabel" for="cfg-api-key">API key</label>
-								<input type="text" id="cfg-api-key" placeholder="Paste your API key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-								<label class="cfg-fieldlabel" for="cfg-model">Default model</label>
+								<label class="cfg-fieldlabel" for="cfg-api-key" data-i18n="models.api_key">API key</label>
+								<input type="text" id="cfg-api-key" placeholder="Paste your API key" data-i18n-placeholder="models.api_key_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+								<label class="cfg-fieldlabel" for="cfg-model" data-i18n="models.default_model">Default model</label>
 								<select id="cfg-model" class="settings-select">
-									<option value="">Choose a provider first…</option>
+									<option value="" data-i18n="models.choose_provider_first">Choose a provider first…</option>
 								</select>
-								<input type="text" id="cfg-model-custom" placeholder="Model id (type manually)" spellcheck="false" style="display:none;">
-								<p class="cfg-fieldnote">New agents use this unless you choose another for them.</p>
-								<button type="button" id="byok-save">Save &amp; start</button>
+								<input type="text" id="cfg-model-custom" placeholder="Model id (type manually)" spellcheck="false" style="display:none;" data-i18n-placeholder="models.model_id_ph">
+								<p class="cfg-fieldnote" data-i18n="models.default_note">New agents use this unless you choose another for them.</p>
+								<button type="button" id="byok-save" data-i18n="models.save_start">Save &amp; start</button>
 							</div>
 							<div id="byok-note" class="login-error"></div>
-							<p class="cfg-hint"><strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.</p>
+							<p class="cfg-hint" data-i18n-html="models.privacy"><strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.</p>
 						</div>
 					</div>
 
 					<!-- Credits: reached from the "Credits" status row. -->
 					<div class="admin-view" id="admin-credits" style="display:none">
 						<div class="settings-section" id="credits-section">
-							<p class="cfg-lead">Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.</p>
+							<p class="cfg-lead" data-i18n="credits.lead">Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.</p>
 							<div class="pro-block" id="credits-pro"></div>
 							<div class="credits-balance" id="credits-balance"></div>
 							<div class="credits-packs" id="credits-packs"></div>
@@ -234,7 +239,7 @@
 				</div>
 			</div>
 		</aside>
-		<div class="phandle" id="handle-rail" data-panel="rail" title="Drag to resize, double-click to reset"></div>
+		<div class="phandle" id="handle-rail" data-panel="rail" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 
 		<!-- ── The stage ───────────────────────────────────────────────
 		     The middle zone. Its occupants are EXCLUSIVE to it: they take the
@@ -249,28 +254,28 @@
 		<div class="stage" id="stage">
 
 			<!-- AI: the conversation. -->
-			<section class="panel ai" id="panel-ai" data-panel="ai" data-zone="stage" data-label="AI">
+			<section class="panel ai" id="panel-ai" data-panel="ai" data-zone="stage" data-label="AI" data-i18n-label="panel.ai">
 				<div class="chead">
 					<span class="ctitle" id="current-session-name">No chat</span>
 					<div class="chead-right">
-						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;"></select>
+						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;" data-i18n-title="chat.model_for_chat"></select>
 						<span class="cmeter" id="ai-meter"></span>
 						<!-- The controls that were an icon nobody could read. A word says what a
 						     picture of a spanner was only hinting at. -->
 						<span class="csel" id="select-tools" style="display:none">
-							<button class="chip-btn" id="sel-all">Select all</button>
-							<button class="chip-btn" id="sel-none">Deselect all</button>
-							<button class="chip-btn accent" id="sel-fold">Fold selected</button>
+							<button class="chip-btn" id="sel-all" data-i18n="chat.select_all">Select all</button>
+							<button class="chip-btn" id="sel-none" data-i18n="chat.deselect_all">Deselect all</button>
+							<button class="chip-btn accent" id="sel-fold" data-i18n="chat.fold_selected">Fold selected</button>
 						</span>
-						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread">Steps</button>
-						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold">−</button>
+						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
+						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help">−</button>
 					</div>
 				</div>
 				<div class="chat-output" id="chat-output"></div>
 				<div class="chat-input-bar">
-					<textarea id="chat-input" placeholder="Type a message…" rows="1"></textarea>
-					<button id="chat-send" title="Send">➤</button>
-					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it.">↑</button>
+					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
+					<button id="chat-send" title="Send" data-i18n-title="chat.send">➤</button>
+					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help">↑</button>
 				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->
@@ -284,15 +289,15 @@
 			     it — a same-origin page we serve ourselves, or a real tab under
 			     Daimond Hands. A cross-origin iframe is opaque to us, and that is
 			     the same-origin policy, not a gap to be worked around. -->
-			<aside class="panel web" id="panel-web" data-panel="web" data-zone="stage" data-label="Web">
+			<aside class="panel web" id="panel-web" data-panel="web" data-zone="stage" data-label="Web" data-i18n-label="panel.web">
 				<div class="chead">
-					<span class="web-mode" id="web-mode" title="Who is driving"></span>
+					<span class="web-mode" id="web-mode" title="Who is driving" data-i18n-title="web.who_drives"></span>
 					<span class="ctitle web-url" id="web-url">The Web panel</span>
 					<div class="chead-right">
-						<button class="icon-btn" id="web-back" title="Back">‹</button>
-						<button class="icon-btn" id="web-reload" title="Reload">⟳</button>
-						<button class="icon-btn" id="web-pop" title="Open in a real tab">↗</button>
-						<button class="addbtn panel-close" data-close="web" title="Close panel">
+						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back">‹</button>
+						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload">⟳</button>
+						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out">↗</button>
+						<button class="addbtn panel-close" data-close="web" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
 					</div>
@@ -305,19 +310,19 @@
 					<!-- The blindfold. Not a promise to look away: nothing is sent. -->
 					<div class="web-blind" id="web-blind" style="display:none">
 						<div class="web-blind-eye">◍</div>
-						<div class="web-blind-title">You're driving. I'm not watching.</div>
-						<div class="web-blind-note">Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.</div>
-						<button class="web-takeover" id="web-takeover">I've resumed — check</button>
+						<div class="web-blind-title" data-i18n="web.blind_title">You're driving. I'm not watching.</div>
+						<div class="web-blind-note" data-i18n-html="web.blind_note">Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.</div>
+						<button class="web-takeover" id="web-takeover" data-i18n="web.resumed">I've resumed — check</button>
 					</div>
 				</div>
 			</aside>
 
 			<!-- A compiled document, where there is room to read it. -->
-			<aside class="panel doc" id="panel-doc" data-panel="doc" data-zone="stage" data-label="Doc">
+			<aside class="panel doc" id="panel-doc" data-panel="doc" data-zone="stage" data-label="Doc" data-i18n-label="panel.doc">
 				<div class="chead">
 					<span class="ctitle doc-name" id="doc-name"></span>
 					<div class="chead-right">
-						<button class="addbtn panel-close" data-close="doc" title="Close panel">
+						<button class="addbtn panel-close" data-close="doc" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
 					</div>
@@ -331,11 +336,11 @@
 
 			<!-- One mail message, where there is room to read it — and, now that
 			     the stage seats two, with the chat still beside it. -->
-			<aside class="panel msg" id="panel-msg" data-panel="msg" data-zone="stage" data-label="Message">
+			<aside class="panel msg" id="panel-msg" data-panel="msg" data-zone="stage" data-label="Message" data-i18n-label="panel.msg">
 				<div class="chead">
 					<span class="ctitle" id="msg-title">Message</span>
 					<div class="chead-right">
-						<button class="addbtn panel-close" data-close="msg" title="Close panel">
+						<button class="addbtn panel-close" data-close="msg" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
 					</div>
@@ -347,11 +352,11 @@
 			<!-- What Daimond can do, and what the rest would cost. A stage guest, because a
 			     tool with a price on it is a thing being inspected, and the rail is too
 			     narrow to inspect anything in. -->
-			<aside class="panel tools" id="panel-tools" data-panel="tools" data-zone="stage" data-label="Tools">
+			<aside class="panel tools" id="panel-tools" data-panel="tools" data-zone="stage" data-label="Tools" data-i18n-label="panel.tools">
 				<div class="chead">
-					<span class="ctitle">Tools</span>
+					<span class="ctitle" data-i18n="panel.tools">Tools</span>
 					<div class="chead-right">
-						<button class="addbtn panel-close" data-close="tools" title="Close panel">
+						<button class="addbtn panel-close" data-close="tools" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
 					</div>
@@ -364,35 +369,35 @@
 			     while it is being written. Nothing here sends by itself — the Send button
 			     is the only thing in Daimond that puts mail on the wire, and only a person
 			     can press it. -->
-			<aside class="panel compose" id="panel-compose" data-panel="compose" data-zone="stage" data-label="Compose">
+			<aside class="panel compose" id="panel-compose" data-panel="compose" data-zone="stage" data-label="Compose" data-i18n-label="panel.compose">
 				<div class="chead">
 					<span class="ctitle" id="compose-title">New message</span>
 					<div class="chead-right">
-						<button class="addbtn panel-close" data-close="compose" title="Close panel">
+						<button class="addbtn panel-close" data-close="compose" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
 					</div>
 				</div>
 				<div class="compose-head">
-					<label class="compose-row"><span>From</span><select id="compose-from"></select></label>
-					<label class="compose-row"><span>To</span><input id="compose-to" type="text" autocomplete="off" placeholder="someone@example.com"></label>
-					<label class="compose-row"><span>Cc</span><input id="compose-cc" type="text" autocomplete="off" placeholder="Optional"></label>
-					<label class="compose-row"><span>Subject</span><input id="compose-subject" type="text" autocomplete="off"></label>
+					<label class="compose-row"><span data-i18n="compose.from">From</span><select id="compose-from"></select></label>
+					<label class="compose-row"><span data-i18n="compose.to">To</span><input id="compose-to" type="text" autocomplete="off" placeholder="someone@example.com"></label>
+					<label class="compose-row"><span data-i18n="compose.cc">Cc</span><input id="compose-cc" type="text" autocomplete="off" placeholder="Optional" data-i18n-placeholder="compose.optional"></label>
+					<label class="compose-row"><span data-i18n="compose.subject">Subject</span><input id="compose-subject" type="text" autocomplete="off"></label>
 				</div>
-				<textarea class="compose-text" id="compose-text" spellcheck="true" placeholder="Write your message."></textarea>
+				<textarea class="compose-text" id="compose-text" spellcheck="true" placeholder="Write your message." data-i18n-placeholder="compose.body_ph"></textarea>
 				<div class="compose-atts" id="compose-atts"></div>
 				<div class="compose-foot">
-					<button class="compose-send" id="compose-send">Send</button>
-					<button class="compose-btn" id="compose-save">Save draft</button>
-					<button class="compose-btn" id="compose-attach">Attach…</button>
+					<button class="compose-send" id="compose-send" data-i18n="compose.send">Send</button>
+					<button class="compose-btn" id="compose-save" data-i18n="compose.save_draft">Save draft</button>
+					<button class="compose-btn" id="compose-attach" data-i18n="compose.attach">Attach…</button>
 					<input type="file" id="compose-file" multiple hidden>
-					<button class="compose-btn danger" id="compose-discard">Discard</button>
+					<button class="compose-btn danger" id="compose-discard" data-i18n="compose.discard">Discard</button>
 					<span class="compose-note" id="compose-note"></span>
 				</div>
 			</aside>
 		</div>
 
-		<div class="phandle" id="handle-dock" title="Drag to resize, double-click to reset"></div>
+		<div class="phandle" id="handle-dock" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 		<!-- ── The dock ────────────────────────────────────────────────
 		     The right zone: the sources you pull from. A closed dock panel is a
 		     tag in the header; clicking the tag docks it. A second column opens
@@ -405,22 +410,22 @@
 		<!-- Dock panels below are relocated into their column by the layout engine. -->
 
 		<!-- Agents: live runs -->
-		<aside class="panel agents" id="panel-agents" data-panel="agents" data-zone="dock" data-label="Agents">
-			<div class="railhead"><span>Agents</span>
+		<aside class="panel agents" id="panel-agents" data-panel="agents" data-zone="dock" data-label="Agents" data-i18n-label="panel.agents">
+			<div class="railhead"><span data-i18n="panel.agents">Agents</span>
 				<span class="rail-count" id="agents-count"></span>
 				<!-- Pause / resume / stop, acting on every agent at once. Pause holds
 				     the pool and hangs up what is running (keeping its work); resume
 				     continues; stop is the kill switch. The same three ride on each
 				     tile. This is the cost brake for a runaway fan-out. -->
-				<div class="agents-ctl" id="agents-ctl" style="display:none" role="group" aria-label="Control all agents">
-					<button class="agc" id="agents-pause" title="Pause all agents" aria-label="Pause all agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="6" width="3.4" height="12" rx="1"/><rect x="13.6" y="6" width="3.4" height="12" rx="1"/></svg></button>
-					<button class="agc" id="agents-play" title="Resume all paused agents" aria-label="Resume all paused agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg></button>
-					<button class="agc" id="agents-stop" title="Stop all agents" aria-label="Stop all agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+				<div class="agents-ctl" id="agents-ctl" style="display:none" role="group" aria-label="Control all agents" data-i18n-aria-label="agents.control_all">
+					<button class="agc" id="agents-pause" title="Pause all agents" aria-label="Pause all agents" data-i18n-title="agents.pause_all" data-i18n-aria-label="agents.pause_all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="6" width="3.4" height="12" rx="1"/><rect x="13.6" y="6" width="3.4" height="12" rx="1"/></svg></button>
+					<button class="agc" id="agents-play" title="Resume all paused agents" aria-label="Resume all paused agents" data-i18n-title="agents.resume_all" data-i18n-aria-label="agents.resume_all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg></button>
+					<button class="agc" id="agents-stop" title="Stop all agents" aria-label="Stop all agents" data-i18n-title="agents.stop_all" data-i18n-aria-label="agents.stop_all"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 				</div>
-				<button class="addbtn" id="agents-clear" title="Clear finished agents" style="display:none">
+				<button class="addbtn" id="agents-clear" title="Clear finished agents" style="display:none" data-i18n-title="agents.clear_finished">
 					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12"/></svg>
 				</button>
-				<button class="addbtn panel-close" data-close="agents" title="Close panel">
+				<button class="addbtn panel-close" data-close="agents" title="Close panel" data-i18n-title="common.close_panel">
 					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 				</button>
 			</div>
@@ -431,26 +436,26 @@
 			     belongs to rides on the run as a chip, so the tree's height is
 			     not spent on it. -->
 			<div class="diamond-find agent-find">
-				<input type="search" class="diamond-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Diamond or tag" autocomplete="off">
+				<input type="search" class="diamond-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Diamond or tag" autocomplete="off" data-i18n-placeholder="agents.search" data-i18n-aria-label="agents.search_help">
 				<div class="diamond-filter" id="agent-filter" style="display:none"></div>
 			</div>
 			<div class="agents-list" id="agents-list"></div>
 		</aside>
 
 		<!-- Email: the mailboxes, and what is in them -->
-		<aside class="panel mail" id="panel-mail" data-panel="mail" data-zone="dock" data-label="Email">
-			<div class="railhead"><span>Email</span>
+		<aside class="panel mail" id="panel-mail" data-panel="mail" data-zone="dock" data-label="Email" data-i18n-label="panel.mail">
+			<div class="railhead"><span data-i18n="panel.mail">Email</span>
 				<span class="mail-actions">
-					<button class="addbtn" data-act="mail-new" title="Write a message" aria-label="Write a message">
+					<button class="addbtn" data-act="mail-new" title="Write a message" aria-label="Write a message" data-i18n-title="mail.write" data-i18n-aria-label="mail.write">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
 					</button>
-					<button class="addbtn" data-act="mail-add" title="Add a mailbox" aria-label="Add a mailbox">
+					<button class="addbtn" data-act="mail-add" title="Add a mailbox" aria-label="Add a mailbox" data-i18n-title="mail.add_mailbox" data-i18n-aria-label="mail.add_mailbox">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
-					<button class="addbtn" data-act="mail-sync" title="Sync now" aria-label="Sync now">
+					<button class="addbtn" data-act="mail-sync" title="Sync now" aria-label="Sync now" data-i18n-title="mail.sync_now" data-i18n-aria-label="mail.sync_now">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="mail" title="Close panel">
+					<button class="addbtn panel-close" data-close="mail" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</span>
@@ -458,30 +463,33 @@
 			<div class="mail-card">
 				<div class="mail-state" id="mail-state"></div>
 				<div class="mail-accounts" id="mail-accounts"></div>
+				<!-- Which of the account's folders the list below is showing.
+				     Empty until an account exists to have folders. -->
+				<div class="mail-folders" id="mail-folders"></div>
 				<div class="mail-list" id="mail-list"></div>
 			</div>
 		</aside>
 
 		<!-- Workspace: OPFS file tree -->
-		<aside class="panel work" id="panel-work" data-panel="work" data-zone="dock" data-label="Workspace">
-			<div class="railhead"><span>Workspace</span>
+		<aside class="panel work" id="panel-work" data-panel="work" data-zone="dock" data-label="Workspace" data-i18n-label="panel.work">
+			<div class="railhead"><span data-i18n="panel.work">Workspace</span>
 				<span class="files-actions">
-					<button class="addbtn" data-act="new-file" title="New file" aria-label="New file">
+					<button class="addbtn" data-act="new-file" title="New file" aria-label="New file" data-i18n-title="work.new_file" data-i18n-aria-label="work.new_file">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V10z"/><path d="M13 3v6h6"/><path d="M12 12.5v5M9.5 15h5"/></svg>
 					</button>
-					<button class="addbtn" data-act="new-dir" title="New folder" aria-label="New folder">
+					<button class="addbtn" data-act="new-dir" title="New folder" aria-label="New folder" data-i18n-title="work.new_folder" data-i18n-aria-label="work.new_folder">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
 					</button>
-					<button class="addbtn" data-act="upload" title="Upload files" aria-label="Upload files">
+					<button class="addbtn" data-act="upload" title="Upload files" aria-label="Upload files" data-i18n-title="work.upload" data-i18n-aria-label="work.upload">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
 					</button>
-					<button class="addbtn" data-act="up" title="Parent folder" aria-label="Parent folder">
+					<button class="addbtn" data-act="up" title="Parent folder" aria-label="Parent folder" data-i18n-title="work.parent" data-i18n-aria-label="work.parent">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V7M6 13l6-6 6 6"/></svg>
 					</button>
-					<button class="addbtn" data-act="refresh" title="Refresh" aria-label="Refresh">
+					<button class="addbtn" data-act="refresh" title="Refresh" aria-label="Refresh" data-i18n-title="common.refresh" data-i18n-aria-label="common.refresh">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="work" title="Close panel">
+					<button class="addbtn panel-close" data-close="work" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</span>
@@ -490,19 +498,19 @@
 				<div class="files-mode"></div>
 				<button class="instructions-chip" id="instructions-chip" style="display:none"></button>
 				<div class="files-path"></div>
-				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false"></div>
+				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false" data-i18n-placeholder="work.filter_ph"></div>
 				<div class="files-tree"></div>
 			</div>
 		</aside>
 
 		<!-- Spending: where inference (your key) and credits (gateway services) go -->
-		<aside class="panel spend" id="panel-spend" data-panel="spend" data-zone="dock" data-label="Spending">
-			<div class="railhead"><span>Spending</span>
+		<aside class="panel spend" id="panel-spend" data-panel="spend" data-zone="dock" data-label="Spending" data-i18n-label="panel.spend">
+			<div class="railhead"><span data-i18n="panel.spend">Spending</span>
 				<span class="spend-actions">
-					<button class="addbtn" data-act="spend-refresh" title="Refresh" aria-label="Refresh">
+					<button class="addbtn" data-act="spend-refresh" title="Refresh" aria-label="Refresh" data-i18n-title="common.refresh" data-i18n-aria-label="common.refresh">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="spend" title="Close panel">
+					<button class="addbtn panel-close" data-close="spend" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</span>
@@ -515,26 +523,26 @@
 	     (Web, Doc, Message, Compose, Tools) rise as a sheet over it, and the
 	     rail (Diamonds/Chats/Admin) is the left drawer behind the hamburger. -->
 	<nav class="mnav" id="mnav">
-		<button data-mp="ai" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-4 4v-4H4z"/></svg><span>Chat</span></button>
-		<button data-mp="mail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span>Email</span></button>
-		<button data-mp="work"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg><span>Files</span></button>
-		<button data-mp="agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 4v4"/><circle cx="12" cy="4" r="0.6"/><path d="M9 13v1.5M15 13v1.5"/><path d="M2 12v3M22 12v3"/></svg><span>Agents</span></button>
+		<button data-mp="ai" class="on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-4 4v-4H4z"/></svg><span data-i18n="mnav.chat">Chat</span></button>
+		<button data-mp="mail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M3 7l9 6 9-6"/></svg><span data-i18n="mnav.mail">Email</span></button>
+		<button data-mp="work"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg><span data-i18n="mnav.files">Files</span></button>
+		<button data-mp="agents"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="2.5"/><path d="M12 4v4"/><circle cx="12" cy="4" r="0.6"/><path d="M9 13v1.5M15 13v1.5"/><path d="M2 12v3M22 12v3"/></svg><span data-i18n="mnav.agents">Agents</span></button>
 	</nav>
 </div>
 
 <!-- Phone shell: the scrim behind the drawer, and the sheet that raises a
      "thing" over the chat. Both are inert on desktop (see mobile.css). -->
 <div id="scrim"></div>
-<div id="msheet" aria-label="Panel">
+<div id="msheet" aria-label="Panel" data-i18n-aria-label="sheet.panel">
 	<div class="msheet-grab" id="msheet-grab">
 		<span class="msheet-bar" aria-hidden="true"></span>
 		<span class="msheet-title" id="msheet-title"></span>
-		<button class="msheet-close" id="msheet-close" title="Close" aria-label="Close">✕</button>
+		<button class="msheet-close" id="msheet-close" title="Close" aria-label="Close" data-i18n-title="common.close" data-i18n-aria-label="common.close">✕</button>
 	</div>
 	<div class="msheet-scroll" id="msheet-body"></div>
 	<div class="msheet-ask" id="msheet-ask">
-		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true">
-		<button id="msheet-ask-send" title="Ask" aria-label="Ask">➤</button>
+		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-i18n-placeholder="sheet.ask_ph">
+		<button id="msheet-ask-send" title="Ask" aria-label="Ask" data-i18n-title="sheet.ask" data-i18n-aria-label="sheet.ask">➤</button>
 	</div>
 </div>
 
@@ -549,7 +557,7 @@
 <div id="settings-modal" class="modal" style="display:none;">
 	<div class="modal-card">
 		<div id="settings-slot"></div>
-		<button class="modal-close" id="settings-close">Close</button>
+		<button class="modal-close" id="settings-close" data-i18n="common.close">Close</button>
 	</div>
 </div>
 
@@ -572,7 +580,7 @@
 		<form id="id-form" autocomplete="on">
 			<div class="id-fields">
 				<div id="id-name-row">
-					<input type="text" id="id-name" name="username" placeholder="Your name" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
+					<input type="text" id="id-name" name="username" placeholder="Your name" data-i18n-placeholder="identity.your_name" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="40">
 				</div>
 				<!-- The generated passphrase, shown so it can be written down. It
 				     mirrors the field below rather than holding a second copy, so a
@@ -580,32 +588,37 @@
 				<div class="pass-gen" id="id-genbox" style="display:none">
 					<div class="pass-gen-words" id="id-genwords"></div>
 					<div class="pass-gen-acts">
-						<button type="button" class="pass-gen-btn" id="id-regen">Generate another</button>
-						<button type="button" class="pass-gen-btn" id="id-gencopy">Copy</button>
+						<button type="button" class="pass-gen-btn" id="id-regen" data-i18n="identity.generate_another">Generate another</button>
+						<button type="button" class="pass-gen-btn" id="id-gencopy" data-i18n="common.copy">Copy</button>
 					</div>
 					<p class="pass-gen-note" id="id-gennote"></p>
-					<label class="pass-gen-ack"><input type="checkbox" id="id-wrote"><span>I have written this down somewhere safe</span></label>
+					<label class="pass-gen-ack"><input type="checkbox" id="id-wrote"><span data-i18n="identity.wrote_it_down">I have written this down somewhere safe</span></label>
 				</div>
 				<div class="pass-wrap" id="id-pass-row">
-					<input type="password" id="id-pass" name="password" placeholder="Passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
-					<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+					<input type="password" id="id-pass" name="password" placeholder="Passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-i18n-placeholder="identity.passphrase">
+					<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase" data-i18n-title="identity.show_passphrase" data-i18n-aria-label="identity.show_passphrase"></button>
 				</div>
 				<div class="pass-wrap" id="id-pass2-row">
-					<input type="password" id="id-pass2" placeholder="Confirm passphrase" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
-					<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase"></button>
+					<input type="password" id="id-pass2" placeholder="Confirm passphrase" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-i18n-placeholder="identity.confirm_passphrase">
+					<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase" data-i18n-title="identity.show_passphrase" data-i18n-aria-label="identity.show_passphrase"></button>
 				</div>
 			</div>
 			<div id="id-error" class="login-error"></div>
 			<button type="submit" id="id-primary">Create passphrase</button>
 		</form>
-		<button type="button" id="id-choose" class="id-choose" style="display:none">Choose my own passphrase instead</button>
-		<button type="button" id="id-skip" class="modal-close">Skip for now</button>
+		<button type="button" id="id-choose" class="id-choose" style="display:none" data-i18n="identity.choose_own">Choose my own passphrase instead</button>
+		<button type="button" id="id-skip" class="modal-close" data-i18n="identity.skip">Skip for now</button>
 	</div>
 </div>
 
 <!-- accounts.js FIRST: it installs the per-account storage namespace before any
      module reads or writes localStorage. -->
 <script src="js/accounts.js"></script>
+<!-- i18n.js next: it owns the language and the display currency, and every
+     money formatter in the app funnels through it. The English table follows
+     immediately, because it is both the baseline and the fallback. -->
+<script src="js/i18n.js"></script>
+<script src="i18n/en.js"></script>
 <!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
      ready before the first turn. -->
 <script src="js/journal.js"></script>
