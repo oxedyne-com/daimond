@@ -184,6 +184,12 @@ import init, {
 	// a nonce bumped on every Diamond mutation is the signal OPFS does not give:
 	// the value means nothing, the CHANGE is the whole message.
 	var DIAMONDS_KEY = 'daimond-diamonds-rev';
+	// Diamonds deleted on purpose, by id. A Diamond lives in OPFS, and the sync
+	// merge carries what the store HAS -- so a Diamond deleted here and still
+	// present on the other device would simply be handed back on the next pull,
+	// for ever. A tombstone is how a deletion survives that, exactly as it does
+	// for chats.
+	var DIAMOND_TOMBS_KEY = 'daimond-diamond-tombs';
 	var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
 	var TOMB_TTL  = 7 * 24 * 3600 * 1000;   // a deletion outlives any live tab
 
@@ -258,6 +264,20 @@ import init, {
 		var t = loadTombs();
 		t[id] = Date.now();
 		try { localStorage.setItem(TOMBS_KEY, JSON.stringify(t)); } catch (e) { /* best effort */ }
+	}
+	/// The Diamonds deleted on purpose, by id, with anything past its TTL pruned.
+	function loadDiamondTombs() {
+		var t = readJson(DIAMOND_TOMBS_KEY, {}), now = Date.now(), out = {};
+		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		return out;
+	}
+	/// Record that a Diamond was deleted on purpose, so the other device deletes
+	/// it too rather than handing it back.
+	function diamondTombstone(id) {
+		if (!id) return;
+		var t = loadDiamondTombs();
+		t[id] = Date.now();
+		try { localStorage.setItem(DIAMOND_TOMBS_KEY, JSON.stringify(t)); } catch (e) { /* best effort */ }
 	}
 
 	function persistChats() {
@@ -669,17 +689,102 @@ import init, {
 		try { localStorage.setItem(SYNC_CLOUDBASE_KEY, JSON.stringify(base)); } catch (e) { /* best effort */ }
 	}
 
+	// ── Diamonds across devices ────────────────────────────────
+	// A Diamond is a DIRECTORY in OPFS, not a record, so it travels as one:
+	// export_diamond packs every file under `diamonds/<id>/` and import_diamond
+	// lays the lot back down. Nothing here knows what those files are called,
+	// which is the point -- a per-Diamond file added later travels without this
+	// having to learn about it.
+	//
+	// The merge is deliberately coarse. Chats union because a transcript is
+	// append-only; a Diamond has no such structure, so the freshest copy wins
+	// WHOLESALE. Two devices that edited the same Diamond between syncs lose the
+	// older side entirely, links included, and that is accepted rather than
+	// fixed: reconciling two crystals is a reduction, and a reduction is a model
+	// turn, not a merge rule.
+
+	/// Every Diamond this device holds, packed for the parcel: the id and stamp
+	/// the merge decides on, the whole directory, and which model it thinks with.
+	async function collectDiamonds() {
+		var out = [], tombs = loadDiamondTombs(), list;
+		try { list = JSON.parse(await diamondApp().list_diamonds()); }
+		catch (e) { return out; }                  // no store to read: send nothing, delete nothing
+		var models = diamondModels();
+		for (var i = 0; i < list.length; i++) {
+			var d = list[i];
+			// A Diamond deleted here is on its way out, not on its way over.
+			if (!d || !d.id || tombs[d.id]) continue;
+			try {
+				out.push({
+					id:      d.id,
+					updated: d.updated || 0,
+					model:   models[d.id] || null,
+					data:    await diamondApp().export_diamond(d.id),
+				});
+			} catch (e) { /* one unreadable Diamond must not hold up the rest */ }
+		}
+		return out;
+	}
+
+	/// Merge the pulled Diamonds into the store. Tombstones first, so a deletion
+	/// on either device wins; then any Diamond this device lacks, or holds an
+	/// older copy of, is replaced wholesale.
+	async function applyDiamonds(remote) {
+		var tombs = mergeTombMap(DIAMOND_TOMBS_KEY, remote.diamondTombs);
+		var incoming = Array.isArray(remote.diamonds) ? remote.diamonds : [];
+		var deletions = Object.keys(tombs);
+		// A v1 parcel carries neither section. Nothing to import, and no
+		// tombstone that did not already come from this device.
+		if (!incoming.length && !deletions.length) return;
+		var app = diamondApp(), local = {};
+		try {
+			JSON.parse(await app.list_diamonds()).forEach(function (d) { if (d && d.id) local[d.id] = d; });
+		} catch (e) { return; }
+		var changed = false;
+		for (var j = 0; j < deletions.length; j++) {
+			var dead = deletions[j];
+			if (!local[dead]) continue;
+			try { await app.delete_diamond(dead); delete local[dead]; changed = true; }
+			catch (e) { /* it goes on the next pull */ }
+		}
+		for (var i = 0; i < incoming.length; i++) {
+			var r = incoming[i];
+			if (!r || !r.id || !r.data || tombs[r.id]) continue;
+			var mine = local[r.id];
+			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
+			// has not moved is not rewritten on every pull.
+			if (mine && !((r.updated || 0) > (mine.updated || 0))) continue;
+			try { await app.import_diamond(r.data); changed = true; }
+			catch (e) { continue; }
+			// Best effort: the model may be one this device has no key for, and
+			// the Diamond then shows as unable to run, which is already a state
+			// the rail draws.
+			if (r.model && r.model.model) setDiamondModel(r.id, r.model);
+		}
+		if (!changed) return;
+		bumpDiamonds();                            // tell the other TABS
+		await onDiamondsChangedElsewhere();        // and this one: same reconciliation
+		signalLinksChanged();                      // links ride with their Diamond, so the graph moved
+	}
+
 	async function collectSync() {
 		persistChats();
 		var fileCol = await collectFiles();
 		var chunked = await collectChunked(fileCol.large);
+		// v2 adds `diamonds` and `diamondTombs`. The version is informational:
+		// every section is read by name and a missing one is a no-op, so a v1
+		// device and a v2 device sync happily in both directions -- the v1 side
+		// ignores what it does not know, and the v2 side sees no Diamonds rather
+		// than an error.
 		return {
-			v:        1,
-			chats:    readJson(CHATS_KEY, []),
-			tombs:    readJson(TOMBS_KEY, {}),
-			msgTombs: readJson(MSG_TOMBS_KEY, {}),
-			files:    fileCol.files,
-			chunked:  chunked,
+			v:            2,
+			chats:        readJson(CHATS_KEY, []),
+			tombs:        readJson(TOMBS_KEY, {}),
+			msgTombs:     readJson(MSG_TOMBS_KEY, {}),
+			files:        fileCol.files,
+			chunked:      chunked,
+			diamonds:     await collectDiamonds(),
+			diamondTombs: readJson(DIAMOND_TOMBS_KEY, {}),
 		};
 	}
 
@@ -688,6 +793,8 @@ import init, {
 	/// wins; then remote chats merge into stored chats by the same freshest-wins,
 	/// union-the-transcript rule the cross-tab path uses; then the in-memory
 	/// array and the UI are reconciled without disturbing a turn in flight.
+	/// Diamonds, workspace files and the cloud index follow, each by its own
+	/// rule and each best-effort, so one of them failing leaves the rest merged.
 	async function applySync(remote) {
 		if (!remote || typeof remote !== 'object') return;
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
@@ -708,6 +815,9 @@ import init, {
 				JSON.stringify(Object.keys(byId).map(function (id) { return byId[id]; })));
 		} catch (e) { /* quota — the merge is lost this session, not corrupted */ }
 		onChatsChangedElsewhere();
+		// Then the Diamonds, each carried whole (best-effort; a Diamond failure
+		// never blocks the files below it).
+		try { await applyDiamonds(remote); } catch (e) { /* Diamonds stay as they are */ }
 		// Then the workspace files (best-effort; a file failure never blocks chats).
 		try { await applyFiles(remote.files); } catch (e) { /* files stay as they are */ }
 		// Then the large files held in the chunk store, reconstructed on demand.
@@ -7040,6 +7150,10 @@ import init, {
 			// grow the write for ever.
 			DaimondPanels.forgetArrangement(f.id);
 			diamondApp().delete_diamond(f.id).then(function () {
+				// Before the rail is redrawn, so the next push carries the deletion:
+				// without a tombstone the other device still holds this Diamond and
+				// simply hands it back on the following pull.
+				diamondTombstone(f.id);
 				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = t('chat.no_chat'); showCentre('chat'); renderEmptyState(); }
 				bumpDiamonds();
 				loadDiamonds();

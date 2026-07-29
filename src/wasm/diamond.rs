@@ -33,10 +33,12 @@ use crate::diamond_meta::{Meta, normalise_tags};
 use crate::llm::json_escape;
 use crate::protocol::generate_session_id;
 use crate::tools::FileRoot;
-use crate::wasm::opfs;
+use crate::wasm::{js_prop, js_str, opfs};
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
+
+use wasm_bindgen::{JsCast, JsValue};
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -763,4 +765,140 @@ pub async fn links_json(node_ref: &str) -> Outcome<String> {
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Whole-directory export / import                                │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Whether a path from an export addresses something inside the Diamond.
+///
+/// The paths in an export were written by another device, so they are checked
+/// rather than trusted: a `..` component would climb out of `diamonds/<id>/`
+/// and land the file in some other Diamond, or beside them all.
+fn is_safe_rel(rel: &str) -> bool {
+    if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
+        return false;
+    }
+    rel.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Export a whole Diamond as JSON: `{"id":..,"files":{"<path>":"<content>",..}}`,
+/// each path relative to `diamonds/<id>/`.
+///
+/// Filesystem-level on purpose rather than field by field.  Everything a
+/// Diamond *is* lives under its directory -- the crystal, every version
+/// snapshot, the metadata, the log, the retained deltas, the link sidecar -- so
+/// a per-Diamond file added later travels with it and nothing carrying a
+/// Diamond about has to learn the new file's name.  Every file is read as text,
+/// which is what all of them are.
+///
+/// The paths come out sorted, so two exports of an unchanged Diamond are the
+/// same bytes and a caller comparing states sees no change where there is none.
+pub async fn export_diamond(id: &str) -> Outcome<String> {
+    let root = diamond_dir(id);
+    if !res!(opfs::exists(FileRoot::Opfs, &root).await) {
+        return Err(err!("There is no Diamond '{}' to export.", id; Missing, Data));
+    }
+    // Recursion is spelled out with an explicit stack: an `async fn` cannot
+    // recurse without boxing its future (as `opfs::copy_dir` does the same).
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
+        let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,     // a directory that has gone carries nothing
+        };
+        for (name, is_dir, _size) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            if is_dir {
+                todo.push(child);
+                continue;
+            }
+            // One unreadable file must not lose the whole Diamond.
+            let bytes = match opfs::read_file(FileRoot::Opfs, &fmt!("{}/{}", root, child)).await {
+                Ok(b)  => b,
+                Err(e) => {
+                    console_log(&fmt!("Diamond '{}' has an unreadable file '{}': {}", id, child, e));
+                    continue;
+                }
+            };
+            files.push((child, String::from_utf8_lossy(&bytes).to_string()));
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let items: Vec<String> = files.iter()
+        .map(|(p, c)| fmt!("\"{}\":\"{}\"", json_escape(p), json_escape(c)))
+        .collect();
+    Ok(fmt!("{{\"id\":\"{}\",\"files\":{{{}}}}}", json_escape(id), items.join(",")))
+}
+
+/// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
+/// device held under that id.
+///
+/// Wholesale, so that "the freshest copy wins" means something predictable: what
+/// arrives *is* the Diamond, rather than being merged into what was here.  Two
+/// devices that edited the same Diamond between syncs therefore lose the older
+/// side entirely, links included, which is the accepted cost of carrying a
+/// directory rather than reconciling one.
+///
+/// The read and the parse both happen before anything is deleted, so a malformed
+/// export cannot leave the user with neither copy.  The window between the delete
+/// and the last write remains: a failure inside it leaves the Diamond gone from
+/// this device, and the next pull brings it back.
+pub async fn import_diamond(json: &str) -> Outcome<()> {
+    // The browser's own parser, not a second one written here.  This JSON holds
+    // whole files, and a hand-rolled scan would be a second unescaping
+    // implementation to keep exactly in step with the first.
+    let val = res!(js_sys::JSON::parse(json)
+        .map_err(|e| err!("A Diamond export could not be parsed: {}.", js_str(&e); Invalid, Input)));
+    let id = match js_prop(&val, "id") {
+        Some(i) => i,
+        None    => return Err(err!("A Diamond export carries no id."; Invalid, Input)),
+    };
+    // The id becomes a path component, so it is checked rather than trusted.
+    if !is_safe_rel(&id) || id.contains('/') {
+        return Err(err!("'{}' is not a Diamond id.", id; Invalid, Input, Path));
+    }
+    let files_val = res!(js_sys::Reflect::get(&val, &JsValue::from_str("files"))
+        .map_err(|e| err!("A Diamond export has no files: {}.", js_str(&e); Invalid, Input)));
+    let files: js_sys::Object = res!(files_val.dyn_into()
+        .map_err(|_| err!("A Diamond export's files were not an object."; Invalid, Input)));
+
+    let mut writes: Vec<(String, String)> = Vec::new();
+    for pair in js_sys::Object::entries(&files).iter() {
+        let pair: js_sys::Array = match pair.dyn_into() {
+            Ok(a)  => a,
+            Err(_) => continue,
+        };
+        let rel = match pair.get(0).as_string() {
+            Some(p) => p,
+            None    => continue,
+        };
+        let body = match pair.get(1).as_string() {
+            Some(c) => c,
+            None    => continue,        // not text; nothing a Diamond stores is
+        };
+        if !is_safe_rel(&rel) {
+            return Err(err!("A Diamond export names '{}', which is not a path inside it.", rel;
+                Invalid, Input, Path));
+        }
+        writes.push((rel, body));
+    }
+    // An export with nothing in it would otherwise delete the Diamond it claims
+    // to be, which is a deletion nobody asked for.
+    if writes.is_empty() {
+        return Err(err!("The export of Diamond '{}' holds no files.", id; Invalid, Input));
+    }
+
+    let dir = diamond_dir(&id);
+    if res!(opfs::exists(FileRoot::Opfs, &dir).await) {
+        res!(opfs::delete_entry(FileRoot::Opfs, &dir, true).await);
+    }
+    for (rel, body) in writes {
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), body.as_bytes()).await);
+    }
+    Ok(())
 }

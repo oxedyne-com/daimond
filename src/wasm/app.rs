@@ -361,6 +361,21 @@ impl DaimondApp {
         diamond::all_links().await.map_err(to_js_err)
     }
 
+    /// Export a whole Diamond as JSON: `{"id":..,"files":{"<path>":"<content>",..}}`.
+    ///
+    /// Every file under `diamonds/<id>/` travels, so a Diamond carried to another
+    /// device arrives whole -- crystal, versions, log, deltas, tags and links --
+    /// and a per-Diamond file added later needs nothing to learn its name.
+    pub async fn export_diamond(&self, id: String) -> Result<String, JsValue> {
+        diamond::export_diamond(&id).await.map_err(to_js_err)
+    }
+
+    /// Recreate a Diamond from an [`DaimondApp::export_diamond`] JSON, replacing
+    /// whatever this device held under that id.
+    pub async fn import_diamond(&self, json: String) -> Result<(), JsValue> {
+        diamond::import_diamond(&json).await.map_err(to_js_err)
+    }
+
     /// Assert a link, returning its id.
     ///
     /// `owner` is the Diamond whose sidecar holds the record; `rel` and `note`
