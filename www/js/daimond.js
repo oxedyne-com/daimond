@@ -7814,9 +7814,31 @@ import init, {
 		note.textContent = t('tag.editor_note');
 		wrap.appendChild(note);
 
+		// Two boxes. The upper holds what is ON the Diamond, each chip with a
+		// closer; the lower holds every tag the user has anywhere -- close a
+		// chip above and it lands back below, click one below and it moves up.
+		// The add input belongs to the lower box: typing mints a new tag into
+		// the same pool the box shows.
+		var curBox = document.createElement('div');
+		curBox.className = 'tag-box tag-box-current';
+		var curLbl = document.createElement('div');
+		curLbl.className = 'tag-box-label';
+		curLbl.textContent = t('tag.on_diamond');
+		curBox.appendChild(curLbl);
 		var current = document.createElement('div');
 		current.className = 'tag-row';
-		wrap.appendChild(current);
+		curBox.appendChild(current);
+		wrap.appendChild(curBox);
+
+		var allBox = document.createElement('div');
+		allBox.className = 'tag-box tag-box-all';
+		var allLbl = document.createElement('div');
+		allLbl.className = 'tag-box-label';
+		allLbl.textContent = t('tag.all');
+		allBox.appendChild(allLbl);
+		var sug = document.createElement('div');
+		sug.className = 'tag-row tag-sug';
+		allBox.appendChild(sug);
 
 		var addRow = document.createElement('div');
 		addRow.className = 'tag-add';
@@ -7829,12 +7851,17 @@ import init, {
 		add.className = 'crystal-act';
 		add.textContent = '+ ' + t('tag.add_btn');
 		addRow.appendChild(input); addRow.appendChild(add);
-		wrap.appendChild(addRow);
-
-		var sug = document.createElement('div');
-		sug.className = 'tag-row tag-sug';
-		wrap.appendChild(sug);
+		allBox.appendChild(addRow);
+		wrap.appendChild(allBox);
 		crystalBody.appendChild(wrap);
+
+		// The pool: every tag on any Diamond, the starter set, and anything
+		// seen here this session -- so a tag just closed above still has a
+		// chip below to bring it back, even if no other Diamond carries it.
+		var seen = {};
+		DEFAULT_TAG_SUGGESTIONS.forEach(function (x) { seen[x] = 1; });
+		diamonds.forEach(function (d) { tagsOf(d).forEach(function (x) { seen[x] = 1; }); });
+		tags.forEach(function (x) { seen[x] = 1; });
 
 		/// Persist, then repaint from what came back. The store owns
 		/// normalisation -- it lowercases, trims, dedupes and caps -- so its
@@ -7871,13 +7898,23 @@ import init, {
 				current.appendChild(chip);
 			});
 
+			tags.forEach(function (x) { seen[x] = 1; });
 			sug.innerHTML = '';
-			var offer = DEFAULT_TAG_SUGGESTIONS.filter(function (x) { return tags.indexOf(x) === -1; });
-			if (!offer.length) return;
-			var lbl = document.createElement('span');
-			lbl.className = 'tag-sug-label';
-			lbl.textContent = t('tag.suggestions');
-			sug.appendChild(lbl);
+			// The starter set leads in its own order; everything else follows
+			// alphabetically. Only what is not already on the Diamond is offered.
+			var rest = Object.keys(seen).filter(function (x) {
+				return DEFAULT_TAG_SUGGESTIONS.indexOf(x) === -1;
+			}).sort();
+			var offer = DEFAULT_TAG_SUGGESTIONS.concat(rest).filter(function (x) {
+				return tags.indexOf(x) === -1;
+			});
+			if (!offer.length) {
+				var empty = document.createElement('span');
+				empty.className = 'tag-none';
+				empty.textContent = t('tag.all_used');
+				sug.appendChild(empty);
+				return;
+			}
 			offer.forEach(function (tag) {
 				var chip = tagChip(tag, 'tag-offer', function () { commit(tags.concat([tag])); });
 				chip.title = t('tag.add', { tag: tag });

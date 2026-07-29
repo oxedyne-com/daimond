@@ -903,7 +903,18 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .tag-input { flex: 1; max-width: 200px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 4px 8px; }
 .tag-input:focus { outline: none; border-color: var(--accent); }
 .tag-input::placeholder { color: var(--text-muted); }
-.tag-sug-label { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+/* The two boxes: what is on the Diamond, and the pool everything comes from.
+   The add input sits inside the pool's box, because typing mints into it. */
+.tag-box {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-secondary);
+	padding: 8px 10px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.tag-box-label { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
 .tag-editor .tag-chip { font-size: var(--fs-xs); padding: 2px 9px; }
 
 

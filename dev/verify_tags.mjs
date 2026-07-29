@@ -91,6 +91,22 @@ await page.waitForTimeout(600);
 const et = await editorTags();
 check(et.includes('person') && et.includes('rust'), `editor shows current tags, normalised: ${JSON.stringify(et)}`);
 
+// ── The two boxes: a closed chip lands back in the pool ──────────
+// Close "rust" above; it must leave the Diamond AND reappear below, where
+// one click brings it back -- the pool holds every tag, not a fixed list.
+await page.click('.tag-chip.tag-edit .tag-x >> nth=-1', { force: true });   // rust is newest, last
+await page.waitForTimeout(600);
+const afterClose = await editorTags();
+const pool = await page.$$eval('.tag-sug .tag-chip', els => els.map(e => e.textContent));
+check(!afterClose.includes('rust') && pool.includes('rust'),
+	`a closed tag returns to the pool: on=${JSON.stringify(afterClose)} pool has rust=${pool.includes('rust')}`);
+const rustChip = await page.$$('.tag-sug .tag-chip');
+for (const c of rustChip) {
+	if ((await c.textContent()) === 'rust') { await c.click({ force: true }); break; }
+}
+await page.waitForTimeout(600);
+check((await editorTags()).includes('rust'), 'one click in the pool restores it');
+
 // ── Tagging must not reorder the rail ────────────────────────────
 // The Rust set_tags deliberately leaves `updated` alone: filing a Diamond is not
 // touching it, and a rail that reshuffles under a tag edit is a rail you
