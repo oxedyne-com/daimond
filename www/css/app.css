@@ -891,8 +891,31 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
    did not fit and names them on hover. */
 .tag-more { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); cursor: default; }
 .tag-active { padding-right: 3px; }
-.tag-x { background: none; border: none; color: inherit; font-size: var(--fs-xs); line-height: 1; padding: 0 2px; opacity: 0.65; }
+/* The closer owns the pill's right end cap: a full-height square flush with
+   the edge, so its centre falls exactly on the cap's centre (half the chip's
+   height in from the right), whatever size the chip is. The chip's own right
+   padding is dropped when a closer is present -- the square supplies it. */
+.tag-x {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	aspect-ratio: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	color: inherit;
+	font-size: var(--fs-sm);
+	line-height: 1;
+	padding: 0;
+	opacity: 0.65;
+	cursor: pointer;
+}
 .tag-x:hover { opacity: 1; }
+.tag-chip:has(.tag-x) { position: relative; padding-right: 2em; }
+.tag-editor .tag-chip:has(.tag-x) { padding-right: 2em; }
 
 /* The tag editor, reached from the crystal bar. */
 .tag-editor { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
