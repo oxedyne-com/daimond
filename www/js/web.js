@@ -153,6 +153,9 @@
 		if (!r.ok) {
 			throw new Error((j && j.error) || 'The web service could not reach that page.');
 		}
+		// Fetching a page costs credits, and the reply says what is left. One place owns that
+		// number; this hands it over rather than letting the header go stale.
+		if (window.DaimondGateway && DaimondGateway.noteBalance) DaimondGateway.noteBalance(j);
 		return j;
 	}
 

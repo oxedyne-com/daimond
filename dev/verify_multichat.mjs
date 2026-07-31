@@ -19,8 +19,9 @@ console.log('chat A running:', JSON.stringify(aRunning));
 // Start a SECOND chat while A still streams.
 await s.page.click('#new-session-btn');
 await s.page.waitForTimeout(400);
-// Start the pending tile.
-const startBtn = s.page.locator('button:has-text("Start")').first();
+// Start the pending tile. `.tile-start` by class, NOT has-text("Start") —
+// the substring match also hits the BYOK form's hidden "Save & start".
+const startBtn = s.page.locator('.tile-start').first();
 if (await startBtn.count()) await startBtn.click();
 await s.page.waitForTimeout(600);
 
@@ -42,7 +43,10 @@ if (!bComposer.inputDisabled) {
 }
 await shot(s, 'multichat-B-active');
 
-console.log('\nA STARTED (stop-mode + disabled input):', aRunning.stopMode && aRunning.disabled);
+// The composer is NOT disabled mid-turn any more: a turn cannot be interrupted, but the next
+// thing to say can be typed while the answer arrives and is sent when the turn ends. Stop-mode on
+// the send button is the signal that a turn is running; an unusable box never was.
+console.log('\nA STARTED (stop-mode + composer live):', aRunning.stopMode && !aRunning.disabled);
 console.log('B USABLE WHILE A RUNS (input enabled, send-mode):', !bComposer.inputDisabled && !bComposer.stopMode);
 console.log('B TURN COMPLETED WHILE A RAN:', bSent);
 console.log('errors:', errors(s));

@@ -347,9 +347,19 @@ gw.spent = [keyN(1)];                    // the key minted at unlock has now spe
 gw.chatHits = 0;
 clearMockLog();                          // so the retry's request can be read back off the wire
 
+// The Admin drawer is open from the models work above and overlays the rail
+// (the + button sits under it since the rail gained its divider) — a force
+// click would land on the drawer. Close it the way a user would.
+if (await page.locator('#admin-close').isVisible().catch(() => false)) {
+	await page.click('#admin-close', { force: true });
+	await page.waitForTimeout(200);
+}
 await page.click('#new-session-btn', { force: true });
 await page.waitForTimeout(600);
-const start = page.locator('button:has-text("Start")').first();
+// `.tile-start` by class, NOT `button:has-text("Start")` — has-text is a
+// substring match that also hits the BYOK form's hidden "Save & start"
+// button, and clicking that fails as "not visible" (see harness.mjs newChat).
+const start = page.locator('.tile-start').first();
 if (await start.count()) await start.click({ force: true });
 await page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
 await page.fill('#chat-input', '@text Hello from a credits chat.');

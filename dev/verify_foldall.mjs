@@ -1,0 +1,303 @@
+// verify_foldall.mjs — the fold never fails in silence.
+//
+// The bug this exists for: a user selected every turn of a chat, pressed Fold,
+// picked a Diamond, and NOTHING happened. Not an error, not a spinner, not a
+// diff. Every exit from the fold path was either invisible (a 12px status line
+// on a panel the user may have left) or literally a bare `return`, and a throw
+// past the one try block left `crystalBusy` true for the rest of the session —
+// Steer and Propose dead, with no explanation.
+//
+// So each check here is one way out of the fold, and what it asserts is that the
+// user can SEE it happened. The one that matters most is the last shape of the
+// failure: an empty reply from the reducer used to render as a diff deleting
+// every line of the crystal, with Accept enabled — one click from wiping the
+// document the app exists to build.
+//
+//   node dev/verify_foldall.mjs
+//
+// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+
+import { open, chat, shot, errors } from './harness.mjs';
+
+const ok = [], bad = [];
+const check = (name, pass, detail) => {
+	(pass ? ok : bad).push(name + (detail ? ' — ' + detail : ''));
+	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const DIAMOND = 'Fold Target';
+const s = await open({ name: 'foldall' });
+const p = s.page;
+
+// Toasts are the app's own floating status line; `.err` marks a failure. They
+// remove themselves after ~4s, which is shorter than some of the waits here, so
+// they are RECORDED as they appear rather than looked for afterwards — a check
+// that polls for a live toast passes or fails on the sleep it happened to use.
+await p.evaluate(() => {
+	window.__toasts = [];
+	new MutationObserver(muts => {
+		for (const m of muts) for (const n of m.addedNodes) {
+			if (n.nodeType === 1 && n.classList && n.classList.contains('daimond-toast')) {
+				window.__toasts.push({ text: n.textContent, err: n.classList.contains('err') });
+			}
+		}
+	}).observe(document.body, { childList: true });
+});
+const toasts = () => p.evaluate(() => window.__toasts.slice());
+const clearToasts = () => p.evaluate(() => {
+	window.__toasts = [];
+	document.querySelectorAll('.daimond-toast').forEach(e => e.remove());
+});
+// The Diamond's own crystal surface: is a diff on show, and can it be applied?
+const diffState = () => p.evaluate(() => {
+	const lines = document.querySelectorAll('.diff-lines .diff-line');
+	const acc = document.querySelector('.diff-accept');
+	let add = 0, del = 0;
+	lines.forEach(l => { if (l.classList.contains('add')) add++; if (l.classList.contains('del')) del++; });
+	return {
+		lines: lines.length, add, del,
+		accept: !!acc, acceptEnabled: !!acc && !acc.disabled,
+		propose: !!document.getElementById('fold-propose'),
+		proposeDisabled: !!(document.getElementById('fold-propose') || {}).disabled,
+	};
+});
+const dialogText = () => p.evaluate(() => {
+	const c = document.querySelector('.dlg-card');
+	return c ? c.textContent : '';
+});
+const dismissDialog = async () => {
+	if (await p.$('.dlg-ok')) { await p.click('.dlg-ok', { force: true }); await sleep(300); }
+};
+
+// ── Seed: one Diamond and a chat of four turns ───────────────────────
+await p.click('#new-diamond-btn', { force: true });
+await p.waitForSelector('.dlg-input', { timeout: 10000 });
+await p.fill('.dlg-input', DIAMOND);
+await p.click('.dlg-ok', { force: true });
+await sleep(1000);
+for (const m of ['MARK-ONE', 'MARK-TWO', 'MARK-THREE', 'MARK-FOUR']) {
+	await chat(s, `@text ${m} and something worth keeping about it.`);
+}
+
+/// Select every turn and fold the lot into the Diamond. Returns once the picker
+/// item has been clicked; the caller decides how long to wait for the reducer.
+async function foldAll({ pickName = DIAMOND } = {}) {
+	// Back into the chat, in case a previous check left the centre on a Diamond.
+	await p.evaluate(() => {
+		const box = document.querySelector('.session-box:not(.diamond-box)');
+		if (box) box.click();
+	});
+	await sleep(600);
+	await p.evaluate(() => {
+		const c = document.getElementById('collapse-btn');
+		if (c && !c.classList.contains('on')) c.click();
+	});
+	await sleep(400);
+	await p.click('#sel-all', { force: true });
+	await sleep(200);
+	await p.click('#sel-fold', { force: true });
+	await p.waitForSelector('.fold-menu', { timeout: 8000 });
+	await p.evaluate((name) => {
+		const item = [...document.querySelectorAll('.fold-menu-item')]
+			.find(b => b.textContent.trim() === name);
+		if (item) item.click();
+	}, pickName);
+}
+
+/// Wait until the fold has visibly resolved one way or the other.
+async function settled(timeout = 20000) {
+	const t0 = Date.now();
+	while (Date.now() - t0 < timeout) {
+		const d = await diffState();
+		if (d.lines > 0) return 'diff';
+		if ((await toasts()).length) return 'toast';
+		if (await p.$('.dlg-card')) return 'dialog';
+		await sleep(250);
+	}
+	return 'nothing';
+}
+
+// ── 1. Folding the whole chat says something within ten seconds ──────
+await clearToasts();
+await foldAll();
+const outcome1 = await settled(20000);
+const d1 = await diffState();
+check('folding every turn produces a visible result, not silence',
+	outcome1 !== 'nothing', `outcome=${outcome1}`);
+check('and that result is a diff with real changes in it',
+	d1.lines > 0 && (d1.add + d1.del) > 0, `${d1.lines} lines, +${d1.add}/-${d1.del}`);
+await shot(s, 'foldall-diff');
+
+// Accept it, so the crystal has content for the empty-reply check below to risk.
+if (d1.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sleep(3500); }
+const crystalLen = await p.evaluate(() => (document.querySelector('.crystal-body .chat-msg-content') || {}).textContent?.length || 0);
+check('the accepted fold left a crystal with something in it (so the next check can bite)',
+	crystalLen > 20, `${crystalLen} chars`);
+
+// ── 2. A provider failure is shown, and does not wedge the crystal ───
+await clearToasts();
+await p.route('**/v1/chat/completions', route => route.fulfill({
+	status: 400,
+	contentType: 'application/json',
+	body: JSON.stringify({ error: { message: 'routed: refused' } }),
+}));
+await foldAll();
+await settled(20000);
+const t2 = await toasts();
+check('a reducer that fails says so, out loud',
+	t2.some(x => x.err), JSON.stringify(t2.slice(0, 2)));
+await p.unroute('**/v1/chat/completions');
+// Back on the Diamond: the controls must be live again. A sticky crystalBusy
+// leaves Propose disabled for the rest of the session.
+await p.evaluate((name) => {
+	const box = [...document.querySelectorAll('.diamond-box')]
+		.find(b => (b.querySelector('.session-box-name') || {}).textContent === name);
+	if (box) box.click();
+}, DIAMOND);
+await sleep(1200);
+const d2 = await diffState();
+check('and the crystal is not left disabled by the failure',
+	d2.propose && !d2.proposeDisabled, `propose present=${d2.propose} disabled=${d2.proposeDisabled}`);
+
+// ── 3. A Diamond deleted under the picker is refused loudly ──────────
+// The realistic case: another tab deletes it while the picker is open. The rail
+// re-reads on the storage event, so the id the menu item holds is stale.
+await clearToasts();
+await p.evaluate(() => {
+	const box = document.querySelector('.session-box:not(.diamond-box)');
+	if (box) box.click();
+});
+await sleep(600);
+await p.evaluate(() => {
+	const c = document.getElementById('collapse-btn');
+	if (c && !c.classList.contains('on')) c.click();
+});
+await sleep(400);
+await p.click('#sel-all', { force: true });
+await p.click('#sel-fold', { force: true });
+await p.waitForSelector('.fold-menu', { timeout: 8000 });
+// Delete it for real, then tell this tab the way another tab would.
+await p.evaluate(async (name) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const row = JSON.parse(await app.list_diamonds()).find(r => r.name === name);
+	if (row) await app.delete_diamond(row.id);
+	window.dispatchEvent(new StorageEvent('storage', { key: 'daimond-diamonds-rev', newValue: String(Date.now()) }));
+}, DIAMOND);
+await sleep(1500);
+await p.evaluate((name) => {
+	const item = [...document.querySelectorAll('.fold-menu-item')]
+		.find(b => b.textContent.trim() === name);
+	if (item) item.click();
+}, DIAMOND);
+await sleep(1200);
+const dlg3 = await dialogText();
+check('folding into a Diamond that has gone says so, rather than doing nothing',
+	/gone/i.test(dlg3), dlg3 ? dlg3.slice(0, 90) : '(no dialog at all)');
+await dismissDialog();
+
+// ── 4. An empty reply is a failure, never a deletion diff ────────────
+// A second Diamond, folded once so its crystal is not empty, then the reducer is
+// made to answer with nothing at all.
+await p.click('#new-diamond-btn', { force: true });
+await p.waitForSelector('.dlg-input', { timeout: 10000 });
+await p.fill('.dlg-input', 'Empty Reply');
+await p.click('.dlg-ok', { force: true });
+await sleep(1000);
+await clearToasts();
+await foldAll({ pickName: 'Empty Reply' });
+await settled(20000);
+const dA = await diffState();
+if (dA.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sleep(3500); }
+// The precondition, asserted rather than assumed: an empty reply against an EMPTY
+// crystal diffs to "no change" and Accept is disabled anyway, so the check below
+// would pass without proving anything.
+const emptyBase = await p.evaluate(() => (document.querySelector('.crystal-body .chat-msg-content') || {}).textContent?.length || 0);
+check('the second Diamond has a crystal worth deleting (the precondition of the next check)',
+	emptyBase > 20, `${emptyBase} chars`);
+
+// Now the empty stream: a well-formed SSE turn that says nothing.
+const EMPTY_SSE = [
+	'data: {"id":"x","object":"chat.completion.chunk","model":"mock/fast","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}',
+	'',
+	'data: {"id":"x","object":"chat.completion.chunk","model":"mock/fast","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+	'',
+	'data: {"id":"x","object":"chat.completion.chunk","model":"mock/fast","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10}}',
+	'',
+	'data: [DONE]',
+	'',
+].join('\n');
+await clearToasts();
+await p.route('**/v1/chat/completions', route => route.fulfill({
+	status: 200,
+	headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+	body: EMPTY_SSE,
+}));
+await foldAll({ pickName: 'Empty Reply' });
+await sleep(9000);
+const t4 = await toasts();
+const d4 = await diffState();
+await p.unroute('**/v1/chat/completions');
+check('an empty reducer reply is reported as a failure',
+	t4.some(x => x.err), JSON.stringify(t4.slice(0, 2)));
+check('and is NEVER offered as a diff that deletes the crystal',
+	!(d4.acceptEnabled && d4.del > 0), `accept=${d4.acceptEnabled} deletions=${d4.del}`);
+await shot(s, 'foldall-empty-reply');
+// Nothing was left pending on that Diamond, so no rail row claims one is waiting.
+const pendingAfterEmpty = await p.$$eval('.diamond-box', els => els.filter(e =>
+	e.querySelector('.diamond-pending')).map(e => (e.querySelector('.session-box-name') || {}).textContent));
+check('and no proposal is left pending from it',
+	pendingAfterEmpty.length === 0, JSON.stringify(pendingAfterEmpty));
+
+// ── 5. Leaving mid-propose leaves a mark on the rail row ─────────────
+// The reducer is slow on purpose; the user goes back to the chat while it runs.
+await clearToasts();
+await p.route('**/v1/chat/completions', async route => {
+	await sleep(6000);
+	await route.continue();
+});
+await foldAll({ pickName: 'Empty Reply' });
+await sleep(1500);
+await p.evaluate(() => {
+	const box = document.querySelector('.session-box:not(.diamond-box)');
+	if (box) box.click();                       // away from the Diamond, mid-propose
+});
+await sleep(14000);
+await p.unroute('**/v1/chat/completions');
+const pending = await p.$$eval('.diamond-box', els => els.map(e => ({
+	name: (e.querySelector('.session-box-name') || {}).textContent,
+	pending: !!e.querySelector('.diamond-pending'),
+})));
+check('a proposal that landed while you were elsewhere is marked on its rail row',
+	pending.some(x => x.pending), JSON.stringify(pending));
+const t5 = await toasts();
+check('and the toast names the Diamond it is waiting on',
+	t5.some(x => /Empty Reply/.test(x.text)), JSON.stringify(t5.slice(0, 2)));
+await shot(s, 'foldall-pending-badge');
+
+// ── 6. The floor under the whole class ───────────────────────────────
+// Most of this app is started rather than awaited: a click hands a promise to
+// nobody. Each of the folds above is one such promise, and the fix for each was
+// local — but a rejection escaping ANY of them must reach the user, or the next
+// one written without a .catch is the same silence again.
+await clearToasts();
+await p.evaluate(() => { Promise.reject(new Error('probe: an escaped rejection')); });
+await sleep(600);
+const t6 = await toasts();
+check('a promise rejection nobody handled still reaches the user',
+	t6.some(x => x.err), JSON.stringify(t6.slice(0, 2)));
+
+// The gateway is not running for this flow, so its 502s are the absence of a
+// server. The routed 400 is this test's own doing.
+// The probe rejection above is this test's own doing and is reported to the
+// console as a pageerror by design: the app's handler tells the USER, it does not
+// swallow the developer's copy.
+const errs = errors(s).filter(e => !/favicon|404|401|402|502|Bad Gateway|net::ERR|400|probe: an escaped rejection/.test(e));
+console.log('\nconsole errors:', errs.slice(0, 5));
+check('nothing throws into the console while all this happens', errs.length === 0, errs[0] || '');
+
+await s.close();
+console.log(`\n${ok.length} passed, ${bad.length} failed`);
+if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
+process.exit(bad.length ? 1 : 0);

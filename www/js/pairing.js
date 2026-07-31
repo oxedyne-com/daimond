@@ -14,6 +14,27 @@
    few minutes, keyed by a code that is single-use and short-lived —
    the same opaque-parcel posture as the sync mailbox.
 
+   HOW IT LOOKS TRAVELS ONCE. A linked device should not have to be
+   dressed twice, so the link carries a snapshot of the parent's
+   presentation — theme, skin, language, display currency, reading size
+   and the whole panel layout — and the child writes it before it next
+   paints. It is a HANDOVER, not a synced setting: the screen
+   configuration is a fact about a screen, and a phone is not a 27-inch
+   monitor. That the snapshot applies exactly once falls out of where it
+   lives: it exists only inside one redeemed pairing parcel, which is
+   consumed in the act of redeeming it, so there is nothing left for a
+   later sync to re-impose. The parcel never carries it either.
+
+   The snapshot rides INSIDE the bundle string. The gateway's pair
+   handler reads exactly one field out of the body -- `bundle`, as a
+   string -- and parks that; a sibling field would be dropped on the
+   floor without a word (see gateway/src/handlers/pair.rs). Nesting is
+   therefore the form that needs no gateway change at all, and
+   DaimondIdentity.importBundle ignores fields it does not know, so the
+   extra one costs the identity path nothing. The gateway does cap a
+   parked bundle at 8 KiB, so the snapshot is budgeted below that and
+   sheds the layout — much the largest part — rather than fail a link.
+
    This module builds its own small dialogs so it needs no markup of
    its own beyond one <script> tag; styles are injected once.
    ============================================================ */
@@ -21,6 +42,69 @@
 	'use strict';
 
 	var CLIENT_API = 1;
+
+	/// How many presentation keys the last redeem brought over, so the dialog can
+	/// mention it. A user whose new device suddenly speaks German is owed a
+	/// sentence saying why.
+	var lastLookApplied = 0;
+
+	// ── How this device looks, carried to the next one ─────────
+	// A whitelist, in both directions. On the way out it is what "how it looks"
+	// means, written down; on the way in it is the only thing a redeemed parcel
+	// may write, so a bundle cannot reach into storage it has no business in.
+	//
+	// Every one of these is read at boot -- the theme, skin and language before
+	// first paint by the inline script in index.html, the reading size and the
+	// layout by their own modules as they load -- so writing them and letting the
+	// page start is the whole of applying them. There is no second mechanism, and
+	// there must not be one: a snapshot applied by poking the live DOM would drift
+	// from what a reload produces.
+	var LOOK_KEYS = [
+		'daimond-theme',		// dark | light | lollypop
+		'daimond-skin',			// sharp | warm
+		'daimond-locale',		// the interface language
+		'daimond-currency',		// the display currency (billing is unaffected)
+		'daimond-fs-scale',		// the reading size (workspace.js)
+		'daimond-layout',		// the dock's tiling, open and pinned panels, widths, splits
+	];
+	/// One value's ceiling. The layout is the only large one and is a few hundred
+	/// bytes; anything past this is not a preference, it is a mistake.
+	var LOOK_VALUE_MAX = 4096;
+	/// What the whole parked bundle may weigh. The gateway refuses over 8 KiB
+	/// (MAX_BUNDLE_BYTES in pair.rs); this leaves room and is checked here so the
+	/// failure is a smaller snapshot rather than a link that will not form.
+	var PARK_BUDGET = 7 * 1024;
+
+	/// This device's presentation, as the keys that hold it. A key never set does
+	/// not travel, so the child keeps its own default rather than being told the
+	/// parent's absence of a choice.
+	function snapshotLook() {
+		var out = {};
+		for (var i = 0; i < LOOK_KEYS.length; i++) {
+			var k = LOOK_KEYS[i], v = null;
+			try { v = localStorage.getItem(k); }
+			catch (e) { v = null; }							// private mode: nothing to carry
+			if (typeof v === 'string' && v !== '' && v.length <= LOOK_VALUE_MAX) out[k] = v;
+		}
+		return out;
+	}
+
+	/// Write a redeemed snapshot, once, before the page next starts.
+	///
+	/// Only the whitelisted keys, only strings, and only on this one redeem. A
+	/// value the receiving device cannot store is skipped: arriving with a slightly
+	/// different look is a far better outcome than a link that fails on quota.
+	function applyLook(look) {
+		if (!look || typeof look !== 'object') return 0;
+		var n = 0;
+		for (var i = 0; i < LOOK_KEYS.length; i++) {
+			var k = LOOK_KEYS[i], v = look[k];
+			if (typeof v !== 'string' || v === '' || v.length > LOOK_VALUE_MAX) continue;
+			try { localStorage.setItem(k, v); n++; }
+			catch (e) { /* quota or private mode: this one stays as it was */ }
+		}
+		return n;
+	}
 
 	// ── Transport ──────────────────────────────────────────────
 
@@ -32,10 +116,23 @@
 		}
 		var bundle = DaimondIdentity.exportBundle();
 		if (!bundle) throw new Error(t('pair.err_unreadable_local'));
+		bundle.look = snapshotLook();
+		var parked = JSON.stringify(bundle);
+		// Shed the layout first, then the snapshot entirely. The identity is the
+		// thing being carried and nothing about how the app looks may put it at
+		// risk of not fitting.
+		if (parked.length > PARK_BUDGET && bundle.look['daimond-layout']) {
+			delete bundle.look['daimond-layout'];
+			parked = JSON.stringify(bundle);
+		}
+		if (parked.length > PARK_BUDGET) {
+			delete bundle.look;
+			parked = JSON.stringify(bundle);
+		}
 		var r = await fetch('/api/pair', {
 			method: 'POST', credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
-			body: JSON.stringify({ bundle: JSON.stringify(bundle) }),
+			body: JSON.stringify({ bundle: parked }),
 		});
 		var j = null; try { j = await r.json(); } catch (e) {}
 		if (r.status === 401) throw new Error(t('pair.err_sign_in_first'));
@@ -46,6 +143,12 @@
 	/// Redeem a code on a NEW device: fetch the bundle and import it, so this
 	/// device now holds the same (still-locked) identity. Returns true on
 	/// success. The caller then prompts for the passphrase to unlock.
+	///
+	/// The parent's presentation is written here, after the identity and before
+	/// anything repaints, because the reload the dialog already does on the way to
+	/// the unlock screen is what applies it. Nothing else in the app writes these
+	/// keys from a bundle, so this is the one and only moment they arrive: from
+	/// here on the device's look is its own to change.
 	async function redeem(code) {
 		code = String(code || '').trim();
 		if (!code) throw new Error(t('pair.err_enter_code'));
@@ -60,6 +163,7 @@
 		var bundle;
 		try { bundle = JSON.parse(j.bundle); } catch (e) { throw new Error(t('pair.err_bundle_unreadable')); }
 		if (!DaimondIdentity.importBundle(bundle)) throw new Error(t('pair.err_bundle_import'));
+		lastLookApplied = applyLook(bundle.look);
 		return true;
 	}
 
@@ -282,6 +386,7 @@
 					box.appendChild(el('p', null, who
 						? t('pair.linked_named', { name: who })
 						: t('pair.linked_note')));
+					if (lastLookApplied > 0) box.appendChild(el('p', 'pair-note', t('pair.look_carried')));
 					var r2 = el('div', 'pair-row');
 					var ok = el('button', 'pair-btn', t('identity.unlock'));
 					ok.addEventListener('click', function () { close(); location.reload(); });

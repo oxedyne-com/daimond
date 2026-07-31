@@ -58,3 +58,33 @@
 	font-size: var(--fs-2xs); color: var(--text-secondary);
 	border-top: 1px solid var(--border);
 }
+
+/* What is left on this provider's key, inside its expanded body. It sits between the provider
+   head and the model rows, so it is ruled off from both rather than floating between them; and
+   it is built entirely from the panel's own tokens, which is what carries it across dark, light
+   and lollypop, and across both skins, without a single override. */
+.models-credit {
+	display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+	margin: 2px 4px 4px; padding: 8px;
+	border: 1px solid var(--border); border-radius: 6px;
+	background: var(--bg-tertiary);
+}
+/* The sentence that says what is known and how it is known. It wraps: a manual figure names the
+   base, the estimated spend and the date, and cutting that short would lose the caveat. */
+.models-credit-line {
+	font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.45;
+}
+/* The user's own figure: a field and the button that commits it, on one line, filling the
+   block's width so the pair reads as one control rather than two loose ones. */
+.models-credit-form { display: flex; align-items: center; gap: 6px; width: 100%; }
+/* Sized to the buttons beside it (`.models-refetch`), NOT to `.settings-section input`, whose
+   9px/base is a form-field scale and would tower over the row. */
+.settings-section .models-credit-input {
+	flex: 1; min-width: 0;
+	padding: 6px 8px; font-size: var(--fs-2xs);
+	font-family: var(--font-mono);
+	background: var(--bg-secondary); border: 1px solid var(--border-2);
+	border-radius: 6px; color: var(--text-primary);
+}
+.settings-section .models-credit-input:focus { outline: none; border-color: var(--accent); }
+.settings-section .models-credit-input::placeholder { color: var(--text-secondary); opacity: .7; }

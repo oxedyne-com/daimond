@@ -161,7 +161,16 @@
 	'chat.input_ph': 'Digite uma mensagem…',
 	'chat.send': 'Enviar',
 	'chat.jump_help': 'Volta para sua última mensagem. Pressione de novo para percorrer as anteriores.',
+	'chat.end_help': 'Vai para o fim do chat.',
 	'chat.new': '+ Novo chat',
+	// Messages typed while an answer is still arriving. They are held, shown, and
+	// sent one turn each once the answer is finished. Short on purpose: a phone’s
+	// composer is ~120px wide, and a longer line wraps to two clipped rows.
+	'chat.queue_ph': 'Escreva a próxima mensagem…',
+	'chat.queue_help': 'Esperando — enviada quando esta resposta terminar',
+	'chat.queued_pending': 'Ainda não foi enviada. Clique para editá-la.',
+	'chat.queue_cancel': 'Não enviar isto',
+	'chat.queue_returned': 'Esse turno não terminou, então o que você deixou na fila voltou para a caixa, sem enviar.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Quem está dirigindo',
@@ -362,6 +371,15 @@
 	'sync.synced': 'Sincronizado',
 	'sync.off': 'Sync desligada',
 	'sync.off_reason': 'A sincronização entre dispositivos faz parte do Pro, que esta conta não tem.',
+	// A refused parcel. Say what is too large, and what usually makes it so.
+	'sync.too_big': 'Sincronização pausada',
+	'sync.too_big_reason': 'O pacote deste dispositivo é grande demais para ser enviado, então o trabalho dele parou de viajar. A causa costuma ser um Diamond ou um arquivo do espaço de trabalho muito grande — tire-o ou diminua-o, e a sincronização volta sozinha.',
+	'sync.last_synced': 'Última sincronização {when}.',
+	'sync.last_never': 'Nada foi sincronizado deste dispositivo ainda.',
+	'sync.when_just_now': 'agora mesmo',
+	'sync.when_mins': 'há {n} min',
+	'sync.when_hours': 'há {n} h',
+	'sync.when_days': 'há {n} d',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Vincular outro dispositivo',
@@ -389,6 +407,9 @@
 	'pair.err_bundle_import': 'A identidade vinculada não pôde ser importada.',
 	'pair.err_create': 'Não foi possível criar um código de pareamento.',
 	'pair.err_link': 'Não foi possível vincular este dispositivo.',
+	// The one-time presentation handover. Say that it happened and that it is
+	// this device’s own from now on.
+	'pair.look_carried': 'Seu tema, seu idioma e a disposição dos painéis vieram junto. Daqui em diante este dispositivo tem os seus — mude um sem mexer no outro.',
 
 	// ── The appearance menu ────────────────────────────────────
 	'menu.skin': 'Estilo',
@@ -474,6 +495,17 @@
 	'spend.col_turns': 'Turnos',
 	'spend.col_tokens': 'Tokens',
 	'spend.col_cost': 'Custo',
+	'spend.col_key': 'Chave',
+	'spend.col_left': 'Resta',
+	'spend.col_period_spend': 'Gasto',
+	'spend.provider_keys': 'Chaves de provedor',
+	'spend.left_auto': 'O que o provedor diz que resta nesta chave.',
+	'spend.left_manual': 'O seu próprio valor, descontado do que o Daimond estima que você gastou desde então.',
+	'spend.left_unknown': 'Este provedor não diz quanto resta, e você não contou ao Daimond.',
+	'spend.all_reported': 'Todos os turnos deste período vieram com um custo do provedor, então isto é o que foi cobrado, não uma estimativa.',
+	'spend.part_reported': 'Deste total, {amount} foram informados pelos provedores; o resto é calculado pela tabela de preços do Daimond.',
+	'spend.none_reported': 'Calculado pela tabela de preços do Daimond — nenhum provedor informou um custo para estes turnos.',
+	'spend.none_reported_unknown': 'Calculado pela tabela de preços do Daimond, e um destes modelos não está nela, então o número é só uma referência aproximada.',
 	'spend.col_when': 'Quando',
 	'spend.col_what': 'Item',
 	'spend.col_amount': 'Valor',
@@ -554,6 +586,19 @@
 	'models.err_bad_key': 'O serviço de contas enviou uma chave que o Daimond não pode usar.',
 	'models.err_no_key': 'Esse provedor ainda não tem chave.',
 	'models.err_key_refused': 'O provedor recusou a chave (HTTP {status}).',
+	// What is left on a provider key, and how that is known. The manual line is
+	// deliberately not called a balance: it is the user’s own figure less an estimate.
+	'models.credit_auto': 'Restam {amount} nesta chave — foi o que o provedor disse em {when}.',
+	'models.credit_manual': 'Restam {amount}: o seu valor de {base} de {when}, menos cerca de {spent} gastos desde então.',
+	'models.credit_unknown': 'Não se sabe nada sobre o que resta nesta chave.',
+	'models.credit_check': 'Perguntar quanto resta',
+	'models.credit_recheck': 'Perguntar de novo',
+	'models.credit_probe_failed': '{provider} não quis dizer quanto resta. Diga você mesmo ao Daimond.',
+	'models.credit_base_ph': 'ex.: 12.50',
+	'models.credit_base_label': 'O que há nesta chave agora, em dólares americanos',
+	'models.credit_base_set': 'Tenho esta quantia, a partir de agora',
+	'models.credit_base_update': 'Atualizar o meu valor',
+	'models.credit_base_bad': 'Isso não é um valor. Digite um número de dólares americanos.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Você está dirigindo. Eu parei em {where}.',
@@ -831,6 +876,16 @@
 	'tag.all_used': 'Todas as suas etiquetas já estão neste Diamond.',
 	'tag.none_yet': 'Ainda não há etiquetas.',
 	'tag.save_failed': 'Não foi possível salvar as etiquetas',
+	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
+	'tag.delete_help': 'Excluir a etiqueta “{tag}” em todo lugar',
+	'tag.delete_title': 'Excluir esta etiqueta?',
+	'tag.delete_body_used.one': 'Excluir a etiqueta “{tag}”? Ela está em {n} Diamond e será tirada dele. Nada mais muda nesse Diamond.',
+	'tag.delete_body_used.other': 'Excluir a etiqueta “{tag}”? Ela está em {n} Diamonds e será tirada de todos eles. Nada mais muda nesses Diamonds.',
+	'tag.delete_body_unused': 'Excluir a etiqueta “{tag}”? Ela não está em nenhum Diamond, então isto só a tira da lista.',
+	'tag.delete_ok': 'Excluir a etiqueta',
+	'tag.deleted': 'Etiqueta “{tag}” excluída.',
+	'tag.deleted_from.one': 'Etiqueta “{tag}” excluída de {n} Diamond.',
+	'tag.deleted_from.other': 'Etiqueta “{tag}” excluída de {n} Diamonds.',
 	'tag.editor_note': 'As etiquetas arquivam este Diamond na barra lateral. Elas nunca são enviadas a um modelo e nunca entram no cristal.',
 
 	// ── Starting and interrupting a turn ───────────────────────
@@ -863,6 +918,12 @@
 	'fold.proposing': 'Propondo a dobra…',
 	'fold.diamond_gone': 'O Diamond sumiu',
 	'fold.diamond_gone_body': 'O Diamond que despachou este agente não existe mais.',
+	'fold.diamond_gone_chat_body': 'O Diamond que você escolheu não existe mais — pode ter sido excluído em outra aba. Nada foi dobrado.',
+	'fold.empty_reply': 'O modelo não devolveu nada para dobrar, então nada foi proposto. Tente de novo.',
+	'fold.proposed_toast': 'Dobra proposta — Aceite ou Rejeite abaixo.',
+	'fold.proposed_elsewhere': 'Dobra proposta em “{diamond}” — abra-o para Aceitar ou Rejeitar.',
+	'fold.pending_badge': 'dobra esperando',
+	'fold.pending_badge_help': 'Há uma dobra proposta esperando neste Diamond. Abra-o para aceitar ou rejeitar a mudança.',
 	'fold.nothing_chosen': 'Nada escolhido',
 	'fold.nothing_chosen_body': 'Marque os turnos que você quer dobrar e pressione Dobrar o selecionado.',
 
@@ -1041,6 +1102,15 @@
 	'files.fetch': 'Buscar',
 	'files.fetch_body': 'Trazer “{path}” para este dispositivo? Isso baixa {size}.',
 	'files.fetching': 'Buscando {path}…',
+	// Where the agent works: the root, and its scope. Changing the root is a separate
+	// act from switching between the browser sandbox and the disk.
+	'files.change_root': 'Mudar de pasta…',
+	'files.change_root_help': 'Apontar o agente para outra pasta desta máquina',
+	'files.machine_scope': 'O agente trabalha só dentro de {name}. Nada acima nem fora dessa pasta fica visível para o Daimond.',
+	'files.machine_return': 'Pôr o agente de volta a trabalhar em {name}',
+	'files.forget_root': 'Esquecer esta pasta',
+	'files.forget_root_help': 'Parar de oferecer esta pasta. O Daimond não guarda registro dela, e da próxima vez você escolhe uma.',
+	'files.root_forgotten': 'Esquecida. O Daimond não guarda mais nenhum registro dessa pasta.',
 	'files.folder_open_failed': 'Não foi possível abrir essa pasta.',
 	'files.import': 'Importar',
 	'files.import_body': 'Copiar “{name}” para o espaço de trabalho? Tudo o que há nele passará a sincronizar com seus outros dispositivos e a contar para o seu armazenamento.',

@@ -245,6 +245,154 @@ check('and the user is told, and offered a way back',
 	/Lost access/i.test(lost.msg) && lost.reconnect === true,
 	`${lost.msg} · reconnect offered: ${lost.reconnect}`);
 
+// ── C2. Going to the sandbox and coming back ────────────────────────────
+//
+// The round trip a user actually makes: point the agent at a folder, send it back to the browser
+// sandbox for something that has to sync, then put it back on the folder. It cost a folder picker
+// EVERY time, because the Machine chip called `showDirectoryPicker` unconditionally and switching
+// to Browser had already deleted the stored handle -- so there was nothing left to go back to.
+// Two bugs producing one symptom, and the symptom is a native dialog no test could answer.
+//
+// The picker is stubbed with a counter that aborts. That is honest to what a picker does when the
+// user dismisses it, and it turns "was a dialog shown" -- otherwise unobservable -- into a number.
+// Nothing below asserts that a picker WORKS; what is asserted is when one is asked for.
+
+await p.evaluate(() => {
+	window.__pick = 0;
+	window.showDirectoryPicker = function (opts) {
+		window.__pick++;
+		window.__pickOpts = opts || null;
+		var e = new Error('The user aborted a request.');
+		e.name = 'AbortError';                  // what Chrome throws on a dismissed picker
+		return Promise.reject(e);
+	};
+});
+
+const mode  = () => p.evaluate(async () => (await import('../pkg/oxedyne_daimond.js')).workspace_mode());
+const picks = () => p.evaluate(() => window.__pick);
+const zero  = () => p.evaluate(() => { window.__pick = 0; });
+const msg   = () => p.evaluate(() => {
+	const m = document.querySelector('.files-mode-msg');
+	return m ? m.textContent.trim() : '(none)';
+});
+/// Click a chip in the mode row by its visible text. The Machine chip is named for the folder
+/// when there is one, so it is matched on either.
+const clickChip = (pat) => p.evaluate((pat) => {
+	const c = [...document.querySelectorAll('.files-mode-chip')]
+		.find(x => new RegExp(pat, 'i').test(x.textContent));
+	if (!c) return false;
+	c.click();
+	return true;
+}, pat);
+const clickBtn = (pat) => p.evaluate((pat) => {
+	const b = [...document.querySelectorAll('.files-mode-btn')]
+		.find(x => new RegExp(pat, 'i').test(x.textContent));
+	if (!b) return false;
+	b.click();
+	return true;
+}, pat);
+/// Does IndexedDB still hold a real directory handle for the workspace? Read from the account's
+/// own database name, exactly as FsaDB composes it.
+const storedHandle = () => p.evaluate(async () => {
+	const name = 'daimond-fsa'
+		+ (window.DaimondAccounts && DaimondAccounts.opfsNs() ? '-' + DaimondAccounts.opfsNs() : '');
+	const db = await new Promise((res, rej) => {
+		const q = indexedDB.open(name, 1);
+		q.onupgradeneeded = () => q.result.createObjectStore('handles');
+		q.onsuccess = () => res(q.result);
+		q.onerror   = () => rej(q.error);
+	});
+	const v = await new Promise((res) => {
+		const t = db.transaction('handles', 'readonly');
+		const r = t.objectStore('handles').get('workspace');
+		r.onsuccess = () => res(r.result);
+		r.onerror   = () => res(undefined);
+	});
+	db.close();
+	return { held: !!v, isDir: !!(v && typeof v.getDirectoryHandle === 'function'), name: v ? v.name : '' };
+});
+
+// Back onto the folder, through the reconnect offer section E left standing. That is the user's
+// own way back and it needs no picker, so the counter must still be zero afterwards.
+await clickChip('Reconnect');
+await p.waitForTimeout(900);
+check('C2 setup: the reconnect offer puts the agent back on the folder',
+	(await mode()) === 'folder', await mode());
+
+// The ACTIVE Machine chip states the root's SCOPE. A user is being asked to point an agent at a
+// directory on their disk; the one thing they need told is how far it reaches. The chip used to
+// re-open the picker instead, which is the least useful thing it could do while already there.
+await zero();
+await clickChip('Machine|' + FOLDER);
+await p.waitForTimeout(600);
+const info = { msg: await msg(), picks: await picks() };
+check('the active Machine chip states what the agent can reach, and asks for no picker',
+	/works only inside/i.test(info.msg) && info.msg.includes(FOLDER) && info.picks === 0,
+	`"${info.msg}" · pickers: ${info.picks}`);
+
+// Changing the root is its own control. It is the ONE thing that should raise a picker.
+await zero();
+const hasChange = await clickBtn('Change folder');
+await p.waitForTimeout(600);
+check('a separate "Change folder…" control is what raises the picker',
+	hasChange === true && (await picks()) === 1,
+	`control present: ${hasChange}, pickers: ${await picks()}`);
+// And it starts where the user already is, rather than in a default they have never used.
+const opts = await p.evaluate(() => window.__pickOpts);
+check('and it opens where the current root is',
+	!!opts && opts.mode === 'readwrite' && !!opts.startIn && opts.startIn !== 'documents',
+	JSON.stringify(opts));
+
+// The round trip. Browser, then back -- and no picker anywhere in it.
+await zero();
+await clickChip('Browser');
+await p.waitForTimeout(900);
+const wentBrowser = await mode();
+const kept = await storedHandle();
+check('switching to the browser sandbox takes the agent there',
+	wentBrowser === 'opfs', wentBrowser);
+check('and does NOT delete the folder it is coming back to',
+	kept.held === true && kept.isDir === true, `stored: ${JSON.stringify(kept)}`);
+
+await clickChip('Machine|' + FOLDER);
+await p.waitForTimeout(1200);
+const wentBack = await mode();
+const backChips = await chips();
+check('and the way back is one click on the chip, with no folder picker',
+	wentBack === 'folder' && (await picks()) === 0,
+	`mode: ${wentBack}, pickers: ${await picks()}`);
+check('the chip names the folder the agent is back in',
+	backChips.active.includes(FOLDER), backChips.all);
+
+// The guard. Coming back is a ROOT SWAP, and a root swap while an agent is mid-turn leaves it
+// reading and writing somewhere else entirely. `openFolder` and `switchToOpfs` have always
+// refused; the reconnect path had no guard at all, and routing the chip through it is exactly
+// what would have made that gap reachable by an ordinary click.
+await clickChip('Browser');
+await p.waitForTimeout(700);
+await p.evaluate(() => { window.__busyWas = DaimondCore.busy; DaimondCore.busy = function () { return true; }; });
+await zero();
+await clickChip('Machine|' + FOLDER);
+await p.waitForTimeout(700);
+const blocked = { mode: await mode(), msg: await msg() };
+check('a root swap is refused while an agent is working, and says why',
+	blocked.mode === 'opfs' && /agent is working/i.test(blocked.msg),
+	`mode: ${blocked.mode} · "${blocked.msg}"`);
+await p.evaluate(() => { DaimondCore.busy = window.__busyWas; });
+
+// And the way out. Remembering the folder across a switch removes the only thing that used to
+// make Daimond forget it, so there has to be a deliberate way to say so.
+await clickChip('Machine|' + FOLDER);
+await p.waitForTimeout(900);
+await clickChip('Machine|' + FOLDER);          // the info context, where Forget lives
+await p.waitForTimeout(400);
+const hasForget = await clickBtn('Forget this folder');
+await p.waitForTimeout(800);
+const forgotten = await storedHandle();
+check('and "Forget this folder" really does forget it',
+	hasForget === true && forgotten.held === false,
+	`control present: ${hasForget}, stored: ${JSON.stringify(forgotten)}`);
+
 await shot(s, 'fsa');
 const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));

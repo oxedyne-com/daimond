@@ -21,6 +21,13 @@
  * and only after the user has unlocked. `key` is the plaintext-at-rest fallback for the
  * skippable, browser-only path, and it is the same trade the app already made.
  *
+ * ACROSS DEVICES. The store travels in the sync parcel — see `exportSync`/`applySync` at the
+ * end of this file — because a second device that has to be told about six providers again,
+ * and have six keys pasted into it again, is not the same account: it is a second setup. What
+ * travels is the SEALED key and never a readable one, which is safe for exactly one reason:
+ * both devices hold the same identity (the salt travels in the pairing bundle), so `keyEnc`
+ * opens on both and the gateway carrying it holds no key for either.
+ *
  * One provider is not like the others. `credits` is the models a Daimond balance buys, and
  * its key is MINTED by the gateway rather than typed by the user — see `mint()`. Everything
  * else about it is ordinary: it is a row in the same store, its models come from the same
@@ -136,6 +143,18 @@
 		if (deps && deps.onChange) deps.onChange();
 	}
 
+	/// Stamp a provider row as configured just now.
+	///
+	/// The merge across devices needs one number per row to compare, and it has to be bumped by
+	/// every change a user would be cross to lose — a key, a name, a URL, a manual balance. The
+	/// model list carries its own stamp (`fetched`) and is merged on that instead: "who asked
+	/// the provider more recently" and "who configured the row more recently" are two different
+	/// questions and a single stamp answers neither well.
+	function touch(id) {
+		var p = store.providers[id];
+		if (p) p.touched = Date.now();
+	}
+
 	/// Which known provider a base URL belongs to, or '' when it is nobody's.
 	function idForUrl(url) {
 		for (var id in KNOWN) { if (KNOWN[id].url === url) return id; }
@@ -183,12 +202,31 @@
 			}
 		}
 		if (deps && deps.onChange) deps.onChange();
+		probeCredits();
+	}
+
+	/// Ask every provider that will answer what is left on its key, in the background.
+	///
+	/// Fire-and-forget on purpose: this is a nicety on a panel, and an unlock must not wait on
+	/// somebody else's server. A probe that fails writes nothing, so the row shows no balance
+	/// rather than a wrong one.
+	function probeCredits() {
+		for (var id in store.providers) {
+			if (id === CREDITS) continue;
+			if (!canProbeCredit(providerUrl(id)) || !keyFor(id)) continue;
+			(function (pid) {
+				fetchCredit(pid).then(function (got) {
+					if (got && document.getElementById('models-list')) render();
+				}).catch(function () { /* no balance is better than a wrong one */ });
+			})(id);
+		}
 	}
 
 	/// Store a key for a provider, sealed under the passphrase where there is one.
 	async function setKey(id, key) {
 		var p = store.providers[id];
 		if (!p) return;
+		touch(id);							// a configuration change the other device must see
 		plain[id] = key;
 		p.key = '';
 		p.keyEnc = '';
@@ -198,7 +236,15 @@
 		} else {
 			p.key = key;
 		}
+		// A key that was just pasted is a key whose balance nobody has asked about. A stale
+		// figure from the PREVIOUS key would be worse than none, so any credit record goes.
+		delete p.credit;
 		save();
+		if (canProbeCredit(providerUrl(id))) {
+			fetchCredit(id).then(function (got) {
+				if (got && document.getElementById('models-list')) render();
+			}).catch(function () { /* no balance is better than a wrong one */ });
+		}
 	}
 
 	/// The plaintext key for a provider, or '' when it is sealed and the app is locked.
@@ -499,9 +545,46 @@
 
 	// ── The models ──────────────────────────────────────────────────
 
+	/// A per-token price as USD per 1,000,000 tokens, or null when the figure cannot be
+	/// trusted.
+	///
+	/// The units are the whole risk here. An OpenAI-compatible `/models` reply gives PER-TOKEN
+	/// prices, usually as strings ("0.0000006153"); read as per-million they would understate
+	/// spend by a factor of a million, which is worse than not knowing. So anything above
+	/// 0.001/token — $1,000 per million, well above any model that exists — is refused rather
+	/// than guessed at, and a provider using a different unit simply contributes nothing and
+	/// leaves the table to answer.
+	function perM(v) {
+		if (v === null || v === undefined || v === '') return null;
+		var n = (typeof v === 'number') ? v : parseFloat(v);
+		if (!isFinite(n) || n < 0) return null;
+		if (n === 0) return 0;                      // a free model is priced, at nothing
+		if (n > 1e-3) return null;                  // not per-token; refuse to convert
+		return n * 1e6;
+	}
+
+	/// The rates and context window one entry of a `/models` reply publishes, or null.
+	function ratesOf(m) {
+		if (!m || typeof m !== 'object') return null;
+		var p = m.pricing || {};
+		var inPerM  = perM(p.prompt !== undefined ? p.prompt : p.input);
+		var outPerM = perM(p.completion !== undefined ? p.completion : p.output);
+		if (inPerM === null || outPerM === null) return null;
+		var cached = perM(p.input_cache_read !== undefined ? p.input_cache_read : p.cached_input);
+		var ctx = (typeof m.context_length === 'number') ? m.context_length : null;
+		var out = { in: inPerM, out: outPerM };
+		if (cached !== null) out.cached = cached;
+		if (ctx !== null) out.ctx = ctx;
+		return out;
+	}
+
 	/// Ask a provider what it can run. The list is cached, because a chat's model can be
 	/// switched from its header and re-asking on every switch would be rude to the provider
 	/// and slow for the user.
+	///
+	/// The reply's prices and context windows are KEPT. They were being thrown away and the
+	/// app then estimated a turn's cost from a hand-maintained table months out of date — while
+	/// the provider had just told it, in the same request, exactly what it charges.
 	async function fetchModels(id) {
 		var url = providerUrl(id);
 		var key = keyFor(id);
@@ -509,14 +592,191 @@
 		var r = await fetch(modelsUrl(url), { headers: { authorization: 'Bearer ' + key } });
 		if (!r.ok) throw new Error(t('models.err_key_refused', { status: r.status }));
 		var j = await r.json();
-		var ids = (j.data || j.models || [])
+		var list = j.data || j.models || [];
+		var ids = list
 			.map(function (m) { return typeof m === 'string' ? m : (m.id || m.name); })
 			.filter(Boolean)
 			.sort();
+		var rates = {};
+		list.forEach(function (m) {
+			if (typeof m === 'string') return;
+			var mid = m.id || m.name;
+			var rr = ratesOf(m);
+			if (mid && rr) rates[mid] = rr;
+		});
 		store.providers[id].models  = ids;
+		store.providers[id].rates   = rates;
 		store.providers[id].fetched = Date.now();
 		save();
 		return ids;
+	}
+
+	/// What `provider` says it charges for `model`, as `{ inPerM, outPerM, cachedPerM, ctx }`,
+	/// or null when it never said.
+	///
+	/// `DaimondPricing` asks this FIRST and falls back to its own table only when the answer is
+	/// null, so a live quote always beats a surveyed figure. `cachedPerM` is null when the
+	/// provider publishes no separate cache-read rate; it is NOT filled in with the input rate
+	/// here, because "no discount published" and "no discount" are different claims and only
+	/// the pricing code should decide what to do about it.
+	function rateFor(provider, model) {
+		var p = store.providers[provider];
+		if (!p || !p.rates) return null;
+		var r = p.rates[model];
+		if (!r || typeof r.in !== 'number' || typeof r.out !== 'number') return null;
+		return {
+			inPerM:     r.in,
+			outPerM:    r.out,
+			cachedPerM: (typeof r.cached === 'number') ? r.cached : null,
+			ctx:        (typeof r.ctx === 'number') ? r.ctx : null,
+		};
+	}
+
+	// ── What is left on a key ───────────────────────────────────────
+
+	/// Sibling endpoints of a chat-completions URL, for the two credit probes.
+	function siblingUrl(base, leaf) {
+		if (base.indexOf('/chat/completions') !== -1) {
+			return base.replace('/chat/completions', '/' + leaf);
+		}
+		return base.replace(/\/+$/, '') + '/' + leaf;
+	}
+
+	/// Whether a provider's endpoint is one whose remaining balance can be ASKED for.
+	///
+	/// Only OpenRouter is known to answer, and only OpenRouter has been verified to answer a
+	/// browser (both probes send CORS headers). Every other provider gets the manual tally
+	/// instead — which is not a lesser feature, it is the honest one for a host that will not
+	/// say.
+	function canProbeCredit(url) {
+		return String(url || '').indexOf('openrouter.ai') !== -1;
+	}
+
+	/// Ask a provider what is left on its key.
+	///
+	/// Two questions, because a key answers only one of them. `/key` describes THIS key: its
+	/// spend cap and what remains of it. A key with `limit: null` has no cap, and its
+	/// `limit_remaining` is null too — which is not zero, and showing $0 to somebody holding a
+	/// hundred dollars of credit would be the worst kind of wrong. So the account-wide figure
+	/// from `/credits` answers for an uncapped key.
+	///
+	/// A failed probe writes NOTHING and returns null: the row then shows no balance at all,
+	/// rather than a zero it cannot stand behind. A figure is never stored without the moment it
+	/// was true (`asOf`), because a balance drawn from disk with no timestamp is a number that
+	/// was true once and is now a claim.
+	///
+	/// Returns `{ remainingUsd, asOf, capped }` or null.
+	async function fetchCredit(id) {
+		var p = store.providers[id];
+		var url = providerUrl(id);
+		var key = keyFor(id);
+		if (!p || !url || !key || !canProbeCredit(url)) return null;
+		var auth = { authorization: 'Bearer ' + key };
+		var keyData = null;
+		try {
+			var rk = await fetch(siblingUrl(url, 'key'), { headers: auth });
+			if (!rk.ok) return null;
+			var jk = await rk.json();
+			keyData = jk.data || jk;
+		} catch (e) { return null; }
+		if (!keyData) return null;
+
+		var remaining = null, capped = false;
+		if (typeof keyData.limit === 'number' && typeof keyData.limit_remaining === 'number') {
+			remaining = keyData.limit_remaining;
+			capped = true;
+		} else {
+			// Uncapped: the account's own credit is what this key can spend.
+			try {
+				var rc = await fetch(siblingUrl(url, 'credits'), { headers: auth });
+				if (!rc.ok) return null;
+				var jc = await rc.json();
+				var cd = jc.data || jc;
+				if (typeof cd.total_credits === 'number' && typeof cd.total_usage === 'number') {
+					remaining = cd.total_credits - cd.total_usage;
+				}
+			} catch (e) { return null; }
+		}
+		if (typeof remaining !== 'number' || !isFinite(remaining)) return null;
+
+		var asOf = Date.now();
+		p.credit = {
+			mode:         'auto',
+			remainingUsd: remaining,
+			asOf:         asOf,
+			// A manual base the user may have set earlier is kept: an auto probe that starts
+			// failing tomorrow should fall back to their figure, not forget it.
+			baseUsd:      (p.credit && typeof p.credit.baseUsd === 'number') ? p.credit.baseUsd : null,
+			baseAt:       (p.credit && typeof p.credit.baseAt === 'number') ? p.credit.baseAt : null,
+		};
+		save();
+		return { remainingUsd: remaining, asOf: asOf, capped: capped };
+	}
+
+	/// Record the user's own figure: "I have $X on this key, as of now".
+	///
+	/// What is displayed afterwards is that figure counted down by the ledger's estimate of what
+	/// has been spent on this provider since — and it is labelled as exactly that, because it is
+	/// their number minus a guess, not a balance.
+	function setCreditBase(id, usd) {
+		var p = store.providers[id];
+		if (!p) return;
+		var n = (typeof usd === 'number') ? usd : parseFloat(usd);
+		if (!isFinite(n) || n < 0) return;
+		var prev = p.credit || {};
+		p.credit = {
+			mode:         'manual',
+			// The probed figure is dropped: the user has just said what is true, and holding a
+			// stale automatic number beside it invites the row to show two different balances.
+			remainingUsd: null,
+			asOf:         null,
+			baseUsd:      n,
+			baseAt:       Date.now(),
+		};
+		if (prev.mode === 'auto') p.credit.mode = 'manual';
+		touch(id);
+		save();
+	}
+
+	/// What this provider's key has left, and how that is known.
+	///
+	/// `{ mode: 'auto', usd, asOf }` — the provider said so.
+	/// `{ mode: 'manual', usd, baseUsd, baseAt, spentUsd }` — the user said so, less the
+	/// ledger's estimate of what has gone since.
+	/// `null` — nothing is known, and the row must show nothing at all.
+	function creditFor(id) {
+		var p = store.providers[id];
+		var c = p && p.credit;
+		if (!c) return null;
+		if (c.mode === 'auto' && typeof c.remainingUsd === 'number' && typeof c.asOf === 'number') {
+			return { mode: 'auto', usd: c.remainingUsd, asOf: c.asOf };
+		}
+		if (typeof c.baseUsd === 'number' && typeof c.baseAt === 'number') {
+			var spent = 0;
+			if (window.DaimondLedger && typeof DaimondLedger.perProvider === 'function') {
+				try {
+					DaimondLedger.perProvider(c.baseAt).forEach(function (row) {
+						if (row.provider === id) spent += row.usd || 0;
+					});
+				} catch (e) { spent = 0; }
+			}
+			return {
+				mode:     'manual',
+				usd:      c.baseUsd - spent,
+				baseUsd:  c.baseUsd,
+				baseAt:   c.baseAt,
+				spentUsd: spent,
+			};
+		}
+		return null;
+	}
+
+	/// A balance as money, from a USD figure rather than the gateway's minor units.
+	function usd(v) {
+		if (window.DaimondI18n && typeof DaimondI18n.money === 'function') {
+			return DaimondI18n.money(v, 'fine');
+		}
+		return '$' + (v || 0).toFixed(2);
 	}
 
 	/// Every model Daimond can reach, across every provider with a key.
@@ -540,6 +800,10 @@
 		return Object.keys(store.providers).map(function (id) {
 			var p    = store.providers[id];
 			var mine = id === CREDITS;
+			// What is left on the user's OWN key, when anything knows. The credits row's
+			// balance is minted money and comes from `credits.bal` instead; the two are
+			// different accounts and are never mixed.
+			var cr   = mine ? null : creditFor(id);
 			return {
 				id:      id,
 				name:    providerName(id),
@@ -558,8 +822,17 @@
 				minted:  mine,
 				why:     mine ? credits.why : '',
 				via:     mine ? credits.via : '',
-				balance: mine && credits.state === 'ready' ? money(credits.bal, credits.cur) : '',
+				balance: mine
+					? (credits.state === 'ready' ? money(credits.bal, credits.cur) : '')
+					: (cr ? usd(cr.usd) : ''),
 				state:   mine ? credits.state : '',
+				// How the balance beside the name is known, so the row can say. Empty when
+				// there is no balance to explain.
+				creditMode: cr ? cr.mode : '',
+				credit:     cr,
+				// Whether this provider will answer the question at all, which decides
+				// between an "ask again" affordance and a "tell me" one.
+				canProbeCredit: !mine && canProbeCredit(providerUrl(id)),
 			};
 		});
 	}
@@ -604,6 +877,7 @@
 	}
 	function setDefault(provider, model) {
 		store.def = { provider: provider, model: model };
+		store.defAt = Date.now();			// which device chose last, for the merge
 		save();
 	}
 
@@ -636,6 +910,7 @@
 			keyEnc:  '',
 			models:  [],
 			fetched: 0,
+			touched: Date.now(),
 		};
 		save();
 	}
@@ -662,6 +937,204 @@
 		// `mintGen` is NOT reset: it only ever counts up, and a caller holding a key from before
 		// the lock must still be told its key is old rather than matching a rewound counter.
 		if (deps && deps.onChange) deps.onChange();
+	}
+
+	// ── Travelling in the sync parcel ───────────────────────────────
+	// A user who has linked two devices has one account, and an account that knows about six
+	// providers on one machine and none on the other is an account only by name. So the store
+	// rides in the parcel beside the chats, the workspace and the Diamonds.
+	//
+	// WHAT TRAVELS, and why each thing was decided:
+	//
+	//   * `keyEnc`, always — and the plaintext `key`, NEVER. The sealed key is the whole reason
+	//     this is safe to do: both devices derive the same wrapping key from the shared salt, so
+	//     the ciphertext opens on both and the gateway in the middle can open neither. A
+	//     plaintext key exists only on the browser-only path where there is no identity to seal
+	//     under, and that path cannot sync at all (sync needs the identity for the parcel), so
+	//     carrying it would be shipping a readable credential purely to satisfy a case that
+	//     cannot arise.
+	//   * The model list and its published rates, stamped with `fetched`. Two devices asked at
+	//     different times, and the later answer is the better one.
+	//   * The row's configuration — name, URL, sealed key — stamped with `touched`.
+	//   * A MANUAL credit base (`baseUsd` + `baseAt`), which is the user telling the app what is
+	//     on a key; that is a fact about the key, not about the device, and belongs on both.
+	//   * NOT the PROBED balance (`remainingUsd`/`asOf`). It is left behind deliberately. It was
+	//     true on the other machine at a moment, and a figure copied here would arrive already
+	//     ageing, with the ledger that is supposed to count it down holding this device's spend
+	//     rather than that one's. A balance nobody can stand behind is worse than none, which is
+	//     the same rule `fetchCredit` follows when a probe fails. This device probes for itself.
+	//   * NOT the `credits` row. Its key is minted per device and never stored; its URL and model
+	//     list are whatever the gateway last minted against. A device that holds the account will
+	//     mint its own on unlock, so carrying the row would only put a keyless one in front of
+	//     somebody a second before their own arrives.
+	//
+	// DETERMINISM IS A REQUIREMENT, not a nicety. sync.js skips a push when the parcel
+	// stringifies to what it last sent, so anything whose serialisation depends on enumeration
+	// order makes the app push for ever. Provider ids are sorted, model lists are sorted, rate
+	// tables are rebuilt with sorted keys, and every row is assembled in a fixed field order.
+
+	/// A millisecond stamp, or 0 when there is none to be had.
+	///
+	/// NOT `n | 0`. A bitwise operator coerces to a 32-bit int, and an epoch-ms value is far
+	/// past that: `1785419676021 | 0` is -1286719115. Every comparison in the merge below is
+	/// against another stamp, so the truncation is not merely wrong, it is inconsistently wrong
+	/// — a fresher stamp can truncate to a smaller number than an older one, and the freshest
+	/// side then loses. This cost the models merge two of its own tests before it was found.
+	function ms(v) {
+		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// One provider's published rates, rebuilt with sorted keys, or null when there are none.
+	function sortedRates(rates) {
+		if (!rates || typeof rates !== 'object') return null;
+		var out = {}, n = 0;
+		Object.keys(rates).sort().forEach(function (mid) {
+			var r = rates[mid];
+			if (!r || typeof r.in !== 'number' || typeof r.out !== 'number') return;
+			var row = { in: r.in, out: r.out };
+			if (typeof r.cached === 'number') row.cached = r.cached;
+			if (typeof r.ctx    === 'number') row.ctx    = r.ctx;
+			out[mid] = row;
+			n++;
+		});
+		return n ? out : null;
+	}
+
+	/// The store as it should travel: JSON-safe, deterministic, and holding no readable key.
+	function exportSync() {
+		var out = {
+			v:     2,
+			def:   { provider: store.def.provider || '', model: store.def.model || '' },
+			defAt: ms(store.defAt),
+			providers: {},
+		};
+		Object.keys(store.providers).sort().forEach(function (id) {
+			if (id === CREDITS) return;					// minted per device; see above
+			var p = store.providers[id] || {};
+			var row = {
+				name:    String(p.name || ''),
+				url:     String(p.url || ''),
+				models:  (Array.isArray(p.models) ? p.models.slice() : []).sort(),
+				fetched: ms(p.fetched),
+				touched: ms(p.touched),
+			};
+			if (p.keyEnc) row.keyEnc = p.keyEnc;		// sealed only, and only when there is one
+			var rates = sortedRates(p.rates);
+			if (rates) row.rates = rates;
+			if (p.credit && typeof p.credit.baseUsd === 'number' && typeof p.credit.baseAt === 'number') {
+				row.credit = { baseUsd: p.credit.baseUsd, baseAt: p.credit.baseAt };
+			}
+			out.providers[id] = row;
+		});
+		return out;
+	}
+
+	/// Merge another device's store into this one.
+	///
+	/// A union, never a replacement: a provider only this device has is untouched, and a
+	/// provider only the other device has arrives whole. Where both have one, the freshest side
+	/// wins per FACT rather than per row — the later `touched` decides the configuration, the
+	/// later `fetched` decides the model list — so a device that merely re-asked a provider for
+	/// its catalogue does not thereby win an argument about the key.
+	///
+	/// Two things are deliberately left alone. Nothing here deletes a provider: a removal is not
+	/// tombstoned, so an absence in the parcel means "that device never had it", not "it is
+	/// gone". And the in-memory plaintext cache is never overwritten — a device mid-turn goes on
+	/// running with the key it holds, and an adopted key is read at the next unlock. A gap in the
+	/// cache IS filled, since a key that arrives and cannot be used until a reload is a key the
+	/// user will assume did not arrive.
+	///
+	/// A parcel with no `models` section (a v1 or early-v2 device) is a no-op, so an old device
+	/// and a new one sync happily in both directions.
+	async function applySync(remote) {
+		if (!remote || typeof remote !== 'object' || !remote.providers
+			|| typeof remote.providers !== 'object') return { added: 0, updated: 0 };
+		var added = 0, updated = 0, adopt = [];
+		Object.keys(remote.providers).sort().forEach(function (id) {
+			if (id === CREDITS) return;					// never carried, never adopted
+			var r = remote.providers[id];
+			if (!r || typeof r !== 'object') return;
+			var models  = (Array.isArray(r.models) ? r.models.slice() : []).sort();
+			var rates   = sortedRates(r.rates);
+			var fetched = ms(r.fetched);
+			var stamp   = ms(r.touched);
+			var mine    = store.providers[id];
+			if (!mine) {
+				mine = store.providers[id] = {
+					name:    String(r.name || (KNOWN[id] && KNOWN[id].name) || 'Custom provider'),
+					url:     String(r.url  || (KNOWN[id] && KNOWN[id].url)  || ''),
+					key:     '',
+					keyEnc:  r.keyEnc || '',
+					models:  models,
+					fetched: fetched,
+					touched: stamp,
+				};
+				if (rates) mine.rates = rates;
+				added++;
+				if (mine.keyEnc) adopt.push(id);
+			} else {
+				if (stamp > ms(mine.touched)) {
+					mine.name = String(r.name || mine.name || '');
+					mine.url  = String(r.url  || mine.url  || '');
+					// An empty `keyEnc` on the other side is not an instruction to forget this
+					// device's key: it means that device never had one.
+					if (r.keyEnc && r.keyEnc !== mine.keyEnc) {
+						mine.keyEnc = r.keyEnc;
+						mine.key    = '';
+						adopt.push(id);
+					}
+					mine.touched = stamp;
+					updated++;
+				}
+				if (fetched > ms(mine.fetched)) {
+					mine.models  = models;
+					if (rates) mine.rates = rates;
+					mine.fetched = fetched;
+					updated++;
+				}
+			}
+			// The manual base carries its own stamp, so it is merged on that and on nothing
+			// else: a user typing "$20 is on this key" on their laptop said something true
+			// about the key, whichever device happens to have been configured more recently.
+			if (r.credit && typeof r.credit.baseUsd === 'number' && typeof r.credit.baseAt === 'number') {
+				var c = mine.credit || {};
+				if (!(typeof c.baseAt === 'number') || r.credit.baseAt > c.baseAt) {
+					mine.credit = {
+						mode:         c.mode === 'auto' ? 'auto' : 'manual',
+						remainingUsd: (typeof c.remainingUsd === 'number') ? c.remainingUsd : null,
+						asOf:         (typeof c.asOf === 'number') ? c.asOf : null,
+						baseUsd:      r.credit.baseUsd,
+						baseAt:       r.credit.baseAt,
+					};
+					updated++;
+				}
+			}
+		});
+		// The default follows the freshest side — but only to a provider that exists here after
+		// the merge. A default pointing at nothing is worse than an older default that works,
+		// and the stamp is NOT advanced when the choice is refused, so the device that does hold
+		// that provider can still win with it later.
+		var rAt = ms(remote.defAt);
+		if (rAt > ms(store.defAt) && remote.def && remote.def.provider
+			&& store.providers[remote.def.provider]) {
+			store.def   = { provider: remote.def.provider, model: remote.def.model || '' };
+			store.defAt = rAt;
+			updated++;
+		}
+		// Fill the gaps in the plaintext cache, never overwrite it.
+		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
+			for (var i = 0; i < adopt.length; i++) {
+				var pid = adopt[i];
+				if (plain[pid]) continue;				// this session's key stays this session's
+				try { plain[pid] = await DaimondIdentity.unwrap(store.providers[pid].keyEnc); }
+				catch (e) { /* sealed under something this device cannot open; leave it keyless */ }
+			}
+		}
+		if (added || updated) {
+			save();
+			if (document.getElementById('models-list')) render();
+		}
+		return { added: added, updated: updated };
 	}
 
 	// ── The panel ───────────────────────────────────────────────────
@@ -698,6 +1171,93 @@
 			case 'failed':    return '⚠ ' + t('models.could_not_connect');
 			default:          return '🔒 ' + t('models.unlock_to_use');
 		}
+	}
+
+	/// The credit block inside an expanded provider: what is left, how that is known, and the
+	/// one affordance for changing the answer.
+	///
+	/// Three states, and each says which it is. An automatic figure names the provider as its
+	/// source and when it was asked. A manual figure is the user's own number counted down by
+	/// the ledger's ESTIMATE of what has been spent since, and says so in those words — it is
+	/// not a balance and must not read like one. Nothing known shows the invitation to say.
+	function creditBlock(p) {
+		var wrap = document.createElement('div');
+		wrap.className = 'models-credit';
+		var c = p.credit;
+
+		if (c && c.mode === 'auto') {
+			wrap.appendChild(html('<div class="models-credit-line">'
+				+ esc(t('models.credit_auto', { amount: usd(c.usd), when: whenShort(c.asOf) }))
+				+ '</div>'));
+		} else if (c && c.mode === 'manual') {
+			wrap.appendChild(html('<div class="models-credit-line">'
+				+ esc(t('models.credit_manual', {
+					amount: usd(c.usd),
+					base:   usd(c.baseUsd),
+					spent:  usd(c.spentUsd),
+					when:   whenShort(c.baseAt),
+				}))
+				+ '</div>'));
+		} else {
+			wrap.appendChild(html('<div class="models-credit-line">'
+				+ esc(t('models.credit_unknown')) + '</div>'));
+		}
+
+		// Ask the provider, where it will answer.
+		if (p.canProbeCredit) {
+			var ask = document.createElement('button');
+			ask.className = 'models-refetch';
+			ask.textContent = t(c && c.mode === 'auto' ? 'models.credit_recheck' : 'models.credit_check');
+			ask.addEventListener('click', async function () {
+				ask.disabled = true;
+				ask.textContent = t('models.asking');
+				var got = null;
+				try { got = await fetchCredit(p.id); } catch (e) { got = null; }
+				if (!got) note(t('models.credit_probe_failed', { provider: p.name }));
+				render();
+			});
+			wrap.appendChild(ask);
+		}
+
+		// And the user's own figure, always available: it is the only thing that works for a
+		// provider that will not answer, and the thing to fall back on when a probe fails.
+		// A div and a button rather than a form: nothing here needs submit semantics, and a
+		// form inside a settings panel is one stray Enter away from navigating the page.
+		var row = document.createElement('div');
+		row.className = 'models-credit-form';
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'models-credit-input';
+		input.inputMode = 'decimal';
+		input.placeholder = t('models.credit_base_ph');
+		input.setAttribute('aria-label', t('models.credit_base_label'));
+		var set = document.createElement('button');
+		set.type = 'button';
+		set.className = 'models-refetch';
+		set.textContent = t(c && c.mode === 'manual' ? 'models.credit_base_update' : 'models.credit_base_set');
+		var commit = function () {
+			var v = parseFloat(String(input.value || '').replace(/[^0-9.]/g, ''));
+			if (!isFinite(v) || v < 0) { note(t('models.credit_base_bad')); return; }
+			setCreditBase(p.id, v);
+			render();
+		};
+		set.addEventListener('click', commit);
+		input.addEventListener('keydown', function (ev) {
+			if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+		});
+		row.appendChild(input);
+		row.appendChild(set);
+		wrap.appendChild(row);
+		return wrap;
+	}
+
+	/// A short local date and time for a figure that was true at a moment.
+	function whenShort(ts) {
+		try {
+			var d = new Date(ts);
+			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+				+ ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+		} catch (e) { return ''; }
 	}
 
 	/// Draw the providers, each one expandable to the models it can run.
@@ -769,6 +1329,12 @@
 					top.addEventListener('click', function () { if (deps && deps.onTopUp) deps.onTopUp(); });
 					body.appendChild(top);
 				}
+
+				// What is left on this key, and where that figure came from. A row that
+				// shows a balance without saying how it knows is asking to be trusted
+				// about money; a row that shows nothing when it cannot know is the same
+				// promise kept the other way.
+				if (!p.minted && p.hasKey && !p.sealed) body.appendChild(creditBlock(p));
 
 				if (!p.count) {
 					var refetch = document.createElement('button');
@@ -961,6 +1527,12 @@
 		hasKey:         hasKey,
 		isSealed:       isSealed,
 		fetchModels:    fetchModels,
+		// The live rates a provider published, which `DaimondPricing` asks before its table.
+		rateFor:        rateFor,
+		// What is left on a provider's key: asked for where it can be, told to us otherwise.
+		fetchCredit:    fetchCredit,
+		setCreditBase:  setCreditBase,
+		creditFor:      creditFor,
 		all:            all,
 		count:          count,
 		getDefault:     getDefault,
@@ -968,6 +1540,9 @@
 		resolve:        resolve,
 		ready:          ready,
 		providerName:   providerName,
+		// The store as it travels between devices, and the merge on arrival.
+		exportSync:     exportSync,
+		applySync:      applySync,
 		// Credits: the provider Daimond mints the key for.
 		CREDITS:        CREDITS,
 		syncCredits:    syncCredits,

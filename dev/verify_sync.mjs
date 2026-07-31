@@ -18,6 +18,14 @@
 //      apply.
 //   5. The identity export bundle carries the salt, without which a second device
 //      could never derive the key to open any of this.
+//   6. A parcel the gateway refuses as too large (413) is SAID so — on the sync
+//      chip, held, with the reason on hover — and the stall clears on the next
+//      push that works.
+//   7. A parked tab converges on window focus, without a reload, and a focus
+//      storm coalesces into one pull.
+//   8. Provider keys and model lists travel too: sealed keys only, deterministic
+//      to the byte, freshest-wins per provider, and a union so neither device
+//      loses a provider the other has never seen.
 import { open, chat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import path from 'node:path';
@@ -28,6 +36,24 @@ const check = (name, pass, detail) => {
 	(pass ? ok : bad).push(name + (detail ? ' — ' + detail : ''));
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
+
+/// Push, and wait until the parcel has actually LANDED. A single push() call is
+/// not enough: one that finds another in flight (or the app busy) only
+/// reschedules and returns, so awaiting it proves nothing — the pull that
+/// follows then reads a stale blob and the Diamond checks flake. The server
+/// version advancing is the only honest signal a push made it.
+async function pushLanded(pg) {
+	const landed = await pg.evaluate(async () => {
+		const v0 = window.DaimondSync.state().version;
+		const t0 = Date.now();
+		while (window.DaimondSync.state().version <= v0 && Date.now() - t0 < 8000) {
+			await window.DaimondSync.push();
+			await new Promise(r => setTimeout(r, 150));
+		}
+		return window.DaimondSync.state().version > v0;
+	});
+	if (!landed) console.log('  note  pushLanded: version did not advance within 8s');
+}
 
 const s = await open({ name: 'sync', signIn: true, connect: true });
 const { page } = s;
@@ -311,8 +337,15 @@ try {
 		'alpha=' + (ids.A || '-') + ' bravo=' + (ids.B || '-'));
 
 	const before = await readDiamond(ids.A);
-	await page.evaluate(() => window.DaimondSync.push());
-	await page.waitForTimeout(300);
+	// What the fixture actually laid down, before any of it travels. Without this
+	// a fixture that quietly failed to write reads afterwards as a sync that
+	// quietly failed to carry, and the two want opposite fixes.
+	check('the fixture took locally before anything synced',
+		!!before && before.tags.join(',') === 'travel,sync' && before.crystal.includes(DMARK)
+			&& before.log >= 2 && before.links.length >= 1,
+		before ? 'tags=[' + before.tags.join(',') + '] v' + before.version
+			+ ' log=' + before.log + ' links=' + before.links.length : 'absent');
+	await pushLanded(page);
 
 	// A second device: it has never seen these Diamonds, holds no per-Diamond
 	// model choice, and has no version cursor. Wiping all three is what "another
@@ -416,8 +449,7 @@ try {
 		if (id) await app.write_crystal(id, 'HERE-' + mark);
 		return id;
 	}, DMARK);
-	await page.evaluate(() => window.DaimondSync.push());
-	await page.waitForTimeout(300);
+	await pushLanded(page);
 
 	const crystalNow = () => wasm((app, id) => app.read_crystal(id), cid);
 
@@ -458,6 +490,257 @@ try {
 	check('a v1 parcel (no diamonds section) applies without error',
 		v1.threw === '', v1.threw);
 	check('and leaves this device’s Diamonds exactly where they were', v1.still === true);
+
+	// ── (6) A parcel the gateway refuses as too large is VISIBLE ───────
+	// A 413 used to log to the console and stop, so sync simply stopped working
+	// and nothing on the screen said so. The refusal is stubbed rather than
+	// provoked: the real ceiling is 32 MB, and building that in the browser to
+	// test a status chip would cost more than the behaviour it proves.
+	const tooBig = await page.evaluate(async () => {
+		const chip = () => {
+			const c = document.getElementById('sync-chip');
+			if (!c) return null;
+			return {
+				state:  c.dataset.state || '',
+				text:   (c.querySelector('.stext') || {}).textContent || '',
+				title:  c.title || '',
+				shown:  c.style.display !== 'none',
+			};
+		};
+		// A genuine local change, or the push is skipped as a no-op and nothing
+		// reaches the (stubbed) gateway at all.
+		const bump = (tag) => {
+			const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+			if (!a.length) return false;
+			a[0].messages = a[0].messages || [];
+			a[0].messages.push({ role: 'user', content: tag, mid: tag, ts: Date.now() });
+			a[0].updatedAt = Date.now();
+			localStorage.setItem('daimond-chats', JSON.stringify(a));
+			return true;
+		};
+		const real = window.fetch;
+		window.fetch = function (u, o) {
+			const url = String((u && u.url) || u || '');
+			if (url.indexOf('/api/sync') !== -1 && o && o.method === 'POST') {
+				return Promise.resolve(new Response(
+					JSON.stringify({ ok: false, error: 'Sync blob exceeds the size limit' }),
+					{ status: 413, headers: { 'content-type': 'application/json' } }));
+			}
+			return real.apply(this, arguments);
+		};
+		const changed = bump('too-big-1');
+		await window.DaimondSync.push();
+		const stalled = chip();
+		const api = window.DaimondSync.state ? window.DaimondSync.state() : null;
+		window.fetch = real;
+		// And a later successful push clears it — a stall that outlives its cause
+		// is the same lie the other way round.
+		bump('too-big-2');
+		await window.DaimondSync.push();
+		const after = chip();
+		return { changed, stalled, api, after };
+	});
+	check('a 413 push shows a stalled state on the sync chip, held (not a flash)',
+		!!(tooBig.stalled && tooBig.stalled.shown && tooBig.stalled.state === 'stalled'),
+		JSON.stringify(tooBig.stalled));
+	check('and says on hover that the parcel is too large, naming what makes it large',
+		!!(tooBig.stalled && /too large/i.test(tooBig.stalled.title)
+			&& /(Diamond|file)/i.test(tooBig.stalled.title)),
+		(tooBig.stalled && tooBig.stalled.title || '').slice(0, 120));
+	check('the engine reports the stall through its own surface too',
+		!!(tooBig.api && tooBig.api.stalled === true), JSON.stringify(tooBig.api));
+	check('a later successful push clears the stall',
+		!!(tooBig.after && tooBig.after.state === 'synced'), JSON.stringify(tooBig.after));
+	const lastLine = await page.evaluate(() => {
+		const c = document.getElementById('sync-chip');
+		return { title: c ? c.title : '', at: (window.DaimondSync.state ? DaimondSync.state().lastSyncedAt : 0) };
+	});
+	check('a successful sync records when it happened, and the chip can say so',
+		lastLine.at > 0 && /synced/i.test(lastLine.title),
+		JSON.stringify(lastLine).slice(0, 120));
+
+	// ── (7) A parked tab converges on focus, without a reload ──────────
+	// Sync fired on idle, on the tab going away, and on auth. A device left open
+	// on the desk therefore never caught up until it was reloaded. Coming back to
+	// a window is exactly the moment its owner expects to see the other device's
+	// work.
+	const focus = await page.evaluate(async () => {
+		const mark = 'FOCUSMARK-' + Date.now();
+		const state = await window.DaimondCore.collectSync();
+		state.chats = (state.chats || []).concat([{
+			id: 'focus-' + Date.now(), title: mark, updatedAt: Date.now(),
+			messages: [{ role: 'user', content: mark, mid: 'fm-' + Date.now(), ts: Date.now() }],
+		}]);
+		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
+		const r = await fetch('/api/sync', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
+			body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'other', blob: blob }),
+		});
+		const posted = r.status;
+		const before = (localStorage.getItem('daimond-chats') || '').indexOf(mark) !== -1;
+		// Count the pulls, so a focus STORM is proved to coalesce into one.
+		const real = window.fetch;
+		let gets = 0;
+		window.fetch = function (u, o) {
+			const url = String((u && u.url) || u || '');
+			if (url.indexOf('/api/sync') !== -1 && (!o || !o.method || o.method === 'GET')) gets++;
+			return real.apply(this, arguments);
+		};
+		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('focus'));
+		document.dispatchEvent(new Event('visibilitychange'));
+		await new Promise(res => setTimeout(res, 2500));
+		const after = (localStorage.getItem('daimond-chats') || '').indexOf(mark) !== -1;
+		const storm = gets;
+		// And a focus arriving straight back is refused by the throttle.
+		window.dispatchEvent(new Event('focus'));
+		await new Promise(res => setTimeout(res, 1200));
+		const again = gets;
+		window.fetch = real;
+		return { posted, before, after, storm, again };
+	});
+	check('the other device’s push landed on the mailbox', focus.posted === 200, 'HTTP ' + focus.posted);
+	check('this device did not already hold it', focus.before === false);
+	check('focus pulls the other device’s work in, with no reload', focus.after === true);
+	check('a focus storm coalesces into ONE pull', focus.storm === 1, 'pulls=' + focus.storm);
+	check('a focus straight afterwards is throttled, not another pull',
+		focus.again === focus.storm, 'pulls=' + focus.again);
+
+	// ── (8) Models and API keys travel with the work ───────────────────
+	// A second device that holds the account holds the same identity, so a key
+	// sealed under it opens on both. That is what makes carrying keys safe, and
+	// it is the only reason this is allowed at all: what travels is `keyEnc`,
+	// never a readable key.
+	const M = await page.evaluate(async () => {
+		const S = window.DaimondModels;
+		const r = { api: typeof S.exportSync === 'function' && typeof S.applySync === 'function' };
+		if (!r.api) return r;
+		const now = Date.now();
+		const PLAIN = 'LOCAL-KEY-' + '4242';
+		const def0 = S.getDefault();		// put the app's own default back afterwards
+
+		S.addProvider('groq', { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions' });
+		await S.setKey('groq', PLAIN);
+
+		const e1 = JSON.stringify(S.exportSync());
+		const e2 = JSON.stringify(S.exportSync());
+		r.deterministic  = e1 === e2;
+		r.carriesKeyEnc  = !!(S.exportSync().providers.groq || {}).keyEnc;
+		r.plaintextAbsent = e1.indexOf(PLAIN) === -1;
+		r.noMintedRow    = !Object.prototype.hasOwnProperty.call(S.exportSync().providers, 'credits');
+
+		// A provider only the other device has arrives; one only this device has
+		// survives. (The union is what makes a second device usable at all.)
+		await S.applySync({
+			v: 2, def: { provider: '', model: '' }, defAt: 0,
+			providers: { together: {
+				name: 'Together AI', url: 'https://api.together.xyz/v1/chat/completions',
+				models: ['m-b', 'm-a'], fetched: now, touched: now, keyEnc: 'REMOTE-SEALED',
+			} },
+		});
+		let ex = S.exportSync();
+		r.remoteArrived = !!ex.providers.together && ex.providers.together.keyEnc === 'REMOTE-SEALED';
+		r.localSurvived = !!ex.providers.groq;
+		r.modelsSorted  = !!ex.providers.together
+			&& ex.providers.together.models.join(',') === 'm-a,m-b';
+
+		// An OLDER remote copy must not clobber a newer local one.
+		const stamp = ex.providers.groq.touched;
+		await S.applySync({ v: 2, providers: { groq: {
+			name: 'Stale', url: 'https://stale.example/v1/chat/completions',
+			models: [], fetched: 0, touched: stamp - 60000, keyEnc: 'STALE-SEALED',
+		} } });
+		let g = S.exportSync().providers.groq;
+		r.olderIgnored = g.keyEnc !== 'STALE-SEALED' && g.url.indexOf('groq.com') !== -1;
+
+		// A fresher one wins, wholesale.
+		await S.applySync({ v: 2, providers: { groq: {
+			name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions',
+			models: ['fresh-1'], fetched: now + 60000, touched: stamp + 60000, keyEnc: 'FRESH-SEALED',
+		} } });
+		g = S.exportSync().providers.groq;
+		r.newerWon = g.keyEnc === 'FRESH-SEALED' && g.models.join(',') === 'fresh-1';
+
+		// The live session keeps the key it is running on: a merge must not lock
+		// a working device out mid-turn.
+		r.sessionKeyKept = S.keyFor('groq') === PLAIN;
+
+		// The default follows the freshest side, and only to somewhere real.
+		S.setDefault('groq', 'fresh-1');
+		const defAt = S.exportSync().defAt;
+		await S.applySync({ v: 2, def: { provider: 'nowhere', model: 'x' }, defAt: defAt + 60000, providers: {} });
+		r.defGuarded = S.getDefault().provider === 'groq';
+		await S.applySync({ v: 2, def: { provider: 'together', model: 'm-a' }, defAt: defAt + 120000, providers: {} });
+		r.defFreshest = S.getDefault().provider === 'together' && S.getDefault().model === 'm-a';
+		await S.applySync({ v: 2, def: { provider: 'groq', model: 'fresh-1' }, defAt: 1, providers: {} });
+		r.defOlderIgnored = S.getDefault().provider === 'together';
+
+		// Enumeration order must not reach the wire: the push-skip comparison is a
+		// string compare, so a store that enumerates differently would push for ever.
+		S.addProvider('zzz-probe', { name: 'Z', url: 'https://z.example/v1/chat/completions' });
+		S.addProvider('aaa-probe', { name: 'A', url: 'https://a.example/v1/chat/completions' });
+		const ks = Object.keys(S.exportSync().providers);
+		r.sortedKeys = JSON.stringify(ks) === JSON.stringify(ks.slice().sort());
+
+		// An old parcel carries no models section at all, and must still apply.
+		let threw = '';
+		try {
+			await S.applySync(undefined);
+			await S.applySync({});
+			await S.applySync({ v: 1 });
+		} catch (e) { threw = String((e && e.message) || e); }
+		r.oldParcelNoop = threw === '' && !!S.exportSync().providers.groq;
+
+		['groq', 'together', 'zzz-probe', 'aaa-probe'].forEach(function (id) { S.removeProvider(id); });
+		S.setDefault(def0.provider, def0.model);
+		return r;
+	});
+	check('models.js offers exportSync/applySync for the parcel', M.api === true);
+	check('two exports of one store are byte-identical', M.deterministic === true);
+	check('the export lists providers in sorted order (enumeration never reaches the wire)',
+		M.sortedKeys === true);
+	check('a model list travels sorted, for the same reason', M.modelsSorted === true);
+	check('a sealed key travels', M.carriesKeyEnc === true);
+	check('a readable key never does', M.plaintextAbsent === true);
+	check('the minted credits row does not travel (it is minted per device)',
+		M.noMintedRow === true);
+	check('a provider only the other device has arrives, key and all', M.remoteArrived === true);
+	check('a provider only this device has survives the merge', M.localSurvived === true);
+	check('an older remote provider does not clobber a newer local one', M.olderIgnored === true);
+	check('a fresher remote provider replaces the local one', M.newerWon === true);
+	check('the running session keeps the key it holds', M.sessionKeyKept === true);
+	check('the default follows the freshest side', M.defFreshest === true);
+	check('an older default is ignored', M.defOlderIgnored === true);
+	check('a default naming a provider nobody has is refused', M.defGuarded === true);
+	check('a parcel with no models section applies as a no-op', M.oldParcelNoop === true);
+
+	// The plaintext-at-rest key exists only where there is no identity to seal
+	// under — and sync only runs WITH one. It is still checked, because the store
+	// on disk may predate the identity and the export must not carry it out.
+	const atRest = await page.evaluate(() => {
+		const S = window.DaimondModels;
+		if (typeof S.exportSync !== 'function') return { absent: false, noField: false };
+		const raw = localStorage.getItem('daimond-models-v2');
+		localStorage.setItem('daimond-models-v2', JSON.stringify({
+			v: 2, def: { provider: 'plainprov', model: 'm' },
+			providers: { plainprov: {
+				name: 'Plain', url: 'https://plain.example/v1/chat/completions',
+				key: 'AT-REST-PLAIN-9876', keyEnc: '', models: ['m'], fetched: 1, touched: 1,
+			} },
+		}));
+		S.init({});
+		const ex = S.exportSync();
+		const out = {
+			absent:  JSON.stringify(ex).indexOf('AT-REST-PLAIN-9876') === -1,
+			noField: !Object.prototype.hasOwnProperty.call(ex.providers.plainprov || {}, 'key'),
+		};
+		if (raw === null) localStorage.removeItem('daimond-models-v2');
+		else localStorage.setItem('daimond-models-v2', raw);
+		S.init({});
+		return out;
+	});
+	check('a plaintext-at-rest key is left behind by the export',
+		atRest.absent === true && atRest.noField === true, JSON.stringify(atRest));
 
 	// (5) The export bundle carries the salt (without it, no second device could decrypt).
 	const bundle = await page.evaluate(() => {

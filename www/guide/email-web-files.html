@@ -152,6 +152,7 @@
 		<div class="card">
 			<h3>Machine</h3>
 			<p>A real folder on this computer's disk. The agent works in it directly, so you see the same files in your own file manager, and it is roomier than what a browser grants. But it stays on that one computer and does not travel to your other devices, and only a Chromium-based browser can open one.</p>
+			<p><strong>The folder is the whole of what the agent can see.</strong> It works only inside the folder you chose: nothing above it, and nothing outside it, is visible to Daimond. Clicking the chip while the agent is working there says so, and offers <span class="ui">Forget this folder</span> if you want Daimond to stop holding a record of it.</p>
 		</div>
 		<div class="card">
 			<h3>Cloud</h3>
@@ -179,6 +180,8 @@
 
 	<h3>Moving files in and out</h3>
 	<p>Two buttons sit beside the chips. <span class="ui">Import a folder…</span> copies a folder from this computer into the workspace, after which it syncs and is stored like everything else. <span class="ui">Save a copy…</span> writes the workspace out to a folder on this computer. Neither changes where the agent is working, and both need a Chromium-based browser. A copy out does not fetch a file that is in cloud storage only, and says how many it left behind.</p>
+
+	<p>While the agent is working in a real folder, a third button appears: <span class="ui">Change folder…</span>, which is the one control that opens a folder picker. Moving between <span class="ui">Browser</span> and <span class="ui">Machine</span> does not: Daimond remembers the folder you last used, so going back to it is a single click on the chip.</p>
 
 	<h3>What the agent may fetch</h3>
 	<p>When the agent needs a file that is in cloud storage, it is told so plainly and has to fetch it deliberately. Nothing is downloaded quietly behind a read, because a download can be large and, once storage is priced, costs you money. There is also a cap on how much the agent may bring down on its own initiative, after which it comes back and asks.</p>

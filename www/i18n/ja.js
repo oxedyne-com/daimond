@@ -159,6 +159,19 @@
 	'models.err_bad_key':          'アカウントサービスが、Daimond では使えない鍵を返しました。',
 	'models.err_no_key':           'そのプロバイダーにはまだ鍵がありません。',
 	'models.err_key_refused':      'プロバイダーが鍵を拒否しました（HTTP {status}）。',
+	// プロバイダーの鍵に残っている分と、それがどうして分かるのか。手入力の行を
+	// あえて「残高」と呼ばないのは、利用者自身の申告から見積もりを引いた数字だからです。
+	'models.credit_auto':          'この鍵の残りは {amount} です — {when} 時点でプロバイダーがそう答えました。',
+	'models.credit_manual':        'この鍵の残りは {amount} です。{when} に申告した {base} から、その後の見積もり {spent} を引いた額です。',
+	'models.credit_unknown':       'この鍵に何が残っているかは分かりません。',
+	'models.credit_check':         '残りを聞く',
+	'models.credit_recheck':       'もう一度聞く',
+	'models.credit_probe_failed':  '{provider} は残りを教えてくれませんでした。代わりに Daimond に教えてください。',
+	'models.credit_base_ph':       '例: 12.50',
+	'models.credit_base_label':    'いまこの鍵にある額（米ドル）',
+	'models.credit_base_set':      'いまこれだけあります',
+	'models.credit_base_update':   '自分の申告を更新',
+	'models.credit_base_bad':      '金額ではありません。米ドルの数値を入力してください。',
 
 	// ── クレジット、パック、Pro ────────────────────────────────
 	// 請求が発生するものは、米ドルであることをはっきり書きます。`billing.*` を参照。
@@ -217,7 +230,16 @@
 	'chat.input_ph':       'メッセージを入力…',
 	'chat.send':           '送信',
 	'chat.jump_help':      '最後に送ったメッセージに戻ります。もう一度押すと、その前のものへ順にさかのぼります。',
+	'chat.end_help':       'チャットのいちばん下に移動します。',
 	'chat.new':            '+ 新しいチャット',
+	// 回答が届いている途中に書いたメッセージ。一旦預かり、画面に見せ、
+	// 回答が終わったら 1 回ずつ送ります。短くしてあるのは、スマホの入力欄が
+	// 約 120px しかなく、長い行は 2 行に折れて切れてしまうからです。
+	'chat.queue_ph':       '次のメッセージを書く…',
+	'chat.queue_help':     '待機中 — この回答が終わったら送ります',
+	'chat.queued_pending': 'まだ送っていません。クリックすると直せます。',
+	'chat.queue_cancel':   'これは送らない',
+	'chat.queue_returned': 'このやり取りは最後まで終わらなかったので、待たせていた文章は未送信のまま入力欄に戻しました。',
 
 	// ── ウェブのパネル ─────────────────────────────────────────
 	'web.who_drives': '操作しているのは',
@@ -485,6 +507,15 @@
 	'sync.synced':     '同期済み',
 	'sync.off':        '同期オフ',
 	'sync.off_reason': '端末間の同期は Pro の機能で、このアカウントは持っていません。',
+	// 受け取られなかった荷物。何が大きすぎるのかと、その典型的な原因を書きます。
+	'sync.too_big':        '同期を止めています',
+	'sync.too_big_reason': 'この端末の荷物が大きすぎて送れないため、ここでの作業はもう外に出ていきません。たいていは、とても大きな Diamond か作業領域のファイルが原因です — 取り除くか小さくすれば、同期はひとりでに再開します。',
+	'sync.last_synced':    '前回の同期は{when}です。',
+	'sync.last_never':     'この端末からはまだ何も同期されていません。',
+	'sync.when_just_now':  'たった今',
+	'sync.when_mins':      '{n} 分前',
+	'sync.when_hours':     '{n} 時間前',
+	'sync.when_days':      '{n} 日前',
 
 	// ── 2 台目の端末とのペアリング ─────────────────────────────
 	// ボタン名を囲む引用符は日本語のかぎ括弧に置き換えています。
@@ -513,6 +544,9 @@
 	'pair.err_bundle_import':    'リンクされた識別情報を取り込めませんでした。',
 	'pair.err_create':           'ペアリングコードを作成できませんでした。',
 	'pair.err_link':             'この端末をリンクできませんでした。',
+	// 見た目の設定の一度きりの引き継ぎ。それが起きたことと、ここから先は
+	// この端末自身のものであることを伝えます。
+	'pair.look_carried': 'テーマ、言語、パネルの配置も一緒に移りました。ここから先はこの端末が自分のものとして持ちます — 片方を変えても、もう片方には影響しません。',
 
 	// ── 外観メニュー ───────────────────────────────────────────
 	'menu.skin':          'スキン',
@@ -601,6 +635,17 @@
 	'spend.col_turns':   'ターン',
 	'spend.col_tokens':  'トークン',
 	'spend.col_cost':    '費用',
+	'spend.col_key':          '鍵',
+	'spend.col_left':         '残り',
+	'spend.col_period_spend': '支出',
+	'spend.provider_keys':    'プロバイダーの鍵',
+	'spend.left_auto':        'この鍵の残りとしてプロバイダーが答えた額です。',
+	'spend.left_manual':      'あなた自身の申告から、その後の支出として Daimond が見積もった分を差し引いた額です。',
+	'spend.left_unknown':     'このプロバイダーは残りを教えてくれず、あなたも Daimond に伝えていません。',
+	'spend.all_reported':          'この期間のやり取りはすべてプロバイダーからの費用付きで戻ってきました。これは見積もりではなく、実際に請求された額です。',
+	'spend.part_reported':         'このうち {amount} はプロバイダーが報告した額です。残りは Daimond の料金表からの計算です。',
+	'spend.none_reported':         'Daimond の料金表からの計算です — これらのやり取りについて費用を報告したプロバイダーはありません。',
+	'spend.none_reported_unknown': 'Daimond の料金表からの計算ですが、この中に料金表に載っていないモデルがあるため、この数字はおおよその目安にすぎません。',
 	'spend.col_when':    '日時',
 	'spend.col_what':    '内容',
 	'spend.col_amount':  '金額',
@@ -865,6 +910,16 @@
 	'tag.all_used':      'すべてのタグがこの Diamond に付いています。',
 	'tag.none_yet':      'タグはまだありません。',
 	'tag.save_failed':   'タグを保存できませんでした',
+	// タグを一覧から削除すること。そのタグが付いた Diamond すべてから外れます。
+	'tag.delete_help':        '「{tag}」タグをどこからも削除します',
+	'tag.delete_title':       'このタグを削除しますか。',
+	'tag.delete_body_used.one':   '「{tag}」タグを削除しますか。{n} 個の Diamond に付いていて、そこから外されます。その Diamond のほかの部分は変わりません。',
+	'tag.delete_body_used.other': '「{tag}」タグを削除しますか。{n} 個の Diamond に付いていて、そのすべてから外されます。それらの Diamond のほかの部分は変わりません。',
+	'tag.delete_body_unused': '「{tag}」タグを削除しますか。どの Diamond にも付いていないので、一覧から消えるだけです。',
+	'tag.delete_ok':          'タグを削除',
+	'tag.deleted':            '「{tag}」タグを削除しました。',
+	'tag.deleted_from.one':   '「{tag}」タグを {n} 個の Diamond から削除しました。',
+	'tag.deleted_from.other': '「{tag}」タグを {n} 個の Diamond から削除しました。',
 	'tag.editor_note':   'タグは、この Diamond をレールで整理するためのものです。モデルに送られることはなく、結晶に入ることもありません。',
 
 	// ── やり取りの開始と中断 ───────────────────────────────────
@@ -899,6 +954,12 @@
 	'fold.proposing':        'たたみ方を考えています…',
 	'fold.diamond_gone':     'Diamond がありません',
 	'fold.diamond_gone_body': 'このエージェントを送り出した Diamond は、もう存在しません。',
+	'fold.diamond_gone_chat_body': '選んだ Diamond は、もう存在しません — ほかのタブで削除されたのかもしれません。何もたたみ込まれていません。',
+	'fold.empty_reply':      'モデルがたたみ込むものを何も返さなかったため、何も提案されませんでした。もう一度お試しください。',
+	'fold.proposed_toast':   'たたみ込みを提案しました — 下で受け入れるか拒否してください。',
+	'fold.proposed_elsewhere': '「{diamond}」へのたたみ込みを提案しました — 開いて、受け入れるか拒否してください。',
+	'fold.pending_badge':    'たたみ込み待ち',
+	'fold.pending_badge_help': 'この Diamond には、提案されたたたみ込みが待っています。開いて、変更を受け入れるか拒否してください。',
 	// たたみ込みの差分の見出し。1 つの文につなぎ言葉を足す形ではなく 4 通り用意
 	// します。対象を先に置く言語では、断片を並べ替えられないからです。
 	'diff.folding_chat':      '「{chat}」をたたみ込みます — 変更を確認して、受け入れるか拒否してください。',
@@ -1073,6 +1134,15 @@
 	'files.fetch':           '取得',
 	'files.fetch_body':      '「{path}」をこの端末に持ってきますか。{size} をダウンロードします。',
 	'files.fetching':        '{path} を取得しています…',
+	// エージェントが働く場所 — ルートと、その範囲。ルートを変えるのは、
+	// ブラウザの砂場とディスクを切り替えるのとは別の行為です。
+	'files.change_root':      'フォルダーを変える…',
+	'files.change_root_help': 'この端末の別のフォルダーをエージェントに向けます',
+	'files.machine_scope':    'エージェントは {name} の中だけで働きます。その上や外にあるものは、Daimond からは見えません。',
+	'files.machine_return':   'エージェントを {name} での作業に戻します',
+	'files.forget_root':      'このフォルダーを忘れる',
+	'files.forget_root_help': 'このフォルダーをもう出しません。Daimond はその記録を持たず、次のときはあらためて選んでもらいます。',
+	'files.root_forgotten':   '忘れました。Daimond はもうそのフォルダーの記録を持っていません。',
 
 	// ── 1 通のメッセージを読む ─────────────────────────────────
 	'msg.unknown_sender':    '（差出人不明）',

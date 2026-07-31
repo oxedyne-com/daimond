@@ -261,6 +261,8 @@ impl DaimondApp {
         let mut own = self.session.borrow_mut();
         own.prompt_tokens      += session.prompt_tokens;
         own.completion_tokens  += session.completion_tokens;
+        own.cached_tokens      += session.cached_tokens;
+        own.cost_usd           += session.cost_usd;
         own.last_prompt_tokens  = session.last_prompt_tokens;
     }
 
@@ -280,17 +282,27 @@ impl DaimondApp {
     /// * `prompt_tokens` - Cumulative prompt tokens to restore.
     /// * `completion_tokens` - Cumulative completion tokens to restore.
     /// * `last_prompt_tokens` - Context-window usage of the last request.
+    /// * `cached_tokens` - Cumulative cached prompt tokens to restore.  May be
+    ///   omitted; a caller that does not pass it leaves the counter at zero,
+    ///   which is what a store written before the field existed holds.
+    /// * `cost_usd` - Cumulative provider-reported USD to restore.  Omissible
+    ///   for the same reason.
     ///
     /// The token counters are restored alongside the messages because
     /// the caller meters a turn by the growth of the cumulative count;
     /// against a counter that restarted at zero the first turn after a
-    /// reload prices as free and the running total jumps backwards.
+    /// reload prices as free and the running total jumps backwards.  The two
+    /// trailing arguments carry the same risk for the reported cost, and are
+    /// trailing and optional so a caller written against the older four-argument
+    /// signature keeps working unchanged.
     pub fn restore(
         &self,
         msgs:               js_sys::Array,
         prompt_tokens:      f64,
         completion_tokens:  f64,
         last_prompt_tokens: f64,
+        cached_tokens:      Option<f64>,
+        cost_usd:           Option<f64>,
     ) {
         let mut session = self.session.borrow_mut();
         session.messages.clear();
@@ -314,6 +326,8 @@ impl DaimondApp {
         session.prompt_tokens      = prompt_tokens      as u64;
         session.completion_tokens  = completion_tokens  as u64;
         session.last_prompt_tokens = last_prompt_tokens as u64;
+        session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
+        session.cost_usd           = cost_usd.unwrap_or(0.0);
     }
 
     /// Invoke a single tool directly by wire name with a raw-JSON argument
@@ -520,6 +534,59 @@ impl DaimondApp {
     pub fn live_completion_tokens(&self) -> f64 {
         self.agent.live_completion.get() as f64
     }
+
+    /// Cumulative prompt tokens this session's provider served from its cache.
+    ///
+    /// Borrows the session, so it is a POST-TURN read only: `run_turn` holds the
+    /// session mutably for the whole turn and reading it mid-turn panics the
+    /// `RefCell`.  Mid-turn, read [`DaimondApp::live_cached_tokens`].
+    #[wasm_bindgen(getter)]
+    pub fn cached_tokens(&self) -> f64 {
+        self.session.borrow().cached_tokens as f64
+    }
+
+    /// Cumulative USD the provider says this session actually cost.
+    ///
+    /// Zero means no provider reported a figure -- never that the session was
+    /// free -- so a caller reading zero prices the turn from its own table.
+    /// Post-turn only, exactly as [`DaimondApp::cached_tokens`].
+    #[wasm_bindgen(getter)]
+    pub fn cost_usd(&self) -> f64 {
+        self.session.borrow().cost_usd
+    }
+
+    /// Cumulative cached prompt tokens for the turn IN FLIGHT, safe to read
+    /// while it runs; see [`DaimondApp::live_prompt_tokens`].
+    #[wasm_bindgen(getter)]
+    pub fn live_cached_tokens(&self) -> f64 {
+        self.agent.live_cached.get() as f64
+    }
+
+    /// Cumulative provider-reported USD for the turn IN FLIGHT, safe to read
+    /// while it runs; see [`DaimondApp::live_prompt_tokens`].
+    #[wasm_bindgen(getter)]
+    pub fn live_cost_usd(&self) -> f64 {
+        self.agent.live_cost.get()
+    }
+
+    /// Write raw bytes to `path` in the ACTIVE workspace root.
+    ///
+    /// The one path by which the browser half can put bytes somewhere without
+    /// reaching into OPFS itself.  It goes through [`crate::wasm::opfs`], so it
+    /// inherits the lexical path jail, the real-folder override when one is
+    /// open, AND the per-account namespace -- the last of which a hand-rolled
+    /// `navigator.storage.getDirectory()` walk in the page does not, which is
+    /// how a secondary account's compiled PDFs and saved mail landed in the
+    /// primary account's workspace.
+    ///
+    /// # Arguments
+    /// * `path` - Workspace-relative destination path.
+    /// * `bytes` - The bytes to write, replacing any existing file.
+    pub async fn write_bytes(&self, path: String, bytes: Vec<u8>) -> Result<(), JsValue> {
+        crate::wasm::opfs::write_file(crate::tools::FileRoot::Workspace, &path, &bytes)
+            .await
+            .map_err(to_js_err)
+    }
 }
 
 /// Inner helpers for the crystal and reducer turns.  Kept in a plain
@@ -629,15 +696,34 @@ impl DaimondApp {
             self.session.borrow().model.clone(),
         );
         let mut out = String::new();
+        // What the reducer said went wrong.  The sink used to keep only `Text`,
+        // so a turn that failed -- a refused key, a rate limit, a model that
+        // errored -- accumulated nothing and this returned `Ok("")`: an EMPTY
+        // proposal, which the caller then offered the user as a fold that
+        // deletes the whole crystal.  An error is now carried out, and an empty
+        // proposal is refused whatever its cause.
+        let mut failure = String::new();
         {
             let mut sink = |ev: AgentEvent| {
-                if let AgentEvent::Text(t) = &ev {
-                    out.push_str(t);
+                match &ev {
+                    AgentEvent::Text(t)  => out.push_str(t),
+                    AgentEvent::Error(m) => if failure.is_empty() { failure = m.clone(); },
+                    _                    => {},
                 }
             };
             res!(agent.run_turn(&mut session, user_msg, &registry, &mut sink).await);
         }
         self.absorb_usage(&session);
+        if !failure.is_empty() {
+            return Err(err!(
+                "The reducer could not propose a fold: {}", failure; Network, Invalid));
+        }
+        if out.trim().is_empty() {
+            return Err(err!(
+                "The reducer returned an empty proposal, so there is nothing to fold in. \
+                A fold never empties a crystal; try again, or steer the Diamond instead.";
+                Invalid, Data));
+        }
         Ok(out)
     }
 }

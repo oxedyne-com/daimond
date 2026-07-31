@@ -134,6 +134,10 @@
 					<div class="diamond-filter" id="diamond-filter" style="display:none"></div>
 				</div>
 				<div class="diamond-list" id="diamond-list"></div>
+				<!-- The divider between the two lists. Diamonds accumulate, and the
+				     list used to grow until the chat tiles were off the bottom of the
+				     rail with no way to get them back. -->
+				<div class="rhandle" id="handle-rail-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 				<div class="railhead"><span title="The seam you work in. Raw conversation, out of which a Diamond is cut." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
 					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -262,6 +266,10 @@
 			<!-- AI: the conversation. -->
 			<section class="panel ai" id="panel-ai" data-panel="ai" data-zone="stage" data-label="AI" data-i18n-label="panel.ai">
 				<div class="chead">
+					<!-- The mark, shown only on a Diamond's crystal (see showCentre): the
+					     crystal is a document you own rather than a conversation, and the
+					     panel says which of its two faces is up. -->
+					<img class="chead-mark" id="chead-mark" src="assets/daimond_mark.svg" alt="" aria-hidden="true" style="display:none">
 					<span class="ctitle" id="current-session-name">No chat</span>
 					<div class="chead-right">
 						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;" data-i18n-title="chat.model_for_chat"></select>
@@ -282,6 +290,7 @@
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send">➤</button>
 					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help">↑</button>
+					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help">↓</button>
 				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->

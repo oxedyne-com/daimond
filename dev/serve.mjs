@@ -21,6 +21,10 @@ const GATEWAY = { host: '127.0.0.1', port: 9002 };
 
 const TYPES = {
 	'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+	// The vendored Typst compiler's glue is `.mjs`, and a dynamic import() refuses anything that
+	// is not served as JavaScript. Without this the whole feature failed locally with "Failed to
+	// fetch dynamically imported module" -- a MIME type, reported as a broken compiler.
+	'.mjs': 'text/javascript; charset=utf-8',
 	'.css': 'text/css; charset=utf-8', '.json': 'application/json',
 	'.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png',
 	'.woff2': 'font/woff2', '.map': 'application/json', '.pdf': 'application/pdf',

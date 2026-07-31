@@ -1,21 +1,27 @@
 /* ============================================================
    Daimond — per-model pricing table (DaimondPricing)
    ------------------------------------------------------------
-   A static, offline lookup of per-token prices for the open
-   models Daimond's curated providers serve. No network fetch: the
-   figures are baked in and refreshed by hand, so a turn can be
-   costed the instant its token counts land.
+   A static, offline lookup of per-token prices, used when
+   nothing better is available. It is the LAST resort, not the
+   first: a turn is costed from what the provider itself
+   reported, failing that from the live rates `DaimondModels`
+   captured when it listed the provider's models, and only
+   failing both from the figures baked in here.
 
    All rates are USD per 1,000,000 tokens. Where a provider
-   publishes a cached-input rate (a discount for prompt reuse)
-   it is recorded too; otherwise cached tokens fall back to the
-   ordinary input rate.
+   publishes a cached-input rate (prompt reuse, a small
+   fraction of a fresh read) it is recorded too; otherwise
+   cached tokens fall back to the ordinary input rate.
 
-   Pricing source: provider pricing pages (Fireworks serverless
-   pricing docs, Groq, Together AI, DeepInfra, OpenRouter),
-   surveyed 2026-07-11. Prices move often — re-verify before
-   relying on the absolute figures. Where no published figure
-   could be found for a model it is omitted rather than guessed.
+   Pricing source: openrouter.ai/api/v1/models, surveyed
+   2026-07-30, converted from per-token to per-million. These
+   are the ROUTED prices actually charged, which is the point:
+   the table previously held direct-provider list prices 2.3x
+   to 4.5x above them (glm-5.2 at 1.40/4.40 against a real
+   0.62/1.93, deepseek-r1 at 3.00/7.00 against 0.70/2.50), and
+   an "estimate" built from those overstated a session's spend
+   roughly six-fold. Prices move; re-verify before relying on
+   the absolute figures.
 
    Attaches a single global, `window.DaimondPricing`.
    ============================================================ */
@@ -23,12 +29,15 @@
 	'use strict';
 
 	// ── Fallback for unknown models ────────────────────────────
-	// When a model is not in the table we still want a plausible,
-	// non-zero cost so the ledger never silently reads $0. The
-	// fallback sits at the pricier end of the open-model spread so
-	// an estimate errs towards over-stating rather than under-
-	// stating spend. Cached tokens reuse the input rate.
-	var FALLBACK = { inUsdPerM: 1.00, outUsdPerM: 3.00, cachedInUsdPerM: 1.00 };
+	// When nothing knows a model we still want a plausible,
+	// non-zero cost so the ledger never silently reads $0. It sits
+	// near the middle of the open-model spread rather than at the
+	// pricier end: the old 1.00/3.00 caught MOST current router ids
+	// -- every anthropic/*, openai/gpt-5*, google/gemini-*, grok,
+	// minimax and qwen3-coder id missed the table -- at about four
+	// times reality, so the "conservative" figure was the single
+	// biggest source of overstatement rather than a safety margin.
+	var FALLBACK = { inUsdPerM: 0.40, outUsdPerM: 1.20, cachedInUsdPerM: 0.10 };
 
 	// ── Price table ────────────────────────────────────────────
 	// Keyed by a canonical model id. Each entry carries:
@@ -37,85 +46,200 @@
 	//   cached — cached-input USD per 1M tokens, when published.
 	//   ctx    — context window in tokens, or null if unknown.
 	//   alias  — extra ids/spellings that map to this entry.
-	// Grouped by the provider whose published price it reflects;
-	// the same open weights are often served by several providers
-	// at similar rates, so a match here is a fair estimate even
-	// when the user runs the model elsewhere.
+	// Grouped by vendor family. A router may serve the same weights
+	// from several hosts at slightly different rates, so a match
+	// here is a fair estimate rather than a quote.
 	var TABLE = {
 
-		// ── Fireworks AI ───────────────────────────────────────
-		// From docs.fireworks.ai/serverless/pricing (standard
-		// tier), 2026-07-11.
+		// ── Z.ai (GLM) ─────────────────────────────────────────
 		'glm-5.2': {
-			in: 1.40, out: 4.40, cached: 0.14, ctx: 1048576,
-			alias: ['accounts/fireworks/models/glm-5p2', 'glm-5p2', 'glm5.2'],
+			in: 0.6153, out: 1.9338, cached: 0.11427, ctx: 1048576,
+			alias: ['z-ai/glm-5.2', 'accounts/fireworks/models/glm-5p2', 'glm-5p2', 'glm5.2'],
 		},
 		'glm-5.1': {
-			in: 1.40, out: 4.40, cached: 0.26, ctx: 200000,
-			alias: ['accounts/fireworks/models/glm-5p1', 'glm-5p1', 'glm5.1'],
+			in: 0.966, out: 3.036, cached: 0.1794, ctx: 204800,
+			alias: ['z-ai/glm-5.1', 'accounts/fireworks/models/glm-5p1', 'glm-5p1', 'glm5.1'],
 		},
+		'glm-5': {
+			in: 0.95, out: 2.55, cached: 0.20, ctx: 204800,
+			alias: ['z-ai/glm-5'],
+		},
+		'glm-4.7': {
+			in: 0.40, out: 1.75, cached: 0.08, ctx: 204800,
+			alias: ['z-ai/glm-4.7'],
+		},
+		'glm-4.7-flash': {
+			in: 0.06, out: 0.40, cached: 0.01, ctx: 202752,
+			alias: ['z-ai/glm-4.7-flash'],
+		},
+		'glm-4.6': {
+			in: 0.50, out: 2.00, cached: 0.10, ctx: 204800,
+			alias: ['z-ai/glm-4.6'],
+		},
+
+		// ── OpenAI open weights ────────────────────────────────
 		'gpt-oss-120b': {
-			in: 0.15, out: 0.60, cached: 0.015, ctx: 131072,
+			in: 0.037, out: 0.17, cached: null, ctx: 131072,
 			alias: ['accounts/fireworks/models/gpt-oss-120b', 'openai/gpt-oss-120b'],
 		},
+		'gpt-oss-20b': {
+			in: 0.03, out: 0.13, cached: 0.03, ctx: 131072,
+			alias: ['openai/gpt-oss-20b'],
+		},
+
+		// ── DeepSeek ───────────────────────────────────────────
 		'deepseek-v4-pro': {
-			in: 1.74, out: 3.48, cached: 0.145, ctx: 1048576,
-			alias: ['accounts/fireworks/models/deepseek-v4-pro', 'deepseek-ai/deepseek-v4-pro'],
+			in: 0.435, out: 0.87, cached: 0.003625, ctx: 1048576,
+			alias: ['deepseek/deepseek-v4-pro', 'accounts/fireworks/models/deepseek-v4-pro',
+				'deepseek-ai/deepseek-v4-pro'],
 		},
-		'kimi-k2.6': {
-			in: 0.95, out: 4.00, cached: 0.16, ctx: 262144,
-			alias: ['accounts/fireworks/models/kimi-k2p6', 'kimi-k2p6', 'moonshotai/kimi-k2.6', 'kimi-k2-6'],
-		},
-		'qwen3.7-plus': {
-			in: 0.40, out: 1.60, cached: 0.08, ctx: 262144,
-			alias: ['accounts/fireworks/models/qwen3p7-plus', 'qwen3p7-plus', 'qwen/qwen3.7-plus'],
-		},
-
-		// ── Groq ───────────────────────────────────────────────
-		// From groq.com/pricing, 2026-07-11. Groq bills a cached-
-		// input rate on some models.
-		'llama-3.3-70b': {
-			in: 0.59, out: 0.79, cached: null, ctx: 131072,
-			alias: ['llama-3.3-70b-versatile', 'meta-llama/llama-3.3-70b-instruct', 'llama3.3-70b'],
-		},
-		'kimi-k2': {
-			in: 1.00, out: 3.00, cached: 0.50, ctx: 262144,
-			alias: ['moonshotai/kimi-k2-instruct', 'moonshotai/kimi-k2', 'kimi-k2-instruct'],
-		},
-
-		// ── Together AI ────────────────────────────────────────
-		// From together.ai/pricing, 2026-07-11.
-		'deepseek-v3.1': {
-			in: 0.60, out: 1.70, cached: null, ctx: 131072,
-			alias: ['deepseek-ai/deepseek-v3.1', 'deepseek-v3', 'deepseek-ai/deepseek-v3', 'deepseek-v3p1'],
+		'deepseek-v4-flash': {
+			in: 0.14, out: 0.28, cached: 0.028, ctx: 1048576,
+			alias: ['deepseek/deepseek-v4-flash'],
 		},
 		'deepseek-r1': {
-			in: 3.00, out: 7.00, cached: null, ctx: 131072,
-			alias: ['deepseek-ai/deepseek-r1', 'deepseek-reasoner'],
+			in: 0.70, out: 2.50, cached: null, ctx: 163840,
+			alias: ['deepseek/deepseek-r1', 'deepseek-ai/deepseek-r1', 'deepseek-reasoner'],
+		},
+		// Three near-identical v3 ids at three different prices. Each
+		// keeps its own entry: the substring resolver used to fold
+		// v3.2-exp onto v3.1 and bill it at more than twice its rate.
+		'deepseek-v3.1': {
+			in: 0.25, out: 0.95, cached: 0.13, ctx: 163840,
+			alias: ['deepseek/deepseek-chat-v3.1', 'deepseek-chat-v3.1',
+				'deepseek-ai/deepseek-v3.1', 'deepseek-v3p1'],
+		},
+		'deepseek-v3.1-terminus': {
+			in: 0.27, out: 1.00, cached: 0.135, ctx: 163840,
+			alias: ['deepseek/deepseek-v3.1-terminus'],
+		},
+		'deepseek-v3.2': {
+			in: 0.269, out: 0.40, cached: 0.1345, ctx: 163840,
+			alias: ['deepseek/deepseek-v3.2', 'deepseek-ai/deepseek-v3.2', 'deepseek-v3p2'],
+		},
+		'deepseek-v3.2-exp': {
+			in: 0.27, out: 0.41, cached: null, ctx: 163840,
+			alias: ['deepseek/deepseek-v3.2-exp'],
 		},
 
-		// ── DeepInfra ──────────────────────────────────────────
-		// From deepinfra.com/pricing, 2026-07-11.
-		'deepseek-v3.2': {
-			in: 0.26, out: 0.38, cached: null, ctx: 131072,
-			alias: ['deepseek-ai/deepseek-v3.2', 'deepseek-v3p2'],
+		// ── Moonshot (Kimi) ────────────────────────────────────
+		'kimi-k2': {
+			in: 0.57, out: 2.30, cached: null, ctx: 131072,
+			alias: ['moonshotai/kimi-k2', 'moonshotai/kimi-k2-instruct', 'kimi-k2-instruct'],
+		},
+		'kimi-k2.5': {
+			in: 0.57, out: 2.85, cached: 0.095, ctx: 262144,
+			alias: ['moonshotai/kimi-k2.5'],
+		},
+		'kimi-k2.6': {
+			in: 0.646, out: 2.72, cached: 0.1088, ctx: 262144,
+			alias: ['moonshotai/kimi-k2.6', 'accounts/fireworks/models/kimi-k2p6', 'kimi-k2p6',
+				'kimi-k2-6'],
+		},
+		'kimi-k2-thinking': {
+			in: 0.60, out: 2.50, cached: 0.15, ctx: 262144,
+			alias: ['moonshotai/kimi-k2-thinking'],
+		},
+		'kimi-k3': {
+			in: 3.00, out: 15.00, cached: 0.30, ctx: 1048576,
+			alias: ['moonshotai/kimi-k3'],
+		},
+
+		// ── Meta (Llama) ───────────────────────────────────────
+		'llama-3.3-70b': {
+			in: 0.13, out: 0.40, cached: null, ctx: 131072,
+			alias: ['llama-3.3-70b-versatile', 'meta-llama/llama-3.3-70b-instruct', 'llama3.3-70b'],
 		},
 		'llama-4-scout': {
-			in: 0.08, out: 0.30, cached: null, ctx: null,
+			in: 0.10, out: 0.30, cached: null, ctx: 1310720,
 			alias: ['meta-llama/llama-4-scout', 'meta-llama/llama-4-scout-17b-16e-instruct'],
 		},
-
-		// ── OpenRouter ─────────────────────────────────────────
-		// From openrouter.ai/pricing, 2026-07-11. OpenRouter is a
-		// router, so a given id may bill at the underlying
-		// provider's rate; these are representative figures.
 		'llama-4-maverick': {
-			in: 0.15, out: 0.60, cached: null, ctx: 1048576,
+			in: 0.20, out: 0.80, cached: null, ctx: 1048576,
 			alias: ['meta-llama/llama-4-maverick', 'meta-llama/llama-4-maverick-17b-128e-instruct'],
 		},
+
+		// ── Qwen ───────────────────────────────────────────────
 		'qwen3-235b': {
-			in: 0.09, out: 0.10, cached: null, ctx: 262144,
+			in: 0.455, out: 1.82, cached: null, ctx: 131072,
 			alias: ['qwen/qwen3-235b-a22b', 'qwen3-235b-a22b', 'qwen/qwen3-235b'],
+		},
+		'qwen3-coder': {
+			in: 0.30, out: 1.00, cached: 0.10, ctx: 262144,
+			alias: ['qwen/qwen3-coder'],
+		},
+		'qwen3-max': {
+			in: 0.78, out: 3.90, cached: 0.156, ctx: 262144,
+			alias: ['qwen/qwen3-max'],
+		},
+		'qwen3.7-plus': {
+			in: 0.32, out: 1.28, cached: 0.064, ctx: 1000000,
+			alias: ['qwen/qwen3.7-plus', 'accounts/fireworks/models/qwen3p7-plus', 'qwen3p7-plus'],
+		},
+
+		// ── MiniMax ────────────────────────────────────────────
+		'minimax-m2': {
+			in: 0.255, out: 1.02, cached: null, ctx: 204800,
+			alias: ['minimax/minimax-m2'],
+		},
+		'minimax-m2.5': {
+			in: 0.15, out: 0.90, cached: 0.05, ctx: 204800,
+			alias: ['minimax/minimax-m2.5'],
+		},
+		'minimax-m3': {
+			in: 0.30, out: 1.20, cached: 0.06, ctx: 1048576,
+			alias: ['minimax/minimax-m3'],
+		},
+
+		// ── xAI ────────────────────────────────────────────────
+		'grok-4.5': {
+			in: 2.00, out: 6.00, cached: 0.30, ctx: 500000,
+			alias: ['x-ai/grok-4.5'],
+		},
+		'grok-4.3': {
+			in: 1.25, out: 2.50, cached: 0.20, ctx: 1000000,
+			alias: ['x-ai/grok-4.3'],
+		},
+
+		// ── Closed models a router also serves ─────────────────
+		// These are not open weights, but they are one line away in
+		// the picker, and the fallback priced them at a quarter of
+		// what an Opus turn really costs.
+		'claude-opus-5': {
+			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
+			alias: ['anthropic/claude-opus-5'],
+		},
+		'claude-sonnet-5': {
+			in: 2.00, out: 10.00, cached: 0.20, ctx: 1000000,
+			alias: ['anthropic/claude-sonnet-5'],
+		},
+		'claude-haiku-4.5': {
+			in: 1.00, out: 5.00, cached: 0.10, ctx: 200000,
+			alias: ['anthropic/claude-haiku-4.5'],
+		},
+		'gpt-5.4': {
+			in: 2.50, out: 15.00, cached: 0.25, ctx: 1050000,
+			alias: ['openai/gpt-5.4'],
+		},
+		'gpt-5.4-mini': {
+			in: 0.75, out: 4.50, cached: 0.075, ctx: 400000,
+			alias: ['openai/gpt-5.4-mini'],
+		},
+		'gpt-5.2': {
+			in: 1.75, out: 14.00, cached: 0.175, ctx: 400000,
+			alias: ['openai/gpt-5.2'],
+		},
+		'gemini-3.1-pro': {
+			in: 2.00, out: 12.00, cached: 0.20, ctx: 1048576,
+			alias: ['google/gemini-3.1-pro-preview'],
+		},
+		'gemini-3.6-flash': {
+			in: 1.50, out: 7.50, cached: 0.15, ctx: 1048576,
+			alias: ['google/gemini-3.6-flash'],
+		},
+		'gemini-2.5-flash': {
+			in: 0.30, out: 2.50, cached: 0.03, ctx: 1048576,
+			alias: ['google/gemini-2.5-flash'],
 		},
 	};
 
@@ -133,30 +257,69 @@
 	}
 
 	// Build a normalised-key → canonical-id index once, covering
-	// each canonical id and all its aliases.
+	// each canonical id and all its aliases. Keys are also held in
+	// longest-first order, which is what `resolve` walks.
 	var INDEX = {};
+	var KEYS = [];
 	(function () {
 		for (var id in TABLE) {
 			INDEX[norm(id)] = id;
 			var aliases = TABLE[id].alias || [];
 			for (var i = 0; i < aliases.length; i++) INDEX[norm(aliases[i])] = id;
 		}
+		KEYS = Object.keys(INDEX).sort(function (a, b) { return b.length - a.length; });
 	})();
 
 	// Resolve a caller's model string to a table entry, or null.
-	// Matching is progressively looser: exact/alias key, then a
-	// two-way substring test on the normalised keys (so a longer
-	// vendor id containing a known model name still resolves).
+	//
+	// Exact key or alias first; then the LONGEST table key that the
+	// caller's id contains. The direction matters and only one is
+	// safe. This used to test both ways and return the first hit in
+	// object order, so `deepseek/deepseek-v3.2-exp` met the earlier
+	// `deepseekv3` alias and was billed at v3.1's rate -- more than
+	// twice its own. A shorter key can never outrank a longer one
+	// now, and a key that merely CONTAINS the caller's id (a bare
+	// `glm5` matching `glm52`) is not a match at all: model ids come
+	// from the provider's own list, so they arrive whole.
 	function resolve(model) {
 		var key = norm(model);
 		if (!key) return null;
 		if (INDEX[key]) return TABLE[INDEX[key]];		// exact or alias
-		// Substring either way: `glm52fast` ⊃ `glm52`, or a bare
-		// `kimi` request ⊂ the fuller `kimik2` key.
-		for (var k in INDEX) {
-			if (key.indexOf(k) !== -1 || k.indexOf(key) !== -1) return TABLE[INDEX[k]];
+		for (var i = 0; i < KEYS.length; i++) {
+			if (key.indexOf(KEYS[i]) !== -1) return TABLE[INDEX[KEYS[i]]];
 		}
 		return null;
+	}
+
+	// The live rates a provider published when `DaimondModels` last
+	// listed its models, in this table's shape. A router's own
+	// figures beat anything baked in here, so they are asked first.
+	// Absent module, absent provider or absent model: null, and the
+	// table answers instead.
+	function liveEntry(provider, model) {
+		if (!provider || !window.DaimondModels
+			|| typeof window.DaimondModels.rateFor !== 'function') return null;
+		var r = null;
+		try { r = window.DaimondModels.rateFor(provider, model); } catch (e) { return null; }
+		if (!r || typeof r.inPerM !== 'number' || typeof r.outPerM !== 'number') return null;
+		return {
+			in:     r.inPerM,
+			out:    r.outPerM,
+			cached: (typeof r.cachedPerM === 'number') ? r.cachedPerM : null,
+			ctx:    (typeof r.ctx === 'number') ? r.ctx : null,
+		};
+	}
+
+	// The entry to price with, and whether it had to be guessed.
+	// `live` is a quote from the provider, `table` a surveyed figure,
+	// `fallback` neither -- and only the last is called estimated,
+	// because only the last is a number nobody published.
+	function entryFor(model, provider) {
+		var live = liveEntry(provider, model);
+		if (live) return { entry: live, source: 'live' };
+		var hit = resolve(model);
+		if (hit) return { entry: hit, source: 'table' };
+		return { entry: FALLBACK_ENTRY(), source: 'fallback' };
 	}
 
 	// ── Public API ─────────────────────────────────────────────
@@ -169,13 +332,16 @@
 	/// otherwise. The remaining prompt tokens bill at the input
 	/// rate and completion tokens at the output rate.
 	///
-	/// Returns `{ usd, estimated }`. `estimated` is true when the
-	/// model was not found and the conservative fallback rate was
-	/// applied.
-	function priceFor(model, promptTokens, completionTokens, cachedTokens) {
-		var entry = resolve(model);
-		var estimated = !entry;
-		var r = entry || FALLBACK_ENTRY();
+	/// `provider` is optional and, when given, lets the live rates
+	/// captured from that provider's own model list take precedence
+	/// over the baked-in table.
+	///
+	/// Returns `{ usd, estimated, source }`. `estimated` is true only
+	/// when no published rate could be found for the model at all and
+	/// the fallback was applied.
+	function priceFor(model, promptTokens, completionTokens, cachedTokens, provider) {
+		var got = entryFor(model, provider);
+		var r = got.entry;
 
 		var prompt = Math.max(0, promptTokens || 0);
 		var completion = Math.max(0, completionTokens || 0);
@@ -184,7 +350,7 @@
 
 		var cachedRate = (r.cached != null) ? r.cached : r.in;
 		var usd = (fresh * r.in + cached * cachedRate + completion * r.out) / 1e6;
-		return { usd: usd, estimated: estimated };
+		return { usd: usd, estimated: got.source === 'fallback', source: got.source };
 	}
 
 	// The fallback expressed in the same shape as a table entry.
@@ -193,23 +359,28 @@
 	}
 
 	/// Context window for `model` in tokens, or null when unknown
-	/// (or when the model itself is unknown).
-	function contextWindow(model) {
+	/// (or when the model itself is unknown). A provider's own
+	/// figure, where one was captured, beats the table's.
+	function contextWindow(model, provider) {
+		var live = liveEntry(provider, model);
+		if (live && live.ctx != null) return live.ctx;
 		var entry = resolve(model);
 		return (entry && entry.ctx != null) ? entry.ctx : null;
 	}
 
 	/// Display rates for `model` as `{ inUsdPerM, outUsdPerM,
-	/// cachedInUsdPerM }`, or null when the model is unknown. A
-	/// null `cachedInUsdPerM` means the provider publishes no
-	/// separate cached rate.
-	function rate(model) {
-		var entry = resolve(model);
+	/// cachedInUsdPerM, source }`, or null when nothing knows the
+	/// model. A null `cachedInUsdPerM` means no separate cached rate
+	/// is published.
+	function rate(model, provider) {
+		var live = liveEntry(provider, model);
+		var entry = live || resolve(model);
 		if (!entry) return null;
 		return {
 			inUsdPerM:       entry.in,
 			outUsdPerM:      entry.out,
 			cachedInUsdPerM: (entry.cached != null) ? entry.cached : null,
+			source:          live ? 'live' : 'table',
 		};
 	}
 
@@ -219,5 +390,10 @@
 		rate:          rate,
 		/// The fallback rate applied to unknown models, for display.
 		fallback:      { inUsdPerM: FALLBACK.inUsdPerM, outUsdPerM: FALLBACK.outUsdPerM, cachedInUsdPerM: FALLBACK.cachedInUsdPerM },
+		/// The table and its resolver, for the pure-node hygiene check
+		/// in `dev/verify_pricing.mjs`: every canonical id must resolve
+		/// to itself, and no id may resolve to an entry other than the
+		/// owner of its longest matching key. Read-only by convention.
+		_core: { TABLE: TABLE, INDEX: INDEX, KEYS: KEYS, norm: norm, resolve: resolve },
 	};
 })();

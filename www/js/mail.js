@@ -919,6 +919,9 @@
 		if (!r.ok || !j || j.ok === false) {
 			throw new Error((j && j.error) || ('HTTP ' + r.status));
 		}
+		// Syncing and sending cost credits, and the reply says what is left. One place owns
+		// that number; this hands it over rather than letting the header go stale.
+		if (window.DaimondGateway && DaimondGateway.noteBalance) DaimondGateway.noteBalance(j);
 		return j;
 	}
 

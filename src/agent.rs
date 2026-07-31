@@ -45,6 +45,10 @@ pub struct Agent {
     pub live_prompt:     Cell<u64>,
     /// Cumulative completion tokens for the turn in flight; see `live_prompt`.
     pub live_completion: Cell<u64>,
+    /// Cumulative cached prompt tokens for the turn in flight; see `live_prompt`.
+    pub live_cached:     Cell<u64>,
+    /// Cumulative provider-reported USD for the turn in flight; see `live_prompt`.
+    pub live_cost:       Cell<f64>,
 }
 
 impl Agent {
@@ -55,6 +59,8 @@ impl Agent {
             system_prompt: system_prompt.to_string(),
             live_prompt:     Cell::new(0),
             live_completion: Cell::new(0),
+            live_cached:     Cell::new(0),
+            live_cost:       Cell::new(0.0),
         }
     }
 
@@ -123,9 +129,13 @@ impl Agent {
                 session.messages.push(ChatMessage::Assistant { content, tool_calls: Vec::new() });
                 session.prompt_tokens += resp.prompt_tokens;
                 session.completion_tokens += resp.completion_tokens;
+                session.cached_tokens += resp.cached_tokens;
+                session.cost_usd += resp.cost_usd;
                 if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
                 self.live_prompt.set(session.prompt_tokens);
                 self.live_completion.set(session.completion_tokens);
+                self.live_cached.set(session.cached_tokens);
+                self.live_cost.set(session.cost_usd);
                 on_event(AgentEvent::Done);
                 Ok(())
             }
@@ -167,9 +177,16 @@ impl Agent {
             };
             session.prompt_tokens += resp.prompt_tokens;
             session.completion_tokens += resp.completion_tokens;
+            // Both are per ROUND, and a tool loop runs many: each round's prompt
+            // is the last one's plus a little, so the cache read and the reported
+            // cost accumulate exactly as the token counters do.
+            session.cached_tokens += resp.cached_tokens;
+            session.cost_usd += resp.cost_usd;
             if resp.prompt_tokens > 0 { session.last_prompt_tokens = resp.prompt_tokens; }
             self.live_prompt.set(session.prompt_tokens);
             self.live_completion.set(session.completion_tokens);
+            self.live_cached.set(session.cached_tokens);
+            self.live_cost.set(session.cost_usd);
 
             // Cancelled mid-stream: keep the partial answer already
             // streamed and end the turn cleanly, without an error.

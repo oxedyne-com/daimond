@@ -159,6 +159,19 @@
 	'models.err_bad_key':          '账户服务发来一个 Daimond 用不了的密钥。',
 	'models.err_no_key':           '那家提供商还没有密钥。',
 	'models.err_key_refused':      '提供商拒绝了这个密钥（HTTP {status}）。',
+	// 一把提供商密钥上还剩多少，以及这个数是怎么来的。手填的那一行故意不叫
+	// “余额”：它是用户自己报的数，减去估算出来的花费。
+	'models.credit_auto':          '这把密钥还剩 {amount} — 提供商在 {when} 是这么说的。',
+	'models.credit_manual':        '这把密钥还剩 {amount}：你在 {when} 报的 {base}，减去此后估算花掉的 {spent}。',
+	'models.credit_unknown':       '这把密钥还剩多少，无从得知。',
+	'models.credit_check':         '问问还剩多少',
+	'models.credit_recheck':       '再问一次',
+	'models.credit_probe_failed':  '{provider} 不肯说还剩多少。那就直接告诉 Daimond。',
+	'models.credit_base_ph':       '例如 12.50',
+	'models.credit_base_label':    '这把密钥现在有多少，以美元计',
+	'models.credit_base_set':      '我现在有这么多',
+	'models.credit_base_update':   '更新我填的数',
+	'models.credit_base_bad':      '这不是一个金额。请输入美元数字。',
 
 	// ── 额度、加油包与 Pro ─────────────────────────────────────
 	// 凡是会扣用户钱的地方，都要把美元说清楚。见 `billing.*`。
@@ -217,7 +230,16 @@
 	'chat.input_ph':       '输入消息…',
 	'chat.send':           '发送',
 	'chat.jump_help':      '跳回你最后发的那条消息。再按一次，可以继续往前翻。',
+	'chat.end_help':       '跳到聊天的最下面。',
 	'chat.new':            '+ 新建聊天',
+	// 回答还在往外吐时写下的消息。先握着、显示出来，等这条回答完了，
+	// 再一轮一条地发出去。故意写得短：手机上的输入框只有 120px 宽，
+	// 行一长就会折成两行并被截断。
+	'chat.queue_ph':       '写下一条消息…',
+	'chat.queue_help':     '排队中 — 这条回答结束后就发出',
+	'chat.queued_pending': '还没发出。点一下可以改。',
+	'chat.queue_cancel':   '不要发这条',
+	'chat.queue_returned': '这一轮没能走完，你排在后面的那条又回到了输入框里，没有发出去。',
 
 	// ── 网页面板 ───────────────────────────────────────────────
 	'web.who_drives': '现在谁在操作',
@@ -484,6 +506,15 @@
 	'sync.synced':     '已同步',
 	'sync.off':        '同步已关',
 	'sync.off_reason': '跨设备同步属于 Pro，这个账户没有。',
+	// 被退回的包裹。要说清楚什么太大，以及通常是什么弄大的。
+	'sync.too_big':        '同步已暂停',
+	'sync.too_big_reason': '这台设备的包裹太大，发不出去，它做的事就不再往外走了。通常是某个特别大的 Diamond 或工作区文件闹的 — 删掉它或让它小一点，同步会自己接上。',
+	'sync.last_synced':    '上次同步：{when}。',
+	'sync.last_never':     '这台设备还没有同步过任何东西。',
+	'sync.when_just_now':  '刚刚',
+	'sync.when_mins':      '{n} 分钟前',
+	'sync.when_hours':     '{n} 小时前',
+	'sync.when_days':      '{n} 天前',
 
 	// ── 关联第二台设备 ─────────────────────────────────────────
 	// 按钮名称外面的引号用中文的“”。
@@ -512,6 +543,9 @@
 	'pair.err_bundle_import':    '关联过来的身份无法导入。',
 	'pair.err_create':           '无法生成配对码。',
 	'pair.err_link':             '无法关联这台设备。',
+	// 外观设置的一次性交接。要说清楚这件事发生了，而且从现在起
+	// 这些就归这台设备自己了。
+	'pair.look_carried': '你的主题、语言和面板布局也一并带了过来。从这里开始，这台设备自己保管这些 — 改一边不会动到另一边。',
 
 	// ── 外观菜单 ───────────────────────────────────────────────
 	'menu.skin':          '皮肤',
@@ -600,6 +634,17 @@
 	'spend.col_turns':   '轮次',
 	'spend.col_tokens':  '词元',
 	'spend.col_cost':    '费用',
+	'spend.col_key':          '密钥',
+	'spend.col_left':         '剩余',
+	'spend.col_period_spend': '花费',
+	'spend.provider_keys':    '提供商密钥',
+	'spend.left_auto':        '提供商说这把密钥上还剩这些。',
+	'spend.left_manual':      '你自己报的数，减去 Daimond 估算你此后花掉的那一部分。',
+	'spend.left_unknown':     '这家提供商不说还剩多少，你也没有告诉 Daimond。',
+	'spend.all_reported':          '这段时间里的每一轮都带回了提供商给的费用，所以这是实际扣的钱，不是估算。',
+	'spend.part_reported':         '其中 {amount} 是提供商报回来的；其余按 Daimond 的价目表计算。',
+	'spend.none_reported':         '按 Daimond 的价目表计算 — 这些轮次没有任何提供商报回费用。',
+	'spend.none_reported_unknown': '按 Daimond 的价目表计算，而其中一个模型不在表里，所以这个数字只是个粗略的参考。',
 	'spend.col_when':    '时间',
 	'spend.col_what':    '项目',
 	'spend.col_amount':  '金额',
@@ -865,6 +910,16 @@
 	'tag.all_used':      '你的所有标签都已加到此 Diamond。',
 	'tag.none_yet':      '还没有标签。',
 	'tag.save_failed':   '无法保存标签',
+	// 从标签列表里删掉一个标签，它会从所有带着它的 Diamond 上取下来。
+	'tag.delete_help':        '把“{tag}”标签到处都删掉',
+	'tag.delete_title':       '删掉这个标签？',
+	'tag.delete_body_used.one':   '删掉“{tag}”标签？它挂在 {n} 个 Diamond 上，会从上面取下来。那个 Diamond 的其他地方不变。',
+	'tag.delete_body_used.other': '删掉“{tag}”标签？它挂在 {n} 个 Diamond 上，会从所有这些上面取下来。这些 Diamond 的其他地方不变。',
+	'tag.delete_body_unused': '删掉“{tag}”标签？它不在任何 Diamond 上，所以这只是把它从列表里去掉。',
+	'tag.delete_ok':          '删掉标签',
+	'tag.deleted':            '“{tag}”标签已删掉。',
+	'tag.deleted_from.one':   '已从 {n} 个 Diamond 上删掉“{tag}”标签。',
+	'tag.deleted_from.other': '已从 {n} 个 Diamond 上删掉“{tag}”标签。',
 	'tag.editor_note':   '标签用来在侧栏里给这个 Diamond 归档。它们从不发给模型，也从不进入晶体。',
 
 	// ── 开始与打断一轮 ─────────────────────────────────────────
@@ -899,6 +954,12 @@
 	'fold.proposing':        '正在拟折叠方案…',
 	'fold.diamond_gone':     'Diamond 不见了',
 	'fold.diamond_gone_body': '派出这个智能体的 Diamond 已经不存在了。',
+	'fold.diamond_gone_chat_body': '你选的那个 Diamond 已经不存在了 — 可能在另一个标签页里被删掉了。什么也没有折叠。',
+	'fold.empty_reply':      '模型没有返回任何可折叠的内容，所以没有提出任何改动。再试一次。',
+	'fold.proposed_toast':   '已提出折叠 — 在下面接受或拒绝。',
+	'fold.proposed_elsewhere': '已对“{diamond}”提出折叠 — 打开它来接受或拒绝。',
+	'fold.pending_badge':    '折叠待处理',
+	'fold.pending_badge_help': '这个 Diamond 上有一个提出的折叠在等着。打开它来接受或拒绝这处改动。',
 	// 折叠差异的标题。做成四种句式而不是一句加拼接，因为把目标放在前面的语言
 	// 没法重排一个片段。
 	'diff.folding_chat':      '正在折叠“{chat}” — 看一下改动，然后接受或拒绝。',
@@ -1073,6 +1134,15 @@
 	'files.fetch':           '取回',
 	'files.fetch_body':      '把“{path}”取到这台设备上？这会下载 {size}。',
 	'files.fetching':        '正在取回 {path}…',
+	// 智能体干活的地方 — 根目录，以及它的范围。换根目录和在浏览器沙盒
+	// 与磁盘之间切换，是两件不同的事。
+	'files.change_root':      '换个文件夹…',
+	'files.change_root_help': '把智能体指向这台机器上的另一个文件夹',
+	'files.machine_scope':    '智能体只在 {name} 里面干活。这个文件夹以上或以外的东西，Daimond 都看不到。',
+	'files.machine_return':   '让智能体回到 {name} 里干活',
+	'files.forget_root':      '忘掉这个文件夹',
+	'files.forget_root_help': '不再提供这个文件夹。Daimond 不会留下它的任何记录，下次你要重新挑一个。',
+	'files.root_forgotten':   '已忘掉。Daimond 不再留有那个文件夹的记录。',
 
 	// ── 读一封邮件 ─────────────────────────────────────────────
 	'msg.unknown_sender':    '（未知发件人）',

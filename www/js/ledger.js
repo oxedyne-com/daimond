@@ -68,30 +68,48 @@
 	///   promptTokens     — input tokens.
 	///   completionTokens — output tokens.
 	///   cachedTokens     — cached-input tokens (subset of prompt).
+	///   costUsd          — what the PROVIDER said the turn cost.
+	///   provider         — provider id, for a per-key breakdown.
 	///
-	/// The stored entry is compact: `{ t, m, p, c, ca, u }` where
-	/// `u` is the computed USD cost. Returns the entry, or null
-	/// when the input is unusable.
+	/// A reported `costUsd` is stored VERBATIM and the entry is
+	/// flagged `r`. It is the money that actually moved, so nothing
+	/// re-derives it: pricing a turn from token counts and a rate
+	/// table is a guess about a router's negotiated price and a
+	/// cache discount, and that guess ran about six times high.
+	/// Absent a reported figure the table prices it as before, now
+	/// with the real cached count.
+	///
+	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e }`
+	/// where `u` is USD. Returns the entry, or null when the input is
+	/// unusable.
 	function record(turn) {
 		if (!turn || typeof turn.ts !== 'number') return null;
 		var model = turn.model || '';
+		var provider = turn.provider || '';
 		var p = Math.max(0, turn.promptTokens || 0);
 		var c = Math.max(0, turn.completionTokens || 0);
 		var ca = Math.max(0, turn.cachedTokens || 0);
+		var reported = (typeof turn.costUsd === 'number' && isFinite(turn.costUsd)
+			&& turn.costUsd > 0) ? turn.costUsd : null;
 
-		// Price through DaimondPricing; if it is somehow absent, record
-		// a zero-cost entry rather than throwing (tokens are kept).
 		var usd = 0, estimated = false;
-		if (window.DaimondPricing && typeof window.DaimondPricing.priceFor === 'function') {
-			var res = window.DaimondPricing.priceFor(model, p, c, ca);
+		if (reported !== null) {
+			usd = reported;
+		} else if (window.DaimondPricing && typeof window.DaimondPricing.priceFor === 'function') {
+			// Price through DaimondPricing; if it is somehow absent, record
+			// a zero-cost entry rather than throwing (tokens are kept).
+			var res = window.DaimondPricing.priceFor(model, p, c, ca, provider);
 			usd = (res && typeof res.usd === 'number') ? res.usd : 0;
 			estimated = !!(res && res.estimated);
 		}
 
-		// `e` marks a cost the pricing table could only estimate (the model was
-		// not in it), so a total containing one can be shown as approximate
-		// rather than stated as fact.
+		// `e` marks a cost nobody published a rate for, so a total containing one
+		// can be shown as approximate rather than stated as fact. `r` marks the
+		// opposite and stronger case: the provider said what it charged, so the
+		// figure is not an approximation at all and must not be dressed as one.
 		var entry = { t: turn.ts, m: model, p: p, c: c, ca: ca, u: usd, e: estimated };
+		if (provider) entry.pv = provider;
+		if (reported !== null) entry.r = 1;
 		var entries = load();
 		entries.push(entry);
 		entries = prune(entries, turn.ts);
@@ -112,15 +130,22 @@
 			.sort(function (a, b) { return a.t - b.t; });
 	}
 
-	// Sum a slice of entries into `{ usd, tokens }`.
+	// Sum a slice of entries into `{ usd, tokens, estimated, reportedUsd }`.
+	//
+	// `reportedUsd` is the part of the total the providers themselves stated.
+	// A caller can then say which it is holding: equal to `usd` means every
+	// turn in the window came with a bill, and there is nothing approximate
+	// about it. Old entries carry no `r`, so they count as priced -- which is
+	// what they were.
 	function sum(slice) {
-		var usd = 0, tokens = 0, estimated = false;
+		var usd = 0, tokens = 0, estimated = false, reportedUsd = 0;
 		for (var i = 0; i < slice.length; i++) {
 			usd += slice[i].u || 0;
 			tokens += tokensOf(slice[i]);
 			if (slice[i].e) estimated = true;
+			if (slice[i].r) reportedUsd += slice[i].u || 0;
 		}
-		return { usd: usd, tokens: tokens, estimated: estimated };
+		return { usd: usd, tokens: tokens, estimated: estimated, reportedUsd: reportedUsd };
 	}
 
 	// The current session: walk the sorted log back from the most
@@ -170,10 +195,45 @@
 		for (var i = 0; i < slice.length; i++) {
 			var e = slice[i];
 			var m = e.m || '';
-			if (!by[m]) by[m] = { model: m, usd: 0, tokens: 0, turns: 0 };
+			if (!by[m]) by[m] = { model: m, usd: 0, tokens: 0, turns: 0, reportedUsd: 0 };
 			by[m].usd += e.u || 0;
 			by[m].tokens += tokensOf(e);
 			by[m].turns += 1;
+			if (e.r) by[m].reportedUsd += e.u || 0;
+		}
+		var out = [];
+		for (var k in by) out.push(by[k]);
+		out.sort(function (a, b) { return b.usd - a.usd; });
+		return out;
+	}
+
+	/// Per-provider breakdown from `since` (epoch-ms) to now.
+	///
+	/// This is what a manual credit tally counts down: the user says
+	/// "I had $12 as of now", and what they have left is that figure
+	/// minus everything spent on that provider's key SINCE that
+	/// moment. So the window is an explicit instant, not one of the
+	/// named periods -- a rolling month cannot answer the question.
+	///
+	/// Entries written before providers were recorded carry no `pv`
+	/// and are grouped under `''`; a caller asking about a named
+	/// provider therefore never sees them, which is right, since
+	/// nothing knows whose key they spent.
+	///
+	/// Returns `[{ provider, usd, tokens, turns, reportedUsd }]`,
+	/// dearest first. Reads no clock: `since` is the whole window.
+	function perProvider(sinceMs) {
+		var from = (typeof sinceMs === 'number' && isFinite(sinceMs)) ? sinceMs : 0;
+		var slice = since(load(), from);
+		var by = {};	// provider id → accumulator
+		for (var i = 0; i < slice.length; i++) {
+			var e = slice[i];
+			var pv = e.pv || '';
+			if (!by[pv]) by[pv] = { provider: pv, usd: 0, tokens: 0, turns: 0, reportedUsd: 0 };
+			by[pv].usd += e.u || 0;
+			by[pv].tokens += tokensOf(e);
+			by[pv].turns += 1;
+			if (e.r) by[pv].reportedUsd += e.u || 0;
 		}
 		var out = [];
 		for (var k in by) out.push(by[k]);
@@ -234,11 +294,12 @@
 	}
 
 	window.DaimondLedger = {
-		record:   record,
-		totals:   totals,
-		perModel: perModel,
-		series:   series,
-		samples:  samples,
-		clear:    clear,
+		record:      record,
+		totals:      totals,
+		perModel:    perModel,
+		perProvider: perProvider,
+		series:      series,
+		samples:     samples,
+		clear:       clear,
 	};
 })();

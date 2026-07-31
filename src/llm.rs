@@ -64,12 +64,35 @@ pub struct LlmClient {
     abort: std::rc::Rc<std::cell::RefCell<Option<web_sys::AbortController>>>,
 }
 
+/// The `usage` block a provider reports for a call.
+///
+/// The token counts were always read; the other two are what the provider
+/// says about its own billing, and are worth strictly more than any estimate
+/// made from them.  A router charges its own negotiated rate, and a prompt
+/// cache read is a fraction of a fresh one -- neither is visible in a token
+/// count, so pricing from tokens alone overstated spend several-fold.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Usage {
+    pub prompt:     u64,
+    pub completion: u64,
+    /// Prompt tokens served from the provider's cache, a subset of `prompt`.
+    pub cached:     u64,
+    /// What the provider says the call actually cost, in USD.  Zero means it
+    /// said nothing, never that the call was free.
+    pub cost_usd:   f64,
+}
+
 /// The response from a completed streaming chat call.
 #[derive(Clone, Debug, Default)]
 pub struct ChatResponse {
     pub content:           String,
     pub prompt_tokens:     u64,
     pub completion_tokens: u64,
+    /// Prompt tokens the provider served from its cache.
+    pub cached_tokens:     u64,
+    /// What the provider says this call cost, in USD; `0.0` when it did not
+    /// say.  An aborted stream may never deliver the usage chunk at all.
+    pub cost_usd:          f64,
     /// Set when the turn was cancelled mid-stream (browser abort).  The
     /// `content` then holds whatever streamed before the cancellation, so
     /// the caller keeps the partial answer rather than reporting an error.
@@ -85,6 +108,11 @@ pub struct ChatOnceResponse {
     pub tool_calls:        Vec<ToolCall>,
     pub prompt_tokens:     u64,
     pub completion_tokens: u64,
+    /// Prompt tokens the provider served from its cache.
+    pub cached_tokens:     u64,
+    /// What the provider says this call cost, in USD; see
+    /// [`ChatResponse::cost_usd`].
+    pub cost_usd:          f64,
     /// Set when the turn was cancelled mid-stream (browser abort); see
     /// [`ChatResponse::aborted`].
     pub aborted:           bool,
@@ -171,22 +199,20 @@ impl LlmClient {
     ) -> Outcome<ChatResponse> {
         let body = self.build_request_body(messages);
         let mut full = String::new();
-        let mut pt = 0u64;
-        let mut ct = 0u64;
+        let mut use_ = Usage::default();
         let aborted = res!(self.stream_sse(&body, &mut |data| {
             if let Some(content) = extract_json_string(data, "content") {
                 on_token(&content);
                 full.push_str(&content);
             }
-            if let Some(usage) = find_json_object(data, "usage") {
-                if let Some(p) = extract_json_number(&usage, "prompt_tokens") { pt = p; }
-                if let Some(c) = extract_json_number(&usage, "completion_tokens") { ct = c; }
-            }
+            if let Some(u) = parse_usage(data) { use_ = u; }
         }).await);
         Ok(ChatResponse {
             content:           full,
-            prompt_tokens:     pt,
-            completion_tokens: ct,
+            prompt_tokens:     use_.prompt,
+            completion_tokens: use_.completion,
+            cached_tokens:     use_.cached,
+            cost_usd:          use_.cost_usd,
             aborted,
         })
     }
@@ -225,13 +251,15 @@ impl LlmClient {
     ) -> Outcome<ChatOnceResponse> {
         let body = self.build_body(messages, tools, false);
         let raw = res!(self.do_request_full(&body).await);
-        let (content, tool_calls, pt, ct) = parse_full_response(&raw);
+        let (content, tool_calls, use_) = parse_full_response(&raw);
         Ok(ChatOnceResponse {
             content,
             tool_calls,
-            prompt_tokens: pt,
-            completion_tokens: ct,
-            aborted: false,
+            prompt_tokens:     use_.prompt,
+            completion_tokens: use_.completion,
+            cached_tokens:     use_.cached,
+            cost_usd:          use_.cost_usd,
+            aborted:           false,
         })
     }
 
@@ -869,12 +897,11 @@ impl<S: tokio::io::AsyncRead + Unpin> LineReader<S> {
 /// needing a full JSON parser.  Escaped quotes inside content are
 /// handled by scanning for the matching unescaped quote.
 pub fn parse_sse_stream(body: &[u8], on_token: &mut impl FnMut(&str))
-    -> (String, u64, u64)
+    -> (String, Usage)
 {
     let text = String::from_utf8_lossy(body);
     let mut full = String::new();
-    let mut prompt_tokens = 0u64;
-    let mut completion_tokens = 0u64;
+    let mut use_ = Usage::default();
 
     for line in text.lines() {
         let line = line.trim();
@@ -892,17 +919,45 @@ pub fn parse_sse_stream(body: &[u8], on_token: &mut impl FnMut(&str))
         }
         // Extract usage from the final chunk:
         // {"choices":[],"usage":{"prompt_tokens":13,"completion_tokens":200}}
-        if let Some(usage_str) = find_json_object(data, "usage") {
-            if let Some(pt) = extract_json_number(&usage_str, "prompt_tokens") {
-                prompt_tokens = pt;
-            }
-            if let Some(ct) = extract_json_number(&usage_str, "completion_tokens") {
-                completion_tokens = ct;
-            }
+        if let Some(u) = parse_usage(data) {
+            use_ = u;
         }
     }
 
-    (full, prompt_tokens, completion_tokens)
+    (full, use_)
+}
+
+/// Read a `usage` object out of a whole response body or one SSE chunk,
+/// returning `None` when the chunk carries none.
+///
+/// Intermediate streamed chunks send `"usage":null`, which is not an object
+/// and so reads as absent rather than as a zeroed usage -- otherwise the last
+/// chunk before `[DONE]` would erase what the usage chunk reported.
+///
+/// # Arguments
+/// * `json` - A response body, or one SSE `data:` payload.
+pub(crate) fn parse_usage(json: &str) -> Option<Usage> {
+    let usage = match find_json_object(json, "usage") {
+        Some(u) => u,
+        None    => return None,
+    };
+    let mut u = Usage::default();
+    if let Some(p) = extract_json_number(&usage, "prompt_tokens")     { u.prompt     = p; }
+    if let Some(c) = extract_json_number(&usage, "completion_tokens") { u.completion = c; }
+    // Cache reads live in a nested `prompt_tokens_details`; a provider that
+    // flattens the field is read too, so neither shape is missed.  A cache read
+    // bills at a fraction of a fresh prompt token, and in an agentic tool loop
+    // -- where every round's prompt is the last round's plus a little -- it is
+    // most of the prompt, so counting it at the full input rate was the single
+    // largest source of overstatement.
+    u.cached = match find_json_object(&usage, "prompt_tokens_details") {
+        Some(d) => extract_json_number(&d, "cached_tokens").unwrap_or(0),
+        None    => extract_json_number(&usage, "cached_tokens").unwrap_or(0),
+    };
+    // What the provider actually drew.  This is money, not an estimate, and it
+    // supersedes anything the price table would have guessed.
+    if let Some(c) = extract_json_f64(&usage, "cost") { u.cost_usd = c; }
+    Some(u)
 }
 
 /// Extract a JSON object value for a key from a JSON string.
@@ -968,6 +1023,46 @@ pub(crate) fn extract_json_number(json: &str, key: &str) -> Option<u64> {
         end += 1;
     }
     json[start..end].parse::<u64>().ok()
+}
+
+/// Extract a fractional numeric value for a key from a JSON string.
+///
+/// [`extract_json_number`] stops at the first non-digit, so it reads `0.0021`
+/// as `0` -- which silently priced every reported cost at nothing.  This scans
+/// the whole JSON number grammar: sign, digits, decimal point and exponent.
+///
+/// # Arguments
+/// * `json` - The JSON text to scan.
+/// * `key` - The key whose value is wanted.
+pub(crate) fn extract_json_f64(json: &str, key: &str) -> Option<f64> {
+    let needle = fmt!("\"{}\":", key);
+    let pos = match json.find(&needle) {
+        Some(p) => p,
+        None    => return None,
+    };
+    let bytes = json.as_bytes();
+    let mut start = pos + needle.len();
+    // Skip whitespace, and an opening quote for a provider that sends the
+    // figure as a string.
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    if start < bytes.len() && bytes[start] == b'"' {
+        start += 1;
+    }
+    let mut end = start;
+    while end < bytes.len() {
+        let b = bytes[end];
+        let numeric = b.is_ascii_digit()
+            || b == b'.'
+            || b == b'-'
+            || b == b'+'
+            || b == b'e'
+            || b == b'E';
+        if !numeric { break; }
+        end += 1;
+    }
+    json[start..end].parse::<f64>().ok()
 }
 
 /// Extract a boolean value for a key from a JSON string.
@@ -1200,8 +1295,8 @@ fn message_to_json(msg: &ChatMessage) -> String {
 }
 
 /// Parse a non-streaming chat completion body into
-/// `(content, tool_calls, prompt_tokens, completion_tokens)`.
-fn parse_full_response(body: &str) -> (String, Vec<ToolCall>, u64, u64) {
+/// `(content, tool_calls, usage)`.
+fn parse_full_response(body: &str) -> (String, Vec<ToolCall>, Usage) {
     // Scope content extraction to before "tool_calls" so we don't pick
     // up a "content" key inside a tool call's arguments.
     let scope_end = body.find("\"tool_calls\"").unwrap_or(body.len());
@@ -1221,13 +1316,7 @@ fn parse_full_response(body: &str) -> (String, Vec<ToolCall>, u64, u64) {
         }
     }
 
-    let mut pt = 0u64;
-    let mut ct = 0u64;
-    if let Some(usage) = find_json_object(body, "usage") {
-        pt = extract_json_number(&usage, "prompt_tokens").unwrap_or(0);
-        ct = extract_json_number(&usage, "completion_tokens").unwrap_or(0);
-    }
-    (content, tool_calls, pt, ct)
+    (content, tool_calls, parse_usage(body).unwrap_or_default())
 }
 
 
@@ -1259,8 +1348,9 @@ struct StreamCall {
 #[derive(Default)]
 struct StreamAcc {
     content:           String,
-    prompt_tokens:     u64,
-    completion_tokens: u64,
+    /// The last usage block the stream reported.  An aborted stream may never
+    /// deliver one, which leaves this at its default rather than erroring.
+    usage:             Usage,
     calls:             Vec<StreamCall>,
 }
 
@@ -1315,13 +1405,8 @@ impl StreamAcc {
         }
 
         // Usage — present on the final chunk when include_usage is set.
-        if let Some(usage) = find_json_object(data, "usage") {
-            if let Some(pt) = extract_json_number(&usage, "prompt_tokens") {
-                self.prompt_tokens = pt;
-            }
-            if let Some(ct) = extract_json_number(&usage, "completion_tokens") {
-                self.completion_tokens = ct;
-            }
+        if let Some(u) = parse_usage(data) {
+            self.usage = u;
         }
     }
 
@@ -1340,8 +1425,10 @@ impl StreamAcc {
         ChatOnceResponse {
             content:           self.content,
             tool_calls,
-            prompt_tokens:     self.prompt_tokens,
-            completion_tokens: self.completion_tokens,
+            prompt_tokens:     self.usage.prompt,
+            completion_tokens: self.usage.completion,
+            cached_tokens:     self.usage.cached,
+            cost_usd:          self.usage.cost_usd,
             aborted,
         }
     }
@@ -1518,6 +1605,67 @@ pub mod tests {
     }
 
     #[test]
+    fn test_extract_json_f64() {
+        // The case that made a reported cost read as free: `extract_json_number`
+        // stops at the '.', so `0.0021` was 0.
+        assert_eq!(extract_json_number(r#"{"cost":0.0021}"#, "cost"), Some(0));
+        assert_eq!(extract_json_f64(r#"{"cost":0.0021}"#, "cost"), Some(0.0021));
+        // Whitespace, exponents both ways, a negative, and a quoted figure.
+        assert_eq!(extract_json_f64(r#"{"cost": 1.5}"#, "cost"), Some(1.5));
+        assert_eq!(extract_json_f64(r#"{"cost":2.1e-5}"#, "cost"), Some(2.1e-5));
+        assert_eq!(extract_json_f64(r#"{"cost":3E+2}"#, "cost"), Some(300.0));
+        assert_eq!(extract_json_f64(r#"{"cost":-0.5,"x":1}"#, "cost"), Some(-0.5));
+        assert_eq!(extract_json_f64(r#"{"cost":"0.0021"}"#, "cost"), Some(0.0021));
+        // A whole number is still a number, and an absent key is still absent.
+        assert_eq!(extract_json_f64(r#"{"cost":0}"#, "cost"), Some(0.0));
+        assert_eq!(extract_json_f64(r#"{"total":1.0}"#, "cost"), None);
+        // A longer key that merely ends in the wanted one is not it.
+        assert_eq!(extract_json_f64(r#"{"upstream_inference_cost":9.0}"#, "cost"), None);
+    }
+
+    #[test]
+    fn test_parse_usage_openrouter() {
+        // The shape OpenRouter actually returns: authoritative cost, and the
+        // cache read nested under `prompt_tokens_details`.
+        let body = r#"{"id":"gen-1","choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":10240,"completion_tokens":128,"total_tokens":10368,"cost":0.0021,"cost_details":{"upstream_inference_cost":null},"prompt_tokens_details":{"cached_tokens":9216},"completion_tokens_details":{"reasoning_tokens":0}}}"#;
+        let u = match parse_usage(body) {
+            Some(u) => u,
+            None    => panic!("usage not found"),
+        };
+        assert_eq!(u.prompt, 10240);
+        assert_eq!(u.completion, 128);
+        assert_eq!(u.cached, 9216);
+        assert_eq!(u.cost_usd, 0.0021);
+    }
+
+    #[test]
+    fn test_parse_usage_absent_and_null() {
+        // No usage at all, and the `"usage":null` every intermediate streamed
+        // chunk carries: both must read as absent, so the usage chunk that came
+        // before is not erased by the chunk that follows it.
+        assert!(parse_usage(r#"{"choices":[{"delta":{"content":"x"}}]}"#).is_none());
+        assert!(parse_usage(r#"{"choices":[{"delta":{}}],"usage":null}"#).is_none());
+        // A provider reporting only tokens leaves cost and cache at zero, which
+        // is "it did not say", never "it was free".
+        let u = match parse_usage(r#"{"usage":{"prompt_tokens":4,"completion_tokens":2}}"#) {
+            Some(u) => u,
+            None    => panic!("usage not found"),
+        };
+        assert_eq!(u.cached, 0);
+        assert_eq!(u.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn test_parse_usage_flat_cached() {
+        // A provider that flattens the cache read onto `usage` is read too.
+        let u = match parse_usage(r#"{"usage":{"prompt_tokens":100,"cached_tokens":80}}"#) {
+            Some(u) => u,
+            None    => panic!("usage not found"),
+        };
+        assert_eq!(u.cached, 80);
+    }
+
+    #[test]
     fn test_extract_json_string_escaped() {
         let json = r#"{"choices":[{"delta":{"content":"hello \"world\""}}]}"#;
         assert_eq!(extract_json_string(json, "content"), Some("hello \"world\"".to_string()));
@@ -1533,7 +1681,7 @@ pub mod tests {
     fn test_parse_sse_simple() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\ndata: [DONE]\n";
         let mut tokens = Vec::new();
-        let (full, _pt, _ct) = parse_sse_stream(sse.as_bytes(), &mut |t| tokens.push(t.to_string()));
+        let (full, _use) = parse_sse_stream(sse.as_bytes(), &mut |t| tokens.push(t.to_string()));
         assert_eq!(tokens, vec!["Hello", " world"]);
         assert_eq!(full, "Hello world");
     }
@@ -1542,7 +1690,7 @@ pub mod tests {
     fn test_parse_sse_empty_lines() {
         let sse = "\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\r\n\r\ndata: [DONE]\r\n";
         let mut tokens = Vec::new();
-        let (full, _pt, _ct) = parse_sse_stream(sse.as_bytes(), &mut |t| tokens.push(t.to_string()));
+        let (full, _use) = parse_sse_stream(sse.as_bytes(), &mut |t| tokens.push(t.to_string()));
         assert_eq!(tokens, vec!["Hi"]);
         assert_eq!(full, "Hi");
     }
@@ -1553,14 +1701,14 @@ pub mod tests {
     #[test]
     fn test_parse_full_response_tool_calls() {
         let body = r#"{"choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"a.txt\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":8}}"#;
-        let (content, calls, pt, ct) = parse_full_response(body);
+        let (content, calls, use_) = parse_full_response(body);
         assert_eq!(content, "");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "file_read");
         assert_eq!(calls[0].arguments, r#"{"path":"a.txt"}"#);
-        assert_eq!(pt, 12);
-        assert_eq!(ct, 8);
+        assert_eq!(use_.prompt, 12);
+        assert_eq!(use_.completion, 8);
     }
 
     #[test]
@@ -1576,13 +1724,13 @@ pub mod tests {
     fn test_parse_full_response_spaced() {
         // Whitespace after colons, as real APIs emit.
         let body = r#"{"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "file_write", "arguments": "{\"path\": \"a.txt\", \"content\": \"hi\"}"}}]}}], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}"#;
-        let (content, calls, pt, ct) = parse_full_response(body);
+        let (content, calls, use_) = parse_full_response(body);
         assert_eq!(content, "");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "file_write");
         assert_eq!(calls[0].arguments, r#"{"path": "a.txt", "content": "hi"}"#);
-        assert_eq!(pt, 4);
-        assert_eq!(ct, 2);
+        assert_eq!(use_.prompt, 4);
+        assert_eq!(use_.completion, 2);
         // And the tool can extract the spaced args.
         assert_eq!(extract_json_string(&calls[0].arguments, "path"), Some("a.txt".to_string()));
     }
@@ -1590,17 +1738,17 @@ pub mod tests {
     #[test]
     fn test_parse_full_response_text() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"Hello there."},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
-        let (content, calls, pt, ct) = parse_full_response(body);
+        let (content, calls, use_) = parse_full_response(body);
         assert_eq!(content, "Hello there.");
         assert!(calls.is_empty());
-        assert_eq!(pt, 5);
-        assert_eq!(ct, 3);
+        assert_eq!(use_.prompt, 5);
+        assert_eq!(use_.completion, 3);
     }
 
     #[test]
     fn test_parse_full_response_two_calls() {
         let body = r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"file_list","arguments":"{}"}},{"id":"c2","type":"function","function":{"name":"shell","arguments":"{\"command\":\"ls\"}"}}]}}]}"#;
-        let (_c, calls, _p, _ct) = parse_full_response(body);
+        let (_c, calls, _use) = parse_full_response(body);
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "file_list");
         assert_eq!(calls[1].name, "shell");
@@ -1631,6 +1779,23 @@ pub mod tests {
         assert_eq!(resp.prompt_tokens, 7);
         assert_eq!(resp.completion_tokens, 3);
         assert!(!resp.aborted);
+        // Nothing said about cost or caching, so nothing is claimed.
+        assert_eq!(resp.cached_tokens, 0);
+        assert_eq!(resp.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn test_stream_acc_reported_cost_survives_later_chunks() {
+        // The usage chunk arrives, and a `"usage":null` chunk follows it before
+        // `[DONE]`.  The reported figures must survive that.
+        let (resp, _tokens) = run_stream(&[
+            r#"{"choices":[{"delta":{"content":"ok"}}],"usage":null}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":8192,"completion_tokens":64,"cost":0.0021,"prompt_tokens_details":{"cached_tokens":7168}}}"#,
+            r#"{"choices":[{"delta":{}}],"usage":null}"#,
+        ]);
+        assert_eq!(resp.prompt_tokens, 8192);
+        assert_eq!(resp.cached_tokens, 7168);
+        assert_eq!(resp.cost_usd, 0.0021);
     }
 
     #[test]

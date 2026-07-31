@@ -20,7 +20,15 @@
 //   @tool <name> <json>      one tool call, then a text reply once it returns
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
-//   @usage <in> <out>        reply reporting those token counts (the meter)
+//   @usage <in> <out> [cost] [cached]
+//                            reply reporting those token counts, and -- when the
+//                            trailing two are given -- the USD the provider says
+//                            the call cost and the prompt tokens it served from
+//                            its cache. The trailing pair is what a router
+//                            actually sends (`cost`, and `cached_tokens` nested
+//                            in `prompt_tokens_details`), and it is the only way
+//                            a test can prove the app bills the REPORTED figure
+//                            rather than its own table's guess.
 //   @err <code>              fail with that HTTP status (the error path)
 //   @slow <ms>               reply after a delay
 //
@@ -130,8 +138,15 @@ const plan = (messages) => {
 		}
 
 		case 'usage': {
-			const [i, o] = d.rest.split(/\s+/).map(Number);
-			return { text: 'Counted.', usage: { prompt_tokens: i || 100, completion_tokens: o || 50 } };
+			const [i, o, cost, cached] = d.rest.split(/\s+/).map(Number);
+			const usage = { prompt_tokens: i || 100, completion_tokens: o || 50 };
+			// Only when asked for. A `cost` of zero means "nobody said", and an
+			// unconditional `cost: 0` would make every @usage turn claim the
+			// provider had reported the call as free.
+			if (isFinite(cost) && cost > 0) usage.cost = cost;
+			// Where a router puts it: nested, not alongside the token counts.
+			if (isFinite(cached) && cached > 0) usage.prompt_tokens_details = { cached_tokens: cached };
+			return { text: 'Counted.', usage };
 		}
 
 		case 'err':

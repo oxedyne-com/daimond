@@ -161,7 +161,16 @@
 	'chat.input_ph': 'Escribe un mensaje…',
 	'chat.send': 'Enviar',
 	'chat.jump_help': 'Vuelve a tu último mensaje. Púlsalo otra vez para ir recorriendo los anteriores.',
+	'chat.end_help': 'Salta al final del chat.',
 	'chat.new': '+ Nuevo chat',
+	// Messages typed while an answer is still arriving. They are held, shown, and
+	// sent one turn each once the answer is finished. Short on purpose: a phone’s
+	// composer is ~120px wide, and a longer line wraps to two clipped rows.
+	'chat.queue_ph': 'Escribe el siguiente mensaje…',
+	'chat.queue_help': 'En espera: se envía cuando termine esta respuesta',
+	'chat.queued_pending': 'Todavía no se ha enviado. Haz clic para editarlo.',
+	'chat.queue_cancel': 'No enviar esto',
+	'chat.queue_returned': 'Ese turno no llegó a terminar, así que lo que dejaste en espera ha vuelto al cuadro, sin enviar.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Quién conduce',
@@ -362,6 +371,15 @@
 	'sync.synced': 'Sincronizado',
 	'sync.off': 'Sincronización desactivada',
 	'sync.off_reason': 'La sincronización entre dispositivos es parte de Pro, que esta cuenta no tiene.',
+	// A refused parcel. Say what is too large, and what usually makes it so.
+	'sync.too_big': 'Sincronización en pausa',
+	'sync.too_big_reason': 'El paquete de este dispositivo es demasiado grande para enviarlo, así que su trabajo ha dejado de viajar. Lo normal es que la causa sea un Diamond o un archivo del espacio de trabajo muy grande: quítalo o redúcelo y la sincronización se reanuda sola.',
+	'sync.last_synced': 'Última sincronización {when}.',
+	'sync.last_never': 'Todavía no se ha sincronizado nada desde este dispositivo.',
+	'sync.when_just_now': 'ahora mismo',
+	'sync.when_mins': 'hace {n} min',
+	'sync.when_hours': 'hace {n} h',
+	'sync.when_days': 'hace {n} d',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Vincular otro dispositivo',
@@ -389,6 +407,9 @@
 	'pair.err_bundle_import': 'No se ha podido importar la identidad vinculada.',
 	'pair.err_create': 'No se ha podido crear un código de vinculación.',
 	'pair.err_link': 'No se ha podido vincular este dispositivo.',
+	// The one-time presentation handover. Say that it happened and that it is
+	// this device’s own from now on.
+	'pair.look_carried': 'Tu tema, tu idioma y la disposición de los paneles también han venido. A partir de aquí este dispositivo tiene los suyos: cambia uno sin tocar el otro.',
 
 	// ── The appearance menu ────────────────────────────────────
 	'menu.skin': 'Estilo',
@@ -474,6 +495,17 @@
 	'spend.col_turns': 'Turnos',
 	'spend.col_tokens': 'Tokens',
 	'spend.col_cost': 'Coste',
+	'spend.col_key': 'Clave',
+	'spend.col_left': 'Queda',
+	'spend.col_period_spend': 'Gastado',
+	'spend.provider_keys': 'Claves de proveedor',
+	'spend.left_auto': 'Lo que el proveedor dice que queda en esta clave.',
+	'spend.left_manual': 'Tu propia cifra, descontando lo que Daimond calcula que has gastado desde entonces.',
+	'spend.left_unknown': 'Este proveedor no dice qué queda, y tú no se lo has dicho a Daimond.',
+	'spend.all_reported': 'Todos los turnos de este periodo vinieron con un coste del proveedor, así que esto es lo que se cobró, no una estimación.',
+	'spend.part_reported': 'De esto, {amount} lo informaron los proveedores; el resto está calculado con la tabla de tarifas de Daimond.',
+	'spend.none_reported': 'Calculado con la tabla de tarifas de Daimond: ningún proveedor informó de un coste para estos turnos.',
+	'spend.none_reported_unknown': 'Calculado con la tabla de tarifas de Daimond, y uno de estos modelos no está en ella, así que la cifra es solo una guía aproximada.',
 	'spend.col_when': 'Cuándo',
 	'spend.col_what': 'Qué',
 	'spend.col_amount': 'Importe',
@@ -554,6 +586,19 @@
 	'models.err_bad_key': 'El servicio de cuentas envió una clave que Daimond no puede usar.',
 	'models.err_no_key': 'Ese proveedor todavía no tiene clave.',
 	'models.err_key_refused': 'El proveedor rechazó la clave (HTTP {status}).',
+	// What is left on a provider key, and how that is known. The manual line is
+	// deliberately not called a balance: it is the user’s own figure less an estimate.
+	'models.credit_auto': 'Quedan {amount} en esta clave — el proveedor lo dijo el {when}.',
+	'models.credit_manual': 'Quedan {amount}: tu cifra de {base} del {when}, menos unos {spent} gastados desde entonces.',
+	'models.credit_unknown': 'No se sabe nada de lo que queda en esta clave.',
+	'models.credit_check': 'Preguntar qué queda',
+	'models.credit_recheck': 'Volver a preguntar',
+	'models.credit_probe_failed': '{provider} no ha querido decir qué queda. Díselo tú a Daimond.',
+	'models.credit_base_ph': 'p. ej. 12.50',
+	'models.credit_base_label': 'Lo que hay ahora en esta clave, en dólares estadounidenses',
+	'models.credit_base_set': 'Tengo esto, a día de hoy',
+	'models.credit_base_update': 'Actualizar mi cifra',
+	'models.credit_base_bad': 'Eso no es un importe. Escribe un número de dólares estadounidenses.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Conduces tú. Yo me he parado en {where}.',
@@ -831,6 +876,16 @@
 	'tag.all_used': 'Todas tus etiquetas ya están en este Diamond.',
 	'tag.none_yet': 'Todavía no hay etiquetas.',
 	'tag.save_failed': 'No se pudieron guardar las etiquetas',
+	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
+	'tag.delete_help': 'Borrar la etiqueta «{tag}» en todas partes',
+	'tag.delete_title': '¿Borrar esta etiqueta?',
+	'tag.delete_body_used.one': '¿Borrar la etiqueta «{tag}»? Está en {n} Diamond y se le quitará. No cambia nada más de ese Diamond.',
+	'tag.delete_body_used.other': '¿Borrar la etiqueta «{tag}»? Está en {n} Diamonds y se les quitará a todos. No cambia nada más de esos Diamonds.',
+	'tag.delete_body_unused': '¿Borrar la etiqueta «{tag}»? No está en ningún Diamond, así que esto solo la quita de la lista.',
+	'tag.delete_ok': 'Borrar la etiqueta',
+	'tag.deleted': 'Etiqueta «{tag}» borrada.',
+	'tag.deleted_from.one': 'Etiqueta «{tag}» borrada de {n} Diamond.',
+	'tag.deleted_from.other': 'Etiqueta «{tag}» borrada de {n} Diamonds.',
 	'tag.editor_note': 'Las etiquetas ordenan este Diamond en la barra lateral. Nunca se envían a un modelo ni entran en el cristal.',
 
 	// ── Starting and interrupting a turn ───────────────────────
@@ -863,6 +918,12 @@
 	'fold.proposing': 'Proponiendo el plegado…',
 	'fold.diamond_gone': 'El Diamond ya no está',
 	'fold.diamond_gone_body': 'El Diamond que despachó a este agente ya no existe.',
+	'fold.diamond_gone_chat_body': 'El Diamond que elegiste ya no existe: puede que se borrara en otra pestaña. No se ha plegado nada.',
+	'fold.empty_reply': 'El modelo no devolvió nada que plegar, así que no se ha propuesto nada. Vuelve a intentarlo.',
+	'fold.proposed_toast': 'Plegado propuesto: acéptalo o recházalo abajo.',
+	'fold.proposed_elsewhere': 'Plegado propuesto en «{diamond}»: ábrelo para aceptarlo o rechazarlo.',
+	'fold.pending_badge': 'plegado en espera',
+	'fold.pending_badge_help': 'En este Diamond hay un plegado propuesto esperando. Ábrelo para aceptar o rechazar el cambio.',
 	'fold.nothing_chosen': 'No has elegido nada',
 	'fold.nothing_chosen_body': 'Marca los turnos que quieras plegar y pulsa Plegar lo seleccionado.',
 
@@ -1041,6 +1102,15 @@
 	'files.fetch': 'Traer',
 	'files.fetch_body': '¿Traer «{path}» a este dispositivo? Eso descarga {size}.',
 	'files.fetching': 'Trayendo {path}…',
+	// Where the agent works: the root, and its scope. Changing the root is a separate
+	// act from switching between the browser sandbox and the disk.
+	'files.change_root': 'Cambiar de carpeta…',
+	'files.change_root_help': 'Apuntar el agente a otra carpeta de esta máquina',
+	'files.machine_scope': 'El agente trabaja solo dentro de {name}. Nada por encima ni fuera de esa carpeta es visible para Daimond.',
+	'files.machine_return': 'Volver a poner al agente a trabajar en {name}',
+	'files.forget_root': 'Olvidar esta carpeta',
+	'files.forget_root_help': 'Dejar de ofrecer esta carpeta. Daimond no guarda ningún registro de ella, y la próxima vez elegirás una.',
+	'files.root_forgotten': 'Olvidada. Daimond ya no guarda ningún registro de esa carpeta.',
 	'files.folder_open_failed': 'No se pudo abrir esa carpeta.',
 	'files.import': 'Importar',
 	'files.import_body': '¿Copiar «{name}» al espacio de trabajo? Todo lo que hay dentro se sincronizará con tus otros dispositivos y contará para tu almacenamiento.',

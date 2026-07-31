@@ -161,6 +161,19 @@
 	'models.err_bad_key':          '계정 서비스가 Daimond이 쓸 수 없는 키를 보냈어요.',
 	'models.err_no_key':           '그 제공자에는 아직 키가 없어요.',
 	'models.err_key_refused':      '제공자가 키를 거절했어요(HTTP {status}).',
+	// 제공자 키에 얼마나 남았는지, 그리고 그걸 어떻게 아는지. 직접 적은 줄을
+	// 일부러 ‘잔액’이라 부르지 않아요. 본인이 적은 숫자에서 어림한 지출을 뺀 값이니까요.
+	'models.credit_auto':          '이 키에 {amount} 남았어요 — {when}에 제공자가 그렇게 말했어요.',
+	'models.credit_manual':        '이 키에 {amount} 남았어요. {when}에 적어 둔 {base}에서, 그 뒤로 쓴 것으로 어림한 {spent}을(를) 뺀 값이에요.',
+	'models.credit_unknown':       '이 키에 얼마가 남았는지는 알 수 없어요.',
+	'models.credit_check':         '얼마 남았는지 묻기',
+	'models.credit_recheck':       '다시 묻기',
+	'models.credit_probe_failed':  '{provider}이(가) 얼마 남았는지 알려 주지 않았어요. 대신 Daimond에 알려 주세요.',
+	'models.credit_base_ph':       '예: 12.50',
+	'models.credit_base_label':    '지금 이 키에 있는 금액(미국 달러)',
+	'models.credit_base_set':      '지금 이만큼 있어요',
+	'models.credit_base_update':   '내가 적은 금액 고치기',
+	'models.credit_base_bad':      '금액이 아니에요. 미국 달러 숫자를 넣어 주세요.',
 
 	// ── 크레딧, 팩, Pro ────────────────────────────────────────
 	// 실제로 결제되는 자리에서는 미국 달러라고 분명히 밝혀요. `billing.*` 참고.
@@ -219,7 +232,16 @@
 	'chat.input_ph':       '메시지를 입력하세요…',
 	'chat.send':           '보내기',
 	'chat.jump_help':      '마지막으로 보낸 메시지로 돌아가요. 다시 누르면 그 앞의 메시지로 계속 거슬러 올라가요.',
+	'chat.end_help':       '채팅 맨 아래로 가요.',
 	'chat.new':            '+ 새 채팅',
+	// 답이 오는 중에 쓴 메시지예요. 잠시 맡아 두었다가 보여 주고, 답이 끝나면
+	// 한 턴씩 보내요. 짧게 둔 건 일부러예요. 휴대폰 입력칸은 120px 남짓이라
+	// 긴 줄은 두 줄로 접히면서 잘려요.
+	'chat.queue_ph':       '다음 메시지를 쓰세요…',
+	'chat.queue_help':     '기다리는 중 — 이 답이 끝나면 보내요',
+	'chat.queued_pending': '아직 안 보냈어요. 눌러서 고치세요.',
+	'chat.queue_cancel':   '이건 보내지 않기',
+	'chat.queue_returned': '그 턴이 끝까지 가지 못해서, 줄 세워 둔 글이 보내지지 않은 채 입력칸으로 돌아왔어요.',
 
 	// ── 웹 패널 ────────────────────────────────────────────────
 	'web.who_drives': '지금 누가 조작하고 있나',
@@ -487,6 +509,15 @@
 	'sync.synced':     '동기화됨',
 	'sync.off':        '동기화 꺼짐',
 	'sync.off_reason': '기기 간 동기화는 Pro 기능인데, 이 계정에는 없어요.',
+	// 거절당한 꾸러미. 무엇이 너무 큰지와, 보통 무엇 때문인지를 밝혀요.
+	'sync.too_big':        '동기화 멈춤',
+	'sync.too_big_reason': '이 기기의 꾸러미가 너무 커서 보낼 수 없어요. 그래서 여기서 한 일이 더는 밖으로 나가지 않아요. 대개는 아주 큰 Diamond이나 작업 공간 파일 하나가 원인이에요 — 지우거나 줄이면 동기화는 저절로 다시 돌아가요.',
+	'sync.last_synced':    '마지막 동기화는 {when}이에요.',
+	'sync.last_never':     '이 기기에서는 아직 아무것도 동기화되지 않았어요.',
+	'sync.when_just_now':  '방금',
+	'sync.when_mins':      '{n}분 전',
+	'sync.when_hours':     '{n}시간 전',
+	'sync.when_days':      '{n}일 전',
 
 	// ── 두 번째 기기 연결 ──────────────────────────────────────
 	// 버튼 이름을 감싸는 따옴표는 한국어 관례대로 “ ”를 써요.
@@ -515,6 +546,9 @@
 	'pair.err_bundle_import':    '연결된 신원을 가져올 수 없었어요.',
 	'pair.err_create':           '페어링 코드를 만들 수 없었어요.',
 	'pair.err_link':             '이 기기를 연결할 수 없었어요.',
+	// 겉모습 설정을 한 번만 넘기는 일. 그런 일이 있었다는 것과, 이제부터는
+	// 이 기기가 자기 것으로 가진다는 걸 밝혀요.
+	'pair.look_carried': '테마와 언어, 패널 배치도 함께 넘어왔어요. 여기서부터는 이 기기가 자기 것으로 가져가요 — 한쪽을 바꿔도 다른 쪽은 그대로예요.',
 
 	// ── 모양 메뉴 ──────────────────────────────────────────────
 	'menu.skin':          '스킨',
@@ -603,6 +637,17 @@
 	'spend.col_turns':   '턴',
 	'spend.col_tokens':  '토큰',
 	'spend.col_cost':    '비용',
+	'spend.col_key':          '키',
+	'spend.col_left':         '남음',
+	'spend.col_period_spend': '지출',
+	'spend.provider_keys':    '제공자 키',
+	'spend.left_auto':        '이 키에 얼마 남았는지 제공자가 말해 준 값이에요.',
+	'spend.left_manual':      '본인이 적어 둔 금액에서, 그 뒤로 쓴 것으로 Daimond이 어림한 만큼을 뺀 값이에요.',
+	'spend.left_unknown':     '이 제공자는 얼마 남았는지 말해 주지 않고, 당신도 Daimond에 알려 주지 않았어요.',
+	'spend.all_reported':          '이 기간의 턴은 모두 제공자가 알려 준 비용을 달고 왔어요. 그러니 이건 어림이 아니라 실제로 청구된 금액이에요.',
+	'spend.part_reported':         '이 가운데 {amount}은(는) 제공자가 알려 준 금액이고, 나머지는 Daimond의 요금표로 매긴 값이에요.',
+	'spend.none_reported':         'Daimond의 요금표로 매긴 값이에요 — 이 턴들에 대해 비용을 알려 준 제공자가 없어요.',
+	'spend.none_reported_unknown': 'Daimond의 요금표로 매겼는데, 이 모델 가운데 하나가 요금표에 없어서 이 숫자는 대략의 눈대중일 뿐이에요.',
 	'spend.col_when':    '시각',
 	'spend.col_what':    '내용',
 	'spend.col_amount':  '금액',
@@ -867,6 +912,16 @@
 	'tag.all_used':      '가진 태그가 모두 이 Diamond에 붙어 있어요.',
 	'tag.none_yet':      '아직 태그가 없어요.',
 	'tag.save_failed':   '태그를 저장하지 못했어요',
+	// 목록에서 태그를 지우는 일. 그 태그가 붙은 Diamond 모두에서 떼어져요.
+	'tag.delete_help':        '“{tag}” 태그를 어디에서나 지우기',
+	'tag.delete_title':       '이 태그를 지울까요?',
+	'tag.delete_body_used.one':   '“{tag}” 태그를 지울까요? Diamond {n}개에 붙어 있고, 거기서 떼어져요. 그 Diamond의 다른 것은 그대로예요.',
+	'tag.delete_body_used.other': '“{tag}” 태그를 지울까요? Diamond {n}개에 붙어 있고, 그 모두에서 떼어져요. 그 Diamond들의 다른 것은 그대로예요.',
+	'tag.delete_body_unused': '“{tag}” 태그를 지울까요? 어느 Diamond에도 붙어 있지 않으니, 목록에서만 빠져요.',
+	'tag.delete_ok':          '태그 지우기',
+	'tag.deleted':            '“{tag}” 태그를 지웠어요.',
+	'tag.deleted_from.one':   '“{tag}” 태그를 Diamond {n}개에서 지웠어요.',
+	'tag.deleted_from.other': '“{tag}” 태그를 Diamond {n}개에서 지웠어요.',
 	'tag.editor_note':   '태그는 이 Diamond을 레일에서 갈래지어 두는 것이에요. 모델에 보내지도 않고, 결정체에 들어가지도 않아요.',
 
 	// ── 턴을 시작하고 멈추기 ───────────────────────────────────
@@ -901,6 +956,12 @@
 	'fold.proposing':        '접는 방법을 궁리하는 중…',
 	'fold.diamond_gone':     'Diamond이 없어졌어요',
 	'fold.diamond_gone_body': '이 에이전트를 내보낸 Diamond이 이제 없어요.',
+	'fold.diamond_gone_chat_body': '고른 Diamond이 이제 없어요 — 다른 탭에서 지워졌을 수 있어요. 아무것도 접히지 않았어요.',
+	'fold.empty_reply':      '모델이 접을 것을 하나도 돌려주지 않아서, 제안된 게 없어요. 다시 해 보세요.',
+	'fold.proposed_toast':   '접기를 제안했어요 — 아래에서 수락하거나 거절하세요.',
+	'fold.proposed_elsewhere': '“{diamond}”에 접기를 제안했어요 — 열어서 수락하거나 거절하세요.',
+	'fold.pending_badge':    '접기 대기',
+	'fold.pending_badge_help': '이 Diamond에 제안된 접기가 기다리고 있어요. 열어서 바뀐 데를 수락하거나 거절하세요.',
 	// 접기 차이의 머리말. 한 문장에 이음말을 붙이는 대신 네 가지를 따로 둬요.
 	// 대상을 앞에 놓는 언어는 조각을 다시 배열할 수 없으니까요.
 	'diff.folding_chat':      '“{chat}”을(를) 접는 중 — 바뀐 데를 보고 수락하거나 거절하세요.',
@@ -1075,6 +1136,15 @@
 	'files.fetch':           '가져오기',
 	'files.fetch_body':      '“{path}”을(를) 이 기기로 가져올까요? {size}만큼 내려받아요.',
 	'files.fetching':        '{path} 가져오는 중…',
+	// 에이전트가 일하는 곳 — 뿌리 폴더와 그 범위. 뿌리를 바꾸는 건
+	// 브라우저 모래판과 디스크 사이를 오가는 것과는 따로예요.
+	'files.change_root':      '폴더 바꾸기…',
+	'files.change_root_help': '이 기기의 다른 폴더를 에이전트에게 가리켜요',
+	'files.machine_scope':    '에이전트는 {name} 안에서만 일해요. 그 위나 바깥에 있는 것은 Daimond에 보이지 않아요.',
+	'files.machine_return':   '에이전트를 {name}에서 다시 일하게 해요',
+	'files.forget_root':      '이 폴더 잊기',
+	'files.forget_root_help': '이 폴더를 더는 내놓지 않아요. Daimond은 그 기록을 갖고 있지 않고, 다음에는 새로 고르게 돼요.',
+	'files.root_forgotten':   '잊었어요. Daimond은 그 폴더의 기록을 더는 갖고 있지 않아요.',
 
 	// ── 메시지 하나 읽기 ───────────────────────────────────────
 	'msg.unknown_sender':    '(보낸 사람 모름)',

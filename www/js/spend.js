@@ -169,6 +169,33 @@
 		return h;
 	}
 
+	// Whether a rolled-up total is entirely what the providers reported. Old
+	// entries carry no `r` and so are priced, not reported -- which is what they
+	// were, and the honest answer for them is still "≈".
+	function allReported(tot) {
+		if (!tot || !(tot.usd > 0)) return false;
+		var rep = tot.reportedUsd || 0;
+		return rep >= tot.usd - 1e-12;
+	}
+
+	// The "≈" that precedes a figure, or nothing when the figure is a bill. A
+	// converted figure already carries its own ≈ from i18n, so this adds none.
+	function mark(tot) {
+		if (allReported(tot)) return '';
+		if (window.DaimondI18n && DaimondI18n.converted()) return '';
+		return '≈ ';
+	}
+
+	// One line under the headline saying what the figure IS.
+	function provenance(tot) {
+		if (!tot || !(tot.usd > 0)) return '';
+		if (allReported(tot)) return t('spend.all_reported');
+		if ((tot.reportedUsd || 0) > 0) {
+			return t('spend.part_reported', { amount: fmtUsd(tot.reportedUsd) });
+		}
+		return tot.estimated ? t('spend.none_reported_unknown') : t('spend.none_reported');
+	}
+
 	// ── Inference section (from DaimondLedger) ─────────────────
 
 	function inferenceSection() {
@@ -188,14 +215,18 @@
 		// A converted figure already carries its own ≈, so the estimate mark is
 		// not added a second time.
 		var approx = (window.DaimondI18n && DaimondI18n.converted()) ? '' : '≈ ';
-		head.appendChild(bigStat(
-			(win.estimated ? approx : '') + fmtUsd(win.usd), periodLbl));
+		head.appendChild(bigStat(mark(win) + fmtUsd(win.usd), periodLbl));
 		if (totals.session) {
-			head.appendChild(bigStat(
-				(totals.session.estimated ? approx : '') + fmtUsd(totals.session.usd), t('spend.session')));
+			head.appendChild(bigStat(mark(totals.session) + fmtUsd(totals.session.usd), t('spend.session')));
 		}
 		head.appendChild(bigStat(fmtTokens(win.tokens) + ' ' + t('spend.tok'), periodLbl));
 		sec.appendChild(head);
+
+		// Say where the figure came from, once, under the headline. A total the
+		// providers themselves billed is a fact, and dressing it in a "≈" was
+		// telling the user it was guesswork when it was the opposite.
+		var prov = provenance(win);
+		if (prov) sec.appendChild(el('div', 'spend-note', prov));
 
 		// The period toggle.
 		var toggle = el('div', 'spend-toggle');
@@ -239,7 +270,68 @@
 			tbl.appendChild(tb);
 			sec.appendChild(tbl);
 		}
+
+		// What is left on each key, beside what this period drew from it. The
+		// credits row has had this since it existed; a user's own key had spend
+		// with nothing to measure it against, which is the half of the question
+		// that decides whether they can keep working.
+		var keys = providerKeys();
+		if (keys.length) {
+			sec.appendChild(el('div', 'spend-sub', t('spend.provider_keys')));
+			var ktbl = el('table', 'spend-table');
+			var khead = el('tr');
+			[t('spend.col_key'), t('spend.col_left'), t('spend.col_period_spend')].forEach(function (h, i) {
+				khead.appendChild(el('th', i > 0 ? 'num' : null, h));
+			});
+			var kthd = el('thead'); kthd.appendChild(khead); ktbl.appendChild(kthd);
+			var ktb = el('tbody');
+			keys.forEach(function (k) {
+				var tr = el('tr');
+				tr.appendChild(el('td', 'spend-model', k.name));
+				var left = el('td', 'num', k.left);
+				if (k.leftHint) left.title = k.leftHint;
+				tr.appendChild(left);
+				tr.appendChild(el('td', 'num', fmtUsd(k.spent)));
+				ktb.appendChild(tr);
+			});
+			ktbl.appendChild(ktb);
+			sec.appendChild(ktbl);
+		}
 		return sec;
+	}
+
+	// Each provider key, with what is left on it and what this period drew.
+	//
+	// A key nobody can say anything about shows an em dash, never a zero: "we do
+	// not know" and "you have nothing" are opposite messages and the second one
+	// would send a working user hunting for a top-up they do not need.
+	function providerKeys() {
+		var M = window.DaimondModels, L = window.DaimondLedger;
+		if (!M || typeof M.providers !== 'function' || !L
+			|| typeof L.perProvider !== 'function') return [];
+		var from = Date.now() - (period === 'week' ? 7 : 30) * 24 * 60 * 60 * 1000;
+		var spentBy = {};
+		try {
+			L.perProvider(from).forEach(function (row) { spentBy[row.provider] = row.usd || 0; });
+		} catch (e) { spentBy = {}; }
+		var out = [];
+		try {
+			M.providers().forEach(function (p) {
+				var spent = spentBy[p.id] || 0;
+				// A row with neither a balance nor any spend has nothing to say.
+				if (!p.balance && spent <= 0) return;
+				out.push({
+					name:     p.name,
+					left:     p.balance || '—',
+					leftHint: p.creditMode === 'manual' ? t('spend.left_manual')
+						: p.creditMode === 'auto' ? t('spend.left_auto')
+						: p.minted ? '' : t('spend.left_unknown'),
+					spent:    spent,
+				});
+			});
+		} catch (e) { return []; }
+		out.sort(function (a, b) { return b.spent - a.spent; });
+		return out;
 	}
 
 	function bigStat(value, label) {

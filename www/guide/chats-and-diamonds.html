@@ -89,6 +89,8 @@
 	<h2>Starting and returning to a chat</h2>
 	<p>Choose <span class="ui">New chat</span> — the <strong>＋</strong> beside <strong>Chats</strong> at the top of the rail. Type in the box at the bottom of the centre panel and send with <span class="ui">➤</span>. Every chat you start is listed under <strong>Chats</strong> in the rail; click one to bring it back to the centre. A new chat starts on your default model; you can change the model for just that chat from the selector in its header.</p>
 
+	<p>While an answer is arriving you can keep typing. A message sent then is <strong>queued</strong> rather than lost: it appears under the thread as a dashed bubble, and goes as its own turn the moment the answer finishes. Click a queued bubble to take it back into the box and change it, or its <span class="ui">×</span> to drop it. Pressing <span class="ui">■</span> to stop the answer hands anything queued behind it back to you, unsent — stopping means stopping.</p>
+
 	<h2>Reading a long conversation</h2>
 	<p>A conversation grows quickly, so the chat header carries controls to keep it readable. They sit at the top-right of the centre panel.</p>
 
@@ -104,6 +106,10 @@
 		<div class="card">
 			<h3>Jump back</h3>
 			<p>The <span class="ui">↑</span> button jumps back to your last message. Press it again to walk back through the ones before it.</p>
+		</div>
+		<div class="card">
+			<h3>Jump to the end</h3>
+			<p>The <span class="ui">↓</span> button returns to the bottom of the chat, and starts the walk again — so the next <span class="ui">↑</span> goes to your last message rather than carrying on from where you had got to.</p>
 		</div>
 	</div>
 
@@ -138,7 +144,7 @@
 	</figure>
 
 	<h2>Working a Diamond</h2>
-	<p>Diamonds are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Diamonds</strong>. Selecting a Diamond replaces the chat in the centre with its command surface — a compact view where you steer the work and fold further improvements into it. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
+	<p>Diamonds are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Diamonds</strong>. Selecting a Diamond replaces the chat in the centre with its command surface — a compact view where you steer the work and fold further improvements into it. You can tell which face the panel is showing without reading it: on a Diamond the panel takes the Daimond mark beside the name and squares its corners, against the rounded corners of everything else on screen. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
 
 	<h3>What a Diamond does, and what it does not</h3>
 	<p>A Diamond retains; it does not run. Nothing executes a crystal. There is no workflow engine behind a Diamond, nothing schedules it, nothing chains one Diamond to another, and there is no saved job waiting to fire. Returning to a Diamond does not set it going — and neither does leaving it alone, since a Diamond at rest stays exactly as you left it.</p>
@@ -191,6 +197,8 @@
 	<p>Diamonds accumulate, so they can be tagged. A tag is a short label you choose. The editor suggests four to start from — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> and <strong>org</strong> — but Daimond imposes no taxonomy on you, and you can type whatever suits your work.</p>
 
 	<p>What you type is tidied: a tag is lowercased, trimmed and deduplicated, with up to <strong>8</strong> tags on a Diamond and up to <strong>24</strong> characters in each. Tags are stored in the Diamond's own meta, on this device, like everything else.</p>
+
+	<p>The editor shows two boxes: the tags <strong>on this Diamond</strong>, and <strong>all your tags</strong> underneath. The <span class="ui">×</span> on a chip in the upper box takes that tag off this Diamond and returns it to the pool below, where one click puts it back. The <span class="ui">×</span> on a chip in the lower box is a different act: it deletes the tag itself, from every Diamond filed under it. That one asks first, and says how many Diamonds it will change. The four starter suggestions carry no <span class="ui">×</span>, because they are always offered.</p>
 
 	<div class="note"><strong>Tags are inert, and that is the point of them.</strong> A tag is your filing system and nothing else. It is never sent to a model, it never enters the crystal, and it never changes what any agent does. Tagging a Diamond <em>urgent</em> changes nothing about how it is treated.</div>
 

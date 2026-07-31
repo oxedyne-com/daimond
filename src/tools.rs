@@ -632,6 +632,8 @@ pub enum Tool {
     WebType,
     /// Scroll the open page.
     WebScroll,
+    /// Compile a Typst source file in the workspace to a PDF, in the browser.
+    TypstCompile,
 }
 
 impl Tool {
@@ -666,6 +668,11 @@ impl Tool {
             Tool::FileMove,
             Tool::DirCreate,
             Tool::FileFetch,
+            // The compiler is vendored into the page, so the browser build can
+            // do this and the native build cannot.  It was reachable only from a
+            // human's Compile button, which meant an agent asked to produce a PDF
+            // correctly said it had no way to.
+            Tool::TypstCompile,
         ];
         t.extend(Tool::web());
         t
@@ -705,6 +712,11 @@ impl Tool {
             Tool::FileWrite | Tool::FileEdit | Tool::FileDelete | Tool::DirCreate
             | Tool::FileFetch =>
                 vec![res!(Self::arg(args_json, "path"))],
+            // The PDF it writes is a write, and naming it here is what puts it in
+            // front of `guard`.  A compile whose `out` was invisible to the guard
+            // could drop a file inside Daimond's own directory.
+            Tool::TypstCompile =>
+                vec![res!(Self::typst_out(args_json))],
             Tool::FileMove =>
                 vec![res!(Self::arg(args_json, "path")), res!(Self::arg(args_json, "to"))],
             _ => Vec::new(),
@@ -784,7 +796,29 @@ impl Tool {
             Tool::WebClick    => "web_click",
             Tool::WebType     => "web_type",
             Tool::WebScroll   => "web_scroll",
+            Tool::TypstCompile => "typst_compile",
         }
+    }
+
+    /// Where a `typst_compile` call will put its PDF: `out` when the model named
+    /// one, else the source path with its extension swapped for `.pdf`.
+    ///
+    /// One function, so the guard, the dispatch and the result all name the same
+    /// file -- a default computed twice is a default that will eventually differ.
+    ///
+    /// # Arguments
+    /// * `args_json` - The raw tool arguments.
+    fn typst_out(args_json: &str) -> Outcome<String> {
+        let path = res!(Self::arg(args_json, "path"));
+        let out = extract_json_string(args_json, "out").unwrap_or_default();
+        if !out.trim().is_empty() {
+            return Ok(out.trim().to_string());
+        }
+        let stem = match path.rfind('.') {
+            Some(i) => &path[..i],
+            None    => path.as_str(),
+        };
+        Ok(fmt!("{}.pdf", stem))
     }
 
     /// Look a tool up by its wire name.
@@ -809,6 +843,7 @@ impl Tool {
             "web_click"    => Some(Tool::WebClick),
             "web_type"     => Some(Tool::WebType),
             "web_scroll"   => Some(Tool::WebScroll),
+            "typst_compile" => Some(Tool::TypstCompile),
             _              => None,
         }
     }
@@ -834,6 +869,7 @@ impl Tool {
             Tool::WebRead     => "Read the full rendered text of the open page — the way to answer 'what does this page say' (a price, a spec, a table, an article). It returns the page's visible text with JavaScript already run, from the main content region (a docs site's navigation and chrome are dropped), and it does NOT truncate to a node budget the way web_snapshot does. Reach for this FIRST whenever you need to know a page's content rather than click something on it: one web_read answers what twenty web_snapshots and web_scrolls cannot. It works on a real page under Daimond Hands and on a page Daimond itself built; a cross-origin page that is only being shown must be read with web_fetch instead.",
             Tool::WebClick    => "Click one node on the open page, named by its integer 'ref' from the most recent web_snapshot. Snapshot first: a ref from an older snapshot may now point at a different node, or at nothing. Assume the page changed after the click, so call web_snapshot again before your next action. Anything the user cannot undo — a purchase, a message sent, a form submitted to a site they have not already approved — is to be put to the user before you click it.",
             Tool::WebType     => "Type text into one field on the open page, named by its integer 'ref' from the most recent web_snapshot. Set submit to true to press Enter afterwards, which usually navigates. Snapshot first, and snapshot again afterwards, because typing and submitting stale the refs. Never type a password, a card number, or any other credential: the user enters those themselves, and while they do, Daimond is not watching the page at all.",
+            Tool::TypstCompile => "Compile a Typst source file in the workspace to a PDF, using the compiler bundled into this page. Give it the workspace path of a '.typ' file; the PDF is written beside it unless you name 'out'. This is real typesetting, so it is the right way to produce a document the user can print or send. Its limits are firm and worth knowing before you write the source: only five fonts are bundled (Libertinus Serif regular/bold/italic/bold-italic and New Computer Modern Math), so any other font falls back; and the compiler has NO file or network access of its own, so '#import \"@preview/...\"', 'read()', 'image()' and every other reference to an outside file will fail. Write self-contained Typst. On a compile error it returns the compiler's own diagnostics, which name the line -- read them and fix the source rather than trying again unchanged.",
             Tool::WebScroll   => "Scroll the open page up or down; 'amount' is how many screens to move, and defaults to one. Scrolling changes what is in the VIEWPORT for a screenshot or for triggering lazy-loaded content — it does NOT reveal more of a web_snapshot (a snapshot already covers the whole page) and it is not how you read a long page (use web_read for that).",
         }
     }
@@ -864,6 +900,7 @@ impl Tool {
             Tool::WebClick    => "Click something on the open page.",
             Tool::WebType     => "Type into the open page. Never a password: you enter those.",
             Tool::WebScroll   => "Scroll the open page.",
+            Tool::TypstCompile => "Typeset a Typst file into a PDF, here in the browser.",
         }
     }
 
@@ -888,6 +925,7 @@ impl Tool {
             Tool::WebRead     => r#"{"type":"object","properties":{}}"#,
             Tool::WebClick => r#"{"type":"object","properties":{"ref":{"type":"integer","description":"Node ref from the most recent web_snapshot"}},"required":["ref"]}"#,
             Tool::WebType => r#"{"type":"object","properties":{"ref":{"type":"integer","description":"Node ref of the field, from the most recent web_snapshot"},"text":{"type":"string","description":"Text to type into the field"},"submit":{"type":"boolean","description":"Press Enter after typing, submitting the form (default false)"}},"required":["ref","text"]}"#,
+            Tool::TypstCompile => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .typ source to compile"},"out":{"type":"string","description":"Workspace-relative path for the PDF (default: the source path with .pdf)"}},"required":["path"]}"#,
             Tool::WebScroll => r#"{"type":"object","properties":{"direction":{"type":"string","enum":["up","down"],"description":"Which way to scroll the page"},"amount":{"type":"integer","description":"How many screens to scroll (default 1)"}},"required":["direction"]}"#,
         }
     }
@@ -931,6 +969,9 @@ impl Tool {
             | Tool::WebClick
             | Tool::WebType
             | Tool::WebScroll => Self::web_unavailable(),
+            Tool::TypstCompile => Err(err!(
+                "Tool 'typst_compile' needs the Typst compiler bundled into the browser page; \
+                this is the native build."; Unimplemented)),
         }
     }
 
@@ -1329,6 +1370,21 @@ impl Tool {
                 }
                 let amount = extract_json_number(args_json, "amount").map(|n| n as u32);
                 crate::wasm::web::scroll(&dir, amount).await
+            }
+            // Rust owns both ends of the file: the source is read and the PDF is
+            // written through `wasm::opfs`, which carries the path jail, the
+            // account namespace and the real-folder override.  The JS driver is
+            // handed a string and hands back bytes; it touches no file at all.
+            Tool::TypstCompile => {
+                let src_rel = res!(Self::arg(args_json, "path"));
+                let out_rel = res!(Self::typst_out(args_json));
+                let src = Self::scoped(ctx, &src_rel);
+                let out = Self::scoped(ctx, &out_rel);
+                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &src).await);
+                let source = String::from_utf8_lossy(&bytes).to_string();
+                let pdf = res!(crate::wasm::typst::compile(&source).await);
+                res!(crate::wasm::opfs::write_file(ctx.root, &out, &pdf).await);
+                Ok(fmt!("Compiled {} to {} ({} bytes).", src, out, pdf.len()))
             }
         }
     }
@@ -2560,6 +2616,8 @@ impl Tool {
             | Tool::WebClick
             | Tool::WebType
             | Tool::WebScroll => Self::web_unavailable(),
+            Tool::TypstCompile => Err(err!(
+                "typst_compile needs the browser's bundled compiler."; Unimplemented)),
         }
     }
 

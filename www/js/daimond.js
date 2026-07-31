@@ -242,11 +242,17 @@ import init, {
 	// `provider` is written and read back with the model. Without it a reload would leave a chat
 	// holding a model id and no idea whose key it belonged to, and it would silently fall back to
 	// the default provider -- the exact drift a chat records its provider in order to prevent.
+	///
+	/// The cached and cost counters travel with the token counters, and for the same reason: the
+	/// next turn is metered by the GROWTH of each, so a counter that restarted at zero after a
+	/// reload would bill the whole restored session again as one turn.
 	function slimChat(c) {
 		return { id: c.id, name: c.name, messages: c.messages, model: c.model, provider: c.provider || '',
 			status: c.status || 'active',
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
+			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
+			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	function readJson(key, fallback) {
@@ -307,7 +313,9 @@ import init, {
 			provider: c.provider || '',
 			status: c.status || 'active',
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
+			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
+			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	function loadChats() {
@@ -341,8 +349,12 @@ import init, {
 				c.status           = s.status || 'active';
 				c.promptTokens     = s.promptTokens || 0;
 				c.completionTokens = s.completionTokens || 0;
+				c.cachedTokens     = s.cachedTokens || 0;
+				c.costUsd          = s.costUsd || 0;
 				c.prevPrompt       = s.prevPrompt || 0;
 				c.prevCompletion   = s.prevCompletion || 0;
+				c.prevCached       = s.prevCached || 0;
+				c.prevCost         = s.prevCost || 0;
 				c.lastPrompt       = s.lastPrompt || 0;
 				c.foldedInto       = s.foldedInto || c.foldedInto || null;
 				c.updatedAt        = s.updatedAt || 0;
@@ -785,6 +797,11 @@ import init, {
 			chunked:      chunked,
 			diamonds:     await collectDiamonds(),
 			diamondTombs: readJson(DIAMOND_TOMBS_KEY, {}),
+			// The providers, their model lists and their SEALED keys. Deterministic
+			// by construction -- models.js sorts every id, every model list and every
+			// rate table -- which is what the push-skip comparison requires: anything
+			// whose serialisation followed enumeration order would push for ever.
+			models:       window.DaimondModels ? DaimondModels.exportSync() : null,
 		};
 	}
 
@@ -822,6 +839,15 @@ import init, {
 		try { await applyFiles(remote.files); } catch (e) { /* files stay as they are */ }
 		// Then the large files held in the chunk store, reconstructed on demand.
 		try { await applyChunked(remote.chunked); } catch (e) { /* large files stay as they are */ }
+		// Then the providers, their model lists and their sealed keys. Same guard as
+		// every section above: a parcel without the field is a device that predates
+		// it and nothing happens, so a v1 or early-v2 parcel still applies cleanly.
+		// Best-effort, so a provider merge failing never costs the chats.
+		try {
+			if (window.DaimondModels && DaimondModels.applySync) {
+				await DaimondModels.applySync(remote.models);
+			}
+		} catch (e) { /* providers stay as they are */ }
 		// If the Workspace panel is open, show what just landed — including any
 		// file that arrived as a cloud reference rather than as bytes.
 		try {
@@ -1172,6 +1198,50 @@ import init, {
 		return '';
 	});
 
+	// ── Nothing fails in silence ───────────────────────────────
+	// Most of this app is started rather than awaited: a click hands a promise to
+	// nobody. A rejection in one of those used to reach the console and no further,
+	// so a user watched a button do nothing and had no reason to think it had even
+	// tried. The last resort, then: whatever escapes, the user is told.
+	//
+	// Not a substitute for handling a failure where it happens -- a caller that
+	// knows what failed can say something better, and should -- but a floor under
+	// the whole class.
+	window.addEventListener('unhandledrejection', function (e) {
+		if (_unloading) return;                 // the page is going; its dead requests are not news
+		var why = e && (e.reason !== undefined ? e.reason : e);
+		try { toast(friendlyError(why), true); } catch (e2) { /* nothing left to tell them with */ }
+	});
+
+	// ── The balance, when it moves ──────────────────────────────
+	// Nearly every credit-spending gateway reply states the resulting balance, and `gateway.js`
+	// announces each one it reads. Before anything listened, the figure in the rail sat at
+	// whatever the last explicit /api/balance call had said: a session that fetched twenty pages
+	// showed the balance it started with until something unrelated happened to repaint.
+	//
+	// `DaimondAdmin` is this file's own closure, not a global, so it is called by name -- the
+	// `window.DaimondAdmin` a passing reader expects is undefined and the row would never repaint.
+	window.addEventListener('daimond:credits', function () {
+		try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
+		try {
+			if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('spend')
+				&& window.DaimondSpend) DaimondSpend.refresh();
+		} catch (e) { /* the Spending panel is not up */ }
+	});
+
+	// And when it does NOT move on its own. A balance can change outside this tab -- an
+	// auto-reload top-up, a purchase on the phone, an operator adjustment -- and nothing here
+	// would hear it. So the app asks, but only when it is idle and at most once a minute: a
+	// balance is worth a request between turns and never worth one during them.
+	var _balAt = 0;
+	window.addEventListener('daimond:idle', function () {
+		var now = Date.now();
+		if (now - _balAt < 60000) return;
+		_balAt = now;
+		var g = window.DaimondGateway;
+		if (g && g.state && g.state().authed) g.refreshBalance().catch(function () {});
+	});
+
 	// ── Mobile: one panel at a time ────────────────────────────
 	var mobileMq = window.matchMedia('(max-width: 760px)');
 	function isMobile() { return mobileMq.matches; }
@@ -1279,7 +1349,10 @@ import init, {
 		// The rail holds the settings forms, so it needs a width a form can be
 		// filled in at, not the width of a list of names.
 		var MIN_W    = { rail: 260, stage: 380, dock: 260 };
-		var MIN_H    = { top: 130, pane: 160 };   // neither pane of the rail may be crushed
+		// Neither pane of the rail may be crushed, and neither of the two LISTS in
+		// its upper pane: a Diamonds list dragged to nothing is a list you cannot
+		// get back, because the handle would be all there is left of it.
+		var MIN_H    = { top: 130, pane: 160, list: 72 };
 		var NARROW   = 1280;    // below this the rail folds away on its own
 		var TWO_COLS = 1900;    // and above this the dock may take a second column
 
@@ -1288,6 +1361,7 @@ import init, {
 		var dock   = [];        // dock panels, in the order they were opened
 		var widths = { rail: 320, dock: 300 };
 		var split  = 0.5;       // the Admin panel's share of the rail's height
+		var railSplit = 0.5;    // the Diamonds list's share of what the two rail lists share
 		var seat   = 0.5;       // the first stage occupant's share of the stage
 		var railForced = false; // a folded rail the user re-opened via its tag
 		var grid   = 'auto';    // which of GRIDS the dock is tiled on
@@ -1361,7 +1435,7 @@ import init, {
 			try {
 				localStorage.setItem(KEY, JSON.stringify({
 					open: open, stage: stage, dock: dock,
-					widths: widths, split: split, seat: seat,
+					widths: widths, split: split, railSplit: railSplit, seat: seat,
 					grid: grid, pinned: pinned, arrangements: arrangements,
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
@@ -1374,6 +1448,7 @@ import init, {
 			// The whole range is legal: the appliers clamp to what fits, so a handle
 			// dragged hard to one end comes back where it was left.
 			if (typeof st.split === 'number' && st.split >= 0 && st.split <= 1) split = st.split;
+			if (typeof st.railSplit === 'number' && st.railSplit >= 0 && st.railSplit <= 1) railSplit = st.railSplit;
 			if (typeof st.seat  === 'number' && st.seat  >= 0 && st.seat  <= 1) seat  = st.seat;
 			if (Array.isArray(st.stage)) {
 				stage = st.stage.filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; })
@@ -1425,6 +1500,55 @@ import init, {
 			// overlays it, so there is no pane to size. Clear any height a split left.
 			var bot = document.getElementById('admin');
 			if (bot) bot.style.height = '';
+		}
+
+		// ── The rail's two lists ──────────────────────────────
+		// Diamonds above, Chats below. Diamonds accumulate and the list grew with
+		// them, pushing the chat tiles off the bottom of the rail with no way to
+		// get them back -- so the boundary between the two moves.
+
+		/// How much height the two lists have to share, and what the Diamonds list
+		/// is holding of it now. Everything else in the pane (the two heads, the
+		/// search box, the handle, and the gaps between them all) is fixed
+		/// furniture, so it comes off the top before the proportion is spent.
+		function railRoom() {
+			var top  = document.getElementById('rail-top');
+			var list = document.getElementById('diamond-list');
+			var sess = document.getElementById('session-list');
+			if (!top || !list || !sess) return null;
+			var h = top.clientHeight;
+			if (!h) return null;
+			var fixed = 0, kids = top.children, shown = 0;
+			for (var i = 0; i < kids.length; i++) {
+				if (getComputedStyle(kids[i]).display === 'none') continue;
+				shown += 1;
+				if (kids[i] === list || kids[i] === sess) continue;
+				fixed += kids[i].getBoundingClientRect().height;
+			}
+			var gap = parseFloat(getComputedStyle(top).rowGap) || 0;
+			var room = h - fixed - gap * Math.max(0, shown - 1);
+			return { room: room, list: list, held: list.getBoundingClientRect().height };
+		}
+
+		/// Give the Diamonds list its share; the Chats list flexes into the rest.
+		/// A proportion rather than a height, so the divider survives a resize.
+		function applyRailSplit() {
+			var r = railRoom();
+			var handle = document.getElementById('handle-rail-split');
+			if (!r) return;
+			// The phone shows this rail as a drawer that scrolls as one column; a
+			// fixed height on one of its lists is not what a thumb wants there.
+			if (isMobile() || r.room <= MIN_H.list * 2) {
+				r.list.style.flex = '';
+				r.list.style.height = '';
+				if (handle) handle.style.display = isMobile() ? 'none' : '';
+				return;
+			}
+			if (handle) handle.style.display = '';
+			var want = Math.round(railSplit * r.room);
+			want = Math.max(MIN_H.list, Math.min(want, r.room - MIN_H.list));
+			r.list.style.flex   = '0 0 auto';
+			r.list.style.height = want + 'px';
 		}
 
 		/// Share the stage between its two occupants. Solo takes it all.
@@ -1566,6 +1690,7 @@ import init, {
 
 			renderTags();
 			applySplit();
+			applyRailSplit();
 			applySeat();
 			save();
 		}
@@ -1820,6 +1945,40 @@ import init, {
 			handle.addEventListener('dblclick', function () { split = 0.5; applySplit(); save(); });
 		}
 
+		// ── The divider between Diamonds and Chats ────────────
+		// The same idiom as the pane handles: pointer capture so the drag survives
+		// leaving the 10px strip, a proportion rather than a pixel height, and a
+		// double-click back to even.
+		function bindRailSplit(handle) {
+			if (!handle) return;
+			var startY = 0, startH = 0, dragging = false;
+			handle.addEventListener('pointerdown', function (e) {
+				var r = railRoom();
+				if (!r) return;
+				dragging = true;
+				startY = e.clientY;
+				startH = r.held;
+				handle.setPointerCapture(e.pointerId);
+				handle.classList.add('dragging');
+				document.body.classList.add('resizing-v');
+			});
+			handle.addEventListener('pointermove', function (e) {
+				if (!dragging) return;
+				var r = railRoom();
+				if (!r || r.room <= 0) return;
+				railSplit = Math.max(0, Math.min(1, (startH + (e.clientY - startY)) / r.room));
+				applyRailSplit();
+			});
+			handle.addEventListener('pointerup', function (e) {
+				dragging = false;
+				handle.releasePointerCapture(e.pointerId);
+				handle.classList.remove('dragging');
+				document.body.classList.remove('resizing-v');
+				save();
+			});
+			handle.addEventListener('dblclick', function () { railSplit = 0.5; applyRailSplit(); save(); });
+		}
+
 		// ── Arrangements ──────────────────────────────────────
 		// A Diamond can carry the arrangement it is worked in, so that returning to a
 		// piece of work restores the panels it needs rather than making them be
@@ -1885,6 +2044,7 @@ import init, {
 			bindHandle(document.getElementById('handle-rail'), 'rail');
 			bindHandle(document.getElementById('handle-dock'), 'dock');
 			bindSplit(document.getElementById('handle-split'));
+			bindRailSplit(document.getElementById('handle-rail-split'));
 			bindSeat(hs);
 			// The split and the seat are pixel sizes cut from a proportion, so they
 			// have to be recut whenever their container changes size. A window
@@ -1894,6 +2054,8 @@ import init, {
 				var railEl = elOf('rail');
 				if (railEl)  new ResizeObserver(applySplit).observe(railEl);
 				if (stageEl) new ResizeObserver(applySeat).observe(stageEl);
+				var railTop = document.getElementById('rail-top');
+				if (railTop) new ResizeObserver(applyRailSplit).observe(railTop);
 			}
 			// Every panel's closer returns it to the header.
 			document.querySelectorAll('[data-close]').forEach(function (b) {
@@ -2094,6 +2256,16 @@ import init, {
 		chatOutput.scrollTop += el.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top;
 	}
 
+	/// Back to the bottom of the thread, where the conversation is.
+	///
+	/// The walk is reset as well as the scroll: having come back down, the next ↑
+	/// starts again from the last question rather than from wherever the walk had
+	/// got to, which is what a user who has just returned to the bottom means by it.
+	function jumpEnd() {
+		chatOutput.scrollTop = chatOutput.scrollHeight;
+		_jumpAt = -1;
+	}
+
 	function appendUserMessage(text) {
 		var div = document.createElement('div');
 		div.className = 'chat-msg chat-msg-user';
@@ -2140,7 +2312,10 @@ import init, {
 	function postToChat(node) {
 		var ph = chatOutput.querySelector('.empty-state');
 		if (ph) ph.remove();
-		chatOutput.appendChild(node);
+		// What is waiting to be sent stays at the bottom, under what has happened.
+		var q = document.getElementById('chat-queued');
+		if (q) chatOutput.insertBefore(node, q);
+		else chatOutput.appendChild(node);
 	}
 
 	// True when the thread is scrolled to (near) the bottom, so streaming
@@ -3507,6 +3682,7 @@ import init, {
 				renderToolResult(m.name || '', m.content || '');
 			}
 		});
+		renderQueue();      // clearChat emptied the thread, queue and all
 	}
 
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
@@ -3683,8 +3859,12 @@ import init, {
 			status: 'pending',
 			promptTokens: 0,
 			completionTokens: 0,
+			cachedTokens: 0,
+			costUsd: 0,
 			prevPrompt: 0,
 			prevCompletion: 0,
+			prevCached: 0,
+			prevCost: 0,
 			lastPrompt: 0,
 			updatedAt: 0,
 		};
@@ -3741,6 +3921,9 @@ import init, {
 			chat._generating = false;
 			if (current === chat) { hideSpinner(); setSendMode('send'); chatInput.disabled = false; }
 		}
+		// A deleted chat's queue goes with it: there is nothing left to send it to.
+		chat._queue = [];
+		if (current === chat) renderQueue();
 		chats = chats.filter(function (c) { return c.id !== chat.id; });
 		tombstone(chat.id);      // so a stale tab cannot resurrect it
 		persistChats();
@@ -3802,12 +3985,18 @@ import init, {
 			var item = document.createElement('button');
 			item.className = 'fold-menu-item';
 			item.textContent = f.name;                 // escaped via textContent (H5)
-			item.addEventListener('click', function () { closeFoldMenu(); foldChatInto(chat, f.id, turns); });
+			item.addEventListener('click', function () {
+				closeFoldMenu();
+				foldChatInto(chat, f.id, turns).catch(foldFailed);
+			});
 			menu.appendChild(item);
 		});
 		var neww = document.createElement('button');
 		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
-		neww.addEventListener('click', function () { closeFoldMenu(); foldChatIntoNew(chat, turns); });
+		neww.addEventListener('click', function () {
+			closeFoldMenu();
+			foldChatIntoNew(chat, turns).catch(foldFailed);
+		});
 		menu.appendChild(neww);
 
 		document.body.appendChild(menu);
@@ -3831,13 +4020,31 @@ import init, {
 		// the user has already answered it, when they started the chat this Diamond is made of.
 		setDiamondModel(id, { provider: chat.provider || '', model: chat.model || '' });
 		await loadDiamonds();
-		foldChatInto(chat, id, turns);
+		foldChatInto(chat, id, turns).catch(foldFailed);
+	}
+
+	/// A fold that threw on its way out.
+	///
+	/// Every entry point to the fold is a fire-and-forget promise, so a rejection
+	/// past the one try block inside used to leave `crystalBusy` true for the rest
+	/// of the session -- Steer and Propose both dead -- with nothing said anywhere.
+	function foldFailed(e) {
+		hideCrystalSpinner();
+		setCrystalStatus('');
+		setCrystalBusy(false);
+		toast(friendlyError(e), true);
 	}
 
 	/// Fold a chat into a Diamond. `turns`, when given, folds only those turns.
 	async function foldChatInto(chat, diamondId, turns) {
 		var f = diamonds.find(function (x) { return x.id === diamondId; });
-		if (!f) return;
+		// The list is emptied on a read failure and re-read whenever another tab
+		// touches a Diamond, so the id picked a moment ago can be absent by now.
+		// Returning silently was a Fold that did nothing and said nothing.
+		if (!f) {
+			noticeDialog(t('fold.diamond_gone'), t('fold.diamond_gone_chat_body'));
+			return;
+		}
 		// The reducer runs on the TARGET Diamond's model, so that is the key that must be readable.
 		if (!diamondCanRun(diamondId)) {
 			openSettings(t('fold.no_key'));
@@ -3857,8 +4064,10 @@ import init, {
 		}
 		await selectDiamond(f);                          // switch the centre to the Diamond crystal
 		setCrystalBusy(true); setCrystalStatus(t('fold.proposing'));
+		showCrystalSpinner();
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
+			hideCrystalSpinner();
 			setCrystalStatus(''); setCrystalBusy(false);
 			noticeDialog(t('fold.nothing'), t('fold.turns_empty'));
 			return;
@@ -3871,10 +4080,23 @@ import init, {
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
 			meterDiamondTurn(fa);
-			setCrystalStatus(friendlyError(e)); setCrystalBusy(false); return;
+			hideCrystalSpinner();
+			// The status line alone was invisible: it is 12px of muted grey under
+			// controls the user is not looking at, on a panel they may have left.
+			setCrystalStatus(friendlyError(e)); setCrystalBusy(false);
+			toast(friendlyError(e), true);
+			return;
 		}
 		meterDiamondTurn(fa);
+		hideCrystalSpinner();
 		setCrystalStatus(''); setCrystalBusy(false);
+		// A reducer that returned nothing has failed, whatever the crystal held. Shown
+		// as a diff it would be a deletion of every line with Accept enabled, so the
+		// one click the user is being invited to make would wipe the crystal.
+		if (!proposed || !String(proposed).trim()) {
+			toast(t('fold.empty_reply'), true);
+			return;
+		}
 		pendingFolds[diamondId] = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: chat.id, chatName: chat.name,
@@ -3882,7 +4104,17 @@ import init, {
 			// claim the rest went in too, and would then refuse to fold the rest as unchanged.
 			partial: !!turns,
 		};
-		renderFoldDiff(diamondId);
+		// Only if that Diamond is still the one on screen: drawing this diff into
+		// whatever the user moved on to would put one Diamond's proposal over
+		// another's crystal. Coming back to it renders it (see selectDiamond).
+		if (currentDiamond && currentDiamond.id === diamondId) renderFoldDiff(diamondId);
+		// The proposal is waiting somewhere; say where. A user who clicked away
+		// during the reducer's minute is looking at something else entirely, and
+		// the rail row is the only other place the pending fold shows.
+		renderDiamondList();
+		toast(centreMode === 'focus'
+			? t('fold.proposed_toast')
+			: t('fold.proposed_elsewhere', { diamond: f.name }));
 	}
 
 	function timeLabel() {
@@ -3974,7 +4206,7 @@ import init, {
 		var wrap = document.createElement('div');
 		wrap.className = 'tile-meter';
 		var total = (s.promptTokens || 0) + (s.completionTokens || 0);
-		var cw = window.DaimondPricing ? DaimondPricing.contextWindow(s.model) : null;
+		var cw = window.DaimondPricing ? DaimondPricing.contextWindow(s.model, s.provider || '') : null;
 		var last = s.lastPrompt || 0;
 		if (cw && last > 0) {
 			var pct = Math.min(100, Math.round(last / cw * 100));
@@ -3993,10 +4225,20 @@ import init, {
 		toks.textContent = fmtCtx(total) + ' tok';
 		wrap.appendChild(toks);
 		if (window.DaimondPricing && total > 0) {
-			var pr = DaimondPricing.priceFor(s.model, s.promptTokens || 0, s.completionTokens || 0, 0);
 			var cost = document.createElement('span'); cost.className = 'tile-cost';
-			cost.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
-			cost.title = t(pr.estimated ? 'tile.cost_estimated' : 'tile.cost_so_far');
+			// What the provider charged, where it said. Only when it did not is the table asked,
+			// and then with the cached share and the provider id -- both of which this used to
+			// throw away, so a cache-heavy chat was billed on the tile as though every prompt
+			// token were fresh.
+			if ((s.costUsd || 0) > 0) {
+				cost.textContent = fmtUsd(s.costUsd);
+				cost.title = t('tile.cost_so_far');
+			} else {
+				var pr = DaimondPricing.priceFor(s.model, s.promptTokens || 0, s.completionTokens || 0,
+					s.cachedTokens || 0, s.provider || '');
+				cost.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
+				cost.title = t(pr.estimated ? 'tile.cost_estimated' : 'tile.cost_so_far');
+			}
 			wrap.appendChild(cost);
 		}
 		return wrap;
@@ -4139,11 +4381,17 @@ import init, {
 			return msg && msg.content && (msg.role === 'user' || msg.role === 'assistant');
 		});
 		if (hist.length) {
-			chat.app.restore(hist, chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0);
+			chat.app.restore(hist, chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0,
+				chat.cachedTokens || 0, chat.costUsd || 0);
 			// The wasm counters now hold the restored totals, so meter the
-			// next turn against those rather than against zero.
+			// next turn against those rather than against zero. All four, not
+			// two: a cost counter restored to the session total while its `prev`
+			// stayed at zero would bill the whole reloaded conversation again as
+			// the first turn after the reload.
 			chat.prevPrompt     = chat.promptTokens || 0;
 			chat.prevCompletion = chat.completionTokens || 0;
+			chat.prevCached     = chat.cachedTokens || 0;
+			chat.prevCost       = chat.costUsd || 0;
 		}
 		return chat.app;
 	}
@@ -4196,8 +4444,15 @@ import init, {
 	// to reload for a new version without reaching into the turn machinery. "Busy" is any chat turn
 	// or any spawned agent still running; the composer check keeps a half-typed prompt from being
 	// reloaded away.
+	/// Is anything waiting to be sent, in any chat? A queued message is work in
+	/// flight as far as the updater is concerned: reloading for a new version would
+	/// throw it away as surely as reloading over a half-typed prompt.
+	function anyQueued() {
+		return chats.some(function (c) { return c._queue && c._queue.length; });
+	}
+
 	window.DaimondCore = {
-		busy:            function () { return anyGen() || (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
+		busy:            function () { return anyGen() || anyQueued() || (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
 		composerHasText: function () { return !!(chatInput && chatInput.value && chatInput.value.trim()); },
 		// Post a message to the one conversation from somewhere other than the
 		// composer — the phone sheet's "Ask about this" pill. Goes through the
@@ -4216,31 +4471,176 @@ import init, {
 		// for the file 3-way merge; sync.js calls this then.
 		syncCommitBaseline: commitFileBaseline,
 	};
-	/// Point the one composer at whichever chat is on screen: disabled and
-	/// showing Stop while that chat generates, ready to type otherwise.
+	/// Point the one composer at whichever chat is on screen: showing Stop while
+	/// that chat generates, ready to type either way.
+	///
+	/// The box is no longer disabled mid-turn. A turn cannot be interrupted -- the
+	/// wasm side holds the session for its whole length -- but there is no reason
+	/// the next thing to say cannot be typed while the answer arrives; it is held
+	/// and sent when the turn ends. Send still means Stop while generating, which
+	/// is the one signal the rest of the app reads to know a turn is running.
 	function syncComposer() {
 		if (!chatInput) return;
 		var g = curGen();
-		chatInput.disabled = g;
+		chatInput.disabled = false;
 		setSendMode(g ? 'stop' : 'send');
+		// Where a user finds out they may keep typing: the placeholder is on screen
+		// exactly when the box is empty and they are wondering whether to wait. The
+		// send button is not touched -- while a turn runs it means Stop, and that is
+		// the one signal the rest of the app reads to know a turn is running.
+		chatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');
 		if (!g) hideSpinner();
+		renderQueue();               // this chat's own queue, not the last one's
 	}
 
 	async function sendUserMessage() {
-		if (curGen()) return;
 		var text = chatInput.value.trim();
 		if (!text) return;
 		// A chat on a provider that is not the starred one must be judged on ITS provider's key.
 		// A chat with no provider yet (no chat open at all) falls back to the default, which is
 		// what it will be started on.
+		//
+		// Checked BEFORE anything is queued: a message held behind a turn on a
+		// provider that cannot run would be queued now and refused later, when the
+		// user has moved on and the refusal is a mystery.
 		var can = current
 			? !!(window.DaimondModels && DaimondModels.resolve(current.provider, current.model))
 			: cfgReady(cfg);
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
+		// Mid-turn: hold it. The composer clears either way, so typing then sending
+		// feels the same whether or not an answer happens to be arriving.
+		if (chat._generating) { enqueueMessage(chat, text); return; }
 		chatInput.value = ''; chatInput.style.height = 'auto';
 		runTurn(chat, text);
+	}
+
+	// ── The queue ──────────────────────────────────────────────
+	//
+	// What you typed while the answer was still coming. It is not sent into the
+	// running turn -- it cannot be, the session is held for the turn's whole length
+	// -- so it waits, visibly, and goes as its own turn the moment the lock is free.
+	// One turn per queued message, never coalesced: a turn is the unit a fold picks
+	// and the unit the numbering counts, so two questions merged into one turn would
+	// be two things that could never be folded apart again.
+	//
+	// The queue lives on the chat and is deliberately NOT persisted: it is a
+	// half-second of intent, not content, and a queue restored after a crash would
+	// spend money on a turn the user cannot remember asking for.
+
+	/// Hold a message until the turn in flight has finished.
+	function enqueueMessage(chat, text) {
+		chat._queue = chat._queue || [];
+		chat._queue.push(text);
+		chatInput.value = ''; chatInput.style.height = 'auto';
+		renderQueue();
+	}
+
+	/// The container the queued bubbles live in, always the last thing in the
+	/// thread: what is waiting sits below what has happened.
+	function queueBox() {
+		var box = document.getElementById('chat-queued');
+		if (!box) {
+			box = document.createElement('div');
+			box.id = 'chat-queued';
+			box.className = 'chat-queued';
+			chatOutput.appendChild(box);
+		} else if (box !== chatOutput.lastElementChild) {
+			chatOutput.appendChild(box);
+		}
+		return box;
+	}
+
+	/// Draw the current chat's queue.
+	///
+	/// A queued bubble is NOT `.chat-msg-user`: that class is what the turn
+	/// machinery counts questions by, so a bubble wearing it would be a turn that
+	/// does not exist -- shifting every turn number a fold maps through.
+	function renderQueue() {
+		if (!chatOutput) return;
+		var q = (current && current._queue) || [];
+		var existing = document.getElementById('chat-queued');
+		if (!q.length) { if (existing) existing.remove(); return; }
+		var box = queueBox();
+		box.innerHTML = '';
+		var head = document.createElement('div');
+		head.className = 'chat-queued-head';
+		head.textContent = t('chat.queue_help');
+		box.appendChild(head);
+		q.forEach(function (text, i) {
+			var div = document.createElement('div');
+			div.className = 'chat-msg chat-msg-queued';
+			div.innerHTML = '<div class="chat-msg-content"></div>';
+			var body = div.querySelector('.chat-msg-content');
+			body.textContent = text;                     // escaped (H5)
+			body.title = t('chat.queued_pending');
+			// Clicking it takes it back: the commonest thing to want from a message
+			// not yet sent is to change it.
+			body.addEventListener('click', function () { unqueue(i, true); });
+			var x = document.createElement('button');
+			x.className = 'queue-x';
+			x.textContent = '×';
+			x.title = t('chat.queue_cancel');
+			x.setAttribute('aria-label', t('chat.queue_cancel'));
+			x.addEventListener('click', function (e) { e.stopPropagation(); unqueue(i, false); });
+			div.appendChild(x);
+			box.appendChild(div);
+		});
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	/// Take a queued message out again: back to the composer to be edited, or
+	/// simply dropped.
+	function unqueue(i, toComposer) {
+		if (!current || !current._queue) return;
+		var text = current._queue.splice(i, 1)[0];
+		if (toComposer && text) {
+			chatInput.value = chatInput.value.trim() ? chatInput.value + '\n\n' + text : text;
+			chatInput.style.height = 'auto';
+			chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+			chatInput.focus();
+		}
+		renderQueue();
+	}
+
+	/// Send the next queued message, now the turn's lock is free.
+	///
+	/// Only after a turn that ended cleanly. A queue drained on the back of an
+	/// error or a Stop would spend money answering a question the user asked before
+	/// they knew the last one had failed -- so instead the text comes back to the
+	/// composer, where they can see it and decide.
+	function drainQueue(chat, failed) {
+		var aborted = !!chat._aborted;
+		chat._aborted = false;
+		var q = chat._queue || [];
+		if (!q.length) return;
+		// Only for the chat on screen. runTurn writes the question straight into the
+		// thread, so a turn started for a chat the user has since left would render
+		// into the conversation they are now looking at. A queue left on another chat
+		// stays visible there, to be sent or dropped when they go back to it.
+		if (current !== chat) return;
+		if (failed || aborted || _unloading || chats.indexOf(chat) === -1) { returnQueue(chat); return; }
+		var next = q.shift();
+		renderQueue();
+		runTurn(chat, next);
+	}
+
+	/// Give a queue back rather than send it.
+	function returnQueue(chat) {
+		var q = chat._queue || [];
+		if (!q.length) return;
+		var text = q.join('\n\n');
+		// Only into the composer of the chat that is actually on screen. A background
+		// chat's queue stays where it is, still visible when the user returns to it,
+		// rather than being pasted into a conversation it was not meant for.
+		if (current !== chat) return;
+		chat._queue = [];
+		chatInput.value = chatInput.value.trim() ? text + '\n\n' + chatInput.value : text;
+		chatInput.style.height = 'auto';
+		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		renderQueue();
+		toast(t('chat.queue_returned'), true);
 	}
 
 	/// Hold an exclusive lock for a chat's turn while `fn` runs, so two tabs cannot run — or later
@@ -4264,7 +4664,8 @@ import init, {
 		var umid = newMid();
 		appendUserMessage(text);
 		chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
-		chatInput.disabled = true;
+		// The composer stays live: what is typed while this runs is queued, not lost.
+		chat._aborted = false;
 
 		// PERSIST-FIRST. The prompt is durable the instant it is sent — before a single token comes
 		// back — so a crash in the next moment can never eat what the user just typed.
@@ -4278,10 +4679,11 @@ import init, {
 		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider });
 
 		chat._generating = true;
-		showSpinner(); setSendMode('stop');
+		showSpinner();
+		syncComposer();               // Stop on the button, and the queue hint in the box
 		chat.app = app;
 
-		var sawText = false, sawError = false;
+		var sawText = false, sawError = false, threw = false;
 		var turnText = '';
 		// A minted credits key is capped at the balance behind it, so it can be refused
 		// part-way through a session for a reason the user did not cause and cannot check.
@@ -4356,16 +4758,29 @@ import init, {
 				stampMessages(chat.messages);
 				if (owns()) finalizeAssistant();
 				else { curAsstDiv = null; curAsstText = ''; }
+				// Four cumulative counters now, not two. The two new ones are the reason a
+				// turn can be billed at what it ACTUALLY cost: `cached_tokens` is the part
+				// of the prompt the provider served from its cache and charged little or
+				// nothing for, and `cost_usd` is the provider's own figure for the whole
+				// call. Read only HERE, after the turn: both getters borrow the session
+				// that `run_turn` holds mutably, so a mid-turn read panics the RefCell (the
+				// live_* getters exist for that case).
 				var pCum = app.prompt_tokens || 0, cCum = app.completion_tokens || 0;
-				var turnP = Math.max(0, pCum - (chat.prevPrompt || 0));
-				var turnC = Math.max(0, cCum - (chat.prevCompletion || 0));
+				var caCum = app.cached_tokens || 0, costCum = app.cost_usd || 0;
+				var turnP  = Math.max(0, pCum - (chat.prevPrompt || 0));
+				var turnC  = Math.max(0, cCum - (chat.prevCompletion || 0));
+				var turnCa = Math.max(0, caCum - (chat.prevCached || 0));
+				var turnCost = Math.max(0, costCum - (chat.prevCost || 0));
 				chat.prevPrompt = pCum; chat.prevCompletion = cCum;
+				chat.prevCached = caCum; chat.prevCost = costCum;
 				chat.promptTokens = pCum; chat.completionTokens = cCum;
+				chat.cachedTokens = caCum; chat.costUsd = costCum;
 				chat.lastPrompt = turnP;
-				recordSpend(chat.model, turnP, turnC);
+				recordSpend(chat.model, turnP, turnC, turnCa, turnCost, chat.provider);
 				// The turn is complete and now lives in the snapshot; fold it out of the journal.
 				if (J) J.turnClose(umid, chat.id, pCum, cCum);
 			} catch (e) {
+				threw = true;
 				finalizeAssistant();
 				if (_unloading) {
 					// The page is going away and took the request with it. That is not a failure to
@@ -4386,8 +4801,11 @@ import init, {
 				chat._generating = false;
 				if (owns()) {
 					hideSpinner();
-					chatInput.disabled = false; setSendMode('send');
-					chatInput.focus();
+					syncComposer();       // back to Send, and the ordinary placeholder
+					// Not while there is something in the box: the caret would jump
+					// out of a half-typed sentence at whatever moment the answer
+					// happened to finish.
+					if (!chatInput.value.trim()) chatInput.focus();
 				}
 				updateMeters(); renderSessionList(); updateSpend();
 				touchChat(chat);
@@ -4399,6 +4817,10 @@ import init, {
 				try { window.dispatchEvent(new Event('daimond:idle')); } catch (e) {}
 			}
 		});
+		// Whatever was typed while that turn ran, sent now. OUTSIDE the lock: the
+		// drain starts another turn, which takes the same lock again, and asking for
+		// it from inside would deadlock the tab.
+		drainQueue(chat, sawError || threw);
 	}
 
 	// Record a completed turn's cost and feed the spend governor in one
@@ -4406,12 +4828,19 @@ import init, {
 	// never fall out of step. The governor learns the user's normal from
 	// exactly these entries, so every metered turn — chat, worker or
 	// conductor — must come through here.
-	function recordSpend(model, promptTokens, completionTokens) {
+	//
+	// `cachedTokens` and `costUsd` are what the provider itself said, and they change the answer
+	// rather than decorate it: a cache hit is charged at a fraction of a fresh token, and a
+	// reported cost is not an estimate at all. Passing zero for either -- which this function used
+	// to hardcode -- is what made a 90%-cached turn bill as though every token were new.
+	function recordSpend(model, promptTokens, completionTokens, cachedTokens, costUsd, provider) {
 		if (!window.DaimondLedger || (promptTokens + completionTokens) <= 0) return;
 		var entry = null;
 		try {
 			entry = DaimondLedger.record({ ts: Date.now(), model: model,
-				promptTokens: promptTokens, completionTokens: completionTokens, cachedTokens: 0 });
+				promptTokens: promptTokens, completionTokens: completionTokens,
+				cachedTokens: cachedTokens || 0, costUsd: costUsd || 0,
+				provider: provider || '' });
 		} catch (e) { /* ledger is best-effort */ }
 		if (entry && window.DaimondGovernor) {
 			try { DaimondGovernor.observe(entry); } catch (e) { /* governor is best-effort */ }
@@ -4480,6 +4909,9 @@ import init, {
 		// Stop the CURRENT chat's turn — the one whose Stop button was pressed —
 		// never whichever happened to start last.
 		if (!current || !current._generating || !current.app) return;
+		// Stop means stop: anything queued behind this turn is handed back to the
+		// composer rather than sent the moment the turn the user just killed ends.
+		current._aborted = true;
 		try { current.app.abort(); } catch (e) { /* idempotent; ignore */ }
 	}
 
@@ -4560,8 +4992,11 @@ import init, {
 				localStorage.setItem(WORKERS_KEY, JSON.stringify(this.runs.slice(0, 12).map(function (r) {
 					return {
 						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
-						model: r.model, status: r.status, text: r.text, tools: r.tools,
+						model: r.model, provider: r.provider || '', status: r.status, text: r.text, tools: r.tools,
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
+						// The cached share and the reported cost, so a tile drawn after a reload
+						// still says what the run actually cost rather than re-guessing it.
+						cachedTokens: r.cachedTokens || 0, costUsd: r.costUsd || 0,
 					};
 				})));
 			} catch (e) { /* quota — runs stay in memory */ }
@@ -4615,6 +5050,8 @@ import init, {
 					text: '',
 					promptTokens: 0,
 					completionTokens: 0,
+					cachedTokens: 0,
+					costUsd: 0,
 					app: null,
 				};
 				self.runs.unshift(run);
@@ -4701,7 +5138,11 @@ import init, {
 			if (run.resume) {
 				var seed = [{ role: 'user', content: run.task }];
 				if (run.text && run.text.trim()) seed.push({ role: 'assistant', content: run.text });
-				try { run.app.restore(seed, 0, 0, 0); } catch (e) { /* restore is best-effort; worst case it restarts */ }
+				// Zeros throughout, and the trailing pair written out rather than left off: the
+				// paused session's spend was billed when it paused, so this session starts from
+				// nothing on every counter -- including the cached share and the reported cost,
+				// which `run.priorCached`/`run.priorCost` carry forward for the tile instead.
+				try { run.app.restore(seed, 0, 0, 0, 0, 0); } catch (e) { /* restore is best-effort; worst case it restarts */ }
 			}
 			var sink = function (ev) {
 				if (!ev || !ev.type) return;
@@ -4761,13 +5202,22 @@ import init, {
 			} finally {
 				var _pt = (run.app && run.app.prompt_tokens) || 0;
 				var _ct = (run.app && run.app.completion_tokens) || 0;
+				// The cached share and the provider's own cost figure, read the same way and for
+				// the same reason as the chat's. No `prev` pair is needed here: a worker gets a
+				// FRESH DaimondApp per session (see start(), and `restore` to zeros on resume),
+				// so the app's cumulative counters ARE this session's delta. The wasm's
+				// `absorb_usage` has already rolled every round of the turn into them.
+				var _ca   = (run.app && run.app.cached_tokens) || 0;
+				var _cost = (run.app && run.app.cost_usd) || 0;
 				// A worker spends the user's money like anything else, so it is
 				// metered like anything else. A resumed worker bills only its own
 				// session here -- the paused session was billed already -- and the
 				// tile shows the running total across both.
-				recordSpend(run.model, _pt, _ct);
+				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider);
 				run.promptTokens = (run.priorPrompt || 0) + _pt;
 				run.completionTokens = (run.priorCompletion || 0) + _ct;
+				run.cachedTokens = (run.priorCached || 0) + _ca;
+				run.costUsd = (run.priorCost || 0) + _cost;
 				this.active--;
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				updateSpend();
@@ -4831,6 +5281,8 @@ import init, {
 			// Carry the accumulated spend and text across into the new session.
 			run.priorPrompt = run.promptTokens || 0;
 			run.priorCompletion = run.completionTokens || 0;
+			run.priorCached = run.cachedTokens || 0;
+			run.priorCost = run.costUsd || 0;
 			run.resume = true;
 			run.app = null;			// a fresh session is built in start()
 			run.status = 'queued';
@@ -4987,11 +5439,16 @@ import init, {
 			// it works -- which is what tells you whether it is worth pausing. A resumed
 			// worker adds what it had already spent before it paused.
 			var pt = run.promptTokens, ct = run.completionTokens;
+			var ca = run.cachedTokens || 0, usd = run.costUsd || 0;
 			if (run.status === 'running' && run.app) {
 				// The live counters, NOT prompt_tokens: that getter borrows the session
 				// the running turn holds, so reading it here would panic the engine.
+				// `cached_tokens` and `cost_usd` borrow it too, so the running tile reads
+				// their live twins for exactly the same reason.
 				pt = (run.priorPrompt || 0) + (run.app.live_prompt_tokens || 0);
 				ct = (run.priorCompletion || 0) + (run.app.live_completion_tokens || 0);
+				ca = (run.priorCached || 0) + (run.app.live_cached_tokens || 0);
+				usd = (run.priorCost || 0) + (run.app.live_cost_usd || 0);
 			}
 			var toks = pt + ct;
 			var bits = [];
@@ -4999,8 +5456,16 @@ import init, {
 			left.textContent = bits.join(' · ');
 			var right = document.createElement('span');
 			if (toks && window.DaimondPricing) {
-				var pr = DaimondPricing.priceFor(run.model, pt, ct, 0);
-				if (pr) right.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
+				// The provider's own figure wherever it gave one, and the table only where it
+				// did not. A run that was mostly cache hits costs a fraction of what the table
+				// says, so the table's answer on the tile is simply a wrong number -- and there
+				// is no "≈" on a figure the provider stated, because it is not an approximation.
+				if (usd > 0) {
+					right.textContent = fmtUsd(usd);
+				} else {
+					var pr = DaimondPricing.priceFor(run.model, pt, ct, ca, run.provider || '');
+					if (pr) right.textContent = (pr.estimated && !DaimondI18n.converted() ? '≈' : '') + fmtUsd(pr.usd);
+				}
 			}
 			arow.appendChild(left); arow.appendChild(right);
 			card.appendChild(arow);
@@ -5490,15 +5955,21 @@ import init, {
 	// module variables. With a single pair, a fold on a cheap model followed by a steer on an
 	// expensive one would have billed the difference between two unrelated counters -- and priced
 	// the turn at whatever the starred model happened to cost.
-	var _diamondMeter = new Map();       // app -> { p, c } at the last reading
+	// The cached share and the provider's own cost figure are metered the same way and kept in the
+	// same per-app reading. `absorb_usage` rolls all four out of each throwaway Session into the
+	// app, so all four grow together and one delta rule serves them all.
+	var _diamondMeter = new Map();       // app -> { p, c, ca, cost } at the last reading
 	function meterDiamondTurn(app) {
 		if (!app || !window.DaimondLedger) return;
-		var prev = _diamondMeter.get(app) || { p: 0, c: 0 };
+		var prev = _diamondMeter.get(app) || { p: 0, c: 0, ca: 0, cost: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
+		var ca = app.cached_tokens || 0, cost = app.cost_usd || 0;
 		var dp = Math.max(0, p - prev.p), dc = Math.max(0, c - prev.c);
-		_diamondMeter.set(app, { p: p, c: c });
+		var dca = Math.max(0, ca - prev.ca), dcost = Math.max(0, cost - prev.cost);
+		_diamondMeter.set(app, { p: p, c: c, ca: ca, cost: cost });
 		if (dp + dc === 0) return;
-		recordSpend(_diamondAppModel.get(app) || cfg.model, dp, dc);
+		recordSpend(_diamondAppModel.get(app) || cfg.model, dp, dc, dca, dcost,
+			_diamondAppProvider.get(app) || '');
 		updateSpend();
 	}
 
@@ -5546,6 +6017,13 @@ import init, {
 		// single-threaded), so every DaimondApp instance follows this handle;
 		// this variable only mirrors it for the UI.
 		var folderHandle = null;
+		// The last real folder this account used, remembered ACROSS a switch to the browser
+		// sandbox. Switching to the sandbox used to delete the stored handle outright, so going
+		// back meant picking the folder again from a native dialog -- every single time. A user
+		// who moves between the two (the sandbox syncs; a folder does not) was doing that all
+		// day. This is what makes the way back one click, and it is a separate variable from
+		// `folderHandle` precisely because the agent is NOT working here.
+		var rootHandle = null;
 
 		function fmtBytes(n) {
 			if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
@@ -5768,16 +6246,32 @@ import init, {
 
 			// Machine — a real folder on this disk. A genuine alternative root, and
 			// mutually exclusive with the sandbox: the agent has exactly one.
+			//
+			// Three things this chip can be, and it used to be only the third:
+			//
+			//   * a RECONNECT offer, when a stored grant needs a gesture (a boot, or a grant the
+			//     browser withdrew mid-session);
+			//   * the way BACK to a folder this session has already used, which needs no picker
+			//     at all -- query the grant, request it if it has lapsed, done;
+			//   * the FIRST-EVER use, which is the only case that needs a folder chosen.
+			//
+			// Calling the picker unconditionally collapsed the middle case into the last one, so
+			// every return trip cost a native dialog.
 			var machineChip = modeChip('machine',
-				onMachine ? folderHandle.name : 'Machine',
+				onMachine ? folderHandle.name : (rootHandle ? rootHandle.name : 'Machine'),
 				onMachine,
 				canPick
 					? (onMachine
 						? 'The agent reads and writes this real folder. It does not sync.'
-						: 'Let the agent work in a real folder on this machine. It will not sync.')
+						: (rootHandle
+							? t('files.machine_return', { name: rootHandle.name })
+							: 'Let the agent work in a real folder on this machine. It will not sync.'))
 					: 'Real folders need a Chromium-based browser.',
 				!canPick ? null
-					: (reconnect ? function () { reconnectFolder(reconnect); } : openFolder));
+					: (reconnect ? function () { reconnectFolder(reconnect); }
+						: onMachine ? showMachineInfo
+						: rootHandle ? function () { reconnectFolder(rootHandle); }
+						: openFolder));
 			if (!canPick) machineChip.classList.add('ghost');
 			if (reconnect) setChip(machineChip, 'machine', 'Reconnect ' + reconnect.name);
 			modeEl.appendChild(machineChip);
@@ -5803,6 +6297,12 @@ import init, {
 					'Copy a folder from this machine into the workspace, so it syncs', importFolder));
 				modeEl.appendChild(modeBtn('Save a copy…',
 					'Write the workspace out to a folder on this machine', exportFolder));
+			}
+			// Choosing a DIFFERENT folder is now the only thing that opens a picker, so it needs
+			// somewhere to live. It belongs here, next to the chip that names the folder it would
+			// replace, and only while there is one to replace.
+			if (canPick && onMachine) {
+				modeEl.appendChild(modeBtn(t('files.change_root'), t('files.change_root_help'), openFolder));
 			}
 			modeChanged();
 		}
@@ -5989,6 +6489,32 @@ import init, {
 				: 'This browser does not report how much storage it has granted.');
 		}
 
+		/// What the agent can reach on this disk, and how to stop it reaching there.
+		///
+		/// The Machine chip, while it is the active one, used to re-open the folder picker. That
+		/// is the least useful thing it could do from a folder that is already open, and it left
+		/// the root's SCOPE unstated -- which is the one fact a person needs before pointing an
+		/// agent at a directory on their own machine. Mirrors showBrowserInfo: the active chip
+		/// says what this location is, and the row beside it carries the acts.
+		function showMachineInfo() {
+			if (!folderHandle) return;
+			// A second click on the chip must not stack a second Forget button.
+			var old = modeEl.querySelector('.files-mode-forget');
+			if (old) old.remove();
+			showModeMsg(t('files.machine_scope', { name: folderHandle.name }));
+			// Forgetting the folder was a side effect of switching to the sandbox until that stopped
+			// deleting the record. Without a deliberate control there would now be NO way to make
+			// Daimond forget a folder, which is worse than the dialog the change removed.
+			var forget = modeBtn(t('files.forget_root'), t('files.forget_root_help'), async function () {
+				try { await FsaDB.clear(); } catch (e) { /* nothing stored */ }
+				rootHandle = null;
+				renderMode();
+				showModeMsg(t('files.root_forgotten'));
+			});
+			forget.classList.add('files-mode-forget');
+			modeEl.appendChild(forget);
+		}
+
 		/// The status rows report which files the agent is touching, so they are stale the moment
 		/// this row is redrawn — opening a folder, closing it, or losing it all pass through here.
 		function modeChanged() {
@@ -6049,7 +6575,15 @@ import init, {
 			}
 			var handle;
 			try {
-				handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+				// `id` gives this picker its own remembered location, so choosing a workspace does
+				// not move where an unrelated save dialog opens. `startIn` puts it where the user
+				// already is: a "Change folder…" that opened in Documents, three levels from the
+				// project they are in, is a dialog they have to navigate every time.
+				handle = await window.showDirectoryPicker({
+					mode:    'readwrite',
+					id:      'daimond-workspace',
+					startIn: rootHandle || 'documents',
+				});
 			} catch (e) {
 				if (e && e.name === 'AbortError') return;   // user cancelled
 				showModeMsg('Could not open folder: ' + (e && e.message ? e.message : e), true);
@@ -6072,17 +6606,25 @@ import init, {
 				return;
 			}
 			folderHandle = handle;
+			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
 			list('');
 		}
 
-		// Switch the agent back to the OPFS sandbox and forget the folder.
+		// Switch the agent back to the OPFS sandbox, KEEPING the folder to come back to.
+		//
+		// This used to call `FsaDB.clear()`, which is what made the round trip expensive: the
+		// stored handle was gone, so the Machine chip had nothing to reconnect and fell back to
+		// the picker. Going to the sandbox says where the agent works, not which folder this
+		// browser is allowed to reach -- and the grant survives either way, so deleting the
+		// record only cost the user the dialog. Forgetting the folder is now its own deliberate
+		// control (see showMachineInfo).
 		async function switchToOpfs() {
 			if (rootSwitchBlocked()) return;
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
+			rootHandle = folderHandle || rootHandle;
 			folderHandle = null;
-			try { await FsaDB.clear(); } catch (e) { /* ignore */ }
 			renderMode();
 			list('');
 		}
@@ -6090,6 +6632,12 @@ import init, {
 		// Re-grant a stored handle (a user gesture drives requestPermission)
 		// and reactivate it.
 		async function reconnectFolder(handle) {
+			// Reconnecting is a ROOT SWAP like any other, and it never had this guard: it was
+			// only ever reached from boot and from a withdrawn grant, neither of which can happen
+			// mid-turn. The Machine chip now routes the way BACK through here, which is an
+			// ordinary click at an arbitrary moment -- so the gap became reachable and the agent
+			// could have had the ground moved under it mid-turn.
+			if (rootSwitchBlocked()) return;
 			if ((await ensurePermission(handle)) !== 'granted') {
 				showModeMsg('Reconnect was declined. Staying on OPFS.', true);
 				return;
@@ -6111,6 +6659,9 @@ import init, {
 			if (perm === 'granted') {
 				await activateFolder(handle, false);
 			} else {
+				// Not granted, but still the folder this account works in: remembered, so a later
+				// switch to the sandbox and back does not lose it.
+				rootHandle = handle;
 				renderMode(handle);         // 'prompt' / 'denied' → offer reconnect
 			}
 		}
@@ -6510,7 +7061,6 @@ import init, {
 		// browser, write it next to the source in OPFS, and render it
 		// inline.  The heavy compiler wasm is imported lazily on first
 		// use so opening non-Typst files stays light.
-		var _typstMod = null;
 		var _pdfUrl = null;   // live blob URL for the shown PDF
 		async function compileTypst(path, btn) {
 			var msgEl = viewEl.querySelector('.files-view-msg');
@@ -6520,10 +7070,15 @@ import init, {
 			msgEl.style.display = ''; msgEl.classList.remove('err');
 			msgEl.textContent = t('files.compiling_path', { path: path });   // escaped
 			try {
-				if (!_typstMod) _typstMod = await import('./typst.js');
+				// One driver, one memo. `typst.js` installs `window.DaimondTypst` and holds the
+				// compiler promise itself, so the button and the agent's `typst_compile` tool
+				// build the 30 MB wasm once between them; a private memo here would have been a
+				// second one the tool could not reach.
+				if (!window.DaimondTypst) await import('./typst.js');
 				// Always compile the freshest source from OPFS.
 				var src = await tools().run_tool('file_read', JSON.stringify({ path: path }));
-				var out = await _typstMod.compilePdf(src);
+				var out = await window.DaimondTypst.compile(src);
+				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
 					msgEl.classList.add('err');
 					msgEl.textContent = out.error;               // escaped
@@ -6547,28 +7102,18 @@ import init, {
 			}
 		}
 
-		// Write bytes to OPFS directly (the same origin-private root the
-		// Rust file tools use), so a compiled PDF appears in the tree.
-		// Path components are jailed exactly as the Rust OPFS edge does.
-		// Write binary bytes into the ACTIVE workspace root — the user's real
-		// folder when one is open, else the OPFS sandbox. Every other file
-		// operation goes through `run_tool`, which follows the same root; this
-		// path used to hardcode OPFS, so a PDF compiled from a source in a real
-		// folder was written into the sandbox instead and the tree never showed
-		// it, while the UI still reported success.
+		// Write binary bytes into the ACTIVE workspace root: a compiled PDF, a saved message, an
+		// upload from the machine. Everything else in this panel goes through `run_tool`, which
+		// carries text; this is the one door for bytes.
+		//
+		// Rust owns the write. It applies the path jail, the real-folder override AND the
+		// per-account namespace, and it is the last of those that matters here: this function used
+		// to walk the origin OPFS root itself, so a secondary account's compiled PDFs and saved
+		// mail landed in the PRIMARY account's workspace, readable by whoever else uses this
+		// browser. A hand-rolled walk cannot know about an account; the wasm edge already does.
 		async function writeWorkspaceBytes(path, bytes) {
-			var parts = String(path).split('/').filter(function (p) {
-				return p && p !== '.' && p !== '..';
-			});
-			if (parts.length === 0) throw new Error('Empty path.');
-			var dir = folderHandle || await navigator.storage.getDirectory();
-			for (var i = 0; i < parts.length - 1; i++) {
-				dir = await dir.getDirectoryHandle(parts[i], { create: true });
-			}
-			var fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
-			var w = await fh.createWritable();
-			await w.write(bytes);
-			await w.close();
+			await tools().write_bytes(String(path),
+				bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
 		}
 
 		// Briefly flash a status line in the open file's header (Saved / error).
@@ -6841,6 +7386,9 @@ import init, {
 	// same client, and DaimondApp has no setter for its model -- changing one means building one.
 	var _diamondApps     = {};           // "provider model" -> DaimondApp
 	var _diamondAppModel = new Map();    // DaimondApp -> the model id it runs, for the ledger
+	// And whose key it runs on. A ledger entry without it cannot be attributed to a provider, and
+	// a live rate captured from that provider cannot be preferred over the baked-in table.
+	var _diamondAppProvider = new Map(); // DaimondApp -> the provider id
 	function diamondApp(diamondId, pick) {
 		var m = pick && pick.model ? pick : diamondModel(diamondId);
 		var a = appCfgFor(m);
@@ -6861,6 +7409,7 @@ import init, {
 		try { app.set_instructions(Instructions.md); } catch (e) { /* ignore */ }
 		_diamondApps[k] = app;
 		_diamondAppModel.set(app, a.model || '');
+		_diamondAppProvider.set(app, a.provider || '');
 		return app;
 	}
 
@@ -6869,6 +7418,7 @@ import init, {
 	function resetDiamondApps() {
 		_diamondApps = {};
 		_diamondAppModel = new Map();
+		_diamondAppProvider = new Map();
 		_diamondMeter = new Map();
 	}
 
@@ -7176,6 +7726,16 @@ import init, {
 		// show, so one heavily-filed Diamond cannot push the rest off the rail;
 		// a Diamond with no tags adds nothing here and looks exactly as it did
 		// before tags existed.
+		// A fold proposed but not yet answered. The diff lives in the centre, which
+		// may be showing something else entirely by the time the reducer returns, so
+		// the row says there is something here to come back to.
+		if (pendingFolds[f.id]) {
+			var pend = document.createElement('span');
+			pend.className = 'diamond-pending';
+			pend.textContent = t('fold.pending_badge');
+			pend.title = t('fold.pending_badge_help');
+			meta.appendChild(pend);
+		}
 		var tags = tagsOf(f);
 		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
 			var chip = tagChip(tag, 'tag-sm', setTagFilter);
@@ -7214,6 +7774,12 @@ import init, {
 		crystalView.style.display    = diamondOn ? 'flex' : 'none';
 		chatOutputEl.style.display = diamondOn ? 'none' : '';
 		chatInputBar.style.display = diamondOn ? 'none' : '';
+		// Which face is up, said in the panel's own shape: the crystal wears the
+		// mark and squares its corners against the rounded chrome everywhere else.
+		var ai = document.getElementById('panel-ai');
+		if (ai) ai.classList.toggle('crystal-face', diamondOn);
+		var mark = document.getElementById('chead-mark');
+		if (mark) mark.style.display = diamondOn ? '' : 'none';
 	}
 
 	/// Show one mail message on the stage, beside the chat — so it can be read
@@ -8048,8 +8614,55 @@ import init, {
 			offer.forEach(function (tag) {
 				var chip = tagChip(tag, 'tag-offer', function () { commit(tags.concat([tag])); });
 				chip.title = t('tag.add', { tag: tag });
+				// The pool is the only place that shows every tag the user has, so it is
+				// the only place one can be got rid of. The starter suggestions are
+				// furniture rather than the user's own data -- they are offered whatever
+				// the pool holds -- so they carry no closer: it could not remove them.
+				if (DEFAULT_TAG_SUGGESTIONS.indexOf(tag) === -1) chip.appendChild(poolCloser(tag));
 				sug.appendChild(chip);
 			});
+		}
+
+		/// The × on a pool chip: delete the tag itself, everywhere it is filed.
+		///
+		/// The glyph is drawn in CSS rather than set as text (see `.tag-kill`). A
+		/// chip's `textContent` is the tag -- the rail, the filter and the search all
+		/// read it -- and a button with an × in it would make every one of them read
+		/// "person×".
+		function poolCloser(tag) {
+			var x = document.createElement('button');
+			x.className = 'tag-x tag-kill';
+			x.title = t('tag.delete_help', { tag: tag });
+			x.setAttribute('aria-label', t('tag.delete_help', { tag: tag }));
+			x.addEventListener('click', async function (e) {
+				e.stopPropagation();          // closing a chip is not clicking the chip
+				// Who else is filed under it. This is the whole reason the removal asks
+				// first: it is not this Diamond's tag, it is the user's tag.
+				var users = diamonds.filter(function (d) { return tagsOf(d).indexOf(tag) !== -1; });
+				var body = users.length
+					? tn('tag.delete_body_used', users.length, { tag: tag })
+					: t('tag.delete_body_unused', { tag: tag });
+				if (!await confirmDialog(body, t('tag.delete_ok'), { title: t('tag.delete_title') })) return;
+				for (var i = 0; i < users.length; i++) {
+					var d = users[i];
+					var next = tagsOf(d).filter(function (u) { return u !== tag; });
+					try { await diamondApp().set_tags(d.id, JSON.stringify(next)); }
+					catch (e2) { noticeDialog(t('tag.save_failed'), friendlyError(e2)); return; }
+				}
+				delete seen[tag];             // gone from the pool for this session too
+				// A filter on a tag that no longer exists would hide every Diamond
+				// there is, with a chip beside the search box as the only clue why.
+				if (tagFilter === tag) tagFilter = null;
+				bumpDiamonds();
+				await loadDiamonds();
+				var g = diamonds.find(function (y) { return y.id === f.id; });
+				if (g) { tags = tagsOf(g).slice(); currentDiamond = g; }
+				paint();
+				toast(users.length
+					? tn('tag.deleted_from', users.length, { tag: tag })
+					: t('tag.deleted', { tag: tag }));
+			});
+			return x;
 		}
 
 		function addTyped() {
@@ -8786,6 +9399,26 @@ import init, {
 		});
 	}
 
+	/// Say, in the crystal itself, that a reducer is running.
+	///
+	/// The status line under the controls is 12px of muted grey, and folding a
+	/// whole chat is the slowest call the app makes: the user pressed a button,
+	/// the centre changed, and nothing moved for half a minute. The chat has had a
+	/// spinner all along; this is the same one, in the other face of the panel.
+	function showCrystalSpinner() {
+		hideCrystalSpinner();
+		var sp = document.createElement('div');
+		sp.className = 'chat-spinner crystal-spinner';
+		sp.id = 'crystal-spinner';
+		sp.innerHTML = '<span class="chat-spinner-dot"></span>'
+			+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+		crystalBody.appendChild(sp);
+	}
+	function hideCrystalSpinner() {
+		var sp = document.getElementById('crystal-spinner');
+		if (sp) sp.remove();
+	}
+
 	/// After any crystal mutation: refresh the meta row in the rail and the
 	/// Centre meter, then re-render the crystal.
 	async function refreshDiamondAfterChange() {
@@ -8902,6 +9535,7 @@ import init, {
 		}
 		setCrystalBusy(true);
 		setCrystalStatus(t('fold.proposing'));
+		showCrystalSpinner();
 		var current_md, proposed;
 		var fa = diamondApp(currentDiamond.id);   // this Diamond's model, not the starred one
 		try {
@@ -8909,17 +9543,27 @@ import init, {
 			proposed = await fa.fold_propose(currentDiamond.id, delta);
 		} catch (e) {
 			meterDiamondTurn(fa);
+			hideCrystalSpinner();
 			setCrystalStatus(friendlyError(e));
 			setCrystalBusy(false);
+			toast(friendlyError(e), true);
 			return;
 		}
 		meterDiamondTurn(fa);
+		hideCrystalSpinner();
 		setCrystalStatus('');
 		setCrystalBusy(false);
+		// As in foldChatInto: an empty proposal is a failure, not a deletion of
+		// everything the crystal says.
+		if (!proposed || !String(proposed).trim()) {
+			toast(t('fold.empty_reply'), true);
+			return;
+		}
 		pendingFolds[currentDiamond.id] = {
 			base: current_md, proposed: proposed, delta: delta, chatId: null, chatName: null,
 		};
 		renderFoldDiff(currentDiamond.id);
+		renderDiamondList();
 	}
 
 	/// Show the fold diff (current vs proposed) with Accept and Reject.
@@ -8982,7 +9626,11 @@ import init, {
 		var reject = document.createElement('button');
 		reject.className = 'diff-reject';
 		reject.textContent = changed ? t('diff.reject') : t('common.close');
-		reject.addEventListener('click', function () { delete pendingFolds[diamondId]; renderCrystal(); });
+		reject.addEventListener('click', function () {
+			delete pendingFolds[diamondId];
+			renderCrystal();
+			renderDiamondList();          // the rail row carries the pending mark
+		});
 		actions.appendChild(accept); actions.appendChild(reject);
 		crystalControls.appendChild(status);
 		crystalControls.appendChild(actions);
@@ -9083,8 +9731,13 @@ import init, {
 		// Belt and braces beside the disabled button: applying a fold that
 		// changes nothing would still bump the version and write a duplicate
 		// delta, quietly growing the history with nothing in it.
-		if ((st.base || '') === (st.proposed || '')) { delete pendingFolds[diamondId]; renderCrystal(); return; }
+		if ((st.base || '') === (st.proposed || '')) {
+			delete pendingFolds[diamondId];
+			renderCrystal(); renderDiamondList();
+			return;
+		}
 		delete pendingFolds[diamondId];
+		renderDiamondList();              // the row's pending mark goes with it
 		setCrystalStatus('Applying fold…');
 		try {
 			await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
@@ -9188,6 +9841,10 @@ import init, {
 				try { if (c.app) c.app.abort(); } catch (e) { /* already gone */ }
 				c._generating = false;
 			}
+			// Locking takes the user's content off the screen, so a queue is content
+			// too — and it must not fire a turn into a locked app.
+			c._queue = [];
+			c._aborted = true;
 		});
 		hideSpinner();
 		setSendMode('send');
@@ -10262,7 +10919,9 @@ import init, {
 		// There is no --danger-bg token, so the failure case takes --warn-bg and
 		// leans on a --danger border and heading colour to read as a failure.
 		var edge = isErr ? 'var(--danger)' : 'var(--ok)';
-		box.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'
+		// pointer-events:none — a toast floats over the composer and the send row,
+		// and a status line that swallows the click underneath it is a trap.
+		box.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);pointer-events:none;'
 			+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:var(--fs-sm);max-width:80vw;'
 			+ 'background:' + (isErr ? 'var(--warn-bg)' : 'var(--ok-bg)') + ';'
 			+ 'color:var(--text-primary);border:1px solid ' + edge + ';'
@@ -10834,6 +11493,8 @@ import init, {
 
 	var jumpBtn = document.getElementById('chat-jump');
 	if (jumpBtn) jumpBtn.addEventListener('click', jumpBack);
+	var endBtn = document.getElementById('chat-end');
+	if (endBtn) endBtn.addEventListener('click', jumpEnd);
 
 	// ── Boot ───────────────────────────────────────────────────
 	async function boot() {
@@ -10965,6 +11626,13 @@ import init, {
 				onCount:  function () { DaimondAdmin.status(); },
 			});
 		}
+		// The Typst driver installs `window.DaimondTypst`, which is the ONE object the Rust
+		// `typst_compile` tool looks for. It is a module, so nothing installs it until something
+		// imports it -- and the tool cannot import anything. Without this the tool was in the
+		// belt and could never work: a model asked for a PDF correctly reported that it could
+		// not make one. The heavy compiler wasm is still built lazily, on the first compile;
+		// this only evaluates the ~4 KB module that registers the driver.
+		import('./typst.js').catch(function () { /* no Typst on this build; the tool says so */ });
 		if (window.DaimondWeb) DaimondWeb.init({
 			// A consequential web action — a purchase, a send — is put to the USER,
 			// never confirmed by the model. Resolves true only on a real yes.

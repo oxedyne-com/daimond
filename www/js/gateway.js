@@ -136,6 +136,35 @@
 		return DaimondI18n.billedMinor(minor, currency);
 	}
 
+	/// Take the balance out of any gateway reply that carries one.
+	///
+	/// Nearly every credit-spending endpoint already returns the resulting balance in
+	/// `credits_minor`, and the app was throwing all of them away — so the account figure in the
+	/// header stayed at whatever the last explicit `/api/balance` call had said, and a page that
+	/// fetched twenty web pages showed the balance it started with until something happened to
+	/// re-ask. Every reply is now read, and each one that says refreshes the number.
+	///
+	/// Silent about anything else: an absent field, a null, a string. `state.credits` is `null`
+	/// for "unknown", and writing that from a reply that simply did not mention money would
+	/// erase a figure the app legitimately holds.
+	///
+	/// # Arguments
+	/// * `j` - A parsed gateway reply, or anything at all.
+	function noteBalance(j) {
+		if (!j || typeof j !== 'object') return;
+		if (typeof j.credits_minor !== 'number' || !isFinite(j.credits_minor)) return;
+		state.credits = j.credits_minor;
+		if (typeof j.currency === 'string' && j.currency) state.currency = j.currency;
+		// The header, the Spending panel and anything else watching money get told once, here,
+		// rather than each of them polling. A page with no `window` (a test harness evaluating
+		// this file) simply does not hear it.
+		try {
+			window.dispatchEvent(new CustomEvent('daimond:credits', {
+				detail: { credits: state.credits, currency: state.currency },
+			}));
+		} catch (e) { /* no window to tell */ }
+	}
+
 	async function post(path, body) {
 		var r = await fetch(path, {
 			method: 'POST',
@@ -150,6 +179,7 @@
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
 		}
+		noteBalance(j);
 		return j;
 	}
 
@@ -165,6 +195,7 @@
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
 		}
+		noteBalance(j);
 		return j;
 	}
 
@@ -381,6 +412,10 @@
 	window.DaimondGateway = {
 		bootstrap:      bootstrap,
 		refreshBalance: refreshBalance,
+		/// Read a balance out of a reply this file did not make itself — the Web panel and the
+		/// mail panel each hold their own `fetch` wrapper, and their replies carry the balance
+		/// too. There is one place that owns `state.credits`, and this is how they reach it.
+		noteBalance:    noteBalance,
 		ledger:         ledger,
 		buyCredits:     buyCredits,
 		buyPro:         buyPro,

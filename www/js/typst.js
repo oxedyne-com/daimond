@@ -127,3 +127,28 @@ export async function compilePdf(source) {
 		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
 	}
 }
+
+// ── The driver the agent's `typst_compile` tool reaches ─────────
+// The compiler was wired to a human's Compile button and to nothing
+// else, so the tool registry had no Typst tool in it and a model
+// asked to produce a PDF correctly answered that it could not.
+// `window.DaimondTypst` is the one object the Rust side looks for
+// (see `src/wasm/typst.rs`), and it exchanges STRINGS and BYTES
+// only: the source comes in, PDF bytes go out, and every file touch
+// stays in Rust where the OPFS path jail and the per-account
+// namespace apply.
+//
+// The memo lives in this module (`_compilerPromise`), so the 30 MB
+// wasm is built once however it is reached -- the button's dynamic
+// `import()` and this global resolve to the same module instance,
+// because a module URL is evaluated once per document. The guard
+// below is belt and braces for a second evaluation under a
+// different URL, which would otherwise install a second compiler.
+if (typeof window !== 'undefined' && !window.DaimondTypst) {
+	window.DaimondTypst = {
+		/// Compile a Typst source string, resolving `{ pdf }` or `{ error }`.
+		/// It RESOLVES on failure rather than rejecting, so the compiler's own
+		/// diagnostics reach the caller as the reason instead of as an exception.
+		compile: function (source) { return compilePdf(String(source == null ? '' : source)); },
+	};
+}

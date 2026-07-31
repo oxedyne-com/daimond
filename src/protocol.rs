@@ -170,6 +170,14 @@ pub struct Session {
     /// Prompt tokens of the most recent request — the current context
     /// window usage (not cumulative), for the live meter.
     pub last_prompt_tokens:  u64,
+    /// Cumulative prompt tokens the provider served from its cache, across all
+    /// turns.  A subset of `prompt_tokens`, never added to it.
+    pub cached_tokens:       u64,
+    /// Cumulative USD the provider says these turns actually cost.
+    ///
+    /// Zero means no provider reported a figure, not that the session was
+    /// free; the caller prices those turns from its table instead.
+    pub cost_usd:            f64,
 }
 
 impl Session {
@@ -184,6 +192,8 @@ impl Session {
             prompt_tokens: 0,
             completion_tokens: 0,
             last_prompt_tokens: 0,
+            cached_tokens: 0,
+            cost_usd: 0.0,
         }
     }
 
@@ -197,6 +207,8 @@ impl Session {
         m.insert(dat!("prompt_tokens"), Dat::U64(self.prompt_tokens));
         m.insert(dat!("completion_tokens"), Dat::U64(self.completion_tokens));
         m.insert(dat!("last_prompt_tokens"), Dat::U64(self.last_prompt_tokens));
+        m.insert(dat!("cached_tokens"), Dat::U64(self.cached_tokens));
+        m.insert(dat!("cost_usd"), dat!(self.cost_usd));
         m
     }
 
@@ -252,9 +264,23 @@ impl Session {
             Some(Dat::U64(n)) => *n,
             _ => 0,
         };
+        // OPTIONAL, and it has to be: a snapshot written before these two fields
+        // existed must still load.  Every field here is decoded with a `_ => 0`
+        // arm for that reason -- a required field would refuse the user's own
+        // history the moment the shape grew, which is how a session store gets
+        // bricked by an upgrade.
+        let cached_tokens = match m.get(&dat!("cached_tokens")) {
+            Some(Dat::U64(n)) => *n,
+            _ => 0,
+        };
+        let cost_usd = match m.get(&dat!("cost_usd")) {
+            Some(Dat::F64(f)) => **f,
+            _ => 0.0,
+        };
         Ok(Self {
             id, name, created_at, model, messages,
             prompt_tokens, completion_tokens, last_prompt_tokens,
+            cached_tokens, cost_usd,
         })
     }
 }
@@ -463,6 +489,45 @@ mod tests {
         let id1 = generate_session_id();
         let id2 = generate_session_id();
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_session_datmap_round_trip() {
+        let mut s = Session::new("s1".to_string(), "Test".to_string(), "glm-5.2".to_string());
+        s.prompt_tokens      = 10240;
+        s.completion_tokens  = 512;
+        s.last_prompt_tokens = 8192;
+        s.cached_tokens      = 9216;
+        s.cost_usd           = 0.0021;
+        let back = match Session::from_datmap(&s.to_datmap()) {
+            Ok(v)  => v,
+            Err(e) => panic!("round trip failed: {}", e),
+        };
+        assert_eq!(back.cached_tokens, 9216);
+        assert_eq!(back.cost_usd, 0.0021);
+        assert_eq!(back.prompt_tokens, 10240);
+    }
+
+    #[test]
+    fn test_session_datmap_without_new_fields() {
+        // A snapshot written before `cached_tokens` and `cost_usd` existed.  It
+        // must still load, at zero -- this is what makes the two fields optional
+        // in practice, and a required field here would refuse a real history.
+        let mut m = DaticleMap::new();
+        m.insert(dat!("id"), dat!("s1"));
+        m.insert(dat!("name"), dat!("Old"));
+        m.insert(dat!("created_at"), Dat::U64(1));
+        m.insert(dat!("model"), dat!("glm-5.2"));
+        m.insert(dat!("prompt_tokens"), Dat::U64(7));
+        m.insert(dat!("completion_tokens"), Dat::U64(3));
+        m.insert(dat!("last_prompt_tokens"), Dat::U64(7));
+        let s = match Session::from_datmap(&m) {
+            Ok(v)  => v,
+            Err(e) => panic!("an older snapshot must still load: {}", e),
+        };
+        assert_eq!(s.prompt_tokens, 7);
+        assert_eq!(s.cached_tokens, 0);
+        assert_eq!(s.cost_usd, 0.0);
     }
 
     #[test]

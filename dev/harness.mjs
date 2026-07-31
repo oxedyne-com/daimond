@@ -166,6 +166,16 @@ export async function signInAs(s, name) {
 export async function newChat(s) {
 	const { page } = s;
 	if (await page.isVisible('#chat-input')) return;
+	// The Admin drawer opens over the rail on a not-connected profile
+	// ("Connect a model"), and since the rail gained its Diamonds/Chats
+	// divider the + button sits under it. A force-click dispatches at the
+	// button's coordinates, so the DRAWER receives it and nothing happens.
+	// Close it the way a user would before reaching for the rail.
+	const drawerClose = page.locator('#admin-close');
+	if (await drawerClose.isVisible().catch(() => false)) {
+		await drawerClose.click({ force: true });
+		await page.waitForTimeout(200);
+	}
 	// force:true throughout — a page animation keeps failing Playwright's
 	// "stable" actionability check, hanging otherwise-fine clicks.
 	await page.click('#new-session-btn', { force: true });

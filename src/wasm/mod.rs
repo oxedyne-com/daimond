@@ -18,6 +18,8 @@
 //!   System (OPFS), reached through `navigator.storage.getDirectory()`.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
 //!   driver behind the agent's web tools.
+//! - [`typst`] — the Typst compiler edge: bindings to the `window.DaimondTypst`
+//!   driver behind `typst_compile`, which exchanges bytes only.
 //!
 //! The synchronous single-writer OPFS path (`createSyncAccessHandle` in
 //! a dedicated Worker, needed for the append-only `.daimond` log) is
@@ -29,6 +31,7 @@ pub mod cloud;
 pub mod entry;
 pub mod diamond;
 pub mod opfs;
+pub mod typst;
 pub mod web;
 
 use oxedyne_fe2o3_core::prelude::*;

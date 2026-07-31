@@ -191,6 +191,35 @@ check('pressing again walks back to the one before it',
 check('and again, so a long thread is walked by its questions',
 	Math.abs(jump.third) <= 4, `${jump.third}px from the top`);
 
+// ── The ↓ comes back, and resets the walk ──────────────────────────────
+//
+// Having walked up to turn 2, ↓ returns to the bottom. The reset is the half that
+// is easy to leave out and impossible to see: without it the next ↑ carries on
+// from where the walk had got to (turn 1), rather than from the last question --
+// so the button would mean something different depending on history the user has
+// no way of knowing.
+const end = await p.evaluate(async () => {
+	const out = document.getElementById('chat-output');
+	const btn = document.getElementById('chat-end');
+	if (!btn) return { missing: true };
+	const topOf = n => {
+		const u = out.querySelector(`.chat-msg-user[data-turn="${n}"]`);
+		return Math.round(u.getBoundingClientRect().top - out.getBoundingClientRect().top);
+	};
+	btn.click();
+	await new Promise(r => setTimeout(r, 250));
+	const fromBottom = Math.round(out.scrollHeight - out.scrollTop - out.clientHeight);
+	document.getElementById('chat-jump').click();
+	await new Promise(r => setTimeout(r, 250));
+	return { fromBottom, restarted: topOf(4) };
+});
+check('the ↓ lands at the end of the chat',
+	!end.missing && Math.abs(end.fromBottom) <= 4,
+	end.missing ? '(no ↓ button in the bar)' : `${end.fromBottom}px from the bottom`);
+check('and the walk starts again from the last question, not from where it had got to',
+	!end.missing && Math.abs(end.restarted) <= 4,
+	end.missing ? '(no ↓ button in the bar)' : `turn 4 is ${end.restarted}px from the top`);
+
 // ── Fold selected really folds only what was selected ──────────────────
 //
 // The oracle is not the page: it is the Diamond history, which records the delta the reducer was

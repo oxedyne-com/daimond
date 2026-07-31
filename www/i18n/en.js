@@ -295,6 +295,20 @@
 	'models.err_bad_key':          'The account service sent a key Daimond cannot use.',
 	'models.err_no_key':           'That provider has no key yet.',
 	'models.err_key_refused':      'The provider refused the key (HTTP {status}).',
+	// What is left on a provider key, and how that is known. The manual line is
+	// deliberately not called a balance: it is the user's own figure less an
+	// estimate, and saying so is the whole point of showing it.
+	'models.credit_auto':          '{amount} left on this key — the provider said so at {when}.',
+	'models.credit_manual':        '{amount} left: your {base} from {when}, less about {spent} spent since.',
+	'models.credit_unknown':       'Nothing known about what is left on this key.',
+	'models.credit_check':         'Ask what is left',
+	'models.credit_recheck':       'Ask again',
+	'models.credit_probe_failed':  '{provider} would not say what is left. Tell Daimond instead.',
+	'models.credit_base_ph':       'e.g. 12.50',
+	'models.credit_base_label':    'What is on this key now, in US dollars',
+	'models.credit_base_set':      'I have this much, as of now',
+	'models.credit_base_update':   'Update my figure',
+	'models.credit_base_bad':      'That is not an amount. Enter a number of US dollars.',
 
 	// ── Credits, packs and Pro ─────────────────────────────────
 	// Anything the user is CHARGED says US dollars out loud. See `billing.*`.
@@ -353,7 +367,18 @@
 	'chat.input_ph':       'Type a message…',
 	'chat.send':           'Send',
 	'chat.jump_help':      'Jump back to your last message. Press again to walk back through the ones before it.',
+	'chat.end_help':       'Jump to the end of the chat.',
 	'chat.new':            '+ New chat',
+	// Messages typed while an answer is still arriving. They are held, shown, and
+	// sent one turn each once the answer is finished.
+	// Short on purpose: a phone's composer is ~120px wide, and a longer line wraps
+	// to two clipped rows. What happens to a queued message is said in full by the
+	// line above the bubbles (chat.queue_help), at the moment it matters.
+	'chat.queue_ph':       'Type the next message…',
+	'chat.queue_help':     'Waiting — sent when this answer finishes',
+	'chat.queued_pending': 'Not sent yet. Click to edit it.',
+	'chat.queue_cancel':   'Do not send this',
+	'chat.queue_returned': 'That turn did not finish, so what you queued is back in the box, unsent.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Who is driving',
@@ -624,6 +649,16 @@
 	'sync.synced':     'Synced',
 	'sync.off':        'Sync off',
 	'sync.off_reason': 'Cross-device sync is part of Pro, which this account does not hold.',
+	// A refused parcel. Say what is too large, and what usually makes it so:
+	// "too large" on its own leaves nothing to do about it.
+	'sync.too_big':        'Sync paused',
+	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. One very large Diamond or workspace file is the usual cause — remove or shrink it and sync resumes on its own.',
+	'sync.last_synced':    'Last synced {when}.',
+	'sync.last_never':     'Nothing has synced from this device yet.',
+	'sync.when_just_now':  'just now',
+	'sync.when_mins':      '{n}m ago',
+	'sync.when_hours':     '{n}h ago',
+	'sync.when_days':      '{n}d ago',
 
 	// ── Pairing a second device ────────────────────────────────
 	// The quotation marks around a button's name are curly on purpose; keep
@@ -653,6 +688,10 @@
 	'pair.err_bundle_import':    'The linked identity could not be imported.',
 	'pair.err_create':           'Could not create a pairing code.',
 	'pair.err_link':             'Could not link this device.',
+	// The one-time presentation handover. Say that it happened and that it is
+	// this device's own from now on, or a German interface on a new phone reads
+	// as a fault rather than as the other device's setting.
+	'pair.look_carried': 'Your theme, language and panel layout came across too. This device keeps its own from here — change either without affecting the other.',
 
 	// ── The appearance menu ────────────────────────────────────
 	'menu.skin':          'Skin',
@@ -741,6 +780,19 @@
 	'spend.col_turns':   'Turns',
 	'spend.col_tokens':  'Tokens',
 	'spend.col_cost':    'Cost',
+	'spend.col_key':          'Key',
+	'spend.col_left':         'Left',
+	'spend.col_period_spend': 'Spent',
+	'spend.provider_keys':    'Provider keys',
+	'spend.left_auto':        'What the provider says is left on this key.',
+	'spend.left_manual':      'Your own figure, counted down by what Daimond estimates you have spent since.',
+	'spend.left_unknown':     'This provider does not say what is left, and you have not told Daimond.',
+	// Where the headline figure came from. A total the providers billed is not an
+	// estimate, and marking it "≈" said the opposite of the truth.
+	'spend.all_reported':          'Every turn in this window came with a cost from the provider, so this is what was charged, not an estimate.',
+	'spend.part_reported':         '{amount} of this was reported by the providers; the rest is priced from Daimond\'s rate table.',
+	'spend.none_reported':         'Priced from Daimond\'s rate table — no provider reported a cost for these turns.',
+	'spend.none_reported_unknown': 'Priced from Daimond\'s rate table, and one of these models is not in it, so the figure is a rough guide only.',
 	'spend.col_when':    'When',
 	'spend.col_what':    'What',
 	'spend.col_amount':  'Amount',
@@ -804,6 +856,16 @@
 	'tag.all_used':      'Every tag you have is on this Diamond already.',
 	'tag.none_yet':      'No tags yet.',
 	'tag.save_failed':   'Could not save the tags',
+	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
+	'tag.delete_help':        'Delete the tag "{tag}" everywhere',
+	'tag.delete_title':       'Delete this tag?',
+	'tag.delete_body_used.one':   'Delete the tag "{tag}"? It is on {n} Diamond, and will be taken off it. Nothing else about that Diamond changes.',
+	'tag.delete_body_used.other': 'Delete the tag "{tag}"? It is on {n} Diamonds, and will be taken off all of them. Nothing else about those Diamonds changes.',
+	'tag.delete_body_unused': 'Delete the tag "{tag}"? It is on no Diamonds, so this only takes it off the list.',
+	'tag.delete_ok':          'Delete the tag',
+	'tag.deleted':            'Tag "{tag}" deleted.',
+	'tag.deleted_from.one':   'Tag "{tag}" deleted from {n} Diamond.',
+	'tag.deleted_from.other': 'Tag "{tag}" deleted from {n} Diamonds.',
 	'tag.editor_note':   'Tags file this Diamond in the rail. They are never sent to a model and never enter the crystal.',
 
 	// ── Starting and interrupting a turn ───────────────────────
@@ -838,6 +900,12 @@
 	'fold.proposing':        'Proposing fold…',
 	'fold.diamond_gone':     'Diamond is gone',
 	'fold.diamond_gone_body': 'The Diamond that dispatched this agent no longer exists.',
+	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists — it may have been deleted in another tab. Nothing was folded.',
+	'fold.empty_reply':      'The model returned nothing to fold, so nothing was proposed. Try again.',
+	'fold.proposed_toast':   'Fold proposed — Accept or Reject it below.',
+	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}" — open it to Accept or Reject.',
+	'fold.pending_badge':    'fold waiting',
+	'fold.pending_badge_help': 'A proposed fold is waiting on this Diamond. Open it to accept or reject the change.',
 	// The fold diff's heading. Four shapes rather than one with glue, because a
 	// language that puts the target first cannot reorder a fragment.
 	'diff.folding_chat':      'Folding "{chat}" — review the change, then Accept or Reject.',
@@ -1012,6 +1080,19 @@
 	'files.fetch':           'Fetch',
 	'files.fetch_body':      'Bring "{path}" onto this device? That downloads {size}.',
 	'files.fetching':        'Fetching {path}…',
+
+	// ── Where the agent works: the root, and its scope ──────────
+	// Changing the root is a separate act from switching between the browser sandbox and the
+	// disk. The Machine chip used to do both, so a user who had gone to the sandbox and back was
+	// shown the folder picker every time -- and had no way to state the root's scope, which is the
+	// one thing they most need to know before pointing an agent at a directory.
+	'files.change_root':      'Change folder…',
+	'files.change_root_help': 'Point the agent at a different folder on this machine',
+	'files.machine_scope':    'The agent works only inside {name}. Nothing above or outside that folder is visible to Daimond.',
+	'files.machine_return':   'Put the agent back to work in {name}',
+	'files.forget_root':      'Forget this folder',
+	'files.forget_root_help': 'Stop offering this folder. Daimond keeps no record of it, and the next time you will pick one.',
+	'files.root_forgotten':   'Forgotten. Daimond no longer holds a record of that folder.',
 
 	// ── One message, read ──────────────────────────────────────
 	'msg.unknown_sender':    '(unknown sender)',

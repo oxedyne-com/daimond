@@ -162,7 +162,16 @@
 	'chat.input_ph': 'Nachricht schreiben…',
 	'chat.send': 'Senden',
 	'chat.jump_help': 'Springt zurück zu deiner letzten Nachricht. Nochmal drücken, um die davor durchzugehen.',
+	'chat.end_help': 'Springt ans Ende des Chats.',
 	'chat.new': '+ Neuer Chat',
+	// Messages typed while an answer is still arriving. They are held, shown, and
+	// sent one turn each once the answer is finished. Short on purpose: a phone’s
+	// composer is ~120px wide, and a longer line wraps to two clipped rows.
+	'chat.queue_ph': 'Nächste Nachricht schreiben…',
+	'chat.queue_help': 'Wartet — wird gesendet, sobald diese Antwort fertig ist',
+	'chat.queued_pending': 'Noch nicht gesendet. Klicke, um sie zu ändern.',
+	'chat.queue_cancel': 'Das nicht senden',
+	'chat.queue_returned': 'Dieser Zug ist nicht fertig geworden, deshalb steht deine wartende Nachricht wieder ungesendet im Feld.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Wer steuert',
@@ -363,6 +372,15 @@
 	'sync.synced': 'Synchronisiert',
 	'sync.off': 'Sync aus',
 	'sync.off_reason': 'Geräteübergreifende Synchronisierung gehört zu Pro, das dieses Konto nicht hat.',
+	// A refused parcel. Say what is too large, and what usually makes it so.
+	'sync.too_big': 'Sync angehalten',
+	'sync.too_big_reason': 'Das Paket dieses Geräts ist zu groß zum Senden, deshalb reist seine Arbeit nicht mehr weiter. Meist liegt es an einem sehr großen Diamond oder einer sehr großen Datei im Arbeitsbereich — entferne oder verkleinere sie, dann läuft die Synchronisierung von selbst wieder an.',
+	'sync.last_synced': 'Zuletzt synchronisiert {when}.',
+	'sync.last_never': 'Von diesem Gerät wurde noch nichts synchronisiert.',
+	'sync.when_just_now': 'gerade eben',
+	'sync.when_mins': 'vor {n} Min.',
+	'sync.when_hours': 'vor {n} Std.',
+	'sync.when_days': 'vor {n} T.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Anderes Gerät verknüpfen',
@@ -390,6 +408,9 @@
 	'pair.err_bundle_import': 'Die verknüpfte Identität konnte nicht importiert werden.',
 	'pair.err_create': 'Es ließ sich kein Kopplungscode erzeugen.',
 	'pair.err_link': 'Dieses Gerät ließ sich nicht verknüpfen.',
+	// The one-time presentation handover. Say that it happened and that it is
+	// this device’s own from now on.
+	'pair.look_carried': 'Design, Sprache und Panel-Anordnung sind mit übergekommen. Ab hier behält dieses Gerät seine eigenen — ändere das eine, ohne das andere zu berühren.',
 
 	// ── The appearance menu ────────────────────────────────────
 	'menu.skin': 'Stil',
@@ -475,6 +496,17 @@
 	'spend.col_turns': 'Runden',
 	'spend.col_tokens': 'Tokens',
 	'spend.col_cost': 'Kosten',
+	'spend.col_key': 'Schlüssel',
+	'spend.col_left': 'Rest',
+	'spend.col_period_spend': 'Ausgegeben',
+	'spend.provider_keys': 'Anbieter-Schlüssel',
+	'spend.left_auto': 'Was der Anbieter als Rest auf diesem Schlüssel angibt.',
+	'spend.left_manual': 'Deine eigene Angabe, heruntergerechnet um das, was Daimond seither als Ausgaben schätzt.',
+	'spend.left_unknown': 'Dieser Anbieter sagt nicht, was übrig ist, und du hast es Daimond nicht gesagt.',
+	'spend.all_reported': 'Jeder Zug in diesem Zeitraum kam mit Kosten vom Anbieter, das hier ist also das Abgerechnete und keine Schätzung.',
+	'spend.part_reported': 'Davon wurden {amount} von den Anbietern gemeldet; der Rest ist nach der Preistabelle von Daimond berechnet.',
+	'spend.none_reported': 'Nach der Preistabelle von Daimond berechnet — kein Anbieter hat für diese Züge Kosten gemeldet.',
+	'spend.none_reported_unknown': 'Nach der Preistabelle von Daimond berechnet, und eines dieser Modelle steht nicht darin, die Zahl ist also nur ein grober Anhaltspunkt.',
 	'spend.col_when': 'Wann',
 	'spend.col_what': 'Was',
 	'spend.col_amount': 'Betrag',
@@ -555,6 +587,19 @@
 	'models.err_bad_key': 'Der Kontodienst hat einen Schlüssel geschickt, den Daimond nicht nutzen kann.',
 	'models.err_no_key': 'Dieser Anbieter hat noch keinen Schlüssel.',
 	'models.err_key_refused': 'Der Anbieter hat den Schlüssel abgelehnt (HTTP {status}).',
+	// What is left on a provider key, and how that is known. The manual line is
+	// deliberately not called a balance: it is the user’s own figure less an estimate.
+	'models.credit_auto': 'Noch {amount} auf diesem Schlüssel — so hat es der Anbieter am {when} gesagt.',
+	'models.credit_manual': 'Noch {amount}: deine Angabe von {base} vom {when}, abzüglich der seither geschätzten {spent}.',
+	'models.credit_unknown': 'Über den Rest auf diesem Schlüssel ist nichts bekannt.',
+	'models.credit_check': 'Nachfragen, was übrig ist',
+	'models.credit_recheck': 'Noch einmal fragen',
+	'models.credit_probe_failed': '{provider} wollte nicht sagen, was übrig ist. Sag es Daimond stattdessen selbst.',
+	'models.credit_base_ph': 'z. B. 12.50',
+	'models.credit_base_label': 'Was gerade auf diesem Schlüssel ist, in US-Dollar',
+	'models.credit_base_set': 'So viel habe ich, Stand jetzt',
+	'models.credit_base_update': 'Meine Angabe aktualisieren',
+	'models.credit_base_bad': 'Das ist kein Betrag. Gib eine Zahl in US-Dollar ein.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Du steuerst. Ich bin bei {where} stehen geblieben.',
@@ -832,6 +877,16 @@
 	'tag.all_used': 'Jeder deiner Tags ist schon auf diesem Diamond.',
 	'tag.none_yet': 'Noch keine Tags.',
 	'tag.save_failed': 'Die Tags ließen sich nicht speichern',
+	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
+	'tag.delete_help': 'Den Tag „{tag}“ überall löschen',
+	'tag.delete_title': 'Diesen Tag löschen?',
+	'tag.delete_body_used.one': 'Den Tag „{tag}“ löschen? Er ist auf {n} Diamond und wird davon entfernt. Sonst ändert sich an diesem Diamond nichts.',
+	'tag.delete_body_used.other': 'Den Tag „{tag}“ löschen? Er ist auf {n} Diamonds und wird von allen entfernt. Sonst ändert sich an diesen Diamonds nichts.',
+	'tag.delete_body_unused': 'Den Tag „{tag}“ löschen? Er ist auf keinem Diamond, das nimmt ihn also nur von der Liste.',
+	'tag.delete_ok': 'Den Tag löschen',
+	'tag.deleted': 'Tag „{tag}“ gelöscht.',
+	'tag.deleted_from.one': 'Tag „{tag}“ von {n} Diamond gelöscht.',
+	'tag.deleted_from.other': 'Tag „{tag}“ von {n} Diamonds gelöscht.',
 	'tag.editor_note': 'Tags ordnen dieses Diamond in der Seitenleiste ein. Sie gehen nie an ein Modell und kommen nie in den Kristall.',
 
 	// ── Starting and interrupting a turn ───────────────────────
@@ -864,6 +919,12 @@
 	'fold.proposing': 'Einklappen wird vorgeschlagen…',
 	'fold.diamond_gone': 'Das Diamond ist weg',
 	'fold.diamond_gone_body': 'Das Diamond, das diesen Agenten entsandt hat, gibt es nicht mehr.',
+	'fold.diamond_gone_chat_body': 'Das gewählte Diamond gibt es nicht mehr — vielleicht wurde es in einem anderen Tab gelöscht. Es wurde nichts eingeklappt.',
+	'fold.empty_reply': 'Das Modell hat nichts zum Einklappen zurückgegeben, also wurde nichts vorgeschlagen. Versuch es noch einmal.',
+	'fold.proposed_toast': 'Einklappen vorgeschlagen — unten Übernehmen oder Ablehnen.',
+	'fold.proposed_elsewhere': 'Einklappen für „{diamond}“ vorgeschlagen — öffne es zum Übernehmen oder Ablehnen.',
+	'fold.pending_badge': 'Einklappen wartet',
+	'fold.pending_badge_help': 'Auf diesem Diamond wartet ein vorgeschlagenes Einklappen. Öffne es, um die Änderung zu übernehmen oder abzulehnen.',
 	'fold.nothing_chosen': 'Nichts gewählt',
 	'fold.nothing_chosen_body': 'Hake die Züge an, die du einklappen willst, und drücke Ausgewählte einklappen.',
 
@@ -1042,6 +1103,15 @@
 	'files.fetch': 'Holen',
 	'files.fetch_body': '„{path}“ auf dieses Gerät holen? Das lädt {size} herunter.',
 	'files.fetching': '{path} wird geholt…',
+	// Where the agent works: the root, and its scope. Changing the root is a separate
+	// act from switching between the browser sandbox and the disk.
+	'files.change_root': 'Ordner wechseln…',
+	'files.change_root_help': 'Den Agenten auf einen anderen Ordner dieses Rechners richten',
+	'files.machine_scope': 'Der Agent arbeitet nur innerhalb von {name}. Was darüber oder außerhalb liegt, sieht Daimond nicht.',
+	'files.machine_return': 'Den Agenten wieder in {name} arbeiten lassen',
+	'files.forget_root': 'Diesen Ordner vergessen',
+	'files.forget_root_help': 'Diesen Ordner nicht mehr anbieten. Daimond behält nichts von ihm, und beim nächsten Mal wählst du einen aus.',
+	'files.root_forgotten': 'Vergessen. Daimond hat von diesem Ordner nichts mehr.',
 	'files.folder_open_failed': 'Dieser Ordner ließ sich nicht öffnen.',
 	'files.import': 'Importieren',
 	'files.import_body': '„{name}“ in den Arbeitsbereich kopieren? Alles darin wird dann auf deine anderen Geräte synchronisiert und zählt zu deinem Speicher.',
