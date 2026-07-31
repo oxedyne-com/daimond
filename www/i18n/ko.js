@@ -947,6 +947,19 @@
 	'tag.all_used':      '가진 태그가 모두 이 Diamond에 붙어 있어요.',
 	'tag.none_yet':      '아직 태그가 없어요.',
 	'tag.save_failed':   '태그를 저장하지 못했어요',
+	// 레일의 거르기. 원하는 태그, 빼고 싶은 태그, 그리고 원하는 태그가 둘
+	// 이상일 때 묶는 방식. 레일의 칩은 없음, 원함, 뺌, 없음으로 돌고,
+	// 요약의 칩은 거르기에서 아예 빠져요.
+	'tag.exclude_next':  '“{tag}” 태그가 붙은 Diamond을 보는 중 — 다시 누르면 대신 숨겨요',
+	'tag.clear_exclude': '“{tag}” 태그가 붙은 Diamond을 그만 숨기기',
+	'tag.not_tagged':    '“{tag}” 태그 없음',
+	'tag.mode_all':      '모두',
+	'tag.mode_any':      '하나라도',
+	'tag.mode_all_help': '이 태그를 모두 지닌 Diamond만 보기',
+	'tag.mode_any_help': '이 태그 중 하나라도 지닌 Diamond 보기',
+	'tag.mode_aria':     '고른 태그를 어떻게 묶을지',
+	'tag.clear_all':     '해제',
+	'tag.clear_all_help': '모든 태그를 거르기에서 빼기',
 	// 목록에서 태그를 지우는 일. 그 태그가 붙은 Diamond 모두에서 떼어져요.
 	'tag.delete_help':        '“{tag}” 태그를 어디에서나 지우기',
 	'tag.delete_title':       '이 태그를 지울까요?',

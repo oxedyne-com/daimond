@@ -944,6 +944,19 @@
 	'tag.all_used':      '你的所有标签都已加到此 Diamond。',
 	'tag.none_yet':      '还没有标签。',
 	'tag.save_failed':   '无法保存标签',
+	// 侧栏的筛选：要的标签、不要的标签，以及两个以上要的标签如何组合。
+	// 侧栏里的标签片按关闭、要、不要、关闭循环；摘要里的标签片则整个
+	// 退出筛选。
+	'tag.exclude_next':  '正在显示标了“{tag}”的 Diamond — 再点一次改为隐藏',
+	'tag.clear_exclude': '不再隐藏标了“{tag}”的 Diamond',
+	'tag.not_tagged':    '没标“{tag}”',
+	'tag.mode_all':      '全部',
+	'tag.mode_any':      '任一',
+	'tag.mode_all_help': '只显示这些标签都有的 Diamond',
+	'tag.mode_any_help': '显示带有其中任一标签的 Diamond',
+	'tag.mode_aria':     '所选标签如何组合',
+	'tag.clear_all':     '清除',
+	'tag.clear_all_help': '把所有标签移出筛选',
 	// 从标签列表里删掉一个标签，它会从所有带着它的 Diamond 上取下来。
 	'tag.delete_help':        '把“{tag}”标签到处都删掉',
 	'tag.delete_title':       '删掉这个标签？',

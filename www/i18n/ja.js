@@ -945,6 +945,19 @@
 	'tag.all_used':      'すべてのタグがこの Diamond に付いています。',
 	'tag.none_yet':      'タグはまだありません。',
 	'tag.save_failed':   'タグを保存できませんでした',
+	// レールの絞り込み。欲しいタグ、除きたいタグ、そして欲しいタグが二つ
+	// 以上あるときの組み合わせ方。レールのチップは、なし、欲しい、除く、
+	// なしと切り替わり、まとめのチップは絞り込みから丸ごと外れる。
+	'tag.exclude_next':  '「{tag}」の付いた Diamond を表示中 — もう一度クリックすると、代わりに隠します',
+	'tag.clear_exclude': '「{tag}」の付いた Diamond を隠すのをやめる',
+	'tag.not_tagged':    '「{tag}」が付いていない',
+	'tag.mode_all':      'すべて',
+	'tag.mode_any':      'いずれか',
+	'tag.mode_all_help': 'これらのタグがすべて付いた Diamond だけ表示',
+	'tag.mode_any_help': 'これらのタグのいずれかが付いた Diamond を表示',
+	'tag.mode_aria':     '選んだタグの組み合わせ方',
+	'tag.clear_all':     'クリア',
+	'tag.clear_all_help': 'すべてのタグを絞り込みから外す',
 	// タグを一覧から削除すること。そのタグが付いた Diamond すべてから外れます。
 	'tag.delete_help':        '「{tag}」タグをどこからも削除します',
 	'tag.delete_title':       'このタグを削除しますか。',

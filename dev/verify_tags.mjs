@@ -258,9 +258,167 @@ await page.click('#diamond-filter .tag-x', { force: true });
 await page.waitForTimeout(400);
 check((await boxes()).length === 3 && !(await page.isVisible('#diamond-filter')),
 	'the filter chip × clears the filter');
+
+// ── The boolean the rail actually holds ──────────────────────────
+// One tag was never enough to say "the family things, but not the ones already
+// bought". The rail keeps two lists -- the tags wanted and the tags refused --
+// and a rule for combining the first. Every state below is reached the way a
+// user reaches it: by clicking chips.
+//
+// The fixture here: "Ship a CSV parser" [person, rust], "Mum birthday plan"
+// [person, family, gifts, urgent], "Rust compiler notes" [].
+
+/// What the summary beside the search box is saying, read off the DOM.
+///
+/// A summary chip's text is the tag plus the × that takes it out -- that × is a
+/// real text node, and the check above asserts it -- so it is stripped here, the
+/// way the editor's reader strips it. Nothing ELSE may be in there: `raw` keeps
+/// the untouched text so the negation mark can be proved absent from it.
+const fstate = () => page.evaluate(() => {
+	const f  = document.getElementById('diamond-filter');
+	const up = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
+	const chips = up ? [...f.querySelectorAll('.tag-chip')] : [];
+	const name = c => c.textContent.replace(/×$/, '');
+	const on = up ? f.querySelector('.tag-mode-btn.on') : null;
+	return {
+		up,
+		inc:   chips.filter(c => !c.classList.contains('tag-no')).map(name),
+		exc:   chips.filter(c =>  c.classList.contains('tag-no')).map(name),
+		raw:   chips.map(c => c.textContent),
+		mode:  on ? on.dataset.mode : null,
+		clear: up && !!f.querySelector('.tag-clear-all'),
+	};
+});
+/// Click a chip in the SUMMARY, which takes that tag out of the filter. Matched
+/// past the closer, which is a text node in there and part of the chip's text.
+const dropChip = async (name) => {
+	const hit = await page.$$eval('#diamond-filter .tag-chip', (els, n) => {
+		for (const e of els) if (e.textContent.replace(/×$/, '') === n) { e.click(); return true; }
+		return false;
+	}, name);
+	if (!hit) check(false, `the summary offers a "${name}" chip to click`);
+	await page.waitForTimeout(400);
+};
+const setMode = async (m) => {
+	await page.click(`#diamond-filter .tag-mode-btn[data-mode="${m}"]`, { force: true });
+	await page.waitForTimeout(400);
+};
+const railMarks = () => page.$$eval('.session-box-meta .tag-chip',
+	els => els.map(e => ({ t: e.textContent, on: e.classList.contains('tag-inc') })));
+
+// A rail chip cycles: off -> wanted -> refused -> off. The last leg is walked
+// from the summary, because refusing a tag takes every Diamond carrying it off
+// the rail, and the chip goes with them.
+const cyc = [];
 await clickTag('person');
+cyc.push(await fstate());
+const wantMarks = await railMarks();
+check(wantMarks.some(m => m.t === 'person' && m.on) && wantMarks.every(m => m.t === 'person' || !m.on),
+	`the chip doing the filtering is marked in the rail, and only it: ${JSON.stringify(wantMarks)}`);
 await clickTag('person');
-check((await boxes()).length === 3, 'clicking the active tag again clears the filter');
+cyc.push(await fstate());
+const refused = await boxes();
+check(refused.length === 1 && refused[0] === 'Rust compiler notes',
+	`a second click refuses the tag, and its carriers leave the rail: ${JSON.stringify(refused)}`);
+check(JSON.stringify(cyc[1].raw) === JSON.stringify(['person×']),
+	`a refused chip's text is the tag and its closer, and nothing else: ${JSON.stringify(cyc[1].raw)}`);
+const negation = await page.$eval('#diamond-filter .tag-no',
+	e => getComputedStyle(e, '::before').content).catch(() => '');
+check(negation.includes('¬'),
+	`the negation is drawn by the theme, not put in the chip's text: ${JSON.stringify(negation)}`);
+await shot(s, 'tags-dark-exclude');
+await dropChip('person');
+cyc.push(await fstate());
+check(!cyc[2].up && (await boxes()).length === 3,
+	`a click in the summary puts the tag down again: ${JSON.stringify(cyc[2])}`);
+// The state a predicate would have to invent a meaning for -- one tag both
+// wanted and refused -- is one the cycle cannot produce: each leg MOVES the
+// tag, and moving is not copying. A step holding it in both lists would read
+// "inc+exc" below and fail, and so would a leg that never happened, so this one
+// line is both the order and the impossibility.
+const where = st => ['inc', 'exc'].filter(k => st[k].indexOf('person') !== -1).join('+') || 'off';
+check(JSON.stringify(cyc.map(where)) === JSON.stringify(['inc', 'exc', 'off']),
+	`the cycle is off -> wanted -> refused -> off, one list at a time: ${JSON.stringify(cyc.map(where))}`);
+
+// ── ALL and ANY ──────────────────────────────────────────────────
+await clickTag('person');
+check((await fstate()).mode === null && (await fstate()).clear === false,
+	'with one tag wanted there is no combining control and no clear-all: neither would change anything');
+await clickTag('rust');
+const bothTags = await boxes();
+check(bothTags.length === 1 && bothTags[0] === 'Ship a CSV parser',
+	`two wanted tags default to ALL -- only the Diamond carrying both: ${JSON.stringify(bothTags)}`);
+const modeUp = await fstate();
+check(modeUp.mode === 'all' && modeUp.clear === true,
+	`a second tag raises the combining control on ALL, and a clear-all: ${JSON.stringify(modeUp)}`);
+await setMode('any');
+const anyBoxes = await boxes();
+check(anyBoxes.length === 2 && anyBoxes.includes('Mum birthday plan') && anyBoxes.includes('Ship a CSV parser'),
+	`ANY gives the union of the two instead: ${JSON.stringify(anyBoxes)}`);
+await shot(s, 'tags-dark-any');
+
+// The mode is a habit of reading and is kept; the two lists are a way of looking
+// at this page and are not. An account switch reloads, so this is that too.
+await page.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'tags');
+await page.waitForTimeout(1500);
+const afterBoot = await fstate();
+check(!afterBoot.up && (await boxes()).length === 3,
+	`the wanted and refused lists do not survive a reload -- which is what an account switch is: ${JSON.stringify(afterBoot)}`);
+check(!(await page.isVisible('#diamond-tag-hint')),
+	'and the empty-pool hint stays away, because it keys off tags existing, not off filtering');
+await clickTag('person');
+await clickTag('rust');
+const kept = await fstate();
+check(kept.mode === 'any' && (await boxes()).length === 2,
+	`the ALL/ANY choice IS kept across the reload: ${JSON.stringify(kept)}`);
+await dropChip('rust');
+const oneLeft = await fstate();
+check(oneLeft.mode === null && oneLeft.clear === false && (await boxes()).length === 2,
+	`and the control goes again when one tag is left: ${JSON.stringify(oneLeft)}`);
+
+// ── A refusal beats a want ───────────────────────────────────────
+// "Mum birthday plan" carries `person`, which is wanted. Refusing `family`
+// still takes it off the rail: a tag you have said you do not want to see
+// cannot be talked round by one you do.
+await clickTag('rust');                     // wanted: person, rust (ANY)
+await clickTag('family');                   // wanted: + family, so Mum still shows
+await clickTag('family');                   // refused
+const beaten = await boxes();
+check(beaten.length === 1 && beaten[0] === 'Ship a CSV parser',
+	`a refused tag hides its Diamond even though a wanted tag matches it: ${JSON.stringify(beaten)}`);
+const halves = await fstate();
+check(JSON.stringify(halves.inc.slice().sort()) === JSON.stringify(['person', 'rust'])
+	&& JSON.stringify(halves.exc) === JSON.stringify(['family']),
+	`the summary shows both halves at once, so neither reason for hiding is silent: ${JSON.stringify(halves)}`);
+await shot(s, 'tags-dark-boolean');
+check((await search('csv')).length === 1, 'the search box composes on top of the boolean');
+const boolNone = await search('zzzznope');
+check(boolNone.length === 0 && (await page.textContent('.diamond-list')).includes('No Diamonds match'),
+	'and a search that matches nothing inside a boolean still says so');
+await search('');
+
+// ── Clear-all, and an honest empty rail ──────────────────────────
+await page.click('#diamond-filter .tag-clear-all', { force: true });
+await page.waitForTimeout(400);
+const cleared = await fstate();
+check(!cleared.up && (await boxes()).length === 3,
+	`one click on the clear-all puts both lists down: ${JSON.stringify(cleared)}`);
+// ALL over two tags no Diamond shares. Reached under ANY, where both chips stay
+// on the rail to be clicked, then narrowed.
+await clickTag('person');
+await clickTag('rust');
+await clickTag('family');
+await dropChip('person');
+const anyTwo = await boxes();
+check(anyTwo.length === 2, `ANY over rust and family holds both their Diamonds: ${JSON.stringify(anyTwo)}`);
+await setMode('all');
+const impossible = await boxes();
+check(impossible.length === 0 && (await page.textContent('.diamond-list')).includes('No Diamonds match'),
+	`ALL over two tags no Diamond shares empties the rail and says why: ${JSON.stringify(impossible)}`);
+await page.click('#diamond-filter .tag-clear-all', { force: true });
+await page.waitForTimeout(400);
+check((await boxes()).length === 3, 'and the clear-all brings them back');
 
 // ── Removing a tag ───────────────────────────────────────────────
 await openTagEditor('Ship a CSV parser');
@@ -416,6 +574,73 @@ const rrust = restored.filter(r => r.name === 'Rust compiler notes');
 check(rrust.length > 0 && rrust.every(r => r.tags.length === 0),
 	`an untagged Diamond restores untagged, with no chips: ${JSON.stringify(rrust[0])}`);
 await shot(b, 'tags-restored');
+
+// ── Deleting a tag that the filter is holding ────────────────────
+// Done on this profile because it destroys tags, and nothing follows it. A tag
+// deleted while WANTED would leave a filter no Diamond can satisfy; deleted
+// while REFUSED it would go on hiding Diamonds with no chip anywhere to click.
+// It has to leave both lists.
+const bp = b.page;
+const bBoxes = () => bp.$$eval('.diamond-box .session-box-name', els => els.map(e => e.textContent));
+const bClickTag = async (name) => {
+	await bp.$$eval('.session-box-meta .tag-chip', (els, n) => {
+		for (const e of els) if (e.textContent === n) { e.click(); return; }
+	}, name);
+	await bp.waitForTimeout(400);
+};
+const bState = () => bp.evaluate(() => {
+	const f  = document.getElementById('diamond-filter');
+	const up = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
+	const chips = up ? [...f.querySelectorAll('.tag-chip')] : [];
+	const name = c => c.textContent.replace(/×$/, '');
+	return {
+		up,
+		inc: chips.filter(c => !c.classList.contains('tag-no')).map(name),
+		exc: chips.filter(c =>  c.classList.contains('tag-no')).map(name),
+	};
+});
+/// Delete a tag from the pool in the tag editor, and confirm it.
+const bKill = async (name) => {
+	await bp.evaluate((n) => {
+		const chip = [...document.querySelectorAll('.tag-sug .tag-chip')].find(e => e.textContent === n);
+		if (chip) chip.querySelector('.tag-kill').click();
+	}, name);
+	await bp.waitForSelector('.dlg-ok', { timeout: 10000 });
+	await bp.click('.dlg-ok');
+	await bp.waitForTimeout(1200);
+};
+// Unlocking left the Admin drawer over the rail, and it takes the clicks meant
+// for a Diamond box. Dismiss it exactly as a user would.
+const adminX = await bp.$('#admin-close');
+if (adminX && await adminX.isVisible()) { await adminX.click({ force: true }); await bp.waitForTimeout(400); }
+// The editor is opened FIRST, on "Ship a CSV parser": the pool only offers what
+// is not already on the Diamond being edited, and the filter below is built out
+// of tags that are on another one. The editor lives in the centre; the rail it
+// is read against stays where it is.
+const bIdx = (await bBoxes()).indexOf('Ship a CSV parser');
+await bp.$$eval('.diamond-box', (els, i) => els[i].click(), bIdx);
+await bp.waitForTimeout(500);
+for (const btn of await bp.$$('.crystal-act')) {
+	if ((await btn.textContent()).includes('Tags')) { await btn.click({ force: true }); break; }
+}
+await bp.waitForSelector('.tag-editor', { timeout: 5000 });
+await bClickTag('gifts');                   // wanted: "Mum birthday plan" alone
+await bClickTag('family');                  // wanted as well; Mum carries both
+await bClickTag('family');                  // refused, so Mum goes and the rail empties
+const bSet = await bState();
+check(JSON.stringify(bSet.inc) === JSON.stringify(['gifts']) && JSON.stringify(bSet.exc) === JSON.stringify(['family']),
+	`a filter with one tag in each list, built by clicking: ${JSON.stringify(bSet)}`);
+check((await bBoxes()).length === 0, 'and it is currently hiding everything, which is the point');
+await bKill('family');
+const afterExcKill = await bState();
+check(afterExcKill.exc.length === 0 && JSON.stringify(afterExcKill.inc) === JSON.stringify(['gifts'])
+	&& (await bBoxes()).length === 1,
+	`deleting a REFUSED tag takes it out of the filter, leaves the rest, and gives the Diamonds back: ${JSON.stringify(afterExcKill)}`);
+await bKill('gifts');
+const afterIncKill = await bState();
+check(!afterIncKill.up && (await bBoxes()).length === 3,
+	`deleting a WANTED tag clears the filter rather than emptying the rail: ${JSON.stringify(afterIncKill)}, ${JSON.stringify(await bBoxes())}`);
+
 const errsB = errors(b).filter(e => !/502 \(Bad Gateway\)/.test(e));
 check(errsB.length === 0, `no console errors on the restoring session: ${JSON.stringify(errsB.slice(0, 3))}`);
 await b.close();

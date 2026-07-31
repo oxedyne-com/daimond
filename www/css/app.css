@@ -415,13 +415,18 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 
 /* Find a Diamond: a search box that is always there, and the active tag filter
-   shown beneath it as one removable chip. */
+   shown beneath it as removable chips. */
 .diamond-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
 .diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
 .diamond-search:focus { outline: none; border-color: var(--accent); }
 .diamond-search::placeholder { color: var(--text-muted); }
 .diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-.diamond-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+/* The filter summary. The tags wanted and the tags refused go on lines of their
+   own, so the two halves of the boolean are never read as one list; the agents
+   panel puts a single chip straight in here and a column of one looks the same
+   as the row it used to be. */
+.diamond-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.tagf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 /* No tags anywhere: one muted line where the chips would be, so an empty
    filing system does not look like a missing one. */
 .rail-tag-hint { font-size: var(--fs-2xs); line-height: 1.35; color: var(--text-muted); }
@@ -1072,6 +1077,11 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	/* The flex centring centres the glyph's TEXT BOX, but the × ink rides
+	   between baseline and x-height and hugs the left of its advance --
+	   measured 0.5px low and 0.22px left at 13px. This puts the INK at the
+	   exact centre of the pill's right end cap, in em so it scales. */
+	transform: translate(0.017em, -0.038em);
 	background: none;
 	border: none;
 	color: inherit;
@@ -1089,6 +1099,37 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .tag-kill:hover { color: var(--danger); opacity: 1; }
 .tag-chip:has(.tag-x) { position: relative; padding-right: 2em; }
 .tag-editor .tag-chip:has(.tag-x) { padding-right: 2em; }
+
+/* A tag the rail is currently filtering ON, seen on the Diamond boxes that
+   survived it: the chip keeps its colour and takes a ring, so which of a
+   Diamond's tags is doing the filtering is legible without reading the summary. */
+.tag-inc { box-shadow: 0 0 0 1px hsl(var(--tag-h, 0) 50% 55%); }
+
+/* A tag the rail is REFUSING. The negation sign is drawn here rather than set as
+   the button's text -- a chip's textContent is the tag name, and the rail, the
+   filter and the search all read it -- and the fill comes off with it, so a
+   refused tag is told from a wanted one across the rail rather than by reading
+   it. Same hue, because it is the same tag. */
+.tag-no::before { content: '\00ac'; font-weight: 700; }
+.tag-no { background: transparent; border-style: dashed; color: hsl(var(--tag-h, 0) 30% 62%); }
+button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hsl(var(--tag-h, 0) 40% 48%); }
+:root[data-theme="light"] .tag-no,
+:root[data-theme="lollypop"] .tag-no { background: transparent; color: hsl(var(--tag-h, 0) 35% 40%); }
+:root[data-theme="light"] button.tag-no:hover,
+:root[data-theme="lollypop"] button.tag-no:hover { background: hsl(var(--tag-h, 0) 60% 96%); }
+
+/* All / Any: how two or more wanted tags combine. Both words are shown with one
+   lit rather than a single label that flips, because a lone word cannot say
+   whether it is naming the state or the action. It appears only when there are
+   two tags for it to combine. */
+.tag-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
+.tag-mode-btn { font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 7px; background: none; border: none; color: var(--text-muted); cursor: pointer; }
+.tag-mode-btn:hover { color: var(--text-primary); }
+.tag-mode-btn.on { background: var(--accent); color: var(--bg-primary); }
+
+/* Put the whole filter down. Deliberately not a chip: it is not a tag. */
+.tag-clear-all { font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 4px; background: none; border: none; color: var(--text-muted); cursor: pointer; text-decoration: underline; }
+.tag-clear-all:hover { color: var(--text-primary); }
 
 /* The tag editor, reached from the crystal bar. */
 .tag-editor { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }

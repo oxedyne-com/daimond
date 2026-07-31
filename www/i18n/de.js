@@ -909,6 +909,19 @@
 	'tag.all_used': 'Jeder deiner Tags ist schon auf diesem Diamond.',
 	'tag.none_yet': 'Noch keine Tags.',
 	'tag.save_failed': 'Die Tags ließen sich nicht speichern',
+	// The rail's boolean filter: the tags wanted, the tags refused, and how two
+	// or more wanted tags combine. A chip in the rail cycles off, wanted,
+	// refused, off; a chip in the summary comes out of the filter altogether.
+	'tag.exclude_next': 'Zeigt Diamonds mit dem Tag „{tag}“ — noch einmal klicken, um sie stattdessen auszublenden',
+	'tag.clear_exclude': 'Diamonds mit dem Tag „{tag}“ nicht mehr ausblenden',
+	'tag.not_tagged': 'Ohne den Tag „{tag}“',
+	'tag.mode_all': 'Alle',
+	'tag.mode_any': 'Eine',
+	'tag.mode_all_help': 'Nur Diamonds zeigen, die jeden dieser Tags tragen',
+	'tag.mode_any_help': 'Diamonds zeigen, die einen dieser Tags tragen',
+	'tag.mode_aria': 'Wie die gewählten Tags zusammenwirken',
+	'tag.clear_all': 'Leeren',
+	'tag.clear_all_help': 'Jeden Tag aus dem Filter nehmen',
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help': 'Den Tag „{tag}“ überall löschen',
 	'tag.delete_title': 'Diesen Tag löschen?',

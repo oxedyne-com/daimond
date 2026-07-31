@@ -1534,7 +1534,16 @@ import init, {
 	var DEFAULT_TAG_SUGGESTIONS = ['person', 'project', 'topic', 'org'];
 	var TAG_CHIPS_SHOWN = 3;    // chips on a Diamond box before the +N overflow
 	var diamondQuery = '';        // the search box, trimmed and lowercased
-	var tagFilter  = null;      // the tag the rail is filtered to, or null
+	// The rail filters on a small boolean rather than one tag: the tags a Diamond
+	// must carry, the tags that hide it, and how two or more of the first combine.
+	// A tag sits in one of those two lists or in neither, never both -- the cycle
+	// that fills them moves it, and moving is not copying (see `cycleTagFilter`).
+	// Both lists are a way of looking rather than a setting, so they last exactly
+	// as long as the page does; the mode is a preference, and is kept.
+	var tagInc  = [];           // tags a Diamond must carry to show
+	var tagExc  = [];           // tags that hide a Diamond outright
+	var TAG_MODE_KEY = 'daimond-tag-mode';
+	var tagMode = readJson(TAG_MODE_KEY, 'all') === 'any' ? 'any' : 'all';
 
 	// Diamond-to-Diamond links: the relations a Diamond has with the other
 	// Diamonds, as against the files and pages the artefact strip holds. Three
@@ -8195,20 +8204,77 @@ import init, {
 		return el;
 	}
 
+	/// Is any tag filter on at all?
+	function tagFiltering() {
+		return tagInc.length > 0 || tagExc.length > 0;
+	}
+
+	/// Does a Diamond's tag set survive the boolean the rail is holding?
+	///
+	/// An exclusion is absolute: a tag you have said you do not want to see hides
+	/// its Diamond however well the rest of it matches, so "not this one" cannot
+	/// be talked round by an inclusion. Past that, an empty include list includes
+	/// everything, and two or more included tags combine as the mode says.
+	function tagsPass(tags) {
+		for (var i = 0; i < tagExc.length; i++) {
+			if (tags.indexOf(tagExc[i]) !== -1) return false;
+		}
+		if (tagInc.length === 0) return true;
+		if (tagMode === 'any') {
+			return tagInc.some(function (t) { return tags.indexOf(t) !== -1; });
+		}
+		return tagInc.every(function (t) { return tags.indexOf(t) !== -1; });
+	}
+
 	/// Does a Diamond survive the search box and the tag filter? Names and tags
 	/// only -- the crystal itself is deliberately not searched.
 	function diamondMatches(f) {
 		var tags = tagsOf(f);
-		if (tagFilter && tags.indexOf(tagFilter) === -1) return false;
+		if (!tagsPass(tags)) return false;
 		if (!diamondQuery) return true;
 		if ((f.name || '').toLowerCase().indexOf(diamondQuery) !== -1) return true;
 		return tags.some(function (t) { return t.toLowerCase().indexOf(diamondQuery) !== -1; });
 	}
 
-	/// Filter the rail to one tag. Clicking the tag that is already filtering
-	/// clears it, so the chip that turns the filter on turns it off again.
-	function setTagFilter(tag) {
-		tagFilter = (tagFilter === tag) ? null : tag;
+	/// Which list a tag is in: 'inc', 'exc', or '' for neither.
+	function tagState(tag) {
+		if (tagInc.indexOf(tag) !== -1) return 'inc';
+		if (tagExc.indexOf(tag) !== -1) return 'exc';
+		return '';
+	}
+
+	/// One click on a tag chip in the rail, cycling that tag through the three
+	/// things it can be -- off, wanted, unwanted -- and round to off again.
+	///
+	/// The three branches are exclusive and each MOVES the tag rather than
+	/// copying it, so a tag can never be in both lists -- which is why nothing
+	/// downstream has to decide what "include and exclude the same tag" would
+	/// mean. The last leg is walked from the summary beside the search box:
+	/// excluding a tag hides every Diamond carrying it, so the chip that was
+	/// just clicked leaves the rail with them, and the summary is where it
+	/// stays reachable.
+	function cycleTagFilter(tag) {
+		var i = tagInc.indexOf(tag), j = tagExc.indexOf(tag);
+		if (i !== -1) { tagInc.splice(i, 1); tagExc.push(tag); }   // wanted -> unwanted
+		else if (j !== -1) { tagExc.splice(j, 1); }                // unwanted -> off
+		else { tagInc.push(tag); }                                 // off -> wanted
+		renderDiamondList();
+	}
+
+	/// Take a tag out of the filter altogether, whichever list it was in. This is
+	/// what a chip in the summary does: the summary says what is on, so clicking
+	/// one of its chips takes that thing off rather than turning it into another.
+	function dropTagFilter(tag) {
+		tagInc = tagInc.filter(function (t) { return t !== tag; });
+		tagExc = tagExc.filter(function (t) { return t !== tag; });
+		renderDiamondList();
+	}
+
+	/// How two or more included tags combine. Kept, because it is a habit of
+	/// reading rather than a thing being looked at.
+	function setTagMode(mode) {
+		tagMode = mode === 'any' ? 'any' : 'all';
+		try { localStorage.setItem(TAG_MODE_KEY, JSON.stringify(tagMode)); } catch (e) { /* best effort */ }
 		renderDiamondList();
 	}
 
@@ -8339,20 +8405,111 @@ import init, {
 		agentFilter.appendChild(chip);
 	}
 
-	/// The active filter, as one removable chip beside the search box. A
-	/// filter you cannot see is a list quietly lying about what it holds.
-	function renderTagFilter() {
-		if (!diamondFilter) return;
-		diamondFilter.innerHTML = '';
-		if (!tagFilter) { diamondFilter.style.display = 'none'; return; }
-		diamondFilter.style.display = '';
-		var chip = tagChip(tagFilter, 'tag-active', function () { setTagFilter(null); });
-		chip.title = t('tag.clear_filter', { tag: tagFilter });
+	/// One chip in the summary: the tag, an × to take it out of the filter, and
+	/// for an excluded tag the negation the theme draws.
+	function filterChip(tag, negated) {
+		var chip = tagChip(tag, 'tag-active' + (negated ? ' tag-no' : ''),
+			function () { dropTagFilter(tag); });
+		chip.title = negated ? t('tag.clear_exclude', { tag: tag }) : t('tag.clear_filter', { tag: tag });
+		// The negation is drawn in CSS (see `.tag-no`) rather than set as text: a
+		// chip's textContent is the tag, and the rail, the filter and the search
+		// all read it. Someone who cannot see the mark is told in words instead.
+		if (negated) chip.setAttribute('aria-label', t('tag.not_tagged', { tag: tag }));
 		var x = document.createElement('span');
 		x.className = 'tag-x';
 		x.textContent = '×';
 		chip.appendChild(x);
-		diamondFilter.appendChild(chip);
+		return chip;
+	}
+
+	/// How two or more included tags combine, as two words with one of them on.
+	/// Both are shown rather than one label that toggles: a lone word cannot say
+	/// whether it is the state or the action, and the alternative stays visible.
+	function tagModeControl() {
+		var grp = document.createElement('span');
+		grp.className = 'tag-mode';
+		grp.setAttribute('role', 'group');
+		grp.setAttribute('aria-label', t('tag.mode_aria'));
+		[['all', 'tag.mode_all', 'tag.mode_all_help'],
+		 ['any', 'tag.mode_any', 'tag.mode_any_help']].forEach(function (m) {
+			var b = document.createElement('button');
+			b.className = 'tag-mode-btn' + (tagMode === m[0] ? ' on' : '');
+			b.dataset.mode = m[0];
+			b.textContent = t(m[1]);
+			b.title = t(m[2]);
+			b.setAttribute('aria-pressed', tagMode === m[0] ? 'true' : 'false');
+			b.addEventListener('click', function (e) { e.stopPropagation(); setTagMode(m[0]); });
+			grp.appendChild(b);
+		});
+		return grp;
+	}
+
+	/// Put the whole filter down at once.
+	function tagClearAll() {
+		var b = document.createElement('button');
+		b.className = 'tag-clear-all';
+		b.textContent = t('tag.clear_all');
+		b.title = t('tag.clear_all_help');
+		b.addEventListener('click', function () {
+			tagInc = [];
+			tagExc = [];
+			renderDiamondList();
+		});
+		return b;
+	}
+
+	function tagfRow(cls) {
+		var d = document.createElement('div');
+		d.className = 'tagf-row ' + cls;
+		return d;
+	}
+
+	/// The active filter, beside the search box: the tags wanted, the tags not
+	/// wanted, and how the first combine. A filter you cannot see is a list
+	/// quietly lying about what it holds -- and a boolean one can hide a Diamond
+	/// for two different reasons, so both have to be on screen.
+	function renderTagFilter() {
+		if (!diamondFilter) return;
+		diamondFilter.innerHTML = '';
+		if (!tagFiltering()) {
+			diamondFilter.style.display = 'none';
+			fitTagFilter();
+			return;
+		}
+		diamondFilter.style.display = '';
+		var inc = null, exc = null;
+		if (tagInc.length) {
+			inc = tagfRow('tagf-inc');
+			tagInc.forEach(function (tag) { inc.appendChild(filterChip(tag, false)); });
+			// Offered only where it can change the answer: with one included tag
+			// ALL and ANY name the same list, and a control that does nothing is
+			// one more thing the reader has to rule out.
+			if (tagInc.length > 1) inc.appendChild(tagModeControl());
+			diamondFilter.appendChild(inc);
+		}
+		if (tagExc.length) {
+			exc = tagfRow('tagf-exc');
+			tagExc.forEach(function (tag) { exc.appendChild(filterChip(tag, true)); });
+			diamondFilter.appendChild(exc);
+		}
+		// With one tag in the filter its own × is already the clear-all.
+		if (tagInc.length + tagExc.length > 1) (exc || inc).appendChild(tagClearAll());
+		fitTagFilter();
+	}
+
+	/// The summary is rail furniture, and the two lists below share what the
+	/// furniture leaves. It takes a second row when a tag is excluded, and wraps
+	/// when the chips outrun the rail's width; either way the height comes off
+	/// the Chats list alone and quietly moves the divider. So say what a window
+	/// resize says -- but only when the height really moved, since a filter is
+	/// changed far more often than the furniture around it.
+	var tagFilterH = 0;         // the summary's height at its last paint
+	function fitTagFilter() {
+		if (!diamondFilter) return;
+		var h = diamondFilter.offsetHeight;
+		if (h === tagFilterH) return;
+		tagFilterH = h;
+		railFurnitureChanged();
 	}
 
 	/// Does any Diamond carry any tag at all?
@@ -8496,8 +8653,13 @@ import init, {
 		}
 		var tags = tagsOf(f);
 		tags.slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
-			var chip = tagChip(tag, 'tag-sm', setTagFilter);
-			chip.title = t('tag.only_diamonds', { tag: tag });
+			// A Diamond only reaches the rail if it passed the filter, so a chip
+			// here is either off or included -- never excluded. The title says
+			// what the next click does rather than what the chip is, because a
+			// chip that already filters looks like it has nothing left to give.
+			var on   = tagState(tag) === 'inc';
+			var chip = tagChip(tag, 'tag-sm' + (on ? ' tag-inc' : ''), cycleTagFilter);
+			chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
 			meta.appendChild(chip);
 		});
 		if (tags.length > TAG_CHIPS_SHOWN) {
@@ -9034,7 +9196,8 @@ import init, {
 	/// setting.
 	function clearDiamondFilters() {
 		diamondQuery = '';
-		tagFilter    = null;
+		tagInc       = [];
+		tagExc       = [];
 		if (diamondSearch) diamondSearch.value = '';
 	}
 
@@ -9409,8 +9572,10 @@ import init, {
 				}
 				delete seen[tag];             // gone from the pool for this session too
 				// A filter on a tag that no longer exists would hide every Diamond
-				// there is, with a chip beside the search box as the only clue why.
-				if (tagFilter === tag) tagFilter = null;
+				// there is, with a chip beside the search box as the only clue why
+				// -- and an EXCLUSION on one would go on hiding them with no chip
+				// at all to click. The tag leaves both lists.
+				dropTagFilter(tag);
 				bumpDiamonds();
 				await loadDiamonds();
 				var g = diamonds.find(function (y) { return y.id === f.id; });
