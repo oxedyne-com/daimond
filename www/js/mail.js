@@ -30,6 +30,11 @@
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
 
 	var LS      = 'daimond-mail';
+	// Mailboxes removed on purpose, by address. The parcel merges by union, so an
+	// account deleted here and still held on the other device would be handed
+	// straight back on the next pull — password and all — and the seat given up at
+	// the gateway would be taken again. See the sync section below.
+	var TOMBS   = 'daimond-mail-tombs';
 	var deps    = null;              // { writeBytes, openFile, refreshFiles, runTool, showDoc }
 	var els     = {};
 	var state   = {
@@ -149,6 +154,186 @@
 	}
 	function acct(address) {
 		return state.accounts.find(function (a) { return a.address === address; }) || null;
+	}
+
+	// ── Travelling in the sync parcel ───────────────────────────────
+	// A user who has linked two devices has one account, and mail configured on
+	// one of them and not the other is half a mailbox. So the accounts ride in the
+	// parcel beside the chats, the Diamonds and the provider keys.
+	//
+	// WHAT TRAVELS, and why:
+	//
+	//   * The server configuration — address, host, port, SMTP host and port, and
+	//     the login user. Facts about the mailbox, true wherever it is read.
+	//   * The WRAPPED password. Both paired devices hold the same identity, so the
+	//     ciphertext opens on both; the gateway in the middle can open neither, and
+	//     the parcel is sealed again over the top of it. It is exactly the trust
+	//     model the sealed provider keys already travel under, and it is what makes
+	//     the second device WORK rather than merely list a mailbox it cannot read.
+	//     The plaintext password exists only for the length of one request and is
+	//     never stored, so there is nothing readable here to carry.
+	//   * `sel`, which mailbox is being looked at — a small courtesy, and cheap.
+	//   * NOT `folders`, and nothing under it. Every UID, uidvalidity, watermark
+	//     and lastSync in there describes what is on THIS device's disk. Carrying
+	//     it would tell the other device it already holds mail it has never
+	//     downloaded, and the merge would have to reconcile two independent
+	//     Maildirs. Rebuilding is one sync per folder and cannot be wrong.
+	//   * NOT `folder`, the folder on screen, for the same reason as the rest of
+	//     the per-folder state: a fresh device starts in INBOX, which is right.
+	//
+	// DETERMINISM IS A REQUIREMENT. sync.js skips a push when the parcel
+	// stringifies to what it last sent, so an export whose field or account order
+	// followed enumeration would make the app push for ever. Accounts are sorted
+	// by address and every row is assembled in a fixed field order.
+
+	/// A millisecond stamp, or 0 when there is none to be had. NOT `n | 0`: a
+	/// bitwise operator coerces to 32 bits and an epoch-ms value is far past that,
+	/// so the truncation would be not merely wrong but inconsistently wrong — a
+	/// fresher stamp can truncate below an older one, and the freshest side then
+	/// loses the merge.
+	function ms(v) {
+		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// The mailboxes deleted on purpose, by address, with anything past its TTL
+	/// pruned. The map, the TTL and the union rule are DaimondCore's — one deletion
+	/// policy for chats, Diamonds, providers and mailboxes rather than four.
+	function tombs() {
+		return (window.DaimondCore && DaimondCore.tombs) ? DaimondCore.tombs(TOMBS) : {};
+	}
+	function tombstone(address) {
+		if (window.DaimondCore && DaimondCore.tombstone) DaimondCore.tombstone(TOMBS, address);
+	}
+	function mergeTombs(incoming) {
+		return (window.DaimondCore && DaimondCore.mergeTombs)
+			? DaimondCore.mergeTombs(TOMBS, incoming) : tombs();
+	}
+
+	/// The tombstone map with sorted keys, for the same reason the accounts are
+	/// sorted: enumeration order must never reach the wire.
+	function sortedTombs() {
+		var t = tombs(), out = {};
+		Object.keys(t).sort().forEach(function (addr) { out[addr] = ms(t[addr]); });
+		return out;
+	}
+
+	/// The mailboxes as they should travel: JSON-safe, deterministic, and carrying
+	/// no per-device state.
+	function exportSync() {
+		var out = { v: 1, sel: state.sel || '', accounts: [], tombs: sortedTombs() };
+		state.accounts.slice().sort(function (x, y) {
+			return String(x.address).localeCompare(String(y.address));
+		}).forEach(function (a) {
+			if (!a || !a.address) return;
+			var row = {
+				address:  String(a.address),
+				host:     String(a.host || ''),
+				port:     a.port | 0,
+				smtpHost: String(a.smtpHost || ''),
+				smtpPort: a.smtpPort | 0,
+				user:     String(a.user || ''),
+				pass:     String(a.pass || ''),		// wrapped; see above
+				touched:  ms(a.touched),
+			};
+			// Only where it has been set: it decides whether the gateway opens the
+			// connection in the clear and upgrades, so losing it would change how
+			// the mailbox is dialled on the other device.
+			if (a.security) row.security = String(a.security);
+			out.accounts.push(row);
+		});
+		return out;
+	}
+
+	/// Merge another device's mailboxes into this one.
+	///
+	/// A union, never a replacement: a mailbox only this device has is left alone,
+	/// one only the other device has arrives whole and working, and where both have
+	/// the same address the later `touched` decides — strictly, so an unchanged
+	/// account is not rewritten on every pull.
+	///
+	/// A deletion travels as a tombstone, and beats any copy of the account stamped
+	/// before it; an account re-added after the deletion carries a later stamp and
+	/// wins in its turn.
+	///
+	/// The arriving account brings no folder state, so it is given the blank INBOX a
+	/// new mailbox starts with and fills it from the server on its first sync. A
+	/// parcel with no `mail` section — a device that predates this — is a no-op.
+	async function applySync(remote) {
+		if (!remote || typeof remote !== 'object') return { added: 0, updated: 0, removed: 0 };
+		var added = 0, updated = 0, removed = 0;
+		var dead = mergeTombs(remote.tombs);
+		state.accounts = state.accounts.filter(function (a) {
+			if (!dead[a.address]) return true;
+			if (ms(a.touched) > ms(dead[a.address])) return true;	// re-added here since
+			removed++;
+			delete state.folders[a.address];
+			return false;
+		});
+		(Array.isArray(remote.accounts) ? remote.accounts : []).forEach(function (r) {
+			if (!r || !r.address) return;
+			if (dead[r.address] && !(ms(r.touched) > ms(dead[r.address]))) return;	// buried
+			var mine = acct(r.address);
+			if (!mine) {
+				var fresh = {
+					address:  String(r.address),
+					host:     String(r.host || ''),
+					port:     r.port | 0,
+					smtpHost: String(r.smtpHost || ''),
+					smtpPort: r.smtpPort | 0,
+					user:     String(r.user || r.address),
+					pass:     String(r.pass || ''),
+					touched:  ms(r.touched),
+					// This device's own view of the mailbox, built fresh: the mail
+					// itself is fetched here rather than carried.
+					folder:   'INBOX',
+					folders:  { INBOX: blankFolder('INBOX') },
+					lastSync: 0,
+				};
+				if (r.security) fresh.security = String(r.security);
+				state.accounts.push(fresh);
+				added++;
+				return;
+			}
+			if (!(ms(r.touched) > ms(mine.touched))) return;		// ours is newer, or the same
+			mine.host     = String(r.host || mine.host || '');
+			mine.port     = (r.port | 0) || mine.port;
+			mine.smtpHost = String(r.smtpHost || mine.smtpHost || '');
+			mine.smtpPort = (r.smtpPort | 0) || mine.smtpPort;
+			mine.user     = String(r.user || mine.user || r.address);
+			// An empty password on the other side is not an instruction to forget
+			// the one that works here: it means that device never had one.
+			if (r.pass) mine.pass = String(r.pass);
+			if (r.security) mine.security = String(r.security);
+			mine.touched  = ms(r.touched);
+			updated++;
+		});
+		// The selection is this device's, as long as it still names something real;
+		// only then does the other device's choice get a say.
+		if (!state.sel || !acct(state.sel)) {
+			state.sel = (remote.sel && acct(remote.sel)) ? remote.sel
+				: ((state.accounts[0] && state.accounts[0].address) || null);
+			state.msgs = [];
+		}
+		if (!added && !updated && !removed) return { added: 0, updated: 0, removed: 0 };
+		save();
+		// Show what landed, but only where there is a panel to show it in: init()
+		// has not run on a page whose Mail panel was never opened, and the digest
+		// cannot be read before the file tools exist.
+		if (els.state) {
+			if (state.sel) {
+				try { await Promise.all([loadDigest(state.sel, folderOf(state.sel)), refreshDrafts()]); }
+				catch (e) { /* the panel still draws what it has */ }
+			}
+			render();
+			if (state.sel) loadFolders(state.sel);
+		}
+		return { added: added, updated: updated, removed: removed };
+	}
+
+	/// The folder an account is looking at, defaulting to the inbox.
+	function folderOf(address) {
+		var a = acct(address);
+		return (a && a.folder) || 'INBOX';
 	}
 
 	// ── RFC 5322, enough of it ──────────────────────────────────────
@@ -1543,6 +1728,14 @@
 			folder:      'INBOX',
 			folders:     { INBOX: blankFolder('INBOX') },
 			lastSync:    0,
+			// When this configuration was last stated. The cross-device merge decides
+			// on it, and on nothing else: a device that merely SYNCED a mailbox has
+			// not thereby won an argument about which server it lives on. It must
+			// also beat any tombstone this address already carries -- removing a
+			// mailbox and adding it straight back is one action to the user and two
+			// to the store, and a re-add stamped in the same millisecond as its own
+			// deletion would lose to it and vanish again on the next pull.
+			touched:     Math.max(Date.now(), ms(tombs()[v.address]) + 1),
 		});
 		state.sel = v.address;
 		save();
@@ -1556,6 +1749,10 @@
 			t('mail.remove.body'),
 			{ ok: t('mail.remove.ok'), danger: true });
 		if (!ok) return;
+		// Before the list is written, so the very next push carries the deletion:
+		// without a tombstone the other device still holds this mailbox and simply
+		// hands it back — with its password — on the following pull.
+		tombstone(address);
 		state.accounts = state.accounts.filter(function (a) { return a.address !== address; });
 		delete state.folders[address];
 		if (state.sel === address) {
@@ -1642,6 +1839,10 @@
 		hasAccounts: function () { return state.accounts.length > 0; },
 		onOpen:  onOpen,
 		clear:   clear,
+		// Cross-device sync (driven by sync.js through DaimondCore): what to put in
+		// the parcel, and what to do with what comes back.
+		exportSync: exportSync,
+		applySync:  applySync,
 		sync:    function () { if (state.sel) syncAccount(state.sel); },
 		reload:  function () { load(); render(); },
 		/// The folder list held for an account, and the way to ask for it

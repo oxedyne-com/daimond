@@ -39,13 +39,25 @@
 			color:		inherit;
 			cursor:		pointer;
 		}
-		#take, #mirror { width: 100%; padding: 9px; font-weight: 600; margin-bottom: 14px; }
-		.none { opacity: .6; font-size: 12px; }
+		#take, #mirror, #raise { width: 100%; padding: 9px; font-weight: 600; margin-bottom: 14px; }
+		.none { opacity: .6; font: 12px/1.4 system-ui, sans-serif; }
+		.ask {
+			padding:	10px 12px;
+			border-radius:	8px;
+			margin-bottom:	10px;
+			font-weight:	600;
+			background:	color-mix(in srgb, #2f6fed 20%, transparent);
+			border:		1px solid color-mix(in srgb, CanvasText 20%, transparent);
+		}
+		.ask small { display: block; font-weight: 400; opacity: .82; margin-top: 3px; }
+		li small { flex: 0 0 auto; font: 11px system-ui, sans-serif; opacity: .6; }
 	</style>
 </head>
 <body>
 	<h1>Daimond Hands</h1>
 	<div class="ver" id="ver"></div>
+	<div class="ask" id="ask" hidden></div>
+	<button id="raise" hidden>Show the approval window</button>
 	<div class="mode" id="mode">…</div>
 	<div class="url" id="url"></div>
 	<button id="take" hidden>Hand the wheel back to Daimond</button>

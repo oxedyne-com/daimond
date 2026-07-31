@@ -28,6 +28,12 @@
 		$('head').textContent	= 'Daimond wants to operate a site for you';
 		$('host').hidden	= false;
 		$('host').textContent	= host;
+		// Say what is actually being granted. The pattern is `*://*.host/*`, so it
+		// covers subdomains -- which is what a person means by "this site", and
+		// what a click that crosses to an app subdomain needs -- but a window that
+		// showed the bare host alone would be asking for more than it said.
+		$('scope').hidden	= false;
+		$('scope').textContent	= `This covers ${host} and its subdomains, and nothing else. Every other site is asked separately.`;
 		$('body').textContent	= "Daimond can read this site's page structure and click and type on it, in this browser, as you.";
 		// Set the expectation before it happens: clicking Allow hands off to
 		// Chrome's own permission prompt, whose wording is alarming by design.
@@ -38,19 +44,25 @@
 	}
 
 	/// Tells the broker how the user answered, then closes.
-	function answer(ok) {
-		chrome.runtime.sendMessage({ type: 'grant', nonce, ok }, () => window.close());
+	///
+	/// 'allowed' or 'declined' -- both are ANSWERS. A window that goes away
+	/// without sending one is a dismissal, and the broker reads that from the
+	/// window closing, not from here.
+	function answer(how) {
+		chrome.runtime.sendMessage({ type: 'grant', nonce, answer: how }, () => window.close());
 	}
 
 	$('allow').addEventListener('click', async () => {
 		try {
+			// Chrome's own prompt is the real approval. Refusing it there is a
+			// refusal, however this window was clicked.
 			const ok = await chrome.permissions.request({ origins: [pat] });
-			answer(!!ok);
+			answer(ok ? 'allowed' : 'declined');
 		} catch (e) {
-			answer(false);
+			answer('declined');
 		}
 	});
 
-	$('deny').addEventListener('click', () => answer(false));
+	$('deny').addEventListener('click', () => answer('declined'));
 
 })();

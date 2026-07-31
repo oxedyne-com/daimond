@@ -171,6 +171,13 @@
 	'chat.queued_pending': 'Todavía no se ha enviado. Haz clic para editarlo.',
 	'chat.queue_cancel': 'No enviar esto',
 	'chat.queue_returned': 'Ese turno no llegó a terminar, así que lo que dejaste en espera ha vuelto al cuadro, sin enviar.',
+	// The same thing said on the chat's TILE, for a queue left on a conversation
+	// the user has walked away from: money about to be spent should not depend
+	// on remembering.
+	'chat.queue_badge.one': '{n} en espera',
+	'chat.queue_badge.other': '{n} en espera',
+	'chat.queue_badge_help.one': 'Hay un mensaje en espera en este chat. Ábrelo y se envía como su propio turno.',
+	'chat.queue_badge_help.other': 'Hay {n} mensajes en espera en este chat. Ábrelo y se envían, uno por turno.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Quién conduce',
@@ -371,6 +378,10 @@
 	'sync.synced': 'Sincronizado',
 	'sync.off': 'Sincronización desactivada',
 	'sync.off_reason': 'La sincronización entre dispositivos es parte de Pro, que esta cuenta no tiene.',
+	// The chip is the only place this is said, so it also has to be the way to
+	// the offer: it is clickable in this state, and opens Pro in Credits.
+	'sync.off_click': 'Haz clic para ver Pro en Créditos.',
+	'sync.off_pitch': 'La sincronización está desactivada porque esta cuenta no tiene Pro. Pro añade sincronización entre dispositivos, almacenamiento en la nube y correo.',
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronización en pausa',
 	'sync.too_big_reason': 'El paquete de este dispositivo es demasiado grande para enviarlo, así que su trabajo ha dejado de viajar. Lo normal es que la causa sea un Diamond o un archivo del espacio de trabajo muy grande: quítalo o redúcelo y la sincronización se reanuda sola.',
@@ -615,7 +626,7 @@
 	'web.who_view_only_help': 'Esta página se puede mostrar, pero no manejar. Instala Daimond Hands para conducirla.',
 	'web.opening': '<b>Abriendo {host}…</b><br>Se está abriendo delante una ventana de <b>Daimond Hands</b>: aprueba ahí el sitio y luego Chrome pedirá una confirmación. Ambas cosas ocurren solo la primera vez para cada sitio.',
 	'web.not_approved': '<b>{host} no fue aprobado.</b><br>',
-	'web.approval_closed': 'La ventana de aprobación se cerró o se rechazó. Pídeme que la abra de nuevo y pulsa <b>Permitir este sitio</b> en la ventana de Daimond Hands (puede abrirse detrás de esta).',
+	'web.approval_closed': 'La ventana de aprobación se cerró, o dijiste que no. Si querías permitirlo, pídeme que abra el sitio otra vez y haz clic en <b>Permitir y luego confirmar en Chrome</b>: la ventana se abre delante de esta, y el icono de <b>Daimond Hands</b> guarda la pregunta hasta que la respondas.',
 	'web.driving_tab': '<b>Daimond está conduciendo {host}</b> en una pestaña del navegador. Míralo ahí, o trae una imagen en vivo a este panel.',
 	'web.show_live': 'Mostrar aquí la vista en vivo',
 	'web.blocked': '<b>{host}</b> no se deja mostrar dentro de otra página. La mayoría de los sitios lo bloquean: es la protección de la web contra el clickjacking, no un fallo.',
@@ -1259,7 +1270,6 @@
 	// instrument for checking the structure, so the wording states what is
 	// there rather than praising it.
 	'graph.no_diamonds': 'Todavía no hay Diamonds, así que no hay nada que dibujar.',
-	'graph.empty': 'Todavía no hay ningún Diamond vinculado a otro. Vincula dos Diamonds y aquí aparecerá el dibujo.',
 	'graph.isolated': 'Sin vincular',
 	'graph.unnamed': 'Sin título',
 	'graph.in_cycle': 'Este Diamond está en un ciclo.',

@@ -140,7 +140,7 @@
 				'background:var(--bg-tertiary);white-space:nowrap}' +
 				'#sync-chip[data-state="syncing"]{color:var(--accent)}' +
 				'#sync-chip[data-state="synced"]{color:var(--ok)}' +
-				'#sync-chip[data-state="off"]{color:var(--text-secondary,#888)}' +
+				'#sync-chip[data-state="off"]{color:var(--text-secondary,#888);cursor:pointer}' +
 				// A stall is not an error and not a success: something is wrong that
 				// the user can fix, which is what --warn is for in the rest of the app.
 				'#sync-chip[data-state="stalled"]{color:var(--warn)}' +
@@ -152,6 +152,16 @@
 		var c = document.createElement('div');
 		c.id = 'sync-chip';
 		c.innerHTML = '<span class="sdot"></span><span class="stext"></span>';
+		// "Sync off" is the one state the user can do something about, and until now
+		// the chip said so and stopped there -- the offer it was pointing at was
+		// three clicks away in a drawer they had no reason to open. Clicking it goes
+		// where the sentence leads. The other states are reports rather than offers,
+		// so they stay inert: a chip that opened a drawer whatever it said would be
+		// a trap sitting next to the pairing button.
+		c.addEventListener('click', function () {
+			if (c.dataset.state !== 'off') return;
+			if (window.DaimondAdmin && DaimondAdmin.credits) DaimondAdmin.credits(t('sync.off_pitch'));
+		});
 		var pair = document.getElementById('pair-link-btn');
 		if (pair && pair.parentNode === actions) actions.insertBefore(c, pair);
 		else actions.appendChild(c);
@@ -209,6 +219,31 @@
 		setStatus('stalled', t('sync.too_big'), 0, t('sync.too_big_reason'));
 	}
 
+	/// Put the chip back to what is TRUE when nothing is in flight.
+	///
+	/// The two standing refusals outlive the round that discovered them, so every
+	/// path that stops showing "Syncing…" has to come through here rather than
+	/// hiding the chip: a pull failing on the network used to blank a "Sync off"
+	/// that was still perfectly true, and a pull SUCCEEDING used to show "Synced"
+	/// on a device whose pushes were paused by a 402 -- which is the one lie this
+	/// chip exists to prevent.
+	///
+	/// They are ordered rather than allowed to overwrite each other. Not entitled
+	/// beats too large: an account that may not sync at all cannot act on a parcel
+	/// being oversized, and telling it to go and shrink a Diamond would send it to
+	/// do work that changes nothing.
+	function restStatus() {
+		if (!entitled)     { setStatus('off', t('sync.off'), 0, offReason()); return; }
+		if (tooLarge)      { showTooLarge(); return; }
+		setStatus('');
+	}
+
+	/// Why sync is off, and what to do about it -- the chip is clickable in this
+	/// state, and a hover that did not say so would leave that undiscovered.
+	function offReason() {
+		return t('sync.off_reason') + '\n' + t('sync.off_click');
+	}
+
 	// ── Pull ───────────────────────────────────────────────────
 
 	/// Fetch the current blob, decrypt it, and merge it into local state.
@@ -220,10 +255,10 @@
 		setStatus('syncing', t('sync.syncing'));
 		var res;
 		try { res = await call('GET'); }
-		catch (e) { log('pull network error', e); setStatus(''); return -1; }
-		if (res.status !== 200 || !res.json) { log('pull status', res.status); setStatus(''); return -1; }
+		catch (e) { log('pull network error', e); restStatus(); return -1; }
+		if (res.status !== 200 || !res.json) { log('pull status', res.status); restStatus(); return -1; }
 		var j = res.json;
-		if (!j.present) { serverVersion = 0; saveVersion(); setStatus(''); return 0; }
+		if (!j.present) { serverVersion = 0; saveVersion(); restStatus(); return 0; }
 		var state;
 		try {
 			var plain = await DaimondIdentity.unwrap(j.blob);	// throws on a wrong key.
@@ -239,8 +274,9 @@
 		saveVersion();
 		noteSynced();
 		// A pull working says nothing about whether this device's own parcel will
-		// fit, so a stall stays on the chip until a PUSH clears it.
-		if (tooLarge) showTooLarge();
+		// EVER leave -- a GET is served to everyone, a push is not -- so a standing
+		// refusal stays on the chip rather than being painted over with "Synced".
+		if (!entitled || tooLarge) restStatus();
 		else setStatus('synced', t('sync.synced'), 1800);
 		log('pulled version', serverVersion, 'from', j.device || '?');
 		return serverVersion;
@@ -269,7 +305,7 @@
 				setStatus('syncing', t('sync.syncing'));
 				var res;
 				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob }); }
-				catch (e) { log('push network error', e); setStatus(''); return; }
+				catch (e) { log('push network error', e); restStatus(); return; }
 
 				if (res.status === 200 && res.json && res.json.ok) {
 					serverVersion = res.json.version | 0;
@@ -313,7 +349,7 @@
 					// over the whole app and open Credits, which interrupted people
 					// who had one device and had never wanted sync.
 					entitled = false;			// stop trying until re-checked.
-					setStatus('off', t('sync.off'), 0, t('sync.off_reason'));
+					restStatus();				// and it outranks a stall: see restStatus.
 					log('sync not entitled (402); pausing pushes');
 					return;
 				}
@@ -325,11 +361,14 @@
 					// has to be visible. It used to be a console line.
 					tooLarge   = true;
 					lastPushed = plain;			// don't spin on the same oversize state.
-					showTooLarge();
+					restStatus();
 					log('blob too large (413); not retrying this payload');
 					return;
 				}
+				// Anything else: the round is over, so the chip stops claiming to be
+				// syncing and goes back to whatever is standing.
 				log('push status', res.status, '— giving up this round');
+				restStatus();
 				return;
 			}
 			log('conflict retries exhausted; will try again on the next idle');

@@ -379,6 +379,13 @@
 	'chat.queued_pending': 'Not sent yet. Click to edit it.',
 	'chat.queue_cancel':   'Do not send this',
 	'chat.queue_returned': 'That turn did not finish, so what you queued is back in the box, unsent.',
+	// The same thing said on the chat's TILE, for a queue left on a conversation
+	// the user has walked away from: the bubbles are only drawn in the chat on
+	// screen, and money about to be spent should not depend on remembering.
+	'chat.queue_badge.one':        '{n} waiting',
+	'chat.queue_badge.other':      '{n} waiting',
+	'chat.queue_badge_help.one':   'One message is waiting on this chat. Open it and it is sent as its own turn.',
+	'chat.queue_badge_help.other': '{n} messages are waiting on this chat. Open it and they are sent, one turn each.',
 
 	// ── The Web panel ──────────────────────────────────────────
 	'web.who_drives': 'Who is driving',
@@ -406,7 +413,7 @@
 	// these are placed as markup, so keep the tags and add none.
 	'web.opening':         '<b>Opening {host}…</b><br>A <b>Daimond Hands</b> window is opening in front — approve the site there, and Chrome will then ask once to confirm. Both happen only the first time for a site.',
 	'web.not_approved':    '<b>{host} was not approved.</b><br>',
-	'web.approval_closed': 'The approval window was closed or declined. Ask me to open it again and click <b>Allow this site</b> in the Daimond Hands window (it may open behind this one).',
+	'web.approval_closed': 'The approval window was closed, or you said no. If you meant to allow it, ask me to open the site again and click <b>Allow, then confirm in Chrome</b> — the window opens in front of this one, and the <b>Daimond Hands</b> icon keeps the question until you answer it.',
 	'web.driving_tab':     '<b>Daimond is driving {host}</b> in a browser tab. Watch it there, or pull a live picture into this panel.',
 	'web.show_live':       'Show live view here',
 	// A site that refuses to be framed, which is most of them.
@@ -649,6 +656,10 @@
 	'sync.synced':     'Synced',
 	'sync.off':        'Sync off',
 	'sync.off_reason': 'Cross-device sync is part of Pro, which this account does not hold.',
+	// The chip is the only place this is said, so it also has to be the way to
+	// the offer: it is clickable in this state, and opens Pro in Credits.
+	'sync.off_click':  'Click to see Pro in Credits.',
+	'sync.off_pitch':  'Sync is off because this account is not on Pro. Pro adds cross-device sync, cloud storage and Email.',
 	// A refused parcel. Say what is too large, and what usually makes it so:
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
@@ -1329,7 +1340,6 @@
 	// instrument for checking the structure, so the wording states what is
 	// there rather than praising it.
 	'graph.no_diamonds':        'There are no Diamonds yet, so there is nothing to draw.',
-	'graph.empty':              'No Diamond is linked to another yet. Link two Diamonds and the picture appears here.',
 	'graph.isolated':           'Not linked',
 	'graph.unnamed':            'Untitled',
 	'graph.in_cycle':           'This Diamond is on a cycle.',

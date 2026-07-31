@@ -112,10 +112,31 @@ function pattern(url) {
 	return `*://*.${new URL(url).hostname}/*`;
 }
 
-/// Every origin the user has approved, as match patterns.
+/// The hosts the extension holds by its own manifest: Daimond's own pages, where
+/// announce.js runs and which may speak to the broker. Chrome reports them among
+/// the permissions, but the user never granted them and cannot withdraw them --
+/// they came with the install. Listing them under "sites you have allowed" would
+/// be untrue twice over: a permission they did not give, beside a Revoke button
+/// that can do nothing.
+function ownHosts() {
+	const m		= chrome.runtime.getManifest();
+	const pats	= [].concat(
+		(m.externally_connectable && m.externally_connectable.matches) || [],
+		...(m.content_scripts || []).map((cs) => cs.matches || []));
+	return new Set(pats.map(hostOfPattern).filter(Boolean));
+}
+
+/// The host part of a match pattern, e.g. `*://*.example.com/*` -> `example.com`.
+function hostOfPattern(pat) {
+	const m = /^[^:]+:\/\/(\*\.)?([^/]+)\//.exec(pat);
+	return m ? m[2] : '';
+}
+
+/// Every origin the USER has approved, as match patterns.
 async function grants() {
 	const all = await chrome.permissions.getAll();
-	return all.origins || [];
+	const own = ownHosts();
+	return (all.origins || []).filter((o) => !own.has(hostOfPattern(o)));
 }
 
 /// Has the user approved this url's origin?
@@ -133,11 +154,60 @@ async function isGranted(url) {
 /// Pending grant questions, keyed by nonce.
 const pending = new Map();
 
+/// How a question ended. Not a boolean, because "the user said no" and "nobody
+/// ever answered" call for different words -- to the user, and to the daimon,
+/// which must stop asking after the first and may ask again after the second.
+const ALLOWED	= 'allowed';
+const DECLINED	= 'declined';
+const DISMISSED	= 'dismissed';
+
+/// The toolbar icon is the one surface that is always there. While a question is
+/// waiting it carries a mark, so a window that landed behind something is still
+/// findable -- and the popup below it says what is being asked and offers the
+/// way back. This paints the mark; it never opens anything.
+function markPending() {
+	const q = [...pending.values()][0];
+	if (!q) {
+		chrome.action.setBadgeText({ text: '' });
+		chrome.action.setTitle({ title: 'Daimond Hands' });
+		return;
+	}
+	chrome.action.setBadgeText({ text: '?' });
+	chrome.action.setBadgeBackgroundColor({ color: '#2f6fed' });
+	chrome.action.setTitle({
+		title: q.kind === 'mirror'
+			? 'Daimond Hands — waiting for you to allow the live mirror'
+			: `Daimond Hands — waiting for you to approve ${q.host}`,
+	});
+}
+
+/// What the user is being asked, for the popup to say in its own words.
+function pendingQuestion() {
+	const q = [...pending.values()][0];
+	return q ? { kind: q.kind, host: q.host || '' } : null;
+}
+
+/// Brings the pending question's window back to the front. The popup's way out
+/// of a lost window -- and it RAISES, never creates: a second window per ask is
+/// the popup flood the mirror guard exists to prevent.
+async function raisePending() {
+	const q = [...pending.values()][0];
+	if (!q || q.windowId == null) return { ok: false, error: 'Nothing is waiting to be approved.' };
+	try {
+		await chrome.windows.update(q.windowId, { focused: true, drawAttention: true });
+		return { ok: true };
+	} catch (e) {
+		return { ok: false, error: 'That window has gone. Ask Daimond to open the site again.' };
+	}
+}
+
 /// Puts the question to the user in a window of our own, and waits.
 ///
 /// chrome.permissions.request needs a user gesture, and a message from a web
 /// page is not one. So the extension asks in its own page, where a click is a
 /// click. The page's `open` call simply blocks until the user has answered.
+///
+/// Resolves ALLOWED, DECLINED or DISMISSED.
 async function ask(params) {
 	const nonce	= Math.random().toString(36).slice(2);
 	const q		= new URLSearchParams(Object.assign({ nonce }, params));
@@ -148,7 +218,7 @@ async function ask(params) {
 	// one surface the whole flow turns on must land where the user is looking.
 	let place = {};
 	try {
-		const cur = await chrome.windows.getLastDiamonded();
+		const cur = await chrome.windows.getLastFocused();
 		if (cur && cur.width) {
 			place = {
 				left: Math.max(0, Math.round(cur.left + (cur.width  - W) / 2)),
@@ -171,7 +241,8 @@ async function ask(params) {
 	catch (e) { /* best effort */ }
 
 	return await new Promise((resolve) => {
-		pending.set(nonce, { resolve, windowId: win.id });
+		pending.set(nonce, { resolve, windowId: win.id, kind: params.kind || 'site', host: params.host || '' });
+		markPending();
 	});
 }
 
@@ -194,14 +265,21 @@ async function askMirror() {
 	return await mirrorAsk;
 }
 
-/// The grant window answered, or was closed.
-function settleGrant(nonce, ok) {
+/// The grant window answered.
+function settleGrant(nonce, answer) {
 	const p = pending.get(nonce);
 	if (!p) return;
 	pending.delete(nonce);
-	p.resolve(ok);
+	markPending();
+	p.resolve(answer === ALLOWED ? ALLOWED : DECLINED);
 	if (p.windowId != null) chrome.windows.remove(p.windowId).catch(() => {});
 }
+
+// The pending map lives in module scope, so an evicted service worker forgets
+// every question it was waiting on -- but the toolbar mark it painted would
+// outlive it. Clear it on every wake: nothing is pending in a worker that has
+// just started.
+markPending();
 
 /// If the user grants something, they have plainly changed their mind about the
 /// mirror, so let it be asked for again.
@@ -209,11 +287,15 @@ chrome.permissions.onAdded.addListener(() => {
 	set({ noMirror: false });
 });
 
+/// A window that goes away without answering was DISMISSED, not refused. The
+/// difference is the whole point: a user who never saw the question has not said
+/// no, and telling the daimon they did would end an errand they still want run.
 chrome.windows.onRemoved.addListener((windowId) => {
 	for (const [nonce, p] of pending) {
 		if (p.windowId === windowId) {
 			pending.delete(nonce);
-			p.resolve(false);
+			markPending();
+			p.resolve(DISMISSED);
 		}
 	}
 });
@@ -487,9 +569,20 @@ async function doTakeover() {
 /// own gesture to resume. Both are trusted because they arrive from OUR managed
 /// tab (`sender.tab.id === s.tabId`), which the web page cannot impersonate.
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+	// Answer ONLY what a content script sends. The extension's own pages speak on
+	// this same channel and are answered by the listener at the foot of the file;
+	// Chrome hands a message to every listener and keeps the FIRST answer, so a
+	// listener that answers everything steals theirs. Sorting by the shape of the
+	// sender is what went wrong before: a popup has no tab, but the grant window
+	// DOES -- it is a tab in a window of its own -- so one listener swallowed the
+	// popup's questions and the other ignored the grant window's answer. The
+	// message type says which channel a message belongs to; the sender says
+	// whether it may be trusted. Both are checked, and separately.
+	if (!msg || !['private', 'typing', 'resume'].includes(msg.type)) return false;
+	if (!sender.tab) { respond({ ok: false }); return false; }
 	(async () => {
 		const s = await get();
-		if (!sender.tab || sender.tab.id !== s.tabId) { respond({ ok: false }); return; }	// Not our tab.
+		if (sender.tab.id !== s.tabId) { respond({ ok: false }); return; }	// Not our tab.
 		if (msg && msg.type === 'private') {
 			if (s.truce && msg.reason === 'a password field') { respond({ ok: true }); return; }
 			await toUser(msg.reason || 'something private');
@@ -589,17 +682,25 @@ const HANDLERS = {
 		}
 
 		if (!(await isGranted(url))) {
-			await askGrant(url);
+			const answer = await askGrant(url);
 			// Do NOT trust how the grant window closed. Chrome's own permission
 			// prompt takes focus and can dismiss the window at the very instant the
 			// user grants the permission -- which the window-close handler would
 			// read as a decline, refusing a site the user just allowed (and then
 			// "try again" works, because it really is granted now). So ask the
 			// permission system itself, which is the only truth.
+			//
+			// The answer decides only the WORDS of the refusal, never whether it is
+			// one. A decline is final and the daimon must stop asking; a window
+			// closed unseen is not an answer at all, and saying otherwise would
+			// abandon an errand the user still wants run.
 			if (!(await isGranted(url))) {
+				const host = new URL(url).hostname;
 				return {
 					ok:	false,
-					error:	`The user has not approved ${new URL(url).hostname}. Daimond can only operate sites the user explicitly allows. Ask them, or read the page with web_fetch instead.`,
+					error:	answer === DECLINED
+						? `The user declined: Daimond may not operate ${host}. Do not ask for it again. Tell them what you wanted to do there, or read the page with web_fetch instead.`
+						: `The approval window for ${host} was closed before it was answered, so the site is not approved. The user may not have seen it -- the Daimond Hands icon carries the question until it is answered. Ask them to allow it and try web_open again, or read the page with web_fetch instead.`,
 				};
 			}
 		}
@@ -768,7 +869,7 @@ const HANDLERS = {
 				return { ok: false, error: MIRROR_OFF };
 			}
 			const ok = await askMirror();
-			if (!ok) {
+			if (ok !== ALLOWED) {
 				await set({ noMirror: true });
 				return { ok: false, error: MIRROR_OFF };
 			}
@@ -818,13 +919,21 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, respond) => {
 });
 
 /// The popup, and the grant window, speak to us on the internal channel.
+///
+/// "Our own page" is decided by the sender's URL, not by whether it sits in a
+/// tab. The grant window is a tab -- a popup window holding one -- so a test for
+/// `!sender.tab` shut this listener out of it, and the answer the user clicked
+/// never arrived: every grant settled through the window merely CLOSING, which is
+/// why a decline and an unseen dismissal were once the same event. A content
+/// script on a web page can never match this prefix, so nothing is loosened.
+const OURS = chrome.runtime.getURL('');
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-	if (!msg || sender.tab) return false;	// Extension pages only.
+	if (!msg || !sender.url || !sender.url.startsWith(OURS)) return false;
 
 	(async () => {
 		try {
 			if (msg.type === 'grant') {
-				settleGrant(msg.nonce, !!msg.ok);
+				settleGrant(msg.nonce, msg.answer);
 				return respond({ ok: true });
 			}
 			if (msg.type === 'panel') {
@@ -837,7 +946,11 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 					title:		s.title,
 					reason:		s.reason,
 					granted:	await grants(),
+					pending:	pendingQuestion(),
 				});
+			}
+			if (msg.type === 'raise') {
+				return respond(await raisePending());
 			}
 			if (msg.type === 'revoke') {
 				await chrome.permissions.remove({ origins: [msg.pattern] });

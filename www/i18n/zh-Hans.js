@@ -240,6 +240,13 @@
 	'chat.queued_pending': '还没发出。点一下可以改。',
 	'chat.queue_cancel':   '不要发这条',
 	'chat.queue_returned': '这一轮没能走完，你排在后面的那条又回到了输入框里，没有发出去。',
+	// 同样的话也写在聊天的磁贴上，给那些人已经走开、却还留着排队消息的会话。
+	// 气泡只画在屏幕上正开着的那个聊天里，而马上要花出去的钱，
+	// 不该指望你记得住。
+	'chat.queue_badge.one':        '{n} 条排队中',
+	'chat.queue_badge.other':      '{n} 条排队中',
+	'chat.queue_badge_help.one':   '这个聊天里有一条消息在等着。打开它，这条就作为单独的一轮发出去。',
+	'chat.queue_badge_help.other': '这个聊天里有 {n} 条消息在等着。打开它，它们就会一轮一条地发出去。',
 
 	// ── 网页面板 ───────────────────────────────────────────────
 	'web.who_drives': '现在谁在操作',
@@ -267,7 +274,7 @@
 	// 这几条是按标记摆放的，保留原有标签，不要添加。
 	'web.opening':         '<b>正在打开 {host}…</b><br>前面会弹出一个 <b>Daimond Hands</b> 窗口 — 在那里批准这个站点，然后 Chrome 会再确认一次。两步都只在第一次访问这个站点时出现。',
 	'web.not_approved':    '<b>{host} 未获批准。</b><br>',
-	'web.approval_closed': '批准窗口被关掉或被拒绝了。让我再打开一次，然后在 Daimond Hands 窗口里点<b>允许这个站点</b>（它可能开在这个窗口后面）。',
+	'web.approval_closed': '批准窗口被关掉了，或者你选了不允许。如果本来是想允许的，让我再打开一次这个站点，然后点<b>允许，再到 Chrome 里确认</b> — 窗口会开在这个窗口前面，而 <b>Daimond Hands</b> 图标会一直留着这个问题，直到你回答为止。',
 	'web.driving_tab':     '<b>Daimond 正在一个浏览器标签页里操作 {host}</b>。你可以到那边看，也可以把实时画面拉进这个面板。',
 	'web.show_live':       '在这里显示实时画面',
 	// 拒绝被嵌进框里的站点，也就是大多数站点。
@@ -506,6 +513,10 @@
 	'sync.synced':     '已同步',
 	'sync.off':        '同步已关',
 	'sync.off_reason': '跨设备同步属于 Pro，这个账户没有。',
+	// 只有这个小标签会说这件事，所以它也得是通往这个提议的路：
+	// 在这个状态下它可以点，点开就是“额度”里的 Pro。
+	'sync.off_click':  '点一下，在“额度”里看看 Pro。',
+	'sync.off_pitch':  '同步是关的，因为这个账户不是 Pro。Pro 会加上跨设备同步、云端存储和 Email。',
 	// 被退回的包裹。要说清楚什么太大，以及通常是什么弄大的。
 	'sync.too_big':        '同步已暂停',
 	'sync.too_big_reason': '这台设备的包裹太大，发不出去，它做的事就不再往外走了。通常是某个特别大的 Diamond 或工作区文件闹的 — 删掉它或让它小一点，同步会自己接上。',
@@ -1297,7 +1308,6 @@
 	// 把所有 Diamond 和它们之间的关联画成一张静止的图。它是用来查看结构的
 	// 工具，所以措辞只说明画面上有什么，不加褒扬。
 	'graph.no_diamonds':         '还没有 Diamond，所以没有可画的东西。',
-	'graph.empty':               '还没有哪个 Diamond 关联到别的 Diamond。关联两个 Diamond，这里就会出现图。',
 	'graph.isolated':            '未关联',
 	'graph.unnamed':             '未命名',
 	'graph.in_cycle':            '这个 Diamond 在一个环上。',

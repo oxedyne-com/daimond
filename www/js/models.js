@@ -43,6 +43,12 @@
 
 	var KEY     = 'daimond-models-v2';
 	var OLD_KEY = 'daimond-byok';           // the single-provider config this replaces
+	// Providers deleted on purpose, by id. The sync merge is a UNION, so a row
+	// this device removed is simply handed back by the device that still has it,
+	// key and all — absence in a parcel means "that device never had it", never
+	// "it is gone". A tombstone is what tells the two apart, and it is the same
+	// mechanism, TTL and merge rule the chats and the Diamonds use.
+	var TOMBS   = 'daimond-provider-tombs';
 	var deps    = null;                     // { onChange, onTopUp }
 
 	/// The provider whose key Daimond mints, rather than the user pasting one.
@@ -910,16 +916,49 @@
 			keyEnc:  '',
 			models:  [],
 			fetched: 0,
-			touched: Date.now(),
+			touched: stampNow(id),
 		};
 		save();
+	}
+
+	/// A stamp for a configuration written NOW, which must also beat any tombstone
+	/// this id already carries.
+	///
+	/// Removing a provider and adding it straight back is one action to the user
+	/// and two to the store, and the merge decides on strictly-later: a re-add
+	/// stamped in the same millisecond as its own deletion would lose to it and
+	/// vanish again on the next pull. A person cannot type that fast; a script,
+	/// and a test, can.
+	function stampNow(id) {
+		return Math.max(Date.now(), ms(tombs()[id]) + 1);
 	}
 
 	function removeProvider(id) {
 		delete store.providers[id];
 		delete plain[id];
 		if (store.def.provider === id) store.def = { provider: '', model: '' };
+		// Before the store is written, so the very next push carries the deletion:
+		// there is one way into this function and every delete in the panel comes
+		// through it, which is what keeps the tombstone from being forgotten at one
+		// of several call sites.
+		tombstone(id);
 		save();
+	}
+
+	/// The providers deleted on purpose, by id, with anything past its TTL pruned.
+	/// The map, the TTL and the union rule are DaimondCore's — one deletion policy
+	/// for chats, Diamonds, providers and mailboxes rather than four. A page
+	/// without the core module cannot sync at all, so an empty map there is the
+	/// truth rather than a fallback.
+	function tombs() {
+		return (window.DaimondCore && DaimondCore.tombs) ? DaimondCore.tombs(TOMBS) : {};
+	}
+	function tombstone(id) {
+		if (window.DaimondCore && DaimondCore.tombstone) DaimondCore.tombstone(TOMBS, id);
+	}
+	function mergeTombs(incoming) {
+		return (window.DaimondCore && DaimondCore.mergeTombs)
+			? DaimondCore.mergeTombs(TOMBS, incoming) : tombs();
 	}
 
 	/// Forget every key. The lock does this: a locked Daimond holds no readable key.
@@ -1000,6 +1039,14 @@
 		return n ? out : null;
 	}
 
+	/// The tombstone map, rebuilt with sorted keys for the same reason every other
+	/// map here is: enumeration order must never reach the wire.
+	function sortedTombs() {
+		var t = tombs(), out = {};
+		Object.keys(t).sort().forEach(function (id) { out[id] = ms(t[id]); });
+		return out;
+	}
+
 	/// The store as it should travel: JSON-safe, deterministic, and holding no readable key.
 	function exportSync() {
 		var out = {
@@ -1007,6 +1054,9 @@
 			def:   { provider: store.def.provider || '', model: store.def.model || '' },
 			defAt: ms(store.defAt),
 			providers: {},
+			// What was deleted here, so the other device deletes it too rather than
+			// handing it back on the next pull.
+			tombs: sortedTombs(),
 		};
 		Object.keys(store.providers).sort().forEach(function (id) {
 			if (id === CREDITS) return;					// minted per device; see above
@@ -1037,12 +1087,16 @@
 	/// later `fetched` decides the model list — so a device that merely re-asked a provider for
 	/// its catalogue does not thereby win an argument about the key.
 	///
-	/// Two things are deliberately left alone. Nothing here deletes a provider: a removal is not
-	/// tombstoned, so an absence in the parcel means "that device never had it", not "it is
-	/// gone". And the in-memory plaintext cache is never overwritten — a device mid-turn goes on
-	/// running with the key it holds, and an adopted key is read at the next unlock. A gap in the
-	/// cache IS filled, since a key that arrives and cannot be used until a reload is a key the
-	/// user will assume did not arrive.
+	/// A DELETION does travel, and it travels as a tombstone. An absence still means "that
+	/// device never had it"; a tombstone means "it is gone", and the two are decided on the
+	/// stamp — a provider whose `touched` is later than the tombstone is a deliberate re-add
+	/// after the deletion and survives, one whose stamp is older is the deleted row coming
+	/// round again and is dropped on both sides.
+	///
+	/// One thing is deliberately left alone: the in-memory plaintext cache is never
+	/// overwritten — a device mid-turn goes on running with the key it holds, and an adopted
+	/// key is read at the next unlock. A gap in the cache IS filled, since a key that arrives
+	/// and cannot be used until a reload is a key the user will assume did not arrive.
 	///
 	/// A parcel with no `models` section (a v1 or early-v2 device) is a no-op, so an old device
 	/// and a new one sync happily in both directions.
@@ -1050,10 +1104,26 @@
 		if (!remote || typeof remote !== 'object' || !remote.providers
 			|| typeof remote.providers !== 'object') return { added: 0, updated: 0 };
 		var added = 0, updated = 0, adopt = [];
+		// The tombstones first, unioned both ways: this device learns what the other
+		// deleted, and keeps its own so the next push still carries them.
+		var dead = mergeTombs(remote.tombs);
+		Object.keys(dead).forEach(function (id) {
+			if (id === CREDITS) return;					// not the user's to delete
+			var p = store.providers[id];
+			if (!p) return;
+			if (ms(p.touched) > ms(dead[id])) return;	// re-added here since: the re-add wins
+			delete store.providers[id];
+			delete plain[id];
+			if (store.def.provider === id) store.def = { provider: '', model: '' };
+			updated++;
+		});
 		Object.keys(remote.providers).sort().forEach(function (id) {
 			if (id === CREDITS) return;					// never carried, never adopted
 			var r = remote.providers[id];
 			if (!r || typeof r !== 'object') return;
+			// A row the other device still holds but this one has buried: it comes
+			// back only if it was re-added after the deletion.
+			if (dead[id] && !(ms(r.touched) > ms(dead[id]))) return;
 			var models  = (Array.isArray(r.models) ? r.models.slice() : []).sort();
 			var rates   = sortedRates(r.rates);
 			var fetched = ms(r.fetched);

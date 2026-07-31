@@ -121,14 +121,28 @@ which it only sends because you said yes. *Do as I mean, or nothing done.*
 **Two permissions, asked separately, never at install.**
 
 - *A site.* The first time Daimond wants to operate `example.com`, a small window
-  asks you. Say no and the agent is told so, in words it can act on.
+  opens over the app and asks you. It names the site, says the approval covers
+  that site and its subdomains and nothing else, and warns that Chrome will ask
+  once more — because Chrome's own prompt is the real approval and cannot be
+  skipped. Say no and the agent is told *the user declined*, and told not to ask
+  again. Close the window without answering and it is told that instead, because
+  a question nobody saw is not a refusal.
 - *The live mirror.* Chrome will not photograph a tab on a per-site grant: it
   wants `<all_urls>` or a gesture on the tab itself. So the mirror is its own
   question, asked the first time the panel wants a picture, and it is entirely
   optional — refuse it and Daimond simply works from the page structure instead.
 
-Every grant is listed in the extension's popup, and every one of them can be
-revoked there.
+A window can be covered, minimised, or lost behind the app, and then it is the
+only place that knows a question is waiting. So the toolbar icon carries the
+question too: it wears a mark while one is pending, and its popup says what is
+being asked, what allowing it would cover, and offers a way back to the window —
+raising the one that is open, never opening another.
+
+Every grant the user gave is listed in that popup, in plain words rather than as
+a match pattern, and every one of them can be revoked there. The extension's own
+origins — Daimond's pages, where `announce.js` runs — are not listed: they came
+with the install, the user never granted them, and Chrome would not let them be
+revoked.
 
 ## The files
 

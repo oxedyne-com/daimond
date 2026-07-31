@@ -742,6 +742,153 @@ try {
 	check('a plaintext-at-rest key is left behind by the export',
 		atRest.absent === true && atRest.noField === true, JSON.stringify(atRest));
 
+	// ── (9) A provider deleted here stays deleted ──────────────────────
+	// The provider merge is a UNION, so a row removed on this device and still
+	// held on the other one was handed straight back on the next pull -- key and
+	// all -- and removing it was something the user could not make stick. An
+	// absence still means "that device never had it"; a TOMBSTONE means "it is
+	// gone", and the stamps decide between a deletion and a re-add.
+	const T = await page.evaluate(async () => {
+		const S = window.DaimondModels;
+		const r = {};
+		const now = Date.now();
+		S.addProvider('tombprov', { name: 'Tombed', url: 'https://tomb.example/v1/chat/completions' });
+		const born = S.exportSync().providers.tombprov.touched;
+		S.removeProvider('tombprov');
+		let ex = S.exportSync();
+		r.gone   = !ex.providers.tombprov;
+		r.tombed = !!(ex.tombs && ex.tombs.tombprov && ex.tombs.tombprov >= born);
+		// The other device still has it, and offers it back.
+		await S.applySync({ v: 2, providers: { tombprov: {
+			name: 'Tombed', url: 'https://tomb.example/v1/chat/completions',
+			models: [], fetched: 0, touched: born, keyEnc: 'RESURRECTED',
+		} } });
+		r.stayedGone = !S.exportSync().providers.tombprov;
+		// A deletion made on the OTHER device reaches this one: the tombstone
+		// arrives without the row, and the row here goes.
+		S.addProvider('otherdev', { name: 'Other', url: 'https://other.example/v1/chat/completions' });
+		await S.applySync({ v: 2, providers: {}, tombs: { otherdev: Date.now() + 1000 } });
+		r.remoteDeleteHonoured = !S.exportSync().providers.otherdev;
+		// A re-add AFTER the deletion wins by its stamp -- deleting a provider must
+		// not make its id unusable for a week.
+		S.addProvider('tombprov', { name: 'Back', url: 'https://back.example/v1/chat/completions' });
+		r.readdSurvives = !!S.exportSync().providers.tombprov;
+		await S.applySync({ v: 2, providers: {}, tombs: { tombprov: now - 1000 } });
+		r.readdSurvivesMerge = !!S.exportSync().providers.tombprov;
+		S.removeProvider('tombprov');
+		return r;
+	});
+	check('removing a provider takes it out of the store', T.gone === true);
+	check('and leaves a tombstone in the parcel', T.tombed === true);
+	check('a deleted provider handed back by the other device does not come back',
+		T.stayedGone === true);
+	check('a provider deleted on the other device is deleted here',
+		T.remoteDeleteHonoured === true);
+	check('a provider re-added after its deletion survives', T.readdSurvives === true);
+	check('and survives a merge carrying the older tombstone', T.readdSurvivesMerge === true);
+
+	// ── (10) The two standing refusals, on one chip, in one order ──────
+	// 402 (not on the tier) and 413 (parcel too large) both outlive the round
+	// that found them, and both are reported on the chip alone. So neither may be
+	// painted over by an ordinary round -- a pull SUCCEEDING used to show
+	// "Synced" on a device whose pushes were paused by a 402, and a pull FAILING
+	// used to blank a refusal that was still perfectly true. And the chip has to
+	// lead somewhere: "Sync off" names Pro, and Pro is bought in Credits.
+	const gate = await page.evaluate(async () => {
+		const chip = () => {
+			const c = document.getElementById('sync-chip');
+			if (!c) return null;
+			return { state: c.dataset.state || '', title: c.title || '',
+				text: (c.querySelector('.stext') || {}).textContent || '',
+				shown: c.style.display !== 'none' };
+		};
+		const bump = (tag) => {
+			const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+			if (!a.length) return false;
+			a[0].messages = a[0].messages || [];
+			a[0].messages.push({ role: 'user', content: tag, mid: tag, ts: Date.now() });
+			a[0].updatedAt = Date.now();
+			localStorage.setItem('daimond-chats', JSON.stringify(a));
+			return true;
+		};
+		const real = window.fetch;
+		const stub = (post, get) => {
+			window.fetch = function (u, o) {
+				const url = String((u && u.url) || u || '');
+				const isSync = url.indexOf('/api/sync') !== -1;
+				const method = (o && o.method) || 'GET';
+				const code = isSync ? (method === 'POST' ? post : get) : 0;
+				if (code) {
+					return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'stub' }),
+						{ status: code, headers: { 'content-type': 'application/json' } }));
+				}
+				return real.apply(this, arguments);
+			};
+		};
+		const out = {};
+		// A 413 first: the parcel is too large, and the chip stalls.
+		stub(413, 0);
+		bump('gate-1');
+		await window.DaimondSync.push();
+		out.stalled = chip();
+		// Then a 402 on top of it. Not entitled outranks too large: an account
+		// that may not sync at all cannot act on a parcel being oversized.
+		stub(402, 0);
+		bump('gate-2');
+		await window.DaimondSync.push();
+		out.off = chip();
+		// A pull that WORKS must not paint "Synced" over it.
+		window.fetch = real;
+		await window.DaimondSync.pull();
+		out.afterGoodPull = chip();
+		// Nor may a pull that fails simply hide it.
+		stub(0, 500);
+		await window.DaimondSync.pull();
+		out.afterBadPull = chip();
+		window.fetch = real;
+		// Clicking it goes where the sentence leads.
+		document.getElementById('sync-chip').click();
+		await new Promise(r => setTimeout(r, 400));
+		const cv = document.getElementById('admin-credits');
+		out.creditsOpen = !!(cv && cv.style.display !== 'none' && cv.offsetParent !== null);
+		out.creditsNote = (document.getElementById('credits-note') || {}).textContent || '';
+		if (window.DaimondAdmin && DaimondAdmin.close) DaimondAdmin.close();
+		// The tier comes back: the stall underneath it is still true and shows again.
+		window.DaimondSync.recheck();
+		await new Promise(r => setTimeout(r, 1200));
+		out.afterRecheck = chip();
+		// And a push that fits clears the lot, so nothing below runs under a stall.
+		bump('gate-3');
+		await window.DaimondSync.push();
+		await new Promise(r => setTimeout(r, 400));
+		out.cleared = chip();
+		out.api = window.DaimondSync.state();
+		return out;
+	});
+	check('a 413 stalls the chip', gate.stalled && gate.stalled.state === 'stalled',
+		JSON.stringify(gate.stalled));
+	check('a 402 on top of a stall shows "Sync off" — not entitled outranks too large',
+		!!(gate.off && gate.off.state === 'off' && gate.off.shown), JSON.stringify(gate.off));
+	check('and says on hover that it is Pro, and that the chip can be clicked',
+		!!(gate.off && /Pro/.test(gate.off.title) && /Credits/i.test(gate.off.title)),
+		(gate.off && gate.off.title || '').replace(/\n/g, ' | ').slice(0, 140));
+	check('a pull that WORKS does not paint "Synced" over a device whose pushes are off',
+		!!(gate.afterGoodPull && gate.afterGoodPull.state === 'off'),
+		JSON.stringify(gate.afterGoodPull));
+	check('a pull that FAILS does not hide the refusal either',
+		!!(gate.afterBadPull && gate.afterBadPull.state === 'off' && gate.afterBadPull.shown),
+		JSON.stringify(gate.afterBadPull));
+	check('clicking the off chip opens the Pro offer in Credits',
+		gate.creditsOpen === true && gate.creditsNote.length > 0,
+		'open=' + gate.creditsOpen + ' note=' + JSON.stringify(gate.creditsNote.slice(0, 60)));
+	check('when the tier comes back the stall underneath is still reported',
+		!!(gate.afterRecheck && gate.afterRecheck.state === 'stalled'),
+		JSON.stringify(gate.afterRecheck));
+	check('and a push that fits clears both',
+		!!(gate.cleared && gate.cleared.state === 'synced')
+		&& gate.api.stalled === false && gate.api.entitled === true,
+		JSON.stringify(gate.cleared) + ' ' + JSON.stringify(gate.api));
+
 	// (5) The export bundle carries the salt (without it, no second device could decrypt).
 	const bundle = await page.evaluate(() => {
 		const b = window.DaimondIdentity.exportBundle();

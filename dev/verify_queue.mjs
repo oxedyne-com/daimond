@@ -203,6 +203,115 @@ check('nothing queued behind a stopped turn is sent',
 	afterStop.users === beforeStop.users + 1, `${beforeStop.users} → ${afterStop.users} (the stopped turn only)`);
 await shot(s, 'queue-stopped');
 
+// ── 9. A queue on a chat you have left is visible, and drains on return ──
+// The queue is drawn in the thread of the chat on screen, and only there, so
+// one left on a background chat used to be invisible AND inert: nothing said it
+// was waiting, and going back to the chat did not send it. Both halves are the
+// same promise -- what you typed will be sent -- and both are kept here.
+const tiles = () => p.evaluate(() => [...document.querySelectorAll('#session-list .session-box')]
+	.map(b => ({
+		id:    b.dataset.id,
+		name:  (b.querySelector('.tile-label') || {}).value || '',
+		badge: (b.querySelector('.queue-badge') || {}).textContent || '',
+	})));
+/// Start a second chat: the + makes a PENDING tile, and Start makes it a chat.
+async function addChat() {
+	await p.click('#new-session-btn', { force: true });
+	await sleep(400);
+	const start = p.locator('.tile-start').first();
+	if (await start.count()) await start.click({ force: true });
+	await sleep(500);
+}
+/// Click a chat's tile in the rail, the way a user changes conversation.
+async function openTile(id) {
+	await p.evaluate((cid) => {
+		const box = [...document.querySelectorAll('#session-list .session-box')]
+			.find(b => b.dataset.id === cid);
+		if (box) box.click();
+	}, id);
+	await sleep(600);
+}
+
+const beforeB = (await tiles()).map(t => t.id);
+await addChat();
+const allTiles = await tiles();
+const chatB = allTiles.map(t => t.id).find(id => beforeB.indexOf(id) === -1) || '';
+const chatA = beforeB[0] || '';
+check('a second chat can be opened beside the first',
+	!!chatA && !!chatB && chatA !== chatB, `A=${chatA} B=${chatB}`);
+
+// Queue behind a turn running on A, then leave for B.
+await openTile(chatA);
+await p.fill('#chat-input', '@long 30');
+await p.click('#chat-send', { force: true });
+await sleep(1200);
+await type('QUEUED-AWAY');
+const queuedOnA = (await shape()).queued;
+check('the message queues on the chat it was typed in',
+	JSON.stringify(queuedOnA) === JSON.stringify(['QUEUED-AWAY']), JSON.stringify(queuedOnA));
+await openTile(chatB);
+const away = await tiles();
+const badgeA = (away.find(t => t.id === chatA) || {}).badge;
+check('the tile of the chat left behind says something is waiting on it',
+	!!badgeA, `badge=${JSON.stringify(badgeA)}`);
+check('and the chat being looked at is not badged for someone else’s queue',
+	!(away.find(t => t.id === chatB) || {}).badge,
+	JSON.stringify((away.find(t => t.id === chatB) || {}).badge));
+// Let the turn that was in flight on A finish while the user is elsewhere.
+await sleep(6000);
+const stillAway = await tiles();
+check('the tile still says so once that turn has finished — nothing is sent behind your back',
+	!!(stillAway.find(t => t.id === chatA) || {}).badge,
+	JSON.stringify((stillAway.find(t => t.id === chatA) || {}).badge));
+
+// Go back: it sends, as its own turn, and the badge goes with it.
+const bBefore = (await shape()).users;
+await openTile(chatA);
+await idle(90000);
+await sleep(1500);
+const returned = await shape();
+const cleared = await tiles();
+check('going back to the chat sends what was queued on it, as a real turn',
+	/QUEUED-AWAY/.test(returned.userText), returned.userText.slice(-120));
+check('as a turn, not a bubble: the queue is empty and the numbering has no gap',
+	returned.queued.length === 0
+	&& returned.turns === Array.from({ length: returned.users }, (_, i) => i + 1).join(','),
+	`queued=${JSON.stringify(returned.queued)} turns=${returned.turns}`);
+check('and the badge clears once it has gone',
+	!(cleared.find(t => t.id === chatA) || {}).badge,
+	JSON.stringify((cleared.find(t => t.id === chatA) || {}).badge));
+check('the other chat is untouched by any of it', bBefore >= 0 && !!chatB);
+await shot(s, 'queue-background');
+
+// ── 10. A queue behind a STOPPED turn is handed back, not sent ────────
+// Stop means stop even when the user is not watching: the chat was in the
+// background when its turn was killed, so the hand-back waits with it and
+// happens on return.
+await openTile(chatA);
+await p.fill('#chat-input', '@long 60');
+await p.click('#chat-send', { force: true });
+await sleep(1200);
+await type('QUEUED-STOPPED');
+// Stop and leave in the SAME tick, so the turn ends while the chat is in the
+// background: an await between the two would let the drain run while it is still
+// on screen, which is the case section 8 already covers.
+await p.evaluate((bid) => {
+	document.getElementById('chat-send').click();          // in stop-mode: kills the turn
+	const box = [...document.querySelectorAll('#session-list .session-box')]
+		.find(b => b.dataset.id === bid);
+	if (box) box.click();
+}, chatB);
+await sleep(2500);
+await openTile(chatA);
+await sleep(1200);
+const handed = await shape();
+check('a queue left behind a stopped turn comes back to the composer, unsent',
+	handed.composer === 'QUEUED-STOPPED' && handed.queued.length === 0,
+	`composer=${JSON.stringify(handed.composer)} queued=${JSON.stringify(handed.queued)}`);
+check('and it was never sent as a turn', !/QUEUED-STOPPED/.test(handed.userText),
+	handed.userText.slice(-80));
+await p.fill('#chat-input', '');
+
 const errs = errors(s).filter(e => !/favicon|404|401|402|502|Bad Gateway|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 5));
 check('nothing throws while all this happens', errs.length === 0, errs[0] || '');

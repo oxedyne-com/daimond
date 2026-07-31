@@ -41,8 +41,11 @@
 	background: var(--accent); color: #fff;
 }
 
+/* The radius is the skin's, not a number: `--radius-sm` is 6px in the sharp skin, so nothing
+   moves there, and 10px in the warm one, where a 6px button beside a 10px field was the one
+   square corner in a rounded panel. */
 .settings-section .models-refetch, .settings-section .models-remove, .settings-section .models-add {
-	padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: var(--fs-2xs);
+	padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--fs-2xs);
 	background: var(--bg-tertiary); border: 1px solid var(--border-2);
 	color: var(--text-secondary);
 }
@@ -62,29 +65,71 @@
 /* What is left on this provider's key, inside its expanded body. It sits between the provider
    head and the model rows, so it is ruled off from both rather than floating between them; and
    it is built entirely from the panel's own tokens, which is what carries it across dark, light
-   and lollypop, and across both skins, without a single override. */
+   and lollypop, and across both skins, without a single override.
+
+   It is drawn as two zones, because it does two things: it STATES what is left, and it offers
+   the ways of changing that answer. The statement keeps the raised surface and is read at the
+   panel's reading size; the affordances sit below a rule on the recessed surface. A person
+   glancing at the row wants the figure, and finds it first; a person who has come to correct
+   the figure is looking for a field, and a field is what the foot of the block is. */
 .models-credit {
-	display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-	margin: 2px 4px 4px; padding: 8px;
-	border: 1px solid var(--border); border-radius: 6px;
+	display: flex; flex-direction: column;
+	margin: 4px 4px 6px;
+	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
 	background: var(--bg-tertiary);
+	/* So the control strip's corners are the card's corners, in either skin. */
+	overflow: hidden;
 }
 /* The sentence that says what is known and how it is known. It wraps: a manual figure names the
-   base, the estimated spend and the date, and cutting that short would lose the caveat. */
+   base, the estimated spend and the date, and cutting that short would lose the caveat. It is
+   the block's headline, so it is set in the panel's ordinary reading size and its ordinary
+   text colour, rather than at the chip size the rest of the provider furniture uses. */
 .models-credit-line {
-	font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.45;
+	padding: 9px 11px 8px;
+	font-size: var(--fs-xs); line-height: 1.5;
+	color: var(--text-primary);
+}
+/* Asking the provider is the other way of answering the same question, so it stays on the
+   statement's surface -- and keeps its own width, which is what says it acts on this one key
+   rather than on the row it sits in. */
+.settings-section .models-credit > .models-refetch {
+	align-self: flex-start;
+	margin: 0 11px 9px;
 }
 /* The user's own figure: a field and the button that commits it, on one line, filling the
-   block's width so the pair reads as one control rather than two loose ones. */
-.models-credit-form { display: flex; align-items: center; gap: 6px; width: 100%; }
+   block's width so the pair reads as one control rather than two loose ones. `stretch` is what
+   balances the pair -- the button takes the field's height exactly, rather than landing near
+   it -- and the strip runs the full width of the card, ruled off from the figure above. */
+.models-credit-form {
+	display: flex; align-items: stretch; gap: 6px; width: 100%;
+	padding: 8px 11px 9px;
+	border-top: 1px solid var(--border);
+	background: var(--bg-secondary);
+}
+.settings-section .models-credit-form > .models-refetch { flex: none; white-space: nowrap; }
 /* Sized to the buttons beside it (`.models-refetch`), NOT to `.settings-section input`, whose
-   9px/base is a form-field scale and would tower over the row. */
+   9px/base is a form-field scale and would tower over the row. Monospace, as the balance on the
+   provider row is: an amount is read digit by digit. The well is the deepest surface, which is
+   the one shade that is recessed in all three palettes rather than only in the dark one. */
 .settings-section .models-credit-input {
 	flex: 1; min-width: 0;
 	padding: 6px 8px; font-size: var(--fs-2xs);
 	font-family: var(--font-mono);
-	background: var(--bg-secondary); border: 1px solid var(--border-2);
-	border-radius: 6px; color: var(--text-primary);
+	background: var(--bg-primary); border: 1px solid var(--border);
+	border-radius: var(--radius-sm); color: var(--text-primary);
+	transition: border-color .12s ease, box-shadow .12s ease;
 }
-.settings-section .models-credit-input:focus { outline: none; border-color: var(--accent); }
+/* Rest, hover, focus, in three steps: the border firms up under the pointer, and takes the
+   accent with a soft ring once the field is being typed in. The ring is the accent's own tint,
+   so there is a ring in every palette rather than a dark-only glow. */
+.settings-section .models-credit-input:hover { border-color: var(--border-2); }
+.settings-section .models-credit-input:focus {
+	outline: none; border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .settings-section .models-credit-input::placeholder { color: var(--text-secondary); opacity: .7; }
+/* And the caret's own ring on the buttons, matching the admin rows: a button that answered only
+   to hover left a keyboard user with nothing to see. */
+.settings-section .models-credit .models-refetch:focus-visible {
+	outline: 2px solid var(--accent); outline-offset: 1px;
+}

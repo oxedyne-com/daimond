@@ -16,7 +16,10 @@
  *     draw was never drawn — so it goes in a band of its own at the foot rather
  *     than being left out.
  *   - Every link whose BOTH ends are Diamonds is an edge, arrowed from `from`
- *     to `to`, labelled with its relation.
+ *     to `to`, labelled with its relation. Two links between the same pair are
+ *     two lines, and their two relations are written at different points ALONG
+ *     those lines, since a picture where one word covers another is not one
+ *     anybody can check anything against.
  *   - A link to a file, a page or a chat is not a node. It is a count on the
  *     Diamond it touches, because a picture that grew a box for every artefact
  *     would stop showing the structure it exists to show.
@@ -52,6 +55,16 @@
 	var BAND_H  = 22;       // that band's heading
 	var NAME_MAX = 20;      // characters of a name a box holds
 	var SWEEPS  = 4;        // barycentre passes; more does not move anything
+	var NUDGE   = 18;       // between parallel lines running the same way
+	// How far along its own line a parallel label slides, per lane. The drop
+	// between two layers is V_GAP, and 0.26 of the curve is about a fifth of it --
+	// some twenty pixels, comfortably more than a line of type -- so two labels
+	// clear each other however long the relations are, which pushing them
+	// sideways by a fixed amount could never promise.
+	var LABEL_T = 0.26;
+	// And the whole spread the labels of one group may use, so that four or five
+	// parallel links stagger inside their line rather than off the end of it.
+	var LABEL_SPAN = 0.72;
 
 	var bodyEl  = null;
 	var app     = null;     // the wasm handle, built once
@@ -358,12 +371,19 @@
 		return { pos: pos, contentW: contentW, bandY: bandY, height: h + PAD, perRow: perRow };
 	}
 
-	/// The point halfway along a cubic bezier, which is where an edge's label
-	/// sits.
-	function midpoint(p0, p1, p2, p3) {
+	/// The point a fraction `t` along a cubic bezier, which is where an edge's
+	/// label sits -- halfway for a lone edge, and a little further along or back
+	/// for one of a parallel group.
+	///
+	/// Rounded to a thousandth of a unit, which is far finer than a pixel and
+	/// keeps the coordinate short in the serialised picture.
+	function pointAt(p0, p1, p2, p3, t) {
+		var u = 1 - t;
+		var a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+		var r = function (v) { return Math.round(v * 1000) / 1000; };
 		return {
-			x: (p0.x + 3 * p1.x + 3 * p2.x + p3.x) / 8,
-			y: (p0.y + 3 * p1.y + 3 * p2.y + p3.y) / 8,
+			x: r(a * p0.x + b * p1.x + c * p2.x + d * p3.x),
+			y: r(a * p0.y + b * p1.y + c * p2.y + d * p3.y),
 		};
 	}
 
@@ -419,8 +439,10 @@
 		return g;
 	}
 
-	/// One link, arrowed from its `from` end to its `to` end.
-	function edgeEl(e, pos, isBack, nudge, bow, names) {
+	/// One link, arrowed from its `from` end to its `to` end. `labelT` says how far
+	/// along the line its relation is written, which is what holds two relations
+	/// between one pair apart.
+	function edgeEl(e, pos, isBack, nudge, bow, labelT, names) {
 		var a = pos[e.from], b = pos[e.to];
 		var g = el('g', 'graph-edge' + (isBack ? ' back' : ''));
 		g.setAttribute('data-link-id', e.id);
@@ -455,7 +477,9 @@
 		tip(g, lines.join('\n'));
 
 		if (e.rel) {
-			var m  = midpoint(p0, p1, p2, p3);
+			// The label rides its own line rather than floating beside it, so the
+			// halo behind it sits where the line it belongs to is.
+			var m  = pointAt(p0, p1, p2, p3, labelT);
 			var lt = attrs(el('text', 'graph-edge-label'), { x: m.x, y: m.y });
 			lt.textContent = e.rel;
 			g.appendChild(lt);
@@ -552,10 +576,16 @@
 		svg.appendChild(defs());
 
 		// Parallel links between one pair are nudged apart, so two relations
-		// between the same two Diamonds are two visible lines.
+		// between the same two Diamonds are two visible lines. The lines alone were
+		// not enough: each label sat at the middle of its OWN line, so two long
+		// relations were written one over the other however far apart the lines they
+		// belong to had been pushed -- eighteen pixels is not a word. So a lane moves
+		// both: the line sideways, and the label along the line, where the room is.
+		//
+		// The lanes are handed out in the edges' own order, which is link-id order, so
+		// the same store gives the same link the same lane on every draw.
 		var groups = {};
 		c.edges.forEach(function (e) {
-			if (cyc.back[e.id]) return;
 			var k = e.from + ' ' + e.to;
 			(groups[k] || (groups[k] = [])).push(e);
 		});
@@ -563,13 +593,13 @@
 		var edgesG = el('g', 'graph-edges');
 		c.edges.forEach(function (e) {
 			var isBack = !!cyc.back[e.id];
-			var nudge  = 0;
-			if (!isBack) {
-				var grp = groups[e.from + ' ' + e.to];
-				var i   = grp.indexOf(e);
-				if (grp.length > 1) nudge = (i - (grp.length - 1) / 2) * 18;
-			}
-			edgesG.appendChild(edgeEl(e, geo.pos, isBack, nudge, bows[e.id] || 0, names));
+			var grp    = groups[e.from + ' ' + e.to];
+			var lane   = grp.length > 1 ? grp.indexOf(e) - (grp.length - 1) / 2 : 0;
+			// A closing edge is already held off its neighbours by its own bow, so
+			// only a forward line is moved sideways; the label moves either way.
+			var nudge  = isBack ? 0 : lane * NUDGE;
+			var labelT = 0.5 + lane * Math.min(LABEL_T, LABEL_SPAN / grp.length);
+			edgesG.appendChild(edgeEl(e, geo.pos, isBack, nudge, bows[e.id] || 0, labelT, names));
 		});
 		svg.appendChild(edgesG);
 
@@ -595,12 +625,13 @@
 			if (g && g.dataset.diamondId) select(g.dataset.diamondId);
 		});
 
-		if (!c.edges.length) {
-			var em = document.createElement('p');
-			em.className = 'graph-empty';
-			em.textContent = t('graph.empty');
-			bodyEl.appendChild(em);
-		}
+		// Nothing is said here about a store that holds Diamonds but no links. The
+		// line that used to be said -- that the picture appears here once two
+		// Diamonds are linked -- was put ABOVE the picture, and the picture was not
+		// missing: every one of those Diamonds was drawn directly below it, in the
+		// band headed "not linked". A sentence promising what is already under it,
+		// and pointing at the place it is standing in, is worse than no sentence.
+		// The band and the stats line say the same thing where the thing is.
 		bodyEl.appendChild(svg);
 
 		var backCount = backList.length;

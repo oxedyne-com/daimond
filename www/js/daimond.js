@@ -443,6 +443,25 @@ import init, {
 		return out;
 	}
 
+	/// A stored tombstone map, with anything past its TTL pruned. The generic form
+	/// of loadTombs/loadMsgTombs/loadDiamondTombs above, written once so a module
+	/// that keeps its own map — models.js, mail.js — does not have to keep its own
+	/// TTL with it.
+	function loadTombMap(key) {
+		var t = readJson(key, {}), now = Date.now(), out = {};
+		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		return out;
+	}
+
+	/// Record that something was deleted on purpose, so the other device deletes
+	/// it too rather than handing it back on the next pull.
+	function tombstoneIn(key, id) {
+		if (!key || !id) return;
+		var t = loadTombMap(key);
+		t[id] = Date.now();
+		try { localStorage.setItem(key, JSON.stringify(t)); } catch (e) { /* best effort */ }
+	}
+
 	// ── Workspace files (the other half of "the work") ─────────
 	// Chats have a natural merge (union transcripts); files do not, so they use
 	// a 3-way compare against a stored per-file hash BASELINE — the state as of
@@ -802,6 +821,13 @@ import init, {
 			// rate table -- which is what the push-skip comparison requires: anything
 			// whose serialisation followed enumeration order would push for ever.
 			models:       window.DaimondModels ? DaimondModels.exportSync() : null,
+			// The mailboxes, with their WRAPPED passwords. Same trust model as the
+			// sealed provider keys above: both devices hold one identity, so what
+			// opens here opens there, and the parcel is sealed over the top of it
+			// again before it leaves. What does NOT travel is the per-folder UID
+			// state -- it is rebuilt per device in a sync or two and would only
+			// give the merge a conflict to have.
+			mail:         (window.DaimondMail && DaimondMail.exportSync) ? DaimondMail.exportSync() : null,
 		};
 	}
 
@@ -848,6 +874,16 @@ import init, {
 				await DaimondModels.applySync(remote.models);
 			}
 		} catch (e) { /* providers stay as they are */ }
+		// Then the mailboxes. A second device that holds the account holds the
+		// entitlement too, so an account that arrives here is an account that can
+		// actually be read; and one that arrives at a device WITHOUT the
+		// entitlement degrades exactly as an unentitled account already does —
+		// the panel shows its pitch and the gateway refuses the sync.
+		try {
+			if (window.DaimondMail && DaimondMail.applySync) {
+				await DaimondMail.applySync(remote.mail);
+			}
+		} catch (e) { /* mailboxes stay as they are */ }
 		// If the Workspace panel is open, show what just landed — including any
 		// file that arrived as a cloud reference rather than as bytes.
 		try {
@@ -1219,8 +1255,9 @@ import init, {
 	// whatever the last explicit /api/balance call had said: a session that fetched twenty pages
 	// showed the balance it started with until something unrelated happened to repaint.
 	//
-	// `DaimondAdmin` is this file's own closure, not a global, so it is called by name -- the
-	// `window.DaimondAdmin` a passing reader expects is undefined and the row would never repaint.
+	// `DaimondAdmin` is this file's own closure, so it is called by name here rather than off
+	// `window` -- it IS published there (see the assignment below the closure), but a listener
+	// in this file has no reason to go round the houses for it.
 	window.addEventListener('daimond:credits', function () {
 		try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
 		try {
@@ -2994,6 +3031,10 @@ import init, {
 			if (n) n.textContent = note || '';
 			renderCredits();
 			if (window.DaimondCredits) DaimondCredits.render();
+			// Again, AFTER renderCredits -- which blanks this line for an authed account, and
+			// so wiped the caller's reason for sending the user here on the way in. Whoever
+			// opened Credits said why; the drawer should still be saying it when it arrives.
+			if (n && note) n.textContent = note;
 			// The standing instruction to buy more credits belongs with the credits, not in a
 			// settings page of its own: the question "what happens when these run out" is asked
 			// while looking at how many are left.
@@ -3576,6 +3617,13 @@ import init, {
 		};
 	})();
 
+	// Published on purpose. Two other modules already ask for `window.DaimondAdmin`
+	// before sending the user to the Pro offer in Credits -- mail.js when its pitch
+	// button is pressed, sync.js when the "Sync off" chip is clicked -- and until
+	// now it was undefined, so the Mail panel's own Buy button did nothing at all.
+	// One handle on the surface that already exists, rather than a second way in.
+	window.DaimondAdmin = DaimondAdmin;
+
 	/// Strip terminal control sequences from anything on its way to the DOM.
 	///
 	/// fe2o3 colours its `Outcome` chains for a terminal, and those bytes cross
@@ -4144,6 +4192,13 @@ import init, {
 		syncComposer();   // reflect THIS chat's own generating state
 		updateActiveSession();
 		updateMeters();
+		// Anything queued on this chat is drawn again — renderHistory has just
+		// rebuilt the thread it lives in — and then acted on. The send is deferred
+		// by a tick so this function finishes drawing the chat before a turn starts
+		// writing into it, and resumeQueue re-checks that the chat is still the one
+		// on screen, since a fast second click can move it again in that tick.
+		renderQueue();
+		setTimeout(function () { resumeQueue(chat); }, 0);
 	}
 
 	// Centre placeholder for a not-yet-started chat: point the user at the
@@ -4343,6 +4398,12 @@ import init, {
 				: t('tile.fold_all_help');
 			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
 			top.appendChild(fold);
+			// What is waiting on this chat. A queue is only drawn in the thread of
+			// the chat on screen, so one left behind while the user works elsewhere
+			// was invisible until they happened to go back — and it is money about
+			// to be spent, which is not a thing to leave people to remember.
+			var qb = queueBadge(s);
+			if (qb) top.appendChild(qb);
 			meta.appendChild(top);
 			meta.appendChild(tileMeter(s));
 			box.appendChild(meta);
@@ -4470,6 +4531,15 @@ import init, {
 		// After a successful push, the pushed state is the new common fork point
 		// for the file 3-way merge; sync.js calls this then.
 		syncCommitBaseline: commitFileBaseline,
+		// The tombstone machinery, shared. A store that syncs by UNION needs a
+		// record of what was deleted, or absence reads as "that device never had
+		// it" and the row comes straight back on the next pull. Chats, Diamonds,
+		// providers and mailboxes all need one, and they all need the SAME one:
+		// one TTL, one union rule, one place to change either. models.js and
+		// mail.js keep their maps under their own keys and call these.
+		tombs:           loadTombMap,
+		tombstone:       tombstoneIn,
+		mergeTombs:      mergeTombMap,
 	};
 	/// Point the one composer at whichever chat is on screen: showing Stop while
 	/// that chat generates, ready to type either way.
@@ -4588,6 +4658,40 @@ import init, {
 			box.appendChild(div);
 		});
 		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		updateQueueBadges();
+	}
+
+	/// The badge a chat's tile wears while something is waiting on it, or null
+	/// when nothing is. `diamond-pending` is the app's existing pending-badge
+	/// style — the same small accented word the rail already uses for a fold
+	/// waiting on a Diamond, which is the same thing being said about a chat.
+	function queueBadge(chat) {
+		var n = (chat && chat._queue) ? chat._queue.length : 0;
+		if (!n) return null;
+		var b = document.createElement('span');
+		b.className = 'diamond-pending queue-badge';
+		b.textContent = tn('chat.queue_badge', n);
+		b.title = tn('chat.queue_badge_help', n);
+		return b;
+	}
+
+	/// Bring every tile's queue badge up to date in place.
+	///
+	/// In place, rather than by redrawing the rail: renderSessionList rebuilds the
+	/// label inputs, so a queue changing under a half-typed rename would take the
+	/// caret out of it.
+	function updateQueueBadges() {
+		if (!sessionList) return;
+		var byId = {};
+		chats.forEach(function (c) { byId[c.id] = c; });
+		sessionList.querySelectorAll('.session-box').forEach(function (box) {
+			var top = box.querySelector('.tile-active-top');
+			if (!top) return;                        // a pending chat cannot hold a queue
+			var was = top.querySelector('.queue-badge');
+			var now = queueBadge(byId[box.dataset.id]);
+			if (was) was.remove();
+			if (now) top.appendChild(now);
+		});
 	}
 
 	/// Take a queued message out again: back to the composer to be edited, or
@@ -4618,12 +4722,42 @@ import init, {
 		// Only for the chat on screen. runTurn writes the question straight into the
 		// thread, so a turn started for a chat the user has since left would render
 		// into the conversation they are now looking at. A queue left on another chat
-		// stays visible there, to be sent or dropped when they go back to it.
-		if (current !== chat) return;
+		// waits there, badged on its tile, and is picked up by resumeQueue the moment
+		// the user goes back to it — which is why HOW the turn ended is recorded
+		// rather than thrown away: the queue must still be handed back, not sent, if
+		// the turn it was waiting behind failed or was stopped.
+		if (current !== chat) {
+			chat._queueFailed = !!(failed || aborted);
+			updateQueueBadges();
+			return;
+		}
 		if (failed || aborted || _unloading || chats.indexOf(chat) === -1) { returnQueue(chat); return; }
+		chat._queueFailed = false;
 		var next = q.shift();
 		renderQueue();
 		runTurn(chat, next);
+	}
+
+	/// Pick up a queue left on a chat, now the user has come back to it.
+	///
+	/// The queue could not run while the chat was in the background — runTurn draws
+	/// into the live thread, so it would have written someone else's conversation —
+	/// and it is not run headlessly here either: this is the same drain, at the
+	/// first moment it is honest to do it. The turn it was waiting behind decides:
+	/// one that ended cleanly sends what was queued, and one that errored or was
+	/// stopped hands it back to the composer instead, exactly as it would have done
+	/// had the user been watching.
+	function resumeQueue(chat) {
+		if (!chat || current !== chat) return;                 // they have moved on again
+		if (!chat._queue || !chat._queue.length) return;
+		if (chat._generating) return;                          // its own turn will drain it
+		if ((chat.status || 'active') === 'pending') return;   // nothing has started here yet
+		if (chat._queueFailed) {
+			chat._queueFailed = false;
+			returnQueue(chat);
+			return;
+		}
+		drainQueue(chat, false);
 	}
 
 	/// Give a queue back rather than send it.

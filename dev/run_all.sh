@@ -48,7 +48,7 @@ SMTPD=${SMTPD:-dev/smtpd.mjs}
 # One line, and matched with a space either side: a newline in this list would
 # make the last name on a line never match, and that test would run in the wrong
 # phase without saying so.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob"
+NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob"
 # Of those, the two that also need an entitled account (and, for compose, mail).
 NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
 

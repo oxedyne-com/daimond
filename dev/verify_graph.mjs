@@ -6,9 +6,10 @@
 // directions separately -- every stored link between two live Diamonds is drawn exactly
 // once, and every drawn edge names a link that is really there -- and then proves the
 // things a faithful picture also has to get right: which way the arrow points, which edge
-// closes a cycle, that two relations between one pair are two lines, that an artefact is a
-// count rather than a box, that a link to a deleted Diamond is confessed in the stats and
-// drawn nowhere, and that the same store draws the same bytes on every load.
+// closes a cycle, that two relations between one pair are two lines AND two readable words,
+// that an artefact is a count rather than a box, that a link to a deleted Diamond is
+// confessed in the stats and drawn nowhere, that no hint stands over the boxes it points at,
+// and that the same store draws the same bytes on every load.
 //
 // The fixture is built through the real wasm, in one browser profile:
 //
@@ -279,6 +280,46 @@ check(par.length === 2 && par[0].d !== par[1].d && par[0].ends && par[1].ends
 check(par.length === 2 && new Set(par.map(e => e.label)).size === 2,
 	`each parallel line carries its own relation: ${JSON.stringify(par.map(e => e.label))}`);
 
+/// Where each label between one pair actually landed, read off the drawn document.
+///
+/// A measurement in the TEST is free; the same measurement inside the layout would not be,
+/// because a picture that placed a word by how wide the browser drew it would place it
+/// differently on another machine.  So this asks the document, and the pane never does.
+const labelsBetween = (pg, from, to) => pg.evaluate(({ from, to }) =>
+	[...document.querySelectorAll('#graph-body g.graph-edge')]
+		.filter(g => g.dataset.from === from && g.dataset.to === to)
+		.map(g => {
+			const tx = g.querySelector('text.graph-edge-label');
+			if (!tx) return null;
+			const bb = tx.getBBox();
+			return {
+				lid: g.dataset.linkId, text: tx.textContent,
+				ax: +tx.getAttribute('x'), ay: +tx.getAttribute('y'),
+				x: bb.x, y: bb.y, w: bb.width, h: bb.height,
+			};
+		}).filter(Boolean), { from, to });
+
+/// The two labels between one pair, asserted apart in both senses: their anchors are a
+/// label's height apart, and the boxes the words actually occupy do not intersect.
+function labelsApart(boxes, what) {
+	const u = boxes[0], v = boxes[1];
+	const gap  = (u && v) ? Math.abs(u.ay - v.ay) : 0;
+	const need = (u && v) ? Math.max(u.h, v.h) : 0;
+	check(boxes.length === 2 && gap >= need,
+		`${what}: the two labels are set apart ALONG their own lines by at least a label's height — `
+		+ `${gap.toFixed(1)}px apart, a label is ${need.toFixed(1)}px tall `
+		+ `(${boxes.map(z => `${JSON.stringify(z.text)}@y=${z.ay.toFixed(1)}`).join(', ')})`);
+	const hit = !!(u && v)
+		&& !(u.x + u.w <= v.x || v.x + v.w <= u.x || u.y + u.h <= v.y || v.y + v.h <= u.y);
+	check(boxes.length === 2 && !hit,
+		`${what}: and the boxes the words occupy do not intersect — `
+		+ boxes.map(z => `${JSON.stringify(z.text)} [${z.x.toFixed(1)},${z.y.toFixed(1)} `
+			+ `${z.w.toFixed(1)}×${z.h.toFixed(1)}]`).join(' vs '));
+}
+// Nudging the PATHS apart was never the whole job: a label rides its own path, so two
+// parallel labels landed at the same height and printed one over the other.
+labelsApart(await labelsBetween(page, id.A, id.D), 'Alpha ⇉ Delta');
+
 // ── 6. Artefacts, and a link to a Diamond that is gone ───────────
 const badged = g.nodes.filter(n => n.badge !== null);
 check(badged.length === 1 && badged[0].did === id.A && badged[0].badge === '◈ 1',
@@ -346,8 +387,14 @@ await page.waitForTimeout(1200);
 const cur = await page.evaluate(() => (window.DaimondDiamond.current() || {}).id || null);
 check(cur === id.C, `clicking a node selects that Diamond: ${nameOf[cur] || cur} (wanted Charlie)`);
 
-const errsA = errors(s).filter(e => !/502 \(Bad Gateway\)/.test(e));
-check(errsA.length === 0, `no console errors beyond the offline gateway: ${JSON.stringify(errsA.slice(0, 3))}`);
+// The dev server proxies /api to a gateway that is either absent (502 from the proxy) or
+// running and unwilling to serve this throwaway identity (401, 402).  None of the three is the
+// pane: the Graph draws from OPFS and asks the network for nothing whatever, so whichever
+// answer the gateway happens to be giving today is the environment talking, not this suite.
+// Everything else a page logs is still an error this run has to answer for.
+const gatewayNoise = /(401 \(Unauthorized\)|402 \(Payment Required\)|502 \(Bad Gateway\))/;
+const errsA = errors(s).filter(e => !gatewayNoise.test(e));
+check(errsA.length === 0, `no console errors beyond the gateway's answer: ${JSON.stringify(errsA.slice(0, 3))}`);
 await s.close();
 
 // ── 11. The empty paths, on a profile that has never held anything ──
@@ -376,16 +423,41 @@ const noLinks = await b.page.evaluate(() => ({
 	nodes: [...document.querySelectorAll('#graph-body g.graph-node')].map(g => g.dataset.diamondId),
 	edges: document.querySelectorAll('#graph-body g.graph-edge').length,
 	iso:   document.querySelectorAll('#graph-body g.graph-node.isolate').length,
+	band:  (document.querySelector('#graph-body text.graph-band') || {}).textContent ?? null,
 	stats: (document.querySelector('#graph-body .graph-stats') || {}).textContent ?? null,
 }));
-check(noLinks.empty.length === 1 && /Link two Diamonds/i.test(noLinks.empty[0]),
-	`Diamonds but no links: the pane says the picture is empty — ${JSON.stringify(noLinks.empty)}`);
+// The hint promised "the picture appears here" from ABOVE the band it was pointing at: the
+// Diamonds were already drawn, right underneath it, in the band that says they are unlinked.
+// A hint that has to be read past the thing it describes is not a hint, so it is gone -- the
+// band and the stats line say the same thing where the thing itself is.
+check(noLinks.empty.length === 0 && !!noLinks.band && /\S/.test(noLinks.band),
+	`Diamonds but no links: no hint stands over the boxes, and the band speaks for itself — `
+	+ `hint ${JSON.stringify(noLinks.empty)}, band ${JSON.stringify(noLinks.band)}`);
 check(noLinks.nodes.length === 2 && bIds.every(x => noLinks.nodes.includes(x)) && noLinks.edges === 0,
 	`and the Diamonds are still drawn: ${noLinks.nodes.length} node(s), ${noLinks.edges} edge(s), ${noLinks.iso} unlinked`);
 check((noLinks.stats || '').includes('2 Diamonds') && (noLinks.stats || '').includes('0 links'),
 	`the stats line is still there and honest: ${JSON.stringify(noLinks.stats)}`);
 await shot(b, 'graph-empty');
-const errsB = errors(b).filter(e => !/502 \(Bad Gateway\)/.test(e));
+
+// ── 12. Two LONG relations between one pair ──────────────────────
+// The case the overlap was reported against, built on its own: one pair, two relations, both
+// far too long to be pulled apart by the eighteen pixels the paths are nudged.
+const longIds = await b.page.evaluate(async (a) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	return [
+		await app.add_link(a[0], 'diamond:' + a[0], 'diamond:' + a[1], 'is-a-precondition-for', '', 'user'),
+		await app.add_link(a[0], 'diamond:' + a[0], 'diamond:' + a[1], 'supersedes-and-replaces', '', 'user'),
+	];
+}, bIds);
+await b.page.evaluate(() => DaimondGraph.refresh());
+await b.page.waitForTimeout(1000);
+const twoLong = await labelsBetween(b.page, bIds[0], bIds[1]);
+check(longIds.every(x => typeof x === 'string' && x.length > 0) && twoLong.length === 2,
+	`two long relations between one pair are both drawn and both labelled: ${JSON.stringify(twoLong.map(z => z.text))}`);
+labelsApart(twoLong, 'two long relations between one pair');
+await shot(b, 'graph-parallel-labels');
+const errsB = errors(b).filter(e => !gatewayNoise.test(e));
 check(errsB.length === 0, `no console errors on the empty session: ${JSON.stringify(errsB.slice(0, 3))}`);
 await b.close();
 
