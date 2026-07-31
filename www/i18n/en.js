@@ -866,6 +866,10 @@
 	'rail.no_diamonds':      'No Diamonds yet.',
 	'rail.no_match':         'No Diamonds match.',
 	'rail.no_chats':         'No chats yet.',
+	// Shown under the search box when nothing is tagged, so that an empty
+	// filing system cannot be read as a missing one.
+	'rail.tag_hint':         'No tags yet. Tag a Diamond and filter chips appear here.',
+	'rail.tag_hint_help':    'Open a Diamond, then Tags on its crystal. Starter tags are offered there: {tags}.',
 	'rail.dblclick_rename':  'Double-click to rename',
 	'rail.rename_diamond':   'Rename Diamond',
 	'rail.rename':           'Rename',

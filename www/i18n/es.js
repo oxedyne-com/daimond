@@ -874,6 +874,10 @@
 	'rail.no_diamonds': 'Todavía no hay Diamonds.',
 	'rail.no_match': 'Ningún Diamond coincide.',
 	'rail.no_chats': 'Todavía no hay chats.',
+	// Shown under the search box when nothing is tagged, so that an empty
+	// filing system cannot be read as a missing one.
+	'rail.tag_hint': 'Todavía no hay etiquetas. Etiqueta un Diamond y aquí aparecerán chips de filtro.',
+	'rail.tag_hint_help': 'Abre un Diamond y luego Etiquetas en su cristal. Allí se ofrecen etiquetas para empezar: {tags}.',
 	'rail.dblclick_rename': 'Doble clic para renombrar',
 	'rail.rename_diamond': 'Renombrar el Diamond',
 	'rail.rename': 'Renombrar',

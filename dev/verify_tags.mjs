@@ -36,6 +36,9 @@ const wasm = (fn, arg) => page.evaluate(async ({ src, arg }) => {
 
 // ── The search box is there before anything else is ──────────────
 check(await page.isVisible('#diamond-search'), 'search box visible with zero Diamonds (not hidden behind a count)');
+// An empty account is already told "No Diamonds yet." -- a second line about
+// tags there would be nagging about a thing there is nothing to do it to.
+check(!(await page.isVisible('#diamond-tag-hint')), 'no tag hint on an account with no Diamonds at all');
 
 // ── Create three Diamonds ────────────────────────────────────────────
 async function newDiamond(name) {
@@ -57,6 +60,30 @@ check(rawRows.length === 3 && rawRows.every(r => Array.isArray(r.tags) && r.tags
 const untaggedMeta = await page.$$eval('.diamond-box', els =>
 	els.map(e => (e.querySelector('.session-box-meta') || {}).innerHTML || ''));
 check(untaggedMeta.every(h => !h.includes('tag-chip')), 'untagged Diamonds render no chips (zero regression)');
+
+// ── The tag pool's empty state ───────────────────────────────────
+// Every chip in the rail is drawn from a Diamond, so a store with no tag on
+// anything draws none, and a rail that is just a search box reads as filing
+// that was taken away rather than filing not yet done. That is how the tag
+// loss was read, twice. Say which, where the chips would be.
+const hintText = () => page.$eval('#diamond-tag-hint', e => e.textContent).catch(() => '');
+check(await page.isVisible('#diamond-tag-hint'),
+	'a store with Diamonds but no tags shows a hint where the chips would be');
+check((await hintText()).includes('No tags yet'),
+	`the hint says the tags are missing, not the feature: ${JSON.stringify(await hintText())}`);
+// It must not sit anywhere a chip's text is read from: the filter chip's text
+// IS a tag name, and the list's text is read for "No Diamonds match".
+check(await page.$eval('#diamond-tag-hint',
+	e => !e.closest('#diamond-filter') && !e.closest('#diamond-list')).catch(() => false),
+	'the hint sits outside the filter chip and outside the Diamonds list');
+check(!(await page.isVisible('#diamond-filter')), 'and it does not raise an empty filter chip beside it');
+// The route to a first tag, for the reader who wants it, in the order the pool
+// really offers them -- a hint promising chips the editor does not offer would
+// be the same lie in a smaller font.
+const hintTip = await page.$eval('#diamond-tag-hint', e => e.title).catch(() => '');
+check(hintTip.includes('person, project, topic, org'),
+	`the hint's tooltip names the starter tags in the pool's order: ${JSON.stringify(hintTip)}`);
+await shot(s, 'tags-empty-hint');
 
 // The order tagging must not disturb.
 const orderBefore = await boxes();
@@ -116,6 +143,37 @@ await page.waitForTimeout(500);
 const orderAfter = await boxes();
 check(JSON.stringify(orderBefore) === JSON.stringify(orderAfter),
 	`rail order is stable across a tag edit: ${JSON.stringify(orderAfter)}`);
+
+// ── The hint goes when there is something to filter with ─────────
+const tagged = (await railOf()).find(r => r.name === 'Ship a CSV parser');
+check(tagged && tagged.tags.length === 2 && !(await page.isVisible('#diamond-tag-hint')),
+	`one tag anywhere replaces the hint with chips: chips=${JSON.stringify(tagged && tagged.tags)}`);
+await shot(s, 'tags-chips-no-hint');
+
+// ── And comes back when the last tag goes ────────────────────────
+// The state the user was actually left in when the sync bug ate the tag set:
+// the filing system is empty again, and the rail has to say so rather than
+// look like the feature went with it.
+await openTagEditor('Ship a CSV parser');
+for (let i = 0; i < 2; i++) {
+	await page.click('.tag-row:not(.tag-sug) .tag-x', { force: true });
+	await page.waitForTimeout(600);
+}
+check((await editorTags()).length === 0, `both tags come off: ${JSON.stringify(await editorTags())}`);
+check(await page.isVisible('#diamond-tag-hint'), 'deleting the LAST tag brings the hint back');
+// Put them back the way the pool offers them, so the rest of this pass sees
+// the store it expects.
+for (const want of ['person', 'rust']) {
+	for (const c of await page.$$('.tag-sug .tag-chip')) {
+		if ((await c.textContent()) === want) { await c.click({ force: true }); break; }
+	}
+	await page.waitForTimeout(600);
+}
+const restoredTwo = await editorTags();
+check(restoredTwo.includes('person') && restoredTwo.includes('rust') && !(await page.isVisible('#diamond-tag-hint')),
+	`and goes again once a tag is back: ${JSON.stringify(restoredTwo)}`);
+await page.click('.crystal-act', { force: true });          // ← Back to the crystal
+await page.waitForTimeout(500);
 
 // ── Tag the second Diamond, so a filter has something to exclude ───
 await openTagEditor('Mum birthday plan');

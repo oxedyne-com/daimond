@@ -913,6 +913,10 @@
 	'rail.no_diamonds':      '아직 Diamond이 없어요.',
 	'rail.no_match':         '맞는 Diamond이 없어요.',
 	'rail.no_chats':         '아직 채팅이 없어요.',
+	// 아무 태그도 없을 때 검색창 아래에 나와요. 비어 있는 갈래가
+	// 갈래 자체가 없는 것으로 읽히지 않도록.
+	'rail.tag_hint':         '아직 태그가 없어요. Diamond에 태그를 붙이면 거를 수 있는 태그가 여기에 나타나요.',
+	'rail.tag_hint_help':    'Diamond을 열고 그 결정체에서 태그를 여세요. 처음 쓸 태그가 준비돼 있어요: {tags}.',
 	'rail.dblclick_rename':  '두 번 누르면 이름을 바꿔요',
 	'rail.rename_diamond':   'Diamond 이름 바꾸기',
 	'rail.rename':           '이름 바꾸기',

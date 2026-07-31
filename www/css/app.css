@@ -422,6 +422,9 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .diamond-search::placeholder { color: var(--text-muted); }
 .diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 .diamond-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+/* No tags anywhere: one muted line where the chips would be, so an empty
+   filing system does not look like a missing one. */
+.rail-tag-hint { font-size: var(--fs-2xs); line-height: 1.35; color: var(--text-muted); }
 
 /* Crystal view — the Diamond command surface (steer + fold). */
 .crystal-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

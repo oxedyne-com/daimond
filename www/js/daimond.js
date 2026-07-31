@@ -1875,6 +1875,11 @@ import init, {
 		}
 		/// How many panels the dock can seat on the current grid.
 		function dockMax() { var g = gridOf(); return g.cols * g.rows; }
+		/// How many columns the dock actually draws. Never more than there are
+		/// panels to put in them, or a lone panel would sit in a half-width column
+		/// with dead space beside it. The dock's width is one column's width times
+		/// this, so anything that sizes the dock has to ask the same question.
+		function dockCols() { return Math.min(gridOf().cols, Math.max(1, dock.length)); }
 		function isPinned(id) { return pinned === null || pinned.indexOf(id) !== -1; }
 
 		/// Panels that wait for something to hold before they join the chip row.
@@ -2164,8 +2169,7 @@ import init, {
 					unseen.forEach(function (id) { open[id] = false; });
 					dock = dock.filter(function (id) { return unseen.indexOf(id) === -1; });
 				}
-				var want = Math.min(gridOf().cols, Math.max(1, dock.length));
-				var cols = dockColumns(want);
+				var cols = dockColumns(dockCols());
 				dock.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
@@ -2173,6 +2177,20 @@ import init, {
 					// Round robin rather than filling each column in turn, so four
 					// panels across two columns come out two and two.
 					cols[i % cols.length].appendChild(el);
+				});
+				// A column the grid has finished with gives up what it is holding and
+				// is retired outright, rather than left to `.pcol:empty` to notice.
+				//
+				// Closing a panel HIDES its element; it does not move it. So a spare
+				// column could still hold the node of a panel nobody can see, which
+				// made it not `:empty` -- and since the columns SHARE the dock's
+				// width, one column's width was then divided between the column that
+				// draws and a column that cannot. Auto to 2 by 2 and back came out a
+				// half-width dock with the panels crushed into the left of it.
+				[].slice.call(dockEl.querySelectorAll('.pcol')).forEach(function (c) {
+					if (cols.indexOf(c) !== -1) { c.style.display = ''; return; }
+					while (c.firstChild) dockEl.appendChild(c.firstChild);
+					c.style.display = 'none';
 				});
 				dockEl.style.display = dock.length ? '' : 'none';
 				document.getElementById('handle-dock').style.display = dock.length ? '' : 'none';
@@ -2362,7 +2380,12 @@ import init, {
 				if (!dragging) return;
 				// The rail grows rightwards; the dock grows leftwards.
 				var dx = (key === 'rail') ? (e.clientX - startX) : (startX - e.clientX);
-				widths[key] = Math.max(MIN_W[key], startW + dx);
+				// `widths.dock` is ONE column's width, and the dock is that times the
+				// columns it draws -- so the drag is spread over them. Three columns
+				// each given the whole of it would move the edge three times as far as
+				// the hand holding it.
+				var per = (key === 'dock') ? dockCols() : 1;
+				widths[key] = Math.max(MIN_W[key], startW + dx / per);
 				apply();
 			});
 			handle.addEventListener('pointerup', function (e) {
@@ -8332,9 +8355,56 @@ import init, {
 		diamondFilter.appendChild(chip);
 	}
 
+	/// Does any Diamond carry any tag at all?
+	function anyTagged() {
+		return diamonds.some(function (f) { return tagsOf(f).length > 0; });
+	}
+
+	/// The rail's honest empty state for tags.
+	///
+	/// Every tag chip in the rail is drawn from a Diamond, so a store with no tag
+	/// on anything draws no chip anywhere and the rail is a bare search box --
+	/// which reads as a filing system that was removed rather than one that is
+	/// empty. Say which, in one quiet line, and take it away the moment a tag
+	/// exists. It sits beside the filter chip rather than inside it: the chip's
+	/// text is read as a tag name, and a sentence in there would be read as one.
+	function renderTagHint() {
+		if (!diamondFilter || !diamondFilter.parentNode) return;
+		var hint = document.getElementById('diamond-tag-hint');
+		var was  = !!hint && hint.style.display !== 'none';   // on screen a moment ago
+		var want = diamonds.length > 0 && !anyTagged();
+		if (!want) {
+			if (hint) hint.style.display = 'none';
+			if (was) railFurnitureChanged();
+			return;
+		}
+		if (!hint) {
+			hint = document.createElement('div');
+			hint.id = 'diamond-tag-hint';
+			hint.className = 'rail-tag-hint';
+			diamondFilter.parentNode.insertBefore(hint, diamondFilter.nextSibling);
+		}
+		hint.textContent = t('rail.tag_hint');
+		// Where to go and what is waiting there, for the reader who wants it.
+		// The starter tags are named from the list itself, so a translated hint
+		// cannot promise chips in words the pool does not offer.
+		hint.title = t('rail.tag_hint_help', { tags: DEFAULT_TAG_SUGGESTIONS.join(', ') });
+		hint.style.display = '';
+		if (!was) railFurnitureChanged();
+	}
+
+	/// The rail's two lists share what the furniture above them leaves, and the
+	/// share is cut into pixels once. A line appearing or going takes that
+	/// height off the Chats list alone and quietly moves the divider, so say
+	/// what a window resize says: cut it again.
+	function railFurnitureChanged() {
+		try { if (window.DaimondPanels) DaimondPanels.reflow(); } catch (e) { /* the layout is not up yet */ }
+	}
+
 	function renderDiamondList() {
 		diamondList.innerHTML = '';
 		renderTagFilter();
+		renderTagHint();
 		if (diamonds.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';

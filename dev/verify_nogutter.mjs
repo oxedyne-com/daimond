@@ -63,6 +63,15 @@ const ZONES = () => {
 	});
 	out.open = (window.DaimondPanels ? DaimondPanels.panels() : [])
 		.map((p) => p.id).filter((id) => DaimondPanels.isOpen(id));
+	// The same question one level down. The dock's columns SHARE its width, so a
+	// column the grid has finished with but the browser is still drawing takes
+	// its share from the columns that have something in them -- a gutter that
+	// does not show up in the dock's own width at all.
+	out.cols = [...document.querySelectorAll('#dock .pcol')].map((c) => ({
+		id:      c.id,
+		width:   Math.round(c.getBoundingClientRect().width),
+		visible: [...c.children].filter(seen).map((k) => k.dataset.panel),
+	}));
 	return out;
 };
 
@@ -75,6 +84,11 @@ function gutterIn(z) {
 			return `${key} is ${zone.width}px wide with nothing rendered in it`
 				+ (zone.seated.length ? ` (seated but invisible: ${zone.seated.join(', ')})` : '');
 		}
+	}
+	const dead = (z.cols || []).filter((c) => c.width > 0 && c.visible.length === 0);
+	if (dead.length) {
+		return dead.map((c) => `dock column ${c.id} is ${c.width}px wide with nothing rendered in it`)
+			.join('; ');
 	}
 	return null;
 }

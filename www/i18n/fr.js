@@ -877,6 +877,10 @@
 	'rail.no_diamonds': 'Aucun Diamond pour l’instant.',
 	'rail.no_match': 'Aucun Diamond ne correspond.',
 	'rail.no_chats': 'Aucun chat pour l’instant.',
+	// Shown under the search box when nothing is tagged, so that an empty
+	// filing system cannot be read as a missing one.
+	'rail.tag_hint': 'Aucune étiquette pour l’instant. Étiquetez un Diamond et des puces de filtre apparaîtront ici.',
+	'rail.tag_hint_help': 'Ouvrez un Diamond, puis Étiquettes sur son cristal. Des étiquettes de départ y sont proposées : {tags}.',
 	'rail.dblclick_rename': 'Double-cliquez pour renommer',
 	'rail.rename_diamond': 'Renommer le Diamond',
 	'rail.rename': 'Renommer',

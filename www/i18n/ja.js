@@ -911,6 +911,10 @@
 	'rail.no_diamonds':      'Diamond はまだありません。',
 	'rail.no_match':         '一致する Diamond はありません。',
 	'rail.no_chats':         'チャットはまだありません。',
+	// 何にもタグが付いていないときに検索欄の下へ出ます。空の分類を、
+	// 分類そのものがないのだと読まれないように。
+	'rail.tag_hint':         'タグはまだありません。Diamond にタグを付けると、絞り込み用のタグがここに並びます。',
+	'rail.tag_hint_help':    'Diamond を開き、その結晶で「タグ」を開きます。手始めのタグが用意されています：{tags}。',
 	'rail.dblclick_rename':  'ダブルクリックで名前を変更',
 	'rail.rename_diamond':   'Diamond の名前を変更',
 	'rail.rename':           '名前を変更',

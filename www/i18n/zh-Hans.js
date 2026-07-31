@@ -911,6 +911,9 @@
 	'rail.no_diamonds':      '还没有 Diamond。',
 	'rail.no_match':         '没有匹配的 Diamond。',
 	'rail.no_chats':         '还没有聊天。',
+	// 什么都还没打标签时，显示在搜索框下面，免得空的分类被当成没有分类。
+	'rail.tag_hint':         '还没有标签。给 Diamond 加上标签，这里就会出现可以筛选的标签。',
+	'rail.tag_hint_help':    '打开一个 Diamond，再打开它晶体上的标签。那里备好了起步用的标签：{tags}。',
 	'rail.dblclick_rename':  '双击可重命名',
 	'rail.rename_diamond':   '重命名 Diamond',
 	'rail.rename':           '重命名',
