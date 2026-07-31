@@ -410,6 +410,9 @@
 	'pair.linked': 'Dieses Gerät ist verknüpft',
 	'pair.linked_note': 'Es trägt jetzt dein Konto. Tippe auf Entsperren und gib DIESELBE Passphrase ein, die du auf deinem anderen Gerät nutzt — keine neue.',
 	'pair.linked_named': 'Es trägt jetzt dein Konto „{name}“. Tippe auf Entsperren und gib DIESELBE Passphrase ein, die du auf deinem anderen Gerät nutzt — keine neue.',
+	'pair.name_this': 'Diesem Gerät einen Namen geben (optional)',
+	'pair.name_ph': 'z. B. Küchenlaptop',
+	'pair.named_note': 'Dieses Gerät erscheint in deiner Geräteliste als „{name}“. Dort kannst du den Namen später ändern.',
 	'pair.err_no_identity': 'Auf diesem Gerät gibt es keine Identität zum Verknüpfen.',
 	'pair.err_unreadable_local': 'Die Identität dieses Geräts war nicht lesbar.',
 	'pair.err_sign_in_first': 'Melde dich auf diesem Gerät an, bevor du ein anderes verknüpfst.',
@@ -775,6 +778,9 @@
 	'devices.unknown': 'Dieses Gerät',
 	'devices.this_device': 'dieses Gerät',
 	'devices.only_this': 'Nur dieses Gerät synchronisiert dieses Konto.',
+	'devices.rename_title': 'Diesem Gerät einen Namen geben',
+	'devices.rename_body': 'Nenn dieses Gerät, wie du willst, damit du es von den anderen unterscheiden kannst. Lässt du das Feld leer, heißt es wieder „{derived}“. Der Name liegt bei deinen eigenen verschlüsselten Daten und geht nur an deine anderen Geräte.',
+	'devices.rename_aria': '{name} umbenennen',
 	'devices.note': 'Diese Geräte synchronisieren dieses Konto. Ein Gerät steht hier, sobald es einmal synchronisiert hat; eines, das dein Konto zwar hat, aber noch nie synchronisiert hat, fehlt in der Liste. Hier lässt sich kein Gerät abmelden: ein verbundenes Gerät hat dieselben Schlüssel wie dieses, also muss das am Gerät selbst erledigt werden.',
 
 	// ── The status rows under the rail ─────────────────────────

@@ -43,6 +43,29 @@
 
 	var CLIENT_API = 1;
 
+	/// Where a name typed on THIS device while linking it waits for the device
+	/// roster to exist.
+	///
+	/// Naming it here is the moment the user actually knows which device this is
+	/// -- they are holding it -- but the roster has no line for it yet: the line is
+	/// minted on the first collect, which happens after the reload below. So the
+	/// name is parked in storage and the mint consumes it (daimond.js
+	/// pendingDeviceLabel). It is the user's own words, so it goes nowhere near
+	/// the gateway: nothing reads this key but this browser.
+	var PAIR_LABEL_KEY = 'daimond-pair-label';
+	/// The roster's own ceiling on a name, kept in step (DEVICE_NAME_MAX).
+	var PAIR_LABEL_MAX = 64;
+
+	/// Park the name chosen while linking, or clear it when nothing was typed.
+	function stashName(name) {
+		var v = String(name == null ? '' : name).trim().slice(0, PAIR_LABEL_MAX);
+		try {
+			if (v) localStorage.setItem(PAIR_LABEL_KEY, v);
+			else localStorage.removeItem(PAIR_LABEL_KEY);
+		} catch (e) { /* private mode: the device keeps its own description */ }
+		return v;
+	}
+
 	/// How many presentation keys the last redeem brought over, so the dialog can
 	/// mention it. A user whose new device suddenly speaks German is owed a
 	/// sentence saying why.
@@ -187,6 +210,12 @@
 			'.pair-input{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;' +
 			'font-size:var(--fs-3xl);letter-spacing:.1em;text-align:center;padding:10px;border-radius:8px;' +
 			'border:1px solid var(--border,#444);background:var(--bg-primary,#111);color:inherit;margin:0 0 12px}' +
+			// The name for this device: prose, not a code, so it is a plain field
+			// at reading size rather than the big spaced-out one above it.
+			'.pair-label{display:block;font-size:var(--fs-sm);opacity:.85;margin:0 0 4px}' +
+			'.pair-name{width:100%;box-sizing:border-box;font-size:var(--fs-base);padding:9px 10px;' +
+			'border-radius:8px;border:1px solid var(--border,#444);background:var(--bg-primary,#111);' +
+			'color:inherit;margin:0 0 12px}' +
 			'.pair-row{display:flex;gap:8px;justify-content:flex-end}' +
 			'.pair-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border,#444);' +
 			'background:var(--accent,#4a7);color:#fff;cursor:pointer;font-size:var(--fs-base)}' +
@@ -359,6 +388,23 @@
 			if (scanned) {
 				box.appendChild(el('p', 'pair-note', t('pair.code_check')));
 			}
+			// What to call this device. Asked HERE because this is the moment the
+			// user knows the answer -- the device is in their hands -- and skippable
+			// because a device that is never named is still a device that syncs.
+			// The placeholder is what it will be called if nothing is typed, so the
+			// empty field is an honest preview rather than a blank.
+			var derived = '';
+			try { derived = (window.DaimondCore && DaimondCore.deviceSelfName && DaimondCore.deviceSelfName()) || ''; }
+			catch (e) { derived = ''; }
+			var lab = el('label', 'pair-label', t('pair.name_this'));
+			lab.setAttribute('for', 'pair-name-input');
+			box.appendChild(lab);
+			var nameIn = el('input', 'pair-name');
+			nameIn.id = 'pair-name-input';
+			nameIn.setAttribute('placeholder', derived || t('pair.name_ph'));
+			nameIn.setAttribute('maxlength', String(PAIR_LABEL_MAX));
+			nameIn.setAttribute('autocomplete', 'off');
+			box.appendChild(nameIn);
 			var err = el('div', 'pair-err');
 			box.appendChild(err);
 			var row = el('div', 'pair-row');
@@ -373,6 +419,9 @@
 				err.textContent = '';
 				go.disabled = true;
 				redeem(input.value).then(function () {
+					// Park the name for this device before the reload, for the roster
+					// to take up when it first mints this device's line.
+					var named = stashName(nameIn.value);
 					// Name the account, and leave a note the unlock screen picks up
 					// after the reload -- on a phone the passphrase box reappears
 					// with a different name on it, and it must be clear that the
@@ -386,6 +435,7 @@
 					box.appendChild(el('p', null, who
 						? t('pair.linked_named', { name: who })
 						: t('pair.linked_note')));
+					if (named) box.appendChild(el('p', 'pair-note', t('pair.named_note', { name: named })));
 					if (lastLookApplied > 0) box.appendChild(el('p', 'pair-note', t('pair.look_carried')));
 					var r2 = el('div', 'pair-row');
 					var ok = el('button', 'pair-btn', t('identity.unlock'));
@@ -399,6 +449,7 @@
 			}
 			go.addEventListener('click', submit);
 			input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+			nameIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
 			setTimeout(function () { try { input.focus(); } catch (e) {} }, 50);
 		});
 	}
@@ -489,7 +540,11 @@
 	}
 
 	// ── Public surface ─────────────────────────────────────────
-	window.DaimondPairing = { create: create, redeem: redeem, showLink: showLink, showRedeem: showRedeem };
+	// `stashName` is published because the naming and the roster are two modules:
+	// this one takes the name, daimond.js consumes it when the device's line is
+	// minted, and the seam between them is worth being able to exercise.
+	window.DaimondPairing = { create: create, redeem: redeem, showLink: showLink, showRedeem: showRedeem,
+		stashName: stashName };
 
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
 	else start();

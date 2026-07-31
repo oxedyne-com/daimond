@@ -197,6 +197,62 @@ check('the key\'s cap is NOT the balance: a key can be spent while credits remai
 	(await page.evaluate(() => window.DaimondModels.creditsState())).limit === FLOAT,
 	`limit=${(await page.evaluate(() => window.DaimondModels.creditsState())).limit} of ${gw.bal} balance`);
 
+// ── The rail's credits row: drawn from what the app KNOWS ─────────────
+//
+// The row that carries the balance sits in the status block at the foot of the rail, and it is
+// the only place in the app that says how much money is left. It used to be gated on
+// `navigator.onLine` ahead of everything else, and that value is a GUESS: a browser reports
+// offline whenever its own connectivity probe fails, network or no network. One machine
+// answering wrongly was enough to replace a signed-in account's balance with "Offline" while
+// the same tab went on fetching, syncing and spending -- the app knew the figure and refused
+// to show it.
+//
+// So: a session and a balance decide the row. The browser's guess may NAME a connection that
+// has actually failed; it may not overrule one that plainly has not.
+const railRow = await page.evaluate(() => {
+	const read = () => {
+		const n = document.getElementById('astat-account');
+		return n ? n.textContent : 'MISSING';
+	};
+	const out = {};
+	window.DaimondAdmin.status();
+	out.online = read();
+	// Make the browser lie, the way a misreporting one does, and repaint.
+	const real = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+	Object.defineProperty(Navigator.prototype, 'onLine', { configurable: true, get: () => false });
+	window.DaimondAdmin.status();
+	out.lying = read();
+	Object.defineProperty(Navigator.prototype, 'onLine', real);
+	window.DaimondAdmin.status();
+	out.restored = read();
+	return out;
+});
+check('the rail\'s status row shows the balance the app holds',
+	/Credits/.test(railRow.online) && /8\.40/.test(railRow.online), JSON.stringify(railRow.online));
+check('...and still shows it when the browser wrongly claims to be offline',
+	/Credits/.test(railRow.lying) && /8\.40/.test(railRow.lying), JSON.stringify(railRow.lying));
+check('...and is unchanged once the browser tells the truth again',
+	railRow.restored === railRow.online, JSON.stringify(railRow.restored));
+
+// The row is painted from `DaimondGateway.state()` at render time, not by the `daimond:credits`
+// event: that event fires only when the figure MOVES (an unconditional dispatch closed a
+// request loop -- see verify_spend), so anything that waited for it would show nothing on a
+// balance that never changes. Re-read the same balance: nothing is announced, and the row is
+// right anyway.
+const railQuiet = await page.evaluate(async () => {
+	let fired = 0;
+	const on = () => fired++;
+	window.addEventListener('daimond:credits', on);
+	await window.DaimondGateway.refreshBalance();
+	window.removeEventListener('daimond:credits', on);
+	const n = document.getElementById('astat-account');
+	return { fired, text: n ? n.textContent : 'MISSING' };
+});
+check('a re-read that does not move the balance announces nothing', railQuiet.fired === 0,
+	railQuiet.fired + ' dispatches');
+check('...and the row carries the balance regardless, because it reads the state itself',
+	/8\.40/.test(railQuiet.text), JSON.stringify(railQuiet.text));
+
 // ── The row, on screen ────────────────────────────────────────────────
 await page.click('#astat-model', { force: true });
 await page.waitForTimeout(600);
@@ -614,6 +670,36 @@ const none = await b.page.evaluate(() => window.DaimondModels.providers().map(p 
 check('a zero balance mints nothing at all', gw.mints === 0, `${gw.mints} mint(s)`);
 check('and adds no row: a BYOK-only user sees no credits row they never asked for',
 	none.length === 0, JSON.stringify(none));
+
+// A balance of nothing is still a balance: $0.00 is what the account holds, and saying so is the
+// difference between "you have none" and "we cannot tell you".
+const zero = await b.page.evaluate(() => {
+	window.DaimondAdmin.status();
+	const n = document.getElementById('astat-account');
+	return n ? n.textContent : 'MISSING';
+});
+check('a zero balance is still reported as a figure', /Credits/.test(zero) && /0\.00/.test(zero),
+	JSON.stringify(zero));
+
+// And with no session there is no figure to report, so the row says which of the three reasons
+// it is -- the browser reporting no network, the service unreachable, or no account at all. The
+// point of the row is that it is never blank.
+const noSession = await b.page.evaluate(async () => {
+	await window.DaimondGateway.logout();
+	window.DaimondAdmin.status();
+	const n = document.getElementById('astat-account');
+	const out = { away: n ? n.textContent : 'MISSING' };
+	const real = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+	Object.defineProperty(Navigator.prototype, 'onLine', { configurable: true, get: () => false });
+	window.DaimondAdmin.status();
+	out.offline = n ? n.textContent : 'MISSING';
+	Object.defineProperty(Navigator.prototype, 'onLine', real);
+	return out;
+});
+check('with no session the row says there is no account', /No credits account/.test(noSession.away),
+	JSON.stringify(noSession.away));
+check('...and names the browser\'s own offline claim when there is nothing to contradict it',
+	/Offline/.test(noSession.offline), JSON.stringify(noSession.offline));
 await b.close();
 
 console.log(`\n${ok.length} passed, ${bad.length} failed`);

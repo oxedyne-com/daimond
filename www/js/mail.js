@@ -151,6 +151,9 @@
 	}
 	function save() {
 		localStorage.setItem(LS, JSON.stringify({ accounts: state.accounts, sel: state.sel }));
+		// A mailbox added or removed outside a turn must travel like any edit.
+		// The engine coalesces and skips an unchanged parcel, so this is cheap.
+		try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); } catch (e) { /* not up yet */ }
 	}
 	function acct(address) {
 		return state.accounts.find(function (a) { return a.address === address; }) || null;

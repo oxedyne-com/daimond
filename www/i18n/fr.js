@@ -409,6 +409,9 @@
 	'pair.linked': 'Cet appareil est associé',
 	'pair.linked_note': 'Il porte maintenant votre compte. Touchez Déverrouiller, puis saisissez la MÊME phrase secrète que sur votre autre appareil — pas une nouvelle.',
 	'pair.linked_named': 'Il porte maintenant votre compte « {name} ». Touchez Déverrouiller, puis saisissez la MÊME phrase secrète que sur votre autre appareil — pas une nouvelle.',
+	'pair.name_this': 'Nommer cet appareil (facultatif)',
+	'pair.name_ph': 'p. ex. Ordinateur de la cuisine',
+	'pair.named_note': 'Cet appareil apparaîtra sous le nom « {name} » dans votre liste d’appareils. Vous pourrez le changer ensuite depuis cette liste.',
 	'pair.err_no_identity': 'Il n’y a aucune identité à associer sur cet appareil.',
 	'pair.err_unreadable_local': 'Impossible de lire l’identité de cet appareil.',
 	'pair.err_sign_in_first': 'Connectez-vous sur cet appareil avant d’en associer un autre.',
@@ -777,6 +780,9 @@
 	'devices.unknown': 'Cet appareil',
 	'devices.this_device': 'cet appareil',
 	'devices.only_this': 'Seul cet appareil synchronise ce compte.',
+	'devices.rename_title': 'Nommer cet appareil',
+	'devices.rename_body': 'Appelez cet appareil comme vous voulez, pour le distinguer des autres. Laissez le champ vide pour revenir à « {derived} ». Le nom est conservé avec vos propres données chiffrées et ne voyage que vers vos autres appareils.',
+	'devices.rename_aria': 'Renommer {name}',
 	'devices.note': 'Ces appareils synchronisent ce compte. Un appareil apparaît ici dès qu’il a synchronisé une fois ; celui qui détient votre compte sans avoir jamais synchronisé n’y figure pas. Rien ici ne déconnecte un appareil : un appareil lié détient les mêmes clés que celui-ci, il faut donc s’en occuper sur l’appareil lui-même.',
 
 	// ── The status rows under the rail ─────────────────────────

@@ -409,6 +409,9 @@
 	'pair.linked': 'Este dispositivo está vinculado',
 	'pair.linked_note': 'Ya tiene tu cuenta. Toca Desbloquear e introduce la MISMA frase de paso que usas en tu otro dispositivo, no una nueva.',
 	'pair.linked_named': 'Ya tiene tu cuenta «{name}». Toca Desbloquear e introduce la MISMA frase de paso que usas en tu otro dispositivo, no una nueva.',
+	'pair.name_this': 'Ponle nombre a este dispositivo (opcional)',
+	'pair.name_ph': 'p. ej. Portátil de la cocina',
+	'pair.named_note': 'Este dispositivo aparecerá como «{name}» en tu lista de dispositivos. Allí podrás cambiarlo más adelante.',
 	'pair.err_no_identity': 'En este dispositivo no hay ninguna identidad que vincular.',
 	'pair.err_unreadable_local': 'No se ha podido leer la identidad de este dispositivo.',
 	'pair.err_sign_in_first': 'Inicia sesión en este dispositivo antes de vincular otro.',
@@ -774,6 +777,9 @@
 	'devices.unknown': 'Este dispositivo',
 	'devices.this_device': 'este dispositivo',
 	'devices.only_this': 'Solo este dispositivo sincroniza esta cuenta.',
+	'devices.rename_title': 'Ponle nombre a este dispositivo',
+	'devices.rename_body': 'Llama a este dispositivo como quieras, para distinguirlo de los demás. Si dejas el campo vacío, vuelve a llamarse «{derived}». El nombre se guarda junto a tus propios datos cifrados y solo viaja a tus otros dispositivos.',
+	'devices.rename_aria': 'Renombrar {name}',
 	'devices.note': 'Estos dispositivos sincronizan esta cuenta. Un dispositivo aparece aquí en cuanto ha sincronizado, así que uno que tenga tu cuenta pero nunca haya sincronizado no sale en la lista. Aquí no se puede cerrar la sesión de ningún dispositivo: un dispositivo enlazado tiene las mismas claves que este, así que hay que resolverlo en el propio dispositivo.',
 
 	// ── The status rows under the rail ─────────────────────────

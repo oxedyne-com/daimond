@@ -965,15 +965,20 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    popup. */
 .account-fp { font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); padding: 0 4px 8px; overflow: hidden; text-overflow: ellipsis; }
 
-/* The devices that sync this account. Rows, not buttons: a paired device holds
-   the same keys as this one, so there is nothing here to revoke and nothing
-   here should look clickable. */
+/* The devices that sync this account. A row is a line of text with one quiet
+   control on it: a paired device holds the same keys as this one, so there is
+   nothing here to revoke, and the only thing a row can do is take a name. */
 .device-row { display: flex; align-items: baseline; gap: 6px; padding: 5px 6px; font-size: var(--fs-sm); color: var(--text-primary); }
 /* The name shrinks first and the id takes the slack, so the id sits with the
    name it belongs to and the last-seen column stays flush right. */
 .device-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-id { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); }
 .device-when { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; text-align: right; }
+/* Naming a device. Muted until the row is under the pointer or the button has
+   the keyboard, so a column of pencils does not compete with the names. The tap
+   target stays 24px square whatever the reading size. */
+.device-rename { flex: none; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-base); line-height: 1; cursor: pointer; opacity: .75; }
+.device-row:hover .device-rename, .device-rename:hover, .device-rename:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }

@@ -409,6 +409,9 @@
 	'pair.linked': 'Este dispositivo está vinculado',
 	'pair.linked_note': 'Agora ele tem sua conta. Toque em Desbloquear e digite a MESMA frase-senha que você usa no outro dispositivo — não uma nova.',
 	'pair.linked_named': 'Agora ele tem sua conta “{name}”. Toque em Desbloquear e digite a MESMA frase-senha que você usa no outro dispositivo — não uma nova.',
+	'pair.name_this': 'Dê um nome a este dispositivo (opcional)',
+	'pair.name_ph': 'ex.: Notebook da cozinha',
+	'pair.named_note': 'Este dispositivo vai aparecer como “{name}” na sua lista de dispositivos. Você pode mudar isso lá depois.',
 	'pair.err_no_identity': 'Não há nenhuma identidade neste dispositivo para vincular.',
 	'pair.err_unreadable_local': 'Não foi possível ler a identidade deste dispositivo.',
 	'pair.err_sign_in_first': 'Entre na sua conta neste dispositivo antes de vincular outro.',
@@ -774,6 +777,9 @@
 	'devices.unknown': 'Este dispositivo',
 	'devices.this_device': 'este dispositivo',
 	'devices.only_this': 'Só este dispositivo sincroniza esta conta.',
+	'devices.rename_title': 'Dê um nome a este dispositivo',
+	'devices.rename_body': 'Chame este dispositivo como quiser, para diferenciá-lo dos outros. Deixe o campo vazio para voltar a “{derived}”. O nome fica guardado junto com os seus próprios dados criptografados e só vai para os seus outros dispositivos.',
+	'devices.rename_aria': 'Renomear {name}',
 	'devices.note': 'Estes dispositivos sincronizam esta conta. Um dispositivo aparece aqui assim que sincroniza, então um que tenha sua conta mas nunca tenha sincronizado não fica listado. Nada aqui desconecta um dispositivo: um dispositivo vinculado tem as mesmas chaves que este, então isso tem que ser resolvido no próprio dispositivo.',
 
 	// ── The status rows under the rail ─────────────────────────

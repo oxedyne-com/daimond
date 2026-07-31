@@ -306,6 +306,10 @@ import init, {
 			var tombs = loadTombs();
 			Object.keys(tombs).forEach(function (id) { delete byId[id]; });
 			localStorage.setItem(CHATS_KEY, JSON.stringify(Object.keys(byId).map(function (id) { return byId[id]; })));
+			// Same reason as bumpDiamonds: renaming or deleting a chat, or folding
+			// one into a Diamond, is not a turn and does not hide the tab, so
+			// nothing else would ever schedule the push that carries it.
+			nudgeSync();
 		} catch (e) { /* quota or unavailable — chats stay in-memory this session */ }
 	}
 	function hydrateChat(c) {
@@ -407,11 +411,36 @@ import init, {
 		renderEmptyState();
 	}
 
-	/// Say that the Diamonds changed, to whatever other tabs are open. Called
-	/// after every mutation; the value is a nonce and is never read back.
+	/// Tell the sync engine that a stored thing moved, so it pushes without
+	/// waiting for a turn to end or the tab to be hidden.
+	///
+	/// The two funnels below are where every mutation already arrives, so this is
+	/// wired there rather than at the two dozen UI handlers that reach them: one
+	/// call site for every Diamond change, one for every chat change.
+	///
+	/// Suppressed while collectSync() is packing the parcel. It calls
+	/// persistChats() on the way past, and a nudge from inside the push would
+	/// re-arm the debounce on every push, turning it into a timer poll that never
+	/// stops.
+	var packingParcel = false;
+	function nudgeSync() {
+		if (packingParcel) return;
+		try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); }
+		catch (e) { /* sync is not up on this device */ }
+	}
+
+	/// Say that the Diamonds changed, to whatever other tabs are open, and to the
+	/// other DEVICES. Called after every mutation; the value is a nonce and is
+	/// never read back.
+	///
+	/// The nudge is here because a Diamond is worked on without turns: renaming,
+	/// tagging, linking and hand-editing a crystal all end here and none of them
+	/// ends a turn, so before this they scheduled no push and the change stayed
+	/// on the machine that made it.
 	function bumpDiamonds() {
 		try { localStorage.setItem(DIAMONDS_KEY, String(Date.now()) + '.' + Math.random()); }
 		catch (e) { /* private mode: this tab is the only one that can see them anyway */ }
+		nudgeSync();
 	}
 
 	window.addEventListener('storage', function (e) {
@@ -472,8 +501,18 @@ import init, {
 	// than one device? Not which paired with which, and not a way to sign one
 	// out: under one shared keypair nothing could enforce a revocation, and a
 	// button that pretended otherwise would be worse than no button.
+	//
+	// A line carries TWO names. What the device says about itself ("Chromium on
+	// Linux") is all it can know unaided, and two of a user's machines say it
+	// identically; what its owner calls it ("Kitchen laptop") is the useful one,
+	// and only the user can supply it. The chosen one is kept separately, with a
+	// stamp of its own, so a rename typed on ANY device reaches the rest — see
+	// mergeDevices for why it cannot ride on `seen`.
 	var DEVICE_ID_KEY  = 'daimond-device-id';	// this device's own id
-	var DEVICES_KEY    = 'daimond-devices';		// the merged roster: id -> { name, created, seen }
+	var DEVICES_KEY    = 'daimond-devices';		// the merged roster: id -> { name, label, created, namedAt, seen }
+	// A name typed into the pairing dialog on a device that has no roster line
+	// yet. pairing.js writes it; the first collect here takes it and clears it.
+	var DEVICE_PAIR_LABEL_KEY = 'daimond-pair-label';
 	// How stale this device's own `seen` may get before a collect refreshes it.
 	// NOT every collect: sync skips a push whose parcel stringifies to what it
 	// last sent, and a stamp that moved every time would defeat that skip and put
@@ -481,7 +520,7 @@ import init, {
 	// anything the roster shows, so the reading loses nothing by it.
 	var SEEN_REFRESH_MS   = 5 * 60 * 1000;
 	var DEVICE_ROSTER_MAX = 24;			// keeps the parcel, and the list, bounded.
-	var DEVICE_NAME_MAX   = 64;			// a self-description, not a paragraph.
+	var DEVICE_NAME_MAX   = 64;			// a name, not a paragraph. Both names share it.
 	var DEVICE_ID_RE      = /^[0-9a-f]{16}$/;
 
 	/// A millisecond stamp, or 0 when there is none to be had.
@@ -578,13 +617,44 @@ import init, {
 		return brand || plat || t('devices.unknown');
 	}
 
-	/// One roster line, cleaned: a name that fits, and stamps that are stamps.
+	/// One roster line, cleaned: two names that fit, and stamps that are stamps.
+	///
+	/// A FIXED field order, for the same reason saveDevices sorts the ids: the
+	/// same line has to serialise to the same bytes every time, or sync stops
+	/// skipping the push it should skip.
+	///
+	/// A line written before names existed has neither field, and decodes to an
+	/// empty label stamped 0. Zero is the right absence here — unlike the `touched`
+	/// stamp elsewhere, where it meant "never touched" and lost real edits —
+	/// because no name at all SHOULD lose to any name anybody has actually given.
 	function deviceEntry(d) {
 		return {
 			name:    String((d && d.name) || '').slice(0, DEVICE_NAME_MAX),
+			label:   String((d && d.label) || '').slice(0, DEVICE_NAME_MAX),
 			created: ms(d && d.created),
+			namedAt: ms(d && d.namedAt),
 			seen:    ms(d && d.seen),
 		};
+	}
+
+	/// What a device is called on screen: the user's name for it when they have
+	/// given one, otherwise what the device says about itself.
+	function deviceShownName(d) {
+		return (d && d.label) || (d && d.name) || t('devices.unknown');
+	}
+
+	/// The name typed into the pairing dialog on this device, taken and cleared.
+	///
+	/// Redeeming a pairing code happens BEFORE this device has a roster line: the
+	/// line is minted on the first collect, which is after the reload the dialog
+	/// performs. So pairing.js parks the name here and the mint consumes it —
+	/// once, so it names this device and no other.
+	function pendingDeviceLabel() {
+		var v = null;
+		try { v = localStorage.getItem(DEVICE_PAIR_LABEL_KEY); } catch (e) { return ''; }
+		if (v == null) return '';
+		try { localStorage.removeItem(DEVICE_PAIR_LABEL_KEY); } catch (e) { /* best effort */ }
+		return String(v).trim().slice(0, DEVICE_NAME_MAX);
 	}
 
 	/// The stored roster, with anything that is not a device dropped.
@@ -625,9 +695,30 @@ import init, {
 	/// nothing else changes nothing here either.
 	function touchSelfDevice(reg) {
 		var id = deviceId(), now = Date.now(), me = reg[id];
-		if (!me) reg[id] = { name: deviceName(), created: now, seen: now };
+		if (!me) me = reg[id] = { name: deviceName(), label: '', created: now, namedAt: 0, seen: now };
 		else if (now - ms(me.seen) >= SEEN_REFRESH_MS) me.seen = now;
+		// A name chosen while pairing, on a device that had no line to put it on
+		// until this moment.
+		var chosen = pendingDeviceLabel();
+		if (chosen) { me.label = chosen; me.namedAt = now; }
 		return reg;
+	}
+
+	/// Give a device the name its owner calls it by, or clear it back to what the
+	/// device says about itself. Returns the roster as written, or null for an id
+	/// that is not on it.
+	///
+	/// Any device on the roster, not only this one. A user standing at their
+	/// laptop is exactly who wants to say which of these lines is the phone, and
+	/// the stamp is what carries that back to the phone.
+	function renameDevice(id, label) {
+		var reg = loadDevices(), d = reg[id];
+		if (!d) return null;
+		var next = String(label == null ? '' : label).trim().slice(0, DEVICE_NAME_MAX);
+		if (next === d.label) return reg;			// nothing changed, nothing to push
+		d.label   = next;
+		d.namedAt = Date.now();
+		return saveDevices(reg);
 	}
 
 	/// The roster as it goes into the parcel, and as the drawer draws it: this
@@ -643,6 +734,14 @@ import init, {
 	/// not change for nothing. A line neither side has seen simply unions in, and
 	/// a parcel with no roster at all is a device that predates this: nothing
 	/// happens, in either direction.
+	///
+	/// The user's name for a device is merged SEPARATELY, on its own `namedAt`
+	/// stamp, and it cannot be otherwise. Each device refreshes only its OWN
+	/// `seen`, so a name typed on the laptop for the phone sits on a line the
+	/// laptop never touches again: on the next pull the phone's own fresher line
+	/// would win and the name would vanish, on the very device it was meant for.
+	/// With its own stamp the two decisions cross in either direction — the phone
+	/// keeps saying where it has been, the laptop keeps saying what it is called.
 	function mergeDevices(incoming) {
 		if (!incoming || typeof incoming !== 'object') return;
 		var reg = loadDevices(), changed = false;
@@ -650,12 +749,22 @@ import init, {
 			if (!DEVICE_ID_RE.test(id) || !incoming[id] || typeof incoming[id] !== 'object') return;
 			var r = deviceEntry(incoming[id]), mine = reg[id];
 			if (!mine) { reg[id] = r; changed = true; return; }
-			if (!(r.seen > mine.seen)) return;
-			// A device is created once, so the EARLIER stamp is the true one: a
-			// copy that reached us later cannot have been created later.
-			if (mine.created && (!r.created || mine.created < r.created)) r.created = mine.created;
-			reg[id] = r;
-			changed = true;
+			// Strictly newer, like `seen`, and for the same reason: an equal stamp
+			// keeps what is here rather than rewriting a line for nothing.
+			var namedWins = r.namedAt > mine.namedAt;
+			if (!namedWins) { r.label = mine.label; r.namedAt = mine.namedAt; }
+			if (r.seen > mine.seen) {
+				// A device is created once, so the EARLIER stamp is the true one: a
+				// copy that reached us later cannot have been created later.
+				if (mine.created && (!r.created || mine.created < r.created)) r.created = mine.created;
+				reg[id] = r;
+				changed = true;
+			} else if (namedWins) {
+				// The line itself is older than ours, but the naming of it is not.
+				mine.label   = r.label;
+				mine.namedAt = r.namedAt;
+				changed = true;
+			}
 		});
 		if (changed) saveDevices(reg);
 	}
@@ -1136,7 +1245,12 @@ import init, {
 	}
 
 	async function collectSync() {
-		persistChats();
+		// persistChats() nudges the sync engine, and this IS the sync engine
+		// asking for the parcel: without the flag every push would arm the next
+		// one and the debounce would become a poll that never stopped.
+		packingParcel = true;
+		try { persistChats(); }
+		finally { packingParcel = false; }
 		var fileCol = await collectFiles();
 		var chunked = await collectChunked(fileCol.large);
 		// v2 adds `diamonds` and `diamondTombs`. The version is informational:
@@ -3609,11 +3723,12 @@ import init, {
 		/// The devices that sync this account: this one first, then the rest by
 		/// how recently they were seen.
 		///
-		/// Display only, and deliberately so. Pairing hands the second device the
-		/// SAME keypair, so there is nothing here that a "remove" could enforce —
-		/// the honest surface is a list and a sentence, not a console. The short
-		/// id suffix is there because two of a user's devices can easily describe
-		/// themselves identically ("Chrome on macOS" twice).
+		/// The one thing a row can DO is take a name. Pairing hands the second
+		/// device the SAME keypair, so there is nothing here that a "remove" could
+		/// enforce — the honest surface is a list, a sentence, and the one control
+		/// that changes something real. The short id suffix stays even for a named
+		/// device: it is what tells two lines apart while they are both still
+		/// called "Chrome on macOS".
 		function renderDevices() {
 			var reg = collectDevices();		// reading it is also how this device joins it
 			var self = deviceId();
@@ -3626,14 +3741,52 @@ import init, {
 			homeView.appendChild(el('div', 'admin-sec', t('home.sec_devices')));
 			ids.forEach(function (id) {
 				var d = reg[id], r = el('div', 'device-row');
-				r.appendChild(el('span', 'device-name', d.name || t('devices.unknown')));
+				var shown = deviceShownName(d);
+				r.appendChild(el('span', 'device-name', shown));
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
+				// Every row, not only this device's: the name carries a stamp of
+				// its own, so one typed here reaches the device it names.
+				var b = document.createElement('button');
+				b.className = 'device-rename';
+				b.type = 'button';
+				b.textContent = '✎';		// a pencil, matching the drawer's line icons
+				b.title = t('devices.rename_aria', { name: shown });
+				b.setAttribute('aria-label', b.title);
+				b.addEventListener('click', function () { askDeviceName(id); });
+				r.appendChild(b);
 				homeView.appendChild(r);
 			});
 			homeView.appendChild(el('div', 'admin-note',
 				ids.length > 1 ? t('devices.note') : t('devices.only_this')));
+		}
+
+		/// Ask what to call a device, and put the answer on its line.
+		///
+		/// An empty box is not a cancelled edit: it clears the name, which is a
+		/// rename like any other and carries a stamp, so the clearing travels to
+		/// the other devices too. Cancelling is what leaves everything alone.
+		async function askDeviceName(id) {
+			var d = loadDevices()[id];
+			if (!d) return;
+			var derived = d.name || t('devices.unknown');
+			var chosen = await promptDialog(t('devices.rename_title'), {
+				message:     t('devices.rename_body', { derived: derived }),
+				value:       d.label || '',
+				placeholder: derived,
+				okLabel:     t('common.save'),
+				validate:    function () { return ''; },	// empty is how a name is cleared
+			});
+			if (chosen == null) return;					// cancelled, Escape, or the scrim
+			renameDevice(id, chosen);
+			// The name is the user's own words, so it travels only inside the sealed
+			// parcel — this asks for that parcel to go now rather than at the next
+			// change, and does nothing at all when sync is off.
+			if (window.DaimondSync && DaimondSync.nudge) {
+				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
+			}
+			renderHome();
 		}
 
 		function el(tag, cls, text) {
@@ -3693,13 +3846,20 @@ import init, {
 			mrow.classList.toggle('astat-pulse', !locked && !ready);
 
 			// The account service: credits, and whether it can be reached at all.
+			//
+			// A session and a figure read under it decide this row. `navigator.onLine` does
+			// NOT: it is the browser's guess, false whenever its own connectivity probe
+			// fails -- network or no network -- and it used to be asked first, so one machine
+			// guessing wrongly replaced a signed-in account's balance with "Offline" while
+			// that same tab went on fetching, syncing and spending. The guess may still NAME a
+			// connection that has actually failed; it may not overrule one that has not.
 			var arow = document.getElementById('astat-account');
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
-			if (!navigator.onLine) {
-				row('astat-account', 'off', '', t('astat.offline'));
-			} else if (locked || !st.authed) {
+			if (locked || !st.authed) {
 				row('astat-account', 'off', '',
-					st.offline ? t('astat.service_unreachable') : t('astat.no_account'));
+					!navigator.onLine ? t('astat.offline')
+						: st.offline ? t('astat.service_unreachable')
+						: t('astat.no_account'));
 			} else {
 				row('astat-account', 'ok', '', t('astat.credits'),
 					st.credits === null ? '—' : DaimondGateway.fmtMoney(st.credits, st.currency));
@@ -7344,7 +7504,7 @@ import init, {
 					}));
 					if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
 						fileMsg(t('files.delete_failed', { name: e.name, reason: friendlyError(res) }), true);
-					}
+					} else nudgeSync();	// a quiet delete must travel like any edit
 					list(curDir);
 				});
 				row.appendChild(del);
@@ -7565,6 +7725,7 @@ import init, {
 						editBtn.textContent = '✎ ' + t('files.edit'); editBtn.disabled = false;
 						cancelBtn.style.display = 'none';
 						fileMsg(t('files.saved')); refresh();
+						nudgeSync();	// a saved edit outside a turn pushes on its own
 						if (path === INSTRUCTIONS_FILE) Instructions.refresh();
 						else if (path.indexOf(PROMPTS_DIR + '/') === 0) Prompts.refresh();
 					}).catch(function (e) {
@@ -7677,6 +7838,7 @@ import init, {
 				await list(curDir);
 				await Instructions.refresh();
 				await Prompts.refresh();
+				nudgeSync();	// a new file outside a turn pushes on its own
 				openFile(p);
 			} catch (e) { fileMsg(t('files.create_failed', { reason: friendlyError(e) }), true); }
 		}
@@ -7710,7 +7872,7 @@ import init, {
 			var res = await tools().run_tool('file_move', JSON.stringify({ path: joinPath(curDir, e.name), to: to }));
 			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
 				fileMsg(t('files.rename_failed', { reason: friendlyError(res) }), true);
-			}
+			} else nudgeSync();	// a rename or move outside a turn pushes on its own
 			await list(curDir);
 		}
 
@@ -12134,6 +12296,7 @@ import init, {
 			DaimondModels.init({
 				onChange: function () {
 					syncCfgFromModels();
+					nudgeSync();	// a provider or key change outside a turn pushes on its own
 					DaimondAdmin.status();
 					// The panel is a view of the store, so it follows the store. Without this it only
 					// redrew when the thing that changed the store happened to remember to ask -- so

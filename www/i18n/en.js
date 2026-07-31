@@ -152,6 +152,12 @@
 	'devices.unknown':     'This device',
 	'devices.this_device': 'this device',
 	'devices.only_this':   'Only this device syncs this account.',
+	// Naming a device. The name is the user's own words, so it never leaves the
+	// browser except inside the encrypted parcel; the wording says so, because a
+	// list of the user's devices is exactly where that question is asked.
+	'devices.rename_title': 'Name this device',
+	'devices.rename_body':  'Call this device whatever you like, so you can tell it from the others. Leave the box empty to go back to “{derived}”. The name is stored with your own encrypted data and travels only to your other devices.',
+	'devices.rename_aria':  'Rename {name}',
 	'devices.note':        'These devices sync this account. A device appears here once it has synced, so one that holds your account but has never synced is not listed. Nothing here can sign a device out: a linked device holds the same keys as this one, so it has to be dealt with on the device itself.',
 
 	// ── The status rows under the rail ─────────────────────────
@@ -705,6 +711,11 @@
 	'pair.linked':        'This device is linked',
 	'pair.linked_note':   'It now holds your account. Tap Unlock, then enter the SAME passphrase you use on your other device — not a new one.',
 	'pair.linked_named':  'It now holds your account “{name}”. Tap Unlock, then enter the SAME passphrase you use on your other device — not a new one.',
+	// Naming the device while linking it: the one moment the user is holding the
+	// device in question. Optional — an unnamed device still syncs.
+	'pair.name_this':     'Name this device (optional)',
+	'pair.name_ph':       'e.g. Kitchen laptop',
+	'pair.named_note':    'This device will appear as “{name}” in your device list. You can change it later there.',
 	'pair.err_no_identity':      'There is no identity on this device to link.',
 	'pair.err_unreadable_local': 'Could not read this device’s identity.',
 	'pair.err_sign_in_first':    'Sign in on this device before linking another.',

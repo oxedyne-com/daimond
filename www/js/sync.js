@@ -411,6 +411,28 @@
 		finally { inFlight = false; }
 	}
 
+	/// A stored thing changed outside a turn: push it soon.
+	///
+	/// The two triggers above are a turn ENDING and the tab going AWAY, and most
+	/// of what a person does to a Diamond is neither. Renaming one, tagging it,
+	/// linking it, editing its crystal by hand, deleting it — none of those take
+	/// a turn, so a user who renamed a Diamond and then left the tab open and
+	/// focused scheduled no push at all, and the other device's focus pull found
+	/// nothing to fetch. The rename simply never travelled.
+	///
+	/// It rides the same debounce as every other trigger, so a burst of edits
+	/// leaves as one parcel, and it costs nothing when there is nothing to send:
+	/// an unchanged parcel is already skipped before any request is made.
+	///
+	/// Dropped outright when the engine could not push anyway — no identity, no
+	/// session, or a standing 402 — rather than arming a timer to find that out.
+	/// A stall (413) is NOT in that list: the nudge after the user shrinks
+	/// whatever would not fit is exactly the push that clears it.
+	function nudge() {
+		if (!ready() || !entitled) return;
+		schedule();
+	}
+
 	function saveVersion() {
 		try { localStorage.setItem(K_VERSION, String(serverVersion)); } catch (e) { /* ignore */ }
 	}
@@ -466,7 +488,7 @@
 	window.DaimondSync = {
 		pull:    pull,
 		push:    function () { return push(); },
-		nudge:   schedule,
+		nudge:   nudge,
 		recheck: recheck,
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },

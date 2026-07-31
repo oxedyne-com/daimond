@@ -15,9 +15,16 @@
 //      put the whole parcel back on the wire for nothing, for ever.
 //   3. The merge is freshest-wins, STRICTLY, per entry, with unknown entries
 //      unioned in -- and a parcel with no roster at all is a no-op both ways.
+//   3b. The name a USER gives a device merges on a stamp of its own. A device
+//      refreshes only its own `seen`, so a name typed on device A for device B
+//      would never travel if it rode on `seen` -- B's next refresh would win the
+//      whole line back and take the name off it.
 //   4. The surface tells the truth: it lists devices that SYNC this account, it
-//      marks this one, and it offers no control that pretends a device can be
-//      signed out (nothing could enforce that under one shared keypair).
+//      marks this one, it lets any line be named, and it offers no control that
+//      pretends a device can be signed out (nothing could enforce that under one
+//      shared keypair).
+//   5. A name typed at pairing time survives the reload that redeeming does, and
+//      the new device's line takes it up the moment that line is minted.
 //
 //   node dev/verify_devices.mjs
 //
@@ -171,14 +178,163 @@ try {
 		merged.parcelKeys.join(','));
 	check('a parcel with no roster at all is a no-op', merged.afterV1 === merged.snap);
 
+	// ── (3b) The name the user gives a device ───────────────────────
+	// "Chromium on Linux" is what a device can say about itself; it is not what
+	// its owner calls it. So a line carries a LABEL as well, with a stamp of its
+	// own, and the rename is done through the real drawer control rather than by
+	// writing storage -- the point of the feature is that a user can do it.
+	// A roster written by a version that had no names at all, read back. It has
+	// to decode rather than be dropped, and it must not invent a name for a
+	// device nobody has named.
+	const legacy = await page.evaluate(async () => {
+		const keep = localStorage.getItem('daimond-devices') || '{}';
+		const OLD  = 'eeee5555ffff6666';
+		localStorage.setItem('daimond-devices', JSON.stringify({
+			[OLD]: { name: 'Edge on Windows', created: 1.75e12, seen: 1.75e12 },
+		}));
+		const line = ((await DaimondCore.collectSync()).devices || {})[OLD];
+		localStorage.setItem('daimond-devices', keep);
+		return line;
+	});
+	check('a roster stored before names existed still decodes, with no name and no stamp',
+		!!legacy && legacy.name === 'Edge on Windows' && legacy.label === '' && legacy.namedAt === 0,
+		JSON.stringify(legacy));
+
+	const named = await page.evaluate(async ([A, B]) => {
+		const now = Date.now();
+		const roster = () => JSON.parse(localStorage.getItem('daimond-devices') || '{}');
+		const wait = (n) => new Promise(r => setTimeout(r, n));
+		// Rename a device the way a user does: open the drawer, press the control
+		// on that device's row, type, save.
+		const renameVia = async (id, text) => {
+			DaimondAdmin.home();
+			const row = [...document.querySelectorAll('#admin-home .device-row')]
+				.find(r => ((r.querySelector('.device-id') || {}).textContent || '') === id.slice(-4));
+			const btn = row && row.querySelector('.device-rename');
+			if (!btn) return false;
+			btn.click();
+			await wait(80);
+			const input = document.querySelector('.dlg .dlg-input');
+			const ok    = document.querySelector('.dlg .dlg-ok');
+			if (!input || !ok) return false;
+			input.value = text;
+			ok.click();
+			await wait(200);
+			return !document.querySelector('.dlg');
+		};
+		const out = {};
+		// This device names ANOTHER device's line.
+		out.renamed = await renameVia(A, ' Kitchen laptop ');
+		out.local   = roster()[A];
+		out.parcel  = ((await DaimondCore.collectSync()).devices || {})[A];
+		// The named device refreshes its own `seen` and knows nothing of the name.
+		// Its line is fresher, so it wins the line -- and must not take the name.
+		await DaimondCore.applySync({ v: 2, devices: {
+			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 1e3 },
+		} });
+		out.afterSelfRefresh = roster()[A];
+		// A rename made on the OTHER device arrives even though its `seen` is
+		// older than what is here: the label merges on its own stamp alone.
+		await DaimondCore.applySync({ v: 2, devices: {
+			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 9e5,
+				label: 'Work desktop', namedAt: now + 5e3 },
+		} });
+		out.afterRemoteRename = roster()[A];
+		// An EQUAL namedAt keeps what is here, exactly as an equal `seen` does.
+		await DaimondCore.applySync({ v: 2, devices: {
+			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 9e5,
+				label: 'Somebody else\'s idea', namedAt: now + 5e3 },
+		} });
+		out.afterEqualNamedAt = roster()[A];
+		// And an OLDER rename loses.
+		await DaimondCore.applySync({ v: 2, devices: {
+			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 9e5,
+				label: 'Older idea', namedAt: now - 1e6 },
+		} });
+		out.afterOlderRename = roster()[A];
+		// A device that predates names carries neither field, and must not take
+		// the name off a line that has one -- even when its `seen` wins the line.
+		await DaimondCore.applySync({ v: 2, devices: {
+			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 500 },
+		} });
+		out.afterOldFormat = roster()[A];
+		// Clearing a name is itself a rename: an empty label with a fresher stamp,
+		// arriving on a line whose `seen` did not move at all.
+		// Its `seen` is EXACTLY what is already stored, so nothing but the naming
+		// can move: a label that travelled with the entry would not arrive at all.
+		const bSeen = (roster()[B] || {}).seen;
+		await DaimondCore.applySync({ v: 2, devices: {
+			[B]: { name: 'Safari on iOS', created: now - 5e6, seen: bSeen,
+				label: 'Phone', namedAt: now },
+		} });
+		out.bNamed = roster()[B];
+		await DaimondCore.applySync({ v: 2, devices: {
+			[B]: { name: 'Safari on iOS', created: now - 5e6, seen: bSeen,
+				label: '', namedAt: now + 2e3 },
+		} });
+		out.bCleared = roster()[B];
+		// A name is a name, not a paragraph.
+		await renameVia(B, 'x'.repeat(400));
+		out.capped = ((roster()[B] || {}).label || '').length;
+		await renameVia(B, '');
+		out.bBlank = roster()[B];
+		// The push skip survives the two new fields.
+		const s1 = JSON.stringify((await DaimondCore.collectSync()).devices);
+		await wait(300);
+		const s2 = JSON.stringify((await DaimondCore.collectSync()).devices);
+		out.stableA = s1; out.stableB = s2;
+		return out;
+	}, [A, B]);
+
+	check('a device row can be renamed from the drawer', named.renamed === true, String(named.renamed));
+	check('the name is stored trimmed, with a stamp of its own',
+		!!named.local && named.local.label === 'Kitchen laptop' && named.local.namedAt > 1.7e12,
+		JSON.stringify(named.local));
+	check('the derived description is kept underneath it, as the fallback',
+		!!named.local && named.local.name === 'Firefox on Windows', JSON.stringify(named.local));
+	check('and the name rides in the parcel, so it can reach the other devices',
+		!!named.parcel && named.parcel.label === 'Kitchen laptop' && named.parcel.namedAt === named.local.namedAt,
+		JSON.stringify(named.parcel));
+	check('the named device refreshing its own seen does NOT take the name off',
+		!!named.afterSelfRefresh && named.afterSelfRefresh.label === 'Kitchen laptop'
+			&& named.afterSelfRefresh.seen > named.local.seen,
+		JSON.stringify(named.afterSelfRefresh));
+	check('a rename from another device arrives even though its seen is older — the label merges on namedAt',
+		!!named.afterRemoteRename && named.afterRemoteRename.label === 'Work desktop',
+		JSON.stringify(named.afterRemoteRename));
+	check('an EQUAL namedAt keeps the name that is here — strictly newer, or nothing',
+		!!named.afterEqualNamedAt && named.afterEqualNamedAt.label === 'Work desktop',
+		JSON.stringify(named.afterEqualNamedAt));
+	check('an OLDER rename loses', !!named.afterOlderRename && named.afterOlderRename.label === 'Work desktop',
+		JSON.stringify(named.afterOlderRename));
+	check('an entry from before names existed carries none, and takes none away',
+		!!named.afterOldFormat && named.afterOldFormat.label === 'Work desktop'
+			&& named.afterOldFormat.seen > named.afterRemoteRename.seen,
+		JSON.stringify(named.afterOldFormat));
+	check('a name reaches a line whose seen did not move at all',
+		!!named.bNamed && named.bNamed.label === 'Phone', JSON.stringify(named.bNamed));
+	check('and clearing it is itself a rename, so the clearing travels too',
+		!!named.bCleared && named.bCleared.label === '' && named.bCleared.namedAt > named.bNamed.namedAt,
+		JSON.stringify(named.bCleared));
+	check('a name is capped, so one line cannot become a paragraph', named.capped === 64,
+		String(named.capped));
+	check('an empty box clears the name, back to what the device says about itself',
+		!!named.bBlank && named.bBlank.label === '' && named.bBlank.name === 'Safari on iOS',
+		JSON.stringify(named.bBlank));
+	check('two collects in a row still stringify identically with names in play — the push skip survives',
+		typeof named.stableA === 'string' && named.stableA === named.stableB,
+		String(named.stableA).slice(0, 100));
+
 	// ── (4) The surface ─────────────────────────────────────────────
 	const view = await page.evaluate(() => {
 		DaimondAdmin.home();
 		const secs = [...document.querySelectorAll('#admin-home .admin-sec')].map(e => e.textContent);
 		const rows = [...document.querySelectorAll('#admin-home .device-row')].map(r => ({
 			text:    r.innerText.replace(/\s+/g, ' ').trim(),
+			name:    (r.querySelector('.device-name') || {}).textContent || '',
 			suffix:  (r.querySelector('.device-id') || {}).textContent || '',
 			buttons: r.querySelectorAll('button').length,
+			rename:  r.querySelectorAll('button.device-rename').length,
 		}));
 		const notes = [...document.querySelectorAll('#admin-home .admin-note')].map(e => e.textContent);
 		return { secs, rows, notes, self: localStorage.getItem('daimond-device-id') };
@@ -192,8 +348,15 @@ try {
 	check('the others carry a relative last-seen, not a raw stamp',
 		view.rows.filter(r => /(just now|\d+[mhd] ago)/.test(r.text)).length === 2,
 		view.rows.map(r => r.text).join(' | '));
-	check('no row offers a control — nothing here pretends a device can be revoked',
-		view.rows.every(r => r.buttons === 0));
+	check('every row offers a rename — a device is named where it is listed',
+		view.rows.every(r => r.rename === 1), view.rows.map(r => r.rename).join(','));
+	check('and offers nothing else — nothing here pretends a device can be revoked',
+		view.rows.every(r => r.buttons === 1), view.rows.map(r => r.buttons).join(','));
+	check('a named device shows the user\'s name in place of the derived description',
+		view.rows.some(r => r.name === 'Work desktop') && !view.rows.some(r => r.name === 'Firefox on Windows'),
+		view.rows.map(r => r.name).join(' | '));
+	check('a device with no name of its own still shows what it says about itself',
+		view.rows.some(r => r.name === 'Safari on iOS'), view.rows.map(r => r.name).join(' | '));
 	check('and the copy says these are devices that SYNC, not devices that are paired',
 		view.notes.some(n => /sync/i.test(n) && /appears/i.test(n)),
 		view.notes.filter(n => /sync/i.test(n)).join(' | ').slice(0, 160));
@@ -203,6 +366,44 @@ try {
 	check('each line carries the tail of its OWN id, so two alike devices are still two',
 		JSON.stringify(view.rows.map(r => r.suffix).sort()) === JSON.stringify(wantSuffix),
 		view.rows.map(r => r.suffix).join(',') + ' vs ' + wantSuffix.join(','));
+
+	// This device can be named too, and naming it must not cost it the one mark
+	// that says which line the user is standing on.
+	const selfNamed = await page.evaluate(async () => {
+		const self = localStorage.getItem('daimond-device-id');
+		DaimondAdmin.home();
+		const row = [...document.querySelectorAll('#admin-home .device-row')]
+			.find(r => ((r.querySelector('.device-id') || {}).textContent || '') === self.slice(-4));
+		const btn = row && row.querySelector('.device-rename');
+		if (!btn) return null;
+		btn.click();
+		await new Promise(r => setTimeout(r, 80));
+		const input = document.querySelector('.dlg .dlg-input');
+		const ok    = document.querySelector('.dlg .dlg-ok');
+		if (!input || !ok) return null;
+		// The box opens on the name that is there now, and says what it falls back
+		// to when emptied.
+		const opened = { value: input.value, placeholder: input.placeholder || '' };
+		input.value = 'Studio Mac';
+		ok.click();
+		await new Promise(r => setTimeout(r, 200));
+		const mine = [...document.querySelectorAll('#admin-home .device-row')]
+			.find(r => ((r.querySelector('.device-id') || {}).textContent || '') === self.slice(-4));
+		return {
+			opened: opened,
+			name:   (mine.querySelector('.device-name') || {}).textContent || '',
+			text:   mine.innerText.replace(/\s+/g, ' ').trim(),
+			suffix: (mine.querySelector('.device-id') || {}).textContent || '',
+		};
+	});
+	check('this device can be named as well', !!selfNamed && selfNamed.name === 'Studio Mac',
+		JSON.stringify(selfNamed));
+	check('and stays marked as this device, with its id tail, once named',
+		!!selfNamed && /this device/i.test(selfNamed.text) && selfNamed.suffix.length === 4,
+		selfNamed && selfNamed.text);
+	check('the rename box offers what the device calls itself as the placeholder',
+		!!selfNamed && /\w/.test(selfNamed.opened.placeholder) && selfNamed.opened.value === '',
+		JSON.stringify(selfNamed && selfNamed.opened));
 
 	await shot(s, 'devices-roster');
 
@@ -222,6 +423,51 @@ try {
 	check('and a sentence saying so, so the question is answered either way',
 		alone.notes.some(n => /only this device/i.test(n)),
 		alone.notes.join(' | ').slice(0, 120));
+
+	// ── (5) A name chosen while pairing ─────────────────────────────
+	// The name is typed on the NEW device, during redeem — before that device has
+	// a line to put it on. Its line is minted on the first collect, which happens
+	// after the reload the redeem dialog performs, so the name is stashed and the
+	// mint consumes it. Redeeming needs a gateway; the field and the stash do not.
+	const paired = await page.evaluate(async () => {
+		const out = {};
+		DaimondPairing.showRedeem('ABCD1234');
+		await new Promise(r => setTimeout(r, 80));
+		const box   = document.querySelector('.pair-scrim .pair-box');
+		const field = box && box.querySelector('.pair-name');
+		out.hasField = !!field;
+		out.ph       = field ? (field.getAttribute('placeholder') || '') : '';
+		out.maxlen   = field ? (field.getAttribute('maxlength') || '') : '';
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await new Promise(r => setTimeout(r, 60));
+		out.closed = !document.querySelector('.pair-scrim');
+		// What a successful redeem does with what was typed.
+		DaimondPairing.stashName('  Kitchen laptop  ');
+		out.stash = localStorage.getItem('daimond-pair-label');
+		// The reload boundary: a device that has just redeemed has no line at all.
+		localStorage.removeItem('daimond-device-id');
+		localStorage.setItem('daimond-devices', '{}');
+		const reg = (await DaimondCore.collectSync()).devices || {};
+		out.self       = reg[localStorage.getItem('daimond-device-id')] || null;
+		out.stashAfter = localStorage.getItem('daimond-pair-label');
+		// And the next device to mint a line does not inherit it.
+		localStorage.removeItem('daimond-device-id');
+		localStorage.setItem('daimond-devices', '{}');
+		const reg2 = (await DaimondCore.collectSync()).devices || {};
+		out.second = reg2[localStorage.getItem('daimond-device-id')] || null;
+		return out;
+	});
+	check('the redeem dialog offers a name for the device being linked',
+		paired.hasField === true && /\w/.test(paired.ph), JSON.stringify(paired.ph));
+	check('the field is capped there too', String(paired.maxlen) === '64', String(paired.maxlen));
+	check('the chosen name is stashed, trimmed, across the reload redeeming does',
+		paired.stash === 'Kitchen laptop', JSON.stringify(paired.stash));
+	check('and the roster takes it up the moment this device first mints its line',
+		!!paired.self && paired.self.label === 'Kitchen laptop' && paired.self.namedAt > 1.7e12,
+		JSON.stringify(paired.self));
+	check('the stash is consumed, so the next line minted is not named for it',
+		!paired.stashAfter && !!paired.second && paired.second.label === '',
+		JSON.stringify(paired.stashAfter) + ' / ' + JSON.stringify(paired.second));
 
 	const errs = s.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502/.test(e));
 	check('no unexpected console errors', errs.length === 0, errs.slice(0, 3).join(' | '));

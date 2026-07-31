@@ -1189,6 +1189,242 @@ try {
 		&& gate.api.stalled === false && gate.api.entitled === true,
 		JSON.stringify(gate.cleared) + ' ' + JSON.stringify(gate.api));
 
+	// ── (11) Work done OUTSIDE a turn travels on its own ───────────────
+	// Pushes fired on exactly two things: a turn ending, and the tab going away.
+	// Most of what a person does to a Diamond is neither. A user renamed a
+	// Diamond on one machine, left the tab open and focused, and the new name
+	// never reached the other machine — because nothing ever scheduled the push.
+	// The other device's focus pull was working perfectly; the mailbox simply
+	// still held the old name.
+	//
+	// Measured from a QUIET engine. A push that finds one in flight reschedules,
+	// so `pushLanded` leaves a timer armed, and that stray timer would carry the
+	// rename and hide the whole bug — which is exactly what it did the first time
+	// this was written.
+
+	/// Let anything already armed drain, and return once the version has stopped
+	/// moving. A flat sleep is not enough: what has to be true is that the engine
+	/// is quiet, not that some number of milliseconds passed.
+	const quiesce = async (pg, ms = 20000) => {
+		let last = -1, stable = Date.now();
+		const t0 = Date.now();
+		while (Date.now() - t0 < ms) {
+			const v = await pg.evaluate(() => window.DaimondSync.state().version);
+			if (v !== last) { last = v; stable = Date.now(); }
+			else if (Date.now() - stable > 5000) return last;
+			await pg.waitForTimeout(300);
+		}
+		return last;
+	};
+
+	/// Wait for the engine to push on its OWN. Deliberately never calls push():
+	/// the point of the whole section is that the change leaves without asking.
+	const ownPush = async (pg, v0, ms = 25000) => {
+		const t0 = Date.now();
+		while (Date.now() - t0 < ms) {
+			const v = await pg.evaluate(() => window.DaimondSync.state().version);
+			if (v > v0) return { landed: true, took: Date.now() - t0 };
+			await pg.waitForTimeout(250);
+		}
+		return { landed: false, took: Date.now() - t0 };
+	};
+
+	/// Count POSTs to the mailbox, so "nothing was sent" is a measurement.
+	const countPosts = (pg) => pg.evaluate(() => {
+		window.__syncPosts = 0;
+		const real = window.__syncRealFetch || window.fetch;
+		window.__syncRealFetch = real;
+		window.fetch = function (u, o) {
+			const url = String((u && u.url) || u || '');
+			if (url.indexOf('/api/sync') !== -1 && o && o.method === 'POST') window.__syncPosts++;
+			return real.apply(this, arguments);
+		};
+	});
+	const posts    = (pg) => pg.evaluate(() => window.__syncPosts | 0);
+	const unstub   = (pg) => pg.evaluate(() => {
+		if (window.__syncRealFetch) { window.fetch = window.__syncRealFetch; window.__syncRealFetch = null; }
+	});
+
+	/// Rename a Diamond the way a person does: double-click its name in the rail,
+	/// type into the dialog, press the button. No turn is taken and the tab is
+	/// never hidden — which is the whole of the report.
+	const renameDiamond = async (from, to) => {
+		const found = await page.evaluate((nm) => {
+			const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
+				.find(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === nm);
+			if (!box) return false;
+			box.querySelector('.session-box-name')
+				.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+			return true;
+		}, from);
+		if (!found) return 'not in the rail';
+		await page.waitForSelector('.dlg-card', { timeout: 8000 });
+		await page.evaluate((nm) => {
+			const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
+			const inp = card.querySelector('input.dlg-input');
+			inp.value = nm;
+			inp.dispatchEvent(new Event('input', { bubbles: true }));
+			card.querySelector('.dlg-ok').click();
+		}, to);
+		await page.waitForTimeout(600);
+		return 'ok';
+	};
+
+	/// Every Diamond name the MAILBOX holds, decrypted — what the other device
+	/// would receive if it pulled this instant.
+	const namesInMailbox = () => page.evaluate(async () => {
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const j = await r.json();
+		if (!j.present) return [];
+		try {
+			const st = JSON.parse(await window.DaimondIdentity.unwrap(j.blob));
+			return (st.diamonds || []).map((d) => {
+				try { return JSON.parse(JSON.parse(d.data).files['.daimond/meta.json']).name; }
+				catch (e) { return '?'; }
+			});
+		} catch (e) { return ['<undecryptable>']; }
+	});
+
+	await newDiamond('Quiet-Alpha');
+	await pushLanded(page);
+	const vQuiet = await quiesce(page);
+	check('the engine is quiet before the measurement, so nothing stray can carry it',
+		vQuiet > 0, 'version=' + vQuiet);
+
+	await countPosts(page);
+	const renamed = await renameDiamond('Quiet-Alpha', 'Quiet-Renamed');
+	const own = await ownPush(page, vQuiet);
+	const mailNames = await namesInMailbox();
+	check('a Diamond is renamed through the rail, with no turn and the tab visible',
+		renamed === 'ok', renamed);
+	check('and the rename pushes ON ITS OWN — no turn, no tab-hide, no explicit push',
+		own.landed === true, 'version ' + vQuiet + ' -> '
+			+ (await page.evaluate(() => window.DaimondSync.state().version))
+			+ ' after ' + own.took + 'ms, posts=' + (await posts(page)));
+	check('so the mailbox holds the NEW name, which is all the other device can read',
+		mailNames.includes('Quiet-Renamed') && !mailNames.includes('Quiet-Alpha'),
+		JSON.stringify(mailNames));
+	check('and it took ONE parcel, not one per keystroke', (await posts(page)) === 1,
+		'posts=' + (await posts(page)));
+
+	// The receiving half, end to end: a device that has never seen the rename
+	// pulls it. (Pull-on-focus is proved in section 7; what is proved here is
+	// that there is now something on the mailbox for it to find.)
+	const second = await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
+		localStorage.removeItem('daimond-sync-version');
+		await window.DaimondSync.pull();
+		return JSON.parse(await app.list_diamonds()).map(d => d.name);
+	});
+	check('a second device pulls the rename in', second.includes('Quiet-Renamed'),
+		JSON.stringify(second));
+
+	// A second real mutation path through the same funnel: deleting through the
+	// rail's × button, which writes the tombstone that has to travel with it.
+	await quiesce(page);
+	await countPosts(page);
+	const vDel = await page.evaluate(() => window.DaimondSync.state().version);
+	const dropped = await removeDiamond('Quiet-Renamed');
+	const delPush = await ownPush(page, vDel);
+	const afterDel = await namesInMailbox();
+	check('deleting a Diamond in the rail also travels without a turn',
+		dropped === 'ok' && delPush.landed === true,
+		dropped + ', after ' + delPush.took + 'ms');
+	// The other Diamonds are named too, so an empty or unreadable mailbox cannot
+	// pass this by holding nothing.
+	check('and the mailbox no longer offers it, while still holding the rest',
+		!afterDel.includes('Quiet-Renamed') && afterDel.includes('Link-Travel'),
+		JSON.stringify(afterDel));
+
+	// A nudge is not a poll, and this is the failure mode the fix itself could
+	// have: collectSync() persists the chats on its way past, so if THAT nudged,
+	// every push would arm the next one for ever.
+	//
+	// Counted as parcels PACKED, not as requests sent. An unchanged parcel is
+	// skipped before any request is made, so a POST counter watches a perfectly
+	// quiet network while the app re-exports every Diamond every 2.5 seconds —
+	// measured at six packs in fifteen seconds with the guard removed, and one
+	// with it. Both numbers are checked, because both costs are real.
+	await quiesce(page);
+	// Refresh this device's roster stamp first: it is rewritten when it goes
+	// stale (five minutes), and a run that crossed that boundary here would see
+	// a genuinely changed parcel and read it as a spurious push.
+	await page.evaluate(async () => { await window.DaimondCore.collectSync(); return true; });
+	await countPosts(page);
+	const idle = await page.evaluate(async () => {
+		let packed = 0;
+		const real = window.DaimondCore.collectSync;
+		window.DaimondCore.collectSync = function () { packed++; return real.apply(this, arguments); };
+		window.DaimondSync.nudge();
+		await new Promise(r => setTimeout(r, 15000));
+		window.DaimondCore.collectSync = real;
+		return { packed: packed, posts: window.__syncPosts | 0 };
+	});
+	check('a nudge with nothing changed sends no parcel at all', idle.posts === 0,
+		'posts=' + idle.posts);
+	check('and packing it does not arm the next one — the debounce is not a poll',
+		idle.packed <= 1, 'parcels packed in 15s = ' + idle.packed);
+
+	// A nudge must not walk through the standing refusals either. 402 stops
+	// pushes until the tier is rechecked, and a mutation arriving afterwards
+	// must not quietly restart them or repaint the chip.
+	const refusal = await page.evaluate(async () => {
+		const chip = () => {
+			const c = document.getElementById('sync-chip');
+			return c ? { state: c.dataset.state || '', shown: c.style.display !== 'none' } : null;
+		};
+		const real = window.__syncRealFetch || window.fetch;
+		window.__syncRealFetch = real;
+		let sent = 0;
+		window.fetch = function (u, o) {
+			const url = String((u && u.url) || u || '');
+			if (url.indexOf('/api/sync') !== -1 && o && o.method === 'POST') {
+				sent++;
+				return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'stub' }),
+					{ status: 402, headers: { 'content-type': 'application/json' } }));
+			}
+			return real.apply(this, arguments);
+		};
+		// One real change, pushed, refused: the engine is now paused on a 402.
+		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		if (a.length) {
+			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'nudge-402', mid: 'nudge-402', ts: Date.now() }]);
+			a[0].updatedAt = Date.now();
+			localStorage.setItem('daimond-chats', JSON.stringify(a));
+		}
+		await window.DaimondSync.push();
+		const paused = { chip: chip(), entitled: window.DaimondSync.state().entitled };
+		// Now a mutation of the kind that nudges. It must change nothing.
+		const before = sent;
+		await window.DaimondCore.collectSync();	// persistChats() runs on the way past
+		window.DaimondSync.nudge();
+		await new Promise(r => setTimeout(r, 7000));
+		const out = { paused, after: chip(), tried: sent - before,
+			entitled: window.DaimondSync.state().entitled };
+		window.fetch = real;
+		window.__syncRealFetch = null;
+		return out;
+	});
+	check('a 402 pauses pushes and says so on the chip',
+		!!(refusal.paused.chip && refusal.paused.chip.state === 'off') && refusal.paused.entitled === false,
+		JSON.stringify(refusal.paused));
+	check('a nudge afterwards does not restart them behind the refusal',
+		refusal.tried === 0 && refusal.entitled === false, 'attempts=' + refusal.tried);
+	check('nor repaint the chip over it',
+		!!(refusal.after && refusal.after.state === 'off' && refusal.after.shown),
+		JSON.stringify(refusal.after));
+
+	// Put the engine back, so nothing below runs paused.
+	await unstub(page);
+	await page.evaluate(() => window.DaimondSync.recheck());
+	await page.waitForTimeout(1500);
+	await pushLanded(page);
+	const back = await page.evaluate(() => window.DaimondSync.state());
+	check('and the tier coming back lifts it, with the engine syncing again',
+		back.entitled === true && back.stalled === false, JSON.stringify(back));
+
 	// (9) The device roster travels, so a user can be told whether their account
 	// is on more than one device.
 	//
@@ -1246,6 +1482,73 @@ try {
 	check('each line carries a name and a last-seen, so the list can be read',
 		!!lineB.name && lineB.seen > 1.7e12 && lineB.created > 1.7e12,
 		JSON.stringify(lineB));
+
+	// A name the USER gives a device, the whole way round. The second device
+	// names the FIRST one's line -- which is the case that cannot work if the
+	// name rides on `seen`, because the first device refreshes its own line and
+	// would win it straight back. And the name is the user's own words, so it
+	// must reach the other device WITHOUT the gateway ever holding it in the
+	// clear: sync.js sends the coarse derived description as the mailbox label
+	// and nothing else, so the typed name may exist only inside the sealed blob.
+	const rename = await page.evaluate(async (r) => {
+		const wait = (n) => new Promise(x => setTimeout(x, n));
+		const mine = JSON.parse(localStorage.getItem('daimond-devices') || '{}');
+		const out  = { aBefore: mine[r.self] };
+		// Device B, naming device A's line through the drawer, as a user would.
+		localStorage.setItem('daimond-device-id', r.b);
+		DaimondAdmin.home();
+		const row = [...document.querySelectorAll('#admin-home .device-row')]
+			.find(x => ((x.querySelector('.device-id') || {}).textContent || '') === r.self.slice(-4));
+		const btn = row && row.querySelector('.device-rename');
+		if (!btn) { out.renamed = false; return out; }
+		btn.click();
+		await wait(80);
+		const input = document.querySelector('.dlg .dlg-input');
+		const ok    = document.querySelector('.dlg .dlg-ok');
+		if (!input || !ok) { out.renamed = false; return out; }
+		input.value = 'Kitchen laptop';
+		ok.click();
+		await wait(200);
+		DaimondAdmin.close();
+		out.renamed = (JSON.parse(localStorage.getItem('daimond-devices') || '{}')[r.self] || {}).label
+			=== 'Kitchen laptop';
+		return out;
+	}, { self: roster0.self, b: DEV_B });
+	check('the second device can name the first one\'s line', rename.renamed === true,
+		JSON.stringify(rename.aBefore));
+
+	await pushLanded(page);
+	const sealedNamed = await page.evaluate(async () => {
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const j = await r.json();
+		return { blob: j.blob || '', label: j.device || j.label || '' };
+	});
+	check('the name the user typed is inside the sealed blob and nowhere else on the wire',
+		!sealedNamed.blob.includes('Kitchen') && !sealedNamed.blob.includes('laptop')
+			&& !/kitchen/i.test(JSON.stringify(sealedNamed.label)),
+		'blob ' + sealedNamed.blob.length + ' bytes, mailbox label ' + JSON.stringify(sealedNamed.label));
+
+	// Back to device A, with the roster it had before any of this: its own line
+	// is the FRESHER one, and it still has to take the name.
+	const aNamed = await page.evaluate(async (r) => {
+		localStorage.setItem('daimond-device-id', r.self);
+		localStorage.setItem('daimond-devices', r.reg);
+		const before = JSON.parse(r.reg)[r.self];
+		await window.DaimondSync.pull();
+		const after = JSON.parse(localStorage.getItem('daimond-devices') || '{}')[r.self];
+		DaimondAdmin.home();
+		const rows = [...document.querySelectorAll('#admin-home .device-row')]
+			.map(x => x.innerText.replace(/\s+/g, ' ').trim());
+		DaimondAdmin.close();
+		return { before: before, after: after, rows: rows };
+	}, { self: roster0.self, reg: JSON.stringify(aSaw) });
+	check('and the first device pulls the name for ITSELF, though its own line is the fresher one',
+		!!aNamed.after && aNamed.after.label === 'Kitchen laptop'
+			&& aNamed.after.seen >= aNamed.before.seen,
+		JSON.stringify(aNamed.after));
+	check('so the drawer there now reads the name its owner gave it',
+		aNamed.rows.some(x => /Kitchen laptop/.test(x) && /this device/i.test(x)),
+		aNamed.rows.join(' | '));
 	// The drawer is the surface the user actually reads.
 	const shown = await page.evaluate(() => {
 		DaimondAdmin.home();
