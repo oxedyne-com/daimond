@@ -20,13 +20,22 @@ const MAX_TAG_LEN: usize = 24;
 
 
 /// Per-Diamond metadata held in `meta.json`.
+///
+/// Two stamps, because they answer two different questions.  `updated` means
+/// *worked on* and orders the rail; `touched` means *changed at all* and is what
+/// the cross-device merge compares.  Tagging moves the second and not the first,
+/// which is the whole reason there are two: filing a Diamond must not shuffle it
+/// to the top of the rail, and it must still travel.
 pub struct Meta {
 	/// Human-readable Diamond name.
 	pub name:    String,
 	/// Current crystal version (the latest snapshot).
 	pub version: u64,
-	/// Last-updated wall-clock time in whole milliseconds.
+	/// Last-worked-on wall-clock time in whole milliseconds; the rail's order.
 	pub updated: u64,
+	/// Last-changed-in-any-way wall-clock time in whole milliseconds; the
+	/// merge's freshness test.
+	pub touched: u64,
 	/// User-defined tags, as [`normalise_tags`] leaves them.
 	pub tags:    Vec<String>,
 }
@@ -36,8 +45,8 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"tags\":{}}}",
-			json_escape(&self.name), self.version, self.updated, self.tags_json(),
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"tags\":{}}}",
+			json_escape(&self.name), self.version, self.updated, self.touched, self.tags_json(),
 		)
 	}
 
@@ -68,6 +77,14 @@ impl Meta {
 				.or_else(|| extract_json_number(s, "brief_version"))
 				.unwrap_or(0),
 			updated: extract_json_number(s, "updated").unwrap_or(0),
+			// `touched` postdates every Diamond already on a device, and a
+			// missing one reads as the stamp that was there: before it existed,
+			// every change moved `updated`, so `updated` IS when the Diamond was
+			// last changed. Defaulting to 0 instead would tell the merge that
+			// every existing Diamond is infinitely stale, and the first device to
+			// touch anything would overwrite the other's copy of all of them.
+			touched: extract_json_number(s, "touched")
+				.unwrap_or_else(|| extract_json_number(s, "updated").unwrap_or(0)),
 			tags:    extract_json_string_array(s, "tags").unwrap_or_default(),
 		}
 	}
@@ -149,11 +166,48 @@ mod tests {
 	}
 
 	#[test]
+	fn test_meta_without_touched_reads_as_updated() {
+		// Every Diamond already on a device was written before the second stamp
+		// existed, and back then every change moved `updated` -- so `updated` is
+		// exactly when such a Diamond was last changed. Reading the missing field
+		// as 0 would instead declare all of them infinitely stale, and the first
+		// device to change anything would overwrite the other device's copy of
+		// every Diamond it holds.
+		let old = Meta::from_json(r#"{"name":"X","crystal_version":3,"updated":123,"tags":[]}"#);
+		assert_eq!(123, old.updated);
+		assert_eq!(123, old.touched, "a missing second stamp is the first one");
+
+		// And a Diamond so old it carries no stamp at all still parses.
+		let ancient = Meta::from_json(r#"{"name":"Y","brief_version":2}"#);
+		assert_eq!(0, ancient.updated);
+		assert_eq!(0, ancient.touched);
+	}
+
+	#[test]
+	fn test_the_two_stamps_round_trip_apart() {
+		// Tagging moves `touched` and leaves `updated` where it was, so the file
+		// has to be able to say two different things. A serialisation that wrote
+		// one over the other would put the rail's order and the merge's freshness
+		// back into the same number, which is the bug this field exists to fix.
+		let meta = Meta {
+			name:    fmt!("Filed"),
+			version: 4,
+			updated: 1_700_000_000_000,
+			touched: 1_700_000_009_999,
+			tags:    vec![fmt!("work")],
+		};
+		let back = Meta::from_json(&meta.to_json());
+		assert_eq!(1_700_000_000_000, back.updated);
+		assert_eq!(1_700_000_009_999, back.touched);
+	}
+
+	#[test]
 	fn test_a_meta_with_tags_round_trips() {
 		let meta = Meta {
 			name:    fmt!("Ship the thing"),
 			version: 7,
 			updated: 1_700_000_000_000,
+			touched: 1_700_000_000_000,
 			tags:    vec![fmt!("work"), fmt!("urgent")],
 		};
 		let back = Meta::from_json(&meta.to_json());
@@ -165,7 +219,7 @@ mod tests {
 
 	#[test]
 	fn test_a_meta_with_no_tags_round_trips_as_an_empty_array() {
-		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, tags: Vec::new() };
+		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new() };
 		let json = meta.to_json();
 		assert!(json.contains("\"tags\":[]"), "{}", json);
 		assert!(Meta::from_json(&json).tags.is_empty());
@@ -183,7 +237,7 @@ mod tests {
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
-		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, tags: tags.clone() };
+		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -196,6 +250,7 @@ mod tests {
 			name:    fmt!("\"tags\":[\"fake\"]"),
 			version: 1,
 			updated: 2,
+			touched: 2,
 			tags:    vec![fmt!("real")],
 		};
 		assert_eq!(vec![fmt!("real")], Meta::from_json(&meta.to_json()).tags);
@@ -279,7 +334,7 @@ mod tests {
 		// The two halves have to agree: what normalisation produces is exactly
 		// what the file gives back, or the store drifts from the interface.
 		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
-		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, tags: tags.clone() };
+		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 }

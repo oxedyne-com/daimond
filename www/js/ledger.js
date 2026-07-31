@@ -38,6 +38,40 @@
 		}
 	}
 
+	// ── One-time repricing of historical guesses ───────────────
+	// Entries priced before 2026-07-31 were guessed from a rate table that ran
+	// about six times high (direct-provider list prices, cached tokens billed
+	// at the full input rate). The table is fixed, but the old guesses sat in
+	// the log and kept inflating every total -- the user rightly did not trust
+	// them. So an entry the provider did NOT bill (`r` absent) is re-priced
+	// once under the corrected table, keeping the original figure in `u0` so
+	// nothing is silently rewritten without a trace. A reported entry is money
+	// that actually moved and is never touched.
+	var repricedThisLife = false;	// one pass per page life is enough
+	function reprice(entries) {
+		if (repricedThisLife) return entries;
+		if (!window.DaimondPricing || typeof window.DaimondPricing.priceFor !== 'function') {
+			return entries;	// pricing not loaded yet -- try again on the next read.
+		}
+		repricedThisLife = true;
+		var changed = false;
+		for (var i = 0; i < entries.length; i++) {
+			var e = entries[i];
+			if (!e || e.r || e.rp) continue;
+			var res;
+			try { res = window.DaimondPricing.priceFor(e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''); }
+			catch (err) { continue; }
+			if (!res || typeof res.usd !== 'number') continue;
+			e.u0 = e.u;	// the figure as originally guessed.
+			e.u  = res.usd;
+			e.e  = !!res.estimated;
+			e.rp = 1;	// repriced -- never again.
+			changed = true;
+		}
+		if (changed) save(entries);
+		return entries;
+	}
+
 	// Persist the log, swallowing quota/availability errors: a
 	// failed write must never break the turn that triggered it.
 	function save(entries) {
@@ -152,11 +186,19 @@
 	// recent entry, keeping entries while each is within the
 	// session gap of its successor. The first larger gap ends the
 	// session, so the slice is the tail of uninterrupted activity.
-	function sessionSlice(entries) {
+	//
+	// The same gap ends the session against NOW: a tail that stopped
+	// twenty minutes ago is the PREVIOUS session, not this one. Without
+	// this, last night's spend read as "This session" all morning -- a
+	// figure that never moved and so could never be trusted.
+	function sessionSlice(entries, now) {
 		var sorted = entries
 			.filter(function (e) { return e && typeof e.t === 'number'; })
 			.sort(function (a, b) { return a.t - b.t; });
 		if (sorted.length === 0) return [];
+		if (typeof now === 'number' && now - sorted[sorted.length - 1].t >= SESSION_GAP_MS) {
+			return [];	// the last activity already ended its session.
+		}
 		var start = sorted.length - 1;
 		for (var i = sorted.length - 1; i > 0; i--) {
 			if (sorted[i].t - sorted[i - 1].t < SESSION_GAP_MS) start = i - 1;
@@ -170,10 +212,10 @@
 	/// no ≥15 min gap; week and month are the rolling last 7 and 30
 	/// days. This getter reads the clock (`Date.now`).
 	function totals() {
-		var entries = load();
+		var entries = reprice(load());
 		var now = Date.now();
 		return {
-			session: sum(sessionSlice(entries)),
+			session: sum(sessionSlice(entries, now)),
 			week:    sum(since(entries, now - WEEK_MS)),
 			month:   sum(since(entries, now - MONTH_MS)),
 		};
@@ -184,10 +226,10 @@
 	/// Returns an array of `{ model, usd, tokens, turns }`, sorted
 	/// by descending cost. This getter reads the clock.
 	function perModel(period) {
-		var entries = load();
+		var entries = reprice(load());
 		var now = Date.now();
 		var slice;
-		if (period === 'session') slice = sessionSlice(entries);
+		if (period === 'session') slice = sessionSlice(entries, now);
 		else if (period === 'week') slice = since(entries, now - WEEK_MS);
 		else slice = since(entries, now - MONTH_MS);	// default: month
 
@@ -224,7 +266,7 @@
 	/// dearest first. Reads no clock: `since` is the whole window.
 	function perProvider(sinceMs) {
 		var from = (typeof sinceMs === 'number' && isFinite(sinceMs)) ? sinceMs : 0;
-		var slice = since(load(), from);
+		var slice = since(reprice(load()), from);
 		var by = {};	// provider id → accumulator
 		for (var i = 0; i < slice.length; i++) {
 			var e = slice[i];
@@ -255,7 +297,7 @@
 	/// Each bucket is `{ day, ts, usd, tokens, turns }`. Reads the clock.
 	function series(days) {
 		var n = (typeof days === 'number' && days > 0) ? Math.floor(days) : 30;
-		var entries = load();
+		var entries = reprice(load());
 		// Midnight today, local, is the newest bucket's day.
 		var d0 = new Date();
 		d0.setHours(0, 0, 0, 0);
@@ -290,7 +332,7 @@
 	/// them. A thin projection of the store, so the storage key
 	/// stays owned here and is never read twice.
 	function samples() {
-		return load().map(function (e) { return { t: e.t, u: e.u || 0 }; });
+		return reprice(load()).map(function (e) { return { t: e.t, u: e.u || 0 }; });
 	}
 
 	window.DaimondLedger = {

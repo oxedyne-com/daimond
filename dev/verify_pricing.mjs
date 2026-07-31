@@ -342,20 +342,77 @@ const C = P._core;
 		near(L.perProvider(0).filter(r => r.provider === 'openrouter')[0].usd, 5.90));
 }
 
-// ── 8. Old entries still read ──────────────────────────────────────
+// ── 8. Old entries still read — and their guesses are REPRICED ─────
 {
-	// A store written before `pv` and `r` existed. Every reader must tolerate it.
+	// A store written before `pv` and `r` existed, priced by the old table
+	// whose guesses ran ~6x high. Every reader must tolerate the shape — and
+	// the first read must reprice the guesses under the corrected table
+	// (keeping the original in `u0`), because the stale figures were still
+	// inflating every total the user saw.
 	store._map.set('daimond-ledger', JSON.stringify([
 		{ t: Date.now() - 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.5, e: false },
 		{ t: Date.now() - 500,  m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.25, e: true },
 	]));
+	// A fresh module life: repricing runs once per life, on the first read —
+	// which is what boot does. The long-lived L above has already spent its
+	// pass on earlier sections' stores.
+	const win8 = { };
+	loadModule('js/pricing.js', { window: win8 });
+	loadModule('js/ledger.js',  { window: win8, localStorage: store });
+	const L = win8.DaimondLedger;
+	const fair = P.priceFor('glm-5.2', 100, 10, 0, '').usd;
 	const tot = L.totals();
-	check('an old store still totals', near(tot.session.usd, 0.75));
+	check('an old store is repriced under the corrected table, not summed as guessed',
+		near(tot.session.usd, 2 * fair) && !near(tot.session.usd, 0.75),
+		'session=' + tot.session.usd + ' fair=' + fair);
 	check('and reports nothing as reported', near(tot.session.reportedUsd, 0));
+	const stored = JSON.parse(store._map.get('daimond-ledger'));
+	check('the original guess survives in u0 with the rp mark',
+		near(stored[0].u0, 0.5) && stored[0].rp === 1 && near(stored[1].u0, 0.25),
+		JSON.stringify(stored[0]));
 	check('perModel still works on old entries', L.perModel('month')[0].model === 'glm-5.2');
 	check('perProvider groups old entries under the empty id',
 		L.perProvider(0)[0].provider === '');
 	check('samples still project old entries', L.samples().length === 2);
+}
+
+// ── 8b. A reported entry is never repriced ─────────────────────────
+{
+	store._map.set('daimond-ledger', JSON.stringify([
+		{ t: Date.now() - 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.0021, r: 1 },
+	]));
+	// A fresh module life, so the once-per-life guard does not skip the read.
+	const win2 = { };
+	loadModule('js/pricing.js', { window: win2 });
+	loadModule('js/ledger.js',  { window: win2, localStorage: store });
+	const t2 = win2.DaimondLedger.totals();
+	check('a reported figure is money that moved — repricing never touches it',
+		near(t2.session.usd, 0.0021) && !JSON.parse(store._map.get('daimond-ledger'))[0].rp);
+}
+
+// ── 8c. A session that stopped is not "this session" ───────────────
+{
+	const win3 = { };
+	loadModule('js/pricing.js', { window: win3 });
+	loadModule('js/ledger.js',  { window: win3, localStorage: store });
+	const L3 = win3.DaimondLedger;
+	// A tail that ended 16 minutes ago: last night's work, not this session.
+	store._map.set('daimond-ledger', JSON.stringify([
+		{ t: Date.now() - 20 * 60 * 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.001, r: 1 },
+		{ t: Date.now() - 16 * 60 * 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.001, r: 1 },
+	]));
+	const idle = L3.totals();
+	check('a tail older than the session gap reads as NO current session',
+		near(idle.session.usd, 0) && idle.session.tokens === 0,
+		'session=' + idle.session.usd);
+	check('the week still counts what the session no longer does',
+		near(idle.week.usd, 0.002));
+	// A tail that ended five minutes ago is still this session.
+	store._map.set('daimond-ledger', JSON.stringify([
+		{ t: Date.now() - 5 * 60 * 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.001, r: 1 },
+	]));
+	const live = L3.totals();
+	check('a five-minute-old tail is still this session', near(live.session.usd, 0.001));
 }
 
 // ── 9. The gateway's balance notice ────────────────────────────────

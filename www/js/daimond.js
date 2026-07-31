@@ -733,9 +733,16 @@ import init, {
 	// older side entirely, links included, and that is accepted rather than
 	// fixed: reconciling two crystals is a reduction, and a reduction is a model
 	// turn, not a merge rule.
+	//
+	// Freshness is `touched`, NOT `updated`. `updated` means worked on and orders
+	// the rail, so tagging deliberately leaves it alone -- and while the merge
+	// read it, a tag-only change was invisible across devices, and the untagged
+	// copy on the other device became strictly fresher the moment anything there
+	// was renamed or edited, at which point it replaced the tagged one and the
+	// tags were gone. `touched` moves on every change, including a tag.
 
-	/// Every Diamond this device holds, packed for the parcel: the id and stamp
-	/// the merge decides on, the whole directory, and which model it thinks with.
+	/// Every Diamond this device holds, packed for the parcel: the id, both
+	/// stamps, the whole directory, and which model it thinks with.
 	async function collectDiamonds() {
 		var out = [], tombs = loadDiamondTombs(), list;
 		try { list = JSON.parse(await diamondApp().list_diamonds()); }
@@ -749,6 +756,10 @@ import init, {
 				out.push({
 					id:      d.id,
 					updated: d.updated || 0,
+					// A device that predates the second stamp sends none, and the
+					// receiver falls back to `updated` — which is what `touched`
+					// means on such a device anyway.
+					touched: d.touched || d.updated || 0,
 					model:   models[d.id] || null,
 					data:    await diamondApp().export_diamond(d.id),
 				});
@@ -757,9 +768,71 @@ import init, {
 		return out;
 	}
 
+	/// How fresh a Diamond is, for the merge alone.
+	///
+	/// `touched` moves on every change; `updated` moves only when the Diamond is
+	/// WORKED on, and orders the rail. A parcel from a device that predates the
+	/// second stamp carries only the first, and on such a device every change
+	/// moved it -- so it stands in exactly, and old parcels merge as they always
+	/// did.
+	function diamondStamp(d) {
+		return (d && (d.touched || d.updated)) || 0;
+	}
+
+	/// The tags a Diamond export is carrying, read out of the packed metadata.
+	///
+	/// The pack was written by another device, so every step is defensive: a
+	/// merge must not be the thing that throws. `.red/` is where the store lived
+	/// before the rename, and a device that has not been opened since then still
+	/// sends that path.
+	function packTags(data) {
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var meta  = JSON.parse(files['.daimond/meta.json'] || files['.red/meta.json'] || '{}');
+			return Array.isArray(meta.tags)
+				? meta.tags.filter(function (x) { return typeof x === 'string' && x; })
+				: [];
+		} catch (e) { return []; }
+	}
+
+	/// Give a Diamond the tags of BOTH copies when the two are equally fresh.
+	/// True when something was written.
+	///
+	/// Equal stamps mean neither side is the newer one, so a wholesale replace
+	/// would be a coin toss and is refused above. Tags are the one part of a
+	/// Diamond that can be reconciled without a model turn -- they are a set of
+	/// short strings, and the union of two sets is not a judgement about either.
+	/// This is what lets two stores that ALREADY diverged (tagged here, not
+	/// there, and stamped identically because the tagging never moved a stamp)
+	/// come back together, rather than needing the user to re-tag by hand.
+	///
+	/// It settles. Writing the union moves `touched`, so this side becomes the
+	/// fresher one and the union travels back on the next push, where it is taken
+	/// wholesale -- an import lays the stamps down as they arrived, so nothing
+	/// bounces back again. And once the two sets agree, the union adds nothing,
+	/// nothing is written and no stamp moves. At most two rounds, then quiet.
+	///
+	/// The store owns normalisation and caps the list at eight, so a union that
+	/// overflows is trimmed there; the extra write that costs is harmless, and
+	/// the round after it agrees.
+	async function unionDiamondTags(app, r, mine) {
+		var here  = Array.isArray(mine && mine.tags) ? mine.tags : [];
+		var there = packTags(r.data);
+		if (!there.length) return false;
+		var union = here.slice();
+		for (var i = 0; i < there.length; i++) {
+			if (union.indexOf(there[i]) === -1) union.push(there[i]);
+		}
+		if (union.length === here.length) return false;		// the other side had nothing new
+		try { await app.set_tags(r.id, JSON.stringify(union)); }
+		catch (e) { return false; }							// it goes on the next pull
+		return true;
+	}
+
 	/// Merge the pulled Diamonds into the store. Tombstones first, so a deletion
 	/// on either device wins; then any Diamond this device lacks, or holds an
-	/// older copy of, is replaced wholesale.
+	/// older copy of, is replaced wholesale; and where the two copies are equally
+	/// fresh, their tags are unioned rather than one side's being dropped.
 	async function applyDiamonds(remote) {
 		var tombs = mergeTombMap(DIAMOND_TOMBS_KEY, remote.diamondTombs);
 		var incoming = Array.isArray(remote.diamonds) ? remote.diamonds : [];
@@ -784,7 +857,13 @@ import init, {
 			var mine = local[r.id];
 			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
 			// has not moved is not rewritten on every pull.
-			if (mine && !((r.updated || 0) > (mine.updated || 0))) continue;
+			if (mine && !(diamondStamp(r) > diamondStamp(mine))) {
+				// Neither copy is newer. Nothing is replaced -- but if the two
+				// disagree about the TAGS, both sides can have them all.
+				if (diamondStamp(r) === diamondStamp(mine)
+					&& await unionDiamondTags(app, r, mine)) changed = true;
+				continue;
+			}
 			try { await app.import_diamond(r.data); changed = true; }
 			catch (e) { continue; }
 			// Best effort: the model may be one this device has no key for, and

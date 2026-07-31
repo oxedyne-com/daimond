@@ -279,10 +279,11 @@ try {
 	/// sealed under the shared key, written over the current version and pulled
 	/// straight back — which is the merge under test.
 	///
-	/// The stamp is set in BOTH the places a real export carries it: the entry
+	/// BOTH stamps move, in both the places a real export carries them: the entry
 	/// the merge compares, and the `meta.json` inside the packed directory. A
-	/// real device's two copies always agree, so a fixture whose copies disagree
-	/// would be testing a state that cannot occur.
+	/// real device's copies always agree, so a fixture whose copies disagree
+	/// would be testing a state that cannot occur -- and a crystal edit on a real
+	/// device moves `updated` (it was worked on) AND `touched` (it changed).
 	const otherDeviceShifts = (id, crystal, delta) => page.evaluate(async (arg) => {
 		const state = await window.DaimondCore.collectSync();
 		const e = (state.diamonds || []).find(d => d.id === arg.id);
@@ -291,8 +292,10 @@ try {
 		pack.files['crystal.md'] = arg.crystal;
 		const meta = JSON.parse(pack.files['.daimond/meta.json']);
 		meta.updated = (e.updated || 0) + arg.delta;
+		meta.touched = (e.touched || e.updated || 0) + arg.delta;
 		pack.files['.daimond/meta.json'] = JSON.stringify(meta);
 		e.updated = meta.updated;
+		e.touched = meta.touched;
 		e.data    = JSON.stringify(pack);
 		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 		await fetch('/api/sync', {
@@ -490,6 +493,156 @@ try {
 	check('a v1 parcel (no diamonds section) applies without error',
 		v1.threw === '', v1.threw);
 	check('and leaves this device’s Diamonds exactly where they were', v1.still === true);
+
+	// ── (4f) Tags across devices: the change that used to vanish ───────
+	// A tag is content, but it is not WORK, so tagging deliberately leaves
+	// `updated` alone -- the rail is ordered by it, and filing a Diamond must not
+	// shuffle it to the top. The merge compared `updated`, so a tag-only change
+	// was invisible to it: it never travelled, and the moment the other device
+	// did anything stamped (a rename, a crystal edit) its untagged copy became
+	// strictly fresher and REPLACED the tagged one wholesale. A real user lost
+	// real tags to exactly that.
+	//
+	// Two devices are simulated on the one browser by swapping the store under
+	// it: `export_diamond` is a device's disk, `import_diamond` lays it back down
+	// verbatim (stamps included), and the merge that runs on each side is the
+	// app's own `applySync`, not a copy of it written here.
+	const TAG = 'keepsake';
+
+	/// What this device holds, as import-ready packs: its disk.
+	const diskNow = () => wasm(async (app) => {
+		const out = [];
+		for (const d of JSON.parse(await app.list_diamonds())) out.push(await app.export_diamond(d.id));
+		return out;
+	});
+
+	/// Make the browser BE the device that disk came from.
+	const becomeDevice = (disk) => wasm(async (app, disk) => {
+		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
+		for (const pack of disk) await app.import_diamond(pack);
+		return JSON.parse(await app.list_diamonds()).length;
+	}, disk);
+
+	/// What this device would push, and what a pull does with what arrives.
+	const parcelNow  = () => page.evaluate(() => window.DaimondCore.collectSync());
+	const pullParcel = (p) => page.evaluate(async (p) => { await window.DaimondCore.applySync(p); }, p);
+
+	/// One Diamond's row as the rail reads it.
+	const rowOf  = (id) => wasm(async (app, id) =>
+		JSON.parse(await app.list_diamonds()).find(d => d.id === id) || null, id);
+	const orderNow = () => wasm(async (app) =>
+		JSON.parse(await app.list_diamonds()).map(d => d.id).join(','));
+	const entryOf = (p, id) => (p.diamonds || []).find(d => d.id === id) || {};
+	const tagsOn  = (row) => ((row && row.tags) || []).join(',');
+
+	// A clean two-device world: one Diamond to tag, one beside it so the rail has
+	// an order to disturb.
+	const two = await wasm(async (app) => {
+		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
+		const a = await app.create_diamond('Tag-Travel');
+		const b = await app.create_diamond('Tag-Neighbour');
+		await app.write_crystal(a, '# shared ground\n');
+		return { a, b };
+	});
+	const disk0 = await diskNow();				// what BOTH devices last agreed on
+	check('the tag fixture starts from one agreed copy on both devices',
+		!!(two.a && two.b) && disk0.length === 2, 'packs=' + disk0.length);
+
+	// (1) A tag-only change reaches the other device.
+	await becomeDevice(disk0);
+	const orderBefore = await orderNow();
+	const rowBefore   = await rowOf(two.a);
+	await wasm((app, arg) => app.set_tags(arg.id, JSON.stringify([arg.tag])), { id: two.a, tag: TAG });
+	const rowTagged = await rowOf(two.a);
+	check('tagging leaves `updated` alone, so the rail keeps its order',
+		!!rowTagged && rowTagged.updated === rowBefore.updated && (await orderNow()) === orderBefore,
+		'updated ' + rowBefore.updated + ' -> ' + (rowTagged && rowTagged.updated));
+	const parcel1 = await parcelNow();
+	const disk1   = await diskNow();			// device 1: tagged, nothing else touched
+
+	await becomeDevice(disk0);					// device 2: the copy it last saw
+	const beforePull2 = await rowOf(two.a);
+	await pullParcel(parcel1);
+	const gotTag = await rowOf(two.a);
+	check('a tag-only change reaches the other device',
+		tagsOn(gotTag) === TAG, 'tags=[' + tagsOn(gotTag) + ']');
+	check('and arriving does not reorder the rail it arrived on',
+		!!gotTag && gotTag.updated === beforePull2.updated && (await orderNow()) === orderBefore,
+		'updated ' + beforePull2.updated + ' -> ' + (gotTag && gotTag.updated));
+
+	// (2) The other device then works on the SAME Diamond. Its copy is fresher,
+	// so it wins wholesale -- and because it had already received the tags, the
+	// tags come back with the rename rather than being wiped by it.
+	await wasm((app, id) => app.rename_diamond(id, 'Renamed-On-Two'), two.a);
+	const parcel2 = await parcelNow();
+	await becomeDevice(disk1);					// device 1 as it was: tagged, not renamed
+	await pullParcel(parcel2);
+	const afterWork = await rowOf(two.a);
+	check('the other device working on that Diamond does not wipe the tags',
+		!!afterWork && afterWork.name === 'Renamed-On-Two' && tagsOn(afterWork) === TAG,
+		afterWork ? afterWork.name + ' [' + tagsOn(afterWork) + ']' : 'absent');
+	check('an imported copy keeps the stamp it was sent with (an import is not working)',
+		!!afterWork && afterWork.updated === (entryOf(parcel2, two.a).updated || 0),
+		'here=' + (afterWork && afterWork.updated) + ' sent=' + entryOf(parcel2, two.a).updated);
+
+	// (3) Two stores that have ALREADY diverged -- the state the user is in.
+	// One side tagged the Diamond under a build that wrote no second stamp, so
+	// both copies are stamped identically and neither is fresher than the other.
+	const diverged = await page.evaluate(({ disk, id, tag }) => disk.map((p) => {
+		const pack = JSON.parse(p);
+		if (pack.id !== id) return p;
+		const meta = JSON.parse(pack.files['.daimond/meta.json']);
+		meta.tags = [tag];
+		delete meta.touched;					// an old build: one stamp, and it did not move
+		pack.files['.daimond/meta.json'] = JSON.stringify(meta);
+		return JSON.stringify(pack);
+	}), { disk: disk0, id: two.a, tag: TAG });
+
+	await becomeDevice(diverged);				// device 1: tagged, stamps as they were
+	const pD1 = await parcelNow();
+	await becomeDevice(disk0);					// device 2: untagged, the same stamps
+	const beforeConv = await rowOf(two.a);
+	await pullParcel(pD1);
+	const conv2 = await rowOf(two.a);
+	check('two stores that already diverged converge: the untagged side gains the tag',
+		tagsOn(conv2) === TAG, 'tags=[' + tagsOn(conv2) + ']');
+	check('and converging still does not reorder the rail',
+		!!conv2 && conv2.updated === beforeConv.updated,
+		'updated ' + beforeConv.updated + ' -> ' + (conv2 && conv2.updated));
+	const pD2 = await parcelNow();
+	await becomeDevice(diverged);				// device 1 once more
+	await pullParcel(pD2);
+	const conv1 = await rowOf(two.a);
+	check('and the side that had the tag keeps it when the union comes back',
+		tagsOn(conv1) === TAG, 'tags=[' + tagsOn(conv1) + ']');
+
+	// (4) A parcel from a device that predates the second stamp still merges by
+	// the only stamp it carries.
+	const oldStyle = await page.evaluate(({ p, id }) => {
+		const e = (p.diamonds || []).find(d => d.id === id);
+		if (!e) return p;
+		const pack = JSON.parse(e.data);
+		const meta = JSON.parse(pack.files['.daimond/meta.json']);
+		meta.name    = 'Named-By-An-Old-Build';
+		meta.updated = (e.updated || 0) + 60000;
+		delete meta.touched;
+		pack.files['.daimond/meta.json'] = JSON.stringify(meta);
+		e.data    = JSON.stringify(pack);
+		e.updated = meta.updated;
+		delete e.touched;
+		return p;
+	}, { p: await parcelNow(), id: two.a });
+	await pullParcel(oldStyle);
+	const oldWon = await rowOf(two.a);
+	check('a parcel with no second stamp still merges on the one it has',
+		!!oldWon && oldWon.name === 'Named-By-An-Old-Build', oldWon ? oldWon.name : 'absent');
+
+	// Every merge above left the store changed, so the engine has a push
+	// scheduled. Let it land: a push still in flight when the next section stubs
+	// the gateway is only rescheduled, and that section would then measure a chip
+	// that says "Syncing…" for a reason that has nothing to do with it.
+	await pushLanded(page);
+	await page.waitForTimeout(500);
 
 	// ── (6) A parcel the gateway refuses as too large is VISIBLE ───────
 	// A 413 used to log to the console and stop, so sync simply stopped working

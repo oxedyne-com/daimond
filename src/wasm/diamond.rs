@@ -13,7 +13,7 @@
 //! ```text
 //! diamonds/<id>/crystal.md                  the reduced state (agent writes, user may edit)
 //! diamonds/<id>/versions/NNNN.md          a snapshot per crystal version (0-padded)
-//! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, tags }
+//! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, touched, tags }
 //! diamonds/<id>/.daimond/log              append-only, one JSON record per line
 //! diamonds/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
 //! ```
@@ -276,6 +276,24 @@ async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
     opfs::write_file(FileRoot::Opfs, &meta_path(id), meta.to_json().as_bytes()).await
 }
 
+/// Stamp a Diamond as changed, without saying it was worked on.
+///
+/// Every mutation of anything inside `diamonds/<id>/` moves `touched`, because
+/// `touched` is what decides whose copy the other device takes.  A change that
+/// moved nothing would simply not travel: the merge would find the two copies
+/// equally fresh and keep its own, which is how tagging used to be invisible
+/// across devices -- and worse, how a later stamped edit on the other device
+/// came to look strictly fresher and replace the tagged copy wholesale.
+///
+/// `updated` is left alone here, deliberately.  It means *worked on* and orders
+/// the rail; the callers that mean that (see [`rename`], [`snapshot`]) move it
+/// themselves.
+async fn touch(id: &str) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.touched = now_ms() as u64;
+    write_meta(id, &meta).await
+}
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Log records                                                    │
@@ -344,7 +362,13 @@ pub async fn create(name: &str) -> Outcome<String> {
     res!(opfs::write_file(FileRoot::Opfs, &crystal_path(&id), b"").await);
     res!(opfs::write_file(FileRoot::Opfs, &version_path(&id, 0), b"").await);
 
-    let meta = Meta { name: name.to_string(), version: 0, updated: now, tags: Vec::new() };
+    let meta = Meta {
+        name:    name.to_string(),
+        version: 0,
+        updated: now,
+        touched: now,
+        tags:    Vec::new(),
+    };
     res!(write_meta(&id, &meta).await);
 
     let rec = LogRecord {
@@ -362,11 +386,13 @@ pub async fn create(name: &str) -> Outcome<String> {
     Ok(id)
 }
 
-/// Rename a Diamond, updating `meta.json`'s name and its `updated` stamp.
+/// Rename a Diamond, updating `meta.json`'s name and both its stamps.
 pub async fn rename(id: &str, name: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
     let mut meta = res!(read_meta(id).await);
     meta.name = name.to_string();
-    meta.updated = now_ms() as u64;
+    meta.updated = now;
+    meta.touched = now;
     res!(write_meta(id, &meta).await);
     Ok(())
 }
@@ -385,9 +411,17 @@ pub async fn rename(id: &str, name: &str) -> Outcome<()> {
 /// tagging must not reorder the rail.  Otherwise tidying a few Diamonds in one
 /// sitting would shuffle them all to the top and lose the order that was the
 /// point of the sort.  This is why it differs from `rename`, which does stamp.
+///
+/// It does move `touched`, because the tags are content and content has to
+/// travel.  While there was one stamp this could not be had both ways: leaving
+/// it alone meant the tags never reached the other device AND that the other
+/// device's untagged copy became strictly fresher the moment anything there was
+/// renamed or edited, at which point the merge replaced the tagged copy with it
+/// and the tags were gone.  A user lost real tags that way.
 pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
     let mut meta = res!(read_meta(id).await);
     meta.tags = normalise_tags(tags);
+    meta.touched = now_ms() as u64;
     res!(write_meta(id, &meta).await);
     Ok(())
 }
@@ -398,8 +432,12 @@ pub async fn delete(id: &str) -> Outcome<()> {
 }
 
 /// List every Diamond, returning a JSON array of
-/// `{ id, name, crystal_version, updated, tags }` ordered by most-recently
-/// updated first.
+/// `{ id, name, crystal_version, updated, touched, tags }` ordered by
+/// most-recently updated first.
+///
+/// Both stamps travel in the row because they answer different questions: the
+/// order below is `updated` (worked on), while the cross-device merge compares
+/// `touched` (changed at all).
 ///
 /// This is the one door every Diamond passes through before it can be opened, so it is where
 /// a workspace made before the rename is migrated (see [`migrate`]).  A Diamond that fails to
@@ -439,8 +477,10 @@ pub async fn list() -> Outcome<String> {
     rows.sort_by(|a, b| b.1.updated.cmp(&a.1.updated));
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
-            "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"tags\":{}}}",
-            json_escape(id), json_escape(&m.name), m.version, m.updated, m.tags_json(),
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
+              \"touched\":{},\"tags\":{}}}",
+            json_escape(id), json_escape(&m.name), m.version, m.updated,
+            m.touched, m.tags_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -464,6 +504,7 @@ async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
     res!(opfs::write_file(FileRoot::Opfs, &version_path(id, next), md.as_bytes()).await);
     meta.version = next;
     meta.updated = now;
+    meta.touched = now;        // a new crystal is both work and a change
     res!(write_meta(id, &meta).await);
     Ok(next)
 }
@@ -647,6 +688,11 @@ pub async fn add_link(
     let mut links = res!(read_links(owner).await);
     links.push(link);
     res!(write_links_for(owner, &links).await);
+    // The sidecar rides inside the owner's directory, so a link is part of what
+    // that Diamond IS, and the merge carries the directory whole.  Without the
+    // stamp the new link would not travel, and the other device's copy would
+    // eventually come back over it carrying the links it had instead.
+    touch_after_link(owner).await;
     Ok(id)
 }
 
@@ -658,7 +704,21 @@ pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
         return Ok(false);
     }
     res!(write_links_for(owner, &kept).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
     Ok(true)
+}
+
+/// Stamp the owner of a sidecar that has just changed, best effort.
+///
+/// Best effort because the link is already written: a Diamond whose `meta.json`
+/// cannot be read is one whose link should still exist here, and failing the
+/// call after the fact would tell the caller nothing happened when something
+/// did.  What is lost is that the link may not travel until the Diamond is
+/// changed again, which is the same position it was in before this existed.
+async fn touch_after_link(owner: &str) {
+    if let Err(e) = touch(owner).await {
+        console_log(&fmt!("Diamond '{}' could not be stamped after a link changed: {}", owner, e));
+    }
 }
 
 /// Every link touching `node`, from whichever Diamond's sidecar holds it.
@@ -784,8 +844,9 @@ fn is_safe_rel(rel: &str) -> bool {
     rel.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
 }
 
-/// Export a whole Diamond as JSON: `{"id":..,"files":{"<path>":"<content>",..}}`,
-/// each path relative to `diamonds/<id>/`.
+/// Export a whole Diamond as JSON:
+/// `{"id":..,"touched":..,"files":{"<path>":"<content>",..}}`, each path
+/// relative to `diamonds/<id>/`.
 ///
 /// Filesystem-level on purpose rather than field by field.  Everything a
 /// Diamond *is* lives under its directory -- the crystal, every version
@@ -796,6 +857,12 @@ fn is_safe_rel(rel: &str) -> bool {
 ///
 /// The paths come out sorted, so two exports of an unchanged Diamond are the
 /// same bytes and a caller comparing states sees no change where there is none.
+///
+/// `touched` -- when anything under the directory last changed -- is repeated at
+/// the top level, so a carrier can tell two copies apart without opening a file
+/// inside the pack.  It is a copy of what `.daimond/meta.json` says, not a
+/// second source of truth: an import lays the file down verbatim and the file
+/// wins from then on.
 pub async fn export_diamond(id: &str) -> Outcome<String> {
     let root = diamond_dir(id);
     if !res!(opfs::exists(FileRoot::Opfs, &root).await) {
@@ -832,7 +899,13 @@ pub async fn export_diamond(id: &str) -> Outcome<String> {
     let items: Vec<String> = files.iter()
         .map(|(p, c)| fmt!("\"{}\":\"{}\"", json_escape(p), json_escape(c)))
         .collect();
-    Ok(fmt!("{{\"id\":\"{}\",\"files\":{{{}}}}}", json_escape(id), items.join(",")))
+    // A Diamond with no readable metadata still exports; it simply carries no
+    // stamp, and a carrier falls back to whatever the pack itself says.
+    let touched = read_meta(id).await.map(|m| m.touched).unwrap_or(0);
+    Ok(fmt!(
+        "{{\"id\":\"{}\",\"touched\":{},\"files\":{{{}}}}}",
+        json_escape(id), touched, items.join(","),
+    ))
 }
 
 /// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
@@ -843,6 +916,13 @@ pub async fn export_diamond(id: &str) -> Outcome<String> {
 /// devices that edited the same Diamond between syncs therefore lose the older
 /// side entirely, links included, which is the accepted cost of carrying a
 /// directory rather than reconciling one.
+///
+/// Every file is laid down exactly as it arrived, `meta.json` and its two stamps
+/// included.  Re-stamping on arrival would be wrong twice over: an import is not
+/// the user working on this device, so the rail would reorder itself on a pull;
+/// and a copy that stamped itself fresh on landing would be handed straight back
+/// as the newer one, so the two devices would take turns overwriting each other
+/// for ever.
 ///
 /// The read and the parse both happen before anything is deleted, so a malformed
 /// export cannot leave the user with neither copy.  The window between the delete
