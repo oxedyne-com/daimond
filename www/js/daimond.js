@@ -1287,24 +1287,17 @@ import init, {
 		};
 	}
 
-	/// Merge a pulled remote state into local storage, then refresh the live
-	/// view in place. Tombstones union first so a deletion on either device
-	/// wins; then remote chats merge into stored chats by the same freshest-wins,
-	/// union-the-transcript rule the cross-tab path uses; then the in-memory
-	/// array and the UI are reconciled without disturbing a turn in flight.
-	/// Diamonds, workspace files and the cloud index follow, each by its own
-	/// rule and each best-effort, so one of them failing leaves the rest merged.
-	async function applySync(remote) {
-		if (!remote || typeof remote !== 'object') return;
-		// The roster first, and on its own: it is pure localStorage, it cannot
-		// fail in a way the rest cares about, and doing it here means a Diamond or
-		// a file failing below never costs the user the answer to "how many
-		// devices". A parcel without the field is a no-op.
-		try { mergeDevices(remote.devices); } catch (e) { /* the roster stays as it is */ }
+	/// Merge the chats out of a pulled parcel. Tombstones union first so a
+	/// deletion on either device wins; then remote chats merge into stored chats
+	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
+	/// uses; then the in-memory array and the UI are reconciled without
+	/// disturbing a turn in flight.
+	function applyChats(remote) {
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
-		readJson(CHATS_KEY, []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+		var stored = readJson(CHATS_KEY, []);
+		(Array.isArray(stored) ? stored : []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 		(Array.isArray(remote.chats) ? remote.chats : []).forEach(function (r) {
 			if (!r || !r.id) return;
 			var st = byId[r.id];
@@ -1319,40 +1312,70 @@ import init, {
 				JSON.stringify(Object.keys(byId).map(function (id) { return byId[id]; })));
 		} catch (e) { /* quota — the merge is lost this session, not corrupted */ }
 		onChatsChangedElsewhere();
-		// Then the Diamonds, each carried whole (best-effort; a Diamond failure
-		// never blocks the files below it).
-		try { await applyDiamonds(remote); } catch (e) { /* Diamonds stay as they are */ }
-		// Then the workspace files (best-effort; a file failure never blocks chats).
-		try { await applyFiles(remote.files); } catch (e) { /* files stay as they are */ }
-		// Then the large files held in the chunk store, reconstructed on demand.
-		try { await applyChunked(remote.chunked); } catch (e) { /* large files stay as they are */ }
-		// Then the providers, their model lists and their sealed keys. Same guard as
-		// every section above: a parcel without the field is a device that predates
-		// it and nothing happens, so a v1 or early-v2 parcel still applies cleanly.
-		// Best-effort, so a provider merge failing never costs the chats.
-		try {
-			if (window.DaimondModels && DaimondModels.applySync) {
-				await DaimondModels.applySync(remote.models);
+	}
+
+	/// Merge a pulled remote state into local storage, then refresh the live
+	/// view in place. Chats, Diamonds, workspace files, the chunk store, the
+	/// providers and the mailboxes, each by its own rule.
+	///
+	/// EVERY section is applied on its own, and nothing here throws. A parcel is
+	/// another device's work — a version behind, a version ahead, or half
+	/// written when it was packed — so one part of it that cannot be read must
+	/// cost only itself. The chats used to run outside any guard at the top,
+	/// which meant a transcript that was not a list took the whole merge with
+	/// it: Diamonds, files, providers and mail were never reached, and the pull
+	/// that called this logged one `console.debug` line, hidden in DevTools
+	/// unless Verbose is on. Two real devices went a week without converging on
+	/// exactly that.
+	///
+	/// Returns `{ failed: [section, …] }`, so the caller can say the merge did
+	/// not finish rather than push its own state over what it could not read.
+	async function applySync(remote) {
+		var failed = [];
+		if (!remote || typeof remote !== 'object') return { failed: ['parcel'] };
+		/// Run one section, and NOTE a failure rather than let it out.
+		async function section(name, fn) {
+			try { await fn(); }
+			catch (e) {
+				failed.push(name);
+				// Loud on purpose: a merge that silently did half its work is the
+				// bug this whole function is shaped around.
+				try { console.warn('[sync] merge failed in section "' + name + '"', e); } catch (e2) {}
 			}
-		} catch (e) { /* providers stay as they are */ }
-		// Then the mailboxes. A second device that holds the account holds the
+		}
+		// The roster first: it is pure localStorage, and doing it here means a
+		// Diamond or a file failing below never costs the user the answer to "how
+		// many devices". A parcel without a given field is a no-op throughout.
+		await section('devices',  function () { mergeDevices(remote.devices); });
+		await section('chats',    function () { applyChats(remote); });
+		await section('diamonds', function () { return applyDiamonds(remote); });
+		await section('files',    function () { return applyFiles(remote.files); });
+		// The large files held in the chunk store, reconstructed on demand.
+		await section('chunked',  function () { return applyChunked(remote.chunked); });
+		// The providers, their model lists and their sealed keys. A parcel without
+		// the field is a device that predates it, so a v1 parcel still applies.
+		await section('models',   function () {
+			if (window.DaimondModels && DaimondModels.applySync) return DaimondModels.applySync(remote.models);
+		});
+		// The mailboxes. A second device that holds the account holds the
 		// entitlement too, so an account that arrives here is an account that can
 		// actually be read; and one that arrives at a device WITHOUT the
 		// entitlement degrades exactly as an unentitled account already does —
 		// the panel shows its pitch and the gateway refuses the sync.
-		try {
-			if (window.DaimondMail && DaimondMail.applySync) {
-				await DaimondMail.applySync(remote.mail);
-			}
-		} catch (e) { /* mailboxes stay as they are */ }
+		await section('mail',     function () {
+			if (window.DaimondMail && DaimondMail.applySync) return DaimondMail.applySync(remote.mail);
+		});
 		// If the Workspace panel is open, show what just landed — including any
-		// file that arrived as a cloud reference rather than as bytes.
+		// file that arrived as a cloud reference rather than as bytes. Drawing is
+		// not merging: this one is not counted as a failed section, because a
+		// panel that did not repaint has cost the parcel nothing.
 		try {
 			if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('work')) {
 				if (Files.refresh) Files.refresh();
 				if (Files.refreshResidency) Files.refreshResidency();
 			}
 		} catch (e) {}
+		return { failed: failed };
 	}
 
 	var seq = 1;
@@ -1859,7 +1882,9 @@ import init, {
 		// Neither pane of the rail may be crushed, and neither of the two LISTS in
 		// its upper pane: a Diamonds list dragged to nothing is a list you cannot
 		// get back, because the handle would be all there is left of it.
-		var MIN_H    = { top: 130, pane: 160, list: 72 };
+		// `stack` is the floor for a panel sharing a dock column: a header and a
+		// couple of rows, which is the least that is worth drawing.
+		var MIN_H    = { top: 130, pane: 160, list: 72, stack: 120 };
 		var NARROW   = 1280;    // below this the rail folds away on its own
 		var TWO_COLS = 1900;    // and above this the dock may take a second column
 
@@ -1874,6 +1899,12 @@ import init, {
 		var grid   = 'auto';    // which of GRIDS the dock is tiled on
 		var pinned = null;      // panel ids kept on the chip row; null means all of them
 		var arrangements = {};  // diamond id -> a saved arrangement, restored on switch
+		// What panels sharing a dock column have made of its height. Keyed by the
+		// column's OCCUPANCY -- 'work|mail' -- not by the column, so the tuning
+		// belongs to the panels rather than to the slot they happened to be in.
+		var stacks    = {};     // occupancy -> each panel's share of the column
+		var dockSeats = [];     // { el, ids } per drawn column, as apply() seated them
+		var stackEls  = {};     // the divider elements, kept rather than rebuilt
 		var tagsEl, stageEl, dockEl, mainEl;
 
 		/// The dock's shape right now, with `auto` resolved against the window.
@@ -1948,7 +1979,7 @@ import init, {
 				localStorage.setItem(KEY, JSON.stringify({
 					open: open, stage: stage, dock: dock,
 					widths: widths, split: split, railSplit: railSplit, seat: seat,
-					grid: grid, pinned: pinned, arrangements: arrangements,
+					grid: grid, pinned: pinned, arrangements: arrangements, stacks: stacks,
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
 		}
@@ -1973,6 +2004,19 @@ import init, {
 			// from it rather than lost -- the gallery still has it.
 			if (Array.isArray(st.pinned)) pinned = st.pinned.filter(def);
 			if (st.arrangements && typeof st.arrangements === 'object') arrangements = st.arrangements;
+			// A stored share is read only if it still names panels that exist and
+			// still has one number per panel: a stack whose occupancy has changed
+			// underneath it is not a stack the numbers describe, and an even split
+			// is the honest answer rather than a share applied to the wrong panel.
+			if (st.stacks && typeof st.stacks === 'object') {
+				Object.keys(st.stacks).forEach(function (k) {
+					var ids = k.split('|'), v = st.stacks[k];
+					if (!Array.isArray(v) || v.length !== ids.length || ids.length < 2) return;
+					if (!ids.every(def)) return;
+					if (!v.every(function (x) { return typeof x === 'number' && x > 0 && x <= 1; })) return;
+					stacks[k] = v.slice();
+				});
+			}
 			if (Array.isArray(st.dock)) {
 				dock = st.dock.filter(function (id) { return def(id) && zoneOf(id) === 'dock' && open[id]; })
 					.slice(0, dockMax());
@@ -2061,6 +2105,138 @@ import init, {
 			want = Math.max(MIN_H.list, Math.min(want, r.room - MIN_H.list));
 			r.list.style.flex   = '0 0 auto';
 			r.list.style.height = want + 'px';
+		}
+
+		// ── Panels stacked in a dock column ───────────────────
+		// A column's height used to be split evenly and that was that, so a
+		// Workspace with one file and an Email with forty got the same half. A
+		// divider now sits between each adjacent pair and moves the boundary.
+		//
+		// The share is kept against WHAT IS IN THE COLUMN rather than against the
+		// column itself. A key tied to the slot ('dock-a, second boundary') would
+		// hand a tuning meant for Email to whatever the next tiling seated there;
+		// keyed by occupancy, `work|mail` finds its own boundary wherever those
+		// two re-stack, which is what makes Auto -> 2 by 2 -> Auto come back to
+		// what the user left. A panel JOINING the column makes a different
+		// occupancy, so that stack starts even -- and the old share is untouched,
+		// waiting for the newcomer to leave again.
+
+		function stackKey(ids) { return ids.join('|'); }
+		function seatOf(colId) {
+			return dockSeats.filter(function (s) { return s.el.id === colId; })[0] || null;
+		}
+
+		/// The stored shares for an occupancy, normalised to sum to one, or null
+		/// when there are none to honour and the column should share evenly.
+		function sharesOf(ids) {
+			var s = stacks[stackKey(ids)];
+			if (!Array.isArray(s) || s.length !== ids.length) return null;
+			var sum = 0;
+			for (var i = 0; i < s.length; i++) {
+				if (typeof s[i] !== 'number' || !(s[i] > 0)) return null;
+				sum += s[i];
+			}
+			if (!(sum > 0)) return null;
+			return s.map(function (v) { return v / sum; });
+		}
+
+		/// Spend `room` on `shares`, with nothing below `min`.
+		///
+		/// What the short panels need is taken from the tall ones in proportion to
+		/// what they hold ABOVE the minimum, so a crush is paid for by whoever can
+		/// afford it. One pass is enough: `room >= min * n` is checked first, and
+		/// that is exactly the condition under which the slack covers the need.
+		function fitStack(shares, room, min) {
+			var n = shares.length;
+			var px = shares.map(function (s) { return s * room; });
+			var need = 0, slack = 0;
+			px.forEach(function (v) { if (v < min) need += min - v; else slack += v - min; });
+			if (need > 0 && slack > 0) {
+				var rate = Math.min(need, slack) / slack;
+				px = px.map(function (v) { return v < min ? min : v - (v - min) * rate; });
+			}
+			return px.map(function (v) { return Math.max(min, Math.round(v)); });
+		}
+
+		/// Put a divider between each adjacent pair in every drawn column.
+		///
+		/// Every divider is taken out of the dock first, wherever it has ended up.
+		/// The surplus-column sweep empties a retired column by moving its children
+		/// into the dock itself, so a divider left in one would be dumped loose
+		/// beside the panels: a handle for a boundary that no longer exists.
+		function placeStacks() {
+			if (!dockEl) return;
+			[].slice.call(dockEl.querySelectorAll('.hstack')).forEach(function (h) {
+				if (h.parentNode) h.parentNode.removeChild(h);
+			});
+			// The phone shows one destination at a time, chosen from the bottom
+			// bar. Nothing is stacked, so there is no boundary to hold.
+			if (isMobile()) return;
+			dockSeats.forEach(function (s) {
+				s.el.classList.toggle('stacked', s.ids.length > 1);
+				for (var i = 1; i < s.ids.length; i++) {
+					var el = elOf(s.ids[i]);
+					if (el && el.parentNode === s.el) {
+						s.el.insertBefore(stackHandle(s.el.id, i - 1), el);
+					}
+				}
+			});
+		}
+
+		/// The divider for a boundary, built once and kept: a handle rebuilt under
+		/// the pointer would drop the drag holding it.
+		function stackHandle(colId, i) {
+			var key = colId + '-' + i;
+			var h = stackEls[key];
+			if (!h) {
+				h = document.createElement('div');
+				h.className = 'hstack';
+				h.id = 'hstack-' + key;
+				h.dataset.i18nTitle = 'layout.handle';
+				bindStack(h, colId, i);
+				stackEls[key] = h;
+			}
+			h.title = t('layout.handle');       // re-read, so a language change lands
+			return h;
+		}
+
+		/// Give each stacked panel its share of its column's height. Pixels cut
+		/// from a proportion, as the rail's own divider does, so a tuned column
+		/// survives a resize; the last panel flexes into whatever is left, so no
+		/// rounding shows as a gap at the bottom of the column.
+		function applyStacks() {
+			dockSeats.forEach(function (s) {
+				var ids = s.ids, n = ids.length;
+				var els = ids.map(elOf);
+				var hs  = [].slice.call(s.el.children).filter(function (k) {
+					return k.classList.contains('hstack');
+				});
+				var even = function () {
+					els.forEach(function (el) { if (el) { el.style.flex = ''; el.style.height = ''; } });
+					hs.forEach(function (h) { h.style.display = 'none'; });
+				};
+				if (isMobile() || n < 2 || els.indexOf(null) !== -1) { even(); return; }
+				// `.pcol.stacked` drops the column's gap, because the divider stands
+				// in for it -- so the room is the column less the dividers alone.
+				//
+				// Measured with the dividers STANDING, always. A hidden one is 0px
+				// tall, so a column that had just put its dividers away measured
+				// itself 16px roomier, decided it could divide after all, and put
+				// them back -- a short column flickering between the two answers.
+				hs.forEach(function (h) { h.style.display = ''; });
+				var room = s.el.clientHeight;
+				hs.forEach(function (h) { room -= h.offsetHeight; });
+				// Too short to give everyone a usable panel: share it evenly and put
+				// the handles away, rather than offer a divider that cannot move.
+				if (room < MIN_H.stack * n) { even(); return; }
+				var shares = sharesOf(ids) || ids.map(function () { return 1 / n; });
+				var px = fitStack(shares, room, MIN_H.stack);
+				els.forEach(function (el, i) {
+					if (i === n - 1) { el.style.flex = '1 1 auto'; el.style.height = ''; return; }
+					el.style.flex   = '0 0 auto';
+					el.style.height = px[i] + 'px';
+				});
+			});
 		}
 
 		/// Share the stage between its two occupants. Solo takes it all.
@@ -2179,6 +2355,11 @@ import init, {
 					dock = dock.filter(function (id) { return unseen.indexOf(id) === -1; });
 				}
 				var cols = dockColumns(dockCols());
+				// Who ends up in which column, taken from the seating itself rather
+				// than read back off the DOM: a panel just closed still has its
+				// element in a column at this point, and asking the browser what is
+				// drawn there would count it.
+				dockSeats = cols.map(function (c) { return { el: c, ids: [] }; });
 				dock.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
@@ -2186,6 +2367,7 @@ import init, {
 					// Round robin rather than filling each column in turn, so four
 					// panels across two columns come out two and two.
 					cols[i % cols.length].appendChild(el);
+					dockSeats[i % cols.length].ids.push(id);
 				});
 				// A column the grid has finished with gives up what it is holding and
 				// is retired outright, rather than left to `.pcol:empty` to notice.
@@ -2216,6 +2398,11 @@ import init, {
 			renderTags();
 			applySplit();
 			applyRailSplit();
+			// Outside the desktop block above, both of them: on a phone the dock's
+			// seating is not touched, and a divider left over from the desktop
+			// would be drawn as a strip across the column the phone lays out.
+			placeStacks();
+			applyStacks();
 			applySeat();
 			save();
 		}
@@ -2509,6 +2696,61 @@ import init, {
 			handle.addEventListener('dblclick', function () { railSplit = 0.5; applyRailSplit(); save(); });
 		}
 
+		// ── The dividers between stacked dock panels ──────────
+		/// The boundary between the i-th and (i+1)-th panel of a column.
+		///
+		/// It moves that boundary and no other: what the panel above gains, the
+		/// one below gives up, and the rest of the column is left exactly where it
+		/// is. The heights are read at pointerdown and the drag is arithmetic on
+		/// them, so a column of three does not shuffle under the hand.
+		function bindStack(handle, colId, i) {
+			var ids = null, base = null, room = 0, startY = 0, dragging = false;
+			handle.addEventListener('pointerdown', function (e) {
+				var s = seatOf(colId);
+				if (!s || i + 1 >= s.ids.length) return;
+				var px = s.ids.map(function (id) {
+					var el = elOf(id);
+					return el ? el.getBoundingClientRect().height : 0;
+				});
+				room = px.reduce(function (a, b) { return a + b; }, 0);
+				if (room <= 0) return;
+				ids = s.ids.slice(); base = px; startY = e.clientY; dragging = true;
+				handle.setPointerCapture(e.pointerId);
+				handle.classList.add('dragging');
+				document.body.classList.add('resizing-v');
+			});
+			handle.addEventListener('pointermove', function (e) {
+				if (!dragging) return;
+				// Clamped on the way in rather than after the fact, so holding the
+				// pointer far past the end of the column and coming back does not
+				// have to unwind a share that was never legal.
+				var dy = Math.max(MIN_H.stack - base[i],
+					Math.min(e.clientY - startY, base[i + 1] - MIN_H.stack));
+				var px = base.slice();
+				px[i] += dy; px[i + 1] -= dy;
+				stacks[stackKey(ids)] = px.map(function (v) { return v / room; });
+				applyStacks();
+			});
+			handle.addEventListener('pointerup', function (e) {
+				if (!dragging) return;
+				dragging = false;
+				handle.releasePointerCapture(e.pointerId);
+				handle.classList.remove('dragging');
+				document.body.classList.remove('resizing-v');
+				save();
+			});
+			// The whole column back to even, not just this pair: with three panels
+			// the pair alone leaves the column in a state nobody asked for, and
+			// "reset" that resets some of it is worse than none.
+			handle.addEventListener('dblclick', function () {
+				var s = seatOf(colId);
+				if (!s) return;
+				delete stacks[stackKey(s.ids)];
+				applyStacks();
+				save();
+			});
+		}
+
 		// ── Arrangements ──────────────────────────────────────
 		// A Diamond can carry the arrangement it is worked in, so that returning to a
 		// piece of work restores the panels it needs rather than making them be
@@ -2586,6 +2828,8 @@ import init, {
 				if (stageEl) new ResizeObserver(applySeat).observe(stageEl);
 				var railTop = document.getElementById('rail-top');
 				if (railTop) new ResizeObserver(applyRailSplit).observe(railTop);
+				// So is a stacked column's share of its column.
+				if (dockEl) new ResizeObserver(applyStacks).observe(dockEl);
 			}
 			// Every panel's closer returns it to the header.
 			document.querySelectorAll('[data-close]').forEach(function (b) {
@@ -8249,10 +8493,10 @@ import init, {
 	/// The three branches are exclusive and each MOVES the tag rather than
 	/// copying it, so a tag can never be in both lists -- which is why nothing
 	/// downstream has to decide what "include and exclude the same tag" would
-	/// mean. The last leg is walked from the summary beside the search box:
-	/// excluding a tag hides every Diamond carrying it, so the chip that was
-	/// just clicked leaves the rail with them, and the summary is where it
-	/// stays reachable.
+	/// mean. Clicked from a Diamond box the last leg is out of reach, since
+	/// refusing a tag takes every Diamond carrying it off the rail and the chip
+	/// goes with them; the standing pool beside the search box holds all three,
+	/// because it is drawn from the store rather than from the rail.
 	function cycleTagFilter(tag) {
 		var i = tagInc.indexOf(tag), j = tagExc.indexOf(tag);
 		if (i !== -1) { tagInc.splice(i, 1); tagExc.push(tag); }   // wanted -> unwanted
@@ -8261,9 +8505,9 @@ import init, {
 		renderDiamondList();
 	}
 
-	/// Take a tag out of the filter altogether, whichever list it was in. This is
-	/// what a chip in the summary does: the summary says what is on, so clicking
-	/// one of its chips takes that thing off rather than turning it into another.
+	/// Take a tag out of the filter altogether, whichever list it was in. Not a
+	/// leg of the cycle: it is what a tag being DELETED does on its way out, so
+	/// a filter is never left holding a tag that no longer exists.
 	function dropTagFilter(tag) {
 		tagInc = tagInc.filter(function (t) { return t !== tag; });
 		tagExc = tagExc.filter(function (t) { return t !== tag; });
@@ -8405,20 +8649,44 @@ import init, {
 		agentFilter.appendChild(chip);
 	}
 
-	/// One chip in the summary: the tag, an × to take it out of the filter, and
-	/// for an excluded tag the negation the theme draws.
-	function filterChip(tag, negated) {
-		var chip = tagChip(tag, 'tag-active' + (negated ? ' tag-no' : ''),
-			function () { dropTagFilter(tag); });
-		chip.title = negated ? t('tag.clear_exclude', { tag: tag }) : t('tag.clear_filter', { tag: tag });
-		// The negation is drawn in CSS (see `.tag-no`) rather than set as text: a
-		// chip's textContent is the tag, and the rail, the filter and the search
-		// all read it. Someone who cannot see the mark is told in words instead.
-		if (negated) chip.setAttribute('aria-label', t('tag.not_tagged', { tag: tag }));
-		var x = document.createElement('span');
-		x.className = 'tag-x';
-		x.textContent = '×';
-		chip.appendChild(x);
+	/// Every tag the pool has to offer: the ones in use across the store, plus
+	/// any the filter is holding.
+	///
+	/// The second half is what keeps a REFUSED tag reachable. Refusing one takes
+	/// every Diamond carrying it off the rail, so a pool drawn from the rail
+	/// would lose the chip along with them and leave the refusal on with nothing
+	/// to click. Read from the store instead, and the chip stays where it was.
+	///
+	/// Alphabetical, not by how often a tag is used. This row is standing
+	/// furniture in a fixed place, and a frequency order reshuffles it exactly
+	/// when it is being looked at -- file one Diamond and the chip you reached
+	/// for last time has moved. The tag editor's pool sorts the same way, so one
+	/// tag sits in one place in both.
+	function tagPool() {
+		var seen = {};
+		diamonds.forEach(function (f) { tagsOf(f).forEach(function (x) { seen[x] = 1; }); });
+		tagInc.forEach(function (x) { seen[x] = 1; });
+		tagExc.forEach(function (x) { seen[x] = 1; });
+		return Object.keys(seen).sort(function (a, b) { return a.localeCompare(b); });
+	}
+
+	/// One chip in the standing pool: the tag, and the state the rail holds it
+	/// in, drawn by the theme.
+	function poolChip(tag) {
+		var st  = tagState(tag);
+		var cls = 'tag-pool' + (st === 'inc' ? ' tag-inc' : st === 'exc' ? ' tag-no' : '');
+		var chip = tagChip(tag, cls, cycleTagFilter);
+		// The title says what the NEXT click does rather than what the chip is: a
+		// chip already filtering looks like it has nothing left to give.
+		chip.title = st === 'inc' ? t('tag.exclude_next', { tag: tag })
+			: st === 'exc' ? t('tag.clear_exclude', { tag: tag })
+			: t('tag.only_diamonds', { tag: tag });
+		// Both marks are drawn in CSS (see `.tag-inc` and `.tag-no`) rather than
+		// set as text: a chip's textContent is the tag, and the rail, the filter
+		// and the search all read it. Someone who cannot see the mark is told
+		// which state it is in, in words.
+		if (st === 'inc') chip.setAttribute('aria-label', t('tag.exclude_next', { tag: tag }));
+		if (st === 'exc') chip.setAttribute('aria-label', t('tag.not_tagged', { tag: tag }));
 		return chip;
 	}
 
@@ -8464,46 +8732,62 @@ import init, {
 		return d;
 	}
 
-	/// The active filter, beside the search box: the tags wanted, the tags not
-	/// wanted, and how the first combine. A filter you cannot see is a list
-	/// quietly lying about what it holds -- and a boolean one can hide a Diamond
-	/// for two different reasons, so both have to be on screen.
+	/// The tag filter, beside the search box: every tag in use, standing, each
+	/// chip cycling off -> wanted -> refused -> off where it sits.
+	///
+	/// A POOL rather than a summary of what is on. A summary is only drawn once
+	/// something has been clicked, so the only way IN was a chip on a Diamond
+	/// box -- and a reader who went looking under the search box for the filter
+	/// found nothing there at all. The pool is the surface: it says what the
+	/// vocabulary is before anything is touched, each chip carries its own state
+	/// in place, and a refused tag stays put even though its Diamonds have left
+	/// the rail. That makes the separate wanted and refused rows redundant --
+	/// they said in a second place what a chip now says where it is -- so what
+	/// is left below the pool is only what is NOT a tag: how the wanted ones
+	/// combine, and the one click that puts the whole thing down.
 	function renderTagFilter() {
 		if (!diamondFilter) return;
+		// A pool taller than its cap scrolls, and a repaint that lost the scroll
+		// would throw the reader back to the top on every click.
+		var was  = diamondFilter.querySelector('.tagf-pool');
+		var top  = was ? was.scrollTop : 0;
 		diamondFilter.innerHTML = '';
-		if (!tagFiltering()) {
+		var pool = tagPool();
+		if (!pool.length) {
 			diamondFilter.style.display = 'none';
 			fitTagFilter();
 			return;
 		}
 		diamondFilter.style.display = '';
-		var inc = null, exc = null;
-		if (tagInc.length) {
-			inc = tagfRow('tagf-inc');
-			tagInc.forEach(function (tag) { inc.appendChild(filterChip(tag, false)); });
-			// Offered only where it can change the answer: with one included tag
+		var row = document.createElement('div');
+		row.className = 'tagf-pool';
+		row.setAttribute('role', 'group');
+		row.setAttribute('aria-label', t('tag.all'));
+		pool.forEach(function (tag) { row.appendChild(poolChip(tag)); });
+		diamondFilter.appendChild(row);
+		row.scrollTop = top;
+		if (tagFiltering()) {
+			var ctl = tagfRow('tagf-ctl');
+			// Offered only where it can change the answer: with one wanted tag
 			// ALL and ANY name the same list, and a control that does nothing is
 			// one more thing the reader has to rule out.
-			if (tagInc.length > 1) inc.appendChild(tagModeControl());
-			diamondFilter.appendChild(inc);
+			if (tagInc.length > 1) ctl.appendChild(tagModeControl());
+			// Offered for a filter of any size. A pool chip has no closer -- its
+			// text is the tag and nothing else -- so putting one tag down takes
+			// two clicks round the cycle, and this is the one that does it in one.
+			ctl.appendChild(tagClearAll());
+			diamondFilter.appendChild(ctl);
 		}
-		if (tagExc.length) {
-			exc = tagfRow('tagf-exc');
-			tagExc.forEach(function (tag) { exc.appendChild(filterChip(tag, true)); });
-			diamondFilter.appendChild(exc);
-		}
-		// With one tag in the filter its own × is already the clear-all.
-		if (tagInc.length + tagExc.length > 1) (exc || inc).appendChild(tagClearAll());
 		fitTagFilter();
 	}
 
-	/// The summary is rail furniture, and the two lists below share what the
-	/// furniture leaves. It takes a second row when a tag is excluded, and wraps
-	/// when the chips outrun the rail's width; either way the height comes off
-	/// the Chats list alone and quietly moves the divider. So say what a window
-	/// resize says -- but only when the height really moved, since a filter is
-	/// changed far more often than the furniture around it.
-	var tagFilterH = 0;         // the summary's height at its last paint
+	/// The pool is rail furniture, and the two lists below share what the
+	/// furniture leaves. It wraps when the chips outrun the rail's width and
+	/// takes a second row when something is filtering; either way the height
+	/// comes off the Chats list alone and quietly moves the divider. So say what
+	/// a window resize says -- but only when the height really moved, since a
+	/// filter is changed far more often than the furniture around it.
+	var tagFilterH = 0;         // the pool's height at its last paint
 	function fitTagFilter() {
 		if (!diamondFilter) return;
 		var h = diamondFilter.offsetHeight;
@@ -8523,8 +8807,9 @@ import init, {
 	/// on anything draws no chip anywhere and the rail is a bare search box --
 	/// which reads as a filing system that was removed rather than one that is
 	/// empty. Say which, in one quiet line, and take it away the moment a tag
-	/// exists. It sits beside the filter chip rather than inside it: the chip's
-	/// text is read as a tag name, and a sentence in there would be read as one.
+	/// exists -- which is the moment the standing pool takes its place. It sits
+	/// beside the pool rather than inside it: a pool chip's text is read as a
+	/// tag name, and a sentence in there would be read as one.
 	function renderTagHint() {
 		if (!diamondFilter || !diamondFilter.parentNode) return;
 		var hint = document.getElementById('diamond-tag-hint');

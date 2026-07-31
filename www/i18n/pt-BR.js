@@ -385,6 +385,9 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronização pausada',
 	'sync.too_big_reason': 'O pacote deste dispositivo é grande demais para ser enviado, então o trabalho dele parou de viajar. A causa costuma ser um Diamond ou um arquivo do espaço de trabalho muito grande — tire-o ou diminua-o, e a sincronização volta sozinha.',
+	'sync.paused': 'Sincronização pausada',
+	'sync.busy_reason': 'Outro dispositivo está salvando nesta conta ao mesmo tempo, então o trabalho deste dispositivo ainda não foi enviado. Ele vai junto na próxima mudança.',
+	'sync.merge_reason': 'Parte do que chegou do outro dispositivo não deu para juntar aqui, então este dispositivo não escreveu por cima. Recarregar a página costuma resolver.',
 	'sync.last_synced': 'Última sincronização {when}.',
 	'sync.last_never': 'Nada foi sincronizado deste dispositivo ainda.',
 	'sync.when_just_now': 'agora mesmo',

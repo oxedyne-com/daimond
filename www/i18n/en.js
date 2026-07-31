@@ -685,6 +685,12 @@
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
 	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. One very large Diamond or workspace file is the usual cause — remove or shrink it and sync resumes on its own.',
+	// A reconcile that did not finish. Both of these mean the same thing to the
+	// user — this device's work is still only here — so they share a label and
+	// differ in the reason.
+	'sync.paused':         'Sync paused',
+	'sync.busy_reason':    'Another device is saving to this account at the same time, so this device’s work has not been sent yet. It goes on the next change.',
+	'sync.merge_reason':   'Some of what arrived from the other device could not be merged here, so this device has not sent over the top of it. Reloading the page usually clears it.',
 	'sync.last_synced':    'Last synced {when}.',
 	'sync.last_never':     'Nothing has synced from this device yet.',
 	'sync.when_just_now':  'just now',

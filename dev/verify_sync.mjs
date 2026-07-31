@@ -26,7 +26,14 @@
 //   8. Provider keys and model lists travel too: sealed keys only, deterministic
 //      to the byte, freshest-wins per provider, and a union so neither device
 //      loses a provider the other has never seen.
-import { open, chat } from './harness.mjs';
+//  10. One section of a parcel that cannot be merged costs only itself: the
+//      Diamonds beside it still arrive, and the merge says what it could not do.
+//  11. A reconcile that gives up says so on the chip, rather than leaving the
+//      "Synced" its own pull put there.
+//  12. Two REAL devices, on two browser profiles, converge in BOTH directions --
+//      including the one that is not being typed at, which raises no focus event
+//      and ends no turn and therefore never asked the gateway anything at all.
+import { open, chat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +64,7 @@ async function pushLanded(pg) {
 
 const s = await open({ name: 'sync', signIn: true, connect: true });
 const { page } = s;
+let child = null;		// a second REAL device, paired in at (12)
 
 // The engine and its dependencies must be live and the session authed.
 await page.waitForFunction(
@@ -1569,11 +1577,255 @@ try {
 	check('identity export bundle carries salt + wrapped key + pubkey',
 		!!bundle && bundle.hasSalt && bundle.hasPriv && bundle.hasPub && bundle.v === 1);
 
+	// ── (10) One bad section must not swallow the parcel ───────────────
+	// A parcel is written by ANOTHER device: a version behind, a version ahead,
+	// or halfway through a write when it was packed. Every section of the merge
+	// is meant to be best effort, so that one of them failing costs only itself.
+	// The TOP of applySync was not: the chats ran outside any guard, so a
+	// transcript that was not a list threw out of the whole function and the
+	// Diamonds, the files, the providers and the mailboxes below it were never
+	// reached. The pull that called it logged one console.debug line -- hidden in
+	// DevTools unless Verbose is on -- adopted the version, and went on to push
+	// this device's state over the top of the parcel it had just failed to merge.
+	const poison = await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		const id   = await app.create_diamond('Poison-Local');
+		const pack = JSON.parse(await app.export_diamond(id));
+		const meta = JSON.parse(pack.files['.daimond/meta.json']);
+		meta.name    = 'Poison-Survivor';
+		meta.touched = Date.now() + 60000;			// the other device's copy is the fresher one
+		pack.files['.daimond/meta.json'] = JSON.stringify(meta);
+		const parcel = await window.DaimondCore.collectSync();
+		parcel.diamonds = [{ id: id, updated: meta.updated || 0, touched: meta.touched,
+			model: null, data: JSON.stringify(pack) }];
+		// A chat THIS DEVICE ALREADY HOLDS, arriving with a transcript that is
+		// not a list. A chat nobody here has seen is simply stored; one that is
+		// held is MERGED, and the union walks the transcript -- so this is where
+		// a parcel written by another build, or half written when it was packed,
+		// actually reaches. Nothing is left behind by it: the throw happens
+		// before the merged chats are written back.
+		const held    = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		const victim  = held.length ? held[0].id : '';
+		parcel.chats  = (parcel.chats || []).map(c =>
+			(c && c.id === victim) ? Object.assign({}, c, { messages: 'not-a-list' }) : c);
+		let threw = '', report = null;
+		try { report = await window.DaimondCore.applySync(parcel); }
+		catch (e) { threw = String(e && e.message || e); }
+		const row  = JSON.parse(await app.list_diamonds()).find(d => d.id === id) || null;
+		const kept = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		return { threw, report, victim, name: row ? row.name : '(gone)',
+			chatsIntact: kept.length === held.length
+				&& kept.every(c => Array.isArray(c.messages)) };
+	});
+	check('the poisoned parcel names a chat this device really holds', !!poison.victim, poison.victim);
+	check('a malformed section does not throw out of applySync', poison.threw === '', poison.threw);
+	check('and the Diamond in the same parcel still arrives',
+		poison.name === 'Poison-Survivor', poison.name);
+	check('and the merge SAYS which section it could not apply',
+		!!(poison.report && Array.isArray(poison.report.failed) && poison.report.failed.indexOf('chats') !== -1),
+		JSON.stringify(poison.report));
+	check('and the section that failed left this device’s own chats as they were',
+		poison.chatsIntact === true);
+
+	// ── (11) Giving up is said out loud ────────────────────────────────
+	// The pull-merge-retry loop is bounded, and running out of attempts used to
+	// be one console.debug line. Worse: the last thing on the chip was the
+	// "Synced" the reconciling PULL put there, so a device whose work never left
+	// looked exactly like a device that had just saved.
+	const exhausted = await page.evaluate(async () => {
+		const chip = () => {
+			const c = document.getElementById('sync-chip');
+			return c ? { state: c.dataset.state || '', text: (c.querySelector('.stext') || {}).textContent || '',
+				title: c.title || '', shown: c.style.display !== 'none' } : null;
+		};
+		const real = window.fetch;
+		let posts = 0;
+		window.fetch = function (u, o) {
+			const url = String((u && u.url) || u || '');
+			if (url.indexOf('/api/sync') !== -1 && o && o.method === 'POST') {
+				posts++;
+				return Promise.resolve(new Response(
+					JSON.stringify({ ok: false, conflict: true, version: 9999, device: 'the other one' }),
+					{ status: 409, headers: { 'content-type': 'application/json' } }));
+			}
+			return real.apply(this, arguments);
+		};
+		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		if (a.length) {
+			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'storm', mid: 'storm-' + Date.now(), ts: Date.now() }]);
+			a[0].updatedAt = Date.now();
+			localStorage.setItem('daimond-chats', JSON.stringify(a));
+		}
+		await window.DaimondSync.push();
+		const out = { posts, chip: chip(), api: window.DaimondSync.state() };
+		window.fetch = real;
+		return out;
+	});
+	check('a permanent conflict is retried, and bounded', exhausted.posts >= 2 && exhausted.posts <= 6,
+		'posts=' + exhausted.posts);
+	check('and running out of attempts is SAID, not swallowed',
+		!!(exhausted.chip && exhausted.chip.state === 'stalled' && exhausted.chip.shown),
+		JSON.stringify(exhausted.chip));
+	check('with a reason that names what is happening — another device writing too',
+		!!(exhausted.chip && /device/i.test(exhausted.chip.title)),
+		(exhausted.chip && exhausted.chip.title || '').slice(0, 140));
+	check('and the engine reports the stall through its own surface',
+		!!(exhausted.api && exhausted.api.stalled === true), JSON.stringify(exhausted.api));
+
+	// Clear the stall before the second device runs below.
+	await page.evaluate(async () => {
+		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		if (a.length) {
+			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'calm', mid: 'calm-' + Date.now(), ts: Date.now() }]);
+			a[0].updatedAt = Date.now();
+			localStorage.setItem('daimond-chats', JSON.stringify(a));
+		}
+	});
+	await pushLanded(page);
+
+	// ── (12) Two REAL devices converge, both ways ──────────────────────
+	// Every check above simulates the second device inside this browser. That
+	// cannot see the thing that actually broke in the field: two windows, both
+	// open and both FOCUSED, on two machines. Neither raises a focus event, so
+	// the focus pull never fires, and the app settling only ever schedules a
+	// PUSH -- which is skipped outright when this device has nothing new to send.
+	// A device that is not editing therefore never asked the gateway anything at
+	// all, and the other device's work sat in the mailbox unread for as long as
+	// the window stayed where it was.
+	child = await open({ name: 'syncmate', signIn: false, connect: false });
+	await child.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 }).catch(() => {});
+	const code = await page.evaluate(() => DaimondPairing.create());
+	await child.page.evaluate(c => DaimondPairing.redeem(c), code.code);
+	await child.page.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(child, 'sync');
+	await child.page.waitForFunction(
+		() => !!window.DaimondSync && window.DaimondGateway && DaimondGateway.state().authed,
+		null, { timeout: 15000 }).catch(() => {});
+	const mate = await child.page.evaluate(() => ({
+		authed: DaimondGateway.state().authed,
+		same:   window.DaimondIdentity.publicKeyB64url(),
+	}));
+	const mine = await page.evaluate(() => window.DaimondIdentity.publicKeyB64url());
+	check('a second REAL device holds the same account and an authed session',
+		mate.authed === true && mate.same === mine, JSON.stringify(mate).slice(0, 80));
+
+	/// One Diamond's name, as each device's own store reads it.
+	const nameOn = (pg, id) => pg.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		return ((JSON.parse(await app.list_diamonds()).find(d => d.id === id)) || {}).name || '(absent)';
+	}, id);
+
+	// A shared Diamond, on both devices, agreed.
+	const shared = await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		return await app.create_diamond('Both-Devices');
+	});
+	await pushLanded(page);
+	await child.page.evaluate(() => window.DaimondSync.pull());
+	check('the second device pulls the shared Diamond down',
+		(await nameOn(child.page, shared)) === 'Both-Devices');
+	// …and it pushes once, so it has something it believes it last sent. This is
+	// the state every idle device is in.
+	await child.page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.create_diamond('Made-On-The-Mate');
+	});
+	await pushLanded(child.page);
+	await page.evaluate(() => window.DaimondSync.pull());
+	// Quiesce the mate, so it is in the state every idle device is in: whatever
+	// it would send, it has already sent.
+	await child.page.evaluate(() => window.DaimondSync.push());
+	await child.page.waitForTimeout(600);
+	await child.page.evaluate(() => window.DaimondSync.push());
+
+	// (12a) The idle device. This one renames; the other has nothing to send and
+	// never leaves the window it is in. Only the app settling fires there.
+	await page.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.rename_diamond(id, 'Renamed-Over-There');
+	}, shared);
+	await pushLanded(page);
+	const idleLearn = await child.page.evaluate(async () => {
+		const v0 = window.DaimondSync.state().version;
+		// The app settling, twice, which is all a device that is not being typed
+		// at ever gets. Twice because the catch-up is rate-limited, and the
+		// quiescing pushes just above have only recently spent that budget.
+		window.dispatchEvent(new Event('daimond:idle'));
+		await new Promise(r => setTimeout(r, 4000));
+		window.dispatchEvent(new Event('daimond:idle'));
+		await new Promise(r => setTimeout(r, 5500));
+		return { v0, v1: window.DaimondSync.state().version };
+	});
+	check('a device with nothing to send still learns what the other one did',
+		(await nameOn(child.page, shared)) === 'Renamed-Over-There',
+		'version ' + idleLearn.v0 + ' -> ' + idleLearn.v1);
+
+	// (12b) Both devices editing at once, pushing on every change, as seq 50's
+	// nudge makes them. Each works on its OWN Diamond, so nothing here is a
+	// question of whose copy wins: a merge that reconciles at all must end with
+	// both names on both devices.
+	const mateOwn = await child.page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		return (JSON.parse(await app.list_diamonds()).find(d => d.name === 'Made-On-The-Mate') || {}).id || '';
+	});
+	check('the mate device owns a Diamond of its own to work on', !!mateOwn, mateOwn);
+	for (let round = 1; round <= 3; round++) {
+		await page.evaluate(async (arg) => {
+			const m = await import('/pkg/oxedyne_daimond.js');
+			const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+			await app.rename_diamond(arg.id, 'Here-' + arg.round);
+		}, { id: shared, round });
+		await child.page.evaluate(async (arg) => {
+			const m = await import('/pkg/oxedyne_daimond.js');
+			const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+			await app.rename_diamond(arg.id, 'There-' + arg.round);
+		}, { id: mateOwn, round });
+		// Both at once: one of them is pushing from a base the other just moved.
+		await Promise.all([
+			page.evaluate(() => window.DaimondSync.push()),
+			child.page.evaluate(() => window.DaimondSync.push()),
+		]);
+		await page.waitForTimeout(400);
+	}
+	// Let each side have its ordinary settling trigger, three times, and no more:
+	// no reload, no focus, nothing a user would have to think of.
+	for (let i = 0; i < 3; i++) {
+		await Promise.all([
+			page.evaluate(() => window.dispatchEvent(new Event('daimond:idle'))),
+			child.page.evaluate(() => window.dispatchEvent(new Event('daimond:idle'))),
+		]);
+		await page.waitForTimeout(6000);
+	}
+	const hereName  = await nameOn(page, shared);
+	const thereName = await nameOn(page, mateOwn);
+	const mateHere  = await nameOn(child.page, shared);
+	const mateThere = await nameOn(child.page, mateOwn);
+	check('after a storm of simultaneous pushes, this device holds both sides’ work',
+		hereName === 'Here-3' && thereName === 'There-3', hereName + ' / ' + thereName);
+	check('and so does the other one — the conflict path converges, both ways',
+		mateHere === 'Here-3' && mateThere === 'There-3', mateHere + ' / ' + mateThere);
+	const chips = await Promise.all([
+		page.evaluate(() => { const c = document.getElementById('sync-chip'); return c ? c.dataset.state : '(none)'; }),
+		child.page.evaluate(() => { const c = document.getElementById('sync-chip'); return c ? c.dataset.state : '(none)'; }),
+	]);
+	check('and neither device is left claiming to be synced while it is stalled',
+		chips.every(c => c !== 'stalled'), chips.join(' / '));
+	const cerrs = child.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e));
+	check('no unexpected console errors on the second device', cerrs.length === 0,
+		cerrs.slice(0, 3).join(' | '));
+
 	const errs = s.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e));
 	check('no unexpected console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) {
 	check('verify_sync ran without throwing', false, String(e && e.message || e));
 } finally {
+	await child?.close?.().catch?.(() => {});
 	await s.close?.().catch?.(() => {});
 }
 

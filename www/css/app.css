@@ -414,19 +414,53 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    list scrolls rather than squeezing the chats out of the pane above it. */
 .diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 
-/* Find a Diamond: a search box that is always there, and the active tag filter
-   shown beneath it as removable chips. */
+/* Find a Diamond: a search box that is always there, and the standing tag pool
+   beneath it. */
 .diamond-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
 .diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
 .diamond-search:focus { outline: none; border-color: var(--accent); }
 .diamond-search::placeholder { color: var(--text-muted); }
 .diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-/* The filter summary. The tags wanted and the tags refused go on lines of their
-   own, so the two halves of the boolean are never read as one list; the agents
-   panel puts a single chip straight in here and a column of one looks the same
-   as the row it used to be. */
+/* The tag filter. A column: the pool of tags, then the controls that are not
+   tags. The agents panel puts a single chip straight in here, and a column of
+   one looks the same as the row it used to be. */
 .diamond-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .tagf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* The standing pool: every tag in use, each chip cycling in place. It is here
+   before anything is clicked, because a filter that only appears once you have
+   found another way to switch it on is a filter nobody finds.
+
+   Capped and scrolled past that. The rail's two lists live on what this leaves,
+   so a vocabulary of thirty tags must not be allowed to take the rail off a
+   reader who came for the Diamonds. A chip row is a 1.6em line box between two
+   1px borders, and the cap is three and a HALF of them plus the flex gaps --
+   stated in em against the pool's own font-size, so it follows the type scale
+   rather than pinning one.
+
+   The half row is the point of the number. A cap of exactly three would end on
+   a row boundary, and thirty tags would look like nine: three tidy rows and no
+   reason to suspect the rest. A row cut through the middle is the only thing
+   in the box that says there is more of it. Under four rows the pool is shorter
+   than the cap anyway, so nothing is cut when there is nothing to hide. */
+.tagf-pool {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	align-self: stretch;
+	font-size: var(--fs-3xs);
+	max-height: calc(5.6em + 19px);
+	overflow-y: auto;
+	overscroll-behavior: contain;	/* on the phone the drawer must not scroll with it */
+}
+/* The app's scrollbar is 14px, which is a fifth of this box's own height and a
+   twentieth of the rail's width. */
+.tagf-pool::-webkit-scrollbar { width: 8px; }
+/* Off, a pool chip is a plain chip, so only the cursor says it is a control. */
+button.tag-pool { cursor: pointer; }
+/* What is left below the pool once each chip holds its own state: how the
+   wanted tags combine, and the one click that puts the whole filter down. */
+.tagf-ctl { gap: 8px; }
 /* No tags anywhere: one muted line where the chips would be, so an empty
    filing system does not look like a missing one. */
 .rail-tag-hint { font-size: var(--fs-2xs); line-height: 1.35; color: var(--text-muted); }
@@ -1293,6 +1327,17 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .pcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; flex: 1; }
 .pcol > .panel { flex: 1; min-height: 0; width: auto !important; }
 .pcol:empty { display: none; }
+/* The divider between two panels stacked in a column: the horizontal twin of
+   .phandle. It STANDS IN FOR the column's gap rather than adding to it — a
+   handle placed between panels that were already 8px apart put 26px of nothing
+   between two cards — so a stacked column gives its gap up to the handles. */
+.pcol.stacked { gap: 0; }
+.hstack { height: 16px; flex: none; cursor: row-resize; position: relative; touch-action: none; }
+/* Transparent at rest, like every other handle between two CARDS: the panels
+   carry their own borders, so a line at rest would be a third edge in the gap.
+   It answers the pointer instead. */
+.hstack::after { content: ""; position: absolute; left: 10%; right: 10%; top: 7px; height: 2px; border-radius: 2px; background: transparent; transition: background 0.15s; }
+.hstack:hover::after, .hstack.dragging::after { background: var(--accent); }
 
 /* ── The Web panel ───────────────────────────────────────────────
    A page can always be SHOWN. It can be operated only where a driver can

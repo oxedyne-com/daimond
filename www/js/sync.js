@@ -22,7 +22,10 @@
    blob; this module pulls it, MERGES — union the transcripts, freshest
    scalar wins, tombstones honoured, exactly as the cross-tab path does
    — and retries. So two devices editing at once converge rather than
-   clobber.
+   clobber. Two rules keep that honest: a merge that did not finish is
+   never pushed over (the retry would replace the other device's version
+   with one that never took its work), and running out of retries is
+   reported rather than logged.
 
    A push never runs over a live turn (that state is still settling)
    and only fires when the app is idle, mirroring updater.js. A PULL
@@ -31,6 +34,14 @@
    somebody reloaded it, and coming back to a window is exactly when its
    owner expects to see what happened elsewhere.
 
+   AND A PUSH WITH NOTHING TO SEND PULLS INSTEAD. Two windows on two
+   machines, both open and both focused, raise no focus event between
+   them and end no turns; the only trigger still running on the device
+   nobody is typing at is the push, and a push whose parcel matches the
+   last one used to return without asking the gateway anything. So the
+   device being worked on sent its work and the device being read never
+   looked, indefinitely. That skip is now a throttled pull.
+
    WHEN IT CANNOT WORK, IT SAYS SO. Two refusals are permanent until
    something changes -- 402 (the tier is not held) and 413 (the parcel
    is over the gateway's ceiling) -- and both are reported on the status
@@ -38,6 +49,12 @@
    dialog over the app, since nobody asked for the round that failed.
    The 413 used to log to the console alone, so sync stopped and the app
    went on looking exactly as it does when sync is working.
+
+   A jam is the third thing the chip says, and it is the same rule
+   applied to the reconcile: retries that ran out, or a parcel that
+   arrived and could not be merged, both leave this device's work
+   sitting here, and both used to leave "Synced" on the chip -- put
+   there by the pull that was only ever half of the round.
    ============================================================ */
 (function () {
 	'use strict';
@@ -53,6 +70,8 @@
 	// behaviour and must not become a request every few seconds.
 	var FOCUS_DEBOUNCE_MS = 400;
 	var FOCUS_PULL_MIN_MS = 30000;
+	// A push with nothing to send asks anyway, at most this often. See push().
+	var IDLE_PULL_MIN_MS  = 5000;
 	var K_VERSION = 'daimond-sync-version';		// Per-account (accounts.js prefixes it).
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
 
@@ -61,10 +80,21 @@
 	var lastPushed    = null;	// JSON of the state last pushed, to skip no-op pushes.
 	var entitled      = true;	// Cleared to false on a 402; stops pointless pushes.
 	var tooLarge      = false;	// Set on a 413; the parcel will not fit as it stands.
+	// A reconcile that could not finish: '' | 'busy' (the retries ran out) |
+	// 'merge' (what arrived could not be merged here). Both mean this device's
+	// work did NOT leave, and both are cleared by the next round that works.
+	var jammed        = '';
+	var lastFailed    = [];		// Sections the last merge could not apply.
 	var lastSynced    = 0;		// ms of the last successful pull or push.
 	var pushTimer     = null;	// Debounce handle.
 	var focusTimer    = null;	// Focus-pull debounce handle.
 	var lastFocusPull = 0;		// ms of the last pull a focus caused.
+	// ms of the last pull that reached the gateway, whatever asked for it. The
+	// catch-up below is measured against THIS rather than against its own last
+	// go: a device that pulled a second ago because its window was focused has
+	// nothing to learn from asking again, and a second reason to ask is not a
+	// second thing to know.
+	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
 	var started       = false;	// The engine has attached its listeners.
 
@@ -222,6 +252,31 @@
 		setStatus('stalled', t('sync.too_big'), 0, t('sync.too_big_reason'));
 	}
 
+	/// Note that a reconcile did not finish, and say so on the chip.
+	///
+	/// Both causes end the same way -- this device's work is still here and the
+	/// mailbox does not have it -- and both used to end in one console.debug
+	/// line, with the chip left showing the "Synced" that the reconciling PULL
+	/// had just put there. A device whose work never left looked exactly like a
+	/// device that had just saved, which is the one thing this chip exists to
+	/// prevent.
+	function jam(why) {
+		jammed = why;
+		restStatus();
+	}
+
+	/// Nothing is standing in the way any more: the round that just worked
+	/// clears whatever the last one could not do.
+	function unjam() {
+		jammed     = '';
+		lastFailed = [];
+	}
+
+	/// Why a reconcile stopped, for the chip's hover.
+	function jamReason() {
+		return jammed === 'merge' ? t('sync.merge_reason') : t('sync.busy_reason');
+	}
+
 	/// Put the chip back to what is TRUE when nothing is in flight.
 	///
 	/// The two standing refusals outlive the round that discovered them, so every
@@ -238,6 +293,11 @@
 	function restStatus() {
 		if (!entitled)     { setStatus('off', t('sync.off'), 0, offReason()); return; }
 		if (tooLarge)      { showTooLarge(); return; }
+		// Below the two standing refusals, and above nothing at all: a jam is
+		// this round's failure rather than a state of the account, so a 402 or a
+		// 413 outranks it — an account that may not sync, or a parcel that will
+		// not fit, is the thing to say first.
+		if (jammed)        { setStatus('stalled', t('sync.paused'), 0, jamReason()); return; }
 		setStatus('');
 	}
 
@@ -253,13 +313,21 @@
 	/// Returns the server version now known, or -1 on a failure that should not
 	/// advance anything. A decrypt failure is swallowed: better to keep local
 	/// state than to clobber it with something we cannot read.
-	async function pull() {
+	///
+	/// `quiet` is for the pull INSIDE a reconcile: the round is not over, so it
+	/// must not paint "Synced" over a push that has not landed yet.
+	///
+	/// Whether the merge finished is recorded in `lastFailed`, because a merge
+	/// that did not is a reason not to push over the parcel it came from.
+	async function pull(quiet) {
 		if (!ready()) return -1;
+		lastFailed = [];		// what follows is the only merge this answers for.
 		setStatus('syncing', t('sync.syncing'));
 		var res;
 		try { res = await call('GET'); }
 		catch (e) { log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { log('pull status', res.status); restStatus(); return -1; }
+		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
 		var j = res.json;
 		if (!j.present) { serverVersion = 0; saveVersion(); restStatus(); return 0; }
 		var state;
@@ -267,19 +335,42 @@
 			var plain = await DaimondIdentity.unwrap(j.blob);	// throws on a wrong key.
 			state = JSON.parse(plain);
 		} catch (e) {
+			// Not readable at all, which is a DIFFERENT thing from readable and
+			// not mergeable, and the two must not be handled alike. What cannot
+			// be opened is unusable to every device that holds this identity, so
+			// the version is adopted and this device's own good state goes over
+			// the top of it -- that is how an account recovers from a corrupt or
+			// half-written blob at all. Refusing to push here instead would leave
+			// the mailbox unreadable and every device silently stuck behind it.
+			// `lastFailed` is for sections that ARRIVED and could not be merged;
+			// this is not one.
 			log('pull decrypt/parse failed; keeping local state');
-			serverVersion = j.version | 0;	// still adopt the version, so we can push over it.
+			serverVersion = j.version | 0;
 			saveVersion();
+			if (!quiet) restStatus();
 			return serverVersion;
 		}
-		try { await DaimondCore.applySync(state); } catch (e) { log('applySync failed', e); }
+		var report = null;
+		try { report = await DaimondCore.applySync(state); }
+		catch (e) { log('applySync threw', e); report = { failed: ['all'] }; }
+		lastFailed = (report && Array.isArray(report.failed)) ? report.failed : [];
 		serverVersion = j.version | 0;
 		saveVersion();
 		noteSynced();
+		// A merge that could not finish is not a sync that worked, and it is the
+		// user's business: their other device's work is sitting in the mailbox
+		// unread on this one.
+		if (lastFailed.length) {
+			log('pulled version', serverVersion, 'but could not merge', lastFailed.join(','));
+			if (!quiet) jam('merge');
+			return serverVersion;
+		}
+		unjam();
 		// A pull working says nothing about whether this device's own parcel will
 		// EVER leave -- a GET is served to everyone, a push is not -- so a standing
 		// refusal stays on the chip rather than being painted over with "Synced".
-		if (!entitled || tooLarge) restStatus();
+		if (quiet) { /* the push that called this is still running */ }
+		else if (!entitled || tooLarge) restStatus();
 		else setStatus('synced', t('sync.synced'), 1800);
 		log('pulled version', serverVersion, 'from', j.device || '?');
 		return serverVersion;
@@ -299,7 +390,26 @@
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 				var state = await DaimondCore.collectSync();
 				var plain = JSON.stringify(state);
-				if (plain === lastPushed && serverVersion > 0) return;	// nothing new to send.
+				if (plain === lastPushed && serverVersion > 0) {
+					// Nothing new to send -- but the round is not wasted, and this
+					// is the trigger that has to catch up.
+					//
+					// A window that is open and FOCUSED raises no focus event and
+					// ends no turn, so on a device nobody is typing at, this push
+					// is the only thing that still runs. It used to return here
+					// without asking the gateway anything at all, so two devices
+					// on two desks never learned about each other: the one being
+					// worked on pushed, and the one being read never looked. That
+					// is a device that is not editing NEVER converging, which is
+					// how it was reported.
+					//
+					// Throttled against the last pull of ANY kind, because a
+					// device that is quiet is quiet for a long time and this
+					// must not become a poll -- nor a second GET on the heels
+					// of the one a focus just made.
+					if (Date.now() - lastPullAt >= IDLE_PULL_MIN_MS) await pull();
+					return;
+				}
 
 				var blob;
 				try { blob = await DaimondIdentity.wrap(plain); }
@@ -331,6 +441,7 @@
 					}
 					catch (e) { /* the next successful push commits and sweeps */ }
 					tooLarge = false;					// whatever would not fit, fits now
+					unjam();							// and whatever would not reconcile, has
 					noteSynced();
 					setStatus('synced', t('sync.synced'), 2200);
 					log('pushed version', serverVersion);
@@ -338,10 +449,22 @@
 				}
 				if (res.status === 409) {
 					// Another device moved the blob on. Pull it, merge, retry
-					// against the version we just learned.
+					// against the version we just learned. `quiet`: the round is
+					// still running, so the pull must not report "Synced" over a
+					// push that has not landed.
 					log('conflict at base', serverVersion, '— pulling and retrying');
-					var v = await pull();
-					if (v < 0) return;			// could not reconcile; leave it for next time.
+					var v = await pull(true);
+					if (v < 0) { jam('busy'); return; }		// could not reconcile; say so.
+					// A merge that did not finish must NOT be pushed over. The
+					// retry sends what this device holds, and what this device
+					// holds is precisely the state that failed to take the other
+					// device's work: pushing it replaces their version in the
+					// mailbox with one that never saw it.
+					if (lastFailed.length) {
+						log('merge incomplete (', lastFailed.join(','), ') — not pushing over it');
+						jam('merge');
+						return;
+					}
 					lastPushed = null;			// local state changed under us; force a fresh send.
 					continue;
 				}
@@ -374,7 +497,14 @@
 				restStatus();
 				return;
 			}
-			log('conflict retries exhausted; will try again on the next idle');
+			// Out of attempts. The mailbox moved under every one of them, so this
+			// device's work is still only here -- which is exactly the state the
+			// chip exists to report. It is not re-armed from here: the next
+			// change, the next turn ending, the next focus and the next tab
+			// switch all try again, and a loop that retried on its own would
+			// spin two busy devices against each other with nobody the wiser.
+			log('conflict retries exhausted; this device’s work has not been sent');
+			jam('busy');
 		} finally {
 			inFlight = false;
 		}
@@ -496,7 +626,11 @@
 		/// anything that needs them in words rather than as a coloured pill.
 		state:   function () {
 			return {
-				stalled:      tooLarge,
+				// Anything standing between this device's work and the mailbox:
+				// a parcel that will not fit, or a reconcile that gave up.
+				stalled:      tooLarge || !!jammed,
+				stalledWhy:   tooLarge ? 'too_big' : (jammed || ''),
+				failedParts:  lastFailed.slice(),
 				entitled:     entitled,
 				lastSyncedAt: lastSynced,
 				lastSynced:   lastSyncedLine(),

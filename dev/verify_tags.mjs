@@ -1,8 +1,16 @@
-// Verify Diamond tags: chips, search, tag filter, the tag editor, persistence,
-// and the backup round trip -- against the real wasm, no stubs.
+// Verify Diamond tags: chips, search, the standing tag pool, the tag editor,
+// persistence, and the backup round trip -- against the real wasm, no stubs.
 //
 // Tags are the user's filing system and nothing else, so the check that
 // matters most is the one proving a tag never reaches the model.
+//
+// The filter used to be drawn only once a tag had been clicked, and the only
+// chip to click sat on a Diamond box -- so the space under the search box, which
+// is where a filter goes, was empty until you had already found another way in.
+// It is a POOL now: every tag in use, standing there, each chip cycling
+// off -> wanted -> refused -> off where it sits. The checks that used to read a
+// summary read the pool instead; the ones that asserted a summary chip's closer
+// now assert the stronger thing, that a pool chip's text is the bare tag.
 
 import fs from 'node:fs';
 import { open, shot, errors, signInAs, mockLog, clearMockLog, scratch } from './harness.mjs';
@@ -148,6 +156,51 @@ check(JSON.stringify(orderBefore) === JSON.stringify(orderAfter),
 const tagged = (await railOf()).find(r => r.name === 'Ship a CSV parser');
 check(tagged && tagged.tags.length === 2 && !(await page.isVisible('#diamond-tag-hint')),
 	`one tag anywhere replaces the hint with chips: chips=${JSON.stringify(tagged && tagged.tags)}`);
+
+// ── The standing pool ────────────────────────────────────────────
+// The filter used to be drawn only once something had been clicked, and the
+// only thing to click was a chip on a Diamond box. So a reader who went looking
+// for the filter under the search box -- which is where a filter goes -- found
+// nothing there, and concluded there wasn't one. The pool is the surface now:
+// it is up before anything is touched, and it says what the vocabulary is.
+/// Every chip in the pool, in the order the pool offers them.
+const poolText = () => page.$$eval('#diamond-filter .tagf-pool .tag-chip',
+	els => els.map(e => e.textContent));
+/// Each pool chip and the state its class says the rail is holding it in.
+const poolState = () => page.$$eval('#diamond-filter .tagf-pool .tag-chip', els => els.map(e => ({
+	t: e.textContent,
+	s: e.classList.contains('tag-inc') ? 'inc' : e.classList.contains('tag-no') ? 'exc' : 'off',
+})));
+const stateOf = (st, tag) => (st.find(x => x.t === tag) || { s: 'ABSENT' }).s;
+/// One click on a pool chip: the same cycle a chip on a Diamond box walks.
+const poolClick = async (tag) => {
+	const hit = await page.$$eval('#diamond-filter .tagf-pool .tag-chip', (els, n) => {
+		for (const e of els) if (e.textContent === n) { e.click(); return true; }
+		return false;
+	}, tag);
+	if (!hit) check(false, `the pool offers a "${tag}" chip to click`);
+	await page.waitForTimeout(400);
+};
+/// Round the cycle until the tag is filtering nothing. Bounded: the cycle is
+/// three legs, so a fourth click would mean it does not close.
+const poolOff = async (tag) => {
+	for (let i = 0; i < 3 && stateOf(await poolState(), tag) !== 'off'; i++) await poolClick(tag);
+};
+
+check(await page.isVisible('#diamond-filter .tagf-pool'),
+	'the tag pool stands under the search box the moment a tag exists, with nothing clicked');
+check(JSON.stringify(await poolText()) === JSON.stringify(['person', 'rust']),
+	`and holds the tags actually in use, sorted: ${JSON.stringify(await poolText())}`);
+// The editor offers `project`, `topic` and `org` whatever the store holds. The
+// rail must not: filtering on a tag no Diamond carries can only empty the rail,
+// so a chip for one would be a control whose single outcome is nothing.
+check(!(await poolText()).some(x => ['project', 'topic', 'org'].includes(x)),
+	`the starter suggestions nobody has used are NOT offered as filters: ${JSON.stringify(await poolText())}`);
+// The chips are the reason every reader of a chip can strip a closer and be
+// wrong: here there is nothing to strip.
+check((await poolText()).every(x => x === x.trim() && !/[×¬]/.test(x)),
+	`a pool chip's text is the bare tag -- no closer, no mark: ${JSON.stringify(await poolText())}`);
+await shot(s, 'tags-pool-idle');
 await shot(s, 'tags-chips-no-hint');
 
 // ── And comes back when the last tag goes ────────────────────────
@@ -161,6 +214,8 @@ for (let i = 0; i < 2; i++) {
 }
 check((await editorTags()).length === 0, `both tags come off: ${JSON.stringify(await editorTags())}`);
 check(await page.isVisible('#diamond-tag-hint'), 'deleting the LAST tag brings the hint back');
+check(!(await page.isVisible('#diamond-filter')),
+	'and the pool goes with it -- an empty pool is a row of nothing, which is what the hint is for');
 // Put them back the way the pool offers them, so the rest of this pass sees
 // the store it expects.
 for (const want of ['person', 'rust']) {
@@ -246,18 +301,27 @@ await clickTag('person');
 const filtered = await boxes();
 check(filtered.length === 2 && filtered.includes('Mum birthday plan') && filtered.includes('Ship a CSV parser'),
 	`clicking a chip filters to that tag: ${JSON.stringify(filtered)}`);
-check(await page.isVisible('#diamond-filter'), 'the active filter shows as a chip beside the search box');
-const fchip = await page.textContent('#diamond-filter');
-check(fchip.includes('person') && fchip.includes('×'), `filter chip names the tag and offers a ×: ${JSON.stringify(fchip)}`);
-check(await page.$eval('#diamond-filter .tag-chip', e => e.style.getPropertyValue('--tag-h')) === personHue,
-	'the filter chip is the same colour as the tag it came from');
+// The pool is the same surface whichever chip started the filter: clicking one
+// on a Diamond box lights that tag WHERE THE POOL ALREADY SHOWS IT.
+check(stateOf(await poolState(), 'person') === 'inc',
+	`a click on a box chip lights that tag in the pool: ${JSON.stringify(await poolState())}`);
+check(await page.$eval('#diamond-filter .tag-chip.tag-inc', e => e.style.getPropertyValue('--tag-h')) === personHue,
+	'the pool chip is the same colour as the tag it stands for');
+// The controls that are NOT tags sit below the pool, and only when there is a
+// filter for them to act on.
+check(await page.isVisible('#diamond-filter .tagf-ctl'),
+	'a filter raises the controls below the pool');
 await shot(s, 'tags-dark-filter');
 check((await search('mum')).length === 1, 'search narrows within an active tag filter');
 await search('');
-await page.click('#diamond-filter .tag-x', { force: true });
+// The clear is the one-click way off. A pool chip carries no closer -- its text
+// is the tag and nothing else -- so the cycle takes two clicks to put one tag
+// down, and this is offered for a filter of any size because of it.
+await page.click('#diamond-filter .tag-clear-all', { force: true });
 await page.waitForTimeout(400);
-check((await boxes()).length === 3 && !(await page.isVisible('#diamond-filter')),
-	'the filter chip × clears the filter');
+check((await boxes()).length === 3 && !(await page.isVisible('#diamond-filter .tagf-ctl'))
+	&& stateOf(await poolState(), 'person') === 'off',
+	'the clear puts the filter down, and the pool stays up with every chip off');
 
 // ── The boolean the rail actually holds ──────────────────────────
 // One tag was never enough to say "the family things, but not the ones already
@@ -268,37 +332,32 @@ check((await boxes()).length === 3 && !(await page.isVisible('#diamond-filter'))
 // The fixture here: "Ship a CSV parser" [person, rust], "Mum birthday plan"
 // [person, family, gifts, urgent], "Rust compiler notes" [].
 
-/// What the summary beside the search box is saying, read off the DOM.
+/// What the pool beside the search box is saying, read off the DOM.
 ///
-/// A summary chip's text is the tag plus the × that takes it out -- that × is a
-/// real text node, and the check above asserts it -- so it is stripped here, the
-/// way the editor's reader strips it. Nothing ELSE may be in there: `raw` keeps
-/// the untouched text so the negation mark can be proved absent from it.
+/// No text is stripped anywhere here. A pool chip's textContent is the tag and
+/// nothing else -- both marks are drawn by the theme -- so the state is read
+/// from the classes and `raw` can prove the text itself carries neither.
+/// `up` is now "something is filtering", not "the element is drawn": the pool
+/// is standing furniture and is drawn whenever a tag exists at all.
 const fstate = () => page.evaluate(() => {
-	const f  = document.getElementById('diamond-filter');
-	const up = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
-	const chips = up ? [...f.querySelectorAll('.tag-chip')] : [];
-	const name = c => c.textContent.replace(/×$/, '');
-	const on = up ? f.querySelector('.tag-mode-btn.on') : null;
+	const f     = document.getElementById('diamond-filter');
+	const shown = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
+	const chips = shown ? [...f.querySelectorAll('.tagf-pool .tag-chip')] : [];
+	const inc   = chips.filter(c => c.classList.contains('tag-inc'));
+	const exc   = chips.filter(c => c.classList.contains('tag-no'));
+	const on    = shown ? f.querySelector('.tag-mode-btn.on') : null;
 	return {
-		up,
-		inc:   chips.filter(c => !c.classList.contains('tag-no')).map(name),
-		exc:   chips.filter(c =>  c.classList.contains('tag-no')).map(name),
-		raw:   chips.map(c => c.textContent),
+		shown,
+		up:    inc.length + exc.length > 0,
+		pool:  chips.map(c => c.textContent),
+		inc:   inc.map(c => c.textContent),
+		exc:   exc.map(c => c.textContent),
+		raw:   inc.concat(exc).map(c => c.textContent),
 		mode:  on ? on.dataset.mode : null,
-		clear: up && !!f.querySelector('.tag-clear-all'),
+		clear: shown && !!f.querySelector('.tag-clear-all'),
+		ctl:   shown && !!f.querySelector('.tagf-ctl'),
 	};
 });
-/// Click a chip in the SUMMARY, which takes that tag out of the filter. Matched
-/// past the closer, which is a text node in there and part of the chip's text.
-const dropChip = async (name) => {
-	const hit = await page.$$eval('#diamond-filter .tag-chip', (els, n) => {
-		for (const e of els) if (e.textContent.replace(/×$/, '') === n) { e.click(); return true; }
-		return false;
-	}, name);
-	if (!hit) check(false, `the summary offers a "${name}" chip to click`);
-	await page.waitForTimeout(400);
-};
 const setMode = async (m) => {
 	await page.click(`#diamond-filter .tag-mode-btn[data-mode="${m}"]`, { force: true });
 	await page.waitForTimeout(400);
@@ -306,31 +365,42 @@ const setMode = async (m) => {
 const railMarks = () => page.$$eval('.session-box-meta .tag-chip',
 	els => els.map(e => ({ t: e.textContent, on: e.classList.contains('tag-inc') })));
 
-// A rail chip cycles: off -> wanted -> refused -> off. The last leg is walked
-// from the summary, because refusing a tag takes every Diamond carrying it off
-// the rail, and the chip goes with them.
+// A chip cycles: off -> wanted -> refused -> off. Every leg is now walked in
+// the POOL, from one chip that never moves -- which is the point of it. On a
+// Diamond box the last leg is out of reach: refusing a tag takes every Diamond
+// carrying it off the rail, and the box chip goes with them.
 const cyc = [];
 await clickTag('person');
 cyc.push(await fstate());
 const wantMarks = await railMarks();
 check(wantMarks.some(m => m.t === 'person' && m.on) && wantMarks.every(m => m.t === 'person' || !m.on),
 	`the chip doing the filtering is marked in the rail, and only it: ${JSON.stringify(wantMarks)}`);
-await clickTag('person');
+check(stateOf(await poolState(), 'person') === 'inc',
+	'and the pool wears the same mark for the same tag, so the two surfaces agree');
+await poolClick('person');
 cyc.push(await fstate());
 const refused = await boxes();
 check(refused.length === 1 && refused[0] === 'Rust compiler notes',
 	`a second click refuses the tag, and its carriers leave the rail: ${JSON.stringify(refused)}`);
-check(JSON.stringify(cyc[1].raw) === JSON.stringify(['person×']),
-	`a refused chip's text is the tag and its closer, and nothing else: ${JSON.stringify(cyc[1].raw)}`);
+// The property the pool exists for. Every Diamond carrying `person` has just
+// left the rail, so there is no box chip for it anywhere -- and the refusal is
+// still one click from being put down, because the pool is drawn from the store.
+check(stateOf(await poolState(), 'person') === 'exc'
+	&& !(await railOf()).some(r => r.tags.includes('person')),
+	`a REFUSED tag stays in the pool though no Diamond showing it carries it: ${JSON.stringify(await poolState())}`);
+check(JSON.stringify(cyc[1].raw) === JSON.stringify(['person']),
+	`a refused chip's text is the bare tag and nothing else: ${JSON.stringify(cyc[1].raw)}`);
 const negation = await page.$eval('#diamond-filter .tag-no',
 	e => getComputedStyle(e, '::before').content).catch(() => '');
 check(negation.includes('¬'),
 	`the negation is drawn by the theme, not put in the chip's text: ${JSON.stringify(negation)}`);
 await shot(s, 'tags-dark-exclude');
-await dropChip('person');
+await poolClick('person');
 cyc.push(await fstate());
 check(!cyc[2].up && (await boxes()).length === 3,
-	`a click in the summary puts the tag down again: ${JSON.stringify(cyc[2])}`);
+	`a third click in the pool puts the tag down again: ${JSON.stringify(cyc[2])}`);
+check(cyc.every(st => st.shown) && cyc.map(st => st.ctl).join() === 'true,true,false',
+	`the pool stands through all three legs; only the controls come and go: ${JSON.stringify(cyc.map(st => [st.shown, st.ctl]))}`);
 // The state a predicate would have to invent a meaning for -- one tag both
 // wanted and refused -- is one the cycle cannot produce: each leg MOVES the
 // tag, and moving is not copying. A step holding it in both lists would read
@@ -342,15 +412,21 @@ check(JSON.stringify(cyc.map(where)) === JSON.stringify(['inc', 'exc', 'off']),
 
 // ── ALL and ANY ──────────────────────────────────────────────────
 await clickTag('person');
-check((await fstate()).mode === null && (await fstate()).clear === false,
-	'with one tag wanted there is no combining control and no clear-all: neither would change anything');
+check((await fstate()).mode === null,
+	'with one tag wanted there is no combining control: ALL and ANY would name the same list');
+// The clear IS offered at one tag now, where it used to wait for two. The chip
+// that used to be the one-click way off carried an × and so read "person×" to
+// everything that reads a chip; the pool's chip reads "person", and pays for it
+// with a second click round the cycle. This is what buys that back.
+check((await fstate()).clear === true,
+	'but the clear is, because a pool chip has no closer and the cycle takes two clicks to put one tag down');
 await clickTag('rust');
 const bothTags = await boxes();
 check(bothTags.length === 1 && bothTags[0] === 'Ship a CSV parser',
 	`two wanted tags default to ALL -- only the Diamond carrying both: ${JSON.stringify(bothTags)}`);
 const modeUp = await fstate();
 check(modeUp.mode === 'all' && modeUp.clear === true,
-	`a second tag raises the combining control on ALL, and a clear-all: ${JSON.stringify(modeUp)}`);
+	`a second tag raises the combining control on ALL, and the clear stays: ${JSON.stringify(modeUp)}`);
 await setMode('any');
 const anyBoxes = await boxes();
 check(anyBoxes.length === 2 && anyBoxes.includes('Mum birthday plan') && anyBoxes.includes('Ship a CSV parser'),
@@ -365,6 +441,12 @@ await page.waitForTimeout(1500);
 const afterBoot = await fstate();
 check(!afterBoot.up && (await boxes()).length === 3,
 	`the wanted and refused lists do not survive a reload -- which is what an account switch is: ${JSON.stringify(afterBoot)}`);
+// The pool is not a filter state and does not reset with one: it is the
+// vocabulary, and it comes back with every chip off. This is the hard refresh
+// the user did, which found nothing under the search box at all.
+check(afterBoot.shown && !afterBoot.ctl
+	&& JSON.stringify(afterBoot.pool) === JSON.stringify(['family', 'gifts', 'person', 'rust', 'urgent']),
+	`but the pool itself comes straight back on a hard reload, every chip off: ${JSON.stringify(afterBoot.pool)}`);
 check(!(await page.isVisible('#diamond-tag-hint')),
 	'and the empty-pool hint stays away, because it keys off tags existing, not off filtering');
 await clickTag('person');
@@ -372,10 +454,10 @@ await clickTag('rust');
 const kept = await fstate();
 check(kept.mode === 'any' && (await boxes()).length === 2,
 	`the ALL/ANY choice IS kept across the reload: ${JSON.stringify(kept)}`);
-await dropChip('rust');
+await poolOff('rust');
 const oneLeft = await fstate();
-check(oneLeft.mode === null && oneLeft.clear === false && (await boxes()).length === 2,
-	`and the control goes again when one tag is left: ${JSON.stringify(oneLeft)}`);
+check(oneLeft.mode === null && oneLeft.clear === true && (await boxes()).length === 2,
+	`the combining control goes again when one tag is left, and the clear stays: ${JSON.stringify(oneLeft)}`);
 
 // ── A refusal beats a want ───────────────────────────────────────
 // "Mum birthday plan" carries `person`, which is wanted. Refusing `family`
@@ -390,7 +472,12 @@ check(beaten.length === 1 && beaten[0] === 'Ship a CSV parser',
 const halves = await fstate();
 check(JSON.stringify(halves.inc.slice().sort()) === JSON.stringify(['person', 'rust'])
 	&& JSON.stringify(halves.exc) === JSON.stringify(['family']),
-	`the summary shows both halves at once, so neither reason for hiding is silent: ${JSON.stringify(halves)}`);
+	`the pool shows both halves at once, so neither reason for hiding is silent: ${JSON.stringify(halves)}`);
+// One row, in one order, whatever the boolean is: the wanted, the refused and
+// the untouched sit alphabetically among each other rather than being gathered
+// into groups that move under a click.
+check(JSON.stringify(halves.pool) === JSON.stringify(['family', 'gifts', 'person', 'rust', 'urgent']),
+	`and does not reorder itself around them: ${JSON.stringify(halves.pool)}`);
 await shot(s, 'tags-dark-boolean');
 check((await search('csv')).length === 1, 'the search box composes on top of the boolean');
 const boolNone = await search('zzzznope');
@@ -402,14 +489,13 @@ await search('');
 await page.click('#diamond-filter .tag-clear-all', { force: true });
 await page.waitForTimeout(400);
 const cleared = await fstate();
-check(!cleared.up && (await boxes()).length === 3,
-	`one click on the clear-all puts both lists down: ${JSON.stringify(cleared)}`);
-// ALL over two tags no Diamond shares. Reached under ANY, where both chips stay
-// on the rail to be clicked, then narrowed.
+check(!cleared.up && cleared.shown && (await boxes()).length === 3,
+	`one click on the clear puts both lists down and leaves the pool standing: ${JSON.stringify(cleared)}`);
+// ALL over two tags no Diamond shares.
 await clickTag('person');
 await clickTag('rust');
 await clickTag('family');
-await dropChip('person');
+await poolOff('person');
 const anyTwo = await boxes();
 check(anyTwo.length === 2, `ANY over rust and family holds both their Diamonds: ${JSON.stringify(anyTwo)}`);
 await setMode('all');
@@ -589,14 +675,16 @@ const bClickTag = async (name) => {
 	await bp.waitForTimeout(400);
 };
 const bState = () => bp.evaluate(() => {
-	const f  = document.getElementById('diamond-filter');
-	const up = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
-	const chips = up ? [...f.querySelectorAll('.tag-chip')] : [];
-	const name = c => c.textContent.replace(/×$/, '');
+	const f     = document.getElementById('diamond-filter');
+	const shown = !!f && f.style.display !== 'none' && getComputedStyle(f).display !== 'none';
+	const chips = shown ? [...f.querySelectorAll('.tagf-pool .tag-chip')] : [];
+	const inc   = chips.filter(c => c.classList.contains('tag-inc'));
+	const exc   = chips.filter(c => c.classList.contains('tag-no'));
 	return {
-		up,
-		inc: chips.filter(c => !c.classList.contains('tag-no')).map(name),
-		exc: chips.filter(c =>  c.classList.contains('tag-no')).map(name),
+		shown, pool: chips.map(c => c.textContent),
+		up: inc.length + exc.length > 0,
+		inc: inc.map(c => c.textContent),
+		exc: exc.map(c => c.textContent),
 	};
 });
 /// Delete a tag from the pool in the tag editor, and confirm it.
@@ -640,6 +728,153 @@ await bKill('gifts');
 const afterIncKill = await bState();
 check(!afterIncKill.up && (await bBoxes()).length === 3,
 	`deleting a WANTED tag clears the filter rather than emptying the rail: ${JSON.stringify(afterIncKill)}, ${JSON.stringify(await bBoxes())}`);
+check(!afterIncKill.pool.includes('family') && !afterIncKill.pool.includes('gifts'),
+	`and both deleted tags leave the pool, so nothing offers a filter that cannot match: ${JSON.stringify(afterIncKill.pool)}`);
+
+// ── The divider does not drift under the pool ────────────────────
+// The pool is furniture, and the Diamonds and Chats lists are cut out of what
+// the furniture leaves -- once, in pixels. Anything that changes the pool's
+// height has to make that cut again, or the height comes off the Chats list
+// alone and the divider walks up the rail a row at a time. Here the change is
+// live and small: a click raises the controls row under the pool.
+const shareOf = () => bp.evaluate(() => {
+	const l = document.getElementById('diamond-list').getBoundingClientRect().height;
+	const c = document.getElementById('session-list').getBoundingClientRect().height;
+	return { list: Math.round(l), sess: Math.round(c), share: +(l / (l + c)).toFixed(3),
+		handle: !!document.getElementById('handle-rail-split') };
+});
+const beforeCtl = await shareOf();
+await bClickTag('person');                  // raises .tagf-ctl: the furniture grows a row
+const withCtl = await shareOf();
+await bp.evaluate(() => { const c = document.querySelector('.tag-clear-all'); if (c) c.click(); });
+await bp.waitForTimeout(400);
+const afterCtl = await shareOf();
+check(withCtl.list + withCtl.sess < beforeCtl.list + beforeCtl.sess,
+	`raising the controls really does take height off the two lists: ${beforeCtl.list + beforeCtl.sess}px -> ${withCtl.list + withCtl.sess}px`);
+check(Math.abs(withCtl.share - beforeCtl.share) <= 0.03 && Math.abs(afterCtl.share - beforeCtl.share) <= 0.03,
+	`and the divider stays at its share rather than walking: ${beforeCtl.share} -> ${withCtl.share} -> ${afterCtl.share}`);
+check(beforeCtl.handle && afterCtl.handle, 'the divider itself is still there afterwards');
+
+// ── A vocabulary the rail cannot afford ──────────────────────────
+// Thirty-odd tags is a filing system, not a mistake, and the pool is furniture:
+// the rail's two lists live on what it leaves. Unbounded, it would push the
+// Diamonds off the bottom of the rail to show a row of chips for them.
+const beforeBulk = await shareOf();
+await bp.evaluate(async () => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const words = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta'];
+	for (let d = 0; d < 4; d++) {
+		const id = await app.create_diamond('Bulk ' + d);
+		await app.set_tags(id, JSON.stringify(words.map(w => w + '-' + d)));   // 8 is the per-Diamond cap
+	}
+});
+// A hard reload, because that is the state being tested: a store that already
+// has this much in it when the app opens.
+await bp.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(b, 'tagsB');
+await bp.waitForTimeout(1800);
+const adminX2 = await bp.$('#admin-close');
+if (adminX2 && await adminX2.isVisible()) { await adminX2.click({ force: true }); await bp.waitForTimeout(400); }
+const big = await bp.evaluate(() => {
+	const el   = document.querySelector('#diamond-filter .tagf-pool');
+	const list = document.getElementById('diamond-list');
+	const sess = document.getElementById('session-list');
+	const cs   = el ? getComputedStyle(el) : {};
+	const rail = document.getElementById('panel-rail').getBoundingClientRect();
+	return {
+		tags: el ? el.children.length : 0,
+		wrap: cs.flexWrap, over: cs.overflowY,
+		clientH: el ? el.clientHeight : 0,
+		scrollH: el ? el.scrollHeight : 0,
+		list: list ? Math.round(list.getBoundingClientRect().height) : 0,
+		sess: sess ? Math.round(sess.getBoundingClientRect().height) : 0,
+		// Nothing may hang out of the rail's width; a chip row that did would
+		// put a horizontal scrollbar under the whole column.
+		widest: el ? Math.max(0, ...[...el.children].map(c => Math.round(c.getBoundingClientRect().right))) : 0,
+		railRight: Math.round(rail.right),
+		// Is a row CUT by the cap? A cap landing on a row boundary would show
+		// thirty tags as three tidy rows and nothing to say there are more.
+		cut: el ? (() => {
+			const box = el.getBoundingClientRect();
+			return [...el.children].some(c => {
+				const r = c.getBoundingClientRect();
+				return r.top < box.bottom - 1 && r.bottom > box.bottom + 1;
+			});
+		})() : false,
+	};
+});
+check(big.tags >= 30, `a store with a real vocabulary in it: ${big.tags} tags in the pool`);
+check(big.wrap === 'wrap' && big.over === 'auto' && big.scrollH > big.clientH,
+	`the pool wraps and then scrolls rather than growing: ${JSON.stringify(big)}`);
+check(big.clientH <= 80,
+	`and is capped at about three rows however many tags there are: ${big.clientH}px for ${big.tags} chips`);
+// The complaint that started all this was a control that gave no sign it was
+// there. A pool that ended flush on a row would be the same mistake one size
+// down: thirty tags looking like nine, with nothing saying otherwise.
+check(big.cut,
+	`a full pool cuts a row rather than ending flush, so the reader can see there is more: ${big.clientH}px of ${big.scrollH}px`);
+check(big.widest <= big.railRight,
+	`no chip hangs out of the rail: widest right edge ${big.widest} vs rail ${big.railRight}`);
+// The furniture moved, so the split below it has to have been cut again --
+// which is what `fitTagFilter` is for. Both lists still have a usable height.
+check(big.list >= 60 && big.sess >= 60,
+	`the two lists still share the rail under a full pool: Diamonds ${big.list}px, Chats ${big.sess}px`);
+check(Math.abs(big.list / (big.list + big.sess) - beforeBulk.share) <= 0.03,
+	`and the divider is where it was before the vocabulary arrived: ${beforeBulk.share} -> ${(big.list / (big.list + big.sess)).toFixed(3)}`);
+await shot(b, 'tags-pool-many');
+// A pool that is scrolled must stay where it was put: it repaints on every
+// click, and one that jumped back to the top would make the tags past the
+// third row unusable.
+const scrollKept = await bp.evaluate(async () => {
+	const el = document.querySelector('.tagf-pool');
+	el.scrollTop = el.scrollHeight;
+	const before = el.scrollTop;
+	[...el.querySelectorAll('.tag-chip')].pop().click();
+	await new Promise(r => setTimeout(r, 350));
+	const now = document.querySelector('.tagf-pool');
+	return { before, after: now.scrollTop, lit: !!now.querySelector('.tag-inc') };
+});
+check(scrollKept.before > 0 && scrollKept.after === scrollKept.before && scrollKept.lit,
+	`the pool holds its scroll across the repaint a click causes: ${JSON.stringify(scrollKept)}`);
+await shot(b, 'tags-pool-many-scrolled');
+await bp.evaluate(() => { const c = document.querySelector('.tag-clear-all'); if (c) c.click(); });
+await bp.waitForTimeout(300);
+
+// ── The phone drawer ─────────────────────────────────────────────
+// The rail is a drawer there, 380px of a 390px screen, and the pool is the
+// first thing under the search box on it.
+await bp.setViewportSize({ width: 390, height: 844 });
+await bp.waitForTimeout(600);
+await bp.evaluate(() => document.getElementById('drawer-btn').click());
+await bp.waitForTimeout(700);
+// Back to the top of the pool, so the shot below is the state a thumb opens on.
+await bp.evaluate(() => { const el = document.querySelector('.tagf-pool'); if (el) el.scrollTop = 0; });
+await bp.waitForTimeout(200);
+const phone = await bp.evaluate(() => {
+	const el = document.querySelector('#diamond-filter .tagf-pool');
+	if (!el) return null;
+	const r = el.getBoundingClientRect();
+	const cs = getComputedStyle(el);
+	return {
+		up: cs.display !== 'none' && r.height > 0,
+		h: Math.round(r.height), right: Math.round(r.right), vw: window.innerWidth,
+		scrollH: el.scrollHeight,
+		// The drawer scrolls as one column; the pool must not drag it along
+		// when a thumb runs off the end of the chips.
+		contain: cs.overscrollBehaviorY,
+		chips: el.children.length,
+	};
+});
+check(!!phone && phone.up && phone.chips >= 30,
+	`the pool is on the phone drawer too: ${JSON.stringify(phone)}`);
+check(!!phone && phone.h <= 80 && phone.right <= phone.vw,
+	`capped there as well, and inside the screen: ${JSON.stringify(phone)}`);
+check(!!phone && phone.contain === 'contain',
+	`and its own scroll does not become the drawer's: ${JSON.stringify(phone && phone.contain)}`);
+await shot(b, 'tags-pool-phone');
+await bp.setViewportSize({ width: 1400, height: 900 });
+await bp.waitForTimeout(500);
 
 const errsB = errors(b).filter(e => !/502 \(Bad Gateway\)/.test(e));
 check(errsB.length === 0, `no console errors on the restoring session: ${JSON.stringify(errsB.slice(0, 3))}`);
