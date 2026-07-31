@@ -415,6 +415,18 @@ impl DaimondApp {
         diamond::remove_link(&owner, &link_id).await.map_err(to_js_err)
     }
 
+    /// Take into a Diamond's sidecar every link another device's copy of it
+    /// holds and this one does not.  True when something was written, which is
+    /// also when the Diamond was stamped.
+    ///
+    /// `sidecar` is that device's `links.jsonl` as stored text, lifted out of a
+    /// Diamond export.  For the merge that calls it, and why a union is what an
+    /// equal-stamp disagreement wants, see
+    /// [`union_links_from`](crate::wasm::diamond::union_links_from).
+    pub async fn union_links(&self, owner: String, sidecar: String) -> Result<bool, JsValue> {
+        diamond::union_links_from(&owner, &sidecar).await.map_err(to_js_err)
+    }
+
     /// Rename a Diamond.
     pub async fn rename_diamond(&self, id: String, name: String) -> Result<(), JsValue> {
         diamond::rename(&id, &name).await.map_err(to_js_err)

@@ -82,10 +82,13 @@
 	}
 
 	/// A short label for this device, shown on the other device as "last saved
-	/// from …". Not trusted by the gateway; purely for display.
+	/// from …". Not trusted by the gateway; purely for display. The gateway
+	/// stores it in the clear beside the sealed blob, so it must describe the
+	/// BROWSER, never the user: the account's chosen name is the user's own
+	/// words, and sending it here was the one readable thing sync leaked.
 	function deviceLabel() {
 		try {
-			var n = DaimondIdentity.displayName && DaimondIdentity.displayName();
+			var n = window.DaimondCore && DaimondCore.deviceSelfName && DaimondCore.deviceSelfName();
 			return (n && String(n).trim()) || 'a device';
 		} catch (e) { return 'a device'; }
 	}

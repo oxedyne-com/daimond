@@ -153,8 +153,18 @@
 	function noteBalance(j) {
 		if (!j || typeof j !== 'object') return;
 		if (typeof j.credits_minor !== 'number' || !isFinite(j.credits_minor)) return;
+		var moved = state.credits !== j.credits_minor;
 		state.credits = j.credits_minor;
-		if (typeof j.currency === 'string' && j.currency) state.currency = j.currency;
+		if (typeof j.currency === 'string' && j.currency && j.currency !== state.currency) {
+			state.currency = j.currency;
+			moved = true;
+		}
+		// Announce the figure only when it MOVED. The Spending panel refreshes on
+		// this event and its refresh fetches the balance, so an unconditional
+		// dispatch closed a loop: every reply refreshed the panel, every refresh
+		// produced a reply, and an open panel drove the gateway at hundreds of
+		// requests a second for as long as it stayed on screen.
+		if (!moved) return;
 		// The header, the Spending panel and anything else watching money get told once, here,
 		// rather than each of them polling. A page with no `window` (a test harness evaluating
 		// this file) simply does not hear it.

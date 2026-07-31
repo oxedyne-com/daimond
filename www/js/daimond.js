@@ -462,6 +462,204 @@ import init, {
 		try { localStorage.setItem(key, JSON.stringify(t)); } catch (e) { /* best effort */ }
 	}
 
+	// ── The devices that sync this account ────────────────────
+	// Pairing moves the identity WHOLE, so a second device ends up holding the
+	// SAME keypair: the gateway cannot tell the two apart, and a redeemed pairing
+	// leaves no record on the server to read back. So there is no list to fetch.
+	// What can still be told is built the way everything else in this file is —
+	// each device writes its own line, the parcel carries the lines, the merge
+	// unions them — and it answers exactly one question: is this account on more
+	// than one device? Not which paired with which, and not a way to sign one
+	// out: under one shared keypair nothing could enforce a revocation, and a
+	// button that pretended otherwise would be worse than no button.
+	var DEVICE_ID_KEY  = 'daimond-device-id';	// this device's own id
+	var DEVICES_KEY    = 'daimond-devices';		// the merged roster: id -> { name, created, seen }
+	// How stale this device's own `seen` may get before a collect refreshes it.
+	// NOT every collect: sync skips a push whose parcel stringifies to what it
+	// last sent, and a stamp that moved every time would defeat that skip and put
+	// the whole parcel back on the wire for nothing. Five minutes is finer than
+	// anything the roster shows, so the reading loses nothing by it.
+	var SEEN_REFRESH_MS   = 5 * 60 * 1000;
+	var DEVICE_ROSTER_MAX = 24;			// keeps the parcel, and the list, bounded.
+	var DEVICE_NAME_MAX   = 64;			// a self-description, not a paragraph.
+	var DEVICE_ID_RE      = /^[0-9a-f]{16}$/;
+
+	/// A millisecond stamp, or 0 when there is none to be had.
+	///
+	/// NOT `n | 0`: an epoch-ms value is far past 32 bits, and the truncation is
+	/// inconsistently wrong — a fresher stamp can come out smaller than an older
+	/// one, so the freshest side loses. (models.js keeps its own copy of this for
+	/// the same reason; each file here is its own closure.)
+	function ms(v) {
+		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// Held only when storage refuses to keep an id (private mode). Without it,
+	/// every call would mint another and the roster would fill with devices that
+	/// existed for one function call.
+	var _deviceIdFallback = null;
+
+	/// This device's id: 16 hex characters from the CSPRNG, minted on first use
+	/// and kept beside the account's other keys — so it is per ACCOUNT as well as
+	/// per device, and two accounts at one browser are never linkable by it.
+	/// Nothing about the machine is measured; two devices are told apart because
+	/// each wrote down a different random number.
+	///
+	/// Sixteen characters can never be an array index (a sixteen-digit number
+	/// without a leading zero is past 2^32), so a map keyed by these keeps its
+	/// insertion order through JSON.stringify — which is what the sorted, stable
+	/// serialisation below rests on.
+	function deviceId() {
+		var id = null;
+		try { id = localStorage.getItem(DEVICE_ID_KEY); } catch (e) { id = null; }
+		if (typeof id === 'string' && DEVICE_ID_RE.test(id)) return id;
+		if (_deviceIdFallback) return _deviceIdFallback;
+		var b = new Uint8Array(8);
+		crypto.getRandomValues(b);
+		id = Array.prototype.map.call(b, function (x) { return (x + 256).toString(16).slice(1); }).join('');
+		try { localStorage.setItem(DEVICE_ID_KEY, id); } catch (e) { /* private mode */ }
+		var back = null;
+		try { back = localStorage.getItem(DEVICE_ID_KEY); } catch (e) { back = null; }
+		if (back !== id) _deviceIdFallback = id;
+		return id;
+	}
+
+	/// The browser a user-agent string names, for anything that does not offer
+	/// `navigator.userAgentData`. Order matters: every one of these also says
+	/// "Safari" or "Chrome" somewhere, so the specific tokens are tested first.
+	function uaBrand(ua) {
+		if (/\bFirefox\//.test(ua))        return 'Firefox';
+		if (/\bEdg\//.test(ua))            return 'Edge';
+		if (/\bOPR\//.test(ua))            return 'Opera';
+		if (/\bSamsungBrowser\//.test(ua)) return 'Samsung Internet';
+		if (/\b(Chrome|CriOS)\//.test(ua)) return 'Chrome';
+		if (/\bSafari\//.test(ua))         return 'Safari';
+		return '';
+	}
+
+	/// The platform a user-agent string names. Coarse on purpose: "Windows", not
+	/// a version — the roster answers "which of my devices", not "what is
+	/// installed on it".
+	function uaPlatform(ua) {
+		if (/\bAndroid\b/.test(ua))            return 'Android';
+		if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return 'iOS';
+		if (/\bCrOS\b/.test(ua))               return 'ChromeOS';
+		if (/\bMac OS X\b/.test(ua))           return 'macOS';
+		if (/\bWindows\b/.test(ua))            return 'Windows';
+		if (/\bLinux\b/.test(ua))              return 'Linux';
+		return '';
+	}
+
+	/// How this device describes itself, worked out once when it first joins the
+	/// roster. Only what the browser volunteers about itself is used — brands and
+	/// platform, nothing measured, nothing that would narrow this browser down to
+	/// this browser. An environment that says nothing recognisable is simply
+	/// "This device", which is still an honest answer to "how many".
+	function deviceName() {
+		var brand = '', plat = '';
+		try {
+			var d = navigator.userAgentData;
+			if (d) {
+				plat = String(d.platform || '');
+				var b = d.brands || [];
+				for (var i = 0; i < b.length; i++) {
+					var n = b[i] && b[i].brand;
+					if (!n || /not.*brand/i.test(n)) continue;	// the deliberate nonsense entry
+					// A named browser beats the engine it is built on.
+					if (!brand || /^chromium$/i.test(brand)) brand = String(n);
+				}
+			}
+		} catch (e) { /* fall through to the user-agent string */ }
+		var ua = '';
+		try { ua = String(navigator.userAgent || ''); } catch (e) { ua = ''; }
+		if (!brand) brand = uaBrand(ua);
+		if (!plat)  plat  = uaPlatform(ua);
+		if (brand && plat) return t('devices.on_platform', { brand: brand, platform: plat });
+		return brand || plat || t('devices.unknown');
+	}
+
+	/// One roster line, cleaned: a name that fits, and stamps that are stamps.
+	function deviceEntry(d) {
+		return {
+			name:    String((d && d.name) || '').slice(0, DEVICE_NAME_MAX),
+			created: ms(d && d.created),
+			seen:    ms(d && d.seen),
+		};
+	}
+
+	/// The stored roster, with anything that is not a device dropped.
+	function loadDevices() {
+		var raw = readJson(DEVICES_KEY, {}), out = {};
+		if (!raw || typeof raw !== 'object') return out;
+		Object.keys(raw).forEach(function (id) {
+			if (DEVICE_ID_RE.test(id) && raw[id] && typeof raw[id] === 'object') out[id] = deviceEntry(raw[id]);
+		});
+		return out;
+	}
+
+	/// Write the roster back, and return what was written.
+	///
+	/// SORTED by id, and each line built in a fixed field order, so the same set
+	/// of devices is always the same bytes. Anything whose serialisation followed
+	/// enumeration order would look like a change on every collect and push for
+	/// ever — the same trap the provider export above is written to avoid.
+	function saveDevices(reg) {
+		var ids = Object.keys(reg);
+		if (ids.length > DEVICE_ROSTER_MAX) {
+			// Bounded, dropping the least recently seen — but never this device,
+			// which is the one line the user is certain to be looking for.
+			var self = deviceId();
+			var keep = ids.slice().sort(function (a, b) { return ms(reg[b].seen) - ms(reg[a].seen); })
+				.slice(0, DEVICE_ROSTER_MAX);
+			if (reg[self] && keep.indexOf(self) === -1) keep[keep.length - 1] = self;
+			ids = keep;
+		}
+		var out = {};
+		ids.sort().forEach(function (id) { out[id] = deviceEntry(reg[id]); });
+		try { localStorage.setItem(DEVICES_KEY, JSON.stringify(out)); } catch (e) { /* best effort */ }
+		return out;
+	}
+
+	/// This device's own line, refreshed. Its `seen` only moves once it is stale
+	/// enough to be worth moving (see SEEN_REFRESH_MS), so a collect that changes
+	/// nothing else changes nothing here either.
+	function touchSelfDevice(reg) {
+		var id = deviceId(), now = Date.now(), me = reg[id];
+		if (!me) reg[id] = { name: deviceName(), created: now, seen: now };
+		else if (now - ms(me.seen) >= SEEN_REFRESH_MS) me.seen = now;
+		return reg;
+	}
+
+	/// The roster as it goes into the parcel, and as the drawer draws it: this
+	/// device's line refreshed, the rest exactly as they were merged.
+	function collectDevices() {
+		return saveDevices(touchSelfDevice(loadDevices()));
+	}
+
+	/// Merge a roster that arrived from another device.
+	///
+	/// Per line, the freshest `seen` wins, STRICTLY — equal stamps keep what is
+	/// here, so a device that has not moved is never rewritten and the parcel does
+	/// not change for nothing. A line neither side has seen simply unions in, and
+	/// a parcel with no roster at all is a device that predates this: nothing
+	/// happens, in either direction.
+	function mergeDevices(incoming) {
+		if (!incoming || typeof incoming !== 'object') return;
+		var reg = loadDevices(), changed = false;
+		Object.keys(incoming).forEach(function (id) {
+			if (!DEVICE_ID_RE.test(id) || !incoming[id] || typeof incoming[id] !== 'object') return;
+			var r = deviceEntry(incoming[id]), mine = reg[id];
+			if (!mine) { reg[id] = r; changed = true; return; }
+			if (!(r.seen > mine.seen)) return;
+			// A device is created once, so the EARLIER stamp is the true one: a
+			// copy that reached us later cannot have been created later.
+			if (mine.created && (!r.created || mine.created < r.created)) r.created = mine.created;
+			reg[id] = r;
+			changed = true;
+		});
+		if (changed) saveDevices(reg);
+	}
+
 	// ── Workspace files (the other half of "the work") ─────────
 	// Chats have a natural merge (union transcripts); files do not, so they use
 	// a 3-way compare against a stored per-file hash BASELINE — the state as of
@@ -739,7 +937,14 @@ import init, {
 	// read it, a tag-only change was invisible across devices, and the untagged
 	// copy on the other device became strictly fresher the moment anything there
 	// was renamed or edited, at which point it replaced the tagged one and the
-	// tags were gone. `touched` moves on every change, including a tag.
+	// tags were gone. `touched` moves on every change, including a tag, and
+	// including a link. Two parts of a Diamond went that way, because a link was
+	// stored in a sidecar inside the directory and stamped nothing either.
+	//
+	// Those two are also the only parts that can be put back together without a
+	// model turn, and where the two copies are equally fresh they are: the tags
+	// union, and so do the links. Everything else at an equal stamp is left as
+	// it is, which is what "the merge does not choose" means.
 
 	/// Every Diamond this device holds, packed for the parcel: the id, both
 	/// stamps, the whole directory, and which model it thinks with.
@@ -829,10 +1034,58 @@ import init, {
 		return true;
 	}
 
+	/// The link sidecar a Diamond export is carrying, as its stored text.
+	///
+	/// Read as defensively as `packTags` and for the same reason, `.red/` legacy
+	/// path included: the pack was written by another device, and a merge must
+	/// not be the thing that throws.
+	function packLinks(data) {
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var text  = files['.daimond/links.jsonl'] || files['.red/links.jsonl'] || '';
+			return typeof text === 'string' ? text : '';
+		} catch (e) { return ''; }
+	}
+
+	/// Give a Diamond the links of BOTH copies when the two are equally fresh.
+	/// True when something was written.
+	///
+	/// The links are the other half of what the single stamp lost. A link lives
+	/// in a sidecar inside the Diamond's own directory, so it travelled on the
+	/// wholesale copy and nothing else -- and asserting one moved no stamp, so
+	/// two stores could hold different links at identical stamps indefinitely,
+	/// and the first thing either of them stamped took the other's links with
+	/// it. Tags and links are the two parts of a Diamond that reconcile without
+	/// a model turn: both are sets of records, and a union of two sets is not a
+	/// judgement about either.
+	///
+	/// Identity is the link's own id, which the store owns and which travels
+	/// with the record. Two devices that each drew "the same" line drew two
+	/// links, and both survive -- the same acceptance the wholesale replace
+	/// makes when it keeps whichever copy it kept.
+	///
+	/// It settles for the reason `unionDiamondTags` does: the store writes only
+	/// when it has something to add, writing moves `touched`, this side becomes
+	/// the fresher one, and the union is taken wholesale on the way back. Once
+	/// the two sidecars agree nothing is written and no stamp moves.
+	///
+	/// It cannot undo a deletion. Removing a link stamps the Diamond, so the copy
+	/// that lost the link is the fresher one and is taken wholesale, and this
+	/// runs only where neither copy is fresher. What it can repair is therefore
+	/// only the divergence the missing stamp left behind, which is what it is
+	/// for.
+	async function unionDiamondLinks(app, r) {
+		var there = packLinks(r.data);
+		if (!there.trim()) return false;
+		try { return (await app.union_links(r.id, there)) === true; }
+		catch (e) { return false; }							// it goes on the next pull
+	}
+
 	/// Merge the pulled Diamonds into the store. Tombstones first, so a deletion
 	/// on either device wins; then any Diamond this device lacks, or holds an
 	/// older copy of, is replaced wholesale; and where the two copies are equally
-	/// fresh, their tags are unioned rather than one side's being dropped.
+	/// fresh, their tags and their links are unioned rather than one side's
+	/// being dropped.
 	async function applyDiamonds(remote) {
 		var tombs = mergeTombMap(DIAMOND_TOMBS_KEY, remote.diamondTombs);
 		var incoming = Array.isArray(remote.diamonds) ? remote.diamonds : [];
@@ -858,10 +1111,15 @@ import init, {
 			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
 			// has not moved is not rewritten on every pull.
 			if (mine && !(diamondStamp(r) > diamondStamp(mine))) {
-				// Neither copy is newer. Nothing is replaced -- but if the two
-				// disagree about the TAGS, both sides can have them all.
-				if (diamondStamp(r) === diamondStamp(mine)
-					&& await unionDiamondTags(app, r, mine)) changed = true;
+				// Neither copy is newer. Nothing is replaced -- but where the
+				// two disagree about the TAGS or the LINKS, both sides can have
+				// them all. Both unions run: one answering false says only that
+				// it had nothing to add, not that the other has nothing.
+				if (diamondStamp(r) === diamondStamp(mine)) {
+					var tagged = await unionDiamondTags(app, r, mine);
+					var linked = await unionDiamondLinks(app, r);
+					if (tagged || linked) changed = true;
+				}
 				continue;
 			}
 			try { await app.import_diamond(r.data); changed = true; }
@@ -907,6 +1165,11 @@ import init, {
 			// state -- it is rebuilt per device in a sync or two and would only
 			// give the merge a conflict to have.
 			mail:         (window.DaimondMail && DaimondMail.exportSync) ? DaimondMail.exportSync() : null,
+			// Which devices sync this account. Deterministic by construction — the
+			// ids are sorted and each line has a fixed field order — and this
+			// device's own stamp only moves when it is stale, so the parcel is the
+			// same bytes between real changes and the push skip still holds.
+			devices:      collectDevices(),
 		};
 	}
 
@@ -919,6 +1182,11 @@ import init, {
 	/// rule and each best-effort, so one of them failing leaves the rest merged.
 	async function applySync(remote) {
 		if (!remote || typeof remote !== 'object') return;
+		// The roster first, and on its own: it is pure localStorage, it cannot
+		// fail in a way the rest cares about, and doing it here means a Diamond or
+		// a file failing below never costs the user the answer to "how many
+		// devices". A parcel without the field is a no-op.
+		try { mergeDevices(remote.devices); } catch (e) { /* the roster stays as it is */ }
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
@@ -3285,6 +3553,12 @@ import init, {
 				}).catch(function () {});
 			}
 
+			// How many devices this account is on. A question a local-first app
+			// owes an answer to, and one nothing else on screen can answer: a
+			// linked device holds the same keypair, so the gateway sees one user
+			// and the pairing itself left no record anywhere.
+			renderDevices();
+
 			// What each kind of agent is told, which is the user's to change.
 			//
 			// Only buttons here: this drawer is narrow, and a system prompt is a
@@ -3331,6 +3605,37 @@ import init, {
 				return b;
 			}
 		}
+
+		/// The devices that sync this account: this one first, then the rest by
+		/// how recently they were seen.
+		///
+		/// Display only, and deliberately so. Pairing hands the second device the
+		/// SAME keypair, so there is nothing here that a "remove" could enforce —
+		/// the honest surface is a list and a sentence, not a console. The short
+		/// id suffix is there because two of a user's devices can easily describe
+		/// themselves identically ("Chrome on macOS" twice).
+		function renderDevices() {
+			var reg = collectDevices();		// reading it is also how this device joins it
+			var self = deviceId();
+			var ids = Object.keys(reg).sort(function (a, b) {
+				var sa = a === self ? 1 : 0, sb = b === self ? 1 : 0;
+				if (sa !== sb) return sb - sa;
+				return reg[b].seen - reg[a].seen;
+			});
+			if (!ids.length) return;
+			homeView.appendChild(el('div', 'admin-sec', t('home.sec_devices')));
+			ids.forEach(function (id) {
+				var d = reg[id], r = el('div', 'device-row');
+				r.appendChild(el('span', 'device-name', d.name || t('devices.unknown')));
+				r.appendChild(el('span', 'device-id', id.slice(-4)));
+				r.appendChild(el('span', 'device-when',
+					id === self ? t('devices.this_device') : relTime(d.seen)));
+				homeView.appendChild(r);
+			});
+			homeView.appendChild(el('div', 'admin-note',
+				ids.length > 1 ? t('devices.note') : t('devices.only_this')));
+		}
+
 		function el(tag, cls, text) {
 			var n = document.createElement(tag);
 			n.className = cls;
@@ -4607,6 +4912,11 @@ import init, {
 		// sync engine never reaches into turn machinery.
 		collectSync:     collectSync,
 		applySync:       applySync,
+		// This device's coarse self-description ("Chromium on Linux"). sync.js
+		// sends it as the mailbox's display label -- the one field the gateway
+		// keeps in the clear -- because the account's chosen name is the user's
+		// own words and must never leave the browser readable.
+		deviceSelfName:  deviceName,
 		// After a successful push, the pushed state is the new common fork point
 		// for the file 3-way merge; sync.js calls this then.
 		syncCommitBaseline: commitFileBaseline,
@@ -7635,16 +7945,19 @@ import init, {
 		_diamondMeter = new Map();
 	}
 
-	/// A short relative-time label from an epoch-ms value.
+	/// A short relative-time label from an epoch-ms value. Spoken through the
+	/// sync.when_* keys, which every locale already carries -- the hard-coded
+	/// English here was the one line of the app a translated drawer still
+	/// showed raw.
 	function relTime(ms) {
 		if (!ms) return '';
 		var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-		if (s < 60) return 'just now';
+		if (s < 60) return t('sync.when_just_now');
 		var m = Math.round(s / 60);
-		if (m < 60) return m + 'm ago';
+		if (m < 60) return t('sync.when_mins', { n: m });
 		var h = Math.round(m / 60);
-		if (h < 24) return h + 'h ago';
-		return Math.round(h / 24) + 'd ago';
+		if (h < 24) return t('sync.when_hours', { n: h });
+		return t('sync.when_days', { n: Math.round(h / 24) });
 	}
 
 	/// Reload the Diamonds list from the store and re-render the rail.
@@ -10795,7 +11108,11 @@ import init, {
 			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-diamond-counter',
 			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-diamond-models',
 			 'daimond-agents-revealed', 'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
-			 'daimond-mail', 'daimond-hands'].forEach(function (k) { localStorage.removeItem(k); });
+			 'daimond-mail', 'daimond-hands',
+			 // The device roster and this device's own id. An account made here
+			 // afterwards is a new account, and it must not inherit the erased
+			 // one's identity as a device or the devices it used to sync with.
+			 'daimond-devices', 'daimond-device-id'].forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
 
 		// OPFS. A namespaced account lives in one subdirectory, so remove just that. The primary

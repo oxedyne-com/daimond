@@ -55,9 +55,24 @@
 
 	// ── The extension bridge ────────────────────────────────────────
 
+	/// The wait ran out. This is NOT a refusal — the question may still be on
+	/// screen — so it is marked, and everything that reads it treats "nobody has
+	/// answered yet" differently from "they said no".
+	function slowOpen() {
+		var e = new Error('Daimond is asking the user to approve this site. It cannot be opened '
+			+ 'until they do. Tell them what you want to do there, and try web_open '
+			+ 'again once they have said yes — or read the page with web_fetch instead.');
+		e.timeout = true;
+		return e;
+	}
+
 	/// Ask the extension something. Resolves its reply, or rejects with a plain
 	/// sentence the model can act on.
-	function ext(cmd, extra) {
+	///
+	/// `limit` overrides the default bound, which is what an `open` uses: its own
+	/// wait is the whole late window (see below), because the reply is worth
+	/// having long after the caller has stopped waiting for it.
+	function ext(cmd, extra, limit) {
 		return new Promise(function (resolve, reject) {
 			if (!state.extId || !window.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
 				reject(new Error(NO_DRIVER));
@@ -68,15 +83,14 @@
 			// a tool call that never returns is a model that never speaks again — it
 			// simply hangs, with the user watching a spinner and no idea why.
 			var done = false;
-			var limit = (cmd === 'open') ? 45000 : 12000;
+			if (!limit) limit = (cmd === 'open') ? OPEN_WAIT : 12000;
 			var timer = setTimeout(function () {
 				if (done) return;
 				done = true;
-				reject(new Error(cmd === 'open'
-					? 'Daimond is asking the user to approve this site. It cannot be opened '
-						+ 'until they do. Tell them what you want to do there, and try web_open '
-						+ 'again once they have said yes — or read the page with web_fetch instead.'
-					: 'Daimond Hands did not answer in time. The page may be busy; try again.'));
+				if (cmd === 'open') { reject(slowOpen()); return; }
+				var e = new Error('Daimond Hands did not answer in time. The page may be busy; try again.');
+				e.timeout = true;
+				reject(e);
 			}, limit);
 			function settle(fn, v) {
 				if (done) return;
@@ -106,6 +120,163 @@
 	var NO_PAGE   = 'No page is open. Call web_open first.';
 	var NOT_YOURS = 'You are not driving. The user is entering something private, '
 		+ 'and Daimond is not watching. Wait for them to hand back the wheel.';
+
+	// ── A late answer ───────────────────────────────────────────────
+	//
+	// The wait above is bounded so the model is never left hanging. The
+	// EXTENSION, though, does not give up when we do: the grant window stays on
+	// screen, the toolbar keeps the question, and when the user finally clicks
+	// Allow the tab really does open and really is driven. That reply used to be
+	// dropped on the floor — so a user who answered slowly watched Daimond drive
+	// a real tab while the panel said the site was never approved and the model
+	// was told to try again. Two things follow.
+	//
+	// First, the REQUEST outlives our wait: it is bounded by the whole late
+	// window, and whatever it finally answers is reconciled with what the panel
+	// is showing — the page is adopted, or the stale note is replaced by the real
+	// refusal. Then, after the late window, we genuinely give up: the record is
+	// dropped and a further reply changes nothing.
+	//
+	// Second, a retry while the question is still on screen ATTACHES to the
+	// answer already coming rather than sending a second `open`. The extension
+	// asks per request, so two requests would be two grant windows stacked on the
+	// user — and the attach is what lets a retried web_open pick up the slow
+	// answer as its own proper tool result.
+
+	var OPEN_WAIT = 45000;     // what a caller waits for a human to answer
+	var LATE_WAIT = 240000;    // how much longer the request is kept alive, then dropped
+
+	/// The one `open` the extension has not answered yet.
+	var liveOpen = null;       // { url, seq, settled, waiters }
+
+	/// What the panel was last ASKED to show. A late answer may touch the panel
+	/// only while this still names its page: anything newer — another site, the
+	/// guide, a close — owns the panel now, and repainting over it would be the
+	/// panel lying about what is on screen.
+	var claim = { seq: 0, url: '' };
+
+	/// The failed-open note now on screen, and which request left it there.
+	var stale = null;          // { seq, url }
+
+	/// A line to put above the driving note, when the panel had already given up.
+	var lateLead = '';
+
+	/// Claim the panel for a page. Returns the sequence number the caller must
+	/// carry, so anything that answers later can tell whether it is still wanted.
+	function claimPage(url) {
+		stale    = null;
+		lateLead = '';
+		claim    = { seq: claim.seq + 1, url: url || '' };
+		return claim.seq;
+	}
+
+	/// Has the panel moved on since this page was asked for?
+	function superseded(seq, url) {
+		return claim.seq !== seq && !sameTarget(claim.url, url);
+	}
+
+	/// Whether two addresses name the same page. Deliberately literal: this is
+	/// about the request the panel made, not about where the site redirected to.
+	function sameTarget(a, b) {
+		if (!a || !b) return false;
+		return norm(a) === norm(b);
+		function norm(u) {
+			try {
+				var x = new URL(u, location.href);
+				return x.origin + (x.pathname === '/' ? '' : x.pathname) + x.search;
+			} catch (e) { return String(u); }
+		}
+	}
+
+	/// Ask the extension to open a page, and keep the request alive past our own
+	/// wait. Rejects with a marked timeout error when the human has not answered
+	/// in time; the request itself carries on.
+	function openViaExt(url, seq) {
+		var rec = (liveOpen && !liveOpen.settled && sameTarget(liveOpen.url, url))
+			? liveOpen : startLive(url);
+		rec.seq = seq;                      // the newest asker owns the outcome
+		return new Promise(function (resolve, reject) {
+			var w = { done: false, timer: null };
+			w.settle = function (ok, v) {
+				if (w.done) return;
+				w.done = true;
+				clearTimeout(w.timer);
+				if (ok) resolve(v); else reject(v);
+			};
+			w.timer = setTimeout(function () {
+				if (w.done) return;
+				w.done = true;
+				reject(slowOpen());
+			}, OPEN_WAIT);
+			rec.waiters.push(w);
+		});
+	}
+
+	function startLive(url) {
+		var rec = { url: url, seq: claim.seq, settled: false, waiters: [] };
+		liveOpen = rec;
+		ext('open', { url: url }, OPEN_WAIT + LATE_WAIT).then(
+			function (r) { settleLive(rec, true, r); },
+			function (e) { settleLive(rec, false, e); });
+		return rec;
+	}
+
+	/// The extension answered — or the late window closed. Anyone still waiting
+	/// gets it as their own tool result; if nobody is, the panel is reconciled.
+	function settleLive(rec, ok, v) {
+		if (rec.settled) return;
+		rec.settled = true;
+		if (liveOpen === rec) liveOpen = null;
+		var heard = false;
+		for (var i = 0; i < rec.waiters.length; i++) {
+			if (!rec.waiters[i].done) heard = true;
+			rec.waiters[i].settle(ok, v);
+		}
+		rec.waiters = [];
+		if (!heard) lateAnswer(rec, ok, v);
+	}
+
+	/// The answer came after everyone had stopped waiting.
+	function lateAnswer(rec, ok, v) {
+		if (superseded(rec.seq, rec.url)) return;
+		// Only the note this very request left behind may be replaced. If it is
+		// gone, the panel is showing something else and this is no longer its
+		// business.
+		if (!stale || stale.seq !== rec.seq) return;
+		if (!ok) {
+			// Our own giving up is not an answer; only a real refusal is.
+			if (v && v.timeout) return;
+			notApproved(rec.url, (v && v.message) || '', true);
+			render();
+			return;
+		}
+		if (window.DaimondPanels) { DaimondPanels.show('web'); DaimondPanels.reflow(); }
+		adoptPage(v, rec.url, t('web.approved_late', { host: esc(hostOf(rec.url)) }));
+	}
+
+	/// Take the page the extension has opened as the panel's own.
+	function adoptPage(r, url, lead) {
+		stale        = null;
+		lateLead     = lead || '';
+		state.driver = 'ext';
+		state.url    = r.url || url;
+		state.title  = r.title || '';
+		state.mode   = r.mode || 'agent';
+		state.reason = '';
+		hideText();
+		note('');
+		startMirror();
+		render();
+	}
+
+	/// The panel's word on an open that did not happen. `late` marks an answer
+	/// that arrived after Daimond had stopped waiting, which is the difference
+	/// between "nobody answered" and "they answered, slowly".
+	function notApproved(url, msg, late) {
+		note(t('web.not_approved', { host: esc(hostOf(url)) })
+			+ (late ? t('web.answer_late') : '')
+			+ (/not approved|declined/i.test(msg) ? t('web.approval_closed') : esc(msg)));
+	}
 
 	/// Look for the hands. They are optional, and their absence is a normal state,
 	/// not an error.
@@ -198,6 +369,7 @@
 			DaimondPanels.show('web');
 			DaimondPanels.reflow();
 			stopMirror();
+			claimPage(url);
 			state.driver = 'local';
 			state.url    = url;
 			state.title  = url.split('/').pop();
@@ -217,6 +389,9 @@
 		}
 		DaimondPanels.show('web');
 		DaimondPanels.reflow();
+		// From here the panel is claimed for this page, and anything still
+		// speaking for the last one has been superseded.
+		var seq = claimPage(url);
 
 		if (hasExt()) {
 			// Opening a site the user has not approved before pops up a small
@@ -229,23 +404,24 @@
 			render();
 			var r;
 			try {
-				r = await ext('open', { url: url });
+				r = await openViaExt(url, seq);
 			} catch (e) {
-				// Declined, closed, or timed out: say what to do, not just the raw error.
-				note(t('web.not_approved', { host: esc(hostOf(url)) })
-					+ (/not approved|declined/i.test(e.message)
-						? t('web.approval_closed')
-						: esc(e.message)));
+				// Declined, closed, or timed out: say what to do, not just the raw
+				// error. The note is stamped with this request, so a late answer can
+				// tell whether it is still the one on screen.
+				stale = { seq: seq, url: url };
+				notApproved(url, e.message, false);
 				render();
 				throw e;
 			}
-			state.driver = 'ext';
-			state.url    = r.url || url;
-			state.title  = r.title || '';
-			state.mode   = r.mode || 'agent';
-			note('');
-			startMirror();
-			render();
+			// The wait is long, and the user or the model may have moved on. The
+			// model is still told its page is open — that is true, and the tab is
+			// there — but the panel now belongs to whatever was asked for since.
+			if (superseded(seq, url)) {
+				return { url: r.url || url, framed: false, driver: 'ext',
+					title: r.title || '', mode: r.mode || 'agent' };
+			}
+			adoptPage(r, url);
 			return { url: state.url, framed: false, driver: 'ext', title: state.title, mode: state.mode };
 		}
 
@@ -310,6 +486,7 @@
 
 	async function close() {
 		stopMirror();
+		claimPage('');           // nothing still coming may repaint this panel
 		if (hasExt() && state.driver === 'ext') { try { await ext('close'); } catch (e) { /* gone */ } }
 		els.frame.removeAttribute('src');
 		state.driver = 'none';
@@ -329,6 +506,7 @@
 	/// navigates between its own pages by itself. Reachable directly at `/guide` too.
 	function guide(sub, noShow) {
 		stopMirror();
+		claimPage('');           // the guide owns the panel now
 		state.driver = 'guide';
 		state.url    = 'guide/';
 		state.title  = 'Guide';
@@ -730,6 +908,13 @@
 		els.frame.style.display = 'none';
 		els.note.className = 'web-note on';
 		els.note.innerHTML = '';
+		// When the panel had already given up on this page, say so above the rest:
+		// the user was last told the site was not approved, and it is.
+		if (lateLead) {
+			var lead = document.createElement('div');
+			lead.innerHTML = lateLead;
+			els.note.appendChild(lead);
+		}
 		var msg = document.createElement('div');
 		msg.innerHTML = t('web.driving_tab', { host: esc(hostOf(state.url)) });
 		els.note.appendChild(msg);
@@ -959,5 +1144,14 @@
 		type: type,
 		scroll: scroll,
 		hasHands: hasExt,
+		/// Test only. The late-answer rule is minutes long by design, and a test
+		/// cannot spend minutes proving it; shortening the two waits changes
+		/// nothing else. Same-origin callers only, and the worst a caller can do
+		/// with it is make its own opens give up sooner.
+		_setWaitsForTest: function (o) {
+			if (o && o.open > 0) OPEN_WAIT = o.open;
+			if (o && o.late > 0) LATE_WAIT = o.late;
+			return { open: OPEN_WAIT, late: LATE_WAIT };
+		},
 	};
 })();

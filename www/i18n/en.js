@@ -142,6 +142,17 @@
 	'home.add_account':       '＋ Add another account',
 	'home.accounts_note':     'Each account has its own chats, keys, credits and files. Switching locks this one and opens the other; nobody sees another account’s data.',
 	'home.log_out':           'Log out',
+	'home.sec_devices':       'Devices',
+
+	// ── The devices that sync this account ─────────────────────
+	// The list is what it says it is: devices that have SYNCED. A linked device
+	// holds the same keys as this one, so there is nothing to revoke and the
+	// wording must not imply there is.
+	'devices.on_platform': '{brand} on {platform}',
+	'devices.unknown':     'This device',
+	'devices.this_device': 'this device',
+	'devices.only_this':   'Only this device syncs this account.',
+	'devices.note':        'These devices sync this account. A device appears here once it has synced, so one that holds your account but has never synced is not listed. Nothing here can sign a device out: a linked device holds the same keys as this one, so it has to be dealt with on the device itself.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',
@@ -414,6 +425,10 @@
 	'web.opening':         '<b>Opening {host}…</b><br>A <b>Daimond Hands</b> window is opening in front — approve the site there, and Chrome will then ask once to confirm. Both happen only the first time for a site.',
 	'web.not_approved':    '<b>{host} was not approved.</b><br>',
 	'web.approval_closed': 'The approval window was closed, or you said no. If you meant to allow it, ask me to open the site again and click <b>Allow, then confirm in Chrome</b> — the window opens in front of this one, and the <b>Daimond Hands</b> icon keeps the question until you answer it.',
+	// An answer that arrived after Daimond had stopped waiting: the site was
+	// approved late, or refused late. The first sits above the driving note.
+	'web.approved_late':   '<b>{host} was approved.</b> Your answer arrived after Daimond had given up waiting, so the panel said otherwise for a moment. The page is open now.',
+	'web.answer_late':     'Your answer came after Daimond had stopped waiting. ',
 	'web.driving_tab':     '<b>Daimond is driving {host}</b> in a browser tab. Watch it there, or pull a live picture into this panel.',
 	'web.show_live':       'Show live view here',
 	// A site that refuses to be framed, which is most of them.
@@ -804,6 +819,9 @@
 	'spend.part_reported':         '{amount} of this was reported by the providers; the rest is priced from Daimond\'s rate table.',
 	'spend.none_reported':         'Priced from Daimond\'s rate table — no provider reported a cost for these turns.',
 	'spend.none_reported_unknown': 'Priced from Daimond\'s rate table, and one of these models is not in it, so the figure is a rough guide only.',
+	// Why a total the user remembers as larger has fallen: the old rate table ran
+	// high, and the estimates it made were corrected once, here, on this device.
+	'spend.repriced': 'Estimates made before the rate table was corrected have been repriced on this device; under the old table this period read {amount}.',
 	'spend.col_when':    'When',
 	'spend.col_what':    'What',
 	'spend.col_amount':  'Amount',

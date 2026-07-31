@@ -196,6 +196,33 @@
 		return tot.estimated ? t('spend.none_reported_unknown') : t('spend.none_reported');
 	}
 
+	// A second line, when the figures above have MOVED since the user last read
+	// them. Estimates made under the old rate table -- the one that ran about six
+	// times high -- were re-priced once on this device, which cut every total
+	// containing one. Dropping a number by that much without a word is how a
+	// meter loses its reader, so the period says what it used to read.
+	//
+	// `tot` is the period's total as it stands. What it read before is that
+	// total with the touched turns put back at their original guess. Nothing is
+	// said when the period holds no repriced turn, nor when the two figures
+	// round to the same thing: an explanation of a change nobody can see is
+	// noise, and this way the line ages out as the 90-day log retires the old
+	// entries.
+	function repriceNote(tot) {
+		var L = window.DaimondLedger;
+		if (!L || typeof L.repriced !== 'function' || !tot) return '';
+		var rp;
+		try { rp = L.repriced(period); } catch (e) { return ''; }
+		if (!rp || !rp.turns) return '';
+		var before = (tot.usd || 0) - (rp.usd || 0) + (rp.was || 0);
+		var was = fmtUsd(before);
+		if (was === fmtUsd(tot.usd || 0)) return '';
+		// The old figure was a guess, and says so -- unless the currency
+		// conversion has already hung a ≈ on it.
+		var approx = (window.DaimondI18n && DaimondI18n.converted()) ? '' : '≈ ';
+		return t('spend.repriced', { amount: approx + was });
+	}
+
 	// ── Inference section (from DaimondLedger) ─────────────────
 
 	function inferenceSection() {
@@ -227,6 +254,10 @@
 		// telling the user it was guesswork when it was the opposite.
 		var prov = provenance(win);
 		if (prov) sec.appendChild(el('div', 'spend-note', prov));
+
+		// And, while the correction is still in view, why the figure fell.
+		var rn = repriceNote(win);
+		if (rn) sec.appendChild(el('div', 'spend-note spend-reprice', rn));
 
 		// The period toggle.
 		var toggle = el('div', 'spend-toggle');

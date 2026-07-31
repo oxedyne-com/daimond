@@ -965,6 +965,16 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    popup. */
 .account-fp { font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); padding: 0 4px 8px; overflow: hidden; text-overflow: ellipsis; }
 
+/* The devices that sync this account. Rows, not buttons: a paired device holds
+   the same keys as this one, so there is nothing here to revoke and nothing
+   here should look clickable. */
+.device-row { display: flex; align-items: baseline; gap: 6px; padding: 5px 6px; font-size: var(--fs-sm); color: var(--text-primary); }
+/* The name shrinks first and the id takes the slack, so the id sits with the
+   name it belongs to and the last-seen column stays flush right. */
+.device-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-id { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); }
+.device-when { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; text-align: right; }
+
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }
 

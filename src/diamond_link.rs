@@ -222,6 +222,70 @@ pub fn write_links(links: &[Link]) -> String {
 	s
 }
 
+/// Rewrite the node kind an earlier build wrote.
+///
+/// A sidecar written before the rename names its ends `facet:<id>` -- what a
+/// Diamond was called when the link substrate shipped.  An unknown kind is kept
+/// rather than refused, so those links survive, but they survive pointing at a
+/// kind nothing resolves any more.  The substitution is on the quoted prefix,
+/// so a note that merely mentions the word is left alone.
+pub fn fix_legacy_kinds(text: &str) -> String {
+	text.replace("\"facet:", "\"diamond:")
+}
+
+/// What identifies a link when two copies of one sidecar are reconciled.
+///
+/// The id, which is assigned once and travels with the record.  Two devices
+/// that each asserted "the same" link asserted two links, with two ids, and
+/// both are kept -- deciding that they meant one is a judgement about content,
+/// and nothing here is entitled to make it.  A record written by a hand or by a
+/// build that assigned no id has only what it says, so that is what it is keyed
+/// by; the two forms are prefixed apart so neither can be mistaken for the
+/// other.
+fn identity(l: &Link) -> String {
+	let id = l.id.trim();
+	if id.is_empty() {
+		fmt!("k:{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+			l.from.to_ref(), l.to.to_ref(), l.rel, l.note, l.by)
+	} else {
+		fmt!("i:{}", id)
+	}
+}
+
+/// Add to `mine` every link of `theirs` it does not already hold, or nothing at
+/// all when it holds them all.
+///
+/// This is what lets two stores whose sidecars disagree come back together.  It
+/// is deliberately not a merge of link CONTENT: a link is not edited in place,
+/// so two records sharing an id are the same record, and the copy already here
+/// is kept rather than compared field by field.
+///
+/// Returning nothing when there is nothing to add is the whole of why it
+/// settles.  The caller writes only when it is handed a list, and writing is
+/// what stamps the Diamond; a union that wrote unconditionally would stamp each
+/// side fresher than the other for ever.
+pub fn union_links(mine: &[Link], theirs: &[Link]) -> Option<Vec<Link>> {
+	// A linear scan, because a sidecar holds a handful of links and a set for a
+	// dozen short strings costs more to read than it saves.
+	let mut keys: Vec<String> = mine.iter().map(identity).collect();
+	let mut out = mine.to_vec();
+	for l in theirs {
+		let key = identity(l);
+		// What is taken includes what was just added, so a sidecar carrying the
+		// same link twice does not land it twice.
+		if keys.iter().any(|k| k == &key) {
+			continue;
+		}
+		keys.push(key);
+		out.push(l.clone());
+	}
+	if out.len() == mine.len() {
+		None
+	} else {
+		Some(out)
+	}
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -442,5 +506,95 @@ mod tests {
 	fn test_an_empty_sidecar_is_no_links_rather_than_a_failure() {
 		assert!(parse_links("").is_empty());
 		assert!(parse_links("\n\n  \n").is_empty());
+	}
+
+	#[test]
+	fn test_a_sidecar_from_before_the_rename_reads_as_diamonds() {
+		let old = concat!(
+			"{\"from\":\"facet:a\",\"to\":\"facet:b\",\"note\":\"a facet: is what it was\"}\n",
+		);
+		let links = parse_links(&fix_legacy_kinds(old));
+		assert_eq!(1, links.len());
+		assert_eq!("diamond:a", links[0].from.to_ref());
+		assert_eq!("diamond:b", links[0].to.to_ref());
+		// Only the quoted prefix is a reference; the same word in prose is prose.
+		assert_eq!("a facet: is what it was", links[0].note);
+	}
+
+	// ── The union: two copies of one sidecar coming back together ────
+
+	fn with_id(id: &str, to: &str) -> Link {
+		let mut l = link("diamond:a", to, "relates to");
+		l.id = fmt!("{}", id);
+		l
+	}
+
+	fn ids(links: &[Link]) -> String {
+		links.iter().map(|l| l.id.clone()).collect::<Vec<_>>().join(",")
+	}
+
+	#[test]
+	fn test_the_union_takes_what_the_other_copy_has_and_keeps_what_this_one_had() {
+		let mine  = vec![with_id("east", "diamond:b")];
+		let there = vec![with_id("west", "diamond:c")];
+		let out = union_links(&mine, &there).expect("one side had a link the other lacked");
+		assert_eq!("east,west", ids(&out), "this copy's links come first, in order");
+	}
+
+	#[test]
+	fn test_a_union_with_nothing_to_add_writes_nothing() {
+		// The whole of why it settles: no addition, no write, no stamp, and the
+		// round after a convergence is quiet.
+		let mine  = vec![with_id("east", "diamond:b"), with_id("west", "diamond:c")];
+		let there = vec![with_id("west", "diamond:c")];
+		assert!(union_links(&mine, &there).is_none());
+		assert!(union_links(&mine, &mine).is_none());
+		assert!(union_links(&mine, &[]).is_none());
+	}
+
+	#[test]
+	fn test_an_id_already_held_is_not_taken_a_second_time() {
+		// The id is the identity, so the copy already here is kept rather than
+		// compared: a link is never edited in place, and re-adding it every
+		// round is how a sidecar would grow without bound.
+		let mut theirs = with_id("east", "diamond:b");
+		theirs.note = fmt!("the other device's wording");
+		let mine = vec![with_id("east", "diamond:b")];
+		assert!(union_links(&mine, &[theirs]).is_none());
+	}
+
+	#[test]
+	fn test_two_devices_asserting_the_same_link_keep_both() {
+		// Two ids are two assertions. Deciding they meant one is a judgement
+		// about content, which the wholesale merge does not make either.
+		let mine  = vec![with_id("here", "diamond:b")];
+		let there = vec![with_id("there", "diamond:b")];
+		let out = union_links(&mine, &there).expect("two ids are two links");
+		assert_eq!("here,there", ids(&out));
+	}
+
+	#[test]
+	fn test_a_hand_written_link_with_no_id_is_keyed_by_what_it_says() {
+		// Nothing else can tell two of them apart, and keying them all as ""
+		// would let one unrelated link hide every other.
+		let text = concat!(
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"rel\":\"informs\"}\n",
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"informs\"}\n",
+		);
+		let mine  = parse_links(&text);
+		let there = parse_links(&text);
+		assert_eq!(2, mine.len());
+		assert!(union_links(&mine, &there).is_none(), "the same two, not four");
+
+		let extra = parse_links("{\"from\":\"diamond:a\",\"to\":\"diamond:d\"}\n");
+		let out = union_links(&mine, &extra).expect("a third link is new");
+		assert_eq!(3, out.len());
+	}
+
+	#[test]
+	fn test_a_link_repeated_in_the_incoming_sidecar_lands_once() {
+		let there = vec![with_id("west", "diamond:c"), with_id("west", "diamond:c")];
+		let out = union_links(&[], &there).expect("this side held none");
+		assert_eq!("west", ids(&out));
 	}
 }

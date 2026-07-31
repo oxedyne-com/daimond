@@ -517,6 +517,7 @@
 	'spend.part_reported': 'De esto, {amount} lo informaron los proveedores; el resto está calculado con la tabla de tarifas de Daimond.',
 	'spend.none_reported': 'Calculado con la tabla de tarifas de Daimond: ningún proveedor informó de un coste para estos turnos.',
 	'spend.none_reported_unknown': 'Calculado con la tabla de tarifas de Daimond, y uno de estos modelos no está en ella, así que la cifra es solo una guía aproximada.',
+	'spend.repriced': 'Las estimaciones hechas antes de que se corrigiera la tabla de tarifas se han recalculado en este dispositivo; con la tabla anterior, este periodo marcaba {amount}.',
 	'spend.col_when': 'Cuándo',
 	'spend.col_what': 'Qué',
 	'spend.col_amount': 'Importe',
@@ -627,6 +628,8 @@
 	'web.opening': '<b>Abriendo {host}…</b><br>Se está abriendo delante una ventana de <b>Daimond Hands</b>: aprueba ahí el sitio y luego Chrome pedirá una confirmación. Ambas cosas ocurren solo la primera vez para cada sitio.',
 	'web.not_approved': '<b>{host} no fue aprobado.</b><br>',
 	'web.approval_closed': 'La ventana de aprobación se cerró, o dijiste que no. Si querías permitirlo, pídeme que abra el sitio otra vez y haz clic en <b>Permitir y luego confirmar en Chrome</b>: la ventana se abre delante de esta, y el icono de <b>Daimond Hands</b> guarda la pregunta hasta que la respondas.',
+	'web.approved_late': '<b>{host} sí fue aprobado.</b> Tu respuesta llegó cuando Daimond ya había renunciado a esperarla, así que el panel dijo lo contrario por un momento. La página ya está abierta.',
+	'web.answer_late': 'Tu respuesta llegó después de que Daimond dejara de esperar. ',
 	'web.driving_tab': '<b>Daimond está conduciendo {host}</b> en una pestaña del navegador. Míralo ahí, o trae una imagen en vivo a este panel.',
 	'web.show_live': 'Mostrar aquí la vista en vivo',
 	'web.blocked': '<b>{host}</b> no se deja mostrar dentro de otra página. La mayoría de los sitios lo bloquean: es la protección de la web contra el clickjacking, no un fallo.',
@@ -764,6 +767,14 @@
 	'home.add_account': '＋ Añadir otra cuenta',
 	'home.accounts_note': 'Cada cuenta tiene sus propios chats, claves, créditos y archivos. Cambiar bloquea esta y abre la otra; nadie ve los datos de otra cuenta.',
 	'home.log_out': 'Cerrar sesión',
+	'home.sec_devices': 'Dispositivos',
+
+	// ── The devices that sync this account ─────────────────────
+	'devices.on_platform': '{brand} en {platform}',
+	'devices.unknown': 'Este dispositivo',
+	'devices.this_device': 'este dispositivo',
+	'devices.only_this': 'Solo este dispositivo sincroniza esta cuenta.',
+	'devices.note': 'Estos dispositivos sincronizan esta cuenta. Un dispositivo aparece aquí en cuanto ha sincronizado, así que uno que tenga tu cuenta pero nunca haya sincronizado no sale en la lista. Aquí no se puede cerrar la sesión de ningún dispositivo: un dispositivo enlazado tiene las mismas claves que este, así que hay que resolverlo en el propio dispositivo.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Sin conexión',

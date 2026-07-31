@@ -275,6 +275,8 @@
 	'web.opening':         '<b>正在打开 {host}…</b><br>前面会弹出一个 <b>Daimond Hands</b> 窗口 — 在那里批准这个站点，然后 Chrome 会再确认一次。两步都只在第一次访问这个站点时出现。',
 	'web.not_approved':    '<b>{host} 未获批准。</b><br>',
 	'web.approval_closed': '批准窗口被关掉了，或者你选了不允许。如果本来是想允许的，让我再打开一次这个站点，然后点<b>允许，再到 Chrome 里确认</b> — 窗口会开在这个窗口前面，而 <b>Daimond Hands</b> 图标会一直留着这个问题，直到你回答为止。',
+	'web.approved_late':   '<b>{host} 已获批准。</b>你的回答是在 Daimond 不再等下去之后才到的，所以面板有一瞬间显示的正好相反。页面现在已经打开了。',
+	'web.answer_late':     '你的回答是在 Daimond 不再等下去之后才到的。',
 	'web.driving_tab':     '<b>Daimond 正在一个浏览器标签页里操作 {host}</b>。你可以到那边看，也可以把实时画面拉进这个面板。',
 	'web.show_live':       '在这里显示实时画面',
 	// 拒绝被嵌进框里的站点，也就是大多数站点。
@@ -656,6 +658,7 @@
 	'spend.part_reported':         '其中 {amount} 是提供商报回来的；其余按 Daimond 的价目表计算。',
 	'spend.none_reported':         '按 Daimond 的价目表计算 — 这些轮次没有任何提供商报回费用。',
 	'spend.none_reported_unknown': '按 Daimond 的价目表计算，而其中一个模型不在表里，所以这个数字只是个粗略的参考。',
+	'spend.repriced': '价目表更正之前做的估算，已经在这台设备上重新算过一遍；按旧的价目表，这段时间显示的是 {amount}。',
 	'spend.col_when':    '时间',
 	'spend.col_what':    '项目',
 	'spend.col_amount':  '金额',
@@ -802,6 +805,14 @@
 	'home.add_account':       '＋ 添加另一个账户',
 	'home.accounts_note':     '每个账户都有自己的聊天、密钥、额度和文件。切换时会锁上这一个、打开另一个；谁也看不到别的账户的数据。',
 	'home.log_out':           '退出登录',
+	'home.sec_devices':       '设备',
+
+	// ── 同步这个账户的设备 ─────────────────────────────────────
+	'devices.on_platform': '{platform} 上的 {brand}',
+	'devices.unknown':     '这台设备',
+	'devices.this_device': '这台设备',
+	'devices.only_this':   '只有这台设备在同步这个账户。',
+	'devices.note':        '这些设备在同步这个账户。设备同步过一次之后才会出现在这里，所以有你的账户、却从未同步过的设备不会列出来。这里没法让哪台设备退出登录：关联的设备和这台持有同样的密钥，只能在那台设备上处理。',
 
 	// ── 侧栏下方的状态行 ───────────────────────────────────────
 	'astat.offline':             '离线',

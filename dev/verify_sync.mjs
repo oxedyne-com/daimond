@@ -94,10 +94,19 @@ try {
 		await window.DaimondSync.push();
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
-		return { version: j.version, present: j.present, blob: j.blob || '' };
+		let name = '';
+		try { name = String(window.DaimondIdentity.displayName() || ''); } catch (e) { name = ''; }
+		return { version: j.version, present: j.present, blob: j.blob || '', device: j.device || '', account: name };
 	});
 	check('after a push the mailbox holds a version >= 1', pushed.present && pushed.version >= 1,
 		'version=' + pushed.version);
+
+	// The record's display label is the one thing the gateway keeps in the clear
+	// beside the blob. A browser-and-platform description is fine; the account
+	// name is the user's own words and must never leave the browser readable.
+	check('the plaintext device label is not the account\'s chosen name',
+		pushed.device !== '' && (pushed.account === '' || !pushed.device.includes(pushed.account)),
+		'device="' + pushed.device + '" account="' + pushed.account + '"');
 
 	// The blob is ciphertext: the plaintext codeword must not be in it, and it must
 	// not decode to readable JSON.
@@ -637,6 +646,144 @@ try {
 	check('a parcel with no second stamp still merges on the one it has',
 		!!oldWon && oldWon.name === 'Named-By-An-Old-Build', oldWon ? oldWon.name : 'absent');
 
+	// ── (4g) Links across devices: the same flaw, one file over ───────
+	// A Diamond's links live in a sidecar inside its own directory, so they rode
+	// the wholesale copy and nothing else -- and before `touched`, asserting or
+	// removing a link stamped nothing at all, exactly as tagging did not. Two
+	// stores could therefore hold different links at identical stamps for ever,
+	// and the first thing either of them stamped replaced the other's links
+	// wholesale. Tags were repaired by unioning them at equal stamps; this is
+	// the same repair one file over, where a link's id is what says whether the
+	// two copies mean the same link or two different ones.
+	const EAST = 'link-east-1', WEST = 'link-west-1';
+
+	/// One stored sidecar line, as a hand or an older build would leave it.
+	const linkLine = (id, from, to, rel) => JSON.stringify({
+		id: id, ts: 1700000000000, from: from, to: to, rel: rel, note: '', by: 'user',
+	}) + '\n';
+
+	/// Every link one Diamond's own sidecar holds, as `id/rel`, sorted. The id
+	/// is in there because a union that re-created the links it took would look
+	/// identical by relation alone, and would then duplicate on every round.
+	const linksOf = (id) => wasm(async (app, id) =>
+		JSON.parse(await app.all_links()).filter(l => l.owner === id)
+			.map(l => l.id + '/' + l.rel).sort().join(','), id);
+
+	/// A disk with one Diamond's sidecar replaced and its stamps left exactly as
+	/// they were -- which is what a link written by a build that stamped nothing
+	/// looks like from the outside.
+	const withSidecar = (disk, id, text) => page.evaluate(({ disk, id, text }) => disk.map((p) => {
+		const pack = JSON.parse(p);
+		if (pack.id !== id) return p;
+		pack.files['.daimond/links.jsonl'] = text;
+		return JSON.stringify(pack);
+	}), { disk: disk, id: id, text: text });
+
+	const three = await wasm(async (app) => {
+		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
+		const a = await app.create_diamond('Link-Travel');
+		const b = await app.create_diamond('Link-East');
+		const c = await app.create_diamond('Link-West');
+		await app.write_crystal(a, '# shared ground\n');
+		return { a: a, b: b, c: c };
+	});
+	const diskL = await diskNow();				// what BOTH devices last agreed on
+	const BOTH  = [EAST + '/east', WEST + '/west'].sort().join(',');
+	const dev1  = await withSidecar(diskL, three.a,
+		linkLine(EAST, 'diamond:' + three.a, 'diamond:' + three.b, 'east'));
+	const dev2  = await withSidecar(diskL, three.a,
+		linkLine(WEST, 'diamond:' + three.a, 'diamond:' + three.c, 'west'));
+
+	await becomeDevice(dev1);
+	const pL1 = await parcelNow();
+	await becomeDevice(dev2);
+	const beforeUnion = await rowOf(three.a);
+	const linksBefore = await linksOf(three.a);
+	check('the link fixture is two stores that disagree at one identical stamp',
+		linksBefore === WEST + '/west'
+			&& entryOf(pL1, three.a).touched === beforeUnion.touched,
+		'here=[' + linksBefore + '] stamps ' + entryOf(pL1, three.a).touched
+			+ ' / ' + beforeUnion.touched);
+
+	await pullParcel(pL1);
+	const unioned2 = await linksOf(three.a);
+	const rowUnion = await rowOf(three.a);
+	check('two stores that already diverged converge: both links, both ids kept',
+		unioned2 === BOTH, '[' + unioned2 + ']');
+	check('and unioning links does not reorder the rail either',
+		!!rowUnion && rowUnion.updated === beforeUnion.updated,
+		'updated ' + beforeUnion.updated + ' -> ' + (rowUnion && rowUnion.updated));
+	check('writing the union stamps this side, so it can travel back',
+		!!rowUnion && rowUnion.touched > beforeUnion.touched,
+		'touched ' + beforeUnion.touched + ' -> ' + (rowUnion && rowUnion.touched));
+
+	const pL2      = await parcelNow();			// device 2, unioned and stamped
+	const diskBoth = await diskNow();
+	await becomeDevice(dev1);					// device 1 as it was: one link
+	await pullParcel(pL2);
+	const unioned1 = await linksOf(three.a);
+	const rowBack  = await rowOf(three.a);
+	check('the union travels back, and the fresher side is taken wholesale',
+		unioned1 === BOTH, '[' + unioned1 + ']');
+	check('the import lays that stamp down verbatim, so the union cannot bounce',
+		!!rowBack && rowBack.touched === entryOf(pL2, three.a).touched,
+		'here=' + (rowBack && rowBack.touched) + ' sent=' + entryOf(pL2, three.a).touched);
+
+	// Round three: the two sides now hold the same links at the same stamp, and
+	// a union with nothing to add must write nothing at all -- otherwise each
+	// side would stamp itself fresher than the other for ever.
+	const pL3 = await parcelNow();
+	await becomeDevice(diskBoth);
+	const quietBefore = await rowOf(three.a);
+	await pullParcel(pL3);
+	const quietAfter  = await rowOf(three.a);
+	check('once the two agree, the union writes nothing and moves no stamp',
+		(await linksOf(three.a)) === BOTH
+			&& !!quietAfter && quietAfter.touched === quietBefore.touched,
+		'[' + (await linksOf(three.a)) + '] touched ' + quietBefore.touched
+			+ ' -> ' + (quietAfter && quietAfter.touched));
+
+	// A link removed since the fix DOES stamp the Diamond, so the removal is
+	// strictly fresher and is taken wholesale. The union only ever sees copies
+	// that are equally fresh, so it cannot be what puts a deleted link back.
+	await becomeDevice(diskBoth);
+	await wasm((app, arg) => app.remove_link(arg.id, arg.link), { id: three.a, link: EAST });
+	const rowDel  = await rowOf(three.a);
+	const pDel    = await parcelNow();
+	const diskDel = await diskNow();
+	check('removing a link stamps the Diamond, so the removal can travel at all',
+		(await linksOf(three.a)) === WEST + '/west'
+			&& !!rowDel && rowDel.touched > quietBefore.touched,
+		'[' + (await linksOf(three.a)) + '] touched ' + quietBefore.touched
+			+ ' -> ' + (rowDel && rowDel.touched));
+
+	await becomeDevice(diskBoth);				// the other device: still holds both
+	const pStale = await parcelNow();			// and would hand the deleted link back
+	await pullParcel(pDel);
+	const pDel2 = await parcelNow();			// that device, having taken the deletion
+	check('a link deleted on another device goes here too',
+		(await linksOf(three.a)) === WEST + '/west', '[' + (await linksOf(three.a)) + ']');
+
+	await becomeDevice(diskDel);				// the device that did the deleting
+	const staleRow = await rowOf(three.a);
+	await pullParcel(pStale);
+	// The outcome AND the mechanism: the copy that still holds the link is
+	// strictly older, so it never reaches the union at all. That is the whole of
+	// why unioning links cannot undo a deletion made since the stamp existed.
+	check('and a stale copy that still holds it does not put it back',
+		(await linksOf(three.a)) === WEST + '/west'
+			&& entryOf(pStale, three.a).touched < staleRow.touched,
+		'[' + (await linksOf(three.a)) + '] stale ' + entryOf(pStale, three.a).touched
+			+ ' < here ' + staleRow.touched);
+	const beforeAgreed = await rowOf(three.a);
+	await pullParcel(pDel2);
+	const afterAgreed  = await rowOf(three.a);
+	check('nor does an equal-stamped copy that has already taken the deletion',
+		(await linksOf(three.a)) === WEST + '/west'
+			&& !!afterAgreed && afterAgreed.touched === beforeAgreed.touched,
+		'[' + (await linksOf(three.a)) + '] touched ' + beforeAgreed.touched
+			+ ' -> ' + (afterAgreed && afterAgreed.touched));
+
 	// Every merge above left the store changed, so the engine has a push
 	// scheduled. Let it land: a push still in flight when the next section stubs
 	// the gateway is only rescheduled, and that section would then measure a chip
@@ -1041,6 +1188,75 @@ try {
 		!!(gate.cleared && gate.cleared.state === 'synced')
 		&& gate.api.stalled === false && gate.api.entitled === true,
 		JSON.stringify(gate.cleared) + ' ' + JSON.stringify(gate.api));
+
+	// (9) The device roster travels, so a user can be told whether their account
+	// is on more than one device.
+	//
+	// Nothing else can tell them. Pairing hands the second device the SAME
+	// keypair, so the gateway sees one user and cannot count devices, and the
+	// parked bundle is deleted on redeem, so there is no server record of the
+	// pairing either. The count therefore has to come out of the parcel, which
+	// means it has to survive the real encrypted round trip -- and the roster must
+	// stay INSIDE the sealed blob while it does. The second device is simulated
+	// the way this file simulates one everywhere else: by swapping what this
+	// browser holds.
+	const DEV_B = 'bbbb2222cccc3333';
+	const roster0 = await page.evaluate(() => ({
+		self: localStorage.getItem('daimond-device-id'),
+		reg:  localStorage.getItem('daimond-devices') || '{}',
+	}));
+	check('this device is on its own roster before any of it travels',
+		/^[0-9a-f]{16}$/.test(roster0.self || '') && !!JSON.parse(roster0.reg)[roster0.self],
+		roster0.reg.slice(0, 120));
+
+	await pushLanded(page);
+	const sealed = await page.evaluate(async () => {
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const j = await r.json();
+		return j.blob || '';
+	});
+	check('the roster rides inside the sealed blob — the gateway is told no device name',
+		!sealed.includes('device') && !sealed.includes('Chromium') && !sealed.includes(roster0.self),
+		'blob ' + sealed.length + ' bytes');
+
+	// Device B: another install of the app, which has never seen this roster.
+	const bSaw = await page.evaluate(async (b) => {
+		localStorage.setItem('daimond-device-id', b);
+		localStorage.setItem('daimond-devices', '{}');
+		await window.DaimondSync.pull();
+		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
+	}, DEV_B);
+	check('the second device pulls and learns of the first',
+		!!bSaw[roster0.self], Object.keys(bSaw).join(','));
+	await pushLanded(page);
+
+	// Device A again, knowing only itself, exactly as it was left.
+	const aSaw = await page.evaluate(async (r) => {
+		localStorage.setItem('daimond-device-id', r.self);
+		localStorage.setItem('daimond-devices', r.reg);
+		await window.DaimondSync.pull();
+		return JSON.parse(localStorage.getItem('daimond-devices') || '{}');
+	}, roster0);
+	check('and the first device pulls and learns of the second',
+		!!aSaw[DEV_B], Object.keys(aSaw).join(','));
+	check('so both ends see BOTH devices — the account is visibly on two',
+		!!aSaw[roster0.self] && !!aSaw[DEV_B] && Object.keys(aSaw).length === 2,
+		JSON.stringify(aSaw).slice(0, 200));
+	const lineB = aSaw[DEV_B] || {};
+	check('each line carries a name and a last-seen, so the list can be read',
+		!!lineB.name && lineB.seen > 1.7e12 && lineB.created > 1.7e12,
+		JSON.stringify(lineB));
+	// The drawer is the surface the user actually reads.
+	const shown = await page.evaluate(() => {
+		DaimondAdmin.home();
+		const rows = [...document.querySelectorAll('#admin-home .device-row')]
+			.map(r => r.innerText.replace(/\s+/g, ' ').trim());
+		DaimondAdmin.close();
+		return rows;
+	});
+	check('and the Admin drawer lists them both, with this one marked',
+		shown.length === 2 && shown.filter(r => /this device/i.test(r)).length === 1,
+		shown.join(' | '));
 
 	// (5) The export bundle carries the salt (without it, no second device could decrypt).
 	const bundle = await page.evaluate(() => {

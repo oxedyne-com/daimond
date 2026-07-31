@@ -415,6 +415,45 @@ const C = P._core;
 	check('a five-minute-old tail is still this session', near(live.session.usd, 0.001));
 }
 
+// ── 8d. What the reprice changed is readable, per period ───────────
+{
+	// The correction only earns trust if it can be shown. `repriced` answers
+	// what the touched entries cost now and what they were first guessed at,
+	// within the window the panel is showing, so the view can quote the figure
+	// the user remembers instead of dropping the total in silence.
+	const win4 = { };
+	loadModule('js/pricing.js', { window: win4 });
+	loadModule('js/ledger.js',  { window: win4, localStorage: store });
+	const L4 = win4.DaimondLedger;
+	const DAY = 86400000, now = Date.now();
+	store._map.set('daimond-ledger', JSON.stringify([
+		// Two already-repriced guesses inside the week.
+		{ t: now - 2 * DAY,  m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.05, u0: 0.30, rp: 1 },
+		{ t: now - 3 * DAY,  m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.03, u0: 0.18, rp: 1 },
+		// A third, older than the week but inside the month.
+		{ t: now - 20 * DAY, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.01, u0: 0.06, rp: 1 },
+		// A billed turn the reprice never touched.
+		{ t: now - 1 * DAY,  m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.02, r: 1 },
+	]));
+	check('the ledger can say what the reprice changed', typeof L4.repriced === 'function');
+	const m = (typeof L4.repriced === 'function') ? L4.repriced('month') : { turns: 0, usd: 0, was: 0 };
+	const w = (typeof L4.repriced === 'function') ? L4.repriced('week')  : { turns: 0, usd: 0, was: 0 };
+	check('repriced() gives the corrected and the original total for the period',
+		m.turns === 3 && near(m.usd, 0.09) && near(m.was, 0.54), JSON.stringify(m));
+	check('repriced() honours the period window',
+		w.turns === 2 && near(w.usd, 0.08) && near(w.was, 0.48), JSON.stringify(w));
+	check('a billed turn is money that moved, so it is not part of the correction',
+		m.turns === 3 && !near(m.usd, 0.11), JSON.stringify(m));
+	// A window holding nothing repriced answers with zeros, so the note the
+	// panel draws from this ages out on its own as the 90-day log retires them.
+	store._map.set('daimond-ledger', JSON.stringify([
+		{ t: now - 1 * DAY, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.02, r: 1 },
+	]));
+	const none = (typeof L4.repriced === 'function') ? L4.repriced('month') : null;
+	check('a period with no repriced turn reports nothing to explain',
+		!!none && none.turns === 0 && near(none.usd, 0) && near(none.was, 0), JSON.stringify(none));
+}
+
 // ── 9. The gateway's balance notice ────────────────────────────────
 {
 	// gateway.js needs rather more of a browser than the other two, so it is

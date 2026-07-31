@@ -517,6 +517,7 @@
 	'spend.part_reported': '{amount} de ce total ont été signalés par les fournisseurs ; le reste est chiffré d’après la table de tarifs de Daimond.',
 	'spend.none_reported': 'Chiffré d’après la table de tarifs de Daimond — aucun fournisseur n’a signalé de coût pour ces tours.',
 	'spend.none_reported_unknown': 'Chiffré d’après la table de tarifs de Daimond, et l’un de ces modèles n’y figure pas : le chiffre n’est donc qu’un ordre de grandeur.',
+	'spend.repriced': 'Les estimations faites avant la correction de la table de tarifs ont été rechiffrées sur cet appareil ; avec l’ancienne table, cette période affichait {amount}.',
 	'spend.col_when': 'Quand',
 	'spend.col_what': 'Objet',
 	'spend.col_amount': 'Montant',
@@ -627,6 +628,8 @@
 	'web.opening': '<b>Ouverture de {host}…</b><br>Une fenêtre <b>Daimond Hands</b> s’ouvre devant — approuvez-y le site, puis Chrome demandera une confirmation. Les deux n’arrivent qu’à la première visite d’un site.',
 	'web.not_approved': '<b>{host} n’a pas été approuvé.</b><br>',
 	'web.approval_closed': 'La fenêtre d’approbation a été fermée, ou vous avez refusé. Si vous vouliez l’autoriser, demandez-moi d’ouvrir le site à nouveau et cliquez sur <b>Autoriser, puis confirmer dans Chrome</b> — la fenêtre s’ouvre devant celle-ci, et l’icône <b>Daimond Hands</b> garde la question jusqu’à ce que vous y répondiez.',
+	'web.approved_late': '<b>{host} a bien été approuvé.</b> Votre réponse est arrivée alors que Daimond avait renoncé à l’attendre : le panneau a donc affiché le contraire un instant. La page est ouverte à présent.',
+	'web.answer_late': 'Votre réponse est arrivée après que Daimond a cessé d’attendre. ',
 	'web.driving_tab': '<b>Daimond conduit {host}</b> dans un onglet du navigateur. Regardez-y, ou ramenez une image en direct dans ce panneau.',
 	'web.show_live': 'Afficher la vue en direct ici',
 	'web.blocked': '<b>{host}</b> refuse de s’afficher dans une autre page. La plupart des sites le bloquent — c’est la protection du web contre le clickjacking, pas une panne.',
@@ -767,6 +770,14 @@
 	'home.add_account': '＋ Ajouter un autre compte',
 	'home.accounts_note': 'Chaque compte a ses propres chats, clés, crédits et fichiers. En changer verrouille celui-ci et ouvre l’autre ; personne ne voit les données d’un autre compte.',
 	'home.log_out': 'Se déconnecter',
+	'home.sec_devices': 'Appareils',
+
+	// ── The devices that sync this account ─────────────────────
+	'devices.on_platform': '{brand} sur {platform}',
+	'devices.unknown': 'Cet appareil',
+	'devices.this_device': 'cet appareil',
+	'devices.only_this': 'Seul cet appareil synchronise ce compte.',
+	'devices.note': 'Ces appareils synchronisent ce compte. Un appareil apparaît ici dès qu’il a synchronisé une fois ; celui qui détient votre compte sans avoir jamais synchronisé n’y figure pas. Rien ici ne déconnecte un appareil : un appareil lié détient les mêmes clés que celui-ci, il faut donc s’en occuper sur l’appareil lui-même.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Hors ligne',

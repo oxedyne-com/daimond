@@ -518,6 +518,7 @@
 	'spend.part_reported': 'Davon wurden {amount} von den Anbietern gemeldet; der Rest ist nach der Preistabelle von Daimond berechnet.',
 	'spend.none_reported': 'Nach der Preistabelle von Daimond berechnet — kein Anbieter hat für diese Züge Kosten gemeldet.',
 	'spend.none_reported_unknown': 'Nach der Preistabelle von Daimond berechnet, und eines dieser Modelle steht nicht darin, die Zahl ist also nur ein grober Anhaltspunkt.',
+	'spend.repriced': 'Schätzungen, die vor der Korrektur der Preistabelle entstanden sind, wurden auf diesem Gerät neu berechnet; nach der alten Tabelle stand für diesen Zeitraum {amount}.',
 	'spend.col_when': 'Wann',
 	'spend.col_what': 'Was',
 	'spend.col_amount': 'Betrag',
@@ -628,6 +629,8 @@
 	'web.opening': '<b>{host} wird geöffnet…</b><br>Ein <b>Daimond Hands</b>-Fenster öffnet sich davor — gib die Seite dort frei, danach fragt Chrome einmal zur Bestätigung. Beides passiert für eine Seite nur beim ersten Mal.',
 	'web.not_approved': '<b>{host} wurde nicht freigegeben.</b><br>',
 	'web.approval_closed': 'Das Freigabefenster wurde geschlossen, oder du hast Nein gesagt. Wenn du sie eigentlich erlauben wolltest, bitte mich, die Seite noch einmal zu öffnen, und klicke auf <b>Erlauben, dann in Chrome bestätigen</b> — das Fenster geht vor diesem auf, und das Symbol von <b>Daimond Hands</b> hält die Frage offen, bis du sie beantwortest.',
+	'web.approved_late': '<b>{host} wurde freigegeben.</b> Deine Antwort kam an, nachdem Daimond das Warten aufgegeben hatte, deshalb zeigte das Panel einen Moment lang etwas anderes an. Die Seite ist jetzt offen.',
+	'web.answer_late': 'Deine Antwort kam, nachdem Daimond aufgehört hatte zu warten. ',
 	'web.driving_tab': '<b>Daimond steuert {host}</b> in einem Browser-Tab. Sieh dort zu, oder hol ein Livebild in dieses Panel.',
 	'web.show_live': 'Live-Ansicht hier zeigen',
 	'web.blocked': '<b>{host}</b> lässt sich nicht in einer anderen Seite darstellen. Die meisten Seiten blockieren das — es ist der Schutz des Webs gegen Clickjacking, kein Fehler.',
@@ -765,6 +768,14 @@
 	'home.add_account': '＋ Weiteres Konto hinzufügen',
 	'home.accounts_note': 'Jedes Konto hat eigene Chats, Schlüssel, Guthaben und Dateien. Ein Wechsel sperrt dieses und öffnet das andere; niemand sieht die Daten eines anderen Kontos.',
 	'home.log_out': 'Abmelden',
+	'home.sec_devices': 'Geräte',
+
+	// ── The devices that sync this account ─────────────────────
+	'devices.on_platform': '{brand} auf {platform}',
+	'devices.unknown': 'Dieses Gerät',
+	'devices.this_device': 'dieses Gerät',
+	'devices.only_this': 'Nur dieses Gerät synchronisiert dieses Konto.',
+	'devices.note': 'Diese Geräte synchronisieren dieses Konto. Ein Gerät steht hier, sobald es einmal synchronisiert hat; eines, das dein Konto zwar hat, aber noch nie synchronisiert hat, fehlt in der Liste. Hier lässt sich kein Gerät abmelden: ein verbundenes Gerät hat dieselben Schlüssel wie dieses, also muss das am Gerät selbst erledigt werden.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Offline',

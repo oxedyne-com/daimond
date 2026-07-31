@@ -28,7 +28,16 @@
 //! synchronous single-writer OPFS path is deferred); single-user,
 //! single-Diamond-at-a-time makes that sufficient for this stage.
 
-use crate::diamond_link::{Link, Node, normalise_note, normalise_rel, parse_links, write_links};
+use crate::diamond_link::{
+	Link,
+	Node,
+	fix_legacy_kinds,
+	normalise_note,
+	normalise_rel,
+	parse_links,
+	union_links,
+	write_links,
+};
 use crate::diamond_meta::{Meta, normalise_tags};
 use crate::llm::json_escape;
 use crate::protocol::generate_session_id;
@@ -626,7 +635,7 @@ pub async fn read_links(id: &str) -> Outcome<Vec<Link>> {
     // as the Diamond it means. Rewriting on read is enough: the file is
     // rewritten whenever a link is added or removed, and until then the
     // in-memory view is already correct.
-    let fixed = text.replace("\"facet:", "\"diamond:");
+    let fixed = fix_legacy_kinds(&text);
     if fixed != text {
         res!(opfs::write_file(FileRoot::Opfs, &path, fixed.as_bytes()).await);
     }
@@ -705,6 +714,58 @@ pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
     }
     res!(write_links_for(owner, &kept).await);
     touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Take into a Diamond's sidecar every link another device's copy of it holds
+/// and this one does not.  True when something was written.
+///
+/// The merge carries a Diamond wholesale on the freshest copy, and refuses to
+/// choose when the two are equally fresh.  Equally fresh with different links is
+/// exactly the state a build that stamped nothing when a link changed used to
+/// leave behind, and no wholesale choice can repair it: whichever copy is
+/// picked, the other's links go.  A union can, because links are a set of
+/// records with ids, and taking both copies' records is not a judgement about
+/// either -- the same reasoning that lets tags be unioned (see
+/// [`set_tags`]).
+///
+/// It settles.  Writing stamps the Diamond, so this side becomes the fresher one
+/// and the union travels back to be taken wholesale; an import lays the stamps
+/// down verbatim, so nothing bounces back again; and once the two sidecars agree
+/// [`union_links`] adds nothing, nothing is written and no stamp moves.
+///
+/// It cannot resurrect a deletion.  [`remove_link`] stamps the Diamond, so the
+/// copy that lost the link is the fresher one and is taken wholesale, and this
+/// is reached only where neither copy is fresher.  What it can repair is
+/// therefore only the divergence the missing stamp left behind, which is what it
+/// is for.
+///
+/// # Arguments
+/// * `owner`   - The Diamond whose sidecar is being reconciled.
+/// * `sidecar` - The other device's copy of it, as stored text.
+pub async fn union_links_from(owner: &str, sidecar: &str) -> Outcome<bool> {
+    // Another device's file, so the same fixup a read applies: a link arriving
+    // under the old kind is the same link, and writing it down unrepaired would
+    // put a dead end in a file this device had already cleaned.
+    let theirs = parse_links(&fix_legacy_kinds(sidecar));
+    if theirs.is_empty() {
+        return Ok(false);
+    }
+    // A Diamond that is not here is not one to write a sidecar for.  Writing
+    // would create the directory, and [`all_links`] walks directories rather
+    // than the rail, so the graph would gain links belonging to a Diamond
+    // nothing lists -- and the stamp afterwards would fail anyway, there being
+    // no metadata to move.
+    if !res!(opfs::exists(FileRoot::Opfs, &meta_path(owner)).await) {
+        return Ok(false);
+    }
+    let mine = res!(read_links(owner).await);
+    let merged = match union_links(&mine, &theirs) {
+        Some(m) => m,
+        None    => return Ok(false),        // they agree: write nothing, stamp nothing
+    };
+    res!(write_links_for(owner, &merged).await);
+    touch_after_link(owner).await;
     Ok(true)
 }
 

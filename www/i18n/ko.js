@@ -277,6 +277,8 @@
 	'web.opening':         '<b>{host}을(를) 여는 중…</b><br>앞쪽에 <b>Daimond Hands</b> 창이 열려요 — 거기서 사이트를 승인하면 Chrome이 한 번 더 확인을 물어봐요. 둘 다 그 사이트의 첫 방문에만 있어요.',
 	'web.not_approved':    '<b>{host}은(는) 승인되지 않았어요.</b><br>',
 	'web.approval_closed': '승인 창이 닫혔거나, 아니라고 하셨어요. 허용하려던 것이었다면 그 사이트를 다시 열어 달라고 하신 다음 <b>허용하고 Chrome에서 확인</b>을 눌러 주세요. 창은 이 창 앞에 열리고, <b>Daimond Hands</b> 아이콘은 답하실 때까지 그 물음을 들고 있어요.',
+	'web.approved_late':   '<b>{host}은(는) 승인됐어요.</b> 답이 Daimond이 기다리기를 포기한 뒤에 닿아서, 패널이 잠깐 반대로 말했어요. 페이지는 이제 열려 있어요.',
+	'web.answer_late':     '답이 Daimond이 기다리기를 그만둔 뒤에 닿았어요. ',
 	'web.driving_tab':     '<b>Daimond이 브라우저 탭에서 {host}을(를) 조작하고 있어요</b>. 거기서 보셔도 되고, 실시간 화면을 이 패널로 끌어와도 돼요.',
 	'web.show_live':       '여기에 실시간 화면 보기',
 	// 틀 안에 담기기를 거부하는 사이트 — 사실 대부분이 그래요.
@@ -659,6 +661,7 @@
 	'spend.part_reported':         '이 가운데 {amount}은(는) 제공자가 알려 준 금액이고, 나머지는 Daimond의 요금표로 매긴 값이에요.',
 	'spend.none_reported':         'Daimond의 요금표로 매긴 값이에요 — 이 턴들에 대해 비용을 알려 준 제공자가 없어요.',
 	'spend.none_reported_unknown': 'Daimond의 요금표로 매겼는데, 이 모델 가운데 하나가 요금표에 없어서 이 숫자는 대략의 눈대중일 뿐이에요.',
+	'spend.repriced': '요금표를 바로잡기 전에 매긴 어림값은 이 기기에서 다시 계산했어요. 예전 요금표로는 이 기간이 {amount}으로(로) 나왔어요.',
 	'spend.col_when':    '시각',
 	'spend.col_what':    '내용',
 	'spend.col_amount':  '금액',
@@ -804,6 +807,14 @@
 	'home.add_account':       '＋ 다른 계정 추가',
 	'home.accounts_note':     '계정마다 채팅, 키, 크레딧, 파일이 따로예요. 전환하면 지금 것은 잠기고 다른 것이 열려요. 다른 계정의 자료는 누구도 볼 수 없어요.',
 	'home.log_out':           '로그아웃',
+	'home.sec_devices':       '기기',
+
+	// ── 이 계정을 동기화하는 기기 ──────────────────────────────
+	'devices.on_platform': '{platform}의 {brand}',
+	'devices.unknown':     '이 기기',
+	'devices.this_device': '이 기기',
+	'devices.only_this':   '이 계정을 동기화하는 기기는 이것뿐이에요.',
+	'devices.note':        '이 기기들이 이 계정을 동기화해요. 한 번이라도 동기화한 기기가 여기에 나오니, 계정을 가지고 있어도 아직 동기화한 적이 없는 기기는 목록에 없어요. 여기서는 어떤 기기도 로그아웃시킬 수 없어요. 연결된 기기는 이 기기와 같은 키를 가지고 있어서, 그 기기에서 직접 처리해야 해요.',
 
 	// ── 레일 아래의 상태 줄 ────────────────────────────────────
 	'astat.offline':             '오프라인',

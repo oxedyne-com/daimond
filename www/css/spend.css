@@ -220,6 +220,11 @@
 	padding: 12px 14px;
 }
 
+/* Two provenance lines in a row are two statements, not one paragraph. */
+.spend-note + .spend-note {
+	margin-top: 8px;
+}
+
 .spend-divider {
 	height: 1px;
 	background: var(--border);

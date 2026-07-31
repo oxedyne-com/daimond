@@ -46,7 +46,7 @@ try {
 	// ── Seed the client inference ledger: two models over several days. The
 	// stored `u` (USD) is read directly by the view, so figures are deterministic
 	// without leaning on the price table. ────────────────────────────────────
-	await page.evaluate(() => {
+	const seedJson = await page.evaluate(() => {
 		const DAY = 86400000, now = Date.now();
 		const e = (daysAgo, m, u) => ({ t: now - daysAgo * DAY, m, p: 1200, c: 400, ca: 0, u, e: false });
 		const seed = [
@@ -56,6 +56,7 @@ try {
 			e(10, 'anthropic/claude-x', 0.30),
 		];
 		localStorage.setItem('daimond-ledger', JSON.stringify(seed));
+		return JSON.stringify(seed);	// so a later check can put it back
 	});
 
 	// Open the panel and wait for it to draw.
@@ -92,6 +93,73 @@ try {
 	const weekBars = await page.evaluate(() => document.querySelectorAll('#spend-view .spend-bar').length);
 	check('Week/Month toggle re-renders the chart', weekBars !== monthBars,
 		`month=${monthBars} bars, week=${weekBars} bars`);
+
+	// ── The seq 48 reprice explains itself. ───────────────────────────────────
+	// Old estimates were re-priced under the corrected table, which quietly cut
+	// every total. A user who remembers the larger figure is owed the reason, so
+	// a period holding repriced turns (`rp`, original guess kept in `u0`) carries
+	// a provenance line quoting what that period read before -- here
+	// $0.10 − $0.08 + $0.48 = $0.50.
+	//
+	// The redraws here are of the LOCAL side only, so the gateway calls `onOpen`
+	// makes are stubbed out for the duration. That is not squeamishness about
+	// traffic: `refreshBalance` publishes `daimond:credits`, and daimond.js
+	// answers that by refreshing an open Spending panel -- which calls
+	// `refreshBalance` again. One real refresh with this panel open therefore
+	// spins, and driving three of them buries the gateway before the checks
+	// below can reach it.
+	const repriced = await page.evaluate(async () => {
+		const g = window.DaimondGateway;
+		window.__spendReal = { refreshBalance: g.refreshBalance, ledger: g.ledger };
+		g.refreshBalance = async () => {};
+		g.ledger = async () => [];
+		const DAY = 86400000, now = Date.now();
+		localStorage.setItem('daimond-ledger', JSON.stringify([
+			{ t: now - 1 * DAY, m: 'mock/fast', p: 1200, c: 400, ca: 0, u: 0.05, u0: 0.30, rp: 1, e: false },
+			{ t: now - 2 * DAY, m: 'mock/fast', p: 1200, c: 400, ca: 0, u: 0.03, u0: 0.18, rp: 1, e: false },
+			{ t: now - 3 * DAY, m: 'mock/fast', p: 1200, c: 400, ca: 0, u: 0.02, r: 1, e: false },
+		]));
+		await window.DaimondSpend.refresh();
+		const n = document.querySelector('#spend-view .spend-reprice');
+		return { shown: !!n, text: n ? n.textContent : '' };
+	});
+	check('a repriced period says so', repriced.shown, repriced.text);
+	check('and quotes what the period read under the old table',
+		/\$0\.50/.test(repriced.text), repriced.text);
+
+	// A shot of the panel itself, scrolled to the note, for the record.
+	await page.evaluate(() => {
+		var v = document.getElementById('spend-view');
+		var n = document.querySelector('#spend-view .spend-reprice');
+		if (v && n) v.scrollTop += n.getBoundingClientRect().top - v.getBoundingClientRect().top - 90;
+	});
+	await new Promise(r => setTimeout(r, 200));
+	await page.locator('#panel-spend')
+		.screenshot({ path: new URL('./shots/spend-reprice.png', import.meta.url).pathname, timeout: 8000 })
+		.catch(() => {});
+
+	// Nothing repriced in view, nothing to explain: the note ages out with the
+	// entries rather than lingering as a permanent apology.
+	const noReprice = await page.evaluate(async () => {
+		const DAY = 86400000, now = Date.now();
+		localStorage.setItem('daimond-ledger', JSON.stringify([
+			{ t: now - 1 * DAY, m: 'mock/fast', p: 1200, c: 400, ca: 0, u: 0.02, r: 1, e: false },
+			{ t: now - 2 * DAY, m: 'mock/fast', p: 1200, c: 400, ca: 0, u: 0.04, r: 1, e: false },
+		]));
+		await window.DaimondSpend.refresh();
+		return !document.querySelector('#spend-view .spend-reprice');
+	});
+	check('a period with no repriced turn shows no such note', noReprice);
+
+	// Put the original seed and the real gateway calls back, so what follows
+	// sees the ledger and the account it expects.
+	await page.evaluate(async (seed) => {
+		localStorage.setItem('daimond-ledger', seed);
+		await window.DaimondSpend.refresh();
+		const g = window.DaimondGateway;
+		g.refreshBalance = window.__spendReal.refreshBalance;
+		g.ledger = window.__spendReal.ledger;
+	}, seedJson);
 
 	// ── /api/ledger contract. ─────────────────────────────────────────────────
 	const led = await page.evaluate(async () => {
@@ -162,6 +230,24 @@ try {
 		return document.querySelector('#spend-view .spend-sec') ? 'opened' : 'empty';
 	});
 	check('Admin credits view has a working "see spending" door', adminDoor === 'opened', adminDoor);
+
+	// ── An open panel at rest is quiet. gateway.js announces a balance only
+	// when it MOVED: an unconditional announce closed a loop (the open panel
+	// refreshes on the announce, the refresh fetches the balance, the reply
+	// announces again) that drove the gateway at hundreds of requests a second
+	// for as long as the panel stayed on screen. The admin door above left the
+	// view open, which is exactly the state the loop needed; one nudge would
+	// have restarted it. ────
+	{
+		let rest = 0;
+		const count = r => { if (/\/api\/(balance|ledger)/.test(r.url())) rest++; };
+		page.on('request', count);
+		await page.evaluate(() => window.DaimondGateway.refreshBalance());
+		await new Promise(r => setTimeout(r, 3000));
+		page.off('request', count);
+		check('an open panel at rest does not drive the gateway',
+			rest <= 3, rest + ' requests in 3s');
+	}
 
 	await shot(s, 'spend-view');
 

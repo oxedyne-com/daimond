@@ -221,17 +221,21 @@
 		};
 	}
 
+	// The entries a named period covers: 'session', 'week' or 'month'
+	// (anything else reads as a month, the widest and safest default).
+	function periodSlice(entries, period, now) {
+		if (period === 'session') return sessionSlice(entries, now);
+		if (period === 'week') return since(entries, now - WEEK_MS);
+		return since(entries, now - MONTH_MS);
+	}
+
 	/// Per-model breakdown for a period, for a future UI. `period`
 	/// is one of 'session', 'week', 'month' (default 'month').
 	/// Returns an array of `{ model, usd, tokens, turns }`, sorted
 	/// by descending cost. This getter reads the clock.
 	function perModel(period) {
 		var entries = reprice(load());
-		var now = Date.now();
-		var slice;
-		if (period === 'session') slice = sessionSlice(entries, now);
-		else if (period === 'week') slice = since(entries, now - WEEK_MS);
-		else slice = since(entries, now - MONTH_MS);	// default: month
+		var slice = periodSlice(entries, period, Date.now());
 
 		var by = {};	// model id → accumulator
 		for (var i = 0; i < slice.length; i++) {
@@ -280,6 +284,30 @@
 		var out = [];
 		for (var k in by) out.push(by[k]);
 		out.sort(function (a, b) { return b.usd - a.usd; });
+		return out;
+	}
+
+	/// What the one-time reprice changed inside a period:
+	/// `{ turns, usd, was }` over the entries it touched -- `usd` as they
+	/// price now, `was` as they were first guessed. `period` is 'session',
+	/// 'week' or 'month' (default 'month'). This getter reads the clock.
+	///
+	/// A total that quietly halves is a total nobody trusts, so the panel
+	/// quotes the figure the period used to read. Only an entry carrying
+	/// both the `rp` mark and its original `u0` counts: a billed turn was
+	/// never touched, and a guess made since the table was fixed was
+	/// always right. A window holding none answers with zeros, so the
+	/// explanation retires itself as the log ages the old entries out.
+	function repriced(period) {
+		var slice = periodSlice(reprice(load()), period, Date.now());
+		var out = { turns: 0, usd: 0, was: 0 };
+		for (var i = 0; i < slice.length; i++) {
+			var e = slice[i];
+			if (!e || !e.rp || typeof e.u0 !== 'number') continue;
+			out.turns += 1;
+			out.usd += e.u || 0;
+			out.was += e.u0;
+		}
 		return out;
 	}
 
@@ -340,6 +368,7 @@
 		totals:      totals,
 		perModel:    perModel,
 		perProvider: perProvider,
+		repriced:    repriced,
 		series:      series,
 		samples:     samples,
 		clear:       clear,
