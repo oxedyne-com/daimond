@@ -169,6 +169,12 @@ pub const DEFAULT_CONDUCTOR: &str =
 	 several agents at once, call `spawn_agent` several times in the SAME turn \
 	 — they then run in parallel. If the user asks for two agents, call it \
 	 twice. Each reports back a summary the user can fold into the crystal.\n\n\
+	 Files already in the workspace that belong to this Diamond — ones the user \
+	 put there, or found, or wrote themselves — are recorded with \
+	 `artefact_add`. Anything an agent produces is recorded on its own, so this \
+	 is only for the ones that arrived some other way. Recording a file does not \
+	 read it: if what it says belongs in the crystal, read it and edit the \
+	 crystal too. Both take effect when the user accepts the fold.\n\n\
 	 Use the tools you have. If an instruction cannot be carried out, say why, \
 	 briefly.";
 

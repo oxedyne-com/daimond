@@ -23,6 +23,13 @@
 	--warn-bg:           #33260F;
 	--danger:            #E07A67;
 	--success:           #66B98C;
+	/* The chip a tag filter is being held by. One neutral pair, declared once and
+	   NOT re-declared per palette: a tag's hue already says which tag it is, so
+	   the state that says "this one is working" has to be the one thing about a
+	   chip that never varies -- across tags, and across themes. */
+	--tag-on-bg:         #4A4A4A;
+	--tag-on-hover:      #5C5C5C;
+	--tag-on-fg:         #FFFFFF;
 	--radius:            8px;
 	--radius-sm:         6px;
 	--radius-lg:         12px;
@@ -161,6 +168,185 @@
 	--warn-bg:           #F7ECD6;
 	--danger:            #A33227;
 	--success:           #2F7A54;
+}
+
+/* ── The rest of the palettes ─────────────────────────────────────────
+   Each one sets the same tokens and nothing else: no palette may introduce a
+   rule, because a rule cannot be chosen from a list. The three above (dark,
+   lollypop, light) came first and keep their ids; these seven fill out the
+   three bands the picker offers.
+
+   Every one is checked by dev/verify_theme.mjs, which computes the real WCAG
+   ratio for each text rung on each surface. The floors are the ones the first
+   three were tuned to: 4.5 for primary and secondary, and 4.0 for the muted
+   rung, which carries whole explanatory paragraphs and is the one that was
+   found sitting at 2.75 when nobody was measuring. */
+
+/* Mist -- a cool light palette: paper with a blue-grey cast, and a slate
+   accent. The quietest of the light band. */
+:root[data-theme="mist"] {
+	--bg-primary:        #F7F9FB;
+	--bg-secondary:      #FFFFFF;
+	--bg-tertiary:       #EDF1F5;
+	--bg-hover:          #E2E8EF;
+	--border:            #DCE3EA;
+	--border-2:          #C3CDD8;
+	--text-primary:      #17202A;
+	--text-secondary:    #56636F;
+	--text-muted:        #5F6B77;
+	--accent:            #26648F;
+	--accent-hover:      #3A87BA;
+	--accent-soft:       #E1EDF6;
+	--accent-text:       #1F5478;
+	--ok:                #2C7A54;
+	--ok-bg:             #DFF1E7;
+	--warn:              #8A5B0C;
+	--warn-bg:           #F8ECD4;
+	--danger:            #A9302C;
+	--success:           #2C7A54;
+}
+
+/* Linen -- warm light: unbleached paper, ink brown, a muted terracotta accent.
+   The counterpart to Mist at the other end of the light band. */
+:root[data-theme="linen"] {
+	--bg-primary:        #FAF6EF;
+	--bg-secondary:      #FFFDF9;
+	--bg-tertiary:       #F2EBDF;
+	--bg-hover:          #E8DFCF;
+	--border:            #E3DACB;
+	--border-2:          #CDC0AB;
+	--text-primary:      #241E16;
+	--text-secondary:    #635849;
+	--text-muted:        #726655;
+	--accent:            #9C4A22;
+	--accent-hover:      #B85E32;
+	--accent-soft:       #F5E5DA;
+	--accent-text:       #7A3818;
+	--ok:                #33704A;
+	--ok-bg:             #E3EFE4;
+	--warn:              #8A5B0C;
+	--warn-bg:           #F6EBD3;
+	--danger:            #A03A2A;
+	--success:           #33704A;
+}
+
+/* Sage -- intermediate, dark ink: a green-grey study, low chroma, restful for
+   long reading without going pale. */
+:root[data-theme="sage"] {
+	--bg-primary:        #EAEEE7;
+	--bg-secondary:      #F5F7F3;
+	--bg-tertiary:       #DFE5DA;
+	--bg-hover:          #D2DACB;
+	--border:            #CFD8C8;
+	--border-2:          #B4C0AA;
+	--text-primary:      #1B2118;
+	--text-secondary:    #4E5A48;
+	--text-muted:        #5C6855;
+	--accent:            #3F6B4A;
+	--accent-hover:      #4F8A5E;
+	--accent-soft:       #DCEADF;
+	--accent-text:       #2F5439;
+	--ok:                #2F6B48;
+	--ok-bg:             #DAEBDF;
+	--warn:              #7E570D;
+	--warn-bg:           #F0E6CC;
+	--danger:            #99332B;
+	--success:           #2F6B48;
+}
+
+/* Dusk -- intermediate, LIGHT ink: a blue slate that is neither paper nor
+   night. This is the palette the tone/ink split exists for; it sits in the
+   middle band and still needs light lettering. */
+:root[data-theme="dusk"] {
+	--bg-primary:        #222A34;
+	--bg-secondary:      #29323D;
+	--bg-tertiary:       #2F3946;
+	--bg-hover:          #384352;
+	--border:            #46525F;
+	--border-2:          #5A6879;
+	--text-primary:      #EDF1F6;
+	--text-secondary:    #BCC7D4;
+	--text-muted:        #A4B1C0;
+	--accent:            #2F70A8;
+	--accent-hover:      #3D86C4;
+	--accent-soft:       #33455A;
+	--accent-text:       #A9CDEC;
+	--ok:                #6FC194;
+	--ok-bg:             #263D33;
+	--warn:              #DFB059;
+	--warn-bg:           #3D3421;
+	--danger:            #EC8578;
+	--success:           #6FC194;
+}
+
+/* Midnight -- cool deep dark: near-black with a blue cast, an ice accent. */
+:root[data-theme="midnight"] {
+	--bg-primary:        #0E1218;
+	--bg-secondary:      #151B23;
+	--bg-tertiary:       #1B222C;
+	--bg-hover:          #232C38;
+	--border:            #262F3B;
+	--border-2:          #333E4C;
+	--text-primary:      #E4EAF2;
+	--text-secondary:    #9BA8B8;
+	--text-muted:        #808E9F;
+	--accent:            #2E7CB8;
+	--accent-hover:      #3B93D2;
+	--accent-soft:       #16293A;
+	--accent-text:       #8FC4EA;
+	--ok:                #56BE8C;
+	--ok-bg:             #12301F;
+	--warn:              #D7A54F;
+	--warn-bg:           #33280F;
+	--danger:            #E8776B;
+	--success:           #56BE8C;
+}
+
+/* Forest -- deep dark green, a moss accent. Warmer than Midnight, darker than
+   Sage, and no relation to either. */
+:root[data-theme="forest"] {
+	--bg-primary:        #0F1511;
+	--bg-secondary:      #161E18;
+	--bg-tertiary:       #1C251E;
+	--bg-hover:          #253026;
+	--border:            #27322A;
+	--border-2:          #354437;
+	--text-primary:      #E6EDE6;
+	--text-secondary:    #A0AFA1;
+	--text-muted:        #86968A;
+	--accent:            #3D8043;
+	--accent-hover:      #4C9A53;
+	--accent-soft:       #1B2E1D;
+	--accent-text:       #A2CFA4;
+	--ok:                #5FBE85;
+	--ok-bg:             #143020;
+	--warn:              #D2A052;
+	--warn-bg:           #33290F;
+	--danger:            #E38377;
+	--success:           #5FBE85;
+}
+
+/* Plum -- deep dark violet, a magenta accent. The loudest of the dark band. */
+:root[data-theme="plum"] {
+	--bg-primary:        #14101A;
+	--bg-secondary:      #1C1725;
+	--bg-tertiary:       #231D2E;
+	--bg-hover:          #2E2639;
+	--border:            #302840;
+	--border-2:          #40354F;
+	--text-primary:      #ECE6F2;
+	--text-secondary:    #ADA0BC;
+	--text-muted:        #9386A2;
+	--accent:            #B06BC9;
+	--accent-hover:      #C588DC;
+	--accent-soft:       #2A1E36;
+	--accent-text:       #CFA5E0;
+	--ok:                #64BE93;
+	--ok-bg:             #16301F;
+	--warn:              #D3A257;
+	--warn-bg:           #332A0F;
+	--danger:            #E88090;
+	--success:           #64BE93;
 }
 
 /* ── CJK faces ─────────────────────────────────────────────────

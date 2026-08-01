@@ -634,6 +634,16 @@ pub enum Tool {
     WebScroll,
     /// Compile a Typst source file in the workspace to a PDF, in the browser.
     TypstCompile,
+    /// Declare that a file already in the workspace belongs to this Diamond.
+    ///
+    /// Artefacts are otherwise harvested from what a turn WROTE, which is right
+    /// for everything an agent produces and useless for everything the user put
+    /// there themselves: a file read is not a file produced, and forty reads
+    /// would drown the one that matters.  This is the declaration that closes
+    /// that gap -- "treat this as mine" -- so the answer to "how do I make my
+    /// own file an artefact" stops being "get the model to touch it", which
+    /// would record it as produced, which is a lie about where it came from.
+    ArtefactAdd,
 }
 
 impl Tool {
@@ -673,6 +683,7 @@ impl Tool {
             // human's Compile button, which meant an agent asked to produce a PDF
             // correctly said it had no way to.
             Tool::TypstCompile,
+            Tool::ArtefactAdd,
         ];
         t.extend(Tool::web());
         t
@@ -785,6 +796,7 @@ impl Tool {
             Tool::FileDelete  => "file_delete",
             Tool::FileMove    => "file_move",
             Tool::DirCreate   => "dir_create",
+            Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
             Tool::Shell       => "shell",
             Tool::SpawnAgent  => "spawn_agent",
@@ -832,6 +844,7 @@ impl Tool {
             "file_delete"  => Some(Tool::FileDelete),
             "file_move"    => Some(Tool::FileMove),
             "dir_create"   => Some(Tool::DirCreate),
+            "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
             "shell"        => Some(Tool::Shell),
             "spawn_agent"  => Some(Tool::SpawnAgent),
@@ -859,6 +872,7 @@ impl Tool {
             Tool::FileDelete  => "Delete a file, or a directory when recursive is true, from the workspace.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
+            Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
@@ -889,6 +903,7 @@ impl Tool {
             Tool::FileDelete  => "Delete a file or a folder.",
             Tool::FileMove    => "Move or rename a file.",
             Tool::DirCreate   => "Make a folder.",
+            Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
@@ -915,6 +930,7 @@ impl Tool {
             Tool::FileDelete => r#"{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"string","description":"Pass true to delete a directory and everything inside it"}},"required":["path"]}"#,
             Tool::FileMove => r#"{"type":"object","properties":{"path":{"type":"string","description":"Existing workspace-relative path"},"to":{"type":"string","description":"New workspace-relative path; must not already exist"}},"required":["path","to"]}"#,
             Tool::DirCreate => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory to create"}},"required":["path"]}"#,
+            Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
@@ -958,6 +974,7 @@ impl Tool {
             Tool::FileDelete => Self::file_delete(args_json, ctx),
             Tool::FileMove   => Self::file_move(args_json, ctx),
             Tool::DirCreate  => Self::dir_create(args_json, ctx),
+            Tool::ArtefactAdd => Err(err!("artefact_add is a browser-build tool"; Unimplemented)),
             Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Self::shell(args_json, ctx).await,
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
@@ -1301,6 +1318,20 @@ impl Tool {
                 let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
                 res!(crate::wasm::opfs::create_dir(ctx.root, &path).await);
                 Ok(fmt!("Created {}.", path))
+            }
+            // The file must EXIST to be declared.  A declaration that quietly
+            // accepted a typo would put a link on the Diamond pointing at
+            // nothing, and the reader would find that out by clicking it.
+            Tool::ArtefactAdd => {
+                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                if !res!(crate::wasm::opfs::exists(ctx.root, &path).await) {
+                    return Ok(fmt!(
+                        "No file at {}. Nothing was recorded -- check the path with file_list.", path));
+                }
+                // Recorded by the fold, from this line in the tool log, with
+                // every other artefact. Nothing is written behind the user's
+                // back: an unaccepted fold records nothing at all.
+                Ok(fmt!("Recorded {} as an artefact of this Diamond.", path))
             }
             Tool::Shell => Err(err!(
                 "Tool 'shell' is not available in the browser build (no in-browser process executor).";
@@ -2605,6 +2636,7 @@ impl Tool {
             Tool::FileDelete => Self::file_delete(args, ctx),
             Tool::FileMove   => Self::file_move(args, ctx),
             Tool::DirCreate  => Self::dir_create(args, ctx),
+            Tool::ArtefactAdd => Err(err!("use execute() for artefact_add"; Invalid)),
             Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args, ctx),

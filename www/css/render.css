@@ -18,11 +18,12 @@
 }
 
 /* ── Token palette (light) ──
-   Lollypop is a LIGHT palette too, and was not listed here, so a code block in
-   the candy theme kept the dark tokens: pale blue strings on a pale pink card at
-   1.3:1, which is not text, it is a stain. Both light themes share these. */
-:root[data-theme="light"],
-:root[data-theme="lollypop"] {
+   Keyed on the INK and not on any palette's name. Lollypop was once missing
+   from the list here, so a code block in the candy theme kept the dark tokens:
+   pale blue strings on a pale pink card at 1.3:1, which is not text, it is a
+   stain. Every palette that takes dark lettering gets these, including the ones
+   added after this line was written. */
+:root[data-ink="dark"] {
 	--tok-comment:  #6e7781;
 	--tok-keyword:  #cf222e;
 	--tok-string:   #0a3069;

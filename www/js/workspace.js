@@ -62,6 +62,12 @@
 			daimondGuide: 'style',
 			theme: window.DaimondTheme ? DaimondTheme.get() : 'dark',
 			scale: scale(),
+			// The language travels the same channel. The guide cannot translate
+			// itself in place -- it is static pages, one set per locale -- so what
+			// it does with this is navigate to the matching page. Sending it here
+			// means the guide follows the app's language the way it already
+			// follows its palette, instead of being English under a German app.
+			locale: window.DaimondI18n ? DaimondI18n.locale() : 'en',
 		};
 	}
 
@@ -339,31 +345,40 @@
 
 	var menuEl;
 
+	/// The word each stored spacing id is shown as. The ids are `sharp` and
+	/// `warm` in storage and will stay that way; this is the only place the two
+	/// vocabularies meet.
+	var SPACING_WORD = { sharp: 'compact', warm: 'breathe' };
+
 	function renderMenu() {
 		menuEl = menuEl || document.getElementById('settings-menu');
 		if (!menuEl) return;
 		menuEl.innerHTML = '';
 		var model = P().model();
 
-		// Skin -- the overall shape (corners, typeface, spacing), orthogonal to
-		// the palette chosen below.
+		// Spacing -- the overall shape (corners, typeface, room between things),
+		// orthogonal to the palette chosen below. The two settings are stored
+		// under their original ids, because a rename that moved them would clear
+		// the choice of everyone already using one; only the words changed.
 		if (window.DaimondSkin) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.skin')));
+			menuEl.appendChild(el('div', 'pop-head', t('menu.spacing')));
 			var skinNow = DaimondSkin.get();
 			var sseg = el('div', 'seg');
 			['sharp', 'warm'].forEach(function (id) {
 				var pair = [id];
-				var sb = el('button', null, t('menu.skin_' + id));
+				var word = SPACING_WORD[id];
+				var sb = el('button', null, t('menu.spacing_' + word));
 				sb.setAttribute('aria-pressed', pair[0] === skinNow ? 'true' : 'false');
-				sb.title = t('menu.skin_' + id + '_help');
+				sb.title = t('menu.spacing_' + word + '_help');
 				sb.addEventListener('click', function () {
+					// Only the spacing. Choosing "Breathe" used to also move a dark
+					// palette to light, on the reading that the warm skin WAS a light
+					// airy look -- but the two axes are orthogonal, and the row now
+					// says so in its own name. Reaching for more room and being given
+					// a different palette is a setting changing a setting nobody
+					// touched, and with a list of palettes to choose from it would
+					// throw away a considered choice.
 					DaimondSkin.set(pair[0]);
-					// The warm skin reads as a light, airy look; if the user is on the
-					// dark palette when they choose it, move them to light so it lands
-					// as intended. The palette is still theirs to change, just below.
-					if (pair[0] === 'warm' && window.DaimondTheme && DaimondTheme.get() === 'dark') {
-						DaimondTheme.set('light');
-					}
 					renderMenu();
 				});
 				sseg.appendChild(sb);
@@ -371,18 +386,30 @@
 			menuEl.appendChild(sseg);
 		}
 
-		// Theme.
+		// Theme. A pulldown rather than a row of buttons: ten palettes in three
+		// bands is a list to look down, and a segmented control of ten would eat
+		// the menu and still not say which of them are light. The bands are the
+		// optgroups, so "a light one" is one glance rather than ten guesses.
 		menuEl.appendChild(el('div', 'pop-head', t('menu.theme')));
-		var themes = window.DaimondTheme ? DaimondTheme.list() : ['dark'];
 		var now = window.DaimondTheme ? DaimondTheme.get() : 'dark';
-		var seg = el('div', 'seg');
-		themes.forEach(function (name) {
-			var b = el('button', null, t('menu.theme_' + name));
-			b.setAttribute('aria-pressed', name === now ? 'true' : 'false');
-			b.addEventListener('click', function () { DaimondTheme.set(name); renderMenu(); });
-			seg.appendChild(b);
+		var sel = el('select', 'theme-pick');
+		sel.setAttribute('aria-label', t('menu.theme'));
+		(window.DaimondTheme ? DaimondTheme.tones() : ['dark']).forEach(function (tone) {
+			var grp = document.createElement('optgroup');
+			grp.label = t('menu.tone_' + tone);
+			DaimondTheme.inTone(tone).forEach(function (name) {
+				var o = el('option', null, t('menu.theme_' + name));
+				o.value = name;
+				if (name === now) o.selected = true;
+				grp.appendChild(o);
+			});
+			sel.appendChild(grp);
 		});
-		menuEl.appendChild(seg);
+		sel.addEventListener('change', function () {
+			DaimondTheme.set(sel.value);
+			renderMenu();
+		});
+		menuEl.appendChild(sel);
 
 		// Reading size. The sample is set in the size being chosen, so the control
 		// shows the change rather than naming it.
@@ -740,6 +767,10 @@
 				else if (P()) P().reflow();
 				if (galEl && !galEl.hidden) renderGallery();
 				if (menuEl && !menuEl.hidden) renderMenu();
+				// And the framed guide, which carries the language the same way it
+				// carries the palette. Without this line the guide stays in the
+				// language it was opened in -- the whole point of sending a locale.
+				tellFrames();
 			});
 		}
 
@@ -781,9 +812,22 @@
 
 		// A click anywhere else closes a popover, which is what a user expects of
 		// one and what stops two being open at once.
+		//
+		// "Anywhere else" has to be decided from the event's PATH, not from where
+		// its target sits now. Every control in the appearance menu re-renders the
+		// menu, which throws the clicked button away; by the time this bubbles,
+		// `menuEl.contains(e.target)` asks whether a detached node is a descendant
+		// and is told no. So the menu closed itself the moment you used it -- one
+		// step of text size per opening, and no way to watch the page change under
+		// the control that was changing it. The path is computed at dispatch,
+		// before any re-render, so it still knows where the click began.
+		function beganIn(pop, e) {
+			var path = e.composedPath ? e.composedPath() : null;
+			return path ? path.indexOf(pop) >= 0 : pop.contains(e.target);
+		}
 		document.addEventListener('click', function (e) {
-			if (menuEl && !menuEl.hidden && !menuEl.contains(e.target)) closeMenu();
-			if (galEl && !galEl.hidden && !galEl.contains(e.target)) closeGallery();
+			if (menuEl && !menuEl.hidden && !beganIn(menuEl, e)) closeMenu();
+			if (galEl && !galEl.hidden && !beganIn(galEl, e)) closeGallery();
 		});
 
 		window.addEventListener('resize', function () { closeMenu(); closeGallery(); });

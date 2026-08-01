@@ -1,66 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-guide-locale="en" data-guide-locales="en de">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Getting started — Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
-<script>
-/* Mirror the app's theme when the guide is framed same-origin; otherwise the
-   prefers-colour-scheme media query in guide.css decides. */
-(function () {
-	// The guide is framed inside Daimond's Web panel, which deliberately withholds
-	// `allow-same-origin` so that a page written by an agent cannot reach the
-	// user's keys. That sandbox blocks this document from reading window.parent
-	// at all, so the theme and the reading size arrive over postMessage instead --
-	// the one channel an opaque origin still has. Both are cosmetic and are
-	// validated on arrival, so accepting them from any framer costs nothing.
-	function paint(theme, scale) {
-		// All three, lollypop included. It used to be flattened to light on the
-		// grounds that both are light backgrounds -- but guide.css carries a
-		// lollypop palette of its own, so flattening it meant a candy reader's
-		// guide came out plain cream while the app around it stayed pink.
-		if (theme === 'dark' || theme === 'light' || theme === 'lollypop') {
-			document.documentElement.setAttribute('data-theme', theme);
-		}
-		var n = parseFloat(scale);
-		if (n >= 0.5 && n <= 2) document.documentElement.style.setProperty('--fs-scale', String(n));
-	}
-	window.addEventListener('message', function (e) {
-		var d = e && e.data;
-		if (!d || d.daimondGuide !== 'style') return;
-		paint(d.theme, d.scale);
-	});
-	try {
-		if (window.parent && window.parent !== window) {
-			window.parent.postMessage({ daimondGuide: 'ready' }, '*');
-		}
-	} catch (e) {}
-
-	// The direct path, for the case where the guide is framed WITHOUT a sandbox
-	// and can simply read the app's root. Harmless where it is blocked.
-	function apply(root) {
-		var t = root.getAttribute('data-theme');
-		// The app's own theme, whichever of the three it is.
-		if (t === 'dark' || t === 'light' || t === 'lollypop') {
-			document.documentElement.setAttribute('data-theme', t);
-		}
-		// The reader's text size travels the same path as the theme.
-		var s = root.style.getPropertyValue('--fs-scale');
-		if (s) document.documentElement.style.setProperty('--fs-scale', s);
-	}
-	try {
-		if (window.parent && window.parent !== window) {
-			var root = window.parent.document.documentElement;
-			apply(root);
-			new MutationObserver(function () {
-				try { apply(window.parent.document.documentElement); } catch (e) {}
-			}).observe(root, { attributes: true, attributeFilter: ['data-theme', 'style'] });
-		}
-	} catch (e) { /* cross-origin or opened directly: the media query handles it. */ }
-})();
-</script>
+<script src="frame.js"></script>
 </head>
 <body>
 

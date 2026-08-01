@@ -145,6 +145,31 @@
 	color: var(--accent-text);
 }
 
+/* The palette picker. A list rather than a segmented row, because ten of them
+   in three bands is something a reader looks DOWN, and because the bands are
+   the answer to the only question anyone brings to it -- "a light one" -- which
+   a row of ten equal buttons cannot answer at all. Full width of the menu, so
+   the longest palette name is never the reason it truncates. */
+.theme-pick {
+	display: block;
+	width: calc(100% - 12px);
+	margin: 2px 6px 8px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	color: var(--text-primary);
+	border-radius: var(--radius-sm);
+	padding: 6px 8px;
+	font-size: var(--fs-xs);
+	cursor: pointer;
+}
+.theme-pick:hover { border-color: var(--accent); }
+.theme-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The dropped list is drawn by the platform, which does not inherit the panel's
+   colours on every browser; naming both keeps a light palette's list off a
+   dark-on-dark default. */
+.theme-pick option,
+.theme-pick optgroup { background: var(--bg-secondary); color: var(--text-primary); }
+
 /* The reading size, shown as the thing it changes: the sample is set in the
    size being chosen, so the control demonstrates rather than describes. */
 .size-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; }

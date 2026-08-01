@@ -1626,18 +1626,54 @@ import init, {
 	var chatInputBar  = document.querySelector('.chat-input-bar');
 
 	// ── Theme ──────────────────────────────────────────────────
-	var THEMES = { light: 1, dark: 1, lollypop: 1 };
+	//
+	// A palette carries two facts beyond its colours, and they are NOT the same
+	// question. `tone` is the band it is offered under -- light, intermediate,
+	// dark -- which is how a reader looks for one. `ink` is whether its surfaces
+	// take dark lettering or light, which is what every rule outside this file
+	// actually needs to know: which wordmark to draw, which chip fill to use,
+	// which prose colours the reader and the guide take.
+	//
+	// They were one question while there were three palettes, and the code asked
+	// it as `theme !== 'dark'`. That is exactly the assumption a list of ten
+	// breaks: an intermediate palette may be a bright sage that wants dark ink or
+	// a slate dusk that wants light, and its band says nothing about which. Both
+	// are published as attributes, so a stylesheet can ask either without
+	// knowing a single palette's name.
+	var THEMES = {
+		// Light: paper-bright grounds, dark lettering.
+		light:    { tone: 'light', ink: 'dark'  },
+		mist:     { tone: 'light', ink: 'dark'  },
+		linen:    { tone: 'light', ink: 'dark'  },
+		// Intermediate: colour or midtone, either way of ink.
+		lollypop: { tone: 'mid',   ink: 'dark'  },
+		sage:     { tone: 'mid',   ink: 'dark'  },
+		dusk:     { tone: 'mid',   ink: 'light' },
+		// Dark: deep grounds, light lettering.
+		dark:     { tone: 'dark',  ink: 'light' },
+		midnight: { tone: 'dark',  ink: 'light' },
+		forest:   { tone: 'dark',  ink: 'light' },
+		plum:     { tone: 'dark',  ink: 'light' },
+	};
+	/// The bands, in the order they are offered. Named here rather than derived
+	/// from THEMES so the order is a decision and not a side effect of insertion.
+	var TONES = ['light', 'mid', 'dark'];
+
 	function initTheme() {
 		var saved = localStorage.getItem('daimond-theme');
 		setTheme(THEMES[saved] ? saved : 'dark');
 	}
 	function setTheme(theme) {
 		if (!THEMES[theme]) theme = 'dark';
-		document.documentElement.setAttribute('data-theme', theme);
+		var spec = THEMES[theme];
+		var root = document.documentElement;
+		root.setAttribute('data-theme', theme);
+		root.setAttribute('data-tone', spec.tone);
+		root.setAttribute('data-ink', spec.ink);
 		localStorage.setItem('daimond-theme', theme);
-		// A word logo drawn for a dark background needs its dark-ink twin on any LIGHT background —
-		// which lollypop is, as much as light itself. Only true dark keeps the light-ink logo.
-		var lightBg = theme !== 'dark';
+		// A word logo drawn for a dark background needs its dark-ink twin on any
+		// surface that takes dark lettering.
+		var lightBg = spec.ink === 'dark';
 		if (brandLogo && brandLogo.dataset.dark) {
 			brandLogo.src = lightBg ? brandLogo.dataset.light : brandLogo.dataset.dark;
 		}
@@ -1648,7 +1684,13 @@ import init, {
 	// setting among several in the appearance menu, so it is published as a
 	// service rather than bound to a control.
 	window.DaimondTheme = {
-		list: function () { return Object.keys(THEMES); },
+		list:  function () { return Object.keys(THEMES); },
+		tones: function () { return TONES.slice(); },
+		/// The palettes in one band, in declaration order.
+		inTone: function (tone) {
+			return Object.keys(THEMES).filter(function (k) { return THEMES[k].tone === tone; });
+		},
+		spec: function (name) { return THEMES[name] || null; },
 		get:  function () { return document.documentElement.getAttribute('data-theme') || 'dark'; },
 		set:  setTheme,
 	};
@@ -3958,6 +4000,9 @@ import init, {
 			// and the pairing itself left no record anywhere.
 			renderDevices();
 
+			// The operator console, for the handful of accounts that hold a role.
+			renderConsoleLink();
+
 			// What each kind of agent is told, which is the user's to change.
 			//
 			// Only buttons here: this drawer is narrow, and a system prompt is a
@@ -4045,6 +4090,50 @@ import init, {
 			});
 			homeView.appendChild(el('div', 'admin-note',
 				ids.length > 1 ? t('devices.note') : t('devices.only_this')));
+		}
+
+		/// A way through to the operator console, for accounts that hold a role.
+		///
+		/// Shown to role-holders ONLY, and the reason is not that the console is
+		/// secret. It is served at a guessable path, its script is public, and the
+		/// gate is decided server-side by the gateway; a link changes who bothers
+		/// to look, not who gets in. What a link for everybody WOULD do is teach
+		/// every user the shape of a phishing script -- "Daimond has an admin
+		/// console, and the way in is to copy your account id out of a card and
+		/// send it to someone" -- and put a door in front of the overwhelming
+		/// majority that they cannot open, which this app's own history says gets
+		/// read as a fault rather than as a boundary.
+		///
+		/// The role is asked for lazily, when the drawer opens, so an account that
+		/// will never hold one pays nothing at launch. The answer decides a link
+		/// and nothing else: every action inside the console is authorised by the
+		/// gateway on its own, and a client that lied to itself here would gain
+		/// exactly one useless hyperlink.
+		var consoleRole = null;		// null = not asked yet, false = asked, none
+		function renderConsoleLink() {
+			if (consoleRole === false) return;
+			if (consoleRole === null) {
+				// Ask once per page life, and redraw only if the answer is yes.
+				consoleRole = false;
+				fetch('/api/admin?view=whoami', {
+					credentials: 'same-origin',
+					headers: { 'x-daimond-api': '1' },
+				}).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+					if (!j || !j.role) return;
+					consoleRole = j.role;
+					if (homeView && !homeView.hidden) renderHome();
+				}).catch(function () { /* offline, or no gateway: no link, no noise. */ });
+				return;
+			}
+			homeView.appendChild(el('div', 'admin-sec', t('home.sec_console')));
+			var a = document.createElement('a');
+			a.className = 'admin-console-link';
+			a.href = '/console/';
+			a.target = '_blank';
+			a.rel = 'noopener';
+			a.textContent = t('home.console_open');
+			homeView.appendChild(a);
+			homeView.appendChild(el('div', 'admin-note', t('home.console_note', { role: consoleRole })));
 		}
 
 		/// Ask what to call a device, and put the answer on its line.
@@ -10942,6 +11031,12 @@ import init, {
 		file_move:  { arg: 'to',   kind: 'file', rel: 'produced' },
 		dir_create: { arg: 'path', kind: 'file', rel: 'produced' },
 		web_open:   { arg: 'url',  kind: 'url',  rel: 'consulted' },
+		// The declared one, and the only one that is not a side effect of doing
+		// something else. It says `holds`, not `produced`: the Diamond did not
+		// make this file, it claims it, and recording a file the user wrote as
+		// something an agent produced would be a lie about where work came from
+		// in the one list that exists to answer that.
+		artefact_add: { arg: 'path', kind: 'file', rel: 'holds' },
 	};
 
 	/// The artefacts named by a run of messages, deduplicated, in first-seen order.

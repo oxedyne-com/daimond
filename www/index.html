@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-skin="sharp">
+<html lang="en" data-theme="dark" data-tone="dark" data-ink="light" data-skin="sharp">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -10,8 +10,21 @@
 <script>
 (function () {
 	try {
+		// The palette table, mirrored from THEMES in daimond.js because this runs
+		// before any script loads. Each entry is [tone, ink]: the band it is
+		// offered under, and whether its surfaces take dark or light lettering.
+		// verify_theme asserts the two tables agree, so the copy cannot drift.
+		var P = {
+			light:    ['light', 'dark'],  mist:  ['light', 'dark'],  linen: ['light', 'dark'],
+			lollypop: ['mid',   'dark'],  sage:  ['mid',   'dark'],  dusk:  ['mid',   'light'],
+			dark:     ['dark',  'light'], midnight: ['dark', 'light'],
+			forest:   ['dark',  'light'], plum:     ['dark', 'light'],
+		};
 		var t = localStorage.getItem('daimond-theme');
-		if (t === 'light' || t === 'lollypop' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+		var spec = P[t] || P.dark;
+		if (P[t]) document.documentElement.setAttribute('data-theme', t);
+		document.documentElement.setAttribute('data-tone', spec[0]);
+		document.documentElement.setAttribute('data-ink', spec[1]);
 		var s = localStorage.getItem('daimond-skin');
 		if (s === 'soft') s = 'warm';   // the warm skin was briefly called "soft".
 		if (s === 'warm' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);

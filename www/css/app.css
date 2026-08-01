@@ -1,18 +1,13 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; width: 100%; overflow: hidden; }
 body { font-family: var(--font); background: var(--bg-primary); color: var(--text-primary); font-size: var(--fs-base); line-height: 1.5; transition: background 0.2s, color 0.2s; -webkit-font-smoothing: antialiased; }
-/* Lollypop lays a soft multicolour glow over the frame — pink at the top-left, lavender at the
-   top-right, mint rising from the bottom — on a candy-pink base. It is fixed, so it sits still
-   behind the panels as they scroll, and the panels themselves are opaque white, so nothing here
-   ever touches the legibility of the words on top. */
-:root[data-theme="lollypop"] body {
-	background:
-		radial-gradient(1200px 720px at 10% -10%, #FFDCEE 0%, rgba(255,220,238,0) 58%),
-		radial-gradient(1100px 720px at 94% 2%,   #E3E0FF 0%, rgba(227,224,255,0) 56%),
-		radial-gradient(1050px 820px at 72% 112%, #D3F5E7 0%, rgba(211,245,231,0) 56%),
-		var(--bg-primary);
-	background-attachment: fixed;
-}
+/* A palette may lay a wash over the frame -- Lollypop's multicolour glow is one
+   -- by declaring --body-wash. It is fixed, so it sits still behind the panels
+   as they scroll, and the panels themselves are opaque, so a wash never touches
+   the legibility of the words on top. Declared as a token rather than as a rule
+   naming one palette, because a rule naming a palette is a rule every palette
+   added afterwards silently misses. */
+body { background-image: var(--body-wash, none); background-attachment: fixed; }
 button, input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
 button { cursor: pointer; }
 svg { display: block; }
@@ -43,10 +38,8 @@ svg { display: block; }
    the dark theme, dark grey on the light and lollypop themes. */
 .brand-wordmark { height: var(--logo-h); width: auto; display: block; }
 .brand-wordmark.wm-on-light { display: none; }
-:root[data-theme="light"] .brand-wordmark.wm-on-dark,
-:root[data-theme="lollypop"] .brand-wordmark.wm-on-dark { display: none; }
-:root[data-theme="light"] .brand-wordmark.wm-on-light,
-:root[data-theme="lollypop"] .brand-wordmark.wm-on-light { display: block; }
+:root[data-ink="dark"] .brand-wordmark.wm-on-dark { display: none; }
+:root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
 .top-meter { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); overflow: hidden; white-space: nowrap; }
 .top-meter .sep { color: var(--text-muted); }
 .top-actions { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }
@@ -269,6 +262,20 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-item.danger { color: var(--danger); }
 .admin-item.danger:hover { background: var(--danger); color: #fff; }
 .admin-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 4px 6px 8px; line-height: 1.5; }
+/* The way through to the operator console. Drawn as one of the drawer's own
+   rows rather than as a button: it leads somewhere, it does not do anything. */
+.admin-console-link {
+	display: block;
+	margin: 2px 6px;
+	padding: 7px 9px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	text-decoration: none;
+}
+.admin-console-link:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* ── Chats list (sessions) ───────────────────────────────────── */
 .session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
@@ -943,8 +950,7 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 /* The wordmark ships white-lettered. The script swaps it per theme too (via
    #id-logo), but CSS `content` applies at first paint and outranks the src
    attribute, so the light and candy themes are right before any script runs. */
-:root[data-theme="light"] #identity-modal .login-logo,
-:root[data-theme="lollypop"] #identity-modal .login-logo {
+:root[data-ink="dark"] #identity-modal .login-logo {
 	content: url("../assets/daimond_word_dark.svg");
 }
 #identity-modal h2 { margin-bottom: 8px; }
@@ -1143,10 +1149,8 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .tag-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 110px; font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 6px; border-radius: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 	background: hsl(var(--tag-h, 0) 30% 20%); color: hsl(var(--tag-h, 0) 55% 78%); border: 1px solid hsl(var(--tag-h, 0) 28% 34%); }
 button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: hsl(var(--tag-h, 0) 40% 48%); }
-:root[data-theme="light"] .tag-chip,
-:root[data-theme="lollypop"] .tag-chip { background: hsl(var(--tag-h, 0) 70% 94%); color: hsl(var(--tag-h, 0) 55% 30%); border-color: hsl(var(--tag-h, 0) 45% 80%); }
-:root[data-theme="light"] button.tag-chip:hover,
-:root[data-theme="lollypop"] button.tag-chip:hover { background: hsl(var(--tag-h, 0) 74% 88%); border-color: hsl(var(--tag-h, 0) 50% 66%); }
+:root[data-ink="dark"] .tag-chip { background: hsl(var(--tag-h, 0) 70% 94%); color: hsl(var(--tag-h, 0) 55% 30%); border-color: hsl(var(--tag-h, 0) 45% 80%); }
+:root[data-ink="dark"] button.tag-chip:hover { background: hsl(var(--tag-h, 0) 74% 88%); border-color: hsl(var(--tag-h, 0) 50% 66%); }
 
 /* On a Diamond box, beside v{n} and the time. The +N stands for the tags that
    did not fit and names them on hover. */
@@ -1189,9 +1193,29 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .tag-editor .tag-chip:has(.tag-x) { padding-right: 2em; }
 
 /* A tag the rail is currently filtering ON, seen on the Diamond boxes that
-   survived it: the chip keeps its colour and takes a ring, so which of a
-   Diamond's tags is doing the filtering is legible without reading the summary. */
-.tag-inc { box-shadow: 0 0 0 1px hsl(var(--tag-h, 0) 50% 55%); }
+   survived it. One neutral chip, the same in every palette and for every tag:
+   the hue says WHICH tag, so it cannot also say which tag is working. A ring in
+   the tag's own colour said it too quietly -- a 1px outline one hue-step from
+   the chip it surrounds is not a state a rail can be read at a glance.
+
+   Deliberately NOT a box-shadow. A ring drawn outside the border box takes no
+   layout space, so the pool and the active row -- both `overflow-y: auto` and
+   both sized to the exact height of one chip row -- sliced it off top and
+   bottom. That is the clipping in the report: a scroll box cutting ink that was
+   never in its layout. Ink that has to survive belongs inside the border box.
+
+   The selector carries `[data-ink]` because the per-ink chip rules above
+   are three classes deep; a bare `.tag-inc` loses to them on every theme but
+   the default, and the whole point of this state is that it does not vary. */
+:root[data-ink] .tag-chip.tag-inc {
+	background: var(--tag-on-bg);
+	border-color: var(--tag-on-bg);
+	color: var(--tag-on-fg);
+}
+:root[data-ink] button.tag-chip.tag-inc:hover {
+	background: var(--tag-on-hover);
+	border-color: var(--tag-on-hover);
+}
 
 /* A tag the rail is REFUSING. The negation sign is drawn here rather than set as
    the button's text -- a chip's textContent is the tag name, and the rail, the
@@ -1201,17 +1225,15 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 .tag-no::before { content: '\00ac'; font-weight: 700; }
 .tag-no { background: transparent; border-style: dashed; color: hsl(var(--tag-h, 0) 30% 62%); }
 button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hsl(var(--tag-h, 0) 40% 48%); }
-:root[data-theme="light"] .tag-no,
-:root[data-theme="lollypop"] .tag-no { background: transparent; color: hsl(var(--tag-h, 0) 35% 40%); }
-:root[data-theme="light"] button.tag-no:hover,
-:root[data-theme="lollypop"] button.tag-no:hover { background: hsl(var(--tag-h, 0) 60% 96%); }
+:root[data-ink="dark"] .tag-no { background: transparent; color: hsl(var(--tag-h, 0) 35% 40%); }
+:root[data-ink="dark"] button.tag-no:hover { background: hsl(var(--tag-h, 0) 60% 96%); }
 
 /* All / Any: how two or more wanted tags combine. Both words are shown with one
    lit rather than a single label that flips, because a lone word cannot say
    whether it is naming the state or the action. It appears only when there are
    two tags for it to combine. */
 .tag-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
-.tag-mode-btn { font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 7px; background: none; border: none; color: var(--text-muted); cursor: pointer; }
+.tag-mode-btn { display: inline-flex; align-items: center; justify-content: center; font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 7px; background: none; border: none; color: var(--text-muted); cursor: pointer; }
 .tag-mode-btn:hover { color: var(--text-primary); }
 .tag-mode-btn.on { background: var(--accent); color: var(--bg-primary); }
 

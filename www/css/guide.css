@@ -4,10 +4,10 @@
  * (see css/variables.css) so the guide reads as part of the app, whether it is
  * opened directly at /guide/ or shown inside Daimond's Web panel.
  *
- * Theme: the app sets data-theme="dark|light" on <html>. When the guide is
- * framed same-origin, a small inline script mirrors that attribute onto the
- * guide's own root. When the attribute is absent (the guide opened on its own),
- * the prefers-colour-scheme media query decides. Both paths are handled below.
+ * Theme: guide/frame.js puts data-theme, data-tone and data-ink on this root --
+ * mirrored from the app when the guide is framed, from the operating system
+ * when it is opened on its own. The colours themselves come from the app's
+ * css/variables.css, which every guide page loads first.
  */
 
 /* Reading size. The guide is framed inside the app as often as it is opened on
@@ -16,95 +16,16 @@
  * standalone default of 1 when there is no app to mirror from. */
 html { font-size: calc(16px * var(--fs-scale, 1)); }
 
-/* ── Palette (dark by default, matching the app) ─────────────────────────── */
+/* ── Palette ──────────────────────────────────────────────────────────────
+   The guide loads the app's own css/variables.css, so every palette the app
+   offers is already here and none is restated. It used to carry copies of
+   three of them, which is why a candy reader once got a cream guide: a copy is
+   a palette that has to be remembered twice, and ten of them could not be.
+
+   Only what the app's stylesheet does not define, or defines differently for a
+   document rather than an application frame, belongs below. */
 :root {
-	--bg-primary:     #15120F;
-	--bg-secondary:   #1E1A16;
-	--bg-tertiary:    #241F1A;
-	--bg-hover:       #2B251E;
-	--border:         #332C25;
-	--border-2:       #3F372E;
-	--text-primary:   #ECE6DC;
-	--text-secondary: #A79E92;
-	--text-muted:     #736A5F;
-	--accent:         #D2604F;
-	--accent-hover:   #E07A67;
-	--accent-soft:    #3A211B;
-	--accent-text:    #E9A392;
-	--ok:             #66B98C;
-	--warn:           #D6A24A;
-	--radius:         8px;
-	--radius-sm:      6px;
-	--radius-lg:      12px;
-	--font:           system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-	--font-mono:      ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 	--maxw:           760px;
-}
-
-/* Light values, shared by the explicit toggle and the OS preference. */
-:root[data-theme="light"],
-:root.theme-light {
-	--bg-primary:     #FBF9F5;
-	--bg-secondary:   #FFFFFF;
-	--bg-tertiary:    #F4F1EA;
-	--bg-hover:       #EDE9E0;
-	--border:         #E7E1D6;
-	--border-2:       #D6CEBF;
-	--text-primary:   #211C18;
-	--text-secondary: #6B635A;
-	--text-muted:     #9A9187;
-	--accent:         #A6322A;
-	--accent-hover:   #C24A38;
-	--accent-soft:    #F6E7E2;
-	--accent-text:    #7E2A20;
-	--ok:             #2F7A54;
-	--warn:           #9A6410;
-}
-
-/* Lollypop, so the guide does not arrive as a dark page in front of a reader
-   whose app is candy-pink. The guide's own inline script only forwards
-   dark|light today, so this waits on that (see the report); with the attribute
-   absent the media query below still lands the reader on a light page. */
-:root[data-theme="lollypop"] {
-	--bg-primary:     #FDEFF7;
-	--bg-secondary:   #FFFFFF;
-	--bg-tertiary:    #FBE6F2;
-	--bg-hover:       #F7D8EC;
-	--border:         #F3D3E6;
-	--border-2:       #E7B4D3;
-	--text-primary:   #3A1E3E;
-	--text-secondary: #7C5578;
-	--text-muted:     #8A5E85;
-	--accent:         #E23E93;
-	--accent-hover:   #F45FAB;
-	--accent-soft:    #FBDDEF;
-	--accent-text:    #AE1E6E;
-	--ok:             #12B26E;
-	--warn:           #E88C0A;
-}
-:root[data-theme="lollypop"] .wm-dark  { display: none; }
-:root[data-theme="lollypop"] .wm-light { display: block; }
-
-/* When no explicit theme is set, follow the operating system. Lollypop is
-   excluded, or this fallback out-specifies its palette on a light-OS machine. */
-@media (prefers-color-scheme: light) {
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) {
-		--bg-primary:     #FBF9F5;
-		--bg-secondary:   #FFFFFF;
-		--bg-tertiary:    #F4F1EA;
-		--bg-hover:       #EDE9E0;
-		--border:         #E7E1D6;
-		--border-2:       #D6CEBF;
-		--text-primary:   #211C18;
-		--text-secondary: #6B635A;
-		--text-muted:     #9A9187;
-		--accent:         #A6322A;
-		--accent-hover:   #C24A38;
-		--accent-soft:    #F6E7E2;
-		--accent-text:    #7E2A20;
-		--ok:             #2F7A54;
-		--warn:           #9A6410;
-	}
 }
 
 /* ── Base ────────────────────────────────────────────────────────────────── */
@@ -162,16 +83,10 @@ a:hover { text-decoration: underline; }
 .wordmark { height: 22px; width: auto; display: block; }
 .wm-light { display: none; }
 
-/* Show the light-background wordmark under a light theme. */
-:root[data-theme="light"] .wm-dark,
-:root.theme-light .wm-dark { display: none; }
-:root[data-theme="light"] .wm-light,
-:root.theme-light .wm-light { display: block; }
-
-@media (prefers-color-scheme: light) {
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) .wm-dark { display: none; }
-	:root:not([data-theme="dark"]):not([data-theme="light"]):not([data-theme="lollypop"]):not(.theme-dark) .wm-light { display: block; }
-}
+/* Show the dark-lettered wordmark wherever the palette takes dark lettering.
+   One rule, on the ink axis, so a palette added later is never missed. */
+:root[data-ink="dark"] .wm-dark  { display: none; }
+:root[data-ink="dark"] .wm-light { display: block; }
 
 .brand-sub {
 	font-size: 0.8rem;
