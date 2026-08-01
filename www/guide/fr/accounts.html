@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr" data-guide-locale="fr" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Comptes &amp; confidentialité — Guide Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guide Daimond, accueil">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Pages du guide">
+			<a href="index.html">Premiers pas</a>
+			<a href="interface.html">L’interface</a>
+			<a href="models.html">Modèles &amp; crédits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+			<a href="accounts.html" aria-current="page">Comptes</a>
+			<a href="sync.html">Synchronisation entre appareils</a>
+			<a href="spending.html">Dépenses</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Comptes &amp; confidentialité</h1>
+	<p class="lede">Un compte dans Daimond est une phrase secrète détenue sur cet appareil. Il n’y a pas de compte sur un serveur : votre identité, vos clés et vos fichiers ne vivent que dans ce navigateur. Cette page couvre la phrase secrète, le partage d’un navigateur avec d’autres personnes, et ce qui reste privé.</p>
+
+	<h2>Votre compte est une phrase secrète</h2>
+	<p>Au premier lancement, Daimond propose de <strong>protéger cet appareil</strong>. Vous donnez un nom et une phrase secrète, et cette phrase secrète devient votre compte. Elle fait deux choses : elle chiffre votre clé de fournisseur et vos identifiants de messagerie enregistrés pour qu’un regard indiscret ne puisse pas les lire, et elle est l’identité qui vous connecte pour les crédits. Rien d’elle ne quitte le navigateur.</p>
+
+	<div class="note"><strong>La phrase secrète n’est jamais conservée et ne peut pas être récupérée.</strong> Daimond ne garde que les données chiffrées, pas la phrase secrète qui les déverrouille. Si vous l’oubliez, les clés et identifiants chiffrés sont perdus — gardez-la donc en lieu sûr. Vous pouvez continuer sans en avoir une en choisissant <span class="ui">Plus tard</span>, mais mieux vaut ajouter une clé de fournisseur une fois qu’une phrase secrète la protège.</div>
+
+	<h2>Un déverrouillage plus rapide avec une clé d’accès</h2>
+	<p>Une fois qu’une phrase secrète protège l’application, vous pouvez ajouter une <strong>clé d’accès</strong> pour un déverrouillage plus rapide : un visage, une empreinte ou une clé de sécurité, la même connexion sans mot de passe que votre appareil propose déjà. Une clé d’accès ne remplace pas la phrase secrète, elle la descelle pour vous : la phrase secrète reste donc la racine et le recours toujours disponible, et une clé d’accès perdue ne vous coûte rien tant que vous détenez encore la phrase secrète. Rien de tout cela n’atteint un serveur : le déverrouillage se fait entièrement sur l’appareil, et le service de crédits ne voit jamais qu’une clé publique.</p>
+
+	<h2>Les contrôles du compte</h2>
+	<p>Votre identité se trouve en haut du panneau d’administration, en bas à gauche. L’accueil du panneau en liste les contrôles :</p>
+
+	<figure class="shot" data-shot="accounts-switch">
+		<img alt="Les contrôles du compte dans le panneau d’administration : changer de nom, changer de phrase secrète, exporter ou importer une sauvegarde, se déconnecter, et oublier cette identité." src="shots/accounts-switch.png" loading="lazy">
+		<figcaption>Les contrôles du compte : changer votre nom ou votre phrase secrète, sauvegarder ou restaurer, vous déconnecter, ou oublier l’identité entièrement.</figcaption>
+	</figure>
+
+	<ul>
+		<li><span class="ui">Changer de nom…</span> — renommer l’identité.</li>
+		<li><span class="ui">Changer de phrase secrète…</span> — définir une nouvelle phrase secrète ; vos données chiffrées sont ré-enveloppées sous elle.</li>
+		<li><span class="ui">Exporter une sauvegarde</span> — enregistrer votre identité pour pouvoir la restaurer sur un autre navigateur ou appareil.</li>
+		<li><span class="ui">Importer une sauvegarde…</span> — amener une identité exportée dans ce navigateur.</li>
+		<li><span class="ui">Se déconnecter</span> — verrouiller l’application. Vos données restent sur l’appareil, chiffrées, jusqu’à ce que la phrase secrète soit saisie de nouveau.</li>
+		<li><span class="ui">Oublier cette identité…</span> — retirer définitivement l’identité et ses données chiffrées de ce navigateur.</li>
+	</ul>
+
+	<h2>Plusieurs personnes sur un même navigateur</h2>
+	<p>Daimond ne tient qu’un compte à la fois dans un navigateur : partager un ordinateur est donc affaire de verrouillage et, au besoin, de remplacement :</p>
+	<ul>
+		<li><strong>Vous vous absentez.</strong> Choisissez <span class="ui">Se déconnecter</span> pour verrouiller l’application. Vos chats, vos clés et vos fichiers restent sur l’appareil mais ne peuvent pas être lus sans votre phrase secrète : la personne suivante ne peut donc pas voir votre travail.</li>
+		<li><strong>Vous revenez.</strong> Saisissez votre phrase secrète pour déverrouiller et reprendre exactement là où vous en étiez.</li>
+		<li><strong>Vous cédez le navigateur à quelqu’un d’autre pour de bon.</strong> Choisissez <span class="ui">Oublier cette identité…</span> pour effacer votre compte, et la personne suivante choisit <span class="ui">Créer un compte…</span> pour créer le sien.</li>
+	</ul>
+
+	<h2>Déplacer votre compte d’un appareil à l’autre</h2>
+	<p>Comme il n’y a pas de serveur, votre compte ne vous suit pas automatiquement. Pour l’utiliser sur un autre navigateur ou une autre machine, choisissez <span class="ui">Exporter une sauvegarde</span> ici et <span class="ui">Importer une sauvegarde…</span> là-bas.</p>
+	<div class="note"><strong>Une sauvegarde contient votre identité.</strong> Quiconque l’importe devient vous : traitez donc le fichier de sauvegarde comme la phrase secrète elle-même — gardez-le privé et ne l’envoyez pas par un canal auquel vous ne confieriez pas la phrase secrète.</div>
+
+	<h2>Ce qui reste privé</h2>
+	<p>Votre phrase secrète, vos clés de fournisseur, vos identifiants de messagerie, vos chats, vos Diamonds et vos fichiers vivent dans ce navigateur et ne nous sont pas envoyés. Ce que nous détenons sur la passerelle, c’est de l’argent et du texte chiffré : votre solde de crédits et vos licences, et, pour la synchronisation entre appareils, un paquet chiffré que nous ne pouvons pas ouvrir. Nous n’avons pas la clé, nous ne pouvons donc pas lire votre travail.</p>
+	<p>Il est utile de savoir exactement où vont les données. Vos messages vont à un fournisseur de modèles quand vous connectez votre propre clé, ou passent par notre service compté quand vous dépensez des crédits sur un modèle. Récupérer une page web à lire, et synchroniser ou envoyer du courrier, passent par la passerelle pour atteindre le monde extérieur. Et une synchronisation transporte un paquet chiffré entre vos propres appareils. L’affirmation honnête n’est donc pas que rien ne sort jamais, mais ceci : avec votre propre clé, vos chats et vos fichiers ne sortent jamais en clair, et vous pouvez constater que seul du texte chiffré part vers nos serveurs.</p>
+	<div class="note"><strong>Vous n’avez pas à nous croire sur parole.</strong> Le client de Daimond — le code qui tourne dans ce navigateur et décide de ce qui est envoyé — est open source. Vous pouvez le lire, le construire, et ouvrir le panneau réseau de votre navigateur pour vérifier vous-même que seul du texte chiffré sort. L’unique affirmation que fait tout outil privé, nous vous laissons la vérifier : le code source est à <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>
+	<p>La protection a des limites qu’il faut dire. La phrase secrète protège contre une inspection locale de passage et contre l’indiscrétion sur un appareil partagé — qui ouvre les outils de développement du navigateur ne trouve que des données chiffrées, pas vos clés. Elle ne protège pas contre un navigateur compromis, une extension malveillante, ou un enregistreur de frappe qui regarde la phrase secrète pendant que vous la tapez. Ceux-là défont n’importe quel dispositif dans le navigateur et sont hors de portée : gardez donc l’appareil lui-même digne de confiance. Et ce qu’un serveur distant fait en lui-même, le nôtre ou celui d’un autre, ne peut pas se prouver de l’extérieur : les quelques opérations qui passent par la passerelle reposent sur cette ouverture et sur notre politique déclarée, et c’est exactement pourquoi c’est le client, la partie que vous pouvez vérifier, que nous vous ouvrons.</p>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; E-mail, Web &amp; fichiers</a>
+		<a href="sync.html">Suivant : Synchronisation entre appareils &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<nav aria-label="Pages du guide">
+		<a href="index.html">Premiers pas</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modèles</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+		<a href="accounts.html">Comptes</a>
+		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="spending.html">Dépenses</a>
+	</nav>
+</footer>
+</body>
+</html>

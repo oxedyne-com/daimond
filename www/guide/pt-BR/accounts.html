@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Contas &amp; privacidade — Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Primeiros passos</a>
+			<a href="interface.html">A interface</a>
+			<a href="models.html">Modelos &amp; créditos</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+			<a href="accounts.html" aria-current="page">Contas</a>
+			<a href="sync.html">Sincronização entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Contas &amp; privacidade</h1>
+	<p class="lede">Uma conta no Daimond é uma frase-senha guardada neste dispositivo. Não há conta em servidor nenhum: sua identidade, suas chaves e seus arquivos vivem só neste navegador. Esta página cobre a frase-senha, o compartilhamento de um navegador com outras pessoas, e o que fica privado.</p>
+
+	<h2>Sua conta é uma frase-senha</h2>
+	<p>Na primeira execução, o Daimond propõe <strong>proteger este dispositivo</strong>. Você dá um nome e uma frase-senha, e essa frase-senha vira a sua conta. Ela faz duas coisas: criptografa a chave de provedor e as credenciais de e-mail que você guardou, para que um curioso não consiga lê-las, e é a identidade que faz seu login para os créditos. Nada a respeito dela sai do navegador.</p>
+
+	<div class="note"><strong>A frase-senha nunca é guardada e não pode ser recuperada.</strong> O Daimond guarda apenas os dados criptografados, não a frase-senha que os destranca. Se você a esquecer, as chaves e credenciais criptografadas se vão — então guarde-a em um lugar seguro. Você pode seguir sem ter uma escolhendo <span class="ui">Agora não</span>, mas é melhor acrescentar a chave de um provedor quando já houver uma frase-senha protegendo-a.</div>
+
+	<h2>Um desbloqueio mais rápido com uma chave de acesso</h2>
+	<p>Uma vez que uma frase-senha esteja protegendo o app, você pode acrescentar uma <strong>chave de acesso</strong> para um desbloqueio mais rápido: um rosto, uma impressão digital ou uma chave de segurança, o mesmo login sem senha que seu dispositivo já oferece. Uma chave de acesso não substitui a frase-senha, ela a destrava para você, de modo que a frase-senha continua sendo a raiz e o recurso sempre disponível, e uma chave de acesso perdida não lhe custa nada enquanto você ainda tiver a frase-senha. Nada disso chega a um servidor: o desbloqueio acontece inteiramente no dispositivo, e o serviço de créditos nunca vê mais do que uma chave pública.</p>
+
+	<h2>Os controles da conta</h2>
+	<p>Sua identidade fica no alto do painel de administração, no canto inferior esquerdo. A tela inicial do painel lista os controles dela:</p>
+
+	<figure class="shot" data-shot="accounts-switch">
+		<img alt="Os controles da conta no painel de administração: mudar o nome, mudar a frase-senha, exportar ou importar um backup, sair, e esquecer esta identidade." src="shots/accounts-switch.png" loading="lazy">
+		<figcaption>Os controles da conta: mudar seu nome ou sua frase-senha, fazer backup ou restaurar, sair, ou esquecer a identidade por completo.</figcaption>
+	</figure>
+
+	<ul>
+		<li><span class="ui">Mudar o nome…</span> — renomear a identidade.</li>
+		<li><span class="ui">Mudar a frase-senha…</span> — definir uma nova frase-senha; seus dados criptografados são reenvolvidos por ela.</li>
+		<li><span class="ui">Exportar um backup</span> — salvar sua identidade para poder restaurá-la em outro navegador ou dispositivo.</li>
+		<li><span class="ui">Importar um backup…</span> — trazer uma identidade exportada para este navegador.</li>
+		<li><span class="ui">Sair</span> — trancar o app. Seus dados ficam no dispositivo, criptografados, até que a frase-senha seja digitada de novo.</li>
+		<li><span class="ui">Esquecer esta identidade…</span> — remover de vez a identidade e seus dados criptografados deste navegador.</li>
+	</ul>
+
+	<h2>Mais de uma pessoa em um mesmo navegador</h2>
+	<p>O Daimond mantém uma conta de cada vez em um navegador, então compartilhar um computador é questão de trancar e, se preciso, substituir:</p>
+	<ul>
+		<li><strong>Você se afasta.</strong> Escolha <span class="ui">Sair</span> para trancar o app. Seus chats, chaves e arquivos continuam no dispositivo, mas não podem ser lidos sem a sua frase-senha, então a próxima pessoa não consegue ver o seu trabalho.</li>
+		<li><strong>Você volta.</strong> Digite sua frase-senha para desbloquear e retomar exatamente de onde parou.</li>
+		<li><strong>Você passa o navegador a outra pessoa de vez.</strong> Escolha <span class="ui">Esquecer esta identidade…</span> para apagar a sua conta, e a próxima pessoa escolhe <span class="ui">Criar uma conta…</span> para criar a dela.</li>
+	</ul>
+
+	<h2>Mover sua conta entre dispositivos</h2>
+	<p>Como não há servidor, sua conta não o acompanha automaticamente. Para usá-la em outro navegador ou máquina, escolha <span class="ui">Exportar um backup</span> aqui e <span class="ui">Importar um backup…</span> lá.</p>
+	<div class="note"><strong>Um backup contém a sua identidade.</strong> Quem o importa vira você, então trate o arquivo de backup como a própria frase-senha — mantenha-o privado e não o envie por um canal ao qual você não confiaria a frase-senha.</div>
+
+	<h2>O que fica privado</h2>
+	<p>Sua frase-senha, suas chaves de provedor, suas credenciais de e-mail, seus chats, Diamonds e arquivos vivem neste navegador e não são enviados para nós. O que guardamos no gateway é dinheiro e texto cifrado: seu saldo de créditos e suas licenças, e, para a sincronização entre dispositivos, um pacote criptografado que não podemos abrir. Não temos a chave, então não podemos ler o seu trabalho.</p>
+	<p>Ajuda saber exatamente para onde vão os dados. Suas mensagens vão para um provedor de modelos quando você conecta sua própria chave, ou passam pelo nosso serviço medido quando você gasta créditos em um modelo. Buscar uma página web para ler, e sincronizar ou enviar correio, passam pelo gateway para alcançar o mundo lá fora. E uma sincronização leva um pacote criptografado entre os seus próprios dispositivos. Então a afirmação honesta não é que nada jamais sai, e sim esta: com a sua própria chave, seus chats e arquivos nunca saem em claro, e você pode ver que só texto cifrado parte para os nossos servidores.</p>
+	<div class="note"><strong>Você não precisa acreditar nisso na palavra.</strong> O cliente do Daimond — o código que roda neste navegador e decide o que é enviado — é de código aberto. Você pode lê-lo, compilá-lo e abrir o painel de rede do seu navegador para confirmar você mesmo que só sai texto cifrado. A única afirmação que toda ferramenta privada faz, nós deixamos você conferir: o código está em <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>
+	<p>A proteção tem limites que convém dizer. A frase-senha protege contra uma inspeção local de passagem e contra a bisbilhotice em dispositivo compartilhado — quem abrir as ferramentas de desenvolvedor do navegador encontra apenas dados criptografados, não as suas chaves. Ela não protege contra um navegador comprometido, uma extensão maliciosa ou um registrador de teclas observando a frase-senha enquanto você a digita. Esses derrotam qualquer esquema dentro do navegador e estão fora do alcance, então mantenha o próprio dispositivo confiável. E o que um servidor remoto faz dentro de si, o nosso ou o de qualquer um, não pode ser provado de fora: as poucas operações que passam pelo gateway apoiam-se nessa abertura e na nossa política declarada, e é exatamente por isso que é o cliente, a parte que você pode conferir, que abrimos para você.</p>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; E-mail, Web &amp; arquivos</a>
+		<a href="sync.html">Próximo: Sincronização entre dispositivos &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Primeiros passos</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+		<a href="accounts.html">Contas</a>
+		<a href="sync.html">Sincronização entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>

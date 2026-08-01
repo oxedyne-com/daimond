@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>支出 — Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">はじめに</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="models.html">モデル &amp; クレジット</a>
+			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+			<a href="accounts.html">アカウント</a>
+			<a href="sync.html">端末間の同期</a>
+			<a href="spending.html" aria-current="page">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>支出</h1>
+	<p class="lede">支出の画面は、お金がどこへ行くのかを示し、二つの財布を分けたままにします。通貨も口座も違うので、Daimond は二本の筋として見せ、足し合わせることはありません。</p>
+
+	<h2>分けたままの二つの財布</h2>
+	<ul>
+		<li><strong>推論。</strong> モデルの呼び出しそのもので、ご自分のプロバイダーの鍵に請求されます。Daimond はこの端末で、やり取りごとに値段を付けて記録します。ご自分の鍵の支出を、こちらを通すことなく見られます。</li>
+		<li><strong>クレジット。</strong> ブラウザの外に出る少数のことにゲートウェイが使う、前払いの残高です。ページの取得、メールの同期や送信、端末間の同期、そして作業領域を置いておく先である <a href="email-web-files.html">クラウド保存</a>.</li>
+	</ul>
+
+	<h2>開き方</h2>
+	<p>支出の画面は、上部バーの <strong>支出のメーター</strong> から、または <span class="ui">クレジット</span> の画面のリンクから開きます。それぞれの財布を、見出しの数字、日ごとのグラフ、区分ごとの内訳、そして増減の素朴な表で見せるので、ある請求が謎のままになることはありません。</p>
+
+	<h2>暴走する費用からの守り</h2>
+	<p>たくさんのエージェントを同時に動かせる作業場は、原理的には速くお金を使えます。危ないのは月の合計が大きいことではなく、 <em>使う速さの跳ね上がり</em>です。ファンアウトが数秒でクレジットを燃やし、あなたが反応する前に終わってしまいます。Daimond は、あとから合計を数えるだけでなく、その跳ね上がりを捕まえるように作られています。四つの手立てが噛み合って働き、どれもあらかじめ上限を決めておくことを求めません。</p>
+	<ul>
+		<li><strong>ファンアウトを走らせる前のペースの確認。</strong> エージェントの一群を送り出す費用は、どれも始まる前に分かっています。ある一群があなた自身の最近のペースより速く走りそうなときは、Daimond がそれを止め、数と見積もりを添えて一度だけ尋ねます。ふつうの費用のエージェントが数体なら、そこには届きません。急に五十体なら届きます。&ldquo;速すぎる&rdquo;の物差しは、最近の支出から学んだあなた自身のふつうなので、設定するものはありません。</li>
+		<li><strong>一時停止と停止は、いつでも手元に。</strong>  <a href="chats-and-diamonds.html">エージェント</a> パネルで、動いているエージェントを一挙に止めることも、そのまま停止することもできます。一時停止は支出をすぐに止め、仕事は残すので、ブレーキを引いて見に行っても失うものはありません。</li>
+		<li><strong>エージェントごとに別の鍵。</strong> クレジットで動くエージェントは、それぞれ新しく発行された自分の鍵を使います。どの鍵にも、きょうだいの取り分を引いて本当に残っている額に対して上限が付きます。二つのエージェントが鍵を共有することはないので、並んで動くエージェントが共有の枠を上限の先まで競り上げることはできません — 使いすぎの一つの型が、まるごと起こりえなくなります。</li>
+		<li><strong>すべてを、やり取りごとに、あなたの端末で計測。</strong> モデルの呼び出しはどれも、起きたその場でここに値段が付き記録され、上のグラフに流れ込みます。請求があとから驚きとして届くことはありません。使われているそばから、目の前にあります。</li>
+	</ul>
+	<p>意図は素朴です。エージェントの一団を走らせても、間違い — 暴走したループ、思ったより大きなファンアウト — が、一目と一クリックで取り消せる以上の費用になるのではないかと怯えなくてよいこと。</p>
+
+	<div class="next">
+		<a href="sync.html">&larr; 端末間の同期</a>
+		<a href="index.html">はじめに に戻る &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">はじめに</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="models.html">モデル</a>
+		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+		<a href="accounts.html">アカウント</a>
+		<a href="sync.html">端末間の同期</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

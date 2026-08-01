@@ -7322,10 +7322,10 @@ import init, {
 			var canPick   = (typeof window.showDirectoryPicker === 'function');
 
 			// Browser — the in-app sandbox. What syncs, and what cloud storage backs.
-			modeEl.appendChild(modeChip('browser', 'Browser', !onMachine,
+			modeEl.appendChild(modeChip('browser', t('files.mode_browser'), !onMachine,
 				onMachine
-					? 'Switch the agent back to the private in-browser workspace.'
-					: 'The agent works in a private in-browser workspace. This is what syncs.',
+					? t('files.browser_switch')
+					: t('files.browser_help'),
 				onMachine ? switchToOpfs : showBrowserInfo));
 
 			// Machine — a real folder on this disk. A genuine alternative root, and
@@ -7342,30 +7342,30 @@ import init, {
 			// Calling the picker unconditionally collapsed the middle case into the last one, so
 			// every return trip cost a native dialog.
 			var machineChip = modeChip('machine',
-				onMachine ? folderHandle.name : (rootHandle ? rootHandle.name : 'Machine'),
+				onMachine ? folderHandle.name : (rootHandle ? rootHandle.name : t('files.mode_machine')),
 				onMachine,
 				canPick
 					? (onMachine
-						? 'The agent reads and writes this real folder. It does not sync.'
+						? t('files.machine_here')
 						: (rootHandle
 							? t('files.machine_return', { name: rootHandle.name })
-							: 'Let the agent work in a real folder on this machine. It will not sync.'))
-					: 'Real folders need a Chromium-based browser.',
+							: t('files.machine_pick')))
+					: t('files.machine_needs_chromium'),
 				!canPick ? null
 					: (reconnect ? function () { reconnectFolder(reconnect); }
 						: onMachine ? showMachineInfo
 						: rootHandle ? function () { reconnectFolder(rootHandle); }
 						: openFolder));
 			if (!canPick) machineChip.classList.add('ghost');
-			if (reconnect) setChip(machineChip, 'machine', 'Reconnect ' + reconnect.name);
+			if (reconnect) setChip(machineChip, 'machine', t('files.machine_reconnect', { name: reconnect.name }));
 			modeEl.appendChild(machineChip);
 
 			// Cloud — not a place but a residency: where the browser workspace's
 			// bytes live. A real folder is the user's own disk and has none.
-			var cloudChip = modeChip('cloud', 'Cloud', false,
+			var cloudChip = modeChip('cloud', t('files.mode_cloud'), false,
 				onMachine
-					? 'Cloud storage carries your browser workspace, not a folder on this machine.'
-					: 'Where your workspace lives, so it can be larger than this device.',
+					? t('files.cloud_on_machine')
+					: t('files.cloud_help'),
 				onMachine ? null : showCloudView);
 			cloudChip.classList.add('ghost');
 			modeEl.appendChild(cloudChip);
@@ -7377,10 +7377,10 @@ import init, {
 			// The two transfers, which never change where the agent works: a
 			// handle can be read or written without becoming the root.
 			if (canPick && !onMachine) {
-				modeEl.appendChild(modeBtn('Import a folder…',
-					'Copy a folder from this machine into the workspace, so it syncs', importFolder));
-				modeEl.appendChild(modeBtn('Save a copy…',
-					'Write the workspace out to a folder on this machine', exportFolder));
+				modeEl.appendChild(modeBtn(t('files.import_folder'),
+					t('files.import_folder_help'), importFolder));
+				modeEl.appendChild(modeBtn(t('files.save_copy'),
+					t('files.save_copy_help'), exportFolder));
 			}
 			// Choosing a DIFFERENT folder is now the only thing that opens a picker, so it needs
 			// somewhere to live. It belongs here, next to the chip that names the folder it would

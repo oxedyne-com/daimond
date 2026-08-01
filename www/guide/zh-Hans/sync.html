@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>跨设备同步 — Daimond 使用指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">使用指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">开始使用</a>
+			<a href="interface.html">界面</a>
+			<a href="models.html">模型与额度</a>
+			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+			<a href="email-web-files.html">邮件、网页与文件</a>
+			<a href="accounts.html">账户</a>
+			<a href="sync.html" aria-current="page">跨设备同步</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>跨设备同步</h1>
+	<p class="lede">Daimond 是本地优先的，所以第二台设备一开始是空的。跨设备同步把你的聊天和工作区文件在你自己的设备之间搬来搬去，而服务器从头到尾读不到它们。</p>
+
+	<p>穿过网关的是一个加密的包裹，只有你的设备握着它的钥匙。钥匙来自你的密码短语，从不离开浏览器，所以服务器存着这个包裹，却打不开它。设备之间没有任何可读的东西经过。</p>
+
+	<h2>关联第二台设备</h2>
+	<p>每台设备都会造出自己的身份，所以在一台新设备上敲你的密码短语，只会开出一个 <em>另外的</em>、空的账户 —— 而不是把你已有的那个带过来。要用你已经有的那个账户，你得把新设备 <strong>关联</strong> 到它上面。这要三步。</p>
+
+	<ol class="steps">
+		<li>
+			<h3>在你已经在用的那台设备上，打开关联对话框</h3>
+			<p>点顶栏里的 <span class="ui">关联另一台设备</span> 按钮。它会显示一个 QR 码和一次性的配对码。</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="“关联另一台设备”对话框，显示一个 QR 码和一次性的配对码，大约十分钟后失效。">
+				<figcaption>你的第一台设备显示一个 QR 码和一串码。</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>在新设备上扫这个 QR 码 —— 或者手动输入</h3>
+			<p>用新手机的摄像头对准这个 QR 码：它会打开 Daimond 并替你把码填好，你只要点一下 <span class="ui">关联这台设备</span>。没有摄像头？在那台设备上打开 Daimond，选 <span class="ui">有配对码吗？</span>，然后输入这串码。显示出来的码只是为了让你核对它和第一台设备上的一致。</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="手机扫码之后的“关联这台设备”对话框，配对码已经填好，还有一个“关联这台设备”按钮。">
+				<figcaption>扫完之后，点一下 <span class="ui">关联这台设备</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>用同一句密码短语解锁</h3>
+			<p>新设备现在持有你的账户了。解锁它，用的是 <strong>你在第一台设备上用的那一句密码短语</strong> —— 不是新的一句 —— 你的聊天和文件就会出现。之后在那台设备上加一个通行密钥，就能更快地解锁。</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>密码短语到哪里都是同一句。</strong> 一个账户，一句密码短语，你关联的每一台设备都一样。如果某台设备要你 <em>创建</em> 一句密码短语，而不是 <em>输入</em> 已有的那一句，那它就要开一个新账户了 —— 改成关联它。</div>
+
+	<h2>什么会跟着走</h2>
+	<p>任何文件都跟着走，不管它是什么类型。一张照片、一段录音、一个 PDF 或者一个表格，和文本一样能到达你别的设备，单个文件最大到一个 GB。</p>
+	<p>同步的东西也正是存在云端存储里的东西，所以一个工作区可以比你正在读它的这台设备更大。此刻不在这台设备上的文件仍然显示在树里，标着一朵云，你要用的时候它就下来。 <a href="email-web-files.html">工作区</a> 一页讲了文件可能处在的三种状态、浏览器满了之后空间怎么释放，以及云端存储要花多少钱。</p>
+
+	<h2>它要花多少钱</h2>
+	<p>跨设备同步属于 <strong>Pro</strong>，那个一次性的解锁 —— 不是订阅，所以和 Daimond 的其余部分一样，买一次就一直是买过的。没有 Pro，一台设备自己单干；有了它，你的几台设备保持同步。Pro 同时还打开云端存储和邮件功能。同步搬运的那些较大的文件正文存在云端存储里，从额度里扣，而不是按订阅收费，并且在开始计量之前有一份免费额度。</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; 账户</a>
+		<a href="spending.html">下一页：支出 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">开始使用</a>
+		<a href="interface.html">界面</a>
+		<a href="models.html">模型</a>
+		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+		<a href="email-web-files.html">邮件、网页与文件</a>
+		<a href="accounts.html">账户</a>
+		<a href="sync.html">跨设备同步</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

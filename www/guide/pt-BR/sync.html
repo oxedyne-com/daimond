@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sincronização entre dispositivos — Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Primeiros passos</a>
+			<a href="interface.html">A interface</a>
+			<a href="models.html">Modelos &amp; créditos</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+			<a href="accounts.html">Contas</a>
+			<a href="sync.html" aria-current="page">Sincronização entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Sincronização entre dispositivos</h1>
+	<p class="lede">O Daimond é local em primeiro lugar, então um segundo dispositivo começa vazio. A sincronização entre dispositivos leva seus chats e os arquivos do seu espaço de trabalho de um dispositivo seu a outro sem que o servidor jamais os leia.</p>
+
+	<p>O que viaja pelo gateway é um único pacote criptografado cuja chave só os seus dispositivos têm. A chave vem da sua frase-senha e nunca sai do navegador, então o servidor guarda o pacote mas não consegue abri-lo. Nada legível passa de um dispositivo a outro.</p>
+
+	<h2>Vincular um segundo dispositivo</h2>
+	<p>Cada dispositivo cria a própria identidade, então digitar sua frase-senha em um dispositivo novo abriria uma conta <em>separada</em>, vazia — e não traria para lá a que você já tem. Para usar a conta que você já tem, você <strong>vincula</strong> o novo dispositivo a ela. São três passos.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>No dispositivo que você já usa, abra a janela de vinculação</h3>
+			<p>Clique no botão <span class="ui">Vincular outro dispositivo</span> na barra superior. Ele mostra um QR code e um código de pareamento de uso único.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="A janela Vincular outro dispositivo, mostrando um QR code e um código de pareamento de uso único que expira em cerca de dez minutos.">
+				<figcaption>Seu primeiro dispositivo mostra um QR code e um código.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>No dispositivo novo, escaneie o QR code — ou digite o código</h3>
+			<p>Aponte a câmera do telefone novo para o QR code: ele abre o Daimond e preenche o código para você, de modo que você só toca em <span class="ui">Vincular este dispositivo</span>. Sem câmera? Abra o Daimond lá, escolha <span class="ui">Tem um código de pareamento?</span>, e digite o código. O código mostrado serve apenas para você conferir se ele bate com o do primeiro dispositivo.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="A janela Vincular este dispositivo em um telefone depois do escaneamento, com o código de pareamento já preenchido e um botão Vincular este dispositivo.">
+				<figcaption>Depois de escanear, basta tocar em <span class="ui">Vincular este dispositivo</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Desbloqueie com a mesma frase-senha</h3>
+			<p>O dispositivo novo agora tem a sua conta. Desbloqueie-o com a <strong>mesma frase-senha que você usa no primeiro dispositivo</strong> — não uma nova — e seus chats e arquivos aparecem. Uma chave de acesso pode desbloqueá-lo mais rápido depois, quando você acrescentar uma ali.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>A frase-senha é a mesma em toda parte.</strong> Uma conta, uma frase-senha, em cada dispositivo que você vincula. Se um dispositivo pedir que você <em>crie</em> uma frase-senha em vez de <em>digite</em> uma, ele está prestes a abrir uma conta nova — vincule-o em vez disso.</div>
+
+	<h2>O que viaja</h2>
+	<p>Qualquer arquivo viaja, seja de que tipo for. Uma fotografia, uma gravação, um PDF ou uma planilha chega aos seus outros dispositivos como o texto chega, até um gigabyte por arquivo.</p>
+	<p>O que sincroniza é também o que fica guardado no armazenamento na nuvem, de modo que um espaço de trabalho pode ser maior do que o dispositivo em que você o lê. Um arquivo que não está neste dispositivo no momento ainda aparece na árvore, marcado com uma nuvem, e desce quando você o pede. <a href="email-web-files.html">O Espaço de trabalho</a> expõe os três estados em que um arquivo pode estar, como o espaço é liberado conforme o navegador enche, e quanto custa o armazenamento na nuvem.</p>
+
+	<h2>Quanto custa</h2>
+	<p>A sincronização entre dispositivos faz parte do <strong>Pro</strong>, o desbloqueio único — não é assinatura, então continua comprado de uma vez, como o resto do Daimond. Sem o Pro, um dispositivo trabalha por conta própria; com ele, seus dispositivos ficam no mesmo passo. O Pro também liga o armazenamento na nuvem e o E-mail. Os corpos de arquivo maiores que a sincronização carrega ficam no armazenamento na nuvem, pagos com créditos e não por assinatura, com uma franquia gratuita antes que qualquer coisa seja medida.</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; Contas</a>
+		<a href="spending.html">Próximo: Gastos &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Primeiros passos</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+		<a href="accounts.html">Contas</a>
+		<a href="sync.html">Sincronização entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>

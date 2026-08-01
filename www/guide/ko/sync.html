@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko" data-guide-locale="ko" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>기기 간 동기화 — Daimond 사용 안내</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 사용 안내, 홈">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">안내</span>
+		</a>
+		<nav class="site-nav" aria-label="안내 페이지">
+			<a href="index.html">시작하기</a>
+			<a href="interface.html">인터페이스</a>
+			<a href="models.html">모델 &amp; 크레딧</a>
+			<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
+			<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
+			<a href="accounts.html">계정</a>
+			<a href="sync.html" aria-current="page">기기 간 동기화</a>
+			<a href="spending.html">지출</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>기기 간 동기화</h1>
+	<p class="lede">Daimond은 로컬이 먼저라, 두 번째 기기는 비어 있는 채로 시작해요. 기기 간 동기화는 서버가 읽는 일 없이 채팅과 작업 공간 파일을 내 기기들 사이에서 날라요.</p>
+
+	<p>게이트웨이를 지나는 것은 내 기기들만 열쇠를 가진, 암호화된 꾸러미 하나예요. 열쇠는 내 암호문구에서 나오고 브라우저를 떠나지 않으니, 서버는 꾸러미를 맡아 두지만 열지 못해요. 읽을 수 있는 것이 기기 사이를 건너는 일은 없어요.</p>
+
+	<h2>두 번째 기기 연결하기</h2>
+	<p>기기는 저마다 자기 신원을 만들어요. 그래서 새 기기에서 암호문구를 치면 <em>별도의</em> 빈 계정이 새로 생길 뿐, 지금 쓰는 계정이 넘어오지는 않아요. 이미 가진 계정을 쓰려면 새 기기를 거기에 <strong>연결하는</strong> 것이에요. 세 단계면 돼요.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>이미 쓰는 기기에서 연결 대화상자 열기</h3>
+			<p>상단 바의 <span class="ui">다른 기기 연결</span> 버튼을 누르세요. QR 코드와 한 번만 쓰는 페어링 코드가 나와요.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="“다른 기기 연결” 대화상자. QR 코드와, 열 분쯤 뒤에 만료되는 한 번만 쓰는 페어링 코드가 보여요.">
+				<figcaption>첫 기기가 QR과 코드를 보여 줘요.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>새 기기에서 QR을 읽기 — 또는 코드를 치기</h3>
+			<p>새 휴대폰의 카메라를 QR 코드에 대세요. Daimond이 열리고 코드도 채워지니, 톡 누르기만 하면 돼요. 누를 것은 <span class="ui">이 기기 연결</span>. 카메라가 없나요? 그 기기에서 Daimond을 열고, <span class="ui">페어링 코드가 있나요?</span>를 고른 다음 코드를 치세요. 보이는 코드는 첫 기기의 것과 맞는지 확인하라고 있는 것뿐이에요.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="읽어 온 뒤 휴대폰에 뜨는 “이 기기 연결” 대화상자. 페어링 코드가 이미 채워져 있고, 이 기기 연결 버튼이 있어요.">
+				<figcaption>읽어 온 다음 톡 누를 것은 <span class="ui">이 기기 연결</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>같은 암호문구로 잠금 풀기</h3>
+			<p>새 기기가 이제 계정을 가지고 있어요. 잠금을 풀 때 쓰는 것은 <strong>첫 기기에서 쓰는 것과 같은 암호문구예요</strong> — 새것이 아니에요 — 그러면 채팅과 파일이 나타나요. 그다음 거기서 패스키를 하나 추가하면 더 빠르게 풀 수 있어요.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>암호문구는 어디서나 같아요.</strong> 계정 하나, 암호문구 하나, 연결하는 모든 기기에서 같아요. 어떤 기기가 암호문구를 <em>만들라고</em> 하고, <em>입력하라고</em> 하지 않는다면, 그건 새 계정을 시작하려는 거예요 — 그러지 말고 연결하세요.</div>
+
+	<h2>무엇이 오가는지</h2>
+	<p>어떤 종류의 파일이든 오가요. 사진도, 녹음도, PDF도, 스프레드시트도 글처럼 다른 기기에 닿아요. 한 파일에 최대 1 기가바이트까지요.</p>
+	<p>동기화되는 것은 클라우드 저장소에 두는 것이기도 해요. 그래서 작업 공간은 지금 읽고 있는 기기보다 클 수 있어요. 지금 이 기기에 없는 파일도 나무에는 구름 표시와 함께 남아 있고, 청하면 내려와요. <a href="email-web-files.html">작업 공간</a> 페이지에 파일이 있을 수 있는 세 상태, 브라우저가 차는 대로 공간이 어떻게 비워지는지, 그리고 클라우드 저장소가 얼마인지 적어 뒀어요.</p>
+
+	<h2>얼마인지</h2>
+	<p>기기 간 동기화는 <strong>Pro</strong>의 일부예요. 한 번만 내는 잠금 해제이지 구독이 아니라서, Daimond의 나머지처럼 한 번 사면 그대로예요. Pro가 없으면 기기는 혼자 일하고, 있으면 기기들이 발을 맞춰요. Pro는 클라우드 저장소와 Email도 켜 줘요. 동기화가 나르는 큰 파일 본문은 클라우드 저장소에 있고, 구독이 아니라 크레딧에서 값을 치르며, 계량이 시작되기 전에 무료 몫이 있어요.</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; 계정</a>
+		<a href="spending.html">다음: 지출 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond은 내 브라우저에서 돌아요. 여기 있는 어떤 것도 저희에게 보내지지 않아요.</span>
+	<nav aria-label="안내 페이지">
+		<a href="index.html">시작하기</a>
+		<a href="interface.html">인터페이스</a>
+		<a href="models.html">모델</a>
+		<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
+		<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
+		<a href="accounts.html">계정</a>
+		<a href="sync.html">기기 간 동기화</a>
+		<a href="spending.html">지출</a>
+	</nav>
+</footer>
+</body>
+</html>

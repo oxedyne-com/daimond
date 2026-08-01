@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>支出 — Daimond 使用指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">使用指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">开始使用</a>
+			<a href="interface.html">界面</a>
+			<a href="models.html">模型与额度</a>
+			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+			<a href="email-web-files.html">邮件、网页与文件</a>
+			<a href="accounts.html">账户</a>
+			<a href="sync.html">跨设备同步</a>
+			<a href="spending.html" aria-current="page">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>支出</h1>
+	<p class="lede">支出视图显示你的钱去了哪里，并且把两个钱袋分开。它们是两个不同币种的不同账户，所以 Daimond 把它们显示成两条轨道，从不加在一起。</p>
+
+	<h2>两个钱袋，分开放</h2>
+	<ul>
+		<li><strong>推理。</strong> 模型调用本身，记在你自己的提供商密钥上。Daimond 在这台设备上按轮计价并记账，所以你能看到自己密钥花了多少，而这一切都不经过我们。</li>
+		<li><strong>额度。</strong> 预付的余额，网关拿它支付少数几件要离开浏览器的事：抓一个页面、同步或发送邮件、跨设备同步，以及把你的工作区放在 <a href="email-web-files.html">云端存储</a>.</li>
+	</ul>
+
+	<h2>怎么打开它</h2>
+	<p>打开支出视图，可以点顶栏里的 <strong>支出计量条</strong> ，也可以点 <span class="ui">额度</span> 视图里的一个链接。它把每个钱袋都配上一个头条数字、一张按天的图、一份按类别的拆解，还有一张朴素的流水表，所以一笔扣费从来不会成谜。</p>
+
+	<h2>防止费用失控</h2>
+	<p>一个能同时跑很多智能体的工作区，原则上可以花得很快。危险不在于月度总额很大 —— 而在于一次 <em>速率尖峰</em>：一次扇出在几秒钟里烧掉额度，你还来不及反应。Daimond 是为了拦住这个尖峰而建的，不只是事后把总数加起来。四道措施合在一起起作用，没有一道要求你事先设一个上限。</p>
+	<ul>
+		<li><strong>扇出跑起来之前，先查一次节奏。</strong> 派出一批智能体要花多少，在其中任何一个启动之前就已知道。当一批的速度会超过你自己近来的节奏时，Daimond 会把它按住，并问你一次，数量和估算都摆在问句上。几个花费寻常的智能体永远碰不到它；突然来五十个就会。&ldquo;太快&rdquo;的尺度是你自己的常态，从你近来的花销里学到，所以没有什么要配置。</li>
+		<li><strong>暂停和停止，永远在手边。</strong>  <a href="chats-and-diamonds.html">智能体</a> 面板让你一下按住每一个正在跑的智能体，或者干脆把它们停掉。暂停会立刻止住花费并保住已有的活，所以拉一下刹车看看，你什么都不会损失。</li>
+		<li><strong>每个智能体一把单独的密钥。</strong> 每个用额度跑的智能体，花的是自己新签发的一把密钥，而每把密钥的上限，都是按扣掉同批兄弟已认领的部分之后真正剩下的量来定的。因为没有两个智能体共用一把密钥，并行的智能体也没法把一份共享额度抢过它的上限 —— 一整类超支就是不可能发生。</li>
+		<li><strong>一切都计量，按轮次，在你的设备上。</strong> 每一次模型调用都在这里当场计价并记下来，喂给上面那些图。账单从来不是过后才来的惊吓；它在花的时候就摆在你面前。</li>
+	</ul>
+	<p>用意很朴素：跑一队智能体，不必担心一个失误 —— 一个失控的循环、一次比你以为的更大的扇出 —— 会花掉多到一眼加一次点击都挽不回来的钱。</p>
+
+	<div class="next">
+		<a href="sync.html">&larr; 跨设备同步</a>
+		<a href="index.html">回到开始使用 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">开始使用</a>
+		<a href="interface.html">界面</a>
+		<a href="models.html">模型</a>
+		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+		<a href="email-web-files.html">邮件、网页与文件</a>
+		<a href="accounts.html">账户</a>
+		<a href="sync.html">跨设备同步</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

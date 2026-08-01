@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Modelos &amp; créditos — Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Primeiros passos</a>
+			<a href="interface.html">A interface</a>
+			<a href="models.html" aria-current="page">Modelos &amp; créditos</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+			<a href="accounts.html">Contas</a>
+			<a href="sync.html">Sincronização entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Modelos &amp; créditos</h1>
+	<p class="lede">Um daimon pensa com um modelo. Você pode trazer a chave do seu próprio provedor e pagar esse provedor diretamente, ou comprar créditos e deixar o Daimond rodar um modelo para você. Esta página cobre os dois casos, e como manter os créditos abastecidos.</p>
+
+	<h2>Duas formas de alimentar um daimon</h2>
+	<div class="cards">
+		<div class="card">
+			<h3>Traga sua própria chave</h3>
+			<p>Conecte uma conta que você já tem em um provedor de modelos. Suas mensagens vão direto para esse provedor; o Daimond não fica no caminho, e nada é cobrado por nós.</p>
+		</div>
+		<div class="card">
+			<h3>Compre créditos</h3>
+			<p>Nenhuma conta de provedor para administrar. O Daimond roda o modelo para você e consome os créditos que você comprou. Sem assinatura: você fica com o que compra.</p>
+		</div>
+	</div>
+	<p>Qualquer um dos dois basta para começar. Você pode fazer os dois — conectar uma chave para o trabalho do dia a dia e guardar créditos para quando preferir não administrar nenhuma.</p>
+
+	<h2>Conectar um provedor</h2>
+	<p>Abra a linha <span class="ui">Modelos</span> do painel de administração, no canto inferior esquerdo. Ela lista uma chave para cada provedor que você usa e mostra em que modelo os novos chats começam. Para adicionar um, escolha <span class="ui">+ Adicionar provedor</span> e responda às mesmas três perguntas, seja qual for o provedor.</p>
+
+	<figure class="shot" data-shot="models-form">
+		<img alt="O formulário Adicionar provedor: uma lista de provedores, uma caixa para a chave de API e uma lista de modelo padrão, com um botão Salvar e começar." src="shots/models-form.png" loading="lazy">
+		<figcaption>Adicionar um provedor: escolha o provedor, cole a chave, marque com a estrela um modelo padrão, e então Salvar e começar.</figcaption>
+	</figure>
+
+	<ol class="steps">
+		<li>
+			<h3>Escolher um provedor</h3>
+			<p>Escolha na lista — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personalizado</strong> para qualquer outro serviço que fale a mesma API chat-completions. Escolher Personalizado revela uma caixa <strong>URL base</strong> para apontar o Daimond a esse serviço.</p>
+		</li>
+		<li>
+			<h3>Colar sua chave de API</h3>
+			<p>Cole a chave da sua conta de provedor na caixa <strong>Chave de API</strong> correspondente. Ela fica guardada só neste dispositivo, envolvida pela sua frase-senha, e é enviada apenas ao provedor que você escolheu.</p>
+		</li>
+		<li>
+			<h3>Marcar um modelo padrão com a estrela</h3>
+			<p>Escolha um <strong>Modelo padrão</strong> na lista (ou digite o id de um modelo, para um provedor personalizado). Este é o único modelo em que novos chats e Diamonds começam. Depois escolha <span class="ui">Salvar e começar</span>.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>Tudo fica neste dispositivo.</strong> Suas chaves, chats e arquivos vivem só neste navegador. Nada é enviado para nós — a chave de provedor que você adiciona fala com aquele provedor, e com mais ninguém.</div>
+
+	<h3>O modelo padrão, e escolher outro para um só chat</h3>
+	<p>Um modelo é o padrão em que novos chats e Diamonds começam. Qualquer modelo conectado pode ser escolhido para um único chat: abra um chat e use o seletor de modelo no cabeçalho dele (canto superior direito do painel central) para trocar só aquela conversa, sem mudar o padrão.</p>
+
+	<h2>Comprar créditos</h2>
+	<p>Abra a linha <span class="ui">Créditos</span> do painel de administração. Ela mostra seu saldo e um conjunto de pacotes à venda. Não há assinatura: você fica com o que compra, e nada é cobrado de novo a menos que você ligue a recarga automática.</p>
+
+	<figure class="shot" data-shot="credits">
+		<img alt="A visão Créditos: o saldo atual, uma fileira de pacotes de crédito à venda e as configurações de recarga automática abaixo." src="shots/credits.png" loading="lazy">
+		<figcaption>Créditos: seu saldo, os pacotes à venda e as configurações de recarga automática embaixo.</figcaption>
+	</figure>
+
+	<p>O pagamento é feito na própria página hospedada do provedor de pagamento. Nenhum número de cartão, validade ou código de segurança é digitado no Daimond, então não há nada aqui que possa vazar.</p>
+
+	<h2>Recarga automática</h2>
+	<p>A recarga automática é uma instrução permanente para comprar seus próprios créditos quando eles acabarem, para que um trabalho longo não pare no meio. É o único lugar em que o Daimond pode cobrar um cartão salvo enquanto você não está, e por isso é deliberadamente explícita. Três números a definem, abaixo dos pacotes na visão Créditos:</p>
+	<ul>
+		<li><strong>Abaixo de</strong> — o saldo em que uma recarga dispara.</li>
+		<li><strong>Comprar</strong> — quanto uma recarga acrescenta.</li>
+		<li><strong>Nunca mais de</strong> — um teto rígido para o total de recargas em um mês do calendário. Este é o número que importa: é um teto, não uma meta, e é aplicado no mesmo caminho de código da cobrança, de modo que não dá para contorná-lo.</li>
+	</ul>
+
+	<div class="note">A recarga automática não pode ser ligada sem um cartão salvo — um controle que ligasse e depois falhasse em silêncio seria pior do que um controle desativado que diz o porquê. Salvar um cartão é um redirecionamento para a página hospedada do provedor de pagamento; o Daimond nunca vê os dados do cartão.</div>
+
+	<div class="next">
+		<a href="interface.html">&larr; A interface</a>
+		<a href="chats-and-diamonds.html">Próximo: Chats &amp; Diamonds &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Primeiros passos</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+		<a href="accounts.html">Contas</a>
+		<a href="sync.html">Sincronização entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>

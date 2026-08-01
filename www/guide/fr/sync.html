@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr" data-guide-locale="fr" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Synchronisation entre appareils — Guide Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guide Daimond, accueil">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Pages du guide">
+			<a href="index.html">Premiers pas</a>
+			<a href="interface.html">L’interface</a>
+			<a href="models.html">Modèles &amp; crédits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+			<a href="accounts.html">Comptes</a>
+			<a href="sync.html" aria-current="page">Synchronisation entre appareils</a>
+			<a href="spending.html">Dépenses</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Synchronisation entre appareils</h1>
+	<p class="lede">Daimond est local d’abord, si bien qu’un second appareil démarre vide. La synchronisation entre appareils transporte vos chats et les fichiers de votre espace de travail entre vos propres appareils sans que le serveur ne les lise jamais.</p>
+
+	<p>Ce qui voyage par la passerelle est un unique paquet chiffré dont seuls vos appareils détiennent la clé. La clé vient de votre phrase secrète et ne quitte jamais le navigateur : le serveur conserve donc le paquet mais ne peut pas l’ouvrir. Rien de lisible ne passe d’un appareil à l’autre.</p>
+
+	<h2>Associer un second appareil</h2>
+	<p>Chaque appareil crée sa propre identité : saisir votre phrase secrète sur un nouvel appareil ouvrirait un compte <em>distinct</em>, vide — et n’amènerait pas celui que vous avez déjà. Pour utiliser le compte que vous avez déjà, vous <strong>associez</strong> le nouvel appareil à ce compte. Cela tient en trois étapes.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>Sur l’appareil que vous utilisez déjà, ouvrez la fenêtre d’association</h3>
+			<p>Cliquez sur le bouton <span class="ui">Associer un autre appareil</span> de la barre du haut. Il affiche un QR code et un code d’association à usage unique.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="La fenêtre Associer un autre appareil, avec un QR code et un code d’association à usage unique qui expire au bout d’une dizaine de minutes.">
+				<figcaption>Votre premier appareil affiche un QR code et un code.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Sur le nouvel appareil, scannez le QR code — ou tapez le code</h3>
+			<p>Pointez l’appareil photo du nouveau téléphone vers le QR code : Daimond s’ouvre et le code est rempli pour vous, il ne vous reste qu’à toucher <span class="ui">Associer cet appareil</span>. Pas d’appareil photo ? Ouvrez Daimond là-bas, choisissez <span class="ui">Vous avez un code d’association ?</span>, et saisissez le code. Le code affiché sert seulement à vérifier qu’il correspond à celui du premier appareil.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="La fenêtre Associer cet appareil sur un téléphone après le scan, avec le code d’association déjà rempli et un bouton Associer cet appareil.">
+				<figcaption>Après le scan, il suffit de toucher <span class="ui">Associer cet appareil</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Déverrouillez avec la même phrase secrète</h3>
+			<p>Le nouvel appareil détient maintenant votre compte. Déverrouillez-le avec la <strong>même phrase secrète que sur votre premier appareil</strong> — pas une nouvelle — et vos chats et vos fichiers apparaissent. Une clé d’accès pourra le déverrouiller plus vite ensuite, une fois que vous en aurez ajouté une là-bas.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>La phrase secrète est la même partout.</strong> Un compte, une phrase secrète, sur chaque appareil que vous associez. Si un appareil vous demande de <em>créer</em> une phrase secrète plutôt que d’en <em>saisir</em> une, il est sur le point d’ouvrir un nouveau compte — associez-le plutôt.</div>
+
+	<h2>Ce qui voyage</h2>
+	<p>Tout fichier voyage, quel qu’en soit le type. Une photographie, un enregistrement, un PDF ou un tableur atteint vos autres appareils comme le fait du texte, jusqu’à un gigaoctet pour un fichier.</p>
+	<p>Ce qui se synchronise est aussi ce qui est gardé dans le stockage en ligne, si bien qu’un espace de travail peut être plus grand que l’appareil sur lequel vous le lisez. Un fichier qui n’est pas sur cet appareil pour le moment figure quand même dans l’arborescence, marqué d’un nuage, et descend quand vous le demandez. <a href="email-web-files.html">L’Espace de travail</a> expose les trois états dans lesquels un fichier peut se trouver, comment la place est libérée à mesure que le navigateur se remplit, et ce que coûte le stockage en ligne.</p>
+
+	<h2>Ce que cela coûte</h2>
+	<p>La synchronisation entre appareils fait partie de <strong>Pro</strong>, le déblocage unique — pas un abonnement : il reste acheté une fois pour toutes, comme le reste de Daimond. Sans Pro, un appareil travaille seul ; avec, vos appareils restent au même pas. Pro active aussi le stockage en ligne et l’e-mail. Les corps de fichiers plus volumineux que la synchronisation transporte sont gardés dans le stockage en ligne, payés avec des crédits plutôt que par abonnement, avec une franchise gratuite avant que quoi que ce soit ne soit compté.</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; Comptes</a>
+		<a href="spending.html">Suivant : Dépenses &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<nav aria-label="Pages du guide">
+		<a href="index.html">Premiers pas</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modèles</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+		<a href="accounts.html">Comptes</a>
+		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="spending.html">Dépenses</a>
+	</nav>
+</footer>
+</body>
+</html>

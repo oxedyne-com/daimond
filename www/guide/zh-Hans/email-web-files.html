@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>邮件、网页与文件 — Daimond 使用指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">使用指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">开始使用</a>
+			<a href="interface.html">界面</a>
+			<a href="models.html">模型与额度</a>
+			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+			<a href="email-web-files.html" aria-current="page">邮件、网页与文件</a>
+			<a href="accounts.html">账户</a>
+			<a href="sync.html">跨设备同步</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>邮件、网页与文件</h1>
+	<p class="lede">daimon 干活时用的那些来源：你能读能回的邮件、它能显示或操作的网页、它能读能写的文件，以及它用来做事的那些工具。</p>
+
+	<h2>邮件</h2>
+	<p>邮件面板在右边的停靠区里。它装着你的邮箱和邮箱里的东西。浏览器自己开不了邮件连接，所以 Daimond 通过一个网关来连，网关把原始邮件交回来，然后忘掉你的凭据。你的邮件会以普通文件的形式写进工作区，所以智能体的文件工具本来就读得到它。</p>
+
+	<figure class="shot" data-shot="email">
+		<img alt="邮件面板：上面是邮箱，下面是邮件列表，还有写信、添加邮箱和同步的按钮。" src="shots/email.png" loading="lazy">
+		<figcaption>邮件面板。它头部的按钮分别是写一封邮件、添加邮箱和同步。</figcaption>
+	</figure>
+
+	<h3>添加一个邮箱</h3>
+	<p>选择 <span class="ui">+</span> （添加邮箱），它在邮件面板的头部。输入你的地址，Daimond 会替常见的提供商猜出服务器设置；每一个字段都仍然可以改，因为猜测不是事实。多数提供商要的是一个 <strong>应用专用密码</strong> —— 一个只作这一个用途的密码，你在邮箱账户的安全设置里生成 —— 而不是你的账户密码。面板会告诉你，在你的提供商那里去哪里找它。</p>
+	<div class="note">你的邮件凭据存在这台设备上，用你的密码短语包住。它只在一次同步时交给网关，只在与你的邮件服务器的一次对话里持有，之后就被忘掉。Daimond 不在任何服务器上存邮件，也从不看到你的账户密码。</div>
+
+	<h3>读信与同步</h3>
+	<p>选择 <span class="ui">⟳</span> （立即同步），把新到的取回来。一次同步只要比手上最后一封更新的邮件，所以它一直很快。点一封邮件，它就打开到舞台上、聊天的旁边，这样你一边读一边可以问 daimon。</p>
+
+	<h3>写一封邮件</h3>
+	<p>选择 <span class="ui">✎</span> （写一封邮件），在舞台上打开撰写面板。填好 <strong>发件人</strong>, <strong>收件人</strong>、一个可选的 <strong>抄送</strong>、一个 <strong>主题</strong> 和正文；用 <span class="ui">添加附件…</span>附上文件；草稿则用 <span class="ui">保存草稿</span>。什么都不会自己发出去。</p>
+	<div class="note"><strong>只有你能发出邮件。</strong>  <span class="ui">发送</span> 按钮是 Daimond 里唯一把邮件送上线路的东西，而且只有人能按它。daimon 可以在你旁边起草一封信，但它发不出去。</div>
+
+	<h2>网页面板</h2>
+	<p>让 Daimond 打开一个网页 —— <em>“给我看 Rust 所有权那一章”</em> —— 或者把链接粘进聊天。它把一个页面放上舞台有三种方式，哪一种管用取决于站点。</p>
+
+	<figure class="shot" data-shot="web-panel">
+		<img alt="网页面板在舞台上显示一个页面，头部有后退、重新加载和在标签页里打开的控制项。" src="shots/web-panel.png" loading="lazy">
+		<figcaption>网页面板。在这里显示的页面就在聊天旁边，所以可以就它向 daimon 提问。</figcaption>
+	</figure>
+
+	<div class="cards">
+		<div class="card">
+			<h3>显示它</h3>
+			<p>页面直接出现在面板里 —— 但多数站点拒绝被嵌进别的页面（这是网页对点击劫持的防护，每个浏览器都一样），所以这只对少数允许的站点管用。</p>
+		</div>
+		<div class="card">
+			<h3>读它</h3>
+			<p>Daimond 把页面抓下来读它的文字，所以显示不了的时候它仍然管用。它读的是词句，不是图片，也不是 JavaScript 画出来的东西；而且你看不到页面 —— Daimond 看得到。</p>
+		</div>
+		<div class="card">
+			<h3>操作它</h3>
+			<p>有了 <strong>Daimond Hands</strong>这个浏览器扩展，Daimond 就能在一个真正的标签页里打开一个真正的页面，以你的身份登录着，当着你的面操作它。要操作一个实时的、已登录的站点，这是唯一的办法。</p>
+		</div>
+	</div>
+
+	<div class="note"><strong>登录这件事始终归你。</strong> 你在一个被操作的页面上登录时，Daimond 完全停止观看 —— 不看文字，不看图像，不看按键 —— 也从不看到你的密码。你把方向盘交回去，用的是 <strong>恢复 Daimond</strong>，而那个按钮在浏览器标签页里，不在 Daimond 里，所以一个页面永远抢不走你的方向盘。</div>
+
+	<h2>工作区</h2>
+	<p>工作区面板在停靠区里，把你的文件呈现成一棵普通的文件夹树。智能体就在这里读和写：上传的东西、邮件、文档，以及它产出的一切，都住在这里。</p>
+
+	<figure class="shot" data-shot="workspace">
+		<img alt="工作区面板：三个标签写着浏览器、本机和云端，几个按钮用来导入文件夹或保存副本，还有一棵文件树，其中一个文件标着在云端存储里，另一个被钉住。" src="shots/workspace.png" loading="lazy">
+		<figcaption>工作区。那几个标签指明工作区住在哪里；在它们下面， <em>interviews.txt</em> 在云端存储里，而不在这台设备上；而 <em>report-draft.txt</em> 被钉住了，所以它一直留在这里。</figcaption>
+	</figure>
+
+	<h3>处理文件</h3>
+	<p>工作区的头部有几个按钮：新建 <span class="ui">🗋</span> 文件、新建 <span class="ui">🗀</span> 文件夹、 <span class="ui">⤒</span> 上传文件、 <span class="ui">↑</span> 回到上一级，以及 <span class="ui">⟳</span> 刷新视图。一个筛选框能把长长的列表收窄。</p>
+
+	<h3>工作区住在哪里</h3>
+	<p>面板顶部的三个标签点出工作区牵涉到的几个地方。点一个，就打开那个地方的控制项。</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>浏览器</h3>
+			<p>这个浏览器自己的私有存储，留在你的设备上，Daimond 之外的任何东西都够不着它。除非你另有交代，工作区就住在这里。它有多大，全看浏览器愿意给多少 —— 在 iPhone 上给得不多 —— 而且浏览器可能不打招呼就把它清掉。</p>
+		</div>
+		<div class="card">
+			<h3>本机</h3>
+			<p>这台电脑磁盘上的一个真实文件夹。智能体直接在里面干活，所以你在自己的文件管理器里看到的是同一批文件，而且它比浏览器给的宽敞。但它只待在那一台电脑上，不会走到你别的设备上，而且只有基于 Chromium 的浏览器才打得开一个。</p>
+			<p><strong>智能体能看到的，就只有这个文件夹。</strong> 它只在你选的那个文件夹里面干活：它上面的、外面的，Daimond 都看不到。智能体正在那里干活时点这个标签，它会这么告诉你，并给出 <span class="ui">忘掉这个文件夹</span> 供你选择，如果你想让 Daimond 不再留着它的记录。</p>
+		</div>
+		<div class="card">
+			<h3>云端</h3>
+			<p>它不是第三个干活的地方，而是工作区被存放的地方。正因为有它，一个工作区才能远远大过任何一台设备装得下的量。它的标签会打开一个视图：存了些什么、哪些不在这台设备上，还有一个 <span class="ui">释放空间</span> 按钮和一个 <span class="ui">额度</span> 按钮。</p>
+		</div>
+	</div>
+
+	<p>前两个是二选一：智能体在其中一个里干活。第三个不是备选项 —— 它是字节存放的地方。管理面板里的存储行会显示每个地方各用了多少空间。</p>
+
+	<div class="note">存在云端存储里的东西是 <strong>离开之前就加密好的</strong>，跟同步包裹一样，所以我们手上是一堆读不了的字节。</div>
+
+	<h3>在本机、只在云端，或者被钉住</h3>
+	<p>一个文件处在三种状态之一，文件树会显示是哪一种：</p>
+	<ul>
+		<li><strong>留在这台设备上</strong> —— 点开就开。</li>
+		<li><strong>只在云端存储里</strong> —— 带一个云的标记。它仍然是你的文件，仍然列在那里，仍然安全，只是此刻不在这台设备上。点它就把它取下来，它那一行上的取回控制项也一样。</li>
+		<li><strong>已钉住</strong> —— 始终留在这台设备上，绝不会被自动释放。图钉就在那一行上，旁边是一个用来释放已留存文件所占空间的控制项。</li>
+	</ul>
+	<p>浏览器的存储快满时，你最久没用过的那些文件会自己被释放回云端存储；被钉住的文件永远不会。</p>
+
+	<div class="note"><strong>释放一个文件不等于删掉它。</strong> 它留在云端存储里，文件树仍然列着它，要用的时候它会回来。只有一次刻意的删除，才会真的移走一个文件。</div>
+
+	<h3>任何类型的文件</h3>
+	<p>任何文件都会在你的设备之间往来并被存下来，不管它是什么类型：一张照片、一段录音、一个 PDF、一个表格，单个文件最大到一个 GB。打开一个不是文本的文件时，显示的是它的大小和一个下载按钮，而不是硬去显示它。</p>
+
+	<h3>把文件搬进搬出</h3>
+	<p>标签旁边还有两个按钮。 <span class="ui">导入一个文件夹…</span> 把这台电脑上的一个文件夹复制进工作区，此后它就和别的东西一样同步、一样存放。 <span class="ui">保存一份副本…</span> 把工作区写出到这台电脑上的一个文件夹里。两者都不改变智能体在哪里干活，也都需要基于 Chromium 的浏览器。往外拷贝时不会去取那些只在云端存储里的文件，并会说明留下了多少个。</p>
+
+	<p>智能体正在一个真实文件夹里干活时，会出现第三个按钮： <span class="ui">换个文件夹…</span>，它是唯一会打开文件夹选择器的控制项。在 <span class="ui">浏览器</span> 和 <span class="ui">本机</span> 之间来回切换则不会：Daimond 记着你上次用的那个文件夹，所以回到它只要点一下标签。</p>
+
+	<h3>智能体可以取什么</h3>
+	<p>智能体需要一个只在云端存储里的文件时，会被明白地告知，并且必须刻意去取。不会有什么在一次读取背后悄悄下载，因为一次下载可能很大，而且一旦存储开始计价，就要花你的钱。它自己主动能取下来多少也有上限，超过之后它会回来问你。</p>
+
+	<h3>云端存储要花多少钱</h3>
+	<p>云端存储不是订阅。和别的所有要离开浏览器的东西一样，它从 <a href="models.html">额度</a>里扣，而一次性的 Pro 解锁仍然是一次性的。眼下它免费，也不计量，直到它能被好好地卖出去为止。</p>
+	<div class="note">万一某笔存储费用付不上， <strong>也不会马上删掉任何东西</strong>。读取和下载在六个月里保持免费，所以一切都取得回来，之后才会移除付费的那部分溢出。免费的工作集永远不会被移除。</div>
+
+	<h2>工具</h2>
+	<p>打开 <span class="ui">工具 · N/M</span> 行，就能看到 Daimond 能做什么。它叫工具，不叫升级，因为它列出的东西大多是免费的，本来就归你。</p>
+
+	<figure class="shot" data-shot="tools-panel">
+		<img alt="工具面板列出智能体能用的内置工具，以及可解锁的工具和它们的价格。" src="shots/tools-panel.png" loading="lazy">
+		<figcaption>工具面板：你已经有的内置工具，以及可解锁的工具和它们的价格。</figcaption>
+	</figure>
+
+	<p>这里出现两类工具：</p>
+	<ul>
+		<li><strong>内置工具</strong> —— 已经交到智能体手上的那些，免费。面板列的正是智能体实际持有的东西，所以它不会承诺一个并不存在的工具。</li>
+		<li><strong>可解锁的工具</strong> —— 要花钱的额外工具。面板会显示价格，以及这个账户是否已经持有这项解锁。</li>
+	</ul>
+	<p>要添加一个可解锁的工具，在面板里选中它并确认解锁；费用从你的额度里扣，一旦解锁，它就一直可供智能体使用。</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; 聊天与 Diamonds</a>
+		<a href="accounts.html">下一页：账户 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">开始使用</a>
+		<a href="interface.html">界面</a>
+		<a href="models.html">模型</a>
+		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+		<a href="email-web-files.html">邮件、网页与文件</a>
+		<a href="accounts.html">账户</a>
+		<a href="sync.html">跨设备同步</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

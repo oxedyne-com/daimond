@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>模型与额度 — Daimond 使用指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">使用指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">开始使用</a>
+			<a href="interface.html">界面</a>
+			<a href="models.html" aria-current="page">模型与额度</a>
+			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+			<a href="email-web-files.html">邮件、网页与文件</a>
+			<a href="accounts.html">账户</a>
+			<a href="sync.html">跨设备同步</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>模型与额度</h1>
+	<p class="lede">daimon 用一个模型来思考。你可以带上自己的提供商密钥，直接付钱给那家提供商；也可以买额度，让 Daimond 替你跑模型。这一页两条都讲，还讲怎么让额度不断档。</p>
+
+	<h2>给 daimon 供能的两条路</h2>
+	<div class="cards">
+		<div class="card">
+			<h3>带上你自己的密钥</h3>
+			<p>把你已经有的模型提供商账户接进来。你的消息直接去那家提供商；Daimond 不在这条路上，我们也不收你任何钱。</p>
+		</div>
+		<div class="card">
+			<h3>买额度</h3>
+			<p>没有提供商账户要管。Daimond 替你跑模型，从你买下的额度里扣。没有订阅：买到的一直是你的。</p>
+		</div>
+	</div>
+	<p>任意一条都足以开始。两条也可以都走 —— 日常干活用自己的密钥，不想管密钥的时候用额度。</p>
+
+	<h2>连接一家提供商</h2>
+	<p>打开 <span class="ui">模型</span> 行，它在左下角的管理面板里。你用到的每一家提供商在这里各有一把密钥，同时显示新聊天从哪个模型开始。要添加一家，选择 <span class="ui">+ 添加提供商</span> ，然后回答同样的三个问题 —— 不管提供商是哪一家。</p>
+
+	<figure class="shot" data-shot="models-form">
+		<img alt="添加提供商的表单：一个提供商下拉框、一个 API 密钥框、一个默认模型下拉框，还有一个保存并开始的按钮。" src="shots/models-form.png" loading="lazy">
+		<figcaption>添加一家提供商：选好提供商，粘贴密钥，给一个默认模型加星，然后保存并开始。</figcaption>
+	</figure>
+
+	<ol class="steps">
+		<li>
+			<h3>选一家提供商</h3>
+			<p>从列表里挑 —— <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>，或者 <strong>自定义</strong> 用于任何别的、说同一套 chat-completions API 的服务。选了自定义，会露出一个 <strong>基础 URL</strong> 框，把 Daimond 指向那个服务。</p>
+		</li>
+		<li>
+			<h3>粘贴你的 API 密钥</h3>
+			<p>把你提供商账户里的密钥粘进 <strong>API 密钥</strong> 框。它只存在这台设备上，用你的密码短语包住，也只发给你选的那家提供商。</p>
+		</li>
+		<li>
+			<h3>给一个默认模型加星</h3>
+			<p>从列表里选一个 <strong>默认模型</strong> （自定义提供商则打一个模型 ID）。新的聊天和 Diamond 都从这一个模型开始。然后选择 <span class="ui">保存并开始</span>.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>一切都留在这台设备上。</strong> 你的密钥、聊天和文件只存在于这个浏览器里。什么都不会发给我们 —— 你添加的提供商密钥只跟那家提供商说话，不跟任何别人。</div>
+
+	<h3>默认模型，以及给某一场聊天换一个</h3>
+	<p>有一个模型是默认的，新的聊天和 Diamond 都从它开始。任何一个已连接的模型都可以只用于某一场聊天：打开那场聊天，用它头部的模型选择器（中间面板的右上角）只切换这一场对话，不动默认设置。</p>
+
+	<h2>购买额度</h2>
+	<p>打开 <span class="ui">额度</span> 行，它在管理面板里。它显示你的余额，以及一组可以买的额度包。没有订阅：买到的一直是你的，除非你打开自动充值，否则不会再有任何扣费。</p>
+
+	<figure class="shot" data-shot="credits">
+		<img alt="额度视图：当前余额、一行可以买的额度包，下面是自动充值的设置。" src="shots/credits.png" loading="lazy">
+		<figcaption>额度：你的余额、可以买的额度包，下面是自动充值的设置。</figcaption>
+	</figure>
+
+	<p>付款在支付服务商自己的托管页面上完成。卡号、有效期和安全码从来不会输进 Daimond，所以这里没有什么可泄露的。</p>
+
+	<h2>自动充值</h2>
+	<p>自动充值是一条常设指令：额度快用完时替你买，好让一件长活不至于做到一半停下。这是 Daimond 唯一被允许在你不在场时扣一张已保存的卡的地方，所以它被刻意做得直白。三个数字定下它，在额度视图里额度包的下面：</p>
+	<ul>
+		<li><strong>当余额低于</strong> —— 触发一次充值的余额。</li>
+		<li><strong>每次买这么多</strong> —— 一次充值加多少。</li>
+		<li><strong>每月最多花</strong> —— 一个自然月里所有充值加起来的硬上限。这是真正要紧的那个数：它是天花板，不是目标；它和扣费走同一条代码路径，所以绕不过去。</li>
+	</ul>
+
+	<div class="note">没有保存过卡，自动充值就打不开 —— 一个打开之后悄悄失败的开关，比一个禁用着并说明原因的开关更糟。保存一张卡会跳转到支付服务商的托管页面；Daimond 从不看到卡的信息。</div>
+
+	<div class="next">
+		<a href="interface.html">&larr; 界面</a>
+		<a href="chats-and-diamonds.html">下一页：聊天与 Diamonds &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">开始使用</a>
+		<a href="interface.html">界面</a>
+		<a href="models.html">模型</a>
+		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+		<a href="email-web-files.html">邮件、网页与文件</a>
+		<a href="accounts.html">账户</a>
+		<a href="sync.html">跨设备同步</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

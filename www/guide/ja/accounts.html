@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>アカウント &amp; プライバシー — Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">はじめに</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="models.html">モデル &amp; クレジット</a>
+			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+			<a href="accounts.html" aria-current="page">アカウント</a>
+			<a href="sync.html">端末間の同期</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>アカウント &amp; プライバシー</h1>
+	<p class="lede">Daimond のアカウントは、この端末に置かれたパスフレーズです。サーバー上にアカウントはありません。あなたの識別情報も、鍵も、ファイルも、このブラウザの中だけにあります。このページでは、パスフレーズ、ブラウザを他の人と共有する場合、そして何が外に出ないのかを説明します。</p>
+
+	<h2>アカウントとはパスフレーズのことです</h2>
+	<p>初回起動時、Daimond は <strong>この端末を保護する</strong>ことを申し出ます。名前とパスフレーズを決めると、そのパスフレーズがそのままアカウントになります。役割は二つあります。保存したプロバイダーの鍵とメールの資格情報を暗号化して、のぞき見た人に読めないようにすること。そして、クレジットを使うときにあなたを示す識別情報になることです。これに関する情報がブラウザの外に出ることはありません。</p>
+
+	<div class="note"><strong>パスフレーズは保存されず、復旧もできません。</strong> Daimond が持っているのは暗号化されたデータだけで、それを開くパスフレーズは持っていません。忘れてしまうと、暗号化された鍵と資格情報は失われます。安全な場所に控えておいてください。パスフレーズなしで進むこともできます。その場合は <span class="ui">今はスキップ</span>を選びます。ただし、プロバイダーの鍵は、パスフレーズが守ってくれる状態になってから追加するのがいちばんです。</div>
+
+	<h2>パスキーでもっと速くロックを解除する</h2>
+	<p>パスフレーズがアプリを守るようになったら、 <strong>パスキー</strong> を追加して、もっと速くロックを解除できます。顔、指紋、セキュリティキー — お使いの端末がすでに備えているパスワードレスのサインインと同じものです。パスキーはパスフレーズの代わりではなく、あなたに代わってそれを開くものです。ですからパスフレーズが根本であり、いつでも使える控えであり続けます。パスフレーズを持っているかぎり、パスキーを失っても失うものはありません。これらがサーバーに届くことはありません。ロック解除は端末の中だけで完結し、クレジットのサービスが目にするのは公開鍵だけです。</p>
+
+	<h2>アカウントの操作</h2>
+	<p>あなたの識別情報は、左下にある管理パネルの上部にあります。管理パネルのホームに、そのための操作が並んでいます。</p>
+
+	<figure class="shot" data-shot="accounts-switch">
+		<img alt="管理パネルにあるアカウントの操作。名前の変更、パスフレーズの変更、バックアップの書き出しと読み込み、ログアウト、この識別情報を消す。" src="shots/accounts-switch.png" loading="lazy">
+		<figcaption>アカウントの操作。名前やパスフレーズを変える、バックアップを取る・戻す、ログアウトする、識別情報ごと消す。</figcaption>
+	</figure>
+
+	<ul>
+		<li><span class="ui">名前を変更…</span> — 識別情報の名前を変えます。</li>
+		<li><span class="ui">パスフレーズを変更…</span> — 新しいパスフレーズを設定します。暗号化されたデータは、それで包み直されます。</li>
+		<li><span class="ui">バックアップを書き出す</span> — 識別情報を保存して、別のブラウザや端末で復元できるようにします。</li>
+		<li><span class="ui">バックアップを読み込む…</span> — 書き出した識別情報をこのブラウザに取り込みます。</li>
+		<li><span class="ui">ログアウト</span> — アプリをロックします。データは暗号化されたまま端末に残り、もう一度パスフレーズを入力するまで開きません。</li>
+		<li><span class="ui">この識別情報を消す…</span> — 識別情報とその暗号化データを、このブラウザから完全に取り除きます。</li>
+	</ul>
+
+	<h2>ひとつのブラウザを複数の人で使う</h2>
+	<p>Daimond がブラウザに持てるアカウントは一度にひとつです。ですからコンピューターを共有するときは、ロックし、必要なら入れ替えることになります。</p>
+	<ul>
+		<li><strong>席を離れるとき。</strong>  <span class="ui">ログアウト</span> を選ぶとアプリがロックされます。チャットも鍵もファイルも端末に残りますが、あなたのパスフレーズがなければ読めないので、次の人にあなたの作業は見えません。</li>
+		<li><strong>戻ってきたとき。</strong> パスフレーズを入力してロックを解除すると、離れたところからそのまま続けられます。</li>
+		<li><strong>ブラウザを別の人に完全に渡すとき。</strong>  <span class="ui">この識別情報を消す…</span> を選んでアカウントを消します。次の人は <span class="ui">アカウントを作成…</span> を選んで自分のものを作ります。</li>
+	</ul>
+
+	<h2>アカウントを端末のあいだで移す</h2>
+	<p>サーバーがないので、アカウントが自動的について来ることはありません。別のブラウザやマシンで使うには、ここで <span class="ui">バックアップを書き出す</span> を、向こうで <span class="ui">バックアップを読み込む…</span> を選びます。</p>
+	<div class="note"><strong>バックアップにはあなたの識別情報が入っています。</strong> 取り込んだ人は誰でもあなたになれます。ですからバックアップのファイルは、パスフレーズそのものと同じように扱ってください — 人目に触れないようにし、パスフレーズを預けたくない経路では送らないことです。</div>
+
+	<h2>外に出ないもの</h2>
+	<p>あなたのパスフレーズ、プロバイダーの鍵、メールの資格情報、チャット、Diamonds、ファイルは、このブラウザの中にあり、こちらには送られません。ゲートウェイでこちらが持っているのはお金と暗号文です。クレジットの残高とライセンス、そして端末間の同期のために、こちらでは開けない暗号化された荷物がひとつ。鍵を持っていないので、あなたの作業を読むことはできません。</p>
+	<p>データがどこへ行くのかは、はっきりさせておくに越したことはありません。あなたのメッセージは、ご自分の鍵をつないだときはそのモデルプロバイダーへ、モデルにクレジットを使うときはこちらの従量制サービスを通って行きます。読むためのウェブページの取得と、メールの同期や送信は、外の世界に届くためにゲートウェイを通ります。そして同期は、あなた自身の端末のあいだで暗号化された荷物を運びます。ですから正直な言い方は、何ひとつ外に出ない、ではありません。こうです。ご自分の鍵を使うかぎり、チャットとファイルが平文で外に出ることはなく、こちらのサーバーへ出ていくのが暗号文だけであることを、あなた自身が見て確かめられます。</p>
+	<div class="note"><strong>それを信用で受け取る必要はありません。</strong> Daimond のクライアント — このブラウザで動き、何を送るかを決めているコード — はオープンソースです。読むこともビルドすることもでき、ブラウザのネットワークパネルを開けば、出ていくのが暗号文だけであることをご自分で確かめられます。プライバシーを掲げるツールがみな口にする主張を、Daimond は確かめられるようにしています。ソースは <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>
+	<p>この保護には、正直に言って限界があります。パスフレーズが守るのは、その場での軽いのぞき見と、共有端末での詮索です — ブラウザの開発者ツールを開いた人が見つけるのは暗号化されたデータだけで、あなたの鍵ではありません。乗っ取られたブラウザ、悪意のある拡張機能、入力中のパスフレーズを見ているキーロガーは防げません。それらはブラウザ内のどんな仕組みも破るもので、ここでは対象外です。端末そのものを信頼できる状態に保ってください。そして、遠くのサーバーが内側で何をしているかは、こちらのものであれ誰のものであれ、外からは証明できません。ゲートウェイを通る少数の処理は、その公開性とこちらの明示した方針の上に成り立っています。だからこそ、あなたが確かめられる部分であるクライアントを公開しているのです。</p>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; メール、ウェブ &amp; ファイル</a>
+		<a href="sync.html">次：端末間の同期 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">はじめに</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="models.html">モデル</a>
+		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+		<a href="accounts.html">アカウント</a>
+		<a href="sync.html">端末間の同期</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ko" data-guide-locale="ko" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>인터페이스 — Daimond 사용 안내</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 사용 안내, 홈">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">안내</span>
+		</a>
+		<nav class="site-nav" aria-label="안내 페이지">
+			<a href="index.html">시작하기</a>
+			<a href="interface.html" aria-current="page">인터페이스</a>
+			<a href="models.html">모델 &amp; 크레딧</a>
+			<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
+			<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
+			<a href="accounts.html">계정</a>
+			<a href="sync.html">기기 간 동기화</a>
+			<a href="spending.html">지출</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>인터페이스</h1>
+	<p class="lede">화면 한 바퀴: 세 구역과 저마다 하는 일이에요. 구역을 알고 나면 Daimond의 모든 것에 자리가 생겨요.</p>
+
+	<figure class="diagram">
+		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
+			<title id="rm-title">Daimond 창의 이름 붙은 구역들</title>
+			<desc id="rm-desc">창의 도식. 위쪽을 가로지르는 것이 상단 바. 그 아래로 세 구역이 나란히 있어요. 왼쪽이 레일(칸막이 위에는 하고 있는 일, 아래에는 관리 패널), 가운데가 스테이지(대화), 오른쪽이 독(메일, 작업 공간, 에이전트)이에요.</desc>
+			<style>
+				.regionmap text { font-family: var(--font); }
+				.rm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+				.rm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+				.rm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-name { fill: var(--accent); font-weight: 700; }
+				.rm-title{ fill: var(--text-secondary); font-weight: 600; }
+				.rm-sub  { fill: var(--text-muted); }
+				.rm-fill { fill: var(--accent); }
+				.rm-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+				.rm-rule { stroke: var(--accent); stroke-width: 2; }
+				.rm-div  { stroke: var(--border-2); stroke-width: 1.5; }
+				.rm-divf { fill: var(--border-2); }
+				.rm-skel { fill: var(--text-muted); opacity: .30; }
+			</style>
+
+			<!-- window + top bar -->
+			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
+			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
+			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">상단 바</text>
+			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
+			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
+			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
+			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
+			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
+			<path class="rm-fill" d="M716,24 a9,9 0 0 1 0,18 z" opacity=".5"/>
+
+			<!-- ── rail ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="22" y="66" width="196" height="382" rx="10"/>
+			<text class="rm-name" x="36" y="93" font-size="15">레일</text>
+			<text class="rm-sub"  x="112" y="93" font-size="11">왼쪽</text>
+			<line class="rm-rule" x1="36" y1="100" x2="70" y2="100"/>
+			<text class="rm-title" x="36" y="120" font-size="10.5">하고 있는 일</text>
+			<!-- Diamonds -->
+			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">DIAMONDS</text>
+			<text class="rm-sub" x="204" y="137" text-anchor="end" font-size="12">+</text>
+			<rect class="rm-cell" x="36" y="142" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="149" width="70" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="148" width="20" height="9" rx="4.5"/>
+			<rect class="rm-soft" x="174" y="148" width="28" height="9" rx="4.5"/>
+			<rect class="rm-cell" x="36" y="172" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="179" width="58" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="178" width="24" height="9" rx="4.5"/>
+			<!-- Chats -->
+			<text class="rm-sub" x="36" y="219" font-size="9" letter-spacing="1">채팅</text>
+			<rect class="rm-cell" x="36" y="224" width="170" height="18" rx="6"/>
+			<rect class="rm-skel" x="44" y="230" width="96" height="6" rx="3"/>
+			<!-- divider between the two halves of the rail -->
+			<line class="rm-div" x1="30" y1="258" x2="198" y2="258"/>
+			<rect class="rm-divf" x="106" y="255.5" width="16" height="5" rx="2.5"/>
+			<text class="rm-sub" x="36" y="274" font-size="9.5">칸막이 — 끌 수 있어요</text>
+			<!-- Admin panel -->
+			<text class="rm-title" x="36" y="294" font-size="10.5">관리 패널</text>
+			<g>
+				<rect class="rm-cell" x="36" y="300" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="307.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="304.5" width="66" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="304.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="320" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="327.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="324.5" width="54" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="324.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="340" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="347.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="344.5" width="72" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="344.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="360" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="367.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="364.5" width="60" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="364.5" width="26" height="6" rx="3"/>
+			</g>
+
+			<!-- ── stage ──────────────────────────────────────────── -->
+			<rect class="rm-pan" x="228" y="66" width="300" height="382" rx="10"/>
+			<text class="rm-name" x="244" y="93" font-size="15">스테이지</text>
+			<text class="rm-sub"  x="330" y="93" font-size="11">가운데</text>
+			<line class="rm-rule" x1="244" y1="100" x2="290" y2="100"/>
+			<text class="rm-title" x="244" y="119" font-size="10.5">daimon — 나의 대화</text>
+			<text class="rm-sub"   x="244" y="133" font-size="9.5">스테이지에 하나, 또는 나란히 둘</text>
+			<rect class="rm-cell" x="244" y="146" width="196" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="153" width="176" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="164" width="120" height="6" rx="3"/>
+			<rect class="rm-soft" x="344" y="184" width="168" height="26" rx="8"/>
+			<rect class="rm-skel" x="354" y="194" width="148" height="6" rx="3"/>
+			<rect class="rm-cell" x="244" y="218" width="212" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="225" width="192" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="236" width="150" height="6" rx="3"/>
+			<!-- composer -->
+			<rect class="rm-cell" x="244" y="410" width="268" height="28" rx="8"/>
+			<rect class="rm-skel" x="256" y="421" width="150" height="6" rx="3"/>
+			<circle class="rm-fill" cx="498" cy="424" r="9"/>
+
+			<!-- ── dock ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="538" y="66" width="200" height="382" rx="10"/>
+			<text class="rm-name" x="552" y="93" font-size="15">독</text>
+			<text class="rm-sub"  x="642" y="93" font-size="11">오른쪽</text>
+			<line class="rm-rule" x1="552" y1="100" x2="596" y2="100"/>
+			<!-- Email -->
+			<rect class="rm-cell" x="552" y="112" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="131" font-size="11">메일</text>
+			<rect class="rm-skel" x="564" y="142" width="148" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="156" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="170" width="134" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="184" width="96" height="6" rx="3"/>
+			<!-- Workspace -->
+			<rect class="rm-cell" x="552" y="210" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="229" font-size="11">작업 공간</text>
+			<rect class="rm-skel" x="564" y="240" width="110" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="254" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="268" width="98" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="282" width="88" height="6" rx="3"/>
+			<!-- Agents, with a mini tile that shows the chips -->
+			<rect class="rm-cell" x="552" y="308" width="172" height="132" rx="8"/>
+			<text class="rm-title" x="564" y="327" font-size="11">에이전트</text>
+			<rect class="rm-pan" x="562" y="336" width="152" height="96" rx="6"/>
+			<rect class="rm-skel" x="570" y="346" width="66" height="7" rx="3.5"/>
+			<circle class="rm-fill" cx="704" cy="350" r="4"/>
+			<rect class="rm-soft" x="570" y="362" width="50" height="12" rx="6"/>
+			<text class="rm-name" x="577" y="371" font-size="8">↳</text>
+			<rect class="rm-cell" x="626" y="362" width="26" height="12" rx="6"/>
+			<rect class="rm-cell" x="658" y="362" width="36" height="12" rx="6"/>
+			<rect class="rm-skel" x="570" y="384" width="128" height="6" rx="3"/>
+			<rect class="rm-skel" x="570" y="396" width="96" height="6" rx="3"/>
+			<rect class="rm-cell" x="570" y="410" width="52" height="13" rx="6"/>
+			<rect class="rm-cell" x="628" y="410" width="40" height="13" rx="6"/>
+		</svg>
+		<figcaption>이름 붙은 구역들. <strong>상단 바가</strong> 위를 가로질러요. 그 아래로 세 구역이 있어요. <strong>레일</strong> (왼쪽) — 칸막이 위에는 하고 있는 일, 아래에는 관리 패널. <strong>스테이지</strong> (가운데)는 대화를 위한 곳, 그리고 <strong>독</strong> (오른쪽)은 메일, 작업 공간, 에이전트를 담아요.</figcaption>
+	</figure>
+
+	<h2>레일 — 왼쪽</h2>
+	<p>레일은 끌 수는 있어도 없앨 수는 없는 칸막이로 나뉘어요. 칸막이 위는 지금 하고 있는 일, 아래는 관리 패널이에요.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Diamonds</h3>
+			<p>내가 이어 가는 취지들이에요. Diamond은 어떤 일에 대해 채팅이 알려 준 것을 담고 있어서, 다음 구간이 이미 아는 데서 시작해요. 쌓여 가면 검색과 태그로 찾으세요. 새로 만들 때 누를 것은 <strong>＋</strong> — 옆은 <strong>Diamonds</strong>.</p>
+		</div>
+		<div class="card">
+			<h3>채팅</h3>
+			<p>내 대화예요. 새로 시작할 때 누를 것은 <strong>＋</strong> — 옆은 <strong>채팅</strong>이에요. 어떤 채팅이든 누르면 가운데로 돌아와요.</p>
+		</div>
+	</div>
+	<p>두 목록 사이에도 칸막이가 있어요. Diamonds은 쌓여 가는데, 이게 없으면 긴 목록이 채팅 타일을 레일 아래로 밀어냈어요. 끌어서 어느 한쪽에 자리를 주거나, 두 번 누르면 반반으로 돌아가요. 어느 목록도 완전히 짓눌리지는 않고, 이 배분은 나머지 배치와 함께 기기마다 기억돼요.</p>
+
+	<p>Diamonds이 채팅 위에 있는 것은 땅이 그렇게 생겼기 때문이에요. 캐는 곳은 아래의 대화이고, 캐낸 것은 그 위에서 깎이고 다듬어져요. 채팅은 원석, Diamond은 다듬은 것이죠. 이 순서는 장식이 아니에요 — 일이 어느 쪽으로 흐르는지를, 한마디 설명 없이 말하고 있어요.</p>
+
+	<p> <strong>채팅이라는</strong> 말을 그대로 둔 것도 같은 이유예요. Diamond은 새로운 종류의 것이라 새 이름을 얻고, 대화는 흔한 것이라 흔한 말을 지켜요.</p>
+
+	<p>Diamonds과 채팅을 자세히 다루는 곳은 <a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>.</p>
+
+	<h3>관리 패널</h3>
+	<p>칸막이 아래의 관리 패널은 이 기계의 상태를 한눈에 보여 줘요. 설정이 팝업이 아니라 여기 있어서 그 옆에서 채팅이 살아 있어요 — 앱 비밀번호가 무엇인지 Daimond에게 물으면서, 그것을 묻는 칸을 화면에 그대로 둘 수 있죠. 손댈 수 있는 줄은 모두 그 이름이 가리키는 것을 여는 버튼이에요.</p>
+	<ul>
+		<li> <strong>신원 줄</strong> — 이 기기에서 내가 누구인지 — 옆에 설정 톱니가 있어요.</li>
+		<li> <span class="ui">모델</span> 행. 연결한 제공자 수를 세고, 모델 입력 화면을 열어요.</li>
+		<li> <span class="ui">크레딧</span> 행. 잔액을 보여 주고, 크레딧 화면을 열어요.</li>
+		<li> <span class="ui">도구 · M개 중 N개</span> 행. 쓸 수 있는 도구가 몇인지 보여 주고, 도구 패널을 열어요.</li>
+		<li> <span class="ui">버전</span> 행. 돌리고 있는 릴리스의 이름과 그것을 쓴 기간을 알려 주고, 아래에 설명한 릴리스 이력을 열어요.</li>
+		<li><strong>작업 공간 저장</strong> 행들. 작업 공간이 있을 수 있는 자리마다 파일이 공간을 얼마나 쓰는지 보여 줘요.</li>
+	</ul>
+
+	<h3>지금 돌리고 있는 버전</h3>
+	<p> <span class="ui">버전</span> 행은 빌드 번호가 아니라 이름과 지난 시간으로 읽혀요 — <span class="ui">버전 · Albany · 오늘</span> — 이런 식이에요. 릴리스에는 서호주 지명이 알파벳 순으로 붙어서, 순서를 따로 찾아보지 않아도 읽혀요. 이름이 표시하는 것은 <strong>이정표</strong>이지 빌드가 아니에요. Daimond은 하루에도 여러 번 빌드를 내놓으니, 하나하나에 이름을 붙이면 소음이 돼요. 줄에 커서를 올리면 빌드 id와 공개된 날짜가 나와요.</p>
+	<p>줄을 누르면 관리 패널에 <strong>릴리스 이력이</strong> 열려요. 위에서 아래로 읽어요.</p>
+	<ul>
+		<li><strong>예정된 것</strong>이 맨 먼저, 점선 테두리로.</li>
+		<li><strong>지금 돌리고 있는 빌드</strong>. 표시는 <span class="ui">지금 여기</span>.</li>
+		<li><strong>그 이전의 모든 빌드</strong>가 새것부터. 저마다 날짜, 무엇이 바뀌었는지 적은 한 줄, 빌드 id, 그리고 봉인된 기록에서의 자리가 붙어요.</li>
+	</ul>
+	<p>이 이력은 앱 옆에 따로 두는 변경 기록이 아니에요. Daimond 자신의 전달 확인이 읽는 것과 같은, 공개된 기록이에요. Daimond이 지금까지 전달한 모든 빌드가 순서대로, 깨뜨리지 않고는 고쳐 쓸 수 없는 사슬에 놓여 있어요. 항목마다 붙은 한 줄짜리 메모는 그 사슬을 건드리지 않고 더한 것이라, 읽고 있는 것은 다시 들려주는 이야기가 아니라 주석이 붙은 이력이에요.</p>
+	<div class="note"><strong>예정 항목이 달라 보이는 것은 실제로 다르기 때문이에요.</strong> 빌드 id도 봉인 번호도 없고, 아직 만들어지지 않았으며 날짜도 약속하지 않았다고 말로 밝혀요. 그 아래는 모두 봉인되어 확인할 수 있어요. 의향의 표명은 그 어느 쪽도 아니니, 기록의 권위를 빌려서는 안 돼요.</div>
+	<p>예전 빌드로 돌아가는 길은 없고, 이건 빠뜨린 게 아니라 고른 것이에요. 예전 빌드에 머물면 너무 오래된 클라이언트와는 말하지 않겠다는 게이트웨이 자신의 거절에 부딪혀요. 이미 고쳐진 보안 결함을 안고 있을 수도 있는데, 제공자 키와 신원과 패스키를 지닌 앱에서는 큰일이에요. 그리고 예전 빌드가 더 새로운 로컬 자료를 — 파일, 내구성 저널, 다른 기기에서 온 동기화 꾸러미를 — 만나면 잘못 읽을 위험이 있어요. 변화가 마음에 들지 않는 마음에는, 무엇이 바뀌었는지 분명히 말하는 것으로 그 변화에서 답해요. 이 이력의 메모가 그걸 위해 있어요.</p>
+
+	<h2>스테이지 — 가운데</h2>
+	<p>스테이지는 한가운데 구역이에요. 여기 서는 것들은 혼자 서거나 나란히 둘이 서고, 오른쪽에 들어가는 일은 없어요. 자리가 둘인 뜻은, 무언가를 하려고 대화를 떠나지 않아도 된다는 거예요. 메시지를 읽고, 페이지를 보고, 문서를 읽는 동안 daimon이 그 옆에 있어서 언제든 물어볼 수 있어요.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>AI — daimon</h3>
+			<p>대화예요. 여기 기본으로 있는 손님이고, 스테이지가 비려 할 때면 언제나 돌아와요. 내 메시지, 답, 그리고 도구 단계가 여기 나와요.</p>
+		</div>
+		<div class="card">
+			<h3>웹</h3>
+			<p>웹 페이지예요. 페이지를 보여 줄 수도, 조작할 수도 있어요. 머리글에서 열거나, Daimond이 링크를 따라갈 때 열려요.</p>
+		</div>
+		<div class="card">
+			<h3>문서</h3>
+			<p>컴파일된 문서(PDF 같은 것). 읽을 자리를 넉넉히 줘요.</p>
+		</div>
+		<div class="card">
+			<h3>메시지</h3>
+			<p>메일 한 통. 메일에서 열어 채팅 옆에서 읽어요.</p>
+		</div>
+		<div class="card">
+			<h3>도구</h3>
+			<p>Daimond이 할 수 있는 일, 그리고 나머지는 얼마인지. 여는 곳은 <span class="ui">도구</span> 행이에요.</p>
+		</div>
+		<div class="card">
+			<h3>작성</h3>
+			<p>메일을 써요. 여기서 저절로 보내지는 것은 없어요 — <span class="ui">보내기</span> 버튼만 메일을 회선에 올리고, 누를 수 있는 사람은 나뿐이에요.</p>
+		</div>
+	</div>
+
+	<p>스테이지 손님은 저마다 머리글에 닫기 버튼을 가지고 있어요. 닫은 패널은 사라지지 않아요. 칩은 상단 바에 채워지지 않은 모습으로 남고, 칩을 누르면 돌아와요.</p>
+
+	<h2>독 — 오른쪽</h2>
+	<p>독은 끌어다 쓰는 원천을 담아요. 하나를 닫아도 칩은 상단 바에 남고, 칩을 누르면 다시 들어와요. 독을 어떻게 나눌지는 — 따라서 한 번에 패널을 몇 개나 담을지는 — 모양 메뉴의 <strong>독 분할</strong> 항목에서 정해요. 아래에서 설명해요.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>메일</h3>
+			<p>내 메일함과 그 안에 든 것. 메일함을 추가하고, 동기화하고, 메시지를 스테이지에 열어요.</p>
+		</div>
+		<div class="card">
+			<h3>작업 공간</h3>
+			<p>내 파일을 평범한 나무로. 에이전트의 파일 도구가 여기를 읽고 써요.</p>
+		</div>
+		<div class="card">
+			<h3>에이전트</h3>
+			<p>돌고 있는 에이전트 실행을 일어나는 그대로. 몇이 일하고 있는지 수도 나와요.</p>
+		</div>
+		<div class="card">
+			<h3>지출</h3>
+			<p>무엇에 얼마를 썼는지. 자세한 곳은 <a href="spending.html">지출</a>.</p>
+		</div>
+	</div>
+
+	<h2>상단 바</h2>
+	<p>위쪽에는 브랜드 마크, 계기, 그리고 <strong>패널 칩</strong> 줄이 있고, 맨 오른쪽에는 <strong>모양과 배치</strong> 메뉴를 여는 버튼이 있어요.</p>
+
+	<h3>칩</h3>
+	<p>어느 패널이든 열려 있든 닫혀 있든 칩이 있고, 하나를 누르면 그 패널이 켜지고 꺼져요. 열린 패널의 칩은 채워져 있어서, 이 줄은 화면에 무엇이 있는지 보여 주는 지도로 읽혀요. 칩이 부르기가 아니라 켜고 끄기인 데는 이유가 있어요. 닫힌 패널에만 칩이 있다면 앱이 가장 빌 때 줄이 가장 길어지고, 하나를 쓸 때마다 모든 칩이 옆으로 밀려요. 자리를 지키는 칩이라야 위치를 익힐 수 있어요. (에이전트는 <em>모든</em>이라는 말의 예외예요. 첫 에이전트가 돌기 전까지는 비켜 있어요.)</p>
+	<p>칩은 구역별로 묶여 있어요 — 레일, 그다음 스테이지, 그다음 독 — 묶음 사이에는 가는 칸막이가 있고, 화면의 구역과 같은 순서로 왼쪽에서 오른쪽으로 놓여요. 그래서 칩은 그것이 여는 패널이 나타날 쪽에 있어요. 알아 둘 만한 표시가 둘 있어요.</p>
+	<ul>
+		<li>닫힌 스테이지 칩 가운데, 그 패널이 <strong>지금 채팅 옆에 있는 손님을 밀어낼</strong> 것은 점선 테두리로 그려요. 스테이지의 자리는 둘이고 daimon은 자기 자리를 지키니, 세 번째 손님을 열면 다른 하나가 떠나요. 이 테두리는 막는 게 아니라 알려 줘요. 그건 진짜 선택이니까요 — 그리고 표시를 더하지 않고 테두리로 둔 것은, 칩의 너비가 그대로여서 이웃이 밀리지 않게 하려는 거예요.</li>
+		<li>닫힌 독 칩은 <strong>독이 가득 찼을 때 회색이 돼요</strong>. 툴팁이 고칠 방법을 알려 줘요: 모양 메뉴에서 더 큰 분할을 고르거나, 독 패널 하나를 닫으세요.</li>
+	</ul>
+
+	<h3>고정한 패널과 패널 모음</h3>
+	<p>상단 바에 어떤 칩을 둘지는 내가 정해요. 어떤 패널이든 <strong>고정할 수</strong> 있고 풀 수도 있어요. 푼 것들은 줄 끝의 <span class="ui">⋯</span> 칩 뒤에 들어가고, 거기 몇 개가 있는지 수가 붙어요. 누르면 <strong>패널 모음</strong>이 열려요: 있는 모든 패널이 이름으로 검색되고, 구역별로 묶이고, 줄마다 고정 조작과 그 패널이 열려 있는지가 붙어요. 줄을 누르면 칩처럼 패널이 열리거나 닫혀요.</p>
+	<p>줄이 빠짐없지 않아도 되는 것은 패널 모음이 빠짐없기 때문이에요. 얼마나 자주 쓰는지로 순위가 매겨지지도 않아요. 스스로 자리를 바꾸는 줄은, 자리를 고정해서 기르려는 몸의 기억을 무너뜨리니까요.</p>
+
+	<h3>명령 팔레트</h3>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> (Mac에서는) — 입력만으로 어떤 패널이나 설정에도 닿는 검색 상자가 열려요. 화살표 키로 결과 사이를 옮기고, <span class="ui">Enter</span> 키로 강조된 것을 실행하고, <span class="ui">Esc</span> 로 닫아요. 패널, 팔레트, 네 가지 글자 크기, 독 배치가 나열돼요. 칩이 보이는 패널로 가는 가장 빠른 길은 아니에요. 패널이 몇 개든 빠짐없이 남는 길이에요.</p>
+
+	<h3>모양과 배치</h3>
+	<p>오른쪽 위 버튼은 Daimond이 무엇을 하는지가 아니라 어떻게 보이고 어떻게 앉는지에 대한 선택을 모아 둔 메뉴 하나를 열어요.</p>
+	<ul>
+		<li><strong>테마</strong> — 팔레트 목록이고, 세 가지 묶음으로 나뉘어 있어요: <span class="ui">밝게</span>, <span class="ui">중간</span> 그리고 <span class="ui">어둡게</span>. 묶음은 찾는 방법이고, 그 안에서는 취향껏 고르면 돼요. 다만 <span class="ui">호박빛</span>만은 그리는 모든 것에서 파란빛을 빼요. 밤늦게 읽기 위한 거예요. 이 안내서는 Daimond 안에서 보일 때 앱이 입은 팔레트를 그대로 입어요.</li>
+		<li><strong>여백</strong> — <span class="ui">조밀하게</span> 또는 <span class="ui">여유롭게</span>. 인터페이스가 스스로에게 주는 여백이에요. 모서리를 좁혀 한 화면에 가장 많이 담거나, 모서리를 둥글게 하고 요소 사이를 넓히거나. 팔레트와도 글자 크기와도 무관해서, 바꿔도 둘은 그대로예요.</li>
+		<li><strong>글자 크기</strong> — 네 단계, <span class="ui">작게</span>, <span class="ui">기본</span>, <span class="ui">크게</span> 그리고 <span class="ui">더 크게</span>. 반응하는 것은 글자뿐이에요. 틀도, 여백도, 패널 너비도 그대로예요. 이건 확대가 아니라 읽기를 위한 조작이니까요. 화면 전체를 크게 하고 싶으면 브라우저 자체의 확대가 그 일을 해요. 메뉴의 견본은 고르는 크기로 짜여 있어서, 이 조작은 변화를 이름으로 말하지 않고 보여 줘요.</li>
+		<li><strong>독 분할</strong> — <span class="ui">자동</span>, <span class="ui">1</span> 열, <span class="ui">2×2</span>, <span class="ui">2×3</span> 또는 <span class="ui">3×2</span>, 저마다 고르는 격자 모양으로 그려져요. 분할은 <em>독이 패널을 몇 개나 담을 수 있는지</em>도 정해요. 열 곱하기 행이에요. 한 열이면 넷, 2×2면 넷, 2×3이나 3×2면 여섯이에요. <span class="ui">자동</span> 쪽은 창이 정하게 두고, 두 번째 열이 정말 들어갈 만해지면 그때 가져가요. 더 작은 격자로 옮기면 더 들어가지 않는 패널이 가장 최근에 연 것부터 닫혀요 — 조용히 떨어지는 게 아니라 닫히는 것이라, 저마다 보이고 누를 수 있는 칩으로 돌아가요.</li>
+	</ul>
+
+	<h3>배치를 Diamond과 함께 남기기</h3>
+	<p>Diamond을 고른 상태에서는 모양 메뉴가 지금의 패널 배치를 그 Diamond과 함께 남기겠다고 물어봐요. 그 Diamond을 다시 열면 배치가 돌아와서, 하던 일로 돌아가는 것이 필요한 패널을 손으로 다시 짜맞추는 일이 되지 않아요. 저장은 부탁할 때만 해요 — 짐작하지도 않고, 뒤에서 하지도 않아요. 말없이 패널을 닫는 전환은 작업이 사라진 것처럼 읽히니까요. 메뉴에서는 저장한 배치를 고치거나 잊게 할 수도 있어요.</p>
+
+	<h2>좁은 화면에서는</h2>
+	<p>휴대폰 너비 아래에서는 칩과 패널 모음이 휴대폰 껍데기에 자리를 내줘요. 같은 물음에 더 적은 자리로 답하는 방식이죠. 채팅이 바닥이 되고, 패널은 그 위로 끌 수 있는 시트로 올라오고, 레일은 왼쪽 위 버튼으로 여는 서랍이 돼요. 아래쪽에 놓인 줄 — <span class="ui">채팅</span>, <span class="ui">메일</span>, <span class="ui">파일</span>, <span class="ui">에이전트</span> — 이 줄로 오가요. 잃는 것은 없어요. 같은 패널을 한 번에 하나씩 보여 줄 뿐이에요.</p>
+
+	<div class="next">
+		<a href="index.html">&larr; 시작하기</a>
+		<a href="models.html">다음: 모델 &amp; 크레딧 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond은 내 브라우저에서 돌아요. 여기 있는 어떤 것도 저희에게 보내지지 않아요.</span>
+	<nav aria-label="안내 페이지">
+		<a href="index.html">시작하기</a>
+		<a href="interface.html">인터페이스</a>
+		<a href="models.html">모델</a>
+		<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
+		<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
+		<a href="accounts.html">계정</a>
+		<a href="sync.html">기기 간 동기화</a>
+		<a href="spending.html">지출</a>
+	</nav>
+</footer>
+</body>
+</html>

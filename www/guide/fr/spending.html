@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="fr" data-guide-locale="fr" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Dépenses — Guide Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guide Daimond, accueil">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Pages du guide">
+			<a href="index.html">Premiers pas</a>
+			<a href="interface.html">L’interface</a>
+			<a href="models.html">Modèles &amp; crédits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+			<a href="accounts.html">Comptes</a>
+			<a href="sync.html">Synchronisation entre appareils</a>
+			<a href="spending.html" aria-current="page">Dépenses</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Dépenses</h1>
+	<p class="lede">La vue Dépenses montre où va votre argent, et elle tient les deux pots séparés. Ce sont des comptes différents dans des monnaies différentes : Daimond les montre donc comme deux pistes et ne les additionne jamais.</p>
+
+	<h2>Deux pots, tenus séparés</h2>
+	<ul>
+		<li><strong>Inférence.</strong> Les appels de modèle eux-mêmes, facturés sur votre propre clé de fournisseur. Daimond les tarife et les enregistre sur cet appareil, tour par tour, pour que vous voyiez le coût de vos dépenses sur votre clé sans que rien n’en passe par nous.</li>
+		<li><strong>Crédits.</strong> Le solde prépayé que la passerelle dépense pour les quelques choses qui quittent le navigateur : récupérer une page, synchroniser ou envoyer du courrier, la synchronisation entre appareils, et garder votre espace de travail dans le <a href="email-web-files.html">stockage en ligne</a>.</li>
+	</ul>
+
+	<h2>L’ouvrir</h2>
+	<p>Ouvrez la vue Dépenses depuis le <strong>compteur de dépenses</strong> de la barre du haut, ou depuis un lien de la vue <span class="ui">Crédits</span> du panneau d’administration. Elle montre chaque pot avec un chiffre principal, un graphique quotidien, une ventilation par catégorie et un tableau simple des mouvements, si bien qu’une écriture n’est jamais un mystère.</p>
+
+	<h2>Protection contre les coûts qui s’emballent</h2>
+	<p>Un espace de travail capable de faire tourner beaucoup d’agents à la fois peut, en principe, dépenser vite. Le danger n’est pas un gros total mensuel — c’est une <em>pointe de débit</em> : un éventail qui brûle du crédit en quelques secondes avant que vous ne puissiez réagir. Daimond est bâti pour attraper cette pointe, pas seulement pour totaliser après coup. Quatre mesures agissent ensemble, et aucune ne vous demande de fixer une limite à l’avance.</p>
+	<ul>
+		<li><strong>Un contrôle de rythme avant qu’un éventail ne parte.</strong> Ce que coûte le lancement d’un lot d’agents est connu avant qu’aucun d’eux ne démarre. Quand un lot irait plus vite que votre propre rythme récent, Daimond le met en pause et vous demande une fois, avec le nombre et l’estimation dans la question. Quelques agents d’un coût ordinaire n’y arrivent jamais ; cinquante d’un coup, si. La mesure du « trop vite » est votre propre normale, apprise de vos dépenses récentes : il n’y a donc rien à régler.</li>
+		<li><strong>Mettre en pause et arrêter, toujours à portée.</strong> Le panneau <a href="chats-and-diamonds.html">Agents</a> vous laisse retenir d’un seul geste tous les agents en cours, ou les arrêter purement et simplement. Mettre en pause arrête la dépense aussitôt et garde le travail : vous ne perdez donc rien à tirer le frein pour regarder.</li>
+		<li><strong>Une clé distincte pour chaque agent.</strong> Chaque agent qui tourne sur des crédits dépense sa propre clé fraîchement frappée, et chaque clé est plafonnée sur ce qui reste réellement une fois déduites les réservations de ses semblables. Comme jamais deux agents ne partagent une clé, des agents parallèles ne peuvent pas faire courir une allocation commune au-delà de son plafond — toute une classe de dépassements ne peut tout simplement pas se produire.</li>
+		<li><strong>Tout compté, tour par tour, sur votre appareil.</strong> Chaque appel de modèle est tarifé et enregistré ici au moment où il a lieu, ce qui alimente les graphiques ci-dessus. La note n’est jamais une surprise qui arrive plus tard ; elle est devant vous à mesure qu’elle se fait.</li>
+	</ul>
+	<p>L’intention est simple : faire tourner une équipe d’agents sans craindre qu’une erreur — une boucle emballée, un éventail plus large que vous ne le pensiez — puisse coûter plus qu’un coup d’œil et un clic ne peuvent défaire.</p>
+
+	<div class="next">
+		<a href="sync.html">&larr; Synchronisation entre appareils</a>
+		<a href="index.html">Retour aux premiers pas &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<nav aria-label="Pages du guide">
+		<a href="index.html">Premiers pas</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modèles</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
+		<a href="accounts.html">Comptes</a>
+		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="spending.html">Dépenses</a>
+	</nav>
+</footer>
+</body>
+</html>

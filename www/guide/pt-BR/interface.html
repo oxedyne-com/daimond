@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>A interface — Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Primeiros passos</a>
+			<a href="interface.html" aria-current="page">A interface</a>
+			<a href="models.html">Modelos &amp; créditos</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+			<a href="accounts.html">Contas</a>
+			<a href="sync.html">Sincronização entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>A interface</h1>
+	<p class="lede">Uma visita à tela: três zonas, e o que cada parte faz. Uma vez conhecidas as zonas, tudo no Daimond tem um lugar.</p>
+
+	<figure class="diagram">
+		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
+			<title id="rm-title">As regiões nomeadas da janela do Daimond</title>
+			<desc id="rm-desc">Um esquema da janela. No alto corre a barra superior. Abaixo dela, três zonas lado a lado: a barra lateral à esquerda (aquilo em que você trabalha acima de um divisor, o painel de administração abaixo), o palco no centro (a conversa) e o dock à direita (E-mail, Espaço e Agentes).</desc>
+			<style>
+				.regionmap text { font-family: var(--font); }
+				.rm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+				.rm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+				.rm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+				.rm-name { fill: var(--accent); font-weight: 700; }
+				.rm-title{ fill: var(--text-secondary); font-weight: 600; }
+				.rm-sub  { fill: var(--text-muted); }
+				.rm-fill { fill: var(--accent); }
+				.rm-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+				.rm-rule { stroke: var(--accent); stroke-width: 2; }
+				.rm-div  { stroke: var(--border-2); stroke-width: 1.5; }
+				.rm-divf { fill: var(--border-2); }
+				.rm-skel { fill: var(--text-muted); opacity: .30; }
+			</style>
+
+			<!-- window + top bar -->
+			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
+			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
+			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">A barra superior</text>
+			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
+			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
+			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
+			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
+			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
+			<path class="rm-fill" d="M716,24 a9,9 0 0 1 0,18 z" opacity=".5"/>
+
+			<!-- ── rail ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="22" y="66" width="196" height="382" rx="10"/>
+			<text class="rm-name" x="36" y="93" font-size="15">A barra lateral</text>
+			<text class="rm-sub"  x="112" y="93" font-size="11">esquerda</text>
+			<line class="rm-rule" x1="36" y1="100" x2="70" y2="100"/>
+			<text class="rm-title" x="36" y="120" font-size="10.5">No que você trabalha</text>
+			<!-- Diamonds -->
+			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">DIAMONDS</text>
+			<text class="rm-sub" x="204" y="137" text-anchor="end" font-size="12">+</text>
+			<rect class="rm-cell" x="36" y="142" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="149" width="70" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="148" width="20" height="9" rx="4.5"/>
+			<rect class="rm-soft" x="174" y="148" width="28" height="9" rx="4.5"/>
+			<rect class="rm-cell" x="36" y="172" width="170" height="26" rx="6"/>
+			<rect class="rm-skel" x="44" y="179" width="58" height="6" rx="3"/>
+			<rect class="rm-soft" x="150" y="178" width="24" height="9" rx="4.5"/>
+			<!-- Chats -->
+			<text class="rm-sub" x="36" y="219" font-size="9" letter-spacing="1">CHATS</text>
+			<rect class="rm-cell" x="36" y="224" width="170" height="18" rx="6"/>
+			<rect class="rm-skel" x="44" y="230" width="96" height="6" rx="3"/>
+			<!-- divider between the two halves of the rail -->
+			<line class="rm-div" x1="30" y1="258" x2="198" y2="258"/>
+			<rect class="rm-divf" x="106" y="255.5" width="16" height="5" rx="2.5"/>
+			<text class="rm-sub" x="36" y="274" font-size="9.5">divisor — arraste-o</text>
+			<!-- Admin panel -->
+			<text class="rm-title" x="36" y="294" font-size="10.5">Painel de administração</text>
+			<g>
+				<rect class="rm-cell" x="36" y="300" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="307.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="304.5" width="66" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="304.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="320" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="327.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="324.5" width="54" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="324.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="340" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="347.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="344.5" width="72" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="344.5" width="26" height="6" rx="3"/>
+				<rect class="rm-cell" x="36" y="360" width="170" height="15" rx="4"/>
+				<circle class="rm-fill" cx="46" cy="367.5" r="3" opacity=".55"/>
+				<rect class="rm-skel" x="56" y="364.5" width="60" height="6" rx="3"/>
+				<rect class="rm-skel" x="176" y="364.5" width="26" height="6" rx="3"/>
+			</g>
+
+			<!-- ── stage ──────────────────────────────────────────── -->
+			<rect class="rm-pan" x="228" y="66" width="300" height="382" rx="10"/>
+			<text class="rm-name" x="244" y="93" font-size="15">O palco</text>
+			<text class="rm-sub"  x="330" y="93" font-size="11">centro</text>
+			<line class="rm-rule" x1="244" y1="100" x2="290" y2="100"/>
+			<text class="rm-title" x="244" y="119" font-size="10.5">O daimon — sua conversa</text>
+			<text class="rm-sub"   x="244" y="133" font-size="9.5">um no palco, ou dois lado a lado</text>
+			<rect class="rm-cell" x="244" y="146" width="196" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="153" width="176" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="164" width="120" height="6" rx="3"/>
+			<rect class="rm-soft" x="344" y="184" width="168" height="26" rx="8"/>
+			<rect class="rm-skel" x="354" y="194" width="148" height="6" rx="3"/>
+			<rect class="rm-cell" x="244" y="218" width="212" height="30" rx="8"/>
+			<rect class="rm-skel" x="254" y="225" width="192" height="6" rx="3"/>
+			<rect class="rm-skel" x="254" y="236" width="150" height="6" rx="3"/>
+			<!-- composer -->
+			<rect class="rm-cell" x="244" y="410" width="268" height="28" rx="8"/>
+			<rect class="rm-skel" x="256" y="421" width="150" height="6" rx="3"/>
+			<circle class="rm-fill" cx="498" cy="424" r="9"/>
+
+			<!-- ── dock ───────────────────────────────────────────── -->
+			<rect class="rm-pan" x="538" y="66" width="200" height="382" rx="10"/>
+			<text class="rm-name" x="552" y="93" font-size="15">O dock</text>
+			<text class="rm-sub"  x="642" y="93" font-size="11">direita</text>
+			<line class="rm-rule" x1="552" y1="100" x2="596" y2="100"/>
+			<!-- Email -->
+			<rect class="rm-cell" x="552" y="112" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="131" font-size="11">E-mail</text>
+			<rect class="rm-skel" x="564" y="142" width="148" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="156" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="170" width="134" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="184" width="96" height="6" rx="3"/>
+			<!-- Workspace -->
+			<rect class="rm-cell" x="552" y="210" width="172" height="90" rx="8"/>
+			<text class="rm-title" x="564" y="229" font-size="11">Espaço</text>
+			<rect class="rm-skel" x="564" y="240" width="110" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="254" width="120" height="6" rx="3"/>
+			<rect class="rm-skel" x="576" y="268" width="98" height="6" rx="3"/>
+			<rect class="rm-skel" x="564" y="282" width="88" height="6" rx="3"/>
+			<!-- Agents, with a mini tile that shows the chips -->
+			<rect class="rm-cell" x="552" y="308" width="172" height="132" rx="8"/>
+			<text class="rm-title" x="564" y="327" font-size="11">Agentes</text>
+			<rect class="rm-pan" x="562" y="336" width="152" height="96" rx="6"/>
+			<rect class="rm-skel" x="570" y="346" width="66" height="7" rx="3.5"/>
+			<circle class="rm-fill" cx="704" cy="350" r="4"/>
+			<rect class="rm-soft" x="570" y="362" width="50" height="12" rx="6"/>
+			<text class="rm-name" x="577" y="371" font-size="8">↳</text>
+			<rect class="rm-cell" x="626" y="362" width="26" height="12" rx="6"/>
+			<rect class="rm-cell" x="658" y="362" width="36" height="12" rx="6"/>
+			<rect class="rm-skel" x="570" y="384" width="128" height="6" rx="3"/>
+			<rect class="rm-skel" x="570" y="396" width="96" height="6" rx="3"/>
+			<rect class="rm-cell" x="570" y="410" width="52" height="13" rx="6"/>
+			<rect class="rm-cell" x="628" y="410" width="40" height="13" rx="6"/>
+		</svg>
+		<figcaption>As regiões nomeadas. A <strong>barra superior</strong> corre no alto; abaixo dela, três zonas: a <strong>barra lateral</strong> (esquerda) — aquilo em que você trabalha, acima de um divisor, com o painel de administração abaixo — o <strong>palco</strong> (centro) para a conversa, e o <strong>dock</strong> (direita) com E-mail, Espaço e Agentes.</figcaption>
+	</figure>
+
+	<h2>A barra lateral — à esquerda</h2>
+	<p>A barra lateral é dividida por um divisor que você pode arrastar mas não remover. Acima do divisor fica aquilo em que você está trabalhando; abaixo dele fica o painel de administração.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Diamonds</h3>
+			<p>Os trabalhos que você guarda. Um Diamond retém o que um chat lhe ensinou sobre um trabalho, para que o próximo trecho comece do que você já sabe. Busque-os e etiquete-os conforme se acumulam. Adicione um com o <strong>＋</strong> ao lado de <strong>Diamonds</strong>.</p>
+		</div>
+		<div class="card">
+			<h3>Chats</h3>
+			<p>Suas conversas. Comece uma com o <strong>＋</strong> ao lado de <strong>Chats</strong>; clique em qualquer chat para trazê-lo de volta ao centro.</p>
+		</div>
+	</div>
+	<p>Um segundo divisor fica entre as duas listas. Os Diamonds se acumulam, e sem ele uma lista longa empurrava os blocos de chat para fora da barra lateral; arraste-o para dar espaço a uma lista ou à outra, ou dê um duplo clique para voltar a uma divisão igual. Nenhuma das listas pode ser esmagada por completo, e a divisão é lembrada por dispositivo junto com o resto da sua disposição.</p>
+
+	<p>Os Diamonds ficam acima dos chats, que é como o terreno é. Você escava na conversa embaixo, e o que traz à tona é lapidado e polido acima. Um chat é bruto; um Diamond é trabalhado. A ordem não é decoração — ela diz para que lado o trabalho viaja, sem precisar de uma palavra de explicação.</p>
+
+	<p>A palavra <strong>chat</strong> foi deixada como estava pelo mesmo motivo. Um Diamond é uma coisa de tipo novo e merece um nome novo; uma conversa é uma coisa comum e mantém sua palavra comum.</p>
+
+	<p>Os Diamonds e os chats são tratados por inteiro em <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>.</p>
+
+	<h3>O painel de administração</h3>
+	<p>Abaixo do divisor, o painel de administração é o estado da máquina num relance. As configurações vivem aqui em vez de numa janela que salta, de modo que um chat continua vivo ao lado delas — você pode perguntar ao Daimond o que é uma senha de app enquanto a caixa que pede uma ainda está na tela. Cada linha sobre a qual se pode agir é um botão que abre aquilo que ela nomeia:</p>
+	<ul>
+		<li>Uma <strong>linha de identidade</strong> — quem você é neste dispositivo — com uma engrenagem de configurações ao lado.</li>
+		<li>Uma linha <span class="ui">Modelos</span> que conta os provedores que você conectou e abre o formulário Modelos.</li>
+		<li>Uma linha <span class="ui">Créditos</span> que mostra seu saldo e abre a visão Créditos.</li>
+		<li>Uma linha <span class="ui">Ferramentas · N de M</span> que mostra quantas ferramentas estão disponíveis e abre o painel Ferramentas.</li>
+		<li>Uma linha <span class="ui">Versão</span> que nomeia a versão que você está usando e há quanto tempo, e abre o histórico de versões descrito abaixo.</li>
+		<li><strong>Linhas de armazenamento do espaço de trabalho</strong> que mostram quanto espaço seus arquivos ocupam em cada um dos lugares onde um espaço de trabalho pode viver.</li>
+	</ul>
+
+	<h3>Qual versão você está usando</h3>
+	<p>A linha <span class="ui">Versão</span> se lê como um nome e uma idade — <span class="ui">Versão · Albany · hoje</span> — e não como um número de build. As versões recebem nomes de lugares da Austrália Ocidental em ordem alfabética, de modo que a sequência é legível sem consultar nada. Um nome marca um <strong>marco</strong>, não um build: o Daimond publica vários builds por dia, e um nome para cada um seria ruído. Passar o mouse pela linha dá o id do build e a data em que ele foi publicado.</p>
+	<p>Clicar na linha abre o <strong>histórico de versões</strong> no painel de administração. Ele se lê de cima para baixo:</p>
+	<ul>
+		<li><strong>O que está planejado</strong>, primeiro, em um contorno tracejado.</li>
+		<li><strong>O build que você está usando</strong>, marcado <span class="ui">você está aqui</span>.</li>
+		<li><strong>Todos os builds anteriores</strong>, do mais novo ao mais antigo, cada um com sua data, uma linha dizendo o que mudou nele, seu id de build e seu lugar no registro selado.</li>
+	</ul>
+	<p>O histórico não é um changelog separado, mantido ao lado do app. É o mesmo registro publicado que a própria verificação de entrega do Daimond lê: todos os builds que o Daimond já serviu, em ordem, numa cadeia que não pode ser reescrita sem se romper. A nota de uma linha em cada entrada foi acrescentada sem perturbar essa cadeia, de modo que o que você lê é história anotada, e não um recontar dela.</p>
+	<div class="note"><strong>A entrada planejada parece diferente porque é diferente.</strong> Ela não traz id de build nem número de selo, e diz com todas as letras que ainda não foi construída e que não há data prometida. Tudo abaixo dela é selado e verificável; uma declaração de intenção não é nem uma coisa nem outra, e não deveria tomar emprestada a autoridade de um registro.</div>
+	<p>Não há caminho de volta para um build mais antigo, e isso é uma escolha, não um esquecimento. Um build antigo fixado esbarra na recusa do próprio gateway em falar com um cliente velho demais; ele pode carregar uma falha de segurança já corrigida, o que importa em um app que guarda suas chaves de provedor, sua identidade e suas chaves de acesso; e um build antigo diante de dados locais mais novos — seus arquivos, o diário de durabilidade, um pacote de sincronização vindo de outro dispositivo — corre o risco de lê-los errado. O desagrado com uma mudança se responde na mudança, dizendo claramente o que mudou, e é para isso que servem as notas deste histórico.</p>
+
+	<h2>O palco — no centro</h2>
+	<p>O palco é a zona do meio. Seus ocupantes o tomam sozinhos ou dois lado a lado, e nunca se encaixam à direita. O sentido de dois lugares é que você nunca sai da conversa para fazer uma coisa: leia a mensagem, veja a página, leia o documento, com o daimon ainda ao lado para ser consultado a respeito.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>IA — o daimon</h3>
+			<p>A conversa. É o ocupante padrão e ela volta sempre que o palco ficaria vazio. Suas mensagens, as respostas e quaisquer etapas de ferramenta aparecem aqui.</p>
+		</div>
+		<div class="card">
+			<h3>Web</h3>
+			<p>Uma página web, que pode ser mostrada ou dirigida. Aberta pelo cabeçalho ou quando o Daimond segue um link.</p>
+		</div>
+		<div class="card">
+			<h3>Doc</h3>
+			<p>Um documento compilado (um PDF, por exemplo), com espaço para ler.</p>
+		</div>
+		<div class="card">
+			<h3>Mensagem</h3>
+			<p>Uma única mensagem de e-mail, aberta pelo E-mail, lida ao lado do chat.</p>
+		</div>
+		<div class="card">
+			<h3>Ferramentas</h3>
+			<p>O que o Daimond sabe fazer, e quanto custaria o resto. Aberto pela linha <span class="ui">Ferramentas</span> do painel de administração.</p>
+		</div>
+		<div class="card">
+			<h3>Escrever</h3>
+			<p>Escrever uma mensagem de e-mail. Nada aqui é enviado sozinho — só o botão <span class="ui">Enviar</span> põe correio na linha, e só você pode apertá-lo.</p>
+		</div>
+	</div>
+
+	<p>Cada convidado do palco tem um cabeçalho com um botão de fechar. Um painel fechado não some: o chip dele fica na barra superior, sem preenchimento, e clicar no chip o traz de volta.</p>
+
+	<h2>O dock — à direita</h2>
+	<p>O dock abriga as fontes de onde você puxa. Fechar um deixa o chip dele na barra superior; clicar no chip o encaixa de novo. Como o dock se divide, e portanto quantos painéis ele comporta de uma vez, cabe a você definir em <strong>Grade do dock</strong> no menu de aparência, descrito abaixo.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>E-mail</h3>
+			<p>Suas caixas de correio e o que há nelas. Adicione uma caixa, sincronize e abra uma mensagem no palco.</p>
+		</div>
+		<div class="card">
+			<h3>Espaço</h3>
+			<p>Seus arquivos, como uma árvore comum. As ferramentas de arquivo do agente leem e escrevem aqui.</p>
+		</div>
+		<div class="card">
+			<h3>Agentes</h3>
+			<p>As execuções de agentes ao vivo, conforme acontecem, com a contagem de quantas estão trabalhando.</p>
+		</div>
+		<div class="card">
+			<h3>Gastos</h3>
+			<p>O que você gastou, e em quê. Tratado por inteiro em <a href="spending.html">Gastos</a>.</p>
+		</div>
+	</div>
+
+	<h2>A barra superior</h2>
+	<p>No alto ficam a marca, um medidor, uma fileira de <strong>chips de painel</strong>, e um botão na ponta direita que abre o menu <strong>aparência e disposição</strong> do Daimond.</p>
+
+	<h3>Os chips</h3>
+	<p>Todo painel tem um chip, esteja aberto ou fechado, e clicar nele alterna esse painel. O chip de um painel aberto fica preenchido, de modo que a fileira se lê como um mapa do que está na tela. Os chips são alternadores e não chamadas por um motivo: se só os painéis fechados tivessem um, a fileira seria mais longa justamente quando o app estivesse mais vazio, e cada chip escorregaria de lado a cada uso. Um chip que fica no lugar é um chip cuja posição se aprende. (Agentes é a exceção a esse <em>todo</em>: ele fica fora do caminho até o primeiro agente rodar.)</p>
+	<p>Os chips são agrupados por zona — barra lateral, depois palco, depois dock — com um divisor fino entre os grupos, da esquerda para a direita na mesma ordem em que as zonas aparecem na tela. Assim, um chip fica do lado em que o painel que ele abre vai aparecer. Duas marcas valem ser conhecidas:</p>
+	<ul>
+		<li>Um chip de palco fechado cujo painel <strong>deslocaria o convidado que está ao lado do chat</strong> é desenhado com contorno tracejado. O palco tem dois lugares, e o daimon mantém o seu, então abrir um terceiro convidado significa que o outro sai. O contorno avisa em vez de recusar, porque essa é uma escolha real — e é um contorno em vez de uma marca adicional para que o chip conserve sua largura e os vizinhos não escorreguem.</li>
+		<li>Um chip de dock fechado fica <strong>esmaecido quando o dock está cheio</strong>. A dica dele aponta a solução: escolher uma grade maior no menu de aparência, ou fechar um painel do dock.</li>
+	</ul>
+
+	<h3>Painéis fixados, e a galeria</h3>
+	<p>Você decide quais chips ficam na barra superior. Qualquer painel pode ser <strong>fixado</strong> ou solto; os soltos vivem atrás de um chip <span class="ui">⋯</span> no fim da fileira, com a contagem de quantos estão lá atrás. Clicar nele abre a <strong>galeria</strong>: todos os painéis que existem, buscáveis pelo nome, agrupados por zona, cada linha com um controle de fixar e dizendo se aquele painel está aberto. Clicar numa linha abre ou fecha o painel como um chip faria.</p>
+	<p>A fileira só pode ser incompleta porque a galeria não é. Nada é ordenado pela frequência de uso, tampouco: uma fileira que se reordena destruiria a memória muscular que posições fixas existem para construir.</p>
+
+	<h3>A paleta</h3>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> em um Mac — abre uma caixa de busca que alcança qualquer painel ou configuração digitando. As setas percorrem os resultados, <span class="ui">Enter</span> executa o que estiver destacado, e <span class="ui">Esc</span> a fecha. Ela lista os painéis, as paletas, os quatro tamanhos de texto e as disposições do dock. Nunca é o caminho mais rápido para um painel cuja ficha você vê; é o caminho que continua completo por mais painéis que existam.</p>
+
+	<h3>Aparência e disposição</h3>
+	<p>O botão no canto superior direito abre um único menu com as escolhas sobre a aparência e a acomodação do Daimond, em oposição ao que ele faz:</p>
+	<ul>
+		<li><strong>Tema</strong> — uma lista de paletas, agrupadas em três faixas: <span class="ui">Claro</span>, <span class="ui">Intermediário</span> e <span class="ui">Escuro</span>. A faixa é como você encontra uma; dentro dela a escolha é gosto, exceto <span class="ui">Âmbar</span>, que mantém o azul fora de tudo o que desenha, para ler tarde da noite. Este guia veste a paleta que o aplicativo estiver vestindo quando é mostrado dentro do Daimond.</li>
+		<li><strong>Espaçamento</strong> — <span class="ui">Compacto</span> ou <span class="ui">Amplo</span>. Quanto espaço a interface dá a si mesma: cantos mais justos e o máximo na tela de uma vez, ou cantos mais arredondados e mais espaço entre as coisas. É independente da paleta e do tamanho do texto, e mudá-lo deixa os dois em paz.</li>
+		<li><strong>Tamanho do texto</strong> — quatro degraus, <span class="ui">Pequeno</span>, <span class="ui">Normal</span>, <span class="ui">Grande</span> e <span class="ui">Maior</span>. Só o texto responde: a moldura, os espaçamentos e as larguras dos painéis ficam onde estão, porque este é um controle de leitura e não um zoom. Se você quer toda a interface maior, o zoom do próprio navegador faz isso. A amostra no menu é composta no tamanho que está sendo escolhido, de modo que o controle mostra a mudança em vez de nomeá-la.</li>
+		<li><strong>Grade do dock</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> coluna, <span class="ui">2×2</span>, <span class="ui">2×3</span> ou <span class="ui">3×2</span>, cada uma desenhada como a grade que seleciona. A grade também decide <em>quantos painéis o dock comporta</em>, que é o número de colunas vezes o de linhas: quatro em uma coluna, quatro em 2×2, seis tanto em 2×3 quanto em 3×2. <span class="ui">Auto</span> deixa a janela decidir, tomando uma segunda coluna assim que houver espaço de verdade para ela. Mudar para uma grade menor fecha os painéis que não cabem mais, começando pelos abertos mais recentemente — eles são fechados, e não descartados em silêncio, então cada um volta a ser um chip que você vê e pode clicar.</li>
+	</ul>
+
+	<h3>Guardar um arranjo com um Diamond</h3>
+	<p>Quando um Diamond está selecionado, o menu de aparência oferece guardar com ele o arranjo atual dos painéis. Abrir aquele Diamond de novo repõe o arranjo, de modo que voltar a um trabalho não significa remontar à mão os painéis de que ele precisa. Ele só é salvo quando você pede — nunca inferido, nunca em segundo plano — porque uma troca que fechasse painéis em silêncio pareceria trabalho perdido. O menu também permite atualizar um arranjo salvo, ou esquecê-lo.</p>
+
+	<h2>Em uma tela estreita</h2>
+	<p>Abaixo da largura de um telefone, os chips e a galeria dão lugar à casca de telefone, que responde à mesma pergunta com menos espaço: o chat é o chão, um painel se ergue sobre ele como uma folha que você pode arrastar, e a barra lateral vira uma gaveta aberta pelo botão no canto superior esquerdo. Uma fileira ao longo da base — <span class="ui">Chat</span>, <span class="ui">E-mail</span>, <span class="ui">Arquivos</span>, <span class="ui">Agentes</span> — passa de um para outro. Nada se perde; são os mesmos painéis, mostrados um de cada vez.</p>
+
+	<div class="next">
+		<a href="index.html">&larr; Primeiros passos</a>
+		<a href="models.html">Próximo: Modelos &amp; créditos &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Primeiros passos</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">E-mail, Web &amp; arquivos</a>
+		<a href="accounts.html">Contas</a>
+		<a href="sync.html">Sincronização entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>

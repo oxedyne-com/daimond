@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>端末間の同期 — Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">はじめに</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="models.html">モデル &amp; クレジット</a>
+			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+			<a href="accounts.html">アカウント</a>
+			<a href="sync.html" aria-current="page">端末間の同期</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>端末間の同期</h1>
+	<p class="lede">Daimond はローカルが先なので、二台目の端末は空から始まります。端末間の同期は、サーバーに読まれることなく、チャットと作業領域のファイルをあなた自身の端末のあいだで運びます。</p>
+
+	<p>ゲートウェイを通るのは、あなたの端末だけが鍵を持つ、暗号化された荷物ひとつです。鍵はあなたのパスフレーズから作られ、ブラウザを出ることはありません。サーバーは荷物を預かりますが、開けません。読める形のものが端末のあいだを渡ることはありません。</p>
+
+	<h2>二台目の端末をリンクする</h2>
+	<p>端末はそれぞれ自分の識別情報を作ります。ですから新しい端末でパスフレーズを打つと、 <em>別の</em>空のアカウントが始まってしまい、今あるものが渡ってくるわけではありません。すでにお持ちのアカウントを使うには、新しい端末をそれに <strong>リンク</strong> します。三つの手順です。</p>
+
+	<ol class="steps">
+		<li>
+			<h3>すでに使っている端末で、リンクのダイアログを開く</h3>
+			<p>上部バーの <span class="ui">ほかの端末をリンク</span> ボタンをクリックします。QR コードと、一度きりのペアリングコードが出ます。</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="「ほかの端末をリンク」のダイアログ。QR コードと、約十分で期限切れになる一度きりのペアリングコードが出ています。">
+				<figcaption>最初の端末が QR とコードを見せます。</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>新しい端末で QR を読み取る — またはコードを打つ</h3>
+			<p>新しいスマートフォンのカメラを QR コードに向けます。Daimond が開き、コードも入力されるので、あとはタップするだけです。押すのは <span class="ui">この端末をリンク</span>。カメラがありませんか。そちらで Daimond を開き、 <span class="ui">ペアリングコードをお持ちですか？</span>を選んで、コードを打ちます。表示されるコードは、最初の端末のものと一致するか確かめるためだけのものです。</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="読み取ったあとのスマートフォンに出る「この端末をリンク」のダイアログ。ペアリングコードがすでに入っていて、この端末をリンクのボタンがあります。">
+				<figcaption>読み取ったあとにタップするのは <span class="ui">この端末をリンク</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>同じパスフレーズでロックを解除する</h3>
+			<p>新しい端末は、これであなたのアカウントを持っています。解除に使うのは <strong>最初の端末で使っているのと同じパスフレーズ</strong> です — 新しいものではありません — そうすればチャットとファイルが現れます。そのあと、そちらでパスキーを追加すれば、もっと速く解除できます。</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>パスフレーズはどこでも同じです。</strong> アカウントは一つ、パスフレーズは一つ、リンクするどの端末でも同じです。端末がパスフレーズを <em>作る</em> ように求めてきて、 <em>入力する</em> ように求めていないなら、それは新しいアカウントを始めようとしています — 代わりにリンクしてください。</div>
+
+	<h2>何が運ばれるか</h2>
+	<p>どんな種類のファイルでも運ばれます。写真も、録音も、PDF も、表計算も、テキストと同じようにほかの端末に届きます。一つのファイルで最大 1 ギガバイトまでです。</p>
+	<p>同期されるものは、クラウド保存に置かれるものでもあります。ですから作業領域は、いま読んでいる端末より大きくなれます。今この端末にないファイルもツリーには雲の印で並び、求めれば降りてきます。 <a href="email-web-files.html">作業領域</a> に、ファイルが取りうる三つの状態、ブラウザが埋まるにつれてどう空きが作られるか、そしてクラウド保存の費用が書いてあります。</p>
+
+	<h2>費用</h2>
+	<p>端末間の同期は <strong>Pro</strong>の一部です。一度きりの解放であって、サブスクリプションではありません。ですから Daimond のほかの部分と同じように、一度買えばそのままです。Pro がなければ端末は単独で働きます。あれば、あなたの端末は足並みを揃えます。Pro はクラウド保存とメールも有効にします。同期が運ぶ大きなファイルの中身はクラウド保存に置かれ、サブスクリプションではなくクレジットから支払われます。計測が始まる前に無料の枠があります。</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; アカウント</a>
+		<a href="spending.html">次：支出 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">はじめに</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="models.html">モデル</a>
+		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
+		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
+		<a href="accounts.html">アカウント</a>
+		<a href="sync.html">端末間の同期</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

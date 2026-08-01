@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es" data-guide-locale="es" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sincronización entre dispositivos — Guía de Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guía de Daimond, inicio">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guía</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas de la guía">
+			<a href="index.html">Primeros pasos</a>
+			<a href="interface.html">La interfaz</a>
+			<a href="models.html">Modelos y créditos</a>
+			<a href="chats-and-diamonds.html">Chats y Diamonds</a>
+			<a href="email-web-files.html">Correo, Web y archivos</a>
+			<a href="accounts.html">Cuentas</a>
+			<a href="sync.html" aria-current="page">Sincronización entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Sincronización entre dispositivos</h1>
+	<p class="lede">Daimond es local-first, así que un segundo dispositivo empieza vacío. La sincronización entre dispositivos lleva tus chats y los archivos de tu espacio de trabajo de un dispositivo tuyo a otro sin que el servidor los lea nunca.</p>
+
+	<p>Lo que viaja por la pasarela es un único paquete cifrado cuya clave solo tienen tus dispositivos. La clave sale de tu frase de paso y nunca abandona el navegador, así que el servidor guarda el paquete pero no puede abrirlo. Nada legible pasa de un dispositivo a otro.</p>
+
+	<h2>Vincular un segundo dispositivo</h2>
+	<p>Cada dispositivo se hace su propia identidad, así que escribir tu frase de paso en un dispositivo nuevo empezaría una cuenta <em>aparte</em>, vacía, en lugar de traer la que ya tienes. Para usar la cuenta que ya tienes, tienes que <strong>vincular</strong> el dispositivo nuevo a ella. Son tres pasos.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>En el dispositivo que ya usas, abre el diálogo de vinculación</h3>
+			<p>Pulsa <span class="ui">Vincular otro dispositivo</span> en la barra superior. Aparecen un código QR y un código de vinculación de un solo uso.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="El diálogo Vincular otro dispositivo, con un código QR y un código de vinculación de un solo uso que caduca en unos diez minutos.">
+				<figcaption>Tu primer dispositivo muestra un QR y un código.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>En el dispositivo nuevo, escanea el QR — o escribe el código</h3>
+			<p>Apunta la cámara del teléfono nuevo al código QR: abre Daimond y rellena el código por ti, así que solo tienes que tocar <span class="ui">Vincular este dispositivo</span>. ¿Sin cámara? Abre Daimond allí, elige <span class="ui">¿Tienes un código de vinculación?</span>, y escribe el código. El código que se muestra solo sirve para que compruebes que coincide con el del primer dispositivo.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="El diálogo Vincular este dispositivo en un teléfono después de escanear, con el código de vinculación ya relleno y un botón Vincular este dispositivo.">
+				<figcaption>Después de escanear, basta con tocar <span class="ui">Vincular este dispositivo</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Desbloquéalo con la misma frase de paso</h3>
+			<p>El dispositivo nuevo ya tiene tu cuenta. Desbloquéalo con la <strong>misma frase de paso que usas en tu primer dispositivo</strong> — no una nueva — y tus chats y archivos aparecen. Después una passkey puede desbloquearlo más rápido, en cuanto añadas una allí.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>La frase de paso es la misma en todas partes.</strong> Una cuenta, una frase de paso, en cada dispositivo que vincules. Si un dispositivo te pide <em>crear</em> una frase de paso en lugar de <em>introducir</em> una, está a punto de empezar una cuenta nueva: vincúlalo en su lugar.</div>
+
+	<h2>Qué viaja</h2>
+	<p>Viaja cualquier archivo, sea del tipo que sea. Una fotografía, una grabación, un PDF o una hoja de cálculo llega a tus otros dispositivos igual que el texto, hasta un gigabyte por archivo.</p>
+	<p>Lo que se sincroniza es también lo que se guarda en el almacenamiento en la nube, así que un espacio de trabajo puede ser mayor que el dispositivo desde el que lo lees. Un archivo que ahora mismo no está en este dispositivo sigue apareciendo en el árbol, marcado con una nube, y baja cuando lo pides. <a href="email-web-files.html">El espacio de trabajo</a> expone los tres estados en los que puede estar un archivo, cómo se libera espacio según se llena el navegador y cuánto cuesta el almacenamiento en la nube.</p>
+
+	<h2>Cuánto cuesta</h2>
+	<p>La sincronización entre dispositivos forma parte de <strong>Pro</strong>, el desbloqueo de una sola vez: no es una suscripción, así que se compra una vez y ya está, como el resto de Daimond. Sin Pro un dispositivo trabaja por su cuenta; con él, tus dispositivos van a la par. Pro también enciende el almacenamiento en la nube y el Correo. Los cuerpos de archivo más grandes que lleva la sincronización se guardan en el almacenamiento en la nube, pagados con créditos y no por suscripción, con una franquicia gratuita antes de que se mida nada.</p>
+
+	<div class="next">
+		<a href="accounts.html">&larr; Cuentas</a>
+		<a href="spending.html">Siguiente: Gastos &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond funciona en tu navegador. Nada de esto se nos envía.</span>
+	<nav aria-label="Páginas de la guía">
+		<a href="index.html">Primeros pasos</a>
+		<a href="interface.html">Interfaz</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats y Diamonds</a>
+		<a href="email-web-files.html">Correo, Web y archivos</a>
+		<a href="accounts.html">Cuentas</a>
+		<a href="sync.html">Sincronización entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>

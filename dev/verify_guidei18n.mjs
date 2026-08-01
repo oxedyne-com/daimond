@@ -63,10 +63,16 @@ await page.evaluate(() => window.postMessage({ daimondGuide: 'style', locale: 'e
 await page.waitForTimeout(600);
 check(/\/guide\/index\.html$/.test(page.url()), `and back to English (${page.url()})`);
 
-// A language with no page for this reader must NOT move them anywhere.
-await page.evaluate(() => window.postMessage({ daimondGuide: 'style', locale: 'ko' }, '*'));
+// A language the guide does not have must NOT move them anywhere. Every
+// locale the app ships is now translated, so this uses one it does not: the
+// guard is on the page's own list of languages, not on the app's.
+await page.evaluate(() => window.postMessage({ daimondGuide: 'style', locale: 'nl' }, '*'));
 await page.waitForTimeout(500);
-check(/\/guide\/index\.html$/.test(page.url()), `an untranslated language leaves them on English (${page.url()})`);
+check(/\/guide\/index\.html$/.test(page.url()), `a language the guide does not have leaves them put (${page.url()})`);
+// And a locale-shaped string that is really a path must be refused outright.
+await page.evaluate(() => window.postMessage({ daimondGuide: 'style', locale: '../../etc' }, '*'));
+await page.waitForTimeout(400);
+check(/\/guide\/index\.html$/.test(page.url()), `a path dressed as a locale is refused (${page.url()})`);
 
 // Every link on the German page must resolve.
 await page.goto('http://localhost:8777/guide/de/index.html', { waitUntil: 'networkidle' });

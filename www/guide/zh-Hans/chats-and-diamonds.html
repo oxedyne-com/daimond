@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>聊天与 Diamonds — Daimond 使用指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">使用指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">开始使用</a>
+			<a href="interface.html">界面</a>
+			<a href="models.html">模型与额度</a>
+			<a href="chats-and-diamonds.html" aria-current="page">聊天与 Diamonds</a>
+			<a href="email-web-files.html">邮件、网页与文件</a>
+			<a href="accounts.html">账户</a>
+			<a href="sync.html">跨设备同步</a>
+			<a href="spending.html">支出</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>聊天与 Diamonds</h1>
+	<p class="lede">一场聊天是与 daimon 的一次对话。一个 Diamond 是某项追求的持久容器 —— 你在一件工作上想明白的东西存在那里，往后的工作就从它开始。这一页讲怎么开始和阅读聊天、轮次的控制项、把一场聊天折叠进 Diamond，以及怎么整理越积越多的 Diamonds。</p>
+
+	<h2>开始一场聊天，以及回到它</h2>
+	<p>选择 <span class="ui">新建聊天</span> ——就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong> ，它在侧栏顶部。在中间面板底部的框里输入内容，然后用 <span class="ui">➤</span>发送。你开的每一场聊天都列在 <strong>聊天</strong> 下面，就在侧栏里；点一个，它就回到中间。新聊天从你的默认模型开始；在聊天头部的选择器里，你可以只为这一场换一个模型。</p>
+
+	<p>回答还在往外来的时候，你可以接着打字。这时发出的消息会被 <strong>排队</strong> 而不是丢掉：它以一个虚线气泡出现在会话下面，等回答一结束，就作为独立的一轮发出去。点一下排队的气泡，可以把它取回输入框改一改，或者点它的 <span class="ui">×</span> 把它丢掉。按 <span class="ui">■</span> 停下回答时，排在它后面的东西会原样退还给你，不会发出 —— 停就是停。</p>
+
+	<h2>读一场长对话</h2>
+	<p>对话涨得很快，所以聊天的头部备了几个控制项，好让它保持可读。它们在中间面板的右上角。</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>步骤</h3>
+			<p> <span class="ui">步骤</span> 按钮用来显示或隐藏会话里的工具步骤 —— 也就是智能体在你的消息和它的回答之间做的活。隐藏它们，只读对话；显示它们，看它到底做了什么。</p>
+		</div>
+		<div class="card">
+			<h3>折叠</h3>
+			<p> <span class="ui">−</span> 按钮把每一条回答都折起来，只留下你问的话。这是快速扫一遍长会话最省事的办法，也是你挑选要折叠的轮次的起点。</p>
+		</div>
+		<div class="card">
+			<h3>跳回</h3>
+			<p> <span class="ui">↑</span> 按钮跳回你最后发的那条消息。再按一次，可以继续往前翻。</p>
+		</div>
+		<div class="card">
+			<h3>跳到末尾</h3>
+			<p> <span class="ui">↓</span> 按钮回到聊天的最下面，并且重新开始往回走 —— 于是下一次按 <span class="ui">↑</span> 会到你最后那条消息，而不是从你刚才走到的地方接着往前。</p>
+		</div>
+	</div>
+
+	<figure class="shot" data-shot="chat-turns">
+		<img alt="一场聊天，回答都已折起，露出问过的问题，头部是挑选轮次的控制项。" src="shots/chat-turns.png" loading="lazy">
+		<figcaption>把回答折起来，剩下的就是你问过的话，同时也打开了挑选轮次来折叠的控制项。</figcaption>
+	</figure>
+
+	<h2>把一场聊天折叠进 Diamond</h2>
+	<p>一场对话把某件事想明白之后，你就折叠它：留下你学到的，扔掉产生它的那些来回。你折进去的那个东西叫 <strong>Diamond</strong>.</p>
+
+	<p>一个 Diamond 由两样东西构成：</p>
+	<ul>
+		<li>一个 <strong>折叠</strong> 就是一处改进 —— 向前的一步。</li>
+		<li>一个 <strong>晶体</strong> 是这些折叠累积起来的东西：这件工作的形状、按顺序排好的步骤，以及你吃过苦头才发现的那些检查点。一个 Diamond，就是一块晶体，加上产生它的那一串折叠。</li>
+	</ul>
+
+	<h3>挑出轮次，把它们折叠起来</h3>
+	<p>用 <span class="ui">−</span>把会话折起来，然后挑出值得留下的轮次。头部会为此出现一行控制项：</p>
+	<ul>
+		<li><span class="ui">全选</span> —— 勾上每一轮。</li>
+		<li><span class="ui">取消全选</span> —— 清空选择。</li>
+		<li><span class="ui">折叠所选</span> —— 把选中的轮次折叠进 Diamond。</li>
+	</ul>
+	<p>你折叠的是你已经 <em>采纳</em>了的一步，不是随口的一句话：折叠留下的是你学到的东西，不是聊天记录。</p>
+
+	<div class="note"><strong>没有东西会自己被吸收进去。</strong> 晶体绝不会在后台生长：轮次是你挑的，折叠本身也只是一个提案 —— 智能体重写晶体，把结果拿给你看，你接受或者拒绝。晶体只会因为你说了才改变。</div>
+
+	<figure class="shot" data-shot="diamond-fold">
+		<img alt="Diamond 的操作面取代聊天显示出来，带着引导方法和折叠方法的控制项。" src="shots/diamond-fold.png" loading="lazy">
+		<figcaption>选中一个 Diamond，它的操作面就取代聊天出现，你在那里引导工作、折叠方法。</figcaption>
+	</figure>
+
+	<h2>经营一个 Diamond</h2>
+	<p>Diamonds 列在侧栏里、你的聊天上方；新建一个，按 <strong>＋</strong> 紧挨着 <strong>Diamonds</strong>。选中一个 Diamond，中间的聊天就被它的操作面取代 —— 一个紧凑的视图，你在那里引导这件工作，把新的改进折叠进去。不用读字也看得出面板正显示哪一面：在 Diamond 上，面板会在名字旁边挂上 Daimond 标记，并把四角变方，与屏幕上其余一切的圆角形成对照。你一旦再点回某个聊天，对话立刻回来 —— 因为 Daimond 是围绕对话建起来的，只要舞台本来会空着，它就回到对话。</p>
+
+	<h3>Diamond 做什么，不做什么</h3>
+	<p>Diamond 只保留，不运行。没有任何东西会执行一块晶体。Diamond 背后没有工作流引擎，没有东西给它排期，没有东西把一个 Diamond 串到另一个上，也没有存着的任务等着触发。回到一个 Diamond 不会让它跑起来 —— 放着不管也一样，因为静止的 Diamond 就停在你离开时的样子。</p>
+
+	<p>所以 <em>重新拿起它</em> 就是说你重新引导它，而它已经学到的一切都还在手边。这就是全部的主张，而它比听上去更值钱。晶体是散文，散文正是模型最会读的东西：你经营这个 Diamond 时，它作为上下文交给 daimon，也交给从它派出的每一个工人。你想明白过一次的东西，不用重新打一遍就再次抵达工作 —— 也不用你记得应该这么做。</p>
+
+	<h2>晶体和它的历史</h2>
+	<p>晶体是一个真实的文件 —— <strong>crystal.md</strong>，就在你工作区里这个 Diamond 自己的文件夹下。你可以打开它、读它，也可以像对待任何别的文件那样自己编辑它。</p>
+
+	<p>每一次写入晶体都会存下一个版本，所以晶体有历史，没有东西被盖掉。历史把每一个版本都列出来，最新的在前，每一条都标明是什么产生了它：</p>
+	<ul>
+		<li><span class="ui">查看</span> —— 读那个版本。</li>
+		<li><span class="ui">恢复</span> —— 让那个版本重新成为当前版本。</li>
+		<li><span class="ui">增量</span> —— 看一次折叠吃进去的原始输入，也就是交给智能体去归纳的材料。</li>
+	</ul>
+
+	<div class="note"><strong>恢复不会毁掉东西。</strong> 当前的文本会先存进历史，所以恢复一个旧版本是往历史里添一笔，而不是替换它 —— 一次并非本意的恢复，自己也能撤销。</div>
+
+	<h2>产物</h2>
+	<p>一个 Diamond 还会记下它的工作碰过什么：写出来的文件，以及你做它的时候打开过的页面。这些都不用你记。Daimond 本来就记着智能体用过的每一个工具，所以这份清单是从发生过的事里读出来的 —— 并且是在你接受一次折叠的那一刻收集的。</p>
+
+	<p>只被 <em>读过</em> 的文件是故意不收进来的。智能体为了找一样东西，可能打开四十个文件，把四十个都列出来，会把真正要紧的那一个埋掉。留下的是这件工作产出的东西，以及你要求看的页面。</p>
+
+	<p>一个 Diamond 有产物时，引导框上方会有一行说共有多少件。点它打开清单，每一条都能做三件事：</p>
+	<ul>
+		<li> <strong>名称</strong> 打开它 —— 文件在文档面板里打开，页面在网页面板里打开。</li>
+		<li> <strong>小箭头</strong> 把指向它的引用放进引导框，这样你说“把这一个里的数字重做一遍”就行，不用把路径打出来。</li>
+		<li> <strong>叉</strong> 把它移掉 —— 如果它到头来并不属于这个 Diamond。</li>
+	</ul>
+
+	<div class="note">一个你后来改了名或删掉的文件 <strong>会明说</strong> —— 在你试着打开它的时候，而不是悄无声息地什么都不做。一份装作没事的死链清单，比没有清单更糟。</div>
+
+	<h2>派出工人</h2>
+	<p>有些任务要的是把活干了，而不只是记下来。对这些任务，Diamond 的指挥会派出一个 <strong>工人智能体</strong>。每个工人在自己的上下文里运行，带着工作区的文件工具，并拿到常设指令和这个 Diamond 的晶体。那块晶体就是它对你这项追求所知的全部 —— 工人看不到你的对话，所以交给它的任务必须把其余需要的东西都说清楚。</p>
+
+	<p>最多 <strong>八个</strong> 工人同时运行，其余的排队。指挥把它们派出去，它这一轮就到此为止：它不接收它们的输出。每个工人回报一份摘要，值得留下的由你亲手折叠进去 —— 这正是让“什么能进晶体”始终归你决定的地方。正在跑的运行出现在停靠区的 <strong>智能体</strong> 面板里。</p>
+
+	<h3>按住和停掉智能体</h3>
+	<p>智能体面板的头部有三个控制项，一次作用于 <em>每一个</em> 智能体；同样的三个也挂在每一张卡片上，好让你只对其中一个动手：</p>
+	<ul>
+		<li><strong>暂停</strong> <span class="ui">⏸</span> —— 把正在跑的挂起来，把队列按住。正在跑的智能体保留它已经做出来的东西；在等的那个干脆不开始。在你恢复之前，不会有新的启动。这是给一次花钱比你想的还快的扇出准备的刹车。</li>
+		<li><strong>恢复</strong> <span class="ui">▶</span> —— 让每一个暂停的智能体从停下的地方继续。它接着自己的活干，而不是从头再来，所以一次暂停只花掉等待的时间，别的什么都不花。</li>
+		<li><strong>停止</strong> <span class="ui">✕</span> —— 直接结束智能体。每一个都以一张“已停止”的卡片保留它来得及做完的部分； <span class="ui">清除</span> 把它们移走。这是那个即刻生效的急停开关。</li>
+	</ul>
+	<p>每张卡片还显示它的 <strong>运行中的花费</strong> —— 词元和美元是实时累加的，不是等智能体跑完才出现 —— 这样你在决定要不要按住它的时候，就看得见它正在花多少。头部下面有一行写着有多少个智能体在 <strong>运行</strong>, <strong>已暂停</strong> 和 <strong>排队</strong>，于是一次扇出的规模 —— 以及它的花费 —— 一眼就看得出来。这几样合起来就是你对失控的防线；Daimond 自己会采取的措施，写在 <a href="spending.html">支出</a> 那一页。</p>
+
+	<p>有两条限制值得知道。工人不能再派工人，所以委派只走一层就停。而且同一时间只引导一个 Diamond，所以不会有第二个 Diamond 在你没看着的时候自顾自地干活。</p>
+
+	<h2>标签</h2>
+	<p>Diamonds 会越积越多，所以可以给它们打标签。标签就是你自己定的一个短词。编辑器给了四个起步的建议 —— <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 和 <strong>org</strong> —— 但 Daimond 不给你强加任何分类法，你可以打任何顺手的词。</p>
+
+	<p>你打的字会被理一遍：标签会转成小写、去掉两头的空白、去重；一个 Diamond 上最多 <strong>8</strong> 个标签，每个标签最多 <strong>24</strong> 个字符。标签和别的东西一样，存在这个 Diamond 自己的元数据里，就在这台设备上。</p>
+
+	<p>编辑器显示两个框：一个是 <strong>此 Diamond 上</strong>的标签，另一个是 <strong>所有标签</strong> ，在它下面。上面那个框里，标签片上的 <span class="ui">×</span> 会把那个标签从这个 Diamond 上取下来，退回下面的池子里，在那里点一下又能放回去。下面那个框里，标签片上的 <span class="ui">×</span> 是另一回事：它删掉标签本身，从每一个归在它名下的 Diamond 上删掉。那一个会先问你，并说明它会改动多少个 Diamond。四个起步建议不带 <span class="ui">×</span>，因为它们始终都会提供。</p>
+
+	<div class="note"><strong>标签是惰性的，这正是它们的用处所在。</strong> 标签只是你的归档方式，别的什么都不是。它从不发给模型，从不进入晶体，也从不改变任何智能体的行为。给一个 Diamond 打上 <em>urgent</em> 这个标签，不会改变它被怎么对待。</div>
+
+	<p>列表上方是一个搜索框，它匹配 Diamond 的 <strong>名称</strong> 以及它的 <strong>标签</strong>。它不搜索晶体内部。点一个标签片，列表就筛到那个标签；列表按最近碰过的顺序排，所以你最后做的那个排在最上面。</p>
+
+	<div class="next">
+		<a href="models.html">&larr; 模型与额度</a>
+		<a href="email-web-files.html">下一页：邮件、网页与文件 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">开始使用</a>
+		<a href="interface.html">界面</a>
+		<a href="models.html">模型</a>
+		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
+		<a href="email-web-files.html">邮件、网页与文件</a>
+		<a href="accounts.html">账户</a>
+		<a href="sync.html">跨设备同步</a>
+		<a href="spending.html">支出</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es" data-guide-locale="es" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Correo, Web y archivos — Guía de Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guía de Daimond, inicio">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Guía</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas de la guía">
+			<a href="index.html">Primeros pasos</a>
+			<a href="interface.html">La interfaz</a>
+			<a href="models.html">Modelos y créditos</a>
+			<a href="chats-and-diamonds.html">Chats y Diamonds</a>
+			<a href="email-web-files.html" aria-current="page">Correo, Web y archivos</a>
+			<a href="accounts.html">Cuentas</a>
+			<a href="sync.html">Sincronización entre dispositivos</a>
+			<a href="spending.html">Gastos</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Correo, Web y archivos</h1>
+	<p class="lede">Las fuentes con las que trabaja un daimon: correo que puedes leer y responder, páginas web que puede mostrar o conducir, archivos que puede leer y escribir, y las herramientas con las que hace el trabajo.</p>
+
+	<h2>Correo</h2>
+	<p>El panel Correo vive en el dock, a la derecha. Guarda tus buzones y lo que hay en ellos. Un navegador no puede abrir por sí solo una conexión de correo, así que Daimond hace la conexión a través de una pasarela, que devuelve el mensaje en bruto y luego olvida tu credencial. Tu correo se escribe en el espacio de trabajo como archivos corrientes, así que las herramientas de archivo del agente ya lo leen.</p>
+
+	<figure class="shot" data-shot="email">
+		<img alt="El panel Correo: los buzones arriba y una lista de mensajes debajo, con botones para escribir, añadir un buzón y sincronizar." src="shots/email.png" loading="lazy">
+		<figcaption>El panel Correo. Los botones de su cabecera escriben un mensaje, añaden un buzón y sincronizan.</figcaption>
+	</figure>
+
+	<h3>Añadir un buzón</h3>
+	<p>Elige <span class="ui">+</span> (añadir un buzón) en la cabecera del panel Correo. Escribe tu dirección y Daimond adivina los ajustes de servidor de los proveedores corrientes; todos los campos siguen siendo editables, porque una conjetura no es un hecho. La mayoría de los proveedores quieren una <strong>contraseña de aplicación</strong> — una contraseña de un solo propósito que generas en los ajustes de seguridad de tu cuenta de correo — en lugar de la contraseña de tu cuenta. El panel te dice dónde encontrarla en tu proveedor.</p>
+	<div class="note">Tu credencial de correo se guarda en este dispositivo, envuelta bajo tu frase de paso. Se le entrega a la pasarela solo para una sincronización, se conserva durante una conversación con tu servidor de correo y luego se olvida. Daimond no guarda correo en ningún servidor y no ve nunca la contraseña de tu cuenta.</div>
+
+	<h3>Leer y sincronizar</h3>
+	<p>Elige <span class="ui">⟳</span> (sincronizar ahora) para traer lo que ha llegado. Una sincronización pide solo los mensajes más nuevos que el último que se tenga, así que sigue siendo rápida. Pulsa un mensaje para abrirlo en el escenario, junto al chat, y así poder preguntarle al daimon por él mientras lees.</p>
+
+	<h3>Escribir un mensaje</h3>
+	<p>Elige <span class="ui">✎</span> (escribir un mensaje) para abrir el panel Redactar en el escenario. Rellena <strong>De</strong>, <strong>Para</strong>, si quieres un <strong>Cc</strong>, un <strong>Asunto</strong> y el cuerpo; adjunta archivos con <span class="ui">Adjuntar…</span>; guarda un borrador con <span class="ui">Guardar borrador</span>. Nada se envía solo.</p>
+	<div class="note"><strong>Solo tú puedes enviar correo.</strong> El botón <span class="ui">Enviar</span> es lo único en Daimond que pone correo en el cable, y solo una persona puede pulsarlo. El daimon puede redactar un mensaje a tu lado, pero no puede enviarlo.</div>
+
+	<h2>El panel Web</h2>
+	<p>Pídele a Daimond que abra una página web — <em>«enséñame el capítulo de ownership de Rust»</em> — o pega un enlace en el chat. Hay tres maneras de poner una página en el escenario, y cuál funciona depende del sitio.</p>
+
+	<figure class="shot" data-shot="web-panel">
+		<img alt="El panel Web mostrando una página en el escenario, con los controles de atrás, recargar y abrir en una pestaña en su cabecera." src="shots/web-panel.png" loading="lazy">
+		<figcaption>El panel Web. Una página mostrada aquí está junto al chat, así que se le puede preguntar al daimon por ella.</figcaption>
+	</figure>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Mostrarla</h3>
+			<p>La página aparece en el panel, pero la mayoría de los sitios se niegan a ser empotrados (es la defensa del web contra el clickjacking, igual en todos los navegadores), así que esto funciona solo con la minoría que lo permite.</p>
+		</div>
+		<div class="card">
+			<h3>Leerla</h3>
+			<p>Daimond trae la página y lee su texto, así que funciona cuando mostrarla no funciona. Lee las palabras, no las imágenes ni nada dibujado por JavaScript, y tú no ves la página: Daimond sí.</p>
+		</div>
+		<div class="card">
+			<h3>Conducirla</h3>
+			<p>Con <strong>Daimond Hands</strong>, un complemento del navegador, Daimond abre una página real en una pestaña real, con tu sesión iniciada, y la maneja mientras miras. Es la única manera de manejar un sitio vivo y con sesión iniciada.</p>
+		</div>
+	</div>
+
+	<div class="note"><strong>Iniciar sesión sigue siendo cosa tuya.</strong> Cuando inicias sesión en una página conducida, Daimond deja de mirar por completo — ni texto, ni imagen, ni pulsaciones de teclado — y no ve nunca tu contraseña. Le devuelves el volante con <strong>Reanudar Daimond</strong>, y ese botón está en la pestaña del navegador, no en Daimond, así que una página nunca puede quitarte el volante.</div>
+
+	<h2>El espacio de trabajo</h2>
+	<p>El panel Espacio, en el dock, son tus archivos como un árbol corriente de carpetas. Aquí es donde lee y escribe el agente: las subidas, el correo, los documentos y todo lo que produzca viven aquí.</p>
+
+	<figure class="shot" data-shot="workspace">
+		<img alt="El panel Espacio: tres fichas que dicen Browser, Machine y Cloud, botones para importar una carpeta o guardar una copia, y un árbol de archivos en el que un archivo está marcado como guardado en la nube y otro está fijado." src="shots/workspace.png" loading="lazy">
+		<figcaption>El espacio de trabajo. Las fichas nombran dónde vive el espacio de trabajo; debajo, <em>interviews.txt</em> está en el almacenamiento en la nube y no en este dispositivo, y <em>report-draft.txt</em> está fijado, así que se conserva siempre aquí.</figcaption>
+	</figure>
+
+	<h3>Trabajar con archivos</h3>
+	<p>La cabecera del espacio de trabajo lleva botones para añadir un <span class="ui">🗋</span> archivo, añadir una <span class="ui">🗀</span> carpeta, <span class="ui">⤒</span> subir archivos, ir <span class="ui">↑</span> un nivel arriba y <span class="ui">⟳</span> actualizar la vista. Una caja de filtro estrecha una lista larga.</p>
+
+	<h3>Dónde vive un espacio de trabajo</h3>
+	<p>Tres fichas arriba del panel nombran los sitios que intervienen en un espacio de trabajo. Al pulsar una se abren los controles de ese sitio.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3>Navegador</h3>
+			<p>El almacenamiento privado del propio navegador, guardado en tu dispositivo y al que no llega nada fuera de Daimond. Es donde vive un espacio de trabajo salvo que digas otra cosa. Su tamaño es lo que el navegador esté dispuesto a conceder — que en un iPhone no es mucho — y un navegador puede vaciarlo sin avisar.</p>
+		</div>
+		<div class="card">
+			<h3>Equipo</h3>
+			<p>Una carpeta real en el disco de este ordenador. El agente trabaja en ella directamente, así que ves los mismos archivos en tu propio gestor de archivos, y es más holgada que lo que concede un navegador. Pero se queda en ese único ordenador y no viaja a tus otros dispositivos, y solo un navegador basado en Chromium puede abrir una.</p>
+			<p><strong>La carpeta es todo lo que el agente puede ver.</strong> Trabaja solo dentro de la carpeta que elegiste: nada por encima ni fuera de ella es visible para Daimond. Pulsar la ficha mientras el agente trabaja ahí lo dice, y ofrece <span class="ui">Olvidar esta carpeta</span> si quieres que Daimond deje de guardar constancia de ella.</p>
+		</div>
+		<div class="card">
+			<h3>Nube</h3>
+			<p>No es un tercer sitio donde trabajar, sino donde se guarda el espacio de trabajo. Es lo que permite que un espacio de trabajo sea mucho mayor de lo que cabe en un solo dispositivo. Su ficha abre una vista de lo que está guardado, de lo que no está en este dispositivo, un botón <span class="ui">Liberar espacio</span> y un botón <span class="ui">Créditos</span> dentro.</p>
+		</div>
+	</div>
+
+	<p>Los dos primeros son alternativas: el agente trabaja en uno o en el otro. El tercero no es una alternativa: es donde se guardan los bytes. Las filas de almacenamiento del panel de administración muestran cuánto espacio usa cada sitio.</p>
+
+	<div class="note">Lo que se guarda en la nube va <strong>cifrado antes de salir</strong>, igual que un paquete de sincronización, así que tenemos bytes que no podemos leer.</div>
+
+	<h3>Guardado, en la nube, o fijado</h3>
+	<p>Un archivo está en uno de tres estados, y el árbol muestra cuál:</p>
+	<ul>
+		<li><strong>Guardado en este dispositivo</strong> — se abre al instante.</li>
+		<li><strong>Solo en la nube</strong> — se muestra con una marca de nube. Sigue siendo tu archivo, sigue en la lista, sigue a salvo, sencillamente no está ahora en este dispositivo. Al pulsarlo baja, y el control de traerlo de su fila hace lo mismo.</li>
+		<li><strong>Fijado</strong> — se conserva siempre en este dispositivo, y nunca se libera solo. La chincheta está en la fila, junto a un control que libera el espacio de un archivo guardado.</li>
+	</ul>
+	<p>Según se llena el almacenamiento del navegador, los archivos que llevas más tiempo sin usar se devuelven solos a la nube; un archivo fijado nunca.</p>
+
+	<div class="note"><strong>Liberar un archivo no es borrarlo.</strong> Se queda en la nube, el árbol lo sigue listando, y vuelve cuando se pide. Solo un borrado deliberado quita un archivo.</div>
+
+	<h3>Cualquier tipo de archivo</h3>
+	<p>Cualquier archivo viaja entre tus dispositivos y se guarda, sea del tipo que sea: una fotografía, una grabación, un PDF, una hoja de cálculo, hasta un gigabyte por archivo. Abrir un archivo que no es texto muestra su tamaño y un botón de descarga en vez de intentar mostrarlo.</p>
+
+	<h3>Mover archivos hacia dentro y hacia fuera</h3>
+	<p>Dos botones están junto a las fichas. <span class="ui">Importar una carpeta…</span> copia una carpeta de este ordenador al espacio de trabajo; después se sincroniza y se guarda como todo lo demás. <span class="ui">Guardar una copia…</span> escribe el espacio de trabajo en una carpeta de este ordenador. Ninguno de los dos cambia dónde trabaja el agente, y los dos necesitan un navegador basado en Chromium. Una copia hacia fuera no trae un archivo que esté solo en la nube, y dice cuántos ha dejado atrás.</p>
+
+	<p>Mientras el agente trabaja en una carpeta real aparece un tercer botón: <span class="ui">Cambiar de carpeta…</span>, que es el único control que abre un selector de carpetas. Pasar entre <span class="ui">Navegador</span> y <span class="ui">Equipo</span> no lo hace: Daimond recuerda la última carpeta que usaste, así que volver a ella es un solo clic en la ficha.</p>
+
+	<h3>Qué puede traerse el agente</h3>
+	<p>Cuando el agente necesita un archivo que está en la nube, se le dice con claridad y tiene que traerlo a propósito. Nada se descarga en silencio detrás de una lectura, porque una descarga puede ser grande y, en cuanto el almacenamiento tenga precio, te cuesta dinero. Hay además un tope de cuánto puede bajarse el agente por su cuenta, pasado el cual vuelve y pregunta.</p>
+
+	<h3>Cuánto cuesta el almacenamiento en la nube</h3>
+	<p>El almacenamiento en la nube no es una suscripción. Como todo lo demás que sale del navegador, se paga con <a href="models.html">créditos</a>, y el desbloqueo Pro de una sola vez sigue siendo de una sola vez. Por ahora es gratis y sin medir, hasta que se pueda vender como es debido.</p>
+	<div class="note">Si alguna vez no se pudiera cubrir un cargo de almacenamiento, <strong>no se borra nada de inmediato</strong>. Leer y descargar siguen siendo gratis durante seis meses, así que todo se puede recuperar, y solo entonces se quita el excedente de pago. El conjunto de trabajo gratuito no se quita nunca.</div>
+
+	<h2>Herramientas</h2>
+	<p>Abre la fila <span class="ui">Herramientas · N de M</span> del panel de administración para ver qué sabe hacer Daimond. Se llama Herramientas, y no Mejoras, porque casi todo lo que enumera es gratis y ya es tuyo.</p>
+
+	<figure class="shot" data-shot="tools-panel">
+		<img alt="El panel Herramientas, con las herramientas incorporadas que el agente puede usar y las herramientas desbloqueables con sus precios." src="shots/tools-panel.png" loading="lazy">
+		<figcaption>El panel Herramientas: las incorporadas que ya tienes, y las desbloqueables con sus precios.</figcaption>
+	</figure>
+
+	<p>Aparecen dos clases de herramienta:</p>
+	<ul>
+		<li><strong>Herramientas incorporadas</strong> — las que ya se le entregan al agente, gratis. El panel enumera exactamente lo que el agente tiene de verdad, así que no puede prometer una herramienta que no está.</li>
+		<li><strong>Herramientas desbloqueables</strong> — extras con un precio. El panel muestra el precio y si esta cuenta ya tiene el desbloqueo.</li>
+	</ul>
+	<p>Para añadir una herramienta desbloqueable, elígela en el panel y confirma el desbloqueo; el coste sale de tus créditos, y una vez desbloqueada sigue disponible para el agente.</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; Chats y Diamonds</a>
+		<a href="accounts.html">Siguiente: Cuentas &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond funciona en tu navegador. Nada de esto se nos envía.</span>
+	<nav aria-label="Páginas de la guía">
+		<a href="index.html">Primeros pasos</a>
+		<a href="interface.html">Interfaz</a>
+		<a href="models.html">Modelos</a>
+		<a href="chats-and-diamonds.html">Chats y Diamonds</a>
+		<a href="email-web-files.html">Correo, Web y archivos</a>
+		<a href="accounts.html">Cuentas</a>
+		<a href="sync.html">Sincronización entre dispositivos</a>
+		<a href="spending.html">Gastos</a>
+	</nav>
+</footer>
+</body>
+</html>
