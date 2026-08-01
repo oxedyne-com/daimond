@@ -445,6 +445,8 @@
 	'menu.theme_sage':      'Sauge',
 	'menu.theme_dusk':      'Crépuscule',
 	'menu.theme_dark':      'Braise',
+	'menu.theme_amber':     'Ambre',
+	'menu.theme_amber_help': 'Chaud et pauvre en bleu, pour lire la nuit.',
 	'menu.theme_midnight':  'Minuit',
 	'menu.theme_forest':    'Forêt',
 	'menu.theme_plum':      'Prune',

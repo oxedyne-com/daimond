@@ -445,6 +445,8 @@
 	'menu.theme_sage':      'Sálvia',
 	'menu.theme_dusk':      'Anoitecer',
 	'menu.theme_dark':      'Brasa',
+	'menu.theme_amber':     'Âmbar',
+	'menu.theme_amber_help': 'Quente e pobre em azul, para ler à noite.',
 	'menu.theme_midnight':  'Meia-noite',
 	'menu.theme_forest':    'Floresta',
 	'menu.theme_plum':      'Ameixa',

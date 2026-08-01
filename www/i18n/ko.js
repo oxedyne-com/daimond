@@ -587,6 +587,8 @@
 	'menu.theme_sage':      '세이지',
 	'menu.theme_dusk':      '황혼',
 	'menu.theme_dark':      '잉걸불',
+	'menu.theme_amber':     '호박빛',
+	'menu.theme_amber_help': '따뜻하고 푸른빛이 적어 밤에 읽기 좋아요.',
 	'menu.theme_midnight':  '자정',
 	'menu.theme_forest':    '숲',
 	'menu.theme_plum':      '자두',

@@ -349,6 +349,40 @@
 	--success:           #64BE93;
 }
 
+/* Amber -- a dark palette for the end of the day.
+   Short-wavelength light is what suppresses melatonin, so this palette holds
+   its BLUE CHANNEL down everywhere rather than merely wearing a warm accent:
+   every surface, every rung of text and every state colour is mixed from red
+   and green, with blue kept to the minimum the hue needs. The greens and the
+   "ok" state come out olive rather than emerald for exactly that reason -- a
+   mint tick would put back at one point on screen what the whole palette is
+   avoiding.
+
+   It is a reading palette, not a filter: the contrast floors are the same ones
+   every other palette is held to, and verify_theme checks the blue channel as
+   well, so a later edit cannot quietly brighten it back. */
+:root[data-theme="amber"] {
+	--bg-primary:        #16100A;
+	--bg-secondary:      #1E1610;
+	--bg-tertiary:       #251C13;
+	--bg-hover:          #2F2418;
+	--border:            #33271A;
+	--border-2:          #423220;
+	--text-primary:      #F2DFC4;
+	--text-secondary:    #C6AE88;
+	--text-muted:        #A28C6B;
+	--accent:            #B86A22;
+	--accent-hover:      #D08133;
+	--accent-soft:       #33220F;
+	--accent-text:       #E6B677;
+	--ok:                #A8B457;
+	--ok-bg:             #262A10;
+	--warn:              #D9A840;
+	--warn-bg:           #33280F;
+	--danger:            #DC7B55;
+	--success:           #A8B457;
+}
+
 /* ── CJK faces ─────────────────────────────────────────────────
    The Latin stacks above name no CJK family, so ideographs fell to the
    browser's generic fallback -- a mismatched face mid-string beside Nunito,

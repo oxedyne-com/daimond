@@ -585,6 +585,8 @@
 	'menu.theme_sage':      'セージ',
 	'menu.theme_dusk':      '黄昏',
 	'menu.theme_dark':      '熾火',
+	'menu.theme_amber':     '琥珀',
+	'menu.theme_amber_help': '暖色で青みが少なく、夜の読書に。',
 	'menu.theme_midnight':  '真夜中',
 	'menu.theme_forest':    '森',
 	'menu.theme_plum':      'すもも',

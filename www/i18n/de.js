@@ -446,6 +446,8 @@
 	'menu.theme_sage':      'Salbei',
 	'menu.theme_dusk':      'Dämmerung',
 	'menu.theme_dark':      'Glut',
+	'menu.theme_amber':     'Bernstein',
+	'menu.theme_amber_help': 'Warm und blauarm, zum Lesen bei Nacht.',
 	'menu.theme_midnight':  'Mitternacht',
 	'menu.theme_forest':    'Wald',
 	'menu.theme_plum':      'Pflaume',

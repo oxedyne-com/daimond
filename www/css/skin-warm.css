@@ -137,8 +137,24 @@
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }
+/* The selected tile's ring, drawn INSIDE the border box.
+   Outside it, the ring takes no layout space, and the Chats list is
+   `overflow-x: hidden` -- so the two vertical sides were sliced clean off and
+   the tile appeared to have a border that stopped at the corners. Same fault as
+   the selected tag chip's ring, in a different list: ink that has to survive
+   belongs inside the box, not in the margin a scroll container is entitled to
+   cut. Inset, the 2px reads identically and cannot be clipped by anything. */
 :root[data-skin="warm"] .session-box.active {
-	box-shadow: 0 0 0 2px var(--accent);
+	box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* The resting tiles are lifted by a soft shadow rather than ruled by a border,
+   and that shadow spreads sideways into the same clipped margin. Three pixels
+   of room, this skin only: the compact skin draws borders, needs none of it,
+   and its rail metrics must not move. */
+:root[data-skin="warm"] .session-list,
+:root[data-skin="warm"] .diamond-list {
+	padding-left: 3px;
+	padding-right: 3px;
 }
 :root[data-skin="warm"] .admin-item {
 	border-radius: var(--radius);

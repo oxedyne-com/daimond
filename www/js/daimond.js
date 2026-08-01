@@ -1651,6 +1651,7 @@ import init, {
 		dusk:     { tone: 'mid',   ink: 'light' },
 		// Dark: deep grounds, light lettering.
 		dark:     { tone: 'dark',  ink: 'light' },
+		amber:    { tone: 'dark',  ink: 'light' },
 		midnight: { tone: 'dark',  ink: 'light' },
 		forest:   { tone: 'dark',  ink: 'light' },
 		plum:     { tone: 'dark',  ink: 'light' },
@@ -4109,20 +4110,46 @@ import init, {
 		/// and nothing else: every action inside the console is authorised by the
 		/// gateway on its own, and a client that lied to itself here would gain
 		/// exactly one useless hyperlink.
-		var consoleRole = null;		// null = not asked yet, false = asked, none
+		// What the gateway last said about this account, and whether that answer
+		// is worth keeping:
+		//   null    nobody has asked yet
+		//   'none'  asked, answered: this account holds no role
+		//   'error' asked, and the ASK failed — not an answer, and must not be
+		//           remembered as one
+		//   <role>  asked, answered: the role held
+		//
+		// The distinction is the whole of it. An earlier version latched any
+		// non-answer as "no role" for the life of the page, and the very first
+		// ask happens while the drawer is drawn at boot — before the session
+		// exists, so it 401s. The gateway was answering correctly the whole
+		// time and the drawer had already decided never to ask again.
+		var consoleRole = null;
+		var consoleAsking = false;
 		function renderConsoleLink() {
-			if (consoleRole === false) return;
-			if (consoleRole === null) {
-				// Ask once per page life, and redraw only if the answer is yes.
-				consoleRole = false;
+			// An account with no role gets no link and no repeat questions.
+			if (consoleRole === 'none') return;
+			if (consoleRole === null || consoleRole === 'error') {
+				// Only worth asking once the session it rides actually exists.
+				if (!(window.DaimondIdentity && DaimondIdentity.isUnlocked())) return;
+				if (consoleAsking) return;
+				consoleAsking = true;
 				fetch('/api/admin?view=whoami', {
 					credentials: 'same-origin',
 					headers: { 'x-daimond-api': '1' },
-				}).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-					if (!j || !j.role) return;
-					consoleRole = j.role;
-					if (homeView && !homeView.hidden) renderHome();
-				}).catch(function () { /* offline, or no gateway: no link, no noise. */ });
+				}).then(function (r) {
+					// A 401 or 403 is the gateway declining to say, not a No.
+					if (!r.ok) throw new Error('HTTP ' + r.status);
+					return r.json();
+				}).then(function (j) {
+					consoleAsking = false;
+					consoleRole = (j && j.role) ? j.role : 'none';
+					if (consoleRole !== 'none') renderHome();
+				}).catch(function () {
+					// Offline, no gateway, or not signed in yet: ask again next
+					// time the drawer is drawn, rather than never.
+					consoleAsking = false;
+					consoleRole = 'error';
+				});
 				return;
 			}
 			homeView.appendChild(el('div', 'admin-sec', t('home.sec_console')));

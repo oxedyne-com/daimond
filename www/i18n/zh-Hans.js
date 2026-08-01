@@ -584,6 +584,8 @@
 	'menu.theme_sage':      '鼠尾草',
 	'menu.theme_dusk':      '暮色',
 	'menu.theme_dark':      '余烬',
+	'menu.theme_amber':     '琥珀',
+	'menu.theme_amber_help': '暖色、蓝光少，适合夜间阅读。',
 	'menu.theme_midnight':  '午夜',
 	'menu.theme_forest':    '森林',
 	'menu.theme_plum':      '李子',

@@ -50,7 +50,7 @@ const declared = blocks(css);
 
 // A palette inherits everything it does not restate from the bare :root block.
 const base = declared.dark || {};
-const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'midnight', 'forest', 'plum'];
+const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum'];
 const palette = (n) => Object.assign({}, base, declared[n] || {});
 
 // ── Colour ──────────────────────────────────────────────────────
@@ -183,6 +183,22 @@ const fromJs = {};
 		while ((m = re.exec(tbl[1]))) fromJs[m[1]] = { tone: m[2], ink: m[3] };
 	}
 }
+// Amber exists to keep short-wavelength light down, so that is a property and
+// not a matter of taste: every colour it paints must be blue-poor, or a later
+// edit "brightening it up" would quietly undo the only reason it is offered.
+{
+	const p = palette('amber');
+	const loud = [];
+	for (const k of REQUIRED) {
+		const c = rgb(p[k] || '');
+		if (!c) continue;
+		// Blue may not lead. Allowing it to equal the smaller of red and green
+		// keeps neutral greys legal and rules out anything that reads as cool.
+		if (c[2] > Math.min(c[0], c[1])) loud.push(`${k}=${p[k]} (b=${c[2]} > min(r,g)=${Math.min(c[0], c[1])})`);
+	}
+	check(loud.length === 0, `amber: no colour lets blue lead${loud.length ? `: ${loud.join(', ')}` : ''}`);
+}
+
 check(Object.keys(fromJs).length === NAMES.length,
 	`the registry in daimond.js holds all ${NAMES.length} palettes (found ${Object.keys(fromJs).length})`);
 check(Object.keys(fromHtml).length === NAMES.length,

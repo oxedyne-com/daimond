@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de" data-guide-locale="de" data-guide-locales="en de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Geräteübergreifende Synchronisierung — Daimond-Handbuch</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond-Handbuch, Startseite">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<span class="brand-sub">Handbuch</span>
+		</a>
+		<nav class="site-nav" aria-label="Handbuchseiten">
+			<a href="index.html">Erste Schritte</a>
+			<a href="../interface.html">Die Oberfläche</a>
+			<a href="../models.html">Modelle &amp; Guthaben</a>
+			<a href="../chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="../email-web-files.html">E-Mail, Web &amp; Dateien</a>
+			<a href="../accounts.html">Konten</a>
+			<a href="sync.html" aria-current="page">Geräteübergreifende Synchronisierung</a>
+			<a href="spending.html">Ausgaben</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Geräteübergreifende Synchronisierung</h1>
+	<p class="lede">Daimond ist local-first, ein zweites Gerät startet also leer. Die geräteübergreifende Synchronisierung trägt Ihre Chats und Arbeitsdateien zwischen Ihren eigenen Geräten hin und her, ohne dass der Server sie je liest.</p>
+
+	<p>Durch das Gateway reist ein einziges verschlüsseltes Paket, zu dem nur Ihre Geräte den Schlüssel haben. Der Schlüssel stammt aus Ihrer Passphrase und verlässt den Browser nie; der Server bewahrt das Paket also auf, kann es aber nicht öffnen. Nichts Lesbares geht von Gerät zu Gerät.</p>
+
+	<h2>Ein zweites Gerät verknüpfen</h2>
+	<p>Jedes Gerät erzeugt seine eigene Identität; Ihre Passphrase auf einem neuen Gerät einzutippen würde also ein <em>eigenes</em>, leeres Konto anlegen — und nicht Ihr bestehendes herüberholen. Um das Konto zu nutzen, das Sie schon haben, <strong>verknüpfen</strong> Sie das neue Gerät damit. Das geht in drei Schritten.</p>
+
+	<ol class="steps">
+		<li>
+			<h3>Auf dem Gerät, das Sie schon nutzen, den Verknüpfungsdialog öffnen</h3>
+			<p>Klicken Sie oben in der Leiste auf <span class="ui">Weiteres Gerät verknüpfen</span> . Es erscheinen ein QR-Code und ein einmaliger Kopplungscode.</p>
+			<figure class="shot narrow" data-shot="pair-desktop">
+				<img src="img/pair-desktop.png" alt="Der Dialog „Weiteres Gerät verknüpfen“ mit einem QR-Code und einem einmaligen Kopplungscode, der nach etwa zehn Minuten verfällt.">
+				<figcaption>Ihr erstes Gerät zeigt einen QR-Code und einen Code.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Auf dem neuen Gerät den QR-Code scannen — oder den Code eintippen</h3>
+			<p>Richten Sie die Kamera des neuen Telefons auf den QR-Code: Daimond öffnet sich und trägt den Code für Sie ein, Sie tippen nur noch auf <span class="ui">Dieses Gerät verknüpfen</span>. Keine Kamera? Öffnen Sie Daimond dort, wählen Sie <span class="ui">Haben Sie einen Kopplungscode?</span>und tippen Sie den Code ein. Der angezeigte Code dient nur dazu, dass Sie prüfen können, ob er zum ersten Gerät passt.</p>
+			<figure class="shot narrow" data-shot="pair-mobile">
+				<img src="img/pair-mobile.png" alt="Der Dialog „Dieses Gerät verknüpfen“ auf einem Telefon nach dem Scannen, mit bereits eingetragenem Kopplungscode und einer Schaltfläche „Dieses Gerät verknüpfen“.">
+				<figcaption>Nach dem Scannen nur noch tippen auf <span class="ui">Dieses Gerät verknüpfen</span>.</figcaption>
+			</figure>
+		</li>
+		<li>
+			<h3>Mit derselben Passphrase entsperren</h3>
+			<p>Das neue Gerät trägt jetzt Ihr Konto. Entsperren Sie es mit <strong>derselben Passphrase, die Sie auf dem ersten Gerät verwenden</strong> — nicht mit einer neuen — und Ihre Chats und Dateien erscheinen. Ein Passkey kann es danach schneller entsperren, sobald Sie dort einen anlegen.</p>
+		</li>
+	</ol>
+
+	<div class="note"><strong>Die Passphrase ist überall dieselbe.</strong> Ein Konto, eine Passphrase, auf jedem Gerät, das Sie verknüpfen. Wenn ein Gerät Sie auffordert, eine Passphrase zu <em>erstellen</em> statt sie <em>einzugeben</em> , ist es dabei, ein neues Konto anzulegen — verknüpfen Sie es stattdessen.</div>
+
+	<h2>Was mitreist</h2>
+	<p>Jede Datei reist mit, gleich welcher Art. Ein Foto, eine Aufnahme, ein PDF oder eine Tabelle erreicht Ihre anderen Geräte genauso wie Text, bis zu einem Gigabyte je Datei.</p>
+	<p>Was synchronisiert wird, ist zugleich das, was im Cloud-Speicher liegt; ein Arbeitsbereich kann also größer sein als das Gerät, auf dem Sie ihn gerade lesen. Eine Datei, die momentan nicht auf diesem Gerät liegt, steht trotzdem im Baum, mit einer Wolke markiert, und kommt herunter, wenn Sie sie anfordern. <a href="../email-web-files.html">Der Arbeitsbereich</a> legt die drei Zustände dar, in denen eine Datei sein kann, wie Platz frei wird, wenn der Browser voll läuft, und was Cloud-Speicher kostet.</p>
+
+	<h2>Was es kostet</h2>
+	<p>Die geräteübergreifende Synchronisierung gehört zu <strong>Pro</strong>, der einmaligen Freischaltung — kein Abonnement, es bleibt also einmal gekauft wie der Rest von Daimond. Ohne Pro arbeitet ein Gerät für sich; mit Pro bleiben Ihre Geräte im Gleichschritt. Pro schaltet außerdem Cloud-Speicher und E-Mail frei. Die größeren Dateiinhalte, die die Synchronisierung trägt, liegen im Cloud-Speicher und werden aus dem Guthaben bezahlt statt per Abonnement, mit einem Freikontingent, bevor überhaupt etwas abgerechnet wird.</p>
+
+	<div class="next">
+		<a href="../accounts.html">&larr; Konten</a>
+		<a href="spending.html">Weiter: Ausgaben &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond läuft in Ihrem Browser. Nichts davon wird an uns gesendet.</span>
+	<nav aria-label="Handbuchseiten">
+		<a href="index.html">Erste Schritte</a>
+		<a href="../interface.html">Oberfläche</a>
+		<a href="../models.html">Modelle</a>
+		<a href="../chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="../email-web-files.html">E-Mail, Web &amp; Dateien</a>
+		<a href="../accounts.html">Konten</a>
+		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+		<a href="spending.html">Ausgaben</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -400,6 +400,11 @@
 			DaimondTheme.inTone(tone).forEach(function (name) {
 				var o = el('option', null, t('menu.theme_' + name));
 				o.value = name;
+				// A palette that exists for a REASON says so on hover. Most are a
+				// matter of taste and need no note; Amber is not, and a reader
+				// scanning ten names would have no way to tell which is which.
+				var help = 'menu.theme_' + name + '_help';
+				if (t(help) !== help) o.title = t(help);
 				if (name === now) o.selected = true;
 				grp.appendChild(o);
 			});

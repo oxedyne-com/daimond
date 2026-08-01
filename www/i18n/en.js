@@ -756,6 +756,8 @@
 	'menu.theme_sage':      'Sage',
 	'menu.theme_dusk':      'Dusk',
 	'menu.theme_dark':      'Ember',
+	'menu.theme_amber':     'Amber',
+	'menu.theme_amber_help': 'Warm and blue-poor, for reading at night.',
 	'menu.theme_midnight':  'Midnight',
 	'menu.theme_forest':    'Forest',
 	'menu.theme_plum':      'Plum',
