@@ -927,6 +927,17 @@
 	'tag.mode_aria': 'Comment les étiquettes choisies se combinent',
 	'tag.clear_all': 'Vider',
 	'tag.clear_all_help': 'Retirer toutes les étiquettes du filtre',
+	// The one row the pool of chips sits behind, under the search box. It is
+	// there whenever a tag is, because a filter nobody can see is a filter
+	// nobody finds -- and it is only a row, because a vocabulary of thirty tags
+	// standing open costs the rail's two lists four rows on every screen.
+	// {n} is how many tags are behind it.
+	'tag.pool_toggle': 'Filtrer par étiquette ({n})',
+	'tag.pool_show_help': 'Afficher toutes les étiquettes sur lesquelles vous pouvez filtrer',
+	'tag.pool_hide_help': 'Ranger les étiquettes. Celles qui filtrent restent actives et restent visibles.',
+	// The chips that are doing the filtering, shown on their own while the tags
+	// are put away.
+	'tag.active_aria': 'Étiquettes sur lesquelles la barre latérale filtre',
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help': 'Supprimer l’étiquette « {tag} » partout',
 	'tag.delete_title': 'Supprimer cette étiquette ?',

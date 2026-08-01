@@ -33,8 +33,16 @@
 //  12. Two REAL devices, on two browser profiles, converge in BOTH directions --
 //      including the one that is not being typed at, which raises no focus event
 //      and ends no turn and therefore never asked the gateway anything at all.
+//  13. And it converges with NOTHING happening on it at all: the gateway taps
+//      every other device of the account when the mailbox moves, so a window
+//      left open on a second desk applies the other one's work within seconds --
+//      no focus, no visibility change, no settling event, no reload. Over a
+//      socket where the front door carries one and over a parked request where
+//      it does not, across a gateway restart, carrying version integers only.
 import { open, chat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +68,54 @@ async function pushLanded(pg) {
 		return window.DaimondSync.state().version > v0;
 	});
 	if (!landed) console.log('  note  pushLanded: version did not advance within 8s');
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/// Is the gateway answering?
+async function gatewayUp() {
+	try {
+		const r = await fetch('http://127.0.0.1:9002/api/health', { signal: AbortSignal.timeout(2000) });
+		return r.ok;
+	} catch (e) { return false; }
+}
+
+/// Stop the running gateway and start it again exactly as it was.
+///
+/// Exactly as it was matters: the suite may be running it from `gateway/` or
+/// from the generated `dev/devgw/`, and which one decides what config it reads.
+/// Both are taken from the live process rather than guessed, so this restarts
+/// whatever is actually there and hands it back in the state it found it.
+///
+/// Returns `true`, or a string saying what went wrong -- this test is the one
+/// place in the suite that takes the gateway down, and it must not leave the
+/// verifiers that run after it wondering why.
+async function restartGateway() {
+	let pid;
+	try { pid = execFileSync('pgrep', ['-x', 'daimond_gateway'], { encoding: 'utf8' }).trim().split('\n')[0]; }
+	catch (e) { return 'no daimond_gateway process to restart'; }
+	if (!pid) return 'no daimond_gateway process to restart';
+
+	let cwd, exe;
+	try {
+		cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+		exe = fs.readlinkSync(`/proc/${pid}/exe`);
+	} catch (e) { return 'could not read the gateway process: ' + e.message; }
+
+	try { execFileSync('pkill', ['-x', 'daimond_gateway']); } catch (e) { /* already gone */ }
+	for (let i = 0; i < 20 && await gatewayUp(); i++) await sleep(500);
+	if (await gatewayUp()) return 'the gateway would not stop';
+
+	const child = spawn(exe, [], {
+		cwd, detached: true, stdio: 'ignore',
+		env: { ...process.env, APP_MODE: process.env.APP_MODE || 'sandbox' },
+	});
+	child.unref();
+	for (let i = 0; i < 60; i++) {
+		if (await gatewayUp()) return true;
+		await sleep(500);
+	}
+	return 'the gateway did not come back on :9002';
 }
 
 const s = await open({ name: 'sync', signIn: true, connect: true });
@@ -1816,11 +1872,205 @@ try {
 	]);
 	check('and neither device is left claiming to be synced while it is stalled',
 		chips.every(c => c !== 'stalled'), chips.join(' / '));
-	const cerrs = child.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e));
+
+	// ── (13) The gateway taps an idle device ───────────────────────────
+	// (12a) proved the idle device catches up when the app settles. But the app
+	// settling is still something that happened HERE, and a window sitting
+	// unfocused on a second desk settles once and then never again: no turn ends,
+	// nothing is renamed, the user is not in it. That window used to converge
+	// only when somebody came back to it, which is the complaint this section
+	// exists for. The trigger now comes from the gateway.
+	//
+	// Everything below runs with the second device touched in exactly one way:
+	// reading its state. No focus, no visibility change, no settling event, no
+	// reload. Those are counted, and the count must stay at zero.
+	// First, what it was like without one. With the channel shut this device has
+	// exactly the triggers it had before the channel existed -- a focus that will
+	// not come, a turn that will not end, a push with nothing to send -- and ten
+	// seconds go by with the other device's work sitting unread in the mailbox.
+	// This is the live complaint, kept as a test so the channel cannot quietly
+	// stop being the thing that answers it.
+	await child.page.evaluate(() => window.DaimondSync.wakeVia('off'));
+	const blindV = await child.page.evaluate(() => window.DaimondSync.state().version);
+	await page.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.rename_diamond(id, 'Unheard-Over-There');
+	}, shared);
+	await pushLanded(page);
+	const blind = await child.page.evaluate(async (v0) => {
+		const t0 = Date.now();
+		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
+			await new Promise(r => setTimeout(r, 200));
+		}
+		return { v0, v1: window.DaimondSync.state().version };
+	}, blindV);
+	check('WITHOUT the channel, an idle unfocused device never hears — this is the bug',
+		blind.v1 === blind.v0 && (await nameOn(child.page, shared)) !== 'Unheard-Over-There',
+		'version stayed at ' + blind.v1);
+
+	// Now with it. Same device, same conditions, one thing different.
+	await child.page.evaluate(() => window.DaimondSync.wakeVia('ws'));
+	await child.page.waitForFunction(
+		() => { const w = window.DaimondSync.wake(); return w.open && (w.mode === 'ws' || w.mode === 'poll'); },
+		null, { timeout: 15000 }).catch(() => {});
+	// A channel that has just opened says what the version is NOW, so a device
+	// that missed something while it was away learns about it on connecting
+	// rather than on the next push somebody else happens to make.
+	await child.page.waitForFunction(
+		v0 => window.DaimondSync.state().version > v0, blind.v1, { timeout: 15000 }).catch(() => {});
+	check('opening the channel catches the device up on what it missed while it was shut',
+		(await nameOn(child.page, shared)) === 'Unheard-Over-There',
+		'version ' + blind.v1 + ' -> ' + (await child.page.evaluate(() => window.DaimondSync.state().version)));
+	const chan = await child.page.evaluate(() => {
+		window.__wakeProbe = { focus: 0, vis: 0, idle: 0 };
+		window.addEventListener('focus', () => window.__wakeProbe.focus++, true);
+		document.addEventListener('visibilitychange', () => window.__wakeProbe.vis++, true);
+		window.addEventListener('daimond:idle', () => window.__wakeProbe.idle++, true);
+		return { wake: window.DaimondSync.wake(), version: window.DaimondSync.state().version };
+	});
+	check('the idle device holds a wake channel open to the gateway',
+		chan.wake.open === true && (chan.wake.mode === 'ws' || chan.wake.mode === 'poll'),
+		JSON.stringify(chan.wake));
+	check('and the two devices name different channels, so neither is woken by itself',
+		chan.wake.id !== (await page.evaluate(() => window.DaimondSync.wake().id)),
+		chan.wake.id);
+
+	// The other device renames a Diamond and pushes. Nothing at all happens on
+	// the idle one.
+	const selfBefore = await page.evaluate(() => window.DaimondSync.wake().wakes);
+	await page.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.rename_diamond(id, 'Woken-Over-There');
+	}, shared);
+	const beganWake = Date.now();
+	await pushLanded(page);
+	const woke = await child.page.evaluate(async (v0) => {
+		const t0 = Date.now();
+		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
+			await new Promise(r => setTimeout(r, 100));
+		}
+		return {
+			v1:    window.DaimondSync.state().version,
+			probe: window.__wakeProbe,
+			wake:  window.DaimondSync.wake(),
+		};
+	}, chan.version);
+	const wakeMs = Date.now() - beganWake;
+	check('an idle, unfocused device applies the other one’s work with no trigger of its own',
+		(await nameOn(child.page, shared)) === 'Woken-Over-There',
+		'version ' + chan.version + ' -> ' + woke.v1 + ' in ' + wakeMs + 'ms');
+	check('and it converges within five seconds of the push, not on the next thing the user does',
+		woke.v1 > chan.version && wakeMs < 5000, wakeMs + 'ms');
+	check('and nothing on that device caused it — no focus, no visibility change, no settling',
+		woke.probe.focus === 0 && woke.probe.vis === 0 && woke.probe.idle === 0,
+		JSON.stringify(woke.probe));
+	check('and the pull was the wake channel’s doing, by its own count',
+		woke.wake.wakes > chan.wake.wakes && woke.wake.heard >= woke.v1,
+		JSON.stringify(woke.wake));
+
+	// The device that pushed is not woken by its own push: it already knows the
+	// version it just wrote, and a channel that told it would double every round.
+	const selfWake = await page.evaluate(() => window.DaimondSync.wake());
+	check('and the device that pushed was not woken by its own push',
+		selfWake.wakes === selfBefore,
+		'wakes ' + selfBefore + ' -> ' + selfWake.wakes);
+
+	// (13b) The channel survives the gateway going away and coming back. A
+	// restart is the ordinary case -- a deploy -- and a device that did not
+	// reconnect would go quiet until its owner touched it, which is exactly the
+	// state this whole section exists to end.
+	const restarted = await restartGateway();
+	check('the gateway comes back after a restart', restarted === true, String(restarted));
+	if (restarted === true) {
+		await child.page.waitForFunction(
+			() => window.DaimondSync.wake().open === true, null, { timeout: 60000 }).catch(() => {});
+		const back = await child.page.evaluate(() => window.DaimondSync.wake());
+		check('and the idle device’s wake channel comes back with it, unprompted',
+			back.open === true, JSON.stringify(back));
+
+		const v2 = await child.page.evaluate(() => window.DaimondSync.state().version);
+		await page.evaluate(async (id) => {
+			const m = await import('/pkg/oxedyne_daimond.js');
+			const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+			await app.rename_diamond(id, 'Woken-After-Restart');
+		}, shared);
+		const beganAgain = Date.now();
+		await pushLanded(page);
+		await child.page.evaluate(async (v0) => {
+			const t0 = Date.now();
+			while (Date.now() - t0 < 15000 && window.DaimondSync.state().version <= v0) {
+				await new Promise(r => setTimeout(r, 100));
+			}
+		}, v2);
+		check('and it is woken again on the far side of the restart',
+			(await nameOn(child.page, shared)) === 'Woken-After-Restart',
+			'took ' + (Date.now() - beganAgain) + 'ms');
+	}
+
+	// (13c) The plain-HTTP fallback does the same job. A front door that will not
+	// carry a WebSocket upgrade is not a reason for an idle device to go blind:
+	// the same wake arrives as a parked request answered early, and a completed
+	// response wakes a throttled background tab exactly as a frame does.
+	const pollOn = await child.page.evaluate(() => window.DaimondSync.wakeVia('poll'));
+	check('the channel can be put onto parked requests instead of a socket', pollOn === 'poll', pollOn);
+	await child.page.waitForFunction(
+		() => window.DaimondSync.wake().open === true, null, { timeout: 15000 }).catch(() => {});
+	const pollChan = await child.page.evaluate(() => {
+		window.__wakeProbe = { focus: 0, vis: 0, idle: 0 };
+		return { wake: window.DaimondSync.wake(), version: window.DaimondSync.state().version };
+	});
+	check('and parking one is enough to hold the channel open', pollChan.wake.open === true,
+		JSON.stringify(pollChan.wake));
+	await page.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.rename_diamond(id, 'Woken-Without-A-Socket');
+	}, shared);
+	const beganPoll = Date.now();
+	await pushLanded(page);
+	const polled = await child.page.evaluate(async (v0) => {
+		const t0 = Date.now();
+		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
+			await new Promise(r => setTimeout(r, 100));
+		}
+		return { v1: window.DaimondSync.state().version, probe: window.__wakeProbe, wake: window.DaimondSync.wake() };
+	}, pollChan.version);
+	const pollMs = Date.now() - beganPoll;
+	check('a parked request wakes the idle device just as a socket does',
+		(await nameOn(child.page, shared)) === 'Woken-Without-A-Socket' && polled.v1 > pollChan.version,
+		'version ' + pollChan.version + ' -> ' + polled.v1 + ' in ' + pollMs + 'ms');
+	check('and that route converges inside five seconds too', pollMs < 5000, pollMs + 'ms');
+	check('and still with nothing happening on the device itself',
+		polled.probe.focus === 0 && polled.probe.vis === 0 && polled.probe.idle === 0,
+		JSON.stringify(polled.probe));
+
+	// The channel carries version integers and nothing else. What the gateway
+	// parks on and answers with is read here directly, so a future change that
+	// smuggled content down it would be caught rather than assumed against.
+	const bare = await page.evaluate(async () => {
+		const v = window.DaimondSync.state().version;
+		const r = await fetch('/api/sync?above=' + v + '&ms=1000&w=wkprobe',
+			{ credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		return { status: r.status, json: await r.json() };
+	});
+	check('a wake answer carries a version and nothing else — no blob, no device, no account',
+		bare.status === 200 && bare.json.waited === true
+			&& Object.keys(bare.json).sort().join(',') === 'changed,ok,version,waited',
+		JSON.stringify(bare.json).slice(0, 160));
+	check('and a wait that nothing moved under says so rather than inventing a change',
+		bare.json.changed === false, JSON.stringify(bare.json));
+
+	// The gateway is deliberately restarted above, so a wake socket that was open
+	// across it reports a failed connection while it is down. That is the reconnect
+	// working, not a fault, and it is the only WebSocket noise this run may make.
+	const wakeNoise = /WebSocket connection to '[^']*\/api\/sync\/ws/;
+	const cerrs = child.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e) && !wakeNoise.test(e));
 	check('no unexpected console errors on the second device', cerrs.length === 0,
 		cerrs.slice(0, 3).join(' | '));
 
-	const errs = s.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e));
+	const errs = s.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|426|502|Unauthorized/.test(e) && !wakeNoise.test(e));
 	check('no unexpected console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) {
 	check('verify_sync ran without throwing', false, String(e && e.message || e));

@@ -55,11 +55,24 @@
    arrived and could not be merged, both leave this device's work
    sitting here, and both used to leave "Synced" on the chip -- put
    there by the pull that was only ever half of the round.
+
+   AND NOW THE GATEWAY SAYS WHEN. Every trigger above is something
+   that happened on THIS device, so a window left open and unfocused
+   on a second desk had none: no turn ends there, nothing is renamed,
+   nobody comes back to it, and the catch-up in push() is throttled to
+   a trickle. It converged when somebody touched it, and not before --
+   which is how it was reported from a live account. So the device no
+   longer has to guess. It holds a channel open to the gateway, and
+   the gateway taps it the moment another device's push lands. What
+   crosses that channel is one integer, the new version, and the
+   device answers it with the pull it would have run on focus. See
+   the wake channel below.
    ============================================================ */
 (function () {
 	'use strict';
 
 	var PATH        = '/api/sync';
+	var WS_PATH     = '/api/sync/ws';	// The wake channel's WebSocket form.
 	var CLIENT_API  = 1;			// Matches gateway.js; sent so an old tab is refused.
 	var HDR_MIN_API = 'x-daimond-min-api';
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
@@ -72,6 +85,33 @@
 	var FOCUS_PULL_MIN_MS = 30000;
 	// A push with nothing to send asks anyway, at most this often. See push().
 	var IDLE_PULL_MIN_MS  = 5000;
+	// ── Wake channel ───────────────────────────────────────────
+	// A wake is EVIDENCE that the mailbox moved, which the speculative triggers
+	// above are not, so it has a throttle of its own and a much shorter one: the
+	// only pull a wake needs to stand down for is one that has just this second
+	// asked the same question.
+	var WAKE_PULL_MIN_MS  = 1000;
+	// How long the gateway is asked to hold a parked request. Under a minute, so
+	// no intermediary decides it has stalled; the gateway clamps it anyway.
+	var WAKE_POLL_MS      = 45000;
+	// A floor under the poll loop, so a gateway answering instantly (or a proxy
+	// answering for it) can never become a hot loop.
+	var WAKE_POLL_FLOOR_MS = 800;
+	// Reconnect backoff after a socket that HAD opened went away. Jittered, so a
+	// gateway restart does not bring every device back in the same millisecond.
+	var WAKE_RETRY_MIN_MS = 1000;
+	var WAKE_RETRY_MAX_MS = 30000;
+	// Consecutive sockets that closed without ever opening before the channel
+	// gives up on WebSocket and parks plain requests instead. Two: one to be
+	// unlucky, one to be sure.
+	var WAKE_WS_TRIES     = 2;
+	// The park the channel makes before it reaches for a socket. Short: it is
+	// asking whether there is a gateway there, not waiting for news.
+	var WAKE_PROBE_MS     = 1000;
+	// How often the channel is checked against what the app is doing -- signed
+	// in or not, entitled or not. Cheap, and it means no other file has to raise
+	// an event this one listens for.
+	var WAKE_WATCH_MS     = 10000;
 	var K_VERSION = 'daimond-sync-version';		// Per-account (accounts.js prefixes it).
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
 
@@ -97,6 +137,25 @@
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
 	var started       = false;	// The engine has attached its listeners.
+
+	// ── Wake channel state ─────────────────────────────────────
+	// This tab's own channel id, named on the channel AND on every push, so the
+	// gateway can wake the account's other devices without waking this one. It
+	// starts with a letter so it is unambiguously a string in a query.
+	var WAKE_ID = 'wk' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+	var wakeMode    = '';		// '' | 'ws' | 'poll' | 'off'
+	var wakeSock    = null;		// The live WebSocket, if there is one.
+	var wakeTimer   = null;		// Reconnect handle.
+	var wakeWatcher = null;		// The supervisor interval.
+	var wakeFails   = 0;		// Sockets that closed without ever opening.
+	var wakeWorked  = false;	// A socket has opened at least once on this page.
+	var wakeBackoff = WAKE_RETRY_MIN_MS;
+	var wakePolling = false;	// A park loop is running.
+	var wakeProbing = false;	// The one-shot park that decides the transport is out.
+	var wakeGen     = 0;		// Bumped on teardown, so an in-flight loop stands down.
+	var wakeTarget  = 0;		// The highest version the channel has heard about.
+	var wakeSoon    = null;		// The coalescing timer for the pull a wake asks for.
+	var wakes       = 0;		// Wakes acted on, for the verifier and for debugging.
 
 	function log(/* ...args */) {
 		try { if (window.console && console.debug) console.debug.apply(console, ['[sync]'].concat([].slice.call(arguments))); }
@@ -126,7 +185,7 @@
 	// ── Transport ──────────────────────────────────────────────
 	// A private fetch wrapper, NOT DaimondGateway.post: sync's 402/409/413 are
 	// outcomes to act on, not errors to throw. Returns {status, json}.
-	async function call(method, body) {
+	async function call(method, body, query) {
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -136,7 +195,7 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
-		var r = await fetch(PATH, opts);
+		var r = await fetch(PATH + (query || ''), opts);
 		// Honour the version contract exactly as gateway.js does: a tab too old
 		// for the gateway must reload rather than talk to it.
 		if (r.status === 426) { fireStale(); return { status: 426, json: null }; }
@@ -417,7 +476,10 @@
 
 				setStatus('syncing', t('sync.syncing'));
 				var res;
-				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob }); }
+				// `w` names this tab's wake channel, so the gateway taps the
+				// account's OTHER devices and not this one: a device that pulled
+				// in answer to its own push would double every round.
+				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
 				catch (e) { log('push network error', e); restStatus(); return; }
 
 				if (res.status === 200 && res.json && res.json.ok) {
@@ -510,6 +572,258 @@
 		}
 	}
 
+	// ── Wake channel ───────────────────────────────────────────
+	// The trigger that was missing. Every other trigger in this file is something
+	// that happened HERE -- a turn ended, the window came back, a Diamond was
+	// renamed -- so a window left open and unfocused had none at all, and sat on
+	// stale state until somebody touched it. This one comes from the gateway,
+	// which is the only party that knows when the mailbox moved.
+	//
+	// WHAT ARRIVES IS A NUMBER. The gateway sends the account's new blob version
+	// and nothing else: no content, no device label, no account name. A version
+	// higher than the one this device holds runs the SAME pull the focus path
+	// runs, over the same authenticated request. The end-to-end story does not
+	// change by a byte, because nothing new crosses the wire.
+	//
+	// TWO WAYS IN, AND IT ASKS BEFORE IT PICKS. The first thing the channel does
+	// is park one short plain request, which answers whether there is a gateway
+	// there, whether it speaks this, and whether it already has news. Only then
+	// does it reach for a WebSocket; where the front door will not carry one, it
+	// goes on parking requests for three quarters of a minute at a time, which
+	// any proxy in the world will forward. Parking is not a consolation prize: a
+	// completed response wakes a throttled background tab exactly as a frame
+	// does, which is the property that matters here.
+	//
+	// If neither works the channel turns itself off and the app is exactly what
+	// it was before -- focus, settling, and the throttled catch-up in push().
+
+	/// Note a version the channel heard about, and pull for it -- once, soon, and
+	/// not on the heels of a pull that has just asked the same question.
+	function wakeTo(v) {
+		v = v | 0;
+		if (v > wakeTarget) wakeTarget = v;
+		if (v <= serverVersion) return;			// already have it.
+		if (wakeSoon) return;					// a pull is already coming.
+		var wait = Math.max(0, WAKE_PULL_MIN_MS - (Date.now() - lastPullAt));
+		wakeSoon = setTimeout(function () { wakeSoon = null; wakePull(); }, wait);
+	}
+
+	/// The pull a wake asks for. Held behind the same `inFlight` gate as every
+	/// other round, and re-armed rather than dropped if one is under way: the
+	/// news is real, so it must not be lost to a coincidence of timing.
+	async function wakePull() {
+		if (!ready()) return;
+		if (wakeTarget <= serverVersion) return;
+		if (inFlight) {
+			if (!wakeSoon) wakeSoon = setTimeout(function () { wakeSoon = null; wakePull(); }, 500);
+			return;
+		}
+		wakes++;
+		inFlight = true;
+		try { await pull(); }
+		finally { inFlight = false; }
+	}
+
+	/// Whether the channel should be running at all: sync can run, and this
+	/// account is allowed to push. A 402 stops the channel with the pushes -- an
+	/// account that may not sync has nothing to be woken for.
+	function wakeWanted() {
+		return ready() && entitled && wakeMode !== 'off';
+	}
+
+	/// Open the channel, by whichever transport is still on the table.
+	function wakeStart() {
+		if (!wakeWanted()) return;
+		if (wakeMode === 'poll') { wakePoll(); return; }
+		if (wakeMode === '')     { wakeProbe(); return; }
+		wakeSocket();
+	}
+
+	/// Ask once, over plain HTTP, before reaching for a socket.
+	///
+	/// A short parked request settles three questions in one go: whether there is
+	/// a gateway there at all, whether it understands the channel, and whether it
+	/// already has news. Only then is a WebSocket attempted.
+	///
+	/// The order matters for a reason that has nothing to do with the protocol: a
+	/// WebSocket that cannot connect writes a line to the browser's console that
+	/// no application code can suppress. Opening one speculatively -- against a
+	/// gateway that is not running, or a stubbed one in a test -- fills the console
+	/// with failures of a thing that was working as designed. Asking first costs
+	/// one request and about a second.
+	async function wakeProbe() {
+		if (wakeProbing || wakeSock || wakeTimer) return;
+		var gen = wakeGen;
+		wakeProbing = true;
+		try {
+			var res;
+			try {
+				res = await call('GET', undefined,
+					'?above=' + (serverVersion | 0) + '&ms=' + WAKE_PROBE_MS + '&w=' + encodeURIComponent(WAKE_ID));
+			} catch (e) {
+				if (gen === wakeGen) wakeRetry();		// nothing answering; try again later.
+				return;
+			}
+			if (gen !== wakeGen || !wakeWanted()) return;
+			if (res.status !== 200) { wakeRetry(); return; }
+			if (!res.json || res.json.waited !== true) {
+				log('wake channel: this gateway does not park requests; channel off');
+				wakeMode = 'off';
+				return;
+			}
+			// It parks, and it may have answered with news already.
+			if (res.json.changed) wakeTo(res.json.version | 0);
+			wakeBackoff = WAKE_RETRY_MIN_MS;
+			wakeMode    = 'ws';
+			wakeSocket();
+		} finally { wakeProbing = false; }
+	}
+
+	/// Open the WebSocket. Only ever reached once the probe above has shown there
+	/// is a gateway on the other end that speaks this.
+	function wakeSocket() {
+		if (!wakeWanted()) return;
+		if (wakeSock || wakeTimer) return;
+		var url;
+		try {
+			url = (location.protocol === 'https:' ? 'wss://' : 'ws://')
+				+ location.host + WS_PATH + '?w=' + encodeURIComponent(WAKE_ID);
+		} catch (e) { wakeMode = 'poll'; wakePoll(); return; }
+
+		var sock, opened = false, gen = wakeGen;
+		try { sock = new WebSocket(url); }
+		catch (e) { wakeGiveUpOnSockets(); return; }
+		wakeSock = sock;
+		sock.onopen = function () {
+			if (gen !== wakeGen) { try { sock.close(); } catch (e) {} return; }
+			opened      = true;
+			wakeMode    = 'ws';
+			wakeFails   = 0;
+			wakeWorked  = true;
+			wakeBackoff = WAKE_RETRY_MIN_MS;
+			log('wake channel open (ws)');
+		};
+		sock.onmessage = function (ev) {
+			if (gen !== wakeGen) return;
+			var v = parseInt(ev.data, 10);
+			if (isFinite(v)) wakeTo(v);
+		};
+		sock.onerror = function () { /* a close always follows; handled there. */ };
+		sock.onclose = function () {
+			if (wakeSock === sock) wakeSock = null;
+			if (gen !== wakeGen) return;
+			if (!opened && !wakeWorked) {
+				// Never opened, and none ever has here. Two of these and the front
+				// door is not carrying upgrades, whatever the reason, so stop
+				// asking it to. A socket that HAS worked on this page is a
+				// different story -- the gateway is restarting, or the network
+				// went -- and that is waited out, not given up on.
+				wakeFails++;
+				if (wakeFails >= WAKE_WS_TRIES) { wakeGiveUpOnSockets(); return; }
+			}
+			wakeRetry();
+		};
+	}
+
+	/// The WebSocket is not going to work here. Park plain requests instead --
+	/// same wake, same latency, and nothing between here and the gateway has to
+	/// understand anything but HTTP.
+	function wakeGiveUpOnSockets() {
+		if (wakeMode === 'off') return;
+		log('wake channel: no websocket through this front door; parking requests instead');
+		wakeMode = 'poll';
+		wakePoll();
+	}
+
+	/// Come back to the socket after a pause that grows, with jitter on it.
+	function wakeRetry() {
+		if (wakeTimer || !wakeWanted()) return;
+		var wait = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff);
+		wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+		var jittered = wait * (0.5 + Math.random());
+		wakeTimer = setTimeout(function () { wakeTimer = null; wakeStart(); }, jittered);
+	}
+
+	/// Park a request at the gateway naming the version this device holds, and
+	/// let it answer when there is a newer one. Loops until the channel is torn
+	/// down or the gateway shows it does not park.
+	async function wakePoll() {
+		if (wakePolling) return;
+		var gen = wakeGen;
+		wakePolling = true;
+		try {
+			while (gen === wakeGen && wakeWanted() && wakeMode === 'poll') {
+				var began = Date.now();
+				var res;
+				try {
+					res = await call('GET', undefined,
+						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID));
+				} catch (e) {
+					// The gateway is down or the network went. Wait, growing,
+					// rather than spinning against a closed door.
+					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
+					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					continue;
+				}
+				if (gen !== wakeGen) break;
+				if (res.status !== 200) {
+					// A refusal, a 502 from a gateway that is restarting, a 401
+					// from a session that has just gone: all temporary, and none
+					// of them a reason to give the channel up. Wait, growing, and
+					// ask again. Turning the channel off here is what a restart
+					// used to do to it -- the device went quiet for good over an
+					// outage that lasted twenty seconds.
+					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
+					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					continue;
+				}
+				if (!res.json || res.json.waited !== true) {
+					// Answered, and did not park. Either the gateway is too old to
+					// know how, or something between here and it dropped the query
+					// and served an ordinary pull. That is a property of the road,
+					// not of the moment, so this one does end the channel -- one
+					// such answer per page load is the whole cost of finding out.
+					log('wake channel: this gateway does not park requests; channel off');
+					wakeMode = 'off';
+					break;
+				}
+				wakeBackoff = WAKE_RETRY_MIN_MS;
+				if (res.json.changed) wakeTo(res.json.version | 0);
+				// However fast that answered, the next one is not immediate.
+				var spent = Date.now() - began;
+				if (spent < WAKE_POLL_FLOOR_MS) await wakeSleep(WAKE_POLL_FLOOR_MS - spent);
+			}
+		} finally { wakePolling = false; }
+	}
+
+	function wakeSleep(ms) {
+		return new Promise(function (r) { setTimeout(r, ms); });
+	}
+
+	/// Shut the channel. Everything in flight stands down on the generation
+	/// counter, so a loop that is mid-await cannot come back and reopen it.
+	function wakeStop() {
+		wakeGen++;
+		if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
+		if (wakeSoon)  { clearTimeout(wakeSoon);  wakeSoon  = null; }
+		if (wakeSock)  { try { wakeSock.close(); } catch (e) { /* already gone */ } wakeSock = null; }
+	}
+
+	/// Keep the channel matching what the app is doing.
+	///
+	/// A poll rather than an event, because the two things that end a channel --
+	/// locking the identity and logging out of the gateway -- are done in other
+	/// files that raise nothing. Ten seconds is far inside a session's life and
+	/// costs two boolean reads.
+	function wakeWatch() {
+		if (wakeWanted()) {
+			if (!wakeSock && !wakeTimer && !wakePolling && !wakeProbing) wakeStart();
+		} else if (wakeSock || wakeTimer || wakePolling) {
+			log('wake channel closing: sync cannot run here just now');
+			wakeStop();
+		}
+	}
+
 	// ── Scheduling ─────────────────────────────────────────────
 
 	/// Push after a quiet period, coalescing rapid triggers into one send.
@@ -582,6 +896,10 @@
 		loadVersion();
 		await pull();
 		schedule();					// push whatever this device adds over the pulled base.
+		// And open the channel that means the next catch-up needs no trigger here
+		// at all. After the first pull, so it parks on a version this device has
+		// actually reconciled rather than on a stale cursor.
+		wakeStart();
 	}
 
 	function start() {
@@ -600,6 +918,13 @@
 		window.addEventListener('focus', scheduleFocusPull);
 		// A session becoming available (unlock → gateway bootstrap) starts it all.
 		window.addEventListener('daimond:authed', function () { onAuthed(); });
+		// The channel is torn down when the page goes, so the gateway is not left
+		// holding a socket for a tab that has closed. `pagehide` and not `unload`:
+		// a page restored from the back/forward cache raises `pageshow`, and the
+		// supervisor opens it again on its next tick.
+		window.addEventListener('pagehide', wakeStop);
+		// Keep the channel matching the app. See wakeWatch.
+		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// If we booted already authed (a returning unlocked tab), reconcile now.
 		if (ready()) onAuthed();
 		log('started');
@@ -622,6 +947,35 @@
 		recheck: recheck,
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },
+		/// The wake channel, as it stands. Nothing in the app turns on this; it
+		/// is what a verifier reads to tell "converged because it was told" from
+		/// "converged because something happened to the window".
+		wake:    function () {
+			return {
+				mode:      wakeMode,				// '' | 'ws' | 'poll' | 'off'
+				id:        WAKE_ID,
+				open:      !!(wakeSock && wakeSock.readyState === 1) || wakePolling,
+				probing:   wakeProbing,
+				heard:     wakeTarget,				// highest version the channel reported
+				wakes:     wakes,					// pulls this channel has caused
+			};
+		},
+		/// Force the channel onto one transport, or shut it.
+		///
+		/// `'poll'` parks plain requests, so the fallback can be seen working
+		/// rather than waited for; `'off'` puts this device back to what it was
+		/// before there was a channel at all, which is what a test asserts the
+		/// absence of convergence against; anything else starts over with the
+		/// socket.
+		wakeVia: function (mode) {
+			wakeStop();
+			wakeMode    = (mode === 'poll' || mode === 'off') ? mode : '';
+			wakeFails   = 0;
+			wakeWorked  = false;
+			wakeBackoff = WAKE_RETRY_MIN_MS;
+			if (wakeMode !== 'off') wakeStart();
+			return wakeMode;
+		},
 		/// What the engine would say if asked -- the same facts the chip shows, for
 		/// anything that needs them in words rather than as a coloured pill.
 		state:   function () {

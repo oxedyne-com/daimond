@@ -1567,6 +1567,15 @@ import init, {
 	var tagExc  = [];           // tags that hide a Diamond outright
 	var TAG_MODE_KEY = 'daimond-tag-mode';
 	var tagMode = readJson(TAG_MODE_KEY, 'all') === 'any' ? 'any' : 'all';
+	// The pool of chips is worth a row of the rail, not four. Standing, a real
+	// vocabulary of thirty tags sat three and a half rows deep under the search
+	// box on every screen, filtering or not, and the two lists below live on what
+	// the furniture leaves. Hidden outright it would be missed -- it was read as
+	// absent twice. So it sits behind one row that NAMES it and COUNTS it, and
+	// that row is always there. Which way it was left is a habit of working, like
+	// the mode above it, and is kept; closed is where it starts.
+	var TAG_POOL_KEY = 'daimond-tag-pool-open';
+	var tagPoolOpen  = readJson(TAG_POOL_KEY, false) === true;
 
 	// Diamond-to-Diamond links: the relations a Diamond has with the other
 	// Diamonds, as against the files and pages the artefact strip holds. Three
@@ -8732,19 +8741,73 @@ import init, {
 		return d;
 	}
 
-	/// The tag filter, beside the search box: every tag in use, standing, each
-	/// chip cycling off -> wanted -> refused -> off where it sits.
+	/// The one row the pool sits behind: what the feature is called, how many
+	/// tags are in it, and which way the next click goes.
+	///
+	/// The whole row is the target rather than the words. A rail is 250px of
+	/// mostly empty space to the right of a short label, and a hit area that
+	/// stops at the last letter is a control that gets missed.
+	///
+	/// The chevron is two borders on an empty box (see `.tagf-chev`), not a
+	/// character. An arrow typed into the label would be one absent glyph away
+	/// from saying nothing at all, and it would ride in the row's textContent,
+	/// where the count is read.
+	function tagPoolToggle(n) {
+		var b = document.createElement('button');
+		b.className = 'tagf-toggle';
+		b.setAttribute('aria-expanded', tagPoolOpen ? 'true' : 'false');
+		b.title = tagPoolOpen ? t('tag.pool_hide_help') : t('tag.pool_show_help');
+		var chev = document.createElement('span');
+		chev.className = 'tagf-chev';
+		chev.setAttribute('aria-hidden', 'true');
+		var lab = document.createElement('span');
+		lab.className = 'tagf-label';
+		lab.textContent = t('tag.pool_toggle', { n: n });
+		b.appendChild(chev);
+		b.appendChild(lab);
+		b.addEventListener('click', function () { setTagPoolOpen(!tagPoolOpen); });
+		return b;
+	}
+
+	/// Open or close the pool, and keep the choice. Only the filter is repainted:
+	/// which Diamonds show has not changed, and repainting the rail under a
+	/// disclosure would flicker the list for nothing.
+	function setTagPoolOpen(open) {
+		tagPoolOpen = !!open;
+		try { localStorage.setItem(TAG_POOL_KEY, JSON.stringify(tagPoolOpen)); } catch (e) { /* best effort */ }
+		renderTagFilter();
+		// That paint replaced the row the click landed on, so focus would be left
+		// on nothing and a keyboard could not close what it had just opened.
+		var b = diamondFilter && diamondFilter.querySelector('.tagf-toggle');
+		if (b) b.focus();
+	}
+
+	/// The tag filter, under the search box: one row naming it, the pool of every
+	/// tag in use behind that, and each chip cycling off -> wanted -> refused ->
+	/// off where it sits.
 	///
 	/// A POOL rather than a summary of what is on. A summary is only drawn once
 	/// something has been clicked, so the only way IN was a chip on a Diamond
 	/// box -- and a reader who went looking under the search box for the filter
-	/// found nothing there at all. The pool is the surface: it says what the
-	/// vocabulary is before anything is touched, each chip carries its own state
-	/// in place, and a refused tag stays put even though its Diamonds have left
-	/// the rail. That makes the separate wanted and refused rows redundant --
-	/// they said in a second place what a chip now says where it is -- so what
-	/// is left below the pool is only what is NOT a tag: how the wanted ones
-	/// combine, and the one click that puts the whole thing down.
+	/// found nothing there at all. The pool says what the vocabulary is before
+	/// anything is touched, each chip carries its own state in place, and a
+	/// refused tag stays put even though its Diamonds have left the rail. That
+	/// makes the separate wanted and refused rows redundant -- they said in a
+	/// second place what a chip now says where it is -- so what is left below the
+	/// pool is only what is NOT a tag: how the wanted ones combine, and the one
+	/// click that puts the whole thing down.
+	///
+	/// What the pool could not be is PERMANENT. Thirty tags is three and a half
+	/// rows of chips paid for out of the rail's two lists on every screen, whether
+	/// anything is being filtered or not, so it collapses -- and what stands in
+	/// its place is a row that names it and counts it, because the fault it was
+	/// built to fix was a feature being read as absent.
+	///
+	/// Collapsed, a filter that is ON still speaks: the chips holding it come out
+	/// and stand on their own. A rail hiding Diamonds for a reason it will not
+	/// give is the same fault one size worse, and the alternative -- forcing the
+	/// pool open whenever anything filters -- hands the reader's own choice back
+	/// to them on the click that needed it least.
 	function renderTagFilter() {
 		if (!diamondFilter) return;
 		// A pool taller than its cap scrolls, and a repaint that lost the scroll
@@ -8759,13 +8822,25 @@ import init, {
 			return;
 		}
 		diamondFilter.style.display = '';
-		var row = document.createElement('div');
-		row.className = 'tagf-pool';
-		row.setAttribute('role', 'group');
-		row.setAttribute('aria-label', t('tag.all'));
-		pool.forEach(function (tag) { row.appendChild(poolChip(tag)); });
-		diamondFilter.appendChild(row);
-		row.scrollTop = top;
+		diamondFilter.appendChild(tagPoolToggle(pool.length));
+		if (tagPoolOpen) {
+			var row = document.createElement('div');
+			row.className = 'tagf-pool';
+			row.setAttribute('role', 'group');
+			row.setAttribute('aria-label', t('tag.all'));
+			pool.forEach(function (tag) { row.appendChild(poolChip(tag)); });
+			diamondFilter.appendChild(row);
+			row.scrollTop = top;
+		} else if (tagFiltering()) {
+			// The same chips, from the same call, in the same order -- only fewer
+			// of them. Nothing here is a second surface to keep in step with the
+			// pool: a chip in this row IS a pool chip, standing somewhere else.
+			var act = tagfRow('tagf-active');
+			act.setAttribute('role', 'group');
+			act.setAttribute('aria-label', t('tag.active_aria'));
+			pool.forEach(function (tag) { if (tagState(tag)) act.appendChild(poolChip(tag)); });
+			diamondFilter.appendChild(act);
+		}
 		if (tagFiltering()) {
 			var ctl = tagfRow('tagf-ctl');
 			// Offered only where it can change the answer: with one wanted tag
@@ -8781,13 +8856,14 @@ import init, {
 		fitTagFilter();
 	}
 
-	/// The pool is rail furniture, and the two lists below share what the
-	/// furniture leaves. It wraps when the chips outrun the rail's width and
-	/// takes a second row when something is filtering; either way the height
-	/// comes off the Chats list alone and quietly moves the divider. So say what
-	/// a window resize says -- but only when the height really moved, since a
-	/// filter is changed far more often than the furniture around it.
-	var tagFilterH = 0;         // the pool's height at its last paint
+	/// The filter is rail furniture, and the two lists below share what the
+	/// furniture leaves. It wraps when the chips outrun the rail's width, takes a
+	/// row when something is filtering, and takes or gives back the whole pool
+	/// when the disclosure is worked; every one of those changes the height, which
+	/// otherwise comes off the Chats list alone and quietly moves the divider. So
+	/// say what a window resize says -- but only when the height really moved,
+	/// since a filter is changed far more often than the furniture around it.
+	var tagFilterH = 0;         // the filter's height at its last paint
 	function fitTagFilter() {
 		if (!diamondFilter) return;
 		var h = diamondFilter.offsetHeight;

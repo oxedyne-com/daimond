@@ -919,6 +919,17 @@
 	'tag.mode_aria':     'How the chosen tags combine',
 	'tag.clear_all':     'Clear',
 	'tag.clear_all_help': 'Take every tag out of the filter',
+	// The one row the pool of chips sits behind, under the search box. It is
+	// there whenever a tag is, because a filter nobody can see is a filter
+	// nobody finds -- and it is only a row, because a vocabulary of thirty tags
+	// standing open costs the rail's two lists four rows on every screen.
+	// {n} is how many tags are behind it.
+	'tag.pool_toggle':    'Filter by tag ({n})',
+	'tag.pool_show_help': 'Show every tag you can filter on',
+	'tag.pool_hide_help': 'Put the tags away. Anything you are filtering on stays on, and stays on show.',
+	// The chips that are doing the filtering, shown on their own while the tags
+	// are put away.
+	'tag.active_aria':    'Tags the rail is filtering on',
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help':        'Delete the tag "{tag}" everywhere',
 	'tag.delete_title':       'Delete this tag?',

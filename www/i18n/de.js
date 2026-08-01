@@ -925,6 +925,17 @@
 	'tag.mode_aria': 'Wie die gewählten Tags zusammenwirken',
 	'tag.clear_all': 'Leeren',
 	'tag.clear_all_help': 'Jeden Tag aus dem Filter nehmen',
+	// The one row the pool of chips sits behind, under the search box. It is
+	// there whenever a tag is, because a filter nobody can see is a filter
+	// nobody finds -- and it is only a row, because a vocabulary of thirty tags
+	// standing open costs the rail's two lists four rows on every screen.
+	// {n} is how many tags are behind it.
+	'tag.pool_toggle': 'Nach Tag filtern ({n})',
+	'tag.pool_show_help': 'Alle Tags zeigen, nach denen du filtern kannst',
+	'tag.pool_hide_help': 'Die Tags wegräumen. Was du im Filter hast, bleibt drin und bleibt sichtbar.',
+	// The chips that are doing the filtering, shown on their own while the tags
+	// are put away.
+	'tag.active_aria': 'Tags, nach denen die Seitenleiste filtert',
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help': 'Den Tag „{tag}“ überall löschen',
 	'tag.delete_title': 'Diesen Tag löschen?',

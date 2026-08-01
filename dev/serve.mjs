@@ -47,6 +47,43 @@ function proxy(req, res) {
 	req.pipe(up);
 }
 
+// A WebSocket upgrade on an /api path is relayed to the gateway and then left
+// alone, which is what Steel's own proxy does (fe2o3_steel::srv::wsproxy): the
+// handshake is forwarded verbatim so the gateway computes the accept value the
+// browser checks, and after the 101 this hop copies bytes and parses nothing.
+// Without it the sync wake channel could only be tested in production.
+function proxyUpgrade(req, socket, head) {
+	if (!(req.url || '').startsWith('/api/')) { socket.destroy(); return; }
+	const up = http.request({
+		host: GATEWAY.host, port: GATEWAY.port,
+		method: req.method, path: req.url, headers: req.headers,
+	});
+	up.on('upgrade', (ures, usocket, uhead) => {
+		const lines = [`HTTP/1.1 ${ures.statusCode} ${ures.statusMessage}`];
+		for (let i = 0; i < ures.rawHeaders.length; i += 2) {
+			lines.push(`${ures.rawHeaders[i]}: ${ures.rawHeaders[i + 1]}`);
+		}
+		socket.write(lines.join('\r\n') + '\r\n\r\n');
+		if (uhead && uhead.length) socket.write(uhead);
+		if (head && head.length) usocket.write(head);
+		usocket.pipe(socket);
+		socket.pipe(usocket);
+		const shut = () => { usocket.destroy(); socket.destroy(); };
+		usocket.on('error', shut); socket.on('error', shut);
+		usocket.on('close', shut); socket.on('close', shut);
+	});
+	// The gateway answered without upgrading (a 401, say). Pass that on whole, so
+	// the browser reports a refusal rather than a connection that vanished.
+	up.on('response', ures => {
+		socket.write(`HTTP/1.1 ${ures.statusCode} ${ures.statusMessage}\r\n`
+			+ 'Content-Length: 0\r\nConnection: close\r\n\r\n');
+		ures.resume();
+		socket.end();
+	});
+	up.on('error', () => socket.destroy());
+	up.end();
+}
+
 const server = http.createServer(async (req, res) => {
 	const url = decodeURIComponent((req.url || '/').split('?')[0]);
 	if (url.startsWith('/api/') || url.startsWith('/webhook/')) return proxy(req, res);
@@ -69,6 +106,8 @@ const server = http.createServer(async (req, res) => {
 		res.end('Not found: ' + url);
 	}
 });
+
+server.on('upgrade', proxyUpgrade);
 
 server.listen(PORT, 'localhost', () => {
 	console.log(`Daimond dev server → http://localhost:${PORT}`);

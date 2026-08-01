@@ -7,10 +7,22 @@
 // The filter used to be drawn only once a tag had been clicked, and the only
 // chip to click sat on a Diamond box -- so the space under the search box, which
 // is where a filter goes, was empty until you had already found another way in.
-// It is a POOL now: every tag in use, standing there, each chip cycling
-// off -> wanted -> refused -> off where it sits. The checks that used to read a
-// summary read the pool instead; the ones that asserted a summary chip's closer
-// now assert the stronger thing, that a pool chip's text is the bare tag.
+// It is a POOL now: every tag in use, each chip cycling off -> wanted ->
+// refused -> off where it sits. The checks that used to read a summary read the
+// pool instead; the ones that asserted a summary chip's closer now assert the
+// stronger thing, that a pool chip's text is the bare tag.
+//
+// The pool STOOD, and that was a rent it could not pay: thirty tags is three and
+// a half rows of chips under the search box on every screen, whether anything is
+// being filtered or not, and the rail's two lists live on what is left. It sits
+// behind a DISCLOSURE now -- one muted row naming the feature and counting what
+// is behind it, in the place and the ink of the "No tags yet" line, so the
+// question "is there a filter here?" is answered before it is asked either way.
+// The checks that asserted the pool stands by default now assert the disclosure
+// stands by default: what is superseded is the pool being permanently up, not
+// the pool. Two properties are new and load-bearing -- the choice is kept across
+// a reload, and a filter that is ON is never invisible, because closed the chips
+// holding it come out and stand on their own.
 
 import fs from 'node:fs';
 import { open, shot, errors, signInAs, mockLog, clearMockLog, scratch } from './harness.mjs';
@@ -41,6 +53,27 @@ const wasm = (fn, arg) => page.evaluate(async ({ src, arg }) => {
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	return await (new Function('app', 'arg', `return (${src})(app, arg);`))(app, arg);
 }, { src: fn.toString(), arg });
+
+/// How the rail's two lists are sharing it. The furniture above them is cut out
+/// of the same column, so anything that changes the furniture's height has to
+/// make that cut again or the divider walks.
+const shareOn = (pg) => pg.evaluate(() => {
+	const l = document.getElementById('diamond-list').getBoundingClientRect().height;
+	const c = document.getElementById('session-list').getBoundingClientRect().height;
+	return { list: Math.round(l), sess: Math.round(c), share: +(l / (l + c)).toFixed(3),
+		handle: !!document.getElementById('handle-rail-split') };
+});
+
+/// Open or close the pool, by the one control a user has for it. A no-op when it
+/// is already the way round it was asked for.
+const setPoolOn = async (pg, want) => {
+	const now = await pg.$eval('#diamond-filter .tagf-toggle',
+		b => b.getAttribute('aria-expanded') === 'true').catch(() => null);
+	if (now === null || now === want) return now;
+	await pg.click('#diamond-filter .tagf-toggle', { force: true });
+	await pg.waitForTimeout(400);
+	return want;
+};
 
 // ── The search box is there before anything else is ──────────────
 check(await page.isVisible('#diamond-search'), 'search box visible with zero Diamonds (not hidden behind a count)');
@@ -186,9 +219,100 @@ const poolClick = async (tag) => {
 const poolOff = async (tag) => {
 	for (let i = 0; i < 3 && stateOf(await poolState(), tag) !== 'off'; i++) await poolClick(tag);
 };
+/// One click on a tag chip on a Diamond BOX -- the other way into the filter,
+/// and the only one there is while the pool is closed.
+const clickTag = async (name) => {
+	await page.$$eval('.session-box-meta .tag-chip', (els, n) => {
+		for (const e of els) if (e.textContent === n) { e.click(); return; }
+	}, name);
+	await page.waitForTimeout(400);
+};
+
+// ── The disclosure the pool sits behind ──────────────────────────
+// One row, always there once a tag is, naming the feature and counting what is
+// behind it. This is the whole of the answer to both faults at once: a reader
+// who goes looking under the search box finds the filter named, and a reader
+// who never touches it pays one line for it instead of four.
+
+/// The disclosure row: what it says, what it is holding, and how much of the
+/// rail it takes -- a label is a word to hit, a row is a row.
+const disc = () => page.evaluate(() => {
+	const b = document.querySelector('#diamond-filter .tagf-toggle');
+	if (!b) return null;
+	const f = document.getElementById('diamond-filter');
+	const chev = document.querySelector('#diamond-filter .tagf-chev');
+	const cs = chev ? getComputedStyle(chev) : null;
+	return {
+		text: b.textContent.trim(),
+		open: b.getAttribute('aria-expanded') === 'true',
+		pool: !!document.querySelector('#diamond-filter .tagf-pool'),
+		w:    Math.round(b.getBoundingClientRect().width),
+		fw:   Math.round(f.getBoundingClientRect().width),
+		// The chevron must be INK, not a character: borders on an empty box,
+		// turned. A font glyph would be one missing-glyph box away from saying
+		// nothing at all, in a UI that ships eight languages.
+		chev: cs ? { rt: cs.borderRightWidth, bt: cs.borderBottomWidth,
+			tr: cs.transform, txt: chev.textContent } : null,
+	};
+});
+/// What the filter is saying while the pool is CLOSED: the chips that are
+/// holding it, standing on their own.
+const astate = () => page.evaluate(() => {
+	const f   = document.getElementById('diamond-filter');
+	const row = f && f.querySelector('.tagf-active');
+	const chips = row ? [...row.querySelectorAll('.tag-chip')] : [];
+	return {
+		row:  !!row,
+		pool: !!(f && f.querySelector('.tagf-pool')),
+		ctl:  !!(f && f.querySelector('.tagf-ctl')),
+		chips: chips.map(c => ({
+			t: c.textContent,
+			s: c.classList.contains('tag-inc') ? 'inc' : c.classList.contains('tag-no') ? 'exc' : 'off',
+		})),
+	};
+});
+/// One click on a chip in the collapsed active row.
+const actClick = async (tag) => {
+	const hit = await page.$$eval('#diamond-filter .tagf-active .tag-chip', (els, n) => {
+		for (const e of els) if (e.textContent === n) { e.click(); return true; }
+		return false;
+	}, tag);
+	if (!hit) check(false, `the active row offers a "${tag}" chip to click`);
+	await page.waitForTimeout(400);
+};
+
+const d0 = await disc();
+check(!!d0 && !d0.pool,
+	`the pool is DOWN by default -- it is rent the rail pays on every screen: ${JSON.stringify(d0)}`);
+check(!!d0 && d0.open === false, 'and the disclosure says so, in the attribute a screen reader reads');
+check(!!d0 && /Filter by tag/.test(d0.text) && /\(2\)/.test(d0.text),
+	`the row names the feature and counts what is behind it: ${JSON.stringify(d0 && d0.text)}`);
+// The fault this replaces was a feature read as ABSENT, twice. A row that hid
+// its own count would be the same mistake: "Filter by tag" with nothing behind
+// it and "Filter by tag" with twelve are different offers.
+check(!!d0 && d0.w >= d0.fw - 1,
+	`and the whole row is the target, not the words -- at 250px a rail is mostly empty on the right: ${d0 && d0.w}px of ${d0 && d0.fw}px`);
+check(!!d0 && !!d0.chev && parseFloat(d0.chev.rt) > 0 && parseFloat(d0.chev.bt) > 0
+	&& d0.chev.tr !== 'none' && d0.chev.txt === '',
+	`the chevron is drawn in CSS, not typed: ${JSON.stringify(d0 && d0.chev)}`);
+check(!!d0 && !/[▸▾►▼▶#⌄›»→]/.test(d0.text),
+	`so no glyph rides in the label's text, where a missing font would eat it: ${JSON.stringify(d0 && d0.text)}`);
+await shot(s, 'tags-pool-collapsed');
+
+// Opening it, and the divider not moving when it does. The furniture grows by
+// a whole pool here; the two lists below are cut out of the same column.
+const shareShut = await shareOn(page);
+await setPoolOn(page, true);
+const dOpen = await disc();
+const shareOpen = await shareOn(page);
+check(!!dOpen && dOpen.open && dOpen.pool, 'one click opens the pool, and the row says which way it is now');
+check(shareOpen.list + shareOpen.sess < shareShut.list + shareShut.sess,
+	`opening it really does take height off the two lists: ${shareShut.list + shareShut.sess}px -> ${shareOpen.list + shareOpen.sess}px`);
+check(Math.abs(shareOpen.share - shareShut.share) <= 0.03,
+	`and the divider holds its share rather than walking: ${shareShut.share} -> ${shareOpen.share}`);
 
 check(await page.isVisible('#diamond-filter .tagf-pool'),
-	'the tag pool stands under the search box the moment a tag exists, with nothing clicked');
+	'the tag pool is one click under the search box the moment a tag exists');
 check(JSON.stringify(await poolText()) === JSON.stringify(['person', 'rust']),
 	`and holds the tags actually in use, sorted: ${JSON.stringify(await poolText())}`);
 // The editor offers `project`, `topic` and `org` whatever the store holds. The
@@ -202,6 +326,50 @@ check((await poolText()).every(x => x === x.trim() && !/[×¬]/.test(x)),
 	`a pool chip's text is the bare tag -- no closer, no mark: ${JSON.stringify(await poolText())}`);
 await shot(s, 'tags-pool-idle');
 await shot(s, 'tags-chips-no-hint');
+
+// ── The choice is kept, and a live filter is never invisible ─────
+// Opening the pool is a habit of working, like the ALL/ANY mode, so it lasts
+// past the page. Closing it must not take the FILTER with it: a rail that is
+// hiding Diamonds and will not say why is the fault this whole surface exists
+// to avoid, one size worse than the one it replaced.
+await setPoolOn(page, false);
+await page.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'tags');
+await page.waitForTimeout(1500);
+const dReload = await disc();
+check(!!dReload && !dReload.open && !dReload.pool,
+	`the pool stays down across a reload, because that is what was chosen: ${JSON.stringify(dReload)}`);
+
+// The one path that reaches the filter with the pool closed: a chip on a
+// Diamond box. It must surface the state where the pool would have shown it.
+await clickTag('person');
+const aInc = await astate();
+check(aInc.row && !aInc.pool && JSON.stringify(aInc.chips) === JSON.stringify([{ t: 'person', s: 'inc' }]),
+	`closed, a filter puts its OWN chips up rather than nothing: ${JSON.stringify(aInc)}`);
+check(aInc.ctl, 'and the controls that are not tags come with them, exactly as they do open');
+// Only "Ship a CSV parser" carries a tag at this point in the pass.
+check((await boxes()).length === 1, 'the filter really is on while the pool is down');
+await shot(s, 'tags-pool-collapsed-active');
+// The same chip, cycling the same way it does in the pool -- it IS a pool chip,
+// standing somewhere else, so there is no second behaviour to keep in step.
+await actClick('person');
+const aExc = await astate();
+check(JSON.stringify(aExc.chips) === JSON.stringify([{ t: 'person', s: 'exc' }])
+	&& (await boxes()).length === 2,
+	`a chip in the active row cycles in place, and refusing takes its carrier off the rail: ${JSON.stringify(aExc)}, ${JSON.stringify(await boxes())}`);
+await actClick('person');
+const aOff = await astate();
+check(!aOff.row && !aOff.ctl && !aOff.pool && (await boxes()).length === 3,
+	`and the row goes when the last tag comes off the filter, leaving the one row: ${JSON.stringify(aOff)}`);
+// Opening it while a filter is on shows the state IN the pool, where each chip
+// already carries its own -- so the two rows are never both saying it.
+await clickTag('person');
+await setPoolOn(page, true);
+const aOpen = await astate();
+check(!aOpen.row && aOpen.pool && stateOf(await poolState(), 'person') === 'inc',
+	`open, the active row stands down: the pool chip is already wearing the state: ${JSON.stringify(aOpen)}`);
+await page.click('#diamond-filter .tag-clear-all', { force: true });
+await page.waitForTimeout(400);
 
 // ── And comes back when the last tag goes ────────────────────────
 // The state the user was actually left in when the sync bug ate the tag set:
@@ -291,12 +459,6 @@ await search('');
 check((await boxes()).length === 3, 'clearing the search box restores the list');
 
 // ── Filter by clicking a chip ────────────────────────────────────
-const clickTag = async (name) => {
-	await page.$$eval('.session-box-meta .tag-chip', (els, n) => {
-		for (const e of els) if (e.textContent === n) { e.click(); return; }
-	}, name);
-	await page.waitForTimeout(400);
-};
 await clickTag('person');
 const filtered = await boxes();
 check(filtered.length === 2 && filtered.includes('Mum birthday plan') && filtered.includes('Ship a CSV parser'),
@@ -447,6 +609,12 @@ check(!afterBoot.up && (await boxes()).length === 3,
 check(afterBoot.shown && !afterBoot.ctl
 	&& JSON.stringify(afterBoot.pool) === JSON.stringify(['family', 'gifts', 'person', 'rust', 'urgent']),
 	`but the pool itself comes straight back on a hard reload, every chip off: ${JSON.stringify(afterBoot.pool)}`);
+// Open, because it was left open. The other half of the kept choice: closed
+// survived a reload above, and so does open -- it is one preference, not a
+// default that only bites one way.
+const dBoot = await disc();
+check(!!dBoot && dBoot.open === true,
+	`and comes back OPEN, because that is the way it was left: ${JSON.stringify(dBoot)}`);
 check(!(await page.isVisible('#diamond-tag-hint')),
 	'and the empty-pool hint stays away, because it keys off tags existing, not off filtering');
 await clickTag('person');
@@ -701,6 +869,24 @@ const bKill = async (name) => {
 // for a Diamond box. Dismiss it exactly as a user would.
 const adminX = await bp.$('#admin-close');
 if (adminX && await adminX.isVisible()) { await adminX.click({ force: true }); await bp.waitForTimeout(400); }
+// A profile that has never been touched, holding five restored tags: the pool
+// is down and the row that names it is up. The first session proved the default
+// on a store it had built; this proves it on a disk it has never seen.
+const bFresh = await bp.evaluate(() => {
+	const b = document.querySelector('#diamond-filter .tagf-toggle');
+	return { row: !!b, open: b ? b.getAttribute('aria-expanded') === 'true' : null,
+		text: b ? b.textContent.trim() : null,
+		pool: !!document.querySelector('#diamond-filter .tagf-pool') };
+});
+check(bFresh.row && bFresh.open === false && !bFresh.pool && /\(\d+\)/.test(bFresh.text || ''),
+	`a fresh profile opens with the pool down and its count on the row: ${JSON.stringify(bFresh)}`);
+await setPoolOn(bp, true);
+// The count on the closed row is the promise; the chips are what it is a
+// promise OF. A number that did not match what opening gives you would be worse
+// than no number, and it is read from the store rather than from the chips.
+const bCount = await bp.$$eval('#diamond-filter .tagf-pool .tag-chip', els => els.length);
+check(bCount > 0 && +((bFresh.text || '').match(/\((\d+)\)/) || [])[1] === bCount,
+	`and the count it promised is the number of chips behind it: ${JSON.stringify(bFresh.text)} -> ${bCount} chips`);
 // The editor is opened FIRST, on "Ship a CSV parser": the pool only offers what
 // is not already on the Diamond being edited, and the filter below is built out
 // of tags that are on another one. The editor lives in the centre; the rail it
@@ -737,12 +923,7 @@ check(!afterIncKill.pool.includes('family') && !afterIncKill.pool.includes('gift
 // height has to make that cut again, or the height comes off the Chats list
 // alone and the divider walks up the rail a row at a time. Here the change is
 // live and small: a click raises the controls row under the pool.
-const shareOf = () => bp.evaluate(() => {
-	const l = document.getElementById('diamond-list').getBoundingClientRect().height;
-	const c = document.getElementById('session-list').getBoundingClientRect().height;
-	return { list: Math.round(l), sess: Math.round(c), share: +(l / (l + c)).toFixed(3),
-		handle: !!document.getElementById('handle-rail-split') };
-});
+const shareOf = () => shareOn(bp);
 const beforeCtl = await shareOf();
 await bClickTag('person');                  // raises .tagf-ctl: the furniture grows a row
 const withCtl = await shareOf();
@@ -776,6 +957,12 @@ await signInAs(b, 'tagsB');
 await bp.waitForTimeout(1800);
 const adminX2 = await bp.$('#admin-close');
 if (adminX2 && await adminX2.isVisible()) { await adminX2.click({ force: true }); await bp.waitForTimeout(400); }
+// Left open, so it comes up open -- on a store that now has a real vocabulary
+// in it, which is the case where the choice is worth most either way.
+const bBig = await bp.$eval('#diamond-filter .tagf-toggle',
+	el => ({ open: el.getAttribute('aria-expanded') === 'true', text: el.textContent.trim() })).catch(() => null);
+check(!!bBig && bBig.open && /\(3\d\)/.test(bBig.text),
+	`the kept choice survives the vocabulary arriving, and the count follows it: ${JSON.stringify(bBig)}`);
 const big = await bp.evaluate(() => {
 	const el   = document.querySelector('#diamond-filter .tagf-pool');
 	const list = document.getElementById('diamond-list');
@@ -841,6 +1028,44 @@ await shot(b, 'tags-pool-many-scrolled');
 await bp.evaluate(() => { const c = document.querySelector('.tag-clear-all'); if (c) c.click(); });
 await bp.waitForTimeout(300);
 
+// ── Putting a full pool away gives the rail back ─────────────────
+// The whole point of the disclosure, measured: with a real vocabulary in it the
+// pool is three and a half rows of furniture, and closing it must hand every
+// pixel of that to the two lists WITHOUT moving the divider between them.
+const bigOpen = await shareOf();
+await setPoolOn(bp, false);
+const bigShut = await shareOf();
+check(bigShut.list + bigShut.sess > bigOpen.list + bigOpen.sess + 40,
+	`closing a full pool gives the rail back a real amount: ${bigOpen.list + bigOpen.sess}px -> ${bigShut.list + bigShut.sess}px`);
+check(Math.abs(bigShut.share - bigOpen.share) <= 0.03,
+	`and the divider does not drift for it: ${bigOpen.share} -> ${bigShut.share}`);
+// Closed, with 36 tags filed, the whole filter is one row.
+const bigRow = await bp.evaluate(() => {
+	const f = document.getElementById('diamond-filter');
+	return f ? Math.round(f.getBoundingClientRect().height) : 0;
+});
+check(bigRow > 0 && bigRow <= 26,
+	`and 36 tags cost the rail one row instead of four: the filter is ${bigRow}px tall`);
+await shot(b, 'tags-pool-many-collapsed');
+// A filter built while it is closed still speaks, at this size too.
+await bClickTag('alpha-0');
+const bigAct = await bp.evaluate(() => {
+	const row = document.querySelector('#diamond-filter .tagf-active');
+	return { chips: row ? [...row.querySelectorAll('.tag-chip')].map(c => c.textContent) : null,
+		pool: !!document.querySelector('#diamond-filter .tagf-pool'),
+		ctl: !!document.querySelector('#diamond-filter .tagf-ctl') };
+});
+check(!!bigAct.chips && JSON.stringify(bigAct.chips) === JSON.stringify(['alpha-0'])
+	&& !bigAct.pool && bigAct.ctl,
+	`one tag filtering out of 36 shows ONE chip, not 36: ${JSON.stringify(bigAct)}`);
+const bigActShare = await shareOf();
+check(Math.abs(bigActShare.share - bigOpen.share) <= 0.03,
+	`and the divider holds when that row arrives: ${bigShut.share} -> ${bigActShare.share}`);
+await shot(b, 'tags-pool-many-collapsed-active');
+await bp.evaluate(() => { const c = document.querySelector('.tag-clear-all'); if (c) c.click(); });
+await bp.waitForTimeout(300);
+await setPoolOn(bp, true);
+
 // ── The phone drawer ─────────────────────────────────────────────
 // The rail is a drawer there, 380px of a 390px screen, and the pool is the
 // first thing under the search box on it.
@@ -873,6 +1098,22 @@ check(!!phone && phone.h <= 80 && phone.right <= phone.vw,
 check(!!phone && phone.contain === 'contain',
 	`and its own scroll does not become the drawer's: ${JSON.stringify(phone && phone.contain)}`);
 await shot(b, 'tags-pool-phone');
+// And the row it collapses to, on the same screen: the drawer is where the rent
+// is dearest -- a phone shows a handful of Diamonds at a time, and four rows of
+// chips is most of what a thumb came for.
+await setPoolOn(bp, false);
+const phoneShut = await bp.evaluate(() => {
+	const b2 = document.querySelector('#diamond-filter .tagf-toggle');
+	const f  = document.getElementById('diamond-filter');
+	if (!b2 || !f) return null;
+	const r = b2.getBoundingClientRect(), fr = f.getBoundingClientRect();
+	return { text: b2.textContent.trim(), h: Math.round(fr.height),
+		w: Math.round(r.width), right: Math.round(r.right), vw: window.innerWidth,
+		pool: !!document.querySelector('#diamond-filter .tagf-pool') };
+});
+check(!!phoneShut && !phoneShut.pool && phoneShut.h <= 26 && phoneShut.right <= phoneShut.vw,
+	`the phone drawer collapses to one row inside the screen: ${JSON.stringify(phoneShut)}`);
+await shot(b, 'tags-pool-phone-collapsed');
 await bp.setViewportSize({ width: 1400, height: 900 });
 await bp.waitForTimeout(500);
 
