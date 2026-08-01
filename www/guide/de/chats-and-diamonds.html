@@ -33,7 +33,7 @@
 
 <main>
 	<h1>Chats &amp; Diamonds</h1>
-	<p class="lede">Ein Chat ist ein Gespräch mit dem Daimon. Ein Diamond ist ein dauerhafter Behälter für ein Vorhaben — dort liegt, was Sie über ein Stück Arbeit herausgearbeitet haben, damit spätere Arbeit davon ausgeht. Diese Seite behandelt das Beginnen und Lesen von Chats, die Bedienelemente für Züge, das Einklappen eines Chats in ein Diamond und das Ordnen der Diamonds, die sich ansammeln.</p>
+	<p class="lede">Ein Chat ist ein Gespräch mit dem Daimon. Ein Diamond ist ein dauerhafter Behälter für ein Vorhaben — dort liegt, was Sie über ein Stück Arbeit herausgearbeitet haben, damit spätere Arbeit davon ausgeht. Diese Seite behandelt das Beginnen und Lesen von Chats, die Bedienelemente für Züge, das Einklappen eines Chats in ein Diamond, den Arbeitsbereich, in dem ein Diamond arbeitet, und das Ordnen der Diamonds, die sich ansammeln.</p>
 
 	<h2>Einen Chat beginnen und zu ihm zurückkehren</h2>
 	<p>Wählen Sie <span class="ui">Neuer Chat</span> — das <strong>＋</strong> neben <strong>Chats</strong> oben in der Leiste. Tippen Sie in das Feld unten im mittleren Bereich und senden Sie mit <span class="ui">➤</span>. Jeder Chat, den Sie beginnen, steht unter <strong>Chats</strong> in der Leiste; klicken Sie einen an, um ihn in die Mitte zurückzuholen. Ein neuer Chat startet mit Ihrem Standardmodell; das Modell nur für diesen Chat ändern Sie über die Auswahl in seiner Kopfzeile.</p>
@@ -126,10 +126,22 @@
 
 	<div class="note">Eine Datei, die Sie inzwischen umbenannt oder gelöscht haben, <strong>sagt das</strong> auch, wenn Sie sie öffnen wollen, statt stillschweigend nichts zu tun. Eine Liste toter Verweise, die etwas anderes vorgibt, ist schlimmer als gar keine Liste.</div>
 
-	<h2>Arbeiter losschicken</h2>
-	<p>Manche Aufgaben wollen getane Arbeit und nicht bloß festgehaltene. Dafür schickt der Dirigent des Diamonds einen <strong>Arbeiter-Agenten</strong> los. Jeder Arbeiter läuft in seinem eigenen Kontext mit den Dateiwerkzeugen des Arbeitsbereichs und bekommt die ständigen Anweisungen und den Kristall dieses Diamonds. Dieser Kristall ist alles, was er über Ihr Vorhaben weiß — ein Arbeiter kann Ihr Gespräch nicht sehen, die Aufgabe, die er bekommt, muss also alles Übrige sagen, was er braucht.</p>
+	<h2>Der Arbeitsbereich eines Diamonds</h2>
+	<p>Ein Diamond hat einen <strong>Arbeitsbereich</strong>: die Dateien und Ordner, die Sie bei ihm behalten. Sie legen sie dort ab — ein Daimon kann seinem eigenen Arbeitsbereich nichts hinzufügen, er arbeitet also mit dem, was er bekommen hat, und fragt Sie, wenn er mehr braucht.</p>
 
-	<p>Bis zu <strong>acht</strong> Arbeiter laufen gleichzeitig; der Rest wartet. Der Dirigent schickt sie los, und damit endet sein Zug: Er empfängt ihre Ausgabe nicht. Jeder meldet eine Zusammenfassung, und Sie klappen die von Hand ein, die es wert sind — was die Wahl, was in einen Kristall kommt, bei Ihnen belässt. Laufende Durchgänge erscheinen im Panel <strong>Agenten</strong> im Dock.</p>
+	<p><strong>Er ist eine Sicht auf Ihre Dateien, kein Kasten, der sie enthält.</strong> Beim Behalten wird nichts kopiert: Die Datei bleibt, wo sie ist, und das Diamond zeigt auf sie. Behalten Sie denselben Ordner bei zwei Diamonds, gibt es ihn immer noch nur einmal — eine Änderung über das eine ist die Datei, die das andere liest. Etwas aus dem Arbeitsbereich eines Diamonds zu nehmen heißt nur, es nicht mehr dort zu behalten; die Datei selbst bleibt unberührt, und nur ein absichtliches Löschen entfernt sie. Das Wort lässt Sie eine Kopie erwarten, und es gibt keine.</p>
+
+	<p>Ein Diamond hat außerdem einen eigenen Ordner, immer in seinem Arbeitsbereich und immer beschreibbar, damit sein Daimon einen Platz zum Arbeiten hat, bevor Sie irgendetwas bei ihm behalten haben — dort liegt der Kristall. Ein Ordner kann auch so behalten werden, dass er <strong>eingesehen statt bearbeitet wird</strong>, was einem Daimon erlaubt, ihn zu lesen, und jeden Schreibzugriff verweigert. Und das Panel <a href="email-web-files.html">Arbeitsbereich</a> zeigt entweder alle Ihre Dateien oder nur die, die dieses Diamond behält, je nachdem, was zur Arbeit vor Ihnen passt.</p>
+
+	<h3>Was ein Daimon öffnen kann</h3>
+	<p><strong>Ein Daimon kann nur die Dateien im Arbeitsbereich seines Diamonds öffnen.</strong> Nichts außerhalb davon ist lesbar oder beschreibbar — weder für den Daimon noch für einen Arbeiter, den er losschickt. Das ist keine Anweisung in einem Prompt, an die ein Modell sich halten kann oder auch nicht: Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt im veröffentlichten Bundle, das reproduzierbar gebaut wird. Es ist also eine Behauptung, die Sie prüfen können, und keine, die Sie glauben müssen.</p>
+
+	<p>Was diese Grenze nicht abdeckt, gehört im selben Atemzug gesagt. Sie regelt, woran ein Daimon herankommt, nicht, wo das Gelesene landet: Was er öffnet, geht mit dem Rest des Zugs an Ihren Modellanbieter. Und sie schützt vor einem Agenten, der sich irrt oder zu etwas überredet worden ist: Ein Zug, der eben eine Webseite oder eine E-Mail mit Anweisungen eines Fremden gelesen hat und sich in dessen Auftrag auf die Suche gemacht hat, erreicht trotzdem nichts außerhalb des Arbeitsbereichs dieses Diamonds. Sie schützt nicht vor einem Anbieter, der missbraucht, was Sie ihm schicken, und nicht vor einem Build, der nicht der ist, den wir veröffentlicht haben; darauf antworten andere Dinge: <a href="accounts.html">was den Browser verlässt</a> und das <a href="interface.html">versiegelte Register jedes Builds</a> — diese Grenze nicht.</p>
+
+	<h2>Arbeiter losschicken</h2>
+	<p>Manche Aufgaben wollen getane Arbeit und nicht bloß festgehaltene. Dafür schickt der Daimon des Diamonds einen <strong>Arbeiter-Agenten</strong> los. Jeder Arbeiter läuft in seinem eigenen Kontext mit den Dateiwerkzeugen des Arbeitsbereichs und bekommt die ständigen Anweisungen und den Kristall dieses Diamonds. Dieser Kristall ist alles, was er über Ihr Vorhaben weiß — ein Arbeiter kann Ihr Gespräch nicht sehen, die Aufgabe, die er bekommt, muss also alles Übrige sagen, was er braucht.</p>
+
+	<p>Bis zu <strong>acht</strong> Arbeiter laufen gleichzeitig; der Rest wartet. Der Daimon schickt sie los, und damit endet sein Zug: Er empfängt ihre Ausgabe nicht. Jeder meldet eine Zusammenfassung, und Sie klappen die von Hand ein, die es wert sind — was die Wahl, was in einen Kristall kommt, bei Ihnen belässt. Laufende Durchgänge erscheinen im Panel <strong>Agenten</strong> im Dock.</p>
 
 	<h3>Agenten anhalten und stoppen</h3>
 	<p>Die Kopfzeile des Agenten-Panels trägt drei Bedienelemente, die auf <em>alle</em> Agenten auf einmal wirken, und dieselben drei sitzen auf jeder Kachel, damit Sie auf einen einzelnen wirken können:</p>

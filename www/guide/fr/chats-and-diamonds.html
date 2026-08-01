@@ -33,7 +33,7 @@
 
 <main>
 	<h1>Chats &amp; Diamonds</h1>
-	<p class="lede">Un chat est une conversation avec le daimon. Un Diamond est un contenant durable pour un travail suivi — l’endroit où est gardé ce que vous avez tiré au clair sur ce travail, pour que la suite reparte de là. Cette page couvre le démarrage et la lecture des chats, les contrôles de tour, le repliage d’un chat dans un Diamond, et l’organisation des Diamonds qui s’accumulent.</p>
+	<p class="lede">Un chat est une conversation avec le daimon. Un Diamond est un contenant durable pour un travail suivi — l’endroit où est gardé ce que vous avez tiré au clair sur ce travail, pour que la suite reparte de là. Cette page couvre le démarrage et la lecture des chats, les contrôles de tour, le repliage d’un chat dans un Diamond, l’espace de travail dans lequel un Diamond travaille, et l’organisation des Diamonds qui s’accumulent.</p>
 
 	<h2>Démarrer un chat et y revenir</h2>
 	<p>Choisissez <span class="ui">Nouveau chat</span> — le <strong>＋</strong> à côté de <strong>Chats</strong> en haut de la barre latérale. Tapez dans la zone en bas du panneau central et envoyez avec <span class="ui">➤</span>. Chaque chat que vous démarrez est listé sous <strong>Chats</strong> dans la barre latérale ; cliquez sur l’un d’eux pour le ramener au centre. Un nouveau chat démarre sur votre modèle par défaut ; vous pouvez changer le modèle pour ce seul chat depuis le sélecteur dans son en-tête.</p>
@@ -126,10 +126,22 @@
 
 	<div class="note">Un fichier que vous avez depuis renommé ou supprimé <strong>le dit</strong> quand vous essayez de l’ouvrir, plutôt que de ne rien faire en silence. Une liste de liens morts qui prétend le contraire est pire que pas de liste du tout.</div>
 
-	<h2>Dépêcher des ouvriers</h2>
-	<p>Certaines tâches veulent du travail fait plutôt que seulement consigné. Pour celles-là, le chef d’orchestre du Diamond dépêche un <strong>agent ouvrier</strong>. Chaque ouvrier tourne dans son propre contexte avec les outils de fichiers de l’espace de travail, et reçoit les instructions permanentes ainsi que le cristal de ce Diamond. Ce cristal est tout ce qu’il sait de votre travail — un ouvrier ne voit pas votre conversation, donc la tâche qu’on lui remet doit dire tout le reste dont il a besoin.</p>
+	<h2>L’espace de travail d’un Diamond</h2>
+	<p>Un Diamond a un <strong>espace de travail</strong> : les fichiers et dossiers que vous gardez avec lui. C’est vous qui les y mettez — un daimon ne peut rien ajouter à son propre espace de travail, il travaille donc avec ce qu’on lui a donné et vous demande quand il lui en faut plus.</p>
 
-	<p>Jusqu’à <strong>huit</strong> ouvriers tournent à la fois ; les autres attendent. Le chef d’orchestre les dépêche et son tour s’arrête là : il ne reçoit pas leur production. Chacun rend un résumé, et vous repliez à la main ceux qui valent d’être gardés — c’est ce qui vous laisse le choix de ce qui entre dans un cristal. Les exécutions en cours apparaissent dans le panneau <strong>Agents</strong> du dock.</p>
+	<p><strong>C’est une vue de vos fichiers, pas une boîte qui les contient.</strong> Rien n’est copié quand vous y gardez quelque chose : le fichier reste où il est et le Diamond pointe dessus. Gardez le même dossier avec deux Diamonds et il n’y a toujours qu’un seul dossier — une modification faite par l’un est le fichier que l’autre lit. Sortir quelque chose de l’espace de travail d’un Diamond ne fait que cesser de l’y garder ; le fichier lui-même reste intact, et seule une suppression délibérée l’enlève. Le mot vous invite à attendre une copie, et il n’y en a pas.</p>
+
+	<p>Un Diamond a aussi un dossier à lui, toujours dans son espace de travail et toujours inscriptible, pour que son daimon ait où travailler avant que vous n’y ayez rien gardé — c’est là que vit le cristal. Un dossier peut être gardé pour être <strong>consulté plutôt que modifié</strong>, ce qui laisse un daimon le lire et refuse toute écriture. Et le panneau <a href="email-web-files.html">Espace</a> affiche soit tous vos fichiers, soit seulement ceux que ce Diamond tient, selon ce qui convient au travail devant vous.</p>
+
+	<h3>Ce qu’un daimon peut ouvrir</h3>
+	<p><strong>Un daimon ne peut ouvrir que les fichiers de l’espace de travail de son Diamond.</strong> Rien en dehors n’est lisible ni inscriptible — ni par le daimon, ni par un ouvrier qu’il dépêche. Ce n’est pas une consigne dans un prompt qu’un modèle peut suivre ou non : la vérification est dans le code compilé, à l’unique porte par laquelle passe chaque outil de fichiers, et ce code est dans le paquet publié, qui est construit de façon reproductible. C’est donc une affirmation que vous pouvez vérifier, et non une que vous devez croire sur parole.</p>
+
+	<p>Ce que cette limite ne couvre pas doit être dit dans la même phrase. Elle règle ce qu’un daimon peut atteindre, pas où finit ce qu’il lit : ce qu’il ouvre part chez votre fournisseur de modèles avec le reste du tour. Et elle protège contre un agent qui se trompe, ou que l’on a persuadé de quelque chose : un tour qui vient de lire une page web ou un courrier portant les instructions d’un inconnu, et qui est parti chercher pour le compte de celui-ci, n’atteint toujours rien en dehors de l’espace de travail de ce Diamond. Ce n’est pas une protection contre un fournisseur qui ferait mauvais usage de ce que vous lui envoyez, ni contre un build qui ne serait pas celui que nous avons publié ; à cela répondent <a href="accounts.html">ce qui quitte le navigateur</a> et le <a href="interface.html">registre scellé de chaque build</a>, pas cette limite.</p>
+
+	<h2>Dépêcher des ouvriers</h2>
+	<p>Certaines tâches veulent du travail fait plutôt que seulement consigné. Pour celles-là, le daimon du Diamond dépêche un <strong>agent ouvrier</strong>. Chaque ouvrier tourne dans son propre contexte avec les outils de fichiers de l’espace de travail, et reçoit les instructions permanentes ainsi que le cristal de ce Diamond. Ce cristal est tout ce qu’il sait de votre travail — un ouvrier ne voit pas votre conversation, donc la tâche qu’on lui remet doit dire tout le reste dont il a besoin.</p>
+
+	<p>Jusqu’à <strong>huit</strong> ouvriers tournent à la fois ; les autres attendent. Le daimon les dépêche et son tour s’arrête là : il ne reçoit pas leur production. Chacun rend un résumé, et vous repliez à la main ceux qui valent d’être gardés — c’est ce qui vous laisse le choix de ce qui entre dans un cristal. Les exécutions en cours apparaissent dans le panneau <strong>Agents</strong> du dock.</p>
 
 	<h3>Retenir et arrêter des agents</h3>
 	<p>L’en-tête du panneau Agents porte trois contrôles qui agissent sur <em>chaque</em> agent à la fois, et les trois mêmes se retrouvent sur chaque tuile pour agir sur un seul :</p>

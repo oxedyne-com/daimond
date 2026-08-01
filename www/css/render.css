@@ -134,3 +134,22 @@
 .chat-msg-content tbody tr:nth-child(even) td {
 	background: var(--bg-secondary);
 }
+
+
+/* ── Links in rendered content ────────────────────────────────────────────
+   Nothing styled a link inside a model's answer, so one arrived as the user
+   agent's own #0000EE: navy on black at 1.38 on Dusk, and under 1.9 on every
+   dark palette. A reply is mostly prose and links, which made this the one
+   defect in the sweep that stopped content being readable rather than merely
+   looking wrong. On the light palettes it was legible and still belonged to no
+   palette in the set. */
+.chat-msg-content a,
+.crystal-body a,
+.md-body a {
+	color: var(--accent-text);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.chat-msg-content a:visited,
+.crystal-body a:visited,
+.md-body a:visited { color: var(--accent-text); opacity: 0.82; }

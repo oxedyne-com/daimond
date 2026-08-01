@@ -57,13 +57,14 @@
 	<h1>Daimond Hands</h1>
 	<div class="ver" id="ver"></div>
 	<div class="ask" id="ask" hidden></div>
-	<button id="raise" hidden>Show the approval window</button>
+	<button id="raise" data-i18n="popup_raise" hidden>Show the approval window</button>
 	<div class="mode" id="mode">…</div>
 	<div class="url" id="url"></div>
-	<button id="take" hidden>Hand the wheel back to Daimond</button>
-	<button id="mirror" hidden>Allow the live mirror of the tab</button>
-	<h2>Sites you have allowed</h2>
+	<button id="take" data-i18n="popup_take" hidden>Hand the wheel back to Daimond</button>
+	<button id="mirror" data-i18n="popup_mirror" hidden>Allow the live view of the tab</button>
+	<h2 data-i18n="popup_granted_head">Sites you have allowed</h2>
 	<ul id="granted"></ul>
+	<script src="i18n.js"></script>
 	<script src="popup.js"></script>
 </body>
 </html>

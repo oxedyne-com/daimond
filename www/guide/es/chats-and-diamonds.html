@@ -33,7 +33,7 @@
 
 <main>
 	<h1>Chats y Diamonds</h1>
-	<p class="lede">Un chat es una conversación con el daimon. Un Diamond es un contenedor duradero para un empeño: donde se guarda lo que has llegado a entender sobre un trabajo, para que el trabajo posterior arranque de ahí. Esta página trata de empezar y leer chats, de los controles de turno, de plegar un chat en un Diamond y de ordenar los Diamonds que se acumulan.</p>
+	<p class="lede">Un chat es una conversación con el daimon. Un Diamond es un contenedor duradero para un empeño: donde se guarda lo que has llegado a entender sobre un trabajo, para que el trabajo posterior arranque de ahí. Esta página trata de empezar y leer chats, de los controles de turno, de plegar un chat en un Diamond, del espacio de trabajo en el que trabaja un Diamond y de ordenar los Diamonds que se acumulan.</p>
 
 	<h2>Empezar un chat y volver a él</h2>
 	<p>Elige <span class="ui">Nuevo chat</span> — el <strong>＋</strong> junto a <strong>Chats</strong> en la parte superior de la barra lateral. Escribe en la caja de la parte inferior del panel central y envía con <span class="ui">➤</span>. Todos los chats que empiezas se listan bajo <strong>Chats</strong> en la barra lateral; pulsa uno para devolverlo al centro. Un chat nuevo arranca con tu modelo predeterminado; puedes cambiar el modelo solo para ese chat desde el selector de su cabecera.</p>
@@ -126,10 +126,22 @@
 
 	<div class="note">Un archivo que hayas renombrado o borrado desde entonces <strong>lo dice</strong> cuando intentas abrirlo, en vez de no hacer nada en silencio. Una lista de enlaces muertos que finge lo contrario es peor que no tener lista.</div>
 
-	<h2>Despachar trabajadores</h2>
-	<p>Algunas tareas quieren trabajo hecho y no solo anotado. Para esas, el director del Diamond despacha un <strong>agente trabajador</strong>. Cada trabajador corre en su propio contexto con las herramientas de archivo del espacio de trabajo, y recibe las instrucciones permanentes y el cristal de este Diamond. Ese cristal es todo lo que sabe de tu empeño: un trabajador no puede ver tu conversación, así que la tarea que se le entrega tiene que decir todo lo demás que necesita.</p>
+	<h2>El espacio de trabajo de un Diamond</h2>
+	<p>Un Diamond tiene un <strong>espacio de trabajo</strong>: los archivos y carpetas que guardas con él. Los pones tú ahí: un daimon no puede añadir nada a su propio espacio de trabajo, así que trabaja con lo que se le ha dado y te pregunta cuando necesita más.</p>
 
-	<p>Hasta <strong>ocho</strong> trabajadores corren a la vez; el resto hace cola. El director los despacha y ahí acaba su turno: no recibe su salida. Cada uno informa con un resumen, y tú pliegas a mano los que vale la pena conservar, que es lo que mantiene tuya la elección de qué entra en un cristal. Las ejecuciones en vivo aparecen en el panel <strong>Agentes</strong> del dock.</p>
+	<p><strong>Es una vista de tus archivos, no una caja que los contiene.</strong> No se copia nada cuando guardas algo con él: el archivo se queda donde está y el Diamond apunta a él. Guarda la misma carpeta con dos Diamonds y sigue habiendo una sola carpeta: una edición hecha desde cualquiera de los dos es el archivo que lee el otro. Sacar algo del espacio de trabajo de un Diamond solo deja de guardarlo ahí; el archivo en sí queda intacto, y solo un borrado deliberado lo quita. La palabra invita a esperar una copia, y no la hay.</p>
+
+	<p>Un Diamond también tiene una carpeta propia, siempre en su espacio de trabajo y siempre escribible, para que su daimon tenga dónde trabajar antes de que hayas guardado nada con él: ahí vive el cristal. Una carpeta se puede guardar para ser <strong>consultada en vez de editada</strong>, lo que deja que un daimon la lea y rechaza toda escritura. Y el panel <a href="email-web-files.html">Espacio</a> muestra o todos tus archivos o solo los que tiene este Diamond, según convenga al trabajo que tienes delante.</p>
+
+	<h3>Qué puede abrir un daimon</h3>
+	<p><strong>Un daimon solo puede abrir los archivos del espacio de trabajo de su Diamond.</strong> Nada de lo que está fuera se puede leer ni escribir: ni el daimon, ni ningún trabajador que despache. Esto no es una instrucción en un prompt que un modelo puede cumplir o no: la comprobación está en el código compilado, en la única puerta por la que pasan todas las herramientas de archivo, y ese código está en el paquete publicado, que se compila de forma reproducible. Así que es una afirmación que puedes comprobar y no una que tengas que dar por buena.</p>
+
+	<p>Lo que ese límite no cubre hay que decirlo en la misma frase. Fija hasta dónde llega un daimon, no dónde acaba lo que lee: lo que abre se envía a tu proveedor de modelos con el resto del turno. Y protege frente a un agente que se equivoca, o al que han convencido de algo: un turno que acaba de leer una página web o un correo con instrucciones de un desconocido, y que ha salido a buscar por cuenta de este, sigue sin alcanzar nada fuera del espacio de trabajo de este Diamond. No protege frente a un proveedor que haga mal uso de lo que le envías, ni frente a una compilación que no sea la que publicamos; a eso responden <a href="accounts.html">lo que sale del navegador</a> y el <a href="interface.html">registro sellado de cada compilación</a>, no este límite.</p>
+
+	<h2>Despachar trabajadores</h2>
+	<p>Algunas tareas quieren trabajo hecho y no solo anotado. Para esas, el daimon del Diamond despacha un <strong>agente trabajador</strong>. Cada trabajador corre en su propio contexto con las herramientas de archivo del espacio de trabajo, y recibe las instrucciones permanentes y el cristal de este Diamond. Ese cristal es todo lo que sabe de tu empeño: un trabajador no puede ver tu conversación, así que la tarea que se le entrega tiene que decir todo lo demás que necesita.</p>
+
+	<p>Hasta <strong>ocho</strong> trabajadores corren a la vez; el resto hace cola. El daimon los despacha y ahí acaba su turno: no recibe su salida. Cada uno informa con un resumen, y tú pliegas a mano los que vale la pena conservar, que es lo que mantiene tuya la elección de qué entra en un cristal. Las ejecuciones en vivo aparecen en el panel <strong>Agentes</strong> del dock.</p>
 
 	<h3>Retener y parar agentes</h3>
 	<p>La cabecera del panel Agentes lleva tres controles que actúan sobre <em>todos</em> los agentes a la vez, y los mismos tres van en cada mosaico para que puedas actuar sobre uno solo:</p>

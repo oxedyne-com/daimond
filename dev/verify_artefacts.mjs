@@ -130,7 +130,14 @@ const strip = await p.evaluate(async ({ diamondId }) => {
 	};
 }, { diamondId });
 check('the strip is shown once there are artefacts', strip.shown === true, String(strip.shown));
-check('it is a count, not a list', /^◈ \d+ artefacts?$/.test(strip.text || ''), strip.text);
+// Asked of the running app rather than spelled here: the strip names a
+// Diamond's workspace now, and the word is different in each of the eight
+// languages. What this check is really about is that the strip carries a COUNT
+// rather than a list, and that survives the rename.
+const wantCount = await p.evaluate(() => {
+	try { return '◈ ' + window.DaimondI18n.tn('dws.count', 5); } catch (e) { return null; }
+});
+check('it is a count, not a list', strip.text === wantCount, `${strip.text} vs ${wantCount}`);
 check('the list stays closed until it is clicked', strip.listShown === false,
 	String(strip.listShown));
 

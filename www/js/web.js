@@ -509,7 +509,7 @@
 		claimPage('');           // the guide owns the panel now
 		state.driver = 'guide';
 		state.url    = 'guide/';
-		state.title  = 'Guide';
+		state.title  = t('web.guide');
 		state.mode   = 'idle';
 		note('');
 		els.frame.style.visibility = '';

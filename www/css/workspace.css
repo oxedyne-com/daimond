@@ -16,8 +16,26 @@
    or shut, so a chip never moves when its neighbour opens. An earlier design
    showed only the closed panels, which meant the row was longest when the app
    was emptiest and every chip shifted sideways each time one was used. */
-.panel-tags { display: flex; align-items: center; gap: 5px; margin-right: 6px; min-width: 0; overflow: hidden; }
-.ptag-group { display: flex; align-items: center; gap: 5px; min-width: 0; }
+/* The row clips, so it has to leave room for the ring its own chips draw.
+   `.ptag:focus-visible` asks for a 2px outline at 2px offset and had 0.0px on
+   every side, so the entire keyboard affordance for the primary panel switcher
+   was two vertical arcs -- the same "border that stopped at the corners"
+   signature as the selected chat tile and the selected tag chip before it. The
+   padding is cancelled by negative margins so the top bar does not grow. */
+.panel-tags {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	overflow: hidden;
+	padding: 4px;
+	margin: -4px 2px -4px -4px;
+}
+/* `flex: none`, not `min-width: 0`: the groups were shrinking past content
+   that cannot shrink, so at 761-768px the stage and dock chips were drawn
+   on top of each other. The row's own overflow and its `... N` chip are
+   what handle a row too full. */
+.ptag-group { display: flex; align-items: center; gap: 5px; flex: none; }
 
 /* Zone is legible by position first -- rail, stage and dock groups run
    left to right in the order the zones themselves do -- and the divider only
@@ -56,7 +74,7 @@
    border style costs no layout. */
 .ptag-stage.will-evict { border-style: dashed; }
 
-.ptag-more { font-family: var(--font); letter-spacing: 0.08em; padding: 4px 9px; }
+.ptag-more { flex: none; font-family: var(--font); letter-spacing: 0.08em; padding: 4px 9px; }
 .ptag-more .n { font-size: var(--fs-4xs); opacity: 0.8; margin-left: 3px; letter-spacing: 0; }
 
 /* ── Popover furniture, shared by the gallery and the settings menu ───────── */

@@ -643,16 +643,20 @@
 		// which the page has no way to reach. The page can ask for many things;
 		// it can never ask to stop being watched-not.
 
+		// The label arrives from the broker, which holds the strings. The hands
+		// are injected into any page the user has approved and have no business
+		// carrying a translation table around with them.
 		let resumeHost = null;
-		function showResume() {
+		function showResume(a) {
 			if (resumeHost) return true;
+			const label = (a && a.label) || 'Resume Daimond ▸';
 			const host = document.createElement('div');
 			// `all:initial` FIRST — it resets everything, so anything after it wins.
 			// Put it last and it would reset the fixed positioning back to static.
 			host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;right:16px;bottom:16px';
 			const root = host.attachShadow({ mode: 'closed' });
 			const btn = document.createElement('button');
-			btn.textContent = 'Resume Daimond ▸';
+			btn.textContent = label;
 			btn.style.cssText = 'font:600 13px system-ui,sans-serif;color:#fff;background:#c0392b;'
 				+ 'border:0;border-radius:8px;padding:10px 16px;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer';
 			btn.addEventListener('click', () => {
@@ -682,7 +686,7 @@
 					case 'click':		return click(a.ref);
 					case 'type':		return type(a.ref, a.text, a.submit);
 					case 'scroll':		return scroll(a.direction, a.amount);
-					case 'showResume':	return showResume();
+					case 'showResume':	return showResume(a);
 					case 'hideResume':	return hideResume();
 					default:		return { ok: false, error: `The hands do not know "${cmd}".` };
 				}

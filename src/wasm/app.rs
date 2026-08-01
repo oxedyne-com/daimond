@@ -48,16 +48,16 @@ pub struct DaimondApp {
     /// The user's standing instructions (their `DAIMOND.md`), prepended to the
     /// system prompt of every turn this app runs.  Chats and workers are
     /// constructed with their system prompt already composed, but the
-    /// conductor's and the reducer's are built here, so they read it from this.
+    /// daimon's and the reducer's are built here, so they read it from this.
     instructions: RefCell<String>,
-    /// The user's replacement for the conductor's role prompt, if they have
-    /// written one (`prompts/conductor.md`).  Empty means the default.
+    /// The user's replacement for the daimon's role prompt, if they have
+    /// written one (`prompts/daimon.md`).  Empty means the default.
     ///
     /// Only these two roles are held here.  A chat and a worker are constructed
     /// with their prompt already composed by the caller, so their file is read
-    /// in the browser; the conductor and the reducer are built inside this
+    /// in the browser; the daimon and the reducer are built inside this
     /// module, where the file is not in reach.
-    conductor_prompt: RefCell<String>,
+    daimon_prompt: RefCell<String>,
     /// The same, for the reducer (`prompts/reducer.md`).
     reducer_prompt: RefCell<String>,
 }
@@ -146,7 +146,7 @@ impl DaimondApp {
             session: RefCell::new(session),
             registry,
             instructions:     RefCell::new(String::new()),
-            conductor_prompt: RefCell::new(String::new()),
+            daimon_prompt: RefCell::new(String::new()),
             reducer_prompt:   RefCell::new(String::new()),
         })
     }
@@ -186,7 +186,7 @@ impl DaimondApp {
     /// Whether this app's turn has taken in content from outside the user — a fetched page, a
     /// mail message, a command's output.
     ///
-    /// The conductor reads this after a steering turn to find out whether the tasks it is about to
+    /// The daimon reads this after a steering turn to find out whether the tasks it is about to
     /// hand out derive from a stranger's words.
     pub fn is_tainted(&self) -> bool {
         self.registry.ctx.is_tainted()
@@ -196,9 +196,57 @@ impl DaimondApp {
     ///
     /// One-way, like the flag itself.  A worker starts with a clean flag, so instructions absorbed
     /// from a stranger could be laundered through a worker that does not know it is carrying them;
-    /// the conductor closes that by setting this on each worker it starts.
+    /// the daimon closes that by setting this on each worker it starts.
     pub fn set_tainted(&self) {
         self.registry.ctx.set_tainted();
+    }
+
+    /// Confine this agent to a Diamond's workspace.
+    ///
+    /// Called on a dispatched WORKER, which is where the reach actually is: a Diamond's daimon is
+    /// already pinned to `diamonds/<id>` on the OPFS root and cannot see the user's files at all,
+    /// but every worker it dispatches was built as an ordinary workspace agent with the whole tree.
+    /// So the daimon could not read a file and could ask something else to read it -- which is the
+    /// leak that makes a claim about a daimon's reach worthless unless its workers are held to it
+    /// too.
+    ///
+    /// `attached` and `read_only` are JSON arrays of workspace-relative paths.  Malformed input
+    /// yields an empty list rather than an error, and an empty list still bounds the agent to
+    /// `own_dir`: a scope that failed open would be the one bug in here that matters.
+    ///
+    /// # Arguments
+    /// * `own_dir` - The Diamond's own directory, always in scope and always writable.
+    /// * `attached` - JSON array of paths in this Diamond's workspace.
+    /// * `read_only` - JSON array of those that may be read but not written.
+    pub fn set_diamond_scope(&mut self, own_dir: String, attached: String, read_only: String) {
+        let paths = |src: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            // A small reader rather than a JSON dependency: the input is an array of plain strings
+            // written by our own caller, and the failure mode that matters is "read nothing", not
+            // "read something wrong".
+            let mut chars = src.chars().peekable();
+            let mut cur = String::new();
+            let mut inside = false;
+            let mut escaped = false;
+            while let Some(c) = chars.next() {
+                if escaped { cur.push(c); escaped = false; continue; }
+                match c {
+                    '\\' if inside => escaped = true,
+                    '"' => {
+                        if inside {
+                            if !cur.trim().is_empty() { out.push(cur.clone()); }
+                            cur.clear();
+                        }
+                        inside = !inside;
+                    }
+                    _ if inside => cur.push(c),
+                    _ => {}
+                }
+            }
+            out
+        };
+        self.registry.ctx.no_write = crate::tools::diamond_bounds(
+            &own_dir, &paths(&attached), &paths(&read_only));
     }
 
     /// Set the user's standing instructions — the contents of their `DAIMOND.md`.
@@ -212,13 +260,13 @@ impl DaimondApp {
 
     /// Set the user's replacement for a role's prompt, from `prompts/<role>.md`.
     ///
-    /// Only `conductor` and `reducer` are held here — a chat and a worker are
+    /// Only `daimon` and `reducer` are held here — a chat and a worker are
     /// constructed with their prompt already composed (see the field docs). An
     /// empty `text` means "use the default", which is how deleting the file puts
     /// the shipped prompt back.
     ///
     /// # Arguments
-    /// * `role` - The role's name: `conductor` or `reducer`.
+    /// * `role` - The role's name: `daimon` or `reducer`.
     /// * `text` - What the user wrote, or empty for the default.
     ///
     /// # Errors
@@ -231,7 +279,7 @@ impl DaimondApp {
             Err(e) => return Err(to_js_err(e)),
         };
         match which {
-            Role::Conductor => *self.conductor_prompt.borrow_mut() = text,
+            Role::Daimon => *self.daimon_prompt.borrow_mut() = text,
             Role::Reducer   => *self.reducer_prompt.borrow_mut() = text,
             other => return Err(to_js_err(err!(
                 "The {} prompt is composed in the browser, not here; pass it to the \
@@ -619,7 +667,7 @@ impl DaimondApp {
     {
         // Stateless per instruction: reconstruct context from the crystal.
         let before = diamond::read_crystal(id).await.unwrap_or_default();
-        let mut system = Role::Conductor.compose(&self.conductor_prompt.borrow());
+        let mut system = Role::Daimon.compose(&self.daimon_prompt.borrow());
         system.push_str("\n\nCurrent crystal.md:\n");
         system.push_str(&before);
 
@@ -634,7 +682,7 @@ impl DaimondApp {
             root:        crate::tools::FileRoot::Opfs,
             // Shared with this app's own context, not fresh: a steering turn is stateless per
             // instruction, so a fresh cache would drop the taint the moment the turn ended and
-            // `is_tainted` would answer no to the very question the conductor asks it.
+            // `is_tainted` would answer no to the very question the daimon asks it.
             read_seen:   self.registry.ctx.read_seen.clone(),
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
             // A skill turn narrows this in the handler, where the declaration is known.
@@ -650,7 +698,7 @@ impl DaimondApp {
                 Tool::FileDelete,
                 Tool::FileMove,
                 Tool::DirCreate,
-                // The conductor commands agents; the workers do the work.
+                // The daimon commands agents; the workers do the work.
                 Tool::SpawnAgent,
             ],
             ctx,

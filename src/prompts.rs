@@ -2,7 +2,7 @@
 //! about it.
 //!
 //! Daimond runs four kinds of agent, and each needs to be told a different thing:
-//! a chat answers a person, a conductor keeps one Diamond's crystal and dispatches
+//! a chat answers a person, a daimon keeps one Diamond's crystal and dispatches
 //! work, a worker carries out one bounded task and reports back, and a reducer
 //! folds one delta into a crystal. Their prompts used to be scattered -- three
 //! constants here in the wasm and one long string in JavaScript -- which is
@@ -29,8 +29,8 @@ use oxedyne_fe2o3_core::prelude::*;
 pub enum Role {
 	/// The chat the user talks to.
 	Chat,
-	/// A Diamond's conductor: keeps the crystal, dispatches workers.
-	Conductor,
+	/// A Diamond's daimon: keeps the crystal, dispatches workers.
+	Daimon,
 	/// A dispatched worker: one task, its own context, reports back.
 	Worker,
 	/// The reducer: folds one delta into the crystal, and nothing else.
@@ -40,14 +40,14 @@ pub enum Role {
 impl Role {
 	/// Every role, in the order they are offered to the user.
 	pub fn all() -> [Self; 4] {
-		[Self::Chat, Self::Conductor, Self::Worker, Self::Reducer]
+		[Self::Chat, Self::Daimon, Self::Worker, Self::Reducer]
 	}
 
 	/// The role's name, which is also its file's stem (`prompts/<name>.md`).
 	pub fn name(&self) -> &'static str {
 		match self {
 			Self::Chat		=> "chat",
-			Self::Conductor	=> "conductor",
+			Self::Daimon	=> "daimon",
 			Self::Worker	=> "worker",
 			Self::Reducer	=> "reducer",
 		}
@@ -57,7 +57,7 @@ impl Role {
 	pub fn label(&self) -> &'static str {
 		match self {
 			Self::Chat		=> "Chat",
-			Self::Conductor	=> "Diamond conductor",
+			Self::Daimon	=> "Diamond daimon",
 			Self::Worker	=> "Dispatched worker",
 			Self::Reducer	=> "Crystal fold",
 		}
@@ -70,7 +70,12 @@ impl Role {
 				return Ok(r);
 			}
 		}
-		Err(err!("'{}' is not a role. Known roles: chat, conductor, worker, reducer.", name;
+		// `conductor` is the daimon's former name. Accepted here and nowhere else, so a
+		// prompts/conductor.md a user edited before the rename still resolves to a role.
+		if name == "conductor" {
+			return Ok(Self::Daimon);
+		}
+		Err(err!("'{}' is not a role. Known roles: chat, daimon, worker, reducer.", name;
 			Invalid, Input))
 	}
 
@@ -88,7 +93,7 @@ impl Role {
 	pub fn default_prompt(&self) -> &'static str {
 		match self {
 			Self::Chat		=> DEFAULT_CHAT,
-			Self::Conductor	=> DEFAULT_CONDUCTOR,
+			Self::Daimon	=> DEFAULT_DAIMON,
 			Self::Worker	=> DEFAULT_WORKER,
 			Self::Reducer	=> DEFAULT_REDUCER,
 		}
@@ -155,10 +160,10 @@ pub const DEFAULT_CHAT: &str =
 	 asked to reply to something, write the draft and tell them it is waiting; do not \
 	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.";
 
-/// The conductor's role: it maintains one Diamond's crystal, resolving an
+/// The daimon's role: it maintains one Diamond's crystal, resolving an
 /// instruction to a file edit or to one or more errors, never to chat.
-pub const DEFAULT_CONDUCTOR: &str =
-	"You are the conductor of this Diamond. You take instructions from the user \
+pub const DEFAULT_DAIMON: &str =
+	"You are the daimon of this Diamond. You take instructions from the user \
 	 and act; you do not converse. Two things are yours to do.\n\n\
 	 First, the crystal. `crystal.md` is the reduced state of this Diamond. Edit it \
 	 with your file tools when the user tells you something worth keeping.\n\n\

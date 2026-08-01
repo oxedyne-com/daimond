@@ -127,10 +127,12 @@ which it only sends because you said yes. *Do as I mean, or nothing done.*
   skipped. Say no and the agent is told *the user declined*, and told not to ask
   again. Close the window without answering and it is told that instead, because
   a question nobody saw is not a refusal.
-- *The live mirror.* Chrome will not photograph a tab on a per-site grant: it
-  wants `<all_urls>` or a gesture on the tab itself. So the mirror is its own
+- *The live view.* Chrome will not photograph a tab on a per-site grant: it
+  wants `<all_urls>` or a gesture on the tab itself. So the live view is its own
   question, asked the first time the panel wants a picture, and it is entirely
   optional — refuse it and Daimond simply works from the page structure instead.
+  The panel calls it the live view, so the extension does too; internally the
+  code still says "mirror".
 
 A window can be covered, minimised, or lost behind the app, and then it is the
 only place that knows a question is waiting. So the toolbar icon carries the
@@ -151,9 +153,49 @@ revoked.
 | `manifest.json` | MV3. The pinned key, the three origins, the optional hosts. |
 | `background.js` | The broker: the tab, the mode machine, the grants, the consequence check. |
 | `content.js` | The hands: the accessibility snapshot, the actions, the login detector. |
-| `announce.js` | Runs on the Daimond origins only. Stamps the extension id on the document. |
-| `grant.html` / `grant.js` | Where a site, or the mirror, is approved. A click here is a real click. |
+| `announce.js` | Runs on the Daimond origins only. Stamps the extension id on the document, and carries the app's chosen language across. |
+| `grant.html` / `grant.js` | Where a site, or the live view, is approved. A click here is a real click. |
 | `popup.html` / `popup.js` | What mode it is in, what page it holds, what you have allowed, and how to take it back. |
+| `i18n.js` | The string lookup, shared by the broker, the popup and the grant window. |
+| `_locales/<lang>/messages.json` | Every string the user reads, in eight languages. |
+
+## The languages
+
+The extension speaks the eight languages the app speaks: `en`, `de`, `es`,
+`fr`, `ja`, `ko`, `pt-BR`, `zh-Hans`. Chrome's `_locales` directories use its
+own names, so those last two live in `pt_BR/` and `zh_CN/`.
+
+The strings are in Chrome's own format for one reason: `manifest.json`'s `name`
+and `description` are read before any code of ours runs, and `__MSG_*__` against
+`_locales` is the only way to translate them. Having paid for the layout,
+everything else uses it too.
+
+*Which* language is not Chrome's business, though. Chrome would dress these
+windows in the browser's UI language, and someone reading a Japanese app is not
+necessarily running a Japanese Chrome. So `announce.js` — which already runs on
+the Daimond origins — reads the language the user chose in the app and puts it
+where the extension can see it, and `i18n.js` prefers it:
+
+1. the language chosen in the app;
+2. `chrome.i18n`, which is the browser's UI language;
+3. `default_locale`, which is English.
+
+Each step falls through to the next, so a fresh profile that has never seen the
+app, or a language we do not ship, ends in plain English rather than in a blank
+window.
+
+Two things are deliberately **not** translated.
+
+*The product nouns.* "Daimond", "Diamond", "Daimond Hands", "Pro". The
+extension's `name` stays English in the manifest for the same reason.
+
+*Every `error` string that crosses the external boundary.* Those are addressed
+to the model, not to the user: it reads them and acts on them, and it has been
+steered by those exact words. `reason` is the one field of the protocol that is
+translated, because the app prints it back to the user inside a sentence of its
+own — so it is a noun phrase in every language, never a sentence.
+
+`dev/verify_ext_i18n.mjs` holds all of this to account.
 
 The signing key lives outside the repository, at
 `../../daimond-hands-key.pem`, and belongs in no commit.

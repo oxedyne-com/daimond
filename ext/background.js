@@ -12,10 +12,21 @@
 // Nothing throws across the message boundary. Every failure comes back as
 // {ok:false, error:'<plain English>'} because the model on the other side reads
 // the error and acts on it.
+//
+// Two audiences, two languages. What the DAIMON reads -- every `error` string
+// crossing the external boundary -- stays English: it is a protocol the model
+// acts on, and the model has been steered by those exact words. What the USER
+// reads -- the toolbar title, and the reason the wheel is with them, which the
+// app prints back to them -- is translated. `i18n.js` is here for the second.
 
 'use strict';
 
+importScripts('i18n.js');
+
 const VERSION = '0.1.0';
+
+const I = globalThis.DaimondExtI18n;
+const T = (...a) => I.t(...a);
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -73,9 +84,39 @@ const BLANK = {
 	url:		'',
 	title:		'',
 	truce:		false,	// The user handed back with the login form still on screen.
-	reason:		'',	// Why the wheel is with the user.
+	reason:		'',	// Why the wheel is with the user, in canonical English.
+	reasonKey:	'',	// The same reason as a string key, for the user's language.
+	reasonArg:	'',	// Its one substitution, where it has one.
 	noMirror:	false,	// The user said no to the live mirror. Do not nag.
 };
+
+/// Canonical reason -> string key. The canonical English is what the state
+/// holds and what the truce is compared against, because a comparison that
+/// changed with the interface language would be a security rule with a
+/// translation bug in it. The key is only what the user is SHOWN.
+const REASON_KEY = {
+	'a password field':			'reason_password',
+	'a passkey or one-time-code prompt':	'reason_passkey_otc',
+	'a passkey prompt':			'reason_passkey',
+	'the user is typing':			'reason_typing',
+	'something private':			'reason_private',
+};
+
+/// The state patch that hands the wheel to the user, for a canonical reason.
+function because(reason) {
+	return { mode: 'user', reason, reasonKey: REASON_KEY[reason] || '', reasonArg: '' };
+}
+
+/// Why the wheel is with the user, in the user's own language.
+///
+/// The app prints this inside a sentence of its own ("I stopped at …"), so it
+/// is a noun phrase in every language, not a sentence. A reason with no key --
+/// one the content script invented -- falls through as it arrived, which is
+/// English but never blank.
+function reasonText(s) {
+	if (!s || !s.reason) return '';
+	return s.reasonKey ? T(s.reasonKey, s.reasonArg || '') : s.reason;
+}
 
 /// Photographing a tab is the one thing Chrome will not do on a per-site grant:
 /// captureVisibleTab wants <all_urls> or a user gesture on the tab itself. So the
@@ -165,7 +206,7 @@ const DISMISSED	= 'dismissed';
 /// waiting it carries a mark, so a window that landed behind something is still
 /// findable -- and the popup below it says what is being asked and offers the
 /// way back. This paints the mark; it never opens anything.
-function markPending() {
+async function markPending() {
 	const q = [...pending.values()][0];
 	if (!q) {
 		chrome.action.setBadgeText({ text: '' });
@@ -174,10 +215,11 @@ function markPending() {
 	}
 	chrome.action.setBadgeText({ text: '?' });
 	chrome.action.setBadgeBackgroundColor({ color: '#2f6fed' });
+	await I.ready();
 	chrome.action.setTitle({
 		title: q.kind === 'mirror'
-			? 'Daimond Hands — waiting for you to allow the live mirror'
-			: `Daimond Hands — waiting for you to approve ${q.host}`,
+			? T('action_pending_mirror')
+			: T('action_pending_site', q.host),
 	});
 }
 
@@ -192,12 +234,13 @@ function pendingQuestion() {
 /// the popup flood the mirror guard exists to prevent.
 async function raisePending() {
 	const q = [...pending.values()][0];
-	if (!q || q.windowId == null) return { ok: false, error: 'Nothing is waiting to be approved.' };
+	await I.ready();
+	if (!q || q.windowId == null) return { ok: false, error: T('raise_none') };
 	try {
 		await chrome.windows.update(q.windowId, { focused: true, drawAttention: true });
 		return { ok: true };
 	} catch (e) {
-		return { ok: false, error: 'That window has gone. Ask Daimond to open the site again.' };
+		return { ok: false, error: T('raise_gone') };
 	}
 }
 
@@ -495,7 +538,9 @@ async function sync() {
 	// An identity provider is a login by definition. Do not even inject.
 	if (isSSO(s.url)) {
 		if (s.mode !== 'user') {
-			s = await set({ mode: 'user', reason: 'the sign-in page for ' + new URL(s.url).hostname });
+			const h = new URL(s.url).hostname;
+			s = await set(Object.assign(because('the sign-in page for ' + h),
+				{ reasonKey: 'reason_sso', reasonArg: h }));
 			await showResumeOverlay(s.tabId);
 		}
 		return s;
@@ -508,7 +553,7 @@ async function sync() {
 
 	const seen = await arm(s.tabId, s.truce);
 	if (seen && seen.private) {
-		s = await set({ mode: 'user', reason: seen.reason });
+		s = await set(because(seen.reason));
 		await disarm(s.tabId);
 		await showResumeOverlay(s.tabId);
 	}
@@ -520,7 +565,7 @@ async function sync() {
 async function toUser(reason) {
 	const s = await get();
 	if (s.mode === 'user') return;
-	await set({ mode: 'user', reason });
+	await set(because(reason));
 	if (s.tabId != null) { await disarm(s.tabId); await showResumeOverlay(s.tabId); }
 }
 
@@ -531,10 +576,15 @@ async function toUser(reason) {
 /// second, always-available way back.
 async function showResumeOverlay(tabId) {
 	try {
+		await I.ready();
 		await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+		// The label is carried in rather than looked up in the page: a content
+		// script would have to be handed the whole `_locales` tree to read it
+		// for itself, and the hands have no business holding the strings.
 		await chrome.scripting.executeScript({
 			target:	{ tabId },
-			func:	() => globalThis.__daimond && globalThis.__daimond.handle('showResume', {}),
+			func:	(label) => globalThis.__daimond && globalThis.__daimond.handle('showResume', { label }),
+			args:	[T('resume_button')],
 		});
 	} catch (e) { /* tab gone, or a page we may not script */ }
 }
@@ -560,7 +610,7 @@ async function doTakeover() {
 	// again. Honour it even if the login form is still on the page: the truce
 	// stops the detector from snatching the wheel straight back, and the
 	// snapshot still refuses to serialise any password either way.
-	const after = await set({ mode: 'agent', truce: true, reason: '' });
+	const after = await set({ mode: 'agent', truce: true, reason: '', reasonKey: '', reasonArg: '' });
 	await arm(after.tabId, true);
 	return { ok: true, mode: 'agent', url: after.url, title: after.title };
 }
@@ -748,12 +798,15 @@ const HANDLERS = {
 
 	async status() {
 		const s = await sync();
+		await I.ready();
 		return {
 			ok:		true,
 			url:		s.url,
 			title:		s.title,
 			mode:		s.mode,
-			reason:		s.mode === 'user' ? s.reason : '',
+			// The app prints this one back to the user, inside a sentence of its
+			// own, so it is the one field of the protocol that is translated.
+			reason:		s.mode === 'user' ? reasonText(s) : '',
 			granted:	await grants(),
 		};
 	},
@@ -938,13 +991,14 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 			}
 			if (msg.type === 'panel') {
 				const s = await sync();
+				await I.ready();
 				return respond({
 					ok:		true,
 					version:	VERSION,
 					mode:		s.mode,
 					url:		s.url,
 					title:		s.title,
-					reason:		s.reason,
+					reason:		reasonText(s),
 					granted:	await grants(),
 					pending:	pendingQuestion(),
 				});

@@ -1,0 +1,161 @@
+{
+	"ext_desc": {
+		"message": "Permet à Daimond de conduire un vrai site dans un vrai onglet, dans votre navigateur, avec votre session. Aucun identifiant ne quitte jamais l’appareil."
+	},
+	"popup_raise": {
+		"message": "Afficher la fenêtre d’approbation"
+	},
+	"popup_take": {
+		"message": "Rendre le volant à Daimond"
+	},
+	"popup_mirror": {
+		"message": "Autoriser la vue en direct de l’onglet"
+	},
+	"popup_granted_head": {
+		"message": "Sites que vous avez autorisés"
+	},
+	"popup_revoke": {
+		"message": "Révoquer"
+	},
+	"popup_none": {
+		"message": "Aucun pour l’instant. Daimond doit demander avant de toucher à un site."
+	},
+	"popup_any_tab": {
+		"message": "N’importe quel onglet, pour la vue en direct"
+	},
+	"popup_subdomains": {
+		"message": "$HOST$ et ses sous-domaines",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_mirror": {
+		"message": "En attente de vous : Daimond peut-il montrer l’onglet qu’il conduit ?"
+	},
+	"popup_ask_mirror_fine": {
+		"message": "Il doit photographier l’onglet, ce que Chrome ne peut pas autoriser site par site. Refuser ne coûte rien — Daimond travaille alors à partir de la structure de la page."
+	},
+	"popup_ask_site": {
+		"message": "En attente de vous : Daimond peut-il conduire $HOST$ ?",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_site_fine": {
+		"message": "L’approbation couvre $HOST$ et ses sous-domaines, et rien d’autre. Chrome demande encore une confirmation.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_mode_user": {
+		"message": "C’est vous qui conduisez."
+	},
+	"popup_mode_user_fine": {
+		"message": "Daimond ne regarde pas cet onglet : ni page, ni pixels, ni frappe au clavier."
+	},
+	"popup_mode_agent": {
+		"message": "Daimond conduit."
+	},
+	"popup_mode_agent_fine": {
+		"message": "Les mots de passe et les champs de paiement ne sont jamais envoyés, même maintenant."
+	},
+	"popup_mode_idle": {
+		"message": "Au repos."
+	},
+	"popup_mode_idle_fine": {
+		"message": "Aucune page n’est ouverte."
+	},
+	"grant_deny": {
+		"message": "Pas maintenant"
+	},
+	"grant_allow": {
+		"message": "Autoriser"
+	},
+	"grant_mirror_head": {
+		"message": "Daimond veut vous montrer l’onglet qu’il conduit"
+	},
+	"grant_mirror_body": {
+		"message": "Pour afficher l’onglet dans le panneau Daimond, l’extension doit en prendre une image. Chrome ne l’autorise pas site par site, donc cette permission couvre n’importe quel onglet."
+	},
+	"grant_mirror_fine": {
+		"message": "Cela ne change rien au relais : pendant que vous saisissez un mot de passe, aucune image n’est prise ni envoyée. Vous pouvez la retirer à tout moment depuis l’icône Daimond Hands. Si vous refusez, Daimond travaille simplement à partir de la structure de la page."
+	},
+	"grant_mirror_allow": {
+		"message": "Autoriser la vue en direct"
+	},
+	"grant_site_head": {
+		"message": "Daimond veut conduire un site pour vous"
+	},
+	"grant_site_scope": {
+		"message": "Cela couvre $HOST$ et ses sous-domaines, et rien d’autre. Chaque autre site est demandé séparément.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"grant_site_body": {
+		"message": "Daimond peut lire la structure de page de ce site, y cliquer et y taper, dans ce navigateur, en votre nom."
+	},
+	"grant_site_fine": {
+		"message": "Quand vous cliquerez ci-dessous, Chrome demandera encore une fois — il dira « lire et modifier vos données sur ce site », la formulation standard de Chrome pour toute extension, et non quelque chose de plus que ferait Daimond. C’est cette invite qui constitue la véritable approbation, et elle n’apparaît que la première fois pour un site. Daimond ne voit jamais de mot de passe : dès qu’un formulaire de connexion apparaît, il ne reçoit plus rien jusqu’à ce que vous lui rendiez le volant, et vous pouvez retirer cette autorisation à tout moment depuis l’icône Daimond Hands."
+	},
+	"grant_site_allow": {
+		"message": "Autoriser, puis confirmer dans Chrome →"
+	},
+	"action_pending_mirror": {
+		"message": "Daimond Hands — en attente de votre autorisation pour la vue en direct"
+	},
+	"action_pending_site": {
+		"message": "Daimond Hands — en attente de votre approbation pour $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"raise_none": {
+		"message": "Rien n’attend d’approbation."
+	},
+	"raise_gone": {
+		"message": "Cette fenêtre a disparu. Demandez à Daimond d’ouvrir le site à nouveau."
+	},
+	"resume_button": {
+		"message": "Reprendre Daimond ▸"
+	},
+	"reason_password": {
+		"message": "un champ de mot de passe"
+	},
+	"reason_passkey_otc": {
+		"message": "une invite de clé d’accès ou de code à usage unique"
+	},
+	"reason_passkey": {
+		"message": "une invite de clé d’accès"
+	},
+	"reason_typing": {
+		"message": "votre saisie"
+	},
+	"reason_private": {
+		"message": "quelque chose de privé"
+	},
+	"reason_sso": {
+		"message": "la page de connexion de $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	}
+}

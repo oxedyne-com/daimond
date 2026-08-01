@@ -1,0 +1,161 @@
+{
+	"ext_desc": {
+		"message": "让 Daimond 在你的浏览器里、用你的会话，在真正的标签页里操作真正的站点。任何凭据都不会离开这台设备。"
+	},
+	"popup_raise": {
+		"message": "显示批准窗口"
+	},
+	"popup_take": {
+		"message": "把操作交回给 Daimond"
+	},
+	"popup_mirror": {
+		"message": "允许这个标签页的实时画面"
+	},
+	"popup_granted_head": {
+		"message": "你已允许的站点"
+	},
+	"popup_revoke": {
+		"message": "撤销"
+	},
+	"popup_none": {
+		"message": "还没有。Daimond 碰任何站点之前都必须先问。"
+	},
+	"popup_any_tab": {
+		"message": "任意标签页，用于实时画面"
+	},
+	"popup_subdomains": {
+		"message": "$HOST$ 及其子域名",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_mirror": {
+		"message": "在等你：Daimond 可以显示它正在操作的标签页吗？"
+	},
+	"popup_ask_mirror_fine": {
+		"message": "它需要给标签页拍一张画面，而 Chrome 无法逐个站点地允许这件事。拒绝不会有任何损失 — Daimond 会改用页面结构来工作。"
+	},
+	"popup_ask_site": {
+		"message": "在等你：Daimond 可以操作 $HOST$ 吗？",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_site_fine": {
+		"message": "批准只涵盖 $HOST$ 及其子域名，别的都不包括。Chrome 会再确认一次。",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_mode_user": {
+		"message": "现在你来操作。"
+	},
+	"popup_mode_user_fine": {
+		"message": "Daimond 没有在看这个标签页：不看页面，不看像素，不看按键。"
+	},
+	"popup_mode_agent": {
+		"message": "Daimond 在操作。"
+	},
+	"popup_mode_agent_fine": {
+		"message": "密码和支付字段从不发送，现在也一样。"
+	},
+	"popup_mode_idle": {
+		"message": "空闲。"
+	},
+	"popup_mode_idle_fine": {
+		"message": "没有打开的页面。"
+	},
+	"grant_deny": {
+		"message": "现在不要"
+	},
+	"grant_allow": {
+		"message": "允许"
+	},
+	"grant_mirror_head": {
+		"message": "Daimond 想让你看到它正在操作的标签页"
+	},
+	"grant_mirror_body": {
+		"message": "要把标签页显示在 Daimond 面板里，扩展需要给它拍一张画面。Chrome 不会逐个站点地允许这件事，所以这项权限涵盖任意标签页。"
+	},
+	"grant_mirror_fine": {
+		"message": "这不会改变交接的方式：你在输入密码时，不会拍画面，也不会发送任何画面。你随时可以从 Daimond Hands 图标撤销它。如果你拒绝，Daimond 就改用页面结构来工作。"
+	},
+	"grant_mirror_allow": {
+		"message": "允许实时画面"
+	},
+	"grant_site_head": {
+		"message": "Daimond 想替你操作一个站点"
+	},
+	"grant_site_scope": {
+		"message": "这只涵盖 $HOST$ 及其子域名，别的都不包括。其他每个站点都会单独询问。",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"grant_site_body": {
+		"message": "Daimond 可以读取这个站点的页面结构，并在这个浏览器里以你的身份点击和输入。"
+	},
+	"grant_site_fine": {
+		"message": "你点下面之后，Chrome 会再问一次 — 它会说“读取和更改你在此网站上的数据”，这是 Chrome 对任何扩展都会用的标准说法，并不是 Daimond 多做了什么。那个提示才是真正的批准，而且每个站点只在第一次出现。Daimond 永远看不到密码：登录表单一出现，它就不再收到任何东西，直到你把操作交回来；你也随时可以从 Daimond Hands 图标撤销这项批准。"
+	},
+	"grant_site_allow": {
+		"message": "允许，再到 Chrome 里确认 →"
+	},
+	"action_pending_mirror": {
+		"message": "Daimond Hands — 正在等你允许实时画面"
+	},
+	"action_pending_site": {
+		"message": "Daimond Hands — 正在等你批准 $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"raise_none": {
+		"message": "没有在等待批准的东西。"
+	},
+	"raise_gone": {
+		"message": "那个窗口已经不在了。让 Daimond 再打开一次这个站点。"
+	},
+	"resume_button": {
+		"message": "恢复 Daimond ▸"
+	},
+	"reason_password": {
+		"message": "一个密码框"
+	},
+	"reason_passkey_otc": {
+		"message": "一次通行密钥或一次性验证码的提示"
+	},
+	"reason_passkey": {
+		"message": "一次通行密钥提示"
+	},
+	"reason_typing": {
+		"message": "你正在输入的地方"
+	},
+	"reason_private": {
+		"message": "某个私密的东西"
+	},
+	"reason_sso": {
+		"message": "$HOST$ 的登录页",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	}
+}

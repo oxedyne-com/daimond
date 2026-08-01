@@ -121,8 +121,14 @@ check(!(await page.isVisible('#diamond-filter')), 'and it does not raise an empt
 // The route to a first tag, for the reader who wants it, in the order the pool
 // really offers them -- a hint promising chips the editor does not offer would
 // be the same lie in a smaller font.
+// The starters are translated, so they are read from the table rather than
+// spelled out here: a test that hardcodes the English four passes in English
+// and fails in the other seven for no reason but its own assumption.
+const STARTERS = fs.readFileSync(new URL('../www/i18n/en.js', import.meta.url), 'utf8')
+	.match(/'tag\.starters':\s*'([^']*)'/)[1]
+	.split(',').map(x => x.trim()).filter(Boolean);
 const hintTip = await page.$eval('#diamond-tag-hint', e => e.title).catch(() => '');
-check(hintTip.includes('person, project, topic, org'),
+check(hintTip.includes(STARTERS.join(', ')),
 	`the hint's tooltip names the starter tags in the pool's order: ${JSON.stringify(hintTip)}`);
 await shot(s, 'tags-empty-hint');
 
@@ -145,7 +151,7 @@ const editorTags = () => page.$$eval('.tag-row:not(.tag-sug) .tag-chip',
 await openTagEditor('Ship a CSV parser');
 check(await page.isVisible('.tag-editor'), 'tag editor opens from the crystal bar');
 const sugs = await page.$$eval('.tag-sug .tag-chip', els => els.map(e => e.textContent));
-check(JSON.stringify(sugs) === JSON.stringify(['person', 'project', 'topic', 'org']),
+check(JSON.stringify(sugs) === JSON.stringify(STARTERS),
 	`default suggestions offered: ${JSON.stringify(sugs)}`);
 
 // One click adds a suggestion.

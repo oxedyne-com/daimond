@@ -23,13 +23,27 @@
 	--warn-bg:           #33260F;
 	--danger:            #E07A67;
 	--success:           #66B98C;
-	/* The chip a tag filter is being held by. One neutral pair, declared once and
-	   NOT re-declared per palette: a tag's hue already says which tag it is, so
-	   the state that says "this one is working" has to be the one thing about a
-	   chip that never varies -- across tags, and across themes. */
+	/* The chip a tag filter is being held by. One neutral pair per INK -- not per
+	   palette. A tag's hue already says which tag it is, so the state saying
+	   "this one is working" must not also vary by tag; and it must not vary by
+	   palette either, or eleven of them become eleven different states. But it
+	   cannot be a single pair across both inks: a mid grey reads 6.17 against a
+	   paper ground and 1.13 against a near-black one, where the only thing left
+	   distinguishing a filtered tag was that its hue had gone -- and hue alone is
+	   not a signal. The ink axis is the smallest thing it can key on that is not
+	   a palette's name. */
 	--tag-on-bg:         #4A4A4A;
 	--tag-on-hover:      #5C5C5C;
 	--tag-on-fg:         #FFFFFF;
+
+	/* What letters a FILLED control -- a button whose ground is --accent, --ok
+	   or --danger. White is right on a light palette, where those fills are deep
+	   reds and greens. On a dark palette they are light mints and salmons, and
+	   white on them measured 2.15-3.46: a label close to invisible on the one
+	   control the eye is meant to go to. The rule is the same one the rest of the
+	   app follows -- dark lettering on a light ground -- so a dark palette's
+	   filled button letters in its own darkest surface. */
+	--on-fill:           #FFFFFF;
 	--radius:            8px;
 	--radius-sm:         6px;
 	--radius-lg:         12px;
@@ -98,18 +112,18 @@
 	/* Same reasoning as the light theme's muted rung: #B08AAA read at 2.5-3.0:1
 	   on the candy surfaces. This keeps the mauve and clears 4.4:1. */
 	--text-muted:        #8A5E85;
-	--accent:            #E23E93;
-	--accent-hover:      #F45FAB;
+	--accent:            #C42B7C;
+	--accent-hover:      #D13988;
 	--accent-soft:       #FBDDEF;
 	--accent-text:       #AE1E6E;
 	/* Dark enough to read AS TEXT on the candy surfaces (4.5:1 on tertiary);
 	   the brighter #12B26E sat at 2.3:1, fine for a dot but not for words. */
 	--ok:                #0C7A4C;
 	--ok-bg:             #DAF6EA;
-	--warn:              #E88C0A;
+	--warn:              #9A5C04;
 	--warn-bg:           #FCEDD1;
-	--danger:            #EC4B67;
-	--success:           #12B26E;
+	--danger:            #C62B48;
+	--success:           #0C7A4C;
 }
 
 /* ── Skin axis ───────────────────────────────────────────────────────
@@ -267,8 +281,8 @@
 	--text-primary:      #EDF1F6;
 	--text-secondary:    #BCC7D4;
 	--text-muted:        #A4B1C0;
-	--accent:            #2F70A8;
-	--accent-hover:      #3D86C4;
+	--accent:            #5AA6E4;
+	--accent-hover:      #79BEF5;
 	--accent-soft:       #33455A;
 	--accent-text:       #A9CDEC;
 	--ok:                #6FC194;
@@ -290,7 +304,7 @@
 	--text-primary:      #E4EAF2;
 	--text-secondary:    #9BA8B8;
 	--text-muted:        #808E9F;
-	--accent:            #2E7CB8;
+	--accent:            #3082C0;
 	--accent-hover:      #3B93D2;
 	--accent-soft:       #16293A;
 	--accent-text:       #8FC4EA;
@@ -314,8 +328,8 @@
 	--text-primary:      #E6EDE6;
 	--text-secondary:    #A0AFA1;
 	--text-muted:        #86968A;
-	--accent:            #3D8043;
-	--accent-hover:      #4C9A53;
+	--accent:            #4E9C55;
+	--accent-hover:      #63B36B;
 	--accent-soft:       #1B2E1D;
 	--accent-text:       #A2CFA4;
 	--ok:                #5FBE85;
@@ -381,6 +395,22 @@
 	--warn-bg:           #33280F;
 	--danger:            #DC7B55;
 	--success:           #A8B457;
+}
+
+/* Dark grounds take the selected chip the other way up: light block, dark
+   lettering. 4.86 against the chip it replaces, 4.63 against every dark-band
+   surface. */
+/* What the user agent should assume when it draws something we have not
+   styled: a scrollbar, a date picker, a default form control, a link. Without
+   it Chromium draws light-mode furniture on a black panel. */
+:root[data-ink="dark"]  { color-scheme: light; }
+:root[data-ink="light"] { color-scheme: dark; }
+
+:root[data-ink="light"] {
+	--tag-on-bg:         #B0B0B0;
+	--tag-on-hover:      #C4C4C4;
+	--tag-on-fg:         #1A1A1A;
+	--on-fill:           var(--bg-primary);
 }
 
 /* ── CJK faces ─────────────────────────────────────────────────

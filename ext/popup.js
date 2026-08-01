@@ -6,14 +6,26 @@
 (() => {
 
 	const $ = (id) => document.getElementById(id);
+	const I = globalThis.DaimondExtI18n;
+	const t = (...a) => I.t(...a);
 
 	/// A match pattern, said the way a person would say it.
 	function plain(pat) {
-		if (pat === '<all_urls>') return 'Any tab, for the live mirror';
+		if (pat === '<all_urls>') return t('popup_any_tab');
 		const m = /^\*:\/\/\*\.([^/]+)\/\*$/.exec(pat);
-		if (m) return `${m[1]} and its subdomains`;
+		if (m) return t('popup_subdomains', m[1]);
 		const n = /^\*:\/\/([^/]+)\/\*$/.exec(pat);
 		return n ? n[1] : pat;
+	}
+
+	/// A line of state: a sentence, and the small print under it.
+	function says(el, head, fine) {
+		el.textContent = '';
+		const h = document.createElement('div');
+		const f = document.createElement('small');
+		h.textContent = head;
+		f.textContent = fine;
+		el.append(h, f);
 	}
 
 	/// Paints the current state.
@@ -27,17 +39,11 @@
 		const ask = $('ask');
 		if (s.pending) {
 			ask.hidden = false;
-			ask.textContent = '';
-			const head = document.createElement('div');
-			const fine = document.createElement('small');
 			if (s.pending.kind === 'mirror') {
-				head.textContent = 'Waiting for you: may Daimond show the tab it is driving?';
-				fine.textContent = 'It needs to photograph the tab, which Chrome cannot allow site by site. Saying no costs nothing — Daimond works from the page structure instead.';
+				says(ask, t('popup_ask_mirror'), t('popup_ask_mirror_fine'));
 			} else {
-				head.textContent = `Waiting for you: may Daimond operate ${s.pending.host}?`;
-				fine.textContent = `Approving covers ${s.pending.host} and its subdomains, and nothing else. Chrome asks once more to confirm.`;
+				says(ask, t('popup_ask_site', s.pending.host), t('popup_ask_site_fine', s.pending.host));
 			}
-			ask.append(head, fine);
 			$('raise').hidden = false;
 		} else {
 			ask.hidden = true;
@@ -47,18 +53,18 @@
 		const mode = $('mode');
 		mode.className = 'mode ' + s.mode;
 		if (s.mode === 'user') {
-			mode.innerHTML = 'You are driving.<small>Daimond is not watching this tab: no page, no pixels, no keystrokes.</small>';
+			says(mode, t('popup_mode_user'), t('popup_mode_user_fine'));
 			$('take').hidden = false;
 		} else if (s.mode === 'agent') {
-			mode.innerHTML = 'Daimond is driving.<small>Passwords and payment fields are never sent, even now.</small>';
+			says(mode, t('popup_mode_agent'), t('popup_mode_agent_fine'));
 			$('take').hidden = true;
 		} else {
-			mode.innerHTML = 'Idle.<small>No page is open.</small>';
+			says(mode, t('popup_mode_idle'), t('popup_mode_idle_fine'));
 			$('take').hidden = true;
 		}
 
 		$('url').textContent = s.url || '';
-		// One question at a time. Offering the mirror -- the broadest permission
+		// One question at a time. Offering the live view -- the broadest permission
 		// Chrome has -- beside a site question the user has not answered is how a
 		// clear flow turns back into three surprises.
 		$('mirror').hidden = (s.granted || []).includes('<all_urls>') || !!s.pending;
@@ -68,7 +74,7 @@
 		if (!s.granted || !s.granted.length) {
 			const li = document.createElement('li');
 			li.className	= 'none';
-			li.textContent	= 'None yet. Daimond must ask before it touches any site.';
+			li.textContent	= t('popup_none');
 			ul.append(li);
 			return;
 		}
@@ -81,7 +87,7 @@
 			// a match pattern to find out that it covers subdomains.
 			span.textContent	= plain(pat);
 			span.title		= pat;
-			btn.textContent		= 'Revoke';
+			btn.textContent		= t('popup_revoke');
 			btn.addEventListener('click', async () => {
 				const res = await chrome.runtime.sendMessage({ type: 'revoke', pattern: pat });
 				if (res && res.ok) refresh();
@@ -97,7 +103,8 @@
 	}
 
 	// Bring the waiting question back to the front. It is the same window, raised
-	// -- opening another would be the popup flood the mirror guard exists to stop.
+	// -- opening another would be the popup flood the live-view guard exists to
+	// stop.
 	$('raise').addEventListener('click', async () => {
 		const r = await chrome.runtime.sendMessage({ type: 'raise' });
 		if (r && r.ok) window.close();
@@ -120,6 +127,9 @@
 		refresh();
 	});
 
-	refresh();
+	// The marked nodes are painted the moment the table is in, and the state is
+	// asked for after -- so the window never draws a translated question around
+	// English furniture.
+	I.ready().then(() => { I.paint(); refresh(); });
 
 })();

@@ -1,0 +1,161 @@
+{
+	"ext_desc": {
+		"message": "Lässt Daimond eine echte Website in einem echten Tab steuern, in deinem Browser, mit deiner Sitzung. Keine Zugangsdaten verlassen jemals dieses Gerät."
+	},
+	"popup_raise": {
+		"message": "Das Freigabefenster zeigen"
+	},
+	"popup_take": {
+		"message": "Das Steuer an Daimond zurückgeben"
+	},
+	"popup_mirror": {
+		"message": "Die Live-Ansicht des Tabs erlauben"
+	},
+	"popup_granted_head": {
+		"message": "Von dir freigegebene Seiten"
+	},
+	"popup_revoke": {
+		"message": "Entziehen"
+	},
+	"popup_none": {
+		"message": "Noch keine. Daimond muss fragen, bevor es eine Seite anfasst."
+	},
+	"popup_any_tab": {
+		"message": "Jeder Tab, für die Live-Ansicht"
+	},
+	"popup_subdomains": {
+		"message": "$HOST$ und seine Subdomains",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_mirror": {
+		"message": "Wartet auf dich: Darf Daimond den Tab zeigen, den es steuert?"
+	},
+	"popup_ask_mirror_fine": {
+		"message": "Dafür muss der Tab fotografiert werden, und das kann Chrome nicht seitenweise erlauben. Nein zu sagen kostet nichts — Daimond arbeitet dann mit der Seitenstruktur."
+	},
+	"popup_ask_site": {
+		"message": "Wartet auf dich: Darf Daimond $HOST$ steuern?",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_site_fine": {
+		"message": "Die Freigabe gilt für $HOST$ und seine Subdomains, sonst nichts. Chrome fragt noch einmal zur Bestätigung.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_mode_user": {
+		"message": "Du steuerst."
+	},
+	"popup_mode_user_fine": {
+		"message": "Daimond sieht sich diesen Tab nicht an: keine Seite, keine Pixel, keine Tastenanschläge."
+	},
+	"popup_mode_agent": {
+		"message": "Daimond steuert."
+	},
+	"popup_mode_agent_fine": {
+		"message": "Passwörter und Zahlungsfelder werden nie gesendet, auch jetzt nicht."
+	},
+	"popup_mode_idle": {
+		"message": "Untätig."
+	},
+	"popup_mode_idle_fine": {
+		"message": "Keine Seite ist offen."
+	},
+	"grant_deny": {
+		"message": "Jetzt nicht"
+	},
+	"grant_allow": {
+		"message": "Erlauben"
+	},
+	"grant_mirror_head": {
+		"message": "Daimond möchte dir den Tab zeigen, den es steuert"
+	},
+	"grant_mirror_body": {
+		"message": "Um den Tab im Daimond-Panel zu zeigen, muss die Erweiterung ihn fotografieren. Chrome erlaubt das nicht seitenweise, deshalb gilt diese Berechtigung für jeden Tab."
+	},
+	"grant_mirror_fine": {
+		"message": "An der Übergabe ändert das nichts: Während du ein Passwort eingibst, wird kein Bild aufgenommen und keines gesendet. Du kannst das jederzeit über das Symbol von Daimond Hands zurücknehmen. Wenn du Nein sagst, arbeitet Daimond einfach mit der Seitenstruktur."
+	},
+	"grant_mirror_allow": {
+		"message": "Live-Ansicht erlauben"
+	},
+	"grant_site_head": {
+		"message": "Daimond möchte eine Seite für dich steuern"
+	},
+	"grant_site_scope": {
+		"message": "Das gilt für $HOST$ und seine Subdomains, sonst nichts. Jede andere Seite wird einzeln gefragt.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"grant_site_body": {
+		"message": "Daimond kann die Seitenstruktur dieser Seite lesen und darauf klicken und tippen — in diesem Browser, als du."
+	},
+	"grant_site_fine": {
+		"message": "Wenn du unten klickst, fragt Chrome noch einmal — es wird „Ihre Daten auf dieser Website lesen und ändern“ sagen. Das ist Chromes Standardformulierung für jede Erweiterung, nichts, was Daimond zusätzlich tut. Diese Abfrage ist die eigentliche Freigabe, und sie erscheint pro Seite nur beim ersten Mal. Daimond sieht nie ein Passwort: Sobald ein Anmeldeformular auftaucht, bekommt es nichts mehr, bis du ihm das Steuer zurückgibst — und du kannst die Freigabe jederzeit über das Symbol von Daimond Hands zurücknehmen."
+	},
+	"grant_site_allow": {
+		"message": "Erlauben, dann in Chrome bestätigen →"
+	},
+	"action_pending_mirror": {
+		"message": "Daimond Hands — wartet auf deine Erlaubnis für die Live-Ansicht"
+	},
+	"action_pending_site": {
+		"message": "Daimond Hands — wartet auf deine Freigabe für $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"raise_none": {
+		"message": "Es wartet nichts auf Freigabe."
+	},
+	"raise_gone": {
+		"message": "Dieses Fenster ist weg. Bitte Daimond, die Seite noch einmal zu öffnen."
+	},
+	"resume_button": {
+		"message": "Daimond fortsetzen ▸"
+	},
+	"reason_password": {
+		"message": "einem Passwortfeld"
+	},
+	"reason_passkey_otc": {
+		"message": "einer Passkey- oder Einmalcode-Abfrage"
+	},
+	"reason_passkey": {
+		"message": "einer Passkey-Abfrage"
+	},
+	"reason_typing": {
+		"message": "deiner Eingabe"
+	},
+	"reason_private": {
+		"message": "etwas Privatem"
+	},
+	"reason_sso": {
+		"message": "der Anmeldeseite für $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	}
+}

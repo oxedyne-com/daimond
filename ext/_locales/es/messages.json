@@ -1,0 +1,161 @@
+{
+	"ext_desc": {
+		"message": "Permite que Daimond conduzca un sitio real en una pestaña real, en tu navegador, con tu sesión. Ninguna credencial sale nunca del dispositivo."
+	},
+	"popup_raise": {
+		"message": "Mostrar la ventana de aprobación"
+	},
+	"popup_take": {
+		"message": "Devolver el volante a Daimond"
+	},
+	"popup_mirror": {
+		"message": "Permitir la vista en vivo de la pestaña"
+	},
+	"popup_granted_head": {
+		"message": "Sitios que has permitido"
+	},
+	"popup_revoke": {
+		"message": "Revocar"
+	},
+	"popup_none": {
+		"message": "Ninguno todavía. Daimond tiene que preguntar antes de tocar cualquier sitio."
+	},
+	"popup_any_tab": {
+		"message": "Cualquier pestaña, para la vista en vivo"
+	},
+	"popup_subdomains": {
+		"message": "$HOST$ y sus subdominios",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_mirror": {
+		"message": "Esperándote: ¿puede Daimond mostrar la pestaña que está conduciendo?"
+	},
+	"popup_ask_mirror_fine": {
+		"message": "Necesita fotografiar la pestaña, y Chrome no puede permitirlo sitio por sitio. Decir que no no cuesta nada: Daimond trabaja con la estructura de la página."
+	},
+	"popup_ask_site": {
+		"message": "Esperándote: ¿puede Daimond conducir $HOST$?",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_site_fine": {
+		"message": "Aprobarlo cubre $HOST$ y sus subdominios, y nada más. Chrome pide una confirmación más.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_mode_user": {
+		"message": "Conduces tú."
+	},
+	"popup_mode_user_fine": {
+		"message": "Daimond no está mirando esta pestaña: ni página, ni píxeles, ni pulsaciones de teclado."
+	},
+	"popup_mode_agent": {
+		"message": "Conduce Daimond."
+	},
+	"popup_mode_agent_fine": {
+		"message": "Las contraseñas y los campos de pago no se envían nunca, tampoco ahora."
+	},
+	"popup_mode_idle": {
+		"message": "En reposo."
+	},
+	"popup_mode_idle_fine": {
+		"message": "No hay ninguna página abierta."
+	},
+	"grant_deny": {
+		"message": "Ahora no"
+	},
+	"grant_allow": {
+		"message": "Permitir"
+	},
+	"grant_mirror_head": {
+		"message": "Daimond quiere mostrarte la pestaña que está conduciendo"
+	},
+	"grant_mirror_body": {
+		"message": "Para mostrar la pestaña dentro del panel de Daimond, la extensión necesita tomar una imagen de ella. Chrome no lo permite sitio por sitio, así que este permiso cubre cualquier pestaña."
+	},
+	"grant_mirror_fine": {
+		"message": "No cambia nada del relevo: mientras escribes una contraseña no se toma ninguna imagen ni se envía ninguna. Puedes retirarlo cuando quieras desde el icono de Daimond Hands. Si dices que no, Daimond simplemente trabaja con la estructura de la página."
+	},
+	"grant_mirror_allow": {
+		"message": "Permitir la vista en vivo"
+	},
+	"grant_site_head": {
+		"message": "Daimond quiere conducir un sitio por ti"
+	},
+	"grant_site_scope": {
+		"message": "Esto cubre $HOST$ y sus subdominios, y nada más. Cada uno de los demás sitios se pregunta por separado.",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"grant_site_body": {
+		"message": "Daimond puede leer la estructura de página de este sitio y hacer clic y escribir en él, en este navegador, como tú."
+	},
+	"grant_site_fine": {
+		"message": "Cuando pulses abajo, Chrome pedirá una confirmación más: dirá «leer y cambiar tus datos en este sitio», que es la fórmula estándar de Chrome para cualquier extensión, no algo adicional que haga Daimond. Ese aviso es la aprobación de verdad, y solo aparece la primera vez para cada sitio. Daimond no ve nunca una contraseña: en cuanto aparece un formulario de inicio de sesión deja de recibir nada hasta que le devuelvas el volante, y puedes retirar esto cuando quieras desde el icono de Daimond Hands."
+	},
+	"grant_site_allow": {
+		"message": "Permitir y luego confirmar en Chrome →"
+	},
+	"action_pending_mirror": {
+		"message": "Daimond Hands — esperando a que permitas la vista en vivo"
+	},
+	"action_pending_site": {
+		"message": "Daimond Hands — esperando a que apruebes $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"raise_none": {
+		"message": "No hay nada esperando aprobación."
+	},
+	"raise_gone": {
+		"message": "Esa ventana ya no está. Pídele a Daimond que abra el sitio otra vez."
+	},
+	"resume_button": {
+		"message": "Reanudar Daimond ▸"
+	},
+	"reason_password": {
+		"message": "un campo de contraseña"
+	},
+	"reason_passkey_otc": {
+		"message": "una petición de llave de acceso o de código de un solo uso"
+	},
+	"reason_passkey": {
+		"message": "una petición de llave de acceso"
+	},
+	"reason_typing": {
+		"message": "lo que estabas escribiendo"
+	},
+	"reason_private": {
+		"message": "algo privado"
+	},
+	"reason_sso": {
+		"message": "la página de inicio de sesión de $HOST$",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	}
+}

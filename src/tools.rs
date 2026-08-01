@@ -112,11 +112,21 @@ pub const DAIMOND_DIR: &str = ".daimond/";
 /// One prefix rule bounding what a turn may touch, checked at the single dispatch door in
 /// [`Tool::execute`].
 ///
-/// The rules are a deny-list with one carve-out, because that is the shape of the problem: a
-/// bounded turn is fenced out of Daimond's own directory, and let back in to exactly one place --
-/// the skill's own folder, whose shipped references are part of the skill.  The carve-out grants
-/// reading and never writing, so a skill can quote its own reference document and still cannot
-/// rewrite its own `uses` line.
+/// Two shapes of rule, because there are two shapes of problem.
+///
+/// A skill's bound is a DENY-LIST with one carve-out: a bounded turn is fenced out of Daimond's own
+/// directory, and let back in to exactly one place -- the skill's own folder, whose shipped
+/// references are part of the skill.  The carve-out grants reading and never writing, so a skill
+/// can quote its own reference document and still cannot rewrite its own `uses` line.
+///
+/// A Diamond's bound is an ALLOW-LIST: its daimon may reach the files in that Diamond's workspace
+/// and nothing else at all.  That is a different guarantee and needs the opposite default -- a
+/// deny-list is only as complete as the list of things someone remembered to deny, and the thing
+/// this has to survive is a turn that has read a stranger's words and been told to go looking.
+///
+/// The two compose, and the allow-list wins.  A turn can be both scoped to a Diamond and running
+/// under a skill, and then it may touch what BOTH permit: inside the Diamond's workspace, and not
+/// inside Daimond's own directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Bound {
     /// Nothing under this workspace-relative prefix may be written, moved onto, or deleted.
@@ -125,7 +135,16 @@ pub enum Bound {
     NoRead(String),
     /// ...except here.  A prefix a bounded turn may always read, whatever a [`Bound::NoRead`]
     /// says: the skill's own directory.  Reading only -- this grants no write.
+    ///
+    /// It does not escape an [`Bound::OnlyUnder`]: a carve-out in a deny-list is a hole punched in
+    /// a fence, and the allow-list is a different fence entirely.
     MayRead(String),
+    /// Nothing OUTSIDE these prefixes may be read or written.
+    ///
+    /// The presence of a single rule of this kind turns the bound into an allow-list.  A path that
+    /// is under none of them is refused whatever else the bound says -- which is the whole of the
+    /// claim that a daimon can only open the files in its Diamond's workspace.
+    OnlyUnder(String),
 }
 
 /// The bounds a turn running under a skill's declaration runs with.
@@ -146,6 +165,44 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
     for dir in skill_dirs {
         out.push(Bound::MayRead(dir.clone()));
     }
+    out
+}
+
+/// The bounds a Diamond's daimon runs with: its own workspace, and nothing else.
+///
+/// `own_dir` is the Diamond's own directory (`diamonds/<id>`), which is always in scope and always
+/// writable -- a daimon that could reach nothing until the user attached something could not even
+/// keep its own crystal, and "somewhere to work" must never be a question the user has to answer
+/// before starting.
+///
+/// `attached` are the workspace-relative files and directories the user has put in this Diamond's
+/// workspace.  `read_only` are those of them the user attached to be consulted rather than edited;
+/// they are expressed as an allow plus a write fence, because that is exactly what they are and it
+/// needs no third kind of rule.
+///
+/// An EMPTY result would mean an unbounded turn -- [`ToolContext::may_read`] treats no bounds as no
+/// restriction -- so this never returns empty: `own_dir` is always present.
+///
+/// # Arguments
+/// * `own_dir` - The Diamond's own directory, workspace-relative.
+/// * `attached` - Paths in this Diamond's workspace.
+/// * `read_only` - Which of `attached` may be read but not written.
+pub fn diamond_bounds(own_dir: &str, attached: &[String], read_only: &[String]) -> Vec<Bound> {
+    let mut out = vec![Bound::OnlyUnder(normalise(own_dir))];
+    for path in attached {
+        out.push(Bound::OnlyUnder(normalise(path)));
+    }
+    for path in read_only {
+        // Allowed in, and fenced against writing. A path in `read_only` that is not also in
+        // `attached` is still allowed by this, which is deliberate: the caller should not have to
+        // list a thing twice to say "readable, not writable".
+        out.push(Bound::OnlyUnder(normalise(path)));
+        out.push(Bound::NoWrite(normalise(path)));
+    }
+    // Daimond's own directory is out of bounds inside a Diamond too. Attaching `.daimond` would
+    // otherwise hand a daimon the rules about what agents may do.
+    out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
+    out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
     out
 }
 
@@ -539,10 +596,62 @@ impl ToolContext {
             return true;
         }
         let p = normalise(path);
+        if !self.within_allow_list(&p) {
+            return false;
+        }
         !self.no_write.iter().any(|b| match b {
             Bound::NoWrite(prefix) => under(&p, prefix),
             _                      => false,
         })
+    }
+
+    /// Why a path was refused, in the model's own terms, so it can recover rather than retry.
+    ///
+    /// The two fences fail for opposite reasons and a single message would misdescribe one of
+    /// them: an allow-list refusal means "that is not in this Diamond's workspace", and a deny
+    /// refusal means "that is Daimond's own directory".  A model told the wrong one tries the
+    /// wrong repair.
+    ///
+    /// # Arguments
+    /// * `path` - The workspace-relative path that was refused.
+    /// * `writing` - Whether the refused call was a write.
+    pub fn refusal(&self, path: &str, writing: bool) -> String {
+        let p = normalise(path);
+        if !self.within_allow_list(&p) {
+            return fmt!(
+                "Refused: '{}' is not in this Diamond's workspace. A daimon can only open the \
+                files its Diamond holds -- the user puts them there, and you cannot add to it \
+                yourself. Work with what is in scope, or say what you would need and let the user \
+                attach it.", path);
+        }
+        if writing {
+            return fmt!(
+                "Refused: '{}' may be read here but not written. It was attached to be consulted \
+                rather than edited.", path);
+        }
+        fmt!(
+            "Refused: '{}' is inside Daimond's own directory, which holds the rules about what \
+            agents may do. Those are not yours to read or rewrite.", path)
+    }
+
+    /// Whether an allow-list is declared at all, and if so whether `path` is inside it.
+    ///
+    /// True when no [`Bound::OnlyUnder`] rule is present, because an absent allow-list bounds
+    /// nothing -- that is the ordinary turn, and the deny rules speak for themselves.
+    ///
+    /// # Arguments
+    /// * `p` - An already-normalised workspace-relative path.
+    fn within_allow_list(&self, p: &str) -> bool {
+        let mut declared = false;
+        for b in &self.no_write {
+            if let Bound::OnlyUnder(prefix) = b {
+                declared = true;
+                if under(p, prefix) {
+                    return true;
+                }
+            }
+        }
+        !declared
     }
 
     /// Whether this turn may read `path`, which is workspace-relative.
@@ -559,6 +668,12 @@ impl ToolContext {
             return true;
         }
         let p = normalise(path);
+        // The allow-list is tested BEFORE the carve-out, so a skill's own folder cannot be the way
+        // out of a Diamond's workspace.  A carve-out is a hole in the deny fence; it is not a key
+        // to a different one.
+        if !self.within_allow_list(&p) {
+            return false;
+        }
         if self.no_write.iter().any(|b| matches!(b, Bound::MayRead(prefix) if under(&p, prefix))) {
             return true;
         }
@@ -767,19 +882,12 @@ impl Tool {
     fn guard(&self, args_json: &str, ctx: &ToolContext) -> Outcome<Option<String>> {
         for path in res!(Self::write_targets(self, args_json)) {
             if !ctx.may_write(&path) {
-                return Ok(Some(fmt!(
-                    "Refused: this turn is running under a skill's declared toolbelt, and a skill \
-                    may not write to '{}'. Daimond's own directory holds the rules about what a \
-                    skill may do, so a skill cannot rewrite them.", path)));
+                return Ok(Some(ctx.refusal(&path, true)));
             }
         }
         if let Some(path) = res!(Self::read_target(self, args_json)) {
             if !ctx.may_read(&path) {
-                return Ok(Some(fmt!(
-                    "Refused: this turn is running under a skill's declared toolbelt, and inside \
-                    Daimond's own directory a skill may read only its own folder -- not '{}'. What \
-                    a skill ships travels with it; another skill's files are not its business.",
-                    path)));
+                return Ok(Some(ctx.refusal(&path, false)));
             }
         }
         Ok(None)
@@ -1832,6 +1940,160 @@ mod tests {
         dir.push(fmt!("daimond_tools_test_{}", n));
         let ws = Workspace::new(dir).expect("ws");
         ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new() }
+    }
+
+    /// A context scoped to a Diamond, as `diamond_bounds` builds it.
+    fn scoped(attached: &[&str], read_only: &[&str]) -> ToolContext {
+        let mut c = ctx();
+        let a: Vec<String> = attached.iter().map(|x| x.to_string()).collect();
+        let r: Vec<String> = read_only.iter().map(|x| x.to_string()).collect();
+        c.no_write = diamond_bounds("diamonds/d1", &a, &r);
+        c
+    }
+
+    // ── A daimon is confined to its Diamond's workspace ──────────────────────
+    //
+    // Each of these is an ESCAPE ATTEMPT. They are written as the thing going wrong, so that a
+    // check which stopped working would go quiet rather than green: every one of them passes on
+    // the unbounded context below, which is the control.
+
+    #[test]
+    fn test_a_daimon_cannot_read_outside_its_workspace_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        assert!(!c.may_read("secrets/keys.txt"), "a path in no attachment must not be readable");
+        assert!(!c.may_write("secrets/keys.txt"), "nor writable");
+        // The control: the same path, unbounded.
+        assert!(ctx().may_read("secrets/keys.txt"), "the check must be the bounds and not the path");
+    }
+
+    #[test]
+    fn test_a_daimon_reaches_what_is_attached_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        assert!(c.may_read("notes/specs/api.md"));
+        assert!(c.may_write("notes/specs/api.md"));
+        assert!(c.may_read("notes/specs"), "the attached directory itself");
+    }
+
+    #[test]
+    fn test_a_daimon_always_has_its_own_directory_00() {
+        // Nothing attached at all: it must still be able to keep its crystal.
+        let c = scoped(&[], &[]);
+        assert!(c.may_write("diamonds/d1/crystal.md"));
+        assert!(c.may_write("diamonds/d1/notes/draft.md"), "and to make its own folders");
+        assert!(!c.may_read("anything/else.md"), "and nothing else");
+    }
+
+    #[test]
+    fn test_a_read_only_attachment_refuses_the_write_00() {
+        let c = scoped(&[], &["reference/handbook"]);
+        assert!(c.may_read("reference/handbook/ch1.md"), "consulting it is the point");
+        assert!(!c.may_write("reference/handbook/ch1.md"), "editing it is not");
+    }
+
+    #[test]
+    fn test_a_neighbouring_prefix_is_not_inside_00() {
+        // `notes/specs-old` starts with the same letters as `notes/specs` and is a different
+        // place. Segment comparison is what makes the allow-list mean anything.
+        let c = scoped(&["notes/specs"], &[]);
+        assert!(!c.may_read("notes/specs-old/api.md"));
+        assert!(!c.may_read("notes/specsomething"));
+    }
+
+    #[test]
+    fn test_dot_dot_does_not_climb_out_00() {
+        let c = scoped(&["notes/specs"], &[]);
+        for p in ["notes/specs/../../secrets/keys.txt", "notes/specs/./../other/x.md"] {
+            assert!(!c.may_read(p), "{} must not resolve out of the workspace", p);
+        }
+    }
+
+    #[test]
+    fn test_daimonds_own_directory_is_out_of_bounds_inside_a_diamond_00() {
+        // Even attached explicitly: the rules about what agents may do are not an agent's to read.
+        let c = scoped(&[".daimond"], &[]);
+        assert!(!c.may_read(".daimond/skills/x.md"));
+        assert!(!c.may_write(".daimond/skills/x.md"));
+    }
+
+    #[test]
+    fn test_a_skills_carve_out_is_not_a_way_out_of_a_diamond_00() {
+        // A turn can be scoped AND running under a skill. The carve-out lets a skill read its own
+        // folder past the deny fence; it must not let it past the allow fence.
+        let mut c = scoped(&["notes/specs"], &[]);
+        c.no_write.push(Bound::MayRead(fmt!(".daimond/skills/mine")));
+        assert!(!c.may_read(".daimond/skills/mine/ref.md"),
+            "the allow-list is tested first, so the carve-out cannot escape it");
+    }
+
+    #[test]
+    fn test_the_refusal_says_which_fence_stopped_it_00() {
+        let c = scoped(&[], &["reference/handbook"]);
+        assert!(c.refusal("secrets/keys.txt", false).contains("not in this Diamond's workspace"));
+        assert!(c.refusal("reference/handbook/ch1.md", true).contains("read here but not written"));
+        // Inside a Diamond, Daimond's own directory is refused as OUT OF SCOPE rather than as
+        // fenced -- it is not attached, and that is the truer reason to give. The fence message
+        // belongs to the turn that has no allow-list: a skill.
+        assert!(c.refusal(".daimond/skills/x.md", false).contains("not in this Diamond's workspace"));
+        let mut skilled = ctx();
+        skilled.no_write = skill_bounds(&[fmt!(".daimond/skills/mine")]);
+        assert!(skilled.refusal(".daimond/skills/other/x.md", false).contains("Daimond's own directory"));
+    }
+
+    #[test]
+    fn test_an_empty_scope_still_bounds_00() {
+        // The failure that would matter: a Diamond with nothing attached must not come out
+        // unbounded. diamond_bounds never returns empty, because empty means "no restriction".
+        let b = diamond_bounds("diamonds/d1", &[], &[]);
+        assert!(!b.is_empty(), "an empty scope must still be a scope");
+        assert!(b.iter().any(|x| matches!(x, Bound::OnlyUnder(_))),
+            "and it must carry an allow-list, or the deny rules alone would let everything else through");
+    }
+
+    #[test]
+    fn test_an_unscoped_turn_is_not_bounded_by_this_00() {
+        // The ordinary Workspace agent has no allow-list and must be unaffected.
+        let c = ctx();
+        assert!(c.may_read("anywhere/at/all.md"));
+        assert!(c.may_write("anywhere/at/all.md"));
+    }
+
+    #[test]
+    fn test_the_guard_refuses_at_the_door_00() {
+        // Not the predicate -- the door every tool dispatches through.
+        let c = scoped(&["notes/specs"], &[]);
+        let out = Tool::FileRead.guard(r#"{"path":"secrets/keys.txt"}"#, &c).expect("guard");
+        assert!(out.is_some(), "file_read outside the workspace must be refused at the door");
+        let w = Tool::FileWrite.guard(r#"{"path":"secrets/keys.txt","content":"x"}"#, &c).expect("guard");
+        assert!(w.is_some(), "and so must file_write");
+        let ok = Tool::FileRead.guard(r#"{"path":"notes/specs/api.md"}"#, &c).expect("guard");
+        assert!(ok.is_none(), "and what is in scope must pass");
+    }
+
+    #[test]
+    fn test_every_path_taking_tool_is_seen_by_the_guard_00() {
+        // The claim is only as good as the enumeration behind it: a tool whose path never reaches
+        // write_targets or read_target is a hole. This fails if one is added without being named.
+        let c = scoped(&["notes/specs"], &[]);
+        let cases: &[(Tool, &str)] = &[
+            (Tool::FileRead,   r#"{"path":"out/x.md"}"#),
+            (Tool::FileWrite,  r#"{"path":"out/x.md","content":"x"}"#),
+            (Tool::FileEdit,   r#"{"path":"out/x.md","old_string":"a","new_string":"b"}"#),
+            (Tool::FileDelete, r#"{"path":"out/x.md"}"#),
+            (Tool::DirCreate,  r#"{"path":"out/x"}"#),
+            (Tool::FileFetch,  r#"{"path":"out/x.md"}"#),
+            (Tool::FileList,   r#"{"path":"out"}"#),
+            (Tool::FileSearch, r#"{"path":"out","pattern":"x"}"#),
+            (Tool::TypstCompile, r#"{"path":"out/x.typ"}"#),
+        ];
+        for (tool, args) in cases {
+            let got = tool.guard(args, &c).expect("guard");
+            assert!(got.is_some(), "{} reached outside the workspace unrefused", tool.name());
+        }
+        // file_move names two paths and BOTH are checked: a move out is an escape as surely as a
+        // write out, and a move in from outside reads what it must not read.
+        let out_dest = Tool::FileMove.guard(
+            r#"{"path":"notes/specs/a.md","to":"escaped/a.md"}"#, &c).expect("guard");
+        assert!(out_dest.is_some(), "file_move must not carry a file out of the workspace");
     }
 
     #[test]

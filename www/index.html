@@ -66,10 +66,29 @@
 		<button id="drawer-btn" title="Menu" aria-label="Open menu" data-i18n-title="topbar.menu" data-i18n-aria-label="topbar.open_menu">
 			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 		</button>
+		<div class="brand-group">
 		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond — the daimond.app home page" data-i18n-aria-label="topbar.brand">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
 		</a>
+		<!-- Who made it, and how. Two marks in one plate: the Oxedyne flame on the
+		     left, the AI-disclosure chip on the right. They are separate claims and
+		     get separate hit areas — the flame leads to Oxedyne, the chip only says
+		     what it says until there is somewhere for it to lead.
+
+		     The artwork is one file with no ids to hook, so the halves are laid
+		     over it rather than cut out of it. The badge carries its own plate, so
+		     unlike the wordmark it needs no light/dark twin. -->
+		<span class="made-by">
+			<img src="assets/made_by_oxedyne.svg" alt="" aria-hidden="true">
+			<a class="mb-hit mb-oxedyne" href="https://oxedyne.com" target="_blank" rel="noopener noreferrer"
+				title="Made by Oxedyne" aria-label="Made by Oxedyne"
+				data-i18n-title="topbar.made_by" data-i18n-aria-label="topbar.made_by"></a>
+			<span class="mb-hit mb-ai" role="img"
+				title="Code made with mostly AI" aria-label="Code made with mostly AI"
+				data-i18n-title="topbar.made_with_ai" data-i18n-aria-label="topbar.made_with_ai"></span>
+		</span>
+		</div>
 		<div class="top-meter" id="top-meter"></div>
 		<div class="top-actions">
 			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
@@ -175,7 +194,7 @@
 							<span class="user-avatar" id="user-avatar" aria-hidden="true">◈</span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
-						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings">⚙</button>
+						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">⚙</button>
 					</div>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
@@ -296,15 +315,15 @@
 							<button class="chip-btn accent" id="sel-fold" data-i18n="chat.fold_selected">Fold selected</button>
 						</span>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
-						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help">−</button>
+						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 					</div>
 				</div>
 				<div class="chat-output" id="chat-output"></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
-					<button id="chat-send" title="Send" data-i18n-title="chat.send">➤</button>
-					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help">↑</button>
-					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help">↓</button>
+					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
+					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help" aria-label="Jump back to your last message" data-i18n-aria-label="chat.jump">↑</button>
+					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">↓</button>
 				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->
@@ -323,9 +342,9 @@
 					<span class="web-mode" id="web-mode" title="Who is driving" data-i18n-title="web.who_drives"></span>
 					<span class="ctitle web-url" id="web-url">The Web panel</span>
 					<div class="chead-right">
-						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back">‹</button>
-						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload">⟳</button>
-						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out">↗</button>
+						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back" aria-label="Back" data-i18n-aria-label="web.back">‹</button>
+						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload" aria-label="Reload" data-i18n-aria-label="web.reload">⟳</button>
+						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out" aria-label="Open in a real tab" data-i18n-aria-label="web.pop_out">↗</button>
 						<button class="addbtn panel-close" data-close="web" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>

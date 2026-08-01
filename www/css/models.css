@@ -38,7 +38,7 @@
 .models-def  {
 	font-family: var(--font); font-size: var(--fs-3xs); font-weight: 600;
 	padding: 1px 6px; border-radius: 999px;
-	background: var(--accent); color: #fff;
+	background: var(--accent); color: var(--on-fill, #fff);
 }
 
 /* The radius is the skin's, not a number: `--radius-sm` is 6px in the sharp skin, so nothing

@@ -21,7 +21,7 @@ svg { display: block; }
 .login-card input { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 14px; font-size: var(--fs-lg); }
 .login-card input:focus { outline: none; border-color: var(--accent); }
 .login-card input::placeholder { color: var(--text-muted); }
-.login-card button { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); }
+.login-card button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); }
 .login-card button:hover { background: var(--accent-hover); }
 .login-error { color: var(--danger); font-size: var(--fs-sm); margin-top: 8px; min-height: 18px; }
 .login-card a { display: block; text-align: center; margin-top: 16px; color: var(--accent); text-decoration: none; font-size: var(--fs-base); }
@@ -37,6 +37,29 @@ svg { display: block; }
    by theme because the topbar sits on the theme background: white lettering on
    the dark theme, dark grey on the light and lollypop themes. */
 .brand-wordmark { height: var(--logo-h); width: auto; display: block; }
+/* The maker's badge, beside the wordmark. It is a lozenge with its own white
+   plate and its own border, so it takes no palette treatment and no dark/light
+   twin -- and the margin has to keep it clear of the wordmark rather than let
+   two marks read as one. Shorter than the wordmark on purpose: it is a
+   signature, not a second logo. */
+/* The wordmark and the badge are ONE item in the top bar. The bar distributes
+   its children with space-between, so a badge added as a child of its own got
+   pushed two hundred pixels away from the wordmark it belongs beside. */
+.brand-group { display: flex; align-items: center; flex: none; min-width: 0; }
+.made-by { position: relative; display: flex; align-items: center; margin-left: 10px; flex: none; }
+/* The two halves of the badge, laid over the artwork. Each is a real element
+   with its own name, so a screen reader meets two claims rather than one
+   picture, and only the Oxedyne half is a link. */
+.made-by .mb-hit { position: absolute; top: 0; bottom: 0; width: 50%; display: block; }
+.made-by .mb-oxedyne { left: 0; }
+.made-by .mb-ai { right: 0; cursor: help; }
+.made-by .mb-oxedyne:hover ~ img { opacity: 0.85; }
+.made-by .mb-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.made-by img { height: calc(var(--logo-h) - 6px); width: auto; display: block; }
+.made-by:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* On a phone the bar is fighting for width and the wordmark already shortens;
+   the signature is the first thing that can go. */
+@media (max-width: 560px) { .made-by { display: none; } }
 .brand-wordmark.wm-on-light { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-dark { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
@@ -243,7 +266,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* Home: the panel at rest. A call to action while Daimond cannot run, and the
    account's own controls — which used to be a floating menu, and are one fewer
    popup now that there is a panel to put them in. */
-.admin-cta { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 9px 12px; font-size: var(--fs-sm); margin-bottom: 10px; }
+.admin-cta { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 12px; font-size: var(--fs-sm); margin-bottom: 10px; }
 .admin-cta:hover { background: var(--accent-hover); }
 .admin-sec { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding: 2px 4px 4px; }
 .admin-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); }
@@ -254,13 +277,28 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    somewhere in a list of eight identical lines. The accent is defined in all
    three palettes, so the ring survives the light themes; a dark-only colour
    would not. The offset stays inside the scroller's 8px padding. */
+/* The controls that had no themed ring of their own fell back to Chromium's,
+   which is drawn in rgb(16, 16, 16) -- a black ring on a near-black panel, and
+   clipped 1px besides by the scrollers they sit in. The offset is NEGATIVE
+   here, so the ring is painted inside the control's own box and no ancestor's
+   overflow can take it. */
+#user-row:focus-visible,
+#settings-btn:focus-visible,
+#spend-row:focus-visible,
+.astat-row:focus-visible,
+.models-prov-head:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+	border-radius: var(--radius-sm);
+}
+
 .admin-item:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 	background: var(--bg-hover);
 }
 .admin-item.danger { color: var(--danger); }
-.admin-item.danger:hover { background: var(--danger); color: #fff; }
+.admin-item.danger:hover { background: var(--danger); color: var(--on-fill, #fff); }
 .admin-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 4px 6px 8px; line-height: 1.5; }
 /* The way through to the operator console. Drawn as one of the drawer's own
    rows rather than as a button: it leads somewhere, it does not do anything. */
@@ -283,7 +321,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .new-session-panel { display: flex; gap: 6px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); flex: none; }
 .new-session-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 8px; font-size: var(--fs-sm); }
 .new-session-model:focus { outline: none; border-color: var(--accent); }
-.new-session-start { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 6px 12px; font-size: var(--fs-sm); white-space: nowrap; }
+.new-session-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 6px 12px; font-size: var(--fs-sm); white-space: nowrap; }
 .new-session-start:hover { background: var(--accent-hover); }
 
 .session-box { padding: 8px 9px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-secondary); cursor: pointer; flex: none; }
@@ -341,7 +379,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	align-items: center;
 	justify-content: center;
 }
-#chat-send { background: var(--accent); color: #fff; border: none; }
+#chat-send { background: var(--accent); color: var(--on-fill, #fff); border: none; }
 #chat-send:hover { background: var(--accent-hover); }
 #chat-send:disabled { opacity: 0.4; cursor: default; }
 #chat-send.stop { background: var(--danger); }
@@ -372,7 +410,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .chat-msg.interrupted .chat-msg-content { opacity: 0.85; }
 .turn-interrupted { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--warn); border-radius: var(--radius-sm); background: var(--warn-bg); }
 .ti-label { font-size: var(--fs-xs); color: var(--warn); flex: 1; min-width: 0; }
-.ti-continue { flex: none; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); font-size: var(--fs-xs); padding: 5px 12px; }
+.ti-continue { flex: none; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); font-size: var(--fs-xs); padding: 5px 12px; }
 .ti-continue:hover { background: var(--accent-hover); }
 .chat-msg-content p { margin: 0 0 8px; }
 .chat-msg-content p:last-child { margin-bottom: 0; }
@@ -537,7 +575,7 @@ button.tag-pool { cursor: pointer; }
 .steer-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
 .steer-input:focus { outline: none; border-color: var(--accent); }
 .steer-input::placeholder { color: var(--text-muted); }
-.steer-send { background: var(--accent); color: #fff; border: none; border-radius: var(--radius); padding: 9px 13px; font-size: var(--fs-xl); flex-shrink: 0; }
+.steer-send { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 9px 13px; font-size: var(--fs-xl); flex-shrink: 0; }
 .steer-send:hover { background: var(--accent-hover); }
 .steer-send:disabled { opacity: 0.4; cursor: default; }
 
@@ -645,7 +683,7 @@ button.tag-pool { cursor: pointer; }
 .link-form-acts { display: flex; gap: 6px; }
 .link-save, .link-cancel { font-size: var(--fs-xs); padding: 7px 13px; min-height: 34px;
 	border-radius: var(--radius-sm); cursor: pointer; }
-.link-save { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+.link-save { background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); }
 .link-save:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .link-save:disabled { opacity: .5; cursor: default; }
 .link-cancel { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border); }
@@ -698,7 +736,7 @@ button.tag-pool { cursor: pointer; }
 .diff-line.add .sign { color: var(--ok); }
 .diff-line.del .sign { color: var(--danger); }
 .diff-actions { display: flex; gap: 8px; }
-.diff-accept { background: var(--ok); color: #fff; border: none; border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
+.diff-accept { background: var(--ok); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
 .diff-accept:hover { filter: brightness(1.08); }
 .diff-reject { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-2); border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
 .diff-reject:hover { border-color: var(--danger); color: var(--danger); }
@@ -710,7 +748,7 @@ button.tag-pool { cursor: pointer; }
 .empty-state p { margin: 0; max-width: 360px; }
 /* The empty chat opens straight on its one action, with the welcome copy removed. */
 .empty-state.bare { gap: 0; }
-.empty-new-session { margin-top: 12px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); padding: 10px 18px; font-size: var(--fs-base); }
+.empty-new-session { margin-top: 12px; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 10px 18px; font-size: var(--fs-base); }
 .empty-state.bare .empty-new-session { margin-top: 0; }
 .empty-new-session:hover { background: var(--accent-hover); }
 
@@ -720,6 +758,15 @@ button.tag-pool { cursor: pointer; }
 .chat-spinner-dot:nth-child(1) { animation-delay: -0.32s; }
 .chat-spinner-dot:nth-child(2) { animation-delay: -0.16s; }
 @keyframes spinner-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+/* A reader who has asked for less motion still needs to know the model is
+   working, so the dots stay -- they stop moving. `animation: none` alone would
+   not do: the keyframe rests them at scale(0), so switching it off mid-cycle
+   leaves three invisible dots and a spinner that says nothing. */
+@media (prefers-reduced-motion: reduce) {
+	.chat-spinner-dot { animation: none; transform: scale(1); opacity: 0.5; }
+	.chat-spinner-dot:nth-child(2) { opacity: 0.75; }
+	.chat-spinner-dot:nth-child(3) { opacity: 1; }
+}
 
 /* Inline tool-call blocks */
 .tool-block { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); overflow: hidden; font-size: var(--fs-sm); }
@@ -774,6 +821,12 @@ button.tag-pool { cursor: pointer; }
 .atool .tick { color: var(--ok); flex: none; }
 .atool .live { color: var(--accent); flex: none; animation: atool-pulse 1.2s infinite ease-in-out; }
 @keyframes atool-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* The running tool keeps its accent colour instead of pulsing: the state was
+   carried by the movement, so something has to carry it once the movement is
+   gone. */
+@media (prefers-reduced-motion: reduce) {
+	.atool .live { animation: none; opacity: 1; font-weight: 600; }
+}
 
 /* ── Mobile nav (hidden on desktop; see responsive.css) ──────── */
 .mnav { display: none; }
@@ -790,7 +843,7 @@ button.tag-pool { cursor: pointer; }
 .settings-select { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
 .settings-select:focus { outline: none; border-color: var(--accent); }
 .settings-select option:disabled { color: var(--text-muted); }
-.settings-section button { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
+.settings-section button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
 .settings-section button:hover { background: var(--accent-hover); }
 .modal-close { background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); margin-top: 8px; width: 100%; }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
@@ -805,7 +858,7 @@ button.tag-pool { cursor: pointer; }
 .byok-form input[type="text"] { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
 .byok-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .byok-form input::placeholder { color: var(--text-muted); }
-#byok-save { width: 100%; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); margin-top: 2px; }
+#byok-save { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); margin-top: 2px; }
 #byok-save:hover { filter: brightness(1.08); }
 /* The default suits a plain block host (the admin card's built forms). The
    BYOK form spaces rows with a flex gap instead, so it compensates below --
@@ -827,7 +880,7 @@ button.tag-pool { cursor: pointer; }
 .tile-pending { display: flex; gap: 6px; margin-top: 7px; }
 .tile-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 5px 6px; }
 .tile-model:focus { outline: none; border-color: var(--accent); }
-.tile-start { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: var(--fs-xs); white-space: nowrap; }
+.tile-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: var(--fs-xs); white-space: nowrap; }
 .tile-start:hover { background: var(--accent-hover); }
 
 .tile-active { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
@@ -916,9 +969,9 @@ button.tag-pool { cursor: pointer; }
 	white-space: nowrap;
 }
 .chip-btn:hover { color: var(--text-primary); border-color: var(--border-2); background: var(--bg-hover); }
-.chip-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip-btn.on { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
 .chip-btn.accent { border-color: var(--accent); color: var(--accent); }
-.chip-btn.accent:hover { background: var(--accent); color: #fff; }
+.chip-btn.accent:hover { background: var(--accent); color: var(--on-fill, #fff); }
 .chip-btn.dim { opacity: 0.45; }
 .csel { display: flex; align-items: center; gap: 4px; }
 
@@ -984,7 +1037,7 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 	cursor: pointer; }
 .pass-eye:hover { color: var(--text-primary); }
 .pass-eye .ic { width: 20px; height: 20px; }
-#id-primary { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); margin-top: 12px; }
+#id-primary { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); margin-top: 12px; }
 #id-primary:hover { background: var(--accent-hover); }
 #id-primary:disabled { opacity: .5; cursor: not-allowed; }
 #id-primary:disabled:hover { background: var(--accent); }
@@ -1046,13 +1099,13 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 .dlg-select optgroup { font-family: var(--font); font-style: normal; font-weight: 600; color: var(--text-secondary); }
 .dlg-select option { font-family: var(--font-mono); color: var(--text-primary); }
 .dlg-select option:disabled { color: var(--text-muted); }
-.dlg-ok { background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); }
+.dlg-ok { background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); }
 .dlg-ok:hover { filter: brightness(1.08); }
 .dlg-err { min-height: 16px; font-size: var(--fs-xs); color: var(--danger); margin-bottom: 8px; }
 .dlg-actions { display: flex; gap: 8px; }
 .dlg-actions .dlg-cancel { margin-top: 0; flex: 1; }
 .dlg-actions .dlg-ok { margin-top: 0; flex: 1; width: auto; }
-.dlg-actions .dlg-ok.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.dlg-actions .dlg-ok.danger { background: var(--danger); border-color: var(--danger); color: var(--on-fill, #fff); }
 .dlg-actions .dlg-ok.danger:hover { filter: brightness(1.1); }
 .tile-fold.folded { color: var(--text-secondary); border-style: dashed; }
 
@@ -1101,9 +1154,9 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .abtn { flex: 1; font-size: var(--fs-2xs); padding: 4px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .abtn:hover { background: var(--bg-hover); }
 .abtn.stop, .abtn.a-cross { color: var(--danger); }
-.abtn.stop:hover, .abtn.a-cross:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+.abtn.stop:hover, .abtn.a-cross:hover { background: var(--danger); color: var(--on-fill, #fff); border-color: var(--danger); }
 .abtn.a-play { color: var(--accent-text); }
-.abtn.a-play:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.abtn.a-play:hover { background: var(--accent); color: var(--on-fill, #fff); border-color: var(--accent); }
 
 /* Agents panel header: pause / resume / stop, acting on every agent. The one
    brake on a runaway fan-out, so the group is prominent but quiet until there
@@ -1128,7 +1181,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .crystal-bar { display: flex; gap: 6px; margin-bottom: 10px; }
 .crystal-act { font-size: var(--fs-xs); padding: 4px 10px; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .crystal-act:hover { background: var(--bg-hover); color: var(--text-primary); }
-.crystal-act.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.crystal-act.primary { background: var(--accent); color: var(--on-fill, #fff); border-color: var(--accent); }
 .crystal-edit { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-edit:focus { outline: none; border-color: var(--accent); }
 .hist-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1427,7 +1480,7 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .web-note { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; text-align: center; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.6; }
 .web-note.on { display: flex; }
 .web-note b { color: var(--text-primary); }
-.web-note button { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 8px 14px; font-size: var(--fs-sm); }
+.web-note button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 8px 14px; font-size: var(--fs-sm); }
 
 /* Who is driving, said in the header rather than buried. */
 .web-mode { flex: none; font-size: var(--fs-3xs-2xs); letter-spacing: 0.03em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
@@ -1441,7 +1494,7 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .web-blind-eye { font-size: var(--fs-6xl); color: var(--ok); opacity: 0.85; }
 .web-blind-title { font-size: var(--fs-xl); font-weight: 600; color: var(--text-primary); }
 .web-blind-note { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.6; max-width: 42ch; }
-.web-takeover { margin-top: 6px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 9px 18px; font-size: var(--fs-base); }
+.web-takeover { margin-top: 6px; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 18px; font-size: var(--fs-base); }
 .web-takeover:hover { background: var(--accent-hover); }
 
 /* A stage panel's header reuses the AI panel's chrome. */

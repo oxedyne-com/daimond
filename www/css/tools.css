@@ -60,7 +60,7 @@
 
 .tools-buy {
 	grid-column: 2; grid-row: 1 / span 2;
-	background: var(--accent); color: #fff;
+	background: var(--accent); color: var(--on-fill, #fff);
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
 	padding: 8px 14px; font-size: var(--fs-sm);
 	white-space: nowrap;

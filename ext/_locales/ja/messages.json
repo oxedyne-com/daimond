@@ -1,0 +1,161 @@
+{
+	"ext_desc": {
+		"message": "Daimond が、あなたのブラウザで、あなたのセッションのまま、実際のタブで実際のサイトを操作できるようにします。認証情報がこの端末を出ることはありません。"
+	},
+	"popup_raise": {
+		"message": "承認のウィンドウを表示"
+	},
+	"popup_take": {
+		"message": "操作を Daimond に戻す"
+	},
+	"popup_mirror": {
+		"message": "タブのライブ表示を許可"
+	},
+	"popup_granted_head": {
+		"message": "許可したサイト"
+	},
+	"popup_revoke": {
+		"message": "取り消す"
+	},
+	"popup_none": {
+		"message": "まだありません。Daimond はどのサイトに触れる前にも必ず尋ねます。"
+	},
+	"popup_any_tab": {
+		"message": "すべてのタブ（ライブ表示のため）"
+	},
+	"popup_subdomains": {
+		"message": "$HOST$ とそのサブドメイン",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_mirror": {
+		"message": "お返事待ちです。Daimond が操作しているタブを表示してもよいですか。"
+	},
+	"popup_ask_mirror_fine": {
+		"message": "タブを撮影する必要がありますが、Chrome はこれをサイトごとに許可できません。断っても失うものはありません — Daimond はページ構造から作業します。"
+	},
+	"popup_ask_site": {
+		"message": "お返事待ちです。Daimond が $HOST$ を操作してもよいですか。",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_ask_site_fine": {
+		"message": "承認は $HOST$ とそのサブドメインだけに及びます。Chrome がもう一度だけ確認を求めます。",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"popup_mode_user": {
+		"message": "あなたの操作です。"
+	},
+	"popup_mode_user_fine": {
+		"message": "Daimond はこのタブを見ていません。ページも、画素も、キー入力も。"
+	},
+	"popup_mode_agent": {
+		"message": "Daimond が操作しています。"
+	},
+	"popup_mode_agent_fine": {
+		"message": "パスワードと支払いの欄は、今も送られません。"
+	},
+	"popup_mode_idle": {
+		"message": "待機中。"
+	},
+	"popup_mode_idle_fine": {
+		"message": "開いているページはありません。"
+	},
+	"grant_deny": {
+		"message": "今はしない"
+	},
+	"grant_allow": {
+		"message": "許可"
+	},
+	"grant_mirror_head": {
+		"message": "Daimond が、操作しているタブを見せようとしています"
+	},
+	"grant_mirror_body": {
+		"message": "タブを Daimond のパネルに表示するには、拡張機能がその画像を撮る必要があります。Chrome はこれをサイトごとには許可しないため、この権限はすべてのタブに及びます。"
+	},
+	"grant_mirror_fine": {
+		"message": "受け渡しの仕組みは変わりません。パスワードを入力している間は、画像は撮られず、送られもしません。Daimond Hands のアイコンからいつでも取り消せます。断った場合、Daimond はページ構造から作業します。"
+	},
+	"grant_mirror_allow": {
+		"message": "ライブ表示を許可"
+	},
+	"grant_site_head": {
+		"message": "Daimond が、あなたのためにサイトを操作しようとしています"
+	},
+	"grant_site_scope": {
+		"message": "これは $HOST$ とそのサブドメインだけに及びます。ほかのサイトは、それぞれ別に尋ねます。",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"grant_site_body": {
+		"message": "Daimond はこのサイトのページ構造を読み、このブラウザであなたとして、クリックや入力ができます。"
+	},
+	"grant_site_fine": {
+		"message": "下をクリックすると、Chrome がもう一度尋ねます。そこには「このサイトのデータの読み取りと変更」と出ますが、これはどの拡張機能にも出る Chrome の定型文で、Daimond が余計に何かをするわけではありません。その確認こそが本当の承認で、そのサイトの初回にだけ出ます。Daimond がパスワードを見ることはありません。ログインの入力欄が現れた時点で、あなたが操作を戻すまで何も受け取らなくなります。承認は Daimond Hands のアイコンからいつでも取り消せます。"
+	},
+	"grant_site_allow": {
+		"message": "許可して Chrome で確認 →"
+	},
+	"action_pending_mirror": {
+		"message": "Daimond Hands — ライブ表示の許可をお待ちしています"
+	},
+	"action_pending_site": {
+		"message": "Daimond Hands — $HOST$ の承認をお待ちしています",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	},
+	"raise_none": {
+		"message": "承認を待っているものはありません。"
+	},
+	"raise_gone": {
+		"message": "そのウィンドウはもうありません。Daimond にもう一度サイトを開くよう頼んでください。"
+	},
+	"resume_button": {
+		"message": "Daimond を再開 ▸"
+	},
+	"reason_password": {
+		"message": "パスワード欄"
+	},
+	"reason_passkey_otc": {
+		"message": "パスキーまたはワンタイムコードの入力"
+	},
+	"reason_passkey": {
+		"message": "パスキーの入力"
+	},
+	"reason_typing": {
+		"message": "あなたの入力"
+	},
+	"reason_private": {
+		"message": "何か私的なもの"
+	},
+	"reason_sso": {
+		"message": "$HOST$ のサインインページ",
+		"placeholders": {
+			"host": {
+				"content": "$1",
+				"example": "example.com"
+			}
+		}
+	}
+}

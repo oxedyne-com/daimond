@@ -33,7 +33,7 @@
 
 <main>
 	<h1>Chats &amp; Diamonds</h1>
-	<p class="lede">A chat is a conversation with the daimon. A Diamond is a durable container for a pursuit — where what you have worked out about a piece of work is kept, so that later work starts from it. This page covers starting and reading chats, the turn controls, folding a chat into a Diamond, and organising the Diamonds you accumulate.</p>
+	<p class="lede">A chat is a conversation with the daimon. A Diamond is a durable container for a pursuit — where what you have worked out about a piece of work is kept, so that later work starts from it. This page covers starting and reading chats, the turn controls, folding a chat into a Diamond, the workspace a Diamond works in, and organising the Diamonds you accumulate.</p>
 
 	<h2>Starting and returning to a chat</h2>
 	<p>Choose <span class="ui">New chat</span> — the <strong>＋</strong> beside <strong>Chats</strong> at the top of the rail. Type in the box at the bottom of the centre panel and send with <span class="ui">➤</span>. Every chat you start is listed under <strong>Chats</strong> in the rail; click one to bring it back to the centre. A new chat starts on your default model; you can change the model for just that chat from the selector in its header.</p>
@@ -126,10 +126,22 @@
 
 	<div class="note">A file you have since renamed or deleted <strong>says so</strong> when you try to open it, rather than quietly doing nothing. A list of dead links that pretends otherwise is worse than no list.</div>
 
-	<h2>Dispatching workers</h2>
-	<p>Some tasks want work done rather than merely recorded. For those, the Diamond's conductor dispatches a <strong>worker agent</strong>. Each worker runs in its own context with the workspace file tools, and is given the standing instructions and this Diamond's crystal. That crystal is the whole of what it knows about your pursuit — a worker cannot see your conversation, so the task it is handed must say everything else it needs.</p>
+	<h2>The workspace of a Diamond</h2>
+	<p>A Diamond has a <strong>workspace</strong>: the files and folders you keep with it. You put them there — a daimon cannot add to its own workspace, so it works with what it has been given and asks you when it needs more.</p>
 
-	<p>Up to <strong>eight</strong> workers run at once; the rest queue. The conductor dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a crystal yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
+	<p><strong>It is a view of your files, not a box holding them.</strong> Nothing is copied when you attach something: the file stays where it is and the Diamond points at it. Attach the same folder to two Diamonds and there is still one folder — an edit made through either is the file the other reads. Taking something out of a Diamond's workspace only detaches it; the file itself is untouched, and only a deliberate delete removes it. The word invites you to expect a copy, and there is none.</p>
+
+	<p>A Diamond also has a directory of its own, always in its workspace and always writable, so its daimon has somewhere to work before you have attached anything — the crystal lives there. A folder can be attached to be <strong>consulted rather than edited</strong>, which lets a daimon read it and refuses every write. And the <a href="email-web-files.html">Workspace</a> panel shows either all your files or only the ones this Diamond holds, whichever suits the work in front of you.</p>
+
+	<h3>What a daimon can open</h3>
+	<p><strong>A daimon can only open the files in its Diamond's workspace.</strong> Nothing outside it is readable or writable — not by the daimon, and not by any worker it dispatches. This is not an instruction in a prompt that a model may or may not honour: the check sits in the compiled code, at the one door every file tool passes through, and that code is in the published bundle, which is built reproducibly. So it is a claim you can check rather than one you have to take on trust.</p>
+
+	<p>What it does not cover belongs in the same breath. It settles what a daimon can reach, not where what it reads ends up: whatever it opens is sent to your model provider with the rest of the turn. And it guards against an agent that is mistaken, or has been talked into something: a turn that has just read a web page or an email carrying instructions from a stranger, and gone looking on their behalf, still reaches nothing outside this Diamond's workspace. It is not a guard against a provider that misuses what you send it, or against a build that is not the one we published; those are answered by <a href="accounts.html">what leaves the browser</a> and by the <a href="interface.html">sealed record of every build</a>, not by this.</p>
+
+	<h2>Dispatching workers</h2>
+	<p>Some tasks want work done rather than merely recorded. For those, the Diamond's daimon dispatches a <strong>worker agent</strong>. Each worker runs in its own context with the workspace file tools, and is given the standing instructions and this Diamond's crystal. That crystal is the whole of what it knows about your pursuit — a worker cannot see your conversation, so the task it is handed must say everything else it needs.</p>
+
+	<p>Up to <strong>eight</strong> workers run at once; the rest queue. The daimon dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a crystal yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
 
 	<h3>Holding and stopping agents</h3>
 	<p>The Agents panel header carries three controls that act on <em>every</em> agent at once, and the same three ride on each tile so you can act on one:</p>

@@ -2,7 +2,8 @@
 	"manifest_version":	3,
 	"name":			"Daimond Hands",
 	"version":		"0.1.0",
-	"description":		"Lets Daimond operate a real site in a real tab, in your browser, with your session. No credential ever leaves the device.",
+	"default_locale":	"en",
+	"description":		"__MSG_ext_desc__",
 
 	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlWDP4URtfJoNBAwncIAMQhAIJyCA24RLdOhNMuM4QFj+xMumidaC9pR2SSvz1adZu/ZdD+NY2QxBUy0stC1FVz6Jxr/lWXA3TwrWGY0igB9+7QVHNkOv7Z9vLN4s8/O2SahvZ0Ut+TZ1FJ9z5aHN/BHM9PwrpJRLbGESLzHhTxZVxR8vkkgRQWf6VufdewVM9CBBVDbyv8tR+OY0mrXNmb+pL8PyZs2meys+KUStMamWMgfMEn+17Fv1Ym9b8buVLJK326PUzw/H1gsgaFeBABJQZxnhCF4uiJ/2u5QRHWKAewoVIorIMxRDorxniGHvHE3Y1x8NKbiosypY2R4CEQIDAQAB",
 

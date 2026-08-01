@@ -69,6 +69,24 @@
 		overflow-y: auto;
 		overscroll-behavior: contain;
 	}
+	/* The drawer is the scroller, and nothing inside it may be. Two competing
+	   scroll regions inside a 100dvh column meant the lists absorbed every
+	   shortfall instead of overflowing: at 320x568 the Diamonds list came out
+	   15px tall and the Chats list 2px, with three Diamonds in the store and not
+	   one complete row visible in either. In landscape it was worse -- the
+	   search box and the two rail buttons were pushed ABOVE the drawer's top
+	   edge, unreachable, with scrollHeight equal to clientHeight so there was
+	   nothing to scroll back to.
+
+	   One column, its natural height, scrolled by the drawer. That is the phone
+	   idiom anyway, and it retires the rail-split handle here: there are no
+	   longer two regions for it to divide. */
+	.panel.rail .rail-top { flex: none; overflow: visible; min-height: 0; }
+	.panel.rail .diamond-list,
+	.panel.rail .session-list { overflow: visible; }
+	.panel.rail .admin { flex: none; }
+	.panel.rail #handle-rail-split { display: none; }
+
 	body.drawer-open .panel.rail { transform: translateX(0); }
 	@media (prefers-reduced-motion: reduce) {
 		.panel.rail { transition: none; }
@@ -238,7 +256,7 @@
 		border: none;
 		border-radius: 50%;
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-fill, #fff);
 		font-size: var(--fs-xl-2xl);
 		cursor: pointer;
 	}

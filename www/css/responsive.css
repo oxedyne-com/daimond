@@ -89,7 +89,11 @@
 		font-size: var(--fs-2xs);
 	}
 	.mnav button .ic { width: 19px; height: 19px; }
-	.mnav button.on { color: var(--accent); background: var(--accent-soft); }
+	/* --accent-text, not --accent: at 11px this is small text and needs 4.5,
+	   and the accent on its own soft ground managed 3.60-4.33 on seven of the
+	   eleven palettes -- making the destination you are ON the least legible
+	   label on the bar. */
+	.mnav button.on { color: var(--accent-text); background: var(--accent-soft); }
 
 	/* Comfortable chat input row. */
 	.chat-output { padding: 12px 14px; }
@@ -143,6 +147,25 @@
    24px WCAG floor; enlarge on small screens, and reveal hover-only close
    buttons (there is no hover on touch). */
 @media (max-width: 760px), (pointer: coarse) {
+	/* Seven controls the existing lifts in this block missed. The worst was the
+	   tag disclosure at 315x16.8 -- the way into the whole filing system, in a
+	   drawer whose entire purpose is to be worked with a thumb. 24x24 is the
+	   WCAG 2.2 AA floor. */
+	.tagf-toggle { padding-top: 5px; padding-bottom: 5px; }
+	.tagf-pool .tag-chip,
+	.tagf-active .tag-chip,
+	.session-box-meta .tag-chip { padding-top: 3px; padding-bottom: 3px; }
+	.files-mode-btn,
+	.files-mode-chip { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
+	.tile-fold { padding-top: 5px; padding-bottom: 5px; }
+	/* The wordmark keeps its 20px ink and gains a 24px target around it. */
+	.brand { display: flex; align-items: center; min-height: 24px; }
+	/* The chips are 24px here rather than 18, so the same cap would show the
+	   same three and a half rows in half again the height -- and the drawer has
+	   less to spare than the desktop rail, not more. Two and a half rows on a
+	   phone: still cut through a row, so it still says there is more of it,
+	   without the filter taking the space the Diamonds came for. */
+	.tagf-pool, .tagf-active { max-height: calc(6em + 16px); }
 	.addbtn { width: 34px; height: 34px; font-size: var(--fs-xl); }
 	.icon-btn { padding: 8px 10px; font-size: var(--fs-2xl); }
 	.session-box-close { opacity: 1; font-size: var(--fs-3xl); padding: 4px 8px; }

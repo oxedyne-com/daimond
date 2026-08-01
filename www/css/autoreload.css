@@ -22,7 +22,7 @@
 	padding: 4px 10px;
 }
 #autoreload .ar-card-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-2); }
-#autoreload .ar-card-btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+#autoreload .ar-card-btn.accent { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
 #autoreload .ar-card-btn.accent:hover { background: var(--accent-hover); }
 
 /* The switch. Disabled without a card, and dimmed so it reads as unavailable rather than off. */
@@ -85,7 +85,7 @@
 #autoreload .ar-save {
 	background: var(--accent);
 	border: none;
-	color: #fff;
+	color: var(--on-fill, #fff);
 	border-radius: var(--radius-sm);
 	font-size: var(--fs-sm);
 	padding: 7px 16px;

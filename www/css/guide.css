@@ -198,7 +198,7 @@ ol.steps > li::before {
 	justify-content: center;
 	font-weight: 700;
 	font-size: 0.95rem;
-	color: #fff;
+	color: var(--on-fill, #fff);
 	background: var(--accent);
 	border-radius: 50%;
 }

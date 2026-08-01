@@ -405,6 +405,7 @@ import init, {
 		}
 		// Gone. A steer or fold running against it has nothing left to write to.
 		currentDiamond = null;
+		signalDiamondChanged();
 		delete pendingFolds[had];
 		sessionNameEl.textContent = t('chat.no_chat');
 		showCentre('chat');
@@ -1554,7 +1555,22 @@ import init, {
 	// behaviour anywhere reads what a tag says. These four are a nudge for an
 	// empty tag editor, offered by this screen alone -- the store normalises
 	// tags but knows nothing of these, and holds no tag to be special.
-	var DEFAULT_TAG_SUGGESTIONS = ['person', 'project', 'topic', 'org'];
+	// They are translated, because a filing system you are invited into in a
+	// language you do not read is not an invitation. They are also DATA rather
+	// than labels: adopting one files that word, and it stays that word if the
+	// interface later changes language -- which is right, since it is then the
+	// user's tag and not our suggestion.
+	//
+	// Normalised here rather than trusted from the table. The store lowercases a
+	// tag and collapses its spaces, so a translator writing "Projekt" -- correct
+	// German, and every noun in the language -- would put a chip on screen
+	// reading "Projekt" that filed "projekt", and the two would not match. Doing
+	// it here means the table can be written naturally in any language.
+	function starterTags() {
+		return t('tag.starters').split(',')
+			.map(function (x) { return x.split(/\s+/).join(' ').trim().toLowerCase(); })
+			.filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+	}
 	var TAG_CHIPS_SHOWN = 3;    // chips on a Diamond box before the +N overflow
 	var diamondQuery = '';        // the search box, trimmed and lowercased
 	// The rail filters on a small boolean rather than one tag: the tags a Diamond
@@ -1748,6 +1764,9 @@ import init, {
 			// anything in the app, and for a new user the FIRST words they read.
 			try { renderDiamondList(); } catch (e) { /* the rail is not up yet */ }
 			try { renderSessionList(); } catch (e) { /* the rail is not up yet */ }
+			// The Workspace panel's scope row, which names the two trees and stays on
+			// screen for as long as the panel does.
+			try { Files.relabel(); } catch (e) { /* the panel is not up yet */ }
 		});
 	}
 
@@ -3670,8 +3689,8 @@ import init, {
 				var x = document.createElement('button');
 				x.type = 'button';
 				x.className = 'admin-back';
-				x.title = 'Close';
-				x.setAttribute('aria-label', 'Close');
+				x.title = t('common.close');
+				x.setAttribute('aria-label', t('common.close'));
 				x.textContent = '×';
 				x.addEventListener('click', function () { (headClose || closeAdmin)(); });
 				modalHeadEl.appendChild(modalHeadTitle);
@@ -5118,6 +5137,7 @@ import init, {
 	function selectChat(chat) {
 		current = chat;
 		currentDiamond = null;                       // a chat is not a Diamond
+		signalDiamondChanged();
 		// The streaming refs point into the outgoing chat's DOM, which is about
 		// to be rebuilt. Left dangling, a turn still in flight would resume
 		// appending into a detached node and its text would vanish.
@@ -5274,6 +5294,20 @@ import init, {
 		});
 		label.addEventListener('blur', function () { label.readOnly = true; });
 		label.addEventListener('keydown', function (e) {
+			// Enter OPENS the chat while the field is resting, and only commits a
+			// rename once a double-click has made it editable. Tab reached this
+			// tile before but nothing the keyboard could do would open the chat:
+			// Enter blurred it, which is the one thing that looks like it worked.
+			if (e.key === 'Enter' && label.readOnly) {
+				e.preventDefault();
+				selectChat(s);
+				return;
+			}
+			if (e.key === ' ' && label.readOnly) {
+				e.preventDefault();
+				selectChat(s);
+				return;
+			}
 			if (e.key === 'Enter') { e.preventDefault(); label.blur(); }
 			else if (e.key === 'Escape') { label.value = s.name; label.blur(); }
 		});
@@ -6600,7 +6634,7 @@ import init, {
 
 					var read = document.createElement('button');
 					read.className = 'abtn';
-					read.textContent = 'Read';
+					read.textContent = t('agents.read');
 					read.addEventListener('click', function () {
 						noticeDialog(run.name, run.text.trim(), { pre: true });
 					});
@@ -6718,7 +6752,7 @@ import init, {
 	//
 	// DAIMOND.md above is what the user ADDS to every agent. This is what each
 	// agent is told in the first place -- the prompt itself -- and it is theirs
-	// to change too: `prompts/chat.md`, `prompts/conductor.md`,
+	// to change too: `prompts/chat.md`, `prompts/daimon.md`,
 	// `prompts/worker.md` and `prompts/reducer.md`, ordinary text files in the
 	// workspace, edited in the Doc panel like anything else and travelling with
 	// a real folder the same way.
@@ -6735,7 +6769,7 @@ import init, {
 	var PROMPTS_DIR = 'prompts';
 	var Prompts = {
 		/// Role name -> the user's text, '' where they have written none.
-		md: { chat: '', conductor: '', worker: '', reducer: '' },
+		md: { chat: '', daimon: '', worker: '', reducer: '' },
 
 		/// Every role, with what to call it and what it is for -- the source for
 		/// the buttons in the Admin panel.
@@ -6743,7 +6777,7 @@ import init, {
 		// reads in whatever language is in force at that moment.
 		roles: [
 			{ id: 'chat',      label: 'role.chat',      blurb: 'role.chat_help' },
-			{ id: 'conductor', label: 'role.conductor', blurb: 'role.conductor_help' },
+			{ id: 'daimon',    label: 'role.daimon',    blurb: 'role.daimon_help' },
 			{ id: 'worker',    label: 'role.worker',    blurb: 'role.worker_help' },
 			{ id: 'reducer',   label: 'role.reducer',   blurb: 'role.reducer_help' },
 		],
@@ -6770,8 +6804,34 @@ import init, {
 
 		/// Re-read every prompt file from the ACTIVE workspace root, so they
 		/// travel with the project exactly as DAIMOND.md does.
+		/// A role that has been renamed carries its old file across.
+		///
+		/// `prompts/conductor.md` was the daimon's, and it is a file the user may
+		/// have spent an afternoon on. Renaming the role without this would leave
+		/// it in the workspace being read by nothing -- the agent quietly back on
+		/// the shipped default, with the edited file still on disk looking as
+		/// though it were in force. That is the worst of the three possible
+		/// outcomes, because nothing about it looks wrong.
+		///
+		/// Copies rather than moves, and only when the new name does not exist, so
+		/// running twice is harmless and nothing the user wrote is destroyed.
+		adoptOldNames: async function () {
+			var renamed = [{ from: 'conductor', to: 'daimon' }];
+			for (var i = 0; i < renamed.length; i++) {
+				var from = this.path(renamed[i].from), to = this.path(renamed[i].to);
+				try {
+					var already = await tools().run_tool('file_read', JSON.stringify({ path: to }));
+					if (typeof already === 'string' && !/^\s*Error\b/i.test(already)) continue;
+					var old = await tools().run_tool('file_read', JSON.stringify({ path: from }));
+					if (typeof old !== 'string' || /^\s*Error\b/i.test(old) || !old.trim()) continue;
+					await tools().run_tool('file_write', JSON.stringify({ path: to, content: old }));
+				} catch (e) { /* no workspace yet, or unreadable: nothing to carry */ }
+			}
+		},
+
 		refresh: async function () {
 			var changed = false;
+			await this.adoptOldNames();
 			for (var i = 0; i < this.roles.length; i++) {
 				var id = this.roles[i].id;
 				var was = this.md[id];
@@ -6786,15 +6846,15 @@ import init, {
 			}
 			// A chat or a worker is built with its prompt already composed, so a
 			// changed file only reaches it on the next construction -- drop them.
-			// The conductor and the reducer are built inside the wasm, which is
+			// The daimon and the reducer are built inside the wasm, which is
 			// told directly.
 			if (changed) {
 				chats.forEach(function (c) { c.app = null; });
 				var self = this;
 				Object.keys(_diamondApps).forEach(function (k) {
 					try {
-						_diamondApps[k].set_role_prompt('conductor', self.md.conductor || '');
-						_diamondApps[k].set_role_prompt('reducer',   self.md.reducer   || '');
+						_diamondApps[k].set_role_prompt('daimon',  self.md.daimon  || '');
+						_diamondApps[k].set_role_prompt('reducer', self.md.reducer || '');
 					} catch (e) { /* an app mid-turn keeps what it has */ }
 				});
 			}
@@ -7109,6 +7169,46 @@ import init, {
 		// `folderHandle` precisely because the agent is NOT working here.
 		var rootHandle = null;
 
+		// ── The Diamond's workspace: a view, not a container ───────
+		//
+		// A Diamond's workspace is the set of paths its daimon may open, and the
+		// tool door enforces exactly that set (`diamond_bounds`, src/tools.rs).
+		// It is a VIEW over the one workspace: the same folder attached to two
+		// Diamonds is one folder, so an edit made in either shows in both. That
+		// is why nothing here copies, moves or deletes anything -- attaching
+		// writes a link and detaching removes it, and the file never moves.
+		//
+		// `scope` is which of the two trees the panel is showing. It is the
+		// device's preference, kept like the line-number toggle beside it, so a
+		// person who works inside one Diamond does not re-choose every session.
+		var LS_SCOPE = 'daimond-files-scope';
+		var scope = (function () {
+			try { return localStorage.getItem(LS_SCOPE) === 'diamond' ? 'diamond' : 'all'; }
+			catch (e) { return 'all'; }
+		})();
+		var scopeEl = null;			// the row of two chips, built in bind()
+		var attached = [];			// the open Diamond's attachments; see loadAttached
+		var lastDiamondId = null;		// so a re-read of the SAME Diamond does not relist
+
+		/// Whether the tree is showing one Diamond's workspace.
+		///
+		/// The stored preference alone is not enough: the Diamond mode exists
+		/// only while a Diamond is open, and a preference left at `diamond`
+		/// must fall back to the whole workspace rather than to nothing.
+		function diamondScope() { return scope === 'diamond' && !!currentDiamond; }
+
+		/// The open Diamond's own directory: always in its workspace, always
+		/// writable, and the one place a daimon can work before the user has
+		/// attached anything.
+		function ownDir() { return currentDiamond ? ('diamonds/' + currentDiamond.id) : ''; }
+
+		/// Whether `p` sits at or beneath `root`, by whole segments -- so
+		/// `notes-old/x` is not "inside" `notes` merely by spelling it.
+		function underPath(p, root) {
+			if (!root) return false;
+			return p === root || p.indexOf(root + '/') === 0;
+		}
+
 		function fmtBytes(n) {
 			if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
 			if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -7122,7 +7222,15 @@ import init, {
 		/// tree from here down — a filter that stops at the current directory
 		/// tells the user a file does not exist when it is one folder away.
 		async function applyFilter() {
-			if (!filter) { renderTree(lastEntries); return; }
+			if (!filter) {
+				if (diamondScope()) list(curDir); else renderTree(lastEntries);
+				return;
+			}
+			// In a Diamond's workspace the search is bounded by the workspace: a
+			// filter that reached the whole tree would answer with files the
+			// daimon cannot open, from a panel whose whole claim is that it shows
+			// what it can.
+			if (diamondScope()) { await filterDiamond(); return; }
 			var hits = [];
 			var todo = [curDir || ''];
 			while (todo.length && hits.length < 200) {
@@ -7164,6 +7272,374 @@ import init, {
 			});
 		}
 
+		// ── This Diamond's workspace ───────────────────────────────
+		//
+		// Two trees, one panel. "Everything" is the workspace as it has always
+		// been. "This Diamond" is the set of paths the open Diamond's daimon may
+		// open -- its own directory, plus whatever the user has attached -- and
+		// nothing else, which is the same set the tool door enforces.
+		//
+		// An attachment is a LINK, so everything here adds or removes one. The
+		// file stays where it is either way: detaching narrows what a daimon can
+		// reach and touches nothing on disk.
+
+		/// What is in the open Diamond's workspace, besides its own directory.
+		///
+		/// Read from the Diamond's links: `file:` and `dir:` ends are paths in
+		/// the workspace, and everything else (another Diamond, a URL, a chat) is
+		/// not a place. Anything already inside the Diamond's own directory is
+		/// dropped, because that directory is listed in full anyway and a thing
+		/// shown twice reads as two things.
+		async function loadAttached() {
+			attached = [];
+			if (!currentDiamond) return attached;
+			var links = [];
+			try {
+				links = JSON.parse(await diamondApp().links_touching('diamond:' + currentDiamond.id) || '[]');
+			} catch (e) { return attached; }
+			var own = ownDir(), seen = {};
+			links.forEach(function (l) {
+				var ref = l.other || '';
+				var i = ref.indexOf(':');
+				if (i <= 0) return;
+				var kind = ref.slice(0, i), path = ref.slice(i + 1).trim();
+				if ((kind !== 'file' && kind !== 'dir') || !path) return;
+				if (underPath(path, own)) return;
+				if (seen[ref]) return;
+				seen[ref] = 1;
+				attached.push({
+					link: l,
+					ref:  ref,
+					path: path,
+					dir:  kind === 'dir',
+					// Attached to be consulted rather than worked on. The tool door
+					// spells this as an allow plus a write fence; here it is a badge.
+					ro:   l.rel === 'consulted',
+				});
+			});
+			attached.sort(function (a, b) { return a.path.localeCompare(b.path); });
+			labelAttached(attached);
+			return attached;
+		}
+
+		/// The last `n` segments of a path.
+		function tailOf(p, n) {
+			var parts = p.split('/').filter(Boolean);
+			return parts.slice(Math.max(0, parts.length - n)).join('/');
+		}
+
+		/// Give each attachment the shortest name that tells it from the others.
+		///
+		/// Two folders called `notes` are the ordinary case, not the exotic one --
+		/// `a/notes` and `b/notes` are exactly what a person attaches -- and a
+		/// tree with two rows both reading "notes" is a tree that cannot be used.
+		/// So a basename is kept while it is unique and grown by whole segments
+		/// until it is not shared.
+		function labelAttached(items) {
+			var groups = {};
+			items.forEach(function (a) {
+				a.base = tailOf(a.path, 1) || a.path;
+				(groups[a.base] = groups[a.base] || []).push(a);
+			});
+			Object.keys(groups).forEach(function (b) {
+				var grp = groups[b];
+				if (grp.length === 1) { grp[0].label = grp[0].base; return; }
+				var n = 2;
+				while (n < 24) {
+					var seen = {}, clash = false;
+					grp.forEach(function (a) {
+						var s = tailOf(a.path, n);
+						if (seen[s]) clash = true;
+						seen[s] = 1;
+					});
+					if (!clash) break;
+					n++;
+				}
+				grp.forEach(function (a) { a.label = tailOf(a.path, n); });
+			});
+		}
+
+		/// The attachment record for a reference, or nothing.
+		function attachedOf(ref) {
+			for (var i = 0; i < attached.length; i++) if (attached[i].ref === ref) return attached[i];
+			return null;
+		}
+
+		/// Put a folder into the open Diamond's workspace, or take it out again.
+		///
+		/// Taking it out removes the link and NOTHING else: the folder and every
+		/// file in it stay exactly where they are, and any other Diamond holding
+		/// the same folder goes on holding it.
+		async function toggleDirHold(path) {
+			if (!currentDiamond) return;
+			var id = currentDiamond.id, ref = 'dir:' + path;
+			var rec = attachedOf(ref);
+			var link = rec ? rec.link : await linkTo(id, ref);
+			try {
+				if (link) await diamondApp().remove_link(link.owner, link.id);
+				else await diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
+			} catch (e) { /* already gone, or already there: the repaint tells the truth */ }
+			// One signal, and everything that draws links redraws: this tree through
+			// refreshAttached, the strip above the steer box, and the graph.
+			signalLinksChanged();
+		}
+
+		/// Reload the attachment set and repaint whatever is on screen for it.
+		async function refreshAttached() {
+			await loadAttached();
+			if (!listed || curFile) return;
+			if (diamondScope()) { await list(curDir); return; }
+			if (!filter) renderTree(lastEntries);
+		}
+
+		/// The two trees, offered as a row of chips above the path.
+		///
+		/// Hidden entirely when no Diamond is open: there is then only one tree,
+		/// and a switch with one position is furniture.
+		function renderScope() {
+			if (!scopeEl) return;
+			scopeEl.innerHTML = '';
+			if (!currentDiamond) { scopeEl.style.display = 'none'; return; }
+			scopeEl.style.display = '';
+			scopeEl.appendChild(scopeChip('all', t('dws.mode_all'), t('dws.mode_all')));
+			scopeEl.appendChild(scopeChip('diamond', t('dws.mode_diamond'), currentDiamond.name));
+		}
+
+		/// One chip in the scope row: a real button, because it changes what the
+		/// panel shows rather than reporting where something is.
+		function scopeChip(which, label, title) {
+			var b = document.createElement('button');
+			var on = (which === 'diamond') ? diamondScope() : !diamondScope();
+			b.className = 'files-scope-chip' + (on ? ' active' : '');
+			b.type = 'button';
+			b.dataset.scope = which;
+			b.textContent = (which === 'diamond' ? '◈ ' : '') + label;
+			b.title = title;
+			b.setAttribute('aria-pressed', on ? 'true' : 'false');
+			b.addEventListener('click', function () { setScope(which); });
+			return b;
+		}
+
+		/// Switch trees, remember it, and say what happened.
+		///
+		/// Said out loud, because the panel's contents change under the user: the
+		/// same folder can be present in one tree and absent from the other, and a
+		/// tree that quietly became a different tree is how a person concludes
+		/// their files have gone.
+		async function setScope(next) {
+			if (next === scope) return;
+			scope = next;
+			try { localStorage.setItem(LS_SCOPE, scope); } catch (e) { /* private mode */ }
+			renderScope();
+			announceScope();
+			await list('');
+		}
+
+		/// Name the tree now showing, in the row that switched it.
+		///
+		/// Beside the chips rather than in the mode row above them: this is a
+		/// sentence about the switch, and a message that explains one row while
+		/// sitting in another is read as being about the other.
+		function announceScope() {
+			if (!scopeEl) return;
+			var old = scopeEl.querySelector('.files-mode-msg');
+			if (old) old.remove();
+			var msg = document.createElement('div');
+			msg.className = 'files-mode-msg';
+			msg.setAttribute('role', 'status');
+			// The words are the app's; the Diamond's name is the user's own and is
+			// not translated, so it is appended rather than interpolated.
+			msg.textContent = diamondScope()
+				? (t('dws.mode_diamond') + ' · ' + currentDiamond.name)
+				: t('dws.mode_all');
+			scopeEl.appendChild(msg);
+		}
+
+		/// The Diamond in focus changed. The scope row is about it, and in Diamond
+		/// scope so is every row of the tree.
+		///
+		/// A re-read of the SAME Diamond (a sync landing, a crystal written) must
+		/// not relist: the user may be three folders deep, and pulling them back
+		/// to the top for a background refresh is a bug, not a refresh.
+		function onDiamondChanged() {
+			var id = currentDiamond ? currentDiamond.id : null;
+			var same = (id === lastDiamondId);
+			lastDiamondId = id;
+			renderScope();
+			if (same || scope !== 'diamond') return;
+			announceScope();
+			// Back to the top of whichever tree now applies: the directory the user
+			// was in belonged to the Diamond that just left.
+			curDir = '';
+			loadAttached().then(function () {
+				if (!listed) return;
+				curFile = null;
+				list('');
+			});
+		}
+
+		/// Search inside this Diamond's workspace, and only inside it.
+		async function filterDiamond() {
+			var hits = [], roots = [ownDir()];
+			attached.forEach(function (a) {
+				if (a.dir) roots.push(a.path);
+				else if (a.base.toLowerCase().indexOf(filter) !== -1) {
+					hits.push({ name: a.path, dir: false, size: 0, deep: true });
+				}
+			});
+			var todo = roots.slice();
+			while (todo.length && hits.length < 200) {
+				var dir = todo.shift();
+				var res = await tools().run_tool('file_list', JSON.stringify({ path: dir || '.' }));
+				if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) continue;
+				parseListing(res).forEach(function (e) {
+					if (e.name.charAt(0) === '.') return;
+					var full = joinPath(dir, e.name);
+					if (e.dir) { todo.push(full); return; }
+					if (e.name.toLowerCase().indexOf(filter) !== -1) {
+						hits.push({ name: full, dir: false, size: e.size, deep: true });
+					}
+				});
+			}
+			renderMatches(hits);
+		}
+
+		/// This Diamond's workspace, as a tree.
+		///
+		/// At the top it is a composed view -- the Diamond's own directory listed
+		/// in full, then each attachment at its own name -- and below that it is an
+		/// ordinary listing of whichever real directory was opened.
+		async function listDiamond(dir) {
+			curDir = dir || '';
+			curFile = null; listed = true;
+			viewEl.style.display = 'none'; docEmbed(false);
+			await loadAttached();
+			if (curDir) {
+				pathEl.textContent = '/' + curDir;
+				var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir }));
+				if (typeof res === 'string' && res.indexOf('Error') === 0) {
+					treeEl.innerHTML = '';
+					var err = document.createElement('div');
+					err.className = 'files-empty';
+					err.textContent = friendlyError(res);
+					treeEl.appendChild(err);
+					return;
+				}
+				renderTree(parseListing(res));
+				refreshResidency();
+				return;
+			}
+			// The composed root. The path line names it rather than showing "/",
+			// which would be a lie: this is not a directory.
+			pathEl.textContent = t('dws.title');
+			treeEl.innerHTML = '';
+			var own = ownDir();
+			var entries = [];
+			var lres = await tools().run_tool('file_list', JSON.stringify({ path: own }));
+			if (typeof lres === 'string' && lres.indexOf('Error') !== 0) entries = parseListing(lres);
+			lastEntries = entries;
+			entries = entries.filter(function (e) { return e.name.charAt(0) !== '.'; });
+			entries.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+			entries.forEach(function (e) {
+				treeEl.appendChild(diamondOwnRow(e, own));
+			});
+			attached.forEach(function (a) { treeEl.appendChild(attachedRow(a)); });
+			if (!entries.length && !attached.length) {
+				var none = document.createElement('div');
+				none.className = 'files-empty';
+				none.textContent = t('dws.empty');
+				treeEl.appendChild(none);
+			} else if (!attached.length) {
+				var hint = document.createElement('div');
+				hint.className = 'files-empty files-dws-hint';
+				hint.textContent = t('dws.empty');
+				treeEl.appendChild(hint);
+			}
+			refreshResidency();
+		}
+
+		/// A row for something in the Diamond's own directory: a real file in a
+		/// real place, with the ordinary file controls.
+		function diamondOwnRow(e, own) {
+			var full = joinPath(own, e.name);
+			var row = document.createElement('div');
+			row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
+			row.dataset.path = full;
+			var name = document.createElement('span');
+			name.className = 'files-name';
+			name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;
+			row.appendChild(name);
+			if (!e.dir) {
+				var size = document.createElement('span');
+				size.className = 'files-size';
+				size.textContent = fmtBytes(e.size || 0);
+				row.appendChild(size);
+			}
+			addFileControls(row, e, full, mayManage(full));
+			row.addEventListener('click', function () {
+				if (e.dir) list(full);
+				else if (e.cloud) fetchEntry(full, e.size || 0, true);
+				else openFile(full);
+			});
+			return row;
+		}
+
+		/// A row for something attached from elsewhere in the workspace.
+		///
+		/// Named by as much of its path as it takes to tell it from the others,
+		/// badged as living elsewhere, and carrying exactly one control: the one
+		/// that takes it back out of this Diamond's workspace. There is no delete
+		/// here on purpose -- this row is a pointer, and the thing it points at is
+		/// not this Diamond's to destroy.
+		function attachedRow(a) {
+			var row = document.createElement('div');
+			row.className = 'files-row attached' + (a.dir ? ' dir' : '') + (a.ro ? ' ro' : '');
+			row.dataset.path = a.path;
+			row.dataset.attached = a.dir ? 'dir' : 'file';
+			row.title = a.path;
+			var name = document.createElement('span');
+			name.className = 'files-name';
+			name.textContent = (a.dir ? '📁 ' : '📄 ') + a.label;
+			row.appendChild(name);
+
+			var away = document.createElement('span');
+			away.className = 'files-badge files-elsewhere';
+			away.textContent = '↗';			// it points out of this Diamond
+			away.title = t('dws.elsewhere') + ' · ' + a.path;
+			away.setAttribute('aria-label', t('dws.elsewhere'));
+			row.appendChild(away);
+
+			if (a.ro) {
+				var ro = document.createElement('span');
+				ro.className = 'files-badge files-ro';
+				ro.textContent = t('dws.readonly');
+				ro.title = t('dws.readonly');
+				row.appendChild(ro);
+			}
+
+			var off = document.createElement('button');
+			off.className = 'files-res files-hold on';
+			off.textContent = '◈';
+			off.dataset.act = a.dir ? 'hold-dir' : 'hold-file';
+			off.title = a.dir
+				? t('dws.detach_dir', { name: currentDiamond.name })
+				: t('files.hold_drop', { name: currentDiamond.name });
+			off.setAttribute('aria-pressed', 'true');
+			off.setAttribute('aria-label', off.title);
+			off.addEventListener('click', async function (ev) {
+				ev.stopPropagation();
+				try { await diamondApp().remove_link(a.link.owner, a.link.id); }
+				catch (e) { /* already gone */ }
+				signalLinksChanged();
+			});
+			row.appendChild(off);
+
+			row.addEventListener('click', function () {
+				if (a.dir) list(a.path); else openFile(a.path);
+			});
+			return row;
+		}
+
 		function bind() {
 			var panel = document.getElementById('panel-work');
 			if (!panel) return;
@@ -7176,6 +7652,17 @@ import init, {
 			// stays put behind it instead of being hidden to make room.
 			viewEl = document.getElementById('doc-view');
 			modeEl = panel.querySelector('.files-mode');
+			// The scope row is its own row, under the one that says where the
+			// workspace is: those chips name a PLACE (the sandbox, a folder on this
+			// disk, cloud storage) and these name WHOSE files are being shown, which
+			// is a different question and was never asked before.
+			scopeEl = panel.querySelector('.files-scope');
+			if (!scopeEl) {
+				scopeEl = document.createElement('div');
+				scopeEl.className = 'files-scope';
+				scopeEl.style.display = 'none';
+				modeEl.parentNode.insertBefore(scopeEl, modeEl.nextSibling);
+			}
 			panel.querySelector('[data-act="refresh"]').addEventListener('click', function () { list(curDir); });
 			var newBtn = panel.querySelector('[data-act="new-file"]');
 			if (newBtn) newBtn.addEventListener('click', newFile);
@@ -7197,9 +7684,32 @@ import init, {
 				if (curFile) { closeView(); return; }
 				if (!curDir) return;
 				var parts = curDir.split('/').filter(Boolean); parts.pop();
-				list(parts.join('/'));
+				var up = parts.join('/');
+				// Going up out of a Diamond's workspace lands back at the workspace
+				// itself, not at whatever directory happens to be above: the tree
+				// there shows a set of paths, and the parent of one of them is very
+				// often somewhere the daimon may not go.
+				if (diamondScope() && !withinDiamond(up)) { list(''); return; }
+				list(up);
 			});
+			// The scope row is about the open Diamond, and in Diamond scope so is
+			// every row of the tree; attaching or detaching changes what is in it.
+			document.addEventListener('daimond-diamond-changed', onDiamondChanged);
+			document.addEventListener('daimond-links-changed', refreshAttached);
+			lastDiamondId = currentDiamond ? currentDiamond.id : null;
+			renderScope();
 			renderMode();
+		}
+
+		/// Whether a directory is one the open Diamond's workspace reaches: its own
+		/// directory, or at or below something attached.
+		function withinDiamond(p) {
+			if (!p) return false;
+			if (underPath(p, ownDir()) && p !== ownDir()) return true;
+			for (var i = 0; i < attached.length; i++) {
+				if (attached[i].dir && underPath(p, attached[i].path)) return true;
+			}
+			return false;
 		}
 
 		// ── FSA real-folder mode ───────────────────────────────────
@@ -7806,11 +8316,15 @@ import init, {
 		}
 
 		async function list(dir) {
+			// One panel, two trees. In Diamond scope the tree is the open
+			// Diamond's workspace, which is composed rather than listed.
+			if (diamondScope()) { await listDiamond(dir); return; }
 			curDir = dir || '';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; docEmbed(false);
 			pathEl.textContent = '/' + curDir;
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
+			await loadAttached();		// so a row can say whether it is attached
 			var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir || '.' }));
 			// A revoked grant is detected at the file edge, which raises `daimond:folder-lost`
 			// for every tool call rather than only this one — so there is nothing to check here.
@@ -7846,10 +8360,8 @@ import init, {
 			entries.forEach(function (e) {
 				var row = document.createElement('div');
 				var full = joinPath(curDir, e.name);
-				// Residency, not location: a cloud row is the user's file, safe,
-				// simply not on this device at the moment.
-				var backed = !e.dir && !e.cloud && !!(window.DaimondCloud && DaimondCloud.manifest(full));
 				row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
+				row.dataset.path = full;
 				var name = document.createElement('span');
 				name.className = 'files-name';
 				name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;   // escaped
@@ -7860,55 +8372,7 @@ import init, {
 					size.textContent = fmtBytes(e.size || 0);
 					row.appendChild(size);
 				}
-				if (e.cloud) {
-					var get = document.createElement('button');
-					get.className = 'files-res files-get'; get.textContent = '⤓';
-					get.title = t('files.get_help', { size: fmtBytes(e.size || 0) });
-					get.addEventListener('click', function (ev) { ev.stopPropagation(); fetchEntry(full, e.size || 0); });
-					row.appendChild(get);
-				} else if (backed) {
-					var pinned = DaimondCloud.isPinned(full);
-					var pinB = document.createElement('button');
-					pinB.className = 'files-res files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
-					pinB.title = t(pinned ? 'files.pinned_help' : 'files.pin_help');
-					pinB.addEventListener('click', function (ev) {
-						ev.stopPropagation();
-						DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
-						list(curDir);
-					});
-					row.appendChild(pinB);
-					if (!pinned) {
-						var freeB = document.createElement('button');
-						freeB.className = 'files-res files-free'; freeB.textContent = '⤒';
-						freeB.title = t('files.free_help');
-						freeB.addEventListener('click', function (ev) { ev.stopPropagation(); freeEntry(full); });
-						row.appendChild(freeB);
-					}
-				}
-				var ren = document.createElement('button');
-				ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = t('files.rename_move');
-				ren.addEventListener('click', function (ev) { ev.stopPropagation(); renameEntry(e); });
-				row.appendChild(ren);
-				var del = document.createElement('button');
-				del.className = 'files-del'; del.textContent = '×'; del.title = t('files.delete');
-				del.addEventListener('click', async function (ev) {
-					ev.stopPropagation();
-					var msg = t(e.dir ? 'files.delete_folder_body' : 'files.delete_file_body',
-						{ name: e.name });
-					if (!await confirmDialog(msg, t('files.delete'))) return;
-					// The result used to be discarded, so a failed directory
-					// delete looked exactly like a successful one: the user
-					// confirmed a destructive action and was told nothing.
-					var res = await tools().run_tool('file_delete', JSON.stringify({
-						path: joinPath(curDir, e.name),
-						recursive: e.dir ? 'true' : 'false',
-					}));
-					if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
-						fileMsg(t('files.delete_failed', { name: e.name, reason: friendlyError(res) }), true);
-					} else nudgeSync();	// a quiet delete must travel like any edit
-					list(curDir);
-				});
-				row.appendChild(del);
+				addFileControls(row, e, full, mayManage(full));
 				row.addEventListener('click', function () {
 					var p = joinPath(curDir, e.name);
 					if (e.dir) list(p);
@@ -7917,6 +8381,94 @@ import init, {
 				});
 				treeEl.appendChild(row);
 			});
+		}
+
+		/// Whether this row may be renamed or deleted from where it is being shown.
+		///
+		/// In a Diamond's workspace almost nothing may: the tree there is a view
+		/// over files that live elsewhere and belong to the workspace at large, and
+		/// a × on such a row would destroy a file the user was merely pointing at.
+		/// The Diamond's OWN directory is the exception -- that is its own, and
+		/// managing it there is ordinary file management.
+		function mayManage(full) {
+			if (!diamondScope()) return true;
+			return underPath(full, ownDir());
+		}
+
+		/// The controls that hang off a file row: residency, attaching a folder to
+		/// the open Diamond, and (where it is allowed) rename and delete.
+		///
+		/// Shared by both trees, so a row means the same thing in each.
+		function addFileControls(row, e, full, manage) {
+			// Residency, not location: a cloud row is the user's file, safe,
+			// simply not on this device at the moment.
+			var backed = !e.dir && !e.cloud && !!(window.DaimondCloud && DaimondCloud.manifest(full));
+			if (e.cloud) {
+				var get = document.createElement('button');
+				get.className = 'files-res files-get'; get.textContent = '⤓';
+				get.title = t('files.get_help', { size: fmtBytes(e.size || 0) });
+				get.addEventListener('click', function (ev) { ev.stopPropagation(); fetchEntry(full, e.size || 0); });
+				row.appendChild(get);
+			} else if (backed) {
+				var pinned = DaimondCloud.isPinned(full);
+				var pinB = document.createElement('button');
+				pinB.className = 'files-res files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
+				pinB.title = t(pinned ? 'files.pinned_help' : 'files.pin_help');
+				pinB.addEventListener('click', function (ev) {
+					ev.stopPropagation();
+					DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
+					list(curDir);
+				});
+				row.appendChild(pinB);
+				if (!pinned) {
+					var freeB = document.createElement('button');
+					freeB.className = 'files-res files-free'; freeB.textContent = '⤒';
+					freeB.title = t('files.free_help');
+					freeB.addEventListener('click', function (ev) { ev.stopPropagation(); freeEntry(full); });
+					row.appendChild(freeB);
+				}
+			}
+			// A folder can be put into the open Diamond's workspace from here, the
+			// way a file can from the ◈ on the open file. Only a folder needs this:
+			// a file is attached where it is read.
+			if (e.dir && currentDiamond) {
+				var on = !!attachedOf('dir:' + full);
+				var hold = document.createElement('button');
+				hold.className = 'files-res files-hold' + (on ? ' on' : '');
+				hold.textContent = '◈';
+				hold.dataset.act = 'hold-dir';
+				hold.dataset.path = full;
+				hold.title = t(on ? 'dws.detach_dir' : 'dws.attach_dir', { name: currentDiamond.name });
+				hold.setAttribute('aria-pressed', on ? 'true' : 'false');
+				hold.setAttribute('aria-label', hold.title);
+				hold.addEventListener('click', function (ev) { ev.stopPropagation(); toggleDirHold(full); });
+				row.appendChild(hold);
+			}
+			if (!manage) return;
+			var ren = document.createElement('button');
+			ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = t('files.rename_move');
+			ren.addEventListener('click', function (ev) { ev.stopPropagation(); renameEntry(e, full); });
+			row.appendChild(ren);
+			var del = document.createElement('button');
+			del.className = 'files-del'; del.textContent = '×'; del.title = t('files.delete');
+			del.addEventListener('click', async function (ev) {
+				ev.stopPropagation();
+				var msg = t(e.dir ? 'files.delete_folder_body' : 'files.delete_file_body',
+					{ name: e.name });
+				if (!await confirmDialog(msg, t('files.delete'))) return;
+				// The result used to be discarded, so a failed directory
+				// delete looked exactly like a successful one: the user
+				// confirmed a destructive action and was told nothing.
+				var res = await tools().run_tool('file_delete', JSON.stringify({
+					path: full,
+					recursive: e.dir ? 'true' : 'false',
+				}));
+				if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
+					fileMsg(t('files.delete_failed', { name: e.name, reason: friendlyError(res) }), true);
+				} else nudgeSync();	// a quiet delete must travel like any edit
+				list(curDir);
+			});
+			row.appendChild(del);
 		}
 
 		/// Bring a cloud-only file down. A fetch moves real bytes and, once
@@ -8021,6 +8573,7 @@ import init, {
 					+ '" style="display:none">✕ ' + esc(t('common.cancel')) + '</button>' +
 				'    <button class="files-btn" data-act="lineno" title="' + esc(t('files.line_numbers')) + '">#</button>' +
 				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">⤓</button>' +
+				'    <button class="files-btn" data-act="hold" title="">◈</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
@@ -8038,6 +8591,48 @@ import init, {
 				localStorage.setItem('daimond-files-lineno', showLineNos ? '1' : '0');
 				renderFileBody();
 			});
+			// ── Attaching a file to the open Diamond ──────────────────────
+			//
+			// Artefacts are otherwise harvested at a fold, from what a turn WROTE.
+			// That is right for everything an agent produces and no use at all for
+			// the work a person brought with them, which is most of what a Diamond
+			// is for. This writes the link there and then: a fold is the moment the
+			// user blesses what an AGENT did, and there is nothing to bless when
+			// the user is the one doing it.
+			//
+			// It says `holds`, not `produced`. The Diamond did not make this file.
+			var holdBtn = viewEl.querySelector('[data-act="hold"]');
+			async function paintHold() {
+				if (!holdBtn) return;
+				if (!currentDiamond) {
+					holdBtn.style.display = 'none';
+					return;
+				}
+				holdBtn.style.display = '';
+				var on = await fileIsHeld(currentDiamond.id, path);
+				holdBtn.classList.toggle('on', on);
+				holdBtn.title = on
+					? t('files.hold_drop', { name: currentDiamond.name })
+					: t('files.hold_add',  { name: currentDiamond.name });
+				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+				holdBtn.setAttribute('aria-label', holdBtn.title);
+			}
+			if (holdBtn) holdBtn.addEventListener('click', async function () {
+				if (!currentDiamond) return;
+				var id = currentDiamond.id, self = 'diamond:' + id, ref = 'file:' + path;
+				var link = await heldLink(id, path);
+				try {
+					if (link) await diamondApp().remove_link(link.owner, link.id);
+					else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
+				} catch (e) { /* already gone, or already there: repaint tells the truth */ }
+				signalLinksChanged();
+				renderArtefacts();
+				paintHold();
+			});
+			paintHold();
+			// The Diamond can change under an open file, and the button names it.
+			document.addEventListener('daimond-links-changed', paintHold);
+
 			viewEl.querySelector('[data-act="download"]').addEventListener('click', function () {
 				var blob = new Blob([curContent], { type: 'text/plain' });
 				var a = document.createElement('a');
@@ -8217,20 +8812,33 @@ import init, {
 			if (!isErr) el._t = setTimeout(function () { el.style.display = 'none'; }, 2500);
 		}
 
+		/// Where a new file, folder or upload lands.
+		///
+		/// The directory being shown, except at the top of a Diamond's workspace,
+		/// which is a composed view rather than a directory: there, new work goes
+		/// into the Diamond's own directory, which is the one place its daimon can
+		/// always write. Without this it landed at the workspace ROOT -- outside
+		/// the very Diamond the panel was showing.
+		function writeDir() {
+			if (diamondScope() && !curDir) return ownDir();
+			return curDir;
+		}
+
 		// Create a new empty file in the current directory and open it to edit.
 		async function newFile() {
-			var atRoot = !curDir || curDir === '.' || curDir === '/';
+			var into = writeDir();
+			var atRoot = !into || into === '.' || into === '/';
 			var hint = (atRoot && !Instructions.md.trim()) ? t('files.new_file_hint') : '';
 			var name = await promptDialog(t('work.new_file'),
 				{ message: hint, placeholder: 'notes.md', okLabel: t('rail.create') });
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
-			var p = joinPath(curDir, name);
+			var p = joinPath(into, name);
 			var seed = '';
 			if (p === INSTRUCTIONS_FILE) {
 				seed = '# Standing instructions\n\n'
 					+ 'Everything written here is given to every agent Daimond runs — chats, the\n'
-					+ 'conductor of each Diamond, and every worker it dispatches.\n\n'
+					+ 'daimon of each Diamond, and every worker it dispatches.\n\n'
 					+ '## House rules\n\n'
 					+ '- \n';
 			}
@@ -8251,7 +8859,7 @@ import init, {
 				{ placeholder: 'notes', okLabel: t('rail.create') });
 			if (name === null) return;
 			name = name.trim(); if (!name) return;
-			var res = await tools().run_tool('dir_create', JSON.stringify({ path: joinPath(curDir, name) }));
+			var res = await tools().run_tool('dir_create', JSON.stringify({ path: joinPath(writeDir(), name) }));
 			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
 				fileMsg(t('files.create_folder_failed', { reason: friendlyError(res) }), true);
 			}
@@ -8260,7 +8868,13 @@ import init, {
 
 		/// Rename or move an entry. `to` may carry a path, so this is also how a
 		/// file is moved into another folder.
-		async function renameEntry(e) {
+		///
+		/// `from` is the entry's own path, which is not always under `curDir`: a
+		/// Diamond's workspace shows its own directory at the top of a composed
+		/// tree, where `curDir` is not a directory at all.
+		async function renameEntry(e, from) {
+			from = from || joinPath(curDir, e.name);
+			var parent = from.slice(0, Math.max(0, from.lastIndexOf('/')));
 			var name = await promptDialog(t('rail.rename'), {
 				message: t('files.rename_hint'),
 				value: e.name, okLabel: t('rail.rename'),
@@ -8269,8 +8883,8 @@ import init, {
 			if (name === null) return;
 			name = name.trim();
 			if (!name || name === e.name) return;
-			var to = name.indexOf('/') === -1 ? joinPath(curDir, name) : name;
-			var res = await tools().run_tool('file_move', JSON.stringify({ path: joinPath(curDir, e.name), to: to }));
+			var to = name.indexOf('/') === -1 ? joinPath(parent, name) : name;
+			var res = await tools().run_tool('file_move', JSON.stringify({ path: from, to: to }));
 			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
 				fileMsg(t('files.rename_failed', { reason: friendlyError(res) }), true);
 			} else nudgeSync();	// a rename or move outside a turn pushes on its own
@@ -8290,7 +8904,7 @@ import init, {
 					var f = files[i];
 					try {
 						var buf = new Uint8Array(await f.arrayBuffer());
-						await writeWorkspaceBytes(joinPath(curDir, f.name), buf);
+						await writeWorkspaceBytes(joinPath(writeDir(), f.name), buf);
 					} catch (err) {
 						fileMsg(t('files.upload_failed', { name: f.name, reason: friendlyError(err) }), true);
 					}
@@ -8395,6 +9009,17 @@ import init, {
 			// not a string, and writing it as one silently corrupts it.
 			writeBytes:    writeWorkspaceBytes,
 			open:          openFile,
+			// Show a directory in the tree, whichever tree is showing.
+			browse:        function (p) { return list(p || ''); },
+			// Say the panel's own words again in a new language. The scope chips and
+			// the badges on an attached row are on screen the whole time the panel
+			// is, so they cannot wait for the next time something rebuilds them.
+			relabel:       function () {
+				renderScope();
+				if (listed && !curFile) list(curDir);
+			},
+			// Which tree the panel is showing: 'all' or 'diamond'.
+			scope:         function () { return diamondScope() ? 'diamond' : 'all'; },
 		};
 	})();
 
@@ -9022,7 +9647,7 @@ import init, {
 		// Where to go and what is waiting there, for the reader who wants it.
 		// The starter tags are named from the list itself, so a translated hint
 		// cannot promise chips in words the pool does not offer.
-		hint.title = t('rail.tag_hint_help', { tags: DEFAULT_TAG_SUGGESTIONS.join(', ') });
+		hint.title = t('rail.tag_hint_help', { tags: starterTags().join(', ') });
 		hint.style.display = '';
 		if (!was) railFurnitureChanged();
 	}
@@ -9064,6 +9689,24 @@ import init, {
 		var box = document.createElement('div');
 		box.className = 'session-box diamond-box' + (active ? ' active' : '');
 		box.dataset.id = f.id;
+		// The row IS the control, so it has to be one to the keyboard and to a
+		// screen reader as well as to the pointer. It was a div with a click
+		// handler whose only focusable child was the x that deletes it, so
+		// tabbing the rail reached "delete this Diamond" twice and "open this
+		// Diamond" never: the destructive act had a keyboard route and the
+		// central one did not.
+		box.setAttribute('role', 'button');
+		box.setAttribute('tabindex', '0');
+		box.setAttribute('aria-label', f.name || t('rail.unnamed_diamond'));
+		if (active) box.setAttribute('aria-current', 'true');
+		box.addEventListener('keydown', function (e) {
+			if (e.key !== 'Enter' && e.key !== ' ') return;
+			// Not when the press belongs to something inside the row -- the
+			// closer, or a tag chip -- which answer for themselves.
+			if (e.target !== box) return;
+			e.preventDefault();
+			box.click();
+		});
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
 		var name = document.createElement('span');
@@ -9096,7 +9739,7 @@ import init, {
 				// without a tombstone the other device still holds this Diamond and
 				// simply hands it back on the following pull.
 				diamondTombstone(f.id);
-				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; sessionNameEl.textContent = t('chat.no_chat'); showCentre('chat'); renderEmptyState(); }
+				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; signalDiamondChanged(); sessionNameEl.textContent = t('chat.no_chat'); showCentre('chat'); renderEmptyState(); }
 				bumpDiamonds();
 				loadDiamonds();
 			}).catch(function (e2) { noticeDialog(t('rail.delete_failed'), friendlyError(e2)); });
@@ -9680,6 +10323,7 @@ import init, {
 
 	async function selectDiamond(f) {
 		currentDiamond = f;
+		signalDiamondChanged();
 		current = null;                            // a Diamond is not a chat
 		updateActiveSession();                     // clear chat highlight
 		updateActiveDiamond();
@@ -9953,7 +10597,7 @@ import init, {
 		// seen here this session -- so a tag just closed above still has a
 		// chip below to bring it back, even if no other Diamond carries it.
 		var seen = {};
-		DEFAULT_TAG_SUGGESTIONS.forEach(function (x) { seen[x] = 1; });
+		starterTags().forEach(function (x) { seen[x] = 1; });
 		diamonds.forEach(function (d) { tagsOf(d).forEach(function (x) { seen[x] = 1; }); });
 		tags.forEach(function (x) { seen[x] = 1; });
 
@@ -9996,10 +10640,11 @@ import init, {
 			sug.innerHTML = '';
 			// The starter set leads in its own order; everything else follows
 			// alphabetically. Only what is not already on the Diamond is offered.
+			var starters = starterTags();
 			var rest = Object.keys(seen).filter(function (x) {
-				return DEFAULT_TAG_SUGGESTIONS.indexOf(x) === -1;
+				return starters.indexOf(x) === -1;
 			}).sort();
-			var offer = DEFAULT_TAG_SUGGESTIONS.concat(rest).filter(function (x) {
+			var offer = starters.concat(rest).filter(function (x) {
 				return tags.indexOf(x) === -1;
 			});
 			if (!offer.length) {
@@ -10016,7 +10661,7 @@ import init, {
 				// the only place one can be got rid of. The starter suggestions are
 				// furniture rather than the user's own data -- they are offered whatever
 				// the pool holds -- so they carry no closer: it could not remove them.
-				if (DEFAULT_TAG_SUGGESTIONS.indexOf(tag) === -1) chip.appendChild(poolCloser(tag));
+				if (starters.indexOf(tag) === -1) chip.appendChild(poolCloser(tag));
 				sug.appendChild(chip);
 			});
 		}
@@ -10099,8 +10744,12 @@ import init, {
 
 		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
 		strip.style.display = '';
-		strip.textContent = '\u25c8 ' + tn('arte.count', links.length);
-		strip.title = t('arte.strip_help');
+		// This strip is the Diamond's workspace in one line: the files, folders and
+		// pages that are part of this pursuit -- which is the same set the Workspace
+		// panel draws as a tree, and the same set its daimon may open. It used to
+		// call them artefacts, which named only how most of them got here.
+		strip.textContent = '\u25c8 ' + tn('dws.count', links.length);
+		strip.title = t('dws.title');
 		if (!strip.dataset.open) { list.style.display = 'none'; return; }
 
 		// Most recent first: what was last touched is what is being worked on.
@@ -10160,6 +10809,31 @@ import init, {
 		});
 	}
 
+	/// The link by which a Diamond holds this reference, or nothing.
+	///
+	/// A reference is `file:<path>` for a file and `dir:<path>` for a folder, and
+	/// both say the same thing: this is in that Diamond's workspace, and its
+	/// daimon may open it.
+	async function linkTo(diamondId, ref) {
+		try {
+			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
+			for (var i = 0; i < links.length; i++) {
+				if (links[i].other === ref) return links[i];
+			}
+		} catch (e) { /* unreadable: treat as not held */ }
+		return null;
+	}
+
+	/// The link by which a Diamond holds this file, or nothing.
+	async function heldLink(diamondId, path) {
+		return await linkTo(diamondId, 'file:' + path);
+	}
+
+	/// Does this Diamond hold this file?
+	async function fileIsHeld(diamondId, path) {
+		return !!(await heldLink(diamondId, path));
+	}
+
 	/// Show an artefact in whichever panel already owns that kind of thing.
 	///
 	/// A file that has since been renamed or deleted is said to be missing rather than
@@ -10181,12 +10855,33 @@ import init, {
 			Files.open(rest);
 			return;
 		}
+		// A folder in this Diamond's workspace: browsed in the panel that browses
+		// folders, like a file is read in the panel that reads files.
+		if (kind === 'dir') {
+			var res = null;
+			try { res = await diamondApp().run_tool('file_list', JSON.stringify({ path: rest })); }
+			catch (e) { res = 'Error'; }
+			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) {
+				noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: rest }));
+				return;
+			}
+			try { DaimondPanels.markUsed('work'); DaimondPanels.show('work'); } catch (e) { /* no panels */ }
+			Files.browse(rest);
+			return;
+		}
 		if (kind === 'chat') {
 			var chat = chats.find(function (c) { return c.id === rest; });
 			if (chat) { selectChat(chat); return; }
 		}
 		noticeDialog(t('arte.nothing_to_open'), t('arte.no_viewer', { kind: kind }));
 	}
+
+	// The strip is a reading of the Diamond's links, so it is stale the moment
+	// they change -- and they change from three places now: a fold's harvest, the
+	// ◈ on an open file, and the Workspace panel's tree. Redrawing on the signal
+	// costs one read and removes the class of bug where a count is right
+	// everywhere except the line the user is looking at.
+	document.addEventListener('daimond-links-changed', function () { renderArtefacts(); });
 
 	// A small surface for tests, and for anything that later wants to record an
 	// artefact from outside a fold.
@@ -10202,6 +10897,14 @@ import init, {
 	// of its ends, so the same link shows on both Diamonds and which way round it
 	// was asserted is part of what it says rather than an accident of where it
 	// happens to live.
+
+	/// Say that the Diamond in focus changed, to anything that draws per-Diamond.
+	///
+	/// The Workspace panel is the first: one of its two trees is the open
+	/// Diamond's workspace, so which Diamond is open decides what it shows.
+	function signalDiamondChanged() {
+		document.dispatchEvent(new CustomEvent('daimond-diamond-changed'));
+	}
 
 	/// Say that the links changed, to the graph and to anything else watching.
 	function signalLinksChanged() {
@@ -10781,7 +11484,7 @@ import init, {
 		var x = document.createElement('button');
 		x.className = 'crystal-reply-x';
 		x.textContent = '×';
-		x.title = 'Dismiss';
+		x.title = t('common.dismiss');
 		x.addEventListener('click', function () { r.style.display = 'none'; r.innerHTML = ''; });
 		var body = document.createElement('div');
 		body.className = 'crystal-reply-body';
@@ -10905,9 +11608,9 @@ import init, {
 					? 'Dispatched 1 agent.'
 					: 'Dispatched ' + dispatched.length + ' agents.');
 				// Whether the steering turn itself read anything from outside.
-				var conductorTainted = false;
-				try { conductorTainted = !!(fa.is_tainted && fa.is_tainted()); } catch (e) { conductorTainted = false; }
-				Workers.dispatch(diamondId, diamondName, dispatched, conductorTainted);
+				var daimonTainted = false;
+				try { daimonTainted = !!(fa.is_tainted && fa.is_tainted()); } catch (e) { daimonTainted = false; }
+				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted);
 			}
 		} else if (rejected) {
 			setCrystalStatus(rejected === 1
@@ -11279,6 +11982,7 @@ import init, {
 		locked = true;
 		current = null;
 		currentDiamond = null;
+		signalDiamondChanged();
 
 		document.body.classList.add('locked');
 		sessionList.innerHTML = '';
