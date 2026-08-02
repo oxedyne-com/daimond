@@ -235,6 +235,8 @@
 	'chat.collapse_help':  '답변을 모두 접어 물어본 것만 남기고, 접을 턴을 골라요',
 	'chat.input_ph':       '메시지를 입력하세요…',
 	'chat.send':           '보내기',
+	'chat.answered': 'Daimond이 답했어요, {n}단어',
+	'chat.answer_failed': 'Daimond이 답하지 못했어요',
 	'chat.collapse': '모든 답변 접기',
 	'chat.jump': '마지막 메시지로 돌아가기',
 	'chat.end': '채팅 끝으로 이동',

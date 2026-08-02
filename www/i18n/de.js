@@ -165,6 +165,8 @@
 	'chat.collapse_help': 'Alle Antworten einklappen und deine Fragen stehen lassen — und Züge zum Einklappen wählen',
 	'chat.input_ph': 'Nachricht schreiben…',
 	'chat.send': 'Senden',
+	'chat.answered': 'Daimond hat geantwortet, {n} Wörter',
+	'chat.answer_failed': 'Daimond konnte nicht antworten',
 	'chat.collapse': 'Alle Antworten einklappen',
 	'chat.jump': 'Zurück zu Ihrer letzten Nachricht',
 	'chat.end': 'Zum Ende des Chats springen',

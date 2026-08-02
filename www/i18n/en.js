@@ -391,6 +391,8 @@
 	'chat.collapse_help':  'Collapse every answer, leaving what you asked — and pick turns to fold',
 	'chat.input_ph':       'Type a message…',
 	'chat.send':           'Send',
+	'chat.answered': 'Daimond answered, {n} words',
+	'chat.answer_failed': 'Daimond could not answer',
 	'chat.collapse': 'Collapse every answer',
 	'chat.jump': 'Jump back to your last message',
 	'chat.end': 'Jump to the end of the chat',

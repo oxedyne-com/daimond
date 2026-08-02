@@ -323,6 +323,14 @@
 					</div>
 				</div>
 				<div class="chat-output" id="chat-output"></div>
+				<!-- What a screen reader is told when an answer arrives. Said ONCE
+				     per turn, not as the answer streams: a live region on the thread
+				     itself would read every token mutation, which is a noise nobody
+				     can leave switched on, and a live region people switch off is
+				     worse than none because the app then looks answerable and is
+				     not. Visually hidden — it says nothing a sighted reader cannot
+				     already see. -->
+				<div class="vh" id="chat-say" role="status" aria-live="polite"></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>

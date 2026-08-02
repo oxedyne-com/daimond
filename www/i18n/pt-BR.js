@@ -164,6 +164,8 @@
 	'chat.collapse_help': 'Recolher todas as respostas, deixando o que você perguntou — e escolher turnos para dobrar',
 	'chat.input_ph': 'Digite uma mensagem…',
 	'chat.send': 'Enviar',
+	'chat.answered': 'Daimond respondeu, {n} palavras',
+	'chat.answer_failed': 'Daimond não conseguiu responder',
 	'chat.collapse': 'Recolher todas as respostas',
 	'chat.jump': 'Voltar à sua última mensagem',
 	'chat.end': 'Ir para o fim do chat',

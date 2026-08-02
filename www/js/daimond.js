@@ -1384,8 +1384,34 @@ import init, {
 	// Auto-incrementing chat label (Chat-0001, Chat-0002, …), persisted so the
 	// numbering survives a reload.
 	var chatCounter = parseInt(localStorage.getItem('daimond-chat-counter') || '0', 10) || 0;
+
+	/// The highest number already worn by a name of the form `<Stem>-NNNN`.
+	///
+	/// The counter is stored PER DEVICE and the things it names are shared across
+	/// every device on the account. So a chat made on the other machine arrives
+	/// here without ever advancing this counter, and the next one made here takes
+	/// a name that is already in use -- two Chat-0002 in the same rail. The same
+	/// gap opens on a backup import, which restores the chats and not the counter.
+	///
+	/// The counter therefore is not the answer, only a floor: whatever number is
+	/// actually in use wins over it. That is self-healing rather than another
+	/// thing to keep in step, and it costs one pass over a list already in memory.
+	function highestNumbered(names, stem) {
+		var re = new RegExp('^' + stem + '-(\\d+)$');
+		var top = 0;
+		(names || []).forEach(function (n) {
+			var m = re.exec(String(n || '').trim());
+			if (m) top = Math.max(top, parseInt(m[1], 10) || 0);
+		});
+		return top;
+	}
+
 	function nextChatLabel() {
-		chatCounter += 1;
+		var used = 0;
+		try {
+			used = highestNumbered(loadChats().map(function (c) { return c.name; }), 'Chat');
+		} catch (e) { /* no store yet: the counter stands alone */ }
+		chatCounter = Math.max(chatCounter, used) + 1;
 		localStorage.setItem('daimond-chat-counter', '' + chatCounter);
 		return 'Chat-' + ('000' + chatCounter).slice(-4);
 	}
@@ -1423,12 +1449,20 @@ import init, {
 	/// must not burn a number, or a user who changes their mind twice finds
 	/// their first Diamond is called Diamond-0003.
 	function peekDiamondLabel() {
-		return 'Diamond-' + ('000' + (diamondCounter + 1)).slice(-4);
+		return 'Diamond-' + ('000' + (nextDiamondNumber())).slice(-4);
 	}
 	/// Commit the number, once a Diamond really exists.
 	function takeDiamondLabel() {
-		diamondCounter += 1;
+		diamondCounter = nextDiamondNumber();
 		localStorage.setItem('daimond-diamond-counter', '' + diamondCounter);
+	}
+	/// The number the next Diamond would take. Diamonds sync and this counter does
+	/// not, so the same collision the chats had (see `nextChatLabel`) applies here:
+	/// a Diamond made on the other machine never advances this device's counter.
+	/// The list is already in memory, so the check is a pass over `diamonds`.
+	function nextDiamondNumber() {
+		return Math.max(diamondCounter, highestNumbered(
+			(diamonds || []).map(function (d) { return d.name; }), 'Diamond')) + 1;
 	}
 
 	// Short, readable model name for a tile chip (drops the provider path).
@@ -4823,6 +4857,40 @@ import init, {
 	}
 	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; } }
 
+	/// Tell a screen reader that the turn is over, once.
+	///
+	/// The obvious thing -- `aria-live` on the thread -- is the wrong thing here.
+	/// An answer arrives a few characters at a time, and a live region reads every
+	/// change, so a reader would hear the answer re-read at them in fragments for
+	/// as long as the model kept typing. That is a noise nobody leaves switched on,
+	/// and a live region people switch off is worse than none: the app looks
+	/// answerable and is not. So the thread stays silent and this says one short
+	/// sentence when the answer is complete, which is the moment a person who
+	/// cannot see it needs to know about.
+	///
+	/// The word count is the only thing said about the answer itself. It is what
+	/// tells a listener whether to settle in or glance, and it is available without
+	/// reading a word of the content aloud.
+	///
+	/// @param chat    The chat whose turn just ended.
+	/// @param failed  Whether it ended in an error rather than an answer.
+	function sayAnswered(chat, failed) {
+		var el = document.getElementById('chat-say');
+		if (!el) return;
+		if (failed) { el.textContent = t('chat.answer_failed'); return; }
+		var last = null;
+		for (var i = chat.messages.length - 1; i >= 0; i--) {
+			if (chat.messages[i] && chat.messages[i].role === 'assistant') { last = chat.messages[i]; break; }
+		}
+		if (!last) return;                       // nothing was said; say nothing
+		var words = String(last.content || '').trim().split(/\s+/).filter(Boolean).length;
+		// Written even when the sentence is identical to the one already there --
+		// two answers of the same length in a row would otherwise be announced
+		// once. Clearing first makes the second write a change.
+		el.textContent = '';
+		el.textContent = t('chat.answered', { n: words });
+	}
+
 	function setSendMode(mode) {
 		chatSend.disabled = false;
 		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); chatSend.title = t('chat.stop'); }
@@ -5497,6 +5565,11 @@ import init, {
 
 	window.DaimondCore = {
 		busy:            function () { return anyGen() || anyQueued() || (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
+		/// Hold Tab inside `card` for one keydown. Published because the two
+		/// popovers in workspace.js are `role="dialog"` and have to keep the
+		/// promise that makes -- and a second copy of a focus trap is a second
+		/// thing to keep right, which is how the two would drift apart.
+		keepFocusIn:     keepFocusIn,
 		composerHasText: function () { return !!(chatInput && chatInput.value && chatInput.value.trim()); },
 		// Post a message to the one conversation from somewhere other than the
 		// composer — the phone sheet's "Ask about this" pill. Goes through the
@@ -5922,6 +5995,7 @@ import init, {
 			} finally {
 				chat._generating = false;
 				if (owns()) {
+					sayAnswered(chat, sawError || threw);
 					hideSpinner();
 					syncComposer();       // back to Send, and the ordinary placeholder
 					// Not while there is something in the box: the caret would jump

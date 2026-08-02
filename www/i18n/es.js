@@ -164,6 +164,8 @@
 	'chat.collapse_help': 'Plegar todas las respuestas y dejar lo que preguntaste, y elegir qué turnos plegar',
 	'chat.input_ph': 'Escribe un mensaje…',
 	'chat.send': 'Enviar',
+	'chat.answered': 'Daimond respondió, {n} palabras',
+	'chat.answer_failed': 'Daimond no pudo responder',
 	'chat.collapse': 'Plegar todas las respuestas',
 	'chat.jump': 'Volver a tu último mensaje',
 	'chat.end': 'Ir al final del chat',

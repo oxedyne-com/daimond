@@ -233,6 +233,8 @@
 	'chat.collapse_help':  'すべての回答をたたんで質問だけを残し、たたむやり取りを選びます',
 	'chat.input_ph':       'メッセージを入力…',
 	'chat.send':           '送信',
+	'chat.answered': 'Daimond が回答しました（{n} 語）',
+	'chat.answer_failed': 'Daimond は回答できませんでした',
 	'chat.collapse': 'すべての回答をたたむ',
 	'chat.jump': '直前のメッセージに戻る',
 	'chat.end': 'チャットの末尾へ移動',

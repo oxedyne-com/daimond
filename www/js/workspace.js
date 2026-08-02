@@ -831,6 +831,17 @@
 				return;
 			}
 			if (e.key === 'Escape') { closeMenu(); closeGallery(); closePalette(); }
+			// Both popovers say `role="dialog"` and cover the app, and Tab used to
+			// walk straight out of them into the page behind -- with the popover
+			// still up, still covering whatever now had the focus. A dialog that
+			// lets the keyboard out from under itself is a dialog in name only, so
+			// the promise the markup makes is kept here. The trap is the one the
+			// real dialogs use, borrowed rather than copied.
+			if (e.key === 'Tab' && window.DaimondCore && DaimondCore.keepFocusIn) {
+				var open = (menuEl && !menuEl.hidden) ? menuEl
+					: (galEl && !galEl.hidden) ? galEl : null;
+				if (open) DaimondCore.keepFocusIn(open, e);
+			}
 		});
 
 		// A click anywhere else closes a popover, which is what a user expects of

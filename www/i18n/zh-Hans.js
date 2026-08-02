@@ -233,6 +233,8 @@
 	'chat.collapse_help':  '折叠每一条回答，只留下你问的话 — 再挑出要折叠的轮次',
 	'chat.input_ph':       '输入消息…',
 	'chat.send':           '发送',
+	'chat.answered': 'Daimond 已回答，{n} 个词',
+	'chat.answer_failed': 'Daimond 无法回答',
 	'chat.collapse': '折叠所有回答',
 	'chat.jump': '回到你上一条消息',
 	'chat.end': '跳到聊天末尾',

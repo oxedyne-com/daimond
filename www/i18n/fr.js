@@ -164,6 +164,8 @@
 	'chat.collapse_help': 'Replier toutes les réponses en laissant vos questions — et choisir les tours à replier',
 	'chat.input_ph': 'Écrivez un message…',
 	'chat.send': 'Envoyer',
+	'chat.answered': 'Daimond a répondu, {n} mots',
+	'chat.answer_failed': 'Daimond n’a pas pu répondre',
 	'chat.collapse': 'Replier toutes les réponses',
 	'chat.jump': 'Revenir à votre dernier message',
 	'chat.end': 'Aller à la fin du chat',
