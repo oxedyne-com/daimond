@@ -18,13 +18,28 @@ svg { display: block; }
 .login-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; width: 360px; max-width: 90vw; }
 .login-logo { height: 64px; margin: 0 auto 20px; display: block; }
 .login-card form { display: flex; flex-direction: column; gap: 12px; }
-.login-card input { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 14px; font-size: var(--fs-lg); }
-.login-card input:focus { outline: none; border-color: var(--accent); }
+.login-card input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 14px; font-size: var(--fs-lg); }
+.login-card input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .login-card input::placeholder { color: var(--text-muted); }
 .login-card button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); }
 .login-card button:hover { background: var(--accent-hover); }
 .login-error { color: var(--danger); font-size: var(--fs-sm); margin-top: 8px; min-height: 18px; }
 .login-card a { display: block; text-align: center; margin-top: 16px; color: var(--accent); text-decoration: none; font-size: var(--fs-base); }
+
+/* Said to a screen reader and to nothing else. The app's own name is drawn as a
+   wordmark, which is an image and cannot be a heading, so the document had no
+   <h1> at all and heading navigation started at level 2 with no level 1 above it.
+   Clipped rather than `display: none`, which would take it out of the tree along
+   with the pixels. */
+.vh {
+	position: absolute;
+	width: 1px; height: 1px;
+	margin: -1px; padding: 0; border: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
 
 /* ── App frame: topbar + four panels ─────────────────────────── */
 #app { display: flex; flex-direction: column; height: 100vh; padding: 10px 12px 12px; gap: 8px; }
@@ -37,16 +52,19 @@ svg { display: block; }
    by theme because the topbar sits on the theme background: white lettering on
    the dark theme, dark grey on the light and lollypop themes. */
 .brand-wordmark { height: var(--logo-h); width: auto; display: block; }
-/* The maker's badge, beside the wordmark. It is a lozenge with its own white
-   plate and its own border, so it takes no palette treatment and no dark/light
-   twin -- and the margin has to keep it clear of the wordmark rather than let
-   two marks read as one. Shorter than the wordmark on purpose: it is a
-   signature, not a second logo. */
-/* The wordmark and the badge are ONE item in the top bar. The bar distributes
-   its children with space-between, so a badge added as a child of its own got
-   pushed two hundred pixels away from the wordmark it belongs beside. */
+/* The brand group. The wordmark was one of two marks here; the maker's badge has
+   since moved to the other end of the bar, so this is now a group of one -- kept
+   as a group because the bar distributes its children with space-between, and a
+   wordmark that is a direct child of that gets a different left edge. */
 .brand-group { display: flex; align-items: center; flex: none; min-width: 0; }
-.made-by { position: relative; display: flex; align-items: center; margin-left: 10px; flex: none; }
+/* The maker's badge, at the right-hand end of the bar in the place the README
+   link held. It is a lozenge with its own white plate and its own border, so it
+   takes no palette treatment and no dark/light twin. Drawn at twice the height
+   it began at, by the user's decision: it is now the tallest thing in the bar,
+   which is a flex row of no declared height and grows to it. The margin buys it
+   more air than the row's 4px gap, so a signature does not read as one more
+   control in the run of icon buttons. */
+.made-by { position: relative; display: flex; align-items: center; margin: 0 4px; flex: none; }
 /* The two halves of the badge, laid over the artwork. Each is a real element
    with its own name, so a screen reader meets two claims rather than one
    picture, and only the Oxedyne half is a link. */
@@ -55,11 +73,10 @@ svg { display: block; }
 .made-by .mb-ai { right: 0; cursor: help; }
 .made-by .mb-oxedyne:hover ~ img { opacity: 0.85; }
 .made-by .mb-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.made-by img { height: calc(var(--logo-h) - 6px); width: auto; display: block; }
+.made-by img { height: calc((var(--logo-h) - 6px) * 2); width: auto; display: block; }
 .made-by:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-/* On a phone the bar is fighting for width and the wordmark already shortens;
-   the signature is the first thing that can go. */
-@media (max-width: 560px) { .made-by { display: none; } }
+/* The phone stands the badge down entirely; the rule lives in responsive.css
+   beside the account of why anything in this row may be dropped at all. */
 .brand-wordmark.wm-on-light { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-dark { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
@@ -71,11 +88,6 @@ svg { display: block; }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .icon-btn.on { color: var(--accent); }
 .icon-btn.dim { opacity: 0.4; }
-/* The README link borrows the icon button's colour and hover, but carries text
-   rather than a glyph, so it wants a smaller type size and no underline. The
-   descendant selector outweighs the touch-size .icon-btn override in
-   responsive.css, keeping the label compact on a phone too. */
-.top-actions .readme-link { font-size: var(--fs-sm); letter-spacing: 0.01em; text-decoration: none; }
 /* One icon size across the top bar. The update chip and the appearance menu
    already drew at 18px while the guide "?" and the pairing glyph took the
    .icon-btn default of 16, so the row of five read as two different sets. */
@@ -143,8 +155,8 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .spend-actions { display: flex; align-items: center; gap: 6px; }
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
-.addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
-.addbtn:hover { border-color: var(--border-2); color: var(--text-primary); }
+.addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
+.addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
 .addbtn:disabled:hover { border-color: var(--border); color: var(--text-secondary); }
 label.addbtn { cursor: pointer; }
@@ -307,7 +319,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	margin: 2px 6px;
 	padding: 7px 9px;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	font-size: var(--fs-sm);
@@ -319,8 +331,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
 
 .new-session-panel { display: flex; gap: 6px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); flex: none; }
-.new-session-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 8px; font-size: var(--fs-sm); }
-.new-session-model:focus { outline: none; border-color: var(--accent); }
+.new-session-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 8px; font-size: var(--fs-sm); }
+.new-session-model:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .new-session-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 6px 12px; font-size: var(--fs-sm); white-space: nowrap; }
 .new-session-start:hover { background: var(--accent-hover); }
 
@@ -354,14 +366,14 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .panel.ai.crystal-face { border-radius: 0; }
 .chead-right { display: flex; align-items: center; gap: 8px; flex: none; }
 .cmeter { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }
-.chat-model-select { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-xs); padding: 3px 6px; max-width: 170px; }
+.chat-model-select { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-xs); padding: 3px 6px; max-width: 170px; }
 .chat-model-select:hover { border-color: var(--accent); color: var(--text-primary); }
-.chat-model-select:focus { outline: none; border-color: var(--accent); }
+.chat-model-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 .chat-output { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .chat-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
-#chat-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
-#chat-input:focus { outline: none; border-color: var(--accent); }
+#chat-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
+#chat-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 #chat-input::placeholder { color: var(--text-muted); }
 /* Send, and the walk back up your own questions. Both are square and exactly as
    tall as the input at rest — 21px of line + ~9px of vertical padding + 2px of
@@ -384,8 +396,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 #chat-send:disabled { opacity: 0.4; cursor: default; }
 #chat-send.stop { background: var(--danger); }
 #chat-send.stop:hover { filter: brightness(1.1); }
-#chat-jump, #chat-end { background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-secondary); }
-#chat-jump:hover, #chat-end:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-2); }
+#chat-jump, #chat-end { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
+#chat-jump:hover, #chat-end:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* Chat messages */
 /* An answer belongs to the question above it, so it sits close to it; the air
@@ -462,8 +474,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* Find a Diamond: a search box that is always there, and the standing tag pool
    beneath it. */
 .diamond-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
-.diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
-.diamond-search:focus { outline: none; border-color: var(--accent); }
+.diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
+.diamond-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .diamond-search::placeholder { color: var(--text-muted); }
 .diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 /* The tag filter. A column: the row that names it, the pool of tags behind
@@ -572,8 +584,8 @@ button.tag-pool { cursor: pointer; }
 
 /* Steer row: an instruction command line, distinct from a chat thread. */
 .steer-row { display: flex; align-items: flex-end; gap: 8px; }
-.steer-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
-.steer-input:focus { outline: none; border-color: var(--accent); }
+.steer-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
+.steer-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .steer-input::placeholder { color: var(--text-muted); }
 .steer-send { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 9px 13px; font-size: var(--fs-xl); flex-shrink: 0; }
 .steer-send:hover { background: var(--accent-hover); }
@@ -645,7 +657,7 @@ button.tag-pool { cursor: pointer; }
 .link-none { font-size: var(--fs-xs); color: var(--text-muted); font-style: italic; padding: 4px 2px; }
 .link-add { align-self: flex-start; font-size: var(--fs-xs); padding: 6px 11px; min-height: 34px;
 	background: var(--bg-secondary); color: var(--text-secondary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: pointer; }
 .link-add:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* The add form. Every value it holds lives in JS rather than in these fields,
@@ -656,22 +668,22 @@ button.tag-pool { cursor: pointer; }
 .link-label { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: .04em;
 	text-transform: uppercase; color: var(--text-muted); }
 .link-pick, .link-rel-input, .link-note-input { background: var(--bg-secondary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary);
 	font-size: var(--fs-sm); padding: 6px 8px; min-height: 34px; width: 100%; }
-.link-pick:focus, .link-rel-input:focus, .link-note-input:focus { outline: none; border-color: var(--accent); }
+.link-pick:focus, .link-rel-input:focus, .link-note-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .link-pick::placeholder, .link-rel-input::placeholder, .link-note-input::placeholder { color: var(--text-muted); }
 .link-picks { display: flex; flex-wrap: wrap; gap: 4px; }
 .link-pick-hit { font-size: var(--fs-xs); padding: 6px 10px; min-height: 34px; cursor: pointer;
 	background: var(--bg-secondary); color: var(--text-primary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-pick-hit:hover { border-color: var(--accent); background: var(--bg-hover); }
 .link-chosen { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .link-chosen-name { font-size: var(--fs-sm); color: var(--text-primary); }
 .link-change { font-size: var(--fs-xs); padding: 6px 10px; min-height: 34px; cursor: pointer;
-	background: none; color: var(--text-secondary); border: 1px solid var(--border);
+	background: none; color: var(--text-secondary); border: 1px solid var(--border-strong);
 	border-radius: var(--radius-sm); }
-.link-change:hover { color: var(--text-primary); border-color: var(--border-2); }
+.link-change:hover { color: var(--text-primary); }
 .link-rel-sug { display: flex; flex-wrap: wrap; gap: 4px; }
 .link-sug { font-family: var(--font-mono); font-size: var(--fs-2xs); padding: 5px 9px;
 	min-height: 28px; cursor: pointer; background: none; color: var(--text-muted);
@@ -686,7 +698,7 @@ button.tag-pool { cursor: pointer; }
 .link-save { background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); }
 .link-save:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .link-save:disabled { opacity: .5; cursor: default; }
-.link-cancel { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border); }
+.link-cancel { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border-strong); }
 .link-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* At a phone's width every target is a thumb's target, and the phrase wraps
@@ -700,8 +712,8 @@ button.tag-pool { cursor: pointer; }
 /* Fold-a-delta control: enter a delta, propose a fold (writes nothing). */
 .fold-row { display: flex; align-items: flex-end; gap: 8px; }
 .fold-delta { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 8px 12px; font-size: var(--fs-sm); resize: none; max-height: 100px; line-height: 1.5; }
-.fold-delta:focus { outline: none; border-color: var(--accent); }
-.fold-btn { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-2); border-radius: var(--radius); padding: 8px 12px; font-size: var(--fs-sm); flex-shrink: 0; white-space: nowrap; }
+.fold-delta:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.fold-btn { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 12px; font-size: var(--fs-sm); flex-shrink: 0; white-space: nowrap; }
 .fold-btn:hover { border-color: var(--accent); }
 .fold-btn:disabled { opacity: 0.4; cursor: default; }
 .crystal-status { font-size: var(--fs-xs); color: var(--text-muted); font-family: var(--font-mono); min-height: 14px; }
@@ -738,7 +750,7 @@ button.tag-pool { cursor: pointer; }
 .diff-actions { display: flex; gap: 8px; }
 .diff-accept { background: var(--ok); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
 .diff-accept:hover { filter: brightness(1.08); }
-.diff-reject { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-2); border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
+.diff-reject { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 9px 16px; font-size: var(--fs-base); }
 .diff-reject:hover { border-color: var(--danger); color: var(--danger); }
 
 /* Empty state */
@@ -838,14 +850,14 @@ button.tag-pool { cursor: pointer; }
 .settings-section { margin-bottom: 20px; }
 .settings-section h3 { font-size: var(--fs-lg); margin-bottom: 12px; color: var(--text-secondary); }
 .settings-section form { display: flex; flex-direction: column; gap: 10px; }
-.settings-section input { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.settings-section input:focus { outline: none; border-color: var(--accent); }
-.settings-select { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.settings-select:focus { outline: none; border-color: var(--accent); }
+.settings-section input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
+.settings-section input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.settings-select { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
+.settings-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .settings-select option:disabled { color: var(--text-muted); }
 .settings-section button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
 .settings-section button:hover { background: var(--accent-hover); }
-.modal-close { background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); margin-top: 8px; width: 100%; }
+.modal-close { background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); margin-top: 8px; width: 100%; }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* BYOK settings helpers (browser-only Daimond). */
@@ -855,8 +867,8 @@ button.tag-pool { cursor: pointer; }
 .cfg-credits-hint { color: var(--text-secondary); }
 .cfg-lead { font-size: var(--fs-sm); color: var(--text-secondary); margin: -4px 0 4px; line-height: 1.5; }
 .byok-form { display: flex; flex-direction: column; gap: 10px; }
-.byok-form input[type="text"] { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.byok-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.byok-form input[type="text"] { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
+.byok-form input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .byok-form input::placeholder { color: var(--text-muted); }
 #byok-save { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); margin-top: 2px; }
 #byok-save:hover { filter: brightness(1.08); }
@@ -873,13 +885,13 @@ button.tag-pool { cursor: pointer; }
 /* ── Chat tiles: pending (pick model → Start) + active (meter + Fold) ─── */
 .tile-label { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 500; padding: 2px 5px; }
 .tile-label:hover { border-color: var(--border); }
-.tile-label:focus { outline: none; border-color: var(--accent); background: var(--bg-primary); }
+.tile-label:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); background: var(--bg-primary); }
 .session-box.active .tile-label { color: var(--accent-text); }
 .session-box.pending { border-style: dashed; }
 
 .tile-pending { display: flex; gap: 6px; margin-top: 7px; }
 .tile-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 5px 6px; }
-.tile-model:focus { outline: none; border-color: var(--accent); }
+.tile-model:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .tile-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: var(--fs-xs); white-space: nowrap; }
 .tile-start:hover { background: var(--accent-hover); }
 
@@ -895,7 +907,7 @@ button.tag-pool { cursor: pointer; }
 .tile-ctx-pct { color: var(--text-secondary); }
 .tile-tok { white-space: nowrap; }
 .tile-cost { color: var(--text-secondary); white-space: nowrap; }
-.tile-fold { background: none; border: 1px solid var(--border-2); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: var(--fs-2xs); padding: 2px 9px; white-space: nowrap; }
+.tile-fold { background: none; border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: var(--fs-2xs); padding: 2px 9px; white-space: nowrap; }
 .tile-fold:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* Fold-into picker (a small anchored menu of Diamonds). */
@@ -928,11 +940,11 @@ button.tag-pool { cursor: pointer; }
 /* Message copy button (revealed on hover). */
 .chat-msg { position: relative; }
 .chat-msg { padding-bottom: 22px; }
-.msg-copy { position: absolute; bottom: 0; background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 3px; line-height: 0; opacity: 0; transition: opacity 0.12s; }
+.msg-copy { position: absolute; bottom: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 3px; line-height: 0; opacity: 0; transition: opacity 0.12s; }
 .chat-msg-assistant .msg-copy { left: 0; }
 .chat-msg-user .msg-copy { right: 0; }
 .chat-msg:hover .msg-copy { opacity: 1; }
-.msg-copy:hover { color: var(--text-primary); border-color: var(--border-2); }
+.msg-copy:hover { color: var(--text-primary); }
 .msg-copy.done { color: var(--ok); border-color: var(--ok); }
 .msg-copy .ic { width: 14px; height: 14px; }
 
@@ -960,7 +972,7 @@ button.tag-pool { cursor: pointer; }
 /* Header chips: a word, not a picture. `.on` is the latched − in select mode. */
 .chip-btn {
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-strong);
 	color: var(--text-secondary);
 	border-radius: var(--radius-sm);
 	font-size: var(--fs-xs);
@@ -968,7 +980,7 @@ button.tag-pool { cursor: pointer; }
 	line-height: 1.5;
 	white-space: nowrap;
 }
-.chip-btn:hover { color: var(--text-primary); border-color: var(--border-2); background: var(--bg-hover); }
+.chip-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
 .chip-btn.on { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
 .chip-btn.accent { border-color: var(--accent); color: var(--accent); }
 .chip-btn.accent:hover { background: var(--accent); color: var(--on-fill, #fff); }
@@ -1016,12 +1028,12 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
 .id-account.on { border-color: var(--accent); background: var(--accent-soft); }
 .id-account-name { font-weight: 600; }
 .id-account-fp { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); }
-.id-account-add { background: none; border: 1px dashed var(--border-2); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 8px 12px; font-size: var(--fs-sm); }
+.id-account-add { background: none; border: 1px dashed var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 8px 12px; font-size: var(--fs-sm); }
 .id-account-add:hover { border-color: var(--accent); color: var(--text-primary); }
 
 .id-fields { display: flex; flex-direction: column; gap: 10px; }
-.id-fields input { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 12px; font-size: var(--fs-base); }
-.id-fields input:focus { outline: none; border-color: var(--accent); }
+.id-fields input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 10px 12px; font-size: var(--fs-base); }
+.id-fields input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 /* Unlocking: the name is not a field to fill but a statement of whose account is
    being opened. It stays a real input because that is what lets a password
    manager file the entry under a username, but it reads as information. */
@@ -1051,10 +1063,10 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
    A short window still scrolls, which is correct; this only stops a full-height
    one from hiding the button and the escape hatch under the fold. */
 #identity-modal .modal-card { max-height: 92vh; }
-.pass-gen { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pass-gen { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .pass-gen-words { font-family: var(--font-mono); font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-spacing: .25em; overflow-wrap: break-word; }
 .pass-gen-acts { display: flex; gap: 8px; }
-.pass-gen-btn { flex: 1; background: none; border: 1px solid var(--border-2); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: var(--fs-xs); cursor: pointer; }
+.pass-gen-btn { flex: 1; background: none; border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: var(--fs-xs); cursor: pointer; }
 .pass-gen-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .pass-gen-note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; }
 .pass-gen-ack { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.4; cursor: pointer; }
@@ -1087,8 +1099,8 @@ body.agents-hidden .mnav [data-mp="agents"] { display: none !important; }
    origin over a dark UI. */
 .dlg-card { width: 420px; }
 .dlg-msg { font-size: var(--fs-base); color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
-.dlg-input { width: 100%; margin-bottom: 4px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.dlg-input:focus { outline: none; border-color: var(--accent); }
+.dlg-input { width: 100%; margin-bottom: 4px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
+.dlg-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 /* A models pulldown in a dialog: the same box as the text fields beside it, so the
    form reads as one form. A long model id is allowed to be long -- truncating it
    would hide the very part that tells two of them apart. */
@@ -1151,7 +1163,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .pill.paused { background: var(--accent-soft); color: var(--accent-text); }
 .aacts { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .afolded { flex: 1; font-size: var(--fs-2xs); color: var(--text-muted); font-family: var(--font-mono); }
-.abtn { flex: 1; font-size: var(--fs-2xs); padding: 4px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.abtn { flex: 1; font-size: var(--fs-2xs); padding: 4px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 .abtn:hover { background: var(--bg-hover); }
 .abtn.stop, .abtn.a-cross { color: var(--danger); }
 .abtn.stop:hover, .abtn.a-cross:hover { background: var(--danger); color: var(--on-fill, #fff); border-color: var(--danger); }
@@ -1162,8 +1174,8 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    brake on a runaway fan-out, so the group is prominent but quiet until there
    are agents to act on. */
 .agents-ctl { display: inline-flex; gap: 3px; align-items: center; }
-.agc { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); }
-.agc:hover:not(:disabled) { border-color: var(--border-2); color: var(--text-primary); }
+.agc { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); }
+.agc:hover:not(:disabled) { color: var(--text-primary); }
 .agc:disabled { opacity: 0.3; cursor: default; }
 #agents-stop:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 #agents-play:not(:disabled) { color: var(--accent-text); border-color: var(--accent); }
@@ -1179,11 +1191,11 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    Every version was already snapshotted to disk; nothing could reach one.
    An accepted fold overwrites the crystal, so without this there is no undo. */
 .crystal-bar { display: flex; gap: 6px; margin-bottom: 10px; }
-.crystal-act { font-size: var(--fs-xs); padding: 4px 10px; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.crystal-act { font-size: var(--fs-xs); padding: 4px 10px; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 .crystal-act:hover { background: var(--bg-hover); color: var(--text-primary); }
 .crystal-act.primary { background: var(--accent); color: var(--on-fill, #fff); border-color: var(--accent); }
-.crystal-edit { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
-.crystal-edit:focus { outline: none; border-color: var(--accent); }
+.crystal-edit { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
+.crystal-edit:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .hist-list { display: flex; flex-direction: column; gap: 6px; }
 .hist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .hist-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -1285,7 +1297,7 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    lit rather than a single label that flips, because a lone word cannot say
    whether it is naming the state or the action. It appears only when there are
    two tags for it to combine. */
-.tag-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
+.tag-mode { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 20px; overflow: hidden; }
 .tag-mode-btn { display: inline-flex; align-items: center; justify-content: center; font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 7px; background: none; border: none; color: var(--text-muted); cursor: pointer; }
 .tag-mode-btn:hover { color: var(--text-primary); }
 .tag-mode-btn.on { background: var(--accent); color: var(--bg-primary); }
@@ -1300,8 +1312,8 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 20px; }
 .tag-none { font-size: var(--fs-xs); color: var(--text-muted); font-style: italic; }
 .tag-add { display: flex; gap: 6px; }
-.tag-input { flex: 1; max-width: 200px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 4px 8px; }
-.tag-input:focus { outline: none; border-color: var(--accent); }
+.tag-input { flex: 1; max-width: 200px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 4px 8px; }
+.tag-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .tag-input::placeholder { color: var(--text-muted); }
 /* The two boxes: what is on the Diamond, and the pool everything comes from.
    The add input sits inside the pool's box, because typing mints into it. */
@@ -1421,8 +1433,8 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    The tree was read/write only: no rename, no move, no new folder, no
    upload, and no way to find anything once it grew past a screenful. */
 .files-filter { padding: 6px 8px 0; }
-.files-filter-input { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); padding: 5px 8px; font-size: var(--fs-xs); }
-.files-filter-input:focus { outline: none; border-color: var(--accent); }
+.files-filter-input { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 5px 8px; font-size: var(--fs-xs); }
+.files-filter-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .files-filter-input::placeholder { color: var(--text-muted); }
 .files-ren { color: var(--text-secondary); }
 .files-ren:hover { color: var(--accent); }

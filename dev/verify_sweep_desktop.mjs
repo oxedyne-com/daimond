@@ -282,6 +282,13 @@ const AUDIT = function () {
 		const c = cs(el);
 		if (c.overflowX !== 'hidden' && c.overflowX !== 'clip') continue;
 		if (el.clientWidth <= 0) continue;
+		// Text meant for a screen reader and for nothing else. The visually-hidden
+		// idiom is a 1x1 box with the paint clipped away, so its content ALWAYS
+		// overflows -- that is how it works, not a defect. Matched on the shape of
+		// the idiom (a 1x1 box whose paint is clipped to nothing) rather than on a
+		// class name, so a rule cannot silence this check by borrowing a name.
+		if (el.clientWidth <= 1 && el.clientHeight <= 1
+			&& (c.clipPath === 'inset(50%)' || c.clip === 'rect(0px, 0px, 0px, 0px)')) continue;
 		const over = el.scrollWidth - el.clientWidth;
 		if (over <= 1) continue;
 		if (c.textOverflow === 'ellipsis') continue;		// an admitted cut

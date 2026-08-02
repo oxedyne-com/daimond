@@ -130,7 +130,11 @@ const BAD_IMAGES = () => {
 const STRUCTURE = () => ({
 	main:     document.querySelectorAll('main,[role="main"]').length,
 	h1:       document.querySelectorAll('h1').length,
-	headings: [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+	// role="heading" counts. The panel heads are <span>s carrying the role rather
+	// than <h2>s, because making them elements would have moved the layout, and a
+	// count that ignored them would report zero headings on a page that has
+	// thirteen -- a report line that is wrong is worse than no report line.
+	headings: [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')]
 		.filter((e) => e.getClientRects().length).length,
 	unnamedRegions: [...document.querySelectorAll('aside,nav,header,footer,[role="region"],[role="complementary"]')]
 		.filter((e) => e.getClientRects().length)

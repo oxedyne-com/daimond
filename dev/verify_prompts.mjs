@@ -131,7 +131,9 @@ await p.click('#settings-btn', { force: true });
 await p.waitForTimeout(900);
 const buttons = await p.$$eval('#admin-home .admin-item', els => els.map(e => e.textContent));
 check('the Admin panel offers a button per role',
-	['chat', 'diamond conductor', 'dispatched worker', 'crystal fold']
+	// "daimon", not "conductor": the agent behind a Diamond was renamed and this
+	// list was not, so the check went on looking for a word the app stopped using.
+	['chat', 'diamond daimon', 'dispatched worker', 'crystal fold']
 		.every(r => buttons.some(b => b.toLowerCase().includes(r))),
 	buttons.filter(b => /prompt/i.test(b)).join(' | '));
 

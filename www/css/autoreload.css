@@ -15,13 +15,13 @@
 .ar-card-none { font-size: var(--fs-sm); color: var(--text-muted); }
 #autoreload .ar-card-btn {
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-strong);
 	color: var(--text-secondary);
 	border-radius: var(--radius-sm);
 	font-size: var(--fs-xs);
 	padding: 4px 10px;
 }
-#autoreload .ar-card-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-2); }
+#autoreload .ar-card-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 #autoreload .ar-card-btn.accent { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
 #autoreload .ar-card-btn.accent:hover { background: var(--accent-hover); }
 
@@ -38,7 +38,7 @@
 .ar-input-row { display: flex; align-items: center; gap: 0; }
 .ar-ccy {
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-strong);
 	border-right: none;
 	border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 	color: var(--text-muted);
@@ -49,14 +49,14 @@
 	flex: 1;
 	min-width: 0;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid var(--border-strong);
 	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 	color: var(--text-primary);
 	font-size: var(--fs-sm);
 	padding: 7px 10px;
 	font-family: var(--font-mono);
 }
-#autoreload .ar-input:focus { outline: none; border-color: var(--accent); }
+#autoreload .ar-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .ar-hint { font-size: var(--fs-2xs); color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
 /* The billing note is a direct child of the panel, not of a field. */
 #autoreload > .ar-hint { margin-top: 8px; }

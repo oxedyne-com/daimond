@@ -65,8 +65,6 @@ const GHOSTS = new Set([
 	'span.astat-dot.warn',
 	'span.astat-val',
 	'span.astat-aside',
-	'div.session-box.diamond-box',
-	'div.session-box.diamond-box.active',
 	'div.session-box-header',
 	'span.session-box-name',
 	'div.session-box-meta',
@@ -299,18 +297,16 @@ if (goneNow.length && goneNow.length < GHOSTS.size) {
 	out.push(`----  ${goneNow.length} census entries were not on the page this run `
 		+ `(either fixed, or that surface was not open): ${JSON.stringify(goneNow.slice(0, 6))}`);
 }
-note('The Diamonds list is reachable by keyboard only to DELETE',
-	'A .diamond-box is a <div> with a click handler (www/js/daimond.js:9123 diamondBox, '
-	+ ':9208 box.addEventListener). Tab through the rail lands on the × delete button and '
-	+ 'nothing else — the destructive action is the only one a keyboard can take. '
-	+ 'See a11y_report.md §1.');
-note('A chat cannot be opened from the keyboard',
-	'.tile-label is focusable but only a mouse CLICK selects the chat '
-	+ '(www/js/daimond.js:5281); Enter and Space were pressed on a non-current tile and '
-	+ 'the chat did not change. See a11y_report.md §2.');
-note('The whole Email panel is mouse-only',
-	'.mail-acct, .mail-draft, .mail-msg and .mail-folder are <div>s with click handlers '
-	+ '(www/js/mail.js:1313, :1349, :1362, :1430). See a11y_report.md §3.');
+// The Diamonds list and the chat tiles were both here, and both are fixed:
+// each row carries the role, the tab stop and the Enter/Space handler.
+// `dev/verify_railkeys.mjs` makes a Diamond and two chats and presses the keys
+// against them -- Enter and Space each open a chat, Enter acts on a Diamond row,
+// and the delete button says WHICH Diamond it would delete.
+// The Email panel was here, and is not any more: all four row types now carry the
+// role, the tab stop and the Enter/Space handler, and `dev/verify_mailkeys.mjs`
+// presses the keys against a seeded panel and asserts the application changed. A
+// note left behind after its fix makes the fix look like a regression, which is
+// exactly what the header of this file says not to do.
 
 // ── 3. A surrogate control is a whole control ───────────────────────
 const surro = await page.evaluate(SURROGATES);

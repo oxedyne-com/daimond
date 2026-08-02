@@ -721,10 +721,14 @@
 		c.run();
 	}
 
+	/// What had the focus when the palette took it, so it can be given back.
+	var palPrev = null;
+
 	function openPalette() {
 		palEl = palEl || document.getElementById('palette');
 		if (!palEl || !palEl.hidden) return;
 		closeMenu(); closeGallery();
+		palPrev = document.activeElement;
 		palInput = document.getElementById('pal-input');
 		palList = document.getElementById('pal-list');
 		palInput.value = '';
@@ -734,9 +738,23 @@
 		palInput.focus();
 	}
 
+	/// Close, and put the focus back where it was.
+	///
+	/// Hiding the scrim and stopping left the focus on `<body>`, so the next Tab
+	/// restarted at the top of the app -- for a keyboard user, the whole rail and
+	/// topbar again, every time the palette was opened and dismissed. `closeMenu`
+	/// and `closeGallery` both already do this; this is the third of three.
+	///
+	/// `runAt` closes BEFORE running the command, so a command that deliberately
+	/// moves the focus somewhere else has to win. Restoring here and letting the
+	/// command move it afterwards is that order.
 	function closePalette() {
 		if (!palEl || palEl.hidden) return;
 		palEl.hidden = true;
+		if (palPrev && palPrev.focus && document.contains(palPrev)) {
+			try { palPrev.focus(); } catch (e) { /* gone from the page */ }
+		}
+		palPrev = null;
 	}
 
 	// ── Wiring ──────────────────────────────────────────────────────────

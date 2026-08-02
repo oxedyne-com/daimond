@@ -35,11 +35,12 @@
 	/* ...and `overflow: hidden` is not a fit, it is a guillotine. Signed in, the
 	   row ran 22-40px past a phone's width, so the appearance-and-layout button
 	   -- theme, skin, reading size -- was CLIPPED OFF the screen on every phone
-	   tested, and on an iPhone SE the guide "?" went with it. The README link is
-	   the one item here that leaves the app entirely (the Oxedyne blog), and it
-	   costs more room than the two controls it was pushing off, so on a phone it
-	   stands down. */
-	.top-actions .readme-link { display: none; }
+	   tested, and on an iPhone SE the guide "?" went with it. The maker's badge
+	   now holds that slot, and it is a signature rather than a control: it is
+	   worth less room than the two controls it would push off, so on a phone it
+	   stands down. It hides at this width and not at its old 560px, because what
+	   decides it is the crowding of THIS row, and this row is crowded from 760. */
+	.top-actions .made-by { display: none; }
 
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }

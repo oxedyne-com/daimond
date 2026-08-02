@@ -370,7 +370,19 @@
 		// A panel's name is markup (`data-label`), because the layout engine reads
 		// the DOM as its registry. Writing the translation back into that attribute
 		// keeps the one registry there is.
-		sel('[data-i18n-label]',       function (n) { n.setAttribute('data-label', t(n.getAttribute('data-i18n-label'))); });
+		//
+		// The same name also becomes the panel's accessible name. An unnamed
+		// <section> is not a landmark at all, and an unnamed <aside> is announced
+		// as "complementary" with nothing to tell it from the next one -- Chrome's
+		// tree showed three of them side by side as `complementary ""`. The name
+		// exists; it was simply never given to the accessibility tree. Doing it
+		// here rather than in the markup means the translated name and the spoken
+		// name cannot drift apart.
+		sel('[data-i18n-label]',       function (n) {
+			var label = t(n.getAttribute('data-i18n-label'));
+			n.setAttribute('data-label', label);
+			n.setAttribute('aria-label', label);
+		});
 	}
 
 	/// Take a table from `i18n/<code>.js`. The first table to arrive for the

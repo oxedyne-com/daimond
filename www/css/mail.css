@@ -103,23 +103,23 @@
 }
 .mail-all {
 	background: var(--bg-secondary); color: var(--text-secondary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	padding: 8px 14px; font-size: var(--fs-sm);
 }
-.mail-all:hover { border-color: var(--border-2); color: var(--text-primary); }
+.mail-all:hover { color: var(--text-primary); }
 .mail-all:disabled { opacity: 0.5; cursor: default; }
 .mail-older {
 	align-self: stretch;
 	background: var(--bg-secondary);
 	color: var(--text-primary);
-	border: 1px solid var(--border-2);
+	border: 1px solid var(--border-strong);
 	border-radius: var(--radius-sm);
 	padding: 8px 14px;
 	font-size: var(--fs-sm);
 }
 .mail-older:hover { border-color: var(--accent); color: var(--accent-text); }
 .mail-older:disabled { opacity: 0.5; cursor: default; }
-.mail-older:disabled:hover { border-color: var(--border-2); color: var(--text-primary); }
+.mail-older:disabled:hover { border-color: var(--border-strong); color: var(--text-primary); }
 .mail-msg {
 	padding: 8px 10px;
 	cursor: pointer;
@@ -205,7 +205,7 @@
 .msg-blocked button {
 	flex: none;
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 5px 10px; font-size: var(--fs-xs);
 }
@@ -217,7 +217,7 @@
 .msg-acts { display: flex; gap: 6px; margin-top: 10px; }
 .msg-act {
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 5px 12px; font-size: var(--fs-xs-sm);
 }
@@ -261,7 +261,7 @@
 .compose-row > input, .compose-row > select {
 	flex: 1; min-width: 0;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 6px 9px; font-size: var(--fs-sm);
 }
@@ -308,10 +308,10 @@
 .compose-send:hover { filter: brightness(1.08); }
 .compose-btn {
 	background: var(--bg-secondary); color: var(--text-secondary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 	padding: 8px 12px; font-size: var(--fs-sm);
 }
-.compose-btn:hover { border-color: var(--border-2); color: var(--text-primary); }
+.compose-btn:hover { color: var(--text-primary); }
 .compose-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .compose-send:disabled, .compose-btn:disabled { opacity: 0.5; cursor: default; }
 .compose-note {

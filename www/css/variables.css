@@ -6,6 +6,21 @@
 	--bg-hover:          #2B251E;
 	--border:            #332C25;
 	--border-2:          #3F372E;
+	/* The boundary of a control, where the boundary is the ONLY cue.
+	   `--border` is a divider: it separates two things that are both visible
+	   without it, and it is drawn quietly on purpose. But every text field in
+	   this app is `background: var(--bg-tertiary); border: 1px solid
+	   var(--border)`, and the fill inside it sits 1.06-1.24 from the panel
+	   outside it -- so on a field that line is not a divider, it is the entire
+	   edge of the control, and it measured 1.02-1.26 against the surfaces it
+	   was supposed to separate, on all eleven palettes. WCAG 2.2 SC 1.4.11
+	   asks 3.0 of it.
+	   Lifting `--border` itself would have given every panel in the app a hard
+	   rule and changed the whole look, so this is a second token, used only
+	   where nothing else says where the control is. Every value clears 3.01-3.08
+	   against every surface of its own palette; `dev/verify_theme.mjs` holds
+	   them there. */
+	--border-strong:     #756F69;
 	--text-primary:      #ECE6DC;
 	--text-secondary:    #A79E92;
 	/* The muted rung, matched across the three palettes. At #736A5F this cleared
@@ -107,6 +122,7 @@
 	--bg-hover:          #F7D8EC;
 	--border:            #F3D3E6;
 	--border-2:          #E7B4D3;
+	--border-strong:     #967589;
 	--text-primary:      #3A1E3E;
 	--text-secondary:    #7C5578;
 	/* Same reasoning as the light theme's muted rung: #B08AAA read at 2.5-3.0:1
@@ -164,6 +180,7 @@
 	--bg-hover:          #EDE9E0;
 	--border:            #E7E1D6;
 	--border-2:          #D6CEBF;
+	--border-strong:     #89847A;
 	--text-primary:      #211C18;
 	--text-secondary:    #6B635A;
 	/* Muted is the quietest text in the app, not the least readable: it carries
@@ -205,6 +222,7 @@
 	--bg-hover:          #E2E8EF;
 	--border:            #DCE3EA;
 	--border-2:          #C3CDD8;
+	--border-strong:     #7F858C;
 	--text-primary:      #17202A;
 	--text-secondary:    #56636F;
 	--text-muted:        #5F6B77;
@@ -229,6 +247,7 @@
 	--bg-hover:          #E8DFCF;
 	--border:            #E3DACB;
 	--border-2:          #CDC0AB;
+	--border-strong:     #857D6F;
 	--text-primary:      #241E16;
 	--text-secondary:    #635849;
 	--text-muted:        #726655;
@@ -253,6 +272,7 @@
 	--bg-hover:          #D2DACB;
 	--border:            #CFD8C8;
 	--border-2:          #B4C0AA;
+	--border-strong:     #737B6D;
 	--text-primary:      #1B2118;
 	--text-secondary:    #4E5A48;
 	--text-muted:        #5C6855;
@@ -278,6 +298,7 @@
 	--bg-hover:          #384352;
 	--border:            #46525F;
 	--border-2:          #5A6879;
+	--border-strong:     #838E9B;
 	--text-primary:      #EDF1F6;
 	--text-secondary:    #BCC7D4;
 	--text-muted:        #A4B1C0;
@@ -301,6 +322,7 @@
 	--bg-hover:          #232C38;
 	--border:            #262F3B;
 	--border-2:          #333E4C;
+	--border-strong:     #6E7680;
 	--text-primary:      #E4EAF2;
 	--text-secondary:    #9BA8B8;
 	--text-muted:        #808E9F;
@@ -325,6 +347,7 @@
 	--bg-hover:          #253026;
 	--border:            #27322A;
 	--border-2:          #354437;
+	--border-strong:     #707A71;
 	--text-primary:      #E6EDE6;
 	--text-secondary:    #A0AFA1;
 	--text-muted:        #86968A;
@@ -348,6 +371,7 @@
 	--bg-hover:          #2E2639;
 	--border:            #302840;
 	--border-2:          #40354F;
+	--border-strong:     #777082;
 	--text-primary:      #ECE6F2;
 	--text-secondary:    #ADA0BC;
 	--text-muted:        #9386A2;
@@ -382,6 +406,7 @@
 	--bg-hover:          #2F2418;
 	--border:            #33271A;
 	--border-2:          #423220;
+	--border-strong:     #796D61;
 	--text-primary:      #F2DFC4;
 	--text-secondary:    #C6AE88;
 	--text-muted:        #A28C6B;

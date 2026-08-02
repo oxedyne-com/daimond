@@ -464,18 +464,31 @@ function worstOn(col, p, surfaces = SURF) {
 }
 
 // ── Borders ─────────────────────────────────────────────────────
-// --border is not decoration. It is the entire visible boundary of every text
-// field in the app (`.login-card input`, `#chat-input`, `.settings-section
-// input`, `.dlg-input`, `.tag-input` and the rest all read
-// `background: var(--bg-tertiary); border: 1px solid var(--border)`), and the
-// fill inside it is within 1.2:1 of the panel outside it in every palette, so
-// the border is the ONLY thing saying a field is there. That is squarely SC
-// 1.4.11. --border-2 bounds the secondary buttons (.fold-btn, .diff-reject,
-// .tile-fold) and is also the hover promotion of --border, so it is checked
-// both against the surfaces and against --border itself: a hover that changes
-// a boundary by less than 3:1 has not shown a state change.
+// There are two border tokens doing two different jobs, and only one of them is
+// a control's boundary.
+//
+// --border-strong IS the boundary. Every text field, select and outlined button
+// in the app now reads `border: 1px solid var(--border-strong)`, and the fill
+// inside a field is within 1.2:1 of the panel outside it on every palette, so
+// that line is the only thing saying the control is there. Squarely SC 1.4.11,
+// and therefore a HARD check: it may not be short on any palette, on any
+// surface, ever. There is no baseline entry to fall back on and there must
+// never be one -- the whole token exists because the debt was allowed to sit.
+//
+// --border and --border-2 are dividers: they separate two things that are both
+// visible without them, and they are drawn quietly on purpose. They stay
+// recorded rather than failed. --border-2 is still checked against --border
+// because where it survives as a hover promotion, a hover that changes a
+// boundary by less than 3:1 has not shown a state change.
 for (const n of NAMES) {
 	const p = palette(n);
+	const strong = rgb(p['--border-strong'] || '');
+	check(!!strong, `${n}: declares --border-strong`);
+	if (strong) {
+		const w = worstOn(strong, p);
+		check(w.r >= CTRL,
+			`${n}: --border-strong against its worst surface (${nm(w.surf)}) = ${w.r.toFixed(2)} (floor ${CTRL})`);
+	}
 	for (const tok of ['--border', '--border-2']) {
 		const w = worstOn(rgb(p[tok] || ''), p);
 		if (w.surf) soft(`${n}/${nm(tok)}-vs-surface`, w.r, CTRL,
@@ -486,9 +499,31 @@ for (const n of NAMES) {
 		`${n}: border-2 against border (the hover promotion of a boundary)`);
 	// The field's own fill against the panel it is let into. Not a floor of its
 	// own -- the border is allowed to be the boundary -- but recorded, because a
-	// fill that is invisible is why the border has to carry the whole job.
+	// fill that is invisible is why the boundary has to carry the whole job.
 	const t = rgb(p['--bg-tertiary'] || ''), s = rgb(p['--bg-secondary'] || '');
-	if (t && s) out.push(`      ${n}: an input's fill against its panel = ${ratio(t, s).toFixed(2)} (no floor; it is why --border matters)`);
+	if (t && s) out.push(`      ${n}: an input's fill against its panel = ${ratio(t, s).toFixed(2)} (no floor; it is why --border-strong matters)`);
+}
+
+// No control may quietly go back to a divider for its boundary. The tokens are
+// only as good as the rules that use them, and the failure this catches is a new
+// input written by copying an old one.
+{
+	// Comments are stripped FIRST. Without that, the prose above a rule is part of
+	// what the selector pattern sees, and a paragraph explaining why an input sits
+	// where it does named a box that is not a control at all.
+	const css = ['app.css', 'files.css', 'mail.css', 'models.css', 'workspace.css',
+		'autoreload.css', 'mobile.css', 'render.css', 'spend.css']
+		.map((f) => fs.readFileSync(path.join(WWW, 'css', f), 'utf8'))
+		.join('\n').replace(/\/\*[\s\S]*?\*\//g, ' ');
+	const CONTROL = /\b(input|select|textarea)\b|(btn|button)\b/i;
+	const stragglers = [];
+	for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+		if (!/border:\s*1px (solid|dashed) var\(--border(-2)?\)/.test(m[2])) continue;
+		const sel = m[1].trim().split('\n').pop().trim().replace(/\s+/g, ' ');
+		if (CONTROL.test(sel)) stragglers.push(sel);
+	}
+	check(stragglers.length === 0,
+		`no control takes a divider for its boundary${stragglers.length ? ' -- ' + JSON.stringify(stragglers) : ''}`);
 }
 
 // ── The accent, as the focus indicator ──────────────────────────

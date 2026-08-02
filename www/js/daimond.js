@@ -5316,6 +5316,10 @@ import init, {
 		var closeBtn = document.createElement('button');
 		closeBtn.className = 'session-box-close';
 		closeBtn.textContent = '×'; closeBtn.title = t('tile.remove_chat');
+		// A title loses to text content in the accessible-name chain, so without
+		// this the button announces as "×" -- and with five chats on screen, as
+		// five identical "×". The label carries the row's own name.
+		closeBtn.setAttribute('aria-label', t('tile.remove_chat_named', { name: s.name }));
 		closeBtn.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			// Deleting a chat destroys its whole history with no undo, so it is
@@ -9395,6 +9399,8 @@ import init, {
 			chip.title = t('tag.clear_filter', { tag: tag });
 		}
 		var x = document.createElement('span'); x.className = 'tag-x'; x.textContent = '×';
+		x.setAttribute('aria-hidden', 'true');
+		chip.setAttribute('aria-label', chip.title);
 		chip.appendChild(x);
 		agentFilter.appendChild(chip);
 	}
@@ -9726,6 +9732,7 @@ import init, {
 		del.className = 'session-box-close';
 		del.textContent = '×';
 		del.title = t('rail.delete_diamond');
+		del.setAttribute('aria-label', t('rail.delete_diamond_named', { name: f.name }));
 		del.addEventListener('click', async function (e) {
 			e.stopPropagation();
 			if (!await confirmDialog(t('rail.delete_diamond_body', { name: f.name }),
@@ -10629,6 +10636,7 @@ import init, {
 				x.className = 'tag-x';
 				x.textContent = '×';
 				x.title = t('tag.remove', { tag: tag });
+				x.setAttribute('aria-label', t('tag.remove', { tag: tag }));
 				x.addEventListener('click', function () {
 					commit(tags.filter(function (u) { return u !== tag; }));
 				});
@@ -10790,6 +10798,7 @@ import init, {
 			drop.className = 'arte-drop';
 			drop.textContent = '\u00d7';
 			drop.title = t('arte.drop_help');
+			drop.setAttribute('aria-label', t('arte.drop_named', { name: rest }));
 			drop.addEventListener('click', async function () {
 				try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
 				// Dropping an artefact removes a link, so it is a link change too.
@@ -11432,6 +11441,7 @@ import init, {
 		steerSend.className = 'steer-send';
 		steerSend.id = 'steer-send';
 		steerSend.title = t('crystal.steer');
+		steerSend.setAttribute('aria-label', t('crystal.steer'));
 		steerSend.textContent = '➤';
 		steerSend.addEventListener('click', doSteer);
 		steerRow.appendChild(steer); steerRow.appendChild(steerSend);

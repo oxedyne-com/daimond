@@ -46,7 +46,7 @@
    square corner in a rounded panel. */
 .settings-section .models-refetch, .settings-section .models-remove, .settings-section .models-add {
 	padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--fs-2xs);
-	background: var(--bg-tertiary); border: 1px solid var(--border-2);
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
 	color: var(--text-secondary);
 }
 .settings-section .models-refetch:hover, .settings-section .models-remove:hover, .settings-section .models-add:hover {
@@ -115,14 +115,14 @@
 	flex: 1; min-width: 0;
 	padding: 6px 8px; font-size: var(--fs-2xs);
 	font-family: var(--font-mono);
-	background: var(--bg-primary); border: 1px solid var(--border);
+	background: var(--bg-primary); border: 1px solid var(--border-strong);
 	border-radius: var(--radius-sm); color: var(--text-primary);
 	transition: border-color .12s ease, box-shadow .12s ease;
 }
 /* Rest, hover, focus, in three steps: the border firms up under the pointer, and takes the
    accent with a soft ring once the field is being typed in. The ring is the accent's own tint,
    so there is a ring in every palette rather than a dark-only glow. */
-.settings-section .models-credit-input:hover { border-color: var(--border-2); }
+.settings-section .models-credit-input:hover { border-color: var(--text-muted); }
 .settings-section .models-credit-input:focus {
 	outline: none; border-color: var(--accent);
 	box-shadow: 0 0 0 3px var(--accent-soft);

@@ -159,7 +159,12 @@ const SURFACES = [
 		open:   { connect: false },
 		reach:  async (page) => {
 			await click(page, '#user-row');
-			await clickLabel(page, '#admin-home', 'Edit the chat prompt…');
+			// The role is interpolated into `home.edit_prompt` with its own
+			// capitalisation ("Edit the Chat prompt…"), and clickLabel matches
+			// exactly -- so a lower-case spelling here quietly stopped opening the
+			// Doc panel, and this whole surface went unsearched while the run
+			// stayed green. The label is written as the app writes it.
+			await clickLabel(page, '#admin-home', 'Edit the Chat prompt…');
 			await page.waitForSelector('#panel-doc .files-view-head', { timeout: 10000 });
 		},
 		ready:  '#panel-doc .files-view-head',

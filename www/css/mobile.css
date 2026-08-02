@@ -243,12 +243,12 @@
 		min-width: 0;
 		font-size: var(--fs-xl);			/* 16px keeps iOS Safari from zooming on focus */
 		padding: 10px 13px;
-		border: 1px solid var(--border);
+		border: 1px solid var(--border-strong);
 		border-radius: 20px;
 		background: var(--bg-primary);
 		color: var(--text-primary);
 	}
-	#msheet-ask-input:focus { outline: none; border-color: var(--accent); }
+	#msheet-ask-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 	#msheet-ask-send {
 		flex: none;
 		width: 42px;

@@ -243,6 +243,11 @@
 		}
 		var c = document.createElement('div');
 		c.id = 'sync-chip';
+		// It goes syncing -> synced -> stalled -> off on its own, with nothing the
+		// user pressed to cause it. `role="status"` is enough here: it changes
+		// rarely and says one short thing, which is the case a polite live region
+		// is actually for.
+		c.setAttribute('role', 'status');
 		c.innerHTML = '<span class="sdot"></span><span class="stext"></span>';
 		// "Sync off" is the one state the user can do something about, and until now
 		// the chip said so and stopped there -- the offer it was pointing at was

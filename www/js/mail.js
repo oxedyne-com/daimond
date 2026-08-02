@@ -1316,17 +1316,20 @@
 				var del = document.createElement('button');
 				del.className = 'mail-del';
 				del.title = t('mail.remove_mailbox');
+				del.setAttribute('aria-label', t('mail.remove_mailbox_named', { address: a.address }));
 				del.textContent = '×';
 				del.addEventListener('click', function (ev) {
 					ev.stopPropagation();
 					removeAccount(a.address);
 				});
 				row.appendChild(del);
-				row.addEventListener('click', function () {
+				rowAsButton(row, function () {
 					state.sel = a.address; save();
 					Promise.all([loadDigest(a.address), refreshDrafts()]).then(render);
 					loadFolders(a.address);
-				});
+				}, a.address);
+				// Which mailbox is being shown, said rather than only coloured.
+				if (a.address === state.sel) row.setAttribute('aria-current', 'true');
 				els.accounts.appendChild(row);
 			});
 			if (!state.accounts.length && state.unlocked) {
@@ -1349,7 +1352,7 @@
 				row.className = 'mail-draft';
 				row.innerHTML = '<div class="mail-subj">' + esc(d.subject) + '</div>'
 					+ '<div class="mail-from">' + esc(d.to || t('mail.no_recipient')) + '</div>';
-				row.addEventListener('click', function () { openDraft(d.path); });
+				rowAsButton(row, function () { openDraft(d.path); });
 				box.appendChild(row);
 			});
 			els.list.appendChild(box);
@@ -1363,7 +1366,7 @@
 				row.innerHTML = '<div class="mail-from">' + esc(m.from || t('mail.unknown_sender')) + '</div>'
 					+ '<div class="mail-subj">' + esc(m.subject) + '</div>'
 					+ '<div class="mail-date">' + esc((m.date || '').replace(/\s*\(.*\)$/, '')) + '</div>';
-				row.addEventListener('click', function () { openMessage(m); });
+				rowAsButton(row, function () { openMessage(m); });
 				els.list.appendChild(row);
 			});
 
@@ -1434,10 +1437,13 @@
 			if (depth > 0) row.style.setProperty('--folder-depth', depth);
 			row.innerHTML = '<span class="mail-addr">' + esc(labelFor(a, f.name)) + '</span>';
 			if (!f.selectable) {
-				// A container, not a mailbox: `[Gmail]` holds folders, not mail.
+				// A container, not a mailbox: `[Gmail]` holds folders, not mail. It is
+				// not made operable and stays out of the tab order, which is the whole
+				// of what `aria-disabled` is claiming here.
 				row.setAttribute('aria-disabled', 'true');
 			} else {
-				row.addEventListener('click', function () { selectFolder(f.name); });
+				rowAsButton(row, function () { selectFolder(f.name); }, labelFor(a, f.name));
+				if (f.name === (a.folder || 'INBOX')) row.setAttribute('aria-current', 'true');
 			}
 			box.appendChild(row);
 		});
@@ -1455,6 +1461,38 @@
 		var d = document.createElement('div');
 		d.innerHTML = s;
 		return d.firstElementChild || d;
+	}
+
+	/// Make a row behave as the button it already is.
+	///
+	/// Every choice in this panel -- a mailbox, a folder, a draft, a message -- was a
+	/// `<div>` with a click handler, so the whole of Email could be reached only with a
+	/// pointer: not picking a mailbox, not changing folder, not opening anything. This is
+	/// the same treatment the Diamond rows in the rail already carry, and it is deliberately
+	/// the same code, because a second way of doing it is a second thing to keep right.
+	///
+	/// `label` is optional. A `role="button"` takes its spoken name from its own contents,
+	/// which for a draft or a message is exactly the right name -- sender, subject, date, in
+	/// the order they are read. It is passed only where the contents would mislead: the
+	/// mailbox row ends in a `×` closer whose text would otherwise be read out as part of
+	/// the mailbox's name.
+	///
+	/// @param row     The element to make operable.
+	/// @param onPress What a click or an Enter/Space does.
+	/// @param label   An explicit accessible name, where the contents will not serve.
+	function rowAsButton(row, onPress, label) {
+		row.setAttribute('role', 'button');
+		row.setAttribute('tabindex', '0');
+		if (label) row.setAttribute('aria-label', label);
+		row.addEventListener('click', onPress);
+		row.addEventListener('keydown', function (e) {
+			if (e.key !== 'Enter' && e.key !== ' ') return;
+			// Not when the press belongs to something inside the row -- the closer answers
+			// for itself, and Space on a nested button must not also open the row.
+			if (e.target !== row) return;
+			e.preventDefault();
+			onPress();
+		});
 	}
 
 	/// Show a message where there is room to read it. The body is inserted as
