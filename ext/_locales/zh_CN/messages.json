@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "任意标签页，用于实时画面"
 	},
+	"popup_machine_hand": {
+		"message": "在这台电脑上运行命令"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ 及其子域名",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "在等你：Daimond 可以在这台电脑上运行命令吗？"
+	},
+	"popup_ask_hand_fine": {
+		"message": "它会以你的身份运行构建、测试和脚本。拒绝不会有任何损失 — Daimond 会继续在浏览器里工作。"
 	},
 	"popup_mode_user": {
 		"message": "现在你来操作。"
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "允许，再到 Chrome 里确认 →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond 想在这台电脑上运行命令"
+	},
+	"grant_hand_body": {
+		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell，并且只在工作区已经允许的文件夹里运行。"
+	},
+	"grant_hand_fine": {
+		"message": "这是你能允许 Daimond 做的最强的一件事。在你这里允许之前，什么都不会运行；每一次运行都会写进一份你可以读的记录。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
+	},
+	"grant_hand_allow": {
+		"message": "允许在这台电脑上运行命令"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — 正在等你允许实时画面"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — 正在等你允许在这台电脑上运行命令"
 	},
 	"raise_none": {
 		"message": "没有在等待批准的东西。"

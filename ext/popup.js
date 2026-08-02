@@ -12,6 +12,9 @@
 	/// A match pattern, said the way a person would say it.
 	function plain(pat) {
 		if (pat === '<all_urls>') return t('popup_any_tab');
+		// Not an origin, and deliberately not spelled like one: this grant is
+		// about the machine, not about a site.
+		if (pat === 'machine-hand') return t('popup_machine_hand');
 		const m = /^\*:\/\/\*\.([^/]+)\/\*$/.exec(pat);
 		if (m) return t('popup_subdomains', m[1]);
 		const n = /^\*:\/\/([^/]+)\/\*$/.exec(pat);
@@ -41,6 +44,8 @@
 			ask.hidden = false;
 			if (s.pending.kind === 'mirror') {
 				says(ask, t('popup_ask_mirror'), t('popup_ask_mirror_fine'));
+			} else if (s.pending.kind === 'hand') {
+				says(ask, t('popup_ask_hand'), t('popup_ask_hand_fine'));
 			} else {
 				says(ask, t('popup_ask_site', s.pending.host), t('popup_ask_site_fine', s.pending.host));
 			}

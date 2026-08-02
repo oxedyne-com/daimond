@@ -15,7 +15,8 @@
 		"scripting",
 		"tabs",
 		"activeTab",
-		"storage"
+		"storage",
+		"nativeMessaging"
 	],
 
 	"optional_host_permissions": [

@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "すべてのタブ（ライブ表示のため）"
 	},
+	"popup_machine_hand": {
+		"message": "このコンピューターでコマンドを実行"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ とそのサブドメイン",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "お返事待ちです。Daimond がこのコンピューターでコマンドを実行してもよいですか。"
+	},
+	"popup_ask_hand_fine": {
+		"message": "ビルドやテスト、スクリプトをあなたとして実行します。断っても失うものはありません — Daimond はブラウザーの中で作業を続けます。"
 	},
 	"popup_mode_user": {
 		"message": "あなたの操作です。"
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "許可して Chrome で確認 →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond が、このコンピューターでコマンドを実行しようとしています"
+	},
+	"grant_hand_body": {
+		"message": "Daimond はこのコンピューターでプログラムを実行します。ビルド、テスト、スクリプトを、あなたとして、あなたのファイルで動かします。どれもシェルを介さず直接起動し、ワークスペースがすでに許しているフォルダーの中だけで動きます。"
+	},
+	"grant_hand_fine": {
+		"message": "これは Daimond に許せることのなかで最も強い権限です。ここで許すまで何も動きません。実行はすべて、あなたが読める記録に残ります。Daimond Hands のアイコンからいつでも取り消せます。取り消すと、そのとき動いているものは止まります。"
+	},
+	"grant_hand_allow": {
+		"message": "このコンピューターでのコマンドを許可"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — ライブ表示の許可をお待ちしています"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — このコンピューターでのコマンドの許可をお待ちしています"
 	},
 	"raise_none": {
 		"message": "承認を待っているものはありません。"

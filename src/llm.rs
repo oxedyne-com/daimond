@@ -1025,6 +1025,35 @@ pub(crate) fn extract_json_number(json: &str, key: &str) -> Option<u64> {
     json[start..end].parse::<u64>().ok()
 }
 
+/// Extract a SIGNED integer value for a key from a JSON string.
+///
+/// [`extract_json_number`] parses a `u64`, so a negative number does not merely come back wrong --
+/// it comes back as `None`, and every caller that reached for `unwrap_or(0)` then read a negative
+/// value as zero.  For a process exit status that is the difference between "the command was
+/// killed" and "the command succeeded", so the signed reader exists separately rather than as a
+/// cast at the call site.
+///
+/// # Arguments
+/// * `json` - The JSON text to read.
+/// * `key` - The key whose value is wanted.
+pub(crate) fn extract_json_i64(json: &str, key: &str) -> Option<i64> {
+    let needle = fmt!("\"{}\":", key);
+    let pos = match json.find(&needle) {
+        Some(p) => p,
+        None    => return None,
+    };
+    let mut start = pos + needle.len();
+    let bytes = json.as_bytes();
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    let mut end = start;
+    while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'-') {
+        end += 1;
+    }
+    json[start..end].parse::<i64>().ok()
+}
+
 /// Extract a fractional numeric value for a key from a JSON string.
 ///
 /// [`extract_json_number`] stops at the first non-digit, so it reads `0.0021`

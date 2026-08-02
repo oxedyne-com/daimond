@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "Any tab, for the live view"
 	},
+	"popup_machine_hand": {
+		"message": "Running commands on this computer"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ and its subdomains",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "Waiting for you: may Daimond run commands on this computer?"
+	},
+	"popup_ask_hand_fine": {
+		"message": "It would run builds, tests and scripts as you. Saying no costs nothing — Daimond keeps working in the browser instead."
 	},
 	"popup_mode_user": {
 		"message": "You are driving."
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "Allow, then confirm in Chrome →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond wants to run commands on this computer"
+	},
+	"grant_hand_body": {
+		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell, and only inside the folders the workspace already allows."
+	},
+	"grant_hand_fine": {
+		"message": "This is the strongest thing you can allow Daimond to do. Nothing runs until you allow it here, every run is written to a journal you can read, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
+	},
+	"grant_hand_allow": {
+		"message": "Allow commands on this computer"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — waiting for you to allow the live view"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — waiting for you to allow commands on this computer"
 	},
 	"raise_none": {
 		"message": "Nothing is waiting to be approved."

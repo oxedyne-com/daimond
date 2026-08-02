@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "Cualquier pestaña, para la vista en vivo"
 	},
+	"popup_machine_hand": {
+		"message": "Ejecutar comandos en este ordenador"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ y sus subdominios",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "Esperándote: ¿puede Daimond ejecutar comandos en este ordenador?"
+	},
+	"popup_ask_hand_fine": {
+		"message": "Ejecutaría compilaciones, pruebas y scripts como tú. Decir que no no cuesta nada — Daimond sigue trabajando en el navegador."
 	},
 	"popup_mode_user": {
 		"message": "Conduces tú."
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "Permitir y luego confirmar en Chrome →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond quiere ejecutar comandos en este ordenador"
+	},
+	"grant_hand_body": {
+		"message": "Daimond ejecutaría programas en este ordenador — compilaciones, pruebas, scripts — como tú, con tus archivos. Cada uno se inicia directamente, no a través de un intérprete de comandos, y solo dentro de las carpetas que el espacio de trabajo ya permite."
+	},
+	"grant_hand_fine": {
+		"message": "Es lo más fuerte que puedes permitir a Daimond. Nada se ejecuta hasta que lo permitas aquí, cada ejecución queda escrita en un registro que puedes leer, y puedes retirarlo cuando quieras desde el icono de Daimond Hands. Retirarlo detiene lo que esté ejecutándose en ese momento."
+	},
+	"grant_hand_allow": {
+		"message": "Permitir comandos en este ordenador"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — esperando a que permitas la vista en vivo"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — esperando a que permitas comandos en este ordenador"
 	},
 	"raise_none": {
 		"message": "No hay nada esperando aprobación."

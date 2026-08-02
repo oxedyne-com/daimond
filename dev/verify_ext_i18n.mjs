@@ -127,7 +127,7 @@ for (const noun of ['Daimond Hands', 'Daimond', 'Chrome']) {
 }
 
 // ── The source and the tables agree ──────────────────────────────────
-const SRC = ['manifest.json', 'i18n.js', 'background.js', 'content.js', 'popup.js', 'popup.html', 'grant.js', 'grant.html', 'announce.js']
+const SRC = ['manifest.json', 'i18n.js', 'background.js', 'hand.js', 'content.js', 'popup.js', 'popup.html', 'grant.js', 'grant.html', 'announce.js']
 	.map((f) => fs.readFileSync(`${EXT}/${f}`, 'utf8')).join('\n');
 
 {

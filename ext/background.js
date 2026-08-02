@@ -21,9 +21,16 @@
 
 'use strict';
 
-importScripts('i18n.js');
+// hand.js is the relay to the machine hand -- the program outside the browser
+// that runs commands. It is a separate file because it is a separate boundary:
+// this one guards a tab, that one guards the machine. It registers its own
+// long-lived port listener (output streams, and a request/response message
+// cannot carry a stream) and is handed this file's grant machinery below.
+importScripts('i18n.js', 'hand.js');
 
 const VERSION = '0.1.0';
+
+const HAND = globalThis.DaimondHand;
 
 const I = globalThis.DaimondExtI18n;
 const T = (...a) => I.t(...a);
@@ -174,10 +181,18 @@ function hostOfPattern(pat) {
 }
 
 /// Every origin the USER has approved, as match patterns.
+///
+/// The machine hand rides in this list too, as `machine-hand`. It is not an
+/// origin and is deliberately not spelled like one, but it is a thing the user
+/// allowed and must be able to take back, and the popup is where they take
+/// things back. A grant that could not be found where every other grant is
+/// listed would be a grant nobody remembers giving.
 async function grants() {
-	const all = await chrome.permissions.getAll();
-	const own = ownHosts();
-	return (all.origins || []).filter((o) => !own.has(hostOfPattern(o)));
+	const all	= await chrome.permissions.getAll();
+	const own	= ownHosts();
+	const list	= (all.origins || []).filter((o) => !own.has(hostOfPattern(o)));
+	if (await HAND.granted()) list.push(HAND.PATTERN);
+	return list;
 }
 
 /// Has the user approved this url's origin?
@@ -217,8 +232,8 @@ async function markPending() {
 	chrome.action.setBadgeBackgroundColor({ color: '#2f6fed' });
 	await I.ready();
 	chrome.action.setTitle({
-		title: q.kind === 'mirror'
-			? T('action_pending_mirror')
+		title: q.kind === 'mirror'	? T('action_pending_mirror')
+			: q.kind === 'hand'	? T('action_pending_hand')
 			: T('action_pending_site', q.host),
 	});
 }
@@ -293,6 +308,13 @@ async function ask(params) {
 async function askGrant(url) {
 	return await ask({ kind: 'site', host: new URL(url).hostname, pattern: pattern(url) });
 }
+
+// The relay asks the same question, through the same window, with the same
+// three answers. It is handed the machinery rather than reaching for it: both
+// scripts share one worker scope, so `ask` would be visible to it by accident
+// of load order, and a dependency that works by accident breaks silently when
+// the order changes.
+HAND.wire({ ask, ALLOWED, DECLINED });
 
 /// May Daimond photograph the tab, so the panel can mirror it?
 ///
@@ -939,6 +961,35 @@ const HANDLERS = {
 		}
 	},
 
+	// ── The machine hand ────────────────────────────────────────────────
+	//
+	// Three questions, and no command among them. Running something is not a
+	// message-and-answer -- output streams, and a reply that arrives once cannot
+	// carry a stream -- so `exec`, `signal` and `bye` travel on the long-lived
+	// port hand.js listens for, and only the STATE of the thing is asked here.
+	// That keeps the two shapes honestly apart: this table is for questions with
+	// one answer.
+
+	/// What the hand is, and whether it may be used. It does not claim to know
+	/// whether the host is installed: finding that out means launching it, and
+	/// launching it is the capability itself.
+	async hand_status() {
+		return await HAND.status();
+	},
+
+	/// Ask for the grant now, rather than have a window appear the instant the
+	/// page opens its port. Same window, same three answers.
+	async hand_grant() {
+		return await HAND.request();
+	},
+
+	/// Give it back. Everything running stops, because a permission that let the
+	/// current build finish would be a promise with an asterisk on it.
+	async hand_revoke() {
+		await HAND.revoke();
+		return { ok: true, granted: false };
+	},
+
 	// `takeover` is deliberately NOT here. It is the one command that must never
 	// be reachable from the web page, because the page is driven by an agent the
 	// page's own text may have steered, and letting it end user mode would let it
@@ -1007,7 +1058,11 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 				return respond(await raisePending());
 			}
 			if (msg.type === 'revoke') {
-				await chrome.permissions.remove({ origins: [msg.pattern] });
+				// The machine hand is our grant, not Chrome's, so it comes back
+				// a different way -- but it comes back from the same button, in
+				// the same list, which is the only part the user should notice.
+				if (msg.pattern === HAND.PATTERN) await HAND.revoke();
+				else await chrome.permissions.remove({ origins: [msg.pattern] });
 				return respond({ ok: true, granted: await grants() });
 			}
 			if (msg.type === 'takeover') {

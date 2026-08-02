@@ -16,6 +16,8 @@
 //!   on this device, and the deliberate fetch that brings one down.
 //! - [`opfs`] — an async filesystem edge over the Origin Private File
 //!   System (OPFS), reached through `navigator.storage.getDirectory()`.
+//! - [`hand`] — the machine hand's edge: bindings to the `window.DaimondHand`
+//!   relay behind `run`, which reaches a process outside the page.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
 //!   driver behind the agent's web tools.
 //! - [`typst`] — the Typst compiler edge: bindings to the `window.DaimondTypst`
@@ -29,6 +31,7 @@
 pub mod app;
 pub mod cloud;
 pub mod entry;
+pub mod hand;
 pub mod diamond;
 pub mod opfs;
 pub mod typst;

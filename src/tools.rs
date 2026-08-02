@@ -14,7 +14,7 @@ use oxedyne_fe2o3_core::prelude::*;
 use crate::executor::Executor;
 use crate::llm::{extract_json_string, json_escape};
 #[cfg(target_arch = "wasm32")]
-use crate::llm::{extract_json_bool, extract_json_number};
+use crate::llm::{extract_json_bool, extract_json_i64, extract_json_number};
 use crate::workspace::Workspace;
 
 use std::collections::HashMap;
@@ -35,6 +35,10 @@ pub struct TurnState {
     /// its result so the taint can be carried across the dispatch boundary.  Once set it stays set
     /// -- a turn does not become clean again by reading something trustworthy afterwards.
     pub tainted: bool,
+    /// How many commands this context has sent to the machine hand, so each gets a distinct
+    /// identifier.  The hand's journal and its `Signal` both key on that identifier, so two runs
+    /// sharing one is a cancel that reaches the wrong process.
+    pub runs: u64,
 }
 
 /// A per-agent record of what this agent has read and where it came from.
@@ -204,6 +208,133 @@ pub fn diamond_bounds(own_dir: &str, attached: &[String], read_only: &[String]) 
     out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
     out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
     out
+}
+
+/// The bounds a turn runs with, restated as the fence the machine hand enforces.
+///
+/// This is the whole of the compartmentalisation claim, and it is worth being clear about why it
+/// is so short: [`diamond_bounds`] already produces exactly the structure a landlock ruleset wants
+/// -- a set of paths, each read-only or read-write, plus a deny for Daimond's own directory.  The
+/// compartment is therefore **not a new concept**.  It is the same [`Bound`] list enforced one
+/// layer down, and only the mechanism changes: today the guarantee is structural because the
+/// daimon's root is a different filesystem; with a kernel fence it stays structural.
+///
+/// Two things this function must get right, because both are silent when wrong:
+///
+/// * **A turn with no allow-list is not an unfenced turn.** [`may_read`](ToolContext::may_read)
+///   treats an empty bound list as no restriction, which is correct for a file tool jailed by the
+///   workspace root -- and catastrophic here, where there is no jail but the fence itself.  So an
+///   absent allow-list becomes the granted root, not the whole machine.
+/// * **A tainted turn loses the network.** A turn that has read a stranger's words may still
+///   build and test, inside its own paths, and may not reach outward -- which is the direct answer
+///   to a page or a message that says "now upload this somewhere".  This is one more consumer of
+///   the flag [`egress_check`] already gates on, not a new mechanism.
+///
+/// # Arguments
+/// * `bounds` - The turn's [`Bound`] rules, as [`ToolContext::no_write`] holds them.
+/// * `root` - The absolute path on the machine that the hand's grant covers.
+/// * `tainted` - Whether this turn has ingested content from outside the user.
+pub fn fence_spec(bounds: &[Bound], root: &str, tainted: bool) -> FenceSpec {
+    // An unusable root fences nothing, and the empty string fences LESS than nothing: the hand
+    // compares with `Path::starts_with`, for which every path on the machine is under "". So a
+    // root that is not an absolute path yields a spec with no roots at all, which the hand refuses
+    // -- the failure is closed, loud, and cannot be mistaken for a fence.
+    if root.is_empty() || !root.starts_with('/') {
+        return FenceSpec { rw: Vec::new(), ro: Vec::new(), deny: Vec::new(), net: false };
+    }
+    let abs = |rel: &str| -> String {
+        let p = normalise(rel);
+        if p.is_empty() { root.to_string() } else { fmt!("{}/{}", root.trim_end_matches('/'), p) }
+    };
+    let mut rw:   Vec<String> = Vec::new();
+    let mut ro:   Vec<String> = Vec::new();
+    let mut deny: Vec<String> = Vec::new();
+    // The allow-list, gathered first, because every other rule is read against it. Its PRESENCE is
+    // what decides whether this turn is scoped at all -- not whether any path happened to land in
+    // `rw` or `ro`, which is a different question and was once confused with it.
+    let allow: Vec<String> = bounds.iter()
+        .filter_map(|b| match b { Bound::OnlyUnder(p) => Some(normalise(p)), _ => None })
+        .collect();
+    let scoped = !allow.is_empty();
+    // A NoWrite prefix takes writing away. It may sit ABOVE an allowed path or BELOW it, and both
+    // directions matter: above, the whole grant becomes read-only; below, the grant stays writable
+    // and the nested prefix is re-stated as a read-only root the hand carves out of it.
+    let no_write: Vec<String> = bounds.iter()
+        .filter_map(|b| match b { Bound::NoWrite(p) => Some(normalise(p)), _ => None })
+        .collect();
+    for p in &allow {
+        if no_write.iter().any(|w| under(p, w)) { ro.push(abs(p)); } else { rw.push(abs(p)); }
+    }
+    for w in &no_write {
+        // Nested inside a grant, and not Daimond's own directory (which is denied outright below).
+        if !under(w, DAIMOND_DIR) && allow.iter().any(|a| under(w, a)) && !allow.contains(w) {
+            let a = abs(w);
+            if !ro.contains(&a) { ro.push(a); }
+        }
+    }
+    for b in bounds {
+        match b {
+            // A read carve-out is a read grant and never a write one -- and it is NOT a way out of
+            // an allow-list. `may_read` tests the allow-list before the carve-out, so a skill
+            // running inside a Diamond cannot read past the Diamond by declaring a folder; the
+            // fence has to make the same ordering, or the two disagree and the fence is the laxer.
+            Bound::MayRead(p) => {
+                let n = normalise(p);
+                if !scoped || allow.iter().any(|a| under(&n, a)) {
+                    let a = abs(&n);
+                    if !ro.contains(&a) { ro.push(a); }
+                }
+            },
+            Bound::NoRead(p) => deny.push(abs(p)),
+            Bound::OnlyUnder(_) | Bound::NoWrite(_) => {},
+        }
+    }
+    // NO allow-list means the turn is bounded only by the workspace, so the fence is the granted
+    // root -- never the machine. The test is whether one was DECLARED: a turn carrying only a
+    // skill's read carve-out has no allow-list, and must still be able to write its workspace.
+    if !scoped {
+        rw.push(root.to_string());
+    }
+    // Daimond's own directory is out of bounds whatever else was said. `diamond_bounds` already
+    // adds it, and an ordinary turn does not, so it is asserted here rather than assumed.
+    let own = abs(DAIMOND_DIR);
+    if !deny.contains(&own) {
+        deny.push(own);
+    }
+    FenceSpec { rw, ro, deny, net: !tainted }
+}
+
+/// What a command may touch, as the machine hand's wire spells it.
+///
+/// A mirror of the hand's own `wire::FenceSpec`, kept here rather than shared through a common
+/// crate because the two ends are deployed separately: the page is sealed into the transparency
+/// log and the hand is installed by the user, so they will sometimes be different versions and the
+/// protocol -- not a shared type -- is what has to hold them together.
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct FenceSpec {
+    /// Absolute roots the command may read and write.
+    pub rw:   Vec<String>,
+    /// Absolute roots the command may read and not write.
+    pub ro:   Vec<String>,
+    /// Absolute subtrees denied outright, even inside `rw` or `ro`.
+    pub deny: Vec<String>,
+    /// Whether the command may reach the network at all.
+    pub net:  bool,
+}
+
+impl FenceSpec {
+
+    /// This fence as the JSON the hand reads.
+    pub fn to_json(&self) -> String {
+        let list = |v: &[String]| -> String {
+            let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+            fmt!("[{}]", items.join(","))
+        };
+        fmt!(
+            r#"{{"rw":{},"ro":{},"deny":{},"net":{}}}"#,
+            list(&self.rw), list(&self.ro), list(&self.deny), self.net,
+        )
+    }
 }
 
 /// Whether the normalised `path` sits at or beneath `prefix`, comparing whole path segments so
@@ -728,6 +859,14 @@ pub enum Tool {
     /// Bring one file down from cloud storage onto this device.
     FileFetch,
     Shell,
+    /// Run one command on the user's machine through the hand, fenced.
+    ///
+    /// Distinct from [`Tool::Shell`], and the difference is the whole design:
+    /// `shell` hands a string to `sh -c`, which means defending against the
+    /// shell itself, and a fence made of string matching is not a fence.  This
+    /// takes an argument vector, so there is nothing to inject into.  `shell`
+    /// exists only on the native build; this is the browser's.
+    Run,
     /// Dispatch a worker agent to carry out a bounded task in its own
     /// context.  Only the conductor (a Diamond's crystal agent) is given this.
     SpawnAgent,
@@ -799,6 +938,12 @@ impl Tool {
             // correctly said it had no way to.
             Tool::TypstCompile,
             Tool::ArtefactAdd,
+            // NOT `Tool::Run`. The machine hand it reaches does not run -- `hand/src/main.rs` has
+            // no message loop -- and the review in `hand/REVIEW.md` demonstrated three escapes
+            // from its fence. This vector is also what the Tools panel shows a person, so adding
+            // the tool here would tell users Daimond can run commands on their computer, which is
+            // both untrue and the thing release gate 3 exists to forbid. Re-adding it is one line,
+            // and it is meant to be a deliberate one taken when the gates are met.
         ];
         t.extend(Tool::web());
         t
@@ -907,6 +1052,7 @@ impl Tool {
             Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
             Tool::Shell       => "shell",
+            Tool::Run         => "run",
             Tool::SpawnAgent  => "spawn_agent",
             Tool::WebOpen     => "web_open",
             Tool::WebClose    => "web_close",
@@ -955,6 +1101,7 @@ impl Tool {
             "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
             "shell"        => Some(Tool::Shell),
+            "run"          => Some(Tool::Run),
             "spawn_agent"  => Some(Tool::SpawnAgent),
             "web_open"     => Some(Tool::WebOpen),
             "web_close"    => Some(Tool::WebClose),
@@ -983,6 +1130,7 @@ impl Tool {
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
+            Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal. To feed a command some input use 'stdin'; to run somewhere else use 'cwd'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. The command runs fenced inside this Diamond's folders and cannot see the rest of the machine -- if it needs a file the Diamond does not hold, say what you would need and let the user attach it. A command that fails is usually telling you something true: read its stderr before running it again.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
             Tool::WebOpen     => "Show a web page to the user in Daimond's Web panel. This makes the page VISIBLE; it does not mean you can operate it. Most sites refuse to be shown inside another page at all, and a page that is shown can still be beyond your reach unless a browser driver is attached. To READ a page's text, use web_fetch, which always works. To find out whether you can act on this one, call web_snapshot: if it refuses, believe the refusal and say so rather than guessing at clicks.",
             Tool::WebClose    => "Close the Web panel and let go of the page in it. Use this when the page is no longer needed; the user's screen is small and the panel takes up half of it. Every ref from an earlier web_snapshot is dead afterwards.",
@@ -1014,6 +1162,7 @@ impl Tool {
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
+            Tool::Run         => "Run a command on your machine, inside this Diamond's folders.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
             Tool::WebOpen     => "Show you a web page beside the chat.",
             Tool::WebClose    => "Put the page away.",
@@ -1041,6 +1190,7 @@ impl Tool {
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
+            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: this Diamond's own directory)"},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
             Tool::WebClose => r#"{"type":"object","properties":{}}"#,
@@ -1085,6 +1235,12 @@ impl Tool {
             Tool::ArtefactAdd => Err(err!("artefact_add is a browser-build tool"; Unimplemented)),
             Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Self::shell(args_json, ctx).await,
+            // The hand is the browser build's route to a process; the native build already has
+            // one, and offering two ways to run a command is how they drift apart.
+            Tool::Run        => Err(err!(
+                "Tool 'run' reaches the machine hand, which exists to give the BROWSER build a \
+                process. This is the native build, which has 'shell'.";
+                Unimplemented)),
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
             Tool::WebOpen
             | Tool::WebClose
@@ -1444,6 +1600,7 @@ impl Tool {
             Tool::Shell => Err(err!(
                 "Tool 'shell' is not available in the browser build (no in-browser process executor).";
                 Unimplemented)),
+            Tool::Run => Self::run(args_json, ctx).await,
             Tool::SpawnAgent => Self::spawn_agent(args_json, ctx),
             Tool::WebOpen => {
                 let url = res!(Self::arg(args_json, "url"));
@@ -1813,6 +1970,219 @@ impl Tool {
         truncate_output(&mut s, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len()));
         Ok(fmt!("{}{}", ctx.wrap_untrusted(&origin, &s), tail))
     }
+
+    /// The default hard limit on a command, and the most a caller may ask for.
+    ///
+    /// A model that has been told a build is slow will ask for a bigger number, and the honest
+    /// ceiling is the one past which the user should be told the command is stuck rather than
+    /// waited on further.
+    #[cfg(target_arch = "wasm32")]
+    const RUN_TIMEOUT_DEFAULT_MS: u64 = 120_000;
+
+    /// The largest `timeout_ms` a caller may ask for.
+    #[cfg(target_arch = "wasm32")]
+    const RUN_TIMEOUT_MAX_MS: u64 = 900_000;
+
+    /// Run one command on the user's machine through the hand.
+    ///
+    /// Four things happen here and each is load-bearing:
+    ///
+    /// 1. **`argv` is taken as an array and never joined.** The moment this function built a
+    ///    string it would have re-created the injection surface the whole design exists to avoid.
+    /// 2. **The environment is not the model's to set.** There is no `env` argument, deliberately:
+    ///    a model that could name environment variables could set `LD_PRELOAD`, or smuggle a
+    ///    stolen value out through one. What a command inherits is the user's decision, made once
+    ///    when they paired the hand.
+    /// 3. **The fence comes from the turn's own bounds** (see [`fence_spec`]).
+    ///
+    ///    **This does NOT yet mean what it should.** `ToolContext::no_write` is never populated in
+    ///    the browser build -- `set_diamond_scope` in `wasm/app.rs` is the only caller of
+    ///    `diamond_bounds` and nothing calls IT -- so a command is fenced to the whole granted
+    ///    folder rather than to the Diamond's own files. Wiring that up is what makes the sentence
+    ///    "a daimon's command reaches exactly the files its `file_read` would have reached" true;
+    ///    until then it is an aspiration and is written here as one. See `hand/REVIEW.md` §1.9.
+    /// 4. **A tainted turn loses the network**, which is [`egress_check`]'s rule applied to a
+    ///    process rather than a URL. The turn is told, because a command that fails to resolve a
+    ///    host with no explanation is a debugging session nobody needed.
+    ///
+    /// # Arguments
+    /// * `args` - The raw tool arguments.
+    /// * `ctx` - The turn, which carries the bounds and the taint flag.
+    #[cfg(target_arch = "wasm32")]
+    async fn run(args: &str, ctx: &ToolContext) -> Outcome<String> {
+        let argv = res!(crate::llm::extract_json_string_array(args, "argv")
+            .ok_or_else(|| err!(
+                "run: 'argv' must be an array of strings -- the program, then each argument \
+                separately, e.g. [\"cargo\",\"test\"]. A single string is a shell command line, \
+                and there is no shell here."; Invalid, Input)));
+        if argv.is_empty() || argv[0].trim().is_empty() {
+            return Err(err!(
+                "run: 'argv' is empty, so there is no program to run."; Invalid, Input));
+        }
+        // Where the hand's grant reaches on this machine. The page cannot know it -- a real folder
+        // arrives through the File System Access API, which hands over a handle and never a path --
+        // so the hand is asked, and its answer is what the fence is expressed against.
+        let st = res!(crate::wasm::hand::status().await);
+        // An ABSENT root and an EMPTY one are the same answer and must be refused alike. They were
+        // not: `extract_json_string` returns `Some("")` for `"root":""`, which sailed past a check
+        // that only tested for the key's absence -- and an empty root is the worst possible value,
+        // because the hand compares paths with `starts_with` and every path on the machine is under
+        // "". The fence would have been the whole filesystem.
+        let root = res!(extract_json_string(&st, "root")
+            .filter(|r| !r.is_empty() && r.starts_with('/'))
+            .ok_or_else(|| err!(
+                "The machine hand did not say which folder it was granted, so there is no way to \
+                say what this command may touch. It is not safe to guess, so nothing was run.";
+                Missing, Configuration)));
+        // The fence is only worth building if the hand can enforce one. Release gate 1: a command
+        // that cannot be fenced is REFUSED, never run unfenced and mentioned afterwards.
+        let caps = extract_json_string(&st, "caps").unwrap_or_default();
+        if caps.contains("fence:none") {
+            return Ok(fmt!(
+                "Refused: the machine hand on this computer cannot fence a command, so nothing \
+                would stop one reaching the rest of the machine. Daimond will not run commands it \
+                cannot contain. Tell the user; the file tools work regardless."));
+        }
+        // The Diamond's own directory is where a command belongs unless the model says otherwise.
+        let cwd_rel = extract_json_string(args, "cwd").unwrap_or_else(|| ctx.path_prefix.clone());
+        if !ctx.may_read(&cwd_rel) {
+            return Ok(ctx.refusal(&cwd_rel, false));
+        }
+        let fence = fence_spec(&ctx.no_write, &root, ctx.is_tainted());
+        if fence.rw.is_empty() && fence.ro.is_empty() {
+            return Ok(fmt!(
+                "Refused: this turn's bounds do not describe any folder the command could run in, \
+                so there is no fence to run it inside. Nothing was run."));
+        }
+        let timeout = extract_json_number(args, "timeout_ms")
+            .unwrap_or(Self::RUN_TIMEOUT_DEFAULT_MS)
+            .min(Self::RUN_TIMEOUT_MAX_MS);
+        let argv_json: Vec<String> =
+            argv.iter().map(|a| fmt!("\"{}\"", json_escape(a))).collect();
+        let stdin_json = match extract_json_string(args, "stdin") {
+            Some(s) => fmt!("\"{}\"", json_escape(&s)),
+            None    => "null".to_string(),
+        };
+        let cwd_abs = if normalise(&cwd_rel).is_empty() {
+            root.clone()
+        } else {
+            fmt!("{}/{}", root.trim_end_matches('/'), normalise(&cwd_rel))
+        };
+        let spec = fmt!(
+            r#"{{"t":"exec","id":"{}","argv":[{}],"cwd":"{}","env":[],"stdin":{},"timeout_ms":{},"capture":"both","fence":{}}}"#,
+            json_escape(&Self::run_id(&argv[0], ctx)),
+            argv_json.join(","),
+            json_escape(&cwd_abs),
+            stdin_json,
+            timeout,
+            fence.to_json(),
+        );
+        let res = res!(crate::wasm::hand::run(&spec).await);
+        Ok(Self::run_result(&argv, &res, ctx))
+    }
+
+    /// The longest a run's identifier may be.
+    ///
+    /// The id is echoed on EVERY chunk of output, so its length is subtracted from the room left
+    /// for the output itself in a frame that may not exceed 1 MB. It used to be `run-{argv[0]}`
+    /// with the program name unbounded and model-chosen: a long enough `argv[0]` made every chunk
+    /// too large to send, and the run's whole output was silently dropped.
+    #[cfg(target_arch = "wasm32")]
+    const RUN_ID_MAX: usize = 48;
+
+    /// A short, unique identifier for one run.
+    ///
+    /// Unique matters as much as short: `Req::Signal` and the hand's journal both key on this, so
+    /// two concurrent `cargo` runs sharing an id meant a cancel could reach the wrong one and the
+    /// journal could not tell them apart.  The counter is per-context and monotonic, which is
+    /// enough -- ids need only be distinct among the runs alive at one moment.
+    ///
+    /// # Arguments
+    /// * `prog` - The program being run, for a person reading the journal.
+    /// * `ctx` - The turn, which holds the counter.
+    #[cfg(target_arch = "wasm32")]
+    fn run_id(prog: &str, ctx: &ToolContext) -> String {
+        let n = {
+            let mut c = lock_cache(&ctx.read_seen);
+            c.runs = c.runs.saturating_add(1);
+            c.runs
+        };
+        // The tail of a path is the useful half: `/usr/bin/cargo` should read as `cargo`.
+        let base = prog.rsplit('/').next().unwrap_or(prog);
+        let mut name = String::new();
+        for ch in base.chars() {
+            if name.len() >= Self::RUN_ID_MAX { break; }
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' { name.push(ch); }
+        }
+        if name.is_empty() { name.push_str("cmd"); }
+        fmt!("run-{}-{}", n, name)
+    }
+
+    /// The hand's result, as the model reads it.
+    ///
+    /// Command output is **not the user's words** -- it is whatever the program printed, and a
+    /// build log can carry a stranger's text (a dependency's name, a test fixture, a fetched
+    /// page). So it goes through the same untrusted envelope `shell` uses, for the same reason.
+    ///
+    /// # Arguments
+    /// * `argv` - What was run, for the origin line.
+    /// * `res` - The hand's JSON result.
+    /// * `ctx` - The turn, which the envelope marks as tainted.
+    #[cfg(target_arch = "wasm32")]
+    fn run_result(argv: &[String], res: &str, ctx: &ToolContext) -> String {
+        // A refusal is not output: it is the fence speaking, and it must not be dressed as a
+        // program's stderr or the model will try to fix the wrong thing.
+        if let Some(reason) = extract_json_string(res, "refused") {
+            return fmt!("Refused: {}", reason);
+        }
+        let out = extract_json_string(res, "stdout").unwrap_or_default();
+        let err = extract_json_string(res, "stderr").unwrap_or_default();
+        // NOT `extract_json_number`: it parses a u64, so the one status that means "there was no
+        // status" -- the -1 the hand sends when a command was killed or the host died mid-run --
+        // failed to parse and defaulted to ZERO. A crashed `cargo test` was then handed to the
+        // model as `[exit code: 0]`, and a broken build reads as a green one. There is no more
+        // dangerous defect available in this file than a failure reported as a success.
+        let exit = extract_json_i64(res, "exit").unwrap_or(-1);
+        let timed_out = extract_json_bool(res, "timed_out").unwrap_or(false);
+        let killed = extract_json_bool(res, "killed").unwrap_or(false);
+        // The byte counts the hand sends are what close the truncation hole: output can go missing
+        // between the hand and here (a dropped frame, a chunk too large to send), and a short
+        // stream presented as a whole one is a model reasoning about a file it never saw.
+        let out_bytes = extract_json_number(res, "out_bytes").unwrap_or(0);
+        let err_bytes = extract_json_number(res, "err_bytes").unwrap_or(0);
+        let mut s = String::new();
+        if !out.is_empty() { s.push_str(&out); }
+        if !err.is_empty() {
+            if !s.is_empty() && !s.ends_with('\n') { s.push('\n'); }
+            s.push_str("[stderr] ");
+            s.push_str(&err);
+        }
+        // Output that went missing is SAID, not smoothed over. The model is about to reason about
+        // this text, and a truncated build log it believes to be whole is worse than one it knows
+        // is partial.
+        let short = (out.len() as u64) < out_bytes || (err.len() as u64) < err_bytes;
+        if short {
+            s.push_str(&fmt!(
+                "\n[some output did not arrive: {} of {} bytes on stdout, {} of {} on stderr]",
+                out.len(), out_bytes, err.len(), err_bytes));
+        }
+        let origin = fmt!("run: {}", argv.join(" "));
+        s = defang(&s);
+        let tail = if timed_out {
+            fmt!("\n[timed out; the command was killed]")
+        } else if killed {
+            fmt!("\n[the command was stopped before it finished; there is no exit code]")
+        } else if exit < 0 {
+            // Not a status. Saying "exit code: -1" invites the model to explain a failure the
+            // command never reported; saying what actually happened invites it to run it again.
+            fmt!("\n[the command did not finish, so it reported no exit code -- \
+                the machine hand stopped or lost it]")
+        } else {
+            fmt!("\n[exit code: {}]", exit)
+        };
+        truncate_output(&mut s, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len()));
+        fmt!("{}{}", ctx.wrap_untrusted(&origin, &s), tail)
+    }
 }
 
 
@@ -2047,6 +2417,163 @@ mod tests {
         assert!(!b.is_empty(), "an empty scope must still be a scope");
         assert!(b.iter().any(|x| matches!(x, Bound::OnlyUnder(_))),
             "and it must carry an allow-list, or the deny rules alone would let everything else through");
+    }
+
+    // ── The fence the machine hand is handed ────────────────────────
+    //
+    // These are the tests that decide whether the compartmentalisation claim survives leaving the
+    // page. Each one is written so that the thing it forbids is what fails, not merely so that the
+    // thing it permits passes.
+
+    #[test]
+    fn test_a_diamonds_fence_is_its_own_workspace_and_nothing_else_00() {
+        let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/d1")));
+        assert!(f.rw.contains(&fmt!("/home/u/ws/notes")));
+        assert!(f.deny.contains(&fmt!("/home/u/ws/.daimond")));
+        assert!(!f.rw.contains(&fmt!("/home/u/ws")),
+            "the workspace root is not a Diamond's to write; granting it would make every other \
+            rule here decoration");
+    }
+
+    #[test]
+    fn test_an_attachment_marked_read_only_is_not_writable_by_a_command_00() {
+        let b = diamond_bounds("diamonds/d1", &[], &[fmt!("reference/handbook")]);
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert!(f.ro.contains(&fmt!("/home/u/ws/reference/handbook")),
+            "attached to be consulted, so the fence must grant reading");
+        assert!(!f.rw.contains(&fmt!("/home/u/ws/reference/handbook")),
+            "and must NOT grant writing -- this is the one that silently rots if the NoWrite rule \
+            is read before the OnlyUnder it qualifies");
+    }
+
+    #[test]
+    fn test_a_turn_with_no_bounds_is_fenced_to_the_grant_not_the_machine_00() {
+        // The trap this exists to catch: `may_read` treats an empty bound list as NO restriction,
+        // which is right for a file tool jailed by the workspace and catastrophic for a process,
+        // where there is no jail but this. An empty list must become the granted root.
+        let f = fence_spec(&[], "/home/u/ws", false);
+        assert_eq!(f.rw, vec![fmt!("/home/u/ws")]);
+        assert!(!f.rw.contains(&fmt!("/")), "never the machine");
+        assert!(f.deny.contains(&fmt!("/home/u/ws/.daimond")),
+            "and Daimond's own directory is denied even when nothing said so");
+    }
+
+    #[test]
+    fn test_a_tainted_turn_loses_the_network_00() {
+        let b = diamond_bounds("diamonds/d1", &[], &[]);
+        assert!(fence_spec(&b, "/home/u/ws", false).net,
+            "a turn that has read nothing but the user's own files runs as it always did");
+        assert!(!fence_spec(&b, "/home/u/ws", true).net,
+            "a turn that has read a stranger's words may still build and test, and may not reach \
+            outward -- this is the direct answer to 'now upload this somewhere'");
+    }
+
+    #[test]
+    fn test_the_fence_is_not_fooled_by_how_a_path_is_spelled_00() {
+        // `a/../b` and `./b` and `b//` are one path, or they are three ways past the fence.
+        let b = vec![Bound::OnlyUnder(fmt!("notes/../work")), Bound::OnlyUnder(fmt!("./docs//"))];
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/work")));
+        assert!(f.rw.contains(&fmt!("/home/u/ws/docs")));
+        assert!(!f.rw.iter().any(|p| p.contains("..")), "no traversal survives into the ruleset");
+    }
+
+    #[test]
+    fn test_an_unusable_root_fences_nothing_rather_than_everything_00() {
+        // The empty root is the worst value there is: the hand compares with `starts_with`, and
+        // every path on the machine is under "". A spec with no roots at all is refused by the
+        // hand, so failing this way is failing closed.
+        for bad in ["", "relative/path", "./ws", "C:\\ws"] {
+            let f = fence_spec(&diamond_bounds("diamonds/d1", &[], &[]), bad, false);
+            assert!(f.rw.is_empty() && f.ro.is_empty(),
+                "root {:?} must yield no roots, got rw={:?} ro={:?}", bad, f.rw, f.ro);
+            assert!(!f.net, "and must not carry the network either");
+        }
+    }
+
+    #[test]
+    fn test_a_read_carve_out_is_not_a_way_out_of_a_diamond_00() {
+        // `may_read` tests the allow-list BEFORE the carve-out, so a skill running inside a Diamond
+        // cannot read past the Diamond by declaring a folder. The fence has to make the same
+        // ordering or the two disagree -- and the fence would be the laxer of the two.
+        let mut b = diamond_bounds("diamonds/d1", &[], &[]);
+        b.push(Bound::MayRead(fmt!("elsewhere/secrets")));
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert!(!f.ro.contains(&fmt!("/home/u/ws/elsewhere/secrets")),
+            "the app refuses this read, so the fence must not grant it: ro={:?}", f.ro);
+        // And the same carve-out inside the allow-list IS granted, or a skill could not read what
+        // it shipped.
+        let mut b2 = diamond_bounds("diamonds/d1", &[], &[]);
+        b2.push(Bound::MayRead(fmt!("diamonds/d1/refs")));
+        let f2 = fence_spec(&b2, "/home/u/ws", false);
+        assert!(f2.ro.contains(&fmt!("/home/u/ws/diamonds/d1/refs")), "ro={:?}", f2.ro);
+    }
+
+    #[test]
+    fn test_a_skills_turn_can_still_write_its_workspace_00() {
+        // A skill-bounded turn has NO allow-list -- it is deny-list plus a read carve-out -- so it
+        // may write the whole workspace, exactly as `may_write` says. The guard that grants the
+        // root must therefore test whether an allow-list was DECLARED, not whether any path
+        // happened to land in a list: the carve-out fills `ro`, and a guard reading `ro.is_empty()`
+        // silently produced a fence with nowhere to write, which refuses every command.
+        let b = skill_bounds(&[fmt!(".daimond/skills/mine")]);
+        let c = { let mut c = ctx(); c.no_write = b.clone(); c };
+        assert!(c.may_write("notes/x.md"), "the app lets a skill write the workspace");
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert_eq!(f.rw, vec![fmt!("/home/u/ws")], "so the fence must too");
+    }
+
+    #[test]
+    fn test_a_write_fence_inside_a_grant_survives_into_the_spec_00() {
+        // A NoWrite may sit ABOVE an allowed path or BELOW it. Only the first was read, so a
+        // nested one vanished and the spec said "writable" for somewhere the app refuses writes.
+        //
+        // Constructed directly rather than through `diamond_bounds`, which happens to push an
+        // OnlyUnder alongside every read-only NoWrite and so never produces the nested shape on its
+        // own. That is why this went unnoticed -- and why the rule is stated here rather than left
+        // to a caller's habit, since `handler.rs` and any future caller may compose bounds freely.
+        let b = vec![
+            Bound::OnlyUnder(fmt!("proj")),
+            Bound::NoWrite(fmt!("proj/docs")),
+        ];
+        let c = { let mut c = ctx(); c.no_write = b.clone(); c };
+        assert!(c.may_read("proj/docs/ch1.md"), "the app allows the read");
+        assert!(!c.may_write("proj/docs/ch1.md"), "and refuses the write");
+        let f = fence_spec(&b, "/home/u/ws", false);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/proj")));
+        assert!(f.ro.contains(&fmt!("/home/u/ws/proj/docs")),
+            "so the nested write fence must be stated, or a second reader of this spec is misled: \
+            rw={:?} ro={:?}", f.rw, f.ro);
+    }
+
+    #[test]
+    fn test_the_fence_json_is_what_the_hand_reads_00() {
+        let f = FenceSpec {
+            rw:   vec![fmt!("/home/u/ws/d1")],
+            ro:   vec![],
+            deny: vec![fmt!("/home/u/ws/.daimond")],
+            net:  false,
+        };
+        let j = f.to_json();
+        assert!(j.contains(r#""rw":["/home/u/ws/d1"]"#), "{}", j);
+        assert!(j.contains(r#""ro":[]"#), "{}", j);
+        assert!(j.contains(r#""net":false"#), "{}", j);
+        // A path with a quote in it must not be able to close the string and add a rule. The
+        // property is "the array still has one element", NOT "the text `/etc` is absent" -- the
+        // escaped form legitimately contains that spelling, and asserting on the spelling passes
+        // for the wrong reason and fails for the wrong reason.
+        let hostile = FenceSpec {
+            rw: vec![fmt!("/home/u/a\",\"/etc")], ro: vec![], deny: vec![], net: false };
+        let j = hostile.to_json();
+        assert!(j.contains(r#"\",\""#), "the quotes must be escaped: {}", j);
+        let unescaped = j.match_indices('"')
+            .filter(|(i, _)| *i == 0 || !j[..*i].ends_with('\\'))
+            .count();
+        assert_eq!(unescaped, 10,
+            "the four keys' quotes plus the one string's pair, and no more -- an unescaped quote \
+            here would be a second rw entry the caller never wrote: {}", j);
     }
 
     #[test]
@@ -2901,6 +3428,7 @@ impl Tool {
             Tool::ArtefactAdd => Err(err!("use execute() for artefact_add"; Invalid)),
             Tool::FileFetch  => Self::cloud_unavailable(),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
+            Tool::Run        => Err(err!("use execute() for run"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args, ctx),
             Tool::WebOpen
             | Tool::WebClose

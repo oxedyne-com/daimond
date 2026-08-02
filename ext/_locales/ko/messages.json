@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "모든 탭 — 실시간 화면을 위해"
 	},
+	"popup_machine_hand": {
+		"message": "이 컴퓨터에서 명령 실행"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$과(와) 그 하위 도메인",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "기다리는 중이에요: Daimond이 이 컴퓨터에서 명령을 실행해도 될까요?"
+	},
+	"popup_ask_hand_fine": {
+		"message": "빌드와 테스트, 스크립트를 당신으로서 실행해요. 거절해도 잃는 건 없어요 — Daimond은 브라우저 안에서 계속 일해요."
 	},
 	"popup_mode_user": {
 		"message": "지금은 직접 조작하고 계세요."
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "허용하고 Chrome에서 확인 →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond이 이 컴퓨터에서 명령을 실행하려고 해요"
+	},
+	"grant_hand_body": {
+		"message": "Daimond은 이 컴퓨터에서 프로그램을 실행해요. 빌드와 테스트, 스크립트를 당신으로서, 당신의 파일로 돌려요. 하나하나 셸을 거치지 않고 바로 실행되고, 작업 공간이 이미 허용한 폴더 안에서만 움직여요."
+	},
+	"grant_hand_fine": {
+		"message": "이건 Daimond에게 허용할 수 있는 가장 강한 권한이에요. 여기서 허용하기 전에는 아무것도 실행되지 않고, 실행은 모두 당신이 읽을 수 있는 기록에 남아요. Daimond Hands 아이콘에서 언제든 되돌릴 수 있고, 되돌리면 그때 돌아가던 것도 멈춰요."
+	},
+	"grant_hand_allow": {
+		"message": "이 컴퓨터에서 명령 실행 허용"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — 실시간 화면 허용을 기다리는 중"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — 이 컴퓨터에서의 명령 실행 허용을 기다리는 중"
 	},
 	"raise_none": {
 		"message": "승인을 기다리는 게 없어요."

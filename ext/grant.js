@@ -4,9 +4,16 @@
 // page is not one -- deliberately. So the question is put here, in the
 // extension's own window, where a click is a click and Chrome will honour it.
 //
-// Two questions are asked here, never together:
+// Three questions are asked here, never together:
 //	'site'   -- may Daimond operate this one site?
 //	'mirror' -- may Daimond photograph the tab, so the panel can show it?
+//	'hand'   -- may Daimond run commands on this computer?
+//
+// The third is not a Chrome permission and cannot be: `nativeMessaging` is
+// granted at install and there is nothing to ask Chrome for a second time. So
+// for that one, this window IS the approval rather than the step before it, and
+// the extension records the answer itself -- which is also what makes it
+// revocable, since Chrome has nothing to take away.
 //
 // It is asked in the language the app is speaking. This is the one window in
 // the product that asks the user to trust something, and a question nobody can
@@ -34,6 +41,14 @@
 			$('body').textContent	= t('grant_mirror_body');
 			$('fine').textContent	= t('grant_mirror_fine');
 			$('allow').textContent	= t('grant_mirror_allow');
+		} else if (kind === 'hand') {
+			// No host and no scope line: this question is not about a site. It
+			// is about the machine, and naming a site here would suggest a
+			// boundary the answer does not have.
+			$('head').textContent	= t('grant_hand_head');
+			$('body').textContent	= t('grant_hand_body');
+			$('fine').textContent	= t('grant_hand_fine');
+			$('allow').textContent	= t('grant_hand_allow');
 		} else {
 			$('head').textContent	= t('grant_site_head');
 			$('host').hidden	= false;
@@ -66,6 +81,10 @@
 	}
 
 	$('allow').addEventListener('click', async () => {
+		// The machine hand has no Chrome permission behind it, so there is no
+		// second prompt to defer to. This click is the whole approval, and the
+		// broker writes it down.
+		if (kind === 'hand') return answer('allowed');
 		try {
 			// Chrome's own prompt is the real approval. Refusing it there is a
 			// refusal, however this window was clicked.

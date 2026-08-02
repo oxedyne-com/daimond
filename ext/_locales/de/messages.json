@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "Jeder Tab, für die Live-Ansicht"
 	},
+	"popup_machine_hand": {
+		"message": "Befehle auf diesem Computer ausführen"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ und seine Subdomains",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "Wartet auf dich: Darf Daimond auf diesem Computer Befehle ausführen?"
+	},
+	"popup_ask_hand_fine": {
+		"message": "Es würde Builds, Tests und Skripte als du ausführen. Nein zu sagen kostet nichts — Daimond arbeitet dann weiter im Browser."
 	},
 	"popup_mode_user": {
 		"message": "Du steuerst."
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "Erlauben, dann in Chrome bestätigen →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond möchte auf diesem Computer Befehle ausführen"
+	},
+	"grant_hand_body": {
+		"message": "Daimond würde Programme auf diesem Computer ausführen — Builds, Tests, Skripte — als du, mit deinen Dateien. Jedes wird direkt gestartet, nicht über eine Shell, und nur in den Ordnern, die der Arbeitsbereich ohnehin erlaubt."
+	},
+	"grant_hand_fine": {
+		"message": "Das ist das Stärkste, was du Daimond erlauben kannst. Nichts läuft, bevor du es hier erlaubst, jeder Lauf wird in ein Journal geschrieben, das du lesen kannst, und du kannst das jederzeit über das Symbol von Daimond Hands zurücknehmen. Ein Widerruf beendet, was in dem Moment gerade läuft."
+	},
+	"grant_hand_allow": {
+		"message": "Befehle auf diesem Computer erlauben"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — wartet auf deine Erlaubnis für die Live-Ansicht"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — wartet auf deine Erlaubnis für Befehle auf diesem Computer"
 	},
 	"raise_none": {
 		"message": "Es wartet nichts auf Freigabe."

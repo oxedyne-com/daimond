@@ -23,6 +23,9 @@
 	"popup_any_tab": {
 		"message": "N’importe quel onglet, pour la vue en direct"
 	},
+	"popup_machine_hand": {
+		"message": "Exécuter des commandes sur cet ordinateur"
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ et ses sous-domaines",
 		"placeholders": {
@@ -55,6 +58,12 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"popup_ask_hand": {
+		"message": "En attente de vous : Daimond peut-il exécuter des commandes sur cet ordinateur ?"
+	},
+	"popup_ask_hand_fine": {
+		"message": "Il exécuterait des compilations, des tests et des scripts en votre nom. Refuser ne coûte rien — Daimond continue de travailler dans le navigateur."
 	},
 	"popup_mode_user": {
 		"message": "C’est vous qui conduisez."
@@ -113,6 +122,18 @@
 	"grant_site_allow": {
 		"message": "Autoriser, puis confirmer dans Chrome →"
 	},
+	"grant_hand_head": {
+		"message": "Daimond veut exécuter des commandes sur cet ordinateur"
+	},
+	"grant_hand_body": {
+		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes, et uniquement dans les dossiers que l’espace de travail autorise déjà."
+	},
+	"grant_hand_fine": {
+		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire. Rien ne s’exécute tant que vous ne l’autorisez pas ici, chaque exécution est écrite dans un journal que vous pouvez lire, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
+	},
+	"grant_hand_allow": {
+		"message": "Autoriser les commandes sur cet ordinateur"
+	},
 	"action_pending_mirror": {
 		"message": "Daimond Hands — en attente de votre autorisation pour la vue en direct"
 	},
@@ -124,6 +145,9 @@
 				"example": "example.com"
 			}
 		}
+	},
+	"action_pending_hand": {
+		"message": "Daimond Hands — en attente de votre autorisation pour les commandes sur cet ordinateur"
 	},
 	"raise_none": {
 		"message": "Rien n’attend d’approbation."
