@@ -35,6 +35,33 @@ check('a browser starts with one account, the primary', start.count === 1 && sta
 check('and the primary is un-namespaced — raw keys, OPFS root',
 	start.prefix === '' && start.opfsNs === '', `prefix="${start.prefix}" ns="${start.opfsNs}"`);
 
+// Chats live in IndexedDB now, per account — `daimond-chats` for the primary and
+// `daimond-chats-<ns>` for the rest — and the old localStorage key is CONSUMED into
+// it on the first boot that finds one. So a seed written to localStorage here is in
+// localStorage until the next reload and in the store afterwards, and a test about
+// isolation has to look in both. The DB name is the isolation: reading the wrong
+// one is the failure this file exists to catch.
+await p.addInitScript(() => {
+	window.__chats = async () => {
+		const ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
+		const rows = await new Promise((res) => {
+			const req = indexedDB.open('daimond-chats' + (ns ? '-' + ns : ''), 1);
+			req.onsuccess = () => {
+				const db = req.result;
+				let t;
+				try { t = db.transaction('chats', 'readonly'); } catch (e) { res([]); return; }
+				const all = t.objectStore('chats').getAll();
+				all.onsuccess = () => res(all.result || []);
+				all.onerror   = () => res([]);
+			};
+			req.onerror = () => res([]);
+		});
+		return JSON.stringify(rows) + ' ' + (localStorage.getItem('daimond-chats') || '');
+	};
+});
+await p.reload({ waitUntil: 'domcontentloaded' });
+await p.waitForTimeout(1500);
+
 // ── Account A writes distinctive data ───────────────────────────────────
 
 const aId = await p.evaluate(async () => {
@@ -50,7 +77,7 @@ const aId = await p.evaluate(async () => {
 const aData = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	return {
-		chats: localStorage.getItem('daimond-chats'),
+		chats: await window.__chats(),
 		key:   localStorage.getItem('daimond-byok'),
 		file:  await mod.read_file('a-file.txt').catch(() => '(unreadable)'),
 	};
@@ -76,7 +103,7 @@ check('the second account IS namespaced — its own prefix and OPFS subdir',
 const bData = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	return {
-		chats: localStorage.getItem('daimond-chats'),
+		chats: await window.__chats(),
 		key:   localStorage.getItem('daimond-byok'),
 		file:  await mod.read_file('a-file.txt').then(() => 'FOUND-A-FILE').catch(() => 'not-found'),
 	};
@@ -104,7 +131,7 @@ const backToA = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	return {
 		current: A.account().name || '(primary)',
-		chats: localStorage.getItem('daimond-chats'),
+		chats: await window.__chats(),
 		key:   localStorage.getItem('daimond-byok'),
 		aFile: await mod.read_file('a-file.txt').catch(() => '(gone)'),
 		bFile: await mod.read_file('b-file.txt').then(() => 'FOUND-B').catch(() => 'not-found'),

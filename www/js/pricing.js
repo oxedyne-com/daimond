@@ -201,22 +201,84 @@
 			alias: ['x-ai/grok-4.3'],
 		},
 
-		// ── Closed models a router also serves ─────────────────
-		// These are not open weights, but they are one line away in
-		// the picker, and the fallback priced them at a quarter of
-		// what an Opus turn really costs.
+		// ── Anthropic ──────────────────────────────────────────
+		// Reached two ways: through a router, and — since the client
+		// learned the Messages API — straight from the browser. The
+		// second way is the one these figures have to be right for.
+		// A router reports `cost` on every call and that verbatim
+		// figure wins; Anthropic reports NO cost at all, so for a
+		// direct call this table IS the number the user is shown.
+		//
+		// Source: the Anthropic pricing table, USD per million tokens,
+		// read 2026-08-02. `cached` is the cache-READ rate, a tenth of
+		// the input rate on every model here. The cache-WRITE premium
+		// (1.25x input for the 5-minute TTL) is not modelled: there is
+		// one cached rate per entry, and a write happens once per
+		// prefix where a read happens every turn after it. See
+		// `AnthUsage::into_usage` in src/llm.rs, which folds writes in
+		// with the fresh prompt tokens for the same reason.
+		'claude-fable-5': {
+			in: 10.00, out: 50.00, cached: 1.00, ctx: 1000000,
+			alias: ['anthropic/claude-fable-5'],
+		},
+		'claude-mythos-5': {
+			in: 10.00, out: 50.00, cached: 1.00, ctx: 1000000,
+			alias: ['anthropic/claude-mythos-5'],
+		},
 		'claude-opus-5': {
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
 			alias: ['anthropic/claude-opus-5'],
 		},
+		'claude-opus-4-8': {
+			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
+			alias: ['anthropic/claude-opus-4-8'],
+		},
+		'claude-opus-4-7': {
+			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
+			alias: ['anthropic/claude-opus-4-7'],
+		},
+		'claude-opus-4-6': {
+			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
+			alias: ['anthropic/claude-opus-4-6'],
+		},
+		// INTRODUCTORY pricing, in force through 2026-08-31. It
+		// reverts to 3.00 / 15.00 / 0.30 on 2026-09-01 — update this
+		// line then. The intro figure is used rather than the standard
+		// one because it is what the user is charged today, and a
+		// table that quotes list price against a discounted invoice is
+		// the overstatement this file was rewritten to stop.
 		'claude-sonnet-5': {
 			in: 2.00, out: 10.00, cached: 0.20, ctx: 1000000,
 			alias: ['anthropic/claude-sonnet-5'],
 		},
+		'claude-sonnet-4-6': {
+			in: 3.00, out: 15.00, cached: 0.30, ctx: 1000000,
+			alias: ['anthropic/claude-sonnet-4-6'],
+		},
 		'claude-haiku-4.5': {
 			in: 1.00, out: 5.00, cached: 0.10, ctx: 200000,
-			alias: ['anthropic/claude-haiku-4.5'],
+			alias: ['anthropic/claude-haiku-4.5', 'claude-haiku-4-5'],
 		},
+		// Still served, and still one click away in the picker. Left out,
+		// they fell to the unknown-model fallback — which prices an Opus
+		// turn at a twelfth of what it costs, and an Opus 4.1 turn at a
+		// fortieth. Understating a bill is not the safe direction either.
+		'claude-opus-4-5': {
+			in: 5.00, out: 25.00, cached: 0.50, ctx: 200000,
+			alias: ['anthropic/claude-opus-4-5', 'claude-opus-4-5-20251101'],
+		},
+		'claude-sonnet-4-5': {
+			in: 3.00, out: 15.00, cached: 0.30, ctx: 200000,
+			alias: ['anthropic/claude-sonnet-4-5', 'claude-sonnet-4-5-20250929'],
+		},
+		'claude-opus-4-1': {
+			in: 15.00, out: 75.00, cached: 1.50, ctx: 200000,
+			alias: ['anthropic/claude-opus-4-1', 'claude-opus-4-1-20250805'],
+		},
+
+		// ── Other closed models a router also serves ───────────
+		// Not open weights, but one line away in the picker, and the
+		// fallback priced them at a quarter of what a turn costs.
 		'gpt-5.4': {
 			in: 2.50, out: 15.00, cached: 0.25, ctx: 1050000,
 			alias: ['openai/gpt-5.4'],

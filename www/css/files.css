@@ -79,6 +79,43 @@
 	color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
 }
 
+/* ── What a Diamond may reach that is not a folder ─────────────
+   A toolchain grant. It sits under the scope row because it answers the same
+   question the row above and the tree below answer -- what this Diamond may
+   open -- and it is the one answer that is not a path in the workspace: a
+   compiler lives on the machine, outside anything the user granted as a folder.
+   Off unless the user says so, and a daimon never chooses one. */
+.files-kits {
+	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border);
+	flex: none;
+}
+.files-kits-label {
+	font-size: var(--fs-2xs); font-weight: 600;
+	color: var(--text-secondary);
+}
+.files-kit-chip {
+	display: inline-flex; align-items: center;
+	padding: 2px 8px; border-radius: 999px;
+	font-size: var(--fs-2xs); font-weight: 600;
+	color: var(--text-secondary); background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong); cursor: pointer;
+}
+.files-kit-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
+.files-kit-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A granted toolchain is a PERMISSION in force, so it reads as a state. */
+.files-kit-chip.active {
+	color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
+}
+/* Said out loud rather than left to be inferred from four unlit chips: "none"
+   is the ordinary state and the safe one, and a person should be able to see
+   that it is deliberate. */
+.files-kits-none {
+	flex: 1 1 100%;
+	font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
+}
+
 /* A row for something attached from elsewhere in the workspace. It is a
    pointer, not a copy: the file lives where it always did, and every other
    Diamond holding it goes on holding it. */

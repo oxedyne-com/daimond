@@ -11,7 +11,22 @@ The page is the mind. This is the hands.
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode**.
-3. **Load unpacked**, and choose this `ext/` directory.
+3. **Load unpacked**, and choose the directory `node dev/extdev.mjs` prints.
+
+That directory, not this one. `ext/` is what **ships**, and what ships names one
+origin: `https://daimond.oxedyne.com`. It used to name `127.0.0.1:8777` and
+`localhost:8777` as well, in `externally_connectable` and in the content-script
+matches, and on a user's machine that is arbitrary program execution for whatever
+happens to bind that port — a stray dev server, a static server rooted in
+`~/Downloads`, another account on a shared box. A reviewer served a bare hostile
+page from it and completed a command.
+
+So the development origins live only in a generated copy under
+`~/.cache/daimond/ext-dev`, which `dev/extdev.mjs` builds from this directory
+plus those two lines. Run it again after editing anything here, then press
+Reload; every harness rebuilds it as it launches. `dev/publish.mjs` refuses to
+carve a `manifest.json` that names a loopback origin, so the dev variant cannot
+reach a release even if someone patches the shipped file by hand.
 
 It has a fixed public key in the manifest, so the id is always the same:
 
@@ -33,9 +48,11 @@ const send = (msg) => new Promise((resolve) => {
 await send({ cmd: 'ping' });		// -> { ok: true, version: '0.1.0' }
 ```
 
-Only three origins may speak to it, and the manifest is the list:
-`https://daimond.oxedyne.com`, and `127.0.0.1:8777` / `localhost:8777` for local
-development. No other page in the browser can reach it at all.
+One origin may speak to it, and the manifest is the list:
+`https://daimond.oxedyne.com`. No other page in the browser can reach it at all,
+and the port is part of the origin — a page on another port of the same host is
+another origin and is turned away, by Chrome and again by the extension's own
+check.
 
 ## What it can do
 
@@ -118,7 +135,7 @@ or when it submits a POST to an origin you have not approved. The answer is
 and nothing happens until the page comes back with `{cmd:'click', ref, confirmed:true}`,
 which it only sends because you said yes. *Do as I mean, or nothing done.*
 
-**Two permissions, asked separately, never at install.**
+**Three permissions, asked separately, never at install.**
 
 - *A site.* The first time Daimond wants to operate `example.com`, a small window
   opens over the app and asks you. It names the site, says the approval covers
@@ -133,6 +150,17 @@ which it only sends because you said yes. *Do as I mean, or nothing done.*
   optional — refuse it and Daimond simply works from the page structure instead.
   The panel calls it the live view, so the extension does too; internally the
   code still says "mirror".
+- *The machine.* May Daimond run commands on this computer? It is the strongest
+  thing here and it is asked per origin, like a site and unlike a browser
+  setting: allowing it for `daimond.oxedyne.com` allows it for that page and no
+  other, it is listed in the popup under the page it was given to, and revoking
+  it there stops whatever that page had running. There is no Chrome permission
+  behind this one — `nativeMessaging` comes with the install and cannot be asked
+  for twice — so this window IS the approval, which is also what makes it ours
+  to take back. What the window PROMISES is chosen from what the hand on this
+  machine says it can enforce, in the `caps` of its `hello`: a computer that
+  cannot fence a command is not described as if it could, and a hand that keeps
+  no journal does not have one promised on its behalf.
 
 A window can be covered, minimised, or lost behind the app, and then it is the
 only place that knows a question is waiting. So the toolbar icon carries the
@@ -150,11 +178,12 @@ revoked.
 
 | File | What it is |
 |---|---|
-| `manifest.json` | MV3. The pinned key, the three origins, the optional hosts. |
+| `manifest.json` | MV3. The pinned key, the one origin, the optional hosts. What ships. |
 | `background.js` | The broker: the tab, the mode machine, the grants, the consequence check. |
 | `content.js` | The hands: the accessibility snapshot, the actions, the login detector. |
 | `announce.js` | Runs on the Daimond origins only. Stamps the extension id on the document, and carries the app's chosen language across. |
-| `grant.html` / `grant.js` | Where a site, or the live view, is approved. A click here is a real click. |
+| `hand.js` | The relay to the machine hand: the per-origin grant, the boundary check, and what an exec may look like. |
+| `grant.html` / `grant.js` | Where a site, the live view, or the machine is approved. A click here is a real click, and for the machine the wording is chosen from what that machine says it can enforce. |
 | `popup.html` / `popup.js` | What mode it is in, what page it holds, what you have allowed, and how to take it back. |
 | `i18n.js` | The string lookup, shared by the broker, the popup and the grant window. |
 | `_locales/<lang>/messages.json` | Every string the user reads, in eight languages. |

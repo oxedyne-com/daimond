@@ -175,6 +175,92 @@
 		} catch (e) { /* no window to tell */ }
 	}
 
+	// ── A session that has gone ────────────────────────────────
+	//
+	// The gateway's session lives an hour and nothing ever renewed it. The only
+	// thing that has ever minted one is `bootstrap()`, called once per unlock, so
+	// an hour into a sitting every call became a 401 -- and every caller in this
+	// file swallowed it. `state.authed` stayed true, so the app went on saying it
+	// was connected while sync's pushes were being refused, one an hour after
+	// another, with the user's work never leaving the device.
+	//
+	// So a 401 is now acted on. The device key is the credential and it is still
+	// in the page, so the session can simply be taken again -- which also covers a
+	// gateway that restarted and a session ended from another tab.
+	//
+	// SINGLE-FLIGHT. Several callers are refused in the same moment -- sync's
+	// push, its wake channel, the balance -- and each one minting its own session
+	// would be a burst of signatures for one thing that needs doing once. They all
+	// wait on the same attempt.
+	var reauthing   = null;			// the attempt in flight, if there is one.
+	// True while `bootstrap()` is running. Its own calls must never answer a 401
+	// by re-entering the renewal they are part of: the balance read at the end of
+	// a bootstrap that raced a logout would otherwise await the very promise it
+	// is running inside, and the tab would hang there for good.
+	var authing     = false;
+	var reauthTimer = null;			// the standing retry, while the identity is unlocked.
+	var reauthGen   = 0;			// bumped by logout, so a deliberate exit is not undone.
+	var REAUTH_MIN_MS = 5000;		// first retry after a failed renewal.
+	var REAUTH_MAX_MS = 120000;		// and no slower than this, ever.
+	var reauthWait  = REAUTH_MIN_MS;
+
+	/// The calls that ARE the authentication, and so cannot answer a 401 by
+	/// authenticating again.
+	function isAuthPath(path) {
+		return path.indexOf('/api/account') === 0 || path.indexOf('/api/auth/') === 0;
+	}
+
+	/// Take a session again after one was refused, once, however many callers ask.
+	///
+	/// Guarded on the identity: the account IS the device key, so with the app
+	/// locked there is nothing to sign with and nothing to renew. That guard is
+	/// also what stops a stray in-flight call resurrecting a session the user has
+	/// just logged out of -- every logout path locks the identity first.
+	///
+	/// Returns whether there is a session now.
+	async function reauth() {
+		if (reauthing) return await reauthing;
+		state.authed = false;			// true from here would be a lie, whatever follows.
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
+		var gen = reauthGen;
+		reauthing = (async function () {
+			var got = await bootstrap();
+			if (gen !== reauthGen) { state.authed = false; return false; }	// logged out under us.
+			if (got) {
+				reauthWait = REAUTH_MIN_MS;
+				if (reauthTimer) { clearTimeout(reauthTimer); reauthTimer = null; }
+				// The same event a first unlock raises, for the same reason: there
+				// is a session now. Sync hears it and reconciles; without it a
+				// device whose renewal only worked on the third go would hold a
+				// live session and never use it.
+				try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* no window */ }
+			} else {
+				armReauth();
+			}
+			return got;
+		})();
+		var out = await reauthing;
+		reauthing = null;
+		return out;
+	}
+
+	/// Come back to a renewal that did not work, after a wait that grows.
+	///
+	/// Without this a gateway that was down for a minute would leave the tab
+	/// signed out for the rest of the day: every trigger in the app that would
+	/// have retried is itself gated on there being a session. Jittered, so a
+	/// gateway restart does not bring every device back in the same millisecond.
+	function armReauth() {
+		if (reauthTimer) return;
+		var wait = reauthWait * (0.5 + Math.random());
+		reauthWait = Math.min(REAUTH_MAX_MS, reauthWait * 2);
+		reauthTimer = setTimeout(function () {
+			reauthTimer = null;
+			if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;
+			reauth();
+		}, wait);
+	}
+
 	async function post(path, body) {
 		var r = await fetch(path, {
 			method: 'POST',
@@ -185,6 +271,7 @@
 		probeVersion(r);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
+		if (r.status === 401 && !isAuthPath(path) && !authing) await reauth();
 		if (!r.ok || !j || j.ok === false) {
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
@@ -201,6 +288,7 @@
 		probeVersion(r);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
+		if (r.status === 401 && !isAuthPath(path) && !authing) await reauth();
 		if (!r.ok || !j || j.ok === false) {
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
@@ -222,6 +310,7 @@
 		if (!pub) return false;
 		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
 
+		authing = true;
 		try {
 			// Register (idempotent: an existing binding is simply re-confirmed).
 			var ts  = Math.floor(Date.now() / 1000);
@@ -250,6 +339,8 @@
 			state.authed = false;
 			state.offline = true;
 			return false;
+		} finally {
+			authing = false;
 		}
 	}
 
@@ -409,6 +500,12 @@
 		state.role   = undefined;
 		state.credits = null;
 		state.pro    = null;
+		// A person leaving is not a session that lapsed, so the renewal above must
+		// not put back what they have just ended: the standing retry is cancelled
+		// and anything mid-flight is told, by the generation, to drop its result.
+		reauthGen++;
+		reauthWait = REAUTH_MIN_MS;
+		if (reauthTimer) { clearTimeout(reauthTimer); reauthTimer = null; }
 		try {
 			await fetch('/api/auth/logout', {
 				method: 'POST',
@@ -421,6 +518,10 @@
 
 	window.DaimondGateway = {
 		bootstrap:      bootstrap,
+		/// Take a session again after one was refused. Single-flight, so a file
+		/// holding its own `fetch` -- sync, the Web panel, mail -- answers its own
+		/// 401 through the one renewal rather than starting another.
+		reauth:         reauth,
 		refreshBalance: refreshBalance,
 		/// Read a balance out of a reply this file did not make itself — the Web panel and the
 		/// mail panel each hold their own `fetch` wrapper, and their replies carry the balance

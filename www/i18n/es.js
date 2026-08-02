@@ -44,6 +44,7 @@
 	'panel.mail': 'Correo',
 	'panel.work': 'Espacio',
 	'panel.spend': 'Gastos',
+	'panel.term': 'Terminal',
 
 	// ── The chip row ───────────────────────────────────────────
 	'chip.dock_full': 'El dock está lleno: elige una cuadrícula mayor en el menú de apariencia, o cierra un panel.',
@@ -179,6 +180,13 @@
 	'chat.queue_help': 'En espera: se envía cuando termine esta respuesta',
 	'chat.queued_pending': 'Todavía no se ha enviado. Haz clic para editarlo.',
 	'chat.queue_cancel': 'No enviar esto',
+	// Traducción automática: hablar dentro de un turno que ya está en marcha. La
+	// línea también dice el límite: una respuesta sin herramientas no tiene costura.
+	'chat.send_into': 'Enviar dentro de esta respuesta',
+	'chat.interject_help': 'En espera: entra en el siguiente paso del modelo, o cuando termine esta respuesta',
+	'chat.interject_pending': 'Todavía no se ha entregado. Haz clic para editarlo.',
+	'chat.interjected': 'Aquí interviniste',
+	'chat.interjected_help': 'Dicho dentro del turno en este punto. El modelo lo tuvo desde aquí.',
 	'chat.queue_returned': 'Ese turno no llegó a terminar, así que lo que dejaste en espera ha vuelto al cuadro, sin enviar.',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
 	// the user has walked away from: money about to be spent should not depend
@@ -395,6 +403,10 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronización en pausa',
 	'sync.too_big_reason': 'El paquete de este dispositivo es demasiado grande para enviarlo, así que su trabajo ha dejado de viajar. Lo normal es que la causa sea un Diamond o un archivo del espacio de trabajo muy grande: quítalo o redúcelo y la sincronización se reanuda sola.',
+	// Una sesión que terminó y no se pudo retomar. Misma etiqueta que abajo: lo
+	// que importa es que el trabajo de este dispositivo no está viajando.
+	'sync.signed_out': 'Sincronización en pausa',
+	'sync.signed_out_reason': 'Este dispositivo ya no tiene la sesión iniciada en el servicio de cuentas de Daimond, y volver a iniciarla no funcionó, así que su trabajo no está llegando a tus otros dispositivos. Se reanuda solo en cuanto se pueda acceder al servicio; si no, bloquea Daimond y desbloquéalo.',
 	'sync.paused': 'Sincronización en pausa',
 	'sync.busy_reason': 'Otro dispositivo está guardando en esta cuenta al mismo tiempo, así que el trabajo de este dispositivo aún no se ha enviado. Saldrá con el próximo cambio.',
 	'sync.merge_reason': 'Parte de lo que llegó del otro dispositivo no se pudo combinar aquí, así que este dispositivo no ha escrito por encima. Recargar la página suele bastar.',
@@ -579,6 +591,44 @@
 	'err.ratelimit_429': 'El proveedor te está limitando la frecuencia (429). Espera un momento y reinténtalo.',
 	'err.server_5xx': 'El proveedor ha tenido un error de servidor. Inténtalo de nuevo en breve.',
 	'err.generic': 'Algo ha ido mal. Inténtalo de nuevo.',
+	'err.reply_cut': 'La respuesta se quedó sin espacio en {max} tokens, así que una llamada a herramienta llegó incompleta y no pudo ejecutarse. Aumenta la longitud de respuesta en Ajustes, o pide un cambio más pequeño',
+
+	// ── Cuánto puede durar una respuesta ───────────────────────
+	'settings.max_tokens': 'Respuesta más larga',
+	'settings.max_tokens_auto': 'Automático',
+	'settings.tokens': 'tokens',
+	'settings.max_tokens_note': 'Cuánto puede durar una sola respuesta. Si es muy baja, un archivo grande llega cortado por la mitad.',
+	'settings.max_tokens_ceiling': 'acepta hasta',
+
+	// ── Cuando las conversaciones dejan de guardarse ───────────
+	'store.alarm': 'Tus conversaciones no se están guardando.',
+	'store.alarm_advice': 'Todo lo que ves sigue aquí, pero al recargar se perdería. Descarga una copia ahora.',
+	'store.alarm_download': 'Descargar una copia',
+	'store.alarm_retry': 'Reintentar',
+	'store.full': 'no queda espacio en el almacenamiento de este navegador para este sitio',
+	// ── La escalera de permisos ────────────────────────────────
+	'permmode.title': 'Modo de permisos',
+	'permmode.lead': 'Lo que Daimond hace sin preguntar',
+	'permmode.chip_help': 'Modo de permisos: lo que Daimond hace sin preguntar',
+	'permmode.chip_aria': 'Modo de permisos: {mode}. Cámbialo.',
+	'permmode.astat': 'Permisos: {mode}',
+	'permmode.never': 'Ningún modo cambia la valla dentro de la que corre un comando, las carpetas que alcanza un Diamond, ni el registro de lo que se ejecutó.',
+	'permmode.failed': 'Ese modo de permisos no se pudo aplicar, así que no ha cambiado nada.',
+	'permmode.ask': 'Preguntar siempre',
+	'permmode.ask_blurb': 'Cada comando se te presenta antes de ejecutarse, y Daimond pregunta antes de traer cualquier página.',
+	'permmode.guarded': 'Vigilado',
+	'permmode.guarded_blurb': 'Los comandos se ejecutan sin preguntar. En cuanto un turno ha leído una página, un correo o un registro de compilación, pierde la red y Daimond pregunta antes de ir a ningún sitio nuevo.',
+	'permmode.bypass': 'Sin preguntas',
+	'permmode.bypass_blurb': 'No se pregunta nada. Los comandos se ejecutan y las páginas se traen, haya leído lo que haya leído el turno.',
+	'permmode.bypass_title': '¿Dejar de preguntar?',
+	'permmode.bypass_body': 'Sin preguntas significa que Daimond deja de preguntar. Ejecutará comandos en tu máquina sin presentártelos, y traerá una página que haya elegido sin preguntar, incluso en un turno que ya ha leído una página web, un correo o un registro de compilación escrito por otra persona.\n\nEso último es exactamente lo que estás cediendo. Es el momento en que algo que tú no escribiste podría convencer a Daimond de enviar tu trabajo a alguna parte.\n\nLo que NO cambia: un comando sigue corriendo dentro de la misma valla, y cada Diamond sigue alcanzando solo sus propias carpetas; el filtro de llamadas al sistema queda intacto; el texto de fuera se sigue marcando como palabras ajenas; y cada comando se sigue escribiendo en el registro de la mano de la máquina, así que después puede comprobarse lo que pasó.\n\nNo se te volverá a preguntar.',
+	'permmode.bypass_ok': 'Usar sin preguntas',
+	'permmode.run_title': '¿Ejecutar este comando?',
+	'permmode.run_body': 'Daimond quiere ejecutar un comando en tu máquina.\n\n{cmd}\n\nen {cwd}\n\nEstás en el modo «preguntar siempre», así que cada comando se te presenta primero.',
+	'permmode.run_ok': 'Ejecutarlo',
+	'pal.kind_permmode': 'Permisos',
+	'chat.compacted': 'Conversación plegada',
+	'chat.compacted_help': 'Daimond ha sustituido la parte anterior de esta conversación por un resumen para que quepa en la ventana de contexto del modelo.',
 
 	// ── Toasts ─────────────────────────────────────────────────
 	'toast.copied': 'Copiado',
@@ -1393,6 +1443,38 @@
 	'graph.stat_cycles.other': '{n} vínculos cierran ciclos',
 	'graph.stat_dangling.one': '{n} vínculo apunta a un Diamond que ya no está',
 	'graph.stat_dangling.other': '{n} vínculos apuntan a Diamonds que ya no están',
+
+	// ── The terminal ───────────────────────────────────────────
+	'term.label':            'Terminal',
+	'term.hint':             'Escriba para enviar las teclas directamente al programa. Ctrl-Mayús-C copia la selección, Ctrl-Mayús-V pega, Ctrl-Mayús-A lo selecciona todo, y Mayús con Re Pág o Av Pág recorre lo que ya ha pasado.',
+	'term.screen_label':     'Pantalla del terminal, como texto',
+	'term.screen_now':       'La pantalla dice ahora:',
+	'term.nothing_selected': 'No hay nada seleccionado.',
+	'term.copied.one':       '{n} línea copiada.',
+	'term.copied.other':     '{n} líneas copiadas.',
+	'term.printed_lines.one':   '{n} línea impresa.',
+	'term.printed_lines.other': '{n} líneas impresas.',
+	'term.paste_warn':       'Este pegado tiene {n} líneas. El programa no ha pedido que se le avise del texto pegado, así que cada línea después de la primera se ejecutaría nada más llegar.',
+	'term.paste_first':      'Pegar solo la primera línea',
+	'term.paste_all':        'Pegar las {n} líneas',
+	'term.exited':           'El programa terminó con el estado {code}.',
+
+	'term.notices_label': 'Avisos sobre este terminal',
+	'term.dismiss_notice': 'Descartar este aviso',
+	'term.gaps_count.one': 'Falta salida en {n} lugar.',
+	'term.gaps_count.other': 'Falta salida en {n} lugares.',
+	'term.start': 'Iniciar un terminal',
+	'term.restart': 'Reiniciar el terminal',
+	'term.stop': 'Detener el programa',
+	'term.leave_hint': 'Pulse F6 para sacar el teclado del terminal.',
+	'term.starting': 'Iniciando un terminal…',
+	'term.running': 'El terminal está en marcha.',
+	'term.nothing_running': 'No hay ningún programa en marcha en este terminal.',
+	'term.not_paired': 'No hay ninguna mano de máquina emparejada con este navegador, así que no hay máquina en la que abrir un terminal. Todo lo demás en Daimond funciona sin ella.',
+	'term.no_composer': 'Esta versión de Daimond no puede decir qué se le permitiría tocar a un terminal, así que no abrirá ninguno. El compartimento lo calcula la parte Rust de la aplicación, y esta página es anterior a eso. Actualice Daimond; los comandos y las herramientas de archivos no se ven afectados.',
+	'term.unreadable_request': 'Daimond no pudo leer su propia respuesta sobre qué se le permitiría tocar a este terminal, así que no se inició nada. Recargue la aplicación y, si vuelve a ocurrir, hay que actualizarla.',
+	'term.no_relay_script': 'El relé del terminal no se cargó en esta página, así que no se puede abrir ningún terminal. Es un fallo de la aplicación y no de su máquina: recargue Daimond.',
+	'term.no_renderer': 'El terminal en sí no se cargó en esta página, así que no hay nada sobre lo que dibujarlo. Es un fallo de la aplicación y no de su máquina: recargue Daimond.',
 
 	});
 })();

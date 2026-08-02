@@ -62,14 +62,26 @@
 	///
 	/// `credits` carries no URL: the gateway names the host when it mints the key, so the one
 	/// provider Daimond runs itself is also the one it does not hardcode an endpoint for.
+	/// `anthropic` is the one row that is NOT OpenAI-compatible. Its endpoint is the Messages
+	/// API, and the wasm client picks the wire dialect off that path — see `Dialect` in
+	/// src/llm.rs. It is here because Claude was reachable only through a router, which meant
+	/// every turn paid a middleman and no turn could ask for extended thinking at all.
 	var KNOWN = {
 		credits:    { name: 'Daimond credits', url: '',                                                    model: '' },
+		anthropic:  { name: 'Anthropic',    url: 'https://api.anthropic.com/v1/messages',              model: 'claude-opus-5' },
 		fireworks:  { name: 'Fireworks AI', url: 'https://api.fireworks.ai/inference/v1/chat/completions', model: 'accounts/fireworks/models/glm-5p2' },
 		openrouter: { name: 'OpenRouter',   url: 'https://openrouter.ai/api/v1/chat/completions',          model: '' },
 		together:   { name: 'Together AI',  url: 'https://api.together.xyz/v1/chat/completions',           model: '' },
 		groq:       { name: 'Groq',         url: 'https://api.groq.com/openai/v1/chat/completions',        model: '' },
 		deepinfra:  { name: 'DeepInfra',    url: 'https://api.deepinfra.com/v1/openai/chat/completions',   model: '' },
 	};
+
+	/// The Anthropic API version this app is written against.
+	///
+	/// Pinned rather than tracking latest, and the same constant the wasm client sends
+	/// (`ANTHROPIC_VERSION` in src/llm.rs): the version header is what stops a breaking change
+	/// to the wire shape arriving without a code change.
+	var ANTHROPIC_VERSION = '2023-06-01';
 
 	var store = { v: 2, def: { provider: '', model: '' }, providers: {} };
 
@@ -186,10 +198,42 @@
 		return n;
 	}
 
-	/// Derive the model-listing endpoint from a chat-completions one.
+	/// Whether an endpoint speaks Anthropic's Messages API rather than OpenAI chat completions.
+	///
+	/// The same two signals the wasm client uses (`Dialect::for_endpoint` in src/llm.rs), and
+	/// deliberately the same shape of test, because a browser that lists models one way and a
+	/// turn that posts them another is a provider that half works.
+	function isAnthropic(url) {
+		var s = String(url || '').toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '');
+		if (!s) return false;
+		if (/^https?:\/\/([^/:]*\.)?anthropic\.com([:/]|$)/.test(s)) return true;
+		return s.slice(-'/v1/messages'.length) === '/v1/messages';
+	}
+
+	/// Derive the model-listing endpoint from a turn endpoint.
+	///
+	/// Anthropic's listing sits at `/v1/models`, a SIBLING of `/v1/messages` — appending
+	/// `/models` to the turn endpoint (which is what every other provider needs) would ask
+	/// `/v1/messages/models`, which is nobody's endpoint and 404s.
 	function modelsUrl(base) {
+		if (isAnthropic(base)) return String(base).replace(/\/+$/, '').replace(/\/messages$/, '/models');
 		if (base.indexOf('/chat/completions') !== -1) return base.replace('/chat/completions', '/models');
 		return base.replace(/\/+$/, '') + '/models';
+	}
+
+	/// The headers a listing or turn request needs for `url`.
+	///
+	/// Anthropic refuses a bearer token: it wants `x-api-key`, a pinned version, and — for a
+	/// call made from a page rather than a server — the header that makes its edge answer a
+	/// cross-origin request at all. Without that last one the browser never sees a reply, only
+	/// a CORS failure, which is why a provider that works from curl can still look broken here.
+	function authHeaders(url, key) {
+		if (!isAnthropic(url)) return { authorization: 'Bearer ' + key };
+		return {
+			'x-api-key':         key,
+			'anthropic-version': ANTHROPIC_VERSION,
+			'anthropic-dangerous-direct-browser-access': 'true',
+		};
 	}
 
 	// ── Keys ────────────────────────────────────────────────────────
@@ -595,7 +639,7 @@
 		var url = providerUrl(id);
 		var key = keyFor(id);
 		if (!url || !key) throw new Error(t('models.err_no_key'));
-		var r = await fetch(modelsUrl(url), { headers: { authorization: 'Bearer ' + key } });
+		var r = await fetch(modelsUrl(url), { headers: authHeaders(url, key) });
 		if (!r.ok) throw new Error(t('models.err_key_refused', { status: r.status }));
 		var j = await r.json();
 		var list = j.data || j.models || [];
@@ -1589,6 +1633,12 @@
 		unseal:         unseal,
 		lock:           lock,
 		known:          function () { return KNOWN; },
+		// Which wire dialect an endpoint speaks, and the headers it wants. Exported because
+		// the settings form in daimond.js lists a provider's models with its own fetch, and a
+		// bearer token is refused by the one provider that is not OpenAI-compatible.
+		isAnthropic:    isAnthropic,
+		authHeaders:    authHeaders,
+		modelsUrl:      modelsUrl,
 		providers:      providers,
 		addProvider:    addProvider,
 		removeProvider: removeProvider,

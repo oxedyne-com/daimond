@@ -110,9 +110,20 @@ pub async fn status() -> Outcome<String> {
 
 /// Run one command and return the whole result as JSON.
 ///
+/// A rejection from the relay is **not** returned as an error, and that is
+/// deliberate.  Every one of them is a whole sentence written for the model to
+/// act on -- the hand is not installed, the user declined, it stopped
+/// part-way -- and an `Err` reaches the daimon wrapped in an fe2o3 chain,
+/// carrying ANSI colour and a `src/*.rs:line` frame around the one sentence
+/// that matters.  A hand that will not run a command has refused it, so it is
+/// handed on as a refusal and rendered as one.
+///
 /// # Arguments
 /// * `spec_json` - The `exec` request, already rendered as the wire's JSON.
 pub async fn run(spec_json: &str) -> Outcome<String> {
     let r = res!(relay());
-    settle(r.run(spec_json)).await
+    match JsFuture::from(r.run(spec_json)).await {
+        Ok(v)  => stringify(&v),
+        Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
+    }
 }

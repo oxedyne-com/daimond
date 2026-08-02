@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "Executar comandos neste computador"
 	},
+	"popup_machine_hand_origin": {
+		"message": "Executar comandos neste computador, para $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ e seus subdomínios",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "O Daimond executaria programas neste computador — builds, testes, scripts — como você, com os seus arquivos. Cada um é iniciado diretamente, e não por um shell, e apenas dentro das pastas que o espaço de trabalho já permite."
 	},
+	"grant_hand_body_nofence": {
+		"message": "O Daimond executaria programas neste computador — builds, testes, scripts — como você, com os seus arquivos. Cada um é iniciado diretamente, e não por um shell. Este computador não consegue limitar quais arquivos eles tocam: um comando permitido aqui alcança tudo o que você alcança."
+	},
+	"grant_hand_body_unknown": {
+		"message": "O Daimond executaria programas neste computador — builds, testes, scripts — como você, com os seus arquivos. Cada um é iniciado diretamente, e não por um shell. A mão daqui não disse a que consegue limitá-los, então trate um comando como capaz de alcançar tudo o que você alcança."
+	},
 	"grant_hand_fine": {
 		"message": "É a coisa mais forte que você pode permitir ao Daimond. Nada é executado até você permitir aqui, cada execução fica escrita em um registro que você pode ler, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
+	},
+	"grant_hand_caps": {
+		"message": "O que este computador consegue impor: $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "A mão deste computador não disse o que consegue impor."
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "É a coisa mais forte que você pode permitir ao Daimond. Nada é executado até você permitir aqui, só a página indicada acima pode pedir, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
 	},
 	"grant_hand_allow": {
 		"message": "Permitir comandos neste computador"

@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "Exécuter des commandes sur cet ordinateur"
 	},
+	"popup_machine_hand_origin": {
+		"message": "Exécuter des commandes sur cet ordinateur, pour $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ et ses sous-domaines",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes, et uniquement dans les dossiers que l’espace de travail autorise déjà."
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes. Cet ordinateur ne peut pas limiter les fichiers auxquels ils touchent : une commande autorisée ici atteint tout ce que vous pouvez atteindre."
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes. La main ici n’a pas dit à quoi elle peut les limiter : considérez qu’une commande atteint tout ce que vous pouvez atteindre."
+	},
 	"grant_hand_fine": {
 		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire. Rien ne s’exécute tant que vous ne l’autorisez pas ici, chaque exécution est écrite dans un journal que vous pouvez lire, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
+	},
+	"grant_hand_caps": {
+		"message": "Ce que cet ordinateur peut faire respecter : $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "La main de cet ordinateur n’a pas dit ce qu’elle peut faire respecter."
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire. Rien ne s’exécute tant que vous ne l’autorisez pas ici, seule la page nommée ci-dessus peut le demander, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
 	},
 	"grant_hand_allow": {
 		"message": "Autoriser les commandes sur cet ordinateur"

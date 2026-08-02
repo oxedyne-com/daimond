@@ -72,6 +72,54 @@ async function pushLanded(pg) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/// Put `window.__bump(tag)` on the page: one genuine local change, so the push
+/// that follows is not skipped as a no-op.
+///
+/// THE BLINDING THIS EXISTS FOR. Every stubbed refusal below — 413, 402, 409 —
+/// is only reached if a parcel is actually SENT, and the engine sends one only
+/// when the parcel differs from the last one it sent. The helper this replaces
+/// wrote `daimond-chats` in localStorage. Transcripts moved into IndexedDB, so
+/// those writes changed nothing `collectSync()` reads: every push was skipped
+/// before any request was made, no stub was ever reached, and eighteen checks
+/// reported on something other than the behaviour they name.
+///
+/// Two things are done about that. The change goes through the app's own chat
+/// store — `DaimondCore.chatStore()`, the very object `collectSync()` packs, so
+/// a store that moves again takes this with it LOUDLY (the call throws) rather
+/// than silently. And the parcel is COMPARED across the change, so a bump that
+/// stops moving it says so at the call site instead of surfacing as an
+/// unrelated red four sections later. Each caller asserts on what it returns.
+///
+/// The tombstone map `daimond-msgs-deleted` would also have worked (see
+/// verify_sessionrenew, which uses it) and is inert by construction. This is
+/// preferred here because these sections say "a genuine local change" and mean
+/// a transcript: what travels is the same section of the parcel the 413 and 409
+/// arms exist to protect.
+const installBump = (pg) => pg.evaluate(() => {
+	window.__bump = async function (tag) {
+		const before = JSON.stringify(await window.DaimondCore.collectSync());
+		const store  = window.DaimondCore.chatStore();
+		const list   = store.stored();
+		if (!list.length) return { moved: false, why: 'no chat in the store to change' };
+		list[0].messages  = (list[0].messages || []).concat([
+			{ role: 'user', content: tag, mid: tag, ts: Date.now() },
+		]);
+		list[0].updatedAt = Date.now();
+		store.save(list);
+		const after = JSON.stringify(await window.DaimondCore.collectSync());
+		return { moved: after !== before, why: after === before ? 'the parcel did not move' : '' };
+	};
+});
+
+/// One local change, from Node. Returns `{ moved, why }`.
+const bumped = (pg, tag) => pg.evaluate(t => window.__bump(t), tag);
+
+/// Did every change a section made really move the parcel? The sections that
+/// bump from inside their own `evaluate` collect the answers and hand them back
+/// as `tag: moved` / `tag: <why not>` lines.
+const allMoved = (lines) => Array.isArray(lines) && lines.length > 0
+	&& lines.every(l => / moved$/.test(l));
+
 /// Is the gateway answering?
 async function gatewayUp() {
 	try {
@@ -132,6 +180,7 @@ await page.waitForFunction(
 try {
 	const authed = await page.evaluate(() => DaimondGateway.state().authed);
 	check('gateway session is authed (sync can reach its mailbox)', authed);
+	await installBump(page);
 
 	// Sync IS the Pro capability under test, so the account has to hold Pro:
 	// without it the gateway answers 402 and there is nothing below to measure.
@@ -182,14 +231,22 @@ try {
 	check('the blob does not decode to plaintext JSON', looksEncrypted);
 
 	// (2) Second device: wipe local chats + version cursor, then pull.
+	//
+	// The chats are wiped through the store that holds them. They are in
+	// IndexedDB, so removing the old localStorage key emptied nothing and this
+	// measured a device that had never lost anything.
 	const restored = await page.evaluate(async () => {
-		localStorage.removeItem('daimond-chats');
+		const store = window.DaimondCore.chatStore();
+		await store.wipe();
 		localStorage.removeItem('daimond-sync-version');
+		const emptied = store.stored().length;
 		const v = await window.DaimondSync.pull();
-		const arr = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		const arr = store.stored();
 		const text = JSON.stringify(arr);
-		return { version: v, chatCount: arr.length, text };
+		return { version: v, emptied, chatCount: arr.length, text };
 	});
+	check('the second device really started with no transcripts',
+		restored.emptied === 0, 'held=' + restored.emptied);
 	check('a fresh device pulls and decrypts the chat transcript back',
 		restored.chatCount >= 1 && restored.text.includes(MARK),
 		'chats=' + restored.chatCount);
@@ -200,28 +257,25 @@ try {
 	const conflict = await page.evaluate(async () => {
 		const before = window.DaimondSync.version();
 		// The "other device" pushes over the current version, advancing it by one.
-		const bump = await fetch('/api/sync', {
+		const otherWrite = await fetch('/api/sync', {
 			method: 'POST', credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': '1' },
 			body: JSON.stringify({ base_version: before, device: 'other-device', blob: 'AAAABBBBCCCCDDDD' }),
 		});
-		const bumpJson = await bump.json();
-		// Make a genuine local change so the push is not skipped as a no-op: append
-		// a new message (a fresh id survives the union-merge deterministically).
-		const arr = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-		if (arr.length) {
-			arr[0].messages = arr[0].messages || [];
-			arr[0].messages.push({ role: 'user', content: 'conflict-note', mid: 'conflicttest-' + Date.now(), ts: Date.now() });
-			localStorage.setItem('daimond-chats', JSON.stringify(arr));
-		}
+		const otherJson = await otherWrite.json();
+		// A genuine local change, or the push is skipped before it is ever sent and
+		// there is no 409 to reconcile.
+		const changed = await window.__bump('conflict-note');
 		// This device still thinks the version is `before`. Push the fresh change.
 		await window.DaimondSync.push();		// base=before → 409 → pull → retry → success.
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
-		return { before, bumped: bumpJson.version, after: j.version };
+		return { before, bumped: otherJson.version, after: j.version, changed };
 	});
 	check('the out-of-band write advanced the mailbox', conflict.bumped === conflict.before + 1,
 		'before=' + conflict.before + ' bumped=' + conflict.bumped);
+	check('and this device really had something of its own to send',
+		conflict.changed.moved === true, conflict.changed.why);
 	check('a stale push reconciles (409 → pull → retry) and advances past the conflict',
 		conflict.after > conflict.bumped, 'bumped=' + conflict.bumped + ' after=' + conflict.after);
 	// After reconciling, the mailbox is this device's real (decryptable) state again.
@@ -872,16 +926,9 @@ try {
 			};
 		};
 		// A genuine local change, or the push is skipped as a no-op and nothing
-		// reaches the (stubbed) gateway at all.
-		const bump = (tag) => {
-			const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-			if (!a.length) return false;
-			a[0].messages = a[0].messages || [];
-			a[0].messages.push({ role: 'user', content: tag, mid: tag, ts: Date.now() });
-			a[0].updatedAt = Date.now();
-			localStorage.setItem('daimond-chats', JSON.stringify(a));
-			return true;
-		};
+		// reaches the (stubbed) gateway at all. Made BEFORE the stub goes on, so
+		// nothing the change does can be answered by it.
+		const changed = await window.__bump('too-big-1');
 		const real = window.fetch;
 		window.fetch = function (u, o) {
 			const url = String((u && u.url) || u || '');
@@ -892,18 +939,20 @@ try {
 			}
 			return real.apply(this, arguments);
 		};
-		const changed = bump('too-big-1');
 		await window.DaimondSync.push();
 		const stalled = chip();
 		const api = window.DaimondSync.state ? window.DaimondSync.state() : null;
 		window.fetch = real;
 		// And a later successful push clears it — a stall that outlives its cause
 		// is the same lie the other way round.
-		bump('too-big-2');
+		const cleared = await window.__bump('too-big-2');
 		await window.DaimondSync.push();
 		const after = chip();
-		return { changed, stalled, api, after };
+		return { changed, cleared, stalled, api, after };
 	});
+	check('both local changes moved the parcel, so the 413 arm was reached at all',
+		tooBig.changed.moved === true && tooBig.cleared.moved === true,
+		[tooBig.changed.why, tooBig.cleared.why].filter(Boolean).join('; '));
 	check('a 413 push shows a stalled state on the sync chip, held (not a flash)',
 		!!(tooBig.stalled && tooBig.stalled.shown && tooBig.stalled.state === 'stalled'),
 		JSON.stringify(tooBig.stalled));
@@ -928,6 +977,18 @@ try {
 	// on the desk therefore never caught up until it was reloaded. Coming back to
 	// a window is exactly the moment its owner expects to see the other device's
 	// work.
+	//
+	// Measured with the wake channel SHUT. The gateway taps every other device of
+	// the account when the mailbox moves, so with the channel open this device
+	// converges on its own and the pull it makes is counted here as a focus pull:
+	// the storm reads as noise and the trigger under test is never the thing that
+	// answered. Section 13 turns the channel back on and tests it in its own
+	// right, which is where that behaviour belongs.
+	await page.evaluate(() => window.DaimondSync.wakeVia('off'));
+	// And from a quiet engine: a push still armed when the focus fires holds
+	// `inFlight`, and `focusPull` stands aside for a round already under way.
+	// Longer than the push debounce, so anything armed has fired and finished.
+	await page.waitForTimeout(4000);
 	const focus = await page.evaluate(async () => {
 		const mark = 'FOCUSMARK-' + Date.now();
 		const state = await window.DaimondCore.collectSync();
@@ -942,7 +1003,11 @@ try {
 			body: JSON.stringify({ base_version: window.DaimondSync.version(), device: 'other', blob: blob }),
 		});
 		const posted = r.status;
-		const before = (localStorage.getItem('daimond-chats') || '').indexOf(mark) !== -1;
+		// What the chat store holds, not what localStorage holds: the transcripts
+		// are in IndexedDB, so the old read saw an empty string and "this device
+		// did not already hold it" passed for a device that held nothing at all.
+		const holds = () => JSON.stringify(window.DaimondCore.chatStore().stored()).indexOf(mark) !== -1;
+		const before = holds();
 		// Count the pulls, so a focus STORM is proved to coalesce into one.
 		const real = window.fetch;
 		let gets = 0;
@@ -954,7 +1019,7 @@ try {
 		for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('focus'));
 		document.dispatchEvent(new Event('visibilitychange'));
 		await new Promise(res => setTimeout(res, 2500));
-		const after = (localStorage.getItem('daimond-chats') || '').indexOf(mark) !== -1;
+		const after = holds();
 		const storm = gets;
 		// And a focus arriving straight back is refused by the throttle.
 		window.dispatchEvent(new Event('focus'));
@@ -963,6 +1028,7 @@ try {
 		window.fetch = real;
 		return { posted, before, after, storm, again };
 	});
+	await page.evaluate(() => window.DaimondSync.wakeVia('ws'));
 	check('the other device’s push landed on the mailbox', focus.posted === 200, 'HTTP ' + focus.posted);
 	check('this device did not already hold it', focus.before === false);
 	check('focus pulls the other device’s work in, with no reload', focus.after === true);
@@ -1166,14 +1232,13 @@ try {
 				text: (c.querySelector('.stext') || {}).textContent || '',
 				shown: c.style.display !== 'none' };
 		};
-		const bump = (tag) => {
-			const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-			if (!a.length) return false;
-			a[0].messages = a[0].messages || [];
-			a[0].messages.push({ role: 'user', content: tag, mid: tag, ts: Date.now() });
-			a[0].updatedAt = Date.now();
-			localStorage.setItem('daimond-chats', JSON.stringify(a));
-			return true;
+		// Every refusal below is only reached if a parcel is actually sent, so each
+		// change records whether it moved the parcel and the file asserts on it.
+		const bumps = [];
+		const bump = async (tag) => {
+			const r = await window.__bump(tag);
+			bumps.push(tag + ': ' + (r.moved ? 'moved' : r.why));
+			return r.moved;
 		};
 		const real = window.fetch;
 		const stub = (post, get) => {
@@ -1192,13 +1257,13 @@ try {
 		const out = {};
 		// A 413 first: the parcel is too large, and the chip stalls.
 		stub(413, 0);
-		bump('gate-1');
+		await bump('gate-1');
 		await window.DaimondSync.push();
 		out.stalled = chip();
 		// Then a 402 on top of it. Not entitled outranks too large: an account
 		// that may not sync at all cannot act on a parcel being oversized.
 		stub(402, 0);
-		bump('gate-2');
+		await bump('gate-2');
 		await window.DaimondSync.push();
 		out.off = chip();
 		// A pull that WORKS must not paint "Synced" over it.
@@ -1222,13 +1287,16 @@ try {
 		await new Promise(r => setTimeout(r, 1200));
 		out.afterRecheck = chip();
 		// And a push that fits clears the lot, so nothing below runs under a stall.
-		bump('gate-3');
+		await bump('gate-3');
 		await window.DaimondSync.push();
 		await new Promise(r => setTimeout(r, 400));
 		out.cleared = chip();
 		out.api = window.DaimondSync.state();
+		out.bumps = bumps;
 		return out;
 	});
+	check('each refusal below was answered to a parcel that really left',
+		allMoved(gate.bumps), (gate.bumps || []).join(' | '));
 	check('a 413 stalls the chip', gate.stalled && gate.stalled.state === 'stalled',
 		JSON.stringify(gate.stalled));
 	check('a 402 on top of a stall shows "Sync off" — not entitled outranks too large',
@@ -1439,6 +1507,10 @@ try {
 			const c = document.getElementById('sync-chip');
 			return c ? { state: c.dataset.state || '', shown: c.style.display !== 'none' } : null;
 		};
+		// One real change, made before the stub so nothing it does is answered by
+		// it, and asserted on: without it the push below is skipped and the 402
+		// arm is never reached at all.
+		const changed = await window.__bump('nudge-402');
 		const real = window.__syncRealFetch || window.fetch;
 		window.__syncRealFetch = real;
 		let sent = 0;
@@ -1451,13 +1523,7 @@ try {
 			}
 			return real.apply(this, arguments);
 		};
-		// One real change, pushed, refused: the engine is now paused on a 402.
-		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-		if (a.length) {
-			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'nudge-402', mid: 'nudge-402', ts: Date.now() }]);
-			a[0].updatedAt = Date.now();
-			localStorage.setItem('daimond-chats', JSON.stringify(a));
-		}
+		// Pushed, refused: the engine is now paused on a 402.
 		await window.DaimondSync.push();
 		const paused = { chip: chip(), entitled: window.DaimondSync.state().entitled };
 		// Now a mutation of the kind that nudges. It must change nothing.
@@ -1465,12 +1531,14 @@ try {
 		await window.DaimondCore.collectSync();	// persistChats() runs on the way past
 		window.DaimondSync.nudge();
 		await new Promise(r => setTimeout(r, 7000));
-		const out = { paused, after: chip(), tried: sent - before,
+		const out = { paused, after: chip(), tried: sent - before, changed: changed,
 			entitled: window.DaimondSync.state().entitled };
 		window.fetch = real;
 		window.__syncRealFetch = null;
 		return out;
 	});
+	check('the change that provoked the 402 really left this device',
+		refusal.changed.moved === true, refusal.changed.why);
 	check('a 402 pauses pushes and says so on the chip',
 		!!(refusal.paused.chip && refusal.paused.chip.state === 'off') && refusal.paused.entitled === false,
 		JSON.stringify(refusal.paused));
@@ -1661,7 +1729,11 @@ try {
 		// a parcel written by another build, or half written when it was packed,
 		// actually reaches. Nothing is left behind by it: the throw happens
 		// before the merged chats are written back.
-		const held    = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		// From the store the chats actually live in. Read out of localStorage, this
+		// was always an empty list: the parcel was never poisoned, and the three
+		// checks below passed on a merge that had nothing to fail at.
+		const store   = window.DaimondCore.chatStore();
+		const held    = store.stored();
 		const victim  = held.length ? held[0].id : '';
 		parcel.chats  = (parcel.chats || []).map(c =>
 			(c && c.id === victim) ? Object.assign({}, c, { messages: 'not-a-list' }) : c);
@@ -1669,7 +1741,7 @@ try {
 		try { report = await window.DaimondCore.applySync(parcel); }
 		catch (e) { threw = String(e && e.message || e); }
 		const row  = JSON.parse(await app.list_diamonds()).find(d => d.id === id) || null;
-		const kept = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+		const kept = store.stored();
 		return { threw, report, victim, name: row ? row.name : '(gone)',
 			chatsIntact: kept.length === held.length
 				&& kept.every(c => Array.isArray(c.messages)) };
@@ -1695,6 +1767,10 @@ try {
 			return c ? { state: c.dataset.state || '', text: (c.querySelector('.stext') || {}).textContent || '',
 				title: c.title || '', shown: c.style.display !== 'none' } : null;
 		};
+		// Something of this device's own to lose, made before the stub: with an
+		// unchanged parcel the push never leaves and there is no conflict to
+		// exhaust.
+		const changed = await window.__bump('storm-note');
 		const real = window.fetch;
 		let posts = 0;
 		window.fetch = function (u, o) {
@@ -1707,17 +1783,13 @@ try {
 			}
 			return real.apply(this, arguments);
 		};
-		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-		if (a.length) {
-			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'storm', mid: 'storm-' + Date.now(), ts: Date.now() }]);
-			a[0].updatedAt = Date.now();
-			localStorage.setItem('daimond-chats', JSON.stringify(a));
-		}
 		await window.DaimondSync.push();
-		const out = { posts, chip: chip(), api: window.DaimondSync.state() };
+		const out = { posts, changed, chip: chip(), api: window.DaimondSync.state() };
 		window.fetch = real;
 		return out;
 	});
+	check('the work the conflict is about really left this device',
+		exhausted.changed.moved === true, exhausted.changed.why);
 	check('a permanent conflict is retried, and bounded', exhausted.posts >= 2 && exhausted.posts <= 6,
 		'posts=' + exhausted.posts);
 	check('and running out of attempts is SAID, not swallowed',
@@ -1730,14 +1802,7 @@ try {
 		!!(exhausted.api && exhausted.api.stalled === true), JSON.stringify(exhausted.api));
 
 	// Clear the stall before the second device runs below.
-	await page.evaluate(async () => {
-		const a = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
-		if (a.length) {
-			a[0].messages = (a[0].messages || []).concat([{ role: 'user', content: 'calm', mid: 'calm-' + Date.now(), ts: Date.now() }]);
-			a[0].updatedAt = Date.now();
-			localStorage.setItem('daimond-chats', JSON.stringify(a));
-		}
-	});
+	await bumped(page, 'calm-note');
 	await pushLanded(page);
 
 	// ── (12) Two REAL devices converge, both ways ──────────────────────

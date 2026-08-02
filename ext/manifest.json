@@ -26,18 +26,14 @@
 
 	"externally_connectable": {
 		"matches": [
-			"https://daimond.oxedyne.com/*",
-			"http://127.0.0.1:8777/*",
-			"http://localhost:8777/*"
+			"https://daimond.oxedyne.com/*"
 		]
 	},
 
 	"content_scripts": [
 		{
 			"matches": [
-				"https://daimond.oxedyne.com/*",
-				"http://127.0.0.1:8777/*",
-				"http://localhost:8777/*"
+				"https://daimond.oxedyne.com/*"
 			],
 			"js":			["announce.js"],
 			"run_at":		"document_start"

@@ -24,8 +24,12 @@
 //     node verify/check.mjs --url … --latest              # fail if not the tip
 //     node verify/check.mjs --url … --expect <bundlehash>  # fail if not this one
 
+//
+//   The machine hand is checked separately, and proves something weaker on purpose:
+//     node verify/check.mjs --hand                # is hand/ the sealed source?
+
 import { readFile } from 'node:fs/promises';
-import { join, normalize } from 'node:path';
+import { join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashTree, bundleHash, diffFiles, parseLog, verifyChain, sha256 } from './lib.mjs';
 
@@ -138,6 +142,72 @@ function report(where, manifest, actual, chain, entries) {
 	for (const p of problems.slice(0, 40)) console.log(red(`    · ${p}`));
 	console.log('');
 	return false;
+}
+
+/// Check the machine hand's source against `verify/hand.json`.
+///
+/// Deliberately a different check from the one above, because a different thing is true of it.
+/// The bundle check ends at "the bytes your browser ran are the published source"; this one ends
+/// at "the files in your clone are the files that were sealed, and here is the toolchain and the
+/// command that build them". Nobody publishes a hand binary, so nothing here compares one, and
+/// saying so is part of the check rather than a footnote to it.
+async function checkHand(dir) {
+	let sealed;
+	try { sealed = JSON.parse(await readFile(join(HERE, 'hand.json'), 'utf8')); }
+	catch (e) {
+		console.error(red(`no hand seal at ${join(HERE, 'hand.json')} — this release did not seal the hand.`));
+		return false;
+	}
+	const root = resolve(dir);
+	let actual;
+	try { actual = await hashTree(root, { exclude: new Set(), excludeDirs: ['target/'], excludeSuffixes: [] }); }
+	catch (e) {
+		console.error(red(`could not read the hand at ${root}: ${e.message}`));
+		return false;
+	}
+
+	const problems = [];
+	if (bundleHash(sealed.files) !== sealed.source) {
+		problems.push(`the seal's source hash does not match its own file list`);
+	}
+	const diff = diffFiles(sealed.files, actual);
+	for (const f of diff.changed)    problems.push(`changed: ${f}`);
+	for (const f of diff.missing)    problems.push(`missing: ${f}`);
+	for (const f of diff.unexpected) problems.push(`unexpected (not in the seal): ${f}`);
+
+	console.log(`\nDaimond machine-hand source check — ${root}`);
+	console.log(`  source      ${sealed.source}`);
+	console.log(`  files       ${Object.keys(sealed.files).length} covered`);
+	console.log(`  toolchain   ${sealed.toolchain || '(none pinned)'}`);
+	console.log(`  build       ${sealed.build}`);
+	if (problems.length === 0) {
+		console.log(green(`\n  OK — this is the sealed source of the hand.`));
+		console.log(`  Proved: the files here are the ones this release sealed, and the command above`);
+		console.log(`  is how they become ${sealed.binary}.`);
+		console.log(`  NOT proved: that any binary you were given came from them. Nobody ships one;`);
+		console.log(`  build it yourself. A Rust release build is not byte-identical across toolchain`);
+		console.log(`  versions, so there is no published binary hash to compare against.\n`);
+		return true;
+	}
+	console.log(red(`\n  FAILED — ${problems.length} problem(s):`));
+	for (const p of problems.slice(0, 40)) console.log(red(`    · ${p}`));
+	// The one honest failure, so it is not mistaken for a real one. `Cargo.toml` and `Cargo.lock`
+	// differ between the development tree and the mirror BY DESIGN -- path dependencies here, a
+	// git pin there -- so this check belongs in a clone of the public repository, which is where a
+	// reader runs it anyway.
+	if (diff.changed.includes('Cargo.toml') || diff.changed.includes('Cargo.lock')) {
+		console.log(yellow(`\n  Cargo.toml and Cargo.lock differ by design between the development tree and`));
+		console.log(yellow(`  the public mirror: path dependencies here, a git pin there. The seal covers`));
+		console.log(yellow(`  the mirror's, so check a clone of the mirror.`));
+	}
+	console.log('');
+	return false;
+}
+
+if (args.includes('--hand')) {
+	const at = opt('--hand');
+	const dir = at && !at.startsWith('--') ? at : join(HERE, '..', 'hand');
+	process.exit(await checkHand(dir) ? 0 : 1);
 }
 
 const { entries, chain } = await loadChain();

@@ -56,6 +56,7 @@
 	'panel.mail':    'Email',
 	'panel.work':    'Workspace',
 	'panel.spend':   'Spending',
+	'panel.term':    'Terminal',
 
 	// ── The chip row ───────────────────────────────────────────
 	// {name} is a panel's name, from `panel.*` above.
@@ -79,6 +80,7 @@
 	'pal.kind_dock':    'Dock',
 	'pal.kind_lang':    'Language',
 	'pal.kind_ccy':     'Currency',
+	'pal.kind_permmode': 'Permissions',
 	'pal.hint_open':    'open',
 	'pal.hint_full':    'dock full',
 	'pal.hint_current': 'current',
@@ -409,6 +411,22 @@
 	'chat.queued_pending': 'Not sent yet. Click to edit it.',
 	'chat.queue_cancel':   'Do not send this',
 	'chat.queue_returned': 'That turn did not finish, so what you queued is back in the box, unsent.',
+	// Speaking into a turn that is already running. A turn is a round of requests,
+	// and the message list is rebuilt between them, so a message typed mid-turn can
+	// go to the model AT THAT SEAM rather than after the whole turn is over. Two
+	// states, and the difference between them is what these say: waiting (typed, not
+	// yet delivered) and delivered (in the conversation, and the model has it).
+	// The heading is honest about the limit -- an answer that writes prose straight
+	// through has no seam in it, so a correction can still end up waiting until it
+	// finishes -- because a promise of "shortly" that a quiet turn cannot keep is
+	// worse than no promise.
+	'chat.send_into':         'Send into this answer',
+	'chat.interject_help':    'Waiting — goes in at the model’s next step, or when this answer finishes',
+	'chat.interject_pending': 'Not delivered yet. Click to edit it.',
+	'chat.interjected':       'You cut in here',
+	'chat.interjected_help':  'Said into the turn at this point. The model had it from here on.',
+	'chat.compacted':         'Conversation folded',
+	'chat.compacted_help':    'Daimond replaced the earlier part of this conversation with a summary so it fits the model’s context window.',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
 	// the user has walked away from: the bubbles are only drawn in the chat on
 	// screen, and money about to be spent should not depend on remembering.
@@ -699,6 +717,11 @@
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
 	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. One very large Diamond or workspace file is the usual cause — remove or shrink it and sync resumes on its own.',
+	// A session that has ended and could not be taken again. Same label as the
+	// two below for the same reason: what the user needs to know is that this
+	// device's work is not travelling, and the difference is in the hover.
+	'sync.signed_out':        'Sync paused',
+	'sync.signed_out_reason': 'This device is no longer signed in to the Daimond account service, and signing in again did not work, so its work is not reaching your other devices. It resumes on its own as soon as the service can be reached; if it does not, lock Daimond and unlock it.',
 	// A reconcile that did not finish. Both of these mean the same thing to the
 	// user — this device's work is still only here — so they share a label and
 	// differ in the reason.
@@ -1071,6 +1094,12 @@
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
 	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
+	'dws.kits':            'Toolchains',
+	'dws.kits_help':       'Which compilers and package managers a command from this Diamond may reach on your computer. Off unless you say so \u2014 nothing here is chosen by a daimon.',
+	'dws.kit_on':          'Grant the {kit} toolchain to {name}',
+	'dws.kit_off':         'Take the {kit} toolchain back from {name}',
+	'dws.kit_failed':      'That toolchain grant was not saved',
+	'dws.kit_none':        'No toolchain. A command can reach this Diamond\u2019s files and nothing else on your computer.',
 
 	// \u2500\u2500 Links between Diamonds \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 	'link.count.one':      '{n} linked Diamond',
@@ -1384,6 +1413,58 @@
 	'err.ratelimit_429': 'The provider is rate-limiting you (429). Wait a moment and retry.',
 	'err.server_5xx':   'The provider had a server error. Please try again shortly.',
 	'err.generic':      'Something went wrong. Please try again.',
+	'err.reply_cut':    'The reply ran out of room at {max} tokens, so a tool call arrived incomplete and could not run. Raise the reply length in Settings, or ask for a smaller change',
+
+	// ── How long a reply may be ────────────────────────────────
+	'settings.max_tokens':         'Longest reply',
+	'settings.max_tokens_auto':    'Automatic',
+	'settings.tokens':             'tokens',
+	'settings.max_tokens_note':    'How long a single reply may be. Too low and a large file arrives cut in half.',
+	'settings.max_tokens_ceiling': 'accepts up to',
+
+	// ── How far one turn may go ─────────────────────
+	'settings.max_rounds':         'Steps per turn',
+	'settings.max_rounds_auto':    'Default',
+	'settings.steps':              'steps',
+	'settings.max_rounds_note':    'How many times an agent may use a tool before one turn stops. It says so when it stops, and you can tell it to carry on.',
+
+	// ── The permission ladder ──────────────────────────────────
+	// What Daimond does WITHOUT ASKING. Nothing here moves the fence, the
+	// system-call filter, a Diamond's folders or the journal — say so plainly,
+	// because a person choosing bypass is entitled to know exactly what they
+	// have and have not switched off.
+	'permmode.title':        'Permission mode',
+	'permmode.lead':         'What Daimond does without asking',
+	'permmode.chip_help':    'Permission mode: what Daimond does without asking',
+	'permmode.chip_aria':    'Permission mode: {mode}. Change it.',
+	'permmode.astat':        'Permissions: {mode}',
+	'permmode.never':        'No mode changes the fence a command runs inside, the folders a Diamond can reach, or the journal that records what ran.',
+	'permmode.failed':       'That permission mode could not be set, so nothing changed.',
+
+	'permmode.ask':          'Ask every time',
+	'permmode.ask_blurb':    'Every command is put to you before it runs, and Daimond asks before it fetches any page.',
+	'permmode.guarded':      'Guarded',
+	'permmode.guarded_blurb': 'Commands run without asking. Once a turn has read a page, an email or a build log, it loses the network and Daimond asks before reaching anywhere new.',
+	'permmode.bypass':       'Bypass',
+	'permmode.bypass_blurb': 'Nothing is asked. Commands run and pages are fetched, whatever the turn has read.',
+
+	'permmode.bypass_title': 'Stop asking?',
+	'permmode.bypass_body':  'Bypass means Daimond stops asking. It will run commands on your machine without putting them to you, and it will fetch a page it chose without asking — including on a turn that has already read a web page, an email, or a build log written by somebody else.\n\nThat last one is the whole of what you are giving up. It is the moment where something you did not write could talk Daimond into sending your work somewhere.\n\nWhat bypass does NOT change: a command still runs inside the same fence, and each Diamond still reaches only its own folders; the system-call filter under it is untouched; text from outside is still marked as somebody else\u2019s words; and every command is still written into the machine hand\u2019s journal, so what happened can be checked afterwards.\n\nYou will not be asked this again.',
+	'permmode.bypass_ok':    'Use bypass',
+
+	'permmode.run_title':    'Run this command?',
+	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nYou are in the \u201cask every time\u201d permission mode, so every command is put to you first.',
+	'permmode.run_ok':       'Run it',
+
+	// ── When conversations stop being saved ────────────────────
+	// Said outright, and while the user can still act. The failure this replaces
+	// was silent: the work went on being answered and stopped being stored, and
+	// the user found out on the next reload.
+	'store.alarm':          'Your conversations are not being saved.',
+	'store.alarm_advice':   'Everything on screen is still here, but a reload would lose it. Download a copy now.',
+	'store.alarm_download': 'Download a copy',
+	'store.alarm_retry':    'Try again',
+	'store.full':           'there is no room left in this browser’s storage for this site',
 
 	// ── The delivery check ─────────────────────────────────────
 	// A page checking itself. The check NAMES are what a reader scans down, so
@@ -1478,6 +1559,44 @@
 	'graph.stat_cycles.other':  '{n} links close cycles',
 	'graph.stat_dangling.one':  '{n} link points at a Diamond that is gone',
 	'graph.stat_dangling.other': '{n} links point at Diamonds that are gone',
+
+	// ── The terminal ───────────────────────────────────────────
+	'term.label':            'Terminal',
+	'term.hint':             'Type to send keys straight to the program. Ctrl-Shift-C copies the selection, Ctrl-Shift-V pastes, Ctrl-Shift-A selects everything, and Shift with Page Up or Page Down moves through what has scrolled past.',
+	'term.screen_label':     'Terminal screen, as text',
+	'term.screen_now':       'The screen now reads:',
+	'term.nothing_selected': 'Nothing is selected.',
+	'term.copied.one':       '{n} line copied.',
+	'term.copied.other':     '{n} lines copied.',
+	'term.printed_lines.one':   '{n} line printed.',
+	'term.printed_lines.other': '{n} lines printed.',
+	'term.paste_warn':       'This paste is {n} lines. The program has not asked to be told when text is pasted, so every line after the first would run the moment it arrived.',
+	'term.paste_first':      'Paste the first line',
+	'term.paste_all':        'Paste all {n} lines',
+	'term.exited':           'The program exited with status {code}.',
+
+	// ── The Terminal panel ─────────────────────────────────────
+	// The sentences a refusal is made of live one layer down, in js/handpty.js and
+	// in the hand itself, and reach the panel verbatim. What is here is the panel's
+	// own furniture, plus the two conditions no lower layer can report: a page
+	// missing one of its own scripts, and a build whose wasm cannot say what a
+	// terminal would be allowed to touch.
+	'term.notices_label':    'Notices about this terminal',
+	'term.dismiss_notice':   'Dismiss this notice',
+	'term.gaps_count.one':   'Output is missing in {n} place.',
+	'term.gaps_count.other': 'Output is missing in {n} places.',
+	'term.start':            'Start a terminal',
+	'term.restart':          'Restart the terminal',
+	'term.stop':             'Stop the program',
+	'term.leave_hint':       'Press F6 to move the keyboard out of the terminal.',
+	'term.starting':         'Starting a terminal…',
+	'term.running':          'The terminal is running.',
+	'term.nothing_running':  'There is no program running in this terminal.',
+	'term.not_paired':       'There is no machine hand paired with this browser, so there is no machine to open a terminal on. Everything else in Daimond works without one.',
+	'term.no_composer':      'This build of Daimond cannot say what a terminal would be allowed to touch, so it will not open one. The compartment is worked out by the Rust side of the app, and this page is older than that. Update Daimond; commands and the file tools are unaffected.',
+	'term.unreadable_request': 'Daimond could not read its own answer about what this terminal would be allowed to touch, so nothing was started. Reload the app, and if it happens again the app needs updating.',
+	'term.no_relay_script':  'The terminal relay did not load in this page, so no terminal can be opened. That is a fault in the app rather than anything about your machine: reload Daimond.',
+	'term.no_renderer':      'The terminal itself did not load in this page, so there is nothing to draw one on. That is a fault in the app rather than anything about your machine: reload Daimond.',
 
 	});
 })();

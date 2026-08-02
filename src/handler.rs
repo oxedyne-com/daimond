@@ -761,6 +761,13 @@ fn event_to_ws(ev: &AgentEvent) -> (&'static str, Vec<Dat>) {
             ("tool_call", vec![dat!(name.clone()), dat!(args.clone())]),
         AgentEvent::ToolResult { name, result } =>
             ("tool_result", vec![dat!(name.clone()), dat!(result.clone())]),
+        AgentEvent::Interjected(text) => ("interjected", vec![dat!(text.clone())]),
+        // The two counts before the prose, so a client can draw the act without
+        // parsing the sentence: what went, what is left, and then what it says.
+        AgentEvent::Compacted { folded, kept, note } =>
+            ("compacted", vec![Dat::U64(*folded as u64), Dat::U64(*kept as u64),
+                dat!(note.clone())]),
+        AgentEvent::Truncated => ("truncated", vec![]),
         AgentEvent::Done      => ("done",  vec![]),
         AgentEvent::Error(msg) => ("error", vec![dat!(msg.clone())]),
     }

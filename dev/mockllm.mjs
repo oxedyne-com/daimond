@@ -101,6 +101,16 @@ const parseDirective = (text) => {
 	return { kind: verb, rest };
 };
 
+// A fresh tool-call id, unique for the life of this mock.
+//
+// It used to mint `call_1` on every turn, which meant two separate turns of one
+// conversation both carried a call with the SAME id. No real provider does that,
+// and a test asserting that a reloaded conversation is well formed cannot tell a
+// duplicate the app caused from a duplicate the fixture caused. So the fixture
+// stopped causing them. Nothing asserts on the literal value.
+let callSeq = 0;
+const nextCallId = () => `call_${++callSeq}`;
+
 // A tool call as the wire format wants it: the arguments are a JSON *string*,
 // which is the detail most hand-rolled clients get wrong.
 const toolCall = (id, name, args) => ({
@@ -158,14 +168,14 @@ const plan = (messages) => {
 		case 'tool': {
 			if (rounds > 0) return { text: 'Tool done.' };
 			const { name, args } = splitCall(d.rest);
-			return { calls: [toolCall('call_1', name, args)] };
+			return { calls: [toolCall(nextCallId(), name, args)] };
 		}
 
 		case 'tools': {
 			if (rounds > 0) return { text: 'Tools done.' };
 			const calls = d.rest.split(';;').map((part, i) => {
 				const { name, args } = splitCall(part.trim());
-				return toolCall(`call_${i + 1}`, name, args);
+				return toolCall(nextCallId(), name, args);
 			});
 			return { calls };
 		}
@@ -175,10 +185,10 @@ const plan = (messages) => {
 			// agentic turn takes, and the one the UI has to keep up with.
 			if (rounds === 0) {
 				const { name, args } = splitCall(d.rest);
-				return { calls: [toolCall('call_1', name, args)] };
+				return { calls: [toolCall(nextCallId(), name, args)] };
 			}
 			if (rounds === 1) {
-				return { calls: [toolCall('call_2', 'file_list', { path: '.' })] };
+				return { calls: [toolCall(nextCallId(), 'file_list', { path: '.' })] };
 			}
 			return { text: 'Chain done.' };
 		}
@@ -187,7 +197,7 @@ const plan = (messages) => {
 			// One tool call, then a slow stream — so a running tile has booked
 			// usage from round one (the meter) while still streaming round two.
 			// Exercises live per-tile cost on a worker that is still running.
-			if (rounds === 0) return { calls: [toolCall('call_1', 'file_list', { path: '.' })] };
+			if (rounds === 0) return { calls: [toolCall(nextCallId(), 'file_list', { path: '.' })] };
 			return { text: Array.from({ length: 60 }, (_, i) => `chunk-${i + 1}`).join(' '), slowChunks: true };
 		}
 

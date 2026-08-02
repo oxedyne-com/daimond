@@ -50,6 +50,7 @@
 	'panel.mail':    '메일',
 	'panel.work':    '작업 공간',
 	'panel.spend':   '지출',
+	'panel.term': '터미널',
 
 	// ── 칩 줄 ──────────────────────────────────────────────────
 	// {name}은 위 `panel.*`의 패널 이름이에요.
@@ -250,6 +251,13 @@
 	'chat.queue_help':     '기다리는 중 — 이 답이 끝나면 보내요',
 	'chat.queued_pending': '아직 안 보냈어요. 눌러서 고치세요.',
 	'chat.queue_cancel':   '이건 보내지 않기',
+	// 기계 번역. 이미 돌고 있는 턴에 말을 끼워 넣기. 한계도 적어 둡니다 --
+	// 도구를 쓰지 않는 답에는 끼어들 이음매가 없습니다.
+	'chat.send_into':         '이 답변에 끼워 보내기',
+	'chat.interject_help':    '기다리는 중 — 모델의 다음 단계에 들어가요. 없으면 이 답이 끝날 때',
+	'chat.interject_pending': '아직 전달되지 않았어요. 눌러서 고치세요.',
+	'chat.interjected':       '여기서 끼어들었어요',
+	'chat.interjected_help':  '이 지점에서 턴에 넣었어요. 모델은 여기부터 알고 있어요.',
 	'chat.queue_returned': '그 턴이 끝까지 가지 못해서, 줄 세워 둔 글이 보내지지 않은 채 입력칸으로 돌아왔어요.',
 	// 같은 이야기를 채팅 '타일'에도 적어요. 자리를 뜬 대화에 줄이 남아 있을 때를
 	// 위해서예요. 말풍선은 화면에 열려 있는 채팅에만 그려지는데, 곧 나갈 돈이
@@ -535,6 +543,9 @@
 	// 거절당한 꾸러미. 무엇이 너무 큰지와, 보통 무엇 때문인지를 밝혀요.
 	'sync.too_big':        '동기화 멈춤',
 	'sync.too_big_reason': '이 기기의 꾸러미가 너무 커서 보낼 수 없어요. 그래서 여기서 한 일이 더는 밖으로 나가지 않아요. 대개는 아주 큰 Diamond이나 작업 공간 파일 하나가 원인이에요 — 지우거나 줄이면 동기화는 저절로 다시 돌아가요.',
+	// 끝나 버렸고 다시 얻지도 못한 세션. 아래와 같은 이름을 씁니다.
+	'sync.signed_out':        '동기화 멈춤',
+	'sync.signed_out_reason': '이 기기가 Daimond 계정 서비스에 더는 로그인되어 있지 않고, 다시 로그인하는 것도 되지 않아서 이 기기의 작업이 다른 기기로 가지 않고 있어요. 서비스에 다시 닿으면 저절로 이어져요. 그래도 안 되면 Daimond를 잠갔다가 다시 열어 주세요.',
 	'sync.paused':         '동기화 멈춤',
 	'sync.busy_reason':    '다른 기기가 같은 계정에 동시에 저장하고 있어서 이 기기의 작업이 아직 보내지지 않았어요. 다음 변경 때 함께 나가요.',
 	'sync.merge_reason':   '다른 기기에서 온 것 가운데 일부를 여기서 합치지 못해서, 이 기기가 그 위에 덮어쓰지 않았어요. 페이지를 새로 고치면 대개 풀려요.',
@@ -725,6 +736,44 @@
 	'err.ratelimit_429': '제공자가 요청 속도를 제한하고 있어요(429). 잠시 뒤에 다시 해 보세요.',
 	'err.server_5xx':   '제공자 쪽에서 서버 오류가 났어요. 잠시 뒤에 다시 시도해 주세요.',
 	'err.generic':      '문제가 생겼어요. 다시 시도해 주세요.',
+	'err.reply_cut':    '답변이 {max} 토큰에서 자리를 다 써서, 도구 호출이 잘린 채 도착해 실행되지 못했어요. 설정에서 답변 길이를 늘리거나, 더 작은 변경을 요청해 주세요',
+
+	// ── 답변 길이 ──────────────────────────────────────────────
+	'settings.max_tokens':         '가장 긴 답변',
+	'settings.max_tokens_auto':    '자동',
+	'settings.tokens':             '토큰',
+	'settings.max_tokens_note':    '한 번의 답변이 길어질 수 있는 한도예요. 너무 낮으면 큰 파일이 반쯤 잘려서 옵니다.',
+	'settings.max_tokens_ceiling': '최대 허용',
+
+	// ── 대화가 저장되지 않을 때 ────────────────────────────────
+	'store.alarm':          '대화가 저장되지 않고 있어요.',
+	'store.alarm_advice':   '화면에 있는 것은 아직 남아 있지만, 새로 고치면 사라집니다. 지금 사본을 내려받으세요.',
+	'store.alarm_download': '사본 내려받기',
+	'store.alarm_retry':    '다시 시도',
+	'store.full':           '이 브라우저의 이 사이트 저장 공간에 남은 자리가 없어요',
+	// ── 권한 단계 ──────────────────────────────────────────────
+	'permmode.title':        '권한 모드',
+	'permmode.lead':         'Daimond가 묻지 않고 하는 일',
+	'permmode.chip_help':    '권한 모드: Daimond가 묻지 않고 하는 일',
+	'permmode.chip_aria':    '권한 모드: {mode}. 바꾸기.',
+	'permmode.astat':        '권한: {mode}',
+	'permmode.never':        '어떤 모드도 명령이 실행되는 울타리, Diamond가 닿는 폴더, 무엇이 실행됐는지 남기는 기록을 바꾸지 않습니다.',
+	'permmode.failed':       '그 권한 모드를 설정하지 못했어요. 아무것도 바뀌지 않았습니다.',
+	'permmode.ask':          '매번 묻기',
+	'permmode.ask_blurb':    '모든 명령은 실행 전에 보여 드리고, 페이지를 가져오기 전에도 물어봅니다.',
+	'permmode.guarded':      '지킴',
+	'permmode.guarded_blurb': '명령은 묻지 않고 실행됩니다. 한 턴이 웹 페이지나 메일, 빌드 로그를 읽는 순간 네트워크를 잃고, 새로운 곳에 닿기 전에 물어봅니다.',
+	'permmode.bypass':       '묻지 않음',
+	'permmode.bypass_blurb': '아무것도 묻지 않습니다. 그 턴이 무엇을 읽었든 명령은 실행되고 페이지는 가져옵니다.',
+	'permmode.bypass_title': '그만 물어볼까요?',
+	'permmode.bypass_body':  '묻지 않음은 Daimond가 더 이상 묻지 않는다는 뜻입니다. 보여 드리지 않고 이 기기에서 명령을 실행하고, 스스로 고른 페이지를 묻지 않고 가져옵니다. 이미 남이 쓴 웹 페이지나 메일, 빌드 로그를 읽은 턴에서도 마찬가지입니다.\n\n내주는 것은 바로 그 지점입니다. 당신이 쓰지 않은 무언가가 Daimond를 설득해 당신의 작업을 어딘가로 보내게 할 수 있는 순간이에요.\n\n바뀌지 않는 것: 명령은 여전히 같은 울타리 안에서 실행되고, 각 Diamond는 자기 폴더에만 닿습니다. 그 아래 시스템 호출 필터도 그대로입니다. 바깥에서 온 글은 남의 말로 계속 표시됩니다. 그리고 모든 명령은 기계 손의 기록에 남아 나중에 확인할 수 있습니다.\n\n다시 묻지 않겠습니다.',
+	'permmode.bypass_ok':    '묻지 않음 사용',
+	'permmode.run_title':    '이 명령을 실행할까요?',
+	'permmode.run_body':     'Daimond가 당신의 기기에서 명령을 실행하려고 합니다.\n\n{cmd}\n\n위치: {cwd}\n\n‘매번 묻기’ 모드라서 모든 명령을 먼저 보여 드립니다.',
+	'permmode.run_ok':       '실행',
+	'pal.kind_permmode':     '권한',
+	'chat.compacted':        '대화를 접었어요',
+	'chat.compacted_help':   '모델의 문맥 창에 맞도록 Daimond가 이 대화의 앞부분을 요약으로 바꿨습니다.',
 
 	// ── 전달 확인 ──────────────────────────────────────────────
 	// 페이지가 스스로를 확인해요. 확인 항목의 이름은 눈으로 훑는 것이라 짧게 두고,
@@ -1434,6 +1483,38 @@
 	'graph.stat_cycles.other':   '순환을 닫는 연결 {n}개',
 	'graph.stat_dangling.one':   '사라진 Diamond을 가리키는 연결 {n}개',
 	'graph.stat_dangling.other': '사라진 Diamond을 가리키는 연결 {n}개',
+
+	// ── The terminal ───────────────────────────────────────────
+	'term.label':            '터미널',
+	'term.hint':             '입력하면 키가 프로그램으로 그대로 전달됩니다. Ctrl-Shift-C는 선택 영역 복사, Ctrl-Shift-V는 붙여넣기, Ctrl-Shift-A는 전체 선택이며, Shift와 함께 Page Up 또는 Page Down을 누르면 지나간 내용을 볼 수 있습니다.',
+	'term.screen_label':     '터미널 화면의 텍스트',
+	'term.screen_now':       '화면에는 지금 이렇게 표시되어 있습니다:',
+	'term.nothing_selected': '선택된 것이 없습니다.',
+	'term.copied.one':       '{n}줄을 복사했습니다.',
+	'term.copied.other':     '{n}줄을 복사했습니다.',
+	'term.printed_lines.one':   '{n}줄이 출력되었습니다.',
+	'term.printed_lines.other': '{n}줄이 출력되었습니다.',
+	'term.paste_warn':       '이 붙여넣기는 {n}줄입니다. 프로그램이 붙여넣기 알림을 요청하지 않았으므로 첫 줄 이후의 모든 줄은 도착하는 즉시 실행됩니다.',
+	'term.paste_first':      '첫 줄만 붙여넣기',
+	'term.paste_all':        '{n}줄 모두 붙여넣기',
+	'term.exited':           '프로그램이 상태 {code}(으)로 종료되었습니다.',
+
+	'term.notices_label': '이 터미널에 대한 알림',
+	'term.dismiss_notice': '이 알림 닫기',
+	'term.gaps_count.one': '{n}곳에서 출력이 누락되었습니다.',
+	'term.gaps_count.other': '{n}곳에서 출력이 누락되었습니다.',
+	'term.start': '터미널 시작',
+	'term.restart': '터미널 다시 시작',
+	'term.stop': '프로그램 중지',
+	'term.leave_hint': 'F6 키를 누르면 키보드가 터미널 밖으로 나갑니다.',
+	'term.starting': '터미널을 시작하는 중…',
+	'term.running': '터미널이 실행 중입니다.',
+	'term.nothing_running': '이 터미널에서 실행 중인 프로그램이 없습니다.',
+	'term.not_paired': '이 브라우저에 연결된 머신 핸드가 없으므로 터미널을 열 기계가 없습니다. Daimond의 나머지 기능은 그것 없이도 작동합니다.',
+	'term.no_composer': '이 Daimond 빌드는 터미널이 무엇에 접근할 수 있는지 말할 수 없으므로 터미널을 열지 않습니다. 그 구획은 앱의 Rust 쪽에서 계산하는데, 이 페이지는 그보다 오래되었습니다. Daimond를 업데이트하세요. 명령과 파일 도구는 영향을 받지 않습니다.',
+	'term.unreadable_request': '이 터미널이 무엇에 접근할 수 있는지에 대한 자체 답변을 Daimond가 읽지 못해 아무것도 시작되지 않았습니다. 앱을 새로 고치고, 다시 발생하면 앱을 업데이트해야 합니다.',
+	'term.no_relay_script': '터미널 중계가 이 페이지에 로드되지 않아 터미널을 열 수 없습니다. 사용자의 기계가 아니라 앱의 결함입니다. Daimond를 새로 고치세요.',
+	'term.no_renderer': '터미널 자체가 이 페이지에 로드되지 않아 그릴 대상이 없습니다. 사용자의 기계가 아니라 앱의 결함입니다. Daimond를 새로 고치세요.',
 
 	});
 })();

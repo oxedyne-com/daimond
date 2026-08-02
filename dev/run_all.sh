@@ -57,9 +57,19 @@ NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
 # forward that has gone quiet (a sleeping laptop at the other end) fails these
 # with "Missing X server", and a live one throws windows in their face. Xvfb
 # gives them a display of their own.
-HEADED="verify_ext verify_grant"
+# verify_handreal is here too, and is the only one that also builds a Rust binary
+# and runs a real `cargo test` through the browser -- see its own header.
+HEADED="verify_ext verify_grant verify_hand verify_ext_i18n verify_handrun verify_handreal"
 # verify_style walks 3 themes x 3 device sizes and is simply slower than the rest.
-slow_for() { [ "$1" = "verify_style" ] && echo 600 || echo 180; }
+# verify_handreal builds the hand from source before it can drive it, and a cold
+# release build of the hand is minutes rather than seconds.
+slow_for() {
+	case "$1" in
+		verify_style)     echo 600 ;;
+		verify_handreal)  echo 900 ;;
+		*)                echo 180 ;;
+	esac
+}
 
 pass=0; fail=0; skip=0; failed=""; skipped=""
 : > "$LOG"

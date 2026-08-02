@@ -191,8 +191,10 @@ async function grants() {
 	const all	= await chrome.permissions.getAll();
 	const own	= ownHosts();
 	const list	= (all.origins || []).filter((o) => !own.has(hostOfPattern(o)));
-	if (await HAND.granted()) list.push(HAND.PATTERN);
-	return list;
+	// One line per origin that holds it, not one line for the browser. A grant
+	// the user cannot see the extent of is a grant they cannot withdraw the
+	// right part of.
+	return list.concat(await HAND.patterns());
 }
 
 /// Has the user approved this url's origin?
@@ -973,20 +975,24 @@ const HANDLERS = {
 	/// What the hand is, and whether it may be used. It does not claim to know
 	/// whether the host is installed: finding that out means launching it, and
 	/// launching it is the capability itself.
-	async hand_status() {
-		return await HAND.status();
+	///
+	/// All three of these are about the ORIGIN that asked, which is why each of
+	/// them is handed the sender. A page asking whether it may run commands is
+	/// not asking whether some other page may.
+	async hand_status(msg, sender) {
+		return await HAND.status(sender);
 	},
 
 	/// Ask for the grant now, rather than have a window appear the instant the
 	/// page opens its port. Same window, same three answers.
-	async hand_grant() {
-		return await HAND.request();
+	async hand_grant(msg, sender) {
+		return await HAND.request(sender);
 	},
 
 	/// Give it back. Everything running stops, because a permission that let the
 	/// current build finish would be a promise with an asterisk on it.
-	async hand_revoke() {
-		await HAND.revoke();
+	async hand_revoke(msg, sender) {
+		await HAND.revoke(HAND.allowedOrigin(sender));
 		return { ok: true, granted: false };
 	},
 
@@ -1003,9 +1009,22 @@ const HANDLERS = {
 
 /// The page speaks to us here. externally_connectable already restricts who may
 /// call; this checks it again, because the boundary is the whole product.
+///
+/// It says "checks it again" and now it does. Until 2026-08-02 the sentence was
+/// there and the check was not: `sender` was passed to the handlers and never
+/// read, so the second look at the boundary was a comment. Chrome's own list is
+/// what stops a stranger today, and a re-check that is only a comment is one
+/// that fails open the day that list is edited -- which is exactly what the dev
+/// origins were.
 chrome.runtime.onMessageExternal.addListener((msg, sender, respond) => {
 	(async () => {
 		try {
+			if (!HAND.allowedOrigin(sender)) {
+				return respond({
+					ok:	false,
+					error:	'Daimond Hands answers Daimond\'s own pages and no others. This message came from somewhere else.',
+				});
+			}
 			if (!msg || typeof msg.cmd !== 'string') {
 				return respond({ ok: false, error: 'Every message needs a cmd.' });
 			}
@@ -1061,7 +1080,8 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 				// The machine hand is our grant, not Chrome's, so it comes back
 				// a different way -- but it comes back from the same button, in
 				// the same list, which is the only part the user should notice.
-				if (msg.pattern === HAND.PATTERN) await HAND.revoke();
+				// It comes back for ONE origin, because that is how it was given.
+				if (HAND.ours(msg.pattern)) await HAND.revoke(HAND.originOfPattern(msg.pattern));
 				else await chrome.permissions.remove({ origins: [msg.pattern] });
 				return respond({ ok: true, granted: await grants() });
 			}

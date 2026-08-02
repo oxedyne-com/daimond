@@ -147,6 +147,34 @@ pub fn set_account_ns(ns: String) {
     opfs::set_account_ns(ns);
 }
 
+/// Which permission mode Daimond is in: `ask`, `guarded` or `bypass`.
+///
+/// See [`crate::tools::Mode`]. Read rather than remembered by the page, so a
+/// control that failed to set one draws what is actually in force.
+#[wasm_bindgen]
+pub fn permission_mode() -> String {
+    crate::tools::mode().name().to_string()
+}
+
+/// Move to a permission mode, returning the one it replaced.
+///
+/// This is the ONLY way the mode moves. No tool reaches it, and nothing derived
+/// from anything a model said reaches it: it is the user's own setting arriving
+/// from their own control. A name this build does not know is REFUSED rather
+/// than rounded to the nearest rung, and the mode is left exactly where it was
+/// -- a page that cannot say what it wants keeps the guarded one it had.
+///
+/// # Arguments
+/// * `name` - The mode's name, as `Mode::name` spells it.
+#[wasm_bindgen]
+pub fn set_permission_mode(name: String) -> Result<String, JsValue> {
+    let m = match crate::tools::Mode::parse(&name) {
+        Ok(m)  => m,
+        Err(e) => return Err(crate::wasm::to_js_err(e)),
+    };
+    Ok(crate::tools::set_mode(m).name().to_string())
+}
+
 /// Probe the LLM transport: issue a real cross-origin `fetch` to
 /// `base_url` with `api_key` and `model`, returning the HTTP status.
 ///

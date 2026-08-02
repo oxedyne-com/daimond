@@ -31,6 +31,27 @@
 	const kind	= q.get('kind') || 'site';
 	const host	= q.get('host') || '';
 	const pat	= q.get('pattern') || '';
+	const origin	= q.get('origin') || '';
+	/// What the hand said it can enforce on this machine, space separated, from
+	/// its `hello`. Empty means it never said, which is a third answer and not
+	/// the same as saying no.
+	const caps	= (q.get('caps') || '').split(/\s+/).filter(Boolean);
+
+	/// Is a compartment actually in force on this machine?
+	///
+	/// `fence.rs` answers `fence:none` rather than an empty list when there is
+	/// nothing, precisely so silence and "no fence" are told apart, and
+	/// `fence:waived` is what a user who turned it off gets. Anything else
+	/// beginning `fence:` is a mechanism that is really there.
+	function fenced() {
+		if (caps.indexOf('fence:none') >= 0 || caps.indexOf('fence:waived') >= 0) return false;
+		return caps.some((c) => c.indexOf('fence:') === 0);
+	}
+
+	/// Is every run written down where the user can read it?
+	function journalled() {
+		return caps.some((c) => c === 'journal' || c.indexOf('journal:') === 0);
+	}
 
 	/// Writes the question. Called once the table is in, so the window is never
 	/// read half in one language and half in another.
@@ -42,12 +63,32 @@
 			$('fine').textContent	= t('grant_mirror_fine');
 			$('allow').textContent	= t('grant_mirror_allow');
 		} else if (kind === 'hand') {
-			// No host and no scope line: this question is not about a site. It
-			// is about the machine, and naming a site here would suggest a
-			// boundary the answer does not have.
+			// The question is about the machine, not about a site -- but it is
+			// asked BY a page, and only that page is answered by it, so the page
+			// is named. A user with the app open in two places should be able to
+			// see which one is asking.
 			$('head').textContent	= t('grant_hand_head');
-			$('body').textContent	= t('grant_hand_body');
-			$('fine').textContent	= t('grant_hand_fine');
+			if (origin) {
+				$('host').hidden	= false;
+				$('host').textContent	= origin;
+			}
+			// What this machine can actually enforce, said in the window that
+			// makes the promise. `hand/README.md`'s first release gate is that
+			// the wording is chosen from `caps` rather than hard-coded: a
+			// sentence about folders, on a machine with no fence, is a promise
+			// the code does not keep, and a promise about safety that is not
+			// kept is worse than none. Three answers, because there are three:
+			// it fences, it does not, or it did not say.
+			$('body').textContent	= caps.length === 0	? t('grant_hand_body_unknown')
+						: fenced()		? t('grant_hand_body')
+						: t('grant_hand_body_nofence');
+			$('scope').hidden	= false;
+			$('scope').textContent	= caps.length
+				? t('grant_hand_caps', caps.join(', '))
+				: t('grant_hand_caps_unknown');
+			// The journal is the other half of the same promise, and it is not
+			// this machine's to make either until the hand says it keeps one.
+			$('fine').textContent	= journalled() ? t('grant_hand_fine') : t('grant_hand_fine_nojournal');
 			$('allow').textContent	= t('grant_hand_allow');
 		} else {
 			$('head').textContent	= t('grant_site_head');

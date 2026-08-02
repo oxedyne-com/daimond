@@ -1,0 +1,9 @@
+{
+	"name": "com.oxedyne.daimond.hand",
+	"description": "Daimond's machine hand: runs commands for the Daimond Hands extension.",
+	"path": "/REPLACE/WITH/AN/ABSOLUTE/PATH/TO/daimond-hand",
+	"type": "stdio",
+	"allowed_origins": [
+		"chrome-extension://mpliijponglmmffjnonahhignkpkhmij/"
+	]
+}

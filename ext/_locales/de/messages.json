@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "Befehle auf diesem Computer ausführen"
 	},
+	"popup_machine_hand_origin": {
+		"message": "Befehle auf diesem Computer ausführen, für $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ und seine Subdomains",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond würde Programme auf diesem Computer ausführen — Builds, Tests, Skripte — als du, mit deinen Dateien. Jedes wird direkt gestartet, nicht über eine Shell, und nur in den Ordnern, die der Arbeitsbereich ohnehin erlaubt."
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond würde Programme auf diesem Computer ausführen — Builds, Tests, Skripte — als du, mit deinen Dateien. Jedes wird direkt gestartet, nicht über eine Shell. Dieser Computer kann nicht einschränken, welche Dateien sie anfassen: ein Befehl, den du hier erlaubst, erreicht alles, was du erreichst."
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond würde Programme auf diesem Computer ausführen — Builds, Tests, Skripte — als du, mit deinen Dateien. Jedes wird direkt gestartet, nicht über eine Shell. Die Hand hier hat nicht gesagt, worauf sie sie einschränken kann; geh davon aus, dass ein Befehl alles erreicht, was du erreichst."
+	},
 	"grant_hand_fine": {
 		"message": "Das ist das Stärkste, was du Daimond erlauben kannst. Nichts läuft, bevor du es hier erlaubst, jeder Lauf wird in ein Journal geschrieben, das du lesen kannst, und du kannst das jederzeit über das Symbol von Daimond Hands zurücknehmen. Ein Widerruf beendet, was in dem Moment gerade läuft."
+	},
+	"grant_hand_caps": {
+		"message": "Was dieser Computer durchsetzen kann: $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "Die Hand auf diesem Computer hat nicht gesagt, was sie durchsetzen kann."
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "Das ist das Stärkste, was du Daimond erlauben kannst. Nichts läuft, bevor du es hier erlaubst, nur die oben genannte Seite darf fragen, und du kannst das jederzeit über das Symbol von Daimond Hands zurücknehmen. Ein Widerruf beendet, was in dem Moment gerade läuft."
 	},
 	"grant_hand_allow": {
 		"message": "Befehle auf diesem Computer erlauben"

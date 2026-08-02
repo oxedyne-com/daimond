@@ -1,0 +1,81 @@
+[package]
+name = "daimond_hand"
+version = "0.1.0"
+authors = ["Jason Hoogland <jason@oxedyne.io>"]
+edition = "2021"
+# The journal takes an exclusive lock with `File::try_lock`, which is safe and
+# needs no dependency -- but it stabilised in 1.89. Recorded here so a build on
+# an older toolchain fails saying why, rather than on a missing method.
+rust-version = "1.89"
+license = "LicenseRef-Proprietary"
+description = "Daimond's machine hand — the program outside the page that runs commands on your behalf, fenced, journalled and revocable."
+repository = "https://github.com/oxedyne-com/daimond"
+
+# Isolate this crate from any parent package/workspace, exactly as the gateway
+# does: the repository root is a plain `[package]` (the wasm crate), so an empty
+# `[workspace]` table here makes the hand its own workspace root and keeps the
+# three builds independent.
+[workspace]
+
+[[bin]]
+# The native messaging host. Chrome launches it, speaks length-prefixed JSON
+# over stdin/stdout, and kills it when the extension goes away.
+name = "daimond-hand"
+path = "src/main.rs"
+
+[lib]
+name = "daimond_hand"
+path = "src/lib.rs"
+
+[dependencies]
+oxedyne_fe2o3_core	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34c8c309efe3a841e71cf48507119e7ff8290483" }
+oxedyne_fe2o3_jdat	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34c8c309efe3a841e71cf48507119e7ff8290483" }
+# The journal's chain. Each entry's hash covers the entry before it, so rewriting
+# any past line breaks every line after it.
+oxedyne_fe2o3_hash	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34c8c309efe3a841e71cf48507119e7ff8290483" }
+# The pty half of the wire carries raw bytes as base64, and `base64::decode` is
+# strict where it matters: non-alphabet characters, misplaced padding, a length
+# that is not a whole quantum and non-zero trailing bits are all refused rather
+# than guessed at. Already in the tree, since fe2o3_jdat depends on it.
+oxedyne_fe2o3_text	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34c8c309efe3a841e71cf48507119e7ff8290483" }
+
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time", "net"] }
+
+# The kernel fence. Landlock is a Linux LSM with no safe path through `std`, and
+# fe2o3 has no process-sandbox abstraction to reach for -- so the choice was this
+# crate or raw syscalls, and raw syscalls mean `unsafe`, which this project does
+# not permit. The crate is a safe wrapper, so the rule holds where it matters:
+# there is no `unsafe` in Daimond's own code.
+#
+# Four crates reach the binary (landlock, enumflags2, libc, thiserror); the other
+# seven in its tree are proc-macros used at build time only, and five of the
+# eleven were already here through tokio.
+#
+# TARGET-GATED, and it must stay that way. Landlock is Linux's, and an
+# unconditional dependency would fail to build on exactly the two platforms the
+# `Fence::MacOs` and `Fence::Windows` arms exist to be ready for.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+
+# The syscall filter, which closes the two escapes Landlock provably cannot:
+# metadata syscalls have no Landlock access right, and a pathname unix socket is
+# ungoverned below ABI 9 -- which made the user session bus a way to run a command
+# OUTSIDE the fence entirely. Pure-Rust BPF assembly; its only dependency is `libc`,
+# which landlock above has already brought in, so this is the cheapest of the two
+# candidates rather than merely the smaller. Two `unsafe` blocks live inside the
+# crate, at the prctl and syscall; Daimond's own code keeps none.
+seccompiler = "0.5.0"
+
+# The terminal. A controlling terminal needs setsid + TIOCSCTTY and a resize needs
+# TIOCSWINSZ; `nix` 0.31 wraps none of the three, offering only ioctl macros that
+# generate `unsafe fn`, so the choice was this crate or breaking the no-unsafe rule.
+# Four packages reach the binary (rustix, linux-raw-sys, bitflags, and socket2 via
+# tokio's `net`, which AsyncFd needs).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs", "process", "pty", "termios"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

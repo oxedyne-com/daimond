@@ -50,6 +50,7 @@
 <link rel="stylesheet" href="css/spend.css">
 <link rel="stylesheet" href="css/passkey.css">
 <link rel="stylesheet" href="css/workspace.css">
+<link rel="stylesheet" href="css/terminal.css">
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
@@ -122,6 +123,11 @@
 
 	<!-- Appearance and layout: theme, reading size, dock tiling. -->
 	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout" data-i18n-aria-label="topbar.appearance"></div>
+	<!-- The permission ladder. A `.pop`, like the appearance menu and the panel
+	     gallery, so Escape and a click outside dismiss it exactly as they do —
+	     and a radio group inside, so the arrow keys work without a line of code. -->
+	<div class="pop mode-pop" id="hand-mode-pop" hidden role="dialog"
+		aria-label="Permission mode" data-i18n-aria-label="permmode.title"></div>
 
 	<!-- The keyboard's way in. Complete at any fleet size, which is what lets
 	     the visible surfaces be selective. -->
@@ -204,6 +210,7 @@
 					<button class="astat-row astat-btn" id="astat-account"></button>
 					<button class="astat-row astat-btn" id="astat-pro"></button>
 					<button class="astat-row astat-btn" id="astat-tools"></button>
+					<button class="astat-row astat-btn" id="astat-hand"></button>
 					<button class="astat-row astat-btn" id="astat-release" title="Version history" data-i18n-title="admin.version_history"></button>
 					<div class="astat-row" id="astat-store"></div>
 					<!-- The real folder, when the browser can open one. Its size is not a thing the
@@ -237,6 +244,7 @@
 								<label class="cfg-fieldlabel" for="cfg-provider" data-i18n="models.provider">Provider</label>
 								<select id="cfg-provider" class="settings-select">
 									<option value="" data-i18n="models.choose_provider">Choose a provider…</option>
+									<option value="anthropic">Anthropic</option>
 									<option value="fireworks">Fireworks AI</option>
 									<option value="openrouter">OpenRouter</option>
 									<option value="together">Together AI</option>
@@ -318,6 +326,15 @@
 							<button class="chip-btn" id="sel-none" data-i18n="chat.deselect_all">Deselect all</button>
 							<button class="chip-btn accent" id="sel-fold" data-i18n="chat.fold_selected">Fold selected</button>
 						</span>
+						<!-- Which permission mode the machine hand is in, where the work is
+						     actually watched. A mode you have to remember is one you will be
+						     wrong about, and being wrong about this one matters — so it is a
+						     word on screen beside the model, not a setting you go and look
+						     up. The word IS the state; the accent is only so the eye lands. -->
+						<button class="chip-btn mode-chip" id="hand-mode-chip"
+							aria-haspopup="dialog" aria-expanded="false" aria-controls="hand-mode-pop"
+							title="Permission mode: what Daimond does without asking"
+							data-i18n-title="permmode.chip_help"><span class="mode-chip-dot" aria-hidden="true"></span><span class="mode-chip-txt" id="hand-mode-chip-txt">Guarded</span></button>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 					</div>
@@ -580,6 +597,56 @@
 			</div>
 		</aside>
 
+		<!-- Terminal: a real terminal on the user's machine, reached through the
+		     machine hand. Everything inside #termp-host is built by js/terminal.js
+		     on the first open, never at load: a canvas, its screen model and its
+		     screen-reader mirror are not worth building for a panel nobody has
+		     asked for.
+
+		     The class is `termpanel` and not `term` on purpose. `.term` is the
+		     class terminal.js puts on the thing it builds, and a panel wearing it
+		     would inherit the terminal's own background, border and 100% height. -->
+		<aside class="panel termpanel" id="panel-term" data-panel="term" data-zone="dock" data-label="Terminal" data-i18n-label="panel.term">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.term">Terminal</span>
+				<!-- What the program calls itself (OSC 0 and 2). aria-hidden, because
+				     the same words reach a screen reader through the terminal's own
+				     live region: a title that changes on every prompt would otherwise
+				     interrupt the output being read out. -->
+				<span class="termp-title" id="termp-title" aria-hidden="true"></span>
+				<!-- A bell rung while the eye is elsewhere. The terminal flashes its
+				     own edge; this is the same event where the panel can be seen. -->
+				<span class="termp-bell" id="termp-bell" aria-hidden="true"></span>
+				<span class="termp-actions">
+					<button class="addbtn" data-act="term-start" title="Start a terminal" aria-label="Start a terminal" data-i18n-title="term.start" data-i18n-aria-label="term.start">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
+					</button>
+					<button class="addbtn" data-act="term-stop" title="Stop the program" aria-label="Stop the program" data-i18n-title="term.stop" data-i18n-aria-label="term.stop">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="term" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="termp-card">
+				<!-- Where the terminal is, in a sentence: starting, running, refused,
+				     finished. A refusal from the hand or the relay is shown VERBATIM
+				     — those sentences are written to be acted on, and a paraphrase
+				     loses the only instruction the reader gets. -->
+				<p class="termp-state" id="termp-state" role="status"></p>
+				<!-- Missing output, said BESIDE the stream and never written into it:
+				     bytes written into a terminal are drawn, so a marker in the stream
+				     would be damage on top of the loss. See handpty.js, "A hole is
+				     shown, not stitched". -->
+				<div class="termp-host" id="termp-host">
+					<div class="termp-gaps" id="termp-gaps" role="log" aria-live="polite" aria-label="Notices about this terminal" data-i18n-aria-label="term.notices_label"></div>
+				</div>
+				<!-- The way back out. A terminal takes nearly every key, so the one
+				     that leaves it has to be said in writing rather than guessed at. -->
+				<p class="termp-foot" id="termp-foot" data-i18n="term.leave_hint">Press F6 to move the keyboard out of the terminal.</p>
+			</div>
+		</aside>
+
 		<!-- Spending: where inference (your key) and credits (gateway services) go -->
 		<aside class="panel spend" id="panel-spend" data-panel="spend" data-zone="dock" data-label="Spending" data-i18n-label="panel.spend">
 			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.spend">Spending</span>
@@ -723,6 +790,8 @@
 <script src="js/autoreload.js"></script>
 <script src="js/web.js"></script>
 <script src="js/hand.js"></script>
+<script src="js/handpty.js"></script>
+<script src="js/terminal.js"></script>
 <script src="js/spend.js"></script>
 <script src="js/updater.js"></script>
 <script src="js/workspace.js"></script>
@@ -731,6 +800,9 @@
 <!-- The phone shell (drawer + sheet). Classic, before the module, so
      window.DaimondSheet/DaimondShell exist when the app wires into them. -->
 <script src="js/mobile.js"></script>
+<!-- The permission ladder's surface. Classic, before the module, so
+     window.DaimondHandMode exists when daimond.js hands it the wasm setter. -->
+<script src="js/handmode.js"></script>
 <script type="module" src="js/daimond.js"></script>
 </body>
 </html>

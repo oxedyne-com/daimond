@@ -16,7 +16,7 @@
 use crate::agent::Agent;
 use crate::llm::{LlmClient, parse_json_string_array};
 use crate::prompts::Role;
-use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
+use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
 use crate::workspace::Workspace;
@@ -162,6 +162,14 @@ impl DaimondApp {
     )
         -> Result<(), JsValue>
     {
+        // What this turn can reach, refreshed now rather than at construction: the fence
+        // depends on the Diamond's bounds and on whether the turn is tainted, and asking the
+        // hand needs an await the constructor does not have. Empty when no hand is attached,
+        // and then nothing is added to the prompt at all.
+        let brief = crate::prompts::machine_briefing(
+            &self.registry.ctx.no_write, self.registry.ctx.is_tainted()).await;
+        self.agent.set_briefing(&brief);
+
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
             // A callback that throws must not abort the turn; ignore the
@@ -181,6 +189,65 @@ impl DaimondApp {
     /// to call when idle: with no request in flight it is a no-op.
     pub fn abort(&self) {
         self.agent.llm.abort();
+    }
+
+    // ── Speaking into a turn that is already running ─────────────────────
+    //
+    // The four calls the browser needs to put a mid-turn correction where a model
+    // can act on it, and to get it back if it never got there.  All take `&self`,
+    // like [`DaimondApp::abort`] and for the same reason: wasm-bindgen guards each
+    // exported call with a borrow of the whole object, and an exclusive one could
+    // not coexist with the turn already running.
+    //
+    // Nothing here reaches the provider.  The queue is read at the seam between
+    // one round and the next (see [`crate::agent::Interjections`]), so a turn
+    // spending its whole length writing prose has nowhere to put one, and
+    // [`DaimondApp::take_interjections`] is how the browser gets it back rather
+    // than losing it.
+
+    /// Say something into the turn this app is running.
+    ///
+    /// Returns how many are now waiting, so the caller can draw them without
+    /// reaching into the queue.  Blank input is ignored rather than queued.
+    ///
+    /// # Arguments
+    /// * `text` - What the user said while the turn was in flight.
+    pub fn interject(&self, text: String) -> usize {
+        self.agent.interject(&text)
+    }
+
+    /// Take back everything that never made it in, leaving the queue empty.
+    ///
+    /// Called by the browser when the turn ends.  A turn with no tool call in it
+    /// has no seam, so what the user typed can still be waiting when it finishes;
+    /// handing it back here is what lets the browser fall back to sending it as
+    /// its own turn -- or returning it to the composer, if the turn failed or was
+    /// stopped.  Silently dropping it would be the one outcome a correction must
+    /// never have.
+    pub fn take_interjections(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        let mut q = self.agent.interject.borrow_mut();
+        for said in std::mem::take(&mut *q) {
+            out.push(&JsValue::from_str(&said));
+        }
+        out
+    }
+
+    /// Take one waiting message back out, by position, returning what it said.
+    ///
+    /// Backs the × and the click-to-edit on a waiting bubble: a message not yet
+    /// delivered must be as easy to withdraw as it was to type.  A position past
+    /// the end yields `None` rather than an error -- the queue drains on its own
+    /// timing, so the row a click was aimed at may already have gone in.
+    ///
+    /// # Arguments
+    /// * `index` - Position in the queue, oldest first.
+    pub fn drop_interjection(&self, index: usize) -> Option<String> {
+        let mut q = self.agent.interject.borrow_mut();
+        if index >= q.len() {
+            return None;
+        }
+        Some(q.remove(index))
     }
 
     /// Whether this app's turn has taken in content from outside the user — a fetched page, a
@@ -210,15 +277,39 @@ impl DaimondApp {
     /// leak that makes a claim about a daimon's reach worthless unless its workers are held to it
     /// too.
     ///
-    /// `attached` and `read_only` are JSON arrays of workspace-relative paths.  Malformed input
-    /// yields an empty list rather than an error, and an empty list still bounds the agent to
-    /// `own_dir`: a scope that failed open would be the one bug in here that matters.
+    /// `attached`, `read_only` and `toolkits` are JSON arrays of strings.  Malformed input yields an
+    /// empty list rather than an error, and an empty list still bounds the agent to `own_dir`: a
+    /// scope that failed open would be the one bug in here that matters.  An `own_dir` that names
+    /// nothing bounds it to NOTHING -- see [`crate::tools::diamond_bounds`], where the empty prefix
+    /// is dealt with, because the empty prefix means every path rather than none.
+    ///
+    /// **This scopes the whole turn, not only its files.**  The one bound list reaches both doors:
+    /// `may_read` / `may_write` for the file tools, and [`crate::tools::fence_spec`] for the fence a
+    /// command runs inside.  So calling this is what makes a command reach exactly the files this
+    /// agent's `file_read` would have reached, and not calling it is what left a command fenced to
+    /// the whole granted folder (`hand/REVIEW.md` §1.9).
+    ///
+    /// `path_prefix` is deliberately NOT set here.  A scoped worker's model writes whole
+    /// workspace-relative paths -- `diamonds/<id>/notes.md`, not `notes.md` -- and a prefix would
+    /// apply itself a second time on top of them.  What a command with no `cwd` defaults to comes
+    /// from [`crate::tools::ToolContext::default_cwd`] instead, which reads the allow-list.
+    ///
+    /// The toolkits are the ones the USER granted this Diamond, and they arrive as recorded names
+    /// for the same reason: a toolchain is a grant, and a grant is never inferred from what the
+    /// model asked to run.  A name this build does not know is dropped.
     ///
     /// # Arguments
     /// * `own_dir` - The Diamond's own directory, always in scope and always writable.
     /// * `attached` - JSON array of paths in this Diamond's workspace.
     /// * `read_only` - JSON array of those that may be read but not written.
-    pub fn set_diamond_scope(&mut self, own_dir: String, attached: String, read_only: String) {
+    /// * `toolkits` - JSON array of granted toolkit names (`rust`, `node`, `python`, `go`).
+    pub fn set_diamond_scope(
+        &mut self,
+        own_dir:   String,
+        attached:  String,
+        read_only: String,
+        toolkits:  String,
+    ) {
         let paths = |src: &str| -> Vec<String> {
             let mut out = Vec::new();
             // A small reader rather than a JSON dependency: the input is an array of plain strings
@@ -245,8 +336,62 @@ impl DaimondApp {
             }
             out
         };
-        self.registry.ctx.no_write = crate::tools::diamond_bounds(
+        let mut bounds = crate::tools::diamond_bounds(
             &own_dir, &paths(&attached), &paths(&read_only));
+        // Appended, never merged in earlier: a toolkit widens what a COMMAND may touch and nothing
+        // else, and composing it here rather than inside `diamond_bounds` keeps the scope and the
+        // grant visible as two separate decisions in the one expression.
+        bounds.extend(crate::tools::toolkit_bounds(&paths(&toolkits)));
+        self.registry.ctx.no_write = bounds;
+    }
+
+    /// What this agent is actually confined to, as the engine holds it.
+    ///
+    /// Exists so that [`DaimondApp::set_diamond_scope`] can be checked rather than assumed.  A
+    /// scope that was asked for and did not take leaves an agent with the reach of an ordinary
+    /// workspace turn -- fenced to the whole granted folder rather than to one Diamond -- and a
+    /// caller that read success from the absence of an exception would never find out.  Failing
+    /// open is the one way this can go wrong that matters, so the browser sets the scope, reads it
+    /// back here, and refuses to run a turn on a disagreement.
+    ///
+    /// Returns a compact JSON object:
+    ///
+    /// ```text
+    /// {"allow":["diamonds/d1","notes"],"no_write":[".daimond/"],"toolkits":["rust"],"nowhere":false}
+    /// ```
+    ///
+    /// `allow` is the allow-list as [`crate::tools::Bound::OnlyUnder`] holds it, normalised -- so a
+    /// path the caller spelled `./notes/` comes back as `notes`, which is what the comparison must
+    /// be made against.  `nowhere` is the scope that named no usable place at all: it is not an
+    /// error, it is a turn that may touch nothing, and it has to be tellable apart from an unscoped
+    /// turn, whose `allow` is also empty.
+    pub fn diamond_scope(&self) -> String {
+        let quoted = |v: Vec<String>| -> String {
+            let items: Vec<String> = v.iter()
+                .map(|s| fmt!("\"{}\"", crate::llm::json_escape(s)))
+                .collect();
+            fmt!("[{}]", items.join(","))
+        };
+        let bounds = &self.registry.ctx.no_write;
+        let allow: Vec<String> = bounds.iter()
+            .filter_map(|b| match b {
+                crate::tools::Bound::OnlyUnder(p) => Some(crate::tools::normalise(p)),
+                _ => None,
+            })
+            .collect();
+        let no_write: Vec<String> = bounds.iter()
+            .filter_map(|b| match b {
+                crate::tools::Bound::NoWrite(p) => Some(crate::tools::normalise(p)),
+                _ => None,
+            })
+            .collect();
+        fmt!(
+            "{{\"allow\":{},\"no_write\":{},\"toolkits\":{},\"nowhere\":{}}}",
+            quoted(allow),
+            quoted(no_write),
+            crate::tools::toolkit_names_json(bounds),
+            bounds.iter().any(|b| matches!(b, crate::tools::Bound::Nowhere)),
+        )
     }
 
     /// Set the user's standing instructions — the contents of their `DAIMOND.md`.
@@ -378,6 +523,153 @@ impl DaimondApp {
         session.cost_usd           = cost_usd.unwrap_or(0.0);
     }
 
+    // ── The conversation the MODEL holds ─────────────────────────────────
+    //
+    // [`DaimondApp::restore`] above rebuilds a session from the transcript on
+    // SCREEN, which is a different thing: it carries prose and nothing else, so a
+    // reloaded chat came back with the model's own tool calls amputated.  It could
+    // not carry them, because the browser never had the provider's call ids -- it
+    // mints a local `t1`, `t2` for its own rendering -- and an assistant turn whose
+    // `tool_calls` cannot be paired with a reply is a request every provider
+    // rejects outright.
+    //
+    // So the ids never leave Rust.  The pair below exports the session's own
+    // message list, ids and all, and takes it back verbatim.  Two consequences fall
+    // out of that and both are the point: a reload keeps the record of what was
+    // read, written and run, and a conversation FOLDED by [`crate::compact`] stays
+    // folded, because what is exported is the folded list rather than the untouched
+    // transcript the screen still shows.
+
+    /// The conversation exactly as this session holds it, for the browser to store
+    /// and hand back after a reload.
+    ///
+    /// A JS array of plain objects mirroring [`ChatMessage::to_datmap`]:
+    /// `{ role, content }`, with `tool_calls: [{ id, name, arguments }]` on an
+    /// assistant turn that asked for tools and `tool_call_id` on a tool reply.
+    /// Objects rather than a JSON string, so the browser can put the array straight
+    /// into IndexedDB, which stores structured values and needs no parse.
+    ///
+    /// Read AFTER a turn, never during one: it borrows the session that
+    /// [`DaimondApp::run_turn`] holds mutably, exactly as
+    /// [`DaimondApp::cached_tokens`] does.
+    pub fn export_session(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for msg in self.session.borrow().messages.iter() {
+            out.push(&message_to_js(msg));
+        }
+        out
+    }
+
+    /// Take a conversation exported by [`DaimondApp::export_session`] back, ids and
+    /// all, replacing whatever this session held.
+    ///
+    /// Every role is carried, including `tool` and the `system` note a turn stopped
+    /// at the round limit leaves behind — unlike [`DaimondApp::restore`], which
+    /// drops both because a screen transcript cannot express them.
+    ///
+    /// What arrives is made WHOLE before it is accepted: see [`pair_up`].  The store
+    /// this comes from is merged across tabs and devices and restored from backups,
+    /// so a list that has lost a tool reply somewhere along the way is a thing that
+    /// will happen — and it must cost that one call, not every turn from then on.
+    ///
+    /// # Arguments
+    /// * `msgs` - The exported array, oldest first.
+    /// * `prompt_tokens` - Cumulative prompt tokens to restore.
+    /// * `completion_tokens` - Cumulative completion tokens to restore.
+    /// * `last_prompt_tokens` - Context-window usage of the last request.
+    /// * `cached_tokens` - Cumulative cached prompt tokens to restore.
+    /// * `cost_usd` - Cumulative provider-reported USD to restore.
+    ///
+    /// # Returns
+    /// How many messages were taken, after the pairing repair — so a caller that
+    /// reads zero knows the store held nothing usable and can fall back to
+    /// [`DaimondApp::restore`].
+    pub fn restore_session(
+        &self,
+        msgs:               js_sys::Array,
+        prompt_tokens:      f64,
+        completion_tokens:  f64,
+        last_prompt_tokens: f64,
+        cached_tokens:      Option<f64>,
+        cost_usd:           Option<f64>,
+    )
+        -> usize
+    {
+        let mut restored: Vec<ChatMessage> = Vec::new();
+        for item in msgs.iter() {
+            if let Some(m) = js_to_message(&item) {
+                restored.push(m);
+            }
+        }
+        let whole = pair_up(restored);
+        let n = whole.len();
+        let mut session = self.session.borrow_mut();
+        session.messages           = whole;
+        session.prompt_tokens      = prompt_tokens      as u64;
+        session.completion_tokens  = completion_tokens  as u64;
+        session.last_prompt_tokens = last_prompt_tokens as u64;
+        session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
+        session.cost_usd           = cost_usd.unwrap_or(0.0);
+        n
+    }
+
+    /// Append a message to the restored conversation without going near a model.
+    ///
+    /// The store is merged across tabs, so a chat can hold turns this device's
+    /// exported session never saw — another window's.  Those arrive as prose only,
+    /// which is all a screen transcript holds, and they are appended here after
+    /// [`DaimondApp::restore_session`] has laid down the part that carries ids.
+    /// Only `user` and `assistant` are accepted, because a bare tool reply appended
+    /// to a conversation answers nothing.
+    ///
+    /// # Arguments
+    /// * `role` - `user` or `assistant`; anything else is ignored.
+    /// * `content` - What was said.
+    pub fn append_message(&self, role: String, content: String) {
+        let mut session = self.session.borrow_mut();
+        match role.as_str() {
+            "user"      => session.messages.push(ChatMessage::User { content }),
+            "assistant" => session.messages.push(ChatMessage::Assistant {
+                content,
+                tool_calls: Vec::new(),
+            }),
+            _ => {},
+        }
+    }
+
+    // ── What bounds a turn ───────────────────────────────────────────────
+
+    /// Tell this agent how big the model's context window is, so a conversation is
+    /// folded before the provider refuses it rather than after.
+    ///
+    /// `f64`, not `u64`: a `u64` argument arrives at the JS boundary as a `BigInt`,
+    /// and `set_context_window(131072)` written with an ordinary Number would throw
+    /// rather than set anything.  Zero, or anything below it, means nobody has
+    /// published a window and the default assumption stands.
+    ///
+    /// # Arguments
+    /// * `tokens` - The window the provider publishes for this model.
+    pub fn set_context_window(&self, tokens: f64) {
+        self.agent.set_context_window(if tokens > 0.0 { tokens as u64 } else { 0 });
+    }
+
+    /// How many tool-call rounds one turn of this agent may take.
+    ///
+    /// # Arguments
+    /// * `n` - The ceiling; zero is ignored.
+    pub fn set_max_rounds(&self, n: usize) {
+        self.agent.set_max_rounds(n);
+    }
+
+    /// Fold this agent's conversations with a different model from the one it chats
+    /// with; empty means the chat's own.
+    ///
+    /// # Arguments
+    /// * `model` - The provider's id for the folding model, or empty.
+    pub fn set_fold_model(&self, model: String) {
+        self.agent.set_fold_model(&model);
+    }
+
     /// Invoke a single tool directly by wire name with a raw-JSON argument
     /// object, returning its result text — the same path the agent loop
     /// takes, without an LLM turn.  This backs UI affordances such as a
@@ -490,6 +782,20 @@ impl DaimondApp {
     pub async fn set_tags(&self, id: String, tags_json: String) -> Result<(), JsValue> {
         let tags = parse_json_string_array(&tags_json);
         diamond::set_tags(&id, &tags).await.map_err(to_js_err)
+    }
+
+    /// Set which toolchains a Diamond is granted, from a JSON array of names.
+    ///
+    /// A grant, and the only way one is ever made: [`crate::tools::Bound::Toolkit`] reaches a fence
+    /// through this store and through nothing else, so what a command may touch outside the
+    /// workspace is decided here, by the user, per Diamond -- never by what a model asked to run.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond.
+    /// * `kits_json` - A JSON array of names: `rust`, `node`, `python`, `go`.
+    pub async fn set_toolkits(&self, id: String, kits_json: String) -> Result<(), JsValue> {
+        let kits = parse_json_string_array(&kits_json);
+        diamond::set_toolkits(&id, &kits).await.map_err(to_js_err)
     }
 
     /// Delete a Diamond and all its stored state.
@@ -615,6 +921,29 @@ impl DaimondApp {
         self.session.borrow().cost_usd
     }
 
+    /// Prompt tokens of the LAST request this session made — one round, not the
+    /// turn's running total.
+    ///
+    /// This is the figure a context meter wants, and the only one that answers
+    /// "how full is the window": what the model was actually sent most recently.
+    /// A turn's cumulative prompt is a different quantity entirely — an agentic
+    /// turn of twelve rounds sends the conversation twelve times, so summing the
+    /// rounds reads roughly twelve times the context actually in use.  The
+    /// browser had no way to ask for the per-round figure: [`DaimondApp::restore`]
+    /// takes it as an argument and nothing read it back out.
+    ///
+    /// Borrows the session, so it is a POST-TURN read only, exactly as
+    /// [`DaimondApp::cached_tokens`]; [`DaimondApp::run_turn`] holds the session
+    /// mutably for the whole turn and a mid-turn read panics the `RefCell`.
+    ///
+    /// Zero means no round of this session ever reported a prompt count — never
+    /// that the last request was empty — so a caller reading zero should draw
+    /// nothing rather than a full meter.
+    #[wasm_bindgen(getter)]
+    pub fn last_prompt_tokens(&self) -> f64 {
+        self.session.borrow().last_prompt_tokens as f64
+    }
+
     /// Cumulative cached prompt tokens for the turn IN FLIGHT, safe to read
     /// while it runs; see [`DaimondApp::live_prompt_tokens`].
     #[wasm_bindgen(getter)]
@@ -695,6 +1024,7 @@ impl DaimondApp {
                 Tool::FileEdit,
                 Tool::FileList,
                 Tool::FileSearch,
+                Tool::FileGlob,
                 Tool::FileDelete,
                 Tool::FileMove,
                 Tool::DirCreate,
@@ -704,6 +1034,10 @@ impl DaimondApp {
             ctx,
         );
         let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&system));
+        // A fresh agent starts from the default limits, so without this a Diamond's
+        // daimon would fold the same model's conversation at a different size from
+        // the chat that dispatched it.
+        agent.adopt_limits(&self.agent);
         let mut session = Session::new(
             generate_session_id(),
             fmt!("crystal:{}", id),
@@ -750,6 +1084,9 @@ impl DaimondApp {
         let registry = ToolRegistry::new(Vec::new(), ctx);
         let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());
         let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&reducer));
+        // The reducer folds by the same figures as the chat, for the same reason the
+        // daimon does.
+        agent.adopt_limits(&self.agent);
         let mut session = Session::new(
             generate_session_id(),
             fmt!("reducer:{}", id),
@@ -788,6 +1125,160 @@ impl DaimondApp {
     }
 }
 
+/// Convert a [`ChatMessage`] to a plain JS object mirroring
+/// [`ChatMessage::to_datmap`], so the browser can store the conversation the
+/// model holds without inventing a second shape for it.
+fn message_to_js(msg: &ChatMessage) -> JsValue {
+    let obj = js_sys::Object::new();
+    let set = |k: &str, v: &JsValue| {
+        // `Reflect::set` on a fresh object cannot fail; ignore the result.
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+    };
+    match msg {
+        ChatMessage::System { content } => {
+            set("role", &JsValue::from_str("system"));
+            set("content", &JsValue::from_str(content));
+        }
+        ChatMessage::User { content } => {
+            set("role", &JsValue::from_str("user"));
+            set("content", &JsValue::from_str(content));
+        }
+        ChatMessage::Assistant { content, tool_calls } => {
+            set("role", &JsValue::from_str("assistant"));
+            set("content", &JsValue::from_str(content));
+            // Written only when there are any, exactly as the JDAT form does, so an
+            // ordinary answer keeps the shape it always had.
+            if !tool_calls.is_empty() {
+                let calls = js_sys::Array::new();
+                for tc in tool_calls {
+                    let c = js_sys::Object::new();
+                    let cs = |k: &str, v: &str| {
+                        let _ = js_sys::Reflect::set(
+                            &c, &JsValue::from_str(k), &JsValue::from_str(v));
+                    };
+                    cs("id", &tc.id);
+                    cs("name", &tc.name);
+                    cs("arguments", &tc.arguments);
+                    calls.push(&c);
+                }
+                set("tool_calls", &calls);
+            }
+        }
+        ChatMessage::Tool { tool_call_id, content } => {
+            set("role", &JsValue::from_str("tool"));
+            set("tool_call_id", &JsValue::from_str(tool_call_id));
+            set("content", &JsValue::from_str(content));
+        }
+    }
+    obj.into()
+}
+
+/// Read a [`ChatMessage`] back out of a plain JS object written by
+/// [`message_to_js`], or `None` when the object is not one.
+///
+/// A tool reply with no `tool_call_id` is refused rather than given an empty one:
+/// an id is what pairs it with its call, and a reply that cannot be paired is worse
+/// than one that was never read.
+fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
+    let content = js_prop(item, "content").unwrap_or_default();
+    match js_prop(item, "role").unwrap_or_default().as_str() {
+        "system" => Some(ChatMessage::System { content }),
+        "user"   => Some(ChatMessage::User { content }),
+        "tool"   => match js_prop(item, "tool_call_id") {
+            Some(id) if !id.is_empty() => Some(ChatMessage::Tool { tool_call_id: id, content }),
+            _ => None,
+        },
+        "assistant" => {
+            let mut tool_calls = Vec::new();
+            if let Ok(v) = js_sys::Reflect::get(item, &JsValue::from_str("tool_calls")) {
+                if let Some(arr) = v.dyn_ref::<js_sys::Array>() {
+                    for call in arr.iter() {
+                        let id = js_prop(&call, "id").unwrap_or_default();
+                        if id.is_empty() {
+                            continue;       // unpairable, so not a call at all
+                        }
+                        tool_calls.push(ToolCall {
+                            id,
+                            name:      js_prop(&call, "name").unwrap_or_default(),
+                            arguments: js_prop(&call, "arguments").unwrap_or_default(),
+                        });
+                    }
+                }
+            }
+            Some(ChatMessage::Assistant { content, tool_calls })
+        }
+        _ => None,
+    }
+}
+
+/// Make a restored conversation legal: every tool call answered, every tool reply
+/// answering something.
+///
+/// The provider's rule is not a preference.  An assistant turn bearing `tool_calls`
+/// must be followed by one `tool` message per call, and a `tool` message must follow
+/// the assistant turn that asked for it; a conversation that breaks either is
+/// rejected WHOLE, so one lost reply from one turn last Tuesday takes every turn
+/// after it with it.  A store merged across tabs, synced between devices and
+/// restored from backups will eventually hand over such a list, so it is repaired
+/// here rather than trusted.
+///
+/// Two edits, and only these two: a call with no reply in the run of `tool` messages
+/// directly after it is dropped from the assistant turn (its prose stays), and a
+/// reply that answers no call in the assistant turn directly before it is dropped
+/// entirely.  Nothing is reordered and nothing is invented — a call that lost its
+/// result is a call the model must be allowed to make again, not one to answer with
+/// a guess.
+///
+/// # Arguments
+/// * `msgs` - The restored conversation, oldest first.
+fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(msgs.len());
+    let mut i = 0usize;
+    while i < msgs.len() {
+        match &msgs[i] {
+            ChatMessage::Assistant { content, tool_calls } if !tool_calls.is_empty() => {
+                // The run of tool replies that directly follows, which is the only
+                // place a reply to this turn may legally sit.
+                let mut answered: Vec<String> = Vec::new();
+                let mut j = i + 1;
+                while j < msgs.len() {
+                    match &msgs[j] {
+                        ChatMessage::Tool { tool_call_id, .. } => {
+                            answered.push(tool_call_id.clone());
+                            j += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                let kept: Vec<ToolCall> = tool_calls.iter()
+                    .filter(|tc| answered.iter().any(|id| id == &tc.id))
+                    .cloned()
+                    .collect();
+                out.push(ChatMessage::Assistant {
+                    content:    content.clone(),
+                    tool_calls: kept.clone(),
+                });
+                // Then the replies, keeping only those that answer a call we kept.
+                for k in (i + 1)..j {
+                    if let ChatMessage::Tool { tool_call_id, content } = &msgs[k] {
+                        if kept.iter().any(|tc| &tc.id == tool_call_id) {
+                            out.push(ChatMessage::Tool {
+                                tool_call_id: tool_call_id.clone(),
+                                content:      content.clone(),
+                            });
+                        }
+                    }
+                }
+                i = j;
+            }
+            // A tool reply reached here without an asking turn in front of it.
+            ChatMessage::Tool { .. } => { i += 1; }
+            other => { out.push(other.clone()); i += 1; }
+        }
+    }
+    out
+}
+
 /// Convert an [`AgentEvent`] to a plain JS object mirroring
 /// [`AgentEvent::to_datmap`]: a `type` discriminator plus the variant's
 /// fields.  Built directly with `Reflect::set` so the JS side receives a
@@ -812,6 +1303,19 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("tool_result"));
             set("name", &JsValue::from_str(name));
             set("content", &JsValue::from_str(result));
+        }
+        AgentEvent::Interjected(text) => {
+            set("type", &JsValue::from_str("interjected"));
+            set("content", &JsValue::from_str(text));
+        }
+        AgentEvent::Compacted { folded, kept, note } => {
+            set("type", &JsValue::from_str("compacted"));
+            set("folded", &JsValue::from_f64(*folded as f64));
+            set("kept", &JsValue::from_f64(*kept as f64));
+            set("content", &JsValue::from_str(note));
+        }
+        AgentEvent::Truncated => {
+            set("type", &JsValue::from_str("truncated"));
         }
         AgentEvent::Done => {
             set("type", &JsValue::from_str("done"));

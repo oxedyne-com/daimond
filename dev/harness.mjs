@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { extDev, isExtSource } from './extdev.mjs';
 
 // playwright-core lives outside the repo, so it is resolved by path, not by
 // package name — nothing here is installed into the app.
@@ -86,7 +87,12 @@ export async function open(opts = {}) {
 
 	const args = ['--no-sandbox', '--disable-dev-shm-usage'];
 	if (extension) {
-		args.push(`--disable-extensions-except=${extension}`, `--load-extension=${extension}`);
+		// `ext/` is the SHIPPED extension and names one origin, which is not this
+		// dev server. A test that asked for it wants the build that will talk to
+		// localhost, so it is handed the generated one -- see dev/extdev.mjs for
+		// why the dev origins are not in the file that ships.
+		const dir = isExtSource(extension) ? await extDev() : extension;
+		args.push(`--disable-extensions-except=${dir}`, `--load-extension=${dir}`);
 	}
 	if (!headed) args.push('--headless=new');
 
@@ -120,6 +126,50 @@ export async function open(opts = {}) {
 
 	s.close = async () => { await browser.close(); };
 	return s;
+}
+
+/// The chats as they are actually stored.
+///
+/// IndexedDB, not localStorage: transcripts moved there when a day of tool results
+/// stopped fitting in the origin's five megabytes and `setItem` began throwing into
+/// a swallowed catch. Read from outside the app, so what a test asserts on is what
+/// is on disk rather than what the page believes it wrote.
+export function storedChats(s) {
+	return s.page.evaluate(() => new Promise((res) => {
+		const req = indexedDB.open('daimond-chats', 1);
+		req.onsuccess = () => {
+			const db = req.result;
+			let t;
+			try { t = db.transaction('chats', 'readonly'); } catch (e) { res([]); return; }
+			const all = t.objectStore('chats').getAll();
+			all.onsuccess = () => res(all.result || []);
+			all.onerror   = () => res([]);
+		};
+		req.onerror = () => res([]);
+	}));
+}
+
+/// Empty the chat store, for a test that wants a clean rail.
+///
+/// Both places: the store itself, and the old localStorage key, which the app
+/// migrates back in on the next boot if it is left sitting there.
+export function clearChats(s) {
+	return s.page.evaluate(() => new Promise((res) => {
+		try {
+			localStorage.removeItem('daimond-chats');
+			localStorage.removeItem('daimond-chats-legacy');
+		} catch (e) { /* private mode, or full */ }
+		const req = indexedDB.open('daimond-chats', 1);
+		req.onsuccess = () => {
+			const db = req.result;
+			let t;
+			try { t = db.transaction('chats', 'readwrite'); } catch (e) { res(); return; }
+			t.objectStore('chats').clear();
+			t.oncomplete = () => res();
+			t.onerror    = () => res();
+		};
+		req.onerror = () => res();
+	}));
 }
 
 /// Get past the passphrase gate, creating the identity on first run.

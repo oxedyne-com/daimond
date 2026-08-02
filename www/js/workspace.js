@@ -633,7 +633,7 @@
 			out.push({
 				kind: t('pal.kind_panel'), name: p.label,
 				hint: p.open ? t('pal.hint_open') : (p.full ? t('pal.hint_full') : ''),
-				run: function () { P().activate(p.id); },
+				run: function () { (P().goTo || P().activate)(p.id); },
 				off: !!(p.full && !p.open),
 			});
 		});
@@ -679,6 +679,18 @@
 					kind: t('pal.kind_ccy'), name: c.code + ' — ' + c.name,
 					hint: DaimondI18n.currency() === c.code ? t('pal.hint_current') : '',
 					run: function () { DaimondI18n.setCurrency(c.code); },
+				});
+			});
+		}
+		// The permission ladder, reachable from Ctrl-K. A mode switch is exactly
+		// what a palette is for: it is a thing you change while working, from
+		// wherever the keyboard already is.
+		if (window.DaimondHandMode) {
+			DaimondHandMode.list().forEach(function (m) {
+				out.push({
+					kind: t('pal.kind_permmode'), name: m.label,
+					hint: DaimondHandMode.get() === m.name ? t('pal.hint_current') : '',
+					run:  function () { DaimondHandMode.set(m.name); },
 				});
 			});
 		}

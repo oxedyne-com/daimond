@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "이 컴퓨터에서 명령 실행"
 	},
+	"popup_machine_hand_origin": {
+		"message": "이 컴퓨터에서 명령 실행 — $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$과(와) 그 하위 도메인",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond은 이 컴퓨터에서 프로그램을 실행해요. 빌드와 테스트, 스크립트를 당신으로서, 당신의 파일로 돌려요. 하나하나 셸을 거치지 않고 바로 실행되고, 작업 공간이 이미 허용한 폴더 안에서만 움직여요."
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond은 이 컴퓨터에서 프로그램을 실행해요. 빌드와 테스트, 스크립트를 당신으로서, 당신의 파일로 돌려요. 하나하나 셸을 거치지 않고 바로 실행돼요. 이 컴퓨터는 어떤 파일을 건드릴지 제한하지 못해요. 여기서 허용한 명령은 당신이 닿을 수 있는 모든 곳에 닿아요."
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond은 이 컴퓨터에서 프로그램을 실행해요. 빌드와 테스트, 스크립트를 당신으로서, 당신의 파일로 돌려요. 하나하나 셸을 거치지 않고 바로 실행돼요. 이 컴퓨터의 핸드가 무엇으로 제한할 수 있는지 말하지 않았으니, 명령이 당신이 닿는 모든 곳에 닿는다고 보세요."
+	},
 	"grant_hand_fine": {
 		"message": "이건 Daimond에게 허용할 수 있는 가장 강한 권한이에요. 여기서 허용하기 전에는 아무것도 실행되지 않고, 실행은 모두 당신이 읽을 수 있는 기록에 남아요. Daimond Hands 아이콘에서 언제든 되돌릴 수 있고, 되돌리면 그때 돌아가던 것도 멈춰요."
+	},
+	"grant_hand_caps": {
+		"message": "이 컴퓨터가 지킬 수 있는 것: $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "이 컴퓨터의 핸드가 무엇을 지킬 수 있는지 말하지 않았어요."
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "이건 Daimond에게 허용할 수 있는 가장 강한 권한이에요. 여기서 허용하기 전에는 아무것도 실행되지 않고, 위에 적힌 페이지만 요청할 수 있어요. Daimond Hands 아이콘에서 언제든 되돌릴 수 있고, 되돌리면 그때 돌아가던 것도 멈춰요."
 	},
 	"grant_hand_allow": {
 		"message": "이 컴퓨터에서 명령 실행 허용"

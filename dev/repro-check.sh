@@ -18,7 +18,19 @@
 # It then compares the rebuild against the SEALED MANIFEST, so the thing under
 # test is the released bundle rather than another copy of itself.
 #
-#   bash dev/repro-check.sh          # ~5 minutes, mostly a cold dependency build
+# THE MACHINE HAND IS CHECKED DIFFERENTLY, AND PROVES LESS. The hand is a native
+# binary, not wasm: nobody publishes one, everybody builds their own, and a Rust
+# release build is not byte-identical across toolchain versions. So there is no
+# binary comparison to make and none is attempted. What is checked instead is the
+# pair of things that are true: the published source is exactly what was sealed
+# (`verify/hand.json`), and the published source BUILDS -- from the clone, with
+# the pinned toolchain, using the command the seal names. The second is not a
+# formality: the hand pins fe2o3 by git revision, and a revision that was never
+# pushed, or that no longer has the API the hand calls, produces a mirror that
+# reads fine and compiles for nobody.
+#
+#   bash dev/repro-check.sh          # ~8 minutes, mostly cold dependency builds
+#   SKIP_HAND=1 bash dev/repro-check.sh
 #
 # Slow and disk-hungry by nature, so it is not part of `run_all.sh`. Run it at
 # release, which is the only time its answer can change.
@@ -51,3 +63,35 @@ bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {
 
 echo "── comparing the rebuild against the sealed manifest"
 node verify/check.mjs --dir www
+
+if [ "${SKIP_HAND:-0}" = "1" ]; then
+	echo "── the machine hand: skipped (SKIP_HAND=1)"
+	exit 0
+fi
+
+# ── The machine hand ────────────────────────────────────────────────────
+#
+# Two questions, and neither of them is "are the bytes the same". The hand runs
+# programs on the reader's computer, so what they need before they install it is
+# that the source in their hands is the sealed source, and that it is a thing
+# that actually builds.
+echo "── the machine hand: is this the sealed source"
+node verify/check.mjs --hand hand
+
+echo "── the machine hand: does the published source build"
+# `--manifest-path`, never `-p`: the hand is its own cargo workspace. And a
+# target directory of its own under $WORK, because /tmp is a tmpfs and a cargo
+# target there is held in RAM.
+export CARGO_TARGET_DIR="$WORK/hand-target"
+if ! cargo build --release --manifest-path hand/Cargo.toml >"$WORK/hand-build.log" 2>&1; then
+	echo "FAILED — the published hand does not build. Last lines:"
+	tail -20 "$WORK/hand-build.log"
+	exit 1
+fi
+BIN="$CARGO_TARGET_DIR/release/daimond-hand"
+echo "   built $(du -h "$BIN" | cut -f1) at $BIN"
+echo
+echo "   Not claimed: that this binary is byte-identical to anyone else's. It is not"
+echo "   compared with one, because no hand binary is published and a Rust release"
+echo "   build is not reproducible across toolchain versions. What is shown is that"
+echo "   the published source is the sealed source and that it compiles as written."

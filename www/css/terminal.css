@@ -1,0 +1,475 @@
+/* terminal.css — the terminal panel's own look, and the sixteen colours.
+ *
+ * Everything here is either a palette variable or derived from one, so the
+ * terminal wears whatever palette the app is wearing. The one thing that could
+ * not be derived is the ANSI set: a program asking for "red" is asking for a
+ * colour by name, and none of the app's tokens is a full sixteen-colour scheme.
+ * So there are two sets, chosen by `data-ink` — the axis the app already
+ * publishes for exactly this kind of question — and neither of them is
+ * per-palette, because sixteen colours times eleven palettes is eleven schemes
+ * to keep honest and one of them would rot.
+ *
+ * Measured against every palette's own `--bg-primary`, which is the ground the
+ * terminal is drawn on: every one of the sixteen clears 3.0 as LETTERING on
+ * every palette, worst case 3.19, and `dev/verify_terminal.mjs` holds them
+ * there. That is why "black" is a mid grey here — a program printing colour 0
+ * on a dark ground is printing something a reader is entitled to be able to
+ * read, and an unreadable black is not more faithful, it is just unreadable.
+ *
+ * The awkward case is a name that has to mean two things. On paper, colour 7 as
+ * LETTERING must be dark or a prompt written in it is not there at all, while
+ * colour 7 as a BACKGROUND must be pale or a status bar comes out inverted. The
+ * usual light-terminal answer is to pick one and live with the other. Here the
+ * renderer knows which it is resolving, so `--term-ansi-bg-N` overrides the
+ * background value where the two genuinely differ, and both come out right.
+ *
+ * Amber deliberately holds blue out of everything it draws, and the ANSI set is
+ * NOT re-tinted for it. What a program prints is content, in the way a page in
+ * the Web panel is content: the app does not repaint either. A user reading at
+ * night has the palette for the frame around it.
+ */
+
+:root {
+	/* Dark ground, light ink — the default. */
+	--term-ansi-0:  #767676;
+	--term-ansi-1:  #EE7A6B;
+	--term-ansi-2:  #8FCE7A;
+	--term-ansi-3:  #DCAE58;
+	--term-ansi-4:  #68AEE8;
+	--term-ansi-5:  #CE93E2;
+	--term-ansi-6:  #5FCBC8;
+	--term-ansi-7:  #C9C4BB;
+	--term-ansi-8:  #949494;
+	--term-ansi-9:  #F7998C;
+	--term-ansi-10: #A9E294;
+	--term-ansi-11: #EDC97A;
+	--term-ansi-12: #8AC8F5;
+	--term-ansi-13: #E0AEF0;
+	--term-ansi-14: #84DFDD;
+	--term-ansi-15: #F3F0E9;
+
+	/* A "black background" must actually be black. Colour 0 as LETTERING is
+	   lifted to a grey so it can be read at all on a dark ground -- it clears
+	   3.19 on the palest of the dark palettes, which is the floor everything
+	   else in the app is held to -- while as a GROUND it is the black the
+	   program asked for. */
+	--term-ansi-bg-0: #1A1A1A;
+
+	--term-fg:        var(--text-primary);
+	--term-bg:        var(--bg-primary);
+	--term-cursor:    var(--accent);
+	/* A translucent wash rather than a palette colour: it is painted OVER the
+	   cell's own background, so it has to survive being laid on any of the
+	   sixteen, and an opaque accent would hide the text it is selecting.
+	   Written literally because nothing else in the app mixes colours, and one
+	   `color-mix` here would be the only one. */
+	--term-selection: rgba(255, 255, 255, .26);
+	--term-font:      var(--font-mono);
+	/* One rung below body text, which is what dense monospace furniture uses
+	   elsewhere in the app, and it moves with the user's text-size choice. */
+	--term-font-size: var(--fs-sm);
+}
+
+:root[data-ink="dark"] {
+	/* Light ground, dark ink. */
+	--term-ansi-0:  #242424;
+	--term-ansi-1:  #A32A1E;
+	--term-ansi-2:  #256D2A;
+	--term-ansi-3:  #7A5A00;
+	--term-ansi-4:  #1A5A96;
+	--term-ansi-5:  #8A2E9C;
+	--term-ansi-6:  #0F6E6C;
+	--term-ansi-7:  #4E4E4E;
+	--term-ansi-8:  #6E6E6E;
+	--term-ansi-9:  #B93A29;
+	--term-ansi-10: #33843A;
+	--term-ansi-11: #8F6D08;
+	--term-ansi-12: #2668AC;
+	--term-ansi-13: #9C43AC;
+	--term-ansi-14: #177E7C;
+	--term-ansi-15: #1C1C1C;
+	/* The other side of the same problem. On paper, colours 7 and 15 have to be
+	   dark to be readable AS TEXT — a prompt in bright white is otherwise not
+	   there at all — and pale to be right AS A BACKGROUND, which is what a
+	   status bar or a selected row uses them for. Both, then. */
+	--term-ansi-bg-7:  #D6D3CC;
+	--term-ansi-bg-15: #FFFFFF;
+	--term-ansi-bg-8:  #9C9C9C;
+
+	--term-selection: rgba(0, 0, 0, .20);
+}
+
+/* ── The panel ──────────────────────────────────────────────── */
+
+.term {
+	position: relative;
+	min-width: 0;
+	/* The grid is sized to the box, so the box may never be sized to the grid:
+	   a canvas that pushed its container wider would grow itself on the next
+	   measurement and never settle. */
+	overflow: hidden;
+	background: var(--term-bg);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	padding: 4px;
+	/* A terminal is a fixed grid, so it takes whatever room it is given and
+	   computes columns from it rather than scrolling sideways. */
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+}
+
+/* Focus is drawn OUTSIDE the control, standing off from its edge against the
+   surface behind it, which is the rule the rest of the app follows: a ring made
+   out of the control's own border is only legible while the resting border is
+   nearly invisible, and this control has a strong resting border by design. */
+.term:focus-within {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.term-canvas {
+	display: block;
+	max-width: 100%;
+}
+
+/* The real control. It carries no text — anything typed or pasted into it is
+   sent and cleared — so it is placed over the canvas and made invisible rather
+   than hidden: a display:none field takes no keystrokes and gets no soft
+   keyboard on a phone. */
+.term-input {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	resize: none;
+	overflow: hidden;
+	background: transparent;
+	color: transparent;
+	caret-color: transparent;
+	outline: none;
+	font: inherit;
+	/* Behind the paste question, which must be clickable. */
+	z-index: 1;
+}
+.term-input::selection { background: transparent; }
+
+/* The size, while it is changing. A person dragging a panel edge wants to know
+   what they are choosing; the rest of the time it is in the way. */
+.term-size {
+	position: absolute;
+	right: 10px;
+	bottom: 8px;
+	z-index: 2;
+	padding: 2px 7px;
+	border-radius: var(--radius-sm);
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2);
+	color: var(--text-secondary);
+	font: var(--fs-2xs) / 1.4 var(--font-mono);
+	opacity: 0;
+	transition: opacity .18s ease;
+	pointer-events: none;
+}
+.term-size.on { opacity: 1; }
+
+/* A bell is a flash of the panel's own edge, not a sound: a page that makes a
+   noise is a page people mute. */
+.term.bell { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* ── The paste question ─────────────────────────────────────── */
+
+.term-paste {
+	position: absolute;
+	left: 8px;
+	right: 8px;
+	bottom: 8px;
+	z-index: 3;
+	padding: 10px 12px;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
+}
+.term-paste[hidden] { display: none; }
+
+.term-paste-say {
+	margin: 0 0 8px;
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+}
+
+.term-paste-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.term-paste-btn {
+	padding: 5px 12px;
+	border-radius: var(--radius-sm);
+	border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary);
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	cursor: pointer;
+}
+.term-paste-btn:hover { background: var(--bg-hover); }
+.term-paste-btn.primary {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--on-fill);
+}
+.term-paste-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.term-paste-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── What a screen reader is given ──────────────────────────────
+   Clipped rather than hidden. `display: none` and `visibility: hidden` both
+   take an element out of the accessibility tree, which would leave the canvas
+   as the only thing there — and a canvas says nothing at all. */
+
+.term-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}
+
+/* The transcript is many lines, so it may not be one nowrap line. */
+.term-mirror { white-space: normal; }
+
+/* ── The Terminal panel ─────────────────────────────────────────
+   The furniture AROUND the terminal: the head, the sentence saying where the
+   session is, the notices that ride beside the stream, and the line that says
+   how to get the keyboard back out. The terminal itself is everything above;
+   nothing here reaches inside it. */
+
+/* The panel is a flex column, like every other panel in the dock.
+   app.css names them one by one (`.rail, .agents, .work, .mail, .spend`), and a
+   panel left off that list stays a block: its head and its body then share the
+   width instead of the height, and nothing inside it can be told to fill what is
+   left. Spending was left off once and came out as a stranded column of letters;
+   the Terminal would come out as a canvas frozen at its minimum grid however
+   tall the panel was. Declared here rather than there because this is the file
+   the terminal owns. */
+.panel.termpanel {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	overflow: hidden;
+}
+
+.termpanel .termp-card {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-height: 0;
+	/* The card takes the panel's height so the host below can be told to fill
+	   what is left -- a terminal computes its columns from the box it is given,
+	   so the box has to be a real one. */
+	flex: 1 1 auto;
+	padding: 8px;
+	box-sizing: border-box;
+}
+
+/* The host is the only thing that grows. `min-height: 0` because a flex item
+   defaults to its content's size, and a canvas that had already grown would
+   then keep the box at that size for ever. */
+.termpanel .termp-host {
+	flex: 1 1 auto;
+	min-height: 120px;
+	display: flex;
+	/* The containing block for the notices, which lie over the SCREEN and not
+	   over the state line above it. */
+	position: relative;
+}
+.termpanel .termp-host > .term { flex: 1 1 auto; }
+
+/* A terminal that was refused before it ever drew anything is an empty black
+   box under a paragraph explaining why it is empty. The paragraph is the whole
+   of what there is to read, so it gets the panel. The moment a session starts —
+   or once anything has been drawn — the box comes back. */
+.termpanel.no-term .termp-host { display: none; }
+
+/* What the program calls itself, beside the panel's own name. Truncated rather
+   than wrapped: a title is a label, and a two-line head moves the terminal. */
+.termp-title {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-secondary);
+	font: var(--fs-xs) / 1.4 var(--font-mono);
+}
+
+.termp-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+
+/* Where the session is, in a sentence. Refusals arrive here verbatim, so it has
+   to be able to hold a paragraph without pushing the terminal off the panel. */
+.termp-state {
+	margin: 0;
+	color: var(--text-secondary);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+	/* Two lines, whatever it says, and it scrolls rather than grows. A state line
+	   that changed height would take that height out of the terminal below it,
+	   the grid would be recomputed smaller, and the model would push the top of
+	   the screen into scrollback — so "the program exited" or "output is missing"
+	   would sweep away the output it is about. Fixed, nothing moves. */
+	flex: none;
+	height: 3em;
+	overflow-y: auto;
+}
+.termp-state:empty { display: none; }
+/* With no screen to protect, the sentence is the whole panel and takes the room:
+   this is the refusal case, where there is nothing else to read. */
+.termpanel.no-term .termp-state { height: auto; max-height: 14em; }
+.termpanel.no-term .termp-state.refused {
+	padding: 8px 10px 8px 10px;
+	border: 1px solid var(--border-strong);
+	border-left: 3px solid var(--warn);
+	border-radius: var(--radius-sm);
+	background: var(--bg-secondary);
+}
+/* A refusal is not a status line. It is the one thing on the panel worth
+   reading, so it is marked rather than merely coloured -- a coloured sentence is
+   invisible to a reader who cannot see the colour.
+
+   A rule down its left and nothing else, because the mark must not change the
+   BOX: padding and a border would make the state line taller the moment a
+   session was refused or a hole appeared, and the terminal underneath would lose
+   the top of its screen to the reflow. The full frame belongs to the case where
+   there is no screen to protect, below. */
+.termp-state.refused {
+	border-left: 3px solid var(--warn);
+	padding-left: 8px;
+	color: var(--text-primary);
+}
+
+/* A hole in the output, said beside the stream. Each notice stays until the
+   session ends: a gap is a fact about the transcript above it, and a message
+   that faded would leave a screen nobody can account for.
+
+   OVER the terminal rather than above it, and that is not a decorative choice.
+   A notice in the flow takes its height out of the panel, the grid is recomputed
+   smaller, and the model pushes the lines at the top of the screen into
+   scrollback — so the arrival of "output is missing here" would itself sweep the
+   output around the hole out of view, at the one moment a reader needs to see
+   it. Out of flow, the grid does not move and nothing is swept anywhere. */
+.termp-gaps {
+	position: absolute;
+	left: 6px;
+	right: 6px;
+	top: 6px;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 45%;
+	overflow-y: auto;
+}
+.termp-gaps:empty { display: none; }
+.termp-gap {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 6px 8px;
+	border: 1px solid var(--border-strong);
+	border-left: 3px solid var(--warn);
+	border-radius: var(--radius-sm);
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	font-size: var(--fs-xs);
+	line-height: 1.45;
+}
+
+/* Take one notice off the screen it is lying over. The fact it reports does not
+   go with it — the count stays in the state line — so this is a "move it out of
+   my way" and not a "forget it". A real button with a real name: the glyph on it
+   is a decoration and says nothing to a screen reader. */
+.termp-gap-x {
+	flex: none;
+	margin: -4px -4px 0 auto;
+	/* A hit area a finger can find, around a glyph that is four pixels wide. */
+	min-width: 26px;
+	min-height: 26px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-secondary);
+	font-size: var(--fs-xs);
+	line-height: 1.4;
+	cursor: pointer;
+}
+.termp-gap-x:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.termp-gap-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The way out, in writing. Quiet, and always there: a hint that appeared only
+   while the terminal had focus would be unreadable at the moment it is wanted,
+   because the reader is looking at the cursor. */
+.termp-foot {
+	margin: 0;
+	color: var(--text-secondary);
+	font-size: var(--fs-2xs);
+	line-height: 1.4;
+}
+/* With no terminal on the panel there is nothing to move the keyboard out of,
+   and a hint about a control that is not there is one more thing to read past. */
+.termpanel.no-term .termp-foot { display: none; }
+
+/* The head's own bell mark, for a bell that rings while the eye is elsewhere.
+   The terminal flashes its own edge; this is the same event at panel scale, and
+   it is aria-hidden because a bell is not something to announce twice. */
+.termp-bell {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--accent);
+	opacity: 0;
+	transition: opacity .2s ease;
+}
+.termpanel.bell .termp-bell { opacity: 1; }
+
+/* The heading is a focus target: F6 out of the terminal lands here, and a
+   programmatic focus with no ring is a keyboard user who has lost their place. */
+.termpanel .railhead [role="heading"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.termp-bell { transition: none; }
+}
+
+/* ── Narrow screens ─────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+	.term {
+		padding: 2px;
+		/* Below about twenty columns a terminal stops being a terminal, so the
+		   floor is held and the panel scrolls rather than the type shrinking
+		   until nothing can be read. The scroll is INSIDE the panel: the page
+		   itself never scrolls sideways. */
+		overflow-x: auto;
+	}
+	.term-size { right: 6px; bottom: 6px; }
+}
+
+/* A reader who has asked for less motion gets a steady cursor; the blink is
+   turned off in terminal.js, and this stops the bell flashing too. */
+@media (prefers-reduced-motion: reduce) {
+	.term-size { transition: none; }
+	.term.bell { box-shadow: inset 0 0 0 2px var(--border-strong); }
+}

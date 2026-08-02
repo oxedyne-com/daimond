@@ -48,6 +48,7 @@
 	'panel.mail':    '邮件',
 	'panel.work':    '工作区',
 	'panel.spend':   '支出',
+	'panel.term': '终端',
 
 	// ── 标签行 ─────────────────────────────────────────────────
 	// {name} 是上面 `panel.*` 里的面板名称。
@@ -248,6 +249,13 @@
 	'chat.queue_help':     '排队中 — 这条回答结束后就发出',
 	'chat.queued_pending': '还没发出。点一下可以改。',
 	'chat.queue_cancel':   '不要发这条',
+	// 机器翻译。往正在跑的这一轮里插话。这行也说清了限制 --
+	// 不调用工具的回答没有可以插进去的接缝。
+	'chat.send_into':         '插入到这条回答里发送',
+	'chat.interject_help':    '等待中 — 会在模型的下一步插入，没有下一步就等这条回答结束',
+	'chat.interject_pending': '还没送到。点一下可以改。',
+	'chat.interjected':       '你在这里插了话',
+	'chat.interjected_help':  '在这个位置加入了本轮对话。模型从这里开始就知道了。',
 	'chat.queue_returned': '这一轮没能走完，你排在后面的那条又回到了输入框里，没有发出去。',
 	// 同样的话也写在聊天的磁贴上，给那些人已经走开、却还留着排队消息的会话。
 	// 气泡只画在屏幕上正开着的那个聊天里，而马上要花出去的钱，
@@ -532,6 +540,9 @@
 	// 被退回的包裹。要说清楚什么太大，以及通常是什么弄大的。
 	'sync.too_big':        '同步已暂停',
 	'sync.too_big_reason': '这台设备的包裹太大，发不出去，它做的事就不再往外走了。通常是某个特别大的 Diamond 或工作区文件闹的 — 删掉它或让它小一点，同步会自己接上。',
+	// 已经结束、又拿不回来的会话。和下面用同一个说法。
+	'sync.signed_out':        '同步已暂停',
+	'sync.signed_out_reason': '这台设备已不再登录 Daimond 的账户服务，重新登录也没成功，所以它做的事没有传到你的其他设备。等服务能连上，同步会自己恢复；如果一直不恢复，把 Daimond 锁上再解锁。',
 	'sync.paused':         '同步已暂停',
 	'sync.busy_reason':    '另一台设备正同时往这个账户里写，所以这台设备做的事还没发出去。下次有改动时就会一起走。',
 	'sync.merge_reason':   '从另一台设备来的东西有一部分在这里合不上，所以这台设备没有覆盖它。刷新页面通常就好了。',
@@ -722,6 +733,44 @@
 	'err.ratelimit_429': '提供商正在限流（429）。稍等片刻再试。',
 	'err.server_5xx':   '提供商那边出了服务器错误。请稍后再试。',
 	'err.generic':      '出了点问题。请再试一次。',
+	'err.reply_cut':    '回复在 {max} 个 token 处用尽了空间，因此一次工具调用只到了一半，无法运行。请在设置里调高回复长度，或者要求一个更小的改动',
+
+	// ── 回复可以有多长 ─────────────────────────────────────────
+	'settings.max_tokens':         '最长回复',
+	'settings.max_tokens_auto':    '自动',
+	'settings.tokens':             'token',
+	'settings.max_tokens_note':    '单次回复可以有多长。设得太低，大文件会被拦腰截断。',
+	'settings.max_tokens_ceiling': '最多接受',
+
+	// ── 当对话不再被保存时 ─────────────────────────────────────
+	'store.alarm':          '你的对话没有被保存。',
+	'store.alarm_advice':   '屏幕上的内容还在，但重新载入就会丢失。请立刻下载一份副本。',
+	'store.alarm_download': '下载副本',
+	'store.alarm_retry':    '重试',
+	'store.full':           '这个浏览器为本站点留的存储空间已经满了',
+	// ── 权限阶梯 ───────────────────────────────────────────────
+	'permmode.title':        '权限模式',
+	'permmode.lead':         'Daimond 不问就做的事',
+	'permmode.chip_help':    '权限模式：Daimond 不问就做的事',
+	'permmode.chip_aria':    '权限模式：{mode}。更改。',
+	'permmode.astat':        '权限：{mode}',
+	'permmode.never':        '任何模式都不会改变命令运行所在的围栏、一个 Diamond 能触及的文件夹，或记录运行内容的日志。',
+	'permmode.failed':       '这个权限模式没能设置成功，所以什么都没变。',
+	'permmode.ask':          '每次都问',
+	'permmode.ask_blurb':    '每条命令在运行前都会先给你看，取任何网页之前也会先问。',
+	'permmode.guarded':      '看守',
+	'permmode.guarded_blurb': '命令不问就运行。一旦某一轮读过网页、邮件或构建日志，它就失去网络，去新的地方之前会先问你。',
+	'permmode.bypass':       '不再询问',
+	'permmode.bypass_blurb': '什么都不问。无论这一轮读过什么，命令照跑，网页照取。',
+	'permmode.bypass_title': '不再询问？',
+	'permmode.bypass_body':  '不再询问意味着 Daimond 不再问你。它会在你的机器上运行命令而不先给你看，也会取它自己选的网页而不问——哪怕这一轮已经读过别人写的网页、邮件或构建日志。\n\n你交出去的正是最后这一点。那是某个不是你写的东西，有可能说服 Daimond 把你的工作发到别处去的时刻。\n\n不再询问不会改变的：命令仍然在同一个围栏里运行，每个 Diamond 仍然只能触及自己的文件夹；下面的系统调用过滤原封不动；来自外部的文字仍然被标为别人的话；每条命令仍然写进机器手的日志，事后可以核对发生了什么。\n\n此后不会再问你这个。',
+	'permmode.bypass_ok':    '使用不再询问',
+	'permmode.run_title':    '运行这条命令？',
+	'permmode.run_body':     'Daimond 想在你的机器上运行一条命令。\n\n{cmd}\n\n位置：{cwd}\n\n你处在“每次都问”模式，所以每条命令都会先给你看。',
+	'permmode.run_ok':       '运行',
+	'pal.kind_permmode':     '权限',
+	'chat.compacted':        '对话已折叠',
+	'chat.compacted_help':   'Daimond 把这段对话较早的部分换成了摘要，好让它装进模型的上下文窗口。',
 
 	// ── 送达核对 ───────────────────────────────────────────────
 	// 一个页面在核对自己。核对项的名字是给人一眼扫下来的，所以要短；
@@ -1430,6 +1479,38 @@
 	'graph.stat_cycles.other':   '{n} 条关联闭合了环',
 	'graph.stat_dangling.one':   '{n} 条关联指向已经不在的 Diamond',
 	'graph.stat_dangling.other': '{n} 条关联指向已经不在的 Diamond',
+
+	// ── The terminal ───────────────────────────────────────────
+	'term.label':            '终端',
+	'term.hint':             '直接输入即可把按键送给程序。Ctrl-Shift-C 复制所选内容，Ctrl-Shift-V 粘贴，Ctrl-Shift-A 全选，按住 Shift 再按 Page Up 或 Page Down 可翻看已经滚过去的内容。',
+	'term.screen_label':     '终端屏幕的文字版本',
+	'term.screen_now':       '屏幕现在显示：',
+	'term.nothing_selected': '没有选中任何内容。',
+	'term.copied.one':       '已复制 {n} 行。',
+	'term.copied.other':     '已复制 {n} 行。',
+	'term.printed_lines.one':   '输出了 {n} 行。',
+	'term.printed_lines.other': '输出了 {n} 行。',
+	'term.paste_warn':       '这次粘贴有 {n} 行。程序没有要求在粘贴时得到通知，因此第一行之后的每一行一到达就会执行。',
+	'term.paste_first':      '只粘贴第一行',
+	'term.paste_all':        '粘贴全部 {n} 行',
+	'term.exited':           '程序已结束，状态码 {code}。',
+
+	'term.notices_label': '关于此终端的提示',
+	'term.dismiss_notice': '关闭此提示',
+	'term.gaps_count.one': '有 {n} 处输出缺失。',
+	'term.gaps_count.other': '有 {n} 处输出缺失。',
+	'term.start': '启动终端',
+	'term.restart': '重新启动终端',
+	'term.stop': '停止程序',
+	'term.leave_hint': '按 F6 将键盘移出终端。',
+	'term.starting': '正在启动终端…',
+	'term.running': '终端正在运行。',
+	'term.nothing_running': '此终端中没有正在运行的程序。',
+	'term.not_paired': '此浏览器未配对机器之手，因此没有可以打开终端的机器。Daimond 的其余功能无需它也能使用。',
+	'term.no_composer': '此版本的 Daimond 无法说明终端可以接触什么，因此不会打开终端。该隔间由应用的 Rust 部分计算，而本页面比它更旧。请更新 Daimond；命令与文件工具不受影响。',
+	'term.unreadable_request': 'Daimond 无法读取自己关于此终端可以接触什么的答复，因此没有启动任何东西。请重新加载应用；若再次发生，应用需要更新。',
+	'term.no_relay_script': '终端中继未在本页面加载，因此无法打开终端。这是应用的问题，而非您机器的问题：请重新加载 Daimond。',
+	'term.no_renderer': '终端本身未在本页面加载，因此没有可供绘制的地方。这是应用的问题，而非您机器的问题：请重新加载 Daimond。',
 
 	});
 })();

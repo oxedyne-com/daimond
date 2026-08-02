@@ -9,7 +9,7 @@
 //
 // It also checks the other side of the ledger: a turn that COMPLETED normally leaves nothing
 // behind — its journal is pruned — so a completed turn never masquerades as interrupted.
-import { open, signInAs, connectMock, chat, errors, scratch } from './harness.mjs';
+import { open, signInAs, connectMock, chat, errors, scratch, clearChats } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -28,10 +28,22 @@ async function until(page, fn, ms = 12000, step = 150) {
 	return false;
 }
 
+// A FIXED profile, so the identity survives between runs — and so, until this was
+// noticed, did the chats. The last check counts how many times one prompt appears
+// on screen, and every run added another copy to the same chat: it read x2, then
+// x3, then x5, and looked for all the world like a regression somebody had just
+// introduced. It was the profile. The store is emptied below rather than left to
+// the reader to remember (the note in the project's own memory says "rm -rf the
+// profile", which is the same discovery made once already).
 const s = await open({ name: 'durability', connect: false, signIn: false, profile: scratch('durability-profile') });
 const p = s.page;
 p.on('dialog', d => d.accept().catch(() => {}));   // a beforeunload warning must not block the reload
 await p.waitForTimeout(1500);
+await signInAs(s, 'Dura');
+await p.waitForTimeout(500);
+await clearChats(s);
+await p.reload({ waitUntil: 'domcontentloaded' });
+await p.waitForTimeout(1200);
 await signInAs(s, 'Dura');
 await p.waitForTimeout(500);
 await connectMock(s);
@@ -65,7 +77,20 @@ await until(p, () => {
 const midTurn = await p.evaluate(async () => {
 	const generating = /stop/i.test((document.getElementById('chat-send').getAttribute('title') || '') + document.getElementById('chat-send').className);
 	// The prompt is already durable (persist-first), before the turn has finished.
-	const snap = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+	// From IndexedDB, which is where transcripts live now — localStorage ran out of
+	// room for a day's tool results and failed silently when it did.
+	const snap = await new Promise((res) => {
+		const req = indexedDB.open('daimond-chats', 1);
+		req.onsuccess = () => {
+			const db = req.result;
+			let t;
+			try { t = db.transaction('chats', 'readonly'); } catch (e) { res([]); return; }
+			const all = t.objectStore('chats').getAll();
+			all.onsuccess = () => res(all.result || []);
+			all.onerror   = () => res([]);
+		};
+		req.onerror = () => res([]);
+	});
 	const msgs = (snap[0] && snap[0].messages) || [];
 	const hasPrompt = msgs.some(m => m.role === 'user' && /@long 90/.test(m.content || ''));
 	// The journal holds the open turn with its partial reply.

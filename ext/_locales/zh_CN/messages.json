@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "在这台电脑上运行命令"
 	},
+	"popup_machine_hand_origin": {
+		"message": "在这台电脑上运行命令 — $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ 及其子域名",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell，并且只在工作区已经允许的文件夹里运行。"
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell。这台电脑无法限制它们碰到哪些文件：你在这里允许的命令，能到达你能到达的一切。"
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell。这台电脑没有说它能把它们限制在哪里，请当作命令能到达你能到达的一切。"
+	},
 	"grant_hand_fine": {
 		"message": "这是你能允许 Daimond 做的最强的一件事。在你这里允许之前，什么都不会运行；每一次运行都会写进一份你可以读的记录。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
+	},
+	"grant_hand_caps": {
+		"message": "这台电脑能够保证的：$CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "这台电脑上的机器之手没有说它能保证什么。"
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "这是你能允许 Daimond 做的最强的一件事。在你这里允许之前，什么都不会运行；只有上面写明的页面可以提出请求。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
 	},
 	"grant_hand_allow": {
 		"message": "允许在这台电脑上运行命令"

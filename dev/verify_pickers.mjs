@@ -8,7 +8,7 @@
 // not that the right words are on screen. It is that the request lands at the right BASE URL with
 // the right KEY — which is checked here by pointing two "providers" at two different mock servers
 // and seeing which one the traffic goes to.
-import { open, shot, errors, MOCK, PASS } from './harness.mjs';
+import { open, shot, errors, MOCK, PASS, storedChats } from './harness.mjs';
 import http from 'node:http';
 
 const ok = [], bad = [];
@@ -141,8 +141,7 @@ check('and asks for the model that was picked',
 	B.seen[0] ? B.seen[0].model : '(nothing sent)');
 
 // The chat's provider must survive a reload, or the next turn falls back to the default key.
-const persisted = await p.evaluate(() => {
-	const raw = JSON.parse(localStorage.getItem('daimond-chats') || '[]');
+const persisted = await storedChats(s).then((raw) => {
 	const c = raw[0] || {};
 	return { model: c.model, provider: c.provider };
 });

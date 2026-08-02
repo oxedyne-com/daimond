@@ -19,6 +19,15 @@
    tokens) live in localStorage for now; passphrase-wrapping is
    a later hardening stage (see the TODO in index.html).
    ============================================================ */
+// The whole wasm surface, as a namespace, BESIDE the named imports below.
+//
+// A named import of something the module does not export is a link-time error
+// that takes the entire app down before a line of it runs, so anything this page
+// asks for CONDITIONALLY has to be reached as a property instead. The terminal
+// panel's `open` request is composed on the Rust side (see DaimondTerm), and a
+// build whose wasm predates that edge must refuse the terminal rather than fail
+// to boot.
+import * as Wasm from '../pkg/oxedyne_daimond.js';
 import init, {
 	DaimondApp,
 	builtin_tools,
@@ -83,6 +92,9 @@ import init, {
 		together:   { name: 'Together AI',  url: 'https://api.together.xyz/v1/chat/completions',            model: '' },
 		groq:       { name: 'Groq',         url: 'https://api.groq.com/openai/v1/chat/completions',         model: '' },
 		deepinfra:  { name: 'DeepInfra',    url: 'https://api.deepinfra.com/v1/openai/chat/completions',    model: '' },
+		// Not OpenAI-compatible: its own endpoint, its own auth header, its own
+		// listing path. models.js knows all three; nothing here does but the URL.
+		anthropic:  { name: 'Anthropic',    url: 'https://api.anthropic.com/v1/messages',                  model: 'claude-opus-5' },
 	};
 
 	// Identify which curated provider a stored base URL belongs to, or
@@ -92,15 +104,34 @@ import init, {
 		return url ? 'custom' : '';
 	}
 
-	// Derive the `/models` listing endpoint from a chat-completions URL.
+	// Derive the `/models` listing endpoint from a turn endpoint.
+	//
+	// Delegated to models.js, which knows the providers that do not follow the OpenAI
+	// shape: Anthropic's listing is a SIBLING of its turn endpoint, so the rule below
+	// asked `/v1/messages/models` — nobody's endpoint, and a 404 with no explanation.
+	// The local rule stays as the fallback, for a page where models.js has not loaded.
 	function modelsUrl(base) {
+		if (window.DaimondModels && DaimondModels.modelsUrl) return DaimondModels.modelsUrl(base);
 		if (base.indexOf('/chat/completions') !== -1) return base.replace('/chat/completions', '/models');
 		return base.replace(/\/+$/, '') + '/models';
 	}
 
+	/// The headers a model listing needs for `base`.
+	///
+	/// Delegated for the same reason as `modelsUrl`: Anthropic refuses a bearer token
+	/// and wants `x-api-key`, a pinned version, and the header that makes its edge
+	/// answer a browser at all. A hardcoded bearer got a 401 and looked like a bad key.
+	function authHeadersFor(base, key) {
+		if (window.DaimondModels && DaimondModels.authHeaders) return DaimondModels.authHeaders(base, key);
+		return { 'Authorization': 'Bearer ' + key };
+	}
+
 	function loadCfg() {
 		var raw = localStorage.getItem(CFG_KEY);
-		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxTokens: 4096, tools: true };
+		// `maxOut` of 0 means AUTO: let `maxOutFor` pick per model. See the
+		// "How long a reply may be" section below for why one number for every
+		// model was the wrong shape.
+		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, tools: true };
 		if (raw) {
 			try {
 				var j = JSON.parse(raw);
@@ -108,7 +139,15 @@ import init, {
 				if (typeof j.apiKey === 'string') cfg.apiKey = j.apiKey;
 				if (typeof j.apiKeyEnc === 'string') cfg.apiKeyEnc = j.apiKeyEnc;
 				if (typeof j.model === 'string') cfg.model = j.model;
-				if (typeof j.maxTokens === 'number') cfg.maxTokens = j.maxTokens;
+				// `maxTokens` -- the old field -- is deliberately NOT read. It was never
+				// user-facing: it held 4096 on every install because that was the
+				// hardcoded internal default, so reading it as a setting would pin
+				// every existing user to the very cap this change exists to lift.
+				// Nobody ever chose it, so nothing is lost by dropping it. The new
+				// field is `maxOut`, and 4096 in it IS a choice.
+				if (typeof j.maxOut === 'number') cfg.maxOut = j.maxOut;
+				// Zero means the engine's own default, which is also what an absent field means.
+				if (typeof j.maxRounds === 'number') cfg.maxRounds = j.maxRounds;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
 			} catch (e) { /* keep defaults */ }
 		}
@@ -124,13 +163,209 @@ import init, {
 			apiKey:    c.apiKeyEnc ? '' : (c.apiKey || ''),
 			apiKeyEnc: c.apiKeyEnc || '',
 			model:     c.model || '',
-			maxTokens: c.maxTokens || 4096,
+			maxOut:    c.maxOut || 0,
+		maxRounds: c.maxRounds || 0,
 			tools:     c.tools !== false,
 		}));
 	}
 
 	function cfgReady(cfg) {
 		return !!(cfg.baseUrl && cfg.model && cfg.apiKey);
+	}
+
+	// ── How long a reply may be ────────────────────────────────
+	//
+	// Every request carried `max_tokens: 4096`, the same figure for every model,
+	// described where it was saved as an internal default and not a user-facing
+	// knob. 4096 OUTPUT tokens is roughly 250 lines of code, so a `file_write` of
+	// a 400-line module ran out part way -- and because a tool call's arguments
+	// are themselves a JSON string, what arrived was not a truncated file but a
+	// malformed tool call. The parse failed, nothing was written, and the model
+	// was told only that its JSON was bad. Any real coding session met this
+	// within the hour, and the failure named the wrong cause.
+	//
+	// Three things replace the constant, and they only work together:
+	//
+	//   AUTO       a per-model default, because a request ABOVE a model's own
+	//              maximum is an ERROR, not a clamp -- one number for every model
+	//              is either too small for most or fatal for some;
+	//   a ceiling  what each model will actually accept, bounding the default and
+	//              anything the user picks;
+	//   a knob     `settings.max_tokens` below, because no one figure suits both
+	//              a one-line answer and a 900-line refactor.
+	//
+	// And a fourth, because the ceilings below are incomplete: `noteCapRefused`
+	// remembers a provider that refused the length asked for, so the refusal
+	// happens at most once per model rather than every turn.
+
+	/// The default reply length, before any per-model ceiling is applied.
+	///
+	/// 32,768 output tokens is about 2,000 lines of code -- eight times the old
+	/// cap, and enough that a whole module arrives in one call. It is deliberately
+	/// well short of the largest ceilings (128,000 on the current Claude models):
+	/// `max_tokens` is checked by some providers against what is LEFT of the
+	/// context window after the prompt, so asking for the maximum on a long
+	/// conversation is a refusal rather than a longer answer.
+	var AUTO_MAX = 32768;
+
+	/// The floor a backoff will not go below, and the smallest the setting offers.
+	var MIN_MAX = 2048;
+
+	/// What a model will accept as `max_tokens`, keyed by the canonical id
+	/// [`DaimondPricing`] resolves an id to.
+	///
+	/// Anthropic rows only, and only because Anthropic publishes the figure per
+	/// model: 128,000 output tokens across the Claude 5 and 4.6-4.8 generations,
+	/// 64,000 for Haiku 4.5, 32,000 for Opus 4.1 (Anthropic's published model
+	/// limits; the current-generation figures were read 2026-08-02). No other
+	/// provider in the table publishes a ceiling this app can read, so nothing
+	/// else is written down: an invented ceiling is worse than none, because it
+	/// would be applied silently. Everything else takes `AUTO_MAX` bounded by the
+	/// context window -- which providers DO report -- and is corrected by the
+	/// backoff if that turns out to be too much.
+	var MAX_OUT = {
+		'claude-fable-5':    128000,
+		'claude-mythos-5':   128000,
+		'claude-opus-5':     128000,
+		'claude-opus-4-8':   128000,
+		'claude-opus-4-7':   128000,
+		'claude-opus-4-6':   128000,
+		'claude-sonnet-5':   128000,
+		'claude-sonnet-4-6': 128000,
+		'claude-haiku-4.5':   64000,
+		'claude-opus-4-5':    64000,
+		'claude-sonnet-4-5':  64000,
+		'claude-opus-4-1':    32000,
+	};
+
+	/// The canonical pricing id a caller's model string resolves to, or ''.
+	///
+	/// The resolution is [`DaimondPricing`]'s own -- exact key, then alias, then
+	/// the LONGEST table key the id contains -- reached through its `_core` export
+	/// rather than re-implemented here, so `accounts/fireworks/models/glm-5p2` and
+	/// `GLM-5.2` fold together for the ceiling exactly as they do for the price.
+	/// A second resolver would be a second set of aliases to keep in step.
+	function modelFamily(model) {
+		var C = window.DaimondPricing && DaimondPricing._core;
+		if (!C || !model) return '';
+		var key = C.norm(model);
+		if (!key) return '';
+		if (C.INDEX[key]) return C.INDEX[key];
+		for (var i = 0; i < C.KEYS.length; i++) {
+			if (key.indexOf(C.KEYS[i]) !== -1) return C.INDEX[C.KEYS[i]];
+		}
+		return '';
+	}
+
+	/// The largest `max_tokens` this model is known to accept, or 0 when nothing
+	/// knows. A published context window bounds it whatever the table says: a
+	/// completion cannot be longer than the window it is generated into.
+	function maxOutCeiling(model, provider) {
+		var pub = MAX_OUT[modelFamily(model)] || 0;
+		var ctx = window.DaimondPricing
+			? (DaimondPricing.contextWindow(model, provider || '') || 0) : 0;
+		if (pub && ctx) return Math.min(pub, ctx);
+		return pub || ctx || 0;
+	}
+
+	// A provider that refused the length we asked for, by "<provider> <model>".
+	// Kept because the ceilings above are incomplete: without it the same refusal
+	// would greet every turn on that model, for ever.
+	var CAPS_KEY = 'daimond-maxout-caps';
+	function capsLearned() { return readJson(CAPS_KEY, {}); }
+	function capKey(model, provider) { return (provider || '') + ' ' + (model || ''); }
+	/// Remember that `n` was refused for this model, so the next request asks for
+	/// half of it and the user is not shown the same refusal twice.
+	function noteCapRefused(model, provider, n) {
+		var caps = capsLearned();
+		var was = caps[capKey(model, provider)] || n;
+		caps[capKey(model, provider)] = Math.max(MIN_MAX, Math.floor(Math.min(was, n) / 2));
+		try { localStorage.setItem(CAPS_KEY, JSON.stringify(caps)); } catch (e) { /* best effort */ }
+		return caps[capKey(model, provider)];
+	}
+
+	/// The `max_tokens` to send for `model` on `provider`.
+	///
+	/// The user's setting when they have made one, `AUTO_MAX` otherwise, and in
+	/// both cases bounded by the model's ceiling and by anything a refusal has
+	/// already taught us. Never zero: a zero `max_tokens` is a request for an
+	/// empty reply, so the floor applies even to a nonsense setting.
+	function maxOutFor(model, provider) {
+		var want = (typeof cfg.maxOut === 'number' && cfg.maxOut > 0) ? cfg.maxOut : AUTO_MAX;
+		return boundMaxOut(want, model, provider);
+	}
+
+	/// What Automatic resolves to for this model, whatever the user has chosen.
+	/// The setting row names it, so it must not read the setting back.
+	function autoMaxOut(model, provider) {
+		return boundMaxOut(AUTO_MAX, model, provider);
+	}
+
+	/// `want`, brought within this model's ceiling and anything a refusal has
+	/// already taught us. Never zero: a `max_tokens` of nought is a request for an
+	/// empty reply, so the floor applies even to a nonsense figure.
+	function boundMaxOut(want, model, provider) {
+		var ceil = maxOutCeiling(model, provider);
+		if (ceil > 0) want = Math.min(want, ceil);
+		var learned = capsLearned()[capKey(model, provider)] || 0;
+		if (learned > 0) want = Math.min(want, learned);
+		return Math.max(MIN_MAX, Math.round(want));
+	}
+
+	/// A token count for a label. Powers of two — which is what the ladder offers
+	/// — read as 32k rather than the 33k a decimal thousand would give.
+	function fmtTok(n) {
+		return (n % 1024 === 0) ? (n / 1024) + 'k' : fmtCtx(n);
+	}
+
+	/// Is this failure the provider refusing the reply LENGTH that was asked for,
+	/// rather than the prompt, the key or the model?
+	///
+	/// Both halves are required. `max_tokens` alone appears in messages about the
+	/// prompt being too long for the window, which the agent's own fold handles
+	/// and which halving the reply would not fix.
+	function capRefused(raw) {
+		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
+		if (!/max_?(?:completion_|output_)?tokens/i.test(s)) return false;
+		return /too (?:large|long|big|high)|exceed|less than|at most|no more than|maximum|greater than|must be|out of range|invalid/i.test(s);
+	}
+
+	/// A rejection the provider gave no readable reason for.
+	///
+	/// The browser transport builds its error from the STATUS LINE alone — see
+	/// `wasm_fetch` in `src/llm.rs`, which drops the response body that the
+	/// native path keeps — so a provider answering "max_tokens is too large:
+	/// this model supports at most 8192 completion tokens" reaches this half as
+	/// "HTTP error: 400 Bad Request." and nothing more. `capRefused` above can
+	/// therefore never match in the browser today; it is kept because it is the
+	/// right test and starts working the moment the body is carried through.
+	///
+	/// Until then a bare 400 is treated as a possible reply-length refusal,
+	/// which is safe for one specific reason: the reply length is the only part
+	/// of the request this app can try SMALLER without changing what was asked.
+	/// The smaller ask is the test — it is only believed, and only remembered,
+	/// if it succeeds. 401/403/404/429 are excluded because each already has its
+	/// own handling and none of them is about length.
+	function opaqueRefusal(raw) {
+		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
+		if (/\b(401|403|404|429)\b/.test(s)) return false;
+		return /\b400\b/.test(s);
+	}
+
+	/// Did this tool call's arguments arrive incomplete?
+	///
+	/// The arguments of a tool call are a JSON string, so a reply that stops at
+	/// the length limit part-way through one leaves an unclosed string or object.
+	/// Every tool here takes a JSON object, so anything that will not parse is
+	/// truncation — and truncation is the ONE cause, because the provider assembles
+	/// the fragments and would not send syntactically broken JSON otherwise.
+	/// An absent or empty argument list is not truncation: a no-argument tool
+	/// sends `{}`, or nothing at all.
+	function truncatedArgs(raw) {
+		var s = String(raw == null ? '' : raw).trim();
+		if (!s || s === '{}') return false;
+		try { JSON.parse(s); return false; }
+		catch (e) { return true; }
 	}
 
 	/// Keep `cfg` as the resolved DEFAULT model, so everything that used to read one provider out
@@ -225,12 +460,18 @@ import init, {
 	}
 	/// Union two transcripts of the same chat, in time order, keeping every turn — except a message
 	/// that has been tombstoned, which stays gone however many copies of it the union sees.
+	///
+	/// When the same message arrives twice, the FULLER copy is kept. A tool result is shortened on
+	/// its way into storage (`slimMessages`), so without that rule a merge against the store would
+	/// hand this tab's whole result back to it truncated — the store's copy is written first, and
+	/// first used to win.
 	function mergeMessages(a, b) {
-		var seen = {}, out = [], tombs = loadMsgTombs();
+		var at = {}, out = [], tombs = loadMsgTombs();
 		stampMessages(a).concat(stampMessages(b)).forEach(function (m) {
-			if (seen[m.mid] || tombs[m.mid]) return;
-			seen[m.mid] = true;
-			out.push(m);
+			if (tombs[m.mid]) return;
+			var had = at[m.mid];
+			if (had === undefined) { at[m.mid] = out.length; out.push(m); return; }
+			if ((out[had].elided || 0) && !(m.elided || 0)) out[had] = m;
 		});
 		out.sort(function (x, y) {
 			if ((x.ts || 0) !== (y.ts || 0)) return (x.ts || 0) - (y.ts || 0);
@@ -246,9 +487,14 @@ import init, {
 	/// The cached and cost counters travel with the token counters, and for the same reason: the
 	/// next turn is metered by the GROWTH of each, so a counter that restarted at zero after a
 	/// reload would bill the whole restored session again as one turn.
+	///
+	/// `session` is the conversation the MODEL holds, which is not the same object as the
+	/// transcript on screen: it carries the provider's own tool-call ids, and it is the folded
+	/// list once compaction has run. See `captureSession`.
 	function slimChat(c) {
 		return { id: c.id, name: c.name, messages: c.messages, model: c.model, provider: c.provider || '',
 			status: c.status || 'active',
+			session: c.session || null,
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
 			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
@@ -286,9 +532,444 @@ import init, {
 		try { localStorage.setItem(DIAMOND_TOMBS_KEY, JSON.stringify(t)); } catch (e) { /* best effort */ }
 	}
 
+	// ── Where a transcript actually lives ──────────────────────
+	//
+	// It lived in localStorage, which holds about five megabytes for the whole
+	// origin. A day of coding — two hundred tool calls at eight kilobytes of result
+	// apiece — is a megabyte and a half in ONE chat, and `setItem` throws when the
+	// origin is full. The throw was caught and dropped:
+	//
+	//     catch (e) { /* quota or unavailable — chats stay in-memory this session */ }
+	//
+	// so the work went on being shown and went on being answered, and simply stopped
+	// being saved. The user found out on the next reload, when it was gone. That is
+	// the same shape as the tag-loss incident — a store quietly doing something other
+	// than what its reader assumed — and the rule that came out of that one is that
+	// what is lost is SAID.
+	//
+	// So chats live in IndexedDB now: sized in hundreds of megabytes, structured
+	// (no stringify of the whole store on every save), and it reports its failures.
+	// journal.js already keeps the write-ahead log there and `daimond-fsa` keeps the
+	// directory handle, so this follows the shape they set — a database name per
+	// account, one object store, the connection dropped and reopened when the account
+	// changes underneath it.
+	//
+	// Three things localStorage did that IndexedDB does not, and what replaces each:
+	//
+	//   - It was SYNCHRONOUS, and `persistChats()` is called from a dozen places that
+	//     cannot await. So the store keeps a MIRROR of its own contents in memory: a
+	//     save merges against the mirror at once and reaches disk behind it.
+	//   - It fired a `storage` event in the other tab. IndexedDB fires nothing, so a
+	//     nonce is bumped in localStorage after every write — the trick DIAMONDS_KEY
+	//     already plays for OPFS, where the value means nothing and the change is the
+	//     whole message.
+	//   - It was there before this version was. So the old key is still read, and what
+	//     it holds is carried across the first time this store opens.
+	var CHATS_DB      = 'daimond-chats';           // the IndexedDB database, per account
+	var CHATS_STORE   = 'chats';
+	var CHATS_REV     = 'daimond-chats-rev';       // the cross-tab nonce
+	var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
+
+	var ChatStore = (function () {
+		var db      = null;      // the open connection, or null when there is none
+		var dbOpen  = null;      // the name it is open on, to notice an account switch
+		var mirror  = [];        // what the store holds, as of the last read or write
+		var disk    = {};        // id → stamp of what we believe is actually written
+		var writing = null;      // the write in flight, so two saves queue rather than race
+		var queued  = null;      // the next list to write, replacing any earlier one
+		var usable  = false;     // the store opened and was read at least once
+
+		function dbName() {
+			var ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
+			return ns ? CHATS_DB + '-' + ns : CHATS_DB;
+		}
+
+		function open(name) {
+			return new Promise(function (resolve, reject) {
+				if (!window.indexedDB) { reject(new Error('this browser offers no IndexedDB')); return; }
+				var req = indexedDB.open(name, 1);
+				req.onupgradeneeded = function () {
+					var d = req.result;
+					if (!d.objectStoreNames.contains(CHATS_STORE)) {
+						d.createObjectStore(CHATS_STORE, { keyPath: 'id' });
+					}
+				};
+				req.onsuccess = function () { resolve(req.result); };
+				req.onerror   = function () { reject(req.error || new Error('the store would not open')); };
+				req.onblocked = function () { reject(new Error('another tab is holding the store open')); };
+			});
+		}
+
+		/// The open connection, reopening when the account has changed under us.
+		async function conn() {
+			var want = dbName();
+			if (db && dbOpen === want) return db;
+			if (db) { try { db.close(); } catch (e) { /* already */ } db = null; disk = {}; }
+			db = await open(want);
+			dbOpen = want;
+			db.onclose        = function () { db = null; dbOpen = null; };
+			db.onversionchange = function () { try { db.close(); } catch (e) { /* already */ } db = null; dbOpen = null; };
+			return db;
+		}
+
+		function tx(mode) {
+			var t = db.transaction(CHATS_STORE, mode);
+			return { store: t.objectStore(CHATS_STORE), done: new Promise(function (res, rej) {
+				t.oncomplete = res;
+				t.onerror    = function () { rej(t.error || new Error('the write failed')); };
+				t.onabort    = function () { rej(t.error || new Error('the write was aborted')); };
+			}) };
+		}
+
+		async function readAll() {
+			await conn();
+			var t = tx('readonly'), rows = [];
+			await new Promise(function (res, rej) {
+				var cur = t.store.openCursor();
+				cur.onsuccess = function () { var c = cur.result; if (c) { rows.push(c.value); c.continue(); } else res(); };
+				cur.onerror   = function () { rej(cur.error || new Error('the store would not be read')); };
+			});
+			await t.done;
+			return rows;
+		}
+
+		/// A stamp that changes whenever a chat's stored bytes would, without
+		/// stringifying a megabyte of transcript to find out. `updatedAt` moves on every
+		/// mutation (`touchChat` is called before every save) and the message count moves
+		/// when another tab's turns are unioned in.
+		function stampOf(c) {
+			return String(c.updatedAt || 0) + ':' + ((c.messages || []).length)
+				+ ':' + ((c.session && c.session.msgs) ? c.session.msgs.length : 0);
+		}
+
+		async function write(list) {
+			try {
+				// Only when there is no usable connection. This is the difference
+				// between the new store and the old one: `localStorage.setItem` was
+				// synchronous, so a reload a heartbeat after a turn always saw the
+				// turn. `db.transaction()` and `store.put()` are synchronous too — it
+				// is only the RESULT that is async — and IndexedDB commits a
+				// transaction whose requests are already queued even if the page goes
+				// away in the next moment. So with the connection kept warm from boot,
+				// the puts below are queued inside the same tick as `save()`, and the
+				// only await is for the answer. An `await conn()` in front of them
+				// would push them to the next microtask and hand back the very gap
+				// this store was moved to avoid.
+				if (!db || dbOpen !== dbName()) {
+					await conn();
+				}
+				var t = tx('readwrite');
+				var seen = {};
+				list.forEach(function (c) {
+					if (!c || !c.id) return;
+					seen[c.id] = true;
+					// Only what has moved. A `put` of every chat on every turn rewrites the
+					// whole store for one appended message.
+					if (disk[c.id] !== stampOf(c)) t.store.put(c);
+				});
+				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
+				//
+				// This used to delete every id the list did not mention, which made a
+				// short list — for any reason, from any caller — a permanent, silent
+				// deletion of the chats it happened to leave out. Everything else in
+				// this app deletes on a tombstone and nothing else, and there was one
+				// reason for the asymmetry: with `localStorage.setItem` of the whole
+				// array there was no gap in which a list could be short. IndexedDB is
+				// asynchronous, so there is.
+				//
+				// `removeChat` is the only path that removes a chat, and it writes the
+				// tombstone before it saves, so every intended deletion still happens
+				// here. What no longer happens is the unintended one. A chat left out
+				// by accident stays on disk and comes back on the next read, which is
+				// the right way round: a resurrected chat is a nuisance, a deleted one
+				// is gone. The same rule that came out of the tag-loss incident.
+				var tombs = loadTombs();
+				var kept = {};
+				Object.keys(disk).forEach(function (id) {
+					if (seen[id]) return;
+					if (tombs[id]) { t.store['delete'](id); return; }
+					kept[id] = disk[id];
+				});
+				var keptN = Object.keys(kept).length;
+				if (keptN) {
+					try { console.warn('Daimond: ' + keptN + ' chat(s) were left out of a save without a tombstone; kept on disk.'); }
+					catch (e) { /* no console */ }
+				}
+				await t.done;
+				// A kept row is still IN the database, so it stays in the store's
+				// account of the database. Rebuilding `disk` from the list alone
+				// would forget it, and the tombstoned deletion that arrived a
+				// moment later would then find nothing to delete -- a chat the user
+				// deleted on purpose, left behind for the next read to resurrect.
+				var next = {};
+				list.forEach(function (c) { if (c && c.id) next[c.id] = stampOf(c); });
+				Object.keys(kept).forEach(function (id) { if (!next[id]) next[id] = kept[id]; });
+				disk = next;
+				usable = true;
+				storageAlarmClear();          // a save landed: whatever it said is over
+				return true;
+			} catch (e) {
+				storageAlarm(storeReason(e));
+				return false;
+			}
+		}
+
+		function schedule(list) {
+			if (writing) { queued = list; return; }
+			writing = write(list).then(function () {
+				writing = null;
+				if (queued) { var next = queued; queued = null; schedule(next); }
+			});
+		}
+
+		/// What localStorage still holds under the old key, or under the archive the
+		/// move leaves behind. Read on every boot, not once behind a flag: a user who
+		/// restores an old backup, or opens a profile this build has never run in, has
+		/// chats sitting there and no reason to know it.
+		function legacy() {
+			var a = readJson(CHATS_KEY, []);
+			if (Array.isArray(a) && a.length) return a;
+			var b = readJson(CHATS_LEGACY, []);
+			return Array.isArray(b) ? b : [];
+		}
+
+		/// Union `incoming` into `base` by id, taking the fresher of any two and
+		/// unioning their transcripts — the same rule the cross-tab and cross-device
+		/// merges use, because migration is the same problem.
+		function mergeInto(base, incoming) {
+			var byId = {};
+			(base || []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+			(incoming || []).forEach(function (c) {
+				if (!c || !c.id) return;
+				var st = byId[c.id];
+				if (!st) { byId[c.id] = c; return; }
+				var merged = slimChat((c.updatedAt || 0) > (st.updatedAt || 0) ? c : st);
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages));
+				if (!merged.session && st.session) merged.session = st.session;
+				byId[c.id] = merged;
+			});
+			return Object.keys(byId).map(function (id) { return byId[id]; });
+		}
+
+		return {
+			/// Open the store, read it, and take in anything the old localStorage key
+			/// still holds. Never throws: a browser that will not give us IndexedDB —
+			/// a locked-down private window — falls back to reading localStorage and
+			/// SAYS so, rather than opening on an empty rail as though there had never
+			/// been anything there.
+			boot: async function () {
+				try {
+					mirror = await readAll();
+					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
+					usable = true;
+					storageAlarmClear();
+				} catch (e) {
+					usable = false;
+					mirror = legacy();
+					storageAlarm(storeReason(e));
+					return mirror.slice();
+				}
+				var old = readJson(CHATS_KEY, []);
+				if (Array.isArray(old) && old.length) {
+					mirror = mergeInto(mirror, old);
+					if (await write(mirror)) {
+						// Only once it is safely in the new store. Kept rather than deleted —
+						// a copy of the transcript in a place a person can still read is worth
+						// the bytes it already occupied — but MOVED, so nothing unions it back
+						// in on the next boot and resurrects a chat deleted after the move.
+						try { localStorage.setItem(CHATS_LEGACY, JSON.stringify(old)); }
+						catch (e2) { /* no room for the archive; the store above has it */ }
+						try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
+					}
+				}
+				return mirror.slice();
+			},
+			/// What the store holds, without a read. This is what makes `persistChats()`
+			/// able to stay synchronous.
+			stored: function () { return mirror.slice(); },
+			/// Re-read from disk — after another tab has written.
+			///
+			/// Never PAST a write of our own. The mirror runs ahead of the disk from
+			/// the moment `save()` returns until the transaction behind it lands, and
+			/// a read taken in that window hands back the contents from before the
+			/// save and installs them as the mirror. `applyChats` does exactly that —
+			/// save the merge, then refresh — so a merged parcel could be read back
+			/// out again a moment after it went in. It healed itself on the next
+			/// push, at the cost of a flicker and a wasted round; waiting for the
+			/// write is cheaper than either. Bounded, so a tab saving continuously
+			/// cannot hold a read off for ever.
+			refresh: async function () {
+				for (var i = 0; i < 8 && (writing || queued); i++) {
+					try { await writing; } catch (e) { break; }
+				}
+				try {
+					mirror = await readAll();
+					disk = {};
+					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
+					usable = true;
+				} catch (e) { storageAlarm(storeReason(e)); }
+				return mirror.slice();
+			},
+			/// Store `list`, which is already the merged truth. Returns at once; the
+			/// mirror is current now and the disk write happens behind it.
+			save: function (list) {
+				mirror = list;
+				bumpChats();
+				schedule(list);
+			},
+			/// Try the last write again, for the button on the alarm.
+			retry: function () { schedule(mirror); },
+			/// Is the real store working? False means this session is running on the
+			/// fallback and the alarm is up.
+			usable: function () { return usable; },
+			/// Forget everything — an account being forgotten takes its chats with it.
+			wipe: async function () {
+				mirror = []; disk = {};
+				try { await conn(); var t = tx('readwrite'); t.store.clear(); await t.done; }
+				catch (e) { /* nothing to clear */ }
+			},
+		};
+	})();
+
+	/// Say what went wrong with the store in words the user can act on.
+	function storeReason(e) {
+		var name = (e && e.name) || '';
+		var msg  = String((e && e.message) || e || 'unknown');
+		if (name === 'QuotaExceededError' || /quota/i.test(msg)) {
+			return t('store.full') === 'store.full'
+				? 'there is no room left in this browser’s storage for this site'
+				: t('store.full');
+		}
+		return msg;
+	}
+
+	/// Tell the other tabs that the chats moved. IndexedDB fires no cross-tab event,
+	/// so this nonce in localStorage is the signal; the value is never read.
+	function bumpChats() {
+		try { localStorage.setItem(CHATS_REV, String(Date.now()) + '.' + Math.random()); }
+		catch (e) { /* private mode: this tab is the only one that can see them anyway */ }
+	}
+
+	// ── When saving stops working, say so ──────────────────────
+	//
+	// Not a toast. A toast fades, and the whole failure of the code this replaces was
+	// that it said nothing at the moment the user could still act. This stays up until
+	// a save lands, and it carries the one move that rescues the work now — writing it
+	// to a file.
+	var storageAlarmEl = null;
+	var storageAlarmWhy = '';
+
+	/// Raise the standing warning that conversations are not being saved.
+	function storageAlarm(why) {
+		storageAlarmWhy = String(why || '');
+		try { console.error('Daimond: conversations are not being saved — ' + storageAlarmWhy); } catch (e) {}
+		if (storageAlarmEl) {
+			var line = storageAlarmEl.querySelector('.storage-alarm-why');
+			if (line) line.textContent = storageAlarmWhy;
+			return;
+		}
+		var box = document.createElement('div');
+		box.className = 'storage-alarm';
+		box.setAttribute('role', 'alert');
+		box.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:10000;'
+			+ 'max-width:min(720px,92vw);padding:12px 16px;border-radius:10px;font-size:var(--fs-sm);'
+			+ 'background:var(--warn-bg);color:var(--text-primary);border:1px solid var(--danger);'
+			+ 'box-shadow:0 6px 20px rgba(0,0,0,.32);display:flex;gap:12px;align-items:flex-start;';
+		var text = document.createElement('div');
+		text.style.cssText = 'flex:1 1 auto;';
+		var head = document.createElement('strong');
+		head.textContent = tOr('store.alarm', 'Your conversations are not being saved.');
+		var why = document.createElement('div');
+		why.className = 'storage-alarm-why';
+		why.style.cssText = 'margin-top:4px;opacity:.85;';
+		why.textContent = storageAlarmWhy;
+		var advice = document.createElement('div');
+		advice.style.cssText = 'margin-top:4px;';
+		advice.textContent = tOr('store.alarm_advice',
+			'Everything on screen is still here, but a reload would lose it. Download a copy now.');
+		text.appendChild(head); text.appendChild(why); text.appendChild(advice);
+		var acts = document.createElement('div');
+		acts.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex:0 0 auto;';
+		var dl = document.createElement('button');
+		dl.type = 'button';
+		dl.className = 'btn-secondary';
+		dl.textContent = tOr('store.alarm_download', 'Download a copy');
+		dl.addEventListener('click', function () { downloadChatsNow(); });
+		var again = document.createElement('button');
+		again.type = 'button';
+		again.className = 'btn-secondary';
+		again.textContent = tOr('store.alarm_retry', 'Try again');
+		again.addEventListener('click', function () { ChatStore.retry(); });
+		acts.appendChild(dl); acts.appendChild(again);
+		box.appendChild(text); box.appendChild(acts);
+		document.body.appendChild(box);
+		storageAlarmEl = box;
+	}
+
+	/// Take the warning down, because a save has landed.
+	function storageAlarmClear() {
+		if (!storageAlarmEl) return;
+		if (storageAlarmEl.parentNode) storageAlarmEl.parentNode.removeChild(storageAlarmEl);
+		storageAlarmEl = null;
+		storageAlarmWhy = '';
+	}
+
+	/// Write every chat this tab holds to a file, right now.
+	///
+	/// The escape hatch behind the alarm: whatever is wrong with the store, the
+	/// transcript is still in memory, and a file on the user's disk is somewhere the
+	/// browser cannot take it back. Deliberately the same shape as a backup export, so
+	/// `doImport` reads it.
+	function downloadChatsNow() {
+		var out = {
+			format:   'daimond-backup',
+			version:  1,
+			exported: new Date().toISOString(),
+			partial:  true,        // chats only; no workspace files, no Diamonds
+			chats:    chats.map(slimChat),
+		};
+		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+		var a = document.createElement('a');
+		a.href = URL.createObjectURL(blob);
+		a.download = 'daimond-chats-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.json';
+		a.click();
+		setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+	}
+
+	// How much of a tool result is kept in the STORED transcript.
+	//
+	// The model had the whole thing while the turn ran, and still does: its own copy of
+	// the conversation is stored separately and whole (see `captureSession`). What is
+	// kept here is the human's scrollback, and eighty kilobytes of a directory listing
+	// is not scrollback — it is the reason a day's work stopped being saved.
+	var TOOL_KEEP = 2048;
+
+	/// Group a number with commas, for a count of characters in a marker.
+	function withCommas(n) {
+		return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	}
+
+	/// Shorten the tool results in a transcript on its way into storage, saying in the
+	/// record itself how much went. Idempotent: a message already shortened carries
+	/// `elided` and is passed through untouched.
+	function slimMessages(msgs) {
+		return (msgs || []).map(function (m) {
+			if (!m || m.role !== 'tool_log' || m.elided) return m;
+			var body = String(m.content == null ? '' : m.content);
+			if (body.length <= TOOL_KEEP) return m;
+			var gone = body.length - TOOL_KEEP;
+			var out = {};
+			for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
+			out.content = body.slice(0, TOOL_KEEP) + '\n\n[' + withCommas(gone)
+				+ ' more characters of this result were not saved. The model was given the whole thing.]';
+			out.elided = gone;
+			return out;
+		});
+	}
+
 	function persistChats() {
 		try {
-			var stored = readJson(CHATS_KEY, []);
+			var stored = ChatStore.stored();
 			var byId = {};
 			stored.forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 			// This tab's version of a chat wins only if it is at least as
@@ -300,17 +981,25 @@ import init, {
 				// The transcript is append-only: union it. Everything else is a
 				// scalar, so the fresher tab's value wins.
 				var merged = slimChat((c.updatedAt || 0) >= (st.updatedAt || 0) ? c : st);
-				merged.messages = mergeMessages(st.messages, c.messages);
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages));
+				// The model's own conversation is this device's state, not something two
+				// tabs union: keep whichever copy has one when the other does not, or a
+				// save from an idle tab would drop the tool history the working tab holds.
+				if (!merged.session && st.session) merged.session = st.session;
 				byId[c.id] = merged;
 			});
 			var tombs = loadTombs();
 			Object.keys(tombs).forEach(function (id) { delete byId[id]; });
-			localStorage.setItem(CHATS_KEY, JSON.stringify(Object.keys(byId).map(function (id) { return byId[id]; })));
+			ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 			// Same reason as bumpDiamonds: renaming or deleting a chat, or folding
 			// one into a Diamond, is not a turn and does not hide the tab, so
 			// nothing else would ever schedule the push that carries it.
 			nudgeSync();
-		} catch (e) { /* quota or unavailable — chats stay in-memory this session */ }
+		} catch (e) {
+			// The merge itself broke, which is not the store's fault and is not
+			// something to swallow either: from here on nothing is being written.
+			storageAlarm(String((e && e.message) || e));
+		}
 	}
 	function hydrateChat(c) {
 		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : []), model: c.model,
@@ -320,13 +1009,22 @@ import init, {
 			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
 			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
+			session: c.session || null,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
-	function loadChats() {
+	/// Open the store and hand back what it holds, hydrated.
+	async function loadChats() {
 		var tombs = loadTombs();
-		return readJson(CHATS_KEY, [])
+		var stored = await ChatStore.boot();
+		return stored
 			.filter(function (c) { return c && c.id && !tombs[c.id]; })
 			.map(hydrateChat);
+	}
+	/// The stored chats as the store last saw them, with no read and no wait. For the
+	/// places that want a list of names rather than a conversation.
+	function storedChats() {
+		var tombs = loadTombs();
+		return ChatStore.stored().filter(function (c) { return c && c.id && !tombs[c.id]; });
 	}
 	/// Stamp a chat as touched, so the merge above can order concurrent writes.
 	function touchChat(c) { if (c) c.updatedAt = Date.now(); }
@@ -334,9 +1032,9 @@ import init, {
 	// Another tab changed the chats: adopt anything new without disturbing a
 	// turn in flight here. Chats this tab already holds keep their live
 	// DaimondApp; chats it has never seen are added; chats deleted elsewhere go.
-	function onChatsChangedElsewhere() {
+	async function onChatsChangedElsewhere() {
 		var tombs = loadTombs();
-		var stored = readJson(CHATS_KEY, []).filter(function (c) { return c && c.id && !tombs[c.id]; });
+		var stored = (await ChatStore.refresh()).filter(function (c) { return c && c.id && !tombs[c.id]; });
 		var mine = {};
 		chats.forEach(function (c) { mine[c.id] = c; });
 		var merged = stored.map(function (s) {
@@ -362,6 +1060,10 @@ import init, {
 				c.lastPrompt       = s.lastPrompt || 0;
 				c.foldedInto       = s.foldedInto || c.foldedInto || null;
 				c.updatedAt        = s.updatedAt || 0;
+				// The model's conversation only ever moves forward, so a stored copy is
+				// taken when there is one and never traded for nothing: a tab that saved
+				// without one would otherwise wipe the tool history held here.
+				if (s.session) c.session = s.session;
 			}
 			return c;
 		});
@@ -445,7 +1147,9 @@ import init, {
 	}
 
 	window.addEventListener('storage', function (e) {
-		if (e.key === CHATS_KEY || e.key === TOMBS_KEY) onChatsChangedElsewhere();
+		// CHATS_REV is the nonce IndexedDB cannot fire for itself; CHATS_KEY is still
+		// watched because a tab running the previous build writes it directly.
+		if (e.key === CHATS_REV || e.key === CHATS_KEY || e.key === TOMBS_KEY) onChatsChangedElsewhere();
 		else if (e.key === DIAMONDS_KEY) onDiamondsChangedElsewhere();
 	});
 
@@ -1261,7 +1965,15 @@ import init, {
 		// than an error.
 		return {
 			v:            2,
-			chats:        readJson(CHATS_KEY, []),
+			// Without the model's own conversation: it holds one provider's call ids,
+			// it is this device's copy of what its agent was told, and it would roughly
+			// double a parcel that is already every transcript the account has. The
+			// other device rebuilds it from the transcript it does receive.
+			chats:        storedChats().map(function (c) {
+				var out = slimChat(c);
+				out.session = null;
+				return out;
+			}),
 			tombs:        readJson(TOMBS_KEY, {}),
 			msgTombs:     readJson(MSG_TOMBS_KEY, {}),
 			files:        fileCol.files,
@@ -1297,21 +2009,21 @@ import init, {
 		var tombs = mergeTombMap(TOMBS_KEY, remote.tombs);
 		mergeTombMap(MSG_TOMBS_KEY, remote.msgTombs);
 		var byId = {};
-		var stored = readJson(CHATS_KEY, []);
+		var stored = ChatStore.stored();
 		(Array.isArray(stored) ? stored : []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 		(Array.isArray(remote.chats) ? remote.chats : []).forEach(function (r) {
 			if (!r || !r.id) return;
 			var st = byId[r.id];
 			if (!st) { byId[r.id] = r; return; }
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-			merged.messages = mergeMessages(st.messages, r.messages);
+			merged.messages = slimMessages(mergeMessages(st.messages, r.messages));
+			// A parcel carries no session (collectSync strips it), so the freshest-wins
+			// rule above would trade this device's model memory for the remote's nothing.
+			if (!merged.session && st.session) merged.session = st.session;
 			byId[r.id] = merged;
 		});
 		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
-		try {
-			localStorage.setItem(CHATS_KEY,
-				JSON.stringify(Object.keys(byId).map(function (id) { return byId[id]; })));
-		} catch (e) { /* quota — the merge is lost this session, not corrupted */ }
+		ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 		onChatsChangedElsewhere();
 	}
 
@@ -1409,7 +2121,9 @@ import init, {
 	function nextChatLabel() {
 		var used = 0;
 		try {
-			used = highestNumbered(loadChats().map(function (c) { return c.name; }), 'Chat');
+			// The store's own list, not a read: naming a chat cannot wait on a disk
+			// round trip, and the mirror is what the store last wrote or read anyway.
+			used = highestNumbered(storedChats().map(function (c) { return c.name; }), 'Chat');
 		} catch (e) { /* no store yet: the counter stands alone */ }
 		chatCounter = Math.max(chatCounter, used) + 1;
 		localStorage.setItem('daimond-chat-counter', '' + chatCounter);
@@ -1801,6 +2515,9 @@ import init, {
 			// The Workspace panel's scope row, which names the two trees and stays on
 			// screen for as long as the panel does.
 			try { Files.relabel(); } catch (e) { /* the panel is not up yet */ }
+			// And the Terminal's two buttons, whose names change with the session
+			// rather than with the markup, so nothing else would ever repaint them.
+			try { if (window.DaimondTerm) DaimondTerm.relabel(); } catch (e) { /* not built yet */ }
 		});
 	}
 
@@ -1882,7 +2599,10 @@ import init, {
 	function isMobile() { return mobileMq.matches; }
 	// The stage's guests do not take a slot on the bottom bar: they RISE as a
 	// sheet over the chat floor, so the daimon stays beside the thing.
-	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1 };
+	// Spending and the Terminal are dock panels and rise the same way: the phone
+	// bar has four seats and they are spoken for, and a panel with no seat and no
+	// sheet is a panel a phone cannot reach at all.
+	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1 };
 	function mshow(name) {
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
 		if (MOBILE_GUESTS[name] && window.DaimondSheet) {
@@ -1906,6 +2626,7 @@ import init, {
 		if (name === 'work') Files.onOpen();
 		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
+		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 	}
 	document.querySelectorAll('#mnav button').forEach(function (b) {
 		b.addEventListener('click', function () { mshow(b.dataset.mp); });
@@ -2576,6 +3297,35 @@ import init, {
 			return true;
 		}
 
+		/// Go to a panel: open it if it is shut, and leave it where it is if it is not.
+		///
+		/// This is NOT [`activate`], and the difference is the difference between a chip and a
+		/// search result. A chip is a toggle and says so by being filled in -- you can see the
+		/// panel is open, so clicking it can only mean "put it away". You reach the palette by
+		/// typing a panel's NAME, which can only mean "take me there"; a search that closes the
+		/// thing you searched for punishes you for using it. The bug this fixes: Ctrl-K, "Email",
+		/// Enter closed the Email panel you were looking at.
+		function goTo(id) {
+			if (reveal(id)) {
+				open[id] = false;                              // so show() seats it afresh
+				stage = stage.filter(function (x) { return x !== id; });
+				dock  = dock.filter(function (x) { return x !== id; });
+				show(id);
+				return;
+			}
+			if (open[id]) {
+				// Already on screen. A folded rail is the one case where "take me there" still has
+				// something to do; otherwise the layout is left exactly as it was.
+				if (id === 'rail' && !railForced && window.innerWidth < NARROW) {
+					railForced = true;
+					apply();
+				}
+				markUsed(id);
+				return;
+			}
+			show(id);
+		}
+
 		function activate(id) {
 			var railFolded = (id === 'rail') && open.rail
 				&& window.innerWidth < NARROW && !railForced;
@@ -2649,11 +3399,20 @@ import init, {
 			if (id === 'work') Files.onOpen();
 			if (id === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
+			// The terminal is built on the first open and started there: a pty is a
+			// real program on the user's machine, so it begins when a person asks
+			// for one and not when the app loads.
+			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (isMobile()) mshow(id);
 		}
 
 		function hide(id) {
 			if (!def(id) || !open[id]) return;
+			// Before the panel goes: the program is asked to stop and the screen is
+			// destroyed. A canvas repainting into a hidden panel costs a frame every
+			// time the program prints, and a session nobody can see is one nobody
+			// can stop.
+			if (id === 'term' && window.DaimondTerm) DaimondTerm.onClose();
 			open[id] = false;
 			if (id === 'rail') railForced = false;   // a closed rail is not a forced one
 			stage = stage.filter(function (x) { return x !== id; });
@@ -2964,7 +3723,7 @@ import init, {
 			},
 			zone: zoneOf,
 			// The chip row, the gallery and the palette are all views of this.
-			model: tagModel, activate: activate,
+			model: tagModel, activate: activate, goTo: goTo,
 			markUsed: markUsed,
 			grids: function () { return GRIDS; },
 			grid: function () { return grid; },
@@ -3182,6 +3941,73 @@ import init, {
 		_jumpAt = -1;
 	}
 
+	/// Draw a message that was said INTO a running turn, at the point it landed.
+	///
+	/// Where it is drawn is the whole point of it. A correction shown at the end,
+	/// under the work it was meant to redirect, reads as one that was ignored;
+	/// drawn here -- between the step that had just finished and the one that
+	/// followed it -- it reads as what it was. So the assistant's text so far is
+	/// closed off first, the same way a tool step closes it, and whatever the model
+	/// says next begins a fresh bubble below this one.
+	///
+	/// It carries the CURRENT turn's number and is deliberately not
+	/// `.chat-msg-user`: it belongs to the turn it cut into rather than starting one
+	/// of its own, so folding that turn away takes it too, and the numbering a fold
+	/// maps through is untouched.
+	///
+	/// The bubble is styled here rather than in the stylesheet only because this
+	/// change did not own `app.css`; the rule belongs beside `.chat-msg-user`.
+	function appendInterjected(text) {
+		finalizeAssistant();
+		var div = document.createElement('div');
+		div.className = 'chat-msg chat-msg-interjected';
+		div.style.textAlign = 'right';
+		// The same small right-aligned caption the waiting bubbles wear, saying the
+		// opposite thing: this one has arrived.
+		var note = document.createElement('div');
+		note.className = 'chat-queued-head';
+		note.textContent = '↳ ' + t('chat.interjected');
+		note.title = t('chat.interjected_help');
+		var body = document.createElement('div');
+		body.className = 'chat-msg-content';
+		body.textContent = text;                     // escaped (H5)
+		body.title = t('chat.interjected_help');
+		body.style.display = 'inline-block';
+		body.style.background = 'var(--accent-soft)';
+		body.style.color = 'var(--accent-text)';
+		body.style.borderRadius = 'var(--radius-lg)';
+		body.style.borderLeft = '3px solid var(--accent)';
+		body.style.padding = '8px 14px';
+		body.style.maxWidth = '82%';
+		body.style.textAlign = 'left';
+		div.appendChild(note);
+		div.appendChild(body);
+		tagTurn(div);
+		postToChat(div);
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	/// Draw the app's own edit of the conversation, where it happened.
+	///
+	/// Not a tool row: a fold is something Daimond did, not something the model
+	/// called, and it is lossy. A user who is not shown one has no way to tell a
+	/// model that forgot from a model that never knew.
+	function appendCompacted(note) {
+		finalizeAssistant();
+		var div = document.createElement('div');
+		div.className = 'chat-msg chat-msg-compacted';
+		var head = document.createElement('div');
+		head.className = 'chat-queued-head';
+		head.textContent = '⊟ ' + t('chat.compacted');
+		head.title = t('chat.compacted_help');
+		var body = document.createElement('div');
+		body.className = 'chat-msg-content';
+		body.textContent = note;                     // escaped (H5)
+		div.appendChild(head); div.appendChild(body);
+		tagTurn(div); postToChat(div);
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
 	/// Put something into the thread, taking the placeholder away first.
 	///
 	/// `.empty-state` is `height:100%`, so anything appended while one is still
@@ -3282,6 +4108,32 @@ import init, {
 			resPre.style.display = '';
 		}
 		chatOutput.scrollTop = chatOutput.scrollHeight;
+	}
+
+	/// The most a live command's output may occupy in the chat.
+	///
+	/// The whole of it is kept by the relay and bounded there; this is the
+	/// smaller bound on what one DOM node holds, because a build that prints for
+	/// ten minutes would otherwise grow a text node until the tab suffers for it.
+	var RUN_LIVE_MAX = 16000;
+
+	/// Show what a running command is printing, while it runs.
+	///
+	/// A tool result arrives in one blob, which is right for the model and wrong
+	/// for a person: a `cargo test` says nothing for a minute and then says
+	/// everything, and a still panel is indistinguishable from a hang. So the
+	/// machine hand's output is written into the running tool block as it
+	/// arrives, and `renderToolResult` replaces it with the finished result.
+	function runLive(text) {
+		if (!lastToolBlock || !lastToolBlock.classList.contains('running')) return;
+		var pre = lastToolBlock.querySelector('.tool-result');
+		if (!pre) return;
+		lastToolBlock.classList.remove('collapsed');
+		pre.style.display = '';
+		var s = pre.textContent + String(text == null ? '' : text);
+		if (s.length > RUN_LIVE_MAX) s = '… ' + s.slice(s.length - RUN_LIVE_MAX);
+		pre.textContent = s;                 // escaped via textContent
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
 
 	function appendError(msg) {
@@ -3584,9 +4436,117 @@ import init, {
 
 	/// Whether the agent may reach `url` now that this turn has read untrusted
 	/// content. Resolves the string the wasm side expects.
+	/// Put a permission mode into the engine, and prove it went in.
+	///
+	/// The engine's copy is the only one that decides anything, so this does not
+	/// report success from the absence of a throw: it reads the mode back and
+	/// refuses when the two disagree. Everything that can go wrong here — an older
+	/// wasm with no such edge, a name this build does not know, a setter that took
+	/// and did not stick — ends the same way, with the caller told nothing changed
+	/// and the chip redrawn from what is actually in force.
+	///
+	/// # Arguments
+	/// * `name` - The mode's name, as the Rust `Mode::name` spells it.
+	function applyPermissionMode(name) {
+		if (!Wasm || typeof Wasm.set_permission_mode !== 'function') {
+			throw new Error('This build of the engine has no permission ladder.');
+		}
+		Wasm.set_permission_mode(name);
+		var now = (typeof Wasm.permission_mode === 'function') ? Wasm.permission_mode() : name;
+		if (now !== name) {
+			throw new Error('The engine is in ' + now + ', not ' + name + '.');
+		}
+		return now;
+	}
+
+	/// Confine a dispatched agent to one Diamond's workspace, and prove it went in.
+	///
+	/// **This is a security boundary and it is set from JavaScript, so it is read back.** A
+	/// scope that throws and is ignored, or one that silently fails to take, leaves the agent
+	/// with the reach of an ordinary workspace turn: its file tools may open anything in the
+	/// workspace, and — because both doors read the one bound list — its commands are fenced to
+	/// the whole folder the user granted the machine hand rather than to this Diamond's part of
+	/// it. That is failing open, so it throws rather than returning false, and the caller does
+	/// not start a turn on a scope it could not establish.
+	///
+	/// The same discipline as `applyPermissionMode`: set it, ask the engine what it now holds,
+	/// and refuse on disagreement.
+	///
+	/// # Arguments
+	/// * `app` - The freshly built DaimondApp.
+	/// * `diamondId` - The Diamond this agent works for.
+	async function scopeAgentTo(app, diamondId) {
+		if (!app || typeof app.set_diamond_scope !== 'function'
+			|| typeof app.diamond_scope !== 'function') {
+			throw new Error('This build of the engine cannot confine an agent to a Diamond.');
+		}
+		if (!diamondId) {
+			throw new Error('An agent was dispatched without a Diamond to work in.');
+		}
+		var b = await Files.bounds(diamondId);
+		if (!b.own_dir) {
+			throw new Error('That Diamond has no directory, so there is nothing to confine it to.');
+		}
+		app.set_diamond_scope(
+			b.own_dir,
+			JSON.stringify(b.attached  || []),
+			JSON.stringify(b.read_only || []),
+			JSON.stringify(b.toolkits  || []));
+
+		// What the engine actually holds now. Compared rather than trusted: everything that can
+		// go wrong here is silent, and every silent failure is in the direction of more reach.
+		var got = {};
+		try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
+		catch (e) { throw new Error('The engine could not say what this agent is confined to.'); }
+		if (got.nowhere) {
+			throw new Error('That Diamond\'s workspace named no usable folder, so an agent in it '
+				+ 'could not touch anything.');
+		}
+		var allow = Array.isArray(got.allow) ? got.allow : [];
+		if (!allow.length) {
+			throw new Error('The scope did not take: this agent is not confined to anything.');
+		}
+		if (allow.indexOf(b.own_dir) < 0) {
+			throw new Error('The scope took, but not for this Diamond: the engine holds '
+				+ allow.join(', ') + ' and not ' + b.own_dir + '.');
+		}
+		// A toolkit the user granted and the engine dropped is a grant that will not work, and
+		// the daimon is about to be TOLD it has that toolchain. Better to say so than to let it
+		// meet a refusal it can do nothing about.
+		var want = (b.toolkits || []).slice().sort().join(',');
+		var have = (Array.isArray(got.toolkits) ? got.toolkits : []).slice().sort().join(',');
+		if (want !== have) {
+			throw new Error('This Diamond is granted ' + (want || 'no toolchain')
+				+ ', but the engine took ' + (have || 'none') + '.');
+		}
+		return got;
+	}
+
 	async function egressAllowed(payloadJson) {
 		var req = {};
 		try { req = JSON.parse(String(payloadJson || '{}')) || {}; } catch (e) { req = {}; }
+		// A command is not a destination. It arrives through this door because it
+		// is the same question — may this act happen — and the door already owns
+		// the dialog, the translations and the focus handling. It is answered
+		// FIRST, above the URL work below, which would read a command line as an
+		// address it cannot parse and deny every command in the ask mode.
+		if (req.tool === 'run') {
+			var cmd = String(req.url || '');
+			if (!cmd.trim()) return 'deny';
+			// Cut to the same 300 characters every other body in this function is cut to.
+			// A command line is `argv.join(" ")` and the model chose every word of it, so an
+			// uncapped one is a dialog whose buttons can be pushed off the screen and whose
+			// operative argument can be buried under a screenful of padding — in the ONE dialog
+			// that authorises a program to run on the user's machine. Shown with an ellipsis
+			// rather than silently trimmed: a reader has to be able to tell that there is more,
+			// and "the rest of it is not on screen" is itself a reason to say no.
+			var shownCmd = cmd.length > 300 ? (cmd.slice(0, 300) + '…') : cmd;
+			var okRun = await confirmDialog(
+				t('permmode.run_body', { cmd: shownCmd, cwd: String(req.detail || '').slice(0, 300) }),
+				t('permmode.run_ok'),
+				{ title: t('permmode.run_title'), danger: false });
+			return okRun ? 'allow' : 'deny';    // never remembered: every time means every time.
+		}
 		var url  = String(req.url || '');
 		// An empty address must not be read as "here". `new URL('', href)` resolves
 		// to the current page, whose host matches ours, so a missing url would have
@@ -4710,7 +5670,11 @@ import init, {
 		clearChat();
 		if (!Array.isArray(messages)) return;
 		messages.forEach(function (m) {
-			if (m.role === 'user') appendUserMessage(m.content);
+			// A message said into a running turn is a user message to the model and
+			// not a turn of its own here, so it is drawn where it landed rather than
+			// as the question that started something.
+			if (m.role === 'user' && m.interject) appendInterjected(m.content);
+			else if (m.role === 'user') appendUserMessage(m.content);
 			else if (m.role === 'assistant') {
 				appendAssistantText(m.content || '');
 				var div = curAsstDiv;
@@ -4720,6 +5684,7 @@ import init, {
 				if (m.interrupted && div) markInterrupted(div, m);
 			}
 			else if (m.role === 'error_log') { appendError(m.content); }
+			else if (m.role === 'fold_log') { appendCompacted(m.content || ''); }
 			else if (m.role === 'tool_log') {
 				// A record of a tool the agent ran. Display only: it is not sent
 				// back to the model, which cannot replay a tool call it has no
@@ -4891,11 +5856,34 @@ import init, {
 		el.textContent = t('chat.answered', { n: words });
 	}
 
+	/// What the one button under the composer means right now.
+	///
+	/// Three modes, not two. `stop` is what a turn used to put on the button for its
+	/// whole length; it still does, but only while the box is empty. With something
+	/// typed in it during a turn the button is `interject` — an ordinary Send arrow
+	/// that puts what was written into the turn already running. The two cannot
+	/// share a button honestly: a user who has just typed a correction and presses ■
+	/// has killed the turn they were trying to steer.
 	function setSendMode(mode) {
 		chatSend.disabled = false;
 		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); chatSend.title = t('chat.stop'); }
-		else { chatSend.innerHTML = '➤'; chatSend.classList.remove('stop'); chatSend.title = t('chat.send'); }
+		else {
+			chatSend.innerHTML = '➤';
+			chatSend.classList.remove('stop');
+			chatSend.title = t(mode === 'interject' ? 'chat.send_into' : 'chat.send');
+		}
 	}
+
+	/// Which of the three the button should be showing.
+	function sendMode() {
+		if (!curGen()) return 'send';
+		return (chatInput && chatInput.value && chatInput.value.trim()) ? 'interject' : 'stop';
+	}
+
+	/// Put the button into the mode the composer's contents imply. Called on every
+	/// keystroke as well as at the ends of a turn, because mid-turn the button's
+	/// meaning changes as the box fills and empties.
+	function syncSendMode() { if (chatSend) setSendMode(sendMode()); }
 
 	// ── Meters ─────────────────────────────────────────────────
 	function fmtCtx(n) {
@@ -5001,8 +5989,10 @@ import init, {
 			chat._generating = false;
 			if (current === chat) { hideSpinner(); setSendMode('send'); chatInput.disabled = false; }
 		}
-		// A deleted chat's queue goes with it: there is nothing left to send it to.
+		// A deleted chat's queue goes with it, and so does anything said into the turn
+		// that has just been killed: there is nothing left to send either to.
 		chat._queue = [];
+		chat._interject = [];
 		if (current === chat) renderQueue();
 		chats = chats.filter(function (c) { return c.id !== chat.id; });
 		tombstone(chat.id);      // so a stale tab cannot resurrect it
@@ -5028,7 +6018,11 @@ import init, {
 	function chatDelta(chat, turns) {
 		var t = 0, want = turns ? turns.slice() : null;
 		return (chat.messages || []).filter(function (m) {
-			if (m.role === 'user') t += 1;
+			// A message said into a running turn is not a turn of its own -- it
+			// belongs to the one it cut into. Counting it would shift every turn
+			// number after it, and a ticked turn is mapped back to its messages
+			// through exactly this count.
+			if (m.role === 'user' && !m.interject) t += 1;
 			return !want || want.indexOf(t) !== -1;
 		}).map(function (m) {
 			return (m.role === 'user' ? 'User: ' : 'Assistant: ') + m.content;
@@ -5480,10 +6474,26 @@ import init, {
 		// spent, and takes the live key instead of buying another. Not persisted: `slimChat`
 		// keeps a whitelist, and this belongs to the app object, which does not survive a reload.
 		chat._gen = creditsGen();
-		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model, cfg.maxTokens || 4096,
+		// `_capTry` is set only while a turn is mid-backoff, after a provider
+		// refused the length first asked for; it lasts exactly as long as that
+		// retry and is not persisted.
+		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
+			chat._capTry || maxOutFor(a.model, a.provider),
 			Instructions.compose(SYSTEM_PROMPT(), ''), cfg.tools !== false);
 		chat.model    = a.model;
 		chat.provider = a.provider || chat.provider || '';
+		// How big this model's window is, so a long chat is folded before the provider
+		// refuses it rather than after. `contextWindow` returns null for a model nobody
+		// publishes a figure for, and a null is left alone: the agent's own default
+		// assumption is a better guess than a number invented here, and the reactive
+		// fold still catches a refusal either way.
+		try {
+			var cw = window.DaimondPricing
+				? DaimondPricing.contextWindow(a.model || chat.model, chat.provider || '')
+				: null;
+			if (cw && chat.app.set_context_window) chat.app.set_context_window(cw);
+		} catch (e) { /* an older wasm build has no setter */ }
+		applyRoundLimit(chat.app);
 		// A rebuilt DaimondApp starts with an empty Session, so a chat reopened
 		// after a reload would send only its newest message and the model
 		// would answer with no memory of the conversation on screen. Seed
@@ -5492,9 +6502,34 @@ import init, {
 		var hist = (chat.messages || []).filter(function (msg) {
 			return msg && msg.content && (msg.role === 'user' || msg.role === 'assistant');
 		});
-		if (hist.length) {
+		// The model's OWN conversation first, when one was stored. It is a different
+		// thing from the transcript on screen: it carries the provider's tool-call ids,
+		// so what the agent read, wrote and ran comes back with it — and it is the
+		// FOLDED list when compaction has run, so a reloaded chat does not spring back
+		// to the full size the screen still shows.
+		var sess = chat.session, seeded = 0;
+		if (sess && sess.msgs && sess.msgs.length && chat.app.restore_session) {
+			try {
+				seeded = chat.app.restore_session(sess.msgs,
+					chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0,
+					chat.cachedTokens || 0, chat.costUsd || 0);
+			} catch (e) { seeded = 0; }
+		}
+		if (seeded) {
+			// Turns another tab took after this session was stored. Prose only — that is
+			// all a screen transcript holds — appended behind the part that carries ids.
+			if (chat.app.append_message) {
+				tailAfter(chat, sess).forEach(function (m) {
+					try { chat.app.append_message(m.role, m.content || ''); } catch (e) { /* skip one */ }
+				});
+			}
+		} else if (hist.length) {
+			// No usable session: the old path, which is also the path a chat written by
+			// an earlier build takes, and the one a backup from before this store took.
 			chat.app.restore(hist, chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0,
 				chat.cachedTokens || 0, chat.costUsd || 0);
+		}
+		if (seeded || hist.length) {
 			// The wasm counters now hold the restored totals, so meter the
 			// next turn against those rather than against zero. All four, not
 			// two: a cost counter restored to the session total while its `prev`
@@ -5506,6 +6541,54 @@ import init, {
 			chat.prevCost       = chat.costUsd || 0;
 		}
 		return chat.app;
+	}
+
+	/// Store the conversation the MODEL holds for `chat`, as its agent now has it.
+	///
+	/// Called at the end of every turn, win or lose. What it saves is not the transcript
+	/// on screen: it is the agent's own message list, which carries the provider's
+	/// tool-call ids — the thing the browser cannot mint, because it never sees them —
+	/// and which compaction has already folded if the conversation outgrew the window.
+	///
+	/// `upto` marks the last screen message the stored list accounts for, so a turn
+	/// another tab took meanwhile can be appended on the next restore rather than lost
+	/// or, worse, added twice.
+	function captureSession(chat, app) {
+		if (!chat || !app || !app.export_session) return;
+		try {
+			var msgs = app.export_session();
+			if (!msgs || !msgs.length) return;
+			var all  = chat.messages || [];
+			var last = all.length ? all[all.length - 1] : null;
+			chat.session = {
+				v:      1,
+				msgs:   Array.prototype.slice.call(msgs),
+				upto:   last ? (last.mid || '') : '',
+				uptoTs: last ? (last.ts  || 0)  : 0,
+			};
+		} catch (e) { /* the chat is fine without it; the next turn writes another */ }
+	}
+
+	/// The screen messages a stored session does not already account for.
+	///
+	/// By position while the marker is still in the transcript, and by timestamp when it
+	/// is not — a message can be tombstoned out from under the marker (continuing an
+	/// interrupted turn does exactly that), and falling back to the clock is what stops
+	/// the tail from replaying the whole conversation a second time.
+	function tailAfter(chat, sess) {
+		var msgs = chat.messages || [];
+		var from = -1;
+		if (sess && sess.upto) {
+			for (var i = 0; i < msgs.length; i++) {
+				if (msgs[i] && msgs[i].mid === sess.upto) { from = i; break; }
+			}
+		}
+		var tail = (from >= 0)
+			? msgs.slice(from + 1)
+			: msgs.filter(function (m) { return m && (m.ts || 0) > ((sess && sess.uptoTs) || 0); });
+		return tail.filter(function (m) {
+			return m && m.content && (m.role === 'user' || m.role === 'assistant');
+		});
 	}
 
 	/// Is this failure a provider refusing the key it was sent?
@@ -5560,11 +6643,22 @@ import init, {
 	/// flight as far as the updater is concerned: reloading for a new version would
 	/// throw it away as surely as reloading over a half-typed prompt.
 	function anyQueued() {
-		return chats.some(function (c) { return c._queue && c._queue.length; });
+		return chats.some(function (c) { return waitingOn(c) > 0; });
 	}
 
 	window.DaimondCore = {
 		busy:            function () { return anyGen() || anyQueued() || (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
+		/// Which permission mode the ENGINE is in — its own answer, not the page's
+		/// copy of it.
+		///
+		/// The two can differ, and the difference is the only one that matters: the
+		/// engine's copy decides what runs, and a surface drawing the other one would
+		/// be reporting an intention rather than a fact. Published because it is the
+		/// only honest source for anything that wants to say what is in force.
+		permissionMode:  function () {
+			try { return (Wasm && Wasm.permission_mode) ? Wasm.permission_mode() : ''; }
+			catch (e) { return ''; }
+		},
 		/// Hold Tab inside `card` for one keydown. Published because the two
 		/// popovers in workspace.js are `role="dialog"` and have to keep the
 		/// promise that makes -- and a second copy of a focus trap is a second
@@ -5584,6 +6678,15 @@ import init, {
 		// sync engine never reaches into turn machinery.
 		collectSync:     collectSync,
 		applySync:       applySync,
+		/// The one chat store, reached in one place.
+		///
+		/// Transcripts live in IndexedDB, which the app can be wrong about: the
+		/// in-memory mirror is what every caller reads, and a mirror that has
+		/// drifted from the database is exactly the failure that loses work. So
+		/// the store itself is published, and anything that needs to know what is
+		/// actually held -- rather than what this tab believes is held -- asks it
+		/// rather than keeping a second opinion.
+		chatStore:       function () { return ChatStore; },
 		// This device's coarse self-description ("Chromium on Linux"). sync.js
 		// sends it as the mailbox's display label -- the one field the gateway
 		// keeps in the clear -- because the account's chosen name is the user's
@@ -5603,22 +6706,22 @@ import init, {
 		mergeTombs:      mergeTombMap,
 	};
 	/// Point the one composer at whichever chat is on screen: showing Stop while
-	/// that chat generates, ready to type either way.
+	/// that chat generates and nothing is typed, ready to type either way.
 	///
-	/// The box is no longer disabled mid-turn. A turn cannot be interrupted -- the
-	/// wasm side holds the session for its whole length -- but there is no reason
-	/// the next thing to say cannot be typed while the answer arrives; it is held
-	/// and sent when the turn ends. Send still means Stop while generating, which
-	/// is the one signal the rest of the app reads to know a turn is running.
+	/// The box is no longer disabled mid-turn, and what is typed into it no longer
+	/// merely waits: a turn is many requests, and between two of them the message
+	/// list is rebuilt, so a correction can go to the model in the turn it was meant
+	/// to redirect. Stop is still on the button whenever the box is empty, which is
+	/// the state anything asking "is a turn running?" looks at.
 	function syncComposer() {
 		if (!chatInput) return;
 		var g = curGen();
 		chatInput.disabled = false;
-		setSendMode(g ? 'stop' : 'send');
+		syncSendMode();
 		// Where a user finds out they may keep typing: the placeholder is on screen
-		// exactly when the box is empty and they are wondering whether to wait. The
-		// send button is not touched -- while a turn runs it means Stop, and that is
-		// the one signal the rest of the app reads to know a turn is running.
+		// exactly when the box is empty and they are wondering whether to wait. What
+		// then happens to what they type is said by the line above the bubbles, at
+		// the moment it matters -- there is not room for it here.
 		chatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');
 		if (!g) hideSpinner();
 		renderQueue();               // this chat's own queue, not the last one's
@@ -5640,24 +6743,42 @@ import init, {
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
-		// Mid-turn: hold it. The composer clears either way, so typing then sending
-		// feels the same whether or not an answer happens to be arriving.
-		if (chat._generating) { enqueueMessage(chat, text); return; }
+		// Mid-turn. A turn is a round of requests, not one, and the message list is
+		// rebuilt between them -- so what is typed now can reach the model IN this
+		// turn, at the seam after the tool replies go back (see `run_tool_loop`).
+		// That is only true of the chat on screen, whose agent is the one running;
+		// anything else still waits in the queue, badged on its tile, exactly as it
+		// did. The composer clears either way, so typing then sending feels the same
+		// whether or not an answer happens to be arriving.
+		if (chat._generating) {
+			if (current === chat && interjectMessage(chat, text)) return;
+			enqueueMessage(chat, text);
+			return;
+		}
 		chatInput.value = ''; chatInput.style.height = 'auto';
 		runTurn(chat, text);
 	}
 
-	// ── The queue ──────────────────────────────────────────────
+	// ── What you typed while the answer was still coming ───────
 	//
-	// What you typed while the answer was still coming. It is not sent into the
-	// running turn -- it cannot be, the session is held for the turn's whole length
-	// -- so it waits, visibly, and goes as its own turn the moment the lock is free.
+	// Two lists, because there are two fates. A turn is a round of requests, and
+	// between any two of them the agent rebuilds the message list -- so a correction
+	// typed into the chat on screen goes to the RUNNING agent (`_interject`) and is
+	// said at that seam, in the turn it was meant to redirect. Nothing can be added
+	// to a request already in flight, and a turn spending its whole length writing
+	// prose has no seam in it at all; whatever is still waiting when the turn ends
+	// comes back and joins the QUEUE (`_queue`), which sends it as its own turn.
+	//
+	// The queue is also where a message typed at a chat in the background goes:
+	// runTurn draws into the live thread, so a turn started for a conversation the
+	// user has left would write itself into the one they are looking at.
+	//
 	// One turn per queued message, never coalesced: a turn is the unit a fold picks
 	// and the unit the numbering counts, so two questions merged into one turn would
 	// be two things that could never be folded apart again.
 	//
-	// The queue lives on the chat and is deliberately NOT persisted: it is a
-	// half-second of intent, not content, and a queue restored after a crash would
+	// Both lists live on the chat and are deliberately NOT persisted: they are a
+	// half-second of intent, not content, and either restored after a crash would
 	// spend money on a turn the user cannot remember asking for.
 
 	/// Hold a message until the turn in flight has finished.
@@ -5665,7 +6786,61 @@ import init, {
 		chat._queue = chat._queue || [];
 		chat._queue.push(text);
 		chatInput.value = ''; chatInput.style.height = 'auto';
+		syncSendMode();
 		renderQueue();
+	}
+
+	/// Say a message into the turn already running, to be delivered at its next seam.
+	///
+	/// Hands it to the agent, which is the only thing that knows when a seam comes
+	/// round; the copy kept here is a mirror to draw from, and the agent's queue is
+	/// the truth. Returns false when this build's agent cannot take one — an older
+	/// wasm bundle, or a chat whose agent has been thrown away — so the caller falls
+	/// back to the queue rather than dropping what was typed.
+	function interjectMessage(chat, text) {
+		if (!chat.app || typeof chat.app.interject !== 'function') return false;
+		try { chat.app.interject(text); }
+		catch (e) { return false; }
+		chat._interject = chat._interject || [];
+		chat._interject.push(text);
+		chatInput.value = ''; chatInput.style.height = 'auto';
+		syncSendMode();
+		renderQueue();
+		return true;
+	}
+
+	/// Take back whatever was said into a turn and never got in, and queue it instead.
+	///
+	/// Called as the turn ends. The agent's queue is drained rather than read: what
+	/// is still in it is exactly what found no seam, and it must not be delivered
+	/// into some later turn by an agent that outlives this one. A turn with no tool
+	/// call in it has no seam, so this is not an edge case — it is the ordinary fate
+	/// of a correction typed into a plain prose answer.
+	///
+	/// What comes back goes in FRONT of anything already queued: it was typed first.
+	function reclaimInterjections(chat) {
+		var left = [];
+		if (chat.app && typeof chat.app.take_interjections === 'function') {
+			try { left = Array.prototype.slice.call(chat.app.take_interjections() || []); }
+			catch (e) { left = []; }
+		}
+		chat._interject = [];
+		// Drained whatever happens, but only put back where there is something to put
+		// it back into: a locked app has just taken the user's content off the screen,
+		// and a deleted chat has nowhere to send it.
+		if (left.length && !locked && chats.indexOf(chat) !== -1) {
+			chat._queue = (chat._queue || []).length ? left.concat(chat._queue) : left;
+		}
+		if (current === chat) renderQueue();
+	}
+
+	/// How much is waiting on a chat, of either kind.
+	///
+	/// Both are money about to be spent and neither has been sent, so the tile badge
+	/// and the updater's idea of "busy" count them together.
+	function waitingOn(chat) {
+		if (!chat) return 0;
+		return ((chat._queue || []).length) + ((chat._interject || []).length);
 	}
 
 	/// The container the queued bubbles live in, always the last thing in the
@@ -5683,43 +6858,63 @@ import init, {
 		return box;
 	}
 
-	/// Draw the current chat's queue.
+	/// Draw everything of the current chat's that has been typed and not yet sent:
+	/// what is waiting on the running turn, then what is queued behind it.
 	///
-	/// A queued bubble is NOT `.chat-msg-user`: that class is what the turn
+	/// Two lists in one box, because to the person who typed them they are one thing
+	/// -- said, not yet delivered -- and the only difference is how soon. The
+	/// heading over each says which, at the moment it matters; the bubbles are the
+	/// same dashed bubbles either way, and both can be withdrawn the same two ways.
+	///
+	/// A waiting bubble is NOT `.chat-msg-user`: that class is what the turn
 	/// machinery counts questions by, so a bubble wearing it would be a turn that
 	/// does not exist -- shifting every turn number a fold maps through.
 	function renderQueue() {
 		if (!chatOutput) return;
-		var q = (current && current._queue) || [];
+		var waiting = (current && current._interject) || [];
+		var q       = (current && current._queue) || [];
 		var existing = document.getElementById('chat-queued');
-		if (!q.length) { if (existing) existing.remove(); return; }
+		if (!waiting.length && !q.length) {
+			if (existing) existing.remove();
+			updateQueueBadges();
+			return;
+		}
 		var box = queueBox();
 		box.innerHTML = '';
+		if (waiting.length) waitingRows(box, t('chat.interject_help'), waiting, t('chat.interject_pending'), unwait);
+		if (q.length)       waitingRows(box, t('chat.queue_help'),     q,       t('chat.queued_pending'),   unqueue);
+		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
+		updateQueueBadges();
+	}
+
+	/// One list of not-yet-sent bubbles, under its own heading.
+	///
+	/// `take(i, toComposer)` is how a bubble is withdrawn, and it differs between
+	/// the two lists: one is held by the running agent, the other by the chat.
+	function waitingRows(box, headText, list, pendingHelp, take) {
 		var head = document.createElement('div');
 		head.className = 'chat-queued-head';
-		head.textContent = t('chat.queue_help');
+		head.textContent = headText;
 		box.appendChild(head);
-		q.forEach(function (text, i) {
+		list.forEach(function (text, i) {
 			var div = document.createElement('div');
 			div.className = 'chat-msg chat-msg-queued';
 			div.innerHTML = '<div class="chat-msg-content"></div>';
 			var body = div.querySelector('.chat-msg-content');
 			body.textContent = text;                     // escaped (H5)
-			body.title = t('chat.queued_pending');
+			body.title = pendingHelp;
 			// Clicking it takes it back: the commonest thing to want from a message
 			// not yet sent is to change it.
-			body.addEventListener('click', function () { unqueue(i, true); });
+			body.addEventListener('click', function () { take(i, true); });
 			var x = document.createElement('button');
 			x.className = 'queue-x';
 			x.textContent = '×';
 			x.title = t('chat.queue_cancel');
 			x.setAttribute('aria-label', t('chat.queue_cancel'));
-			x.addEventListener('click', function (e) { e.stopPropagation(); unqueue(i, false); });
+			x.addEventListener('click', function (e) { e.stopPropagation(); take(i, false); });
 			div.appendChild(x);
 			box.appendChild(div);
 		});
-		if (nearBottom()) chatOutput.scrollTop = chatOutput.scrollHeight;
-		updateQueueBadges();
 	}
 
 	/// The badge a chat's tile wears while something is waiting on it, or null
@@ -5727,7 +6922,7 @@ import init, {
 	/// style — the same small accented word the rail already uses for a fold
 	/// waiting on a Diamond, which is the same thing being said about a chat.
 	function queueBadge(chat) {
-		var n = (chat && chat._queue) ? chat._queue.length : 0;
+		var n = waitingOn(chat);
 		if (!n) return null;
 		var b = document.createElement('span');
 		b.className = 'diamond-pending queue-badge';
@@ -5755,17 +6950,43 @@ import init, {
 		});
 	}
 
+	/// Put text back in the composer, after whatever is already typed there.
+	function putInComposer(text) {
+		if (!text) return;
+		chatInput.value = chatInput.value.trim() ? chatInput.value + '\n\n' + text : text;
+		chatInput.style.height = 'auto';
+		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		chatInput.focus();
+		syncSendMode();
+	}
+
 	/// Take a queued message out again: back to the composer to be edited, or
 	/// simply dropped.
 	function unqueue(i, toComposer) {
 		if (!current || !current._queue) return;
 		var text = current._queue.splice(i, 1)[0];
-		if (toComposer && text) {
-			chatInput.value = chatInput.value.trim() ? chatInput.value + '\n\n' + text : text;
-			chatInput.style.height = 'auto';
-			chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
-			chatInput.focus();
+		if (toComposer) putInComposer(text);
+		renderQueue();
+	}
+
+	/// Take a message back out of the turn it was said into.
+	///
+	/// It has to leave the AGENT's queue, not merely the mirror drawn here: a row
+	/// removed from the picture and still delivered is worse than one never removed
+	/// at all. The agent may hand back nothing, which means the seam came round
+	/// between the click and this line — it is in the conversation now, so it is not
+	/// withdrawn and it is certainly not put back in the box to be sent a second time.
+	function unwait(i, toComposer) {
+		if (!current || !current._interject || !current._interject.length) return;
+		var canDrop = !!(current.app && typeof current.app.drop_interjection === 'function');
+		var got = null;
+		if (canDrop) {
+			try { got = current.app.drop_interjection(i); }
+			catch (e) { got = null; }
 		}
+		var mirrored = current._interject.splice(i, 1)[0];
+		if (canDrop && (got === null || got === undefined)) { renderQueue(); return; }
+		if (toComposer) putInComposer(canDrop ? got : mirrored);
 		renderQueue();
 	}
 
@@ -5885,6 +7106,14 @@ import init, {
 		// That refusal is held back rather than written into the conversation, and answered
 		// with a fresh key below; only a SECOND refusal is real, and only that one is shown.
 		var authFail = false, reminted = false;
+		// The provider refusing the reply LENGTH asked for is held back the same
+		// way and answered below by halving it, because a raw "max_tokens must be
+		// at most N" sends the user looking at a setting they never chose.
+		var capFail = false, backedOff = false;
+		// A tool call whose arguments will not parse: the fingerprint of a reply
+		// cut off at the length limit. Recorded here and reported once at the end
+		// of the turn, where the whole turn is known.
+		var capCut = false;
 		var pendingTool = null, toolSeq = 0, pendingCallId = null;
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
@@ -5897,6 +7126,15 @@ import init, {
 				appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
 				pendingCallId = 't' + (++toolSeq);
+				// A tool call's arguments ARE a JSON string, so a reply that stops at
+				// the length limit part-way through one arrives as a MALFORMED CALL,
+				// not as a short file. The model is told only that its JSON was bad,
+				// and the user sees a tool that did nothing for no stated reason —
+				// which is the single most confusing failure in a coding session.
+				// Nothing on the wire that reaches this half says "cut for length"
+				// (the client does not surface a finish reason), so it is inferred
+				// from the evidence that is here.
+				if (truncatedArgs(ev.args)) capCut = true;
 				pendingTool = { role: 'tool_log', name: ev.name || '', args: ev.args || '', content: '', mid: newMid(), ts: Date.now() };
 				chat.messages.push(pendingTool);
 				// Write-ahead: the intent to run this tool is on disk before the tool returns, so
@@ -5911,12 +7149,48 @@ import init, {
 				pendingCallId = null;
 				if (!owns()) return;
 				renderToolResult(ev.name || '', ev.content || '');
+			} else if (ev.type === 'interjected') {
+				// It has landed: the agent put it into the conversation at the seam,
+				// and the model has it from the next request on. So it stops being
+				// something waiting and becomes part of the thread, here, where it
+				// took effect.
+				var said = ev.content || '';
+				if (chat._interject && chat._interject.length) {
+					var at = chat._interject.indexOf(said);
+					chat._interject.splice(at === -1 ? 0 : at, 1);
+				}
+				chat.messages.push({ role: 'user', interject: true, content: said, mid: newMid(), ts: Date.now() });
+				if (!owns()) return;
+				appendInterjected(said);
+				renderQueue();
+			} else if (ev.type === 'compacted') {
+				// Persisted, so a reload still shows that the history was folded --
+				// otherwise the thread silently loses messages between two visits.
+				chat.messages.push({ role: 'fold_log', content: ev.content || '',
+					folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
+				if (!owns()) return;
+				appendCompacted(ev.content || '');
+			} else if (ev.type === 'truncated') {
+				// Said by the provider rather than inferred from a tool call whose
+				// arguments would not parse. Not an error: the request succeeded and a
+				// setting was reached, so the turn is not retried, only reported.
+				capCut = true;
 			} else if (ev.type === 'error') {
 				// The refusal of a spent minted key is not news to the user: it is a key to
 				// replace, and the retry below does that. Nothing is written down until that
 				// retry has had its go, or a turn that goes on to succeed leaves a failure
 				// standing in the transcript underneath its own answer.
 				if (!reminted && canRemint(chat) && keyRefused(ev.content)) { authFail = true; return; }
+				// Likewise for a provider that will not generate a reply this long.
+				// The ceilings this app knows are incomplete by construction — most
+				// providers publish none — so the correction is made by asking, not
+				// by guessing again, and it is only shown if the second ask fails too.
+				// Only worth trying while there is room below to try: at the floor
+				// the reply length is no longer a plausible cause.
+				if (!backedOff && maxOutFor(chat.model, chat.provider) > MIN_MAX
+					&& (capRefused(ev.content) || opaqueRefusal(ev.content))) {
+					capFail = true; return;
+				}
 				chat.messages.push({ role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
 				if (J) J.turnError(umid, chat.id, friendlyError(ev.content || 'Error'));
 				if (!owns()) return;
@@ -5931,22 +7205,44 @@ import init, {
 				try {
 					await app.run_turn(text, onEvent);
 				} catch (e) {
-					if (!authFail) throw e;
-					// One shot at a fresh key, then the same turn again. The key is fixed at a
-					// DaimondApp's construction, so the agent is rebuilt rather than told.
-					reminted = true; authFail = false;
-					// The generation this app froze, so a key already replaced by another agent's
-					// mint is simply taken rather than bought again.
-					try { await DaimondModels.remint(chat._gen); }
-					catch (e2) {
-						// The key could not be replaced, so the balance is gone rather than merely
-						// capped. Say the thing the user can act on: a raw 401 would send them
-						// hunting for a key they never had.
-						throw new Error('Your Daimond credits have run out. Top up in Credits, or '
-							+ 'switch this chat to a provider key of your own.');
+					if (capFail) {
+						// The provider would not do the reply length asked for — or said
+						// something the transport did not carry, which today is the same
+						// thing. Ask for half as much and run the same turn again;
+						// `max_tokens` is frozen when a DaimondApp is built, so the agent
+						// is rebuilt rather than told. One correction only: a second
+						// refusal is real and is reported.
+						backedOff = true; capFail = false;
+						var asked = maxOutFor(chat.model, chat.provider);
+						var half  = Math.max(MIN_MAX, Math.floor(asked / 2));
+						chat._capTry = half;
+						app = rebuildAppWithout(chat, umid);
+						await app.run_turn(text, onEvent);
+						// Only NOW is the smaller ask believed. Recording the cap before
+						// the retry would teach the app a ceiling from any unrelated 400 —
+						// a bad key, a malformed request — and every later turn on that
+						// model would be quietly shortened for it.
+						chat._capTry = 0;
+						noteCapRefused(chat.model, chat.provider, asked);
+					} else if (authFail) {
+						// One shot at a fresh key, then the same turn again. The key is fixed at a
+						// DaimondApp's construction, so the agent is rebuilt rather than told.
+						reminted = true; authFail = false;
+						// The generation this app froze, so a key already replaced by another agent's
+						// mint is simply taken rather than bought again.
+						try { await DaimondModels.remint(chat._gen); }
+						catch (e2) {
+							// The key could not be replaced, so the balance is gone rather than merely
+							// capped. Say the thing the user can act on: a raw 401 would send them
+							// hunting for a key they never had.
+							throw new Error('Your Daimond credits have run out. Top up in Credits, or '
+								+ 'switch this chat to a provider key of your own.');
+						}
+						app = rebuildAppWithout(chat, umid);
+						await app.run_turn(text, onEvent);
+					} else {
+						throw e;
 					}
-					app = rebuildAppWithout(chat, umid);
-					await app.run_turn(text, onEvent);
 				}
 				if (chats.indexOf(chat) === -1) { if (J) J.clearTurn(umid); return; }
 				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ts: Date.now() });
@@ -5970,8 +7266,28 @@ import init, {
 				chat.prevCached = caCum; chat.prevCost = costCum;
 				chat.promptTokens = pCum; chat.completionTokens = cCum;
 				chat.cachedTokens = caCum; chat.costUsd = costCum;
-				chat.lastPrompt = turnP;
+				// What the LAST request actually sent, not what the turn sent in total.
+				// The two are the same only for a one-round turn: an agentic turn sends
+				// the whole conversation once per round, so `turnP` — the growth of the
+				// cumulative counter — is the sum of a dozen overlapping prompts, and
+				// the meter drawn from it read about a dozen times high. The per-round
+				// figure was always tracked in Rust (`session.last_prompt_tokens`);
+				// there was simply no getter for it, so `restore` could set it and
+				// nothing could read it back.
+				chat.lastPrompt = app.last_prompt_tokens || 0;
 				recordSpend(chat.model, turnP, turnC, turnCa, turnCost, chat.provider);
+				// A tool call arrived unparseable, which means the reply ran out of room
+				// mid-argument. Said once, at the end, naming the limit and the setting —
+				// the alternative is a tool that silently did nothing.
+				if (capCut) {
+					var cutMsg = t('err.reply_cut') === 'err.reply_cut'
+						? ('The reply ran out of room at ' + fmtTok(maxOutFor(chat.model, chat.provider))
+							+ ' tokens, so a tool call arrived incomplete and could not run. '
+							+ 'Raise the reply length in Settings, or ask for a smaller change')
+						: t('err.reply_cut', { max: fmtTok(maxOutFor(chat.model, chat.provider)) });
+					chat.messages.push({ role: 'error_log', content: cutMsg, mid: newMid(), ts: Date.now() });
+					if (owns()) appendError(cutMsg);
+				}
 				// The turn is complete and now lives in the snapshot; fold it out of the journal.
 				if (J) J.turnClose(umid, chat.id, pCum, cCum);
 			} catch (e) {
@@ -5994,6 +7310,13 @@ import init, {
 				}
 			} finally {
 				chat._generating = false;
+				chat._capTry = 0;            // the backoff belonged to this turn only
+				// Anything said into this turn that never found a seam comes back now
+				// and joins the queue, whose own rules then decide: sent as its own
+				// turn if the turn ended cleanly, handed back to the composer if it
+				// errored or was stopped. Before `syncComposer` below, so the box and
+				// the bubbles are redrawn once, in their final state.
+				reclaimInterjections(chat);
 				if (owns()) {
 					sayAnswered(chat, sawError || threw);
 					hideSpinner();
@@ -6004,6 +7327,12 @@ import init, {
 					if (!chatInput.value.trim()) chatInput.focus();
 				}
 				updateMeters(); renderSessionList(); updateSpend();
+				// The model's own conversation, taken before the chat is stored and
+				// whatever the turn did: a turn that errored half way through still
+				// leaves the agent holding the tool calls it made, and losing those is
+				// exactly what a reload used to do. Safe here and only here — the getter
+				// borrows the session `run_turn` held mutably, and this is after it.
+				captureSession(chat, app);
 				touchChat(chat);
 				persistChats();
 				Files.refresh();
@@ -6288,19 +7617,44 @@ import init, {
 			// die on the same exhausted key is the worst of both.
 			var onCredits = !!(window.DaimondModels && run.provider === DaimondModels.CREDITS);
 			var authFail = false, reminted = false;
+			// A worker folds by its own model's window, like a chat does; a null means
+			// nobody publishes one and the agent's own assumption stands.
+			var window_ = function (model, provider) {
+				try {
+					var cw = window.DaimondPricing
+						? DaimondPricing.contextWindow(model, provider || '') : null;
+					if (cw && run.app && run.app.set_context_window) run.app.set_context_window(cw);
+				} catch (e) { /* an older wasm build has no setter */ }
+			};
+			// A worker is confined to the Diamond it works for, and the scope is established
+			// BEFORE its first turn rather than trusted afterwards. Async, so it cannot live
+			// inside `build` — which is called again on a re-mint, and is called from a
+			// synchronous try/catch — so `build` mints the app and this puts the fence on it.
+			//
+			// Why a worker and not the chat: a chat is the user's own conversation over their
+			// whole workspace and is unscoped by design (see `Tool::run` in src/tools.rs, which
+			// says so). A worker is dispatched BY a daimon that can itself see only one
+			// Diamond, so an unscoped worker is the way round that confinement — the daimon
+			// could not read a file and could ask something else to read it.
+			var scope = async function () {
+				applyRoundLimit(run.app);
+				await scopeAgentTo(run.app, run.diamondId);
+			};
 			var build = function () {
 				if (onCredits) {
 					var s = DaimondModels.slotConfig(run.slot);
 					if (!s || !s.key) throw new Error('This worker has no key to run on.');
 					run._gen = s.gen;
-					run.app = new DaimondApp(s.url, s.key, run.model, cfg.maxTokens || 4096,
+					run.app = new DaimondApp(s.url, s.key, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
 						Instructions.compose(Prompts.role('worker'), crystal), true);
+					window_(run.model, DaimondModels.CREDITS);
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				} else {
 					var a = appCfgFor(run);
 					run._gen = creditsGen();
-					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, cfg.maxTokens || 4096,
+					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, maxOutFor(run.model, a.provider || run.provider),
 						Instructions.compose(Prompts.role('worker'), crystal), true);
+					window_(run.model, a.provider || run.provider);
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				}
 			};
@@ -6321,6 +7675,7 @@ import init, {
 			}
 			try {
 				build();
+				await scope();
 			} catch (e) {
 				run.status = 'error';
 				run.text = friendlyError(e);
@@ -6349,6 +7704,11 @@ import init, {
 					for (var i = run.tools.length - 1; i >= 0; i--) {
 						if (run.tools[i].status === 'running') { run.tools[i].status = failed ? 'failed' : 'done'; break; }
 					}
+				} else if (ev.type === 'truncated') {
+					// The provider stopped at the output limit. Recorded on the run rather
+					// than written into its output: it is a fact about the reply, not part
+					// of what the worker said.
+					run.truncated = true;
 				} else if (ev.type === 'error') {
 					// Held back while a fresh key is still worth trying, exactly as a chat holds
 					// it back: an agent that goes on to succeed must not carry the wreckage of
@@ -6389,6 +7749,9 @@ import init, {
 					}
 					self.render();
 					build();
+					// The rebuilt app is a NEW app and carries no scope: a re-mint that skipped
+					// this would quietly hand the retry the whole workspace.
+					await scope();
 					await run.app.run_turn(run.task, sink);
 				}
 				// A stopped worker keeps whatever it managed to do; it did not fail.
@@ -7265,6 +8628,7 @@ import init, {
 			catch (e) { return 'all'; }
 		})();
 		var scopeEl = null;			// the row of two chips, built in bind()
+		var kitsEl  = null;			// the row of toolchain grants, built in bind()
 		var attached = [];			// the open Diamond's attachments; see loadAttached
 		var lastDiamondId = null;		// so a re-read of the SAME Diamond does not relist
 
@@ -7369,13 +8733,29 @@ import init, {
 		/// dropped, because that directory is listed in full anyway and a thing
 		/// shown twice reads as two things.
 		async function loadAttached() {
-			attached = [];
-			if (!currentDiamond) return attached;
+			attached = await attachmentsOf(currentDiamond ? currentDiamond.id : '');
+			labelAttached(attached);
+			return attached;
+		}
+
+		/// The same, for ANY Diamond rather than the one on screen.
+		///
+		/// Split out of `loadAttached` because a dispatched worker is scoped to the Diamond it
+		/// works for, which is not always the Diamond the user is looking at — and a scope read
+		/// from `currentDiamond` would confine a worker to whichever Diamond happened to be open
+		/// when it started. It touches no module state, so asking about another Diamond cannot
+		/// repaint this panel.
+		///
+		/// # Arguments
+		/// * `id` - The Diamond, or '' for none.
+		async function attachmentsOf(id) {
+			var out = [];
+			if (!id) return out;
 			var links = [];
 			try {
-				links = JSON.parse(await diamondApp().links_touching('diamond:' + currentDiamond.id) || '[]');
-			} catch (e) { return attached; }
-			var own = ownDir(), seen = {};
+				links = JSON.parse(await diamondApp().links_touching('diamond:' + id) || '[]');
+			} catch (e) { return out; }
+			var own = 'diamonds/' + id, seen = {};
 			links.forEach(function (l) {
 				var ref = l.other || '';
 				var i = ref.indexOf(':');
@@ -7385,7 +8765,7 @@ import init, {
 				if (underPath(path, own)) return;
 				if (seen[ref]) return;
 				seen[ref] = 1;
-				attached.push({
+				out.push({
 					link: l,
 					ref:  ref,
 					path: path,
@@ -7395,9 +8775,8 @@ import init, {
 					ro:   l.rel === 'consulted',
 				});
 			});
-			attached.sort(function (a, b) { return a.path.localeCompare(b.path); });
-			labelAttached(attached);
-			return attached;
+			out.sort(function (a, b) { return a.path.localeCompare(b.path); });
+			return out;
 		}
 
 		/// The last `n` segments of a path.
@@ -7481,6 +8860,79 @@ import init, {
 			scopeEl.style.display = '';
 			scopeEl.appendChild(scopeChip('all', t('dws.mode_all'), t('dws.mode_all')));
 			scopeEl.appendChild(scopeChip('diamond', t('dws.mode_diamond'), currentDiamond.name));
+			renderKits();
+		}
+
+		/// The toolchains this build can grant, in the order they are offered.
+		///
+		/// The same four names `Toolkit::all` gives, and they are names rather than labels
+		/// because the name is what is STORED and what reaches `Toolkit::parse`. The label is
+		/// only ever how it is written on a button.
+		var KITS = [
+			{ name: 'rust',   label: 'Rust' },
+			{ name: 'node',   label: 'Node' },
+			{ name: 'python', label: 'Python' },
+			{ name: 'go',     label: 'Go' },
+		];
+
+		/// Draw the toolchain grants for the open Diamond.
+		///
+		/// Only in the Diamond tree: a grant is per Diamond, and a row of toolchain buttons over
+		/// the whole workspace would be asking about something that has no answer.
+		function renderKits() {
+			if (!kitsEl) return;
+			if (!currentDiamond || !diamondScope()) { kitsEl.style.display = 'none'; return; }
+			kitsEl.style.display = '';
+			kitsEl.innerHTML = '';
+			var d = diamonds.find(function (x) { return x.id === currentDiamond.id; });
+			var on = (d && Array.isArray(d.toolkits)) ? d.toolkits : [];
+			var lab = document.createElement('span');
+			lab.className = 'files-kits-label';
+			lab.textContent = t('dws.kits');
+			lab.title = t('dws.kits_help');
+			kitsEl.appendChild(lab);
+			KITS.forEach(function (k) {
+				var b = document.createElement('button');
+				var has = on.indexOf(k.name) >= 0;
+				b.type = 'button';
+				b.className = 'files-kit-chip' + (has ? ' active' : '');
+				b.textContent = k.label;
+				b.setAttribute('aria-pressed', has ? 'true' : 'false');
+				b.title = t(has ? 'dws.kit_off' : 'dws.kit_on',
+					{ kit: k.label, name: currentDiamond.name });
+				b.addEventListener('click', function () { toggleKit(k.name); });
+				kitsEl.appendChild(b);
+			});
+			if (!on.length) {
+				var none = document.createElement('span');
+				none.className = 'files-kits-none';
+				none.textContent = t('dws.kit_none');
+				kitsEl.appendChild(none);
+			}
+		}
+
+		/// Grant a toolchain to the open Diamond, or take it back.
+		///
+		/// Written to the store first and drawn from the store afterwards, never from what was
+		/// clicked: the store normalises, and a button that painted itself from the click would
+		/// claim a grant the store had dropped.
+		///
+		/// # Arguments
+		/// * `name` - The toolkit's name, as the store spells it.
+		async function toggleKit(name) {
+			if (!currentDiamond) return;
+			var d = diamonds.find(function (x) { return x.id === currentDiamond.id; });
+			var on = (d && Array.isArray(d.toolkits)) ? d.toolkits.slice() : [];
+			var i = on.indexOf(name);
+			if (i >= 0) on.splice(i, 1); else on.push(name);
+			try {
+				await diamondApp().set_toolkits(currentDiamond.id, JSON.stringify(on));
+			} catch (e) {
+				toast(t('dws.kit_failed') + ': ' + friendlyError(e), true);
+				return;
+			}
+			await loadDiamonds();
+			renderKits();
 		}
 
 		/// One chip in the scope row: a real button, because it changes what the
@@ -7740,6 +9192,17 @@ import init, {
 				scopeEl.className = 'files-scope';
 				scopeEl.style.display = 'none';
 				modeEl.parentNode.insertBefore(scopeEl, modeEl.nextSibling);
+			}
+			// The toolchain grants, under the scope row and above the tree. It belongs in
+			// this panel and nowhere else: this is where a person says what a Diamond may
+			// reach, and a toolchain is one more thing it may reach — the only one that is
+			// not a folder in the workspace.
+			kitsEl = panel.querySelector('.files-kits');
+			if (!kitsEl) {
+				kitsEl = document.createElement('div');
+				kitsEl.className = 'files-kits';
+				kitsEl.style.display = 'none';
+				scopeEl.parentNode.insertBefore(kitsEl, scopeEl.nextSibling);
 			}
 			panel.querySelector('[data-act="refresh"]').addEventListener('click', function () { list(curDir); });
 			var newBtn = panel.querySelector('[data-act="new-file"]');
@@ -9098,8 +10561,475 @@ import init, {
 			},
 			// Which tree the panel is showing: 'all' or 'diamond'.
 			scope:         function () { return diamondScope() ? 'diamond' : 'all'; },
+			/// What the open Diamond's workspace is made of, as the three lists
+			/// `diamond_bounds` in src/tools.rs takes: its own directory, what the
+			/// user attached, and which of those were attached to be consulted
+			/// rather than worked on.
+			///
+			/// This is the INPUT to a fence and not a fence. The bounds, and the
+			/// compartment built from them, are computed in Rust; a page that
+			/// composed either would be a second opinion about what a command may
+			/// touch, free to drift from the one the hand enforces.
+			///
+			/// Read here because this module already keeps the attachments — the
+			/// panel lists them on every open — and a second reader of the same
+			/// links would be a second answer to the same question.
+			/// # Arguments
+			/// * `id` - Which Diamond, or nothing for the one on screen. A worker is
+			///   scoped to the Diamond it works FOR, which is not always the one the
+			///   user is looking at.
+			bounds:        async function (id) {
+				var did = id || (currentDiamond ? currentDiamond.id : '');
+				if (!did) return { own_dir: '', attached: [], read_only: [], toolkits: [] };
+				var list = [];
+				try { list = await attachmentsOf(did); } catch (e) { list = []; }
+				var d = diamonds.find(function (x) { return x.id === did; });
+				return {
+					own_dir:   'diamonds/' + did,
+					attached:  list.map(function (a) { return a.path; }),
+					read_only: list.filter(function (a) { return a.ro; })
+						.map(function (a) { return a.path; }),
+					// The toolchains the USER granted this Diamond, from the store. Never
+					// inferred from anything a model asked to run — see `Toolkit` in
+					// src/tools.rs, which says the same thing at the other end.
+					toolkits:  (d && Array.isArray(d.toolkits)) ? d.toolkits.slice() : [],
+				};
+			},
 		};
 	})();
+
+	// ── The Terminal panel ─────────────────────────────────────
+	//
+	// The last joint in a road that is otherwise finished. `js/terminal.js` draws
+	// a terminal and produces keystrokes; `js/handpty.js` carries bytes to and
+	// from a real pty on the user's machine; neither knows the other exists. This
+	// is the piece that puts one inside a Diamond and joins them.
+	//
+	// Three rules, and none of them is this module's to relax:
+	//
+	//   The fence is composed in Rust and nowhere else. `fence_spec` in
+	//   src/tools.rs computes what a session may touch, from the Diamond's own
+	//   bounds and the folder the user granted the hand — exactly as it does for
+	//   `Tool::Run`. This page asks for that request and passes it through. It
+	//   does not compose one, does not widen one, and does not patch a missing
+	//   one: `DaimondPty.open` refuses a fenceless request by design, and the
+	//   right response to that refusal is to show it.
+	//
+	//   Bytes are bytes. `onOutput` hands over the bytes the program wrote, and
+	//   `write` takes them; a keystroke goes back the same way. Nothing in
+	//   between converts either to text — a base64 STRING handed to
+	//   `DaimondPty.input` would be UTF-8 encoded and typed at the program
+	//   literally, which is the exact failure a byte path exists to prevent.
+	//
+	//   A hole is shown, not stitched. A gap in the output is surfaced BESIDE the
+	//   stream, in the notices column, and the bytes still go through. A terminal
+	//   that quietly closed over a missing chunk would draw a screen that never
+	//   existed.
+	//
+	// The refusals a user reads here are, wherever there is one, the sentence the
+	// layer below already wrote — the relay's, the extension's or the hand's,
+	// verbatim. They are written to be acted on, and a paraphrase loses the only
+	// instruction the reader gets.
+	var DaimondTerm = (function () {
+
+		var els   = null;	// the panel's own furniture, bound on the first open
+		var term  = null;	// the DaimondTerminal handle, or null before one exists
+		var sid   = null;	// the live session's id, or null
+		var owner = null;	// the Diamond that session belongs to
+		var size  = { cols: 80, rows: 24 };
+		var starting = false;	// an open is in flight
+		var tearing  = false;	// a teardown is in progress; endings are ours, not news
+		var again    = false;	// a restart is waiting for the old program to go
+		var composer = null;	// test-only; see _setRequestForTest
+
+		/// The Diamond a session belongs to, or '' when none is open.
+		function diamondId() { return currentDiamond ? currentDiamond.id : ''; }
+
+		/// The sentence out of a rejection, which is what these rejections carry.
+		function msgOf(e) { return (e && e.message) || String(e || ''); }
+
+		function bind() {
+			if (els) return els;
+			var panel = document.getElementById('panel-term');
+			if (!panel) return null;
+			els = {
+				panel: panel,
+				head:  panel.querySelector('.railhead [role="heading"]'),
+				title: document.getElementById('termp-title'),
+				bell:  document.getElementById('termp-bell'),
+				state: document.getElementById('termp-state'),
+				gaps:  document.getElementById('termp-gaps'),
+				host:  document.getElementById('termp-host'),
+				start: panel.querySelector('[data-act="term-start"]'),
+				stop:  panel.querySelector('[data-act="term-stop"]'),
+			};
+			// Where F6 lands. -1 rather than 0: it is a destination, not a stop on
+			// the way round, and a heading in the tab order would be one more press
+			// between everybody else and the panel's buttons.
+			if (els.head) els.head.setAttribute('tabindex', '-1');
+			if (els.start) els.start.addEventListener('click', function () { restart(); });
+			if (els.stop)  els.stop.addEventListener('click', function () { stop(); });
+			// The way out, and it has to be taken BEFORE the terminal sees the key.
+			// A terminal owns nearly every keystroke — Escape is a byte, Tab is a
+			// byte, F6 itself is `\x1b[17~` — so the panel takes this one in the
+			// capture phase and stops it there. Without that there is no keyboard
+			// route out of the terminal at all, which is a trap and not a panel.
+			panel.addEventListener('keydown', function (ev) {
+				if (ev.key !== 'F6' || ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return;
+				ev.preventDefault();
+				ev.stopPropagation();
+				leave();
+			}, true);
+			return els;
+		}
+
+		/// Move the keyboard out of the terminal, to the panel's own heading.
+		///
+		/// The heading and not the next control: a reader who has just left a
+		/// terminal is told where they now are, and Tab from here reaches the
+		/// panel's buttons in the ordinary way.
+		function leave() {
+			if (els && els.head) els.head.focus();
+		}
+
+		/// Where the session is, in a sentence. `refused` gives it the app's
+		/// warning frame rather than a colour, which a reader who cannot see
+		/// colour would not get at all.
+		///
+		/// The count of holes is carried here rather than only on the notices,
+		/// because a notice can be dismissed and the fact cannot: a transcript
+		/// with a hole in it is not a transcript, for as long as it is on screen.
+		var state = { line: '', refused: false, gaps: 0 };
+		function say(text, refused) {
+			state.line = text || '';
+			state.refused = !!refused;
+			render();
+		}
+		function render() {
+			if (!els) return;
+			var line = state.line;
+			if (state.gaps) {
+				line = (line ? line + ' ' : '') + tn('term.gaps_count', state.gaps);
+			}
+			els.state.textContent = line;
+			els.state.classList.toggle('refused', state.refused || state.gaps > 0);
+		}
+
+		/// Whether the empty screen is worth showing at all.
+		///
+		/// A terminal refused before it ever drew a byte is a black box under a
+		/// paragraph saying why the box is empty; the paragraph is the whole of
+		/// what there is to read, so it gets the room. Anything that has drawn
+		/// keeps its screen, ending or no ending.
+		function showScreen(on) {
+			if (els) els.panel.classList.toggle('no-term', !on);
+		}
+
+		/// One notice beside the stream: a hole in the output, or a problem the
+		/// session survived. Never written INTO the terminal — see the header.
+		///
+		/// It lies OVER the screen (see terminal.css) and can therefore be in the
+		/// way of the very output it is about, so it carries a dismiss. What the
+		/// dismiss does not do is take the fact away: the count stays in the state
+		/// line for as long as the session lasts.
+		function notice(line) {
+			if (!els || !line) return;
+			state.gaps++;
+			render();
+			var d = document.createElement('div');
+			d.className = 'termp-gap';
+			var msg = document.createElement('span');
+			msg.textContent = line;
+			var x = document.createElement('button');
+			x.type = 'button';
+			x.className = 'termp-gap-x';
+			x.title = t('term.dismiss_notice');
+			x.setAttribute('aria-label', t('term.dismiss_notice'));
+			x.textContent = '✕';
+			x.addEventListener('click', function () {
+				if (d.parentNode) d.parentNode.removeChild(d);
+			});
+			d.appendChild(msg);
+			d.appendChild(x);
+			els.gaps.appendChild(d);
+			// A session that keeps losing chunks would otherwise bury the screen.
+			// The oldest go; the count in the state line is what survives, and it
+			// counts every hole rather than the ones still on screen.
+			while (els.gaps.childNodes.length > 4) els.gaps.removeChild(els.gaps.firstChild);
+		}
+
+		/// A bell, where the panel can be seen. The terminal flashes its own edge
+		/// at the same moment; this is the same event at panel scale.
+		function ring() {
+			if (!els) return;
+			els.panel.classList.add('bell');
+			setTimeout(function () { els.panel.classList.remove('bell'); }, 1200);
+		}
+
+		/// The Start button says which of the two things it would do.
+		function paintButtons() {
+			if (!els) return;
+			var k = sid ? 'term.restart' : 'term.start';
+			if (els.start) {
+				els.start.title = t(k);
+				els.start.setAttribute('aria-label', t(k));
+			}
+			if (els.stop) {
+				els.stop.title = t('term.stop');
+				els.stop.setAttribute('aria-label', t('term.stop'));
+			}
+		}
+
+		/// Build the terminal into the panel, once, on the first open.
+		///
+		/// Not at page load: a canvas, a screen model and a screen-reader mirror
+		/// are not worth building for a panel nobody has asked for, and the grid
+		/// is computed from a box that does not have a size until the panel is on
+		/// screen.
+		function make() {
+			if (term) return term;
+			var e = bind();
+			if (!e || !window.DaimondTerminal) return null;
+			term = DaimondTerminal.create(e.host, {
+				label: t('term.label'),
+				onData: function (u8) {
+					// Bytes, exactly as typed. `DaimondPty.input` encodes them for
+					// the wire itself; handing it base64 would send the base64.
+					if (!sid) return;
+					DaimondPty.input(sid, u8).catch(function (err) { say(msgOf(err), true); });
+				},
+				onResize: function (cols, rows) {
+					size = { cols: cols, rows: rows };
+					// A program asks the KERNEL how big its terminal is, so the pty
+					// has to be told and told again. Before a session exists this
+					// only records the size, which is then what the open asks for.
+					if (!sid) return;
+					DaimondPty.resize(sid, cols, rows).catch(function () { /* it has closed */ });
+				},
+				onTitle: function (s) {
+					// A title is bytes a program chose. Control sequences are taken
+					// out of it before it reaches the DOM, and its length is bounded:
+					// the head is a line, not a paragraph.
+					e.title.textContent = stripAnsi(String(s == null ? '' : s)).slice(0, 120);
+				},
+				onBell: ring,
+			});
+			return term;
+		}
+
+		/// The `open` request, composed on the Rust side.
+		///
+		/// **This is the whole of the fence question.** The page hands over what it
+		/// knows — which Diamond, what the user attached, how big the screen is —
+		/// and Rust answers with the request the wire carries, fence included, by
+		/// the same `fence_spec` a `Tool::Run` goes through. Where that edge is
+		/// missing the answer is a refusal, never a request this page filled in.
+		async function request() {
+			var b = { own_dir: '', attached: [], read_only: [], toolkits: [] };
+			try { b = await Files.bounds(); } catch (e) { /* no Diamond open */ }
+			var ask = {
+				own_dir:   b.own_dir,
+				attached:  b.attached,
+				read_only: b.read_only,
+				// The toolchains the user granted this Diamond. Without them a session
+				// in a Diamond granted Rust met `cargo` as a refusal, because the fence
+				// never named the toolchain and the hand clamps to what it was told.
+				toolkits:  b.toolkits || [],
+				cwd:       b.own_dir,
+				cols:      size.cols,
+				rows:      size.rows,
+			};
+			var fn = composer || (Wasm && Wasm.pty_request);
+			if (typeof fn !== 'function') return { refused: t('term.no_composer') };
+			var raw;
+			try { raw = await fn(JSON.stringify(ask)); }
+			catch (e) { return { refused: msgOf(e) }; }
+			try { return JSON.parse(raw); }
+			catch (e) { return { refused: t('term.unreadable_request') }; }
+		}
+
+		/// What a live session tells the panel.
+		function subs() {
+			return {
+				onOutput: function (u8) { if (term) term.write(u8); },
+				// The bytes still went through; what is said here is what is MISSING
+				// from between them.
+				onGap:    function (info) { notice((info && info.reason) || ''); },
+				onError:  function (line) { notice(line); },
+				onClosed: ended,
+			};
+		}
+
+		/// Open a terminal for the Diamond on screen.
+		async function start() {
+			var e = bind();
+			if (!e || starting || sid) return;
+			starting = true;
+			say(t('term.starting'));
+			/// A refusal, shown as one: the sentence, and no empty screen under it.
+			///
+			/// The screen is hidden only HERE and never at the top of the attempt,
+			/// because a hidden box measures nothing — the request would then ask
+			/// the kernel for the minimum grid instead of the panel's.
+			function refuse(line) {
+				say(line, true);
+				showScreen(false);
+			}
+			try {
+				if (!window.DaimondPty) { refuse(t('term.no_relay_script')); return; }
+				if (!make()) { refuse(t('term.no_renderer')); return; }
+				// Ask before knocking. `status` is the one call that says "no hand
+				// here" without putting an approval window in front of somebody who
+				// has not installed anything, and its `reason` is the sentence the
+				// relay or the hand already wrote for exactly this moment.
+				var st = {};
+				try { st = JSON.parse(await DaimondPty.status()); } catch (x) { st = {}; }
+				if (!st.paired) { refuse(st.reason || t('term.not_paired')); return; }
+				var req = await request();
+				if (!req || req.refused) { refuse((req && req.refused) || t('term.no_composer')); return; }
+				var live = await DaimondPty.open(req, subs())
+					.then(function (v) { return { ok: v }; }, function (err) { return { err: msgOf(err) }; });
+				if (live.err) { refuse(live.err); return; }
+				sid   = live.ok.id;
+				owner = diamondId();
+				say(t('term.running'));
+				showScreen(true);
+				// The box may have come back from `display: none`, where it had no
+				// size to measure. Re-fit before the program's first byte, or the
+				// screen it draws is the minimum grid and not the panel's.
+				if (term) term.fit();
+				// The size the panel actually has, once more, now that there is a
+				// kernel to tell: the grid may have been re-fitted while the approval
+				// window was on screen, and a program that is never told draws to
+				// whatever it was opened with.
+				DaimondPty.resize(sid, size.cols, size.rows).catch(function () {});
+			} finally {
+				starting = false;
+				paintButtons();
+			}
+		}
+
+		/// Ask the program to stop. Asking, not insisting: a shell given SIGTERM
+		/// writes out its history and one given SIGKILL does not.
+		function stop() {
+			if (!sid) { say(t('term.nothing_running')); return; }
+			DaimondPty.close(sid, 'term').catch(function (err) { say(msgOf(err), true); });
+		}
+
+		/// Start one, or replace the one that is there.
+		function restart() {
+			if (!sid) { start(); return; }
+			again = true;
+			stop();
+		}
+
+		/// The session is over, one way or another.
+		function ended(how) {
+			sid = null;
+			if (tearing) return;		// we ended it ourselves; there is nothing to report
+			var line;
+			if (how && how.refusal) line = how.refusal;
+			else if (how && how.reason && (how.stopped || how.absent)) line = how.reason;
+			else line = t('term.exited', { code: (how && typeof how.exit === 'number') ? how.exit : -1 });
+			say(line, !!(how && (how.refusal || how.stopped || how.absent)));
+			// And into the screen as well, where the output it belongs to is. This
+			// is the terminal's own voice, not the program's — see `say` in
+			// terminal.js — so it is the one thing written in that never came off
+			// the wire.
+			if (term) { try { term.say(line); } catch (e) { /* already destroyed */ } }
+			paintButtons();
+			if (again) { again = false; setTimeout(function () { start(); }, 0); }
+		}
+
+		/// Let go of everything: the program, the session and the screen.
+		///
+		/// Called when the panel closes, when the Diamond changes and when the app
+		/// locks. The program is asked to stop and the session is then forgotten
+		/// locally, which is what `forget` is for — the hand owns the process until
+		/// the link itself goes.
+		function teardown() {
+			var id = sid;
+			tearing = true;
+			sid = null;
+			owner = null;
+			again = false;
+			if (id && window.DaimondPty) {
+				try { DaimondPty.close(id, 'term').catch(function () {}); } catch (e) { /* no link */ }
+				try { DaimondPty.forget(id); } catch (e) { /* already gone */ }
+			}
+			if (term) { try { term.destroy(); } catch (e) { /* already gone */ } term = null; }
+			if (els) {
+				els.gaps.innerHTML = '';
+				els.title.textContent = '';
+				state.gaps = 0;
+				say('');
+				// Back to a panel that will measure itself: the next terminal built
+				// into a hidden box would compute the minimum grid and keep it.
+				showScreen(true);
+			}
+			tearing = false;
+			paintButtons();
+		}
+
+		/// The panel has been shown.
+		function onOpen() {
+			var e = bind();
+			if (!e) return;
+			// A locked app holds none of the user's content on screen, and a
+			// terminal is content twice over: what is on it, and a program still
+			// running behind it.
+			if (locked) { teardown(); return; }
+			// A session belongs to the Diamond it was opened for. One that has
+			// outlived its Diamond is torn down rather than re-labelled: its fence
+			// was computed for the other one.
+			if (sid && owner !== diamondId()) teardown();
+			var first = !term;
+			if (!make()) { say(t('term.no_renderer'), true); showScreen(false); return; }
+			// The panel has just been given its size, and the grid is computed from
+			// it. `fit` is what turns that into columns, rows and a SIGWINCH.
+			term.fit();
+			paintButtons();
+			if (first) start();
+		}
+
+		/// The panel has been closed.
+		function onClose() { teardown(); }
+
+		/// The Diamond in focus changed.
+		function onDiamondChanged() {
+			if (!els) return;
+			if (!sid && !term) return;
+			var open = window.DaimondPanels && DaimondPanels.isOpen('term');
+			teardown();
+			// Locking clears the Diamond too, and that arrives here as a change. A
+			// terminal started in answer to it would be a program launched by the act
+			// of logging out.
+			if (open && !locked) onOpen();
+		}
+
+		return {
+			onOpen:  onOpen,
+			onClose: onClose,
+			onDiamondChanged: onDiamondChanged,
+			/// Say the panel's own words again in a new language. The two buttons
+			/// change their names as the session comes and goes, so they cannot wait
+			/// for the next thing that rebuilds them — nothing does.
+			relabel: paintButtons,
+			/// Whether a session is live, for anything that reports on the app.
+			session: function () { return sid; },
+			/// Test only, and same-origin callers only.
+			///
+			/// It replaces the ONE call that reaches Rust for an `open` request, so
+			/// that the panel's own wiring — bytes in, keystrokes out, a resize, a
+			/// hole in the stream, an ending — can be driven without a machine hand
+			/// on the far side. It is not a way to compose a fence in the page: what
+			/// it stands in for is the Rust side's answer, and a caller that puts a
+			/// fence of its own invention through here has tested its own fiction
+			/// and nothing about this app.
+			_setRequestForTest: function (fn) { composer = (typeof fn === 'function') ? fn : null; },
+		};
+	})();
+	window.DaimondTerm = DaimondTerm;
 
 	// Persist an FSA FileSystemDirectoryHandle across reloads.  Handles are
 	// structured-cloneable, so IndexedDB can store them where localStorage
@@ -9188,14 +11118,27 @@ import init, {
 		var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
 		try {
 			app = new DaimondApp(base, a.apiKey || '', a.model || 'none',
-				cfg.maxTokens || 4096, SYSTEM_PROMPT(), true);
+				maxOutFor(a.model, a.provider), SYSTEM_PROMPT(), true);
 		} catch (e) {
 			app = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none',
-				4096, SYSTEM_PROMPT(), true);
+				AUTO_MAX, SYSTEM_PROMPT(), true);
 		}
 		// The conductor's and the reducer's system prompts are composed in Rust,
 		// so the house rules are handed across rather than baked into the ctor.
 		try { app.set_instructions(Instructions.md); } catch (e) { /* ignore */ }
+		// How big this model's window is, exactly as a chat and a worker are told (see
+		// `ensureApp`). Without it a Diamond's daimon folded against the agent's ASSUMED
+		// default rather than the model's published one — and `adopt_limits` hands whatever
+		// this app holds to every worker the daimon dispatches, so one wrong figure here
+		// became the wrong figure for the whole team. A null means nobody publishes a window
+		// and the agent's own assumption is the better guess.
+		try {
+			var cw = window.DaimondPricing
+				? DaimondPricing.contextWindow(a.model || '', a.provider || '')
+				: null;
+			if (cw && app.set_context_window) app.set_context_window(cw);
+		} catch (e) { /* an older wasm build has no setter */ }
+		applyRoundLimit(app);
 		_diamondApps[k] = app;
 		_diamondAppModel.set(app, a.model || '');
 		_diamondAppProvider.set(app, a.provider || '');
@@ -10989,6 +12932,13 @@ import init, {
 		document.dispatchEvent(new CustomEvent('daimond-diamond-changed'));
 	}
 
+	// The Terminal panel is the second: a session's fence was computed for ONE
+	// Diamond's bounds, so a Diamond change ends it rather than carrying it over
+	// into a workspace it was never granted.
+	document.addEventListener('daimond-diamond-changed', function () {
+		if (window.DaimondTerm) DaimondTerm.onDiamondChanged();
+	});
+
 	/// Say that the links changed, to the graph and to anything else watching.
 	function signalLinksChanged() {
 		document.dispatchEvent(new CustomEvent('daimond-links-changed'));
@@ -12015,6 +13965,9 @@ import init, {
 		// so it would otherwise never ask the gateway what this account holds
 		// and would sit there reporting the account service unreachable.
 		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		// And the Terminal, for the same reason: a panel left open in the saved
+		// layout is never `show`n, so nothing would ever build the terminal into it.
+		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		// Fold back whatever was in flight when the tab last died. Runs after Workers.load, so an
 		// interrupted agent's record exists to enrich; repaints the affected chat and the panel.
 		recoverInterrupted();
@@ -12035,8 +13988,12 @@ import init, {
 				c._generating = false;
 			}
 			// Locking takes the user's content off the screen, so a queue is content
-			// too — and it must not fire a turn into a locked app.
+			// too — and it must not fire a turn into a locked app. What was said into
+			// a running turn is the same content and goes the same way; the drain in
+			// `reclaimInterjections` checks `locked` so a turn ending after this
+			// cannot hand it back onto a locked screen.
 			c._queue = [];
+			c._interject = [];
 			c._aborted = true;
 		});
 		hideSpinner();
@@ -12083,6 +14040,10 @@ import init, {
 		// Hiding it left the figures sitting in the DOM; empty it.
 		if (spend) { spend.innerHTML = ''; spend.style.display = 'none'; }
 		Files.clear();
+		// The terminal goes with the rest of it: the program is asked to stop and
+		// the screen is destroyed, so a locked app is not one with a live shell
+		// drawing behind the passphrase box.
+		try { if (window.DaimondTerm) DaimondTerm.onClose(); } catch (e) { /* never built */ }
 		DaimondAdmin.clear();
 		if (window.DaimondMail) DaimondMail.clear();
 
@@ -12801,6 +14762,11 @@ import init, {
 		// non-primary account — the registry entry and any keys not caught above.
 		try { indexedDB.deleteDatabase('daimond-fsa' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		try { indexedDB.deleteDatabase('daimond-journal' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
+		// The transcripts, which are the whole point of forgetting an account. Closed
+		// first: a live connection blocks the delete, and a blocked delete is silent.
+		try { await ChatStore.wipe(); } catch (e) { /* ignore */ }
+		try { indexedDB.deleteDatabase(CHATS_DB + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
+		try { localStorage.removeItem(CHATS_LEGACY); } catch (e) { /* ignore */ }
 		if (A && acct && !acct.primary) { try { A.remove(acct.id); } catch (e) { /* ignore */ } }
 
 		cfg = loadCfg();          // a blank config, not the erased user's
@@ -13198,7 +15164,7 @@ import init, {
 			version: 1,
 			exported: new Date().toISOString(),
 			name: DaimondIdentity.displayName(),
-			chats: readJson(CHATS_KEY, []),
+			chats: storedChats(),
 			ledger: readJson('daimond-ledger', []),
 			diamonds: [],
 			workspace: await collectOpfsFiles(),
@@ -13247,7 +15213,21 @@ import init, {
 				catch (e) { /* skip one bad file, keep going */ }
 			}
 			if (Array.isArray(data.chats) && data.chats.length) {
-				try { localStorage.setItem(CHATS_KEY, JSON.stringify(data.chats)); loadChats(); } catch (e) { /* keep */ }
+				// Merged into the store, not written over it: a restore adds to this tab
+				// rather than replacing it, which is the promise the rest of this function
+				// keeps for workspace files and Diamonds.
+				var byId = {};
+				storedChats().forEach(function (c) { if (c && c.id) byId[c.id] = c; });
+				data.chats.forEach(function (r) {
+					if (!r || !r.id) return;
+					var st = byId[r.id];
+					if (!st) { byId[r.id] = r; return; }
+					var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
+					merged.messages = slimMessages(mergeMessages(st.messages, r.messages));
+					if (!merged.session && st.session) merged.session = st.session;
+					byId[r.id] = merged;
+				});
+				ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 			}
 			if (Array.isArray(data.ledger) && data.ledger.length) {
 				try { localStorage.setItem('daimond-ledger', JSON.stringify(data.ledger)); } catch (e) { /* keep */ }
@@ -13426,7 +15406,7 @@ import init, {
 		var _msel = document.getElementById('cfg-model');
 		var _hasReal = Array.prototype.some.call(_msel.options, function (o) { return o.value && o.value !== MODEL_OTHER; });
 		if (!_hasReal) setModelOptions([{ value: '', label: 'Loading models…' }]);
-		fetch(modelsUrl(base), { headers: { 'Authorization': 'Bearer ' + key } })
+		fetch(modelsUrl(base), { headers: authHeadersFor(base, key) })
 			.then(function (r) { return r.ok ? r.json() : r.text().then(function () { throw new Error('HTTP ' + r.status); }); })
 			.then(function (j) {
 				if (seq !== _modelFetchSeq) return;	// superseded by a newer fetch
@@ -13481,7 +15461,210 @@ import init, {
 				label: t(prov ? 'models.enter_key_first' : 'models.choose_provider_first') }]);
 		}
 		if (prov && cfg.apiKey) fetchModels();
+		// The reply-length row reads the starred model's ceiling, so it is redrawn
+		// whenever the settings are, not only when it is first built.
+		ReplyLength.render();
+		RoundLimit.render();
 	}
+	/// A string from the table, or the English written here when the table has no
+	/// entry for it yet.
+	///
+	/// The reply-length row ships before its i18n keys do — `www/js/i18n/en.js` is
+	/// not this file's to write — and a settings control reading
+	/// "settings.max_tokens" is worse than one reading English. Once the keys land
+	/// the table wins and these fallbacks go unused; nothing needs changing here.
+	function tOr(key, fallback) {
+		var s = t(key);
+		return s === key ? fallback : s;
+	}
+
+	/// The round-limit setting: how many tool-call rounds one turn may take.
+	///
+	/// A sibling of the reply-length row and deliberately beside it, because the two are the
+	/// same kind of thing to a person: how far one answer is allowed to go. Reply length caps
+	/// how much a model may SAY in a round; this caps how many rounds it may take before the
+	/// turn stops and says so.
+	///
+	/// It earns a control rather than a constant because the right value is not knowable from
+	/// here. The default was 25, is now 150, and a turn asked to refactor forty files can want
+	/// more; a turn that has started looping wants less. Both are ordinary, and the person who
+	/// can tell them apart is the one watching it.
+	///
+	/// Unlike reply length there is no per-model ceiling to read: a round is Daimond's own unit,
+	/// not the provider's, so the ladder is the same everywhere.
+	/// What the engine falls back to when nobody has chosen: `compact::DEFAULT_MAX_ROUNDS`.
+	/// Named here only so the "Default" row can say the figure rather than leave it a mystery;
+	/// nothing is set from it, so the two cannot disagree about what is in force.
+	var DEFAULT_ROUNDS = 150;
+
+	var RoundLimit = {
+		/// The ladder offered. The user's own figure is added when it is off the ladder, so
+		/// opening the panel never silently changes their setting.
+		STEPS: [25, 50, 150, 300, 600],
+
+		/// Build the row once, under the reply-length row it belongs beside.
+		mount: function () {
+			if (document.getElementById('cfg-max-rounds')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-max-rounds');
+			lab.textContent = tOr('settings.max_rounds', 'Steps per turn');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-max-rounds';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-max-rounds-note';
+			note.textContent = tOr('settings.max_rounds_note',
+				'How many times an agent may use a tool before one turn stops. It says so when it '
+				+ 'stops, and you can tell it to carry on.');
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { RoundLimit.save(sel.value); });
+			return true;
+		},
+
+		/// Fill the pulldown from what is stored.
+		render: function () {
+			if (!this.mount()) return;
+			var sel = document.getElementById('cfg-max-rounds');
+			sel.innerHTML = '';
+			var mine = cfg.maxRounds || 0;
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.max_rounds_auto', 'Default') + ' \u2014 ' + DEFAULT_ROUNDS);
+			steps.forEach(function (n) { mk(n, String(n) + ' ' + tOr('settings.steps', 'steps')); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		/// Record a choice and rebuild every agent, since the limit is put on an app when it is
+		/// built and a chat holding an old one would go on using it.
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.maxRounds = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.maxRounds = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			chats.forEach(function (c) { c.app = null; });
+			resetDiamondApps();
+			this.render();
+		},
+	};
+
+	/// Put the user's round limit on a freshly built agent, where they have set one.
+	///
+	/// Zero means "leave the engine's own default alone", which is what `set_max_rounds`
+	/// already does with a zero — passed through rather than special-cased here so there is one
+	/// rule and it lives at the end that enforces it.
+	///
+	/// # Arguments
+	/// * `app` - The DaimondApp to bound.
+	function applyRoundLimit(app) {
+		if (!app || !cfg.maxRounds || typeof app.set_max_rounds !== 'function') return;
+		try { app.set_max_rounds(cfg.maxRounds); } catch (e) { /* an older wasm build has no setter */ }
+	}
+
+	/// The reply-length setting: how many tokens a single answer may run to.
+	///
+	/// Lives with the models, because it is a property OF the model — the ceiling
+	/// differs per model and the row says which one it is reading. Built here
+	/// rather than in the page, so it can name the resolved figure for whichever
+	/// model is starred and offer only the lengths that model will accept.
+	var ReplyLength = {
+		/// The ladder offered, filtered by the starred model's ceiling. A value
+		/// the user already holds is added even when it is off the ladder, so
+		/// opening the panel never silently changes their setting.
+		STEPS: [4096, 8192, 16384, 32768, 65536, 131072],
+
+		/// Build the row once, into the Models panel's existing section.
+		mount: function () {
+			if (document.getElementById('cfg-max-tokens')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-max-tokens');
+			lab.textContent = tOr('settings.max_tokens', 'Longest reply');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-max-tokens';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-max-tokens-note';
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { ReplyLength.save(sel.value); });
+			return true;
+		},
+
+		/// Fill the pulldown for whichever model is starred.
+		render: function () {
+			if (!this.mount()) return;
+			var sel = document.getElementById('cfg-max-tokens');
+			var note = document.getElementById('cfg-max-tokens-note');
+			var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
+			var model = d.model || cfg.model || '';
+			var ceil = maxOutCeiling(model, d.provider || '');
+			var auto = autoMaxOut(model, d.provider || '');
+			sel.innerHTML = '';
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.max_tokens_auto', 'Automatic') + ' — ' + fmtTok(auto));
+			var steps = this.STEPS.filter(function (n) { return !ceil || n <= ceil; });
+			// The user's own figure, when it is not one of the offered steps: an
+			// unlisted value would otherwise be silently rewritten by the first
+			// `change` the pulldown fires.
+			var mine = cfg.maxOut || 0;
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			steps.forEach(function (n) { mk(n, fmtTok(n) + ' ' + tOr('settings.tokens', 'tokens')); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+			// The ceiling clause only when there IS one: naming the model and then
+			// saying nothing about it reads as a sentence that lost its end.
+			note.textContent = tOr('settings.max_tokens_note',
+				'How long a single reply may be. Too low and a large file arrives cut in half.')
+				+ (ceil ? ' ' + model + ' ' + tOr('settings.max_tokens_ceiling', 'accepts up to')
+					+ ' ' + fmtTok(ceil) + '.' : '');
+		},
+
+		/// Record a choice and rebuild every agent, since `max_tokens` is frozen
+		/// when a `DaimondApp` is constructed and nothing can change it after.
+		///
+		/// Only this field is written back. The in-memory `cfg` is a VIEW of
+		/// whichever model is starred and carries the resolved key IN THE CLEAR,
+		/// so persisting it wholesale would put a plaintext key into storage that
+		/// `DaimondModels` had sealed.
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.maxOut = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.maxOut = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			chats.forEach(function (c) { c.app = null; });
+			resetDiamondApps();
+			this.render();
+		},
+	};
+
 	/// Take the user to the settings, wherever the settings currently are: the
 	/// lower pane of the rail, or — where there is no rail — a modal card.
 	function openSettings(note) {
@@ -13523,7 +15706,7 @@ import init, {
 			apiKey: getSecret(document.getElementById('cfg-api-key')).trim(),
 			apiKeyEnc: '',
 			model: currentModel(),
-			maxTokens: cfg.maxTokens || 4096,	// internal default — not a user-facing knob
+			maxOut: cfg.maxOut || 0,	// 0 = Auto; the knob is in the Models panel
 			tools: true,	// tools are on by default; no user-facing toggle
 		};
 		// Validate before saving — never report success on an unusable config.
@@ -13578,6 +15761,10 @@ import init, {
 		// a box that stays open — it is the status header now naming the model
 		// Daimond is running on.
 		DaimondModels.render();
+		// The starred model may have changed, and with it the ceiling the
+		// reply-length row reads and the figure Automatic resolves to.
+		ReplyLength.render();
+		RoundLimit.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();
@@ -13619,13 +15806,19 @@ import init, {
 	chatInput.addEventListener('input', function () {
 		chatInput.style.height = 'auto';
 		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		// Mid-turn the button's meaning follows the box: empty it means Stop, with
+		// a correction in it it means send that correction into the turn.
+		syncSendMode();
 	});
 	chatInput.addEventListener('keydown', function (e) {
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendUserMessage(); }
 	});
 	chatSend.addEventListener('click', function () {
-		// In stop-mode the same button cancels the current chat's running turn.
-		if (curGen()) { stopGeneration(); return; }
+		// In stop-mode the same button cancels the current chat's running turn -- but
+		// only with an empty box. With something typed in it the button is a Send
+		// arrow and sends, because a user who has just written a correction and
+		// pressed the button meant to send the correction, not to kill the turn.
+		if (sendMode() === 'stop') { stopGeneration(); return; }
 		sendUserMessage();
 	});
 	newSessionBtn.addEventListener('click', newChat);
@@ -13848,6 +16041,31 @@ import init, {
 				return tools().run_tool('file_read', JSON.stringify({ path: path }));
 			},
 		});
+		// The machine hand is the browser build's route to a process, and the `run`
+		// tool reaches it through `window.DaimondHand` exactly as the web tools reach
+		// `window.DaimondWeb`. Nothing used to wire it: the relay was in the page and
+		// never spoken to, so the handshake that reports the granted folder was never
+		// sent, and without that folder there is no fence to express and every command
+		// was refused. This is the wiring — and only the wiring. The link itself opens
+		// LAZILY, on the first thing that needs a hand, because opening it is what puts
+		// the approval window on the user's screen and a question that arrives merely
+		// because the app started is one a person learns to dismiss.
+		if (window.DaimondHand) DaimondHand.init({
+			onStart: function (id, pid) { runLive('[running, process ' + pid + ']\n'); },
+			onChunk: function (id, stream, data) { runLive(data); },
+			onEnd:   function (id, exit) { runLive('\n[exit code: ' + exit + ']\n'); },
+			// What the relay has to say about the hand itself — that it stopped,
+			// that it was never installed — rather than about the command. It is
+			// written for the model, and a person watching the panel is owed it too.
+			note:    function (msg) { runLive('\n' + msg + '\n'); },
+			// The folder the user opened, so the relay can settle whether it is the
+			// folder the hand was granted (`hand/REVIEW.md` §1.14). A handle and never
+			// a path: the File System Access API gives the page no path at all, which
+			// is the whole reason the two ends compare a token in a file instead.
+			// Null on the browser sandbox, and that is an ANSWER — there is no folder
+			// for a command to run against — not a missing one.
+			folder:  function () { return Files.folder(); },
+		});
 		Files.init();
 		Workers.render();
 		mshow(document.body.dataset.mpanel || 'ai');
@@ -13859,6 +16077,16 @@ import init, {
 			// this browser. Empty for the primary account (the root, unchanged).
 			try { set_account_ns(window.DaimondAccounts ? DaimondAccounts.opfsNs() : ''); }
 			catch (e) { /* single-account build */ }
+			// The permission ladder. Pushed into the wasm BEFORE any agent runs: the
+			// engine's copy is the one that decides anything, and a page drawing
+			// "Bypass" over an engine still running guarded would be worse than either
+			// being wrong on its own. `apply` is here rather than in handmode.js
+			// because the wasm is a module and that file is a classic script.
+			if (window.DaimondHandMode) DaimondHandMode.init({
+				apply:   applyPermissionMode,
+				confirm: confirmDialog,
+				notice:  function (m) { toast(m, true); },
+			});
 			// Warm the write-ahead journal (it self-inits, but opening it now surfaces any storage
 			// problem before the first turn rather than during it).
 			if (window.DaimondJournal) { try { DaimondJournal.init(); } catch (e) { /* no IDB */ } }
@@ -13875,7 +16103,7 @@ import init, {
 			window.__DAIMOND_READY = false;
 			return;
 		}
-		chats = loadChats();        // restore persisted chats (survive reload)
+		chats = await loadChats();  // restore persisted chats (survive reload)
 		chats.forEach(function (c) { var n = parseInt((c.id || '').replace(/^c/, ''), 10); if (n >= seq) seq = n + 1; });
 		updateUserRow();
 

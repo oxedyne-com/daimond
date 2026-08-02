@@ -31,6 +31,12 @@ const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
 const EXT = `${ROOT}/ext`;
+// The SHIPPED manifest names one origin, and it is not this dev server, so the
+// BROWSER is given the generated dev build -- the same files, linked, with the
+// loopback origins added back. Everything read from disk below is still read
+// from the source. See dev/extdev.mjs.
+const { extDev } = await import(pathToFileURL(`${ROOT}/dev/extdev.mjs`).href);
+const EXT_DEV = await extDev();
 const EXTID = 'mpliijponglmmffjnonahhignkpkhmij';
 // Not /tmp -- see the SCRATCH note in harness.mjs.
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
@@ -176,7 +182,7 @@ function launch(profile) {
 	return chromium.launchPersistentContext(profile, {
 		executablePath: CHROME, headless: false,
 		args: ['--no-sandbox', '--disable-dev-shm-usage',
-			`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+			`--disable-extensions-except=${EXT_DEV}`, `--load-extension=${EXT_DEV}`],
 		viewport: { width: 1280, height: 900 },
 	});
 }
@@ -364,7 +370,7 @@ try {
 	b = await chromium.launchPersistentContext(P2, {
 		executablePath: CHROME, headless: false,
 		args: ['--no-sandbox', '--disable-dev-shm-usage',
-			`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+			`--disable-extensions-except=${EXT_DEV}`, `--load-extension=${EXT_DEV}`],
 		viewport: { width: 1280, height: 900 },
 	});
 	await waitSW(b);

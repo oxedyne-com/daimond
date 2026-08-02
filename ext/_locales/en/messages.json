@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "Running commands on this computer"
 	},
+	"popup_machine_hand_origin": {
+		"message": "Running commands on this computer, for $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ and its subdomains",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell, and only inside the folders the workspace already allows."
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell. This computer cannot limit which files they touch, so a command you allow here reaches everything you can reach."
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell. The hand here did not say what it can limit them to, so treat a command as reaching everything you can reach."
+	},
 	"grant_hand_fine": {
 		"message": "This is the strongest thing you can allow Daimond to do. Nothing runs until you allow it here, every run is written to a journal you can read, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
+	},
+	"grant_hand_caps": {
+		"message": "What this computer can enforce: $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "The hand on this computer did not say what it can enforce."
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "This is the strongest thing you can allow Daimond to do. Nothing runs until you allow it here, only the page named above may ask, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
 	},
 	"grant_hand_allow": {
 		"message": "Allow commands on this computer"

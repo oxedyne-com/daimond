@@ -38,6 +38,14 @@ pub struct Meta {
 	pub touched: u64,
 	/// User-defined tags, as [`normalise_tags`] leaves them.
 	pub tags:    Vec<String>,
+	/// The toolchains the user granted this Diamond, as [`normalise_kits`] leaves them.
+	///
+	/// A GRANT and not a tag, and the difference is the whole reason this is its own field rather
+	/// than a reserved tag name.  A tag is an arbitrary string the user types; deriving a
+	/// toolchain grant from one would mean a Diamond filed under "rust" quietly reaching the
+	/// compiler, which is a permission nobody gave.  What is in here reaches
+	/// `Toolkit::parse` and decides what a COMMAND may touch outside the workspace.
+	pub kits:    Vec<String>,
 }
 
 impl Meta {
@@ -45,8 +53,9 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"tags\":{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"tags\":{},\"toolkits\":{}}}",
 			json_escape(&self.name), self.version, self.updated, self.touched, self.tags_json(),
+			self.kits_json(),
 		)
 	}
 
@@ -56,6 +65,14 @@ impl Meta {
 	pub fn tags_json(&self) -> String {
 		let items: Vec<String> = self.tags.iter()
 			.map(|t| fmt!("\"{}\"", json_escape(t)))
+			.collect();
+		fmt!("[{}]", items.join(","))
+	}
+
+	/// The granted toolkits as a JSON array of strings, `[]` when there are none.
+	pub fn kits_json(&self) -> String {
+		let items: Vec<String> = self.kits.iter()
+			.map(|k| fmt!("\"{}\"", json_escape(k)))
 			.collect();
 		fmt!("[{}]", items.join(","))
 	}
@@ -86,10 +103,48 @@ impl Meta {
 			touched: extract_json_number(s, "touched")
 				.unwrap_or_else(|| extract_json_number(s, "updated").unwrap_or(0)),
 			tags:    extract_json_string_array(s, "tags").unwrap_or_default(),
+			// Postdates every Diamond already on a device, and an absent field means no grant --
+			// which is both the honest reading and the safe one. A toolkit is off by default.
+			kits:    normalise_kits(
+				&extract_json_string_array(s, "toolkits").unwrap_or_default()),
 		}
 	}
 }
 
+
+/// The toolkit names this build knows, in the order they are offered.
+///
+/// Named here as strings rather than reached for from `crate::tools::Toolkit`, because this module
+/// is the STORE and the store's job is to hold what the user chose, not to decide what it means.
+/// A name that survives this is still put through `Toolkit::parse` before it grants anything, and
+/// one this build does not know grants nothing there.
+const KNOWN_KITS: [&str; 4] = ["rust", "node", "python", "go"];
+
+/// Normalise a caller's toolkit grants into the form the store holds.
+///
+/// Lowercased, trimmed, de-duplicated keeping first-seen order, and -- unlike a tag -- checked
+/// against [`KNOWN_KITS`].  A tag is an arbitrary string and this is not: it decides what a command
+/// may reach outside the workspace, so a name nobody can act on has no business being stored as
+/// though somebody had granted something.
+///
+/// An unknown name is DROPPED rather than refused, so a `meta.json` written by a later build that
+/// knows a fifth toolchain still opens, carrying the grants this build does understand.
+///
+/// # Arguments
+/// * `kits` - The names the caller offered.
+pub fn normalise_kits(kits: &[String]) -> Vec<String> {
+	let mut out: Vec<String> = Vec::new();
+	for kit in kits {
+		let name = kit.trim().to_lowercase();
+		if !KNOWN_KITS.contains(&name.as_str()) {
+			continue;
+		}
+		if !out.contains(&name) {
+			out.push(name);
+		}
+	}
+	out
+}
 
 /// Normalise a caller's tags into the form the store holds.
 ///
@@ -195,6 +250,7 @@ mod tests {
 			updated: 1_700_000_000_000,
 			touched: 1_700_000_009_999,
 			tags:    vec![fmt!("work")],
+			kits: Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!(1_700_000_000_000, back.updated);
@@ -209,6 +265,7 @@ mod tests {
 			updated: 1_700_000_000_000,
 			touched: 1_700_000_000_000,
 			tags:    vec![fmt!("work"), fmt!("urgent")],
+			kits: Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!("Ship the thing", back.name);
@@ -219,7 +276,7 @@ mod tests {
 
 	#[test]
 	fn test_a_meta_with_no_tags_round_trips_as_an_empty_array() {
-		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new() };
+		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new() };
 		let json = meta.to_json();
 		assert!(json.contains("\"tags\":[]"), "{}", json);
 		assert!(Meta::from_json(&json).tags.is_empty());
@@ -237,7 +294,7 @@ mod tests {
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
-		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone() };
+		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -252,6 +309,7 @@ mod tests {
 			updated: 2,
 			touched: 2,
 			tags:    vec![fmt!("real")],
+			kits: Vec::new(),
 		};
 		assert_eq!(vec![fmt!("real")], Meta::from_json(&meta.to_json()).tags);
 	}
@@ -334,7 +392,36 @@ mod tests {
 		// The two halves have to agree: what normalisation produces is exactly
 		// what the file gives back, or the store drifts from the interface.
 		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
-		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone() };
+		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone(),
+			kits: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
+	}
+
+	#[test]
+	fn test_a_toolkit_grant_is_only_ever_a_name_this_build_can_act_on() {
+		// A tag is an arbitrary string; this is not. What is stored here decides what a command
+		// may reach outside the workspace, so anything unrecognised is dropped rather than kept
+		// as though somebody had granted something nobody can name.
+		assert_eq!(vec![fmt!("rust"), fmt!("go")],
+			normalise_kits(&[fmt!(" Rust "), fmt!("emacs"), fmt!("GO"), fmt!("rust")]));
+		assert!(normalise_kits(&[fmt!("")]).is_empty());
+	}
+
+	#[test]
+	fn test_a_meta_written_before_toolkits_existed_grants_none() {
+		// The failure that would matter is the opposite one: a missing field read as a grant.
+		let old = r#"{"name":"N","crystal_version":1,"updated":2,"touched":2,"tags":["work"]}"#;
+		let m = Meta::from_json(old);
+		assert_eq!(fmt!("N"), m.name);
+		assert!(m.kits.is_empty(), "an absent field is not a grant");
+	}
+
+	#[test]
+	fn test_toolkit_grants_round_trip_through_the_stored_json() {
+		let meta = Meta {
+			name: fmt!("N"), version: 2, updated: 3, touched: 3,
+			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")],
+		};
+		assert_eq!(vec![fmt!("rust"), fmt!("node")], Meta::from_json(&meta.to_json()).kits);
 	}
 }

@@ -26,6 +26,15 @@
 	"popup_machine_hand": {
 		"message": "このコンピューターでコマンドを実行"
 	},
+	"popup_machine_hand_origin": {
+		"message": "このコンピューターでコマンドを実行 — $ORIGIN$",
+		"placeholders": {
+			"origin": {
+				"content": "$1",
+				"example": "https://daimond.oxedyne.com"
+			}
+		}
+	},
 	"popup_subdomains": {
 		"message": "$HOST$ とそのサブドメイン",
 		"placeholders": {
@@ -128,8 +137,29 @@
 	"grant_hand_body": {
 		"message": "Daimond はこのコンピューターでプログラムを実行します。ビルド、テスト、スクリプトを、あなたとして、あなたのファイルで動かします。どれもシェルを介さず直接起動し、ワークスペースがすでに許しているフォルダーの中だけで動きます。"
 	},
+	"grant_hand_body_nofence": {
+		"message": "Daimond はこのコンピューターでプログラムを実行します。ビルド、テスト、スクリプトを、あなたとして、あなたのファイルで動かします。どれもシェルを介さず直接起動します。このコンピューターは、どのファイルに触れるかを制限できません。ここで許したコマンドは、あなたが届くところすべてに届きます。"
+	},
+	"grant_hand_body_unknown": {
+		"message": "Daimond はこのコンピューターでプログラムを実行します。ビルド、テスト、スクリプトを、あなたとして、あなたのファイルで動かします。どれもシェルを介さず直接起動します。このコンピューターのハンドは、何に制限できるかを答えませんでした。コマンドはあなたが届くところすべてに届くものとして扱ってください。"
+	},
 	"grant_hand_fine": {
 		"message": "これは Daimond に許せることのなかで最も強い権限です。ここで許すまで何も動きません。実行はすべて、あなたが読める記録に残ります。Daimond Hands のアイコンからいつでも取り消せます。取り消すと、そのとき動いているものは止まります。"
+	},
+	"grant_hand_caps": {
+		"message": "このコンピューターが守れること: $CAPS$",
+		"placeholders": {
+			"caps": {
+				"content": "$1",
+				"example": "fence:linux, landlock:abi-8"
+			}
+		}
+	},
+	"grant_hand_caps_unknown": {
+		"message": "このコンピューターのハンドは、何を守れるかを答えませんでした。"
+	},
+	"grant_hand_fine_nojournal": {
+		"message": "これは Daimond に許せることのなかで最も強い権限です。ここで許すまで何も動きません。求められるのは、上に示したページだけです。Daimond Hands のアイコンからいつでも取り消せます。取り消すと、そのとき動いているものは止まります。"
 	},
 	"grant_hand_allow": {
 		"message": "このコンピューターでのコマンドを許可"

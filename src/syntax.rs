@@ -254,6 +254,49 @@ pub fn build_syntax()
     s = res!(s.add_cmd(cmd));
 
     // ----------------------------------------------------------------
+    // Command: compacted  (server → client: the history was folded)
+    // ----------------------------------------------------------------
+    let cmd = Cmd::from(CmdConfig {
+        name:   fmt!("compacted"),
+        help:   Some(fmt!("The conversation was folded to fit the context window.")),
+        vals:   vec![
+            (Kind::U64, fmt!("Messages folded")),
+            (Kind::U64, fmt!("Messages kept")),
+            (Kind::Str, fmt!("What the fold did")),
+        ],
+        cat:    fmt!("Response"),
+        ..Default::default()
+    });
+    s = res!(s.add_cmd(cmd));
+
+    // ----------------------------------------------------------------
+    // Command: truncated  (server → client: the reply hit the output limit)
+    // ----------------------------------------------------------------
+    let cmd = Cmd::from(CmdConfig {
+        name:   fmt!("truncated"),
+        help:   Some(fmt!("The reply stopped at the model's output limit.")),
+        cat:    fmt!("Response"),
+        ..Default::default()
+    });
+    s = res!(s.add_cmd(cmd));
+
+    // ----------------------------------------------------------------
+    // Command: interjected  (server → client: a mid-turn steer landed)
+    // ----------------------------------------------------------------
+    //
+    // Emitted by `event_to_ws` since the interjection feature landed and never
+    // declared here, so on the native path every interjection reached the
+    // browser as `error "internal"` -- the user's own correction, lost.
+    let cmd = Cmd::from(CmdConfig {
+        name:   fmt!("interjected"),
+        help:   Some(fmt!("What the user said mid-turn, now in the conversation.")),
+        vals:   vec![(Kind::Str, fmt!("What was said"))],
+        cat:    fmt!("Response"),
+        ..Default::default()
+    });
+    s = res!(s.add_cmd(cmd));
+
+    // ----------------------------------------------------------------
     // Command: done  (server → client: agent turn complete)
     // ----------------------------------------------------------------
     let cmd = Cmd::from(CmdConfig {

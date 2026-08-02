@@ -42,15 +42,26 @@
    device being worked on sent its work and the device being read never
    looked, indefinitely. That skip is now a throttled pull.
 
-   WHEN IT CANNOT WORK, IT SAYS SO. Two refusals are permanent until
-   something changes -- 402 (the tier is not held) and 413 (the parcel
-   is over the gateway's ceiling) -- and both are reported on the status
-   chip and nowhere else: state on the chip, reason on hover, never a
-   dialog over the app, since nobody asked for the round that failed.
-   The 413 used to log to the console alone, so sync stopped and the app
-   went on looking exactly as it does when sync is working.
+   WHEN IT CANNOT WORK, IT SAYS SO. Three refusals are permanent until
+   something changes -- 402 (the tier is not held), 413 (the parcel is
+   over the gateway's ceiling) and a 401 that a fresh session could not
+   clear -- and all three are reported on the status chip and nowhere
+   else: state on the chip, reason on hover, never a dialog over the app,
+   since nobody asked for the round that failed. The 413 used to log to
+   the console alone, so sync stopped and the app went on looking exactly
+   as it does when sync is working.
 
-   A jam is the third thing the chip says, and it is the same rule
+   THE 401 WAS THE ONE THIS LIST NEVER ENUMERATED. The gateway's session
+   lives an hour and nothing renewed it, so every request after that was
+   refused: the pull called restStatus() and HID the chip, the push fell
+   past the 402/413 arms into one console line, and the wake channel
+   reconnected on a backoff for ever. A real account spent four hours and
+   fifty minutes that way, seven pushes of the user's work discarded with
+   the app positively claiming to be connected. A 401 now takes a fresh
+   session and sends the request again (see call()), and only says so
+   when that could not be done.
+
+   A jam is the last thing the chip says, and it is the same rule
    applied to the reconcile: retries that ran out, or a parcel that
    arrived and could not be merged, both leave this device's work
    sitting here, and both used to leave "Synced" on the chip -- put
@@ -120,6 +131,9 @@
 	var lastPushed    = null;	// JSON of the state last pushed, to skip no-op pushes.
 	var entitled      = true;	// Cleared to false on a 402; stops pointless pushes.
 	var tooLarge      = false;	// Set on a 413; the parcel will not fit as it stands.
+	// Set on a 401 that a fresh session could not clear. Standing, like the two
+	// above: until there is a session again nothing leaves this device.
+	var sessionGone   = false;
 	// A reconcile that could not finish: '' | 'busy' (the retries ran out) |
 	// 'merge' (what arrived could not be merged here). Both mean this device's
 	// work did NOT leave, and both are cleared by the next round that works.
@@ -185,7 +199,7 @@
 	// ── Transport ──────────────────────────────────────────────
 	// A private fetch wrapper, NOT DaimondGateway.post: sync's 402/409/413 are
 	// outcomes to act on, not errors to throw. Returns {status, json}.
-	async function call(method, body, query) {
+	async function once(method, body, query) {
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -204,6 +218,45 @@
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		return { status: r.status, json: j };
+	}
+
+	/// One request, with the one refusal this engine can put right by itself.
+	///
+	/// The gateway's session lasts an hour and nothing renewed it, so an hour into
+	/// a sitting every request here became a 401 -- and a 401 fell past the 409,
+	/// 402 and 413 arms into a `console.debug` line. Seven pushes of a real user's
+	/// work were refused and discarded that way in one afternoon, with the chip
+	/// showing nothing and the account dot claiming to be connected.
+	///
+	/// So a 401 asks the gateway for a new session and sends the request again.
+	/// ONCE: an identity that genuinely cannot authenticate must surface on the
+	/// chip rather than spin against a door that is not going to open.
+	async function call(method, body, query) {
+		var res = await once(method, body, query);
+		if (res.status !== 401) { clearSessionGone(res.status); return res; }
+		var back = false;
+		try {
+			back = !!(window.DaimondGateway && DaimondGateway.reauth
+				&& await DaimondGateway.reauth());
+		} catch (e) { back = false; }
+		if (back) {
+			res = await once(method, body, query);
+			if (res.status !== 401) { clearSessionGone(res.status); return res; }
+		}
+		// Still refused. This device's work is not travelling and the user has to
+		// be able to find that out; see restStatus.
+		if (!sessionGone) { sessionGone = true; restStatus(); }
+		return res;
+	}
+
+	/// A request that was served is proof the session is back. Only a round that
+	/// actually reached the mailbox counts -- a 502 from a gateway that is
+	/// restarting says nothing about whether this device is signed in.
+	function clearSessionGone(status) {
+		if (!sessionGone) return;
+		if (status !== 200 && status !== 402 && status !== 409 && status !== 413) return;
+		sessionGone = false;
+		restStatus();
 	}
 
 	function fireStale() {
@@ -343,9 +396,9 @@
 
 	/// Put the chip back to what is TRUE when nothing is in flight.
 	///
-	/// The two standing refusals outlive the round that discovered them, so every
-	/// path that stops showing "Syncing…" has to come through here rather than
-	/// hiding the chip: a pull failing on the network used to blank a "Sync off"
+	/// The three standing refusals outlive the round that discovered them, so
+	/// every path that stops showing "Syncing…" has to come through here rather
+	/// than hiding the chip: a pull failing on the network used to blank a "Sync off"
 	/// that was still perfectly true, and a pull SUCCEEDING used to show "Synced"
 	/// on a device whose pushes were paused by a 402 -- which is the one lie this
 	/// chip exists to prevent.
@@ -357,10 +410,12 @@
 	function restStatus() {
 		if (!entitled)     { setStatus('off', t('sync.off'), 0, offReason()); return; }
 		if (tooLarge)      { showTooLarge(); return; }
-		// Below the two standing refusals, and above nothing at all: a jam is
-		// this round's failure rather than a state of the account, so a 402 or a
-		// 413 outranks it — an account that may not sync, or a parcel that will
-		// not fit, is the thing to say first.
+		// Below both of those. An account that may not sync at all, and a parcel
+		// that will not fit, are true whatever the session is doing; a session
+		// that has gone is the narrower fact and would be noise over either.
+		if (sessionGone)   { setStatus('stalled', t('sync.signed_out'), 0, t('sync.signed_out_reason')); return; }
+		// And above nothing at all: a jam is this round's failure rather than a
+		// state of this device, so all three standing refusals outrank it.
 		if (jammed)        { setStatus('stalled', t('sync.paused'), 0, jamReason()); return; }
 		setStatus('');
 	}
@@ -726,6 +781,16 @@
 				wakeFails++;
 				if (wakeFails >= WAKE_WS_TRIES) { wakeGiveUpOnSockets(); return; }
 			}
+			// Go back through the plain probe rather than straight at another
+			// socket. A refused UPGRADE is the one failure this channel cannot
+			// read: the browser hands back a close with no status, so a session
+			// that had gone looked exactly like a network that had. This device
+			// reconnected on a jittered backoff for four hours and fifty minutes
+			// against a gateway answering 401 to every one -- about two hundred
+			// and forty refusals an hour, and not one of them said why. The probe
+			// is an ordinary request through call(), which takes a fresh session
+			// when that is what is wrong and gives up loudly when it cannot.
+			if (wakeMode === 'ws') wakeMode = '';
 			wakeRetry();
 		};
 	}
@@ -772,12 +837,15 @@
 				}
 				if (gen !== wakeGen) break;
 				if (res.status !== 200) {
-					// A refusal, a 502 from a gateway that is restarting, a 401
-					// from a session that has just gone: all temporary, and none
-					// of them a reason to give the channel up. Wait, growing, and
-					// ask again. Turning the channel off here is what a restart
-					// used to do to it -- the device went quiet for good over an
-					// outage that lasted twenty seconds.
+					// A refusal, or a 502 from a gateway that is restarting: both
+					// temporary, and neither a reason to give the channel up. Wait,
+					// growing, and ask again. Turning the channel off here is what a
+					// restart used to do to it -- the device went quiet for good over
+					// an outage that lasted twenty seconds. A 401 does not reach here
+					// on the first go: call() answers it with a fresh session, and
+					// only a renewal that failed comes back refused -- at which point
+					// `wakeWanted()` is false and the loop below ends rather than
+					// parking against a door that is shut.
 					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
 					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
 					continue;
@@ -897,7 +965,8 @@
 	/// contributes in one pass.
 	async function onAuthed() {
 		if (!ready()) return;
-		entitled = true;			// a fresh session may have just bought the tier.
+		entitled    = true;			// a fresh session may have just bought the tier.
+		sessionGone = false;		// and there is demonstrably a session again.
 		loadVersion();
 		await pull();
 		schedule();					// push whatever this device adds over the pulled base.
@@ -985,12 +1054,16 @@
 		/// anything that needs them in words rather than as a coloured pill.
 		state:   function () {
 			return {
-				// Anything standing between this device's work and the mailbox:
-				// a parcel that will not fit, or a reconcile that gave up.
-				stalled:      tooLarge || !!jammed,
-				stalledWhy:   tooLarge ? 'too_big' : (jammed || ''),
+				// Anything standing between this device's work and the mailbox: a
+				// parcel that will not fit, a session that has gone, or a reconcile
+				// that gave up. Ordered as the chip orders them, so what this says
+				// and what the chip shows can never disagree.
+				stalled:      tooLarge || sessionGone || !!jammed,
+				stalledWhy:   tooLarge ? 'too_big' : (sessionGone ? 'signed_out' : (jammed || '')),
 				failedParts:  lastFailed.slice(),
 				entitled:     entitled,
+				/// Whether a 401 is standing that a fresh session could not clear.
+				sessionGone:  sessionGone,
 				lastSyncedAt: lastSynced,
 				lastSynced:   lastSyncedLine(),
 				version:      serverVersion,

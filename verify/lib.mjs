@@ -88,17 +88,24 @@ export function posix(rel) {
 }
 
 /// Every covered file under `root`, as POSIX relpaths, sorted byte-wise.
-export async function coveredFiles(root) {
+///
+/// The defaults are the served bundle's rules, which is what almost every caller wants. `opts`
+/// overrides them for a tree that is not `www/` — the hand's published source is hashed the same
+/// way and leaves out a different set of things (`verify/hand.mjs`).
+export async function coveredFiles(root, opts = {}) {
+	const exclude		= opts.exclude		|| EXCLUDE;
+	const excludeDirs	= opts.excludeDirs	|| EXCLUDE_DIRS;
+	const excludeSuffixes	= opts.excludeSuffixes	|| EXCLUDE_SUFFIXES;
 	const out = [];
 	async function walk(dir) {
 		const ents = await readdir(dir, { withFileTypes: true });
 		for (const ent of ents) {
 			const p   = join(dir, ent.name);
 			const rel = posix(relative(root, p));
+			if (excludeDirs.some(d => (rel + '/').startsWith(d))) continue;
 			if (ent.isDirectory()) { await walk(p); continue; }
-			if (EXCLUDE.has(rel)) continue;
-			if (EXCLUDE_DIRS.some(d => rel.startsWith(d))) continue;
-			if (EXCLUDE_SUFFIXES.some(s => rel.endsWith(s))) continue;
+			if (exclude.has(rel)) continue;
+			if (excludeSuffixes.some(s => rel.endsWith(s))) continue;
 			out.push(rel);
 		}
 	}
@@ -108,8 +115,8 @@ export async function coveredFiles(root) {
 }
 
 /// The `{ relpath: filehash }` map for a directory tree.
-export async function hashTree(root) {
-	const files = await coveredFiles(root);
+export async function hashTree(root, opts = {}) {
+	const files = await coveredFiles(root, opts);
 	const map = {};
 	for (const rel of files) {
 		map[rel] = sha256(await readFile(join(root, rel)));

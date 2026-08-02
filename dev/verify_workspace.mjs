@@ -52,6 +52,22 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	x: Math.round(e.getBoundingClientRect().left),
 })));
 
+/// Which panels the DOCUMENT says belong to the dock.
+///
+/// The number of them is not a constant this file may hold: it was four, the
+/// Terminal panel made it five, and a check carrying the old number fails for a
+/// panel that is working. `data-zone` in the markup is where that fact lives.
+const dockZone = () => p.$$eval('.panel[data-zone="dock"]', els => els.map(e => e.dataset.panel));
+
+/// How many panels the dock actually DRAWS.
+///
+/// Not how many nodes sit in its columns: closing a panel hides its element and
+/// leaves it where it was seated (apply() says so in as many words), so counting
+/// nodes counts a panel that has just been shed and reads a working shrink as an
+/// overfull dock. The computed style is what says a seat was given up.
+const seatedNow = () => p.$$eval('#dock .pcol > .panel',
+	els => els.filter(e => getComputedStyle(e).display !== 'none').length);
+
 // ── The row shows every panel, not only the closed ones ─────────────────
 {
 	const c = await chips();
@@ -125,23 +141,71 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 {
 	await p.evaluate(() => window.DaimondPanels.setGrid('2x2'));
 	await p.waitForTimeout(400);
-	const seated = await p.$$eval('#dock .pcol > .panel', e => e.length);
+	const seated = await seatedNow();
 	check('a 2 by 2 dock seats no more than four', seated <= 4, `${seated} seated`);
 
 	await p.evaluate(() => window.DaimondPanels.setGrid('1'));
 	await p.waitForTimeout(400);
-	const c = await chips();
-	const dockChips = c.filter(x => x.zone === 'dock');
+	// Which panels belong to the dock is DECLARED in the markup, so the
+	// expectation is read from there rather than written down here. It used to
+	// say four; the Terminal panel made it five and the check went red for a
+	// panel that was working perfectly. Reading the document also cross-checks
+	// two sources against each other -- `data-zone` in the markup against the
+	// `ptag-dock` class the chip row draws from the panel registry -- so a panel
+	// declared in one zone and registered in another is caught here too.
+	const dockPanels = await dockZone();
+	const dockChips  = (await chips()).filter(x => x.zone === 'dock').map(x => x.id);
+	const chipless   = dockPanels.filter(id => !dockChips.includes(id));
 	check('every dock panel still has a chip after the grid shrank',
-		dockChips.length === 4, `${dockChips.length} dock chips`);
-	// NOTE: the shedding path in setGrid cannot be driven today. The smallest
-	// grid seats four and there are exactly four dock panels, so nothing is ever
-	// surplus. What can be asserted is the invariant it exists to keep -- and
-	// this check starts biting the moment a fifth dock panel is added.
-	const seatedNow = await p.$$eval('#dock .pcol > .panel', e => e.length);
+		chipless.length === 0 && dockChips.length === dockPanels.length,
+		`${dockChips.length} chips for ${dockPanels.length} dock panels`
+			+ (chipless.length ? `; no chip for ${chipless.join(', ')}` : ''));
+	const drawn  = await seatedNow();
 	const capNow = await p.evaluate(() => window.DaimondPanels.model().dockMax);
-	check('the dock never seats more than the grid allows', seatedNow <= capNow,
-		`${seatedNow} seated, ${capNow} allowed`);
+	check('the dock never seats more than the grid allows', drawn <= capNow,
+		`${drawn} seated, ${capNow} allowed`);
+}
+
+// ── The surplus is CLOSED, not lost ─────────────────────────────────────
+// This could not be driven while the dock held four panels: the smallest grid
+// seats four, so nothing was ever surplus and the shedding arm of setGrid ran
+// in no test. The Terminal panel is the fifth, so opening the whole dock on one
+// column now leaves one with nowhere to sit — and what has to be true of it is
+// that it was CLOSED, and is therefore still on the row to be clicked back.
+{
+	const dockPanels = await dockZone();
+	await p.evaluate((ids) => {
+		window.DaimondPanels.setGrid('2x3');
+		ids.forEach(id => window.DaimondPanels.show(id));
+	}, dockPanels);
+	await p.waitForTimeout(600);
+	const openFull = await p.evaluate((ids) =>
+		ids.filter(id => window.DaimondPanels.isOpen(id)), dockPanels);
+	check('a grid with room for them seats every dock panel at once',
+		openFull.length === dockPanels.length,
+		`${openFull.length} of ${dockPanels.length} open`);
+
+	await p.evaluate(() => window.DaimondPanels.setGrid('1'));
+	await p.waitForTimeout(600);
+	const shrunk = await p.evaluate((ids) => ({
+		open: ids.filter(id => window.DaimondPanels.isOpen(id)),
+		cap:  window.DaimondPanels.model().dockMax,
+	}), dockPanels);
+	shrunk.seated = await seatedNow();
+	const shed = openFull.filter(id => !shrunk.open.includes(id));
+	check('a grid too small to hold them closes the surplus',
+		shrunk.seated <= shrunk.cap && shed.length === openFull.length - shrunk.cap,
+		`${shrunk.seated} seated of ${shrunk.cap}; closed: ${shed.join(', ') || 'none'}`);
+	const onRow = (await chips()).map(x => x.id);
+	check('and what was closed is back on the row, where it can be clicked again',
+		shed.length > 0 && shed.every(id => onRow.includes(id)),
+		`closed ${shed.join(', ') || 'nothing'}; row has ${onRow.join(', ')}`);
+
+	await p.evaluate((ids) => {
+		ids.forEach(id => window.DaimondPanels.hide(id));
+		window.DaimondPanels.setGrid('auto');
+	}, dockPanels);
+	await p.waitForTimeout(400);
 }
 
 // ── A full dock says so on the chip, before it is clicked ───────────────

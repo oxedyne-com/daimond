@@ -12,9 +12,12 @@
 	/// A match pattern, said the way a person would say it.
 	function plain(pat) {
 		if (pat === '<all_urls>') return t('popup_any_tab');
-		// Not an origin, and deliberately not spelled like one: this grant is
-		// about the machine, not about a site.
+		// Not an origin, and deliberately not spelled like one: what was granted
+		// is the machine. But it was granted to ONE page, and the page is named,
+		// because a user looking at this list is auditing what they gave away and
+		// "commands on this computer" alone does not say to whom.
 		if (pat === 'machine-hand') return t('popup_machine_hand');
+		if (pat.indexOf('machine-hand:') === 0) return t('popup_machine_hand_origin', pat.slice('machine-hand:'.length));
 		const m = /^\*:\/\/\*\.([^/]+)\/\*$/.exec(pat);
 		if (m) return t('popup_subdomains', m[1]);
 		const n = /^\*:\/\/([^/]+)\/\*$/.exec(pat);

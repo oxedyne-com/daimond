@@ -10,8 +10,10 @@
 # (they become signed tool-library/registry downloads).
 /www/vendor/
 
-# Native build output.
+# Native build output.  The machine hand is its own cargo workspace, so its
+# target directory is a second one and the root rule does not reach it.
 /target/
+/hand/target/
 
 # The Daimond Hands signing key never belongs in the repo.
 *.pem

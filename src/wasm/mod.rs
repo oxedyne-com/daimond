@@ -16,6 +16,10 @@
 //!   on this device, and the deliberate fetch that brings one down.
 //! - [`opfs`] — an async filesystem edge over the Origin Private File
 //!   System (OPFS), reached through `navigator.storage.getDirectory()`.
+//! - [`pty`] — the terminal edge: bindings to `window.DaimondPty`, which
+//!   carries a real terminal session rather than one whole command, and
+//!   [`pty_request`](pty::pty_request), which composes the `open` request a
+//!   session travels on — fence included, by the same path `Tool::Run` takes.
 //! - [`hand`] — the machine hand's edge: bindings to the `window.DaimondHand`
 //!   relay behind `run`, which reaches a process outside the page.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
@@ -34,6 +38,7 @@ pub mod entry;
 pub mod hand;
 pub mod diamond;
 pub mod opfs;
+pub mod pty;
 pub mod typst;
 pub mod web;
 

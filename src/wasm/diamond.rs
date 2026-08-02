@@ -377,6 +377,8 @@ pub async fn create(name: &str) -> Outcome<String> {
         updated: now,
         touched: now,
         tags:    Vec::new(),
+        // Off by default, which is the whole shape of a grant: nobody has said yes yet.
+        kits:    Vec::new(),
     };
     res!(write_meta(&id, &meta).await);
 
@@ -435,6 +437,28 @@ pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
     Ok(())
 }
 
+/// Set which toolchains this Diamond is granted, replacing whatever it held.
+///
+/// Stamped and normalised exactly as [`set_tags`] is, and for the same two reasons: filing a
+/// permission is not working on the Diamond, so the rail must not reorder; and the grant is content
+/// that has to reach the user's other devices, so `touched` moves.
+///
+/// The names are normalised here rather than taken on trust (see
+/// [`normalise_kits`](crate::diamond_meta::normalise_kits)) -- and unlike a tag, a name this build
+/// does not know is dropped, because what is stored here decides what a command may reach outside
+/// the workspace and a grant nobody can act on is not a grant.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `kits` - The toolkit names the user granted, as `Toolkit::name` spells them.
+pub async fn set_toolkits(id: &str, kits: &[String]) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.kits = crate::diamond_meta::normalise_kits(kits);
+    meta.touched = now_ms() as u64;
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
 /// Delete a Diamond: remove its whole directory (crystal, versions, log, meta).
 pub async fn delete(id: &str) -> Outcome<()> {
     opfs::delete_entry(FileRoot::Opfs, &diamond_dir(id), true).await
@@ -487,9 +511,9 @@ pub async fn list() -> Outcome<String> {
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
-              \"touched\":{},\"tags\":{}}}",
+              \"touched\":{},\"tags\":{},\"toolkits\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
-            m.touched, m.tags_json(),
+            m.touched, m.tags_json(), m.kits_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
