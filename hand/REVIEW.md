@@ -78,20 +78,20 @@ which is why each one cites code.
 | 1.9 | `no_write` never populated in the browser build | **open** — being closed elsewhere |
 | 1.10 | `fence_spec` not a faithful restatement of `Bound` | **closed** |
 | 1.11 | A killed command reported as `exit code: 0` | **closed** |
-| 1.12 | `handler.rs` assigns rather than composes | **open** — latent behind 1.9 |
+| 1.12 | `handler.rs` assigns rather than composes | **closed** |
 | 1.13 | The first command of a turn costs the turn its network | **open** — a decision for the user |
-| 1.14 | No check that the hand's root is the workspace | **closed** in the hand; one comparison owed by the page |
+| 1.14 | No check that the hand's root is the workspace | **closed** at both ends |
 | 1.15 | Release gate 1 is nobody's job | **closed** |
 | 1.16 | Every disconnect reported as "not installed" | **closed** |
 | 1.17 | A lost output tail is detectable and not detected | **closed** |
 | 1.18 | Scoped workers cannot run with a default `cwd` | **closed** |
 | 1.19 | `id` neither unique nor bounded | **closed** |
+| 1.20 | A Diamond's crystal agent could reach another Diamond | **closed** |
 
-**Three open, and none of them is an escape.** 1.9 and 1.12 are one thing, and
-both were in another agent's hands as this was written; while 1.9 is open a
-command is fenced to the whole granted folder rather than to one Diamond's part
-of it, which is wider than intended and is not a way out. 1.13 is a design
-decision, not a defect, and it is written up as a recommendation.
+**One open, and it is not an escape.** 1.9 and 1.12 were one thing and both are
+now closed: a worker is scoped by its own Diamond, and a second bound composes
+with the first rather than replacing it. 1.13 is a design decision, not a
+defect, and it is written up as a recommendation.
 
 **Both compartment escapes are closed, and each closed by a different layer.**
 1.1 was Landlock's own carve; 1.2 and 1.3 needed a mechanism Landlock does not
@@ -771,15 +771,58 @@ the context. The composition documented at `tools.rs:126-129` — "the two compo
 and the allow-list wins" — describes something no code does. If a Diamond-scoped
 registry ever reaches that line, the Diamond's fence is deleted outright.
 
-**OPEN, and latent.** `src/handler.rs` still assigns rather than composes, and
-`src/tools.rs` still documents composition — "the two compose, and the allow-list
-wins". The assignment now carries a justification for the skill case (a bounded
-turn must be fenced out of `.daimond`, or a skill rewrites its own `uses` line),
-which is right on its own terms and does not address what happens when a turn is
-*both* Diamond-scoped and skill-bounded: the Diamond's allow-list is discarded.
-It cannot be reached while 1.9 is open, because nothing sets a Diamond scope. The
-two should be closed together, and the documented behaviour and the code should
-be made to agree in whichever direction the user chooses.
+**CLOSED, and the documentation was the one telling the truth.** `src/tools.rs`
+now has `compose`, and `src/handler.rs:537` calls it: a skill's bound is merged
+into whatever the turn already carried rather than written over it. The rule is
+the one the doc comment always claimed — a path survives only where BOTH lists
+permitted it — and it is now stated as an invariant rather than a description.
+**Composing can never widen either input**, so that line can only narrow, which
+is what makes it safe to call from anywhere a bound is set.
+
+Rule by rule. Allow-lists INTERSECT, and the intersection of two prefix sets is
+exactly expressible rather than approximated: where one prefix contains the
+other the answer is the deeper of the two, and where they are disjoint it is
+nothing. Nothing becomes `Bound::Nowhere` and NOT an empty list -- an empty
+allow-list reads as no allow-list at all, which is the widest answer there is to
+the narrowest question, and that is the empty-prefix trap arriving through the
+merge. Denials union. A read carve-out survives only where the other list would
+have permitted the whole of its subtree anyway, because `may_read` answers a
+carve-out before it looks at any deny, so one carried across would punch through
+the other list's denials. A `Toolkit` survives only where both sides granted it:
+a toolchain is machine paths a command may reach, and carrying one into a turn
+whose other bound granted none would widen that turn's fence.
+
+One consequence is worth saying plainly rather than discovering. **A skill
+running inside a Diamond cannot read its own shipped references.** A carve-out
+is a hole punched in its own deny fence, and `Bound::MayRead` has always said it
+does not escape an `OnlyUnder`; the Diamond denies the whole of `.daimond/` and
+allow-lists none of it, so the hole closes. The skill is refused in those words
+rather than the Diamond being quietly widened to fit it. Nothing behaves
+differently today -- the native handler's context carries no bounds, so a skill
+turn composes to exactly `skill_bounds`, as it did when the line assigned -- and
+the day skills are wired into the browser this fails closed and loudly instead
+of silently and open.
+
+Ten tests, and not one of them passes on the code it replaced: eight fail when
+the second bound is assigned over the first, seven fail on the other order, and
+the union is all ten. The four-way case is
+`test_a_turn_bounded_twice_reaches_what_both_permit_00` -- own Diamond readable
+and writable, other Diamond refused, Daimond's own directory refused, the
+skill's carve-out subordinate to the allow-list and alive again the moment the
+turn is not scoped. The walkers are checked too, in both directions: an
+allow-list the merge could have dropped, and a deny the merge could have dropped
+inside one. And the section checks itself: `composition_checks` holds eighteen
+named effects of the merge, and
+`test_every_check_here_fails_on_the_assignment_it_replaced_00` runs every one
+against both assignment orders and asserts that twelve of them are wrong under
+an assignment. The other six are declared as liveness checks, so the count means
+what it says.
+
+`DaimondApp::set_diamond_scope` now composes as well, so that a second caller
+can never widen the first: on a freshly built app it is the identity, re-scoping
+the same Diamond is idempotent, and re-scoping a *different* one intersects to
+`Bound::Nowhere`, which `diamond_scope` reports and the caller already refuses to
+start a turn on.
 
 **1.13 The first command of a turn costs the turn its network.** CONFIRMED.
 `run_result` wraps output through `ctx.wrap_untrusted`, which sets `tainted`, and
@@ -880,8 +923,11 @@ With an OPFS-only workspace, or an FSA folder different from the grant, the fenc
 names paths on the machine that have nothing to do with the files the model just
 read. No folder-identity token exists on the wire.
 
-**CLOSED on the hand's side; one comparison is owed by the page.** There now is
-a folder-identity token. The hand writes a random 32-hex token to
+**CLOSED at both ends.** There now is a folder-identity token, the page compares
+it against the folder it has open, and a command is REFUSED where the two cannot
+be shown to be the same folder.
+
+*The hand's half.* It writes a random 32-hex token to
 `<root>/.daimond/workspace.id` and publishes it in `caps` as `ws:<token>`, beside
 the `root:` entry that was already there. The two answer different questions:
 `root:` says *where* the hand will work, and `ws:` is what lets the page find out
@@ -908,59 +954,109 @@ release binary over a pipe, whose `hello` carries
 `ws:f3540427d40b90dcffc6bb7a7e4feb90` matching the file on disk and the line
 `--report` prints.
 
-**What is owed, in `www/js/hand.js`.** The hand holds one of the two names and
+*The page's half, in `www/js/hand.js`.* The hand holds one of the two names and
 can only supply evidence; the comparison belongs where both names meet, and that
-is the page. Precisely:
+is the page. Once per grant — and again whenever the folder changes — it opens
+`.daimond` and then `workspace.id` through the directory handle it holds, passing
+no `{create: true}` to either call, because a page that creates the file is a page
+that has proved nothing. It takes the first line that is neither blank nor a `#`
+comment and compares it with the `ws:` value, exactly, as strings. The file's four
+comment lines are why the token is not simply the first line:
 
-*The check.* The hand's `hello` carries a capability `ws:<value>` beside the
-existing `root:<path>`, read the same way `rootCap` already reads `root:`. The
-page holds a `FileSystemDirectoryHandle` for the folder the user granted. It
-should, once per grant:
+```
+# Daimond wrote this so that the browser and the machine hand can tell whether
+# they are talking about the same folder. It is not a secret and not a key.
+# Deleting it costs nothing: the next hand to start writes a new one, and the
+# page will ask you to confirm the folder again.
+75111c6348d13219899a27405d5a769f
+```
 
-1. `getDirectoryHandle('.daimond')`, then `getFileHandle('workspace.id')`, then
-   read the file as text. Neither call should create anything: pass no
-   `{create: true}`, because a page that creates the file is a page that has
-   proved nothing.
-2. Take the **first line that is neither blank nor starts with `#`** — the file
-   opens with four comment lines explaining itself to whoever finds it — and trim
-   it. The whole file is five lines and looks like this:
+The verdict is reached in `status()`, which is the one door every route to a
+command already goes through: `Tool::run` reads it before composing a fence,
+`pty_request` reads it before opening a terminal, and the Terminal panel shows its
+`reason` where it will not open one. So a single refusal closes all of them, and
+what the model is handed is a sentence rather than the output of a command that
+ran somewhere else.
 
-   ```
-   # Daimond wrote this so that the browser and the machine hand can tell whether
-   # they are talking about the same folder. It is not a secret and not a key.
-   # Deleting it costs nothing: the next hand to start writes a new one, and the
-   # page will ask you to confirm the folder again.
-   75111c6348d13219899a27405d5a769f
-   ```
-3. Compare that line with the `ws:` value, exactly, as strings.
+**The four outcomes, and what the user reads.**
 
-*The four outcomes, and what the user should read.*
-
-- **Equal.** Nothing is said, nothing is shown. This is the ordinary case and it
-  must stay silent, or the check becomes a dialog people learn to dismiss.
+- **Equal.** Nothing is said and nothing is shown. This is the ordinary case and
+  it stays silent, or the check becomes a dialog people learn to dismiss.
 - **Different, or the file or the `.daimond` directory is missing through the
-  handle.** Refuse to run commands, and say: *"The folder you opened in Daimond
-  is not the folder the machine hand was told to work in, so a command would run
-  against different files from the ones Daimond has been reading. Daimond has
-  «folder name as the page knows it»; the hand has «the `root:` path». Fix the
-  path in the hand's `root.txt`, or open the other folder here."* Name both, or
-  the user cannot tell which end is wrong.
-- **No folder at all — an OPFS-only workspace.** The same refusal, and it is not
-  an edge case: there is no directory handle to read through, so the check cannot
-  pass, and it must not be skipped for want of a handle. The sentence is the
-  same shape: *"This workspace lives in the browser and not in a folder on this
+  handle.** Refused, with: *"The folder you opened in Daimond is not the folder
+  the machine hand was told to work in, so a command would run against different
+  files from the ones Daimond has been reading. Daimond has «the folder's name as
+  the page knows it»; the hand has «the `root:` path». Fix the path in the hand's
+  root.txt, or open the other folder here."* Both ends are named, because the two
+  fixes are different and the user cannot otherwise tell which end is wrong.
+- **No folder at all — an OPFS-only workspace.** Its own case, and not one to
+  skip for want of a handle: there is nothing to read the token through, so the
+  check cannot pass, and a check that is skipped when it cannot pass is not a
+  check. *"This workspace lives in the browser and not in a folder on this
   machine, so there is nothing for the hand's commands to run against. Open a
   folder for this workspace before using the machine hand."*
-- **`ws:unproven`** (a literal string; a token is 32 hexadecimal characters and
-  can never be this word). Refuse, and say: *"The machine hand could not write
-  its identity file into the folder it was granted, so the two ends cannot
-  confirm they mean the same folder. The hand's own error output names the path
-  that failed."*
+- **`ws:unproven`.** Refused: *"The machine hand could not write its identity file
+  into the folder it was granted, so the two ends cannot confirm they mean the
+  same folder. The hand's own error output names the path that failed."*
 
-*What not to do.* Do not fall back to comparing the folder's **name** with the
-last component of `root:`. Two projects called `site` on one machine is the
-ordinary case, not the exotic one, and a check that passes for the wrong folder
-is worse than no check.
+A fifth thing can happen which is not an outcome of the comparison at all: the
+page can fail to say what folder it has. That is refused in the same place and
+for the same reason — a check that could not be made has not passed — and the
+sentence says so, rather than blaming a folder.
+
+**Two decisions inside that, which a later reader should not undo.**
+
+*The folder's name is never compared.* Not as a fallback, not as a tie-break. Two
+projects called `site` on one machine is the ordinary case rather than the exotic
+one, and a check that passes for the wrong folder is worse than no check at all.
+Both directions are tested: a `site` whose identity is wrong is refused, and a
+folder called `moved` whose identity is right is allowed.
+
+*Silence passes.* A hand that publishes no `ws:` at all is an OLDER hand, not a
+mismatch. A page cannot tell an old hand from any other silent thing on that wire,
+and refusing silence would break every mock host permanently while telling the
+user about a folder they can do nothing about. It is a compatibility seam and it
+is recorded as one in the source: a page that meets such a hand is back where it
+was before this entry, and the proper place to close it is the protocol version,
+where "this hand is too old to serve" can be said once and plainly.
+
+The verdict is cached per grant AND per directory handle. Per grant alone was not
+enough: the user opens a different folder in the Workspace panel while the hand
+says nothing at all, so a remembered verdict would answer for a folder it had
+never read — and it would do so in the direction that runs the command.
+
+**How this is tested, given that no automated run can satisfy it.** A page holds a
+real folder only through `showDirectoryPicker()`, a native dialog no harness can
+answer, so every headless run has an OPFS workspace, which is the third outcome
+and a refusal. There is no configuration in which this check passes by accident.
+That is a fact about the browser and not a gap in the tests, and it is met in
+three places:
+
+- `dev/verify_wsident.mjs` is new and tests the refusal itself: 33 checks, of
+  which 10 are proved against a deliberately broken `www/js/hand.js` served through
+  a patch. The two folders are real `FileSystemDirectoryHandle`s taken from OPFS,
+  each with a real `.daimond/workspace.id` in it, so `getDirectoryHandle`, the
+  read, the comment-skipping and the compare all run for real; the only thing
+  stood in for is the one thing a headless browser cannot have. The headline case
+  is a hand granted folder A while the page holds folder B — both real folders,
+  both perfectly good workspaces — refused, with the sentence naming `beta` and
+  `/home/u/projects/alpha` in the same breath, and `pty_request` on the real wasm
+  then refusing to open a terminal and passing that sentence on whole.
+- `dev/verify_ptyedge.mjs` asserts the refusal once against the REAL hand — the
+  relay's own `status`, and the engine refusing on the strength of it — and then
+  wraps `status` so that the verdict, and only the verdict, is stood in for. Its
+  subject is the composition of a terminal request and a real pty on this machine,
+  and the hand's own account of itself passes through untouched, so every fence it
+  composes is still the real one.
+- `dev/verify_handreal.mjs` does the same at the other end of the chain: its first
+  turn is now a REFUSAL, asserted on what the model was actually handed — a
+  sentence, no nonce, no exit code — after which the same wrapper is installed and
+  the file gets on with proving that a real process runs, that its real output
+  reaches the daimon and that the kernel refuses what the fence denies.
+
+Both wrappers substitute the folder verdict and nothing else, and both say so at
+the point of use. `dev/verify_scope.mjs` had already taken the same route for the
+whole of `status`, for the same reason.
 
 **1.15 Release gate 1 is nobody's job.** CONFIRMED. `Tool::run` reads only `root`
 from `status()` and ignores `caps` and `paired`; `apply_fence` is an empty stub;
@@ -1018,6 +1114,68 @@ on it, so a cancel can reach the wrong run. Unbounded, it also drives 3.1.
 and `name` is the program's basename filtered to a safe alphabet and cut at
 `RUN_ID_MAX`. Two concurrent `cargo` runs no longer share an id, and an unbounded
 one can no longer drive 3.1.
+
+**1.20 A Diamond's crystal agent could read and write another Diamond, using a
+path the model wrote.** FOUND while closing 1.12, and closed with it.
+
+*The reproduction.* `steer_inner` (`src/wasm/app.rs`) gives the crystal agent
+`no_write: Vec::new()` and relies entirely on `path_prefix` for its compartment.
+`Tool::scoped` joined that prefix to whatever the model wrote --
+`fmt!("{}/{}", prefix, rel.trim_start_matches("./"))` -- and never normalised the
+result. `wasm::opfs::split_components` then resolved `..` lexically and refused
+only a climb above the OPFS ROOT. A Diamond is not the root. So a daimon
+steering its crystal and asking for `../beta/crystal.md` was handed
+`diamonds/alpha/../beta/crystal.md`, which landed at `diamonds/beta/crystal.md`
+-- another Diamond's private notes, inside OPFS, permitted, read and writable.
+`guard` could not catch it: it tests the path as the model wrote it against the
+turn's bounds, and this turn's bounds are empty, which permits everything.
+
+Six more shapes did the same: a bare `..` and `./..` reached the `diamonds`
+directory itself, `notes/../../beta/x.md` and `../../beta/x.md` reached a
+sibling from the middle and from the start, `notes/../..` climbed two, and
+`../alpha2/x.md` reached a Diamond whose name merely *begins* with this one's --
+which is the shape a string-prefix containment test waves through. Only
+`../../../../etc/passwd` was ever stopped, and by the wrong fence, with a
+message about the workspace rather than about this Diamond.
+
+**This is a model-controlled string leaving its compartment**, the same class as
+the empty-prefix escape and reachable by any daimon steering a Diamond. The
+instruction that produces the path may itself have come from a stranger's words.
+
+**CLOSED.** `Tool::scoped` normalises the join and refuses what is not under the
+prefix, in plain English that names the path, says it is outside this Diamond,
+and says nothing was read, written or run. The containment test is `under`,
+which compares whole segments, so `../alpha2` is the different Diamond it
+actually is. Separators are unified first, so a backslash is not a containment
+test that means one thing on one platform and another elsewhere. An absolute
+path stays relative to the Diamond and cannot escape it, which is what
+`Workspace::resolve` does natively. A turn with no prefix -- the user's own
+workspace agent -- is untouched, and bounded by the OPFS root as it always was.
+
+The doc comment records why this cannot be done with `may_read` instead, because
+that is the repair the next person will reach for: that door tests the path as
+the MODEL wrote it, so a crystal agent asking for `crystal.md` would be measured
+against an allow-list of `diamonds/<id>` and refused for its ordinary work. It
+is 1.18's collision from the other side -- a prefix and an allow-list are two
+ways of saying where a turn lives, and a path can be checked against one, not
+both.
+
+Three tests, and the section counts itself: eighteen path shapes, of which nine
+must now be refused, and three counters assert that seven of those nine landed
+in another compartment before, one was stopped only by the OPFS root jail, and
+one was harmless. The ordinary paths are pinned in the same table, so a fix that
+simply refused everything would fail here. They run NATIVELY against the same
+function the browser calls -- it is compiled for `test` as well as for `wasm32`,
+so there is one implementation rather than two that drift -- but nothing in them
+reaches the OPFS edge, which no native test can; where the old path landed is
+shown through a model of `split_components` and not through the edge itself.
+
+**Still open, and latent: `path_prefix` means two different things.** In the
+browser it confines every file path; natively the file tools ignore it entirely
+and jail on the workspace root instead, so it reaches only `default_cwd`. Every
+native context sets it empty today, so nothing is wrong now -- and the day a
+native turn carries a prefix, it will confine nothing. Wiring `scoped` into the
+native transport is a no-op on today's values and would make the two agree.
 
 ## What was verified as genuinely sound
 

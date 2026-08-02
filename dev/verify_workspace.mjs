@@ -166,12 +166,64 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 		`${drawn} seated, ${capNow} allowed`);
 }
 
+// ── A fifth dock panel, so the shedding arm can be driven ──────────────
+// The smallest grid seats four, and the product ships four dock panels, so
+// nothing is ever surplus and `setGrid`'s shedding arm — and the "this dock is
+// full" chip below it — run in no test at all.
+//
+// That gap was invisible for a day because the Terminal happened to be a fifth
+// dock panel, and it closed again the moment the Terminal moved to the stage.
+// Depending on a particular product panel being docked is what made the check
+// fragile, so it does not depend on one: a panel is DECLARED, the way any panel
+// is declared, and the engine is left to discover it through the same `scan()`
+// that finds the real ones. It is added before the document's own scripts run
+// (a MutationObserver at document-start, because the registry is read during
+// boot and a DOMContentLoaded listener is a race against it), and the page is
+// reloaded so boot sees it.
+{
+	await p.addInitScript(() => {
+		const add = () => {
+			if (document.getElementById('panel-scratch')) return true;
+			const dock = document.getElementById('dock');
+			if (!dock) return false;			// not parsed yet; the observer waits
+			const a = document.createElement('aside');
+			a.className = 'panel scratch';
+			a.id = 'panel-scratch';
+			a.dataset.panel = 'scratch';
+			a.dataset.zone  = 'dock';
+			a.dataset.label = 'Scratch';
+			a.innerHTML = '<div class="railhead"><span role="heading" aria-level="2">Scratch</span></div>';
+			dock.parentNode.insertBefore(a, dock.nextSibling);
+			return true;
+		};
+		if (!add()) {
+			// `document`, not `document.documentElement`: at document-start the root
+			// element does not exist yet, and observing null throws before anything
+			// else in this script has been registered.
+			const mo = new MutationObserver(() => { if (add()) mo.disconnect(); });
+			mo.observe(document, { childList: true, subtree: true });
+			document.addEventListener('DOMContentLoaded', add);
+		}
+	});
+	await p.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(s, 'workspace');
+	await p.waitForTimeout(2500);
+	const dockPanels = await dockZone();
+	check('a fifth dock panel is registered from the markup, as any panel is',
+		dockPanels.includes('scratch') && dockPanels.length === 5, dockPanels.join(', '));
+	const smallest = await p.evaluate(() => {
+		const g = window.DaimondPanels.grids();
+		return Math.min(...Object.keys(g).filter(k => g[k]).map(k => g[k].cols * g[k].rows));
+	});
+	check('and the smallest grid seats fewer than there now are, so a surplus exists',
+		smallest < dockPanels.length, `${smallest} seats for ${dockPanels.length} panels`);
+}
+
 // ── The surplus is CLOSED, not lost ─────────────────────────────────────
-// This could not be driven while the dock held four panels: the smallest grid
-// seats four, so nothing was ever surplus and the shedding arm of setGrid ran
-// in no test. The Terminal panel is the fifth, so opening the whole dock on one
-// column now leaves one with nowhere to sit — and what has to be true of it is
-// that it was CLOSED, and is therefore still on the row to be clicked back.
+// A grid too small to hold what is open leaves a panel with nowhere to sit, and
+// what has to be true of it is that it was CLOSED, and is therefore still on the
+// row to be clicked back. A panel that simply vanished would be one the user
+// cannot get back without knowing it was ever there.
 {
 	const dockPanels = await dockZone();
 	await p.evaluate((ids) => {
@@ -223,8 +275,14 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 	await p.waitForTimeout(300);
 	const c = await chips();
 	const disabled = c.filter(x => x.disabled).map(x => x.id);
-	check('a chip that cannot be honoured is disabled rather than silently inert',
-		full.length === 0 || disabled.length > 0, `full: [${full}] disabled: [${disabled}]`);
+	// Two checks, not one. This used to read `full.length === 0 || disabled…`,
+	// which passes without asserting anything at all on a dock that is never
+	// full — and with four dock panels and a four-seat floor, that was every run.
+	check('a dock with no seat left names the chip it cannot honour',
+		full.length > 0, `full: [${full}]`);
+	check('and that chip is disabled rather than silently inert',
+		full.length > 0 && full.every(id => disabled.includes(id)),
+		`full: [${full}] disabled: [${disabled}]`);
 	await p.evaluate(() => window.DaimondPanels.setGrid('auto'));
 	await p.waitForTimeout(300);
 }

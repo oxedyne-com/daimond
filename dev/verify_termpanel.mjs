@@ -104,12 +104,41 @@ console.log('\nThe panel, as the page declares it');
 
 const asideRe = /<aside[^>]*data-panel="term"[^>]*>/;
 const aside = (asideRe.exec(indexSrc) || [''])[0];
-check('index.html declares a dock panel with the id `term`',
-	/data-panel="term"/.test(aside) && /data-zone="dock"/.test(aside), aside.slice(0, 120));
+check('index.html declares a stage panel with the id `term`',
+	/data-panel="term"/.test(aside) && /data-zone="stage"/.test(aside), aside.slice(0, 120));
 check('and it carries a label and the key that translates it',
 	/data-label="Terminal"/.test(aside) && /data-i18n-label="panel\.term"/.test(aside), aside.slice(0, 160));
 check('and it is NOT given the `term` class, which belongs to what terminal.js builds',
 	/class="panel termpanel"/.test(aside) && !/class="panel term"/.test(aside), aside.slice(0, 80));
+// The stage's occupants are DECLARED inside <main class="stage">; the dock's are
+// declared after it and moved into a column by the engine. A stage panel left
+// among the dock's would still work -- the engine seats by `data-zone` and not by
+// position -- so what this holds is the file's own convention, which is the only
+// thing a reader has to go on when they open the markup looking for the stage.
+{
+	const stageFrom = indexSrc.indexOf('<main class="stage"');
+	const stageTo   = indexSrc.indexOf('</main>', stageFrom);
+	const at        = indexSrc.search(asideRe);
+	check('and it is declared inside the stage, where the stage\'s panels are written',
+		stageFrom !== -1 && at > stageFrom && at < stageTo, `aside@${at}, stage ${stageFrom}..${stageTo}`);
+}
+// A stage panel is a CARD -- the AI, the page, the document and the graph all
+// carry the same border, ground and corner. app.css names most of them in one
+// rule and graph.css gives the Graph its own copy; the Terminal's is in the file
+// the terminal owns. A panel left off every one of those lists is a bare block
+// on the stage's ground, and worse, a block is not a flex column: its head and
+// its body would share the WIDTH and nothing inside could be told to fill the
+// height, which is the failure that froze the terminal at its minimum grid.
+{
+	const cssSrc = fs.readFileSync(path.join(ROOT, 'www/css/terminal.css'), 'utf8');
+	const rule = (/\.panel\.termpanel\s*\{([^}]*)\}/.exec(cssSrc) || [, ''])[1];
+	check('the panel is given the stage card: a ground, an edge and a corner',
+		/background:/.test(rule) && /border:/.test(rule) && /border-radius:/.test(rule), rule.replace(/\s+/g, ' ').trim());
+	check('and it is a flex column, or nothing in it can be told to fill the height',
+		/display:\s*flex/.test(rule) && /flex-direction:\s*column/.test(rule), rule.replace(/\s+/g, ' ').trim());
+	check('and it declares no flex of its own, which the engine sets per seat',
+		!/(^|;)\s*flex:/.test(rule), rule.replace(/\s+/g, ' ').trim());
+}
 check('the panel body has a host, a state line, a notices region and a way-out hint',
 	/id="termp-host"/.test(indexSrc) && /id="termp-state"/.test(indexSrc)
 	&& /id="termp-gaps"/.test(indexSrc) && /id="termp-foot"/.test(indexSrc));
@@ -394,6 +423,41 @@ try {
 	check('a session opens through the relay and the panel holds its id', !!sid, String(sid));
 	check('the panel says it is running', /running/i.test(await stateText()), await stateText());
 
+	// ── Where the panel sits, and what fills it ─────────────────
+	//
+	// A dock panel and a stage panel are laid out by different rules: the dock
+	// tiles its occupants into a fixed column, the stage sizes its two seats
+	// inline. What has to hold either way is that the terminal's own box IS the
+	// panel's, minus the head and the two lines of furniture -- a grid computed
+	// from a box smaller than the panel is a screen the program draws wrong for
+	// as long as it runs.
+	const seat = await p.evaluate(() => {
+		const panel = document.getElementById('panel-term');
+		const host  = document.getElementById('termp-host');
+		const term  = document.querySelector('#termp-host .term');
+		const cs    = getComputedStyle(panel);
+		const h = (e) => (e ? Math.round(e.getBoundingClientRect().height) : 0);
+		const w = (e) => (e ? Math.round(e.getBoundingClientRect().width)  : 0);
+		return {
+			declared: panel.dataset.zone,
+			seated:   window.DaimondPanels.zone('term'),
+			parent:   panel.parentElement.id,
+			display:  cs.display,
+			flow:     cs.flexDirection,
+			panelH: h(panel), hostH: h(host), termH: h(term),
+			hostW:  w(host),  termW: w(term),
+		};
+	});
+	check('the panel is seated on the stage rather than tiled into the dock',
+		seat.declared === 'stage' && seat.seated === 'stage' && seat.parent === 'stage',
+		`declared ${seat.declared}, registered ${seat.seated}, drawn in #${seat.parent}`);
+	check('and it is a flex column on screen, not a block',
+		seat.display === 'flex' && seat.flow === 'column', `${seat.display} / ${seat.flow}`);
+	check('the terminal is exactly its host, and the host has most of the panel',
+		seat.termH === seat.hostH && seat.termW === seat.hostW
+		&& seat.hostH > seat.panelH * 0.6 && seat.termH > 200,
+		`term ${seat.termW}x${seat.termH}, host ${seat.hostW}x${seat.hostH}, panel ${seat.panelH} tall`);
+
 	const asked = await p.evaluate(() => window.__asked);
 	check('the request Rust was asked for carries the panel\'s real grid',
 		asked && asked.cols === grid.cols && asked.rows === grid.rows,
@@ -407,6 +471,59 @@ try {
 	check('the request reached the wire exactly as Rust composed it',
 		openMsg && openMsg.fence && openMsg.fence.rw[0] === '/nowhere/ws' && openMsg.cwd === '/nowhere/ws',
 		JSON.stringify(openMsg && openMsg.fence));
+
+	// ── The dock keeps its four ─────────────────────────────────
+	//
+	// The reason the panel moved. The dock's automatic grid is one column of four
+	// below 1900px, and Agents, Email, Workspace and Spending fill it exactly; a
+	// fifth panel there can only arrive by closing one of them. On the stage,
+	// opening the Terminal costs the dock nothing.
+	//
+	// The broken world is the behaviour it used to have: a `show('term')` that
+	// takes a dock seat with it. That is a faithful break -- it is what the user
+	// actually saw -- and the check has to go red for it or it is not reading the
+	// dock at all.
+	const dockSeats = () => p.evaluate(() => [...document.querySelectorAll('#dock .pcol > .panel')]
+		.filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.dataset.panel).sort());
+	await p.evaluate(() => {
+		// Agents waits for its first run before it joins the row; the dock is only
+		// full with it, and full is the case this is about.
+		try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
+		document.body.classList.remove('agents-hidden');
+		['agents', 'mail', 'work', 'spend'].forEach((id) => window.DaimondPanels.show(id));
+	});
+	await sleep(600);
+	check('the dock holds its four, and its automatic grid has room for exactly those',
+		(await dockSeats()).length === 4
+		&& (await p.evaluate(() => window.DaimondPanels.model().dockMax)) === 4,
+		(await dockSeats()).join(', '));
+
+	await proved('opening the Terminal costs the dock no seat',
+		async () => {
+			await p.evaluate(() => {
+				window.__realShow = window.DaimondPanels.show;
+				window.DaimondPanels.show = function (id) {
+					window.__realShow.call(window.DaimondPanels, id);
+					// What a fifth panel in a four-seat dock did: something already
+					// seated has to go, and the user is never asked which.
+					if (id === 'term') window.DaimondPanels.hide('spend');
+				};
+			});
+		},
+		async () => {
+			await closePanel();
+			const before = await dockSeats();
+			await openPanel();
+			const after = await dockSeats();
+			return before.length === 4 && after.join('|') === before.join('|');
+		},
+		async () => {
+			await p.evaluate(() => { window.DaimondPanels.show = window.__realShow; });
+			await p.evaluate(() => ['agents', 'mail', 'work', 'spend']
+				.forEach((id) => window.DaimondPanels.show(id)));
+			await sleep(400);
+			await closePanel(); await installLink(); await installComposer(); await openPanel();
+		});
 
 	/// Push output at the session as the hand would, base64 as the wire carries it.
 	///
@@ -664,8 +781,8 @@ try {
 	// 14. What a screen reader is given, and what the keyboard can reach.
 	const a11y = await p.evaluate(() => {
 		const input = document.querySelector('#termp-host .term-input');
-		const head  = document.querySelector('#panel-term .railhead [role="heading"]');
-		const btns  = [...document.querySelectorAll('#panel-term .railhead button')];
+		const head  = document.querySelector('#panel-term .chead [role="heading"]');
+		const btns  = [...document.querySelectorAll('#panel-term .chead button')];
 		return {
 			inputName:  input ? input.getAttribute('aria-label') : null,
 			inputDesc:  input ? !!document.getElementById(input.getAttribute('aria-describedby')) : false,
@@ -686,15 +803,114 @@ try {
 	check('the screen is also there as text, for a reader who cannot see a canvas',
 		a11y.mirrorRole === 'region');
 
-	// 15. Two palettes, looked at rather than assumed.
-	for (const theme of ['dark', 'light']) {
-		await p.evaluate((th) => {
-			try { window.DaimondTheme.set(th); } catch (e) { document.documentElement.setAttribute('data-theme', th); }
-		}, theme);
-		await sleep(400);
-		await shot(s, `termpanel-${theme}`);
+	// 15. Every palette, measured — and two of them looked at.
+	//
+	// The head changed with the zone: a dock panel wears the rail's small capitals
+	// on the page's own ground, a stage card wears the card head the AI and the
+	// Web panel wear on a card of its own. New ink on a new ground is a new
+	// contrast question, and it is not one screenshot's to answer -- the app has
+	// eleven palettes and a colour that reads on two of them can be unreadable on
+	// a third. So every palette is put on and the RENDERED pixels are measured.
+	//
+	// The panel's name and its two sentences are TEXT and are held to 4.5. The
+	// card's EDGE is not held to a number here, and the reason is worth writing
+	// down: `--border` is a hairline separator in this app, not a boundary drawn
+	// to be seen on its own -- it measures 1.23 to 1.29 against the ground on
+	// every palette, and it does so for the AI panel, the Web panel and the Graph
+	// exactly as much as for this one. A 3.0 floor asserted here would fail every
+	// card in the app, which would mean the check was wrong and not the app. What
+	// is held instead is that the Terminal's card is the SAME card: same ground,
+	// same edge, on all eleven. That is the property a zone move can actually
+	// break -- a panel left wearing the dock's transparent ground would be a bare
+	// block on the stage -- and it is proved below against a page where it does
+	// not hold.
+	{
+		/// WCAG relative luminance, from an `rgb(...)` string the browser gave us.
+		const lum = (css) => {
+			const [r, g, b] = (css.match(/[\d.]+/g) || ['0', '0', '0']).slice(0, 3).map(Number);
+			const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+			return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+		};
+		const ratio = (a, b) => {
+			const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+			return (x + 0.05) / (y + 0.05);
+		};
+		/// What the panel is wearing right now, straight off the rendered styles.
+		const ink = () => p.evaluate(() => {
+			const panel = document.getElementById('panel-term');
+			const ai    = document.getElementById('panel-ai');
+			const cs    = (e) => getComputedStyle(e);
+			return {
+				title: cs(panel.querySelector('.chead .ctitle')).color,
+				state: cs(document.getElementById('termp-state')).color,
+				foot:  cs(document.getElementById('termp-foot')).color,
+				card:  cs(panel).backgroundColor,
+				edge:  cs(panel).borderTopColor,
+				aiCard: cs(ai).backgroundColor,
+				aiEdge: cs(ai).borderTopColor,
+			};
+		});
+		/// Whether this panel is wearing the stage card the AI panel is wearing.
+		const sameCard = (v) => v.card === v.aiCard && v.edge === v.aiEdge;
+
+		const themes = await p.evaluate(() => window.DaimondTheme.list());
+		check('the app has the eleven palettes this is measured across',
+			themes.length === 11, `${themes.length}: ${themes.join(', ')}`);
+		const shortfalls = [], strangers = [], edges = [];
+		for (const theme of themes) {
+			await p.evaluate((th) => {
+				try { window.DaimondTheme.set(th); } catch (e) { document.documentElement.setAttribute('data-theme', th); }
+			}, theme);
+			await sleep(220);
+			const v = await ink();
+			[
+				['the panel\'s name',  ratio(v.title, v.card)],
+				['the state sentence', ratio(v.state, v.card)],
+				['the way-out line',   ratio(v.foot,  v.card)],
+			].forEach(([what, r]) => {
+				if (r < 4.5) shortfalls.push(`${theme}: ${what} = ${r.toFixed(2)} (floor 4.5)`);
+			});
+			if (!sameCard(v)) strangers.push(`${theme}: card ${v.card} vs ${v.aiCard}, edge ${v.edge} vs ${v.aiEdge}`);
+			edges.push(ratio(v.edge, v.card));
+		}
+		check('every word the panel says clears 4.5 on every palette',
+			shortfalls.length === 0, shortfalls.join(' | ') || `${themes.length} palettes measured`);
+		check('and it wears the same card as the AI panel on every one of them',
+			strangers.length === 0,
+			strangers.join(' | ')
+				+ ` (its hairline runs ${Math.min(...edges).toFixed(2)}-${Math.max(...edges).toFixed(2)}`
+				+ ' against its own ground, which is what every card in the app runs at)');
+
+		// And the card check is put through the same door as everything else: a
+		// panel painted in the ground behind it is the state the check exists to
+		// catch, so it has to go red for one.
+		await proved('the panel is wearing the stage\'s card and not the ground behind it',
+			async () => {
+				await p.evaluate(() => {
+					const el = document.getElementById('panel-term');
+					el.style.background = getComputedStyle(document.body).backgroundColor;
+					el.style.borderColor = getComputedStyle(document.body).backgroundColor;
+				});
+			},
+			async () => sameCard(await ink()),
+			async () => {
+				await p.evaluate(() => {
+					const el = document.getElementById('panel-term');
+					el.style.background = '';
+					el.style.borderColor = '';
+				});
+			});
+
+		// And two of them photographed, because a ratio is not a look.
+		for (const theme of ['dark', 'light']) {
+			await p.evaluate((th) => {
+				try { window.DaimondTheme.set(th); } catch (e) { document.documentElement.setAttribute('data-theme', th); }
+			}, theme);
+			await sleep(400);
+			await shot(s, `termpanel-${theme}`);
+		}
+		check('a screenshot was taken in a dark and a light palette', true);
 	}
-	check('a screenshot was taken in a dark and a light palette', true);
 
 	const noise = s.errs.filter((e) => !/favicon|ERR_ABORTED|502|Bad Gateway|net::ERR/i.test(e));
 	check('the app threw nothing while all that happened', noise.length === 0, noise.slice(0, 3).join(' | '));

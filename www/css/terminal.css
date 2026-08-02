@@ -250,21 +250,39 @@
    how to get the keyboard back out. The terminal itself is everything above;
    nothing here reaches inside it. */
 
-/* The panel is a flex column, like every other panel in the dock.
-   app.css names them one by one (`.rail, .agents, .work, .mail, .spend`), and a
-   panel left off that list stays a block: its head and its body then share the
-   width instead of the height, and nothing inside it can be told to fill what is
-   left. Spending was left off once and came out as a stranded column of letters;
-   the Terminal would come out as a canvas frozen at its minimum grid however
-   tall the panel was. Declared here rather than there because this is the file
-   the terminal owns. */
+/* The panel is a stage card and a flex column, like the AI, the Web page and a
+   document. app.css names the stage's cards one by one (`.ai, .web, .doc, .msg,
+   .compose, .tools`) and graph.css gives the Graph its own copy of that card for
+   exactly this reason; this is the Terminal's, declared here because this is the
+   file the terminal owns.
+
+   Both halves of the rule earn their place. Left off the CARD list the panel
+   would be a bare box on the stage's ground with no edge between it and the
+   conversation beside it. Left off the FLEX list it would stay a block: its head
+   and its body would then share the WIDTH instead of the height, and nothing
+   inside it could be told to fill what is left. Spending was left off the dock's
+   equivalent once and came out as a stranded column of letters; the Terminal
+   comes out as a canvas frozen at its minimum grid however tall the panel is.
+
+   No `flex` of its own: a stage occupant's flex and width are set inline by the
+   engine's applySeat, which is the only thing that knows whether it is sharing
+   the stage or holding it alone. */
 .panel.termpanel {
-	flex: none;
+	min-width: 0;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
 	overflow: hidden;
 }
+
+/* The head is the stage's card head, so the panel's own name is set in the same
+   type as the AI's and the page's rather than in the dock's small capitals. The
+   name is fixed and the program's title takes the slack beside it, so the three
+   buttons stay against the right however long a title runs. */
+.termpanel .chead { gap: 8px; }
+.termpanel .chead .ctitle { flex: none; }
 
 .termpanel .termp-card {
 	display: flex;
@@ -298,10 +316,11 @@
    or once anything has been drawn — the box comes back. */
 .termpanel.no-term .termp-host { display: none; }
 
-/* What the program calls itself, beside the panel's own name. Truncated rather
-   than wrapped: a title is a label, and a two-line head moves the terminal. */
+/* What the program calls itself, beside the panel's own name. It takes the head's
+   slack, so the buttons keep their place. Truncated rather than wrapped: a title
+   is a label, and a two-line head moves the terminal. */
 .termp-title {
-	flex: 0 1 auto;
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -310,7 +329,9 @@
 	font: var(--fs-xs) / 1.4 var(--font-mono);
 }
 
-.termp-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+/* The three buttons sit closer together than the stage head's default 8px: they
+   are icons in a row and read as one control group, not as three. */
+.termpanel .chead-right { gap: 2px; }
 
 /* Where the session is, in a sentence. Refusals arrive here verbatim, so it has
    to be able to hold a paragraph without pushing the terminal off the panel. */
@@ -443,7 +464,7 @@
 
 /* The heading is a focus target: F6 out of the terminal lands here, and a
    programmatic focus with no ring is a keyboard user who has lost their place. */
-.termpanel .railhead [role="heading"]:focus-visible {
+.termpanel .chead [role="heading"]:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 	border-radius: var(--radius-sm);

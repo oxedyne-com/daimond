@@ -224,6 +224,11 @@
 	   row. The other stage heads carry live titles (the doc name, the URL,
 	   the message subject) and stay. */
 	#msheet .panel.tools > .chead { display: none; }
+	/* The Terminal's head is not droppable -- Start and Stop live in it, and a
+	   terminal you cannot start is not a terminal -- so only the duplicated NAME
+	   goes. What is left is the program's own title and the two controls, which
+	   is what the head is for. */
+	#msheet .panel.termpanel > .chead > .ctitle { display: none; }
 
 	/* The ask pill: the composer, relocated. "Ask about THIS" is the
 	   whole thesis — read the thing, and the daimon is still there to

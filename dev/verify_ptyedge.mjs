@@ -18,6 +18,17 @@
 // it. `test -t 0` is answered by the kernel and `stty size` by the terminal
 // driver; neither can be satisfied by a test that is agreeing with itself.
 //
+// ── One thing is stood in for, and it is named ──────────────────────
+//
+// `hand/REVIEW.md` §1.14: the relay refuses to pair where the folder the page
+// has open cannot be shown to be the folder the hand was granted. This page has
+// no folder — and no automated page can have one, because a real folder arrives
+// only through `showDirectoryPicker()`, a native dialog no harness can answer —
+// so the verdict here is always a refusal. Section 3 asserts that refusal
+// against the real hand; everywhere else `status()` is wrapped so that the
+// verdict, and only the verdict, is stood in for. The hand's own account of
+// itself passes through untouched, and every fence below is composed from it.
+//
 // ── The oracle for the screen model is tmux ─────────────────────────
 //
 // A resize is asserted against what tmux 3.6 actually does with the same
@@ -425,6 +436,35 @@ async function reload() {
 		// and wrong for a test that has already answered it.
 		if (window.DaimondPty && DaimondPty._setWaitsForTest) DaimondPty._setWaitsForTest({ open: 20000 });
 		if (window.DaimondHand && DaimondHand._setWaitsForTest) DaimondHand._setWaitsForTest({ hello: 20000, grace: 20000 });
+		// ── The folder verdict, stood in for ────────────────────────
+		//
+		// `hand/REVIEW.md` §1.14 is armed: the relay refuses to pair where the
+		// folder the page has open cannot be shown to be the folder the hand was
+		// granted. This page has no folder at all — it is three script tags, and
+		// even the app cannot get one without `showDirectoryPicker()`, a native
+		// dialog no harness can answer — so the verdict here is always a refusal
+		// and there is no arrangement of this file in which it is not. What is
+		// under test below is the COMPOSITION of a terminal request and a real pty
+		// on this machine, so the verdict is stood in for, as `dev/verify_scope.mjs`
+		// does. `dev/verify_wsident.mjs` tests the refusal itself, and section 3
+		// asserts it here once against the real hand before this takes effect.
+		//
+		// Only the verdict. The hand's own account of itself — its root, its caps,
+		// its os — passes through untouched, and the fence every request composes
+		// is built from it.
+		var real = window.DaimondHand.status;
+		window.__realStatus = function () { return real.call(window.DaimondHand); };
+		window.DaimondHand.status = function () {
+			return real.call(window.DaimondHand).then(function (raw) {
+				var st = JSON.parse(raw);
+				if (st.workspace && st.workspace !== 'ok') {
+					st.paired = true;
+					delete st.reason;
+					st.workspace = 'stood in for by verify_ptyedge.mjs';
+				}
+				return JSON.stringify(st);
+			});
+		};
 	});
 }
 
@@ -774,6 +814,32 @@ const opened = await Promise.all([openReal(ASK), grant('allow')]).then((r) => r[
 const allow = () => grant('allow', 4000);
 check('a real terminal opens on this machine, through the extension and the hand',
 	!!opened.id && opened.pid > 0, JSON.stringify(opened));
+
+// ── §1.14, asked of the real hand, with nothing stood in for ────
+//
+// The relay's OWN answer, reached through `__realStatus`. The hand has a folder
+// on this machine and this page has none, so the two cannot be shown to mean the
+// same folder and the relay refuses the pairing outright — which is what a user
+// with the wrong folder open meets, and the reason everything else in this file
+// stands the verdict in. Asserted against the REAL hand, because a refusal that
+// only ever fires against a stub is a refusal nobody has watched happen.
+const owned = await page.evaluate(async (ask) => {
+	const st = JSON.parse(await window.__realStatus());
+	const stood = window.DaimondHand.status;
+	window.DaimondHand.status = window.__realStatus;
+	let req;
+	try { req = JSON.parse(await window.Wasm.pty_request(JSON.stringify(ask))); }
+	finally { window.DaimondHand.status = stood; }
+	return { st, req };
+}, ASK);
+check('the relay refuses to pair a folder it cannot show is the hand\'s',
+	owned.st.paired === false && owned.st.root === GRANT
+	&& /lives in the browser and not in a folder on this machine/.test(owned.st.reason || ''),
+	JSON.stringify(owned.st).slice(0, 220));
+check('and the engine opens no terminal on it, passing the sentence on whole',
+	!!owned.req.refused && owned.req.t === undefined
+	&& /lives in the browser and not in a folder on this machine/.test(owned.req.refused),
+	JSON.stringify(owned.req).slice(0, 220));
 
 let SAW = '';
 if (opened.id) {

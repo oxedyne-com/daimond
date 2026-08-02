@@ -448,13 +448,19 @@
 	// runs, correctly fenced, against the wrong files.
 	//
 	// The hand holds one of the two names and can only supply evidence. The comparison belongs
-	// where both names meet, which is here.
+	// where both names meet, which is here — and it REFUSES, in `settled()`, rather than merely
+	// reporting what it found.
 
-	/// The last comparison, cached per grant: `{ key, ok, why }`.
+	/// The last comparison, cached per grant and per folder: `{ key, dir, ok, why }`.
 	///
 	/// Keyed by the root and the token together, so a hand that reconnects to a different folder
 	/// — or the same folder with a new identity, which means somebody deleted the file — is asked
 	/// again rather than believed on the strength of an older answer.
+	///
+	/// The HANDLE is part of the key too, and that half is what makes the cache safe to arm on. A
+	/// user who opens a different folder in the Workspace panel changes one of the two names being
+	/// compared while the hand says nothing at all, and a verdict remembered by grant alone would
+	/// answer for a folder it never read — passing a swap in the direction that runs the command.
 	var wsProof = null;
 
 	/// Whether this page's folder is the folder the hand was granted, and what to say if not.
@@ -471,10 +477,11 @@
 	async function proveFolder() {
 		var token = capValue(state.caps, WS_CAP);
 		var key   = state.root + '\u0000' + token;
-		if (wsProof && wsProof.key === key) return wsProof;
+		var dir   = (deps.folder && deps.folder()) || null;
+		if (wsProof && wsProof.key === key && wsProof.dir === dir) return wsProof;
 
-		var out = await folderVerdict(token);
-		wsProof = { key: key, ok: out.ok, why: out.why || '' };
+		var out = await folderVerdict(token, dir);
+		wsProof = { key: key, dir: dir, ok: out.ok, why: out.why || '' };
 		return wsProof;
 	}
 
@@ -482,7 +489,8 @@
 	///
 	/// # Arguments
 	/// * `token` - The `ws:` value the hand published, or '' where it published none.
-	async function folderVerdict(token) {
+	/// * `dir` - The folder the page has open, or null where it has none.
+	async function folderVerdict(token, dir) {
 		if (!token) {
 			// A hand that says nothing about its folder, which is a hand from before the token
 			// existed. §1.14 enumerates four outcomes and every one of them presupposes a `ws:`
@@ -503,7 +511,6 @@
 				+ 'folder it was granted, so the two ends cannot confirm they mean the same '
 				+ 'folder. The hand\'s own error output names the path that failed.' };
 		}
-		var dir = (deps.folder && deps.folder()) || null;
 		if (!dir) {
 			// Its own case, and NOT one to skip for want of a handle. There is nothing to read
 			// the token through, so the check cannot pass — and a check that is skipped when it
@@ -806,44 +813,55 @@
 		});
 	}
 
-	/// What we know about the hand, with the folder comparison made and reported.
+	/// What we know about the hand, with the folder comparison made and ACTED ON.
 	///
 	/// The comparison is made HERE, at the door every caller already goes through, rather than
 	/// beside each of them: `Tool::run` reads this, and so does the terminal.
 	///
-	/// # Why the verdict is REPORTED and does not yet refuse
+	/// # The refusal
 	///
-	/// `hand/REVIEW.md` §1.14 says a folder that cannot be shown to be this page's folder should
-	/// refuse commands, and arming that is one line — return the `paired: false` object below
-	/// instead of `mine()` when `p.ok` is false. It is not armed here, and the reason is a
-	/// measurement rather than an opinion:
+	/// `hand/REVIEW.md` §1.14. A folder that cannot be shown to be this page's folder makes this
+	/// answer `paired: false`, and `reason` carries the sentence §1.14 wrote for whichever of the
+	/// four outcomes was reached. Every route to a command reads this first — `Tool::run` refuses
+	/// on `paired`, `pty_request` refuses on `paired`, and the Terminal panel shows `reason` — so
+	/// one refusal here closes all of them. The ORDINARY case is silent: an equal token adds
+	/// `workspace: 'ok'` and nothing else, because a check that speaks every time it passes is a
+	/// check people learn to dismiss.
 	///
-	/// **No automated test can satisfy the check.** The page can only hold a real folder through
-	/// `showDirectoryPicker()`, which is a native dialog no harness can answer, so every headless
-	/// run has an OPFS workspace — which is §1.14's third outcome and a refusal. Turning it on
-	/// was measured: `dev/verify_ptyedge.mjs` loses 3 checks and then throws, and
-	/// `dev/verify_handreal.mjs` loses 14, every one of them this refusal and none of them a
-	/// defect in what they test. Both drive the REAL hand, which publishes the token.
+	/// What the hand said about itself is kept on the refusal — `root`, `caps`, `os` — because it
+	/// is true and useful: the hand really did report those, and what is refused is that they
+	/// describe the folder this page has open. Nothing composes a fence from it: every caller
+	/// gates on `paired` before reading a root.
 	///
-	/// So arming it is a decision about test strategy as much as about the product, and it wants
-	/// the two verifiers changed in the same breath — either standing in for `status` as
-	/// `dev/verify_scope.mjs` does, or asserting the refusal. That is not a change to make
-	/// silently underneath them.
-	///
-	/// What is here meanwhile is the whole mechanism and its evidence: `workspace` is `ok` or the
-	/// outcome that was reached, and `workspace_reason` is the sentence §1.14 wrote for it. A
-	/// caller that wants the guarantee today asks `DaimondHand.workspaceProof()`.
+	/// **No automated test can satisfy this check**, and that is structural rather than a gap in
+	/// the tests. A page holds a real folder only through `showDirectoryPicker()`, a native dialog
+	/// no harness can answer, so every headless run has an OPFS workspace — §1.14's third outcome,
+	/// and a refusal. `dev/verify_wsident.mjs` therefore tests the refusal itself, with two real
+	/// directory handles standing in for the two folders; `dev/verify_ptyedge.mjs` and
+	/// `dev/verify_handreal.mjs` assert the refusal once against the real hand and then stand in
+	/// for `status` for the rest, as `dev/verify_scope.mjs` does.
 	function settled() {
 		return proveFolder().then(function (p) {
 			var out = JSON.parse(mine());
 			out.workspace = p.ok ? 'ok' : 'mismatch';
-			if (!p.ok) out.workspace_reason = p.why;
+			if (!p.ok) {
+				out.paired = false;
+				out.reason = p.why;
+				out.workspace_reason = p.why;
+			}
 			return JSON.stringify(out);
 		}, function () {
+			// The check could not answer, which is not the same as answering yes. A folder that
+			// cannot be compared is refused for the same reason a missing one is: the comparison
+			// is what stands between a command and the wrong files.
 			var out = JSON.parse(mine());
+			out.paired = false;
 			out.workspace = 'unchecked';
 			out.workspace_reason = 'Daimond could not check whether the folder you have open is '
-				+ 'the folder the machine hand was granted.';
+				+ 'the folder the machine hand was granted, so it will not run a command that '
+				+ 'might reach different files from the ones it has been reading. Reopen the '
+				+ 'folder for this workspace and try again.';
+			out.reason = out.workspace_reason;
 			return JSON.stringify(out);
 		});
 	}

@@ -342,7 +342,13 @@ impl DaimondApp {
         // else, and composing it here rather than inside `diamond_bounds` keeps the scope and the
         // grant visible as two separate decisions in the one expression.
         bounds.extend(crate::tools::toolkit_bounds(&paths(&toolkits)));
-        self.registry.ctx.no_write = bounds;
+        // COMPOSED and never assigned, for the reason `hand/REVIEW.md` §1.12 gives: a second
+        // caller must not be able to widen what a first one set.  On a freshly built app this is
+        // the identity -- composing with an empty list is the other list -- so the browser's
+        // per-dispatch call is unchanged.  Re-scoping the SAME Diamond is idempotent; re-scoping a
+        // different one intersects to `Bound::Nowhere`, which `diamond_scope` reports and the
+        // caller already refuses to start a turn on.
+        self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
     }
 
     /// What this agent is actually confined to, as the engine holds it.

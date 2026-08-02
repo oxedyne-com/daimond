@@ -489,6 +489,64 @@
 				</div>
 				<div class="graph-body" id="graph-body"></div>
 			</aside>
+
+			<!-- Terminal: a real terminal on the user's machine, reached through the
+			     machine hand. Everything inside #termp-host is built by js/terminal.js
+			     on the first open, never at load: a canvas, its screen model and its
+			     screen-reader mirror are not worth building for a panel nobody has
+			     asked for.
+
+			     A stage guest, and for the same reason the Web panel is one: it is a
+			     thing you work IN rather than glance at, and it wants the room and the
+			     height to be worked in. It shipped in the dock for a day and the dock
+			     is the wrong shape for it twice over -- the dock's own grid seats four
+			     below 1900px, so a fifth panel there could only arrive by closing one
+			     of the four that were already earning their place.
+
+			     The class is `termpanel` and not `term` on purpose. `.term` is the
+			     class terminal.js puts on the thing it builds, and a panel wearing it
+			     would inherit the terminal's own background, border and 100% height. -->
+			<aside class="panel termpanel" id="panel-term" data-panel="term" data-zone="stage" data-label="Terminal" data-i18n-label="panel.term">
+				<div class="chead">
+					<span class="ctitle" role="heading" aria-level="2" data-i18n="panel.term">Terminal</span>
+					<!-- What the program calls itself (OSC 0 and 2). aria-hidden, because
+					     the same words reach a screen reader through the terminal's own
+					     live region: a title that changes on every prompt would otherwise
+					     interrupt the output being read out. -->
+					<span class="termp-title" id="termp-title" aria-hidden="true"></span>
+					<div class="chead-right">
+						<!-- A bell rung while the eye is elsewhere. The terminal flashes its
+						     own edge; this is the same event where the panel can be seen. -->
+						<span class="termp-bell" id="termp-bell" aria-hidden="true"></span>
+						<button class="addbtn" data-act="term-start" title="Start a terminal" aria-label="Start a terminal" data-i18n-title="term.start" data-i18n-aria-label="term.start">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
+						</button>
+						<button class="addbtn" data-act="term-stop" title="Stop the program" aria-label="Stop the program" data-i18n-title="term.stop" data-i18n-aria-label="term.stop">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg>
+						</button>
+						<button class="addbtn panel-close" data-close="term" title="Close panel" data-i18n-title="common.close_panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="termp-card">
+					<!-- Where the terminal is, in a sentence: starting, running, refused,
+					     finished. A refusal from the hand or the relay is shown VERBATIM
+					     — those sentences are written to be acted on, and a paraphrase
+					     loses the only instruction the reader gets. -->
+					<p class="termp-state" id="termp-state" role="status"></p>
+					<!-- Missing output, said BESIDE the stream and never written into it:
+					     bytes written into a terminal are drawn, so a marker in the stream
+					     would be damage on top of the loss. See handpty.js, "A hole is
+					     shown, not stitched". -->
+					<div class="termp-host" id="termp-host">
+						<div class="termp-gaps" id="termp-gaps" role="log" aria-live="polite" aria-label="Notices about this terminal" data-i18n-aria-label="term.notices_label"></div>
+					</div>
+					<!-- The way back out. A terminal takes nearly every key, so the one
+					     that leaves it has to be said in writing rather than guessed at. -->
+					<p class="termp-foot" id="termp-foot" data-i18n="term.leave_hint">Press F6 to move the keyboard out of the terminal.</p>
+				</div>
+			</aside>
 		</main>
 
 		<div class="phandle" id="handle-dock" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
@@ -594,56 +652,6 @@
 				<div class="files-path"></div>
 				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false" data-i18n-placeholder="work.filter_ph"></div>
 				<div class="files-tree"></div>
-			</div>
-		</aside>
-
-		<!-- Terminal: a real terminal on the user's machine, reached through the
-		     machine hand. Everything inside #termp-host is built by js/terminal.js
-		     on the first open, never at load: a canvas, its screen model and its
-		     screen-reader mirror are not worth building for a panel nobody has
-		     asked for.
-
-		     The class is `termpanel` and not `term` on purpose. `.term` is the
-		     class terminal.js puts on the thing it builds, and a panel wearing it
-		     would inherit the terminal's own background, border and 100% height. -->
-		<aside class="panel termpanel" id="panel-term" data-panel="term" data-zone="dock" data-label="Terminal" data-i18n-label="panel.term">
-			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.term">Terminal</span>
-				<!-- What the program calls itself (OSC 0 and 2). aria-hidden, because
-				     the same words reach a screen reader through the terminal's own
-				     live region: a title that changes on every prompt would otherwise
-				     interrupt the output being read out. -->
-				<span class="termp-title" id="termp-title" aria-hidden="true"></span>
-				<!-- A bell rung while the eye is elsewhere. The terminal flashes its
-				     own edge; this is the same event where the panel can be seen. -->
-				<span class="termp-bell" id="termp-bell" aria-hidden="true"></span>
-				<span class="termp-actions">
-					<button class="addbtn" data-act="term-start" title="Start a terminal" aria-label="Start a terminal" data-i18n-title="term.start" data-i18n-aria-label="term.start">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
-					</button>
-					<button class="addbtn" data-act="term-stop" title="Stop the program" aria-label="Stop the program" data-i18n-title="term.stop" data-i18n-aria-label="term.stop">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg>
-					</button>
-					<button class="addbtn panel-close" data-close="term" title="Close panel" data-i18n-title="common.close_panel">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-					</button>
-				</span>
-			</div>
-			<div class="termp-card">
-				<!-- Where the terminal is, in a sentence: starting, running, refused,
-				     finished. A refusal from the hand or the relay is shown VERBATIM
-				     — those sentences are written to be acted on, and a paraphrase
-				     loses the only instruction the reader gets. -->
-				<p class="termp-state" id="termp-state" role="status"></p>
-				<!-- Missing output, said BESIDE the stream and never written into it:
-				     bytes written into a terminal are drawn, so a marker in the stream
-				     would be damage on top of the loss. See handpty.js, "A hole is
-				     shown, not stitched". -->
-				<div class="termp-host" id="termp-host">
-					<div class="termp-gaps" id="termp-gaps" role="log" aria-live="polite" aria-label="Notices about this terminal" data-i18n-aria-label="term.notices_label"></div>
-				</div>
-				<!-- The way back out. A terminal takes nearly every key, so the one
-				     that leaves it has to be said in writing rather than guessed at. -->
-				<p class="termp-foot" id="termp-foot" data-i18n="term.leave_hint">Press F6 to move the keyboard out of the terminal.</p>
 			</div>
 		</aside>
 

@@ -527,7 +527,16 @@ pub async fn handle_chat_websocket<
                                 // directory, where the rules about what a skill may do are kept --
                                 // and let back in to read one place only, its own folder, because
                                 // the references a skill ships are part of the skill.
-                                narrowed.ctx.no_write = crate::tools::skill_bounds(&dirs);
+                                //
+                                // COMPOSED and never assigned. A turn can already be bounded when
+                                // it arrives here -- scoped to a Diamond, granted a toolkit -- and
+                                // assigning over that discarded the Diamond's allow-list outright,
+                                // silently, leaving a skill turn able to read every other Diamond
+                                // (`hand/REVIEW.md` §1.12). `compose` gives what BOTH permit and is
+                                // never able to widen either, so this line can only narrow.
+                                narrowed.ctx.no_write = crate::tools::compose(
+                                    &narrowed.ctx.no_write,
+                                    &crate::tools::skill_bounds(&dirs));
                                 info!(
                                     "Skill turn bounded to {} of {} tools ({}), fenced out of \
                                     .daimond/ but for reading {}",

@@ -33,7 +33,10 @@
 	// ── The sheet ──────────────────────────────────────────────
 	// Guests that default to full (a thing you mostly read or write)
 	// versus half (a thing you glance at while talking to the daimon).
-	var DEFAULT_FULL = { doc: 1, compose: 1, tools: 1 };
+	// A thing you mostly read or write, so it opens at full height rather than
+	// half. The terminal belongs here for the plainest reason: at the half detent
+	// it is eleven rows, and eleven rows is not a terminal.
+	var DEFAULT_FULL = { doc: 1, compose: 1, tools: 1, term: 1 };
 	// Guests with nothing to "ask about" hide the ask pill.
 	var NO_ASK       = { compose: 1, tools: 1 };
 

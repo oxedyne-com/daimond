@@ -2598,10 +2598,11 @@ import init, {
 	var mobileMq = window.matchMedia('(max-width: 760px)');
 	function isMobile() { return mobileMq.matches; }
 	// The stage's guests do not take a slot on the bottom bar: they RISE as a
-	// sheet over the chat floor, so the daimon stays beside the thing.
-	// Spending and the Terminal are dock panels and rise the same way: the phone
-	// bar has four seats and they are spoken for, and a panel with no seat and no
-	// sheet is a panel a phone cannot reach at all.
+	// sheet over the chat floor, so the daimon stays beside the thing. That is
+	// what a stage panel does on a phone, and the Terminal is one of them.
+	// Spending is a DOCK panel and rises the same way: the phone bar has four
+	// seats and they are spoken for, and a panel with no seat and no sheet is a
+	// panel a phone cannot reach at all.
 	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1 };
 	function mshow(name) {
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
@@ -2623,6 +2624,9 @@ import init, {
 		document.querySelectorAll('#mnav button').forEach(function (b) {
 			b.classList.toggle('on', b.dataset.mp === name);
 		});
+		// The bar's own destinations. Spending and the Terminal reach here only on
+		// a page whose sheet script did not load, and are woken anyway: a panel
+		// shown without its onOpen is a panel that draws nothing.
 		if (name === 'work') Files.onOpen();
 		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
@@ -10654,7 +10658,7 @@ import init, {
 			if (!panel) return null;
 			els = {
 				panel: panel,
-				head:  panel.querySelector('.railhead [role="heading"]'),
+				head:  panel.querySelector('.chead [role="heading"]'),
 				title: document.getElementById('termp-title'),
 				bell:  document.getElementById('termp-bell'),
 				state: document.getElementById('termp-state'),

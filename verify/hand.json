@@ -1,6 +1,6 @@
 {
 	"algo": "sha-256",
-	"source": "29e3e84dea135f52fcc0539c8ff5ea192d753070be935cf1e161e1a72cd3c86d",
+	"source": "0c5557ea758b44ef860140bb84d662930b6f5e6839b07523a1a34721aa27aafa",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
@@ -8,7 +8,7 @@
 		"Cargo.lock": "4d489d659fda6878b715665c5f7b36544216befbd6de9b5b15fe08e33bfc68f8",
 		"Cargo.toml": "3cc5690948e2261b2f0162665bf105c1660393777efe56dd99e2d3d7ec00fdee",
 		"README.md": "aa38941e2bfc7b5b6800509cda61afae67fe67dc518efccfd30352559b6e2376",
-		"REVIEW.md": "5d5e742bc74fdaf7c9d7ef3f92a11005ad0efce522e6dc4cca41934173de52f6",
+		"REVIEW.md": "a340b26db3372a083a86913ecc8fab9126409374841bc6abd79347b7d56640cb",
 		"install/README.md": "6b26346b56411c9f8953cae84217f8222f84240194e54c41f37c524e12126918",
 		"install/com.oxedyne.daimond.hand.json": "7239b6c2270ee9f93f2bdcb130740824f8b4da2e2f5d79d083977486cdfd3fe5",
 		"install/install.sh": "ad5df82ff786b5614f05dee5995859c65783c9bf9f5e0d449aacc694e53c3bd5",

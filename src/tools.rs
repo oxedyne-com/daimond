@@ -138,7 +138,9 @@ pub const DAIMOND_DIR: &str = ".daimond/";
 ///
 /// The two compose, and the allow-list wins.  A turn can be both scoped to a Diamond and running
 /// under a skill, and then it may touch what BOTH permit: inside the Diamond's workspace, and not
-/// inside Daimond's own directory.
+/// inside Daimond's own directory.  [`compose`] is where that happens and it is the only correct
+/// way to put a second bound on a turn -- assigning one over another deletes the other in silence,
+/// which is what `hand/REVIEW.md` §1.12 was.
 ///
 /// [`Bound::Toolkit`] is a third thing again -- a grant of a toolchain ON THE MACHINE, which no
 /// file tool can address -- and it is here because it is one more thing the user decided about this
@@ -704,6 +706,215 @@ pub fn toolkit_bounds(names: &[String]) -> Vec<Bound> {
             let b = k.bound();
             if !out.contains(&b) {
                 out.push(b);
+            }
+        }
+    }
+    out
+}
+
+// ── Two bounds on one turn ───────────────────────────────────────────────────
+//
+// A turn can be narrowed twice: once by the Diamond it works for, and once by the skill it runs
+// under. Until this existed, the second narrowing was ASSIGNED over the first (`src/handler.rs`),
+// so whichever ran last won and the other vanished without a word -- either the daimon lost its
+// Diamond's allow-list, or the skill lost its carve-out (`hand/REVIEW.md` §1.12). What follows is
+// the merge, and the whole of its correctness is one sentence: the result permits a path only where
+// BOTH lists permitted it.
+
+/// The allow-list a bound list declares: whether one is declared at all, and the prefixes it names.
+///
+/// The two answers are separate because they pull opposite ways, exactly as
+/// [`ToolContext::within_allow_list`] has them: a prefix that normalises away is DECLARED and names
+/// nothing, so a scope naming nowhere is not the same as no scope.
+///
+/// # Arguments
+/// * `bounds` - The list to read.
+fn allow_list(bounds: &[Bound]) -> (bool, Vec<String>) {
+    let mut declared = false;
+    let mut out: Vec<String> = Vec::new();
+    for b in bounds {
+        if let Bound::OnlyUnder(p) = b {
+            declared = true;
+            let n = normalise(p);
+            if !n.is_empty() && !out.contains(&n) {
+                out.push(n);
+            }
+        }
+    }
+    (declared, out)
+}
+
+/// Whether `bounds` permits reading EVERYTHING beneath `prefix`, which is already normalised.
+///
+/// Used to decide whether one list's read carve-out may survive being composed with another.  The
+/// question has to be asked of the whole subtree rather than of the prefix itself, because
+/// [`ToolContext::may_read`] answers a carve-out before it looks at any deny: a carve-out kept over
+/// a list that denies part of its subtree would open that part too.
+///
+/// # Arguments
+/// * `bounds` - The other list, whose denials this carve-out must not punch through.
+/// * `prefix` - The normalised, non-empty carve-out prefix.
+fn permits_subtree(bounds: &[Bound], prefix: &str) -> bool {
+    // A hole in the other list that covers this one: then the other list carves out the subtree
+    // too, and keeping this carve-out grants nothing the other did not.
+    if bounds.iter().any(|b| matches!(b, Bound::MayRead(c)
+        if !normalise(c).is_empty() && under(prefix, c)))
+    {
+        return true;
+    }
+    // Otherwise no denial of the other list may touch the subtree, in either direction: one above
+    // it denies the whole of it, one inside it denies a part.
+    !bounds.iter().any(|b| match b {
+        Bound::NoRead(d) => {
+            let n = normalise(d);
+            under(prefix, &n) || under(&n, prefix)
+        },
+        _ => false,
+    })
+}
+
+/// Two bounds on one turn, merged into the one list both doors read: what BOTH permit, and never
+/// one thing more.
+///
+/// A turn can be narrowed twice -- scoped to a Diamond and running under a skill -- and the two
+/// narrowings must COMPOSE.  Assigning one over the other deletes the other silently, which is the
+/// one way this can go wrong that nobody notices (`hand/REVIEW.md` §1.12).
+///
+/// **The invariant, and it is the whole of the security argument: the result is at least as narrow
+/// as each input taken alone.**  For every path, `compose(a, b)` permits it only where `a` permitted
+/// it and `b` permitted it.  Composition can therefore never be a way to widen a bound by adding a
+/// second one, which is what makes it safe to call from anywhere a bound is about to be set.
+///
+/// Rule by rule, and each is stated as what it must not do:
+///
+/// * **An EMPTY list is no restriction**, so composing with one yields the other unchanged.  This is
+///   the case that runs today: the native handler's context carries no bounds, so a skill turn
+///   composes to exactly [`skill_bounds`], as it did when the line assigned.
+/// * **[`Bound::Nowhere`] on either side decides the whole list.**  Nothing widens nothing.
+/// * **Allow-lists INTERSECT.**  Two prefixes overlap only where one contains the other, and then
+///   the intersection is the deeper of the two; two disjoint prefixes intersect in nothing.  The
+///   intersection is therefore exactly expressible as a union of prefixes and is never approximated.
+///   If a scope was declared on either side and the intersection is empty, the result is
+///   [`Bound::Nowhere`] -- NOT an empty allow-list, which reads as no allow-list at all and would
+///   hand back everything the two lists were narrowing.  That is the empty-prefix trap arriving
+///   through the merge, and refusing is the answer to it.
+/// * **Denials UNION.**  A denial from either side denies, which is the direction that narrows.
+/// * **A read carve-out survives only where the other list would have permitted the whole of it
+///   anyway** (see [`permits_subtree`]), and only inside the composed allow-list.  A carve-out is a
+///   hole punched in ITS OWN deny fence, and a hole in one fence is not a hole in the other.  So a
+///   skill's carve-out for its own folder does NOT survive composition with a Diamond's scope: the
+///   Diamond denies its whole directory and does not allow-list it, and "the allow-list wins" is
+///   what [`Bound::MayRead`] has always said.  A skill running inside a Diamond therefore cannot
+///   read its own shipped references, and is refused in those words rather than quietly widening the
+///   Diamond to reach them.
+/// * **A [`Bound::Toolkit`] survives only where BOTH sides granted it.**  A toolkit is machine paths
+///   a command may reach, so carrying one across from a list that granted it into a turn bounded by
+///   a list that did not would widen that turn's fence -- the one thing this must not do.  A caller
+///   that means to compose a narrowing and keep a grant says so in its own expression, by extending
+///   [`toolkit_bounds`] onto the result, where the decision is visible.
+///
+/// The merge is symmetric in effect; the argument order decides only the order of the result, and
+/// therefore which allowed directory [`ToolContext::default_cwd`] picks.  Pass the turn's existing
+/// bounds first.
+///
+/// # Arguments
+/// * `a` - The bounds the turn already carries.
+/// * `b` - The bounds being applied on top of them.
+pub fn compose(a: &[Bound], b: &[Bound]) -> Vec<Bound> {
+    // No restriction composed with a restriction is that restriction. Read before anything else:
+    // an empty list has no allow-list to intersect, and treating it as one that named nowhere would
+    // turn every ordinary turn into `Nowhere`.
+    if a.is_empty() {
+        return b.to_vec();
+    }
+    if b.is_empty() {
+        return a.to_vec();
+    }
+    if a.iter().chain(b.iter()).any(|x| matches!(x, Bound::Nowhere)) {
+        return vec![Bound::Nowhere];
+    }
+    let (dec_a, allow_a) = allow_list(a);
+    let (dec_b, allow_b) = allow_list(b);
+    let allow: Vec<String> = if dec_a && dec_b {
+        let mut v: Vec<String> = Vec::new();
+        for x in &allow_a {
+            for y in &allow_b {
+                // Comparable or disjoint, and there is no third case: two prefixes that both
+                // contain some path are both prefixes of it, so one is inside the other.
+                let keep = if under(x, y) {
+                    Some(x)
+                } else if under(y, x) {
+                    Some(y)
+                } else {
+                    None
+                };
+                if let Some(p) = keep {
+                    if !v.contains(p) {
+                        v.push(p.clone());
+                    }
+                }
+            }
+        }
+        v
+    } else if dec_a {
+        allow_a
+    } else if dec_b {
+        allow_b
+    } else {
+        Vec::new()
+    };
+    if (dec_a || dec_b) && allow.is_empty() {
+        // A scope was declared and the two sides have no place in common -- or the only side that
+        // declared one named nowhere usable. Emitting no rule at all would say "unscoped", which is
+        // the widest answer there is to the narrowest question. Refuse instead.
+        return vec![Bound::Nowhere];
+    }
+    let mut out: Vec<Bound> = Vec::new();
+    for p in &allow {
+        out.push(Bound::OnlyUnder(p.clone()));
+    }
+    // Denials from both sides, normalised so one prefix spelled two ways is one rule.
+    for src in [a, b] {
+        for x in src {
+            let rule = match x {
+                Bound::NoWrite(p) => Bound::NoWrite(normalise(p)),
+                Bound::NoRead(p)  => Bound::NoRead(normalise(p)),
+                _                 => continue,
+            };
+            if !out.contains(&rule) {
+                out.push(rule);
+            }
+        }
+    }
+    // Carve-outs, each tested against the list it did not come from.
+    for (src, other) in [(a, b), (b, a)] {
+        for x in src {
+            let p = match x {
+                Bound::MayRead(p) => normalise(p),
+                _                 => continue,
+            };
+            // A carve-out that names nowhere carves nothing: `under(p, "")` is true for every path.
+            if p.is_empty() {
+                continue;
+            }
+            if (dec_a || dec_b) && !allow.iter().any(|q| under(&p, q)) {
+                continue;
+            }
+            if !permits_subtree(other, &p) {
+                continue;
+            }
+            let rule = Bound::MayRead(p);
+            if !out.contains(&rule) {
+                out.push(rule);
+            }
+        }
+    }
+    // Granted on both sides or not at all.
+    for x in a {
+        if let Bound::Toolkit(k) = x {
+            let rule = Bound::Toolkit(*k);
+            if b.contains(&rule) && !out.contains(&rule) {
+                out.push(rule);
             }
         }
     }
@@ -2734,7 +2945,7 @@ impl Tool {
         }
         match self {
             Tool::FileWrite => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 let content = res!(Self::arg(args_json, "content"));
                 // If this agent has seen the file before, refuse to overwrite it
                 // when the bytes on disk no longer match what it last saw -- that
@@ -2763,7 +2974,7 @@ impl Tool {
             }
             Tool::FileRead => {
                 let raw = res!(Self::arg(args_json, "path"));
-                let path = Self::scoped(ctx, &raw);
+                let path = res!(Self::scoped(ctx, &raw));
                 let read = crate::wasm::opfs::read_file(ctx.root, &path).await;
                 // A file the device does not hold is not a missing file: the workspace is one set
                 // of files, and this one is in cloud storage. Saying so plainly, with its size, is
@@ -2797,7 +3008,7 @@ impl Tool {
                 Ok(Self::mark_if_untrusted(ctx, &raw, Self::read_view(args_json, &raw, &s)))
             }
             Tool::FileEdit => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 let old = res!(Self::arg(args_json, "old_string"));
                 let new = res!(Self::arg(args_json, "new_string"));
                 let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
@@ -2823,7 +3034,7 @@ impl Tool {
             }
             Tool::FileList => {
                 let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
-                let path = Self::scoped(ctx, &raw);
+                let path = res!(Self::scoped(ctx, &raw));
                 // What is in cloud storage is part of the workspace, so it belongs in the
                 // listing -- a directory that holds nothing but cloud-only files is not empty,
                 // and a directory that exists only in cloud storage still lists.
@@ -2865,13 +3076,13 @@ impl Tool {
             Tool::FileSearch => {
                 let query = res!(Self::arg(args_json, "query"));
                 let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
-                let start = Self::scoped(ctx, &raw);
+                let start = res!(Self::scoped(ctx, &raw));
                 // Strip the Diamond prefix from reported paths so results are
                 // Diamond-relative and round-trip back through `file_read`.
-                let strip = if ctx.path_prefix.is_empty() {
-                    String::new()
-                } else {
-                    fmt!("{}/", ctx.path_prefix.trim_end_matches('/'))
+                // Normalised, so the prefix `scoped` joined with is the prefix stripped back off.
+                let strip = {
+                    let p = normalise(&ctx.path_prefix);
+                    if p.is_empty() { String::new() } else { fmt!("{}/", p) }
                 };
                 let opts = res!(search_opts(args_json));
                 let mut trusted: Vec<String> = Vec::new();
@@ -2955,11 +3166,11 @@ impl Tool {
                 let glob = res!(Glob::new(pattern.trim()).map_err(|e| err!(e,
                     "file_glob: 'pattern' is not a glob this build can read."; Invalid, Input)));
                 let raw = extract_json_string(args_json, "path").unwrap_or_else(|| ".".to_string());
-                let start = Self::scoped(ctx, &raw);
-                let strip = if ctx.path_prefix.is_empty() {
-                    String::new()
-                } else {
-                    fmt!("{}/", ctx.path_prefix.trim_end_matches('/'))
+                let start = res!(Self::scoped(ctx, &raw));
+                // Normalised, so the prefix `scoped` joined with is the prefix stripped back off.
+                let strip = {
+                    let p = normalise(&ctx.path_prefix);
+                    if p.is_empty() { String::new() } else { fmt!("{}/", p) }
                 };
                 let all = extract_json_bool(args_json, "all").unwrap_or(false);
                 let limit = uint_arg(args_json, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
@@ -3001,7 +3212,7 @@ impl Tool {
                 Ok(Self::glob_output(&pattern, &raw, hits, limit, skipped, refused, false))
             }
             Tool::FileDelete => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 // OPFS refuses to remove a non-empty directory unless the
                 // caller asks recursively, so a plain delete of a folder used
                 // to fail; the caller states its intent explicitly.
@@ -3033,17 +3244,17 @@ impl Tool {
                 Ok(msg)
             }
             Tool::FileFetch => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 crate::wasm::cloud::fetch(&path).await
             }
             Tool::FileMove => {
-                let from = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
-                let to   = Self::scoped(ctx, &res!(Self::arg(args_json, "to")));
+                let from = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
+                let to   = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "to"))));
                 res!(crate::wasm::opfs::move_entry(ctx.root, &from, &to).await);
                 Ok(fmt!("Moved {} to {}.", from, to))
             }
             Tool::DirCreate => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 res!(crate::wasm::opfs::create_dir(ctx.root, &path).await);
                 Ok(fmt!("Created {}.", path))
             }
@@ -3051,7 +3262,7 @@ impl Tool {
             // accepted a typo would put a link on the Diamond pointing at
             // nothing, and the reader would find that out by clicking it.
             Tool::ArtefactAdd => {
-                let path = Self::scoped(ctx, &res!(Self::arg(args_json, "path")));
+                let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 if !res!(crate::wasm::opfs::exists(ctx.root, &path).await) {
                     return Ok(fmt!(
                         "No file at {}. Nothing was recorded -- check the path with file_list.", path));
@@ -3138,8 +3349,8 @@ impl Tool {
             Tool::TypstCompile => {
                 let src_rel = res!(Self::arg(args_json, "path"));
                 let out_rel = res!(Self::typst_out(args_json));
-                let src = Self::scoped(ctx, &src_rel);
-                let out = Self::scoped(ctx, &out_rel);
+                let src = res!(Self::scoped(ctx, &src_rel));
+                let out = res!(Self::scoped(ctx, &out_rel));
                 let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &src).await);
                 let source = String::from_utf8_lossy(&bytes).to_string();
                 let pdf = res!(crate::wasm::typst::compile(&source).await);
@@ -3167,22 +3378,58 @@ impl Tool {
     }
 
     /// Resolve a tool's raw path against the context's Diamond
-    /// [`path_prefix`](ToolContext::path_prefix).
+    /// [`path_prefix`](ToolContext::path_prefix), refusing one that leaves it.
     ///
-    /// With an empty prefix the path passes through unchanged (whole-OPFS
-    /// behaviour); with a prefix such as `diamonds/<id>` the leaf path is
-    /// confined beneath it, so a crystal agent addressing `crystal.md` writes
-    /// `diamonds/<id>/crystal.md`.  Still OPFS-jailed downstream.
-    #[cfg(target_arch = "wasm32")]
-    fn scoped(ctx: &ToolContext, rel: &str) -> String {
-        let prefix = ctx.path_prefix.trim_end_matches('/');
+    /// With an empty prefix the path passes through unchanged (whole-OPFS behaviour, jailed by the
+    /// OPFS root itself); with a prefix such as `diamonds/<id>` the leaf path is confined beneath
+    /// it, so a crystal agent addressing `crystal.md` writes `diamonds/<id>/crystal.md`.
+    ///
+    /// **The join is normalised and then checked, and both halves are the fix.**  This used to
+    /// concatenate -- `fmt!("{}/{}", prefix, rel)` -- and hand the result to the OPFS edge, which
+    /// resolves `..` lexically and refuses only what climbs above the OPFS ROOT.  A Diamond is not
+    /// the root.  So a crystal agent asking for `../beta/crystal.md` was given
+    /// `diamonds/alpha/../beta/crystal.md`, which resolved to another Diamond's private notes,
+    /// inside OPFS and permitted (`hand/REVIEW.md` §1.19).  The string is the model's, so this is
+    /// the compartment being left by something the model chose to write.
+    ///
+    /// The containment test is [`under`], which compares whole segments.  A string-prefix test
+    /// would pass `../alpha2/x` against the prefix `diamonds/alpha` -- a different Diamond whose
+    /// name merely begins with this one's.
+    ///
+    /// **This cannot be done with [`ToolContext::may_read`] instead, and the next person should not
+    /// try.**  That door tests the path as the MODEL wrote it, because a turn's bounds are
+    /// workspace-relative and a bounded skill turn carries no prefix; a crystal agent asking for
+    /// `crystal.md` would be measured as `crystal.md` against an allow-list of `diamonds/<id>` and
+    /// refused for its ordinary work.  It is the same collision [`ToolContext::default_cwd`]
+    /// records for §1.18, arriving from the other side: a prefix and an allow-list are two ways of
+    /// saying where a turn lives, and a path can be checked against one of them, not both.
+    ///
+    /// An absolute path is treated as relative to the Diamond rather than refused, which is what
+    /// [`crate::workspace::Workspace::resolve`] does natively and what the OPFS edge does anyway.
+    /// It cannot escape: `/etc/passwd` lands at `diamonds/<id>/etc/passwd`.
+    ///
+    /// # Arguments
+    /// * `ctx` - The turn's context, whose `path_prefix` confines the path.
+    /// * `rel` - The path as the model wrote it.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn scoped(ctx: &ToolContext, rel: &str) -> Outcome<String> {
+        let prefix = normalise(&ctx.path_prefix);
         if prefix.is_empty() {
-            rel.to_string()
-        } else if rel.is_empty() || rel == "." {
-            prefix.to_string()
-        } else {
-            fmt!("{}/{}", prefix, rel.trim_start_matches("./"))
+            // No Diamond prefix: the whole OPFS sandbox, which is the user's own workspace agent,
+            // and the OPFS edge's own lexical jail is what bounds it. Passed through rather than
+            // normalised, because this string is also the key the read cache remembers a file by
+            // and the path the result quotes back.
+            return Ok(rel.to_string());
         }
+        let joined = normalise(&fmt!("{}/{}", prefix, rel));
+        if !under(&joined, &prefix) {
+            return Err(err!(
+                "'{}' is outside this Diamond. A Diamond's agent works in its own folder and \
+                cannot reach another's, so nothing was read, written or run. Name the file \
+                relative to this Diamond, without '..'.", rel;
+                Invalid, Input, Path));
+        }
+        Ok(joined)
     }
 
     /// Join a workspace-relative directory and an entry name into a clean
@@ -6473,8 +6720,596 @@ mod tests {
         let out = Tool::FileSearch
             .execute_sync_guarded(r#"{"query":"TOPSECRET","path":".","limit":1000}"#, &c)
             .expect("search");
+        // Said aloud, because without it the two checks below pass on a refusal and would go on
+        // passing if the walk stopped refusing anything at all.
+        assert!(out.contains("not in this Diamond's workspace"),
+            "the door must refuse a walk that starts outside the scope: {}", out);
         assert!(!out.contains("secrets/keys.txt"), "{}", out);
         assert!(!out.contains("elsewhere"), "the contents leaked: {}", out);
+        // And a walk that starts INSIDE the scope runs, and still reaches only what is in it.
+        let ok = Tool::FileSearch
+            .execute_sync_guarded(r#"{"query":"TOPSECRET","path":"notes/specs","limit":1000}"#, &c)
+            .expect("search");
+        assert!(ok.contains("notes/specs/api.md"), "the attachment must still be searchable: {}", ok);
+        assert!(!ok.contains("secrets/keys.txt"), "{}", ok);
+    }
+
+    // ── Two bounds on one turn ──────────────────────────────────────
+    //
+    // A turn can be narrowed by its Diamond AND by the skill it runs under, and `src/handler.rs`
+    // used to ASSIGN the second over the first, so whichever ran last won and the other vanished
+    // (`hand/REVIEW.md` §1.12). Each test below is written as the escape that assignment allows.
+
+    /// The two bounds §1.12 is about: a Diamond's scope, and a skill turn running inside it.
+    fn diamond_and_skill() -> (Vec<Bound>, Vec<Bound>) {
+        (
+            diamond_bounds("diamonds/alpha", &[], &[]),
+            skill_bounds(&[fmt!(".daimond/skills/mine")]),
+        )
+    }
+
+    /// A context carrying `b`.
+    fn bound_ctx(b: Vec<Bound>) -> ToolContext {
+        let mut c = ctx();
+        c.no_write = b;
+        c
+    }
+
+    #[test]
+    fn test_a_turn_bounded_twice_reaches_what_both_permit_00() {
+        let (d, s) = diamond_and_skill();
+        let c = bound_ctx(compose(&d, &s));
+        // 1. Its own Diamond: the point of having one, and the half a merge could break by
+        //    over-narrowing.
+        assert!(c.may_read("diamonds/alpha/crystal.md"), "a daimon must reach its own Diamond");
+        assert!(c.may_write("diamonds/alpha/crystal.md"), "and be able to keep its crystal");
+        // 2. The other Diamond: what the assignment let through, because it discarded the
+        //    allow-list and a skill's bound has none.
+        assert!(!c.may_read("diamonds/beta/crystal.md"),
+            "the Diamond's allow-list must survive the skill's bound being applied");
+        assert!(!c.may_write("diamonds/beta/crystal.md"));
+        // 3. Daimond's own directory, which neither bound ever permits.
+        assert!(!c.may_read(".daimond/config.jdat"));
+        assert!(!c.may_read(".daimond/skills/other/SKILL.md"), "nor another skill's declaration");
+        assert!(!c.may_write(".daimond/skills/mine/SKILL.md"), "nor its own");
+        // 4. The skill's carve-out. Inside a Diamond it is REFUSED -- the Diamond denies its whole
+        //    directory and allow-lists none of it, and "the allow-list wins" is what `MayRead` has
+        //    always said. Composing must not widen the Diamond to reach it.
+        assert!(!c.may_read(".daimond/skills/mine/ref.md"),
+            "a carve-out is a hole in the skill's own deny fence, not a key to the Diamond's");
+        // ...and the same carve-out on a turn that is not Diamond-scoped is alive, so what refused
+        // it above is the composition and not the loss of the skill's own rule.
+        assert!(bound_ctx(compose(&[], &s)).may_read(".daimond/skills/mine/ref.md"),
+            "an unscoped skill turn must still read what it shipped");
+    }
+
+    #[test]
+    fn test_a_composed_bound_is_neither_side_alone_00() {
+        // Both assignment orders are wrong and each is wrong differently, so the test names a path
+        // that only the merge refuses in each direction. `a` allows Daimond's directory and denies
+        // nothing; `b` denies it and carves one folder back out.
+        let a = vec![Bound::OnlyUnder(fmt!(".daimond"))];
+        let (_, b) = diamond_and_skill();
+        let c = bound_ctx(compose(&a, &b));
+        assert!(!c.may_read(".daimond/config.jdat"),
+            "assigning `a` over `b` loses the skill's deny: the rules about what agents may do");
+        assert!(!c.may_read("elsewhere/x.md"),
+            "assigning `b` over `a` loses the allow-list: a skill's bound has none");
+        // And the carve-out survives here, because the OTHER side permits the whole of it: the
+        // merge keeps a hole exactly where keeping it grants nothing new.
+        assert!(c.may_read(".daimond/skills/mine/ref.md"),
+            "a carve-out the other bound already permitted must not be dropped");
+        assert!(!c.may_write(".daimond/skills/mine/ref.md"), "a carve-out grants no write");
+    }
+
+    #[test]
+    fn test_composing_two_bounds_never_widens_either_00() {
+        // The invariant, checked exhaustively rather than argued: for every pair of bounds and
+        // every path, what the merge permits, both sides permitted. This is what makes `compose`
+        // safe to call anywhere a bound is set -- it can only ever narrow.
+        let lists: Vec<Vec<Bound>> = vec![
+            Vec::new(),
+            diamond_bounds("diamonds/alpha", &[fmt!("notes")], &[fmt!("reference")]),
+            diamond_bounds("diamonds/beta", &[], &[]),
+            skill_bounds(&[fmt!(".daimond/skills/mine")]),
+            skill_bounds(&[fmt!(".daimond/skills/other")]),
+            vec![Bound::OnlyUnder(fmt!("notes/specs"))],
+            vec![Bound::OnlyUnder(fmt!(".daimond"))],
+            vec![Bound::OnlyUnder(fmt!("."))],
+            vec![Bound::NoRead(fmt!("notes")), Bound::NoWrite(fmt!("notes"))],
+            vec![Bound::NoRead(DAIMOND_DIR.to_string()), Bound::MayRead(fmt!("."))],
+            vec![Bound::Toolkit(Toolkit::Rust)],
+            vec![Bound::Nowhere],
+        ];
+        let paths = [
+            "diamonds/alpha/crystal.md", "diamonds/beta/crystal.md", "notes/plain.md",
+            "notes/specs/api.md", "reference/handbook/ch1.md", "secrets/keys.txt",
+            ".daimond/config.jdat", ".daimond/skills/mine/ref.md",
+            ".daimond/skills/other/SKILL.md", "elsewhere/x.md", ".", "",
+        ];
+        for a in &lists {
+            for b in &lists {
+                let m = compose(a, b);
+                let (ca, cb, cm) = (bound_ctx(a.clone()), bound_ctx(b.clone()), bound_ctx(m));
+                for p in paths {
+                    if cm.may_read(p) {
+                        assert!(ca.may_read(p) && cb.may_read(p),
+                            "composing widened a READ of {:?}: {:?} + {:?}", p, a, b);
+                    }
+                    if cm.may_write(p) {
+                        assert!(ca.may_write(p) && cb.may_write(p),
+                            "composing widened a WRITE of {:?}: {:?} + {:?}", p, a, b);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_two_scopes_with_nothing_in_common_compose_to_nowhere_00() {
+        // The empty-prefix trap arriving through the merge. An intersection of two disjoint
+        // allow-lists is empty, and an EMPTY allow-list is no allow-list at all -- the widest
+        // answer there is to the narrowest question. It has to become `Nowhere`.
+        let m = compose(
+            &diamond_bounds("diamonds/alpha", &[], &[]),
+            &diamond_bounds("diamonds/beta", &[], &[]));
+        assert_eq!(vec![Bound::Nowhere], m, "two Diamonds with no place in common: {:?}", m);
+        let c = bound_ctx(m.clone());
+        assert!(!c.may_read("diamonds/alpha/x.md"));
+        assert!(!c.may_read("diamonds/beta/x.md"));
+        let f = fence_spec(&m, &Machine::at("/home/u/ws"), false);
+        assert!(f.rw.is_empty() && f.ro.is_empty(), "and no roots, which the hand refuses: {:?}", f);
+        // Nested scopes are a different case and must NOT refuse: the intersection of two prefixes
+        // where one contains the other is the deeper of the two.
+        let n = bound_ctx(compose(
+            &[Bound::OnlyUnder(fmt!("notes"))],
+            &[Bound::OnlyUnder(fmt!("notes/specs"))]));
+        assert!(n.may_read("notes/specs/api.md"), "the deeper scope is what both permit");
+        assert!(!n.may_read("notes/other.md"), "and the wider of the two must not win");
+    }
+
+    #[test]
+    fn test_a_scope_that_names_nowhere_does_not_compose_to_everywhere_00() {
+        // `under(p, "")` is true for every path, so a prefix that normalises away is the whole
+        // workspace. A declared allow-list whose every prefix normalises away must come out of the
+        // merge refusing, not unscoped.
+        let m = compose(&[Bound::OnlyUnder(fmt!("."))], &skill_bounds(&[fmt!(".daimond/skills/mine")]));
+        assert_eq!(vec![Bound::Nowhere], m, "a scope naming nowhere: {:?}", m);
+        let c = bound_ctx(m);
+        assert!(!c.may_read("secrets/keys.txt"), "it must not have become an unbounded turn");
+        assert!(!c.may_read(".daimond/skills/mine/ref.md"));
+        // And a carve-out that names nowhere must not be carried through either: kept, it would
+        // open every path there is, Daimond's own directory included.
+        let m2 = compose(
+            &diamond_bounds("diamonds/alpha", &[], &[]),
+            &[Bound::NoRead(DAIMOND_DIR.to_string()), Bound::MayRead(fmt!("./"))]);
+        assert!(!m2.iter().any(|b| matches!(b, Bound::MayRead(p) if normalise(p).is_empty())),
+            "an empty carve-out survived the merge: {:?}", m2);
+        let c2 = bound_ctx(m2);
+        assert!(!c2.may_read(".daimond/config.jdat"));
+        assert!(!c2.may_read("diamonds/beta/x.md"));
+    }
+
+    #[test]
+    fn test_a_composed_bound_reaches_the_fence_the_same_00() {
+        // Both doors read the one list, so a merge that satisfied `may_read` and left the fence
+        // wide would be the divergence §1.9 and §1.10 were about, arriving by a third road.
+        let (d, s) = diamond_and_skill();
+        let f = fence_spec(&compose(&d, &s), &Machine::at("/home/u/ws"), false);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/alpha")),
+            "the Diamond's own directory must stay writable by a command: {:?}", f.rw);
+        assert!(!f.rw.contains(&fmt!("/home/u/ws")),
+            "assignment gave a skill turn the whole grant, because a skill's bound has no \
+            allow-list and `fence_spec` then falls back to the root: {:?}", f.rw);
+        assert!(!f.rw.iter().chain(f.ro.iter()).any(|p| p.contains("diamonds/beta")),
+            "the other Diamond reached the fence: {:?}", f);
+        assert!(f.deny.contains(&fmt!("/home/u/ws/.daimond")));
+        assert!(!f.ro.contains(&fmt!("/home/u/ws/.daimond/skills/mine")),
+            "the carve-out the app refuses must not be granted by the fence: {:?}", f.ro);
+    }
+
+    #[test]
+    fn test_a_toolkit_does_not_cross_a_composition_00() {
+        // A toolkit is machine paths a command may reach. Carrying one into a turn bounded by a
+        // list that granted none would widen that turn's fence, which is the one thing a merge
+        // must not do -- so it survives only where BOTH sides granted it.
+        let mut granted = diamond_bounds("diamonds/alpha", &[], &[]);
+        granted.extend(toolkit_bounds(&[fmt!("rust")]));
+        let (_, s) = diamond_and_skill();
+        let m = compose(&granted, &s);
+        assert!(!m.contains(&Bound::Toolkit(Toolkit::Rust)),
+            "a grant the skill's bound never made crossed into it: {:?}", m);
+        let f = fence_spec(&m, &machine("/home/u"), false);
+        assert!(!f.ro.iter().any(|p| p.contains(".cargo")), "and reached the fence: {:?}", f.ro);
+        // Granted on both sides, it survives -- so this is a rule and not a leak.
+        let mut both = s.clone();
+        both.extend(toolkit_bounds(&[fmt!("rust")]));
+        assert!(compose(&granted, &both).contains(&Bound::Toolkit(Toolkit::Rust)));
+    }
+
+    #[test]
+    fn test_a_walk_under_two_bounds_stays_inside_both_00() {
+        // The walkers re-ask the bound per file, so a merge that got the list shape wrong -- an
+        // allow-list that came out as none, a deny that was dropped -- shows up here as content.
+        let mut c = ctx();
+        put(&c, "diamonds/alpha/own.md", "TOPSECRET my own\n");
+        put(&c, "diamonds/beta/theirs.md", "TOPSECRET the other daimon's\n");
+        put(&c, ".daimond/config.jdat", "TOPSECRET what agents may do\n");
+        put(&c, ".daimond/skills/mine/ref.md", "TOPSECRET my shipped reference\n");
+        let all = search_says(&c, r#"{"query":"TOPSECRET","limit":1000}"#);
+        assert_eq!(4, all.len(), "the fixture must be findable before the bounds: {:?}", all);
+
+        let (d, s) = diamond_and_skill();
+        c.no_write = compose(&d, &s);
+        // The whole-workspace walk a skill's bound permits and a Diamond's does not. Under the
+        // assignment this ran, and returned every file above; the refusal is the allow-list
+        // surviving, and it is asserted by name so the two checks under it cannot pass on a walk
+        // that simply found nothing.
+        let out = Tool::FileSearch
+            .execute_sync_guarded(r#"{"query":"TOPSECRET","path":".","limit":1000}"#, &c)
+            .expect("search");
+        assert!(out.contains("not in this Diamond's workspace"),
+            "a walk from the workspace root must be refused under a Diamond's scope: {}", out);
+        assert!(!out.contains("diamonds/beta"), "the walk reached the other Diamond: {}", out);
+        assert!(!out.contains("other daimon"), "and its contents: {}", out);
+        assert!(!out.contains("what agents may do"), "and Daimond's own directory: {}", out);
+        let g = Tool::FileGlob
+            .execute_sync_guarded(r#"{"pattern":"**/*","path":"."}"#, &c).expect("glob");
+        assert!(!g.contains("diamonds/beta"), "the glob listed the other Diamond: {}", g);
+        assert!(!g.contains("config.jdat"), "and Daimond's own directory: {}", g);
+        // And the walk the turn IS entitled to still works, so the bound is a fence and not an
+        // outage.
+        let own = Tool::FileSearch
+            .execute_sync_guarded(
+                r#"{"query":"TOPSECRET","path":"diamonds/alpha","limit":1000}"#, &c)
+            .expect("search");
+        assert!(own.contains("diamonds/alpha/own.md"),
+            "the daimon's own Diamond must still be searchable: {}", own);
+    }
+
+    #[test]
+    fn test_a_walk_honours_a_deny_the_second_bound_added_00() {
+        // The mirror of the test above, and it fails for the opposite assignment: a second bound
+        // that denies a subtree INSIDE the Diamond's allow-list. The walk starts at an allowed
+        // place, so nothing but the per-file check can stop it.
+        let mut c = ctx();
+        put(&c, "notes/plain.md", "TOPSECRET the user's own note\n");
+        put(&c, "notes/private/diary.md", "TOPSECRET not for this turn\n");
+        let all = search_says(&c, r#"{"query":"TOPSECRET","limit":1000}"#);
+        assert_eq!(2, all.len(), "the fixture must be findable first: {:?}", all);
+
+        c.no_write = compose(
+            &diamond_bounds("diamonds/alpha", &[fmt!("notes")], &[]),
+            &[Bound::NoRead(fmt!("notes/private")), Bound::NoWrite(fmt!("notes/private"))]);
+        assert!(c.may_read("notes/plain.md"), "the attachment is still in scope");
+        assert!(!c.may_read("notes/private/diary.md"), "and the second bound's deny holds");
+        let out = Tool::FileSearch
+            .execute_sync_guarded(r#"{"query":"TOPSECRET","path":"notes","limit":1000}"#, &c)
+            .expect("search");
+        assert!(out.contains("notes/plain.md"), "{}", out);
+        assert!(!out.contains("private"), "the walk read past the second bound: {}", out);
+        assert!(!out.contains("not for this turn"), "and its contents: {}", out);
+    }
+
+    // ── And every check above, checked ──────────────────────────────
+    //
+    // A check that would also pass on the code it replaced proves nothing, and a section of them
+    // proves nothing at all. So each effect the merge is supposed to have is stated once more here
+    // as a predicate over the merge that produced it, and run against the two ASSIGNMENTS -- which
+    // is what `src/handler.rs` did, in both possible orders.
+
+    /// A merge of two bounds, so the checks below can be run against the assignments this replaced.
+    type Merge = fn(&[Bound], &[Bound]) -> Vec<Bound>;
+
+    /// The assignment `src/handler.rs` performed: the second bound put over the first, so the
+    /// Diamond's allow-list is discarded.
+    fn assign_second(_a: &[Bound], b: &[Bound]) -> Vec<Bound> {
+        b.to_vec()
+    }
+
+    /// The other order, which loses the second bound instead -- the skill's deny and its carve-out.
+    fn assign_first(a: &[Bound], _b: &[Bound]) -> Vec<Bound> {
+        a.to_vec()
+    }
+
+    /// A bound list that allows Daimond's own directory and denies nothing, for the checks that
+    /// need the two sides to disagree in both directions.
+    fn allows_daimond_dir() -> Vec<Bound> {
+        vec![Bound::OnlyUnder(fmt!(".daimond"))]
+    }
+
+    /// Every effect the merge must have, and whether an assignment gets it wrong.
+    ///
+    /// The second field is the load-bearing one.  `true` means at least one of the two assignments
+    /// fails this check, so it is evidence about the fix; `false` names it for what it is -- a
+    /// liveness check, that the bound is a fence and not an outage -- rather than leaving it
+    /// looking like a guarantee it does not give.
+    fn composition_checks() -> Vec<(&'static str, bool, fn(Merge) -> bool)> {
+        vec![
+            ("the daimon reaches its own Diamond", false, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                bound_ctx(m(&d, &s)).may_read("diamonds/alpha/crystal.md")
+            }),
+            ("and may write in it", false, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                bound_ctx(m(&d, &s)).may_write("diamonds/alpha/crystal.md")
+            }),
+            ("the other Diamond is refused a read", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_read("diamonds/beta/crystal.md")
+            }),
+            ("and refused a write", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_write("diamonds/beta/crystal.md")
+            }),
+            ("Daimond's own directory is refused", false, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_read(".daimond/config.jdat")
+            }),
+            ("another skill's declaration is refused", false, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_read(".daimond/skills/other/SKILL.md")
+            }),
+            ("the skill's carve-out does not escape the Diamond", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_read(".daimond/skills/mine/ref.md")
+            }),
+            ("an unscoped skill turn still reads what it shipped", false, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                bound_ctx(m(&[], &s)).may_read(".daimond/skills/mine/ref.md")
+            }),
+            ("a deny the second bound added survives", true, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                !bound_ctx(m(&allows_daimond_dir(), &s)).may_read(".daimond/config.jdat")
+            }),
+            ("an allow-list the first bound declared survives", true, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                !bound_ctx(m(&allows_daimond_dir(), &s)).may_read("elsewhere/x.md")
+            }),
+            ("a carve-out the other bound permits is kept", false, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                bound_ctx(m(&allows_daimond_dir(), &s)).may_read(".daimond/skills/mine/ref.md")
+            }),
+            ("two scopes with nothing in common become Nowhere", true, |m: Merge| {
+                m(&diamond_bounds("diamonds/alpha", &[], &[]),
+                  &diamond_bounds("diamonds/beta", &[], &[])) == vec![Bound::Nowhere]
+            }),
+            ("nested scopes keep the deeper of the two", true, |m: Merge| {
+                !bound_ctx(m(&[Bound::OnlyUnder(fmt!("notes"))],
+                    &[Bound::OnlyUnder(fmt!("notes/specs"))])).may_read("notes/other.md")
+            }),
+            ("a scope naming nowhere does not become no scope at all", true, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                !bound_ctx(m(&[Bound::OnlyUnder(fmt!("."))], &s)).may_read("secrets/keys.txt")
+            }),
+            ("a carve-out naming nowhere is dropped", true, |m: Merge| {
+                let (d, _) = diamond_and_skill();
+                let b = vec![Bound::NoRead(DAIMOND_DIR.to_string()), Bound::MayRead(fmt!("./"))];
+                !m(&d, &b).iter()
+                    .any(|x| matches!(x, Bound::MayRead(p) if normalise(p).is_empty()))
+            }),
+            ("the fence keeps the Diamond's own directory", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                fence_spec(&m(&d, &s), &Machine::at("/home/u/ws"), false)
+                    .rw.contains(&fmt!("/home/u/ws/diamonds/alpha"))
+            }),
+            ("and does not hand back the whole grant", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !fence_spec(&m(&d, &s), &Machine::at("/home/u/ws"), false)
+                    .rw.contains(&fmt!("/home/u/ws"))
+            }),
+            ("a toolkit granted on one side only does not cross", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                let mut granted = d;
+                granted.extend(toolkit_bounds(&[fmt!("rust")]));
+                !m(&granted, &s).contains(&Bound::Toolkit(Toolkit::Rust))
+            }),
+        ]
+    }
+
+    #[test]
+    fn test_every_check_here_fails_on_the_assignment_it_replaced_00() {
+        let mut caught = 0usize;
+        for (name, catches, check) in composition_checks() {
+            assert!(check(compose as Merge), "the merge does not do it: {}", name);
+            let broken = !check(assign_first as Merge) || !check(assign_second as Merge);
+            if catches {
+                assert!(broken,
+                    "'{}' passes on the assignment too, so it is evidence about nothing", name);
+                caught += 1;
+            } else {
+                assert!(!broken,
+                    "'{}' is recorded as a liveness check and it catches the assignment -- say so \
+                    in the table, or the count below means less than it says", name);
+            }
+        }
+        assert_eq!(12, caught,
+            "the number of checks here that fail on the code this replaced -- if it moved, the \
+            table moved, and the claim in `hand/REVIEW.md` §1.12 moved with it");
+    }
+
+    // ── A Diamond's prefix is a compartment, and a path is a model's string ──
+    //
+    // `Tool::scoped` joined a Diamond's `path_prefix` to whatever the model wrote and handed the
+    // result to the OPFS edge, which resolves `..` lexically and refuses only what climbs above the
+    // OPFS ROOT. A Diamond is not the root, so `../beta/crystal.md` reached another Diamond's
+    // private notes (`hand/REVIEW.md` §1.19).
+    //
+    // These run NATIVELY, against the same function the browser calls -- it is compiled for `test`
+    // as well as for `wasm32`, so there is one implementation and not two that drift. What they do
+    // NOT exercise is the OPFS edge itself, which no native test can reach; where the old path
+    // landed is therefore shown through a model of `wasm::opfs::split_components` rather than
+    // through the edge.
+
+    /// A crystal agent's context: confined by its Diamond's `path_prefix` and by nothing else,
+    /// which is what `src/wasm/app.rs` gives it.
+    fn crystal_ctx() -> ToolContext {
+        let mut c = ctx();
+        c.path_prefix = fmt!("diamonds/alpha");
+        c
+    }
+
+    /// What [`Tool::scoped`] used to produce: a concatenation, never normalised, never checked.
+    fn old_scoped(c: &ToolContext, rel: &str) -> String {
+        let prefix = c.path_prefix.trim_end_matches('/');
+        if prefix.is_empty() {
+            rel.to_string()
+        } else if rel.is_empty() || rel == "." {
+            prefix.to_string()
+        } else {
+            fmt!("{}/{}", prefix, rel.trim_start_matches("./"))
+        }
+    }
+
+    /// Where the OPFS edge lands a path, as `wasm::opfs::split_components` resolves it: `.`
+    /// dropped, `..` popped, and `None` only where a pop would climb above the OPFS ROOT -- which
+    /// is the one thing that edge refuses, and the reason a Diamond was no barrier at all.
+    fn opfs_lands(path: &str) -> Option<String> {
+        let mut out: Vec<&str> = Vec::new();
+        for seg in path.trim_start_matches('/').split('/') {
+            match seg {
+                "" | "." => continue,
+                ".."     => {
+                    if out.pop().is_none() {
+                        return None;
+                    }
+                },
+                s        => out.push(s),
+            }
+        }
+        Some(out.join("/"))
+    }
+
+    /// Every shape a path can arrive in: what the model wrote, what [`Tool::scoped`] must now do
+    /// with it, and whether the OLD concatenation put it outside the Diamond.
+    ///
+    /// The third field is the load-bearing one, as in [`composition_checks`].  `true` means the old
+    /// code landed this path in another compartment and the OPFS edge accepted it, so the row is
+    /// evidence about the defect.  The `false` rows are pinned too -- the ordinary paths that must
+    /// keep working, and the shapes that were already refused or already harmless -- so that a
+    /// "fix" which simply refuses everything cannot pass this section.
+    fn scoped_cases() -> Vec<(&'static str, Option<&'static str>, bool)> {
+        vec![
+            // Refused now, and each one left the Diamond before.
+            ("../beta/crystal.md",     None, true),
+            ("..",                     None, true),
+            ("./..",                   None, true),
+            ("notes/../../beta/x.md",  None, true),
+            ("../../beta/x.md",        None, true),
+            // The sibling whose NAME begins with this Diamond's: a string-prefix containment test
+            // calls this inside, and it is a different Diamond.
+            ("../alpha2/x.md",         None, true),
+            ("notes/../..",            None, true),
+            // Refused now, and refused before as well -- by the OPFS root jail, with a message
+            // about the workspace rather than about this Diamond.
+            ("../../../../etc/passwd", None, false),
+            // Refused now, harmless before: the OPFS edge splits on '/' alone, so this was one
+            // oddly named file inside the Diamond. `normalise` unifies the separators, and a
+            // separator that means nothing on one platform and everything on another is not a
+            // thing to leave in a containment test.
+            ("..\\beta\\x.md",         None, false),
+            // The ordinary work, which must go on working.
+            ("crystal.md",             Some("diamonds/alpha/crystal.md"), false),
+            ("./notes/draft.md",       Some("diamonds/alpha/notes/draft.md"), false),
+            ("notes//draft.md",        Some("diamonds/alpha/notes/draft.md"), false),
+            ("",                       Some("diamonds/alpha"), false),
+            (".",                      Some("diamonds/alpha"), false),
+            // Lands exactly ON the prefix, which is the Diamond's own folder and is inside it.
+            ("notes/..",               Some("diamonds/alpha"), false),
+            // An absolute path is relative to the Diamond, as it is natively, and cannot escape.
+            ("/etc/passwd",            Some("diamonds/alpha/etc/passwd"), false),
+            // Not decoded by anything downstream either, so it is one strangely named folder.
+            ("%2e%2e/beta",            Some("diamonds/alpha/%2e%2e/beta"), false),
+            // A relative path that merely repeats the words: nested, not an escape.
+            ("diamonds/alpha2/x.md",   Some("diamonds/alpha/diamonds/alpha2/x.md"), false),
+        ]
+    }
+
+    #[test]
+    fn test_a_diamonds_prefix_cannot_be_left_by_a_path_the_model_wrote_00() {
+        let c = crystal_ctx();
+        let prefix = normalise(&c.path_prefix);
+        // Three counts rather than one, because they say three different things: how many shapes
+        // are refused now, how many of those the old concatenation put in another compartment, and
+        // how many it got away with only because something further down happened to stop them.
+        let mut refused_now = 0usize;
+        let mut escaped     = 0usize;
+        let mut root_jailed = 0usize;
+        for (rel, want, old_left) in scoped_cases() {
+            match (Tool::scoped(&c, rel), want) {
+                (Ok(got), Some(w))  => assert_eq!(w, got, "scoped({:?})", rel),
+                (Ok(got), None)     => panic!("scoped({:?}) returned {:?}; it must refuse", rel, got),
+                (Err(e), Some(w))   => panic!("scoped({:?}) must give {:?}: {}", rel, w, e),
+                (Err(e), None)      => {
+                    let msg = fmt!("{}", e);
+                    assert!(msg.contains("outside this Diamond"),
+                        "the refusal must say which compartment was left: {}", msg);
+                    assert!(msg.contains(rel), "and name what was asked for: {}", msg);
+                    assert!(msg.contains("nothing was read, written or run"),
+                        "and say that nothing happened: {}", msg);
+                },
+            }
+            // Where the OLD concatenation put the same string, as the OPFS edge would have
+            // resolved it. This is what makes each refusal above evidence rather than assertion.
+            let old  = opfs_lands(&old_scoped(&c, rel));
+            let left = match &old {
+                Some(p) => !under(p, &prefix),
+                None    => false,
+            };
+            assert_eq!(old_left, left,
+                "the record of what the old code did with {:?} is wrong: it landed at {:?}",
+                rel, old);
+            if left {
+                escaped += 1;
+            }
+            if want.is_none() {
+                refused_now += 1;
+                if old.is_none() {
+                    root_jailed += 1;
+                }
+            }
+        }
+        // Nine shapes are refused here. Before, the function had no refusal in it at all: seven of
+        // the nine landed in another compartment, one was stopped further down by the OPFS root
+        // jail -- with a message about the workspace and not about this Diamond -- and one was
+        // harmless. Every one of the nine is therefore a check about the defect or about the
+        // hardening, and none of them is a check about nothing.
+        assert_eq!(9, refused_now, "a refusal row was quietly turned into an allowance");
+        assert_eq!(7, escaped,
+            "the number of these paths the old concatenation put in another compartment -- if it \
+            moved, so did the reproduction in `hand/REVIEW.md` §1.19");
+        assert_eq!(1, root_jailed, "only the climb above the OPFS root was ever stopped");
+    }
+
+    #[test]
+    fn test_the_crystal_agent_cannot_reach_another_diamond_00() {
+        // The reproduction, as it was found. A daimon steers its Diamond's crystal agent, the
+        // instruction may have come from a stranger's words, and the path is a string the model
+        // writes: `../beta/crystal.md` was another Diamond's private notes, readable and writable.
+        let c = crystal_ctx();
+        assert_eq!(Some(fmt!("diamonds/beta/crystal.md")),
+            opfs_lands(&old_scoped(&c, "../beta/crystal.md")),
+            "the reproduction: this is the file the concatenation opened");
+        let e = Tool::scoped(&c, "../beta/crystal.md").expect_err("it must be refused now");
+        assert!(fmt!("{}", e).contains("outside this Diamond"), "{}", e);
+        // And the agent's ordinary work is untouched, which is the half a refusal cannot cover for.
+        assert_eq!(fmt!("diamonds/alpha/crystal.md"),
+            Tool::scoped(&c, "crystal.md").expect("its own crystal"));
+        assert_eq!(fmt!("diamonds/alpha/notes/draft.md"),
+            Tool::scoped(&c, "notes/draft.md").expect("and its own folders"));
+    }
+
+    #[test]
+    fn test_a_turn_with_no_prefix_is_left_exactly_as_it_was_00() {
+        // The user's own workspace agent carries no prefix and is bounded by the OPFS root, which
+        // is the whole of its compartment and is not this function's to narrow. Pinned so the
+        // change is known to reach only the turns that have a Diamond.
+        let c = ctx();
+        assert!(c.path_prefix.is_empty());
+        for p in ["notes.md", "./a/b.md", "../up.md", "", ".", "/abs.md"] {
+            assert_eq!(p, Tool::scoped(&c, p).expect("no prefix means pass-through"),
+                "an unprefixed turn's path must not be rewritten: {:?}", p);
+        }
     }
 }
 

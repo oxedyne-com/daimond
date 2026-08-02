@@ -138,7 +138,12 @@ svg { display: block; }
 .panel.nt { transition: none; }
 .panel.closed { display: none; }
 
-/* Every stage panel is the same card: the AI, a page, a document, a message. */
+/* Every stage panel is the same card: the AI, a page, a document, a message.
+   NOT the whole list -- the Graph and the Terminal wear the same card, declared
+   in the file each of them owns (graph.css, terminal.css) rather than here. A
+   stage panel that appears on none of the three lists is a bare block on the
+   stage's ground, and worse than bare: a block is not a flex column, so nothing
+   inside it can be told to fill the height. */
 .ai, .web, .doc, .msg, .compose, .tools { min-width: 0; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; }
 
 /* Drag handles between panels. */

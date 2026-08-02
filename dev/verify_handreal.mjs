@@ -46,6 +46,12 @@
 //     test asserts `DAIMOND_HAND_ROOT` is UNSET, so the root it reads back can
 //     only have come from the file.
 //  4. Allow the hand in the window that opens on the first command.
+//  5. **Open the folder the hand was granted, in Daimond.** `hand/REVIEW.md`
+//     §1.14 refuses a command where the two ends cannot be shown to mean one
+//     folder, and no automated browser can satisfy that — a page holds a real
+//     folder only through a native dialog no harness can answer. The refusal is
+//     asserted here against the real hand and then stood in for; the note beside
+//     the stand-in says exactly what is substituted and what is not.
 //
 // `DAIMOND_HAND_JOURNAL_DIR` is set here, and only for test isolation: without
 // it the journal — and `root.txt` with it — would be written into the user's own
@@ -338,23 +344,81 @@ try {
 	}));
 
 	// ── The hand answers, and says what it can enforce ──────────────
+	//
+	// The FIRST command is not a command that runs. `hand/REVIEW.md` §1.14 is
+	// armed: the hand was granted a folder on this machine, this page's workspace
+	// is the browser's own sandbox, and the two cannot be shown to be the same
+	// folder — so the daimon is handed a refusal instead of output. Asserted here,
+	// on the real chain, because this is the only place in the repository where
+	// that refusal meets a real hand.
 	const grant = allowHand();
-	const first = await run(s, { argv: ['/bin/cat', 'inside.txt'], timeout_ms: 30000 });
+	const refused = await run(s, { argv: ['/bin/cat', 'inside.txt'], timeout_ms: 30000 });
 	const head = await grant;
 	check('running a command asks the user first, in the extension\'s own window',
 		!!head && /computer/i.test(head), String(head));
+	check('a command is REFUSED while the page cannot show it holds the hand\'s folder',
+		/^Refused:/.test(refused)
+		&& /lives in the browser and not in a folder on this machine/.test(refused),
+		refused.slice(0, 240));
+	check('and nothing ran: the model was given a sentence, not a result',
+		!refused.includes(INSIDE_NONCE) && !/exit code/.test(refused), refused.slice(0, 200));
 
 	const st = JSON.parse(await page.evaluate(() => window.DaimondHand.status()));
-	check('a real hand paired', st.paired === true && st.transport === 'machine',
-		JSON.stringify(st).slice(0, 200));
+	check('a real hand answered, on the machine transport',
+		st.transport === 'machine' && !!st.version, JSON.stringify(st).slice(0, 200));
+	check('and the relay refuses the pairing over the folder, in so many words',
+		st.paired === false && st.workspace === 'mismatch' && st.reason === st.workspace_reason,
+		JSON.stringify(st).slice(0, 240));
 	check('the granted root came from root.txt, with DAIMOND_HAND_ROOT unset',
 		st.root === fs.realpathSync(GRANT), `${st.root} vs ${GRANT}`);
 	check('the hand reports a kernel fence, not a claim of one',
 		(st.caps || []).includes('fence:linux') && (st.caps || []).some((c) => /^landlock:abi-\d+$/.test(c)),
 		(st.caps || []).join(' '));
+	const wsCap = (st.caps || []).find((c) => c.indexOf('ws:') === 0) || '';
+	check('and it published an identity for the folder it was granted, which is on disk',
+		/^ws:[0-9a-f]{32}$/.test(wsCap) && fs.existsSync(path.join(GRANT, '.daimond/workspace.id'))
+		&& fs.readFileSync(path.join(GRANT, '.daimond/workspace.id'), 'utf8').includes(wsCap.slice(3)),
+		wsCap);
 	note(`hand ${st.version} on ${st.os}: ${(st.caps || []).join(' ')}`);
 
+	// ── Standing in for the folder verdict, and only for that ───────
+	//
+	// Every check below runs a command, and every one of them meets the refusal
+	// just asserted. It cannot be arranged away: a page holds a real folder only
+	// through `showDirectoryPicker()`, a native dialog no automated browser can
+	// answer, so a headless run necessarily has an OPFS workspace and is
+	// necessarily refused. There is no configuration in which this check passes by
+	// accident, which is what makes standing in for it honest rather than a
+	// weakening — `dev/verify_scope.mjs` stands in for the whole of `status` for
+	// the same reason, and `dev/verify_wsident.mjs` tests the refusal itself,
+	// against two real directory handles.
+	//
+	// Only the folder VERDICT is stood in for. What the hand said about itself —
+	// its root, its caps, its os — passes through untouched, because the fence
+	// every command below runs under is composed from it.
+	await page.evaluate(() => {
+		var real = window.DaimondHand.status;
+		window.__realStatus = function () { return real.call(window.DaimondHand); };
+		window.DaimondHand.status = function () {
+			return real.call(window.DaimondHand).then(function (raw) {
+				var out = JSON.parse(raw);
+				if (out.workspace && out.workspace !== 'ok') {
+					out.paired = true;
+					delete out.reason;
+					out.workspace = 'stood in for by verify_handreal.mjs';
+				}
+				return JSON.stringify(out);
+			});
+		};
+	});
+	const stood = JSON.parse(await page.evaluate(() => window.DaimondHand.status()));
+	check('the stand-in changes the folder verdict and nothing else',
+		stood.paired === true && stood.root === st.root && stood.os === st.os
+		&& JSON.stringify(stood.caps) === JSON.stringify(st.caps),
+		JSON.stringify(stood).slice(0, 200));
+
 	// ── A real process, and its real output ─────────────────────────
+	const first = await run(s, { argv: ['/bin/cat', 'inside.txt'], timeout_ms: 30000 });
 	check('a real command\'s stdout reaches the model, nonce and all',
 		first.includes(INSIDE_NONCE), first.slice(0, 240));
 	check('and it is marked as a stranger\'s words, naming the command',
