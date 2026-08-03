@@ -555,13 +555,31 @@
 					// device working from a stale view of the world — an index
 					// built without knowing about someone else's file would
 					// otherwise delete it.
-					try {
-						if (window.DaimondChunks && state.chunked) {
-							var tiers = window.DaimondCloud ? DaimondCloud.tierPlan(DaimondCloud.allowance()) : null;
-							await DaimondChunks.commit(state.chunked, serverVersion, tiers);
+					//
+					// And ONLY from a device that merged the index it is about to
+					// declare. `applyChunked` refuses the merge whenever the
+					// workspace is not syncable -- a real folder is open, the tools
+					// are not up -- and this device then held nothing but its own
+					// view. Committing that view named none of the other device's
+					// files and the gateway swept every one of them. The same
+					// condition gates both, so what cannot be merged cannot be
+					// declared.
+					var mayCommit = !!(DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
+					if (!mayCommit) log('chunk index not merged on this device — not committing a live set');
+					else {
+						try {
+							if (window.DaimondChunks && state.chunked) {
+								var tiers = window.DaimondCloud ? DaimondCloud.tierPlan(DaimondCloud.allowance()) : null;
+								// A refusal is a swept-or-not answer nobody heard: the
+								// gateway can decline this commit, and a client that
+								// throws the result away cannot tell a sweep that
+								// happened from one that did not.
+								var swept = await DaimondChunks.commit(state.chunked, serverVersion, tiers);
+								if (!swept) log('chunk commit refused at version', serverVersion);
+							}
 						}
+						catch (e) { log('chunk commit failed', e); }
 					}
-					catch (e) { /* the next successful push commits and sweeps */ }
 					tooLarge = false;					// whatever would not fit, fits now
 					unjam();							// and whatever would not reconcile, has
 					noteSynced();

@@ -3,6 +3,7 @@
 <head>
 	<meta charset="utf-8">
 	<title>Daimond Hands</title>
+	<link rel="icon" type="image/svg+xml" href="daimond_mark.svg">
 	<style>
 		:root { color-scheme: light dark; }
 		body {
@@ -13,7 +14,19 @@
 			background:	Canvas;
 			color:		CanvasText;
 		}
-		h1 { font-size: 15px; margin: 0 0 2px; }
+		h1 { font-size: 15px; margin: 0 0 2px; display: flex; align-items: center; gap: 7px; }
+		/* The mark's facets are pale, so it carries its own dark ground rather
+		   than disappearing into a light palette. */
+		.mark {
+			display:	grid;
+			place-items:	center;
+			flex:		0 0 auto;
+			width:		20px;
+			height:		20px;
+			border-radius:	5px;
+			background:	#17181c;
+		}
+		.mark img { display: block; width: 14px; height: 14px; }
 		.ver { opacity: .6; font-size: 12px; margin-bottom: 12px; }
 		.mode {
 			padding:	10px 12px;
@@ -54,7 +67,7 @@
 	</style>
 </head>
 <body>
-	<h1>Daimond Hands</h1>
+	<h1><span class="mark"><img src="daimond_mark.svg" alt="" width="14" height="14"></span>Daimond Hands</h1>
 	<div class="ver" id="ver"></div>
 	<div class="ask" id="ask" hidden></div>
 	<button id="raise" data-i18n="popup_raise" hidden>Show the approval window</button>

@@ -1278,6 +1278,11 @@
 	'files.forget_root': 'Olvidar esta carpeta',
 	'files.forget_root_help': 'Dejar de ofrecer esta carpeta. Daimond no guarda ningún registro de ella, y la próxima vez elegirás una.',
 	'files.root_forgotten': 'Olvidada. Daimond ya no guarda ningún registro de esa carpeta.',
+
+	'files.adopted_title.one': 'Se recuperó un Diamond',
+	'files.adopted_title.other': 'Se recuperaron {n} Diamonds',
+	'files.adopted_body': 'Daimond encontró archivos propios en esta carpeta y los copió de vuelta a su propio almacenamiento, donde sí se sincronizan: {names}. Las copias de la carpeta quedaron exactamente donde estaban, en diamonds/: puedes borrarlas cuando estés conforme.',
+	'files.adopted_kept': 'Estos diferían de lo que Daimond ya tenía, así que se conservaron ambas copias:\n{paths}',
 	'files.folder_open_failed': 'No se pudo abrir esa carpeta.',
 	'files.import': 'Importar',
 	'files.import_body': '¿Copiar «{name}» al espacio de trabajo? Todo lo que hay dentro se sincronizará con tus otros dispositivos y contará para tu almacenamiento.',
@@ -1348,7 +1353,7 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title': '¿Salvar antes tus créditos?',
-	'forget.credits_body': 'Esta cuenta tiene {amount}. Eso está guardado en el servidor de Daimond y solo lo abre esta identidad, así que olvidarla lo pierde para siempre: no hay forma de recuperarlo sin una copia de seguridad. ¿Exportar una ahora?',
+	'forget.credits_body': 'Esta cuenta tiene {amount}. Se guarda en el servidor de Daimond y solo esta identidad lo desbloquea. Una copia de seguridad guarda la identidad cifrada, de modo que otro dispositivo pueda asumirla, pero solo con la contraseña de esta cuenta, que la copia no contiene. Si se pierde la contraseña, nada puede recuperar el saldo. ¿Exportar una copia ahora?',
 	'forget.skip': 'Omitir',
 	'forget.title': '¿Olvidar esta cuenta?',
 	'forget.ok': 'Borrarlo todo',
@@ -1356,7 +1361,7 @@
 	'forget.tail': 'No hay recuperación. Todo desaparece.',
 	'forget.body_secondary': 'Esto quita la cuenta «{name}» de este navegador: su frase de paso, sus claves, chats, Diamonds, gastos y archivos.',
 	'forget.tail_secondary': 'No hay recuperación. Las demás cuentas de aquí quedan intactas.',
-	'forget.abandons': 'También abandona {amount} guardados en el servidor, que no se pueden recuperar sin una copia de seguridad.',
+	'forget.abandons': 'También abandona {amount} en el servidor. Solo esta identidad lo desbloquea, y solo la contraseña de esta cuenta abre una copia de la identidad.',
 
 	// ── Changing a name, and a passphrase ──────────────────────
 	'rename.title': 'Cambiar el nombre',
@@ -1384,6 +1389,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'No se pudo leer ese archivo de copia de seguridad.',
 	'backup.not_a_backup': 'Eso no es una copia de seguridad de Daimond.',
+	'backup.identity_title': 'Identidad de la cuenta restaurada',
+	'backup.identity_body': 'La copia traía la identidad de \u00ab{name}\u00bb, y este navegador es ahora esa cuenta, con los créditos y la licencia Pro guardados en el servidor. Desbloquéala con la contraseña de esa cuenta; la copia no la contiene, y nada más puede abrirla.',
+	'backup.identity_kept': 'Este navegador ya tiene una cuenta, así que la identidad de \u00ab{name}\u00bb en esa copia se dejó intacta. Todo lo demás se restauró.',
+	'backup.identity_failed': 'No se pudo restaurar la identidad de esa copia.',
 	'backup.restored': 'Copia de seguridad restaurada',
 	'backup.n_files.one': '{n} archivo del espacio de trabajo',
 	'backup.n_files.other': '{n} archivos del espacio de trabajo',

@@ -27,6 +27,7 @@
 			<a href="accounts.html" aria-current="page">Contas</a>
 			<a href="sync.html">Sincronização entre dispositivos</a>
 			<a href="spending.html">Gastos</a>
+			<a href="../machine-operations.html">Comandos na máquina</a>
 		</nav>
 	</div>
 </header>
@@ -54,7 +55,7 @@
 	<ul>
 		<li><span class="ui">Mudar o nome…</span> — renomear a identidade.</li>
 		<li><span class="ui">Mudar a frase-senha…</span> — definir uma nova frase-senha; seus dados criptografados são reenvolvidos por ela.</li>
-		<li><span class="ui">Exportar um backup</span> — salvar sua identidade para poder restaurá-la em outro navegador ou dispositivo.</li>
+		<li><span class="ui">Exportar um backup</span> — grava seus chats, Diamonds e arquivos do espaço de trabalho em um arquivo que fica com você. Ele restaura seu trabalho, não sua conta: sua chave não está nele.</li>
 		<li><span class="ui">Importar um backup…</span> — trazer uma identidade exportada para este navegador.</li>
 		<li><span class="ui">Sair</span> — trancar o app. Seus dados ficam no dispositivo, criptografados, até que a frase-senha seja digitada de novo.</li>
 		<li><span class="ui">Esquecer esta identidade…</span> — remover de vez a identidade e seus dados criptografados deste navegador.</li>
@@ -69,8 +70,8 @@
 	</ul>
 
 	<h2>Mover sua conta entre dispositivos</h2>
-	<p>Como não há servidor, sua conta não o acompanha automaticamente. Para usá-la em outro navegador ou máquina, escolha <span class="ui">Exportar um backup</span> aqui e <span class="ui">Importar um backup…</span> lá.</p>
-	<div class="note"><strong>Um backup contém a sua identidade.</strong> Quem o importa vira você, então trate o arquivo de backup como a própria frase-senha — mantenha-o privado e não o envie por um canal ao qual você não confiaria a frase-senha.</div>
+	<p>Sua conta é uma chave de assinatura guardada neste navegador, e a frase-senha não a recria: apenas decifra a cópia que já está aqui, então a mesma frase-senha em um navegador novo começa uma conta <em>separada</em> com créditos próprios e sem Pro. Duas coisas levam a chave adiante, e nada mais: <span class="ui">Vincular outro dispositivo</span>, que mostra um código de emparelhamento para digitar no navegador novo, e uma passkey, que põe um dispositivo novo de pé em um gesto. Faça uma das duas <strong>antes de</strong> remover um navegador, não depois — quando o armazenamento dele se vai, a chave vai junto. Use também <span class="ui">Exportar um backup</span> — isso leva os chats, Diamonds e arquivos do espaço de trabalho que a chave não leva.</p>
+	<div class="note"><strong>Um backup guarda tudo o que você escreveu.</strong> A chave não — importá-lo não faz de ninguém você — mas cada chat, Diamond e arquivo do espaço de trabalho está ali em texto puro, então guarde-o tão em particular quanto o próprio trabalho.</div>
 
 	<h2>O que fica privado</h2>
 	<p>Sua frase-senha, suas chaves de provedor, suas credenciais de e-mail, seus chats, Diamonds e arquivos vivem neste navegador e não são enviados para nós. O que guardamos no gateway é dinheiro e texto cifrado: seu saldo de créditos e suas licenças, e, para a sincronização entre dispositivos, um pacote criptografado que não podemos abrir. Não temos a chave, então não podemos ler o seu trabalho.</p>
@@ -95,6 +96,7 @@
 		<a href="accounts.html">Contas</a>
 		<a href="sync.html">Sincronização entre dispositivos</a>
 		<a href="spending.html">Gastos</a>
+		<a href="../machine-operations.html">Comandos na máquina</a>
 	</nav>
 </footer>
 </body>

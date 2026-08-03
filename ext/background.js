@@ -271,6 +271,15 @@ async function raisePending() {
 async function ask(params) {
 	const nonce	= Math.random().toString(36).slice(2);
 	const q		= new URLSearchParams(Object.assign({ nonce }, params));
+	// Sized for the FIRST screen, not for everything the window can say. Opening
+	// the disclosure scrolls the sheet between the brand and the buttons rather
+	// than growing the window, so the two buttons are on screen at every height
+	// and in every language -- which a 470px window full of prose was not.
+	//
+	// The height is a starting guess and nothing more: the window is created
+	// before the language it will be written in is known, and French needs
+	// 353px of sheet where Chinese needs 250. grant.js measures what it actually
+	// got and sizes the window to its own first screen, either way.
 	const W = 480, H = 470;
 
 	// Centre the grant window over the app window. A popup that Chrome drops

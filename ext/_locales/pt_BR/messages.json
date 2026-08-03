@@ -98,6 +98,9 @@
 	"grant_allow": {
 		"message": "Permitir"
 	},
+	"grant_more": {
+		"message": "O que isto cobre e o que não cobre"
+	},
 	"grant_mirror_head": {
 		"message": "O Daimond quer mostrar a você a aba que está dirigindo"
 	},
@@ -134,6 +137,24 @@
 	"grant_hand_head": {
 		"message": "O Daimond quer executar comandos neste computador"
 	},
+	"grant_hand_lead": {
+		"message": "Programas seriam executados neste computador como você, com seus arquivos. Esta máquina pode limitá-los a uma pasta — dentro dela, podem ler e alterar qualquer coisa."
+	},
+	"grant_hand_lead_nofence": {
+		"message": "Programas seriam executados neste computador como você, com seus arquivos. Esta máquina não pode limitar quais arquivos eles tocam, então um comando alcança tudo o que você alcança."
+	},
+	"grant_hand_lead_unknown": {
+		"message": "Programas seriam executados neste computador como você, com seus arquivos. Esta máquina não disse a que pode limitá-los, então trate um comando como alcançando tudo o que você alcança."
+	},
+	"grant_hand_folder": {
+		"message": "Pasta"
+	},
+	"grant_hand_asked_by": {
+		"message": "Pedido por"
+	},
+	"grant_hand_strongest": {
+		"message": "É a coisa mais forte que você pode permitir ao Daimond."
+	},
 	"grant_hand_body": {
 		"message": "O Daimond executaria programas neste computador — builds, testes, scripts — como você, com os seus arquivos. Cada um é iniciado diretamente, e não por um shell, e apenas dentro das pastas que o espaço de trabalho já permite."
 	},
@@ -144,7 +165,7 @@
 		"message": "O Daimond executaria programas neste computador — builds, testes, scripts — como você, com os seus arquivos. Cada um é iniciado diretamente, e não por um shell. A mão daqui não disse a que consegue limitá-los, então trate um comando como capaz de alcançar tudo o que você alcança."
 	},
 	"grant_hand_fine": {
-		"message": "É a coisa mais forte que você pode permitir ao Daimond. Nada é executado até você permitir aqui, cada execução fica escrita em um registro que você pode ler, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
+		"message": "Nada é executado até você permitir aqui, cada execução fica escrita em um registro que você pode ler, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
 	},
 	"grant_hand_caps": {
 		"message": "O que este computador consegue impor: $CAPS$",
@@ -159,7 +180,7 @@
 		"message": "A mão deste computador não disse o que consegue impor."
 	},
 	"grant_hand_fine_nojournal": {
-		"message": "É a coisa mais forte que você pode permitir ao Daimond. Nada é executado até você permitir aqui, só a página indicada acima pode pedir, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
+		"message": "Nada é executado até você permitir aqui, só a página indicada acima pode pedir, e você pode retirar essa permissão quando quiser pelo ícone do Daimond Hands. Retirar interrompe o que estiver em execução naquele momento."
 	},
 	"grant_hand_allow": {
 		"message": "Permitir comandos neste computador"

@@ -1278,6 +1278,11 @@
 	'files.forget_root': 'Esquecer esta pasta',
 	'files.forget_root_help': 'Parar de oferecer esta pasta. O Daimond não guarda registro dela, e da próxima vez você escolhe uma.',
 	'files.root_forgotten': 'Esquecida. O Daimond não guarda mais nenhum registro dessa pasta.',
+
+	'files.adopted_title.one': 'Um Diamond foi trazido de volta',
+	'files.adopted_title.other': '{n} Diamonds foram trazidos de volta',
+	'files.adopted_body': 'O Daimond encontrou arquivos seus nesta pasta e os copiou de volta para o próprio armazenamento, onde eles sincronizam: {names}. As cópias na pasta ficaram exatamente onde estavam, em diamonds/ — você pode apagá-las quando estiver satisfeito.',
+	'files.adopted_kept': 'Estes diferiam do que o Daimond já tinha, então as duas cópias foram mantidas:\n{paths}',
 	'files.folder_open_failed': 'Não foi possível abrir essa pasta.',
 	'files.import': 'Importar',
 	'files.import_body': 'Copiar “{name}” para o espaço de trabalho? Tudo o que há nele passará a sincronizar com seus outros dispositivos e a contar para o seu armazenamento.',
@@ -1348,7 +1353,7 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title': 'Salvar seus créditos antes?',
-	'forget.credits_body': 'Esta conta tem {amount}. Isso fica no servidor do Daimond e só esta identidade abre, então esquecê-la perde tudo para sempre — não há como recuperar sem um backup. Exportar um agora?',
+	'forget.credits_body': 'Esta conta tem {amount}. Isso fica no servidor do Daimond e só esta identidade desbloqueia. Um backup guarda a identidade de forma criptografada, para que outro dispositivo possa assumi-la — mas apenas com a frase-senha desta conta, que o backup não contém. Se a frase-senha for perdida, nada traz o saldo de volta. Exportar um backup agora?',
 	'forget.skip': 'Pular',
 	'forget.title': 'Esquecer esta conta?',
 	'forget.ok': 'Apagar tudo',
@@ -1356,7 +1361,7 @@
 	'forget.tail': 'Não há recuperação. Tudo se vai.',
 	'forget.body_secondary': 'Isso remove a conta “{name}” deste navegador — sua frase-senha, chaves, chats, Diamonds, gastos e arquivos.',
 	'forget.tail_secondary': 'Não há recuperação. As outras contas daqui ficam intactas.',
-	'forget.abandons': 'Também abandona {amount} guardados no servidor, que não podem ser recuperados sem um backup.',
+	'forget.abandons': 'Também abandona {amount} guardados no servidor. Só esta identidade desbloqueia, e só a frase-senha desta conta abre um backup da identidade.',
 
 	// ── Changing a name, and a passphrase ──────────────────────
 	'rename.title': 'Mudar o nome',
@@ -1384,6 +1389,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Não foi possível ler esse arquivo de backup.',
 	'backup.not_a_backup': 'Isso não é um backup do Daimond.',
+	'backup.identity_title': 'Identidade da conta restaurada',
+	'backup.identity_body': 'O backup trazia a identidade de \u201c{name}\u201d, e este navegador agora é aquela conta \u2014 incluindo os créditos e a licença Pro guardados no servidor. Desbloqueie com a frase-senha daquela conta; o backup não a contém, e nada mais consegue abri-la.',
+	'backup.identity_kept': 'Este navegador já tem uma conta, então a identidade de \u201c{name}\u201d nesse backup foi deixada como estava. Todo o resto foi restaurado.',
+	'backup.identity_failed': 'Não foi possível restaurar a identidade desse backup.',
 	'backup.restored': 'Backup restaurado',
 	'backup.n_files.one': '{n} arquivo do espaço de trabalho',
 	'backup.n_files.other': '{n} arquivos do espaço de trabalho',

@@ -27,6 +27,7 @@
 			<a href="accounts.html" aria-current="page">Accounts</a>
 			<a href="sync.html">Cross-device sync</a>
 			<a href="spending.html">Spending</a>
+			<a href="machine-operations.html">Machine Operations</a>
 		</nav>
 	</div>
 </header>
@@ -54,7 +55,7 @@
 	<ul>
 		<li><span class="ui">Change name…</span> — rename the identity.</li>
 		<li><span class="ui">Change passphrase…</span> — set a new passphrase; your encrypted data is re-wrapped under it.</li>
-		<li><span class="ui">Export a backup</span> — save your identity so you can restore it on another browser or device.</li>
+		<li><span class="ui">Export a backup</span> — write your chats, Diamonds and workspace files to a file you keep. It restores your work, not your account: your key is not in it.</li>
 		<li><span class="ui">Import a backup…</span> — bring an exported identity into this browser.</li>
 		<li><span class="ui">Log out</span> — lock the app. Your data stays on the device, encrypted, until the passphrase is entered again.</li>
 		<li><span class="ui">Forget this identity…</span> — remove the identity and its encrypted data from this browser for good.</li>
@@ -69,8 +70,8 @@
 	</ul>
 
 	<h2>Moving your account between devices</h2>
-	<p>Because there is no server, your account does not follow you automatically. To use it on another browser or machine, <span class="ui">Export a backup</span> here and <span class="ui">Import a backup…</span> there.</p>
-	<div class="note"><strong>A backup contains your identity.</strong> Anyone who imports it becomes you, so treat the backup file like the passphrase itself — keep it private and do not send it over a channel you would not trust with the passphrase.</div>
+	<p>Your account is a signing key held in this browser, and the passphrase does not recreate it — it only decrypts the copy already stored here, so the same passphrase in a fresh browser starts a <em>separate</em> account with its own credits and no Pro. Two things carry the key across and nothing else does: <span class="ui">Link another device</span>, which shows a pairing code to type into the new browser, and a passkey, which stands a new device up in one gesture. Do one of them <strong>before</strong> you remove a browser, not after — once its storage is gone the key is gone with it. Take an <span class="ui">Export a backup</span> as well, because it carries the chats, Diamonds and workspace files that the key does not.</p>
+	<div class="note"><strong>A backup holds everything you have written.</strong> Not the key — importing it does not make anyone you — but every chat, Diamond and workspace file is in it as plain text, so keep it as private as the work itself.</div>
 
 	<h2>What stays private</h2>
 	<p>Your passphrase, provider keys, mail credentials, chats, Diamonds and files live in this browser and are not sent to us. What we hold on the gateway is money and ciphertext: your credit balance and licences, and, for cross-device sync, one encrypted parcel we cannot open. We do not have the key, so we cannot read your work.</p>
@@ -95,6 +96,7 @@
 		<a href="accounts.html">Accounts</a>
 		<a href="sync.html">Cross-device sync</a>
 		<a href="spending.html">Spending</a>
+		<a href="machine-operations.html">Machine Operations</a>
 	</nav>
 </footer>
 </body>

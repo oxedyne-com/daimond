@@ -1535,17 +1535,25 @@ import init, {
 	/// Walk the OPFS workspace and read every syncable text file into
 	/// `{ path: content }`, skipping dotfiles, Daimond's own `diamonds` store, binary
 	/// files, and anything over the per-file or total budget.
+	///
+	/// `complete` says whether the walk actually enumerated the whole workspace.
+	/// It is the ONLY thing that entitles the far side to read an absent path as a
+	/// deletion, so it is false the moment anything is missed for any reason —
+	/// folder mode, no tools, a directory that would not list, a file skipped for
+	/// budget. An incomplete census still carries the files it did find; it simply
+	/// carries no news about the ones it did not.
 	async function collectFiles() {
-		var out = { files: {}, large: {}, skipped: 0, oversize: [] };
+		var out = { files: {}, large: {}, skipped: 0, oversize: [], complete: false };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
+		out.complete = true;						// until something below is missed.
 		var total = 0, largeTotal = 0, todo = [''], guard = 0;
 		while (todo.length && guard++ < 5000) {
 			var dir = todo.shift();
 			var res;
 			try { res = await app.run_tool('file_list', JSON.stringify({ path: dir || '.' })); }
-			catch (e) { continue; }
-			if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) continue;
+			catch (e) { out.complete = false; continue; }
+			if (typeof res !== 'string' || /^\s*Error\b/i.test(res)) { out.complete = false; continue; }
 			var entries = parseSyncListing(res);
 			for (var i = 0; i < entries.length; i++) {
 				var e = entries[i];
@@ -1593,6 +1601,10 @@ import init, {
 				out.files[full] = content; total += content.length;
 			}
 		}
+		// Anything skipped -- for budget, for size, for an unreadable byte -- and a
+		// walk that hit the loop guard with directories still queued, are both a
+		// census that did not see everything.
+		if (out.skipped || todo.length) out.complete = false;
 		return out;
 	}
 
@@ -1633,8 +1645,18 @@ import init, {
 	/// baseline. New remote files are written; a file changed on only one side
 	/// takes that side; a file changed on BOTH, differently, keeps the local
 	/// copy and lands the remote one beside it as `<path>.synced`, so nothing is
-	/// ever silently overwritten. Deletions are not propagated in v1.
-	async function applyFiles(remoteFiles) {
+	/// ever silently overwritten.
+	///
+	/// `remoteComplete` is the sender's word that its census enumerated the whole
+	/// workspace, and NOTHING is deleted without it. Every other store in this app
+	/// deletes on a tombstone; files delete on absence, and absence has four
+	/// innocent causes -- the sender had a real folder open, its tools were not up,
+	/// a directory would not list, or a file was left out for budget. Each of those
+	/// used to arrive as `files: {}` and read as "the user deleted everything",
+	/// which is how a workspace was lost account-wide. A parcel that does not say
+	/// its census was complete is no news, never a deletion; a device too old to
+	/// say so is treated the same way.
+	async function applyFiles(remoteFiles, remoteComplete) {
 		if (!remoteFiles || typeof remoteFiles !== 'object' || !filesSyncable()) return;
 		var app; try { app = tools(); } catch (e) { return; }
 		var base  = readJson(SYNC_FILEBASE_KEY, {});
@@ -1660,12 +1682,14 @@ import init, {
 		// remote no longer has was deleted there. Propagate it here ONLY if it is
 		// unchanged locally since that fork — a local edit after the remote delete
 		// keeps the file, because an edit must never be lost to a delete.
-		for (var bp in base) {
-			if (!Object.prototype.hasOwnProperty.call(base, bp)) continue;
-			if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
-			var lv = local[bp];
-			if (lv == null) continue;								// already gone here.
-			if (fileHash(lv) === base[bp]) await deleteSyncFile(app, bp);	// unchanged: honour the delete.
+		if (remoteComplete === true) {
+			for (var bp in base) {
+				if (!Object.prototype.hasOwnProperty.call(base, bp)) continue;
+				if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
+				var lv = local[bp];
+				if (lv == null) continue;							// already gone here.
+				if (fileHash(lv) === base[bp]) await deleteSyncFile(app, bp);	// unchanged: honour the delete.
+			}
 		}
 		await commitFileBaseline();
 	}
@@ -1977,6 +2001,9 @@ import init, {
 			tombs:        readJson(TOMBS_KEY, {}),
 			msgTombs:     readJson(MSG_TOMBS_KEY, {}),
 			files:        fileCol.files,
+			// Whether `files` above is the WHOLE workspace. Only a complete census
+			// entitles the receiver to delete by absence; see applyFiles.
+			filesComplete: fileCol.complete === true,
 			chunked:      chunked,
 			diamonds:     await collectDiamonds(),
 			diamondTombs: readJson(DIAMOND_TOMBS_KEY, {}),
@@ -2062,7 +2089,7 @@ import init, {
 		await section('devices',  function () { mergeDevices(remote.devices); });
 		await section('chats',    function () { applyChats(remote); });
 		await section('diamonds', function () { return applyDiamonds(remote); });
-		await section('files',    function () { return applyFiles(remote.files); });
+		await section('files',    function () { return applyFiles(remote.files, remote.filesComplete === true); });
 		// The large files held in the chunk store, reconstructed on demand.
 		await section('chunked',  function () { return applyChunked(remote.chunked); });
 		// The providers, their model lists and their sealed keys. A parcel without
@@ -6699,6 +6726,14 @@ import init, {
 		// After a successful push, the pushed state is the new common fork point
 		// for the file 3-way merge; sync.js calls this then.
 		syncCommitBaseline: commitFileBaseline,
+		/// Whether this device may DECLARE the account's live chunk set.
+		///
+		/// Committing tells the gateway to sweep every chunk the declared index
+		/// does not name, so only a device whose index is merged with everyone
+		/// else's may do it -- and this is exactly the condition under which
+		/// applyChunked merges. A device that refused the other device's index and
+		/// then committed its own swept the account's cloud files away.
+		syncMayCommitChunks: function () { return !!window.DaimondCloud && filesSyncable(); },
 		// The tombstone machinery, shared. A store that syncs by UNION needs a
 		// record of what was deleted, or absence reads as "that device never had
 		// it" and the row comes straight back on the next pull. Chats, Diamonds,
@@ -9748,7 +9783,38 @@ import init, {
 			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
+			await adoptFolderDiamonds();
 			list('');
+		}
+
+		/// Bring home any Diamond files this folder is holding, and say so.
+		///
+		/// A build before this one let Daimond's own store follow the workspace root, so a
+		/// Diamond worked on with a folder open wrote `diamonds/<id>/…` into the user's project:
+		/// outside the sync parcel, and gone from view the moment they switched back. The engine
+		/// copies those files into the store — never deleting, never overwriting — and this
+		/// reports what it did. It runs on every activation, boot reconnect included, so it is
+		/// silent when there was nothing to bring home.
+		///
+		/// The folder's copies are LEFT WHERE THEY ARE, and the user is told that too. Deleting
+		/// from someone's own project folder to tidy up after our bug is the more dangerous of
+		/// the two mistakes available here.
+		async function adoptFolderDiamonds() {
+			if (!Wasm || typeof Wasm.adopt_folder_diamonds !== 'function') return;
+			var rep;
+			try { rep = JSON.parse(await Wasm.adopt_folder_diamonds() || '{}'); }
+			catch (e) { return; }                  // an older engine, or nothing to look at
+			var took = Array.isArray(rep.adopted) ? rep.adopted : [];
+			if (!took.length) return;
+			// The rail reads the store, and the store just gained Diamonds.
+			try { await loadDiamonds(); } catch (e) { /* the next refresh will find them */ }
+			refresh();
+			var names = took.map(function (d) { return d.name || d.id; });
+			var kept = [];
+			took.forEach(function (d) { (d.kept || []).forEach(function (k) { kept.push(k); }); });
+			var body = t('files.adopted_body', { names: names.join(', ') });
+			if (kept.length) body += '\n\n' + t('files.adopted_kept', { paths: kept.join('\n') });
+			noticeDialog(tn('files.adopted_title', took.length), body, { pre: kept.length > 0 });
 		}
 
 		// Switch the agent back to the OPFS sandbox, KEEPING the folder to come back to.
@@ -15162,12 +15228,25 @@ import init, {
 	/// browser, so a workspace you cannot get out of the tab is a workspace you
 	/// can lose — which is the whole reason to keep a backup, and so the whole
 	/// reason the workspace files must be in it.
+	///
+	/// It carries the IDENTITY too, because without it a backup restores a
+	/// stranger: the credit balance and a Pro licence are held gateway-side and
+	/// unlocked by this key alone, and the Forget flow offers this export as the
+	/// way to keep them. What travels is exactly what is already at rest here --
+	/// the salt, the public key and the WRAPPED private key -- so the file is no
+	/// easier to open than this browser's storage is, and neither can be opened
+	/// without the account's passphrase.
 	async function doExport() {
 		var out = {
 			format: 'daimond-backup',
 			version: 1,
 			exported: new Date().toISOString(),
 			name: DaimondIdentity.displayName(),
+			// Null when there is no identity to carry; the restore then leaves this
+			// device's own alone.
+			identity: (function () {
+				try { return DaimondIdentity.exportBundle(); } catch (e) { return null; }
+			})(),
 			chats: storedChats(),
 			ledger: readJson('daimond-ledger', []),
 			diamonds: [],
@@ -15209,6 +15288,32 @@ import init, {
 			catch (e) { toast(t('backup.unreadable'), true); return; }
 			if (data.format !== 'daimond-backup') {
 				toast(t('backup.not_a_backup'), true); return;
+			}
+			// The identity, first and out loud.
+			//
+			// The credit balance and a Pro licence are unlocked by this key alone,
+			// so a backup that leaves it behind restores a stranger -- which is what
+			// the Forget flow was telling people to rely on. It is adopted only on a
+			// browser that holds NO identity: that is the recovery case, and there
+			// the account is unambiguous. Where one is already here, the backup's is
+			// LEFT ALONE, because a restore must not sign the person at this browser
+			// out of their own account. Either way they are told which it was.
+			var idBundle = data.identity;
+			var haveId   = !!(window.DaimondIdentity && DaimondIdentity.exists && DaimondIdentity.exists());
+			if (idBundle && window.DaimondIdentity && DaimondIdentity.importBundle) {
+				var idName = idBundle.name || data.name || t('home.unnamed_account');
+				if (haveId) {
+					// A different account is already at this browser; say what was skipped.
+					toast(t('backup.identity_kept', { name: idName }));
+				} else {
+					var took = false;
+					// The bundle is still wrapped, so this leaves the identity LOCKED
+					// and the passphrase is asked for after the reload below.
+					try { took = DaimondIdentity.importBundle(idBundle); }
+					catch (e) { took = false; }
+					if (took) await noticeDialog(t('backup.identity_title'), t('backup.identity_body', { name: idName }));
+					else toast(t('backup.identity_failed'), true);
+				}
 			}
 			var files = data.workspace || [];
 			var restored = 0;

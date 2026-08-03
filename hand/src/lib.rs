@@ -47,6 +47,15 @@ pub const PROTO: u32 = 1;
 /// The name this build reports to the page, for the device roster.
 pub const HOST_NAME: &str = "daimond-hand";
 
+/// The file, beside the journal, naming the one folder the hand may work in.
+///
+/// A file rather than an environment variable because the browser hands a
+/// native messaging host *its own* environment, so nothing the user exports
+/// reaches this program.  Here rather than in `main.rs` because [`journal`]
+/// counts it as its own furniture: a directory holding the record and this file
+/// and nothing else is one the hand made, and may be tightened to 0700.
+pub const ROOT_FILE: &str = "root.txt";
+
 /// The version string this build reports, taken from the manifest at compile time.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

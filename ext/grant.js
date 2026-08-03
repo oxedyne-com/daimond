@@ -18,6 +18,18 @@
 // It is asked in the language the app is speaking. This is the one window in
 // the product that asks the user to trust something, and a question nobody can
 // read is not a question.
+//
+// TWO SCREENS, NOT TWO WINDOWS. What a person needs in order to decide is on
+// the surface: what is being asked, which folder, which page asked, and the two
+// buttons. Everything else -- the reasoning, the caveats, what the compartment
+// does and does not stop -- is behind one disclosure, a Tab and a keypress away.
+// Nothing was cut. A window nobody finishes reading is a window nobody
+// understands, and an approval given without understanding is the failure this
+// whole flow exists to avoid; but so is a short window that hides the fact that
+// a website is being handed the ability to run programs. So the first screen
+// still says, in its own words, that programs would run as this user with this
+// user's files, whether the machine can hold them to a folder, and that this is
+// the strongest thing Daimond can be allowed to do.
 
 'use strict';
 
@@ -53,6 +65,60 @@
 		return caps.some((c) => c === 'journal' || c.indexOf('journal:') === 0);
 	}
 
+	/// The folder the hand says the grant covers, or '' where it named none.
+	///
+	/// It travels as a `root:` capability because `wire.rs` has no field for it
+	/// -- see `hand/src/main.rs`. The page cannot work the path out for itself:
+	/// the File System Access API hands it a handle and never a name. So this is
+	/// the only place the folder can come from, and a window that did not show
+	/// it would be asking about a compartment without saying where it is.
+	function rootDir() {
+		const c = caps.find((s) => s.indexOf('root:') === 0);
+		return c ? c.slice(5) : '';
+	}
+
+	/// Puts a node behind the disclosure, keeping the order it is given in.
+	function conceal() {
+		$('moreBody').prepend.apply($('moreBody'), arguments);
+	}
+
+	/// Sizes the window to its first screen.
+	///
+	/// The window is created before anything is known about the language it will
+	/// be written in, and a height measured against English clips German while
+	/// leaving an inch of nothing under Chinese. The sheet scrolls rather than
+	/// clipping, so nothing is ever lost -- but a sentence a person has to scroll
+	/// to is a sentence they did not read, and the whole point of the split is
+	/// that the first screen IS read. So the height in background.js is a
+	/// starting guess and this corrects it, in either direction, once, before the
+	/// window has been shown long enough for anyone to have dragged it.
+	///
+	/// Bounded both ways: never past the screen, and never so small that the two
+	/// buttons and the brand have nowhere to sit.
+	function fit() {
+		try {
+			const sheet	= document.querySelector('.sheet');
+			const have	= sheet.clientHeight;
+			// What the sheet WANTS. `scrollHeight` alone cannot say: it is
+			// clamped to the box, so it reports the overflow and never the slack,
+			// and a window sized from it could grow but never give anything back.
+			// Letting the sheet take its content height for one measurement is
+			// the only way to see both.
+			const flex	= sheet.style.flex;
+			sheet.style.flex = '0 0 auto';
+			const need	= Math.ceil(sheet.scrollHeight);
+			sheet.style.flex = flex;
+			const delta	= need - have;
+			if (Math.abs(delta) < 4) return;
+			chrome.windows.getCurrent((w) => {
+				if (!w || w.height == null) return;
+				const room = Math.max(320, (screen.availHeight || 900) - 60);
+				chrome.windows.update(w.id,
+					{ height: Math.max(300, Math.min(w.height + delta + 2, room)) });
+			});
+		} catch (e) { /* no windows API here; the sheet still scrolls */ }
+	}
+
 	/// Writes the question. Called once the table is in, so the window is never
 	/// read half in one language and half in another.
 	function draw() {
@@ -63,22 +129,54 @@
 			$('fine').textContent	= t('grant_mirror_fine');
 			$('allow').textContent	= t('grant_mirror_allow');
 		} else if (kind === 'hand') {
+			$('head').textContent	= t('grant_hand_head');
+			// The short of it, and the line on the first screen that decides the
+			// question. `hand/README.md`'s first release gate is that the wording
+			// is chosen from `caps` rather than hard-coded: a sentence about
+			// folders, on a machine with no fence, is a promise the code does not
+			// keep, and a promise about safety that is not kept is worse than
+			// none. Three answers, because there are three: it fences, it does
+			// not, or it did not say.
+			$('lead').hidden	= false;
+			$('lead').textContent	= caps.length === 0	? t('grant_hand_lead_unknown')
+						: fenced()		? t('grant_hand_lead')
+						: t('grant_hand_lead_nofence');
+			// Which folder. A fact about the decision rather than a detail of
+			// it: approving this for a project folder and approving it for a
+			// home directory are different answers to different questions.
+			const dir = rootDir();
+			// Shown only where there is a fact to put in it: an empty grid is a
+			// gap the reader has to account for.
+			$('facts').hidden = !dir && !origin;
+			if (dir) {
+				$('folderlab').hidden		= false;
+				$('folderlab').textContent	= t('grant_hand_folder');
+				$('folder').hidden		= false;
+				$('folder').textContent		= dir;
+			}
 			// The question is about the machine, not about a site -- but it is
 			// asked BY a page, and only that page is answered by it, so the page
 			// is named. A user with the app open in two places should be able to
 			// see which one is asking.
-			$('head').textContent	= t('grant_hand_head');
 			if (origin) {
-				$('host').hidden	= false;
-				$('host').textContent	= origin;
+				$('hostlab').hidden		= false;
+				$('hostlab').textContent	= t('grant_hand_asked_by');
+				$('host').hidden		= false;
+				$('host').textContent		= origin;
+				// A row of the facts grid here, not the boxed headline it is on
+				// the site question -- there the name IS the question, here it
+				// is one fact among several.
+				$('host').className		= 'val';
+				$('facts').appendChild($('host'));
 			}
-			// What this machine can actually enforce, said in the window that
-			// makes the promise. `hand/README.md`'s first release gate is that
-			// the wording is chosen from `caps` rather than hard-coded: a
-			// sentence about folders, on a machine with no fence, is a promise
-			// the code does not keep, and a promise about safety that is not
-			// kept is worse than none. Three answers, because there are three:
-			// it fences, it does not, or it did not say.
+			// Kept on the first screen deliberately, and lifted out of the fine
+			// print to get there. It is the one sentence that stops a click, and
+			// a sentence that stops a click cannot sit behind a control that a
+			// hurried person does not press.
+			$('strongest').hidden		= false;
+			$('strongest').textContent	= t('grant_hand_strongest');
+			// The long form of the same three answers, the capability list
+			// verbatim, and the fine print. All still said, all one click away.
 			$('body').textContent	= caps.length === 0	? t('grant_hand_body_unknown')
 						: fenced()		? t('grant_hand_body')
 						: t('grant_hand_body_nofence');
@@ -90,6 +188,7 @@
 			// this machine's to make either until the hand says it keeps one.
 			$('fine').textContent	= journalled() ? t('grant_hand_fine') : t('grant_hand_fine_nojournal');
 			$('allow').textContent	= t('grant_hand_allow');
+			conceal($('body'), $('scope'));
 		} else {
 			$('head').textContent	= t('grant_site_head');
 			$('host').hidden	= false;
@@ -110,6 +209,11 @@
 			$('fine').textContent	= t('grant_site_fine');
 			$('allow').textContent	= t('grant_site_allow');
 		}
+		// The cautious button holds the focus, so a keyboard alone can answer the
+		// window and a reflexive Return refuses rather than approves. Everything
+		// else -- the disclosure, then Allow -- is a Tab away.
+		$('deny').focus();
+		fit();
 	}
 
 	/// Tells the broker how the user answered, then closes.

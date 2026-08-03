@@ -15,18 +15,12 @@
 set -euo pipefail
 
 HOST='com.oxedyne.daimond.hand'
-CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-DIRS=(
-	"$CONFIG/google-chrome/NativeMessagingHosts"
-	"$CONFIG/google-chrome-beta/NativeMessagingHosts"
-	"$CONFIG/google-chrome-unstable/NativeMessagingHosts"
-	"$CONFIG/chromium/NativeMessagingHosts"
-	"$CONFIG/BraveSoftware/Brave-Browser/NativeMessagingHosts"
-	"$CONFIG/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts"
-	"$CONFIG/microsoft-edge/NativeMessagingHosts"
-	"$CONFIG/vivaldi/NativeMessagingHosts"
-)
+# From `install.sh --paths`, not from a copy of its table. A second list here
+# would drift, and the browsers it forgot would keep a registration nobody could
+# find -- snap and flatpak profiles are exactly the entries a stale copy misses.
+mapfile -t DIRS < <(bash "$HERE/install.sh" --paths)
 
 if [ "${1:-}" = '--dir' ]; then
 	DIRS=("${2:?--dir needs a directory}")

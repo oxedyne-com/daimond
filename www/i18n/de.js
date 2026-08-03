@@ -1279,6 +1279,11 @@
 	'files.forget_root': 'Diesen Ordner vergessen',
 	'files.forget_root_help': 'Diesen Ordner nicht mehr anbieten. Daimond behält nichts von ihm, und beim nächsten Mal wählst du einen aus.',
 	'files.root_forgotten': 'Vergessen. Daimond hat von diesem Ordner nichts mehr.',
+
+	'files.adopted_title.one': 'Ein Diamond wurde zurückgeholt',
+	'files.adopted_title.other': '{n} Diamonds wurden zurückgeholt',
+	'files.adopted_body': 'Daimond hat in diesem Ordner eigene Dateien gefunden und sie zurück in den eigenen Speicher kopiert, wo sie synchronisiert werden: {names}. Die Kopien im Ordner blieben genau dort, unter diamonds/ — Sie können sie löschen, sobald Sie zufrieden sind.',
+	'files.adopted_kept': 'Diese wichen von dem ab, was Daimond bereits hatte, also wurden beide Fassungen behalten:\n{paths}',
 	'files.folder_open_failed': 'Dieser Ordner ließ sich nicht öffnen.',
 	'files.import': 'Importieren',
 	'files.import_body': '„{name}“ in den Arbeitsbereich kopieren? Alles darin wird dann auf deine anderen Geräte synchronisiert und zählt zu deinem Speicher.',
@@ -1349,7 +1354,7 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title': 'Erst dein Guthaben retten?',
-	'forget.credits_body': 'Dieses Konto hält {amount}. Das liegt auf Daimonds Server und wird nur von dieser Identität geöffnet; es zu vergessen verliert es endgültig — ohne Backup gibt es keinen Weg zurück. Jetzt eines exportieren?',
+	'forget.credits_body': 'Dieses Konto hält {amount}. Das liegt auf dem Server von Daimond und wird nur durch diese Identität entsperrt. Ein Backup speichert die Identität in verschlüsselter Form, sodass ein anderes Gerät sie übernehmen kann — aber nur mit der Passphrase dieses Kontos, die im Backup nicht enthalten ist. Ist die Passphrase verloren, holt nichts das Guthaben zurück. Jetzt ein Backup exportieren?',
 	'forget.skip': 'Überspringen',
 	'forget.title': 'Dieses Konto vergessen?',
 	'forget.ok': 'Alles löschen',
@@ -1357,7 +1362,7 @@
 	'forget.tail': 'Es gibt keine Wiederherstellung. Alles ist weg.',
 	'forget.body_secondary': 'Das entfernt das Konto „{name}“ aus diesem Browser — seine Passphrase, Schlüssel, Chats, Diamonds, Ausgaben und Dateien.',
 	'forget.tail_secondary': 'Es gibt keine Wiederherstellung. Andere Konten hier bleiben unberührt.',
-	'forget.abandons': 'Es gibt außerdem {amount} auf dem Server auf, die sich ohne Backup nicht zurückholen lassen.',
+	'forget.abandons': 'Damit werden auch {amount} auf dem Server aufgegeben. Nur diese Identität entsperrt sie, und nur die Passphrase dieses Kontos öffnet ein Backup der Identität.',
 
 	// ── Changing a name, and a passphrase ──────────────────────
 	'rename.title': 'Namen ändern',
@@ -1385,6 +1390,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Diese Backup-Datei ließ sich nicht lesen.',
 	'backup.not_a_backup': 'Das ist kein Daimond-Backup.',
+	'backup.identity_title': 'Kontoidentität wiederhergestellt',
+	'backup.identity_body': 'Das Backup enthielt die Identität für \u201e{name}\u201c, und dieser Browser ist jetzt dieses Konto \u2014 samt der auf dem Server gehaltenen Credits und der Pro-Lizenz. Entsperren Sie es mit der Passphrase dieses Kontos; das Backup enthält sie nicht, und nichts sonst öffnet es.',
+	'backup.identity_kept': 'Dieser Browser hält bereits ein Konto, deshalb blieb die Identität für \u201e{name}\u201c aus dem Backup unangetastet. Alles andere wurde wiederhergestellt.',
+	'backup.identity_failed': 'Die Identität in diesem Backup konnte nicht wiederhergestellt werden.',
 	'backup.restored': 'Backup wiederhergestellt',
 	'backup.n_files.one': '{n} Workspace-Datei',
 	'backup.n_files.other': '{n} Workspace-Dateien',

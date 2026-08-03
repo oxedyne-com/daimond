@@ -98,6 +98,9 @@
 	"grant_allow": {
 		"message": "允许"
 	},
+	"grant_more": {
+		"message": "这项许可管到哪里，管不到哪里"
+	},
 	"grant_mirror_head": {
 		"message": "Daimond 想让你看到它正在操作的标签页"
 	},
@@ -134,6 +137,24 @@
 	"grant_hand_head": {
 		"message": "Daimond 想在这台电脑上运行命令"
 	},
+	"grant_hand_lead": {
+		"message": "程序会在这台电脑上以你的身份、用你的文件运行。这台机器能把它们限制在一个文件夹里，但在那里面它们可以读取和修改任何东西。"
+	},
+	"grant_hand_lead_nofence": {
+		"message": "程序会在这台电脑上以你的身份、用你的文件运行。这台机器无法限制它们碰哪些文件，所以一条命令能碰到你能碰到的一切。"
+	},
+	"grant_hand_lead_unknown": {
+		"message": "程序会在这台电脑上以你的身份、用你的文件运行。这台机器没有说它能把它们限制在什么范围内，所以请把一条命令当作能碰到你能碰到的一切。"
+	},
+	"grant_hand_folder": {
+		"message": "文件夹"
+	},
+	"grant_hand_asked_by": {
+		"message": "请求的页面"
+	},
+	"grant_hand_strongest": {
+		"message": "这是你能允许 Daimond 做的最强的一件事。"
+	},
 	"grant_hand_body": {
 		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell，并且只在工作区已经允许的文件夹里运行。"
 	},
@@ -144,7 +165,7 @@
 		"message": "Daimond 会在这台电脑上运行程序 — 构建、测试、脚本 — 以你的身份，用你的文件。每一个都直接启动，不经过 shell。这台电脑没有说它能把它们限制在哪里，请当作命令能到达你能到达的一切。"
 	},
 	"grant_hand_fine": {
-		"message": "这是你能允许 Daimond 做的最强的一件事。在你这里允许之前，什么都不会运行；每一次运行都会写进一份你可以读的记录。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
+		"message": "在你这里允许之前，什么都不会运行；每一次运行都会写进一份你可以读的记录。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
 	},
 	"grant_hand_caps": {
 		"message": "这台电脑能够保证的：$CAPS$",
@@ -159,7 +180,7 @@
 		"message": "这台电脑上的机器之手没有说它能保证什么。"
 	},
 	"grant_hand_fine_nojournal": {
-		"message": "这是你能允许 Daimond 做的最强的一件事。在你这里允许之前，什么都不会运行；只有上面写明的页面可以提出请求。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
+		"message": "在你这里允许之前，什么都不会运行；只有上面写明的页面可以提出请求。你随时可以从 Daimond Hands 图标撤回，撤回会停下那一刻正在运行的东西。"
 	},
 	"grant_hand_allow": {
 		"message": "允许在这台电脑上运行命令"

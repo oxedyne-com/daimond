@@ -2575,11 +2575,15 @@ fn is_ours(dir: &Path) -> Outcome<bool> {
     for ent in rd {
         let ent  = res!(ent, IO, File);
         let name = ent.file_name().to_string_lossy().to_string();
+        // `root.txt` counts, because the hand puts it here and the installer
+        // writes it here. Without it, the directory the documented install
+        // produces is one the hand refuses to tighten and then refuses to use.
         let mine = (name.starts_with(FILE_STEM) && name.ends_with(FILE_EXT))
             || name.starts_with(STRAY_STEM)
             || name == MARK_FILE
             || name == MARK_TMP
-            || name == LOCK_FILE;
+            || name == LOCK_FILE
+            || name == crate::ROOT_FILE;
         if !mine {
             return Ok(false);
         }
@@ -2624,12 +2628,13 @@ fn ensure_dir(dir: &Path) -> Outcome<()> {
         }
         if res!(too_open(dir)) {
             return Err(err!(
-                "The journal was pointed at '{}', which holds other things and \
-                is readable by users other than its owner. The hand will not \
-                re-permission a directory it did not make, and will not write \
-                the record of every command every Diamond ran somewhere others \
-                can read it. Point DAIMOND_HAND_JOURNAL_DIR at a directory of \
-                its own.", dir.display();
+                "The journal directory '{}' is readable by other users and \
+                holds files the journal did not write, so the hand will not \
+                tighten it -- that would re-permission your files, and leaving \
+                it puts the record of every command every Diamond ran where \
+                others can read it. Fix: chmod 700 '{}', or point \
+                DAIMOND_HAND_JOURNAL_DIR at a directory of its own.",
+                dir.display(), dir.display();
                 Invalid, Configuration, Path, Security));
         }
         return Ok(());
@@ -4857,6 +4862,33 @@ mod tests {
         assert_eq!(mode, 0o755,
             "the journal must not silently tighten a directory it did not make");
         // Refusing is a fine answer; quietly re-permissioning is not.
+        drop(opened);
+        Ok(())
+    }
+
+    /// A directory holding only the record and `root.txt` is one the hand made.
+    ///
+    /// The documented install puts `root.txt` beside the journal, so counting
+    /// it as somebody else's file made the ordinary layout a directory the hand
+    /// would neither tighten nor use -- a refusal produced by following the
+    /// instructions.
+    #[cfg(unix)]
+    #[test]
+    fn test_root_txt_beside_the_journal_is_ours_00() -> Outcome<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let base = res!(scratch("chmod_root_00"));
+        let dir  = base.join("journal");
+        res!(fs::create_dir(&dir), IO, File);
+        res!(fs::write(dir.join(crate::ROOT_FILE), b"/home/u/work\n"), IO, File);
+        let mut p = res!(fs::metadata(&dir), IO, File).permissions();
+        p.set_mode(0o755);
+        res!(fs::set_permissions(&dir, p), IO, File);
+
+        let opened = Journal::open(cfg_at(&dir));
+        assert!(opened.is_ok(), "the hand must open a directory holding only its own files");
+        let mode = res!(fs::metadata(&dir), IO, File).permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700,
+            "a directory holding only the record and root.txt is the hand's, and is tightened");
         drop(opened);
         Ok(())
     }

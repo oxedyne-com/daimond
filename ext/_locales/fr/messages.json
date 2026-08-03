@@ -98,6 +98,9 @@
 	"grant_allow": {
 		"message": "Autoriser"
 	},
+	"grant_more": {
+		"message": "Ce que cela couvre, et ce que cela ne couvre pas"
+	},
 	"grant_mirror_head": {
 		"message": "Daimond veut vous montrer l’onglet qu’il conduit"
 	},
@@ -134,6 +137,24 @@
 	"grant_hand_head": {
 		"message": "Daimond veut exécuter des commandes sur cet ordinateur"
 	},
+	"grant_hand_lead": {
+		"message": "Des programmes s’exécuteraient sur cet ordinateur en votre nom, avec vos fichiers. Cette machine peut les limiter à un seul dossier — à l’intérieur, ils peuvent tout lire et tout modifier."
+	},
+	"grant_hand_lead_nofence": {
+		"message": "Des programmes s’exécuteraient sur cet ordinateur en votre nom, avec vos fichiers. Cette machine ne peut pas limiter les fichiers qu’ils touchent : une commande atteint donc tout ce que vous pouvez atteindre."
+	},
+	"grant_hand_lead_unknown": {
+		"message": "Des programmes s’exécuteraient sur cet ordinateur en votre nom, avec vos fichiers. Cette machine n’a pas dit à quoi elle peut les limiter : traitez donc une commande comme atteignant tout ce que vous pouvez atteindre."
+	},
+	"grant_hand_folder": {
+		"message": "Dossier"
+	},
+	"grant_hand_asked_by": {
+		"message": "Demandé par"
+	},
+	"grant_hand_strongest": {
+		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire."
+	},
 	"grant_hand_body": {
 		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes, et uniquement dans les dossiers que l’espace de travail autorise déjà."
 	},
@@ -144,7 +165,7 @@
 		"message": "Daimond exécuterait des programmes sur cet ordinateur — compilations, tests, scripts — en votre nom, avec vos fichiers. Chacun est lancé directement plutôt que par un interpréteur de commandes. La main ici n’a pas dit à quoi elle peut les limiter : considérez qu’une commande atteint tout ce que vous pouvez atteindre."
 	},
 	"grant_hand_fine": {
-		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire. Rien ne s’exécute tant que vous ne l’autorisez pas ici, chaque exécution est écrite dans un journal que vous pouvez lire, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
+		"message": "Rien ne s’exécute tant que vous ne l’autorisez pas ici, chaque exécution est écrite dans un journal que vous pouvez lire, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
 	},
 	"grant_hand_caps": {
 		"message": "Ce que cet ordinateur peut faire respecter : $CAPS$",
@@ -159,7 +180,7 @@
 		"message": "La main de cet ordinateur n’a pas dit ce qu’elle peut faire respecter."
 	},
 	"grant_hand_fine_nojournal": {
-		"message": "C’est la chose la plus forte que vous puissiez autoriser Daimond à faire. Rien ne s’exécute tant que vous ne l’autorisez pas ici, seule la page nommée ci-dessus peut le demander, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
+		"message": "Rien ne s’exécute tant que vous ne l’autorisez pas ici, seule la page nommée ci-dessus peut le demander, et vous pouvez le retirer à tout moment depuis l’icône Daimond Hands. Le retirer arrête ce qui est en cours à cet instant."
 	},
 	"grant_hand_allow": {
 		"message": "Autoriser les commandes sur cet ordinateur"

@@ -27,6 +27,7 @@
 			<a href="accounts.html" aria-current="page">Comptes</a>
 			<a href="sync.html">Synchronisation entre appareils</a>
 			<a href="spending.html">Dépenses</a>
+			<a href="../machine-operations.html">Commandes sur la machine</a>
 		</nav>
 	</div>
 </header>
@@ -54,7 +55,7 @@
 	<ul>
 		<li><span class="ui">Changer de nom…</span> — renommer l’identité.</li>
 		<li><span class="ui">Changer de phrase secrète…</span> — définir une nouvelle phrase secrète ; vos données chiffrées sont ré-enveloppées sous elle.</li>
-		<li><span class="ui">Exporter une sauvegarde</span> — enregistrer votre identité pour pouvoir la restaurer sur un autre navigateur ou appareil.</li>
+		<li><span class="ui">Exporter une sauvegarde</span> — écrit vos conversations, vos Diamonds et vos fichiers d’espace de travail dans un fichier que vous gardez. Elle restaure votre travail, pas votre compte : votre clé n’y est pas.</li>
 		<li><span class="ui">Importer une sauvegarde…</span> — amener une identité exportée dans ce navigateur.</li>
 		<li><span class="ui">Se déconnecter</span> — verrouiller l’application. Vos données restent sur l’appareil, chiffrées, jusqu’à ce que la phrase secrète soit saisie de nouveau.</li>
 		<li><span class="ui">Oublier cette identité…</span> — retirer définitivement l’identité et ses données chiffrées de ce navigateur.</li>
@@ -69,8 +70,8 @@
 	</ul>
 
 	<h2>Déplacer votre compte d’un appareil à l’autre</h2>
-	<p>Comme il n’y a pas de serveur, votre compte ne vous suit pas automatiquement. Pour l’utiliser sur un autre navigateur ou une autre machine, choisissez <span class="ui">Exporter une sauvegarde</span> ici et <span class="ui">Importer une sauvegarde…</span> là-bas.</p>
-	<div class="note"><strong>Une sauvegarde contient votre identité.</strong> Quiconque l’importe devient vous : traitez donc le fichier de sauvegarde comme la phrase secrète elle-même — gardez-le privé et ne l’envoyez pas par un canal auquel vous ne confieriez pas la phrase secrète.</div>
+	<p>Votre compte est une clé de signature conservée dans ce navigateur, et la phrase secrète ne la recrée pas : elle ne fait que déchiffrer la copie déjà présente ici. La même phrase secrète dans un navigateur neuf ouvre donc un compte <em>distinct</em> avec son propre solde et sans Pro. Deux choses font passer la clé, et rien d’autre : <span class="ui">Associer un autre appareil</span>, qui affiche un code d’association à saisir dans le nouveau navigateur, et une clé d’accès, qui met un nouvel appareil en service d’un seul geste. Faites l’une des deux <strong>avant</strong> de retirer un navigateur, pas après : une fois son stockage parti, la clé est partie avec lui. Utilisez aussi <span class="ui">Exporter une sauvegarde</span> — cela emporte les conversations, les Diamonds et les fichiers d’espace de travail que la clé n’emporte pas.</p>
+	<div class="note"><strong>Une sauvegarde contient tout ce que vous avez écrit.</strong> Pas la clé — l’importer ne fait de personne vous — mais chaque conversation, chaque Diamond et chaque fichier d’espace de travail y figure en clair, alors gardez-la aussi privée que le travail lui-même.</div>
 
 	<h2>Ce qui reste privé</h2>
 	<p>Votre phrase secrète, vos clés de fournisseur, vos identifiants de messagerie, vos chats, vos Diamonds et vos fichiers vivent dans ce navigateur et ne nous sont pas envoyés. Ce que nous détenons sur la passerelle, c’est de l’argent et du texte chiffré : votre solde de crédits et vos licences, et, pour la synchronisation entre appareils, un paquet chiffré que nous ne pouvons pas ouvrir. Nous n’avons pas la clé, nous ne pouvons donc pas lire votre travail.</p>
@@ -95,6 +96,7 @@
 		<a href="accounts.html">Comptes</a>
 		<a href="sync.html">Synchronisation entre appareils</a>
 		<a href="spending.html">Dépenses</a>
+		<a href="../machine-operations.html">Commandes sur la machine</a>
 	</nav>
 </footer>
 </body>

@@ -1281,6 +1281,11 @@
 	'files.forget_root': 'Oublier ce dossier',
 	'files.forget_root_help': 'Ne plus proposer ce dossier. Daimond n’en garde aucune trace, et la prochaine fois vous en choisirez un.',
 	'files.root_forgotten': 'Oublié. Daimond ne garde plus aucune trace de ce dossier.',
+
+	'files.adopted_title.one': 'Un Diamond a été récupéré',
+	'files.adopted_title.other': '{n} Diamonds ont été récupérés',
+	'files.adopted_body': 'Daimond a trouvé ses propres fichiers dans ce dossier et les a recopiés dans son propre stockage, où ils se synchronisent : {names}. Les copies du dossier sont restées exactement où elles étaient, sous diamonds/ — vous pourrez les supprimer une fois rassuré.',
+	'files.adopted_kept': 'Ceux-ci différaient de ce que Daimond avait déjà, donc les deux copies ont été conservées :\n{paths}',
 	'files.folder_open_failed': 'Impossible d’ouvrir ce dossier.',
 	'files.import': 'Importer',
 	'files.import_body': 'Copier « {name} » dans l’espace de travail ? Tout ce qu’il contient se synchronisera alors sur vos autres appareils et comptera dans votre stockage.',
@@ -1351,7 +1356,7 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title': 'Sauver vos crédits d’abord ?',
-	'forget.credits_body': 'Ce compte détient {amount}. C’est gardé sur le serveur de Daimond et déverrouillé par cette seule identité : l’oublier le perd pour de bon — il n’y a aucun moyen de le récupérer sans sauvegarde. En exporter une maintenant ?',
+	'forget.credits_body': 'Ce compte détient {amount}. Cette somme est conservée sur le serveur de Daimond et n\u2019est déverrouillée que par cette identité. Une sauvegarde enregistre l\u2019identité sous forme chiffrée, de sorte qu\u2019un autre appareil puisse la reprendre — mais uniquement avec la phrase secrète de ce compte, que la sauvegarde ne contient pas. Si la phrase secrète est perdue, rien ne peut récupérer le solde. Exporter une sauvegarde maintenant ?',
 	'forget.skip': 'Passer',
 	'forget.title': 'Oublier ce compte ?',
 	'forget.ok': 'Tout effacer',
@@ -1359,7 +1364,7 @@
 	'forget.tail': 'Il n’y a aucune récupération. Tout est perdu.',
 	'forget.body_secondary': 'Cela retire le compte « {name} » de ce navigateur — sa phrase secrète, ses clés, chats, Diamonds, dépenses et fichiers.',
 	'forget.tail_secondary': 'Il n’y a aucune récupération. Les autres comptes d’ici ne sont pas touchés.',
-	'forget.abandons': 'Cela abandonne aussi {amount} détenus sur le serveur, qui ne peuvent pas être récupérés sans sauvegarde.',
+	'forget.abandons': 'Cela abandonne aussi {amount} conservés sur le serveur. Seule cette identité les déverrouille, et seule la phrase secrète de ce compte ouvre une sauvegarde de cette identité.',
 
 	// ── Changing a name, and a passphrase ──────────────────────
 	'rename.title': 'Changer de nom',
@@ -1387,6 +1392,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Ce fichier de sauvegarde n’a pas pu être lu.',
 	'backup.not_a_backup': 'Ce n’est pas une sauvegarde Daimond.',
+	'backup.identity_title': 'Identité du compte restaurée',
+	'backup.identity_body': 'La sauvegarde contenait l\u2019identité de \u00ab\u202f{name}\u202f\u00bb, et ce navigateur est désormais ce compte \u2014 y compris les crédits et la licence Pro conservés sur le serveur. Déverrouillez-le avec la phrase secrète de ce compte\u202f; la sauvegarde ne la contient pas, et rien d\u2019autre ne peut l\u2019ouvrir.',
+	'backup.identity_kept': 'Ce navigateur détient déjà un compte\u202f: l\u2019identité de \u00ab\u202f{name}\u202f\u00bb contenue dans la sauvegarde a été laissée telle quelle. Tout le reste a été restauré.',
+	'backup.identity_failed': 'L\u2019identité de cette sauvegarde n\u2019a pas pu être restaurée.',
 	'backup.restored': 'Sauvegarde restaurée',
 	'backup.n_files.one': '{n} fichier de l’espace de travail',
 	'backup.n_files.other': '{n} fichiers de l’espace de travail',

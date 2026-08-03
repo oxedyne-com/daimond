@@ -95,6 +95,55 @@ from an older hand.
 The hand has one of the two names, so this is evidence and not enforcement. The
 refusal belongs in the page, which has both.
 
+## Where the journal lives — an open question
+
+`~/.local/share/daimond/hand/journal`, and `.local` is hidden. That one fact cost
+an hour on 2026-08-02: a snap Chromium started the hand, snap's `home` interface
+grants only the *non-hidden* files in `$HOME`, and the hand could not open the
+journal — so it exited without writing the record it would have used to say why,
+and Chrome reported a bare "Native host has exited".
+
+Two things have been done and one has not.
+
+**Done.** Every refusal on the startup path now goes to standard error as a
+sentence before the process ends (`refuse` in `src/main.rs`), because Chrome
+copies a native host's standard error into its own log and that is the only
+channel that survives a journal the hand cannot open. And `install/install.sh`
+finds snap and flatpak profiles, refuses to register into them, and says why.
+
+**Not done: the journal has not been moved, and should not be without a
+decision.** The argument for moving it — say to `~/Daimond/hand/journal`, not
+hidden, reachable by a confined browser — is that the override is an environment
+variable and a browser hands a native messaging host *its own* environment, so
+`DAIMOND_HAND_JOURNAL_DIR` cannot reach the hand at all. That is precisely why
+the granted root is a *file*. An escape hatch nobody can operate is not one.
+
+The argument against is stronger, and is why this is written down rather than
+acted on:
+
+- The journal is the tamper-evident record, and its whole value is that its
+  location is predictable and boring. `~/.local/share` is where XDG says
+  application state goes; a visible directory in `$HOME` is a directory users
+  rename, sync, back up into a shared drive, and delete.
+- Moving it strands every existing install's chain. The chain is the product's
+  claim, and a hand that starts a new one because the path changed under it is a
+  hand that has quietly discarded history.
+- It fixes the symptom for one packaging. Flatpak's `--filesystem=home` has the
+  same hidden-file exclusion, and any future confinement will differ again. The
+  refusal at install time works for all of them.
+
+**The recommendation is therefore: keep the path, and fix the override rather
+than the default.** `root.txt` cannot be the model here — it lives *inside* the
+journal directory, so a file naming that directory cannot live there too. The one
+path a browser-launched hand knows without being told is its own: a
+`daimond-hand.journal` beside `/proc/self/exe`, written by `install.sh` when an
+operator asks for a journal elsewhere, would give the escape hatch to the person
+who actually needs it, with no migration and no second guess about where the
+record is by default.
+
+That has not been built. It is a change to where the tamper-evident record can be
+pointed, and that is the user's call rather than this session's.
+
 ## Layout
 
 | File | What it is |
@@ -105,7 +154,7 @@ refusal belongs in the page, which has both.
 | `src/fence.rs` | What a command may touch |
 | `src/seccomp.rs` | What a command may *call* — the half Landlock cannot express |
 | `src/journal.rs` | What was run, what it returned, and what it was refused |
-| `install/` | The host manifest, the installer, and a mock host for tests |
+| `install/` | The host manifest, the installer (`--workspace`, `--check`, `--selftest`), and a mock host for tests |
 
 ## Release gates
 

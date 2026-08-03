@@ -1313,6 +1313,11 @@
 	'files.forget_root_help': '이 폴더를 더는 내놓지 않아요. Daimond은 그 기록을 갖고 있지 않고, 다음에는 새로 고르게 돼요.',
 	'files.root_forgotten':   '잊었어요. Daimond은 그 폴더의 기록을 더는 갖고 있지 않아요.',
 
+	'files.adopted_title.one': 'Diamond 하나를 되찾았어요',
+	'files.adopted_title.other': 'Diamond {n}개를 되찾았어요',
+	'files.adopted_body': '이 폴더 안에서 Daimond 자신의 파일을 찾아, 동기화되는 Daimond 자체 저장소로 다시 복사했어요: {names}. 폴더 안의 사본은 diamonds/ 아래에 그대로 두었으니, 확인이 끝나면 지우면 돼요.',
+	'files.adopted_kept': '다음 파일은 Daimond이 이미 갖고 있던 것과 달라서, 두 사본을 모두 남겼어요:\n{paths}',
+
 	// ── 메시지 하나 읽기 ───────────────────────────────────────
 	'msg.unknown_sender':    '(보낸 사람 모름)',
 	'msg.reply_to':          '회신 주소',
@@ -1377,7 +1382,7 @@
 
 	// ── 계정 지우기 ────────────────────────────────────────────
 	'forget.credits_title':  '크레딧을 먼저 지킬까요?',
-	'forget.credits_body':   '이 계정에는 {amount}이(가) 있어요. Daimond 서버에 있고 이 신원으로만 열리니, 지우면 영영 사라져요 — 백업 없이는 되찾을 길이 없어요. 지금 하나 내보낼까요?',
+	'forget.credits_body':   '이 계정에는 {amount} 이(가) 있어요. 이는 Daimond 서버에 보관되며 이 신원만 잠금을 풀 수 있어요. 백업은 신원을 암호화된 형태로 저장하므로 다른 기기가 이어받을 수 있지만, 이 계정의 암호 문구가 있어야 하고 그 문구는 백업에 들어 있지 않아요. 암호 문구를 잃으면 잔액을 되돌릴 방법은 없어요. 지금 백업을 내보낼까요?',
 	'forget.skip':           '건너뛰기',
 	'forget.title':          '이 계정을 지울까요?',
 	'forget.ok':             '모두 지우기',
@@ -1385,7 +1390,7 @@
 	'forget.tail':           '되살릴 길은 없어요. 전부 사라져요.',
 	'forget.body_secondary': '이 브라우저에서 계정 “{name}”을(를) 치워요 — 그 암호문구, 키, 채팅, Diamond, 지출, 파일까지요.',
 	'forget.tail_secondary': '되살릴 길은 없어요. 여기 다른 계정은 그대로예요.',
-	'forget.abandons':       '서버에 있는 {amount}도 함께 버리게 되는데, 백업 없이는 되찾을 수 없어요.',
+	'forget.abandons':       '서버에 있는 {amount} 도 함께 버려요. 이 신원만 잠금을 풀 수 있고, 그 신원의 백업은 이 계정의 암호 문구로만 열려요.',
 
 	// ── 이름과 암호문구 바꾸기 ─────────────────────────────────
 	'rename.title':               '이름 바꾸기',
@@ -1410,6 +1415,10 @@
 	// ── 백업 ───────────────────────────────────────────────────
 	'backup.unreadable':      '그 백업 파일을 읽을 수 없었어요.',
 	'backup.not_a_backup':    '그건 Daimond 백업이 아니에요.',
+	'backup.identity_title':  '계정 신원을 복원했어요',
+	'backup.identity_body':   '백업에 “{name}”의 신원이 들어 있어서, 이 브라우저는 이제 그 계정이에요. 서버에 보관된 크레딧과 Pro 라이선스도 함께예요. 그 계정의 암호 문구로 잠금을 푸세요. 백업에는 암호 문구가 없고, 다른 방법으로는 열 수 없어요.',
+	'backup.identity_kept':   '이 브라우저에는 이미 계정이 있어서, 백업 안의 “{name}” 신원은 그대로 두었어요. 나머지는 모두 복원했어요.',
+	'backup.identity_failed': '그 백업의 신원을 복원하지 못했어요.',
 	'backup.restored':        '백업을 되살렸어요',
 	'backup.n_files.one':     '작업 공간 파일 {n}개',
 	'backup.n_files.other':   '작업 공간 파일 {n}개',

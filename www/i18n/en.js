@@ -1255,6 +1255,14 @@
 	'files.forget_root_help': 'Stop offering this folder. Daimond keeps no record of it, and the next time you will pick one.',
 	'files.root_forgotten':   'Forgotten. Daimond no longer holds a record of that folder.',
 
+	// Diamond files an earlier build left in a folder, brought back into Daimond's own storage.
+	// Said out loud rather than done quietly: files moved, and the copies in the user's project
+	// are still there for them to delete when they are satisfied.
+	'files.adopted_title.one':   'A Diamond was brought back',
+	'files.adopted_title.other': '{n} Diamonds were brought back',
+	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies in the folder were left exactly where they are, under diamonds/ — you can delete them once you are satisfied.',
+	'files.adopted_kept':        'These differed from what Daimond already held, so both copies were kept:\n{paths}',
+
 	// ── One message, read ──────────────────────────────────────
 	'msg.unknown_sender':    '(unknown sender)',
 	'msg.reply_to':          'Reply-to',
@@ -1319,7 +1327,7 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title':  'Save your credits first?',
-	'forget.credits_body':   'This account holds {amount}. That is kept on Daimond\u2019s server and unlocked only by this identity, so forgetting it loses it for good — there is no way to get it back without a backup. Export one now?',
+	'forget.credits_body':   'This account holds {amount}. That is kept on Daimond\u2019s server and unlocked only by this identity. A backup saves the identity in encrypted form, so another device can take it over — but only with this account\u2019s passphrase, which the backup does not contain. If the passphrase is lost, nothing can bring the balance back. Export a backup now?',
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
 	'forget.ok':             'Erase everything',
@@ -1327,7 +1335,7 @@
 	'forget.tail':           'There is no recovery. Everything is gone.',
 	'forget.body_secondary': 'This removes the account \u201c{name}\u201d from this browser — its passphrase, keys, chats, Diamonds, spend and files.',
 	'forget.tail_secondary': 'There is no recovery. Other accounts here are untouched.',
-	'forget.abandons':       'It also abandons {amount} held on the server, which cannot be recovered without a backup.',
+	'forget.abandons':       'It also abandons {amount} held on the server. Only this identity unlocks it, and only this account\u2019s passphrase opens a backup of the identity.',
 
 	// ── Changing a name, and a passphrase ──────────────────────
 	'rename.title':               'Change name',
@@ -1352,6 +1360,10 @@
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable':      'That backup file could not be read.',
 	'backup.not_a_backup':    'That is not a Daimond backup.',
+	'backup.identity_title':  'Account identity restored',
+	'backup.identity_body':   'The backup carried the identity for \u201c{name}\u201d, and this browser is now that account \u2014 including the credits and Pro licence held on the server for it. Unlock it with that account\u2019s passphrase; the backup does not contain the passphrase, and nothing else can open it.',
+	'backup.identity_kept':   'This browser already holds an account, so the identity for \u201c{name}\u201d in that backup was left alone. Everything else was restored.',
+	'backup.identity_failed': 'The identity in that backup could not be restored.',
 	'backup.restored':        'Backup restored',
 	'backup.n_files.one':     '{n} workspace file',
 	'backup.n_files.other':   '{n} workspace files',

@@ -172,8 +172,12 @@
 		`Daimond's machine hand is not installed on this computer, so no command can be run here. `
 		+ `Chrome could not find the native messaging host "${HOST_NAME}". `
 		+ `The user must build the hand and register it: from the Daimond repository, `
-		+ `run "cargo build --release --manifest-path hand/Cargo.toml" and then "hand/install/install.sh", `
-		+ `which writes one small file per browser and nothing else. `
+		+ `run "cargo build --release --manifest-path hand/Cargo.toml" and then `
+		+ `"hand/install/install.sh --workspace <the folder Daimond may work in>" -- naming the folder `
+		+ `in that same command is what saves a second pass, because the hand refuses to serve a page `
+		+ `until it has been told which folder it may touch, and it never guesses. `
+		+ `Then restart the browser, which reads the registration only at startup. `
+		+ `"hand/install/install.sh --check" says what is still wrong, one line each. `
 		+ `hand/install/README.md is the whole procedure. `
 		+ `Tell them that, and work in the browser instead until it is done.`;
 

@@ -27,6 +27,7 @@
 			<a href="accounts.html" aria-current="page">Cuentas</a>
 			<a href="sync.html">Sincronización entre dispositivos</a>
 			<a href="spending.html">Gastos</a>
+			<a href="../machine-operations.html">Comandos en el equipo</a>
 		</nav>
 	</div>
 </header>
@@ -54,7 +55,7 @@
 	<ul>
 		<li><span class="ui">Cambiar el nombre…</span> — renombra la identidad.</li>
 		<li><span class="ui">Cambiar la frase de paso…</span> — pon una frase de paso nueva; tus datos cifrados se reenvuelven con ella.</li>
-		<li><span class="ui">Exportar una copia de seguridad</span> — guarda tu identidad para poder restaurarla en otro navegador o dispositivo.</li>
+		<li><span class="ui">Exportar una copia de seguridad</span> — escribe tus chats, Diamonds y archivos del espacio de trabajo en un archivo que guardas tú. Restaura tu trabajo, no tu cuenta: tu clave no está dentro.</li>
 		<li><span class="ui">Importar una copia de seguridad…</span> — trae a este navegador una identidad exportada.</li>
 		<li><span class="ui">Cerrar sesión</span> — bloquea la aplicación. Tus datos siguen en el dispositivo, cifrados, hasta que se vuelva a introducir la frase de paso.</li>
 		<li><span class="ui">Olvidar esta identidad…</span> — quita para siempre de este navegador la identidad y sus datos cifrados.</li>
@@ -69,8 +70,8 @@
 	</ul>
 
 	<h2>Llevar tu cuenta de un dispositivo a otro</h2>
-	<p>Como no hay servidor, tu cuenta no te sigue sola. Para usarla en otro navegador o en otra máquina: <span class="ui">Exportar una copia de seguridad</span> aquí y <span class="ui">Importar una copia de seguridad…</span> allí.</p>
-	<div class="note"><strong>Una copia de seguridad contiene tu identidad.</strong> Quien la importe pasa a ser tú, así que trata el archivo de la copia como la propia frase de paso: mantenlo privado y no lo mandes por un canal al que no confiarías la frase de paso.</div>
+	<p>Tu cuenta es una clave de firma guardada en este navegador, y la frase de paso no la recrea: solo descifra la copia que ya está aquí, así que la misma frase de paso en un navegador nuevo empieza una cuenta <em>aparte</em> con su propio saldo y sin Pro. Dos cosas llevan la clave al otro lado, y ninguna más: <span class="ui">Vincular otro dispositivo</span>, que muestra un código de vinculación para teclear en el navegador nuevo, y una passkey, que levanta un dispositivo nuevo en un solo gesto. Haz una de las dos <strong>antes de</strong> quitar un navegador, no después: cuando su almacenamiento se va, la clave se va con él. Usa también <span class="ui">Exportar una copia de seguridad</span> — lleva los chats, Diamonds y archivos del espacio de trabajo que la clave no lleva.</p>
+	<div class="note"><strong>Una copia de seguridad contiene todo lo que has escrito.</strong> La clave no — importarla no convierte a nadie en ti — pero cada chat, Diamond y archivo del espacio de trabajo está ahí en texto plano, así que guárdala tan en privado como el propio trabajo.</div>
 
 	<h2>Lo que queda en privado</h2>
 	<p>Tu frase de paso, tus claves de proveedor, tus credenciales de correo, tus chats, tus Diamonds y tus archivos viven en este navegador y no se nos envían. Lo que tenemos en la pasarela es dinero y texto cifrado: tu saldo de créditos y tus licencias y, para la sincronización entre dispositivos, un paquete cifrado que no podemos abrir. No tenemos la clave, así que no podemos leer tu trabajo.</p>
@@ -95,6 +96,7 @@
 		<a href="accounts.html">Cuentas</a>
 		<a href="sync.html">Sincronización entre dispositivos</a>
 		<a href="spending.html">Gastos</a>
+		<a href="../machine-operations.html">Comandos en el equipo</a>
 	</nav>
 </footer>
 </body>

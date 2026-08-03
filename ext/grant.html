@@ -3,52 +3,186 @@
 <head>
 	<meta charset="utf-8">
 	<title>Daimond Hands</title>
+	<link rel="icon" type="image/svg+xml" href="daimond_mark.svg">
 	<style>
-		:root { color-scheme: light dark; }
+		:root {
+			color-scheme: light dark;
+			/* The edge of anything you can click, at 3:1 against the page. */
+			--edge:	color-mix(in srgb, CanvasText 45%, Canvas);
+			/* A separator, which identifies nothing and needs no floor. */
+			--rule:	color-mix(in srgb, CanvasText 16%, Canvas);
+			/* Secondary text. A real colour rather than an opacity, so it can be
+			   measured: opacity leaves getComputedStyle reporting the colour the
+			   text is NOT drawn in. */
+			--dim:	color-mix(in srgb, CanvasText 78%, Canvas);
+			--soft:	color-mix(in srgb, CanvasText 6%, Canvas);
+			--blue:	#2f6fed;
+		}
+		html, body { height: 100%; }
 		body {
+			display:	flex;
+			flex-direction:	column;
 			font:		15px/1.5 system-ui, sans-serif;
 			margin:		0;
-			padding:	22px;
 			background:	Canvas;
 			color:		CanvasText;
 		}
-		h1 { font-size: 17px; margin: 0 0 14px; }
-		.host {
-			font:		600 20px/1.3 ui-monospace, monospace;
-			padding:	10px 12px;
-			border:		1px solid color-mix(in srgb, CanvasText 22%, transparent);
-			border-radius:	8px;
-			margin:		0 0 14px;
+
+		/* Whose window this is. A permission window that appeared while you were
+		   browsing has to say who is asking before it says what for. */
+		.brand {
+			display:	flex;
+			align-items:	center;
+			gap:		8px;
+			flex:		0 0 auto;
+			padding:	11px 20px;
+			border-bottom:	1px solid var(--rule);
+		}
+		.mark {
+			display:	grid;
+			place-items:	center;
+			flex:		0 0 auto;
+			width:		22px;
+			height:		22px;
+			border-radius:	6px;
+			/* The mark's facets are pale, so it carries its own dark ground in
+			   both palettes rather than disappearing into a light one. */
+			background:	#17181c;
+		}
+		.mark img { display: block; width: 15px; height: 15px; }
+		.brand b { font-size: 13px; letter-spacing: .01em; }
+
+		/* Everything between the brand and the buttons scrolls, so opening the
+		   detail can never push the two buttons out of the window. */
+		.sheet {
+			flex:		1 1 auto;
+			overflow-y:	auto;
+			padding:	16px 20px 14px;
+		}
+		h1 { font-size: 17px; line-height: 1.35; margin: 0 0 12px; }
+		p { margin: 0 0 12px; }
+
+		/* The facts, as two compact rows rather than two labelled boxes. Stacked
+		   with a box each they cost 120px of a 400px window and pushed the
+		   disclosure and the weightiest sentence off the bottom -- which is the
+		   failure this whole change is against. */
+		.facts {
+			display:		grid;
+			grid-template-columns:	max-content 1fr;
+			column-gap:		12px;
+			row-gap:		6px;
+			align-items:		baseline;
+			margin:			0 0 14px;
+		}
+		.label {
+			margin:		0;
+			font-size:	12px;
+			font-weight:	600;
+			letter-spacing:	.04em;
+			text-transform:	uppercase;
+			color:		var(--dim);
+		}
+		.val {
+			margin:		0;
+			font:		600 13px/1.45 ui-monospace, monospace;
+			padding:	3px 6px;
+			border-radius:	5px;
+			background:	var(--soft);
 			word-break:	break-all;
 		}
-		p { margin: 0 0 12px; }
-		.scope { margin-top: -8px; font-size: 13px; opacity: .8; }
-		.fine { opacity: .72; font-size: 13px; }
-		.row { display: flex; gap: 10px; margin-top: 18px; }
+		/* The site question's subject, where the name IS the question. */
+		.host {
+			font:		600 15px/1.4 ui-monospace, monospace;
+			padding:	8px 10px;
+			border:		1px solid var(--edge);
+			border-radius:	8px;
+			background:	var(--soft);
+			margin:		0 0 12px;
+			word-break:	break-all;
+		}
+		.scope { margin-top: -6px; font-size: 13px; color: var(--dim); }
+		.fine { font-size: 13px; color: var(--dim); }
+		.strong { font-weight: 600; }
+
+		/* The disclosure. Everything the short screen does not have room for is
+		   here, one click and one Tab stop away -- never dropped. */
+		details {
+			margin:		14px 0 0;
+			border-top:	1px solid var(--rule);
+		}
+		summary {
+			list-style:	none;
+			cursor:		pointer;
+			padding:	10px 0 2px;
+			font-size:	14px;
+			font-weight:	600;
+			color:		var(--dim);
+		}
+		summary::-webkit-details-marker { display: none; }
+		summary::before {
+			content:	'\25B8';
+			display:	inline-block;
+			width:		1em;
+		}
+		details[open] summary::before { content: '\25BE'; }
+		.more { padding-top: 8px; }
+		.more > :last-child { margin-bottom: 0; }
+
+		.row {
+			display:	flex;
+			gap:		10px;
+			flex:		0 0 auto;
+			padding:	12px 20px 16px;
+			border-top:	1px solid var(--rule);
+		}
 		button {
 			flex:		1;
 			padding:	10px 14px;
 			font:		inherit;
 			font-weight:	600;
 			border-radius:	8px;
-			border:		1px solid color-mix(in srgb, CanvasText 25%, transparent);
-			background:	transparent;
-			color:		inherit;
+			border:		1px solid var(--edge);
+			background:	Canvas;
+			color:		CanvasText;
 			cursor:		pointer;
 		}
 		button.allow {
-			background:	#2f6fed;
-			border-color:	#2f6fed;
+			background:	var(--blue);
+			border-color:	var(--blue);
 			color:		#fff;
+		}
+		:focus-visible {
+			outline:	2px solid var(--blue);
+			outline-offset:	2px;
 		}
 	</style>
 </head>
 <body>
-	<h1 id="head">…</h1>
-	<div class="host" id="host" hidden></div>
-	<p class="scope" id="scope" hidden></p>
-	<p id="body"></p>
-	<p class="fine" id="fine"></p>
+	<div class="brand">
+		<span class="mark"><img src="daimond_mark.svg" alt="" width="15" height="15"></span>
+		<b>Daimond Hands</b>
+	</div>
+
+	<div class="sheet">
+		<h1 id="head">…</h1>
+		<p id="lead" hidden></p>
+		<div class="facts" id="facts" hidden>
+			<p class="label" id="folderlab" hidden></p>
+			<div class="val" id="folder" hidden></div>
+			<p class="label" id="hostlab" hidden></p>
+		</div>
+		<div class="host" id="host" hidden></div>
+		<p class="scope" id="scope" hidden></p>
+		<p id="body"></p>
+		<p class="strong" id="strongest" hidden></p>
+		<details id="more">
+			<summary id="more-sum" data-i18n="grant_more">What this covers, and what it does not</summary>
+			<div class="more" id="moreBody">
+				<p class="fine" id="fine"></p>
+			</div>
+		</details>
+	</div>
+
 	<div class="row">
 		<button id="deny" data-i18n="grant_deny">Not now</button>
 		<button id="allow" class="allow" data-i18n="grant_allow">Allow</button>

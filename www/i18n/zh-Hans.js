@@ -1309,6 +1309,11 @@
 	'files.forget_root_help': '不再提供这个文件夹。Daimond 不会留下它的任何记录，下次你要重新挑一个。',
 	'files.root_forgotten':   '已忘掉。Daimond 不再留有那个文件夹的记录。',
 
+	'files.adopted_title.one': '找回了一个 Diamond',
+	'files.adopted_title.other': '找回了 {n} 个 Diamond',
+	'files.adopted_body': 'Daimond 在这个文件夹里发现了自己的文件，已把它们复制回自己的存储中，那里才会同步：{names}。文件夹里的副本原封不动地留在 diamonds/ 下面 —— 你确认无误后可以删掉。',
+	'files.adopted_kept': '以下文件与 Daimond 已有的内容不同，因此两份都保留了：\n{paths}',
+
 	// ── 读一封邮件 ─────────────────────────────────────────────
 	'msg.unknown_sender':    '（未知发件人）',
 	'msg.reply_to':          '回复地址',
@@ -1373,7 +1378,7 @@
 
 	// ── 忘掉一个账户 ───────────────────────────────────────────
 	'forget.credits_title':  '要先把额度保下来吗？',
-	'forget.credits_body':   '这个账户里有 {amount}。它存在 Daimond 的服务器上，只有这个身份能解开，所以忘掉它就等于永远丢了 — 没有备份就再也拿不回来。现在导出一份吗？',
+	'forget.credits_body':   '此账户持有 {amount}。它保存在 Daimond 的服务器上，只有这个身份能解锁。备份会以加密形式保存这个身份，另一台设备可以接管它 — 但需要此账户的口令，而备份中并不包含口令。口令一旦丢失，余额无法找回。现在导出备份吗？',
 	'forget.skip':           '跳过',
 	'forget.title':          '要忘掉这个账户吗？',
 	'forget.ok':             '全部抹掉',
@@ -1381,7 +1386,7 @@
 	'forget.tail':           '没有恢复的余地。一切都没了。',
 	'forget.body_secondary': '这会把账户“{name}”从这个浏览器里移除 — 它的密码短语、密钥、聊天、Diamond、支出和文件。',
 	'forget.tail_secondary': '没有恢复的余地。这里的其他账户不受影响。',
-	'forget.abandons':       '它还会丢下服务器上存着的 {amount}，没有备份就拿不回来。',
+	'forget.abandons':       '这也会放弃服务器上的 {amount}。只有这个身份能解锁它，而这个身份的备份只有此账户的口令能打开。',
 
 	// ── 改名，以及改密码短语 ───────────────────────────────────
 	'rename.title':               '改名',
@@ -1406,6 +1411,10 @@
 	// ── 备份 ───────────────────────────────────────────────────
 	'backup.unreadable':      '那个备份文件读不出来。',
 	'backup.not_a_backup':    '那不是一份 Daimond 备份。',
+	'backup.identity_title':  '已恢复账户身份',
+	'backup.identity_body':   '备份带来了“{name}”的身份，这个浏览器现在就是该账户，包括服务器上为它保存的额度和 Pro 许可。请用该账户的口令解锁；备份中不含口令，也没有别的办法打开它。',
+	'backup.identity_kept':   '这个浏览器已经有账户，所以备份中“{name}”的身份保持不动。其余内容都已恢复。',
+	'backup.identity_failed': '无法恢复该备份中的身份。',
 	'backup.restored':        '备份已恢复',
 	'backup.n_files.one':     '{n} 个工作区文件',
 	'backup.n_files.other':   '{n} 个工作区文件',

@@ -16,15 +16,34 @@ doing it this way: a background service on a port would be reachable by any page
 you visit, and its only defence would be a secret you had pasted somewhere. Here
 there is nothing to find and nothing to steal — the browser is the doorman.
 
+## Before you start: your browser must not be a snap or a flatpak
+
+A snap or flatpak browser **cannot run Machine Operations**, and this is worth
+checking first because everything below will otherwise appear to succeed.
+
+The confinement extends to the programs the browser starts. The hand is one of
+them, so it may only see the files in `$HOME` that are *not* hidden — and its
+journal is at `~/.local/share/daimond/hand/journal`, behind one that is. The hand
+exits before it can open the journal it would have used to say so, and the
+browser reports only "Native host has exited".
+
+`install.sh` finds these profiles and refuses them by name. The fix is a
+Chromium-family browser installed from a `.deb`. Moving the journal is not a fix:
+the browser hands the hand *its own* environment, so `DAIMOND_HAND_JOURNAL_DIR`
+never reaches it.
+
 ## What you need
 
-- The **Daimond Hands** extension, loaded in your browser. See `ext/README.md`.
-- A **folder** you are content for Daimond to work in. Not your home directory.
-- The **hand** binary, built from this repository.
+- The **Daimond Hands** extension, in this repository at `ext/`.
+- A **folder** you are content for Daimond to work in. That folder bounds
+  everything any command can read or write, so not your home directory.
+- A **.deb** Chromium-family browser, started at least once — the profile
+  directory appears on first run, not when the package is installed.
 
 ## Do this
 
-All four steps, from the top of the Daimond repository. They take about a minute.
+Two commands, from the top of the Daimond repository, then four things in the
+browser.
 
 ### 1. Build it
 
@@ -34,86 +53,68 @@ cargo build --release --manifest-path hand/Cargo.toml
 
 `--manifest-path`, not `-p`: the hand is its own cargo workspace, so `-p` fails.
 
-### 2. Say which folder it may work in
-
-The hand will not serve a page until it has been told. It does not guess, because
-a guessed folder is a guess about what a command may touch.
+### 2. Grant a folder and register the hand
 
 ```sh
-mkdir -p -m 700 ~/.local/share/daimond/hand/journal
-echo "$HOME/work" > ~/.local/share/daimond/hand/journal/root.txt
+hand/install/install.sh --workspace ~/work
 ```
 
-Replace `$HOME/work` with the folder you chose. It must be an absolute path and
-it must already exist.
+Replace `~/work` with the folder you chose; it must already exist. That one
+command creates the journal directory at mode `700`, writes your folder into
+`root.txt` beside it, and writes the host manifest into every usable browser
+profile it finds. It builds nothing, downloads nothing, starts nothing, and needs
+no root.
 
-Three things about this that are easy to get wrong:
+Two things worth knowing rather than discovering:
 
-- **`-m 700` is not decoration.** The journal holds a record of every command
-  every Diamond ran, so the hand refuses to write it into a directory other
-  users can read. It creates its own at `700`; a directory *you* create with the
-  usual umask is `755`, and the hand will refuse to start. The message it gives
-  talks about `DAIMOND_HAND_JOURNAL_DIR`; the fix is `chmod 700`.
-- **The environment variable is a trap.** `DAIMOND_HAND_ROOT` does the same job
-  and takes precedence, and it will not work for a browser you start from a
-  desktop launcher, because your browser hands the hand *its own* environment
-  and yours is not in it. Use the file.
-- **`~/.local/share/daimond/hand/journal` is where the hand puts its journal**,
-  and `root.txt` goes beside it. If you moved the journal with
-  `DAIMOND_HAND_JOURNAL_DIR`, `root.txt` moves with it.
+- **The hand never guesses the folder.** Without `root.txt` it refuses to serve a
+  page at all, because a guessed folder is a guess about what a command may
+  touch.
+- **`DAIMOND_HAND_ROOT` does the same job and is a trap.** It takes precedence,
+  and it will not work for a browser started from a desktop launcher, because
+  the browser hands the hand its own environment. Use the file.
 
-### 3. Register it with your browser
+### 3. Load the extension, and restart the browser
+
+`install.sh` prints the path. At `chrome://extensions`, turn on Developer mode,
+click "Load unpacked", and choose `ext/`. Then restart the browser: it reads the
+registration only at startup.
+
+### 4. In Daimond, open the folder and allow the first command
+
+Both are decisions and neither is automated. The first time Daimond wants to run
+something a window opens and asks you; there is no browser permission for "may
+run programs on this computer", so that window **is** the approval, and the
+extension remembers your answer itself. Until you allow it, nothing runs.
+
+## When something is wrong, run this
 
 ```sh
-hand/install/install.sh
+hand/install/install.sh --check
 ```
 
-The script prints which browsers it found and which file it wrote in each. It
-writes JSON and nothing else: it builds nothing, downloads nothing, starts
-nothing, and needs no root.
+One line per thing that has to be true — browser, registration, binary, journal
+directory, granted folder, fence, extension — and the fix printed under each that
+is not. It changes nothing. This is the first thing to run, before reading
+anything else here.
 
-### 4. Restart your browser
-
-It reads these directories when it starts, and will not notice a file that
-appeared while it was running.
-
-That is the whole of it. Nothing is running yet.
-
-## Check it before you open the browser
-
-Two commands, both harmless, and between them they answer "is this thing set up,
-and is it actually protecting me".
+Two more, both harmless:
 
 ```sh
 hand/target/release/daimond-hand --report
 ```
 
-prints what the fence can enforce on *this* kernel, and — at greater length —
-what it cannot. Read the second list. It is not boilerplate; on a kernel below
-Linux 7.1 it includes a way out of the fence entirely.
+prints what the fence can enforce on *this* kernel and, at greater length, what
+it cannot. Read the second list: on a kernel below Linux 7.1 it includes a way
+out of the fence entirely.
 
 ```sh
 hand/target/release/daimond-hand < /dev/null
 ```
 
-starts the hand the way your browser will, with no browser at the other end.
-
-- `daimond-hand: the page closed the pipe.` — configured, and ready.
-- `This hand has not been told which folder it may work in` — step 2 is missing.
-- `holds other things and is readable by users other than its owner` — the
-  journal directory is not `700`. See step 2.
-
-## Then, in Daimond
-
-The first time Daimond wants to run something, a small window opens and asks
-you. It is the same window that asks whether Daimond may operate a website, and
-it works the same way: allow it, or don't.
-
-This one has no second Chrome prompt behind it. There is no browser permission
-for "may run programs on this computer", so that window **is** the approval, and
-the extension remembers your answer itself.
-
-Until you allow it, nothing can be run. Nothing starts on its own.
+starts the hand the way your browser will. `the page closed the pipe` means it is
+configured and ready; anything else is a sentence naming the path, the cause and
+the fix.
 
 ## What a command can actually reach
 
@@ -159,12 +160,26 @@ hand/install/install.sh --dir /path/to/profile/NativeMessagingHosts /path/to/dai
 A browser started with `--user-data-dir` reads `<that dir>/NativeMessagingHosts`
 and nothing else, which is what this is for.
 
+`--dir` writes into a snap or flatpak profile too, with the warning above, on the
+grounds that naming a directory explicitly means you know better. Expect the hand
+to disconnect on the first command.
+
 ### To see what it would do, without doing it
 
 ```sh
 hand/install/install.sh --list
 hand/install/install.sh --help
 ```
+
+### To check the script itself
+
+```sh
+hand/install/install.sh --selftest
+```
+
+Builds throwaway home directories that look like a snap profile, a flatpak
+profile, a `.deb` profile and nothing at all, runs itself against each, and
+asserts what it says and its exit status. Nothing of yours is touched.
 
 ## To take it back
 
@@ -191,20 +206,24 @@ hand at all. The binary is left where it is; the script did not put it there.
 
 ## When it does not work
 
-**"Daimond's machine hand is not installed on this computer."** The browser
-looked and found no file naming the host. Either `install.sh` has not been run,
-or it was run for a different browser than the one you are using, or the browser
-has not been restarted since. `install.sh --list` shows where it looks.
+Run `hand/install/install.sh --check` first. What follows is what each symptom
+usually turns out to be.
+
+**"Daimond's machine hand is not installed on this computer."** The browser found
+no file naming the host: `install.sh` has not been run, or was run for a
+different browser, or the browser has not been restarted since.
 
 **"The machine hand disconnected without finishing (Native host has exited.)"**
-seen on the *first* command, before anything could have crashed, is almost
-always step 2: the hand read its configuration, refused to serve, and exited.
-Run `hand/target/release/daimond-hand < /dev/null` and it will say which of the
-two reasons it was.
+on the *first* command, before anything could have crashed. The hand read its
+configuration, refused to serve, and exited. Two causes account for nearly all of
+it: a snap or flatpak browser, which cannot reach the journal at all; or no
+`root.txt`. `--check` distinguishes them. So does
+`hand/target/release/daimond-hand < /dev/null`, which prints the refusal as a
+sentence — the same sentence the browser puts in its own log, since Chrome
+captures a native host's standard error.
 
 **"…did not say which folder it was granted."** The hand answered but named no
-root. Same cause, different symptom: `root.txt` is missing, empty, or names a
-folder that does not exist.
+root: `root.txt` is missing, empty, or names a folder that does not exist.
 
 **"Installed but will not talk to this extension."** The file exists but names a
 different extension. This happens if you loaded the extension without the pinned
@@ -228,8 +247,8 @@ That is the fence, working. See "What a command can actually reach".
 
 | File | What it is |
 |---|---|
-| `install.sh` | Writes the host manifest into each browser's directory. |
-| `uninstall.sh` | Removes it again. |
+| `install.sh` | Writes the host manifest into each usable browser's directory, and with `--workspace` the journal directory and `root.txt` too. `--check` diagnoses an install; `--selftest` tests the script. It holds the table of browsers, so it is the one file to edit when a path changes. |
+| `uninstall.sh` | Removes the manifests again. Reads the directory list from `install.sh --paths` rather than keeping a copy, because a stale copy would silently forget the browsers it had not heard of. |
 | `com.oxedyne.daimond.hand.json` | The manifest, for reading, and for registering by hand on a platform the script does not cover yet. `install.sh` writes its own copy rather than editing this one, so the path and the extension id are decided in exactly one place. |
 | `mock_host.py` | A stand-in hand for testing, which speaks the real protocol and runs nothing. See below. |
 

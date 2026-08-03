@@ -152,7 +152,10 @@ const DRAIN_MS: u64 = 3_000;
 const MARKER_RESERVE: usize = 128;
 
 /// The name of the file, beside the journal, that names the granted root.
-const ROOT_FILE: &str = "root.txt";
+///
+/// In `lib.rs` because [`journal`] needs it too, to tell its own directory from
+/// somebody else's.
+use daimond_hand::ROOT_FILE;
 
 /// The variable that names the granted root, which takes precedence over the file.
 const ROOT_VAR: &str = "DAIMOND_HAND_ROOT";
@@ -1623,6 +1626,15 @@ where
 {
     let os = res!(daimond_hand::checked_os());
 
+    // A kernel with no fence refuses every command one at a time, journalled
+    // and answered -- which is right, and is also a page that fails command
+    // after command for a reason nothing has stated. Said once, here.
+    if let Fence::None { why } = &cfg.fence {
+        eprintln!(
+            "daimond-hand: this kernel offers no fence, so every command will be \
+            refused rather than run unconfined: {}", why);
+    }
+
     // No journal, no service. This is the gate `README.md` states and
     // `REVIEW.md` §2.8 found nowhere in code.
     let jr = res!(Journal::open(cfg.journal.clone()));
@@ -1747,6 +1759,181 @@ where
     Ok(ending)
 }
 
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Saying why, when the journal cannot                            │
+// └───────────────────────────────────────────────────────────────┘
+//
+// The hand says everything in the journal, and the failure this section exists
+// for is the failure to open the journal.  A hand that reported it only there
+// would be mute exactly when it had most to say -- which is what happened: a
+// snap Chromium started the hand, the hand could not open a journal behind a
+// hidden directory, and it exited with Chrome reporting nothing but "Native
+// host has exited".  Diagnosis took an hour.
+//
+// Standard error is the one channel that survives, because Chrome copies a
+// native messaging host's standard error into its own log.  So every refusal on
+// the startup path goes through [`refuse`], in words, before the process ends.
+
+/// Written and removed to find out whether the journal directory can be written.
+const PROBE_FILE: &str = ".daimond-hand-write-probe";
+
+/// Whether the hand can get at the directory the record lives in.
+enum Reach {
+    /// It can be read and written, or it is merely absent and can be made.
+    Ok,
+    /// It, or the nearest ancestor that exists, would not open.
+    Closed {
+        /// The path that would not open.
+        at:  PathBuf,
+        /// What the operating system said.
+        why: String,
+    },
+    /// It is there and cannot be written.
+    Frozen {
+        /// The directory.
+        at:  PathBuf,
+        /// What the operating system said.
+        why: String,
+    },
+}
+
+/// Asks whether the journal directory can be reached, without opening a journal.
+///
+/// Walks up until something exists, because an absent directory is not a fault
+/// -- the journal makes its own -- and a directory whose *parent* cannot be
+/// opened is.
+///
+/// # Arguments
+/// * `dir` - Where the record is to live.
+fn reach(dir: &Path) -> Reach {
+    let mut at = Some(dir);
+    while let Some(cur) = at {
+        match fs::read_dir(cur) {
+            Ok(_)                                                 => return writable(cur),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound	=> at = cur.parent(),
+            Err(e) => return Reach::Closed {
+                at:  cur.to_path_buf(),
+                why: fmt!("{}", e),
+            },
+        }
+    }
+    Reach::Ok
+}
+
+/// Whether a directory can be written, found out by writing in it and tidying up.
+///
+/// Only ever called after something has already failed, so the probe file costs
+/// nothing on the path that works.
+///
+/// # Arguments
+/// * `dir` - The directory.
+fn writable(dir: &Path) -> Reach {
+    let p = dir.join(PROBE_FILE);
+    match fs::OpenOptions::new().create(true).write(true).truncate(true).open(&p) {
+        Ok(_) => {
+            let _ = fs::remove_file(&p);
+            Reach::Ok
+        },
+        Err(e) => Reach::Frozen {
+            at:  dir.to_path_buf(),
+            why: fmt!("{}", e),
+        },
+    }
+}
+
+/// The first hidden component of a path inside `$HOME`, where there is one.
+///
+/// This is the whole difference between a path a confined browser's child can
+/// open and one it cannot: snap's `home` interface and flatpak's `--filesystem`
+/// grant the non-hidden files in a home directory and nothing else.
+///
+/// # Arguments
+/// * `p` - The path.
+fn hidden_in_home(p: &Path) -> Option<String> {
+    let home = match std::env::var("HOME") {
+        Ok(h) if !h.is_empty()	=> PathBuf::from(h),
+        _						=> return None,
+    };
+    hidden_under(p, &home)
+}
+
+/// The first hidden component of `p` below `home`, where there is one.
+///
+/// Separate from [`hidden_in_home`] so a test can ask the question without
+/// setting `HOME` out from under every other test in the binary.
+///
+/// # Arguments
+/// * `p`    - The path.
+/// * `home` - The home directory it may be under.
+fn hidden_under(p: &Path, home: &Path) -> Option<String> {
+    let rest = match p.strip_prefix(home) {
+        Ok(r)  => r,
+        Err(_) => return None,
+    };
+    for c in rest.components() {
+        let s = c.as_os_str().to_string_lossy();
+        if s.len() > 1 && s.starts_with('.') {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
+/// Says on standard error why the hand will not serve, before the process ends.
+///
+/// Each line stands alone, because it will be read out of context in a browser
+/// log by somebody already confused: what was attempted, what stopped it, what
+/// to do.
+///
+/// # Arguments
+/// * `e` - The refusal.
+fn refuse(e: &Error<ErrTag>) {
+    // The cause before the symptom.  Where the journal directory will not open,
+    // every other refusal is downstream of it -- and "write your folder into
+    // root.txt" is actively misleading advice about a file in a directory
+    // nothing can read.
+    if let Some(n) = journal_note() {
+        eprintln!("daimond-hand: {}", n);
+    }
+    eprintln!("daimond-hand: {}", e.plain());
+    eprintln!(
+        "daimond-hand: 'hand/install/install.sh --check' lists what has to be \
+        true, and the fix for each thing that is not.");
+}
+
+/// The sentence about the record's own directory, where there is one to say.
+///
+/// # Returns
+/// What is wrong with the journal directory and what to do about it, or `None`
+/// where it can be reached and the refusal is about something else.
+fn journal_note() -> Option<String> {
+    let dir = match journal::default_dir() {
+        Ok(d)  => d,
+        Err(_) => return None,	// The refusal itself is that there is no such path.
+    };
+    let (at, why, verb) = match reach(&dir) {
+        Reach::Ok					=> return None,
+        Reach::Closed { at, why }	=> (at, why, "could not be opened"),
+        Reach::Frozen { at, why }	=> (at, why, "cannot be written"),
+    };
+    Some(match hidden_in_home(&at) {
+        // The hour. A confined browser hands the hand its confinement, and the
+        // record is behind a hidden directory, so the hand cannot write the one
+        // thing it would have used to explain itself.
+        Some(h) => fmt!(
+            "the journal at '{}' {}: {}. '{}' is hidden, and a snap or flatpak \
+            browser lets the programs it starts see only the files in $HOME \
+            that are not -- so the hand exits before it can say so. Fix: a \
+            Chromium-family browser installed from a .deb. \
+            DAIMOND_HAND_JOURNAL_DIR will not help, because the browser gives \
+            this program its own environment rather than yours.",
+            at.display(), verb, why, h),
+        None => fmt!(
+            "the journal at '{}' {}: {}. Nothing is served without a record of \
+            it.", at.display(), verb, why),
+    })
+}
+
 /// Reads where the journal goes, which folder is granted, and what can be enforced.
 fn configure() -> Outcome<Serve> {
     let dir  = res!(journal::default_dir());
@@ -1775,9 +1962,14 @@ fn host() -> Outcome<()> {
 ///
 /// The launcher arm comes first and never returns; everything else is either a
 /// person at a terminal or a browser at a pipe.
-fn main() -> Outcome<()> {
+///
+/// Nothing is returned to the runtime.  `fn main() -> Outcome<()>` ends a
+/// refusal with `Error: UpstreamErr{"src/main.rs:1764"}` and two more frames of
+/// the same, which is a stack trace where a sentence was wanted; [`refuse`]
+/// writes the sentence instead.
+fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(|s| s.as_str()) {
+    let done = match args.first().map(|s| s.as_str()) {
         // The launcher, and the first thing this binary looks at.
         //
         // `exec.rs` re-executes the hand to apply a fence and then become the
@@ -1800,6 +1992,10 @@ fn main() -> Outcome<()> {
             Invalid, Input)),
         // No arguments means a pipe as well, which is how a test drives it.
         None => host(),
+    };
+    if let Err(e) = done {
+        refuse(&e);
+        std::process::exit(1);
     }
 }
 
@@ -2385,6 +2581,97 @@ mod tests {
         }
         // The refusal was written down before it was sent.
         assert!(res!(kinds(&jdir)).contains(&fmt!("refused")));
+        Ok(())
+    }
+
+    // ── Saying why, when the journal cannot ─────────────────────────
+    //
+    // The hour of 2026-08-02: a snap Chromium started the hand, the hand could
+    // not open a journal behind `~/.local`, and it exited with Chrome reporting
+    // "Native host has exited" and the hand reporting nothing -- because the
+    // thing it could not do was the thing it would have used to say so.
+
+    /// The hidden component that a confined browser cannot reach is named.
+    #[test]
+    fn a_hidden_directory_under_home_is_named() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            hidden_under(Path::new("/home/u/.local/share/daimond/hand/journal"), home),
+            Some(fmt!(".local")),
+            "the component a snap cannot open is the one to name");
+        // A journal somewhere the browser CAN reach says nothing about snap,
+        // because saying it would send the next hour the wrong way.
+        assert_eq!(hidden_under(Path::new("/home/u/daimond/journal"), home), None);
+        // Outside the home directory the confinement does not apply.
+        assert_eq!(hidden_under(Path::new("/srv/daimond/journal"), home), None);
+        // The home directory's own name may start with a dot without that
+        // meaning anything about what is inside it.
+        assert_eq!(hidden_under(Path::new("/home/.u/work"), Path::new("/home/.u")), None);
+    }
+
+    /// A journal directory that will not open is reported, and named.
+    #[cfg(unix)]
+    #[test]
+    fn an_unopenable_journal_directory_is_reported() -> Outcome<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir  = res!(scratch("reach-closed"));
+        let jdir = dir.join("journal");
+        res!(fs::create_dir(&jdir));
+        res!(fs::set_permissions(&jdir, fs::Permissions::from_mode(0o000)), IO, File);
+        let got = reach(&jdir);
+        // Restored before any assertion, so a failure does not leave a
+        // directory the next `cargo clean` cannot remove.
+        res!(fs::set_permissions(&jdir, fs::Permissions::from_mode(0o700)), IO, File);
+        match got {
+            Reach::Closed { at, .. } => assert_eq!(at, jdir),
+            _ => return Err(err!(
+                "A journal directory at mode 000 must be reported as closed, \
+                which is the snap failure in a form a test can make."; Test, Bug)),
+        }
+        Ok(())
+    }
+
+    /// A journal directory that will not take a file is reported, and named.
+    #[cfg(unix)]
+    #[test]
+    fn an_unwritable_journal_directory_is_reported() -> Outcome<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir  = res!(scratch("reach-frozen"));
+        let jdir = dir.join("journal");
+        res!(fs::create_dir(&jdir));
+        res!(fs::set_permissions(&jdir, fs::Permissions::from_mode(0o500)), IO, File);
+        let got = reach(&jdir);
+        res!(fs::set_permissions(&jdir, fs::Permissions::from_mode(0o700)), IO, File);
+        match got {
+            Reach::Frozen { at, .. } => assert_eq!(at, jdir),
+            _ => return Err(err!(
+                "A readable directory that takes no file must be reported as \
+                frozen: the hand cannot write the record and will exit."; Test, Bug)),
+        }
+        Ok(())
+    }
+
+    /// A directory that is merely absent is not a fault, and the probe leaves nothing.
+    #[test]
+    fn an_absent_journal_directory_is_not_a_fault() -> Outcome<()> {
+        let dir = res!(scratch("reach-ok"));
+        // Absent, with a reachable ancestor: the journal makes its own.
+        match reach(&dir.join("not").join("there").join("yet")) {
+            Reach::Ok => {},
+            _ => return Err(err!(
+                "An absent journal directory under a writable ancestor must not \
+                be reported as unreachable, or every first run says so."; Test, Bug)),
+        }
+        match reach(&dir) {
+            Reach::Ok => {},
+            _ => return Err(err!("A writable directory must be reachable."; Test, Bug)),
+        }
+        let left: Vec<_> = res!(fs::read_dir(&dir), IO, File)
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(left.is_empty(),
+            "the write probe must tidy up after itself, found {:?}", left);
         Ok(())
     }
 

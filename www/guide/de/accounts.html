@@ -27,6 +27,7 @@
 			<a href="accounts.html" aria-current="page">Konten</a>
 			<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 			<a href="spending.html">Ausgaben</a>
+			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
 		</nav>
 	</div>
 </header>
@@ -54,7 +55,7 @@
 	<ul>
 		<li><span class="ui">Namen ändern…</span> — die Identität umbenennen.</li>
 		<li><span class="ui">Passphrase ändern…</span> — eine neue Passphrase setzen; Ihre verschlüsselten Daten werden darunter neu verpackt.</li>
-		<li><span class="ui">Backup exportieren</span> — Ihre Identität sichern, damit Sie sie in einem anderen Browser oder auf einem anderen Gerät wiederherstellen können.</li>
+		<li><span class="ui">Backup exportieren</span> — schreibt Ihre Chats, Diamonds und Workspace-Dateien in eine Datei, die Sie behalten. Sie stellt Ihre Arbeit wieder her, nicht Ihr Konto: Ihr Schlüssel ist nicht darin.</li>
 		<li><span class="ui">Backup importieren…</span> — eine exportierte Identität in diesen Browser holen.</li>
 		<li><span class="ui">Abmelden</span> — die App sperren. Ihre Daten bleiben verschlüsselt auf dem Gerät, bis die Passphrase wieder eingegeben wird.</li>
 		<li><span class="ui">Diese Identität vergessen…</span> — die Identität und ihre verschlüsselten Daten endgültig aus diesem Browser entfernen.</li>
@@ -69,8 +70,8 @@
 	</ul>
 
 	<h2>Ihr Konto zwischen Geräten bewegen</h2>
-	<p>Da es keinen Server gibt, folgt Ihnen Ihr Konto nicht von selbst. Um es in einem anderen Browser oder auf einem anderen Rechner zu nutzen: <span class="ui">Backup exportieren</span> hier, und <span class="ui">Backup importieren…</span> dort.</p>
-	<div class="note"><strong>Ein Backup enthält Ihre Identität.</strong> Wer es importiert, wird zu Ihnen; behandeln Sie die Backup-Datei also wie die Passphrase selbst — halten Sie sie privat und schicken Sie sie über keinen Kanal, dem Sie die Passphrase nicht anvertrauen würden.</div>
+	<p>Ihr Konto ist ein Signaturschlüssel, der in diesem Browser liegt, und die Passphrase erzeugt ihn nicht neu — sie entschlüsselt nur die hier bereits gespeicherte Kopie. Dieselbe Passphrase in einem frischen Browser beginnt deshalb ein <em>eigenes</em> Konto mit eigenem Guthaben und ohne Pro. Zwei Dinge tragen den Schlüssel hinüber, sonst nichts: <span class="ui">Weiteres Gerät verknüpfen</span>, das einen Kopplungscode zeigt, den Sie im neuen Browser eintippen, und ein Passkey, der ein neues Gerät in einer Geste einrichtet. Tun Sie eines davon, <strong>bevor</strong> Sie einen Browser entfernen, nicht danach — ist sein Speicher erst weg, ist der Schlüssel mit ihm weg. Nutzen Sie außerdem <span class="ui">Backup exportieren</span> — das trägt die Chats, Diamonds und Workspace-Dateien, die der Schlüssel nicht trägt.</p>
+	<div class="note"><strong>Ein Backup enthält alles, was Sie geschrieben haben.</strong> Nicht den Schlüssel — wer es importiert, wird dadurch nicht zu Ihnen — aber jeder Chat, jedes Diamond und jede Workspace-Datei steht darin im Klartext, also halten Sie es so privat wie die Arbeit selbst.</div>
 
 	<h2>Was privat bleibt</h2>
 	<p>Ihre Passphrase, Anbieterschlüssel, Mail-Zugangsdaten, Chats, Diamonds und Dateien liegen in diesem Browser und werden nicht an uns gesendet. Was wir auf dem Gateway halten, ist Geld und Chiffrat: Ihr Guthabensaldo und Ihre Lizenzen und, für die geräteübergreifende Synchronisierung, ein verschlüsseltes Paket, das wir nicht öffnen können. Wir haben den Schlüssel nicht, also können wir Ihre Arbeit nicht lesen.</p>
@@ -95,6 +96,7 @@
 		<a href="accounts.html">Konten</a>
 		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 		<a href="spending.html">Ausgaben</a>
+		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
 	</nav>
 </footer>
 </body>

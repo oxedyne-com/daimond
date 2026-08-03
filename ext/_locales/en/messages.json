@@ -98,6 +98,9 @@
 	"grant_allow": {
 		"message": "Allow"
 	},
+	"grant_more": {
+		"message": "What this covers, and what it does not"
+	},
 	"grant_mirror_head": {
 		"message": "Daimond wants to show you the tab it is driving"
 	},
@@ -134,6 +137,24 @@
 	"grant_hand_head": {
 		"message": "Daimond wants to run commands on this computer"
 	},
+	"grant_hand_lead": {
+		"message": "Programs would run on this computer as you, with your files. This machine can hold them to one folder — inside it, they can read and change anything."
+	},
+	"grant_hand_lead_nofence": {
+		"message": "Programs would run on this computer as you, with your files. This machine cannot limit which files they touch, so a command reaches everything you can reach."
+	},
+	"grant_hand_lead_unknown": {
+		"message": "Programs would run on this computer as you, with your files. This machine did not say what it can limit them to, so treat a command as reaching everything you can reach."
+	},
+	"grant_hand_folder": {
+		"message": "Folder"
+	},
+	"grant_hand_asked_by": {
+		"message": "Asked by"
+	},
+	"grant_hand_strongest": {
+		"message": "This is the strongest thing you can allow Daimond to do."
+	},
 	"grant_hand_body": {
 		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell, and only inside the folders the workspace already allows."
 	},
@@ -144,7 +165,7 @@
 		"message": "Daimond would run programs on this computer — builds, tests, scripts — as you, with your files. Each one is started directly rather than through a shell. The hand here did not say what it can limit them to, so treat a command as reaching everything you can reach."
 	},
 	"grant_hand_fine": {
-		"message": "This is the strongest thing you can allow Daimond to do. Nothing runs until you allow it here, every run is written to a journal you can read, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
+		"message": "Nothing runs until you allow it here, every run is written to a journal you can read, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
 	},
 	"grant_hand_caps": {
 		"message": "What this computer can enforce: $CAPS$",
@@ -159,7 +180,7 @@
 		"message": "The hand on this computer did not say what it can enforce."
 	},
 	"grant_hand_fine_nojournal": {
-		"message": "This is the strongest thing you can allow Daimond to do. Nothing runs until you allow it here, only the page named above may ask, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
+		"message": "Nothing runs until you allow it here, only the page named above may ask, and you can withdraw this at any time from the Daimond Hands icon. Withdrawing it stops whatever is running at that moment."
 	},
 	"grant_hand_allow": {
 		"message": "Allow commands on this computer"
