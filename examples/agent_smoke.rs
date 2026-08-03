@@ -35,11 +35,9 @@ async fn run() -> Outcome<()> {
     );
     let agent = Agent::new(llm, "You are Daimond, a coding agent.");
 
-    // Fresh temp workspace.
-    let mut dir = std::env::temp_dir();
-    let n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    dir.push(fmt!("daimond_smoke_{}", n));
+    // A fresh workspace under the user cache. Not `std::env::temp_dir()`: `/tmp`
+    // is a tmpfs, so whatever the agent writes there stays resident in memory.
+    let dir = res!(oxedyne_fe2o3_test::scratch::scratch_dir("daimond_smoke"));
     let ws = res!(Workspace::new(dir.clone()));
     let ctx = ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: oxedyne_daimond::tools::FileRoot::Workspace, read_seen: oxedyne_daimond::tools::new_read_cache(), no_write: Vec::new() };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);

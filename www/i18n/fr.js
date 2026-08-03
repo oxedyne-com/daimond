@@ -403,6 +403,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Synchronisation en pause',
 	'sync.too_big_reason': 'Le colis de cet appareil est trop gros pour être envoyé, son travail ne circule donc plus. La cause habituelle est un Diamond ou un fichier de l’espace de travail très volumineux — retirez-le ou réduisez-le, et la synchronisation repart d’elle-même.',
+	'sync.diamonds_left.one': '{n} Diamond n’a pas tenu dans le colis de synchronisation de cet appareil : il n’atteindra vos autres appareils qu’une fois plus petit : {names}',
+	'sync.diamonds_left.other': '{n} Diamonds n’ont pas tenu dans le colis de synchronisation de cet appareil : ils n’atteindront vos autres appareils qu’une fois plus petits : {names}',
 	// Une session terminée et impossible à reprendre. Même libellé que ci-dessous :
 	// ce qui compte est que le travail de cet appareil ne circule plus.
 	'sync.signed_out': 'Synchronisation en pause',
@@ -416,6 +418,10 @@
 	'sync.when_mins': 'il y a {n} min',
 	'sync.when_hours': 'il y a {n} h',
 	'sync.when_days': 'il y a {n} j',
+
+	// ── Cloud storage cleanup ──────────────────────────────────
+	'chunks.sweep_held': 'Nettoyage en pause',
+	'chunks.sweep_held_reason': 'Le stockage cloud conserve {n} de ses {m} fragments enregistrés auxquels plus aucun fichier de ce compte ne renvoie. Ils n’ont PAS été supprimés : aucune requête ne peut retirer plus de la moitié de ce qui est stocké, et cet appareil n’est pas en mesure d’insister. Rien ne vous manque — l’espace est libéré à la prochaine synchronisation capable de tout justifier.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Associer un autre appareil',
@@ -597,6 +603,10 @@
 	'settings.max_tokens': 'Réponse la plus longue',
 	'settings.max_tokens_auto': 'Automatique',
 	'settings.tokens': 'jetons',
+	'settings.max_rounds': 'Étapes par tour',
+	'settings.max_rounds_auto': 'Par défaut',
+	'settings.steps': 'étapes',
+	'settings.max_rounds_note': 'Combien de fois un agent peut utiliser un outil avant qu’un tour s’arrête. Il le dit en s’arrêtant, et vous pouvez lui demander de continuer.',
 	'settings.max_tokens_note': 'Longueur maximale d’une seule réponse. Trop basse, et un gros fichier arrive coupé en deux.',
 	'settings.max_tokens_ceiling': 'accepte jusqu’à',
 
@@ -930,6 +940,8 @@
 	'tile.delete_chat_empty': 'Supprimer « {name} » ?',
 	'tile.start': 'Démarrer',
 	'tile.start_help': 'Confirmez le modèle et démarrez ce chat',
+	'tile.workers': 'Ouvriers',
+	'tile.worker_model_help': 'Le modèle sur lequel tournent les ouvriers dépêchés par un Diamond taillé dans ce chat ; si vous n’y touchez pas, ils tournent sur le modèle du chat lui-même.',
 	'tile.folded': 'Replié',
 	'tile.fold_all': 'Tout replier',
 	'tile.folded_help': 'Déjà replié dans « {name} » — repliez encore pour ajouter ce qui est venu depuis.',
@@ -971,6 +983,9 @@
 	'rail.create': 'Créer',
 	'rail.name': 'Nom',
 	'rail.model': 'Modèle',
+	'rail.worker_model': 'Modèle pour les ouvriers',
+	'rail.worker_model_help': 'Le daimon de ce Diamond dépêche des ouvriers, plusieurs à la fois ; si vous n’y touchez pas, ils tournent sur le modèle du Diamond lui-même.',
+	'rail.err_no_key_worker': 'Le fournisseur des ouvriers n’a pas encore de clé lisible, ils retomberaient donc sur le modèle du Diamond — déverrouillez-le, ou choisissez-en un autre.',
 	'rail.err_name': 'Donnez un nom au Diamond.',
 	'rail.err_model': 'Choisissez un modèle avec lequel ce Diamond va penser.',
 	'rail.err_no_key': 'Ce fournisseur n’a pas encore de clé lisible — déverrouillez, ou ajoutez-en une.',
@@ -1127,6 +1142,12 @@
 	'dws.empty': 'Rien n’est encore gardé avec ce Diamond. Ce que vous gardez ici est ce que son daimon peut ouvrir.',
 	'dws.attach_dir': 'Garder ce dossier avec {name}',
 	'dws.detach_dir': 'Ne plus garder ce dossier avec {name}',
+	'dws.kits': 'Chaînes d’outils',
+	'dws.kits_help': 'Quels compilateurs et gestionnaires de paquets une commande de ce Diamond peut atteindre sur votre ordinateur. Désactivé tant que vous ne l’autorisez pas — rien ici n’est choisi par un daimon.',
+	'dws.kit_on': 'Accorder la chaîne {kit} à {name}',
+	'dws.kit_off': 'Retirer la chaîne {kit} à {name}',
+	'dws.kit_failed': 'Cette chaîne d’outils n’a pas été enregistrée',
+	'dws.kit_none': 'Aucune chaîne d’outils. Une commande atteint les fichiers de ce Diamond et rien d’autre sur votre ordinateur.',
 	'dws.elsewhere': 'Vit dans l’espace de travail',
 	'dws.readonly': 'Lecture seule',
 
@@ -1286,6 +1307,8 @@
 	'files.adopted_title.other': '{n} Diamonds ont été récupérés',
 	'files.adopted_body': 'Daimond a trouvé ses propres fichiers dans ce dossier et les a recopiés dans son propre stockage, où ils se synchronisent : {names}. Les copies du dossier sont restées exactement où elles étaient, sous diamonds/ — vous pourrez les supprimer une fois rassuré.',
 	'files.adopted_kept': 'Ceux-ci différaient de ce que Daimond avait déjà, donc les deux copies ont été conservées :\n{paths}',
+	'files.adopt_left_title': 'Certains fichiers sont restés dans le dossier',
+	'files.adopted_skipped': 'Ceux-ci n’ont pas été copiés — plus de 8 Mio, ou illisibles — : un Diamond qui en a besoin est donc ici sans eux, voire pas là du tout :\n{paths}',
 	'files.folder_open_failed': 'Impossible d’ouvrir ce dossier.',
 	'files.import': 'Importer',
 	'files.import_body': 'Copier « {name} » dans l’espace de travail ? Tout ce qu’il contient se synchronisera alors sur vos autres appareils et comptera dans votre stockage.',
@@ -1402,6 +1425,8 @@
 	'backup.n_diamonds.one': '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body': '{files} et {diamonds} restaurés. Daimond va recharger pour ouvrir votre espace de travail restauré.',
+	'backup.n_foreign.one': '{n} fichier de cette sauvegarde appartient à un autre compte du navigateur d’où elle vient, il n’a donc pas été restauré et n’existe plus que dans le fichier de sauvegarde.',
+	'backup.n_foreign.other': '{n} fichiers de cette sauvegarde appartiennent à un autre compte du navigateur d’où elle vient, ils n’ont donc pas été restaurés et n’existent plus que dans le fichier de sauvegarde.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Autre (saisie manuelle)…',

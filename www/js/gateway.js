@@ -210,6 +210,28 @@
 		return path.indexOf('/api/account') === 0 || path.indexOf('/api/auth/') === 0;
 	}
 
+	/// Is this request one that a bootstrap in flight is making ITSELF?
+	///
+	/// Such a request must not answer a 401 by renewing: it would await the very
+	/// promise it is running inside, and the tab would hang there for good. The
+	/// authentication calls are one class of those; the other two are the balance
+	/// and licence reads at the end of `bootstrap()`, and only while one is
+	/// running.
+	///
+	/// Named by PATH rather than taken from the `authing` flag alone, and that
+	/// distinction is the whole point. A flag says only that a bootstrap is
+	/// happening SOMEWHERE, and refusing to renew on the strength of that breaks
+	/// the case this mechanism exists for: several panels are refused in the same
+	/// moment, one of them starts the renewal, and the rest land in the middle of
+	/// it. Those are not the bootstrap's calls and cannot deadlock on it -- they
+	/// simply wait for the attempt in flight and ask again, which is what the
+	/// single-flight `reauth()` is for.
+	function isBootstrapOwn(path) {
+		if (isAuthPath(path)) return true;
+		if (!authing) return false;
+		return path.indexOf('/api/balance') === 0 || path.indexOf('/api/licence') === 0;
+	}
+
 	/// Take a session again after one was refused, once, however many callers ask.
 	///
 	/// Guarded on the identity: the account IS the device key, so with the app
@@ -218,6 +240,17 @@
 	/// just logged out of -- every logout path locks the identity first.
 	///
 	/// Returns whether there is a session now.
+	///
+	/// The attempt in flight is cleared in a `finally`, and that is not tidiness.
+	/// It used to be cleared on the way past a value, so an attempt that THREW
+	/// left the rejected promise standing as `reauthing` -- and every later call
+	/// took the `if (reauthing)` arm and re-threw the same failure, for the life
+	/// of the page. One renewal that fell over meant no session again, ever,
+	/// short of a reload. `bootstrap()` catches broadly, but the six lines before
+	/// its `try` -- `isUnlocked()`, `publicKeyB64url()`, a `localStorage` read --
+	/// are outside it, and localStorage throws outright where storage access is
+	/// denied. So the wedge is reachable, and it is one keystroke away from being
+	/// reachable again whatever those lines become next.
 	async function reauth() {
 		if (reauthing) return await reauthing;
 		state.authed = false;			// true from here would be a lie, whatever follows.
@@ -239,9 +272,8 @@
 			}
 			return got;
 		})();
-		var out = await reauthing;
-		reauthing = null;
-		return out;
+		try { return await reauthing; }
+		finally { reauthing = null; }
 	}
 
 	/// Come back to a renewal that did not work, after a wait that grows.
@@ -261,17 +293,70 @@
 		}, wait);
 	}
 
+	/// One gateway request, with the one refusal the app can put right itself.
+	///
+	/// THE ONE COPY. Four sibling files -- mail, tools, pairing, passkey -- each
+	/// held an identical private version of this, and sync a fifth in a different
+	/// shape; five copies of a rule that has to be the same rule in all five
+	/// places. It lives here now, beside the renewal it drives, and every caller
+	/// reaches it through `DaimondGateway.gwFetch`.
+	///
+	/// RENEW ONCE, RETRY ONCE, AND OTHERWISE HAND BACK THE ORIGINAL 401. An
+	/// identity that genuinely cannot authenticate must surface rather than spin
+	/// against a door that is not going to open, and when it does not come back
+	/// `reauth()` has already cleared `state.authed` -- which is what the Admin
+	/// drawer's Account row and the sync chip draw "not signed in" from. Nothing
+	/// is raised over the app from here.
+	///
+	/// SAFE TO REPEAT. Every session-authed handler in the gateway takes the
+	/// session before it does anything else: `common::authed_account` is the
+	/// first statement after the method check in `pro_impl`, `credits_impl`,
+	/// `pack_impl`, `card_impl`, `tools_impl`, `create_impl`, the mail handlers
+	/// and the passkey blob's write and delete. So a 401 is proof that nothing
+	/// happened -- no body parsed, no code minted, no charge, no message sent --
+	/// and the second attempt cannot duplicate a side effect the first never had.
+	/// The options object is reused as given, which holds because every body in
+	/// this app is a string rather than a stream.
+	///
+	/// NOT FOR EVERY PATH. `/api/pair/redeem` and the passkey blob READ take no
+	/// session at all and run on a device mid-adoption that has no identity to
+	/// authenticate with; a redeem code is single-use besides, so a blanket retry
+	/// is exactly the retry that must not exist. Both deliberately call `fetch`
+	/// directly -- see the notes at `redeem()` in pairing.js and `getBlob()` in
+	/// passkey.js.
+	async function gwFetch(path, opts) {
+		var r = await fetch(path, opts);
+		probeVersion(r);
+		// A call the bootstrap is making itself cannot answer a 401 by
+		// bootstrapping; see isBootstrapOwn. Everything else may.
+		if (r.status !== 401 || isBootstrapOwn(path)) return r;
+		var back = false;
+		try { back = !!(await reauth()); } catch (e) { back = false; }
+		if (!back) return r;
+		r = await fetch(path, opts);
+		probeVersion(r);
+		return r;
+	}
+
+	/// The reply, or an error. Through `gwFetch`, so a lapsed session costs the
+	/// round a renewal and not the round itself.
+	///
+	/// This file used to renew and then throw the result away: the 401 arm called
+	/// `reauth()` and fell straight through to the `throw`, so every caller here
+	/// lost its answer at the hour mark having just paid for a new session. Two
+	/// of those losses were worse than a blank: `state.pro` going null HIDES the
+	/// Pro row rather than showing it unbought, and `operatorRole()` caches its
+	/// null for the rest of the unlock, so a signed-in operator's console entry
+	/// disappeared until they locked and unlocked again.
 	async function post(path, body) {
-		var r = await fetch(path, {
+		var r = await gwFetch(path, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			credentials: 'same-origin',
 			body: JSON.stringify(body || {}),
 		});
-		probeVersion(r);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
-		if (r.status === 401 && !isAuthPath(path) && !authing) await reauth();
 		if (!r.ok || !j || j.ok === false) {
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
@@ -281,14 +366,12 @@
 	}
 
 	async function get(path) {
-		var r = await fetch(path, {
+		var r = await gwFetch(path, {
 			credentials: 'same-origin',
 			headers: { 'x-daimond-api': String(CLIENT_API) },
 		});
-		probeVersion(r);
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
-		if (r.status === 401 && !isAuthPath(path) && !authing) await reauth();
 		if (!r.ok || !j || j.ok === false) {
 			var msg = (j && (j.error || j.message)) || ('HTTP ' + r.status);
 			throw new Error(msg);
@@ -389,12 +472,29 @@
 	/// Start a hosted Stripe Checkout for the one-time Pro unlock. The gateway
 	/// owns the price and refuses a second purchase, so the client sends nothing
 	/// but the intent to buy.
+	///
+	/// Through `gwFetch`, like everything else here. This was a bare `fetch` with
+	/// no answer to a 401 at all, so an expired session ended the purchase where
+	/// it stood: the button reported the gateway's own "No valid session.", which
+	/// says nothing the buyer can act on, and its fallback line -- "The checkout
+	/// session came back without a URL." -- is a sentence about a URL for a
+	/// problem about a session, reached whenever the refusal arrives without a
+	/// body of its own. On the one screen where being wrong costs a sale.
+	///
+	/// A RETRY ON A PAYMENT PATH, AND WHY IT IS SOUND. `pro_impl`
+	/// (gateway/src/handlers/checkout.rs) takes the session immediately after the
+	/// method check -- before the licence lookup, before Stripe is configured,
+	/// long before a session is created -- so a 401 is proof that no hosted
+	/// checkout exists and no money has moved. And should the two attempts ever
+	/// both reach Stripe, they carry the same idempotency key over the same form,
+	/// which is what makes a second attempt land on the first session rather than
+	/// a second charge.
 	async function buyPro() {
 		if (!state.authed) {
 			var ok = await bootstrap();
 			if (!ok) throw new Error('Could not reach the Daimond account service. Try again shortly.');
 		}
-		var r = await fetch('/api/checkout/pro', {
+		var r = await gwFetch('/api/checkout/pro', {
 			method: 'POST',
 			credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
@@ -522,6 +622,12 @@
 		/// holding its own `fetch` -- sync, the Web panel, mail -- answers its own
 		/// 401 through the one renewal rather than starting another.
 		reauth:         reauth,
+		/// One gateway request that answers its own lapsed session: renew once,
+		/// retry once, and otherwise hand back the original 401. Every file that
+		/// holds its own gateway call -- mail, tools, pairing, passkey, sync --
+		/// goes through this rather than carrying a copy of the rule. See the
+		/// note on `gwFetch` for which paths must NOT use it.
+		gwFetch:        gwFetch,
 		refreshBalance: refreshBalance,
 		/// Read a balance out of a reply this file did not make itself — the Web panel and the
 		/// mail panel each hold their own `fetch` wrapper, and their replies carry the balance

@@ -114,13 +114,16 @@ impl Workspace {
 mod tests {
     use super::*;
 
+    /// A workspace rooted on a scratch directory of this call's own.
+    ///
+    /// Under the user cache rather than `std::env::temp_dir()`: `/tmp` is a tmpfs
+    /// here, so a fixture written there is resident memory charged to the test
+    /// binary, and the fixtures left by earlier runs are swept as this one is made.
     fn tmp_ws() -> Workspace {
-        let mut dir = std::env::temp_dir();
-        let n = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        dir.push(fmt!("daimond_ws_test_{}", n));
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_ws_test") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
         Workspace::new(dir).expect("workspace")
     }
 

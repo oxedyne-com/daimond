@@ -76,6 +76,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { open as openApp, chat, transcript, mockLog, clearMockLog, scratch } from './harness.mjs';
+import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -188,10 +189,25 @@ fs.chmodSync(JOURNAL, 0o700);
 // default and the one `hand/install/README.md` names, so what is verified is
 // what a reader of that file will have. Three other agents share this tree, so a
 // build that fails because somebody is mid-edit is retried rather than fatal.
-let built = null;
+//
+// `CARGO_TARGET_DIR` is REMOVED from the build's environment, and that is not
+// tidying: an agent working in this tree usually has one set, cargo would write
+// the new binary there, and `HAND` — the path `install.sh` registers and this
+// test therefore runs — would still be whatever was built last. See the same
+// note in `verify_kitfence.mjs`, where an inherited one made a security test
+// pass against a binary from before the fix.
+const buildEnv = { ...process.env };
+delete buildEnv.CARGO_TARGET_DIR;
+//
+// `DAIMOND_NO_BUILD` skips the build and NOTHING else: the staleness guard below
+// runs either way, so it cannot make this file report success against code it
+// did not test — only refuse. It exists because cargo relinks an output it finds
+// backdated, so with the build in the way the guard can never be watched
+// refusing. Same hatch as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
+let built = process.env.DAIMOND_NO_BUILD ? true : null;
 for (let i = 1; i <= 3 && !built; i++) {
 	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
-		{ cwd: ROOT, encoding: 'utf8' });
+		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 	if (r.status === 0) { built = true; break; }
 	console.log((r.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 5).join('\n'));
 	if (i < 3) { note(`the hand did not build (attempt ${i}); waiting 30 s in case somebody is mid-edit`); await sleep(30000); }
@@ -200,21 +216,34 @@ check('the hand builds from source', !!built && fs.existsSync(HAND),
 	built ? HAND : 'cargo build --release --manifest-path hand/Cargo.toml failed three times');
 if (!built) { console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'); process.exit(1); }
 
-// The wasm the browser will load is the app's half of this. If it predates the
-// tools that call the hand, this test is measuring a stale binary — say so
-// rather than let a stale pass read as a real one.
+// A build that exits 0 is not the same claim as an artefact built from this
+// tree. Cargo's own dep-info file is the oracle — it names every source that
+// went into the link, this crate's and every fe2o3 crate's — so nothing is
+// hardcoded and an upstream change counts as staleness.
+refuse(whyStaleBinary(HAND, {
+	subject: 'The hand, and therefore every fence below it,',
+	what:    'hand',
+	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+}));
+
+// ── And the app's half of it ────────────────────────────────────────
+//
+// The wasm the browser loads composes every request the hand is sent, so it is
+// as much the code under test as the binary is. This used to WARN and carry on
+// to a green summary, against a list of three hand-picked sources — which is two
+// failures in one: `src/prompts.rs`, `src/skills.rs`, `src/wasm/opfs.rs` and
+// `src/wasm/diamond.rs` all changed on 2026-08-03 and none of them was on the
+// list, and a warning inside a run that then reports success is not a guard.
+// Now it refuses, against every `.rs` there is.
 const wasmFile = path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm');
 if (WASM) {
 	note('rebuilding the wasm bundle');
 	spawnSync('bash', ['dev/build-wasm.sh'], { cwd: ROOT, stdio: 'inherit' });
 }
-const wasmAt = fs.existsSync(wasmFile) ? fs.statSync(wasmFile).mtimeMs : 0;
-const srcAt = ['src/tools.rs', 'src/wasm/hand.rs', 'src/wasm/app.rs']
-	.map((f) => path.join(ROOT, f)).filter((f) => fs.existsSync(f))
-	.reduce((a, f) => Math.max(a, fs.statSync(f).mtimeMs), 0);
-if (srcAt > wasmAt) {
-	note(`WARNING: www/pkg is older than src/tools.rs — run with --wasm, or this tests a stale bundle`);
-}
+refuse(whyStaleWasm(wasmFile, path.join(ROOT, 'src'), {
+	subject: 'What the app asks the hand for',
+	holds:   'every tool call this file makes',
+}));
 
 // The nonces. One inside the fence, which a real command must be able to read;
 // one outside it, which the kernel must refuse and which must therefore never

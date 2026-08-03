@@ -87,11 +87,21 @@ which is why each one cites code.
 | 1.18 | Scoped workers cannot run with a default `cwd` | **closed** |
 | 1.19 | `id` neither unique nor bounded | **closed** |
 | 1.20 | A Diamond's crystal agent could reach another Diamond | **closed** |
+| 3.13 | `screen_env` is past through `argv`, not through `env` | **open** |
 
 **One open, and it is not an escape.** 1.9 and 1.12 were one thing and both are
 now closed: a worker is scoped by its own Diamond, and a second bound composes
 with the first rather than replacing it. 1.13 is a design decision, not a
 defect, and it is written up as a recommendation.
+
+**And one more, found afterwards, which is also not an escape.** 3.13 was found
+while wiring the git toolkit and is written up in full at the end of Severity 3.
+It does not widen the compartment: everything it reaches is inside the same
+ruleset and the same filter. What it breaks is the neighbouring claim — that
+what a command runs *with* is the user's decision — because `/usr/bin/env` and
+`/bin/sh` are inside every fence and both take an environment out of their own
+arguments, which no screen of the `env` field can see. The paragraph above about
+the release gates was written before it and is left as written.
 
 **Both compartment escapes are closed, and each closed by a different layer.**
 1.1 was Landlock's own carve; 1.2 and 1.3 needed a mechanism Landlock does not
@@ -656,6 +666,89 @@ the bytes are not Chrome-serialised.
 run before the JDAT decoder, so single quotes, unquoted keys, trailing commas,
 `#` comments and typed values are refused rather than accepted by a superset. Each
 of the accepted spellings the finding lists is a case in the test.
+
+**3.13 `screen_env` is a speed bump, not a boundary: the caller sets
+`LD_PRELOAD` through `argv` instead.** CONFIRMED. `exec.rs:1681-1703` (the
+screen), applied at `exec.rs:447` in `Runner::spawn`, at `exec.rs:2464` in
+`launch_inner`, and at `pty.rs:447` for a terminal session. Line numbers here are
+as of the working tree this file ships in, not of `ad19a62`.
+
+`README.md:39-41` states the guarantee as *"The environment is not the model's to
+set … a model that could name environment variables could set `LD_PRELOAD`, or
+carry a stolen value out through one."* 3.5 made that true of the `env` **field**
+of the request. It is not true of the request. `/usr` is in the hand's read-only
+system base, so `/usr/bin/env` and `/bin/sh` are inside every fence, and both of
+them set an environment out of their own arguments — which `screen_env` never
+looks at, because `argv` is not an environment.
+
+Measured through the real `Runner::spawn`, the real launcher, and a real
+Landlock ruleset with the syscall filter installed:
+
+```
+0  env field   env:[("LD_PRELOAD","/x/nope.so")]
+              Refused: this command asked to run with LD_PRELOAD set. …
+
+1  argv        ["/usr/bin/env","FOO=bar","/usr/bin/printenv","FOO"]
+              out: "bar\n"                                exit 0
+
+2  argv        ["/usr/bin/env","LD_PRELOAD=/x/nope.so","/bin/echo","hi"]
+              out: "hi\n"
+              err: "ERROR: ld.so: object '/x/nope.so' from LD_PRELOAD
+                    cannot be preloaded (cannot open shared object file):
+                    ignored."                              exit 0
+
+3  argv        ["/bin/sh","-c","export LD_PRELOAD=/x/nope.so; exec /bin/echo hi"]
+              err: the same ld.so line                     exit 0
+
+4  argv        ["/usr/bin/env","LD_PRELOAD=<ws>/copy.so","/bin/echo","hi"]
+              (copy.so is a copy of libm.so.6, written INSIDE the fenced
+               workspace and named from there)
+              out: "hi\n"    err: ""                       exit 0
+```
+
+Case 0 is the screen doing its job. Case 1 is the model setting an environment
+variable anyway. Cases 2 and 3 are the *dynamic loader* acting on a variable the
+model chose — the diagnostic is proof the value was read, not merely carried.
+Case 4 is the one that matters: a real shared object, in a directory the command
+can write, loaded with **no diagnostic and exit 0**. The contrast between 4 and
+2 is what makes 4 a success rather than a silent ignore.
+
+**OPEN.** Nothing here is fixed, and it is recorded rather than patched because a
+patch would be the third guess at where the boundary is. What the exposure is
+meanwhile:
+
+* **Not an escape from the fence.** Everything in cases 1–4 runs inside the same
+  Landlock ruleset and the same seccomp filter as any other command; the preloaded
+  object has to be readable and executable through the same grants, so it is the
+  workspace or the read-only system base and nowhere else. The compartment holds.
+* **It is a hole in a different claim** — that what a command runs *with* is the
+  user's decision. A `.so` in the workspace, loaded into every later command,
+  makes `cargo test` do something the user never granted and the journal records
+  the argv it was asked for. A model that can write a file and compile it (the
+  Rust toolkit grants `cargo`) can do this on one turn and use it on the next.
+* **`TMPDIR` and `TERM` are screened the same way and are past the same way**
+  (`screen_scratch`, `screen_term`), so the private scratch directory is likewise
+  a default rather than a decision.
+* **The pty half is worse**, not better: `Pty::open` calls the identical
+  `screen_env` and then runs an interactive shell, where `export LD_PRELOAD=…` is
+  the ordinary way to set a variable.
+
+What a fix would have to be, so that the next person does not reach for the
+cheap one: screening `argv` for `env` and `sh` is a fence made of string matching,
+which `README.md:31` already refuses on its own terms — `/usr/bin/env` has as many
+spellings as `argv[0]` had before 3.4, and every interpreter in the base can
+export a variable. The two candidates that are not string matching are (a) an
+allow-list of programs the base may execute, which is a much larger decision than
+this finding, and (b) refusing `LD_*` at the *loader* rather than at the request,
+which on Linux means the filter, not `exec.rs`.
+
+**The same shape appears in the new `screen_git_push`** (`exec.rs`, the section
+comment says so at the point of definition): it matches `argv[0]` by basename, so
+`sh -c 'git push --force'` is past it. There the page's answer — a command whose
+`argv[0]` is not `git` gets no credential, so it cannot authenticate — does not
+transfer, because the harm that guard exists for is a repository holding
+credentials of its own. Same defect, same reason, and it is written down at both
+ends rather than counted as covered.
 
 ## Severity 4 — the page relay
 

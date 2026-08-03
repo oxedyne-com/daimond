@@ -162,12 +162,18 @@ impl DaimondApp {
     )
         -> Result<(), JsValue>
     {
-        // What this turn can reach, refreshed now rather than at construction: the fence
-        // depends on the Diamond's bounds and on whether the turn is tainted, and asking the
-        // hand needs an await the constructor does not have. Empty when no hand is attached,
-        // and then nothing is added to the prompt at all.
-        let brief = crate::prompts::machine_briefing(
-            &self.registry.ctx.no_write, self.registry.ctx.is_tainted()).await;
+        // A `/name` the user typed, resolved to the file's own text BEFORE the turn starts.
+        // Deterministic, and it either happens or is refused out loud -- unlike telling the model
+        // to go and read the file, where a model that does not bother produces a plausible session
+        // that skipped the instructions and nobody can tell.
+        let user_msg = match open_command(user_msg).await {
+            Opened::Send(text)  => text,
+            Opened::Refuse(msg) => return Err(to_js_err(refuse(&msg))),
+        };
+        // Which model is carrying this turn, and what it can reach, refreshed now rather than at
+        // construction: the fence depends on the Diamond's bounds and on whether the turn is
+        // tainted, and asking the hand needs an await the constructor does not have.
+        let brief = self.briefing(&self.registry).await;
         self.agent.set_briefing(&brief);
 
         let mut sink = |ev: AgentEvent| {
@@ -676,6 +682,73 @@ impl DaimondApp {
         self.agent.set_fold_model(&model);
     }
 
+    // ── The credential a push travels with ───────────────────────────────
+    //
+    // **It does not survive a page reload, and nothing else clears it.**  Both halves are
+    // established from the code rather than assumed, because a push that worked yesterday and
+    // silently refuses today is the failure this whole arrangement is written against.
+    //
+    // * **Nothing else clears it.**  It lives in one `thread_local!` in `crate::tools`, and the
+    //   only write to that cell is `tools::set_push_cred`, which nothing but the two calls below
+    //   reaches.  `set_diamond_scope`, `set_toolkits`, `set_permission_mode`, `set_account_ns` and
+    //   building another `DaimondApp` all leave it exactly where it was -- it is a setting of the
+    //   app, as the permission rung is, and not a field of a turn or of a Diamond.
+    // * **A reload loses it.**  The cell belongs to the wasm instance, which is built fresh on
+    //   every load; there are no workers, so there is one instance and one credential per tab.
+    //   Switching account, adding one, erasing one, restoring a backup and taking an update all
+    //   end in `location.reload()`, so each of those loses it too -- which is the right default,
+    //   since one account's token must not be left standing for the next.
+    //
+    // So **the page must call `set_push_cred` on every load**, from whatever it stores the
+    // credential in, for the account that is now current.  There is no other way it comes back.
+
+    /// Hold the credential Daimond pushes with, or clear it.  The token never leaves this call.
+    ///
+    /// An empty or whitespace `token` CLEARS the credential rather than storing an empty one: a
+    /// stored empty token would fail to authenticate at the remote, and "there is no credential"
+    /// is a sentence a model can act on where "authentication failed" is not.
+    ///
+    /// Nothing derived from anything a model said reaches this.  It is the user's own setting
+    /// arriving from their own control, exactly as `set_permission_mode` is, and the token has no
+    /// accessor once it is here -- see [`crate::tools::PushCred`], which writes its own `Debug` so
+    /// that a struct printed in anger cannot publish it.
+    ///
+    /// # Arguments
+    /// * `host` - The bare host, as in `github.com`: no scheme, no port, no user and no path.
+    ///   Folded and validated by [`crate::tools::PushCred::new`], which is the one place that
+    ///   decides what a host is.
+    /// * `user` - The name the token travels as, or empty for GitHub's `x-access-token`.  GitLab
+    ///   wants `oauth2`.
+    /// * `token` - The secret, or empty to clear.
+    ///
+    /// # Returns
+    /// Whether a credential is held afterwards, so a caller that clears one gets `false` and a
+    /// caller that set one gets `true` without having to ask a second question.
+    ///
+    /// # Errors
+    /// A malformed host, user or token is refused, and the refusal names the field and never the
+    /// value.
+    pub fn set_push_cred(&self, host: String, user: String, token: String)
+        -> Result<bool, JsValue>
+    {
+        if token.trim().is_empty() {
+            return Ok(crate::tools::set_push_cred(None));
+        }
+        match crate::tools::PushCred::new(&host, &user, &token) {
+            Ok(c)  => Ok(crate::tools::set_push_cred(Some(c))),
+            Err(e) => Err(to_js_err(e)),
+        }
+    }
+
+    /// The host a push would reach, or empty where no credential is held.
+    ///
+    /// For the settings panel to draw what is actually set rather than what it last sent, which is
+    /// the only way a page can notice that a reload lost it.  The token is not readable here or
+    /// anywhere else.
+    pub fn push_host(&self) -> String {
+        crate::tools::push_host().unwrap_or_default()
+    }
+
     /// Invoke a single tool directly by wire name with a raw-JSON argument
     /// object, returning its result text — the same path the agent loop
     /// takes, without an LLM turn.  This backs UI affordances such as a
@@ -990,6 +1063,42 @@ impl DaimondApp {
 /// wrappers above map the result to the JS boundary.
 impl DaimondApp {
 
+    /// What this turn is told beyond its role: which model is carrying it, and what machine it can
+    /// reach.
+    ///
+    /// Composed per TURN and not at construction, because both halves move under a built agent --
+    /// the fence depends on the Diamond's bounds and on whether the turn has read a stranger's
+    /// words, and asking the hand needs an await the constructor does not have.  Either half may
+    /// come back empty (no model configured, no hand attached) and then it simply is not said:
+    /// this rides on every request of every turn, so an absent capability is not worth describing.
+    ///
+    /// # Arguments
+    /// * `registry` - The tools this turn will hold, which decide the fence and whether the model
+    ///   is asked to judge its own fan-out.
+    async fn briefing(&self, registry: &ToolRegistry) -> String {
+        // Read off the client that will actually carry the request, never a constant: a written-
+        // down model name is a lie the moment the user switches provider.
+        let mut s = crate::prompts::model_note(
+            &self.agent.llm.model,
+            &self.agent.llm.host,
+            registry.tools.contains(&Tool::SpawnAgent));
+        // The machine only where a command can actually be run on it. A daimon holds file tools
+        // and `spawn_agent` and no `run`, so a paragraph about which folders a command may touch
+        // is a paragraph it can never act on -- and it would be paid for on every request of every
+        // steering turn.
+        if registry.tools.contains(&Tool::Run) {
+            let machine = crate::prompts::machine_briefing(
+                &registry.ctx.no_write, registry.ctx.is_tainted()).await;
+            if !machine.is_empty() {
+                if !s.is_empty() {
+                    s.push_str("\n\n");
+                }
+                s.push_str(&machine);
+            }
+        }
+        s
+    }
+
     /// Drive the crystal agent for one instruction (see
     /// [`DaimondApp::steer_crystal`]).
     async fn steer_inner(
@@ -1000,6 +1109,17 @@ impl DaimondApp {
     )
         -> Outcome<()>
     {
+        // A `/name` here matters more than in a chat, not less: a daimon's file tools are pinned to
+        // `diamonds/<id>`, so it could not read a skill for itself even if it tried, and the prose
+        // convention fails here in total silence.
+        //
+        // What the user TYPED is kept for the log below. The record of why a crystal changed should
+        // read `/pickup daimond`, which is what they did; the skill's whole text is in the skill.
+        let typed = instruction.clone();
+        let instruction = match open_command(instruction).await {
+            Opened::Send(text)  => text,
+            Opened::Refuse(msg) => return Err(refuse(&msg)),
+        };
         // Stateless per instruction: reconstruct context from the crystal.
         let before = diamond::read_crystal(id).await.unwrap_or_default();
         let mut system = Role::Daimon.compose(&self.daimon_prompt.borrow());
@@ -1044,6 +1164,9 @@ impl DaimondApp {
         // daimon would fold the same model's conversation at a different size from
         // the chat that dispatched it.
         agent.adopt_limits(&self.agent);
+        // And it starts with no briefing at all, which left the ONE agent that dispatches workers
+        // as the one agent that could not judge how many to dispatch.
+        agent.set_briefing(&self.briefing(&registry).await);
         let mut session = Session::new(
             generate_session_id(),
             fmt!("crystal:{}", id),
@@ -1053,14 +1176,14 @@ impl DaimondApp {
             let js = event_to_js(&ev);
             let _ = on_event.call1(&JsValue::NULL, &js);
         };
-        res!(agent.run_turn(&mut session, instruction.clone(), &registry, &mut sink).await);
+        res!(agent.run_turn(&mut session, instruction, &registry, &mut sink).await);
         self.absorb_usage(&session);
 
         // If the crystal changed, snapshot a version and log the edit so
         // every crystal mutation stays versioned and auditable.
         let after = diamond::read_crystal(id).await.unwrap_or_default();
         if after != before {
-            res!(diamond::record_steer(id, &after, &instruction).await);
+            res!(diamond::record_steer(id, &after, &typed).await);
         }
         Ok(())
     }
@@ -1129,6 +1252,115 @@ impl DaimondApp {
         }
         Ok(out)
     }
+}
+
+// ── The slash command a person types ─────────────────────────────────────────
+//
+// `DAIMOND.md` tells the model that a `/name` means "read
+// `code/ai/context/dump/skills/claude/<name>/SKILL.md` and follow it".  That is prose, and prose is
+// enforced by the model's willingness: it half-works, and when it does not work it fails SILENTLY
+// -- a model that does not bother, or reads the wrong file, produces a perfectly plausible session
+// that skipped the instructions, and nobody can tell from the outside.  In the browser, which is
+// the only place the user actually works, nothing read a skill at all: `skills::expand` has one
+// caller and it is in `handler`, which `lib.rs` gates out of the wasm build.
+//
+// So the page resolves it instead, here, before the turn starts.  Three properties follow, and
+// they are the whole of why this is not left to the model:
+//
+// * **It happens or it is refused.**  A name that resolves to no file ends the turn with a message
+//   saying so, and nothing reaches the provider.  Falling through to ordinary chat is the one
+//   outcome that must never happen, because the user then believes a workflow ran.
+// * **The file's own text goes in.**  Not a path for the model to fetch, so a skill works for a
+//   turn whose file tools are pinned somewhere else entirely -- which is exactly a Diamond's
+//   daimon, fenced to `diamonds/<id>` and unable to read `.daimond/skills` at all.
+// * **It is the user's own instruction, so it is trusted as one.**  A skill is a file the user
+//   wrote in their own workspace, standing where `DAIMOND.md` and `prompts/<role>.md` already
+//   stand, and it is injected verbatim rather than wrapped as untrusted content.  That judgement
+//   rests entirely on where it came from: the day a skill can be IMPORTED from a stranger, it stops
+//   being the user speaking and the `uses` declaration in [`crate::skills::Skill`] is what has to
+//   start being enforced here, as it already is in `handler`.
+
+/// A message the user typed, once any `/name` in it has been resolved.
+///
+/// An enum rather than an `Option<String>` because the two outcomes are not "changed" and
+/// "unchanged" -- one sends a turn and one refuses to, and a caller that muddled them would send
+/// the refusal to the model.
+enum Opened {
+    /// Send this: the message unchanged, or a skill's instructions with the rest of it.
+    Send(String),
+    /// Show this and run nothing: the user named a skill that is not there.
+    Refuse(String),
+}
+
+/// Resolve a leading `/name` to the skill file's own text, or pass the message through untouched.
+///
+/// # Arguments
+/// * `msg` - The message exactly as the user typed it.
+async fn open_command(msg: String) -> Opened {
+    let cmd = match crate::skills::parse_command(&msg) {
+        Some(c) => c,
+        None    => return Opened::Send(msg),    // not a command; an ordinary message
+    };
+    match read_skill(&cmd.name).await {
+        Some((path, text)) => {
+            let sk = crate::skills::parse_skill(&text, &cmd.name);
+            Opened::Send(crate::skills::compose_command(&sk.name, &path, &sk.body, &cmd.args))
+        },
+        None => Opened::Refuse(crate::skills::no_such_skill(&cmd.name)),
+    }
+}
+
+/// Read the skill a `/name` invoked, as `(path, text)`, or `None` where no such file is there.
+///
+/// Two roots, not one.  The user's real folder is where their skills actually live, and it is not
+/// open in Browser mode -- so a lookup that knew only about it would answer "no such skill" for
+/// every skill they have, in the one mode that always works.  Daimond's own OPFS store is the
+/// place that is always there, and it is searched second so a real folder's copy wins.  Nothing
+/// syncs between the two: putting a skill in the sandbox is a file the user writes there (through
+/// the Workspace panel, like any other), and making that automatic would need a sync of
+/// `.daimond/skills` on folder open, which is not built here.
+///
+/// A file that exists but is blank is passed over rather than injected: an empty skill is
+/// indistinguishable, once in front of the model, from no skill at all, and the refusal that
+/// follows at least names what was looked for.
+///
+/// # Arguments
+/// * `name` - The skill's name, as typed after the slash.
+async fn read_skill(name: &str) -> Option<(String, String)> {
+    let mut roots = vec![crate::tools::FileRoot::Workspace];
+    // Only while a folder is open are these two different stores; without one they are the same
+    // directory, and searching it twice would double the cost of every refusal.
+    if crate::wasm::opfs::workspace_mode() == "folder" {
+        roots.push(crate::tools::FileRoot::Opfs);
+    }
+    for root in roots {
+        for path in crate::skills::command_paths(name) {
+            let bytes = match crate::wasm::opfs::read_file(root, &path).await {
+                Ok(b)  => b,
+                Err(_) => continue,     // not there, or not readable: try the next place
+            };
+            if let Ok(text) = String::from_utf8(bytes) {
+                if !text.trim().is_empty() {
+                    return Some((path, text));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The refusal a turn ends with when the user named a skill that is not there.
+///
+/// Carried by the REJECTION rather than by an `Error` event, and it has to be, because a Diamond's
+/// status line is wiped the instant a steer resolves: an event there would flash and vanish, which
+/// is the failure this whole path exists to end.  Every surface already draws what a rejection
+/// carries -- a chat writes it into its transcript, a worker onto its tile, a Diamond into its
+/// status line -- so none of them has to learn anything new, and each reports it exactly once.
+///
+/// # Arguments
+/// * `msg` - What to tell the user.
+fn refuse(msg: &str) -> Error<ErrTag> {
+    err!("{}", msg; Invalid, Input)
 }
 
 /// Convert a [`ChatMessage`] to a plain JS object mirroring

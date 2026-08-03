@@ -47,6 +47,7 @@ use crate::wasm::{js_prop, js_str, opfs};
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
 
+use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
 
 
@@ -149,12 +150,14 @@ async fn migrate_root() -> Outcome<bool> {
     };
     res!(opfs::move_entry(FileRoot::Opfs, legacy, ROOT_DIR).await);
 
-    // Every log points at its deltas by a path that has just moved.
-    let entries = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
+    // Every log points at its deltas by a path that has just moved.  Named for what it holds --
+    // the entries of the root this function has only now created -- so it cannot be mistaken for
+    // the rail's own walk of the store further down, which answers a different question.
+    let moved = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
         Ok(e)  => e,
         Err(_) => return Ok(true),      // moved, but nothing to walk
     };
-    for (id, is_dir, _size) in entries {
+    for (id, is_dir, _size) in moved {
         if !is_dir {
             continue;
         }
@@ -520,9 +523,67 @@ pub async fn list() -> Outcome<String> {
 }
 
 /// Read a Diamond's current crystal markdown.
+///
+/// A Diamond that LISTS must OPEN.  [`list`] admits one on its metadata alone -- deliberately, so
+/// that a broken Diamond is a bug the user can report rather than one they can only mourn -- and
+/// this used to be a bare read, so a Diamond whose `crystal.md` was missing threw `NotFoundError`
+/// at the panel and could not be opened at all.  Four live paths arrive at that state, an
+/// interrupted import among them.
+///
+/// So the version snapshots are used for what they have always been: the store's own redundancy.
+/// The newest `versions/NNNN.md` is read when the crystal is not there, and a Diamond with neither
+/// opens empty and says so in the console rather than refusing to open.  Nothing else reads the
+/// snapshots back except [`read_version`], so this costs nothing and turns a dead Diamond into a
+/// recoverable one.
 pub async fn read_crystal(id: &str) -> Outcome<String> {
-    let bytes = res!(opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await);
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await {
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    match res!(newest_version(id).await) {
+        Some((n, md)) => {
+            console_log(&fmt!(
+                "Diamond '{}' has no crystal.md; read version {} instead.", id, n));
+            Ok(md)
+        }
+        None => {
+            console_log(&fmt!(
+                "Diamond '{}' has no crystal.md and no version to fall back on; it opens empty.",
+                id));
+            Ok(String::new())
+        }
+    }
+}
+
+/// The highest-numbered version snapshot a Diamond holds, with its text.
+///
+/// The numbering is `versions/NNNN.md`, zero-padded and monotonic, so the highest that PARSES is
+/// the newest; a file that does not parse is somebody else's and is passed over rather than
+/// guessed at.
+async fn newest_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    let dir = fmt!("diamonds/{}/versions", id);
+    let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(None),      // no snapshots: a Diamond older than they are, or emptied
+    };
+    let mut best: Option<u64> = None;
+    for (name, is_dir, _size) in entries {
+        if is_dir {
+            continue;
+        }
+        let n = match name.strip_suffix(".md").and_then(|s| s.parse::<u64>().ok()) {
+            Some(n) => n,
+            None    => continue,
+        };
+        if best.map(|b| n > b).unwrap_or(true) {
+            best = Some(n);
+        }
+    }
+    let n = match best {
+        Some(n) => n,
+        None    => return Ok(None),
+    };
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_path(id, n)).await);
+    Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())))
 }
 
 /// Snapshot a new crystal version and return its number.
@@ -1058,6 +1119,15 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         return Err(err!("The export of Diamond '{}' holds no files.", id; Invalid, Input));
     }
 
+    // The metadata goes LAST, whatever order it arrived in.  `list` admits a Diamond on its
+    // metadata alone, so an import that fails half way with the metadata already down leaves a
+    // Diamond that lists, opens, and throws on a crystal that never arrived.  Written last, the
+    // same failure leaves it invisible, and the next pull brings the whole of it back.  The order
+    // used to be the export's own, which sorts paths -- and `.daimond/meta.json` sorts BEFORE
+    // `crystal.md`, so the bad case was the ordinary one.
+    let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+    writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+
     let dir = diamond_dir(&id);
     if res!(opfs::exists(FileRoot::Opfs, &dir).await) {
         res!(opfs::delete_entry(FileRoot::Opfs, &dir, true).await);
@@ -1066,4 +1136,307 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), body.as_bytes()).await);
     }
     Ok(())
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Bringing home what an earlier build left in a folder           │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The most one adoption run copies out of the folder in total.
+///
+/// A ceiling exists because the folder is the user's own project and nothing says what an earlier
+/// build put under `diamonds/` there.  Copying is into OPFS, which the browser may evict wholesale
+/// when it fills, so an unbounded copy could cost the user their whole store to save a directory
+/// they can still see on disk.
+const ADOPT_TOTAL_MAX: u64 = 64 * 1024 * 1024;
+
+/// The largest single file one adoption run copies out of the folder.
+const ADOPT_FILE_MAX: u64 = 8 * 1024 * 1024;
+
+/// What is inserted before a clashing file's extension, so the folder's copy is kept beside the
+/// store's and still opens as the kind of file it is.
+const FROM_MACHINE: &str = ".from-machine";
+
+/// What became of one file the folder was holding.
+enum Took {
+    /// It was not in the store, and now it is.
+    Copied,
+    /// The store already had it, byte for byte, so nothing was written.
+    Same,
+    /// The store had it with DIFFERENT bytes.  The store's copy stands and the folder's was
+    /// written beside it, at the path carried here.
+    Kept(String),
+    /// Too large for the budget, and so left exactly where it is.
+    Skipped,
+}
+
+/// Where a clashing file's folder copy is written: `note.md` -> `note.from-machine.md`.
+///
+/// Before the extension rather than after it, so the kept copy still opens as markdown -- the user
+/// is being asked to compare two files, and one of them arriving as an unopenable
+/// `note.md.from-machine` would make that harder than it needs to be.
+fn beside_path(rel: &str) -> String {
+    let (dir, leaf) = match rel.rfind('/') {
+        Some(i) => (&rel[..i + 1], &rel[i + 1..]),
+        None    => ("", rel),
+    };
+    match leaf.rfind('.') {
+        // A leading dot is the whole name of a dotfile, not an extension.
+        Some(i) if i > 0 => fmt!("{}{}{}{}", dir, &leaf[..i], FROM_MACHINE, &leaf[i..]),
+        _                => fmt!("{}{}{}", dir, leaf, FROM_MACHINE),
+    }
+}
+
+/// Whether a directory under the folder's `diamonds/` is a Diamond at all.
+///
+/// Two ways to be one, and the second is what makes a Diamond the store has never seen adoptable:
+/// the store already holds it under that id, or the folder's copy carries the metadata that makes
+/// a Diamond a Diamond.  Anything else is a directory of the user's that happens to live under
+/// `diamonds/` -- notes, a build output, a folder they made -- and it is left alone.
+///
+/// The test is not "does it look like it might be one".  Materialising a shell of a Diamond out of
+/// a user's own directory would put a row on the rail that opens on a `NotFoundError`, which is
+/// the failure this whole change is trying to stop happening.
+///
+/// # Arguments
+/// * `id` - The directory name under `diamonds/` in the folder.
+async fn is_diamond(id: &str) -> Outcome<bool> {
+    if res!(opfs::exists(FileRoot::Opfs, &diamond_dir(id)).await) {
+        return Ok(true);
+    }
+    opfs::exists(FileRoot::Machine, &meta_path(id)).await
+}
+
+/// Take one file out of the folder and into the store, and say what that came to.
+///
+/// The store always wins a clash, per file rather than per Diamond.  The folder's copy is never
+/// dropped and never deleted: it is written beside the store's under [`beside_path`] and named in
+/// the report, because the two differing copies are the user's to reconcile and we cannot know
+/// which they wanted.
+///
+/// Idempotent by comparison rather than by a flag.  A second run finds the store's copy identical
+/// (or the kept copy identical) and writes nothing, which is what lets adoption run on EVERY folder
+/// activation for ever -- there is no moment at which we could prove every folder has been seen, so
+/// there is no moment at which it would be safe to stop looking.
+///
+/// # Arguments
+/// * `rel` - The workspace-relative path, the same on both sides.
+/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
+/// * `used` - How much this run has copied so far, added to here.
+async fn take_file(rel: &str, size: u64, used: &mut u64) -> Outcome<Took> {
+    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
+        return Ok(Took::Skipped);
+    }
+    let bytes = res!(opfs::read_file(FileRoot::Machine, rel).await);
+    if !res!(opfs::exists(FileRoot::Opfs, rel).await) {
+        res!(opfs::write_file(FileRoot::Opfs, rel, &bytes).await);
+        *used += size;
+        return Ok(Took::Copied);
+    }
+    let held = res!(opfs::read_file(FileRoot::Opfs, rel).await);
+    if held == bytes {
+        return Ok(Took::Same);
+    }
+    // Kept on an earlier run: the copy beside it already holds exactly these bytes, so this run
+    // has nothing to add and must not make a second copy of the second copy.
+    let beside = beside_path(rel);
+    if res!(opfs::exists(FileRoot::Opfs, &beside).await) {
+        let there = res!(opfs::read_file(FileRoot::Opfs, &beside).await);
+        if there == bytes {
+            return Ok(Took::Same);
+        }
+    }
+    res!(opfs::write_file(FileRoot::Opfs, &beside, &bytes).await);
+    *used += size;
+    Ok(Took::Kept(beside))
+}
+
+/// Every file the folder holds under one Diamond, workspace-relative, with the size the folder
+/// reports for it.  Sorted, so a run's order does not depend on how the browser iterates.
+///
+/// Recursion is spelled out with an explicit stack, as [`export_diamond`] does and for the same
+/// reason: an `async fn` cannot recurse without boxing its future.
+async fn folder_files(id: &str) -> Outcome<Vec<(String, u64)>> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    let mut todo: Vec<String> = vec![diamond_dir(id)];
+    while let Some(dir) = todo.pop() {
+        let entries = match opfs::list_dir(FileRoot::Machine, &dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,     // a directory that has gone holds nothing
+        };
+        for (name, is_dir, size) in entries {
+            let child = fmt!("{}/{}", dir, name);
+            if is_dir {
+                todo.push(child);
+            } else {
+                out.push((child, size));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// Bring one Diamond's files home.  True when anything was actually taken.
+///
+/// **The order is the correctness.**  `crystal.md` is copied FIRST and `.daimond/meta.json` LAST,
+/// because [`list`] admits a Diamond on its metadata alone and [`read_crystal`] looks for the
+/// crystal where it should be.  Metadata written first, and a run interrupted between the two,
+/// leaves a Diamond that lists, opens, and throws -- visible and broken.  Metadata written last
+/// leaves a half-adopted Diamond *invisible*, and the next activation completes it.  Nothing is
+/// ever deleted from the folder, so an interruption costs nothing at all.
+///
+/// For the same reason the metadata is not written when the crystal is not in the store
+/// afterwards: a Diamond whose crystal was too large for the budget, or unreadable, stays out of
+/// the rail rather than joining it broken.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `used` - The run's byte accumulator.
+/// * `kept` - Collects the paths where a clashing folder copy was kept.
+/// * `skipped` - Collects the paths this run did not take.
+async fn adopt_one(
+    id:      &str,
+    used:    &mut u64,
+    kept:    &mut Vec<String>,
+    skipped: &mut Vec<String>,
+)
+    -> Outcome<bool>
+{
+    let files   = res!(folder_files(id).await);
+    let crystal = crystal_path(id);
+    let meta    = meta_path(id);
+    let mut ordered: Vec<(String, u64)> = Vec::new();
+    if let Some(f) = files.iter().find(|(p, _)| *p == crystal) {
+        ordered.push(f.clone());
+    }
+    for f in &files {
+        if f.0 == crystal || f.0 == meta {
+            continue;
+        }
+        ordered.push(f.clone());
+    }
+    let mut took_any = false;
+    for (rel, size) in &ordered {
+        // One unreadable file must not lose the rest of the Diamond, nor the rest of the run.
+        match take_file(rel, *size, used).await {
+            Ok(Took::Copied)     => took_any = true,
+            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
+            Ok(Took::Same)       => {},
+            Ok(Took::Skipped)    => skipped.push(rel.clone()),
+            Err(e) => {
+                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
+                skipped.push(rel.clone());
+            }
+        }
+    }
+    // Last, and only over a crystal that is there to be read.
+    if let Some((rel, size)) = files.iter().find(|(p, _)| *p == meta) {
+        if !res!(opfs::exists(FileRoot::Opfs, &crystal).await) {
+            skipped.push(rel.clone());
+            return Ok(took_any);
+        }
+        match take_file(rel, *size, used).await {
+            Ok(Took::Copied)     => took_any = true,
+            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
+            Ok(Took::Same)       => {},
+            Ok(Took::Skipped)    => skipped.push(rel.clone()),
+            Err(e) => {
+                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
+                skipped.push(rel.clone());
+            }
+        }
+    }
+    Ok(took_any)
+}
+
+/// Bring home every Diamond an earlier build left in the open folder, and report what was done.
+///
+/// A build before this one let Daimond's own store follow the workspace root, so a Diamond worked
+/// on with a folder open wrote `diamonds/<id>/...` into the user's project: outside the sync
+/// parcel, invisible to the panel the moment they switched back, and absent from a backup.  This
+/// copies those files into the store.
+///
+/// Three rules, and each is a thing that could be got dangerously wrong:
+///
+/// * **Nothing is ever deleted from the folder.**  Deleting from a user's own project to tidy up
+///   after our own bug is the more dangerous of the two mistakes available here, and leaving the
+///   copies also makes an interrupted run free to repeat.
+/// * **The store wins a clash, and the folder's copy is kept beside it** (see [`take_file`]).
+/// * **It runs on every activation, for ever**, boot reconnect included, because there is no
+///   moment at which every folder can be proved to have been seen.  So it is silent when it finds
+///   nothing: the caller shows the user nothing at all when `adopted` is empty.
+///
+/// Returns `{"folder":bool,"adopted":[{"id","name","kept":[..]}],"left":[..],"skipped":[..]}`.
+/// `folder` is false when none is open, which is not an error and must not be reported as one.
+pub async fn adopt_from_folder() -> Outcome<String> {
+    if !opfs::folder_open() {
+        return Ok(fmt!("{{\"folder\":false,\"adopted\":[],\"left\":[],\"skipped\":[]}}"));
+    }
+    let mut adopted: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut left:    Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    // A folder with no `diamonds/` in it is the ordinary case, and it is not a failure.
+    let entries = match opfs::list_dir(FileRoot::Machine, ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(fmt!("{{\"folder\":true,\"adopted\":[],\"left\":[],\"skipped\":[]}}")),
+    };
+    let mut used = 0u64;
+    for (name, is_dir, _size) in entries {
+        let here = fmt!("{}/{}", ROOT_DIR, name);
+        if !is_dir {
+            left.push(here);
+            continue;
+        }
+        match is_diamond(&name).await {
+            Ok(true)  => {},
+            Ok(false) => { left.push(here); continue; },
+            Err(e) => {
+                console_log(&fmt!("'{}' in the folder could not be examined: {}", here, e));
+                left.push(here);
+                continue;
+            }
+        }
+        let mut kept: Vec<String> = Vec::new();
+        let took = match adopt_one(&name, &mut used, &mut kept, &mut skipped).await {
+            Ok(t) => t,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' could not be brought home: {}", name, e));
+                continue;
+            }
+        };
+        if !took {
+            continue;       // already home: say nothing, or every boot would announce itself
+        }
+        // The name the rail will show, read from the store now that the metadata is in it.
+        let label = read_meta(&name).await.map(|m| m.name).unwrap_or_else(|_| name.clone());
+        adopted.push((name, label, kept));
+    }
+    let rows: Vec<String> = adopted.iter().map(|(id, name, kept)| {
+        let ks: Vec<String> = kept.iter().map(|k| fmt!("\"{}\"", json_escape(k))).collect();
+        fmt!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"kept\":[{}]}}",
+            json_escape(id), json_escape(name), ks.join(","),
+        )
+    }).collect();
+    let quote = |v: &[String]| -> String {
+        let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+        items.join(",")
+    };
+    Ok(fmt!(
+        "{{\"folder\":true,\"adopted\":[{}],\"left\":[{}],\"skipped\":[{}]}}",
+        rows.join(","), quote(&left), quote(&skipped),
+    ))
+}
+
+/// Bring home every Diamond the open folder is holding, as the page calls it.
+///
+/// Called from `activateFolder` in `daimond.js`, which runs on every folder activation including
+/// the silent reconnect at boot -- so a user of yesterday's build gets their stranded Diamonds back
+/// on their next page load with no action at all.  See [`adopt_from_folder`] for what it does and
+/// what it refuses to do.
+#[wasm_bindgen]
+pub async fn adopt_folder_diamonds() -> Result<String, JsValue> {
+    adopt_from_folder().await.map_err(crate::wasm::to_js_err)
 }

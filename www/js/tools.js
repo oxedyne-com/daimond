@@ -28,6 +28,23 @@
 		loaded:   false,
 	};
 
+	// ── The gateway, and a session that has gone ───────────────
+	//
+	// Both calls below go through `DaimondGateway.gwFetch`, which meets a 401 by
+	// renewing the session once and asking once more. The gateway's session lives
+	// an hour and only an unlock ever minted one, so an hour into a sitting
+	// `GET /api/tools` came back 401 and this panel said the account service
+	// could not be reached -- which was untrue, and which no amount of reopening
+	// the panel would clear.
+	//
+	// Safe to repeat here, and this is why: `common::authed_account` is the first
+	// statement of both `tools_impl` and `pack_impl` in the gateway, so a 401 is
+	// proof that nothing happened -- no body parsed, no checkout session made.
+	//
+	// This file used to carry its own copy of that rule, one of five identical
+	// copies across the app. There is one now, in gateway.js, beside the renewal
+	// it drives.
+
 	function esc(s) {
 		return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
 			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -64,7 +81,7 @@
 			if (window.DaimondGateway && !DaimondGateway.state().authed) {
 				await DaimondGateway.bootstrap();
 			}
-			var r = await fetch('/api/tools', { credentials: 'same-origin' });
+			var r = await DaimondGateway.gwFetch('/api/tools', { credentials: 'same-origin' });
 			var j = await r.json();
 			if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
 			state.packs   = j.tools || [];
@@ -87,12 +104,16 @@
 		render();
 		try {
 			if (!window.DaimondGateway) throw new Error(t('tools.no_service'));
-			var r = await fetch('/api/checkout/pack', {
+			var r = await DaimondGateway.gwFetch('/api/checkout/pack', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				credentials: 'same-origin',
 				body: JSON.stringify({ pack: tool }),
 			});
+			// A 401 that survived the renewal is a session this device cannot get
+			// back, not a fault in the purchase. The gateway's own words for it
+			// ("No valid session.") say nothing a user can act on.
+			if (r.status === 401) throw new Error(t('tools.unreachable'));
 			var j = await r.json();
 			if (!r.ok || !j.ok || !j.url) throw new Error((j && j.error) || ('HTTP ' + r.status));
 			window.location = j.url;

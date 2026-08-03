@@ -49,6 +49,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { open as openApp, scratch } from './harness.mjs';
+import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -114,19 +115,45 @@ fs.writeFileSync(path.join(GRANT, 'inside.txt'), 'a file inside the grant\n');
 // 2026-08-02 audit and this is exactly how it happens.
 const buildEnv = { ...process.env };
 delete buildEnv.CARGO_TARGET_DIR;
-const built = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
-	{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
+// `DAIMOND_NO_BUILD` skips the build and NOTHING else: the staleness guard below
+// runs either way, so the variable cannot make this file report success against
+// code it did not test — it can only make it refuse. It is here because cargo
+// relinks an output it finds backdated, so with the build in the way there is no
+// arrangement of this tree in which the guard can be watched refusing, and a
+// guard nobody has watched work is the thing this file exists to be rid of. The
+// same hatch, for the same reason, as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
+const built = process.env.DAIMOND_NO_BUILD ? { status: 0, stderr: '' }
+	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 check('the hand builds from source', built.status === 0 && fs.existsSync(HAND),
 	(built.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 3).join(' | '));
 if (built.status !== 0) { console.log('\n0 ok, 1 failed'); process.exit(1); }
+
 // And the artefact is newer than the source it was supposedly built from, or
 // this test is measuring a binary somebody else's build left behind.
-const handAt = fs.statSync(HAND).mtimeMs;
-const srcAt = ['hand/src/exec.rs', 'hand/src/main.rs', 'hand/src/wire.rs', 'hand/src/codec.rs']
-	.map((f) => path.join(ROOT, f)).filter((f) => fs.existsSync(f))
-	.reduce((a, f) => Math.max(a, fs.statSync(f).mtimeMs), 0);
-check('and the binary under test is newer than the hand\'s source', handAt >= srcAt,
-	`binary ${new Date(handAt).toISOString()} vs source ${new Date(srcAt).toISOString()}`);
+//
+// That comparison was against four hand-picked files — exec.rs, main.rs,
+// wire.rs, codec.rs — which left out `hand/src/journal.rs`, `fence.rs`,
+// `seccomp.rs` and `pty.rs`, and every fe2o3 crate under all of them. A clamp
+// moved in `fence.rs` would not have registered at all. Cargo already writes
+// down what it linked, so the list is not picked: `daimond-hand.d` names every
+// source that went into the binary, and one of them being newer is the refusal.
+// The same oracle as `shipping_hand` in `hand/src/exec.rs` and
+// `dev/verify_ptyedge.mjs`.
+refuse(whyStaleBinary(HAND, {
+	subject: 'The toolchain clamp',
+	what:    'hand',
+	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+}));
+
+// The relay's half of the clamp is composed in the wasm — `toolkit_bounds`, and
+// the roots it puts in a fence — so a stale bundle would measure a clamp that is
+// no longer there. No dep-info exists for a wasm bundle (see
+// `dev/staleguard.mjs`), so the oracle is every `.rs` under `src/`.
+refuse(whyStaleWasm(path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm'), path.join(ROOT, 'src'), {
+	subject: 'The relay\'s half of the clamp',
+	holds:   '`toolkit_bounds` and the roots it puts in a fence',
+}));
 
 fs.writeFileSync(path.join(JOURNAL, 'root.txt'),
 	`# The one folder Daimond's machine hand may work in.\n${GRANT}\n`);

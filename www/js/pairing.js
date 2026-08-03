@@ -130,6 +130,22 @@
 	}
 
 	// ── Transport ──────────────────────────────────────────────
+	//
+	// `create()` goes through `DaimondGateway.gwFetch`, which meets a 401 by
+	// renewing the session once and asking once more. The gateway's session lives
+	// an hour and only an unlock ever minted one, so an hour into a sitting
+	// `POST /api/pair` came back 401 and the dialog told the user to sign in on a
+	// device they were already signed in on -- with no control anywhere in the
+	// app that would do it.
+	//
+	// Safe to repeat, and this is why: `create_impl` in gateway/src/handlers/
+	// pair.rs checks the session BEFORE it parses the body, so a 401 leaves no
+	// parked bundle and mints no code. A retry cannot leave a second code
+	// standing.
+	//
+	// ONLY `create()`. `redeem()` must not -- see the note there. This file used
+	// to carry its own copy of the retry rule, one of five identical copies; the
+	// rule lives in gateway.js now, beside the renewal it drives.
 
 	/// Create a pairing: export this device's identity and park it. Returns
 	/// { code, expires_in }. Throws with a readable message on any failure.
@@ -152,7 +168,7 @@
 			delete bundle.look;
 			parked = JSON.stringify(bundle);
 		}
-		var r = await fetch('/api/pair', {
+		var r = await DaimondGateway.gwFetch('/api/pair', {
 			method: 'POST', credentials: 'same-origin',
 			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 			body: JSON.stringify({ bundle: parked }),
@@ -172,6 +188,16 @@
 	/// the unlock screen is what applies it. Nothing else in the app writes these
 	/// keys from a bundle, so this is the one and only moment they arrive: from
 	/// here on the device's look is its own to change.
+	///
+	/// DELIBERATELY NOT through `gwFetch`, on three counts. `redeem_impl` takes no
+	/// session at all -- the redeeming device has none, which is the whole point --
+	/// so a 401 here could not be a session that lapsed and re-authenticating
+	/// could not change the answer. There is nothing to re-authenticate WITH: this
+	/// device's identity arrives in the reply, so `reauth()` would find nothing
+	/// unlocked, return false, and leave `state.authed` stamped false on a device
+	/// whose gateway account is not yet a thing that exists. And a code is
+	/// single-use: it is consumed in the act of redeeming it, so a blanket retry
+	/// on any refusal is exactly the retry that must not exist here.
 	async function redeem(code) {
 		code = String(code || '').trim();
 		if (!code) throw new Error(t('pair.err_enter_code'));

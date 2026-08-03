@@ -1089,6 +1089,28 @@
 
 	// ── The gateway ─────────────────────────────────────────────────
 
+	// Every call below goes through `DaimondGateway.gwFetch`, which meets a 401 by
+	// renewing the session once and asking once more -- single-flight, so mail and
+	// sync refused in the same moment share one renewal.
+	//
+	// The gateway's session lives an hour and only an unlock ever minted one, so
+	// an hour into a sitting every mail call came back 401: a sync showed the
+	// gateway's own "No valid session." where the new-message count belongs, the
+	// entitlement read fell back to "unknown" and the panel offered the Pro pitch
+	// to an account that holds Pro, and freeing a seat on a removed mailbox was
+	// discarded without a word.
+	//
+	// Safe to repeat, INCLUDING `/api/mail/send`, and this is why: every
+	// session-authed handler in the gateway checks the session BEFORE it parses
+	// the body and before it opens a connection to anybody's mail server
+	// (`common::authed_account` is the first statement of `send_impl`,
+	// `sync_impl`, `folders_impl` and `accounts_impl`), so a 401 is proof that
+	// nothing happened -- no message left, no seat moved.
+	//
+	// This file used to carry its own copy of that rule, one of five identical
+	// copies across the app. There is one now, in gateway.js, beside the renewal
+	// it drives.
+
 	async function post(path, body) {
 		if (!window.DaimondGateway) throw new Error(t('mail.err.service_unavailable'));
 		var st = DaimondGateway.state();
@@ -1096,12 +1118,16 @@
 			var ok = await DaimondGateway.bootstrap();
 			if (!ok) throw new Error(t('mail.err.service_unreachable'));
 		}
-		var r = await fetch(path, {
+		var r = await DaimondGateway.gwFetch(path, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			credentials: 'same-origin',
 			body: JSON.stringify(body || {}),
 		});
+		// A 401 that survived the renewal is this device signed out, and it is
+		// said in those terms. The gateway's "No valid session." was appearing
+		// verbatim on the mail panel where a sync result belongs.
+		if (r.status === 401) throw new Error(t('mail.err.service_unreachable'));
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (!r.ok || !j || j.ok === false) {
@@ -1119,7 +1145,7 @@
 		try {
 			var st = DaimondGateway.state();
 			if (!st.authed) await DaimondGateway.bootstrap();
-			var r = await fetch('/api/mail/accounts', { credentials: 'same-origin' });
+			var r = await DaimondGateway.gwFetch('/api/mail/accounts', { credentials: 'same-origin' });
 			var j = await r.json();
 			if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
 			state.unlocked = !!j.unlocked;
@@ -1802,8 +1828,11 @@
 		}
 		save();
 		// Free the seat at the gateway, which is the only place the cap is real.
+		// Through DaimondGateway.gwFetch: an hour into a sitting this was a 401 into a swallowed
+		// catch, so the mailbox left the panel and the seat stayed taken -- and
+		// the next add met a cap the user could see no reason for.
 		try {
-			await fetch('/api/mail/accounts', {
+			await DaimondGateway.gwFetch('/api/mail/accounts', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				credentials: 'same-origin',

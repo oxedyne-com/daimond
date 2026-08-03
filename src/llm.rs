@@ -4232,11 +4232,13 @@ pub mod tests {
     fn stub_cert() -> &'static (Vec<u8>, Vec<u8>) {
         static CERT: std::sync::OnceLock<(Vec<u8>, Vec<u8>)> = std::sync::OnceLock::new();
         CERT.get_or_init(|| {
-            let dir = std::env::temp_dir().join(fmt!("daimond-llm-cert-{}", std::process::id()));
-            match std::fs::create_dir_all(&dir) {
-                Ok(_)  => {}
+            // Under the user cache, not the tmpfs at `/tmp`. The key is written to
+            // disk for as long as openssl takes to write it, and a private key in a
+            // tmpfs is a private key in the machine's memory.
+            let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_llm_cert") {
+                Ok(d)  => d,
                 Err(e) => panic!("could not make a cert directory: {}", e),
-            }
+            };
             let cert = dir.join("cert.pem");
             let key = dir.join("key.pem");
             let out = std::process::Command::new("openssl")

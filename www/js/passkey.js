@@ -465,12 +465,36 @@
 		return h;
 	}
 
+	// ── The gateway, and a session that has gone ───────────────
+	//
+	// The write and the delete below go through `DaimondGateway.gwFetch`, which
+	// meets a 401 by renewing the session once and asking once more. The
+	// gateway's session lives an hour and only an unlock ever minted one, so an
+	// hour into a sitting both came back 401: adding a passkey said it works on
+	// this device only, and removing one left the gateway's copy in place -- a
+	// passkey the user believes they revoked, still able to adopt the account.
+	//
+	// Safe to repeat, and this is why: `write` and `forget` in gateway/src/
+	// handlers/passkey_blob.rs check the session BEFORE they parse the body or
+	// read the handle, so a 401 is proof that nothing happened. Both are
+	// idempotent besides -- a write is an upsert keyed by the handle, and
+	// forgetting a handle already forgotten is the same outcome.
+	//
+	// ONLY the write and the delete. The READ must not -- see `getBlob`. This
+	// file used to carry its own copy of the retry rule, one of five identical
+	// copies; the rule lives in gateway.js now, beside the renewal it drives.
+	//
+	// gateway.js loads AFTER this file (index.html), which is safe because
+	// nothing here calls the gateway while the page is parsing: this module only
+	// defines functions, and every one of them is reached from a user gesture
+	// long after every script has run.
+
 	/// Upload the sealed bundle. Best-effort: a gateway that is down or an
 	/// account with no session must not fail an enrolment that already works on
 	/// this device. Returns whether it landed.
 	async function putBlob(handle, blob) {
 		try {
-			var r = await fetch('/api/passkey-blob', {
+			var r = await DaimondGateway.gwFetch('/api/passkey-blob', {
 				method: 'POST',
 				headers: apiHeaders({ 'content-type': 'application/json' }),
 				credentials: 'same-origin',
@@ -484,6 +508,12 @@
 
 	/// Fetch a sealed bundle by handle. No session is needed or sent — a device
 	/// adopting an account has neither.
+	///
+	/// DELIBERATELY NOT through `gwFetch`. `read` takes no session (see the module
+	/// note in gateway/src/handlers/passkey_blob.rs on why that is safe), so a 401
+	/// here could not be a session that lapsed, and the device asking has no
+	/// unlocked identity to re-authenticate with — `reauth()` would return false
+	/// and leave `state.authed` stamped false on a device that is mid-adoption.
 	async function getBlob(handle) {
 		try {
 			var r = await fetch('/api/passkey-blob?h=' + encodeURIComponent(handle), {
@@ -501,7 +531,7 @@
 	/// opens rather than leaving the account adoptable by a revoked authenticator.
 	async function deleteBlob(handle) {
 		try {
-			var r = await fetch('/api/passkey-blob?h=' + encodeURIComponent(handle), {
+			var r = await DaimondGateway.gwFetch('/api/passkey-blob?h=' + encodeURIComponent(handle), {
 				method: 'DELETE',
 				headers: apiHeaders({}),
 				credentials: 'same-origin',

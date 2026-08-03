@@ -404,6 +404,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sync angehalten',
 	'sync.too_big_reason': 'Das Paket dieses Geräts ist zu groß zum Senden, deshalb reist seine Arbeit nicht mehr weiter. Meist liegt es an einem sehr großen Diamond oder einer sehr großen Datei im Arbeitsbereich — entferne oder verkleinere sie, dann läuft die Synchronisierung von selbst wieder an.',
+	'sync.diamonds_left.one': '{n} Diamond hat nicht ins Sync-Paket dieses Geräts gepasst, deshalb erreicht er deine anderen Geräte erst, wenn er kleiner ist: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds haben nicht ins Sync-Paket dieses Geräts gepasst, deshalb erreichen sie deine anderen Geräte erst, wenn sie kleiner sind: {names}',
 	// Eine Sitzung, die geendet hat und nicht erneuert werden konnte. Gleiche
 	// Beschriftung wie unten: Was zählt, ist, dass die Arbeit nicht weitergeht.
 	'sync.signed_out': 'Sync angehalten',
@@ -417,6 +419,10 @@
 	'sync.when_mins': 'vor {n} Min.',
 	'sync.when_hours': 'vor {n} Std.',
 	'sync.when_days': 'vor {n} T.',
+
+	// ── Cloud storage cleanup ──────────────────────────────────
+	'chunks.sweep_held': 'Aufräumen angehalten',
+	'chunks.sweep_held_reason': 'Der Cloud-Speicher hält {n} von {m} gespeicherten Teilen, auf die keine Datei dieses Kontos mehr verweist. Gelöscht wurden sie NICHT: Eine einzelne Anfrage darf nie mehr als die Hälfte des Gespeicherten entfernen, und dieses Gerät ist nicht in der Lage, darauf zu bestehen. Von deinen Daten fehlt nichts — der Platz wird beim nächsten Sync frei, der alles zuordnen kann.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Anderes Gerät verknüpfen',
@@ -598,6 +604,10 @@
 	'settings.max_tokens': 'Längste Antwort',
 	'settings.max_tokens_auto': 'Automatisch',
 	'settings.tokens': 'Tokens',
+	'settings.max_rounds': 'Schritte pro Zug',
+	'settings.max_rounds_auto': 'Standard',
+	'settings.steps': 'Schritte',
+	'settings.max_rounds_note': 'Wie oft ein Agent ein Werkzeug benutzen darf, bevor ein Zug endet. Er sagt es, wenn er endet, und du kannst ihn weitermachen lassen.',
 	'settings.max_tokens_note': 'Wie lang eine einzelne Antwort sein darf. Zu niedrig, und eine große Datei kommt halbiert an.',
 	'settings.max_tokens_ceiling': 'akzeptiert bis zu',
 
@@ -928,6 +938,8 @@
 	'tile.delete_chat_empty': '„{name}“ löschen?',
 	'tile.start': 'Starten',
 	'tile.start_help': 'Modell bestätigen und diesen Chat starten',
+	'tile.workers': 'Arbeiter',
+	'tile.worker_model_help': 'Das Modell, auf dem die Arbeiter laufen, die ein aus diesem Chat geschnittenes Diamond entsendet; lässt du es stehen, laufen sie auf dem Modell des Chats selbst.',
 	'tile.folded': 'Eingeklappt',
 	'tile.fold_all': 'Alles einklappen',
 	'tile.folded_help': 'Schon in „{name}“ eingeklappt — klapp erneut ein, um Neues seitdem aufzunehmen.',
@@ -969,6 +981,9 @@
 	'rail.create': 'Anlegen',
 	'rail.name': 'Name',
 	'rail.model': 'Modell',
+	'rail.worker_model': 'Modell für Arbeiter',
+	'rail.worker_model_help': 'Der Daimon dieses Diamonds entsendet Arbeiter, mehrere auf einmal; lässt du es stehen, laufen sie auf dem Modell des Diamonds selbst.',
+	'rail.err_no_key_worker': 'Der Anbieter der Arbeiter hat noch keinen lesbaren Schlüssel, also fielen die Arbeiter auf das Modell des Diamonds zurück — entsperre ihn, oder wähle ein anderes.',
 	'rail.err_name': 'Gib dem Diamond einen Namen.',
 	'rail.err_model': 'Wähle ein Modell, mit dem dieses Diamond denken soll.',
 	'rail.err_no_key': 'Dieser Anbieter hat noch keinen lesbaren Schlüssel — entsperre, oder füge einen hinzu.',
@@ -1125,6 +1140,12 @@
 	'dws.empty': 'Bei diesem Diamond wird noch nichts behalten. Was du hier behältst, ist das, was sein Daimon öffnen kann.',
 	'dws.attach_dir': 'Diesen Ordner bei {name} behalten',
 	'dws.detach_dir': 'Diesen Ordner nicht mehr bei {name} behalten',
+	'dws.kits': 'Toolchains',
+	'dws.kits_help': 'Welche Compiler und Paketmanager ein Befehl aus diesem Diamond auf deinem Computer erreichen darf. Aus, solange du es nicht erlaubst — nichts davon wählt ein Daimon selbst.',
+	'dws.kit_on': 'Die Toolchain {kit} an {name} vergeben',
+	'dws.kit_off': 'Die Toolchain {kit} von {name} zurücknehmen',
+	'dws.kit_failed': 'Diese Toolchain wurde nicht gespeichert',
+	'dws.kit_none': 'Keine Toolchain. Ein Befehl erreicht die Dateien dieses Diamonds und sonst nichts auf deinem Computer.',
 	'dws.elsewhere': 'Liegt im Arbeitsbereich',
 	'dws.readonly': 'Nur lesen',
 
@@ -1284,6 +1305,8 @@
 	'files.adopted_title.other': '{n} Diamonds wurden zurückgeholt',
 	'files.adopted_body': 'Daimond hat in diesem Ordner eigene Dateien gefunden und sie zurück in den eigenen Speicher kopiert, wo sie synchronisiert werden: {names}. Die Kopien im Ordner blieben genau dort, unter diamonds/ — Sie können sie löschen, sobald Sie zufrieden sind.',
 	'files.adopted_kept': 'Diese wichen von dem ab, was Daimond bereits hatte, also wurden beide Fassungen behalten:\n{paths}',
+	'files.adopt_left_title': 'Einige Dateien sind im Ordner geblieben',
+	'files.adopted_skipped': 'Diese wurden nicht kopiert — über 8 MiB oder nicht lesbar —, deshalb fehlt einem Diamond, der sie braucht, genau dieser Teil, oder er ist gar nicht da:\n{paths}',
 	'files.folder_open_failed': 'Dieser Ordner ließ sich nicht öffnen.',
 	'files.import': 'Importieren',
 	'files.import_body': '„{name}“ in den Arbeitsbereich kopieren? Alles darin wird dann auf deine anderen Geräte synchronisiert und zählt zu deinem Speicher.',
@@ -1400,6 +1423,8 @@
 	'backup.n_diamonds.one': '{n} Diamond',
 	'backup.n_diamonds.other': '{n} Diamonds',
 	'backup.restored_body': '{files} und {diamonds} wiederhergestellt. Daimond lädt neu, um deinen wiederhergestellten Arbeitsbereich zu öffnen.',
+	'backup.n_foreign.one': '{n} Datei in dieser Sicherung gehört einem anderen Konto in dem Browser, aus dem sie stammt, deshalb wurde sie nicht wiederhergestellt und liegt weiterhin nur in der Sicherungsdatei.',
+	'backup.n_foreign.other': '{n} Dateien in dieser Sicherung gehören einem anderen Konto in dem Browser, aus dem sie stammt, deshalb wurden sie nicht wiederhergestellt und liegen weiterhin nur in der Sicherungsdatei.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Anderes (von Hand eingeben)…',

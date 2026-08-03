@@ -42,6 +42,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { open as openApp, scratch } from './harness.mjs';
+import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -96,21 +97,40 @@ fs.chmodSync(JOURNAL, 0o700);
 // made a security test pass against a binary from before the fix.
 const buildEnv = { ...process.env };
 delete buildEnv.CARGO_TARGET_DIR;
-const built = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
-	{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
+// `DAIMOND_NO_BUILD` skips the build and NOTHING else: the staleness guard below
+// runs either way, so it cannot make this file report success against code it did
+// not test — only refuse. It exists because cargo relinks an output it finds
+// backdated, so with the build in the way the guard can never be watched
+// refusing. Same hatch as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
+const built = process.env.DAIMOND_NO_BUILD ? { status: 0, stderr: '' }
+	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 check('the hand builds from source', built.status === 0 && fs.existsSync(HAND),
 	(built.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 3).join(' | '));
 if (built.status !== 0) { console.log('\n0 ok, 1 failed'); process.exit(1); }
 
-// The wasm the browser loads is the half under test here; a stale bundle would
-// be measuring yesterday's engine.
-const wasmFile = path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm');
-const wasmAt = fs.existsSync(wasmFile) ? fs.statSync(wasmFile).mtimeMs : 0;
-const srcAt = ['src/tools.rs', 'src/wasm/app.rs']
-	.map((f) => path.join(ROOT, f)).filter((f) => fs.existsSync(f))
-	.reduce((a, f) => Math.max(a, fs.statSync(f).mtimeMs), 0);
-check('the wasm bundle is newer than the engine source it was built from', wasmAt >= srcAt,
-	'run dev/build-wasm.sh');
+// A build that exits 0 says the compiler was happy, not that `HAND` is what it
+// produced. Cargo's own dep-info file is the oracle — every source that went
+// into the link, this crate's and every fe2o3 crate's.
+refuse(whyStaleBinary(HAND, {
+	subject: 'The fence this file measures',
+	what:    'hand',
+	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+}));
+
+// ── The engine's half ───────────────────────────────────────────────
+//
+// The wasm composes the fence the hand is handed, so it is the half under test
+// here. This compared it against `src/tools.rs` and `src/wasm/app.rs` alone,
+// which on 2026-08-03 missed `src/wasm/opfs.rs`, `src/wasm/diamond.rs`,
+// `src/prompts.rs` and `src/skills.rs` — all changed that day — and misses every
+// fe2o3 crate always. There is no dep-info to be had for a wasm bundle (see
+// `dev/staleguard.mjs`), so the oracle is every `.rs` under `src/`: coarse, and
+// a superset of anything hand-picked.
+refuse(whyStaleWasm(path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm'), path.join(ROOT, 'src'), {
+	subject: 'The scope the engine composes',
+	holds:   '`diamond_bounds` and the fence it builds',
+}));
 
 fs.writeFileSync(path.join(JOURNAL, 'root.txt'),
 	`# The one folder Daimond's machine hand may work in.\n${GRANT}\n`);

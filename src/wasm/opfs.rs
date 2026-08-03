@@ -23,12 +23,16 @@
 //! FSA mode is therefore not a new filesystem but a *swapped root handle*.
 //! A thread-local override (wasm is single-threaded, so no `Send` bound is
 //! needed) holds the FSA handle when one is open.  Which root a given call
-//! uses is selected by [`crate::tools::FileRoot`]:
+//! uses is selected by [`crate::tools::FileRoot`] **and by the path**:
 //! [`FileRoot::Workspace`](crate::tools::FileRoot::Workspace) honours the
-//! override (the file tools / Workspace edit the real folder), while
+//! override (the file tools / Workspace edit the real folder) for the user's
+//! work, and pins the OPFS root for a path naming Daimond's own store
+//! ([`is_store_path`](crate::tools::is_store_path)), so a Diamond is the same
+//! Diamond in either mode;
 //! [`FileRoot::Opfs`](crate::tools::FileRoot::Opfs) always pins the OPFS
 //! root so Daimond's own Diamond/crystal/`.daimond` state can never pollute the user's
-//! real repo.
+//! real repo; and [`FileRoot::Machine`](crate::tools::FileRoot::Machine) always
+//! resolves to the real folder, for the one operation that copies out of it.
 //!
 //! The synchronous `createSyncAccessHandle` path (single-writer Worker,
 //! for the append-only `.daimond` log) is deferred; this async edge covers
@@ -98,6 +102,15 @@ pub fn set_override(handle: FileSystemDirectoryHandle) {
 /// OPFS sandbox root.
 pub fn clear_override() {
     WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = None);
+}
+
+/// Whether a real folder is open at all.
+///
+/// [`workspace_mode`] answers the same question for the page, which wants a word to render; a
+/// caller that wants to know whether [`FileRoot::Machine`] can resolve wants a boolean, and
+/// comparing strings to find out is how the two answers drift apart.
+pub fn folder_open() -> bool {
+    WORKSPACE_OVERRIDE.with(|c| c.borrow().is_some())
 }
 
 /// The current file-tool root mode: `"folder"` when an FSA real folder is
@@ -231,19 +244,49 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
     Ok(sub)
 }
 
-/// Resolve the root handle a call operates against.
+/// Resolve the root handle a call operates against, for the path it is about to address.
 ///
-/// [`FileRoot::Workspace`] returns the FSA override when one is open, else
-/// the OPFS root; [`FileRoot::Opfs`] always returns the OPFS root.
-async fn resolve_root(root: FileRoot) -> Outcome<FileSystemDirectoryHandle> {
+/// [`FileRoot::Workspace`] returns the FSA override when one is open, else the OPFS root;
+/// [`FileRoot::Opfs`] always returns the OPFS root; [`FileRoot::Machine`] always returns the
+/// override and fails when there is none.
+///
+/// The path is what makes the first of those true of Daimond's own state as well as of the user's
+/// work.  A Diamond lives at `diamonds/<id>`, and every reader of that path other than the store
+/// itself -- the file tools, the Workspace panel, a dispatched worker -- asks for
+/// [`FileRoot::Workspace`].  With a folder open they were reading and writing the user's project,
+/// so a Diamond's own files vanished from the panel on a switch and a worker's output landed
+/// outside the sync parcel where nothing would ever see it again.  The rule is one line and it is
+/// applied here, once: a path naming the store resolves against OPFS whatever root is active (see
+/// [`crate::tools::is_store_path`]).
+///
+/// [`FileRoot::Opfs`] is NOT made redundant by that and must not be deleted as though it were.  It
+/// is the belt to this test's braces: `crystal.md` is written through two doors and read through a
+/// third, and the day one of them stops agreeing with the others is the day an agent reads an empty
+/// crystal and writes over work it never saw.
+///
+/// # Arguments
+/// * `root` - Which root the caller asked for.
+/// * `path` - The workspace-relative path the call addresses; empty addresses the root itself.
+async fn resolve_root(root: FileRoot, path: &str) -> Outcome<FileSystemDirectoryHandle> {
     match root {
         FileRoot::Workspace => {
-            if let Some(h) = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone()) {
-                return Ok(h);
+            // Daimond's own store never follows the folder, whoever asked.
+            if !crate::tools::is_store_path(path) {
+                if let Some(h) = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone()) {
+                    return Ok(h);
+                }
             }
             opfs_root().await
         }
         FileRoot::Opfs => opfs_root().await,
+        // Never a fallback to the sandbox: the one caller is a copy OUT of the folder, and a
+        // fallback would copy the sandbox onto itself and call it a migration.
+        FileRoot::Machine => match WORKSPACE_OVERRIDE.with(|c| c.borrow().clone()) {
+            Some(h) => Ok(h),
+            None    => Err(err!(
+                "OPFS: '{}' was addressed on the machine folder, and no folder is open.", path;
+                IO, File, Missing)),
+        },
     }
 }
 
@@ -324,7 +367,7 @@ async fn open_parent(
 /// Write `content` to `path` under `root`, creating parent directories
 /// and the file as needed, replacing any existing contents.
 pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<()> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(descend(&handle, components).await);
 
@@ -357,7 +400,7 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
 /// Only an agent could make a directory before this, and only as a side effect
 /// of writing a file into one; the user had no way at all.
 pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let mut dir = handle;
     for name in components {
@@ -376,6 +419,12 @@ pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
 /// OPFS has no rename, so this copies and then deletes.  Directories are copied
 /// recursively.  The destination must not already exist, so a move can never
 /// silently clobber the user's work.
+///
+/// Each sub-call resolves the root for ITS OWN path (see [`resolve_root`]), so a move between
+/// Daimond's store and the user's folder crosses roots correctly rather than half-happening: the
+/// bytes are read from wherever `from` lives and written to wherever `to` lives.  What it is not is
+/// a way to move a Diamond out of the store and have it still be a Diamond -- the store is where
+/// the rail reads, so such a move REMOVES it, exactly as asked.
 pub async fn move_entry(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
     if res!(exists(root, to).await) {
         return Err(err!("'{}' already exists.", to; Invalid, Input));
@@ -414,7 +463,7 @@ async fn copy_dir(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
 
 /// True when `path` names a directory.
 async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
     Ok(JsFuture::from(dir.get_directory_handle(&leaf)).await.is_ok())
@@ -423,7 +472,7 @@ async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
 /// Read the entire contents of `path` under `root` as bytes.  Errors if
 /// any path component (directory or the file itself) does not exist.
 pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
@@ -509,7 +558,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle) -> Outcome<Vec<(String, b
 /// `(name, is_dir, size)` per entry (unsorted — the caller orders them).
 /// An empty path addresses the root directory.
 pub async fn list_dir(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool, u64)>> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let dir = res!(descend_dir(&handle, path).await);
     read_entries(&dir).await
 }
@@ -519,7 +568,7 @@ pub async fn list_dir(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool, 
 /// directory is rejected by the browser.  Errors if the entry or any
 /// parent does not exist.
 pub async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
     let opts = FileSystemRemoveOptions::new();
@@ -531,7 +580,7 @@ pub async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcom
 
 /// Whether an entry (file or directory) exists at `path` under `root`.
 pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
-    let handle = res!(resolve_root(root).await);
+    let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = match open_parent(&handle, components).await {
         Ok(v)  => v,

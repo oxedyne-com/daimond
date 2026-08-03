@@ -491,8 +491,13 @@ import init, {
 	/// `session` is the conversation the MODEL holds, which is not the same object as the
 	/// transcript on screen: it carries the provider's own tool-call ids, and it is the folded
 	/// list once compaction has run. See `captureSession`.
+	/// `workerModel`/`workerProvider` travel for the same reason the chat's own pair does: they are
+	/// a decision the user made when the chat was created, and a device that did not receive them
+	/// would put this chat's workers back on whatever IT has starred. Empty means "not chosen", and
+	/// every reader takes that as the chat's own model -- never the default.
 	function slimChat(c) {
 		return { id: c.id, name: c.name, messages: c.messages, model: c.model, provider: c.provider || '',
+			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
 			status: c.status || 'active',
 			session: c.session || null,
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
@@ -1004,6 +1009,9 @@ import init, {
 	function hydrateChat(c) {
 		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : []), model: c.model,
 			provider: c.provider || '',
+			// A chat stored before workers had a model of their own carries neither, and reads
+			// as "the chat's own model" everywhere. See `slimChat`.
+			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
 			status: c.status || 'active',
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
 			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
@@ -1491,6 +1499,24 @@ import init, {
 	// entry count in hand (chunks.js chunkSizeFor).
 	var SYNC_CHUNK_FILE_MAX  = 1024 * 1024 * 1024;
 	var SYNC_CHUNK_TOTAL_MAX = 4 * 1024 * 1024 * 1024;	// budget for all offloaded bytes.
+	// What the WHOLE parcel has to stay under, and it is not the 32 MiB the gateway
+	// advertises. `max_bytes` on /api/sync is 32 MiB and refuses an oversized push
+	// with a 413 that sync.js draws on the chip -- but the parcel never gets that
+	// far. The gateway caps an HTTP BODY at 16 MiB (gateway/src/app_main.rs,
+	// MAX_BODY_BYTES), the reader rejects a larger one before dispatch, and
+	// `handle_connection` logs the read error and closes: no status line, no 413,
+	// nothing for the chip to show. The browser sees a dropped connection and takes
+	// sync.js's network-error arm, which is silent by design because a flaky network
+	// is not news. Base64 costs a third on top of the parcel, so 16 MiB of body is
+	// about 12 MiB of parcel, and the 413 arm is unreachable behind that.
+	//
+	// 10 MiB, so the Diamonds are budgeted with room for the rest of the parcel --
+	// every transcript, the mailboxes, the ledger, the model tables and the chunk
+	// manifest, none of which is capped here.
+	var SYNC_PARCEL_MAX      = 10 * 1024 * 1024;
+	// And the most the Diamonds may take of it, so a store that grows without limit
+	// cannot crowd out the workspace files it shares the parcel with.
+	var SYNC_DIAMONDS_MAX    = 6 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
 	// The cloud index has its own fork point, kept apart from the inline one so
 	// the two 3-way merges can never read each other's hashes.
@@ -1543,7 +1569,10 @@ import init, {
 	/// budget. An incomplete census still carries the files it did find; it simply
 	/// carries no news about the ones it did not.
 	async function collectFiles() {
-		var out = { files: {}, large: {}, skipped: 0, oversize: [], complete: false };
+		// `bytes` is what the inline files came to, so the Diamonds can be budgeted
+		// against what is left of the parcel rather than against a number chosen in
+		// ignorance of them.
+		var out = { files: {}, large: {}, skipped: 0, oversize: [], bytes: 0, complete: false };
 		if (!filesSyncable()) return out;
 		var app; try { app = tools(); } catch (e) { return out; }
 		out.complete = true;						// until something below is missed.
@@ -1605,6 +1634,7 @@ import init, {
 		// walk that hit the loop guard with directories still queued, are both a
 		// census that did not see everything.
 		if (out.skipped || todo.length) out.complete = false;
+		out.bytes = total;
 		return out;
 	}
 
@@ -1784,31 +1814,88 @@ import init, {
 	// union, and so do the links. Everything else at an equal stamp is left as
 	// it is, which is what "the merge does not choose" means.
 
-	/// Every Diamond this device holds, packed for the parcel: the id, both
-	/// stamps, the whole directory, and which model it thinks with.
-	async function collectDiamonds() {
-		var out = [], tombs = loadDiamondTombs(), list;
-		try { list = JSON.parse(await diamondApp().list_diamonds()); }
-		catch (e) { return out; }                  // no store to read: send nothing, delete nothing
+	/// Every Diamond this device holds that fits, packed for the parcel: the id,
+	/// both stamps, the whole directory, and which model it thinks with.
+	///
+	/// `{ list, left, complete }`. `left` names the Diamonds this parcel could not
+	/// carry, so the caller can say so; `complete` is false when anything at all was
+	/// missed, including a Diamond that would not export.
+	///
+	/// WHY THERE IS A BUDGET AT ALL. A Diamond carries its crystal, every version of
+	/// it, its log and its sidecars, and the whole store rides in one array with
+	/// nothing bounding it. Past the parcel ceiling the push does not fail loudly --
+	/// see `SYNC_PARCEL_MAX` -- it fails as a dropped connection, and the account
+	/// stops syncing ALTOGETHER: no transcripts, no files, no mail, and a chip that
+	/// says nothing is wrong. Leaving out the Diamonds that do not fit costs the
+	/// user the ones named in `left` and keeps everything else moving.
+	///
+	/// NOT A LOSS AT THE FAR END, AND NOT A SILENT ONE HERE. A Diamond is deleted on
+	/// a tombstone and never on absence (see `applyDiamonds`), so one left out of a
+	/// parcel is a Diamond that has not travelled YET, not one the other device is
+	/// entitled to delete. `diamondsComplete` says so in the parcel, and the caller
+	/// tells the user which ones stayed behind -- a census that quietly drops content
+	/// is the defect `dev/verify_dataloss.mjs` exists about.
+	///
+	/// Freshest first, so what the user is working on is what travels when not all of
+	/// it does; ties broken by id, because the parcel is compared byte-for-byte
+	/// against the last one pushed and an order that depended on how the store
+	/// enumerated would push for ever.
+	///
+	/// # Arguments
+	/// * `budget` - The most exported bytes the Diamonds may take of this parcel.
+	async function collectDiamonds(budget) {
+		var out = { list: [], left: [], complete: true }, tombs = loadDiamondTombs(), held;
+		try { held = JSON.parse(await diamondApp().list_diamonds()); }
+		catch (e) { out.complete = false; return out; }   // no store to read: send nothing, delete nothing
 		var models = diamondModels();
-		for (var i = 0; i < list.length; i++) {
-			var d = list[i];
-			// A Diamond deleted here is on its way out, not on its way over.
-			if (!d || !d.id || tombs[d.id]) continue;
-			try {
-				out.push({
-					id:      d.id,
-					updated: d.updated || 0,
-					// A device that predates the second stamp sends none, and the
-					// receiver falls back to `updated` — which is what `touched`
-					// means on such a device anyway.
-					touched: d.touched || d.updated || 0,
-					model:   models[d.id] || null,
-					data:    await diamondApp().export_diamond(d.id),
-				});
-			} catch (e) { /* one unreadable Diamond must not hold up the rest */ }
+		// A Diamond deleted here is on its way out, not on its way over.
+		held = held.filter(function (d) { return d && d.id && !tombs[d.id]; });
+		held.sort(function (a, b) {
+			return diamondStamp(b) - diamondStamp(a) || (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
+		});
+		var used = 0;
+		for (var i = 0; i < held.length; i++) {
+			var d = held[i], data;
+			try { data = await diamondApp().export_diamond(d.id); }
+			catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
+			// `continue`, not `break`: one enormous Diamond must not stop the small
+			// fresh ones behind it from travelling.
+			if (used + data.length > budget) {
+				out.left.push({ id: d.id, name: d.name || d.id });
+				out.complete = false;
+				continue;
+			}
+			used += data.length;
+			out.list.push({
+				id:      d.id,
+				updated: d.updated || 0,
+				// A device that predates the second stamp sends none, and the
+				// receiver falls back to `updated` — which is what `touched`
+				// means on such a device anyway.
+				touched: d.touched || d.updated || 0,
+				model:   models[d.id] || null,
+				data:    data,
+			});
 		}
 		return out;
+	}
+
+	/// The Diamonds the last parcel could not carry, told once per set.
+	///
+	/// Said out loud rather than logged. What the user has to act on is one Diamond
+	/// they can see the name of -- prune its versions, or delete it -- and a
+	/// `console.warn` is not a place anyone looks. Deduplicated on the set, so a push
+	/// every few seconds does not become a toast every few seconds; a set that
+	/// changes, or one that empties and comes back, is news again.
+	var _leftTold = null;
+	function noteDiamondsLeft(left) {
+		var sig = left.map(function (d) { return d.id; }).sort().join(',');
+		if (sig === _leftTold) return;
+		_leftTold = sig;
+		if (!left.length) return;
+		var names = left.slice(0, 3).map(function (d) { return d.name; });
+		if (left.length > names.length) names.push('…');
+		toast(tn('sync.diamonds_left', left.length, { names: names.join(', ') }), true);
 	}
 
 	/// How fresh a Diamond is, for the merge alone.
@@ -1982,6 +2069,13 @@ import init, {
 		finally { packingParcel = false; }
 		var fileCol = await collectFiles();
 		var chunked = await collectChunked(fileCol.large);
+		// What is left of the parcel after the inline files, and never more than the
+		// Diamonds' own share of it. Taking the files off first is deliberate: they
+		// have already been read and counted, and a budget that ignored them would
+		// let the two sections agree to overrun the ceiling between them.
+		var dCol = await collectDiamonds(
+			Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)));
+		noteDiamondsLeft(dCol.left);
 		// v2 adds `diamonds` and `diamondTombs`. The version is informational:
 		// every section is read by name and a missing one is a no-op, so a v1
 		// device and a v2 device sync happily in both directions -- the v1 side
@@ -2005,7 +2099,14 @@ import init, {
 			// entitles the receiver to delete by absence; see applyFiles.
 			filesComplete: fileCol.complete === true,
 			chunked:      chunked,
-			diamonds:     await collectDiamonds(),
+			diamonds:     dCol.list,
+			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
+			// nothing needs to: a Diamond is deleted on a tombstone, so absence is not
+			// news and cannot be mistaken for one. It is carried because the day
+			// somebody makes Diamonds delete by absence -- as files once did -- this is
+			// the flag that stops a budgeted parcel reading as a mass deletion, and the
+			// receiver that has to check it will only exist if the sender said it.
+			diamondsComplete: dCol.complete === true,
 			diamondTombs: readJson(DIAMOND_TOMBS_KEY, {}),
 			// The providers, their model lists and their SEALED keys. Deterministic
 			// by construction -- models.js sorts every id, every model list and every
@@ -2024,6 +2125,20 @@ import init, {
 			// device's own stamp only moves when it is stale, so the parcel is the
 			// same bytes between real changes and the push skip still holds.
 			devices:      collectDevices(),
+			// What the account has spent, turn by turn.
+			//
+			// The provider keys and their credit bases already travel, so without
+			// this the two devices held the same "you put $40 on this key" and
+			// subtracted different spend from it: each knew only its own turns, and
+			// so each showed a different figure for the same key on the same day.
+			// A ledger merges by union (see `mergeLedgers`), which is what lets both
+			// arrive at the one number.
+			//
+			// Passed through the merge with nothing, which sorts it and drops any
+			// duplicate: the parcel is compared byte-for-byte against the last one
+			// pushed, so an order that depended on how storage enumerated would push
+			// for ever.
+			ledger:       mergeLedgers(readJson('daimond-ledger', []), []),
 		};
 	}
 
@@ -2096,6 +2211,17 @@ import init, {
 		// the field is a device that predates it, so a v1 parcel still applies.
 		await section('models',   function () {
 			if (window.DaimondModels && DaimondModels.applySync) return DaimondModels.applySync(remote.models);
+		});
+		// What the other device spent. UNION, never replacement: an entry is a turn
+		// that really happened and was really paid for, so a merge that dropped one
+		// would take money out of the account's history — and each device is the
+		// only witness to its own turns.
+		await section('ledger',   function () {
+			if (!Array.isArray(remote.ledger) || !remote.ledger.length) return;
+			var merged = mergeLedgers(readJson('daimond-ledger', []), remote.ledger);
+			localStorage.setItem('daimond-ledger', JSON.stringify(merged));
+			// The meters are showing a total that just changed.
+			try { updateSpend(); } catch (e) { /* nothing is drawn yet */ }
 		});
 		// The mailboxes. A second device that holds the account holds the
 		// entitlement too, so an account that arrives here is an account that can
@@ -4199,6 +4325,9 @@ import init, {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.textContent = f.label || f.name;
+			// A field whose label cannot say what happens if it is left alone carries the
+			// sentence on hover instead, on both halves of the row.
+			if (f.title) lab.title = f.title;
 			host.appendChild(lab);
 
 			// A `models` field is a pulldown of every model, grouped by provider, drawn by the
@@ -4207,6 +4336,7 @@ import init, {
 			if (f.kind === 'models') {
 				var sel = document.createElement('select');
 				sel.className = 'dlg-input dlg-select';
+				if (f.title) { sel.title = f.title; sel.setAttribute('aria-label', f.title); }
 				if (window.DaimondModels) DaimondModels.fillSelect(sel, f.provider || '', f.value || '');
 				host.appendChild(sel);
 				inputs[f.name] = sel;
@@ -5177,7 +5307,17 @@ import init, {
 				if (!(window.DaimondIdentity && DaimondIdentity.isUnlocked())) return;
 				if (consoleAsking) return;
 				consoleAsking = true;
-				fetch('/api/admin?view=whoami', {
+				// Through `gwFetch`, which is the one copy of the 401 rule: a session
+				// lives an hour, this drawer is opened long after that, and a bare fetch
+				// answered its own 401 by remembering 'error' and asking again on the
+				// next draw -- against a session that nothing here was renewing. It
+				// self-heals, but only when something ELSE takes a session again, so a
+				// role-holder could open the drawer all afternoon and never see the link.
+				// `/api/admin` is neither an auth path nor one a bootstrap makes itself
+				// (see isBootstrapOwn), so the renewal is allowed; and `whoami` takes the
+				// session before it does anything, so the retry cannot repeat a side
+				// effect the first attempt never had.
+				DaimondGateway.gwFetch('/api/admin?view=whoami', {
 					credentials: 'same-origin',
 					headers: { 'x-daimond-api': '1' },
 				}).then(function (r) {
@@ -5955,6 +6095,11 @@ import init, {
 			messages: [],
 			model: d.model || cfg.model || '',
 			provider: d.provider || '',
+			// The workers start on the same model as the chat, and the tile's second pulldown is
+			// where that is changed. Seeded rather than left empty so the pulldown has something to
+			// point at; an empty pair still means the chat's own model wherever one is read.
+			workerModel: d.model || cfg.model || '',
+			workerProvider: d.provider || '',
 			status: 'pending',
 			promptTokens: 0,
 			completionTokens: 0,
@@ -5975,8 +6120,13 @@ import init, {
 		if (isMobile()) mshow('ai');
 	}
 
-	// Confirm a pending chat's model and activate it so it can take input.
-	function startChat(chat, model, provider) {
+	/// Confirm a pending chat's model -- and its workers' model -- and activate it so it can take
+	/// input.
+	///
+	/// `worker` is `{ provider, model }` from the tile's second pulldown. Absent, or naming a model
+	/// no provider can run, it becomes the chat's own model: the one thing already known to work,
+	/// and never the starred default, which is a different provider's key as often as not.
+	function startChat(chat, model, provider, worker) {
 		model    = (model    || chat.model    || cfg.model || '').trim();
 		provider = (provider || chat.provider || '').trim();
 		if (!model) { openSettings(t('chat.choose_model')); return; }
@@ -5990,6 +6140,11 @@ import init, {
 		}
 		chat.model    = r.model;
 		chat.provider = r.provider;
+		var wm = (worker && worker.model) || chat.workerModel || '';
+		var wp = (worker && worker.provider) || chat.workerProvider || '';
+		var wr = wm && window.DaimondModels && DaimondModels.resolve(wp, wm);
+		chat.workerModel    = wr ? wr.model    : r.model;
+		chat.workerProvider = wr ? wr.provider : r.provider;
 		chat.status = 'active';
 		chat.app = null;                       // built lazily on the first turn
 		touchChat(chat);
@@ -6121,9 +6276,15 @@ import init, {
 		var id;
 		try { id = await diamondApp().create_diamond(name); takeDiamondLabel(); bumpDiamonds(); }
 		catch (e) { noticeDialog(t('rail.create_failed'), friendlyError(e)); return; }
-		// A Diamond made out of a chat inherits that chat's model. It is not asked for here because
-		// the user has already answered it, when they started the chat this Diamond is made of.
-		setDiamondModel(id, { provider: chat.provider || '', model: chat.model || '' });
+		// A Diamond made out of a chat inherits that chat's model, and its workers' model with it.
+		// Neither is asked for here because the user has already answered both, when they started
+		// the chat this Diamond is made of.
+		setDiamondModel(id, {
+			provider:       chat.provider || '',
+			model:          chat.model || '',
+			workerProvider: chat.workerProvider || '',
+			workerModel:    chat.workerModel || '',
+		});
 		await loadDiamonds();
 		foldChatInto(chat, id, turns).catch(foldFailed);
 	}
@@ -6440,6 +6601,14 @@ import init, {
 			sel.addEventListener('change', function () {
 				var p = DaimondModels.pick(sel);
 				s.model = p.model; s.provider = p.provider;
+				// The workers follow the chat's model until the user moves them off it
+				// themselves. "Defaults to the main model" has to keep meaning that while the
+				// main model is still being chosen, or a user who picks the chat's model second
+				// gets workers on whatever they happened to look at first.
+				if (!wsel._chosen) {
+					s.workerModel = p.model; s.workerProvider = p.provider;
+					populateModelSelect(wsel, p.model, p.provider);
+				}
 			});
 			var start = document.createElement('button');
 			start.className = 'tile-start';
@@ -6448,10 +6617,34 @@ import init, {
 			start.addEventListener('click', function (e) {
 				e.stopPropagation();
 				var p = DaimondModels.pick(sel);
-				startChat(s, p.model, p.provider);
+				startChat(s, p.model, p.provider, DaimondModels.pick(wsel));
 			});
 			ctrls.appendChild(sel); ctrls.appendChild(start);
 			box.appendChild(ctrls);
+
+			// Below it: the model this chat's WORKERS run on. Its own row, because it is a second
+			// decision about money -- a fan-out is several turns at once, and it used to be taken
+			// silently on whatever model happened to be starred. A worker is dispatched by a
+			// Diamond's daimon, so this is what a Diamond cut from this chat inherits.
+			var wrow = document.createElement('div');
+			wrow.className = 'tile-pending';
+			var wlab = document.createElement('span');
+			wlab.className = 'tile-model-chip';
+			wlab.textContent = t('tile.workers');
+			var wsel = document.createElement('select');
+			wsel.className = 'tile-model tile-worker-model';
+			wsel.title = t('tile.worker_model_help');
+			wsel.setAttribute('aria-label', t('tile.worker_model_help'));
+			populateModelSelect(wsel, s.workerModel || s.model || cfg.model || '',
+				s.workerProvider || s.provider || '');
+			wsel.addEventListener('click', function (e) { e.stopPropagation(); });
+			wsel.addEventListener('change', function () {
+				var p = DaimondModels.pick(wsel);
+				s.workerModel = p.model; s.workerProvider = p.provider;
+				wsel._chosen = true;		// from here it no longer follows the chat's own model
+			});
+			wrow.appendChild(wlab); wrow.appendChild(wsel);
+			box.appendChild(wrow);
 		} else {
 			// Active: model chip + Fold on one row, the live meter below.
 			var meta = document.createElement('div');
@@ -7586,10 +7779,17 @@ import init, {
 		},
 
 		/// Dispatch every agent the conductor asked for in one turn.
-		dispatch: function (diamondId, diamondName, specs, tainted) {
+		///
+		/// `pick` is `{ provider, model }` -- the pair the USER chose for this Diamond's workers.
+		/// It is resolved once for the whole turn, so every worker in one fan-out runs on the same
+		/// model and spends the same key, and it is a parameter rather than something read here
+		/// because the model must never be the thing that decides what to spend money on: that is
+		/// why `spawn_agent`'s schema is still `{name, task}`.
+		dispatch: function (diamondId, diamondName, specs, tainted, pick) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
+			var wm = (pick && pick.model) ? pick : diamondWorkerModel(diamondId);
 			specs.forEach(function (spec) {
 				var run = {
 					id: 'w' + (++self.seq),
@@ -7597,12 +7797,14 @@ import init, {
 					task: spec.task || '',
 					diamondId: diamondId,
 					diamondName: diamondName,
-					model: cfg.model,
-					// A worker runs on the starred default, which is what `cfg` is a view of. It
-					// was implicit before, read straight out of `cfg` at construction; naming it
-					// lets a worker be asked the same question a chat is asked -- whose key is
-					// this, and can it be replaced -- and answered the same way.
-					provider: (window.DaimondModels ? DaimondModels.getDefault().provider : '') || '',
+					model: wm.model || '',
+					// The provider is the other half of the choice, and it has to travel with the
+					// model rather than be read off the starred default: the same model name sits
+					// behind two providers as often as not, and a worker sent with the wrong key
+					// is billed to the wrong balance or refused outright. `appCfgFor(run)` and the
+					// credits check in `start` both read this pair, so setting them together here
+					// is what puts the worker on the right endpoint with the right key.
+					provider: wm.provider || '',
 					status: 'queued',
 					// A worker starts with a clean context, which is exactly how an
 					// instruction absorbed from a stranger could be laundered through
@@ -9305,6 +9507,55 @@ import init, {
 		// switch — which also makes the consequence explicit: what you import
 		// starts syncing, and one day starts costing.
 
+		/// The root the workspace ACTUALLY is: the open real folder, or this
+		/// account's OPFS sandbox when there is none.
+		///
+		/// Both transfers below reach the workspace twice — the export lists it and
+		/// then reads its bytes, the import writes into it — and the two reaches
+		/// have to arrive at the same directory. They did not: the listing went
+		/// through `file_list`, which resolves the real-folder override inside the
+		/// wasm, while the bytes went through `DaimondCloud`, which is OPFS and
+		/// nothing else. With a folder open that is two different places, so a
+		/// "Save a copy" listed the user's real files, looked for them in a sandbox
+		/// that had never held them, and wrote an EMPTY copy without failing;
+		/// an import put the files where the agent could not see them.
+		///
+		/// Streamed rather than routed through the wasm `write_bytes`, which would
+		/// also be correct: a folder import is whole files of any size, and this
+		/// way none of them is ever held in memory at once.
+		async function wsRoot() {
+			return folderHandle || await DaimondCloud.opfsRoot();
+		}
+
+		function pathParts(path) {
+			return String(path).split('/').filter(function (x) { return x && x !== '.' && x !== '..'; });
+		}
+
+		/// The `File` at a workspace-relative path, or null when it is not there.
+		async function wsFileAt(path) {
+			var p = pathParts(path);
+			if (!p.length) return null;
+			var dir = await wsRoot();
+			try {
+				for (var i = 0; i < p.length - 1; i++) dir = await dir.getDirectoryHandle(p[i]);
+				return await (await dir.getFileHandle(p[p.length - 1])).getFile();
+			} catch (e) { return null; }
+		}
+
+		/// Write a Blob to a workspace-relative path, creating folders as needed.
+		async function wsWriteBlob(path, blob) {
+			var p = pathParts(path);
+			if (!p.length) throw new Error('Empty path.');
+			var dir = await wsRoot();
+			for (var i = 0; i < p.length - 1; i++) {
+				dir = await dir.getDirectoryHandle(p[i], { create: true });
+			}
+			var fh = await dir.getFileHandle(p[p.length - 1], { create: true });
+			var w = await fh.createWritable();
+			await w.write(blob);
+			await w.close();
+		}
+
 		/// Copy a folder from this machine into the workspace.
 		async function importFolder() {
 			if (typeof window.showDirectoryPicker !== 'function') {
@@ -9328,9 +9579,10 @@ import init, {
 					try { src = await h.getFile(); }
 					catch (e2) { skipped++; continue; }
 					showModeMsg('Importing ' + rel + '\u2026');
-					// The bytes, whatever they are. A picture imports as a picture; only
-					// the sync layer decides later whether it rides inline or as chunks.
-					try { await DaimondCloud.writeBlob(joinPath(handle.name, rel), src); copied++; }
+					// The bytes, whatever they are, into the root the agent is on. A
+					// picture imports as a picture; only the sync layer decides later
+					// whether it rides inline or as chunks.
+					try { await wsWriteBlob(joinPath(handle.name, rel), src); copied++; }
 					catch (e3) { skipped++; }
 				}
 			}
@@ -9374,9 +9626,10 @@ import init, {
 					// Copy the file itself, NOT its text through file_read: that tool
 					// truncates at its context budget, so anything over ~60 KB would
 					// land silently shortened — the one thing a "save a copy" must
-					// never do — and a binary file would not survive at all.
+					// never do — and a binary file would not survive at all. From the
+					// root the listing above came from, which is not always OPFS.
 					var src;
-					try { src = await DaimondCloud.fileAt(full); }
+					try { src = await wsFileAt(full); }
 					catch (e2) { src = null; }
 					if (!src) continue;
 					showModeMsg('Saving ' + full + '…');
@@ -9770,8 +10023,9 @@ import init, {
 			await activateFolder(handle, true);
 		}
 
-		// Point the wasm file tools at `handle`, mirror the UI, optionally
-		// persist the handle for reconnect, and refresh the tree.
+		// Point the wasm file tools at `handle`, mirror the UI, re-read the rules from
+		// the root that is now active, optionally persist the handle for reconnect, and
+		// refresh the tree.
 		async function activateFolder(handle, persist) {
 			try {
 				set_workspace_dir(handle);
@@ -9783,8 +10037,41 @@ import init, {
 			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
+			await rereadRootRules();
 			await adoptFolderDiamonds();
 			list('');
+		}
+
+		/// Re-read `DAIMOND.md` and the role prompts, because the root they are read from
+		/// has just moved.
+		///
+		/// Both are loaded from the ACTIVE workspace root, and nothing on the switch path
+		/// re-read them: the first turn after a switch ran on the other root's rules while
+		/// the chip in the Workspace head named a file it was no longer reading. Every
+		/// other trigger is downstream of that turn -- the pair is refreshed when a turn
+		/// ENDS, on a save of one of those paths, and on a full redraw -- so the one turn
+		/// that was wrong was the one nobody could see was wrong.
+		///
+		/// AWAITED, and before anything else the switch does. `Instructions.refresh` drops
+		/// each chat's built agent so the next turn composes a fresh system prompt, and a
+		/// turn started while this was still in flight would compose the old one. It runs
+		/// ahead of `adoptFolderDiamonds` for the same reason: adoption can put a dialog
+		/// on screen and wait for the user to read it.
+		///
+		/// Both are idempotent -- each re-reads, compares, and does nothing when nothing
+		/// changed -- so running on every activation, boot reconnect included, costs two
+		/// file reads and no redraw. They are run together because neither touches what
+		/// the other reads, and `run_tool` takes `&self`, so two calls into the one wasm
+		/// app are not a borrow conflict.
+		///
+		/// NOT called from `handlePermissionLoss`, which is the third way the root moves.
+		/// That one fires from inside a running turn -- the wasm raises it when a tool call
+		/// meets a withdrawn grant -- and `Instructions.refresh` nulls `chat.app`, which is
+		/// what Stop and interject read. Trading a working Stop for rules that the end of
+		/// that same turn refreshes anyway is the wrong way round.
+		async function rereadRootRules() {
+			try { await Promise.all([Instructions.refresh(), Prompts.refresh()]); }
+			catch (e) { /* an unreadable root has no rules, which is what refresh records */ }
 		}
 
 		/// Bring home any Diamond files this folder is holding, and say so.
@@ -9799,22 +10086,42 @@ import init, {
 		/// The folder's copies are LEFT WHERE THEY ARE, and the user is told that too. Deleting
 		/// from someone's own project folder to tidy up after our bug is the more dangerous of
 		/// the two mistakes available here.
+		///
+		/// AND WHAT DID NOT COME. The engine copies under a budget -- 8 MiB for one file,
+		/// 64 MiB for one run -- and puts everything past it, along with anything it could
+		/// not read, into `skipped`. This read only `adopted` and `kept`, so a Diamond whose
+		/// big file was left behind was adopted WITHOUT IT and announced as though whole,
+		/// and a run that took nothing and skipped everything returned before saying a word.
+		/// This is a migration that runs once over data the user has held since seq 63, and
+		/// the one thing it must not do is leave them believing it brought everything.
 		async function adoptFolderDiamonds() {
 			if (!Wasm || typeof Wasm.adopt_folder_diamonds !== 'function') return;
 			var rep;
 			try { rep = JSON.parse(await Wasm.adopt_folder_diamonds() || '{}'); }
 			catch (e) { return; }                  // an older engine, or nothing to look at
-			var took = Array.isArray(rep.adopted) ? rep.adopted : [];
-			if (!took.length) return;
-			// The rail reads the store, and the store just gained Diamonds.
-			try { await loadDiamonds(); } catch (e) { /* the next refresh will find them */ }
-			refresh();
-			var names = took.map(function (d) { return d.name || d.id; });
+			var took   = Array.isArray(rep.adopted) ? rep.adopted : [];
+			var missed = Array.isArray(rep.skipped) ? rep.skipped : [];
+			if (!took.length && !missed.length) return;
+			if (took.length) {
+				// The rail reads the store, and the store just gained Diamonds.
+				try { await loadDiamonds(); } catch (e) { /* the next refresh will find them */ }
+				refresh();
+			}
 			var kept = [];
 			took.forEach(function (d) { (d.kept || []).forEach(function (k) { kept.push(k); }); });
-			var body = t('files.adopted_body', { names: names.join(', ') });
-			if (kept.length) body += '\n\n' + t('files.adopted_kept', { paths: kept.join('\n') });
-			noticeDialog(tn('files.adopted_title', took.length), body, { pre: kept.length > 0 });
+			var body = '';
+			if (took.length) {
+				var names = took.map(function (d) { return d.name || d.id; });
+				body = t('files.adopted_body', { names: names.join(', ') });
+				if (kept.length) body += '\n\n' + t('files.adopted_kept', { paths: kept.join('\n') });
+			}
+			if (missed.length) {
+				body += (body ? '\n\n' : '') + t('files.adopted_skipped', { paths: missed.join('\n') });
+			}
+			// A run that skipped everything adopted nothing, so the adopted title would be a
+			// lie: the dialog is titled by what actually happened.
+			var title = took.length ? tn('files.adopted_title', took.length) : t('files.adopt_left_title');
+			noticeDialog(title, body, { pre: kept.length > 0 || missed.length > 0 });
 		}
 
 		// Switch the agent back to the OPFS sandbox, KEEPING the folder to come back to.
@@ -9831,6 +10138,7 @@ import init, {
 			rootHandle = folderHandle || rootHandle;
 			folderHandle = null;
 			renderMode();
+			await rereadRootRules();		// the sandbox has its own DAIMOND.md and its own prompts
 			list('');
 		}
 
@@ -11146,10 +11454,20 @@ import init, {
 
 	function diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }
 
+	/// Record what a Diamond thinks with, and what its workers think with.
+	///
+	/// `pick` carries both pairs -- `{ provider, model, workerProvider, workerModel }` -- so the one
+	/// record travels in the parcel's Diamonds section as it always did, and a device on an older
+	/// build simply arrives with the worker half empty.
 	function setDiamondModel(id, pick) {
 		if (!id || !pick || !pick.model) return;
 		var all = diamondModels();
-		all[id] = { provider: pick.provider || '', model: pick.model };
+		all[id] = {
+			provider:       pick.provider || '',
+			model:          pick.model,
+			workerProvider: pick.workerProvider || '',
+			workerModel:    pick.workerModel || '',
+		};
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
@@ -11158,6 +11476,27 @@ import init, {
 	function diamondModel(id) {
 		var m = diamondModels()[id];
 		return m && m.model ? m : (window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' });
+	}
+
+	/// The model this Diamond's WORKERS run on: what the user chose for them, and otherwise the
+	/// Diamond's own model.
+	///
+	/// Never the starred default. A worker used to be built straight out of `cfg` -- a view of
+	/// whatever is starred -- so a Diamond deliberately pinned to a strong model fanned its workers
+	/// out onto whatever the user happened to have starred, and the whole fan-out was billed to that
+	/// provider's key. A Diamond made before this setting existed carries no worker model, and
+	/// "absent" therefore has to mean the Diamond's own model: reading it as the default would
+	/// preserve the defect for every Diamond that already exists.
+	function diamondWorkerModel(id) {
+		var m = diamondModels()[id];
+		if (m && m.workerModel) {
+			var r = window.DaimondModels
+				&& DaimondModels.resolve(m.workerProvider || '', m.workerModel);
+			// A worker model whose provider has since lost its key falls back to the Diamond's own
+			// model, which is the one thing here already known to be able to run.
+			if (r) return { provider: r.provider, model: r.model };
+		}
+		return diamondModel(id);
 	}
 
 	/// Can this Diamond actually think? That is a question about ITS provider's key, not the starred
@@ -12361,12 +12700,35 @@ import init, {
 			fields: [
 				{ name: 'name',  label: t('rail.name'),  value: peekDiamondLabel() },
 				{ name: 'model', label: t('rail.model'), kind: 'models', provider: d.provider, value: d.model },
+				// Below the model, because it is a second decision about money: this Diamond's
+				// daimon dispatches workers, and a fan-out is several turns at once.
+				{ name: 'workerModel', label: t('rail.worker_model'), kind: 'models',
+					title: t('rail.worker_model_help'), provider: d.provider, value: d.model },
 			],
+			// The worker pulldown follows the Diamond's own model until the user moves it
+			// themselves, so "defaults to the Diamond's model" holds while the dialog is still
+			// being filled in rather than only at the instant it opened.
+			onInit: function (inputs) {
+				var m = inputs.model, w = inputs.workerModel;
+				if (!m || !w) return;
+				w.addEventListener('change', function () { w._chosen = true; });
+				m.addEventListener('change', function () {
+					if (w._chosen) return;
+					var p = DaimondModels.pick(m);
+					DaimondModels.fillSelect(w, p.provider || '', p.model || '');
+				});
+			},
 			validate: function (v) {
 				if (!v.name) return t('rail.err_name');
 				if (!v.model || !v.model.model) return t('rail.err_model');
 				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
 					return t('rail.err_no_key');
+				}
+				// A worker model on a provider with no readable key would fall back to the
+				// Diamond's own model at dispatch and silently ignore what was chosen here.
+				if (v.workerModel && v.workerModel.model
+					&& !DaimondModels.resolve(v.workerModel.provider, v.workerModel.model)) {
+					return t('rail.err_no_key_worker');
 				}
 				return '';
 			},
@@ -12385,7 +12747,13 @@ import init, {
 			noticeDialog(t('rail.create_failed'), friendlyError(e));
 			return;
 		}
-		setDiamondModel(id, vals.model);
+		var w = vals.workerModel || {};
+		setDiamondModel(id, {
+			provider:       vals.model.provider,
+			model:          vals.model.model,
+			workerProvider: w.provider || '',
+			workerModel:    w.model || '',
+		});
 		bumpDiamonds();
 		// Creating something is the user saying "show me this now". A search
 		// string or a tag filter left over from a moment ago can hide the new
@@ -13714,7 +14082,11 @@ import init, {
 				// Whether the steering turn itself read anything from outside.
 				var daimonTainted = false;
 				try { daimonTainted = !!(fa.is_tainted && fa.is_tainted()); } catch (e) { daimonTainted = false; }
-				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted);
+				// On the model the user chose for THIS Diamond's workers -- not the starred
+				// default, which is what every worker used to be built on however the Diamond
+				// itself was pinned.
+				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted,
+					diamondWorkerModel(diamondId));
 			}
 		} else if (rejected) {
 			setCrystalStatus(rejected === 1
@@ -14359,7 +14731,17 @@ import init, {
 		document.getElementById('id-primary').textContent    = unlock ? t('identity.unlock') : t('identity.create_account');
 		document.getElementById('id-skip').textContent       = unlock ? t('identity.forget') : t('identity.skip');
 		document.getElementById('id-error').textContent = '';
-		setSecret(document.getElementById('id-pass'), '');
+		// The passphrase box is cleared on every draw EXCEPT the first one of a
+		// page's life. A redraw -- logging out, switching account -- must not leave
+		// the last passphrase sitting in the field for whoever is at the browser
+		// next. The first draw is different: the only thing that can be in the box
+		// by then is what a password manager filled, and the form is in the served
+		// HTML, so that fill lands as soon as the document parses while the gate
+		// waits on the wasm engine. Clearing there emptied the box on a cold load
+		// (a hard refresh refetches the engine) while a warm one, drawing sooner,
+		// kept it -- the same passphrase remembered or forgotten by how long the
+		// page took to start.
+		if (!(unlock && !m.dataset.mode)) setSecret(document.getElementById('id-pass'), '');
 		setSecret(document.getElementById('id-pass2'), '');
 		setSecretRevealed(document.getElementById('id-pass'), false);
 		setSecretRevealed(document.getElementById('id-pass2'), false);
@@ -15165,15 +15547,25 @@ import init, {
 		setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 4200);
 	}
 
-	/// Write bytes to a path in the OPFS sandbox root, creating folders as
+	/// Write bytes to a path in THIS ACCOUNT's OPFS sandbox, creating folders as
 	/// needed. Used to restore a backup; a top-level sibling of the Workspace
 	/// panel's own writer, which is nested out of reach here.
+	///
+	/// The root is `DaimondCloud.opfsRoot()` and never `navigator.storage
+	/// .getDirectory()`: the origin root is the PRIMARY account's workspace, so a
+	/// restore into any other account used to land in the primary's files —
+	/// invisible to the account that asked for it, and reported as a success.
+	///
+	/// It goes to OPFS even when a real folder is open, which the wasm
+	/// `write_bytes` would not: a backup exists to carry the store the browser
+	/// may evict, and unpacking one into the user's own project folder is not
+	/// what "restore" was asked to mean.
 	async function writeOpfsBytes(path, bytes) {
 		var parts = String(path).split('/').filter(function (p) {
 			return p && p !== '.' && p !== '..';
 		});
 		if (parts.length === 0) throw new Error('Empty path.');
-		var dir = await navigator.storage.getDirectory();
+		var dir = await DaimondCloud.opfsRoot();
 		for (var i = 0; i < parts.length - 1; i++) {
 			dir = await dir.getDirectoryHandle(parts[i], { create: true });
 		}
@@ -15199,14 +15591,27 @@ import init, {
 		return out;
 	}
 
-	/// Every file in the OPFS sandbox, as `{ path, b64 }`. This is the store the
-	/// browser may evict, and so the one a backup exists to preserve — a real
-	/// folder opened over FSA is already on the user's disk and needs no copy.
+	/// Every file in THIS ACCOUNT's OPFS sandbox, as `{ path, b64 }`. This is the
+	/// store the browser may evict, and so the one a backup exists to preserve —
+	/// a real folder opened over FSA is already on the user's disk and needs no
+	/// copy.
+	///
+	/// The walk starts at the account's own root, and the paths are relative to
+	/// it, which is what makes a backup a backup OF AN ACCOUNT. Walking the
+	/// origin root instead put every account at this browser into every backup —
+	/// one person's private workspace inside another person's file — and wrote
+	/// the taker's own files under the internal `d~<id>/` prefix, which is not a
+	/// path any account uses. The primary account IS the origin root, so its walk
+	/// steps over the `d~…` subdirectories its neighbours live in.
 	async function collectOpfsFiles() {
 		var out = [];
+		// True when the walk starts at the origin root, i.e. this is the primary
+		// account and its neighbours' namespaces are directories inside it.
+		var atOrigin = !(window.DaimondAccounts && DaimondAccounts.opfsNs());
 		async function walk(dir, prefix) {
 			for await (var ent of dir.entries()) {
 				var name = ent[0], handle = ent[1];
+				if (!prefix && atOrigin && name.indexOf('d~') === 0) continue;   // another account
 				var path = prefix ? prefix + '/' + name : name;
 				if (handle.kind === 'directory') {
 					await walk(handle, path);
@@ -15219,8 +15624,65 @@ import init, {
 				}
 			}
 		}
-		try { await walk(await navigator.storage.getDirectory(), ''); }
+		try { await walk(await DaimondCloud.opfsRoot(), ''); }
 		catch (e) { /* no OPFS; export the rest */ }
+		return out;
+	}
+
+	/// One spend entry's identity: the turn it records, and nothing about what it
+	/// was later decided to have cost.
+	///
+	/// The moment, the model, the token counts and whose key paid — two ledgers
+	/// naming the same millisecond, model, tokens and provider are naming one
+	/// turn. Deliberately NOT the price: an entry the provider never billed is
+	/// re-priced in place when the rate table is corrected (`u` changes, `u0`
+	/// keeps the old guess), so a key that included the price would see the same
+	/// turn twice and double the user's spend on the strength of our own
+	/// arithmetic.
+	function ledgerKey(e) {
+		return [e.t, e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''].join('|');
+	}
+
+	/// Merge two spend ledgers by UNION, keeping `mine` where both hold a turn.
+	///
+	/// A ledger is an append-only record of money that actually moved, and two
+	/// ledgers of one account differ only by turns the other has not seen —
+	/// never by disagreeing about a turn they both hold. So union is the only
+	/// merge that cannot lose spend: last-writer-wins, which is what restoring a
+	/// backup used to do, throws away every turn since the backup was taken, and
+	/// the older the backup the more of the user's history it erases.
+	///
+	/// Where both hold the same turn, the LOCAL entry wins. It is the one this
+	/// device has already re-priced and the one its meters have been showing;
+	/// taking the incoming copy would silently walk a corrected figure back to
+	/// the guess it replaced.
+	///
+	/// Sorted by time, so the result is a function of its inputs and not of the
+	/// order they were read in — the sync parcel is compared byte-for-byte to
+	/// decide whether there is anything to push, and a merge that reordered
+	/// itself would push for ever.
+	///
+	/// # Arguments
+	/// * `mine` - This device's ledger, which wins any tie.
+	/// * `theirs` - The incoming ledger, from a backup file or another device.
+	function mergeLedgers(mine, theirs) {
+		var out = [], seen = {};
+		function take(list) {
+			(Array.isArray(list) ? list : []).forEach(function (e) {
+				if (!e || typeof e.t !== 'number') return;
+				var k = ledgerKey(e);
+				if (seen[k]) return;
+				seen[k] = 1;
+				out.push(e);
+			});
+		}
+		take(mine);
+		take(theirs);
+		out.sort(function (a, b) {
+			if (a.t !== b.t) return a.t - b.t;
+			var ka = ledgerKey(a), kb = ledgerKey(b);
+			return ka < kb ? -1 : ka > kb ? 1 : 0;
+		});
 		return out;
 	}
 
@@ -15251,6 +15713,12 @@ import init, {
 			ledger: readJson('daimond-ledger', []),
 			diamonds: [],
 			workspace: await collectOpfsFiles(),
+			// Says that `workspace` holds ONE account's files, at paths relative to
+			// that account's own root. A backup written before the namespace fix has
+			// no such promise to make: it is the raw origin root, several accounts
+			// deep, with nothing marking which files belong to whom — so its absence
+			// is what puts the restore into its legacy path. See `doImport`.
+			workspaceScope: 'account',
 		};
 		try {
 			var list = await diamondApp().list_diamonds();
@@ -15276,6 +15744,10 @@ import init, {
 	/// workspace file is written back into OPFS. Existing files of the same path
 	/// are overwritten; nothing already present is deleted, so a restore adds to
 	/// the tab rather than replacing it.
+	///
+	/// Everything lands in the CURRENT account: its OPFS root, its namespaced
+	/// localStorage. A backup is a backup of one account, and restoring one is
+	/// not a way to reach into another account at this browser.
 	async function doImport() {
 		var inp = document.createElement('input');
 		inp.type = 'file';
@@ -15315,11 +15787,53 @@ import init, {
 					else toast(t('backup.identity_failed'), true);
 				}
 			}
+			// The workspace files, into THIS account's OPFS root.
+			//
+			// A backup that says `workspaceScope: 'account'` holds one account's
+			// files at that account's own paths, and they are written as they are.
+			// One that says nothing predates the fix: it is the raw origin root of
+			// some browser, with the primary's files at the top and every other
+			// account's under its internal `d~<id>/` prefix, and no record of which
+			// account took it. Three rules, and each is the only defensible answer
+			// to its case:
+			//
+			//   * un-prefixed files are restored here, as they always were. That is
+			//     the ordinary single-account backup, and the recovery case the
+			//     Forget flow points at.
+			//   * a `d~<id>/` subtree whose id is THIS account's comes home with the
+			//     prefix stripped: the destination is unambiguous, and those are the
+			//     taker's own files if they took the backup from this account.
+			//   * any other `d~<id>/` subtree is skipped. Writing it here would put a
+			//     folder named after a stranger's account into this workspace, and
+			//     writing it to the origin root would be a write INTO another
+			//     account's private storage at this browser. Neither is a restore.
 			var files = data.workspace || [];
-			var restored = 0;
+			var scoped = data.workspaceScope === 'account';
+			var mineNs = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
+			var restored = 0, foreign = 0;
+			var wrotePaths = [];        // what actually reached this account's OPFS
 			for (var i = 0; i < files.length; i++) {
-				try { await writeOpfsBytes(files[i].path, b64ToBytes(files[i].b64)); restored++; }
+				var fp = String((files[i] && files[i].path) || '');
+				if (!scoped) {
+					var head = fp.split('/')[0];
+					if (head.indexOf('d~') === 0) {
+						if (mineNs && head === mineNs) fp = fp.slice(head.length + 1);
+						else { foreign++; continue; }
+					}
+				}
+				if (!fp) continue;
+				try { await writeOpfsBytes(fp, b64ToBytes(files[i].b64)); restored++; wrotePaths.push(fp); }
 				catch (e) { /* skip one bad file, keep going */ }
+			}
+			if (foreign) {
+				// Not counted as restored, because they were not: the dialog below says
+				// how many files came back, and that number stays true. It also says this,
+				// now -- a restore that quietly drops a subtree and reports a clean success
+				// is how a person concludes the backup was empty and deletes it.
+				try {
+					console.warn('[backup] ' + foreign + ' file(s) in that backup belong to another '
+						+ 'account at the browser it was taken from, and were left out.');
+				} catch (e) {}
 			}
 			if (Array.isArray(data.chats) && data.chats.length) {
 				// Merged into the store, not written over it: a restore adds to this tab
@@ -15339,7 +15853,14 @@ import init, {
 				ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 			}
 			if (Array.isArray(data.ledger) && data.ledger.length) {
-				try { localStorage.setItem('daimond-ledger', JSON.stringify(data.ledger)); } catch (e) { /* keep */ }
+				// MERGED, not written over. The ledger is what the user was charged, and
+				// a restore that replaced it erased every turn since the backup was
+				// taken -- so restoring last week's backup billed the account for last
+				// week and told the user the days between had cost nothing.
+				try {
+					localStorage.setItem('daimond-ledger',
+						JSON.stringify(mergeLedgers(readJson('daimond-ledger', []), data.ledger)));
+				} catch (e) { /* keep */ }
 			}
 			// A Diamond is stored in full under `diamonds/<id>/` -- the crystal, every
 			// version, the append-only log, and `.daimond/meta.json` (its name and
@@ -15349,8 +15870,12 @@ import init, {
 			// So the summary is now only a FALLBACK, used for a Diamond whose raw store
 			// is somehow absent from the workspace files (e.g. an older partial export).
 			var restoredIds = {};
-			for (var w = 0; w < files.length; w++) {
-				var m = /(?:^|\/)diamonds\/([^/]+)\//.exec(files[w].path);
+			// The paths actually WRITTEN, not the ones the file offered: a Diamond
+			// whose store was left out as another account's is a Diamond that is not
+			// here, and counting it as restored would silence the fallback in the one
+			// case the fallback exists for.
+			for (var w = 0; w < wrotePaths.length; w++) {
+				var m = /(?:^|\/)diamonds\/([^/]+)\//.exec(wrotePaths[w]);
 				if (m) restoredIds[m[1]] = true;
 			}
 			for (var j = 0; j < (data.diamonds || []).length; j++) {
@@ -15374,11 +15899,16 @@ import init, {
 			// reading a workspace the page cannot see. The user acknowledges first, so
 			// the reload is expected rather than a surprise.
 			var nFiles = restored;
-			await noticeDialog(t('backup.restored'),
-				t('backup.restored_body', {
-					files:    tn('backup.n_files', nFiles),
-					diamonds: tn('backup.n_diamonds', nDiamonds),
-				}));
+			var restoredBody = t('backup.restored_body', {
+				files:    tn('backup.n_files', nFiles),
+				diamonds: tn('backup.n_diamonds', nDiamonds),
+			});
+			// The subtrees that had nowhere to go. One sentence, because the count on its
+			// own reads as a fault and the reason is what tells the user there is nothing
+			// to fix: those files are another account's, and the backup file is still the
+			// only place they exist.
+			if (foreign) restoredBody += ' ' + tn('backup.n_foreign', foreign);
+			await noticeDialog(t('backup.restored'), restoredBody);
 			location.reload();
 		});
 		inp.click();

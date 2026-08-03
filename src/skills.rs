@@ -25,7 +25,15 @@
 //! <the markdown instruction body...>
 //! ```
 //!
-//! Skills are invoked from chat with an angle-tag directive
+//! Skills are invoked two ways, and both end in the same place -- the file's text in front of the
+//! model before the turn starts, rather than an instruction to the model to go and read it.
+//!
+//! The first is a slash command, `/name the rest of the message`, which is what a person types.
+//! It is resolved by [`parse_command`] against the directories [`COMMAND_DIRS`] names, and a name
+//! that resolves to no file is REFUSED rather than sent on as ordinary chat: a user who types
+//! `/pickup` and gets a plausible answer that skipped the workflow has no way to tell.
+//!
+//! The second is an angle-tag directive
 //! `<name args...>`, optionally closed with `</name>` or a bare `</>`.
 //! Parsing is deliberately tolerant (plan D9): only the *opening* tag is
 //! terminated by `>`, so a `>` inside the body — such as `Vec<T>` or
@@ -177,6 +185,114 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The subdirectory of a skill directory that holds executable code.
 const SCRIPTS_DIR: &str = "scripts";
 
+/// The directories a `/name` command looks in, in order, each workspace-relative.
+///
+/// The first is Daimond's own, and the one [`list_skills`] walks.  The two after it are the layout
+/// the user's standing instructions (`DAIMOND.md`) already name, and they are here for one reason:
+/// a `/name` the user has been typing for months must keep working, rather than every skill having
+/// to be copied into a second place before the app will honour a command it told them to type.
+/// Anything Daimond itself creates goes in the first.
+pub const COMMAND_DIRS: [&str; 3] = [
+    SKILLS_DIR,
+    "code/ai/context/dump/skills/claude",
+    "code/ai/context/dump/skills/agents",
+];
+
+
+/// A slash command the user typed: `/name` and everything after it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Command {
+    /// The skill's name, from the leading token.
+    pub name: String,
+    /// The rest of the message, trimmed.  Empty when the command was typed on its own.
+    pub args: String,
+}
+
+/// Read a leading `/name` slash command out of a message, or `None` where there is none.
+///
+/// The name must be a whole token: a message beginning `/home/jason/usr` is a path the user typed,
+/// and reading it as a command would refuse an ordinary message that was never one -- which is a
+/// worse failure than missing a command, because the user's words are then thrown away.
+///
+/// # Arguments
+/// * `input` - The message exactly as the user typed it.
+pub fn parse_command(input: &str) -> Option<Command> {
+    let rest = match input.trim_start().strip_prefix('/') {
+        Some(r) => r,
+        None    => return None,
+    };
+    let len = rest.find(|c: char| !is_ident(c)).unwrap_or(rest.len());
+    if len == 0 {
+        return None;                            // a bare `/`, or `//…`
+    }
+    match rest[len..].chars().next() {
+        Some(c) if !c.is_whitespace() => return None,   // `/home/jason`, `/v1.2` — not a command
+        _ => {},
+    }
+    Some(Command {
+        name: rest[..len].to_string(),
+        args: rest[len..].trim().to_string(),
+    })
+}
+
+/// Every file a `/name` command could mean, workspace-relative and in the order to try them.
+///
+/// Both skill forms in every directory: `<dir>/<name>/SKILL.md` for a skill that ships files, and
+/// `<dir>/<name>.md` for one that is only instructions.  An empty vector for a name that is not a
+/// bare identifier, so a caller that did not come through [`parse_command`] cannot reach out of the
+/// skills directories with one.
+///
+/// # Arguments
+/// * `name` - The skill's name, as typed after the slash.
+pub fn command_paths(name: &str) -> Vec<String> {
+    if name.is_empty() || !name.chars().all(is_ident) {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(COMMAND_DIRS.len() * 2);
+    for dir in COMMAND_DIRS {
+        out.push(fmt!("{}/{}/{}", dir, name, SKILL_FILE));
+        out.push(fmt!("{}/{}.md", dir, name));
+    }
+    out
+}
+
+/// What the model is sent when a `/name` resolved: the skill's instructions, named, then whatever
+/// else the user typed.
+///
+/// The file it came from is named in the text rather than only in the app, so the model can say
+/// which instructions it is following and the user can catch it following the wrong ones.  That is
+/// the whole failure this replaces: a skill silently not read looks exactly like a skill read.
+///
+/// # Arguments
+/// * `name` - The skill's name.
+/// * `path` - The file it was read from, workspace-relative.
+/// * `body` - The instruction body, frontmatter already stripped.
+/// * `args` - The rest of the user's message.
+pub fn compose_command(name: &str, path: &str, body: &str, args: &str) -> String {
+    let mut s = fmt!("Skill '{}', from '{}':\n\n{}", name, path, body.trim());
+    if !args.trim().is_empty() {
+        s.push_str(&fmt!("\n\nUser request: {}", args.trim()));
+    }
+    s
+}
+
+/// What the user is told when they invoked a skill that is not there.
+///
+/// It says that nothing ran, first, because that is the part they cannot otherwise find out: a
+/// `/name` quietly passed on as ordinary chat produces a perfectly plausible answer that skipped
+/// the workflow, and the user believes the workflow ran.
+///
+/// # Arguments
+/// * `name` - The name they typed after the slash.
+pub fn no_such_skill(name: &str) -> String {
+    fmt!(
+        "There is no skill called '{}', so nothing ran -- this message was not sent to the model. \
+        Daimond looked for '{}/SKILL.md' and '{}.md' under each of {}, in your workspace and in \
+        Daimond's own storage. Write one of those files, or send the message again without the \
+        leading slash.",
+        name, name, name, COMMAND_DIRS.join(", "))
+}
+
 
 /// The scripts a skill directory ships, workspace-relative and sorted.
 ///
@@ -273,8 +389,6 @@ pub fn load_skill(ws: &Workspace, name: &str)
     Ok(None)
 }
 
-/// Parse a skill file's text into a [`Skill`], using `stem` as the
-/// fallback name when the frontmatter omits `name`.
 /// Read a frontmatter `uses` line into tool names.
 ///
 /// Written either as a list or as a plain series, because a person writing a skill should not have
@@ -299,7 +413,18 @@ fn parse_uses(val: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_skill(text: &str, stem: &str) -> Skill {
+/// Parse a skill file's text into a [`Skill`], using `stem` as the fallback name when the
+/// frontmatter omits `name`.
+///
+/// Public because the browser reads a skill file itself, through OPFS, rather than through
+/// [`list_skills`]: `std::fs` compiles on wasm32 and fails at runtime, so the directory walk that
+/// serves the native handler cannot serve the page.  The parse is the same either way, and that is
+/// the point of sharing it -- two readers of one file format eventually disagree about it.
+///
+/// # Arguments
+/// * `text` - The file's whole text, frontmatter included.
+/// * `stem` - The file or directory name, used when the frontmatter names none.
+pub fn parse_skill(text: &str, stem: &str) -> Skill {
     let mut name        = stem.to_string();
     let mut description = String::new();
     let mut uses:  Option<Vec<String>> = None;
@@ -469,13 +594,13 @@ pub fn expand(input: &str, ws: &Workspace)
 mod tests {
     use super::*;
 
+    /// A workspace rooted on a scratch directory of this call's own, under the
+    /// user cache rather than the tmpfs at `/tmp`.
     fn tmp_ws() -> Workspace {
-        let mut dir = std::env::temp_dir();
-        let n = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        dir.push(fmt!("daimond_skills_test_{}", n));
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_skills_test") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
         Workspace::new(dir).expect("workspace")
     }
 
@@ -576,6 +701,157 @@ mod tests {
         assert_eq!(inv.name, "run");
         assert_eq!(inv.args, "go");
         assert_eq!(inv.body, "then more");
+    }
+
+    // ── The slash command a person types ────────────────────────────
+    //
+    // Each of these is written as the thing going wrong: a command not recognised, an ordinary
+    // message mistaken for one, a skill looked for in a place it is not kept, and a name that
+    // resolves to nothing being passed on as chat.
+
+    #[test]
+    fn test_a_slash_command_carries_its_name_and_the_rest_of_the_message() {
+        let c = parse_command("/pickup daimond").expect("a command");
+        assert_eq!("pickup", c.name);
+        assert_eq!("daimond", c.args);
+
+        // Typed on its own, and the skill is the whole instruction.
+        let bare = parse_command("/handover").expect("a command");
+        assert_eq!("handover", bare.name);
+        assert_eq!("", bare.args);
+
+        // The rest of the message is the rest of the MESSAGE, not the rest of the line: a person
+        // pasting three paragraphs after a command means all three.
+        let long = parse_command("/polish  chapter 3\nand chapter 4\n").expect("a command");
+        assert_eq!("polish", long.name);
+        assert_eq!("chapter 3\nand chapter 4", long.args);
+    }
+
+    #[test]
+    fn test_a_path_the_user_typed_is_not_taken_for_a_command() {
+        // The failure that matters most here is the false positive, not the false negative. A
+        // message read as a command that is not one is REFUSED -- so the user's words are thrown
+        // away and nothing is sent -- and an absolute path is the commonest thing a person starts
+        // a message with in this app.
+        for not_a_command in [
+            "/home/jason/usr/code",
+            "/etc/passwd is world readable",
+            "/v1.2",
+            "//comment",
+            "/",
+            "/ pickup",
+            "read /pickup for me",
+            "3/4 of the way",
+            "no slash at all",
+        ] {
+            assert_eq!(None, parse_command(not_a_command),
+                "{:?} was taken for a command, so an ordinary message would be refused",
+                not_a_command);
+        }
+    }
+
+    #[test]
+    fn test_a_command_is_looked_for_where_the_user_actually_keeps_skills() {
+        let paths = command_paths("pickup");
+        // Daimond's own directory, both forms.
+        assert!(paths.contains(&fmt!(".daimond/skills/pickup/SKILL.md")), "{:?}", paths);
+        assert!(paths.contains(&fmt!(".daimond/skills/pickup.md")), "{:?}", paths);
+        // And the layout the standing instructions name, which is where the skills the user has
+        // been typing `/pickup` at for months actually live. Without it the command resolves to
+        // nothing in the one workspace it has to work in.
+        assert!(paths.contains(&fmt!("code/ai/context/dump/skills/claude/pickup/SKILL.md")),
+            "{:?}", paths);
+        assert!(paths.contains(&fmt!("code/ai/context/dump/skills/agents/pickup/SKILL.md")),
+            "{:?}", paths);
+        // Daimond's own comes first: a skill it created must not be shadowed by one it did not.
+        assert!(paths[0].starts_with(SKILLS_DIR), "{:?}", paths);
+
+        // A name that is not a bare identifier reaches nothing at all, so nothing that skipped
+        // `parse_command` can walk out of the skills directories with one.
+        for bad in ["../../etc/passwd", "a/b", "", "a b"] {
+            assert!(command_paths(bad).is_empty(), "{:?} produced paths", bad);
+        }
+    }
+
+    #[test]
+    fn test_the_skill_the_user_invoked_reaches_the_model_with_its_file_named() {
+        let text = "---\nname: pickup\ndescription: Resume work\n---\nRead the newest handover.";
+        let sk   = parse_skill(text, "pickup");
+        let out  = compose_command(&sk.name, ".daimond/skills/pickup/SKILL.md", &sk.body, "daimond");
+
+        // The instructions themselves, which is the whole job.
+        assert!(out.contains("Read the newest handover."), "{}", out);
+        // Without the frontmatter, which is bookkeeping the model is charged for on every turn it
+        // is sent.
+        assert!(!out.contains("description:"), "{}", out);
+        // The file it came from, so the model can say which instructions it is following and the
+        // user can catch it following the wrong ones.
+        assert!(out.contains(".daimond/skills/pickup/SKILL.md"), "{}", out);
+        // And what the user actually asked for, after them.
+        assert!(out.contains("User request: daimond"), "{}", out);
+        assert!(out.find("Read the newest handover.") < out.find("User request:"), "{}", out);
+
+        // Typed on its own there is no request, and an empty one is not written out: a trailing
+        // "User request:" with nothing after it reads as a message that went missing.
+        let alone = compose_command("pickup", "p", "Body.", "   ");
+        assert!(!alone.contains("User request"), "{}", alone);
+    }
+
+    #[test]
+    fn test_a_command_that_names_no_skill_says_nothing_ran() {
+        let msg = no_such_skill("pickup");
+        // The part the user cannot otherwise find out. A `/name` quietly passed on as chat
+        // produces a plausible answer that skipped the workflow, and they believe it ran.
+        assert!(msg.contains("nothing ran"), "{}", msg);
+        assert!(msg.contains("not sent to the model"), "{}", msg);
+        // What it looked for, so they can see whether they wrote the file somewhere else.
+        assert!(msg.contains("pickup"), "{}", msg);
+        for dir in COMMAND_DIRS {
+            assert!(msg.contains(dir), "the refusal does not say it looked in {}: {}", dir, msg);
+        }
+        // And the way out, for a message that was never meant as a command.
+        assert!(msg.contains("without the leading slash"), "{}", msg);
+    }
+
+    #[test]
+    fn test_a_command_the_user_types_ends_with_the_files_own_text_in_the_message() {
+        // The whole chain in one test, over a workspace laid out the way the user's really is:
+        // what they type, the paths that are searched, the file that is found, and what the model
+        // is finally handed. Every link but one is the code the page runs -- the read itself is
+        // OPFS there and `std::fs` here.
+        let ws  = tmp_ws();
+        let rel = "code/ai/context/dump/skills/claude/pickup/SKILL.md";
+        let abs = ws.resolve(rel).expect("resolve");
+        std::fs::create_dir_all(abs.parent().expect("a parent")).expect("create dirs");
+        std::fs::write(&abs, "---\nname: pickup\ndescription: Resume work\n---\n\
+            Read the newest handover in code/ai/claude/handover/.").expect("write the skill");
+
+        let typed = "/pickup daimond";
+        let cmd   = parse_command(typed).expect("a command");
+        let mut found = None;
+        for path in command_paths(&cmd.name) {
+            let abs = match ws.resolve(&path) {
+                Ok(p)  => p,
+                Err(_) => continue,
+            };
+            if let Ok(text) = std::fs::read_to_string(&abs) {
+                found = Some((path, text));
+                break;
+            }
+        }
+        let (path, text) = found.expect("the skill the user keeps in their workspace was not found");
+        assert_eq!(rel, path, "found in the wrong place");
+
+        let sk   = parse_skill(&text, &cmd.name);
+        let sent = compose_command(&sk.name, &path, &sk.body, &cmd.args);
+        // The file's own words, which is the whole point: not a path for the model to fetch, and
+        // not a hope that it will.
+        assert!(sent.contains("Read the newest handover in code/ai/claude/handover/."), "{}", sent);
+        assert!(sent.contains("User request: daimond"), "{}", sent);
+        // And what the model gets is not what the user typed. A `/pickup` passed through as chat
+        // is the silent failure this replaces.
+        assert_ne!(typed, sent);
+        assert!(!sent.starts_with('/'), "{}", sent);
     }
 
     // ── frontmatter parsing ─────────────────────────────────────────

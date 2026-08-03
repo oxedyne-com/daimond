@@ -452,6 +452,15 @@ impl Runner {
             return self.refuse(&id, &tx, s).await;
         }
 
+        // A push that could destroy work at the far end, refused HERE as well as in the page --
+        // because a repository holding credentials of its own needs nothing from Daimond to make
+        // one, and that is the case the page cannot see. See the section comment on
+        // [`screen_git_push`] for which of the page's rules this repeats and which it does not.
+        // Before the scratch directory is made, so a refusal costs no filesystem work.
+        if let Some(s) = screen_git_push(&argv) {
+            return self.refuse(&id, &tx, s).await;
+        }
+
         // Against the fence the caller sent, before the hand widens it. The
         // scratch is a root the caller did not ask for, and a spec that grants
         // nothing must still read as granting nothing.
@@ -1724,6 +1733,250 @@ pub(crate) fn screen_scratch(env: &[(String, String)]) -> Option<String> {
     None
 }
 
+// ── A push this repository could authenticate on its own ─────────────────────
+//
+// The app guards `git push` inside the page (`src/tools.rs`, `git_guard`), and for a push carrying
+// DAIMOND's credential that guard is the whole decision: an `argv` that does not pass it gets no
+// environment, so the push cannot authenticate however it is spelled.  What it cannot cover is a
+// repository that already holds working credentials of its OWN -- an HTTPS remote with a token in
+// `.git/config`, or a `.git-credentials` file inside the granted root.  There a `--force` succeeds
+// with nothing from Daimond in it at all, and the page has no way to know.  The hand is where that
+// refusal can still be made, so it is made again here.
+//
+// # How much of the page's list is duplicated, and why not the rest
+//
+// Two copies of a list drift, and drift is its own hazard, so the line is drawn by REASON rather
+// than by copying.  The page's rules have two different reasons behind them and only one of them
+// survives the journey:
+//
+// * **Work that cannot be got back.**  `--force`, `--force-with-lease`, `--force-if-includes`,
+//   `--delete`, `--mirror`, `--prune`, a `+` or `:` refspec, and `f` or `d` in a short cluster.
+//   `--no-verify`, because a pre-push hook is a check the user installed.  `--receive-pack` and
+//   `--exec`, because they name a program to run at the far end.  None of these depends on whose
+//   credential authenticates the push, so every one is duplicated here.
+// * **Daimond's credential is scoped to one host.**  "Only `origin`", "not a URL", `--repo`.  Those
+//   exist because a push aimed anywhere else could not authenticate with the app's token anyway,
+//   and saying so turns a confusing failure into a sentence.  NONE of them is duplicated.  The
+//   premise here is a repository with its own credentials, so `git push upstream main` is an
+//   ordinary push and refusing it would be a rule with no harm behind it -- while a fenced command
+//   that wanted to send the workspace somewhere would reach for `curl` and not for git.  Refusing
+//   destruction on EVERY remote is broader where it matters and narrower where it does not.
+//
+// `-c`, `--config-env` and `--exec-path` before the subcommand are duplicated, for a reason of
+// their own rather than the page's: `remote.<name>.push` is a refspec, so
+// `-c remote.origin.push=+main:main` is `--force` spelled in configuration, and `--exec-path`
+// chooses which `git-*` programs run.
+//
+// # What this does not close, and is not pretended to
+//
+// * **The same refspec written into the repository's own `.git/config`.**  That file is inside the
+//   fence and the model may write it, so `git push origin` on its own can be a forced push and
+//   neither guard sees anything in `argv`.  Closing it means reading the repository's
+//   configuration, and that job has real corners -- `.git` can be a file, the repository can be
+//   above `cwd`, `-C` and `--git-dir` move it -- so a half-built version would be counted as done
+//   and would be worse than none.  Written down rather than attempted.
+// * **Another spelling of the program.**  `argv[0]` is matched by basename, so `/usr/bin/git` is
+//   caught and `sh -c 'git push -f'` is not.  The page can shrug that off because no credential is
+//   attached to a command whose `argv[0]` is not `git`; here the harm needs no credential of ours,
+//   so the shrug does not transfer.  It is the same shape as `REVIEW.md` §3.13 and it is not
+//   closed.
+// * **A pty session.**  `Pty::open` runs an interactive shell; `argv[0]` is that shell, and what is
+//   typed into it never passes through here.
+
+/// Git's own options, before the subcommand, that take their value as a separate argument.
+///
+/// Needed for one thing: finding where the subcommand is.  `git -C /somewhere push` has `push`
+/// third and `git --no-pager push` has it second, and a parser that could not tell them apart would
+/// read `/somewhere` as the subcommand and stop guarding.
+const GIT_OPT_VALUE: &[&str] = &[
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+    "--super-prefix", "--attr-source",
+];
+
+/// Long options to `git push` that are refused, and what each of them does.
+///
+/// Matched on the name with any `=value` removed, so `--force-with-lease=main` is caught and
+/// `--no-force-with-lease` -- which turns forcing OFF -- is not.
+const PUSH_LONG_REFUSED: &[(&str, &str)] = &[
+    ("--force",             "overwrites whatever is on the remote"),
+    ("--force-with-lease",  "overwrites the remote when it looks unchanged, which is still an \
+                             overwrite"),
+    ("--force-if-includes", "is part of the force-with-lease family"),
+    ("--delete",            "removes a branch or tag from the remote"),
+    ("--mirror",            "makes the remote match this repository exactly, deleting every ref \
+                             that is not here"),
+    ("--prune",             "deletes remote branches that are not here"),
+    ("--no-verify",         "skips the hooks that run before a push"),
+    ("--receive-pack",      "names the program that runs at the far end"),
+    ("--exec",              "names the program that runs at the far end"),
+];
+
+/// The refusal a push that could lose work gets.
+///
+/// One shape for all of them, because they are one decision.  It names the hand, so that a reader
+/// looking at two guards can tell which one spoke; and it says the rule is a rule, so that the
+/// model reworks the request rather than the spelling.
+///
+/// # Arguments
+/// * `spelling` - The option as it was written, so the model can see which one was meant.
+/// * `does` - What that option does, in a clause.
+fn push_refusal(spelling: &str, does: &str) -> String {
+    fmt!(
+        "Refused: '{}' {}. A push from inside Daimond only ever fast-forwards, because a \
+        fast-forward push cannot destroy a commit that exists nowhere else and every other kind \
+        can. The machine hand refuses this as well as the page does, because a repository holding \
+        credentials of its own could make that push without anything from Daimond in it. It is a \
+        rule and not a fault in the command, so do not try another spelling of it: '-f', \
+        '--force-with-lease', a '+' in front of the refspec and '--delete' are all refused \
+        together. If the history really has to be rewritten, say so and let the user push it \
+        themselves.", spelling, does)
+}
+
+/// Whether one of git's own options, before the subcommand, is refused on a push.
+///
+/// # Arguments
+/// * `a` - One argument, exactly as it was written.
+fn git_opt_refused(a: &str) -> Option<&'static str> {
+    // `-c k=v` and `-ck=v` are both git; `-C` is a different option and case matters.
+    if a.starts_with("-c") && !a.starts_with("--") {
+        return Some("-c");
+    }
+    match a.split('=').next().unwrap_or(a) {
+        "--config-env" => Some("--config-env"),
+        "--exec-path"  => Some("--exec-path"),
+        _              => None,
+    }
+}
+
+/// Refuses a `git push` that could destroy work at the far end.
+///
+/// Pure, so the whole decision is testable without a repository, a remote or a credential.  See the
+/// section comment above for which of the app's rules are duplicated here, which are not, and what
+/// is left open.
+///
+/// # Arguments
+/// * `argv` - The command, exactly as the caller sent it.
+///
+/// # Returns
+/// The refusal sentence, or `None` where this is not a push or is one that only fast-forwards.
+pub(crate) fn screen_git_push(argv: &[String]) -> Option<String> {
+    let first = match argv.first() {
+        Some(a) => a.as_str(),
+        None    => return None,
+    };
+    // Basename, so `/usr/bin/git` is caught. Split on '/' rather than through `Path`, so that this
+    // reads argument text the same way the page's guard does.
+    if first.rsplit('/').next().unwrap_or(first) != "git" {
+        return None;
+    }
+    // Git's own options, then the subcommand. `pre` is kept because some of those options are
+    // refused on a push, and finding the subcommand at all needs the same walk.
+    let mut i = 1;
+    let mut pre: Vec<&str> = Vec::new();
+    let mut sub: Option<&str> = None;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if !a.starts_with('-') {
+            sub = Some(a);
+            i += 1;
+            break;
+        }
+        pre.push(a);
+        i += if GIT_OPT_VALUE.contains(&a) { 2 } else { 1 };
+    }
+    // `git`, `git --version`: nothing to guard.
+    let sub = match sub {
+        Some(s) => s,
+        None    => return None,
+    };
+    if sub != "push" {
+        return None;
+    }
+    for a in &pre {
+        if let Some(name) = git_opt_refused(a) {
+            return Some(fmt!(
+                "Refused: '{}' before 'push' adds configuration to this one command, and \
+                'remote.<name>.push' is a refspec -- so a forced push can be written there \
+                instead of on the command line, and '--exec-path' chooses which git programs run \
+                at all. The machine hand refuses it for the same reason the page does. Run the \
+                push without it.", name));
+        }
+    }
+    let rest: Vec<&str> = argv.get(i..).unwrap_or(&[]).iter().map(|s| s.as_str()).collect();
+    // The push's own arguments. Positionals are collected rather than checked in place, because
+    // which one is the remote depends on how many options ate a value first.
+    let mut positional: Vec<&str> = Vec::new();
+    let mut j = 0;
+    let mut ended = false;
+    while j < rest.len() {
+        let a = rest[j];
+        if ended {
+            positional.push(a);
+            j += 1;
+            continue;
+        }
+        if a == "--" {
+            ended = true;
+            j += 1;
+            continue;
+        }
+        if a.starts_with("--") {
+            let name = a.split('=').next().unwrap_or(a);
+            if let Some((sp, does)) = PUSH_LONG_REFUSED.iter().find(|(n, _)| *n == name) {
+                return Some(push_refusal(sp, does));
+            }
+            // The one permitted long option that takes a separate value; the rest either take none
+            // or are refused above.
+            j += if name == "--push-option" && !a.contains('=') { 2 } else { 1 };
+            continue;
+        }
+        if a.starts_with('-') && a.len() > 1 {
+            // Short options are CLUSTERS: `-uf`, `-fq` and `-qfu` all carry the `f`.
+            let flags = &a[1..];
+            if flags.contains('f') {
+                return Some(push_cluster_refusal(a, 'f', "forces the push"));
+            }
+            if flags.contains('d') {
+                return Some(push_cluster_refusal(a, 'd', "deletes the ref on the remote"));
+            }
+            // `-o` is `--push-option`, and its value follows unless it is stuck to the cluster.
+            j += if flags.ends_with('o') { 2 } else { 1 };
+            continue;
+        }
+        positional.push(a);
+        j += 1;
+    }
+    // The first positional is the remote, which this deliberately does not judge; every one after
+    // it is a refspec, and two ordinary-looking spellings destroy work.
+    for spec in positional.iter().skip(1) {
+        if spec.starts_with('+') {
+            return Some(push_refusal(spec,
+                "is a forced refspec -- the leading '+' means the same as --force"));
+        }
+        if spec.starts_with(':') {
+            return Some(push_refusal(spec,
+                "is a delete refspec -- an empty source side means the same as --delete"));
+        }
+    }
+    None
+}
+
+/// The refusal a short-option cluster gets, naming the letter rather than the cluster.
+///
+/// `-uf` is refused for its `f`, and a model told only that `-uf` was refused would reasonably try
+/// `-u -f`.
+///
+/// # Arguments
+/// * `cluster` - The argument as written.
+/// * `letter` - The letter that decided it.
+/// * `does` - What that letter does, in a clause.
+fn push_cluster_refusal(cluster: &str, letter: char, does: &str) -> String {
+    push_refusal(
+        &fmt!("-{}", letter),
+        &fmt!("{} -- it is in '{}', and a short option carries every letter written after the \
+            dash", does, cluster))
+}
+
 /// Resolves `prefix` where it exists, so both sides of a containment test agree.
 ///
 /// # Arguments
@@ -1799,6 +2052,15 @@ const TOOLKIT_ROOTS: &[KitRoot] = &[
     KitRoot { kit: "go",     tail: "go/bin",               write: false },
     KitRoot { kit: "go",     tail: "go/pkg/mod",           write: true  },
     KitRoot { kit: "go",     tail: ".cache/go-build",      write: true  },
+    // git -- the CONFIGURATION and not the program, which is in `/usr/bin` and therefore already in
+    // this hand's own read-only base. Without these two rows the app's Git toolkit cannot be
+    // granted at all: `vet_roots` refuses the fence, loudly and safely, and a fenced git then runs
+    // with no `core.hooksPath` -- which on this machine is the whole of `~/.gitconfig`, and is the
+    // pre-commit hook that reads every staged line looking for a credential. An unreadable hooks
+    // directory is indistinguishable from an empty one, so refusing `--no-verify` while the hook
+    // cannot run would be a guard protecting nothing.
+    KitRoot { kit: "git",    tail: ".gitconfig",           write: false },
+    KitRoot { kit: "git",    tail: ".config/git",          write: false },
 ];
 
 /// One folder a named toolchain may reach, and at what level.
@@ -2770,6 +3032,69 @@ mod tests {
         Ok(res!(base.canonicalize()))
     }
 
+    /// How long a file this process has just written is given to stop being busy.
+    ///
+    /// Generous by more than two orders of magnitude: every wait measured here
+    /// cleared inside three attempts and fifteen milliseconds. A file still busy
+    /// after this is not the race below.
+    const FRESH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// A program this process has just written, run once the kernel will let it.
+    ///
+    /// `std::fs::copy` opens the destination for writing, and for as long as that
+    /// descriptor is open any OTHER thread of this process that starts a command
+    /// forks a child whose file descriptor table is a copy of ours -- so the child
+    /// carries a duplicate of it until its own `execve` closes it. For those few
+    /// milliseconds the file has a writer, and Linux answers `execve` on a file
+    /// with a writer with `ETXTBSY`. Nothing has leaked: the child is a launcher
+    /// this suite meant to start, the descriptor is not one it knows it holds, and
+    /// it goes the moment the child execs.
+    ///
+    /// Measured on this tree, which runs its tests in parallel and starts a real
+    /// second process for nearly every one of them. At 32 threads the failure
+    /// appeared in 3 runs of 20; a scan of this process's own children at the
+    /// instant of the error caught the holder twice, by pid and by descriptor
+    /// number; and with this wait in place it appeared in 7 runs of 40 and cleared
+    /// every time inside three attempts and fifteen milliseconds. Run serially it
+    /// never appeared in 20 runs, and run on its own never in 300 -- which is the
+    /// same statement from the other side, since neither has anything else
+    /// forking.
+    ///
+    /// So this waits, briefly, and only for that one error. Every other failure is
+    /// returned at once, and a file still busy at the end of [`FRESH_WAIT`] is a
+    /// descriptor somebody really did leak rather than this race, and says so.
+    ///
+    /// # Arguments
+    /// * `prog` - The program, which this process wrote a moment ago.
+    /// * `args` - Its arguments.
+    fn run_fresh(prog: &Path, args: &[&str]) -> Outcome<std::process::Output> {
+        let began = std::time::Instant::now();
+        let mut tries = 0u32;
+        loop {
+            tries += 1;
+            match std::process::Command::new(prog).args(args).output() {
+                Ok(out) => return Ok(out),
+                Err(e)  => {
+                    if e.kind() != std::io::ErrorKind::ExecutableFileBusy {
+                        return Err(err!(e,
+                            "{} would not run.", prog.display(); Test, IO));
+                    }
+                    if began.elapsed() >= FRESH_WAIT {
+                        return Err(err!(e,
+                            "{} was still busy after {} attempts over {:?}. A file this \
+                            process wrote and then closed goes un-busy as soon as the \
+                            children that forked while it was open have exec'd, which \
+                            takes milliseconds; {:?} means a descriptor on it is genuinely \
+                            held open somewhere, and that leak is the thing to fix rather \
+                            than this wait.",
+                            prog.display(), tries, began.elapsed(), FRESH_WAIT; Test, IO));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                },
+            }
+        }
+    }
+
     /// A request with the fields the tests vary and sensible rest.
     fn exec(id: &str, argv: &[&str]) -> Req {
         Req::Exec {
@@ -3573,6 +3898,140 @@ mod tests {
         Ok(())
     }
 
+    /// The prerequisites named on one line of a cargo dep-info file.
+    ///
+    /// Make's escaping, which is what the format is: a backslash makes the
+    /// character after it ordinary, so a path containing a space survives being
+    /// split on whitespace.
+    ///
+    /// # Arguments
+    /// * `list` - Everything after the colon on a dep-info line.
+    fn dep_sources(list: &str) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut esc = false;
+        for c in list.chars() {
+            if esc {
+                cur.push(c);
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c.is_whitespace() {
+                if !cur.is_empty() {
+                    out.push(PathBuf::from(std::mem::take(&mut cur)));
+                }
+            } else {
+                cur.push(c);
+            }
+        }
+        if !cur.is_empty() {
+            out.push(PathBuf::from(cur));
+        }
+        out
+    }
+
+    /// The shipping binary, refused unless it was built from the source that is
+    /// in the tree now.
+    ///
+    /// `cargo test` never builds `daimond-hand`: not `--lib`, and not the whole
+    /// suite either, since this crate has no integration test that would make
+    /// cargo produce the binary for one. Only a separate `cargo build` refreshes
+    /// it, so a test that execs whatever is lying in `target/debug` is measuring
+    /// a binary of unknown vintage. That cuts both ways, and the second way is
+    /// the dangerous one: a stale binary can fail against source that is fine,
+    /// and it can equally pass against source whose fence has since been broken.
+    /// `dev/verify_scope.mjs` deletes an inherited `CARGO_TARGET_DIR` for the
+    /// same reason -- one there once made a security test pass against a binary
+    /// from before the fix.
+    ///
+    /// The oracle is cargo's own dep-info file, `daimond-hand.d`, written beside
+    /// the binary: it names every source that went into it, this crate's and
+    /// every fe2o3 crate's, so a change anywhere below the launcher counts.
+    /// Where the binary is missing, where that record is missing or does not
+    /// describe it, or where any source it names is newer than the binary, this
+    /// refuses and says what to run. It does not skip: a fence test that cannot
+    /// say which code it measured must not report success.
+    fn shipping_hand() -> Outcome<PathBuf> {
+        /// What a caller has to run to make this test meaningful again.
+        const REBUILD: &str = "cargo build --manifest-path hand/Cargo.toml";
+
+        let exe = res!(std::env::current_exe().map_err(|e| err!(e,
+            "The launcher tests need to know their own binary."; Test, IO)));
+        let dir = match exe.parent().and_then(|p| p.parent()) {
+            Some(d) => d.to_path_buf(),
+            None    => return Err(err!(
+                "The test binary is not where cargo puts one."; Test, Path)),
+        };
+        let hand	= dir.join("daimond-hand");
+        let record	= dir.join("daimond-hand.d");
+
+        let built = match std::fs::metadata(&hand).and_then(|md| md.modified()) {
+            Ok(t)  => t,
+            Err(e) => return Err(err!(e,
+                "The shipping launcher cannot be tested, because {} is not there to \
+                test: `cargo test` does not build that binary, neither with `--lib` \
+                nor as the whole suite, so run `{}` and test again.",
+                hand.display(), REBUILD; Test, Missing)),
+        };
+        let listed = match std::fs::read_to_string(&record) {
+            Ok(s)  => s,
+            Err(e) => return Err(err!(e,
+                "The shipping launcher cannot be tested, because {} has no dep-info \
+                file at {}, so there is no record of what went into it and its \
+                vintage cannot be established: run `{}` and test again.",
+                hand.display(), record.display(), REBUILD; Test, Missing)),
+        };
+
+        // Cargo writes one line per artefact, `<artefact>: <source> <source> ...`.
+        let mut described = false;
+        let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
+        for line in listed.lines() {
+            let (target, sources) = match line.split_once(':') {
+                Some(pair) => pair,
+                None       => continue,
+            };
+            if Path::new(target.trim()) != hand {
+                continue;
+            }
+            described = true;
+            for src in dep_sources(sources) {
+                let at = match std::fs::metadata(&src).and_then(|md| md.modified()) {
+                    Ok(t)  => t,
+                    Err(e) => return Err(err!(e,
+                        "The shipping launcher cannot be tested, because {} was built \
+                        from {}, which can no longer be read, so what is inside the \
+                        binary cannot be established: run `{}` and test again.",
+                        hand.display(), src.display(), REBUILD; Test, Missing)),
+                };
+                if newest.as_ref().map_or(true, |(_, t)| at > *t) {
+                    newest = Some((src, at));
+                }
+            }
+        }
+        if !described {
+            return Err(err!(
+                "The shipping launcher cannot be tested, because {} says nothing about \
+                {}, so the binary is not the one this build produced: run `{}` and test \
+                again.",
+                record.display(), hand.display(), REBUILD; Test, Mismatch));
+        }
+        if let Some((src, at)) = newest {
+            if at > built {
+                let by = match at.duration_since(built) {
+                    Ok(d)  => d.as_secs(),
+                    Err(_) => 0,
+                };
+                return Err(err!(
+                    "The shipping launcher test would have measured a stale binary, which \
+                    proves nothing about the fence in either direction: {} was last changed \
+                    {} second(s) after {} was linked, so that binary is not this source -- \
+                    run `{}` and test again.",
+                    src.display(), by, hand.display(), REBUILD; Test, Mismatch));
+            }
+        }
+        Ok(hand)
+    }
+
     /// The same thing again, through the binary that actually ships.
     ///
     /// [`Launcher::SelfExe`] cannot be exercised from a test binary, because
@@ -3581,24 +4040,11 @@ mod tests {
     /// dispatch in `main`. If that arm is ever moved after something that starts
     /// a runtime, or removed, this test fails and the other one does not.
     ///
-    /// Skipped loudly rather than silently where the binary has not been built,
-    /// since `cargo test --lib` alone does not build it.
+    /// The binary is reached through [`shipping_hand`], which refuses rather
+    /// than skips where it is absent or older than the source it was built from.
     #[tokio::test]
     async fn the_shipping_launcher_fences_a_real_command() -> Outcome<()> {
-        let exe = res!(std::env::current_exe().map_err(|e| err!(e,
-            "The launcher tests need to know their own binary."; Test, IO)));
-        let hand = match exe.parent().and_then(|p| p.parent()) {
-            Some(d) => d.join("daimond-hand"),
-            None    => return Err(err!(
-                "The test binary is not where cargo puts one."; Test, Path)),
-        };
-        if !hand.exists() {
-            println!(
-                "[the_shipping_launcher_fences_a_real_command] SKIPPED: {} has \
-                not been built. Run the whole suite, not just --lib.",
-                hand.display());
-            return Ok(());
-        }
+        let hand = res!(shipping_hand());
 
         let base = res!(fixture("launcher-shipping"));
         let ws = base.join("ws");
@@ -3821,8 +4267,11 @@ mod tests {
         let evil = base.join("outside/bin/echo");
         res!(std::fs::copy("/bin/echo", &evil));
 
-        // Broken first: unfenced, it runs.
-        let bare = res!(std::process::Command::new(&evil).arg("ran").output());
+        // Broken first: unfenced, it runs. Through `run_fresh`, because this
+        // process wrote that file a moment ago and a sibling test's fork may
+        // still be carrying a duplicate of the descriptor it was written
+        // through; see the note there.
+        let bare = res!(run_fresh(&evil, &["ran"]));
         assert!(bare.status.success(), "the control program does not run: {}",
             String::from_utf8_lossy(&bare.stderr));
 
@@ -4529,7 +4978,7 @@ mod tests {
         let kits = |names: &[&str]| -> Vec<String> {
             names.iter().map(|n| fmt!("{}", n)).collect()
         };
-        let all = kits(&["rust", "node", "python", "go"]);
+        let all = kits(&["rust", "node", "python", "go", "git"]);
 
         // The workspace itself, and anything under it, with no toolkit in play at all.
         assert_eq!(None, vet_roots(&ws, &spec(one(&ws), Vec::new()), &[]));
@@ -4570,7 +5019,7 @@ mod tests {
                 "{} was reachable with no toolkit granted", k.tail);
             assert!(vet_roots(&ws, &spec(one(&p), Vec::new()), &[]).is_some(),
                 "{} was WRITABLE with no toolkit granted", k.tail);
-            let others: Vec<String> = ["rust", "node", "python", "go"].iter()
+            let others: Vec<String> = ["rust", "node", "python", "go", "git"].iter()
                 .filter(|n| **n != k.kit).map(|n| fmt!("{}", n)).collect();
             assert!(vet_roots(&ws, &spec(one(&ws), one(&p)), &others).is_some(),
                 "{} was reachable to a request that granted only {:?}", k.tail, others);
@@ -4660,7 +5109,154 @@ mod tests {
         // And the same fence with the grant absent is refused outright.
         assert!(vet_roots(&ws, &spec, &[]).is_some(),
             "the Rust toolchain was reachable to a request that granted no toolkit");
+
+        // And the same for git, which is the toolkit whose absence from this table is quiet rather
+        // than loud: a fenced git that cannot read `~/.gitconfig` runs with no `core.hooksPath`,
+        // and an unreadable hooks directory looks exactly like an empty one. Nothing here is
+        // writable -- a configuration a command could rewrite decides what runs on the user's next
+        // commit -- and every credential the app denies is denied and not granted back.
+        let spec = FenceSpec {
+            rw:   vec![fmt!("{}", ws.display())],
+            ro:   vec![at(".gitconfig"), at(".config/git")],
+            deny: vec![at(".git-credentials"), at(".config/git/credentials"), at(".ssh"),
+                       at(".netrc")],
+            net:  true,
+        };
+        assert_eq!(None, vet_roots(&ws, &spec, &[fmt!("git")]),
+            "the fence the app composes for the Git toolkit was refused by the hand's clamp");
+        assert!(vet_roots(&ws, &spec, &[]).is_some(),
+            "the user's git configuration was reachable with no toolkit granted");
+        // Read-only in the table means read-only at the clamp.
+        assert!(vet_roots(&ws, &FenceSpec {
+            rw:   vec![fmt!("{}", ws.display()), at(".gitconfig")],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        }, &[fmt!("git")]).is_some(), "the git configuration was accepted as writable");
         Ok(())
+    }
+
+    // ── A push that could destroy work at the far end ────────────────────
+    //
+    // Each of these is written as the thing going wrong: a forced push getting through because it
+    // was spelled with a cluster, or a refspec, or a configuration option -- and an ordinary push
+    // being refused, which is the failure that gets a guard switched off.
+
+    #[test]
+    fn a_forced_push_is_refused_however_it_is_spelled() {
+        let argv = |v: &[&str]| -> Vec<String> { v.iter().map(|s| fmt!("{}", s)).collect() };
+        for cmd in [
+            vec!["git", "push", "--force"],
+            vec!["git", "push", "--force-with-lease"],
+            vec!["git", "push", "--force-with-lease=main"],
+            vec!["git", "push", "--force-if-includes"],
+            vec!["git", "push", "--delete", "origin", "main"],
+            vec!["git", "push", "--mirror"],
+            vec!["git", "push", "--prune", "origin"],
+            vec!["git", "push", "--no-verify"],
+            vec!["git", "push", "--receive-pack=/tmp/x"],
+            vec!["git", "push", "--exec=/tmp/x"],
+            vec!["git", "push", "-f"],
+            vec!["git", "push", "-uf", "origin", "main"],   // the cluster
+            vec!["git", "push", "-qfu", "origin", "main"],
+            vec!["git", "push", "-d", "origin", "main"],
+            vec!["git", "push", "origin", "+main:main"],    // the refspec spelling of --force
+            vec!["git", "push", "origin", ":main"],         // and of --delete
+            vec!["git", "push", "origin", "--", "+main"],   // still a refspec after `--`
+            vec!["/usr/bin/git", "push", "--force"],        // an absolute program
+            vec!["git", "-C", "/somewhere", "push", "--force"], // the subcommand is not second
+            vec!["git", "--no-pager", "push", "-f"],
+            // Configuration, which is where a forced refspec can be written instead.
+            vec!["git", "-c", "remote.origin.push=+main:main", "push", "origin"],
+            vec!["git", "-cremote.origin.push=+main:main", "push", "origin"],
+            vec!["git", "--config-env=remote.origin.push=X", "push", "origin"],
+            vec!["git", "--exec-path=/tmp", "push", "origin"],
+        ] {
+            match screen_git_push(&argv(&cmd)) {
+                Some(s) => {
+                    assert!(s.starts_with("Refused: "),
+                        "{:?} was refused in words nobody can act on: {}", cmd, s);
+                    assert!(s.contains("machine hand"),
+                        "{:?} was refused without saying which guard spoke: {}", cmd, s);
+                },
+                None => panic!("{:?} was allowed through the hand", cmd),
+            }
+        }
+    }
+
+    #[test]
+    fn an_ordinary_push_is_not_refused() {
+        let argv = |v: &[&str]| -> Vec<String> { v.iter().map(|s| fmt!("{}", s)).collect() };
+        for cmd in [
+            vec!["git", "push"],
+            vec!["git", "push", "origin", "main"],
+            vec!["git", "push", "-u", "origin", "main"],
+            vec!["git", "push", "--set-upstream", "origin", "main"],
+            vec!["git", "push", "--dry-run"],
+            vec!["git", "push", "-n"],                       // `-n` on a push is --dry-run
+            vec!["git", "push", "--tags"],
+            vec!["git", "push", "--no-force-with-lease"],     // turns forcing OFF
+            vec!["git", "push", "-o", "ci.skip", "origin", "main"],
+            // The remote is not this guard's business: the app refuses anything but `origin`
+            // because ITS credential is scoped to one host, and that reason does not travel here.
+            vec!["git", "push", "upstream", "main"],
+            vec!["git", "push", "https://example.com/r.git", "main"],
+            vec!["git", "push", "--repo=https://example.com/r.git"],
+            // Not a push at all.
+            vec!["git", "commit", "-m", "x"],
+            vec!["git", "log", "--force"],
+            vec!["git", "--version"],
+            vec!["git"],
+            vec!["cargo", "push", "--force"],
+            vec!["gitk", "push", "--force"],
+            // `-c` is only refused on a push, because it is the push that this guard is about.
+            vec!["git", "-c", "user.name=x", "commit", "-m", "y"],
+        ] {
+            assert_eq!(None, screen_git_push(&argv(&cmd)),
+                "{:?} is an ordinary command and was refused", cmd);
+        }
+        assert_eq!(None, screen_git_push(&[]));
+    }
+
+    /// The guard is CALLED, and not merely written.
+    ///
+    /// `REVIEW.md` §1.2 is why this test exists: `seccomp.rs` implemented its answer, had passing
+    /// unit tests for both halves, and was called from nowhere -- so a passing unit test on the
+    /// pure decision was precisely the evidence that failed. This drives the real `spawn`.
+    #[tokio::test]
+    async fn a_forced_push_is_refused_by_the_real_spawn_and_not_only_by_the_function() -> Outcome<()> {
+        let rs = res!(run(exec("gp", &["/usr/bin/git", "push", "--force", "origin", "main"])).await);
+        match rs.first() {
+            Some(Resp::Refused { reason, .. }) => {
+                assert!(reason.contains("fast-forward"),
+                    "the refusal is not the push guard's: {}", reason);
+                assert!(reason.contains("machine hand"), "{}", reason);
+            },
+            other => return Err(err!(
+                "A forced push reached the launcher; the hand said {:?}.", other; Test, Mismatch)),
+        }
+        // And an ordinary git command is not refused by it. `--version` needs no repository, so
+        // what this measures is the guard and not the state of the checkout.
+        let rs = res!(run(exec("gv", &["/usr/bin/git", "--version"])).await);
+        assert!(!matches!(rs.first(), Some(Resp::Refused { .. })),
+            "an ordinary git command was refused: {:?}", rs.first());
+        Ok(())
+    }
+
+    #[test]
+    fn the_refusal_says_it_is_a_rule_rather_than_a_fault() {
+        let argv: Vec<String> = ["git", "push", "-uf", "origin", "main"].iter()
+            .map(|s| fmt!("{}", s)).collect();
+        let s = match screen_git_push(&argv) {
+            Some(s) => s,
+            None    => panic!("a forced push was allowed"),
+        };
+        // The LETTER and not the cluster, or a model told `-uf` was refused tries `-u -f`.
+        assert!(s.contains("'-f'"), "{}", s);
+        assert!(s.contains("-uf"), "{}", s);
+        assert!(s.contains("do not try another spelling"), "{}", s);
+        assert!(s.contains("let the user push it themselves"),
+            "the refusal leaves the model no way forward: {}", s);
     }
 
     #[test]

@@ -540,6 +540,8 @@
 	// 被退回的包裹。要说清楚什么太大，以及通常是什么弄大的。
 	'sync.too_big':        '同步已暂停',
 	'sync.too_big_reason': '这台设备的包裹太大，发不出去，它做的事就不再往外走了。通常是某个特别大的 Diamond 或工作区文件闹的 — 删掉它或让它小一点，同步会自己接上。',
+	'sync.diamonds_left.one': '有 {n} 个 Diamond 装不进这台设备的同步包裹，在它变小之前不会传到你的其他设备：{names}',
+	'sync.diamonds_left.other': '有 {n} 个 Diamond 装不进这台设备的同步包裹，在它们变小之前不会传到你的其他设备：{names}',
 	// 已经结束、又拿不回来的会话。和下面用同一个说法。
 	'sync.signed_out':        '同步已暂停',
 	'sync.signed_out_reason': '这台设备已不再登录 Daimond 的账户服务，重新登录也没成功，所以它做的事没有传到你的其他设备。等服务能连上，同步会自己恢复；如果一直不恢复，把 Daimond 锁上再解锁。',
@@ -552,6 +554,10 @@
 	'sync.when_mins':      '{n} 分钟前',
 	'sync.when_hours':     '{n} 小时前',
 	'sync.when_days':      '{n} 天前',
+
+	// ── 云端存储清理 ───────────────────────────────────────────
+	'chunks.sweep_held':          '清理已暂停',
+	'chunks.sweep_held_reason':   '云端存储里有 {m} 个片段中的 {n} 个，已经没有本账户的任何文件再引用它们。它们并没有被删除：一次请求最多只能删掉已存内容的一半，而这台设备没有立场坚持。你的东西一件都没少 — 等到下一次同步能把它们都对上，空间就会释放。',
 
 	// ── 关联第二台设备 ─────────────────────────────────────────
 	// 按钮名称外面的引号用中文的“”。
@@ -739,6 +745,10 @@
 	'settings.max_tokens':         '最长回复',
 	'settings.max_tokens_auto':    '自动',
 	'settings.tokens':             'token',
+	'settings.max_rounds':         '每轮的步数',
+	'settings.max_rounds_auto':    '默认',
+	'settings.steps':              '步',
+	'settings.max_rounds_note':    '一轮停下来之前，代理可以使用工具的次数。停下来时它会说明，你可以让它继续。',
 	'settings.max_tokens_note':    '单次回复可以有多长。设得太低，大文件会被拦腰截断。',
 	'settings.max_tokens_ceiling': '最多接受',
 
@@ -967,6 +977,8 @@
 	'tile.delete_chat_empty': '删除“{name}”？',
 	'tile.start':          '开始',
 	'tile.start_help':     '确认模型并开始这次聊天',
+	'tile.workers':        '工人',
+	'tile.worker_model_help': '从这次聊天里切出的 Diamond 派出的工人跑在哪个模型上；不动它，它们就跑在聊天自己的模型上。',
 	'tile.folded':         '已折叠',
 	'tile.fold_all':       '全部折叠',
 	'tile.folded_help':    '已经折叠进“{name}” — 再折叠一次，就能把之后新增的内容加进去。',
@@ -1003,6 +1015,9 @@
 	'rail.create':           '创建',
 	'rail.name':             '名称',
 	'rail.model':            '模型',
+	'rail.worker_model':     '工人用的模型',
+	'rail.worker_model_help': '这个 Diamond 的 daimon 会派出工人，而且一次好几个；不动它，它们就跑在 Diamond 自己的模型上。',
+	'rail.err_no_key_worker': '工人那边的提供商还没有可读的密钥，它们会退回 Diamond 自己的模型 — 请解锁，或者换一个。',
 	'rail.err_name':         '给这个 Diamond 起个名字。',
 	'rail.err_model':        '给这个 Diamond 选一个用来思考的模型。',
 	'rail.err_no_key':       '那家提供商还没有可读的密钥 — 请解锁，或添加一个。',
@@ -1156,6 +1171,12 @@
 	'dws.empty':           '这个 Diamond 还没有留下任何东西。你留在这里的，就是它的 daimon 能打开的。',
 	'dws.attach_dir':      '把这个文件夹留在 {name} 里',
 	'dws.detach_dir':      '不再把这个文件夹留在 {name} 里',
+	'dws.kits':            '工具链',
+	'dws.kits_help':       '来自这个 Diamond 的命令可以在你的电脑上使用哪些编译器和包管理器。在你允许之前一律关闭，这里的任何一项都不由 daimon 自己选择。',
+	'dws.kit_on':          '把 {kit} 工具链授予 {name}',
+	'dws.kit_off':         '从 {name} 收回 {kit} 工具链',
+	'dws.kit_failed':      '该工具链没有保存',
+	'dws.kit_none':        '没有工具链。命令只能访问这个 Diamond 的文件，电脑上的其他内容都访问不到。',
 	'dws.elsewhere':       '在工作区里',
 	'dws.readonly':        '只读',
 
@@ -1313,6 +1334,8 @@
 	'files.adopted_title.other': '找回了 {n} 个 Diamond',
 	'files.adopted_body': 'Daimond 在这个文件夹里发现了自己的文件，已把它们复制回自己的存储中，那里才会同步：{names}。文件夹里的副本原封不动地留在 diamonds/ 下面 —— 你确认无误后可以删掉。',
 	'files.adopted_kept': '以下文件与 Daimond 已有的内容不同，因此两份都保留了：\n{paths}',
+	'files.adopt_left_title': '有些文件留在了文件夹里',
+	'files.adopted_skipped': '以下文件没有复制过来 —— 超过 8 MiB，或者读不了 —— 所以需要它们的 Diamond 会缺这一块，甚至根本不在这里：\n{paths}',
 
 	// ── 读一封邮件 ─────────────────────────────────────────────
 	'msg.unknown_sender':    '（未知发件人）',
@@ -1421,6 +1444,8 @@
 	'backup.n_diamonds.one':  '{n} 个 Diamond',
 	'backup.n_diamonds.other': '{n} 个 Diamond',
 	'backup.restored_body':   '已恢复 {files} 和 {diamonds}。Daimond 会重新加载，打开恢复好的工作区。',
+	'backup.n_foreign.one':   '那份备份里有 {n} 个文件属于做备份的那台浏览器上的另一个账户，因此没有恢复，只留在备份文件里。',
+	'backup.n_foreign.other': '那份备份里有 {n} 个文件属于做备份的那台浏览器上的另一个账户，因此没有恢复，只留在备份文件里。',
 
 	// ── 提供商表单 ─────────────────────────────────────────────
 	'models.other':            '其他（手动输入）…',

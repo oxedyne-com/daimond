@@ -543,6 +543,8 @@
 	// 거절당한 꾸러미. 무엇이 너무 큰지와, 보통 무엇 때문인지를 밝혀요.
 	'sync.too_big':        '동기화 멈춤',
 	'sync.too_big_reason': '이 기기의 꾸러미가 너무 커서 보낼 수 없어요. 그래서 여기서 한 일이 더는 밖으로 나가지 않아요. 대개는 아주 큰 Diamond이나 작업 공간 파일 하나가 원인이에요 — 지우거나 줄이면 동기화는 저절로 다시 돌아가요.',
+	'sync.diamonds_left.one': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못했어요. 더 작아지기 전까지는 다른 기기로 가지 않아요: {names}',
+	'sync.diamonds_left.other': 'Diamond {n}개가 이 기기의 동기화 꾸러미에 들어가지 못했어요. 더 작아지기 전까지는 다른 기기로 가지 않아요: {names}',
 	// 끝나 버렸고 다시 얻지도 못한 세션. 아래와 같은 이름을 씁니다.
 	'sync.signed_out':        '동기화 멈춤',
 	'sync.signed_out_reason': '이 기기가 Daimond 계정 서비스에 더는 로그인되어 있지 않고, 다시 로그인하는 것도 되지 않아서 이 기기의 작업이 다른 기기로 가지 않고 있어요. 서비스에 다시 닿으면 저절로 이어져요. 그래도 안 되면 Daimond를 잠갔다가 다시 열어 주세요.',
@@ -555,6 +557,10 @@
 	'sync.when_mins':      '{n}분 전',
 	'sync.when_hours':     '{n}시간 전',
 	'sync.when_days':      '{n}일 전',
+
+	// ── 클라우드 저장소 정리 ───────────────────────────────────
+	'chunks.sweep_held':          '정리 일시 중지',
+	'chunks.sweep_held_reason':   '클라우드 저장소에 이 계정의 어떤 파일도 더는 참조하지 않는 조각이 {m}개 중 {n}개 남아 있습니다. 삭제하지 않았습니다. 한 번의 요청으로 저장된 것의 절반을 넘게 지울 수 없고, 이 기기는 그것을 밀어붙일 처지가 아니기 때문입니다. 사용자의 데이터가 사라진 것은 아니며, 전부를 설명할 수 있는 다음 동기화에서 공간이 확보됩니다.',
 
 	// ── 두 번째 기기 연결 ──────────────────────────────────────
 	// 버튼 이름을 감싸는 따옴표는 한국어 관례대로 “ ”를 써요.
@@ -742,6 +748,10 @@
 	'settings.max_tokens':         '가장 긴 답변',
 	'settings.max_tokens_auto':    '자동',
 	'settings.tokens':             '토큰',
+	'settings.max_rounds':         '한 턴의 단계 수',
+	'settings.max_rounds_auto':    '기본값',
+	'settings.steps':              '단계',
+	'settings.max_rounds_note':    '한 턴이 멈추기 전까지 에이전트가 도구를 쓸 수 있는 횟수. 멈출 때 그렇게 알려 주며, 계속하라고 지시할 수 있습니다.',
 	'settings.max_tokens_note':    '한 번의 답변이 길어질 수 있는 한도예요. 너무 낮으면 큰 파일이 반쯤 잘려서 옵니다.',
 	'settings.max_tokens_ceiling': '최대 허용',
 
@@ -969,6 +979,8 @@
 	'tile.delete_chat_empty': '“{name}”을(를) 지울까요?',
 	'tile.start':          '시작',
 	'tile.start_help':     '모델을 확인하고 이 채팅을 시작해요',
+	'tile.workers':        '일꾼',
+	'tile.worker_model_help': '이 채팅에서 깎아낸 Diamond이 내보내는 일꾼이 도는 모델이에요. 그대로 두면 채팅 자신의 모델로 돌아요.',
 	'tile.folded':         '접힘',
 	'tile.fold_all':       '모두 접기',
 	'tile.folded_help':    '이미 “{name}”에 접혀 있어요 — 다시 접으면 그 뒤에 생긴 것을 더해요.',
@@ -1006,6 +1018,9 @@
 	'rail.create':           '만들기',
 	'rail.name':             '이름',
 	'rail.model':            '모델',
+	'rail.worker_model':     '일꾼이 쓸 모델',
+	'rail.worker_model_help': '이 Diamond의 daimon은 일꾼을 한 번에 여럿 내보내요. 그대로 두면 Diamond 자신의 모델로 돌아요.',
+	'rail.err_no_key_worker': '일꾼 쪽 제공자에는 아직 읽을 수 있는 키가 없어서 일꾼이 Diamond 자신의 모델로 되돌아가요 — 잠금을 풀거나, 다른 것을 고르세요.',
 	'rail.err_name':         'Diamond에 이름을 붙여 주세요.',
 	'rail.err_model':        '이 Diamond이 생각할 모델을 골라 주세요.',
 	'rail.err_no_key':       '그 제공자에는 아직 읽을 수 있는 키가 없어요 — 잠금을 풀거나 키를 추가하세요.',
@@ -1160,6 +1175,12 @@
 	'dws.empty':           '아직 이 Diamond에 둔 것이 없어요. 여기에 두는 것이 그 daimon이 열 수 있는 것이에요.',
 	'dws.attach_dir':      '이 폴더를 {name}에 두기',
 	'dws.detach_dir':      '이 폴더를 {name}에서 빼기',
+	'dws.kits':            '툴체인',
+	'dws.kits_help':       '이 Diamond의 명령이 컴퓨터에서 어떤 컴파일러와 패키지 관리자에 닿을 수 있는지. 허용하기 전까지는 꺼져 있으며, 여기 있는 것을 daimon이 고르지는 않습니다.',
+	'dws.kit_on':          '{kit} 툴체인을 {name}에 허용',
+	'dws.kit_off':         '{kit} 툴체인을 {name}에서 회수',
+	'dws.kit_failed':      '그 툴체인은 저장되지 않았습니다',
+	'dws.kit_none':        '툴체인 없음. 명령은 이 Diamond의 파일에만 닿고 컴퓨터의 다른 것에는 닿지 않습니다.',
 	'dws.elsewhere':       '작업 공간에 있어요',
 	'dws.readonly':        '읽기 전용',
 
@@ -1317,6 +1338,8 @@
 	'files.adopted_title.other': 'Diamond {n}개를 되찾았어요',
 	'files.adopted_body': '이 폴더 안에서 Daimond 자신의 파일을 찾아, 동기화되는 Daimond 자체 저장소로 다시 복사했어요: {names}. 폴더 안의 사본은 diamonds/ 아래에 그대로 두었으니, 확인이 끝나면 지우면 돼요.',
 	'files.adopted_kept': '다음 파일은 Daimond이 이미 갖고 있던 것과 달라서, 두 사본을 모두 남겼어요:\n{paths}',
+	'files.adopt_left_title': '폴더에 남겨 둔 파일이 있어요',
+	'files.adopted_skipped': '다음 파일은 복사하지 않았어요 — 8 MiB를 넘거나, 읽을 수 없었어요 — 그래서 이 파일이 필요한 Diamond은 그 부분이 빠진 채 있거나, 아예 없어요:\n{paths}',
 
 	// ── 메시지 하나 읽기 ───────────────────────────────────────
 	'msg.unknown_sender':    '(보낸 사람 모름)',
@@ -1425,6 +1448,8 @@
 	'backup.n_diamonds.one':  'Diamond {n}개',
 	'backup.n_diamonds.other': 'Diamond {n}개',
 	'backup.restored_body':   '{files}과(와) {diamonds}을(를) 되살렸어요. Daimond이 다시 불러와서, 되살린 작업 공간을 열어요.',
+	'backup.n_foreign.one':   '그 백업에 든 파일 {n}개는 백업을 만든 브라우저의 다른 계정 것이라서 되살리지 않았고, 백업 파일 안에만 남아 있어요.',
+	'backup.n_foreign.other': '그 백업에 든 파일 {n}개는 백업을 만든 브라우저의 다른 계정 것이라서 되살리지 않았고, 백업 파일 안에만 남아 있어요.',
 
 	// ── 제공자 입력 칸 ─────────────────────────────────────────
 	'models.other':            '기타(직접 입력)…',

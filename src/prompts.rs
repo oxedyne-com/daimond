@@ -33,6 +33,7 @@ use crate::tools::{
 	Kit,
 	Machine,
 	Mode,
+	Toolkit,
 	toolkits,
 };
 
@@ -289,14 +290,25 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) ->
 	match Kit::resolve(bounds, m) {
 		Some(kit) => {
 			for k in &kit.kits {
-				if k.bins().is_empty() {
+				match k {
+					// Git is the one toolkit whose binary was never the problem: `git` is in
+					// `/usr/bin`, which the hand's own read-only base already carries, so `status`,
+					// `diff` and `commit` all work with no grant at all. What the grant adds is the
+					// CONFIGURATION -- the user's name, their email, and `core.hooksPath` -- so
+					// telling a daimon to name the binary in full would be advice about a problem
+					// this toolkit does not have, and would leave the one thing that did change
+					// unsaid.
+					Toolkit::Git => s.push_str(&fmt!(
+						"\n{} toolkit: git was always on PATH; what this adds is the user's own \
+						configuration, so a commit carries their name and runs their hooks.",
+						k.label())),
 					// Nothing went on `PATH`, because nvm's node sits at a path carrying a version
 					// this page cannot know. Saying so is what stops a daimon concluding the grant
 					// did not work when a bare `node` is not found.
-					s.push_str(&fmt!("\n{} toolkit: {}, under the folders above -- name the \
-						binary in full.", k.label(), k.tools()));
-				} else {
-					s.push_str(&fmt!("\n{} toolkit: {} are on PATH.", k.label(), k.tools()));
+					_ if k.bins().is_empty() => s.push_str(&fmt!(
+						"\n{} toolkit: {}, under the folders above -- name the binary in full.",
+						k.label(), k.tools())),
+					_ => s.push_str(&fmt!("\n{} toolkit: {} are on PATH.", k.label(), k.tools())),
 				}
 			}
 		},
@@ -309,6 +321,11 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) ->
 			}
 		},
 	}
+	// What a push can and cannot do, from the credential the user set. Empty where they set none,
+	// so a turn that could not push anyway pays nothing for the sentence -- and where one IS set,
+	// this is the only place a daimon learns that pushing works at all, that it is fast-forward
+	// only, and that a push runs no hooks.
+	s.push_str(&crate::tools::push_note());
 	// The network, in the terms the RUNG makes true. Three sentences and not two, because the
 	// guarded sentence -- "reading anything from outside ends that for the rest of this turn" --
 	// is a promise about the future that is simply false in bypass, and a briefing the model can
@@ -330,6 +347,44 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) ->
 	// for a line naming itself.
 	s.push_str(mode.briefing());
 	s
+}
+
+// ── What model this is ───────────────────────────────────────────────────────
+//
+// No model can read its own identity off its own weights -- no version string is stored in them --
+// so an agent asked which one it is either says it cannot know or invents an answer, and Daimond
+// told it nothing. That costs twice. The user cannot tell which model answered, and the model
+// cannot judge its own limits: how much to attempt in one turn, and how wide to fan out when it
+// holds the tool that dispatches workers. A small model fanning out like a large one is the
+// expensive half of that.
+//
+// Both facts are already held by the client that will carry the request, so the line is composed
+// from it rather than written down anywhere. A hard-coded model name would be a lie the moment the
+// user switched provider, which is precisely the failure this ends.
+
+/// What an agent is told about the model it is: one line, from the client that will carry the
+/// request.
+///
+/// Empty where either fact is missing, since half of it does not earn what a whole line costs on
+/// every request of every turn.
+///
+/// # Arguments
+/// * `model` - The provider's own id for the model, exactly as the client will send it.
+/// * `host` - The endpoint the request goes to, which is the provider as this page can honestly
+///   name it: a router or a gateway is named as itself rather than as whatever sits behind it,
+///   because that is all Daimond knows.
+/// * `dispatches` - Whether this agent holds the tool that starts workers, which decides whether
+///   the fan-out half of the sentence is worth its words.
+pub fn model_note(model: &str, host: &str, dispatches: bool) -> String {
+	let (model, host) = (model.trim(), host.trim());
+	if model.is_empty() || host.is_empty() {
+		return String::new();
+	}
+	fmt!("## This model\n\nYou are {}, served by {}; size what you take on in one turn{} to what \
+		this model can do.",
+		model,
+		host,
+		if dispatches { ", and how many workers you dispatch at once," } else { "" })
 }
 
 /// Whether an absolute grant covers an absolute path, comparing whole segments so that
@@ -406,7 +461,7 @@ pub const DEFAULT_COMPACTOR: &str =
 mod tests {
 	use super::*;
 
-	use crate::tools::{diamond_bounds, Toolkit};
+	use crate::tools::{diamond_bounds, set_push_cred, PushCred};
 
 	#[test]
 	fn test_every_role_round_trips_through_its_name() {
@@ -561,6 +616,56 @@ mod tests {
 	}
 
 	#[test]
+	fn test_the_git_toolkit_is_not_described_as_a_binary_that_needs_naming_in_full() {
+		// `Toolkit::Git.bins()` is empty like Node's, and for the opposite reason: node is at a
+		// path this page cannot spell, and git was on PATH before the grant existed. The sentence
+		// that fits one is wrong about the other, and it is wrong in the direction that sends a
+		// daimon hunting for a git it already has.
+		let mut b = diamond_bounds("diamonds/d1", &[], &[]);
+		b.push(Toolkit::Git.bound());
+		let s = machine_note(&machine(), &b, false, Mode::default());
+		assert!(s.contains("Git toolkit:"), "{}", s);
+		assert!(!s.contains("name the binary in full"),
+			"git was described as a binary the grant made reachable: {}", s);
+		assert!(s.contains("configuration"),
+			"what the grant actually adds is unsaid: {}", s);
+		assert!(s.contains("hooks"),
+			"a commit that suddenly runs the user's hooks arrives unannounced: {}", s);
+		// And the toolkit the sentence was written for still gets it.
+		let mut n = diamond_bounds("diamonds/d1", &[], &[]);
+		n.push(Toolkit::Node.bound());
+		let s = machine_note(&machine(), &n, false, Mode::default());
+		assert!(s.contains("name the binary in full"), "{}", s);
+	}
+
+	#[test]
+	fn test_a_push_credential_is_briefed_and_its_absence_costs_nothing() {
+		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let bare = machine_note(&machine(), &b, false, Mode::default());
+		assert!(!bare.contains("git push"),
+			"a push was described to a turn that has no credential to make one: {}", bare);
+		let cred = PushCred::new("github.com", "", "ghp_TESTTOKEN0123456789").expect("cred");
+		assert!(set_push_cred(Some(cred)));
+		let s = machine_note(&machine(), &b, false, Mode::default());
+		assert!(s.contains("git push"), "{}", s);
+		assert!(s.contains("github.com"), "the daimon is not told where a push would go: {}", s);
+		assert!(s.contains("fast-forward"), "{}", s);
+		assert!(s.contains("no hooks"),
+			"a push whose hooks do not run reads as a broken repository: {}", s);
+		// The token is not in the briefing, which is the one place every turn sends to a provider.
+		assert!(!s.contains("ghp_TESTTOKEN0123456789"),
+			"the credential reached the system prompt");
+		// Ordered: the toolkit, then the push, then the network. A push sentence after "Network:
+		// none" would read as a note about a turn that has just been told it cannot reach anything.
+		let push = match s.find("Git: 'git push'") { Some(i) => i, None => panic!("{}", s) };
+		let net  = match s.find("\nNetwork:")      { Some(i) => i, None => panic!("{}", s) };
+		assert!(push < net, "the push note follows the network sentence: {}", s);
+		// Cleared, and the briefing goes back to costing nothing.
+		assert!(!set_push_cred(None));
+		assert!(!machine_note(&machine(), &b, false, Mode::default()).contains("git push"));
+	}
+
+	#[test]
 	fn test_the_briefing_stays_short_enough_to_pay_for_every_turn() {
 		// It is sent on every request of every turn. The number is a ceiling, not a target: this
 		// exists so that a later addition has to be argued for rather than merely appended.
@@ -652,6 +757,59 @@ mod tests {
 					rung.name(), s.len(), s);
 			}
 		}
+	}
+
+	// ── What model the agent is ──────────────────────────────────────────────
+	//
+	// Written as the thing going wrong: an agent that cannot say what it is, one told a model name
+	// that is not the one carrying its request, a chat charged for advice about workers it cannot
+	// dispatch, and a line nobody would notice growing.
+
+	#[test]
+	fn test_the_agent_is_told_which_model_and_whose() {
+		// The two facts no model holds about itself. Without them it answers "I cannot know",
+		// which is true and useless.
+		let s = model_note("claude-opus-5", "api.anthropic.com", false);
+		assert!(s.contains("claude-opus-5"), "{}", s);
+		assert!(s.contains("api.anthropic.com"), "{}", s);
+		// Read from the client, so switching provider switches the line rather than leaving the
+		// old name standing.
+		let other = model_note("accounts/fireworks/models/glm-5p2", "api.fireworks.ai", false);
+		assert!(other.contains("accounts/fireworks/models/glm-5p2"), "{}", other);
+		assert!(other.contains("api.fireworks.ai"), "{}", other);
+		assert!(!other.contains("claude"), "a switched model left the old one standing: {}", other);
+	}
+
+	#[test]
+	fn test_a_model_or_a_provider_nobody_named_is_not_described() {
+		// Every word is paid on every request of every turn, and half the fact is not worth a
+		// whole line -- nor is a placeholder: the browser builds a throwaway client on model
+		// "none" for its file panel, and a turn on one must not be told it IS none.
+		assert_eq!("", model_note("", "api.anthropic.com", true));
+		assert_eq!("", model_note("claude-opus-5", "", true));
+		assert_eq!("", model_note("   ", "  ", false));
+	}
+
+	#[test]
+	fn test_only_an_agent_that_can_dispatch_is_charged_for_advice_about_dispatching() {
+		// A chat holds no `spawn_agent` (see `Tool::browser`), so a sentence about how many
+		// workers to start at once is words it can never act on -- paid for on every request of
+		// every turn by the agent that runs most often.
+		let chat = model_note("m", "h", false);
+		assert!(!chat.contains("workers"), "{}", chat);
+		let daimon = model_note("m", "h", true);
+		assert!(daimon.contains("workers"), "the one agent that fans out is not told to judge \
+			the fan-out: {}", daimon);
+		assert!(daimon.len() > chat.len());
+	}
+
+	#[test]
+	fn test_the_model_line_carries_its_reason_and_stays_one_line() {
+		// The house rule: an instruction with no reason attached is one the model argues with. And
+		// a ceiling rather than a target, so a later addition has to be argued for.
+		let s = model_note("accounts/fireworks/models/glm-5p2", "api.fireworks.ai", true);
+		assert!(s.contains("size what you take on"), "{}", s);
+		assert!(s.len() < 220, "the model line is {} bytes:\n{}", s.len(), s);
 	}
 
 	#[test]

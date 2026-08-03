@@ -48,9 +48,44 @@ SMTPD=${SMTPD:-dev/smtpd.mjs}
 # One line, and matched with a space either side: a newline in this list would
 # make the last name on a line never match, and that test would run in the wrong
 # phase without saying so.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob"
+# verify_gwretry belongs here for a reason worth writing down: it ENDS a live
+# gateway session with a raw POST to /api/auth/logout and asserts that four
+# panels each re-authenticate and retry. There is no session to end without a
+# gateway, so with :9002 clear it prints its own SKIP and exits 0 -- a green
+# line, on a suite summary, for a 401-recovery path nobody exercised.
+# verify_sessionrenew is here for the same reason and was missing for longer: it
+# too exits 0 with a SKIP line when :9002 is clear, which phase 1 guarantees, so
+# the session-renewal path had never run under this suite and had been reported
+# as passing every time.
+NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew"
 # Of those, the two that also need an entitled account (and, for compose, mail).
 NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
+
+# Verifiers that need something this suite cannot invent, and that say so by
+# exiting 2 rather than pretending. `verify_droots_real` proves the Diamond
+# migration against a backup exported from a REAL install: without one it prints
+# "SKIPPED -- and this is NOT a pass" and exits 2, deliberately, so that nobody
+# can read a suite line as a claim about a corpus that was never opened. Point
+# DAIMOND_BACKUP at such a file and it runs; leave it unset and it is skipped
+# here, loudly, and never counted as a pass.
+#
+#   DAIMOND_BACKUP=~/Downloads/daimond-backup-2026-08-01.json bash dev/run_all.sh
+args_for() {
+	case "$1" in
+		verify_droots_real) echo "--backup $DAIMOND_BACKUP" ;;
+		*)                  echo "" ;;
+	esac
+}
+needs_input() {                 # name -> prints why it cannot run, or nothing
+	case "$1" in
+		verify_droots_real)
+			[ -n "${DAIMOND_BACKUP:-}" ] || {
+				echo "needs a backup from a real install: DAIMOND_BACKUP=<file.json> (it exits 2 rather than pass)"
+				return
+			}
+			[ -f "$DAIMOND_BACKUP" ] || echo "DAIMOND_BACKUP=$DAIMOND_BACKUP is not a file" ;;
+	esac
+}
 
 # The extension flows load a real unpacked extension, which Chromium will only
 # do HEADED -- and a headed browser needs a display. Never the user's: an X
@@ -59,15 +94,27 @@ NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
 # gives them a display of their own.
 # verify_handreal is here too, and is the only one that also builds a Rust binary
 # and runs a real `cargo test` through the browser -- see its own header.
-HEADED="verify_ext verify_grant verify_hand verify_ext_i18n verify_handrun verify_handreal"
+#
+# verify_scope, verify_kitfence, verify_pty, verify_ptyedge and verify_sweep_mobile
+# were MISSING from this list and each asks for a real window -- the first four
+# load an unpacked extension, the last drives device emulation. Run without a
+# display they fail on "Missing X server", which reads on the summary as the
+# fence being broken rather than the suite being wrong about how to start them;
+# run WITH the user's display they throw windows into whatever they were doing.
+HEADED="verify_ext verify_grant verify_hand verify_ext_i18n verify_handrun verify_handreal \
+verify_scope verify_kitfence verify_pty verify_ptyedge verify_sweep_mobile"
 # verify_style walks 3 themes x 3 device sizes and is simply slower than the rest.
 # verify_handreal builds the hand from source before it can drive it, and a cold
-# release build of the hand is minutes rather than seconds.
+# release build of the hand is minutes rather than seconds. verify_ptyedge builds
+# a whole wasm package per property it proves against broken code.
 slow_for() {
 	case "$1" in
-		verify_style)     echo 600 ;;
-		verify_handreal)  echo 900 ;;
-		*)                echo 180 ;;
+		verify_style)                     echo 600 ;;
+		verify_scope|verify_kitfence)     echo 600 ;;
+		verify_sweep_mobile)              echo 900 ;;
+		verify_handreal)                  echo 900 ;;
+		verify_ptyedge)                   echo 2400 ;;
+		*)                                echo 180 ;;
 	esac
 }
 
@@ -76,26 +123,38 @@ pass=0; fail=0; skip=0; failed=""; skipped=""
 say() { echo "$1" | tee -a "$LOG"; }
 
 run_one() {
-	local name=$1 out code tail
+	local name=$1 out code tail why extra
+	# A verifier that cannot be given what it needs is not run at all. It is NOT
+	# run and then forgiven: `verify_droots_real` exits 2 on purpose in that
+	# state, and a suite that turned an exit 2 into a pass would be the same
+	# defect it exists to prevent.
+	why=$(needs_input "$name")
+	if [ -n "$why" ]; then skip_one "$name" "$why"; return; fi
+	extra=$(args_for "$name")
 	[ "$name" = "verify_durability" ] && rm -rf "$SCRATCH/durability-profile"
 	case " $HEADED " in
 		*" $name "*)
 			if command -v xvfb-run >/dev/null 2>&1; then
 				out=$(timeout "$(slow_for "$name")" xvfb-run -a -s "-screen 0 1400x900x24" \
-					node "dev/$name.mjs" 2>&1)
+					node "dev/$name.mjs" $extra 2>&1)
 				code=$?
 			else
 				skip_one "$name" "needs a headed browser and xvfb-run is not installed"
 				return
 			fi ;;
 		*)
-			out=$(timeout "$(slow_for "$name")" node "dev/$name.mjs" 2>&1)
+			out=$(timeout "$(slow_for "$name")" node "dev/$name.mjs" $extra 2>&1)
 			code=$? ;;
 	esac
 	tail=$(echo "$out" | grep -vE "Skipping host" | tail -1)
-	if echo "$out" | grep -q '^SKIPPED:'; then
+	# Two spellings, because both are in the tree: `SKIPPED: <why>` and
+	# `SKIP <name> — <why>`. Only the first was recognised, so verify_gwretry,
+	# verify_sessionrenew and verify_chunkgw -- each of which prints the second
+	# and then exits 0 -- were counted as PASSES for runs in which they had
+	# refused to do anything at all.
+	if echo "$out" | grep -qE '^SKIPPED:|^SKIP '; then
 		skip=$((skip+1)); skipped="$skipped $name"
-		say "SKIP  $name  — $(echo "$out" | grep '^SKIPPED:' | head -1)"
+		say "SKIP  $name  — $(echo "$out" | grep -E '^SKIPPED:|^SKIP ' | head -1)"
 	elif [ $code -eq 0 ]; then
 		pass=$((pass+1)); say "PASS  $name  — $tail"
 	else

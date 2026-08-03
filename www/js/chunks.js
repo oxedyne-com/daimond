@@ -33,12 +33,19 @@
    paid would lose a lapsed account its whole store rather than its
    overflow. The plan comes from cloud.js, most recently used first,
    drawn against the allowance the gateway reports.
+
+   THE SWEEP FLOOR. A commit declares the live set and the gateway
+   deletes everything it does not name, which is the most destructive
+   thing the gateway does on this file's say-so — and it used to obey
+   without question. It no longer will: a sweep that would take more
+   than half the account's chunks deletes NOTHING and comes back
+   `sweep_held_back`/`sweep_held`/`sweep_token`. See `commit` for what
+   this client does with that, and why it does not simply say yes.
    ============================================================ */
 (function () {
 	'use strict';
 
 	var PATH        = '/api/chunk';
-	var CLIENT_API  = 1;
 	var HAVE_BATCH  = 64;							// Upload at most this many pieces per request.
 
 	function log(/* ...args */) {
@@ -85,11 +92,41 @@
 	// ── Transport ──────────────────────────────────────────────
 	// Like sync.js: a private wrapper returning {status, json}; a chunk op's
 	// 4xx is an outcome to read, not an error to throw.
+	//
+	// THROUGH `DaimondGateway.gwFetch`, WHICH IS THE ONE COPY OF THE 401 RULE.
+	// This file called `fetch` directly and did nothing whatever about a lapsed
+	// session — the sixth copy of a wrapper that five siblings each answered a
+	// 401 in, and the worst of the six to have left out. The gateway's session
+	// lives an hour and nothing renewed it, so an hour into a sitting every op
+	// here was refused: `missing()` reports EVERY address as missing, so the next
+	// sync re-encrypts and re-uploads the whole corpus; `putChunks()` throws
+	// `chunk put failed: 401`; and the commit that lets the gateway sweep never
+	// lands, so the account's garbage is never collected. None of it was said
+	// anywhere.
+	//
+	// SAFE TO REPEAT. `handle_impl` (gateway/src/handlers/chunk.rs) takes the
+	// session in its FIRST statement — before the method check, before the body
+	// is parsed, before `op` is even read — so a 401 is proof that nothing
+	// happened: nothing stored, nothing swept, no index recorded. The second
+	// attempt cannot duplicate a side effect the first never had, and the body is
+	// a string, so the options object is reused as given.
+	//
+	// LATE-BOUND, NEVER CAPTURED. `DaimondGateway` is looked up on the global at
+	// every call rather than held in a local at load. index.html loads gateway.js
+	// at 790 and this file at 791, so the order holds today; a property lookup
+	// means it goes on holding whatever that order becomes, and it is what lets
+	// the renewal be replaced without every caller keeping a reference to the old
+	// one. `clientApi()` is read the same way: this file used to carry its own
+	// copy of the number, and two constants that have to match are two constants
+	// that will eventually not.
 	async function call(body) {
-		var r = await fetch(PATH, {
+		var r = await DaimondGateway.gwFetch(PATH, {
 			method:      'POST',
 			credentials: 'same-origin',
-			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers:     {
+				'content-type':  'application/json',
+				'x-daimond-api': String(DaimondGateway.clientApi()),
+			},
 			body:        JSON.stringify(body),
 		});
 		var j = null;
@@ -282,6 +319,196 @@
 		catch (e) { log('materialise: unwrap failed'); return null; }
 	}
 
+	// ── A sweep the gateway would not carry out ────────────────
+	//
+	// `sweep_chunks` had no floor: it deleted whatever a commit did not name, on
+	// one request, and a client bug did exactly that to a real account. It now
+	// refuses any sweep that would take more than half the chunks an account
+	// holds. Nothing is deleted, the commit still succeeds and the index is still
+	// recorded — the reply simply carries `sweep_held_back`, `sweep_held` and a
+	// `sweep_token`, and repeating the IDENTICAL commit with that token carries
+	// the deletion out. The token is a digest of the account and the sorted
+	// doomed addresses, so if either set moves by one chunk in between it no
+	// longer matches and the sweep is held back again.
+	//
+	// SHOULD THIS CLIENT SIMPLY SAY YES? Not unconditionally, and not for the
+	// reason it is tempting to give. A second request does NOT make this client
+	// think again: `manifests` is `DaimondCloud.index()`, a merged structure read
+	// out of localStorage, so re-deriving it a moment later yields the same
+	// answer it yielded the first time. The only genuinely independent opinion in
+	// the interlock is the gateway's own re-read of what it holds, and that
+	// catches one thing — another device having uploaded in between. So an
+	// unconditional yes really would reduce the floor to a formality.
+	//
+	// Nor can it be a permanent no. A wholesale rewrite of one large file
+	// re-chunks all of it, so a legitimate sweep over half the account is
+	// ORDINARY rather than exceptional; and the storage ceilings are computed
+	// from the committed index rather than from the chunks actually held, so
+	// held-back chunks are charged to no cap at all. Never confirming means
+	// garbage that grows without bound and is billed to nobody.
+	//
+	// WHAT IS CHECKED, AND WHAT IT PROTECTS. Nothing this client can compute
+	// distinguishes a large deletion that is right from a narrow index that is
+	// wrong — the shape is identical, which is exactly why the floor lives on the
+	// server. So the conditions below do not try to; each rules out one way the
+	// question could be being asked by something that is not in a position to ask
+	// it, and everything else is reported rather than decided:
+	//
+	//   1. The device may still declare a live set AT THE MOMENT OF CONFIRMING.
+	//      `syncMayCommitChunks()` is false whenever the workspace is not
+	//      syncable, and such a device holds only its own view of the index. sync
+	//      checks it before the first commit; this checks it again immediately
+	//      before a destructive second request, which is the window where it can
+	//      change.
+	//   2. The index names something. An index naming NOTHING is the sharpest
+	//      form of a client that knows nothing declaring the account empty, and
+	//      it is what a workspace that failed to enumerate produces. This client
+	//      never confirms one, whatever else is true.
+	//   3. The gateway's arithmetic and this client's agree: every chunk the
+	//      account holds is either one this commit named live or one it named
+	//      doomed (`sweep_held - sweep_held_back === entries.length`). Where the
+	//      two parties cannot agree on the size of the corpus, this client does
+	//      not insist on the largest deletion the gateway will accept.
+	//
+	// Once per commit, never a loop, and a sweep that is not collected is left
+	// standing on the chip rather than swallowed.
+	var heldSweep = null;		// {body, n, m, token, why, at} while a deletion stands uncollected.
+	var confirmed = 0;			// Large sweeps this page has carried out, for the verifier.
+
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// The chip that says a deletion is standing, drawn beside sync's.
+	///
+	/// It is sync's chip in everything but ownership: same row, same shape, same
+	/// `stalled` colour, standing rather than fading, reason on hover, and never
+	/// a dialog over the app. It is a separate element only because `setStatus`
+	/// is private to sync.js and a held-back sweep outlives the round that found
+	/// it — sync paints "Synced" the instant `commit` returns, so anything this
+	/// file wrote into that chip would live for no time at all.
+	var _chip = null;
+	function chip() {
+		if (_chip) return _chip;
+		var actions = document.getElementById('top-actions') || document.querySelector('.top-actions');
+		if (!actions) return null;
+		if (!document.getElementById('chunk-status-styles')) {
+			var st = document.createElement('style');
+			st.id = 'chunk-status-styles';
+			st.textContent =
+				'#chunk-chip{display:none;align-items:center;gap:5px;font-size:var(--fs-xs);padding:3px 9px;' +
+				'border-radius:999px;border:1px solid var(--border,#333);background:var(--bg-tertiary);' +
+				// A deletion that did not happen is not an error and not a success:
+				// something is standing that the operator can act on, which is what
+				// --warn is for everywhere else in the app.
+				'color:var(--warn);white-space:nowrap}' +
+				'#chunk-chip .cdot{width:6px;height:6px;border-radius:50%;background:currentColor}';
+			document.head.appendChild(st);
+		}
+		var c = document.createElement('div');
+		c.id = 'chunk-chip';
+		c.setAttribute('role', 'status');
+		c.innerHTML = '<span class="cdot"></span><span class="ctext"></span>';
+		var sib = document.getElementById('sync-chip');
+		if (sib && sib.parentNode === actions) actions.insertBefore(c, sib);
+		else actions.appendChild(c);
+		_chip = c;
+		return c;
+	}
+
+	/// Show or hide the standing notice, and tell anything else that is watching.
+	///
+	/// The event mirrors gateway.js's `daimond:credits`: one place owns the fact
+	/// and announces it, rather than every panel that wants it polling for it.
+	function draw() {
+		var c = chip();
+		if (c) {
+			if (!heldSweep) c.style.display = 'none';
+			else {
+				c.querySelector('.ctext').textContent = t('chunks.sweep_held');
+				c.title = t('chunks.sweep_held_reason', { n: heldSweep.n, m: heldSweep.m });
+				c.style.display = 'inline-flex';
+			}
+		}
+		try {
+			window.dispatchEvent(new CustomEvent('daimond:chunks', { detail: state() }));
+		} catch (e) { /* no window to tell */ }
+	}
+
+	/// Note a deletion the gateway would not carry out and this client would not
+	/// insist on. `why` is the short reason, for the verifier and the log.
+	///
+	/// The commit body is kept beside it, because the only way to carry the
+	/// deletion out later is to send that body again unchanged: the token names
+	/// the doomed set, which the gateway derives from the live set in the body,
+	/// so a rebuilt one would name a different deletion.
+	function standHeld(body, n, m, token, why) {
+		heldSweep = { body: body, n: n, m: m, token: token, why: why, at: Date.now() };
+		log('sweep held back:', n, 'of', m, 'chunks not deleted —', why);
+		draw();
+	}
+
+	/// Nothing is standing any more: the commit that just ran collected whatever
+	/// the last one could not.
+	function noteCollected() {
+		if (!heldSweep) return;
+		heldSweep = null;
+		draw();
+	}
+
+	/// The gateway names the free allowance it grants, so the next tiering can be
+	/// honest about which files fit inside it.
+	function noteAllowance(j) {
+		if (window.DaimondCloud && j && typeof j.free_allowance === 'number') {
+			DaimondCloud.setAllowance(j.free_allowance);
+		}
+	}
+
+	/// Why this client will not confirm a held-back sweep, or '' when it will.
+	/// The three conditions are argued at the head of this section.
+	function refusalToConfirm(entries, n, m) {
+		var may = window.DaimondCore && DaimondCore.syncMayCommitChunks
+			&& DaimondCore.syncMayCommitChunks();
+		if (!may)						return 'not_merged';
+		if (!entries.length)			return 'names_nothing';
+		if (m - n !== entries.length)	return 'unaccounted';
+		return '';
+	}
+
+	/// Answer a held-back sweep: confirm it if this client may, and otherwise
+	/// leave it standing and say so. Returns the reply to hand back to sync.
+	async function answerHeldBack(body, j) {
+		var n = j.sweep_held_back | 0, m = j.sweep_held | 0;
+		var why = refusalToConfirm(body.chunks, n, m);
+		if (why) { standHeld(body, n, m, j.sweep_token, why); return j; }
+
+		// The IDENTICAL commit, quoting what the gateway said it was about to
+		// delete. Identical to the byte: the token is over the doomed set, which
+		// the gateway derives from the live set in this body, so a body that
+		// differed anywhere in `chunks` would name a different deletion and be
+		// held back again.
+		body.sweep_token = j.sweep_token;
+		var res;
+		try { res = await call(body); }
+		finally { delete body.sweep_token; }
+		if (res.status !== 200 || !res.json || !res.json.ok) {
+			standHeld(body, n, m, j.sweep_token, 'refused');
+			return j;
+		}
+		noteAllowance(res.json);
+		if (res.json.sweep_token) {
+			// Held back a second time: the account's chunks moved between the two
+			// requests, so the token no longer names this deletion. One attempt
+			// only — a loop here would be a client insisting until it got its way,
+			// which is the behaviour the floor exists to stop.
+			standHeld(body, res.json.sweep_held_back | 0, res.json.sweep_held | 0,
+				res.json.sweep_token, 'moved');
+			return res.json;
+		}
+		confirmed++;
+		noteCollected();
+		log('confirmed a large sweep:', res.json.swept, 'of', m, 'chunks removed');
+		return res.json;
+	}
+
 	/// Declare the live, tiered chunk set to the gateway and let it sweep
 	/// everything unreferenced. `manifests` is the map of `{path: manifest}` in
 	/// the state just pushed; every chunk it names is committed as paid overflow.
@@ -290,6 +517,9 @@
 	/// gateway refuses to sweep for a device naming a version older than the one
 	/// it holds, because such a device cannot know about a file another device
 	/// added — and a sweep on its word would delete that file's chunks.
+	///
+	/// A sweep over the gateway's floor comes back undone, with a token: see
+	/// `answerHeldBack` for when this client confirms one and when it does not.
 	async function commit(manifests, blobVersion, tiers) {
 		var seen = {}, entries = [];
 		Object.keys(manifests || {}).forEach(function (path) {
@@ -309,13 +539,54 @@
 		if (typeof blobVersion === 'number') body.blob_version = blobVersion | 0;
 		var res = await call(body);
 		if (res.status !== 200 || !res.json || !res.json.ok) { log('commit failed', res.status); return null; }
-		// The gateway names the free allowance it grants, so the next tiering can
-		// be honest about which files fit inside it.
-		if (window.DaimondCloud && typeof res.json.free_allowance === 'number') {
-			DaimondCloud.setAllowance(res.json.free_allowance);
-		}
+		noteAllowance(res.json);
+		if (res.json.sweep_token) return await answerHeldBack(body, res.json);
+		noteCollected();
 		log('committed', entries.length, 'live chunks; swept', res.json.swept);
 		return res.json;
+	}
+
+	/// Carry out a deletion this client declined to confirm on its own.
+	///
+	/// The escape hatch for the one case the conditions above deliberately never
+	/// clear by themselves — an index that names nothing, on an account that
+	/// really has been emptied — and the only thing in this file that deletes on
+	/// a person's word rather than the engine's. It re-sends the commit exactly
+	/// as it stood, so a set that has moved since is refused by the token.
+	async function confirmHeldSweep() {
+		if (!heldSweep || !heldSweep.body) return null;
+		var body = heldSweep.body;
+		body.sweep_token = heldSweep.token;
+		var res;
+		try { res = await call(body); }
+		finally { delete body.sweep_token; }
+		if (res.status !== 200 || !res.json || !res.json.ok) return null;
+		noteAllowance(res.json);
+		if (res.json.sweep_token) {
+			standHeld(body, res.json.sweep_held_back | 0, res.json.sweep_held | 0,
+				res.json.sweep_token, 'moved');
+			return res.json;
+		}
+		confirmed++;
+		noteCollected();
+		return res.json;
+	}
+
+	/// What this file would say if asked — the same facts the chip shows, in
+	/// words, for anything that needs them other than as a coloured pill.
+	function state() {
+		return {
+			/// A deletion the gateway would not carry out and this client did not
+			/// insist on. Standing until a commit collects it.
+			heldBack:  heldSweep ? heldSweep.n : 0,
+			held:      heldSweep ? heldSweep.m : 0,
+			/// '' | 'not_merged' | 'names_nothing' | 'unaccounted' | 'refused' | 'moved'
+			why:       heldSweep ? heldSweep.why : '',
+			since:     heldSweep ? heldSweep.at : 0,
+			standing:  !!heldSweep,
+			/// Large sweeps this page has confirmed, for the verifier.
+			confirmed: confirmed,
+		};
 	}
 
 	// ── Public surface ─────────────────────────────────────────
@@ -325,6 +596,11 @@
 		materialiseV1:     materialiseV1,		// (manifest) -> text|null, old files only
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null
+		/// A deletion this client declined to confirm, carried out on a person's
+		/// word. Nothing in the app calls it yet; the operator reaches it from the
+		/// console, and a panel that offers it has somewhere to hang.
+		confirmHeldSweep:  confirmHeldSweep,
+		state:             state,
 		// exposed for tests/tools:
 		_b64urlEncode: b64urlEncode,
 		_b64urlDecode: b64urlDecode,

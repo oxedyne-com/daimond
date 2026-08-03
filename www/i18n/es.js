@@ -403,6 +403,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronización en pausa',
 	'sync.too_big_reason': 'El paquete de este dispositivo es demasiado grande para enviarlo, así que su trabajo ha dejado de viajar. Lo normal es que la causa sea un Diamond o un archivo del espacio de trabajo muy grande: quítalo o redúcelo y la sincronización se reanuda sola.',
+	'sync.diamonds_left.one': '{n} Diamond no cupo en el paquete de sincronización de este dispositivo, así que no llega a tus otros dispositivos hasta que sea más pequeño: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds no cupieron en el paquete de sincronización de este dispositivo, así que no llegan a tus otros dispositivos hasta que sean más pequeños: {names}',
 	// Una sesión que terminó y no se pudo retomar. Misma etiqueta que abajo: lo
 	// que importa es que el trabajo de este dispositivo no está viajando.
 	'sync.signed_out': 'Sincronización en pausa',
@@ -416,6 +418,10 @@
 	'sync.when_mins': 'hace {n} min',
 	'sync.when_hours': 'hace {n} h',
 	'sync.when_days': 'hace {n} d',
+
+	// ── Cloud storage cleanup ──────────────────────────────────
+	'chunks.sweep_held': 'Limpieza en pausa',
+	'chunks.sweep_held_reason': 'El almacenamiento en la nube conserva {n} de sus {m} fragmentos guardados a los que ya no hace referencia ningún archivo de esta cuenta. NO se han borrado: ninguna petición puede eliminar más de la mitad de lo almacenado, y este dispositivo no está en condiciones de insistir. No falta nada tuyo: el espacio se libera con la próxima sincronización que pueda dar cuenta de todo.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Vincular otro dispositivo',
@@ -597,6 +603,10 @@
 	'settings.max_tokens': 'Respuesta más larga',
 	'settings.max_tokens_auto': 'Automático',
 	'settings.tokens': 'tokens',
+	'settings.max_rounds': 'Pasos por turno',
+	'settings.max_rounds_auto': 'Predeterminado',
+	'settings.steps': 'pasos',
+	'settings.max_rounds_note': 'Cuántas veces puede un agente usar una herramienta antes de que un turno se detenga. Lo dice al detenerse, y puedes indicarle que siga.',
 	'settings.max_tokens_note': 'Cuánto puede durar una sola respuesta. Si es muy baja, un archivo grande llega cortado por la mitad.',
 	'settings.max_tokens_ceiling': 'acepta hasta',
 
@@ -927,6 +937,8 @@
 	'tile.delete_chat_empty': '¿Borrar «{name}»?',
 	'tile.start': 'Iniciar',
 	'tile.start_help': 'Confirma el modelo e inicia este chat',
+	'tile.workers': 'Trabajadores',
+	'tile.worker_model_help': 'El modelo con el que corren los trabajadores que despacha un Diamond cortado de este chat; si lo dejas, corren con el modelo del propio chat.',
 	'tile.folded': 'Plegado',
 	'tile.fold_all': 'Plegar todo',
 	'tile.folded_help': 'Ya plegado en «{name}»: pliega otra vez para añadir lo nuevo desde entonces.',
@@ -968,6 +980,9 @@
 	'rail.create': 'Crear',
 	'rail.name': 'Nombre',
 	'rail.model': 'Modelo',
+	'rail.worker_model': 'Modelo para los trabajadores',
+	'rail.worker_model_help': 'El daimon de este Diamond despacha trabajadores, varios a la vez; si lo dejas así, corren con el modelo del propio Diamond.',
+	'rail.err_no_key_worker': 'El proveedor de los trabajadores todavía no tiene una clave legible, así que caerían al modelo del propio Diamond: desbloquéalo, o elige otro.',
 	'rail.err_name': 'Dale un nombre al Diamond.',
 	'rail.err_model': 'Elige un modelo con el que pensará este Diamond.',
 	'rail.err_no_key': 'Ese proveedor todavía no tiene una clave legible: desbloquea, o añade una.',
@@ -1124,6 +1139,12 @@
 	'dws.empty': 'Todavía no se guarda nada con este Diamond. Lo que guardes aquí es lo que su daimon puede abrir.',
 	'dws.attach_dir': 'Guardar esta carpeta con {name}',
 	'dws.detach_dir': 'Dejar de guardar esta carpeta con {name}',
+	'dws.kits': 'Cadenas de herramientas',
+	'dws.kits_help': 'Qué compiladores y gestores de paquetes puede alcanzar en tu ordenador un comando de este Diamond. Desactivado salvo que lo permitas — un daimon no elige nada de esto.',
+	'dws.kit_on': 'Conceder la cadena {kit} a {name}',
+	'dws.kit_off': 'Retirar la cadena {kit} de {name}',
+	'dws.kit_failed': 'Esa cadena de herramientas no se guardó',
+	'dws.kit_none': 'Sin cadena de herramientas. Un comando alcanza los archivos de este Diamond y nada más en tu ordenador.',
 	'dws.elsewhere': 'Vive en el espacio de trabajo',
 	'dws.readonly': 'Solo lectura',
 
@@ -1283,6 +1304,8 @@
 	'files.adopted_title.other': 'Se recuperaron {n} Diamonds',
 	'files.adopted_body': 'Daimond encontró archivos propios en esta carpeta y los copió de vuelta a su propio almacenamiento, donde sí se sincronizan: {names}. Las copias de la carpeta quedaron exactamente donde estaban, en diamonds/: puedes borrarlas cuando estés conforme.',
 	'files.adopted_kept': 'Estos diferían de lo que Daimond ya tenía, así que se conservaron ambas copias:\n{paths}',
+	'files.adopt_left_title': 'Algunos archivos se quedaron en la carpeta',
+	'files.adopted_skipped': 'Estos no se copiaron — más de 8 MiB, o ilegibles —, así que un Diamond que los necesite está aquí sin ellos, o no está aquí en absoluto:\n{paths}',
 	'files.folder_open_failed': 'No se pudo abrir esa carpeta.',
 	'files.import': 'Importar',
 	'files.import_body': '¿Copiar «{name}» al espacio de trabajo? Todo lo que hay dentro se sincronizará con tus otros dispositivos y contará para tu almacenamiento.',
@@ -1399,6 +1422,8 @@
 	'backup.n_diamonds.one': '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body': 'Restaurados {files} y {diamonds}. Daimond se recargará para abrir tu espacio de trabajo restaurado.',
+	'backup.n_foreign.one': '{n} archivo de esa copia pertenece a otra cuenta del navegador del que salió, así que no se restauró y solo sigue existiendo dentro del archivo de copia.',
+	'backup.n_foreign.other': '{n} archivos de esa copia pertenecen a otra cuenta del navegador del que salió, así que no se restauraron y solo siguen existiendo dentro del archivo de copia.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Otro (escríbelo a mano)…',

@@ -84,8 +84,10 @@
 
 	var PATH        = '/api/sync';
 	var WS_PATH     = '/api/sync/ws';	// The wake channel's WebSocket form.
-	var CLIENT_API  = 1;			// Matches gateway.js; sent so an old tab is refused.
-	var HDR_MIN_API = 'x-daimond-min-api';
+	// The contract version this build speaks is gateway.js's to own, and it is
+	// read from there (`DaimondGateway.clientApi()`) rather than copied: two
+	// constants that have to match are two constants that will eventually not.
+
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
 	var MAX_CONFLICT_RETRIES = 4;	// Bound the pull-merge-retry loop.
 	// Focus arrives in bursts -- a click into the window raises focus on the
@@ -197,28 +199,6 @@
 	}
 
 	// ── Transport ──────────────────────────────────────────────
-	// A private fetch wrapper, NOT DaimondGateway.post: sync's 402/409/413 are
-	// outcomes to act on, not errors to throw. Returns {status, json}.
-	async function once(method, body, query) {
-		var opts = {
-			method:      method,
-			credentials: 'same-origin',
-			headers:     { 'x-daimond-api': String(CLIENT_API) },
-		};
-		if (body !== undefined) {
-			opts.headers['content-type'] = 'application/json';
-			opts.body = JSON.stringify(body);
-		}
-		var r = await fetch(PATH + (query || ''), opts);
-		// Honour the version contract exactly as gateway.js does: a tab too old
-		// for the gateway must reload rather than talk to it.
-		if (r.status === 426) { fireStale(); return { status: 426, json: null }; }
-		var min = parseInt(r.headers.get(HDR_MIN_API), 10);
-		if (isFinite(min) && min > CLIENT_API) fireStale();
-		var j = null;
-		try { j = await r.json(); } catch (e) { j = null; }
-		return { status: r.status, json: j };
-	}
 
 	/// One request, with the one refusal this engine can put right by itself.
 	///
@@ -228,23 +208,39 @@
 	/// work were refused and discarded that way in one afternoon, with the chip
 	/// showing nothing and the account dot claiming to be connected.
 	///
-	/// So a 401 asks the gateway for a new session and sends the request again.
-	/// ONCE: an identity that genuinely cannot authenticate must surface on the
-	/// chip rather than spin against a door that is not going to open.
+	/// So a 401 asks the gateway for a new session and sends the request again --
+	/// through `DaimondGateway.gwFetch`, which is the ONE place that rule lives.
+	/// This file used to hold its own copy of it, one of five identical copies
+	/// across the app; a rule about not losing the user's work is not a rule that
+	/// should exist in five places. Renew once, retry once, and otherwise the
+	/// original 401 comes back and the chip says so, because an identity that
+	/// genuinely cannot authenticate must surface rather than spin against a door
+	/// that is not going to open.
+	///
+	/// NOT DaimondGateway.post: sync's 402/409/413 are outcomes to act on, not
+	/// errors to throw, so this keeps its own shape -- {status, json} -- and reads
+	/// the reply itself. The version contract is honoured on the way past, by
+	/// `gwFetch`: a tab too old for the gateway is told to reload rather than go
+	/// on talking to it.
 	async function call(method, body, query) {
-		var res = await once(method, body, query);
-		if (res.status !== 401) { clearSessionGone(res.status); return res; }
-		var back = false;
-		try {
-			back = !!(window.DaimondGateway && DaimondGateway.reauth
-				&& await DaimondGateway.reauth());
-		} catch (e) { back = false; }
-		if (back) {
-			res = await once(method, body, query);
-			if (res.status !== 401) { clearSessionGone(res.status); return res; }
+		var opts = {
+			method:      method,
+			credentials: 'same-origin',
+			headers:     { 'x-daimond-api': String(DaimondGateway.clientApi()) },
+		};
+		if (body !== undefined) {
+			opts.headers['content-type'] = 'application/json';
+			opts.body = JSON.stringify(body);
 		}
-		// Still refused. This device's work is not travelling and the user has to
-		// be able to find that out; see restStatus.
+		var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+		if (r.status === 426) return { status: 426, json: null };
+		var j = null;
+		try { j = await r.json(); } catch (e) { j = null; }
+		var res = { status: r.status, json: j };
+		if (r.status !== 401) { clearSessionGone(r.status); return res; }
+		// Still refused after a renewal that either failed or did not help. This
+		// device's work is not travelling and the user has to be able to find
+		// that out; see restStatus.
 		if (!sessionGone) { sessionGone = true; restStatus(); }
 		return res;
 	}
@@ -257,10 +253,6 @@
 		if (status !== 200 && status !== 402 && status !== 409 && status !== 413) return;
 		sessionGone = false;
 		restStatus();
-	}
-
-	function fireStale() {
-		try { window.dispatchEvent(new Event('daimond:stale')); } catch (e) { /* ignore */ }
 	}
 
 	// ── Status indicator ───────────────────────────────────────

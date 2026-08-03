@@ -119,10 +119,165 @@ const GRANT = fs.realpathSync(path.join(WORK, 'root'));
 fs.writeFileSync(path.join(GRANT, OWN_DIR, 'hello.txt'), 'inside the fence\n');
 fs.writeFileSync(path.join(GRANT, '.daimond/secret.txt'), 'out of bounds\n');
 
-if (!fs.existsSync(HAND)) {
-	console.error(`No hand binary at ${HAND}. Build it with: cd hand && cargo build --release`);
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The hand under test is built here, now, from this tree          │
+// └───────────────────────────────────────────────────────────────┘
+//
+// This file used to take whatever was lying in `hand/target/release` and, where
+// there was nothing, print a line and leave. Neither half is safe. Nothing in
+// the test suite builds that binary, and nor did this file, so a release binary
+// from last week would drive the pty edge and report it green against code that
+// no longer exists — a verifier that cannot say which code it measured must not
+// report success. `verify_kitfence.mjs` records having measured exactly that:
+// with a `CARGO_TARGET_DIR` inherited, its checks passed against a binary from
+// before the clamp existed. `hand/src/exec.rs`'s `shipping_hand` refuses for the
+// same reason on the debug side.
+//
+// So: build first, and then require the artefact to be newer than every source
+// cargo says went into it. `CARGO_TARGET_DIR` is REMOVED from the build's
+// environment, and that is not tidying — an agent working in this tree usually
+// has one set, cargo would write the new binary there, and `HAND`, the path this
+// registers as the profile's native messaging host, would still be whatever was
+// built last.
+
+/// What to run by hand when this refuses.
+const REBUILD = 'cargo build --release --manifest-path hand/Cargo.toml';
+
+/// The prerequisites named on one line of a cargo dep-info file.
+///
+/// Make's escaping, which is what the format is: a backslash makes the character
+/// after it ordinary, so a path containing a space survives being split on
+/// whitespace. The same reading as `dep_sources` in `hand/src/exec.rs`.
+function depSources(list) {
+	const out = [];
+	let cur = '', esc = false;
+	for (const c of list) {
+		if (esc) { cur += c; esc = false; }
+		else if (c === '\\') { esc = true; }
+		else if (/\s/.test(c)) { if (cur) { out.push(cur); cur = ''; } }
+		else { cur += c; }
+	}
+	if (cur) out.push(cur);
+	return out;
+}
+
+/// Why the binary at `bin` is not this tree's, or '' when there is no reason.
+///
+/// The oracle is cargo's own dep-info file, `<bin>.d`, written beside it: it
+/// names every source that went into the binary, this crate's and every fe2o3
+/// crate's, so a change anywhere below the pty edge counts. A missing binary, a
+/// missing or silent record, a source that can no longer be read, or a source
+/// newer than the binary are each a refusal with the sentence that says so.
+function whyStale(bin) {
+	let built;
+	try { built = fs.statSync(bin).mtimeMs; }
+	catch (e) {
+		return `The pty edge cannot be verified, because there is no hand at ${bin} `
+			+ `to verify it against. Run \`${REBUILD}\` and try again.`;
+	}
+	const record = `${bin}.d`;
+	let listed;
+	try { listed = fs.readFileSync(record, 'utf8'); }
+	catch (e) {
+		return `The pty edge cannot be verified, because ${bin} has no dep-info file at `
+			+ `${record}, so there is no record of what went into it and its vintage `
+			+ `cannot be established. Run \`${REBUILD}\` and try again.`;
+	}
+	let described = false;
+	let newest = null;
+	for (const line of listed.split('\n')) {
+		const at = line.indexOf(':');
+		if (at < 0) continue;
+		if (path.resolve(line.slice(0, at).trim()) !== path.resolve(bin)) continue;
+		described = true;
+		for (const src of depSources(line.slice(at + 1))) {
+			let t;
+			try { t = fs.statSync(src).mtimeMs; }
+			catch (e) {
+				return `The pty edge cannot be verified, because ${bin} was built from `
+					+ `${src}, which can no longer be read, so what is inside the binary `
+					+ `cannot be established. Run \`${REBUILD}\` and try again.`;
+			}
+			if (!newest || t > newest.t) newest = { src, t };
+		}
+	}
+	if (!described) {
+		return `The pty edge cannot be verified, because ${record} says nothing about `
+			+ `${bin}, so that binary is not the one this build produced. Run `
+			+ `\`${REBUILD}\` and try again.`;
+	}
+	if (newest && newest.t > built) {
+		const by = Math.round((newest.t - built) / 1000);
+		return `The pty edge would have been verified against a stale hand, which proves `
+			+ `nothing about it in either direction: ${newest.src} was last changed ${by} `
+			+ `second(s) after ${bin} was linked, so that binary is not this source. Run `
+			+ `\`${REBUILD}\` and try again.`;
+	}
+	return '';
+}
+
+const buildEnv = { ...process.env };
+delete buildEnv.CARGO_TARGET_DIR;
+// `PTYEDGE_NO_BUILD` skips the build and nothing else: the staleness guard below
+// runs either way, so the variable cannot make this file report success against
+// code it did not test — it can only make it refuse. It is here so that the
+// guard can be shown to refuse, which is the only way to know it works.
+if (!process.env.PTYEDGE_NO_BUILD) {
+	const built = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
+	if (built.status !== 0) {
+		console.error(`The hand did not build, so there is nothing here to verify the pty `
+			+ `edge against. Fix the build and run this again.\n`
+			+ (built.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 5).join('\n'));
+		process.exit(2);
+	}
+}
+const stale = whyStale(HAND);
+if (stale) {
+	console.error(stale);
 	process.exit(2);
 }
+console.log(`The hand under test was built from this tree: ${HAND}`);
+
+// ── And the other half of what is under test ────────────────────
+//
+// Sections 1 to 3 run against `www/pkg`, so `pty_request` there is as much the
+// code under test as the hand is, and a bundle older than the engine it was
+// built from would carry the same fail-open: green against a composition that no
+// longer exists. Every `.rs` under `src/` goes into that bundle, so any one of
+// them being newer than it is enough to say it is not this tree. Not rebuilt
+// here, because a wasm build is minutes and a surprise one in the middle of a
+// verifier is worse than a sentence saying what to run.
+const WASM_FILE = path.join(WWW, 'pkg/oxedyne_daimond_bg.wasm');
+
+/// Every Rust source under `dir`, which is everything the bundle is built from.
+function rustSources(dir) {
+	const out = [];
+	for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+		const f = path.join(dir, ent.name);
+		if (ent.isDirectory()) out.push(...rustSources(f));
+		else if (ent.name.endsWith('.rs')) out.push(f);
+	}
+	return out;
+}
+
+const wasmAt = fs.existsSync(WASM_FILE) ? fs.statSync(WASM_FILE).mtimeMs : 0;
+if (!wasmAt) {
+	console.error(`The pty edge cannot be verified, because there is no wasm bundle at `
+		+ `${WASM_FILE} and \`pty_request\` lives in it. Run \`dev/build-wasm.sh\` and try again.`);
+	process.exit(2);
+}
+const newestSrc = rustSources(path.join(ROOT, 'src'))
+	.map((f) => ({ f, t: fs.statSync(f).mtimeMs }))
+	.reduce((a, b) => (a && a.t >= b.t ? a : b), null);
+if (newestSrc && newestSrc.t > wasmAt) {
+	console.error(`The pty edge would have been verified against a stale engine, which proves `
+		+ `nothing about it in either direction: ${newestSrc.f} was last changed `
+		+ `${Math.round((newestSrc.t - wasmAt) / 1000)} second(s) after ${WASM_FILE} was built, `
+		+ `so that bundle is not this source. Run \`dev/build-wasm.sh\` and try again.`);
+	process.exit(2);
+}
+console.log(`and the engine under test was built from this tree: ${WASM_FILE}`);
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ The tmux oracle                                                │

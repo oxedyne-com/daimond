@@ -45,6 +45,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { whyStaleWasm, refuse } from './staleguard.mjs';
 
 const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
@@ -267,10 +268,23 @@ async function listen(from) {
 	throw new Error(`No free port from ${from}.`);
 }
 
-if (!fs.existsSync(path.join(WWW, 'pkg/oxedyne_daimond.js'))) {
-	console.error('No www/pkg — build it with dev/build-wasm.sh.');
-	process.exit(2);
-}
+// ── The engine under test has to be this tree's ─────────────────────
+//
+// This file asked only whether `www/pkg` EXISTED. That is the fail-open that
+// `hand/src/exec.rs`'s `shipping_hand` and `dev/verify_ptyedge.mjs` were both
+// written to close: the whole subject here is the ENGINE's own refusal, reached
+// through the real `pty_request` in the bundle, so a bundle built before that
+// refusal existed would have this file report, in detail and in green, on a
+// refusal that is no longer in the code. Existence proves the file is there and
+// nothing at all about what is in it.
+//
+// So: every `.rs` under `src/` must be older than the bundle. Not rebuilt here —
+// a wasm build is minutes and a surprise one inside a verifier is worse than a
+// sentence saying what to run.
+refuse(whyStaleWasm(path.join(WWW, 'pkg/oxedyne_daimond_bg.wasm'), path.join(ROOT, 'src'), {
+	subject: 'The workspace-identity refusal',
+	holds:   '`pty_request`, whose refusal is the subject of this file,',
+}));
 
 const PORT = await listen(Number(process.env.WSIDENT_PORT || 8811));
 const APP  = `http://127.0.0.1:${PORT}`;

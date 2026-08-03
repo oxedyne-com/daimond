@@ -1065,8 +1065,13 @@ mod tests {
 
     /// A registry with no tools, so a turn takes the plain streaming path.
     fn no_tools() -> crate::tools::ToolRegistry {
-        let mut dir = std::env::temp_dir();
-        dir.push(fmt!("daimond_agent_test_{}", std::process::id()));
+        // A scratch directory under the user cache, not the tmpfs at `/tmp`, and one
+        // per call rather than one per process: keyed on the process identifier, every
+        // turn in the file shared a workspace.
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_agent_test") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
         let ws = match crate::workspace::Workspace::new(dir) {
             Ok(w)  => w,
             Err(e) => panic!("a scratch workspace: {}", e),

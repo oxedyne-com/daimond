@@ -403,6 +403,8 @@
 	// A refused parcel. Say what is too large, and what usually makes it so.
 	'sync.too_big': 'Sincronização pausada',
 	'sync.too_big_reason': 'O pacote deste dispositivo é grande demais para ser enviado, então o trabalho dele parou de viajar. A causa costuma ser um Diamond ou um arquivo do espaço de trabalho muito grande — tire-o ou diminua-o, e a sincronização volta sozinha.',
+	'sync.diamonds_left.one': '{n} Diamond não coube no pacote de sincronização deste dispositivo, então ele não chega aos seus outros dispositivos enquanto não ficar menor: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds não couberam no pacote de sincronização deste dispositivo, então eles não chegam aos seus outros dispositivos enquanto não ficarem menores: {names}',
 	// Uma sessão que acabou e não pôde ser retomada. Mesmo rótulo dos de baixo: o
 	// que importa é que o trabalho deste dispositivo não está viajando.
 	'sync.signed_out': 'Sincronização pausada',
@@ -416,6 +418,10 @@
 	'sync.when_mins': 'há {n} min',
 	'sync.when_hours': 'há {n} h',
 	'sync.when_days': 'há {n} d',
+
+	// ── Cloud storage cleanup ──────────────────────────────────
+	'chunks.sweep_held': 'Limpeza pausada',
+	'chunks.sweep_held_reason': 'O armazenamento na nuvem mantém {n} dos seus {m} pedaços guardados aos quais nenhum arquivo desta conta ainda se refere. Eles NÃO foram apagados: nenhuma requisição pode remover mais da metade do que está armazenado, e este dispositivo não está em posição de insistir. Nada seu está faltando — o espaço é liberado na próxima sincronização que conseguir dar conta de tudo.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Vincular outro dispositivo',
@@ -597,6 +603,10 @@
 	'settings.max_tokens': 'Resposta mais longa',
 	'settings.max_tokens_auto': 'Automático',
 	'settings.tokens': 'tokens',
+	'settings.max_rounds': 'Passos por turno',
+	'settings.max_rounds_auto': 'Padrão',
+	'settings.steps': 'passos',
+	'settings.max_rounds_note': 'Quantas vezes um agente pode usar uma ferramenta antes de um turno parar. Ele avisa ao parar, e você pode mandar continuar.',
 	'settings.max_tokens_note': 'O tamanho máximo de uma única resposta. Baixo demais, e um arquivo grande chega cortado ao meio.',
 	'settings.max_tokens_ceiling': 'aceita até',
 
@@ -927,6 +937,8 @@
 	'tile.delete_chat_empty': 'Excluir “{name}”?',
 	'tile.start': 'Iniciar',
 	'tile.start_help': 'Confirme o modelo e inicie este chat',
+	'tile.workers': 'Trabalhadores',
+	'tile.worker_model_help': 'O modelo em que rodam os trabalhadores despachados por um Diamond cortado deste chat; se você deixar como está, eles rodam no modelo do próprio chat.',
 	'tile.folded': 'Dobrado',
 	'tile.fold_all': 'Dobrar tudo',
 	'tile.folded_help': 'Já dobrado em “{name}” — dobre de novo para acrescentar o que veio depois.',
@@ -968,6 +980,9 @@
 	'rail.create': 'Criar',
 	'rail.name': 'Nome',
 	'rail.model': 'Modelo',
+	'rail.worker_model': 'Modelo para os trabalhadores',
+	'rail.worker_model_help': 'O daimon deste Diamond despacha trabalhadores, vários de uma vez; se você deixar como está, eles rodam no modelo do próprio Diamond.',
+	'rail.err_no_key_worker': 'O provedor dos trabalhadores ainda não tem uma chave legível, então eles cairiam no modelo do próprio Diamond — desbloqueie, ou escolha outro.',
 	'rail.err_name': 'Dê um nome ao Diamond.',
 	'rail.err_model': 'Escolha um modelo com que este Diamond vai pensar.',
 	'rail.err_no_key': 'Esse provedor ainda não tem uma chave legível — desbloqueie, ou adicione uma.',
@@ -1124,6 +1139,12 @@
 	'dws.empty': 'Ainda não há nada mantido com este Diamond. O que você mantém aqui é o que o daimon dele pode abrir.',
 	'dws.attach_dir': 'Manter esta pasta com {name}',
 	'dws.detach_dir': 'Parar de manter esta pasta com {name}',
+	'dws.kits': 'Cadeias de ferramentas',
+	'dws.kits_help': 'Quais compiladores e gerenciadores de pacotes um comando deste Diamond pode alcançar no seu computador. Desligado até você permitir — nada aqui é escolhido por um daimon.',
+	'dws.kit_on': 'Conceder a cadeia {kit} a {name}',
+	'dws.kit_off': 'Retirar a cadeia {kit} de {name}',
+	'dws.kit_failed': 'Essa cadeia de ferramentas não foi salva',
+	'dws.kit_none': 'Sem cadeia de ferramentas. Um comando alcança os arquivos deste Diamond e nada mais no seu computador.',
 	'dws.elsewhere': 'Vive no espaço de trabalho',
 	'dws.readonly': 'Somente leitura',
 
@@ -1283,6 +1304,8 @@
 	'files.adopted_title.other': '{n} Diamonds foram trazidos de volta',
 	'files.adopted_body': 'O Daimond encontrou arquivos seus nesta pasta e os copiou de volta para o próprio armazenamento, onde eles sincronizam: {names}. As cópias na pasta ficaram exatamente onde estavam, em diamonds/ — você pode apagá-las quando estiver satisfeito.',
 	'files.adopted_kept': 'Estes diferiam do que o Daimond já tinha, então as duas cópias foram mantidas:\n{paths}',
+	'files.adopt_left_title': 'Alguns arquivos ficaram na pasta',
+	'files.adopted_skipped': 'Estes não foram copiados — acima de 8 MiB, ou ilegíveis — então um Diamond que precise deles está aqui sem eles, ou nem está aqui:\n{paths}',
 	'files.folder_open_failed': 'Não foi possível abrir essa pasta.',
 	'files.import': 'Importar',
 	'files.import_body': 'Copiar “{name}” para o espaço de trabalho? Tudo o que há nele passará a sincronizar com seus outros dispositivos e a contar para o seu armazenamento.',
@@ -1399,6 +1422,8 @@
 	'backup.n_diamonds.one': '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body': 'Restaurados {files} e {diamonds}. O Daimond vai recarregar para abrir seu espaço de trabalho restaurado.',
+	'backup.n_foreign.one': '{n} arquivo desse backup pertence a outra conta do navegador de onde ele veio, então não foi restaurado e continua existindo só dentro do arquivo de backup.',
+	'backup.n_foreign.other': '{n} arquivos desse backup pertencem a outra conta do navegador de onde ele veio, então não foram restaurados e continuam existindo só dentro do arquivo de backup.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Outro (digite manualmente)…',

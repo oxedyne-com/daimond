@@ -541,6 +541,8 @@
 	// 受け取られなかった荷物。何が大きすぎるのかと、その典型的な原因を書きます。
 	'sync.too_big':        '同期を止めています',
 	'sync.too_big_reason': 'この端末の荷物が大きすぎて送れないため、ここでの作業はもう外に出ていきません。たいていは、とても大きな Diamond か作業領域のファイルが原因です — 取り除くか小さくすれば、同期はひとりでに再開します。',
+	'sync.diamonds_left.one': 'Diamond が {n} 件この端末の同期の荷物に入りきらなかったので、小さくするまでほかの端末には届きません: {names}',
+	'sync.diamonds_left.other': 'Diamond が {n} 件この端末の同期の荷物に入りきらなかったので、小さくするまでほかの端末には届きません: {names}',
 	// 終わってしまい、取り直せなかったセッション。下と同じ見出しにします。
 	'sync.signed_out':        '同期を止めています',
 	'sync.signed_out_reason': 'この端末は Daimond のアカウントサービスにサインインしていない状態で、入り直しもうまくいかなかったため、ここでの作業がほかの端末に届いていません。サービスにつながればひとりでに再開します。それでも直らないときは、Daimond をロックしてから解除してください。',
@@ -553,6 +555,10 @@
 	'sync.when_mins':      '{n} 分前',
 	'sync.when_hours':     '{n} 時間前',
 	'sync.when_days':      '{n} 日前',
+
+	// ── クラウドストレージの整理 ───────────────────────────────
+	'chunks.sweep_held':          'クリーンアップを一時停止',
+	'chunks.sweep_held_reason':   'クラウドストレージには、このアカウントのどのファイルからも参照されなくなった断片が {m} 件中 {n} 件残っています。削除はしていません。1 回のリクエストで保存量の半分を超えて消すことはできず、この端末にはそれを押し通す根拠がないからです。あなたのデータが欠けているわけではありません。すべてを説明できる次回の同期で領域が解放されます。',
 
 	// ── 2 台目の端末とのペアリング ─────────────────────────────
 	// ボタン名を囲む引用符は日本語のかぎ括弧に置き換えています。
@@ -740,6 +746,10 @@
 	'settings.max_tokens':         '返答の最大の長さ',
 	'settings.max_tokens_auto':    '自動',
 	'settings.tokens':             'トークン',
+	'settings.max_rounds':         '1 ターンあたりのステップ数',
+	'settings.max_rounds_auto':    '既定',
+	'settings.steps':              'ステップ',
+	'settings.max_rounds_note':    '1 つのターンが止まるまでに、エージェントがツールを使える回数。止まるときにはそう伝えるので、続けるように指示できます。',
 	'settings.max_tokens_note':    '一回の返答の長さの上限です。低すぎると、大きなファイルが途中で切れて届きます。',
 	'settings.max_tokens_ceiling': 'の上限は',
 
@@ -967,6 +977,8 @@
 	'tile.delete_chat_empty': '「{name}」を削除しますか？',
 	'tile.start':          '開始',
 	'tile.start_help':     'モデルを確認して、このチャットを始めます',
+	'tile.workers':        'ワーカー',
+	'tile.worker_model_help': 'このチャットから切り出した Diamond が送り出すワーカーが動くモデル。触らなければ、チャット自身のモデルで動きます。',
 	'tile.folded':         'たたみ済み',
 	'tile.fold_all':       'すべてたたむ',
 	'tile.folded_help':    'すでに「{name}」にたたまれています。もう一度たたむと、その後の分を足せます。',
@@ -1004,6 +1016,9 @@
 	'rail.create':           '作成',
 	'rail.name':             '名前',
 	'rail.model':            'モデル',
+	'rail.worker_model':     'ワーカーのモデル',
+	'rail.worker_model_help': 'この Diamond の daimon はワーカーを、それも何体もまとめて送り出します。触らなければ、Diamond 自身のモデルで動きます。',
+	'rail.err_no_key_worker': 'ワーカーのプロバイダーには読める鍵がまだないので、ワーカーは Diamond 自身のモデルに戻ってしまいます — ロックを解除するか、別のものを選んでください。',
 	'rail.err_name':         'Diamond に名前を付けてください。',
 	'rail.err_model':        'この Diamond が考えるためのモデルを選んでください。',
 	'rail.err_no_key':       'そのプロバイダーには読める鍵がまだありません — ロックを解除するか、鍵を追加してください。',
@@ -1158,6 +1173,12 @@
 	'dws.empty':           'この Diamond にはまだ何も持たせていません。ここに持たせたものが、その daimon が開けるものです。',
 	'dws.attach_dir':      'このフォルダーを {name} に持たせる',
 	'dws.detach_dir':      'このフォルダーを {name} から外す',
+	'dws.kits':            'ツールチェーン',
+	'dws.kits_help':       'この Diamond からのコマンドが、あなたのコンピューター上でどのコンパイラーやパッケージマネージャーに到達できるか。許可するまでオフで、ここにあるものを daimon が選ぶことはありません。',
+	'dws.kit_on':          '{kit} ツールチェーンを {name} に許可する',
+	'dws.kit_off':         '{kit} ツールチェーンを {name} から取り消す',
+	'dws.kit_failed':      'そのツールチェーンは保存されませんでした',
+	'dws.kit_none':        'ツールチェーンなし。コマンドはこの Diamond のファイルに到達でき、あなたのコンピューター上のそれ以外には到達できません。',
 	'dws.elsewhere':       '作業領域にあります',
 	'dws.readonly':        '読み取り専用',
 
@@ -1315,6 +1336,8 @@
 	'files.adopted_title.other': 'Diamond を {n} 件戻しました',
 	'files.adopted_body': 'このフォルダーの中に Daimond 自身のファイルが見つかったので、同期される Daimond 自身の保存先へコピーし直しました: {names}。フォルダー内のコピーは diamonds/ にそのまま残してあります。確認できたら削除してください。',
 	'files.adopted_kept': '次のファイルは Daimond が持っていたものと内容が違ったため、両方とも残しました:\n{paths}',
+	'files.adopt_left_title': 'フォルダーに残したファイルがあります',
+	'files.adopted_skipped': '次のファイルはコピーしていません（8 MiB を超えるか、読み取れませんでした）。そのため、これを必要とする Diamond は欠けたまま、あるいはそもそも見当たりません:\n{paths}',
 
 	// ── 1 通のメッセージを読む ─────────────────────────────────
 	'msg.unknown_sender':    '（差出人不明）',
@@ -1423,6 +1446,8 @@
 	'backup.n_diamonds.one':  'Diamond {n} 個',
 	'backup.n_diamonds.other': 'Diamond {n} 個',
 	'backup.restored_body':   '{files}と{diamonds}を復元しました。Daimond を再読み込みして、復元した作業領域を開きます。',
+	'backup.n_foreign.one':   'そのバックアップのうち {n} 件のファイルは、取得元のブラウザーにある別のアカウントのものなので復元せず、バックアップファイルの中だけに残っています。',
+	'backup.n_foreign.other': 'そのバックアップのうち {n} 件のファイルは、取得元のブラウザーにある別のアカウントのものなので復元せず、バックアップファイルの中だけに残っています。',
 
 	// ── プロバイダーの入力欄 ───────────────────────────────────
 	'models.other':            'その他（手入力）…',

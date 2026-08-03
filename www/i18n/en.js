@@ -237,6 +237,8 @@
 	'tile.delete_chat_empty': 'Delete "{name}"?',
 	'tile.start':          'Start',
 	'tile.start_help':     'Confirm the model and start this chat',
+	'tile.workers':        'Workers',
+	'tile.worker_model_help': 'The model the workers dispatched by a Diamond cut from this chat run on; left alone they run on the chat’s own model.',
 	'tile.folded':         'Folded',
 	'tile.fold_all':       'Fold all',
 	'tile.folded_help':    'Already folded into "{name}" — fold again to add anything new since.',
@@ -717,6 +719,11 @@
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
 	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. One very large Diamond or workspace file is the usual cause — remove or shrink it and sync resumes on its own.',
+	// A Diamond the parcel had no room for. Named, because the only thing the user can
+	// do about it is find that Diamond, and said aloud rather than logged, because
+	// nothing else on screen would look any different.
+	'sync.diamonds_left.one':   '{n} Diamond did not fit in this device’s sync parcel, so it is not reaching your other devices until it is smaller: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds did not fit in this device’s sync parcel, so they are not reaching your other devices until they are smaller: {names}',
 	// A session that has ended and could not be taken again. Same label as the
 	// two below for the same reason: what the user needs to know is that this
 	// device's work is not travelling, and the difference is in the hover.
@@ -734,6 +741,12 @@
 	'sync.when_mins':      '{n}m ago',
 	'sync.when_hours':     '{n}h ago',
 	'sync.when_days':      '{n}d ago',
+
+	// ── Cloud storage cleanup ──────────────────────────────────
+	// A deletion the gateway would not carry out on one request. Say the two
+	// numbers, and say plainly that nothing of theirs has gone.
+	'chunks.sweep_held':          'Cleanup paused',
+	'chunks.sweep_held_reason':   'Cloud storage is holding {n} of its {m} stored pieces that no file on this account still refers to. They have NOT been deleted: no single request may remove more than half of what is stored, and this device is not in a position to insist. Nothing of yours is missing — the space is freed by the next sync that can account for all of it.',
 
 	// ── Pairing a second device ────────────────────────────────
 	// The quotation marks around a button's name are curly on purpose; keep
@@ -936,9 +949,12 @@
 	'rail.create':           'Create',
 	'rail.name':             'Name',
 	'rail.model':            'Model',
+	'rail.worker_model':     'Model for workers',
+	'rail.worker_model_help': 'This Diamond’s daimon dispatches workers, several at a time; left as it is they run on the Diamond’s own model.',
 	'rail.err_name':         'Give the Diamond a name.',
 	'rail.err_model':        'Choose a model for this Diamond to think with.',
 	'rail.err_no_key':       'That provider has no readable key yet — unlock, or add one.',
+	'rail.err_no_key_worker': 'The workers’ provider has no readable key yet, so they would fall back to the Diamond’s own model — unlock it, or choose another.',
 	'rail.create_failed':    'Could not create Diamond',
 	'rail.created_unreadable': 'Diamond created, but not readable',
 	'rail.created_unreadable_body': '"{name}" was written, but Daimond could not read it back, so it is not in the rail. Reload the page; if it is still missing, this device\u2019s storage is refusing to serve what it accepted.',
@@ -1262,6 +1278,11 @@
 	'files.adopted_title.other': '{n} Diamonds were brought back',
 	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies in the folder were left exactly where they are, under diamonds/ — you can delete them once you are satisfied.',
 	'files.adopted_kept':        'These differed from what Daimond already held, so both copies were kept:\n{paths}',
+	// And what did not come back. The copy runs under a budget, and a file past it is
+	// left where it is — which the user has to be told, or a Diamond arrives missing a
+	// part of itself and looks whole.
+	'files.adopt_left_title':    'Some files stayed in the folder',
+	'files.adopted_skipped':     'These were not copied — over 8 MiB, or unreadable — so a Diamond that needs one is here without it, or not here at all:\n{paths}',
 
 	// ── One message, read ──────────────────────────────────────
 	'msg.unknown_sender':    '(unknown sender)',
@@ -1370,6 +1391,12 @@
 	'backup.n_diamonds.one':  '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body':   'Restored {files} and {diamonds}. Daimond will reload to open your restored workspace.',
+	// Appended to the line above when a backup held another account's files. There are
+	// only two places they could go — a folder named after a stranger inside this
+	// workspace, or into that account's private storage — and neither is a restore, so
+	// they are left out and the user is told rather than left to notice.
+	'backup.n_foreign.one':   '{n} file in that backup belongs to another account at the browser it came from, so it was not restored and remains only in the backup file.',
+	'backup.n_foreign.other': '{n} files in that backup belong to another account at the browser it came from, so they were not restored and remain only in the backup file.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other':            'Other (type manually)…',

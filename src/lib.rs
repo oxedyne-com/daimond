@@ -33,6 +33,13 @@ pub mod llm;
 pub mod prompts;
 pub mod protocol;
 pub mod session;
+/// Named instruction bundles, and the two ways a turn invokes one.
+///
+/// Target-agnostic on purpose.  The directory walk ([`skills::list_skills`]) is `std::fs` and so
+/// serves the native `handler` alone, but the parts that decide what a `/name` means and what the
+/// model is finally handed are pure, and the browser drives them over OPFS from `wasm::app` --
+/// because in the browser, which is where the user actually works, this module used to compile and
+/// be read by nothing.
 pub mod skills;
 pub mod syntax;
 pub mod tools;

@@ -118,6 +118,10 @@
 	// file tools resolve it. Reading the raw root instead would look in the
 	// primary's workspace.
 
+	/// The directory this account's OPFS files live in: the origin root for the
+	/// primary account, its own `d~<id>` subdirectory for every other. Published,
+	/// because the backup path in daimond.js needs the same answer and a second
+	/// implementation of it is a second chance to walk the wrong root.
 	async function opfsRoot() {
 		var root = await navigator.storage.getDirectory();
 		var ns = '';
@@ -649,5 +653,8 @@
 		// `file_read` tool.
 		readText:     readText,
 		writeText:    writeText,
+		// And the root those resolve against, for the backup path, which walks
+		// the whole tree rather than one named file.
+		opfsRoot:     opfsRoot,
 	};
 })();
