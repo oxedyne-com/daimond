@@ -1,6 +1,6 @@
 {
 	"algo": "sha-256",
-	"source": "0704ffea07c583aa227c9c0d126050dc17d0cb4a1b51e9804debf71e6037aa18",
+	"source": "bbe9e13e0b3cbfa8d133b2e9d317bcda5d117cfdf4bc2a14b6d57e46a345aff3",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
@@ -16,7 +16,7 @@
 		"install/uninstall.sh": "9e8a84942e53661cc54574e7dd416b8e5fbbc66b6218f7f94bfdbae378f23ef1",
 		"src/codec.rs": "85cab4014759df99969faf9794316b947a0fd48a992c4f8e7d06c5e7a1a997a4",
 		"src/exec.rs": "f4229bdac63249c5340cbdfbc67dd8704d91f06f43e52b7931bc1527829ee351",
-		"src/fence.rs": "2b98f45fdbfc4befe7763b7e335df2c232a414353df2667b562438c223a64206",
+		"src/fence.rs": "bc73a5868b84fcb448a16d10e7cf2b2dcd19850e60e284c593f4b232bff4d7c1",
 		"src/journal.rs": "ba1a0fe1f668c8d28e32ae072dd20f590feb306794c209b9196f049f1a02c161",
 		"src/lib.rs": "94c6560aab40840f15aad50fe9dbd6ff7bded98d738edd66e3a8861c1966cadf",
 		"src/main.rs": "1ca4b3482db0a567d49f8ed55909451490f79d6726a7116d1cdfa34b8bf44320",

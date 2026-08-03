@@ -363,12 +363,33 @@ impl SysBase {
                 "/libx32",
                 "/etc",
                 "/opt",
-                "/dev/null",
                 "/dev/zero",
-                "/dev/full",
                 "/dev/random",
                 "/dev/urandom",
             ],
+        }
+    }
+
+    /// The paths this base contributes READ-WRITE, because a program that cannot
+    /// write to them is a program that does not run.
+    ///
+    /// `/dev/null` is the whole of why this exists. It was in the read-only list,
+    /// and every git command inside the fence died with `fatal: could not open
+    /// '/dev/null' for reading and writing` -- git opens it for both, as does a
+    /// large share of Unix tooling, because discarding output IS a write. A base
+    /// described as "the system paths a program needs in order to be a program"
+    /// was missing the one device every program uses, and no test caught it
+    /// because nothing in the suite ran a program that writes to it.
+    ///
+    /// Writable is not a widening worth worrying about: writing to `/dev/null`
+    /// discards, and writing to `/dev/full` fails with ENOSPC by design. Neither
+    /// can carry a byte out of the compartment, which is what the fence is for.
+    /// `/dev/zero`, `/dev/random` and `/dev/urandom` stay read-only, because
+    /// nothing legitimate writes to them and a write there is a seeding attempt.
+    pub fn write_paths(&self) -> &'static [&'static str] {
+        match self {
+            Self::Bare => &[],
+            Self::Minimal => &["/dev/null", "/dev/full"],
         }
     }
 }
@@ -1163,6 +1184,16 @@ fn resolve(spec: &FenceSpec, base: SysBase) -> Outcome<Resolved> {
             Err(_) => continue,
         };
         want.entry(real).or_insert(Level::Ro);
+    }
+    // The writable half of the base, after the read-only half, so a device named
+    // in both lists ends up writable. Same rule as above: an explicit entry from
+    // the caller still wins, because `or_insert` does not overwrite one.
+    for raw in base.write_paths() {
+        let real = match Path::new(raw).canonicalize() {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        want.entry(real).or_insert(Level::Rw);
     }
 
     // Which paths have to be cut out of which. A path is cut out of its nearest
@@ -2437,4 +2468,57 @@ mod tests {
             "a `..` path walked into the denied subtree");
         Ok(())
     }
+    /// `/dev/null` must be WRITABLE, or nothing that discards output runs.
+    ///
+    /// This is the shape the whole file exists to catch and did not: the base is
+    /// described as "the system paths a program needs in order to be a program",
+    /// and it granted the one device every program uses read-only. Every git
+    /// command inside the fence died with `fatal: could not open '/dev/null' for
+    /// reading and writing`. Nothing in the suite ran a program that WRITES to
+    /// it, so a base that could not run git passed every test it had.
+    ///
+    /// It runs real `git` where there is one, because a write to `/dev/null` by
+    /// hand proves the device and the fence agree while the failure this is
+    /// written against was a whole tool refusing to start.
+    #[test]
+    fn a_fenced_command_can_discard_its_output() -> Outcome<()> {
+        let f = match kernel_fence("a_fenced_command_can_discard_its_output") {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+        own_thread("a_fenced_command_can_discard_its_output", move || {
+            let base = res!(fixture("devnull"));
+            res!(engage(&f, &spec(&base)));
+
+            // The device itself, opened the way a shell redirection opens it.
+            res!(fs::OpenOptions::new().write(true).open("/dev/null")
+                .map_err(|e| err!("/dev/null is not writable behind the fence: {}", e;
+                    IO, Write)));
+            // And read-write, which is what git asks for and what failed.
+            res!(fs::OpenOptions::new().read(true).write(true).open("/dev/null")
+                .map_err(|e| err!("/dev/null could not be opened read-write: {}", e;
+                    IO, Write)));
+
+            // Reading it still works, so the fix did not trade one direction for
+            // the other.
+            assert_eq!("", res!(fs::read_to_string("/dev/null")));
+
+            // Seeding the random devices stays refused: nothing legitimate writes
+            // there, and a write is an attempt to make randomness predictable.
+            assert!(fs::OpenOptions::new().write(true).open("/dev/urandom").is_err(),
+                "/dev/urandom was writable: the base promoted more than it needed");
+
+            // The tool that could not start. Skipped rather than faked where git
+            // is absent, because a claimed proof is worse than an honest gap.
+            if let Ok(out) = std::process::Command::new("git")
+                .args(["--version"]).output()
+            {
+                assert!(out.status.success(),
+                    "git could not run behind the fence: {}",
+                    String::from_utf8_lossy(&out.stderr));
+            }
+            Ok(())
+        })
+    }
+
 }
