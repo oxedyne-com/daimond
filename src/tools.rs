@@ -164,6 +164,88 @@ pub fn is_store_path(path: &str) -> bool {
     !p.is_empty() && STORE_ROOTS_LEGACY.iter().any(|r| under(&p, r))
 }
 
+/// A Diamond's content file, under its own directory.
+pub const CRYSTAL_FILE: &str = "crystal.md";
+
+/// What a crystal may weigh before a write that grows it is refused, in bytes.
+///
+/// A crystal is the REDUCED state of a Diamond, and the weight belongs in the scope attached to
+/// it: files the Diamond points at carry detail, and the crystal says what it means.  Nothing
+/// enforced that, so a daimon that started recording rather than reducing simply kept going, and
+/// the cost arrived later and elsewhere -- every fold copies the whole crystal into `versions/`,
+/// and all of it rides in the sync parcel.
+///
+/// 16 KiB is about three times what a single fold can emit ([`crate::compact::FOLD_MAX_TOKENS`] is
+/// 1,400 tokens), so ordinary work never approaches it and a crystal being used as a filing
+/// cabinet meets it early.  The user can move it; see [`set_crystal_cap`].
+pub const CRYSTAL_CAP_DEFAULT: usize = 16 * 1024;
+
+thread_local! {
+    /// The ceiling in force, or 0 for [`CRYSTAL_CAP_DEFAULT`].
+    static CRYSTAL_CAP: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The crystal ceiling in force, in bytes.
+pub fn crystal_cap() -> usize {
+    let set = CRYSTAL_CAP.with(|c| c.get());
+    if set == 0 { CRYSTAL_CAP_DEFAULT } else { set }
+}
+
+/// Set the crystal ceiling; 0 restores [`CRYSTAL_CAP_DEFAULT`].
+///
+/// # Arguments
+/// * `bytes` - The new ceiling, or 0 for the default.
+pub fn set_crystal_cap(bytes: usize) {
+    CRYSTAL_CAP.with(|c| c.set(bytes));
+}
+
+/// Whether a workspace-relative path names a Diamond's crystal.
+///
+/// Whole segments, and exactly three of them: `diamonds/<id>/crystal.md` is a crystal,
+/// `diamonds/<id>/versions/0007.md` is not, and neither is `notes/crystal.md` in the user's own
+/// work.  A snapshot must stay writable whatever the crystal itself weighs, or a Diamond at the
+/// ceiling could not be recorded at all.
+///
+/// # Arguments
+/// * `path` - A workspace-relative path, as a caller wrote it.
+pub fn is_crystal_path(path: &str) -> bool {
+    let p = normalise(path);
+    let seg: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
+    if seg.len() != 3 || seg[2] != CRYSTAL_FILE {
+        return false;
+    }
+    seg[0] == STORE_ROOT || STORE_ROOTS_LEGACY.contains(&seg[0])
+}
+
+/// Whether a crystal write must be refused: over the ceiling, and not making it smaller.
+///
+/// The second half is what keeps an existing oversized crystal workable.  A ceiling that refused
+/// every write over it would leave a Diamond that predates the rule unable to be edited DOWN to
+/// it, which turns a limit into a brick.  So the rule is not "no crystal over the cap" but "no
+/// write that takes a crystal further over it".
+///
+/// # Arguments
+/// * `new_len` - Bytes the write would leave on disk.
+/// * `old_len` - Bytes there now; 0 when there is no crystal yet.
+pub fn crystal_write_refused(new_len: usize, old_len: usize) -> bool {
+    new_len > crystal_cap() && new_len >= old_len
+}
+
+/// What to say when [`crystal_write_refused`] says no.
+///
+/// It names the ceiling, what was offered, and the one thing that resolves it -- the scope -- in
+/// the same breath, because a refusal a daimon cannot act on is a turn spent learning nothing.
+///
+/// # Arguments
+/// * `new_len` - Bytes the write would have left on disk.
+pub fn crystal_cap_message(new_len: usize) -> String {
+    fmt!(
+        "The crystal is this Diamond's summary and may not exceed {} bytes; this write is {}. \
+        Put the detail in a file in the Diamond's scope and refer to it from the crystal.",
+        crystal_cap(), new_len,
+    )
+}
+
 /// Daimond's own directory in the workspace: the skills, the config -- the rules about what a
 /// skill may do.  A turn running under a skill's declaration is fenced out of it.
 pub const DAIMOND_DIR: &str = ".daimond/";
@@ -3964,6 +4046,19 @@ impl Tool {
                         }
                     }
                 }
+                // The crystal has a ceiling, and this is the door a daimon uses: it edits
+                // `crystal.md` with the ordinary file tools, and the store only sees the result
+                // afterwards, when `record_steer` snapshots whatever is on disk. Refusing there
+                // would be refusing a write that already happened.
+                if is_crystal_path(&path) {
+                    let old = crate::wasm::opfs::read_file(ctx.root, &path).await
+                        .map(|b| b.len())
+                        .unwrap_or(0);
+                    if crystal_write_refused(content.len(), old) {
+                        return Err(err!("file_write: {}", crystal_cap_message(content.len());
+                            Invalid, Input, Size));
+                    }
+                }
                 res!(crate::wasm::opfs::write_file(ctx.root, &path, content.as_bytes()).await);
                 let mut st = lock_cache(&ctx.read_seen);
                 st.seen.insert(path.clone(), content_hash(content.as_bytes()));
@@ -5986,6 +6081,44 @@ mod tests {
         assert!(!is_store_path("/"));
         // A path that climbs out of the store is not in it.
         assert!(!is_store_path("diamonds/a/../../etc/x"));
+    }
+
+    #[test]
+    fn test_only_a_crystal_is_measured_against_the_ceiling_00() {
+        // Exactly three segments ending in the crystal's own name. The near misses matter more
+        // than the hits: a rule that caught `versions/NNNN.md` would refuse to snapshot a Diamond
+        // that is already at the ceiling, and one that caught the user's own `crystal.md` would
+        // put a ceiling on their work.
+        assert!(is_crystal_path("diamonds/abc123/crystal.md"));
+        assert!(is_crystal_path("./diamonds/abc123/../abc123/crystal.md"), "normalised first");
+        assert!(is_crystal_path("foci/abc123/crystal.md"), "the roots the store had before");
+        assert!(is_crystal_path("facets/abc123/crystal.md"));
+        assert!(!is_crystal_path("diamonds/abc123/versions/0007.md"), "a snapshot is not a crystal");
+        assert!(!is_crystal_path("diamonds/abc123/notes/crystal.md"));
+        assert!(!is_crystal_path("notes/crystal.md"), "the user's own file, whatever it is called");
+        assert!(!is_crystal_path("crystal.md"));
+        assert!(!is_crystal_path("diamonds/abc123"));
+        assert!(!is_crystal_path(""));
+    }
+
+    #[test]
+    fn test_the_ceiling_refuses_growth_and_never_the_way_back_00() {
+        set_crystal_cap(1_000);
+        // Under it, always fine.
+        assert!(!crystal_write_refused(999, 0));
+        assert!(!crystal_write_refused(1_000, 0), "at the ceiling is not over it");
+        // Over it, refused -- including growing an already-oversized crystal.
+        assert!(crystal_write_refused(1_001, 0));
+        assert!(crystal_write_refused(5_000, 4_000));
+        assert!(crystal_write_refused(4_000, 4_000), "no change is not progress");
+        // But a Diamond that is ALREADY over the ceiling must be editable DOWN to it, or the
+        // rule bricks every Diamond that predates it.
+        assert!(!crystal_write_refused(4_000, 5_000));
+        assert!(!crystal_write_refused(900, 5_000));
+        // Zero means the default, not "no ceiling".
+        set_crystal_cap(0);
+        assert_eq!(crystal_cap(), CRYSTAL_CAP_DEFAULT);
+        assert!(crystal_write_refused(CRYSTAL_CAP_DEFAULT + 1, 0));
     }
 
     #[test]

@@ -136,6 +136,22 @@
 		return DaimondI18n.billedMinor(minor, currency);
 	}
 
+	/// The header, the Spending panel and anything else watching money get told once, here,
+	/// rather than each of them polling. A page with no `window` (a test harness evaluating this
+	/// file) simply does not hear it.
+	///
+	/// Only ever called for a figure that MOVED. The Spending panel refreshes on this event and
+	/// its refresh fetches the balance, so an unconditional dispatch closed a loop: every reply
+	/// refreshed the panel, every refresh produced a reply, and an open panel drove the gateway
+	/// at hundreds of requests a second for as long as it stayed on screen.
+	function announce() {
+		try {
+			window.dispatchEvent(new CustomEvent('daimond:credits', {
+				detail: { credits: state.credits, currency: state.currency },
+			}));
+		} catch (e) { /* no window to tell */ }
+	}
+
 	/// Take the balance out of any gateway reply that carries one.
 	///
 	/// Nearly every credit-spending endpoint already returns the resulting balance in
@@ -148,6 +164,28 @@
 	/// for "unknown", and writing that from a reply that simply did not mention money would
 	/// erase a figure the app legitimately holds.
 	///
+	/// ## WHY THE FIGURE SITS STILL WHILE A CHAT RUNS, AND WHY THAT IS NOT THIS FILE'S FAULT
+	///
+	/// Reported as a bug twice, and looked for twice in the client, so it is written down here
+	/// where the next reader will be standing.
+	///
+	/// Daimond does not proxy inference — that is the privacy claim, not an implementation
+	/// detail. The gateway sells a spend-capped key at the model host and the browser talks to
+	/// the host directly, so the gateway is not in the request path and learns nothing about a
+	/// turn as it happens. The account's ledger is debited only when that key is RECONCILED,
+	/// which `/api/inference-key` does at the top of a mint (gateway `handlers::inference_key`,
+	/// `reconcile`) — that is, when the key's float is exhausted, or when the daily sweep finds
+	/// it. `/api/balance` folds the ledger, so between reconciliations it returns the same figure
+	/// however often it is asked, and `noteBalance` correctly says nothing about a number that
+	/// has not moved. The session/week/month meters below it move every turn because they are
+	/// built from what the PROVIDER reported, on the device, and never touch the ledger at all.
+	///
+	/// So a client-side poll cannot fix this and no amount of it will: the balance really has not
+	/// changed where the balance lives. Two things do fix it, in this order — `/api/inference-key`
+	/// carries the freshly reconciled figure in its reply and its caller must hand it to this
+	/// function rather than keeping a private copy; and `/api/balance` should reconcile before it
+	/// folds, which `reconcile()` is already re-entrant and non-fatal enough to allow.
+	///
 	/// # Arguments
 	/// * `j` - A parsed gateway reply, or anything at all.
 	function noteBalance(j) {
@@ -159,20 +197,7 @@
 			state.currency = j.currency;
 			moved = true;
 		}
-		// Announce the figure only when it MOVED. The Spending panel refreshes on
-		// this event and its refresh fetches the balance, so an unconditional
-		// dispatch closed a loop: every reply refreshed the panel, every refresh
-		// produced a reply, and an open panel drove the gateway at hundreds of
-		// requests a second for as long as it stayed on screen.
-		if (!moved) return;
-		// The header, the Spending panel and anything else watching money get told once, here,
-		// rather than each of them polling. A page with no `window` (a test harness evaluating
-		// this file) simply does not hear it.
-		try {
-			window.dispatchEvent(new CustomEvent('daimond:credits', {
-				detail: { credits: state.credits, currency: state.currency },
-			}));
-		} catch (e) { /* no window to tell */ }
+		if (moved) announce();
 	}
 
 	// ── A session that has gone ────────────────────────────────
@@ -427,15 +452,24 @@
 		}
 	}
 
+	/// Ask for the balance outright, and keep the recent ledger entries with it.
+	///
+	/// The figure and the currency are adopted by `noteBalance` inside `get`, and are NOT written
+	/// again here. They used to be, and the second write was not a duplicate: `j.credits_minor ||
+	/// 0` turns a reply that said nothing about money into an explicit zero balance, which is the
+	/// one reading a credit figure must never invent.
 	async function refreshBalance() {
 		if (!state.authed) return null;
 		try {
-			var j = await get('/api/balance');
-			state.credits  = j.credits_minor || 0;
-			state.currency = j.currency || 'usd';
-			state.entries  = j.entries || [];
+			var j = await get('/api/balance');	// `get` adopts the figure through `noteBalance`
+			state.entries = j.entries || [];
 		} catch (e) {
-			state.credits = null;
+			// Unknown is a change like any other, and the row that shows this says "—" for it.
+			// Without the announcement the figure was set to null here and nothing was told, so
+			// the header went on showing money the app had stopped believing in until something
+			// unrelated repainted it. Only on the way from a figure to none, so a gateway that
+			// stays down is silent after the first failure.
+			if (state.credits !== null) { state.credits = null; announce(); }
 		}
 		return state.credits;
 	}
@@ -598,8 +632,12 @@
 	async function logout() {
 		state.authed = false;
 		state.role   = undefined;
+		var had = state.credits !== null;
 		state.credits = null;
 		state.pro    = null;
+		// One account's money must not sit on screen under the next person's session, and the
+		// header only repaints when it is told to.
+		if (had) announce();
 		// A person leaving is not a session that lapsed, so the renewal above must
 		// not put back what they have just ended: the standing retry is cancelled
 		// and anything mid-flight is told, by the generation, to drop its result.
@@ -629,9 +667,12 @@
 		/// note on `gwFetch` for which paths must NOT use it.
 		gwFetch:        gwFetch,
 		refreshBalance: refreshBalance,
-		/// Read a balance out of a reply this file did not make itself — the Web panel and the
-		/// mail panel each hold their own `fetch` wrapper, and their replies carry the balance
-		/// too. There is one place that owns `state.credits`, and this is how they reach it.
+		/// Read a balance out of a reply this file did not make itself — the Web panel, the mail
+		/// panel and the inference mint each hold their own `fetch` wrapper, and their replies
+		/// carry the balance too. There is one place that owns `state.credits`, and this is how
+		/// they reach it. The mint's reply is the one that matters most: `/api/inference-key`
+		/// reconciles the account before it answers, so its figure is the only one in an ordinary
+		/// chat session that has actually moved. See the note at `noteBalance`.
 		noteBalance:    noteBalance,
 		ledger:         ledger,
 		buyCredits:     buyCredits,

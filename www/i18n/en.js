@@ -90,8 +90,6 @@
 	'rail.diamonds_help':        'What you have brought up and cut: a repeatable method, distilled from a conversation.',
 	'rail.new_diamond':          'New Diamond',
 	'rail.unnamed_diamond': 'Unnamed Diamond',
-	'rail.search_diamonds':      'Search Diamonds',
-	'rail.search_diamonds_help': 'Search Diamonds by name or tag',
 	'rail.chats':                'Chats',
 	'rail.chats_help':           'The seam you work in. Raw conversation, out of which a Diamond is cut.',
 	'rail.new_chat':             'New chat',
@@ -498,6 +496,10 @@
 	'web.answer_late':     'Your answer came after Daimond had stopped waiting. ',
 	'web.driving_tab':     '<b>Daimond is driving {host}</b> in a browser tab. Watch it there, or pull a live picture into this panel.',
 	'web.show_live':       'Show live view here',
+	'web.real_tab':       'The page opens as a real browser window — it has to be a real tab to carry your own sign-ins — so this panel only ever shows a picture of it.',
+	'web.mirror_wait':    'Waiting for the first picture of that tab; if Chrome has put a permission window in front of you, it is waiting on your answer.',
+	'web.mirror_silent':  'Nothing has come back from Daimond Hands for a while, so there is no live picture here — the tab itself is still open, and is still the page.',
+	'web.mirror_refused': 'This tab cannot be photographed, so there is no live picture to show; watch the tab itself, or ask again below.',
 	// A site that refuses to be framed, which is most of them.
 	'web.blocked':         '<b>{host}</b> will not display inside another page. Most sites block this — it is the web’s protection against clickjacking, not a fault.',
 	'web.blocked_hands':   'Daimond Hands can drive it in a real tab.',
@@ -1491,6 +1493,9 @@
 
 	// ── How far one turn may go ─────────────────────
 	'settings.max_rounds':         'Steps per turn',
+	'settings.crystal_cap':      'Crystal size limit',
+	'settings.crystal_cap_note': 'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is told to put the detail in a file in the Diamond’s scope instead.',
+	'settings.crystal_cap_auto': 'Default',
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many times an agent may use a tool before one turn stops. It says so when it stops, and you can tell it to carry on.',

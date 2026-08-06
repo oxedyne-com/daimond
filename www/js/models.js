@@ -408,6 +408,12 @@
 		if (r.status === 426) { try { window.dispatchEvent(new Event('daimond:stale')); } catch (e) {} }
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
+		// The gateway reconciles the account before it answers, so this reply carries the one
+		// balance in an ordinary chat session that has actually moved -- on the refusal as much as
+		// on the mint, which is the moment a nearly empty account most needs the figure to be
+		// right. `credits.bal` below is this file's own copy for the models panel; the account
+		// figure in the rail belongs to gateway.js and has to be told, and was not.
+		if (window.DaimondGateway && DaimondGateway.noteBalance) DaimondGateway.noteBalance(j);
 		if (!r.ok || !j || j.ok === false) {
 			var err = new Error((j && (j.error || j.message))
 				|| t('models.err_refused', { status: r.status }));

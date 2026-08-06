@@ -128,7 +128,7 @@ async function secondWindow(s) {
 	await s.close();
 }
 
-// ── 3: a create must never land behind a filter ──────────────────────
+// ── 3: a create selects what it made ─────────────────────────────────
 {
 	const dir = scratch('pw', 'diamonds-filter-' + process.pid);
 	fs.rmSync(dir, { recursive: true, force: true });
@@ -138,24 +138,13 @@ async function secondWindow(s) {
 	await create(p, 'Alpha');
 	await railUntil(p, r => r.includes('Alpha'));
 
-	// Filter the rail to something the next Diamond will not match.
-	await p.evaluate(() => {
-		const box = document.getElementById('diamond-search');
-		box.value = 'alpha';
-		box.dispatchEvent(new Event('input', { bubbles: true }));
-	});
-	await p.waitForTimeout(400);
-	const filtered = await rail(p);
-	check('a search string hides what does not match',
-		filtered.includes('Alpha') && filtered.length === 1, filtered.join(', '));
-
+	// The rail's text search was removed at the user's request, so the filter this
+	// block was written around no longer exists. The property it proved does -- a
+	// Diamond made while the rail is filtered must not land out of sight -- and it
+	// is now proved against the TAG filter, which is the only filter left, at the
+	// foot of dev/verify_tags.mjs where the tags already are.
 	await create(p, 'Zeta');
-	const after = await railUntil(p, r => r.includes('Zeta'));
-	check('a Diamond made while the rail is filtered is still visible',
-		after.includes('Zeta'), after.join(', ') || 'empty');
-	const boxValue = await p.$eval('#diamond-search', e => e.value);
-	check('and the filter that would have hidden it is cleared', boxValue === '',
-		JSON.stringify(boxValue));
+	await railUntil(p, r => r.includes('Zeta'));
 
 	// The centre followed the create, which is what selecting it means.
 	const centre = await p.$eval('#current-session-name', e => e.textContent.trim());

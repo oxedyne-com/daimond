@@ -475,7 +475,7 @@ async function seed(s) {
 	await signInAs(s, 'sweepm');
 	await sleep(600);
 	await page.evaluate(() => { try { DaimondAdmin.closeModal(); } catch (e) {} });
-	await page.waitForSelector('#diamond-search', { timeout: 15000 });
+	await page.waitForSelector('#diamond-list', { timeout: 15000 });
 	await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
 	await sleep(600);
 

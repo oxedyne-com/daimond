@@ -134,7 +134,7 @@ import init, {
 		//
 		// `pushToken` is deliberately NOT in the stored shape and never read back: the
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
-		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, tools: true,
+		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, crystalKb: 0, tools: true,
 			pushHost: '', pushUser: '', pushToken: '', pushTokenEnc: '' };
 		if (raw) {
 			try {
@@ -152,6 +152,8 @@ import init, {
 				if (typeof j.maxOut === 'number') cfg.maxOut = j.maxOut;
 				// Zero means the engine's own default, which is also what an absent field means.
 				if (typeof j.maxRounds === 'number') cfg.maxRounds = j.maxRounds;
+				// Kilobytes; zero is the engine's default ceiling, as an absent field is.
+				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
 				// The push credential. The host and the user name it travels as are not
 				// secrets and are read as written; the token is only ever read WRAPPED,
@@ -187,6 +189,7 @@ import init, {
 			model:     c.model || '',
 			maxOut:    c.maxOut || 0,
 		maxRounds: c.maxRounds || 0,
+			crystalKb: c.crystalKb || 0,
 			tools:     c.tools !== false,
 			// Written on every save, not only by the push panel: this function
 			// rebuilds the stored object from scratch, so a field it does not know
@@ -1590,8 +1593,17 @@ import init, {
 		else if (now - ms(me.seen) >= SEEN_REFRESH_MS) me.seen = now;
 		// A name chosen while pairing, on a device that had no line to put it on
 		// until this moment.
+		//
+		// Only when it CHANGES the name. `pendingDeviceLabel` consumes the parked value with a
+		// `removeItem` whose failure is swallowed, so a browser that declines the delete hands
+		// the same name back on every collect -- and stamping `namedAt` with the clock each time
+		// makes this device's parcel differ from the one it last sent, for ever. `push` then
+		// never takes its skip branch, every push wakes the other device, whose merge sees a
+		// strictly newer `namedAt` and pushes back. That is an endless loop between two devices
+		// that are both behaving correctly, and it can only start on a device that has just
+		// redeemed a pairing code -- which is where it was reported from.
 		var chosen = pendingDeviceLabel();
-		if (chosen) { me.label = chosen; me.namedAt = now; }
+		if (chosen && chosen !== me.label) { me.label = chosen; me.namedAt = now; }
 		return reg;
 	}
 
@@ -2651,7 +2663,6 @@ import init, {
 			.filter(function (x, i, a) { return x && a.indexOf(x) === i; });
 	}
 	var TAG_CHIPS_SHOWN = 3;    // chips on a Diamond box before the +N overflow
-	var diamondQuery = '';        // the search box, trimmed and lowercased
 	// The rail filters on a small boolean rather than one tag: the tags a Diamond
 	// must carry, the tags that hide it, and how two or more of the first combine.
 	// A tag sits in one of those two lists or in neither, never both -- the cycle
@@ -2706,7 +2717,6 @@ import init, {
 	var agentsList    = document.getElementById('agents-list');
 	var agentsCount   = document.getElementById('agents-count');
 	var diamondList     = document.getElementById('diamond-list');
-	var diamondSearch   = document.getElementById('diamond-search');
 	var diamondFilter   = document.getElementById('diamond-filter');
 	var agentSearch   = document.getElementById('agent-search');
 	var agentFilter   = document.getElementById('agent-filter');
@@ -2906,6 +2916,14 @@ import init, {
 	// in this file has no reason to go round the houses for it.
 	window.addEventListener('daimond:credits', function () {
 		try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
+		// The strip is not the only place the figure is written. The line INSIDE the open
+		// Credits drawer was painted on open and on a language change and at no other time, so
+		// somebody watching the drawer while the balance moved saw the staleness the strip had
+		// just been cured of.
+		try {
+			var cv = document.getElementById('admin-credits');
+			if (cv && cv.style.display !== 'none') renderCredits();
+		} catch (e) { /* the drawer is not open */ }
 		try {
 			if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('spend')
 				&& window.DaimondSpend) DaimondSpend.refresh();
@@ -3117,8 +3135,12 @@ import init, {
 				return !!(j && Array.isArray(j.accounts) && j.accounts.length);
 			} catch (e) { return false; }
 		}
+		// Agents is NOT in this table, and its absence is the point. It waited for
+		// a Diamond to dispatch a worker, which meant a user who had never run one
+		// had no chip, no nav item and no panel -- and read the panel as deleted
+		// rather than as empty. It still OPENS itself on the first dispatch; it is
+		// only the chip that no longer waits, and an empty panel says so in a line.
 		var WAITS_FOR = {
-			agents:  function () { return !document.body.classList.contains('agents-hidden'); },
 			msg:     hasMail,
 			compose: hasMail,
 			doc:     function () { return !!usedPanels().doc; },
@@ -3134,6 +3156,17 @@ import init, {
 		function elOf(id)   { var d = def(id); return d ? document.getElementById(d.el) : null; }
 		function zoneOf(id) { var d = def(id); return d ? d.zone : 'dock'; }
 		function isOpen(id) { return !!open[id]; }
+
+		/// Whether a panel actually holds a place in its zone.
+		///
+		/// `open` is the intention; this is the fact, and the two come apart whenever a saved
+		/// layout names more stage guests than the stage has seats.
+		function seated(id) {
+			var z = zoneOf(id);
+			if (z === 'stage') return stage.indexOf(id) !== -1;
+			if (z === 'dock')  return dock.indexOf(id)  !== -1;
+			return true;					// the rail has no seating
+		}
 
 		function save() {
 			try {
@@ -3226,7 +3259,7 @@ import init, {
 
 		/// How much height the two lists have to share, and what the Diamonds list
 		/// is holding of it now. Everything else in the pane (the two heads, the
-		/// search box, the handle, and the gaps between them all) is fixed
+		/// tag filter, the handle, and the gaps between them all) is fixed
 		/// furniture, so it comes off the top before the proportion is spent.
 		function railRoom() {
 			var top  = document.getElementById('rail-top');
@@ -3617,18 +3650,13 @@ import init, {
 		///
 		/// This used to live inside `activate` -- the chip row's path alone -- so
 		/// every OTHER way of asking for a panel (the API, the mobile nav, the
-		/// guide button, a saved layout) could seat one the stylesheet still
-		/// suppresses. `body.agents-hidden #panel-agents{display:none!important}`
-		/// then beat the engine's own `display:''`, and the dock reserved a 300px
-		/// column for a panel that could render nothing: a dead gutter beside the
-		/// chat, with no chip to close it, because an unrevealed panel draws none.
+		/// guide button, a saved layout) could seat one a stylesheet still
+		/// suppressed, and the dock reserved a 300px column for a panel that could
+		/// render nothing: a dead gutter beside the chat, with no chip to close it,
+		/// because an unrevealed panel draws none.
 		function reveal(id) {
 			if (revealed(id)) return false;
 			markUsed(id);
-			if (id === 'agents') {
-				try { localStorage.setItem('daimond-agents-revealed', '1'); } catch (e) { /* private mode */ }
-				document.body.classList.remove('agents-hidden');
-			}
 			return true;
 		}
 
@@ -3648,8 +3676,10 @@ import init, {
 				show(id);
 				return;
 			}
-			if (open[id]) {
-				// Already on screen. A folded rail is the one case where "take me there" still has
+			if (open[id] && seated(id)) {
+				// Already on screen -- and seated, or the palette would keep landing on the same
+				// dead state `show` was taught to repair. A folded rail is the one case where
+				// "take me there" still has
 				// something to do; otherwise the layout is left exactly as it was.
 				if (id === 'rail' && !railForced && window.innerWidth < NARROW) {
 					railForced = true;
@@ -3715,7 +3745,13 @@ import init, {
 			// screen: a guest is only visible while it is the one in the sheet. So
 			// re-present it — this is why the guide "?" (which shows the Web panel,
 			// open by default) did nothing on a phone.
-			if (open[id]) { if (isMobile()) mshow(id); return; }
+			// And "open" is not "seated". A layout or a per-Diamond arrangement can carry
+			// `open.web` with the stage's seats already spoken for, and `seatOpenPanels` then has
+			// nowhere to put it: nothing draws the panel, nothing chips it -- a chip is for a
+			// CLOSED panel -- and this shortcut returned. So `web_open` revealed nothing and a
+			// real browser window was the whole of what the user saw. A panel with no seat is not
+			// open, whatever the flag says.
+			if (open[id] && seated(id)) { if (isMobile()) mshow(id); return; }
 			var zone = zoneOf(id);
 			if (zone === 'stage') {
 				if (stage.length >= STAGE_MAX) {
@@ -4091,13 +4127,13 @@ import init, {
 		current: function () { return currentDiamond ? { id: currentDiamond.id, name: currentDiamond.name } : null; },
 	};
 
-	// The Agents panel is for Diamond-crystal-dispatched agents, not chats, so it
-	// stays hidden until the first such agent runs. Once revealed it behaves
-	// like any other panel (closable, resizable) and the reveal is remembered.
+	// The panel is reachable from the dock whether or not anything is running, but
+	// the first Diamond-dispatched agent still OPENS it: that is the one moment
+	// there is something to watch and nobody has asked to watch it yet. Once, and
+	// remembered, so it never barges back over a panel the user chose instead.
 	function revealAgents() {
-		if (localStorage.getItem('daimond-agents-revealed') === '1' && !document.body.classList.contains('agents-hidden')) return;
+		if (localStorage.getItem('daimond-agents-revealed') === '1') return;
 		localStorage.setItem('daimond-agents-revealed', '1');
-		document.body.classList.remove('agents-hidden');
 		if (!DaimondPanels.isOpen('agents')) DaimondPanels.show('agents'); else DaimondPanels.reflow();
 		if (isMobile()) mshow('agents');
 	}
@@ -6952,6 +6988,7 @@ import init, {
 			if (cw && chat.app.set_context_window) chat.app.set_context_window(cw);
 		} catch (e) { /* an older wasm build has no setter */ }
 		applyRoundLimit(chat.app);
+		applyCrystalCap(chat.app);
 		// A rebuilt DaimondApp starts with an empty Session, so a chat reopened
 		// after a reload would send only its newest message and the model
 		// would answer with no memory of the conversation on screen. Seed
@@ -8113,6 +8150,7 @@ import init, {
 			// could not read a file and could ask something else to read it.
 			var scope = async function () {
 				applyRoundLimit(run.app);
+				applyCrystalCap(run.app);
 				await scopeAgentTo(run.app, run.diamondId);
 			};
 			var build = function () {
@@ -9662,6 +9700,15 @@ import init, {
 			// the daimon. So the viewer renders into the Doc panel, and the tree
 			// stays put behind it instead of being hidden to make room.
 			viewEl = document.getElementById('doc-view');
+			// The line-number toggle belongs to the document, so it is wired here
+			// where the view's own state is, and not with the panel's furniture.
+			var lnBtn = document.getElementById('doc-lineno');
+			if (lnBtn) lnBtn.addEventListener('click', function () {
+				showLineNos = !showLineNos;
+				try { localStorage.setItem('daimond-files-lineno', showLineNos ? '1' : '0'); }
+				catch (e) { /* private mode: it holds for this session only */ }
+				renderFileBody();
+			});
 			modeEl = panel.querySelector('.files-mode');
 			// The scope row is its own row, under the one that says where the
 			// workspace is: those chips name a PLACE (the sandbox, a folder on this
@@ -10711,7 +10758,7 @@ import init, {
 				}
 				if (binary) { await openBinaryFile(path, f); return; }
 			}
-			var content = await tools().run_tool('file_read', JSON.stringify({ path: path }));
+			var content = await readRaw(path);
 			curFile = path; curContent = content; editing = false;
 			docEmbed(false);
 			viewEl.style.display = '';
@@ -10730,7 +10777,9 @@ import init, {
 				// without a word -- a one-way door into a mode that writes.
 				'    <button class="files-btn" data-act="cancel-edit" title="' + esc(t('files.stop_editing'))
 					+ '" style="display:none">✕ ' + esc(t('common.cancel')) + '</button>' +
-				'    <button class="files-btn" data-act="lineno" title="' + esc(t('files.line_numbers')) + '">#</button>' +
+				// Line numbers used to be a `#` in this row. They are now a toggle in
+				// the panel's own header, where the rest of "how this is shown" lives
+				// and where it can be reached without the toolbar in view.
 				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">⤓</button>' +
 				'    <button class="files-btn" data-act="hold" title="">◈</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
@@ -10745,11 +10794,6 @@ import init, {
 			DaimondPanels.show('doc');
 			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
-			viewEl.querySelector('[data-act="lineno"]').addEventListener('click', function () {
-				showLineNos = !showLineNos;
-				localStorage.setItem('daimond-files-lineno', showLineNos ? '1' : '0');
-				renderFileBody();
-			});
 			// ── Attaching a file to the open Diamond ──────────────────────
 			//
 			// Artefacts are otherwise harvested at a fold, from what a turn WROTE.
@@ -10848,6 +10892,7 @@ import init, {
 					ta.scrollLeft = 0;
 					editBtn.textContent = '✔ ' + t('common.save');
 					cancelBtn.style.display = '';
+					syncLineNo();            // a textarea has no gutter to number
 				} else {
 					var ta2 = viewEl.querySelector('.files-edit'), content = ta2.value;
 					editBtn.disabled = true; editBtn.textContent = t('files.saving');
@@ -10856,7 +10901,7 @@ import init, {
 					// so a disk that no longer matches the edit's base is confirmed
 					// before it is overwritten.
 					var disk = null;
-					try { disk = await tools().run_tool('file_read', JSON.stringify({ path: path })); }
+					try { disk = await readRaw(path); }
 					catch (e) { /* new file, or unreadable; treat as no conflict */ }
 					if (disk !== null && disk !== curContent && disk !== content) {
 						// In-app, not window.confirm: a native box is an OS dialog with
@@ -11087,13 +11132,47 @@ import init, {
 				e.removeAttribute('src');
 				if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 			}
+			syncLineNo();
+		}
+
+		/// Put the header's line-number toggle where the panel is: on and pressed
+		/// only over a text file being READ, since a PDF, a binary, the cloud view
+		/// and the editor's textarea have no lines to number, and a control that
+		/// cannot do anything is one the reader has to rule out.
+		function syncLineNo() {
+			var btn = document.getElementById('doc-lineno');
+			if (!btn) return;
+			var text = !!curFile && typeof curContent === 'string' && !editing
+				&& !!viewEl && viewEl.style.display !== 'none';
+			btn.style.display = text ? '' : 'none';
+			btn.classList.toggle('on', showLineNos);
+			btn.setAttribute('aria-pressed', showLineNos ? 'true' : 'false');
+		}
+
+		/// The file as it is ON DISK, for the viewer and the editor.
+		///
+		/// NOT `file_read`. That tool renders a file FOR A MODEL: it numbers every line
+		/// (`1\t`), it says so when it truncates, and it explains itself when the bytes are in
+		/// cloud storage. All three are right for an agent and none of them is the file. The
+		/// viewer showed that rendering as though it were the document -- two columns of numbers
+		/// once the line-number toggle was on -- and, far worse, the editor was seeded with it, so
+		/// OPENING A FILE AND PRESSING SAVE WITHOUT TYPING ANYTHING WROTE THE LINE NUMBERS INTO
+		/// IT, compounding on every repeat. A truncated read would have written the truncation in
+		/// the same way.
+		///
+		/// `Wasm.read_file` resolves against the same active root the tools use, so a folder on
+		/// the machine and the sandbox both work, and the store still pins itself.
+		///
+		/// # Arguments
+		/// * `path` - Workspace-relative path.
+		async function readRaw(path) {
+			return await Wasm.read_file(path);
 		}
 
 		function renderFileBody() {
+			syncLineNo();
 			var body = viewEl.querySelector('.files-view-body');
 			if (!body) return;
-			var btn = viewEl.querySelector('[data-act="lineno"]');
-			if (btn) btn.classList.toggle('active', showLineNos);
 			if (showLineNos) {
 				var lines = curContent.split('\n');
 				var html = '';
@@ -11129,6 +11208,7 @@ import init, {
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 			viewEl.style.display = 'none'; docEmbed(false);
 			curFile = null; editing = false;
+			syncLineNo();                        // after the file is let go, not before
 			DaimondPanels.hide('doc');
 		}
 		function onOpen() { if (!curFile) list(curDir); }
@@ -11142,7 +11222,7 @@ import init, {
 			if (!isOpen() || !listed) return;
 			if (!curFile) { list(curDir); return; }
 			var disk = null;
-			try { disk = await tools().run_tool('file_read', JSON.stringify({ path: curFile })); }
+			try { disk = await readRaw(curFile); }
 			catch (e) { return; }   // gone or unreadable; leave the view as it is
 			if (disk === curContent) return;
 			if (editing) {
@@ -11164,6 +11244,9 @@ import init, {
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
 			folder:        function () { return folderHandle; },
+			// A PDF is put on the panel from outside this module, so the header's
+			// line-number toggle has to be told to stand down from there too.
+			syncLineNo:    syncLineNo,
 			// Mail arrives as bytes, not text: a message with a JPEG attached is
 			// not a string, and writing it as one silently corrupts it.
 			writeBytes:    writeWorkspaceBytes,
@@ -11788,6 +11871,7 @@ import init, {
 			if (cw && app.set_context_window) app.set_context_window(cw);
 		} catch (e) { /* an older wasm build has no setter */ }
 		applyRoundLimit(app);
+		applyCrystalCap(app);
 		_diamondApps[k] = app;
 		_diamondAppModel.set(app, a.model || '');
 		_diamondAppProvider.set(app, a.provider || '');
@@ -11890,14 +11974,11 @@ import init, {
 		return tagInc.every(function (t) { return tags.indexOf(t) !== -1; });
 	}
 
-	/// Does a Diamond survive the search box and the tag filter? Names and tags
-	/// only -- the crystal itself is deliberately not searched.
+	/// Does a Diamond survive the tag filter? A search over names stood beside
+	/// this and has gone: the rail is one screen of Diamonds you named yourself,
+	/// and what it is filed under is the question worth asking of it.
 	function diamondMatches(f) {
-		var tags = tagsOf(f);
-		if (!tagsPass(tags)) return false;
-		if (!diamondQuery) return true;
-		if ((f.name || '').toLowerCase().indexOf(diamondQuery) !== -1) return true;
-		return tags.some(function (t) { return t.toLowerCase().indexOf(diamondQuery) !== -1; });
+		return tagsPass(tagsOf(f));
 	}
 
 	/// Which list a tag is in: 'inc', 'exc', or '' for neither.
@@ -11915,7 +11996,7 @@ import init, {
 	/// downstream has to decide what "include and exclude the same tag" would
 	/// mean. Clicked from a Diamond box the last leg is out of reach, since
 	/// refusing a tag takes every Diamond carrying it off the rail and the chip
-	/// goes with them; the standing pool beside the search box holds all three,
+	/// goes with them; the standing pool under the rail's head holds all three,
 	/// because it is drawn from the store rather than from the rail.
 	function cycleTagFilter(tag) {
 		var i = tagInc.indexOf(tag), j = tagExc.indexOf(tag);
@@ -12195,13 +12276,14 @@ import init, {
 		if (b) b.focus();
 	}
 
-	/// The tag filter, under the search box: one row naming it, the pool of every
+	/// The tag filter, under the rail's head: one row naming it, the pool of every
 	/// tag in use behind that, and each chip cycling off -> wanted -> refused ->
-	/// off where it sits.
+	/// off where it sits. It is now the only way the rail narrows, the search box
+	/// that stood above it having gone.
 	///
 	/// A POOL rather than a summary of what is on. A summary is only drawn once
 	/// something has been clicked, so the only way IN was a chip on a Diamond
-	/// box -- and a reader who went looking under the search box for the filter
+	/// box -- and a reader who went looking at the top of the rail for the filter
 	/// found nothing there at all. The pool says what the vocabulary is before
 	/// anything is touched, each chip carries its own state in place, and a
 	/// refused tag stays put even though its Diamonds have left the rail. That
@@ -12293,7 +12375,7 @@ import init, {
 	/// The rail's honest empty state for tags.
 	///
 	/// Every tag chip in the rail is drawn from a Diamond, so a store with no tag
-	/// on anything draws no chip anywhere and the rail is a bare search box --
+	/// on anything draws no chip anywhere and the rail head has nothing under it --
 	/// which reads as a filing system that was removed rather than one that is
 	/// empty. Say which, in one quiet line, and take it away the moment a tag
 	/// exists -- which is the moment the standing pool takes its place. It sits
@@ -12920,6 +13002,7 @@ import init, {
 		e.style.display = '';
 		e.src = url;
 		n.textContent = name;
+		Files.syncLineNo();                  // the text view has stepped aside
 		DaimondPanels.markUsed('doc');       // it now has something to hold
 		DaimondPanels.show('doc');
 		DaimondPanels.reflow();
@@ -13013,14 +13096,11 @@ import init, {
 		if (isMobile()) mshow('ai');
 	}
 
-	/// Empty the rail's search box and tag filter, and repaint the controls that
-	/// show them. Nothing is remembered: a filter is a way of looking, not a
-	/// setting.
+	/// Put the rail's tag filter down. Nothing is remembered: a filter is a way of
+	/// looking, not a setting.
 	function clearDiamondFilters() {
-		diamondQuery = '';
-		tagInc       = [];
-		tagExc       = [];
-		if (diamondSearch) diamondSearch.value = '';
+		tagInc = [];
+		tagExc = [];
 	}
 
 	async function selectDiamond(f) {
@@ -13397,7 +13477,7 @@ import init, {
 				}
 				delete seen[tag];             // gone from the pool for this session too
 				// A filter on a tag that no longer exists would hide every Diamond
-				// there is, with a chip beside the search box as the only clue why
+				// there is, with a chip under the rail head as the only clue why
 				// -- and an EXCLUSION on one would go on hiding them with no chip
 				// at all to click. The tag leaves both lists.
 				dropTagFilter(tag);
@@ -16369,6 +16449,7 @@ import init, {
 		// whenever the settings are, not only when it is first built.
 		ReplyLength.render();
 		RoundLimit.render();
+		CrystalCap.render();
 	}
 	/// A string from the table, or the English written here when the table has no
 	/// entry for it yet.
@@ -16478,6 +16559,103 @@ import init, {
 	function applyRoundLimit(app) {
 		if (!app || !cfg.maxRounds || typeof app.set_max_rounds !== 'function') return;
 		try { app.set_max_rounds(cfg.maxRounds); } catch (e) { /* an older wasm build has no setter */ }
+	}
+
+	/// What the engine falls back to when nobody has chosen: `tools::CRYSTAL_CAP_DEFAULT`.
+	/// Named here only so the "Default" row can show the figure; nothing is set from it.
+	var DEFAULT_CRYSTAL_KB = 16;
+
+	/// The crystal ceiling: how large a Diamond's summary may grow before a write that grows it
+	/// further is refused.
+	///
+	/// It earns a control rather than a constant for the same reason the round limit does — the
+	/// right figure depends on how the person works. A Diamond holding one project's state wants
+	/// far less than one standing in for a whole field of them, and only the user knows which
+	/// they are building.
+	var CrystalCap = {
+		/// The ladder offered, in kilobytes. The user's own figure is added when it is off the
+		/// ladder, so opening the panel never silently changes their setting.
+		STEPS: [4, 8, 16, 32, 64, 128],
+
+		/// Build the row once, beneath the round limit it sits beside.
+		mount: function () {
+			if (document.getElementById('cfg-crystal-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-crystal-cap');
+			lab.textContent = tOr('settings.crystal_cap', 'Crystal size limit');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-crystal-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-crystal-cap-note';
+			note.textContent = tOr('settings.crystal_cap_note',
+				'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is '
+				+ 'told to put the detail in a file in the Diamond’s scope instead.');
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { CrystalCap.save(sel.value); });
+			return true;
+		},
+
+		/// Fill the pulldown from what is stored.
+		render: function () {
+			if (!this.mount()) return;
+			var sel = document.getElementById('cfg-crystal-cap');
+			sel.innerHTML = '';
+			var mine = cfg.crystalKb || 0;
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — ' + DEFAULT_CRYSTAL_KB + ' KB');
+			steps.forEach(function (n) { mk(n, String(n) + ' KB'); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		/// Record a choice and put it in force at once. The ceiling is engine-wide rather than
+		/// per-agent, so it does not need the agents rebuilt the way the round limit does.
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.crystalKb = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.crystalKb = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			applyCrystalCap(anyApp());
+			this.render();
+		},
+	};
+
+	/// Put the user's crystal ceiling on the engine.
+	///
+	/// The ceiling lives in the wasm instance, not on an agent, so ANY app sets it for all of
+	/// them — it is applied wherever an agent is built only so that a page which has not opened
+	/// the settings panel still has it in force. Zero means the engine's own default, which
+	/// `set_crystal_cap` already understands, so it is passed through rather than special-cased.
+	///
+	/// # Arguments
+	/// * `app` - Any DaimondApp; the setting is not that app's.
+	function applyCrystalCap(app) {
+		if (!app || typeof app.set_crystal_cap !== 'function') return;
+		try { app.set_crystal_cap((cfg.crystalKb || 0) * 1024); }
+		catch (e) { /* an older wasm build has no setter */ }
+	}
+
+	/// Any built agent, for a setting that is the engine's rather than an agent's.
+	function anyApp() {
+		for (var i = 0; i < chats.length; i++) { if (chats[i] && chats[i].app) return chats[i].app; }
+		return null;
 	}
 
 	/// The reply-length setting: how many tokens a single answer may run to.
@@ -16669,6 +16847,7 @@ import init, {
 		// reply-length row reads and the figure Automatic resolves to.
 		ReplyLength.render();
 		RoundLimit.render();
+		CrystalCap.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();
@@ -16733,10 +16912,6 @@ import init, {
 		// Showing an already-open panel changes no attribute, so ask for the
 		// redraw explicitly rather than relying on the visibility observer.
 		if (window.DaimondGraph) DaimondGraph.refresh();
-	});
-	if (diamondSearch) diamondSearch.addEventListener('input', function () {
-		diamondQuery = diamondSearch.value.trim().toLowerCase();
-		renderDiamondList();
 	});
 	if (agentSearch) agentSearch.addEventListener('input', function () {
 		agentQuery = agentSearch.value.trim().toLowerCase();
@@ -16872,8 +17047,6 @@ import init, {
 			ev.preventDefault();
 			idPrimary();
 		});
-		// The Agents panel stays hidden until the first Diamond-dispatched agent.
-		if (localStorage.getItem('daimond-agents-revealed') !== '1') document.body.classList.add('agents-hidden');
 		DaimondPanels.init();
 		DaimondAdmin.init();
 		if (window.DaimondMail) {

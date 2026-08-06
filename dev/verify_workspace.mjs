@@ -355,45 +355,25 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 }
 
 // ── A panel that has not revealed itself is still enumerable ───────────
-// The Agents panel stays off the chip row until the first agent runs. It must
-// still be findable, or the dock reads as three panels and a user counting them
-// is simply misinformed about their own app.
+// This was proved with the Agents panel, which stayed off the chip row until a
+// Diamond dispatched its first agent. It no longer does: a panel that comes and
+// goes reads as a panel that was taken away, which is how the user read it, so
+// Agents is now reachable at all times and says that nothing is running. The
+// property is unchanged and is proved directly above with the Doc panel, which
+// is what still waits to be earned ("reaching for Doc puts it on the row for
+// good"). What went with the block was its fixture, not its subject.
 {
-	await p.evaluate(() => {
-		localStorage.removeItem('daimond-agents-revealed');
-		// A panel that has ever been opened stays on the row, so a genuinely
-		// fresh state has to clear that too -- otherwise this seeds a state no
-		// new user is ever in.
-		try {
-			const u = JSON.parse(localStorage.getItem('daimond-used-panels') || '{}');
-			delete u.agents;
-			localStorage.setItem('daimond-used-panels', JSON.stringify(u));
-		} catch (e) {}
-		document.body.classList.add('agents-hidden');
-		window.DaimondPanels.hide('agents');
-		window.DaimondPanels.reflow();
-	});
-	await p.waitForTimeout(350);
-	const row = await chips();
-	check('an unrevealed panel keeps off the chip row',
-		!row.some(x => x.id === 'agents'), `${row.length} chips`);
-
-	await p.click('#panel-more').catch(() => {});
+	// `show`, not `activate`: activate TOGGLES a panel that has already revealed
+	// itself, so calling it on one that happens to be open closes it -- which is
+	// what the first draft of this check did to itself.
+	await p.evaluate(() => window.DaimondPanels.hide('agents'));
+	await p.waitForTimeout(300);
+	await p.evaluate(() => window.DaimondPanels.show('agents'));
 	await p.waitForTimeout(400);
-	const names = await p.$$eval('#panel-gallery .gal-row .nm', els => els.map(e => e.textContent));
-	check('but the gallery still lists it', names.includes('Agents'), names.join(', '));
-	const states = await p.$$eval('#panel-gallery .gal-row', els =>
-		els.map(e => e.textContent).filter(t => /Agents/.test(t)));
-	check('and says why it is not on the row', /not in use yet/.test(states[0] || ''), states[0]);
-	await p.keyboard.press('Escape');
-	await p.waitForTimeout(250);
-
-	// Asking for it IS the event the reveal was waiting for.
-	await p.evaluate(() => window.DaimondPanels.activate('agents'));
-	await p.waitForTimeout(500);
-	check('reaching for it reveals it',
-		!(await p.evaluate(() => document.body.classList.contains('agents-hidden'))));
-	check('and it opens', await p.evaluate(() => window.DaimondPanels.isOpen('agents')));
+	check('the Agents panel opens whether or not an agent has ever run',
+		await p.evaluate(() => window.DaimondPanels.isOpen('agents')));
+	const row = (await chips()).map(x => x.id);
+	check('and it is on the chip row from the start', row.includes('agents'), row.join(', '));
 }
 
 // ── Pins survive a reload, and so does the grid ─────────────────────────

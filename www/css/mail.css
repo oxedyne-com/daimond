@@ -324,10 +324,12 @@
 /* The form dialog's guidance line, under the fields. */
 .dlg-note { font-size: var(--fs-xs); line-height: 1.45; color: var(--text-secondary); margin-top: 8px; }
 .dlg-note.err { color: var(--accent-text); }
-/* The shared field label carries a negative bottom margin, which suits the dense
- * settings panel and pulls a dialog's box up hard against its label. In a form
- * the user is typing a credential into, give the label room to breathe and the
- * fields room to separate. */
+/* The negative bottom margin this was written against has gone: the shared label
+ * now spaces itself 12/6 and only the BYOK form compensates for its flex gap
+ * (app.css). What is left is the extra 2px of top margin, kept deliberately --
+ * a form asking for a credential is read more slowly than a settings row. It
+ * does mean the same built form is 2px looser in the modal than in the rail
+ * drawer, which is the only place the two hosts differ. */
 .dlg-card .cfg-fieldlabel { margin-top: 14px; margin-bottom: 6px; }
 
 /* ── The folder picker ─────────────────────────────────────────

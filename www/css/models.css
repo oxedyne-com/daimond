@@ -9,8 +9,12 @@
 
 .models-prov { border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
 
+/* Same reason as the model rows below: the name is built to wrap in the rail
+   (see .models-prov-name, which breaks between whole facts), and a disclosure
+   caret centred against two or three lines of it points at the middle of the
+   name rather than at the line it opens. */
 .settings-section .models-prov-head {
-	display: flex; align-items: center; gap: 8px; width: 100%;
+	display: flex; align-items: flex-start; gap: 8px; width: 100%;
 	padding: 8px 10px; cursor: pointer; text-align: left;
 	background: var(--bg-tertiary); border: 0; color: var(--text-primary);
 	font-size: var(--fs-xs);
@@ -23,8 +27,15 @@
 
 .models-prov-body { display: flex; flex-direction: column; padding: 4px; gap: 2px; }
 
+/* Top, not centre. The id is `word-break: break-all` in a column that is about
+   90px wide once the star and the chips have taken their share of a 220px rail,
+   and model ids run to thirty characters -- so two and three line rows are the
+   normal case here, not the exception. Centred, the star and the DEFAULT chip
+   floated halfway down the block, level with nothing. They belong on the id's
+   first line, which is where the row starts. Single-line rows do not move: every
+   item on one is within a pixel of the same height. */
 .settings-section .models-model {
-	display: flex; align-items: center; gap: 8px; width: 100%;
+	display: flex; align-items: flex-start; gap: 8px; width: 100%;
 	padding: 5px 8px; border-radius: 6px; cursor: pointer; text-align: left;
 	background: transparent; border: 0; color: var(--text-secondary);
 	font-family: var(--font-mono); font-size: var(--fs-2xs);

@@ -35,7 +35,15 @@
    that is not running -- but they stay editable, so it can be set up and then switched on. */
 .ar-field { margin-bottom: 12px; }
 .ar-label { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 4px; }
-.ar-input-row { display: flex; align-items: center; gap: 0; }
+/* The currency and the number are drawn as one control -- the prefix drops its
+   right border and its right corners so the seam disappears -- and `stretch` is
+   the only thing that makes that true. A span takes the page's 1.5 line-height
+   and an input takes the UA's `normal`, so at identical padding the prefix
+   stands about 4px taller than the box it is joined to; centred, that came out
+   as a step above AND below the seam. Stretched, the two are the same height by
+   construction, whatever line-height the browser gives a form control. The same
+   fix, for the same reason, as .models-credit-form in models.css. */
+.ar-input-row { display: flex; align-items: stretch; gap: 0; }
 .ar-ccy {
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border-strong);

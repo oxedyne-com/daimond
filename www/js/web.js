@@ -51,7 +51,9 @@
 	var els = {};
 	var deps = {};           // { onOpen, onClose, note } — supplied by daimond.js
 	var mirrorTimer = null;
-	var mirrorOff   = false;   // the live picture is unavailable; stop asking for it
+	var mirrorTick  = null;  // the running tick, so a button can ask for a picture at once
+	var mirrorOn    = false; // the user has asked for the live picture
+	var mirrorWhy   = '';    // '' a picture is arriving | 'wait' | 'silent' | 'refused'
 
 	// ── The extension bridge ────────────────────────────────────────
 
@@ -250,7 +252,7 @@
 			render();
 			return;
 		}
-		if (window.DaimondPanels) { DaimondPanels.show('web'); DaimondPanels.reflow(); }
+		showPanel();
 		adoptPage(v, rec.url, t('web.approved_late', { host: esc(hostOf(rec.url)) }));
 	}
 
@@ -339,6 +341,15 @@
 			mode: state.mode, reason: state.reason || '' };
 	}
 
+	/// Bring the panel forward. Guarded, because the driver is loaded on pages
+	/// that have no layout engine (the harness), and an open that throws before
+	/// it has started is worse than one that cannot reveal itself.
+	function showPanel() {
+		if (!window.DaimondPanels) return;
+		DaimondPanels.show('web');
+		DaimondPanels.reflow();
+	}
+
 	/// Show a page. Under the extension this is a real tab with the user's real
 	/// session; otherwise it is an iframe, which many sites simply refuse. We ask
 	/// the gateway FIRST whether the site will frame, because a parent page
@@ -366,8 +377,7 @@
 			var html;
 			try { html = await deps.readFile(url); }
 			catch (e) { throw new Error('No such page in the workspace: ' + url); }
-			DaimondPanels.show('web');
-			DaimondPanels.reflow();
+			showPanel();
 			stopMirror();
 			claimPage(url);
 			state.driver = 'local';
@@ -387,8 +397,7 @@
 			if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(url)) url = 'https://' + url;
 			else throw new Error('That is not a web address. Give a full http(s) URL.');
 		}
-		DaimondPanels.show('web');
-		DaimondPanels.reflow();
+		showPanel();
 		// From here the panel is claimed for this page, and anything still
 		// speaking for the last one has been superseded.
 		var seq = claimPage(url);
@@ -398,9 +407,20 @@
 			// Daimond Hands window asking them to allow it — a separate window
 			// that is easy to miss. Say it is coming, so the panel is not just a
 			// blank wait while an approval window sits unnoticed behind it.
+			//
+			// And say what will happen AFTER they allow it, before it happens: the
+			// page arrives as a browser window of its own, and a user who was not
+			// told that reads it as Daimond having launched a browser instead of
+			// using the panel.
 			state.driver = 'ext';
-			state.url = url;
-			note(t('web.opening', { host: esc(hostOf(url)) }));
+			state.url    = url;
+			// The last page's title and mode do not describe this one. Left as they
+			// were, a site opened while the user still had the wheel on the previous
+			// tab drew the blindfold over the new site's opening note — the panel
+			// saying "you're driving" about a page nobody has opened yet.
+			state.title  = '';
+			state.mode   = 'idle';
+			note(t('web.opening', { host: esc(hostOf(url)) }) + '<br>' + t('web.real_tab'));
 			render();
 			var r;
 			try {
@@ -486,6 +506,11 @@
 
 	async function close() {
 		stopMirror();
+		// The live view was a choice about a page that is now gone. It survives an
+		// open — see the mirror section — but not a close, which is the user
+		// putting the whole thing away.
+		mirrorOn  = false;
+		mirrorWhy = '';
 		claimPage('');           // nothing still coming may repaint this panel
 		if (hasExt() && state.driver === 'ext') { try { await ext('close'); } catch (e) { /* gone */ } }
 		els.frame.removeAttribute('src');
@@ -850,13 +875,26 @@
 	// endless stream of permission windows. By default the tab is simply open
 	// and visible — the user watches it there — and a button pulls the live view
 	// into the panel if they want it.
+	//
+	// The answer to that button belongs to the SESSION, not to the page.
+	// `mirrorOn` used to be cleared on every open, so a user who had already
+	// pulled the picture in was put back to the note at the next site with no
+	// word about why — and, having watched a browser window open, had every
+	// reason to read that as the panel not working. Turning it off is what stops
+	// the polling; opening a page is not.
+	//
+	// `mirrorWhy` is the other half. A panel with no picture must say WHICH kind
+	// of no it is: nobody has answered yet, or this tab cannot be photographed
+	// at all. Blank is the one thing it may not be.
 
 	function startMirror() {
 		stopMirror();
-		mirrorOff = true;                     // opt-in; the picture is off until asked for
+		// A new page has no picture yet, however the last one ended.
+		mirrorWhy = mirrorOn ? 'wait' : '';
 		var inFlight = false;                 // one tick at a time; never overlap
+		mirrorTick  = tick;
 		mirrorTimer = setInterval(tick, 1200);
-		driveNote();
+		extNote();
 		tick();
 		/// Ask only `status` — the tab's URL and mode, nothing off the page and no
 		/// permission needed. This is all we poll unless the live view is on.
@@ -867,7 +905,14 @@
 				// blindfold can name the cause ("the sign-in page for …") rather than
 				// only ever saying it stopped.
 				if (st && typeof st.reason === 'string') state.reason = st.reason;
-				if (st && st.mode && st.mode !== state.mode) { state.mode = st.mode; render(); if (state.mode === 'agent') driveNote(); }
+				if (st && st.mode && st.mode !== state.mode) {
+					state.mode = st.mode;
+					// The wheel handed back is a panel with no picture yet, whatever was
+					// on screen before the user took it.
+					if (mirrorOn && state.mode === 'agent') mirrorWhy = 'wait';
+					render();
+					extNote();
+				}
 				if (st && st.url) { state.url = st.url; state.title = st.title || state.title; render(); }
 			} catch (e) { /* no hands; nothing to poll */ }
 		}
@@ -878,10 +923,11 @@
 				// Poll pictures ONLY when the user has turned the live view on and we
 				// are not blindfolded. Otherwise poll status alone — no permission,
 				// no popup.
-				if (state.mode === 'user' || mirrorOff) { await pollStatus(); return; }
+				if (state.mode === 'user' || !mirrorOn) { await pollStatus(); return; }
 				try {
 					var r = await ext('frame');
 					if (r && r.png) {
+						mirrorWhy = '';
 						els.mirror.src = r.png;
 						els.mirror.style.display = '';
 						els.frame.style.display = 'none';
@@ -890,44 +936,73 @@
 					if (r && r.mode && r.mode !== state.mode) { state.mode = r.mode; render(); }
 					if (r && r.url) { state.url = r.url; state.title = r.title || state.title; render(); }
 				} catch (e) {
-					if (/not driving/i.test(e.message)) { state.mode = 'user'; render(); }
-					// The mirror was declined, or Chrome will not grant it. Turn it
-					// back off — for good this session — so it is never re-asked.
-					else if (/mirror|photograph/i.test(e.message)) { mirrorOff = true; driveNote(); }
+					var msg = (e && e.message) || '';
+					if (/not driving/i.test(msg)) { state.mode = 'user'; render(); }
+					// The mirror was declined, or Chrome will not grant it. Stop asking
+					// — the button is how it is asked for again — and say why, rather
+					// than leaving the last photograph up as though it were live.
+					else if (/mirror|photograph/i.test(msg)) { mirrorOn = false; mirrorWhy = 'refused'; extNote(); }
+					// Anything else is silence, not a refusal: the hands may be busy,
+					// or gone. Nobody having answered is not the same as this being
+					// impossible, and the panel has to tell the two apart — this branch
+					// used to swallow the error, which left the panel blank or, worse,
+					// still showing the last photograph.
+					else { mirrorWhy = 'silent'; extNote(); }
 				}
 			} finally { inFlight = false; }
 		}
 	}
 
-	/// The default driving state: the tab is open and Daimond is operating it,
-	/// with a button to pull the live view into the panel (which is what asks for
-	/// the mirror permission — once, and only if the user wants it).
-	function driveNote() {
-		if (state.mode !== 'agent' || !mirrorOff) return;
-		els.mirror.style.display = 'none';
+	/// What the panel says while the extension is driving a real tab.
+	///
+	/// EVERY ext state a person can see comes through here, because a browser
+	/// window appearing beside a silent panel is indistinguishable from Daimond
+	/// having simply launched a browser and stopped. The one state it does not
+	/// own is the blindfold: there the user has the wheel, and render() speaks.
+	function extNote() {
+		if (state.driver !== 'ext') return;
+		// Under the extension the iframe is never the page. It still holds
+		// whatever it last showed — the guide, usually — and the guide under a
+		// header naming a site is the panel lying about what it displays.
 		els.frame.style.display = 'none';
+		if (state.mode === 'user') return;
+		if (mirrorOn && !mirrorWhy) return;   // a live picture is on screen
+		els.mirror.style.display = 'none';
 		els.note.className = 'web-note on';
 		els.note.innerHTML = '';
+		function line(html) {
+			var d = document.createElement('div');
+			d.innerHTML = html;               // built here, from our own strings
+			els.note.appendChild(d);
+		}
 		// When the panel had already given up on this page, say so above the rest:
 		// the user was last told the site was not approved, and it is.
-		if (lateLead) {
-			var lead = document.createElement('div');
-			lead.innerHTML = lateLead;
-			els.note.appendChild(lead);
-		}
-		var msg = document.createElement('div');
-		msg.innerHTML = t('web.driving_tab', { host: esc(hostOf(state.url)) });
-		els.note.appendChild(msg);
+		if (lateLead) line(lateLead);
+		line(t('web.driving_tab', { host: esc(hostOf(state.url)) }));
+		// The relationship, in one sentence: the window that just appeared IS the
+		// page, and this panel is its mirror.
+		line(t('web.real_tab'));
+		if (mirrorWhy === 'wait')         line(t('web.mirror_wait'));
+		else if (mirrorWhy === 'silent')  line(t('web.mirror_silent'));
+		else if (mirrorWhy === 'refused') line(t('web.mirror_refused'));
+		if (mirrorOn) return;                 // already asked for; the button would say nothing
 		var btn = document.createElement('button');
 		btn.textContent = t('web.show_live');
 		btn.addEventListener('click', function () {
-			mirrorOff = false;              // the next tick asks for the mirror permission, once
-			note('');
+			// The panel says it is waiting BEFORE the ask, and asks at once rather
+			// than at the next tick: the next thing the user sees may be Chrome's
+			// permission window, and an empty panel behind it is what made this
+			// look broken.
+			mirrorOn  = true;
+			mirrorWhy = 'wait';
+			extNote();
+			if (mirrorTick) mirrorTick();
 		});
 		els.note.appendChild(btn);
 	}
 	function stopMirror() {
 		if (mirrorTimer) { clearInterval(mirrorTimer); mirrorTimer = null; }
+		mirrorTick = null;
 		els.mirror.style.display = 'none';
 		els.frame.style.display = '';
 	}

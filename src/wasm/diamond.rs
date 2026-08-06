@@ -592,6 +592,15 @@ async fn newest_version(id: &str) -> Outcome<Option<(u64, String)>> {
 /// snapshot and updates `meta.json`.  The caller appends the matching log
 /// record.
 async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
+    // The other door on the ceiling. `Tool::FileWrite` catches a daimon growing the crystal past
+    // it; this catches a hand edit and a fold, which reach the file through the store instead and
+    // would otherwise walk straight past the rule.
+    let old = opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await
+        .map(|b| b.len())
+        .unwrap_or(0);
+    if crate::tools::crystal_write_refused(md.len(), old) {
+        return Err(err!("{}", crate::tools::crystal_cap_message(md.len()); Invalid, Input, Size));
+    }
     let mut meta = res!(read_meta(id).await);
     let next = meta.version + 1;
     res!(opfs::write_file(FileRoot::Opfs, &crystal_path(id), md.as_bytes()).await);

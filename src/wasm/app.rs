@@ -673,6 +673,18 @@ impl DaimondApp {
         self.agent.set_max_rounds(n);
     }
 
+    /// What a Diamond's crystal may weigh before a write that grows it is refused, in bytes.
+    ///
+    /// The crystal is the summary; the scope attached to a Diamond is what carries the data, and
+    /// this is the rule that keeps the two apart.  A ceiling that suits one person's Diamonds is
+    /// not a ceiling that suits everyone's, so it is theirs to set.
+    ///
+    /// # Arguments
+    /// * `bytes` - The ceiling; zero restores the default.
+    pub fn set_crystal_cap(&self, bytes: usize) {
+        crate::tools::set_crystal_cap(bytes);
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats
     /// with; empty means the chat's own.
     ///

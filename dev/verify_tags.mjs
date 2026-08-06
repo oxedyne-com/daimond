@@ -75,8 +75,6 @@ const setPoolOn = async (pg, want) => {
 	return want;
 };
 
-// ── The search box is there before anything else is ──────────────
-check(await page.isVisible('#diamond-search'), 'search box visible with zero Diamonds (not hidden behind a count)');
 // An empty account is already told "No Diamonds yet." -- a second line about
 // tags there would be nagging about a thing there is nothing to do it to.
 check(!(await page.isVisible('#diamond-tag-hint')), 'no tag hint on an account with no Diamonds at all');
@@ -446,24 +444,6 @@ check(csvAfter && csvAfter.tags.length === 2,
 check(JSON.stringify(afterReload.map(r => r.name)) === JSON.stringify(orderBefore),
 	`rail order survives the reload: ${JSON.stringify(afterReload.map(r => r.name))}`);
 
-// ── Search ───────────────────────────────────────────────────────
-async function search(q) {
-	await page.fill('#diamond-search', q);
-	await page.waitForTimeout(300);
-	return boxes();
-}
-check(JSON.stringify(await search('mum')) === JSON.stringify(['Mum birthday plan']),
-	'search matches the name, case-insensitively');
-const rustHits = await search('RUST');
-check(rustHits.length === 2, `search matches a TAG as well as a name: ${JSON.stringify(rustHits)}`);
-check((await search('family')).length === 1, 'search matches a tag that is in no name');
-const none = await search('zzzznope');
-check(none.length === 0 && (await page.textContent('.diamond-list')).includes('No Diamonds match'),
-	'a search with no hits says so');
-await shot(s, 'tags-dark-search');
-await search('');
-check((await boxes()).length === 3, 'clearing the search box restores the list');
-
 // ── Filter by clicking a chip ────────────────────────────────────
 await clickTag('person');
 const filtered = await boxes();
@@ -480,8 +460,6 @@ check(await page.$eval('#diamond-filter .tag-chip.tag-inc', e => e.style.getProp
 check(await page.isVisible('#diamond-filter .tagf-ctl'),
 	'a filter raises the controls below the pool');
 await shot(s, 'tags-dark-filter');
-check((await search('mum')).length === 1, 'search narrows within an active tag filter');
-await search('');
 // The clear is the one-click way off. A pool chip carries no closer -- its text
 // is the tag and nothing else -- so the cycle takes two clicks to put one tag
 // down, and this is offered for a filter of any size because of it.
@@ -653,12 +631,6 @@ check(JSON.stringify(halves.inc.slice().sort()) === JSON.stringify(['person', 'r
 check(JSON.stringify(halves.pool) === JSON.stringify(['family', 'gifts', 'person', 'rust', 'urgent']),
 	`and does not reorder itself around them: ${JSON.stringify(halves.pool)}`);
 await shot(s, 'tags-dark-boolean');
-check((await search('csv')).length === 1, 'the search box composes on top of the boolean');
-const boolNone = await search('zzzznope');
-check(boolNone.length === 0 && (await page.textContent('.diamond-list')).includes('No Diamonds match'),
-	'and a search that matches nothing inside a boolean still says so');
-await search('');
-
 // ── Clear-all, and an honest empty rail ──────────────────────────
 await page.click('#diamond-filter .tag-clear-all', { force: true });
 await page.waitForTimeout(400);
@@ -796,6 +768,23 @@ check(bmum && Array.isArray(bmum.tags) && bmum.tags.includes('family'),
 const brust = (backup.diamonds || []).find(f => f.name === 'Rust compiler notes');
 check(brust && Array.isArray(brust.tags) && brust.tags.length === 0,
 	`an untagged Diamond exports tags:[] not undefined: ${JSON.stringify(brust && brust.tags)}`);
+
+// ── A create must never land behind a filter ─────────────────────
+// Proved through the search box in verify_diamonds until the box was removed.
+// The hazard is the filter's, not the box's: a Diamond made while the rail is
+// filtered to something it does not match is a Diamond the user cannot see and
+// did not lose.
+await clickTag('person');
+const beforeCreate = await boxes();
+check(!beforeCreate.includes('Rust compiler notes'),
+	`the rail is filtered to something the new Diamond will not match: ${JSON.stringify(beforeCreate)}`);
+await newDiamond('Made while filtered');
+await page.waitForTimeout(600);
+const afterCreate = await boxes();
+check(afterCreate.includes('Made while filtered'),
+	`a Diamond made while the rail is filtered is still visible: ${JSON.stringify(afterCreate)}`);
+check(!(await page.isVisible('#diamond-filter .tagf-ctl')),
+	'and the filter that would have hidden it is cleared');
 
 const errsA = errors(s).filter(e => !/502 \(Bad Gateway\)/.test(e));
 check(errsA.length === 0, `no console errors beyond the offline gateway: ${JSON.stringify(errsA.slice(0, 3))}`);

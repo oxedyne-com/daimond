@@ -169,11 +169,10 @@
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
-				<!-- Find a Diamond by name or by tag. Always on show: Diamonds
-				     accumulate, and a search box that only appears past some
-				     count is a search box nobody ever discovers. -->
+				<!-- Narrow the rail by tag. A search box stood here too and has
+				     gone: a Diamond is found by what it is filed under, and two
+				     ways of narrowing one short list is one more than it needs. -->
 				<div class="diamond-find">
-					<input type="search" class="diamond-search" id="diamond-search" placeholder="Search Diamonds" aria-label="Search Diamonds by name or tag" autocomplete="off" data-i18n-placeholder="rail.search_diamonds" data-i18n-aria-label="rail.search_diamonds_help">
 					<div class="diamond-filter" id="diamond-filter" style="display:none"></div>
 				</div>
 				<div class="diamond-list" id="diamond-list"></div>
@@ -380,8 +379,15 @@
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
-					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help" aria-label="Jump back to your last message" data-i18n-aria-label="chat.jump">↑</button>
-					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">↓</button>
+					<!-- Drawn chevrons, not ↑ and ↓: a font's arrowhead is a few
+					     pixels of ink on a 32px button, and read as specks beside
+					     the stroked icons the rest of the app is made of. -->
+					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help" aria-label="Jump back to your last message" data-i18n-aria-label="chat.jump">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+					</button>
+					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+					</button>
 				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->
@@ -430,6 +436,14 @@
 				<div class="chead">
 					<span class="ctitle doc-name" id="doc-name" role="heading" aria-level="2"></span>
 					<div class="chead-right">
+						<!-- Line numbers, in the header rather than in the toolbar the
+						     text view draws for itself: it is a way of reading the
+						     panel, not a thing to do to the file, and it is asked for
+						     while looking at the document. Shown only while a text file
+						     is up, since a PDF has no lines to number. -->
+						<button class="icon-btn" id="doc-lineno" title="Line numbers" data-i18n-title="files.line_numbers" aria-label="Line numbers" data-i18n-aria-label="files.line_numbers" aria-pressed="false" style="display:none">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h2M4 12h2M4 18h2M10 6h10M10 12h10M10 18h10"/></svg>
+						</button>
 						<button class="addbtn panel-close" data-close="doc" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
