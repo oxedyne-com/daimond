@@ -859,6 +859,7 @@
 	'drawer.models':  '模型',
 	'drawer.version': '版本',
 	'drawer.credits': '额度',
+	'drawer.push':    '推送',
 
 	// ── 对话框 ─────────────────────────────────────────────────
 	'dlg.are_you_sure': '确定吗？',
@@ -897,6 +898,33 @@
 	'home.sec_console':      '控制台',
 	'home.console_open':     '打开运营控制台',
 	'home.console_note':     '此账户拥有 {role} 角色。控制台会在新标签页打开，并沿用当前登录。',
+	'home.sec_push':         '推送',
+	'home.push_setup':       '设置 git push…',
+	'home.push_to':          '{host} — 更换推送令牌…',
+	'home.push_help':        '有令牌，Daimond 就能把已经提交的内容推送出去。没有也照样能提交，但每次推送都会被拒绝。',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         '给 Daimond 一个令牌，它就能把已经提交的工作推送出去。没有令牌它仍然可以提交，但每次推送都会被拒绝，工作只留在这台机器上。',
+	'push.host':         '主机',
+	'push.host_ph':      'github.com',
+	'push.host_note':    '只填名字，比如 github.com — 不要 https://、端口和路径。只有推送到这台主机才会带上凭据；别处的仓库会被直接拒绝，而不会用你的令牌去连。',
+	'push.token':        '令牌',
+	'push.token_ph':     '粘贴一个有推送权限的令牌',
+	'push.token_note':   '能推送的令牌就够了，从不需要更多。Daimond 只做推送，只做快进，也只推到 origin — 即使令牌允许，force、delete、mirror 和其他远程都会被拒绝。清空这一栏再保存就是删除它。',
+	'push.save':         '保存',
+	'push.privacy':      '令牌会用你的密码短语加密，只留在这个浏览器里；不会再显示、不会发给我们，也不会交给模型。没有账户就没有东西可以加密它，那样它只在这个标签页里有效，重新加载后会再问你一次。',
+	'push.set':          '已设置：推送会到 {host}。',
+	'push.none':         '未设置：在这里保存令牌之前，每次推送都会被拒绝。',
+	'push.saved':        '已保存。用你的密码短语加密，每次解锁后都会重新启用。',
+	'push.cleared':      '已删除。在这里保存令牌之前，推送会再次被拒绝。',
+	'push.session_only': '只在这个标签页里有效：没有账户就没有东西可以加密它，重新加载会再问一次。想留住它就创建一个账户。',
+	'push.err_host':     '填上推送要去的主机，比如 github.com；要删除凭据就把令牌那一栏清空。',
+	'push.err_not_held': '没有被接受，所以现在没有推送凭据。检查主机和令牌后再试一次。',
+	'push.not_resealed': '密码短语已经改了，但推送令牌没能用新的重新加密。重新加载之前推送还能用；想留住它就再设置一次令牌。',
 
 	// ── 同步这个账户的设备 ─────────────────────────────────────
 	'devices.on_platform': '{platform} 上的 {brand}',

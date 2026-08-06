@@ -118,7 +118,15 @@ impl Meta {
 /// is the STORE and the store's job is to hold what the user chose, not to decide what it means.
 /// A name that survives this is still put through `Toolkit::parse` before it grants anything, and
 /// one this build does not know grants nothing there.
-const KNOWN_KITS: [&str; 4] = ["rust", "node", "python", "go"];
+///
+/// **This list and `Toolkit` are two copies of one fact, and they have already drifted once.**
+/// `git` was added to the enum, to the fence's `TOOLKIT_ROOTS` and to the page's `KITS` row, and
+/// not to this array -- so the chip drew, the click was written, the store dropped the name, and
+/// the chip redrew unlit. Nothing was broken and nothing said anything: the store was doing
+/// exactly what it is for, against a list that was one name short. Add a toolkit here whenever one
+/// is added there, and see `test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps`, which
+/// fails when they disagree.
+const KNOWN_KITS: [&str; 5] = ["rust", "node", "python", "go", "git"];
 
 /// Normalise a caller's toolkit grants into the form the store holds.
 ///
@@ -404,6 +412,22 @@ mod tests {
 		// as though somebody had granted something nobody can name.
 		assert_eq!(vec![fmt!("rust"), fmt!("go")],
 			normalise_kits(&[fmt!(" Rust "), fmt!("emacs"), fmt!("GO"), fmt!("rust")]));
+	}
+
+	/// Every toolkit the engine knows is a name this store will keep.
+	///
+	/// The two lists drifted once and it cost a user an evening: `git` reached the enum, the
+	/// fence and the page's chip row, but not `KNOWN_KITS`, so the grant was written, silently
+	/// dropped, and the chip redrew unlit with nothing said. The store was right and the list was
+	/// short, which is the hardest shape of this to see.
+	#[test]
+	fn test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps() {
+		for kit in crate::tools::Toolkit::all() {
+			let name = fmt!("{}", kit.name());
+			assert_eq!(vec![name.clone()], normalise_kits(&[name.clone()]),
+				"the engine offers the toolkit '{}' and the store drops it, so granting it \
+				writes nothing and the chip cannot light -- add it to KNOWN_KITS", name);
+		}
 		assert!(normalise_kits(&[fmt!("")]).is_empty());
 	}
 

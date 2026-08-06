@@ -823,6 +823,7 @@
 	'drawer.models': 'Modelos',
 	'drawer.version': 'Versión',
 	'drawer.credits': 'Créditos',
+	'drawer.push':    'Push',
 
 	// ── Dialogs ────────────────────────────────────────────────
 	'dlg.are_you_sure': '¿Seguro?',
@@ -859,6 +860,33 @@
 	'home.sec_console':      'Consola',
 	'home.console_open':     'Abrir la consola de operador',
 	'home.console_note':     'Esta cuenta tiene el rol {role}. La consola se abre en una pestaña nueva y sigue esta sesión.',
+	'home.sec_push':         'Push',
+	'home.push_setup':       'Configurar git push…',
+	'home.push_to':          '{host} — cambiar el token de push…',
+	'home.push_help':        'Con un token, Daimond puede subir lo que ya ha confirmado. Sin él sigue confirmando, pero se rechaza cada push.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Dale un token a Daimond y podrá subir el trabajo que ya ha confirmado. Sin él sigue pudiendo confirmar, pero se rechaza cada push y el trabajo se queda en esta máquina.',
+	'push.host':         'Servidor',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'Solo el nombre, como github.com: sin https://, sin puerto y sin ruta. Solo se autentican los push a este servidor; un repositorio en cualquier otro sitio se rechaza en lugar de alcanzarse con tu token.',
+	'push.token':        'Token',
+	'push.token_ph':     'Pega un token con permiso de push',
+	'push.token_note':   'Basta con un token que pueda hacer push; nunca necesita más. Daimond solo hace push, solo en avance rápido y solo a origin: force, delete, mirror y cualquier otro remoto se rechazan aunque el token los permita. Vacía esta casilla y guarda para quitarlo.',
+	'push.save':         'Guardar',
+	'push.privacy':      'El token se cifra con tu frase de paso y se queda en este navegador; no vuelve a mostrarse, no se nos envía y no se le da a ningún modelo. Sin cuenta no hay con qué cifrarlo, así que solo se conserva en esta pestaña y volveremos a pedírtelo tras recargar.',
+	'push.set':          'Configurado: un push llega a {host}.',
+	'push.none':         'Sin configurar: se rechaza cada push hasta que guardes un token aquí.',
+	'push.saved':        'Guardado. Cifrado con tu frase de paso y reutilizado cada vez que desbloqueas.',
+	'push.cleared':      'Quitado. Los push vuelven a rechazarse hasta que guardes un token aquí.',
+	'push.session_only': 'Solo en esta pestaña: sin cuenta no hay con qué cifrarlo, así que al recargar volveremos a pedírtelo. Crea una cuenta para conservarlo.',
+	'push.err_host':     'Escribe el servidor al que va el push, como github.com, o vacía la casilla del token para quitar las credenciales.',
+	'push.err_not_held': 'No se aceptó, así que no hay credenciales de push. Revisa el servidor y el token e inténtalo otra vez.',
+	'push.not_resealed': 'Tu frase de paso cambió, pero el token de push no pudo volver a cifrarse con ella. El push funciona hasta que recargues; vuelve a escribir el token para conservarlo.',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} en {platform}',

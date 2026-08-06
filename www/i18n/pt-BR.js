@@ -823,6 +823,7 @@
 	'drawer.models': 'Modelos',
 	'drawer.version': 'Versão',
 	'drawer.credits': 'Créditos',
+	'drawer.push':    'Push',
 
 	// ── Dialogs ────────────────────────────────────────────────
 	'dlg.are_you_sure': 'Tem certeza?',
@@ -859,6 +860,33 @@
 	'home.sec_console':      'Console',
 	'home.console_open':     'Abrir o console do operador',
 	'home.console_note':     'Esta conta tem o papel {role}. O console abre em uma nova aba e segue esta sessão.',
+	'home.sec_push':         'Push',
+	'home.push_setup':       'Configurar git push…',
+	'home.push_to':          '{host} — trocar o token de push…',
+	'home.push_help':        'Com um token, o Daimond consegue enviar o que já commitou. Sem ele ainda commita, mas todo push é recusado.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Dê um token ao Daimond e ele consegue enviar o trabalho que já commitou. Sem token ele ainda commita, mas todo push é recusado e o trabalho fica nesta máquina.',
+	'push.host':         'Host',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'Só o nome, como github.com — sem https://, sem porta e sem caminho. Só os push para este host são autenticados; um repositório em qualquer outro lugar é recusado em vez de ser alcançado com o seu token.',
+	'push.token':        'Token',
+	'push.token_ph':     'Cole um token com permissão de push',
+	'push.token_note':   'Um token que possa dar push já basta; nunca precisa de mais. O Daimond só empurra, só em fast-forward e só para origin — force, delete, mirror e qualquer outro remoto são recusados, mesmo que o token permita. Esvazie esta caixa e salve para removê-lo.',
+	'push.save':         'Salvar',
+	'push.privacy':      'O token é criptografado com a sua frase-senha e fica neste navegador; nunca é mostrado de novo, nunca é enviado para nós e nunca é dado a um modelo. Sem conta não há com o que criptografá-lo, então ele vale só para esta aba e será pedido de novo depois de recarregar.',
+	'push.set':          'Definido: um push chega a {host}.',
+	'push.none':         'Não definido: todo push é recusado até um token ser salvo aqui.',
+	'push.saved':        'Salvo. Criptografado com a sua frase-senha e usado de novo a cada desbloqueio.',
+	'push.cleared':      'Removido. Os push voltam a ser recusados até um token ser salvo aqui.',
+	'push.session_only': 'Vale só para esta aba: sem conta não há com o que criptografá-lo, então recarregar vai pedir de novo. Crie uma conta para mantê-lo.',
+	'push.err_host':     'Informe o host para onde vai o push, como github.com, ou esvazie a caixa do token para remover as credenciais.',
+	'push.err_not_held': 'Isso não foi aceito, então nenhuma credencial de push está guardada. Confira o host e o token e tente de novo.',
+	'push.not_resealed': 'Sua frase-senha mudou, mas o token de push não pôde ser recriptografado com ela. O push funciona até você recarregar; informe o token de novo para mantê-lo.',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} em {platform}',

@@ -862,6 +862,7 @@
 	'drawer.models':  '모델',
 	'drawer.version': '버전',
 	'drawer.credits': '크레딧',
+	'drawer.push':    '푸시',
 
 	// ── 대화 상자 ──────────────────────────────────────────────
 	'dlg.are_you_sure': '정말 할까요?',
@@ -899,6 +900,33 @@
 	'home.sec_console':      '콘솔',
 	'home.console_open':     '운영 콘솔 열기',
 	'home.console_note':     '이 계정은 {role} 역할을 가지고 있어요. 콘솔은 새 탭에서 열리며 이 로그인을 따라가요.',
+	'home.sec_push':         '푸시',
+	'home.push_setup':       'git push 설정…',
+	'home.push_to':          '{host} — 푸시 토큰 바꾸기…',
+	'home.push_help':        '토큰이 있으면 Daimond가 이미 커밋한 것을 푸시할 수 있어요. 없어도 커밋은 되지만 푸시는 모두 거부돼요.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Daimond에 토큰을 주면 이미 커밋한 작업을 푸시할 수 있어요. 토큰이 없어도 커밋은 되지만 푸시는 모두 거부되고, 작업은 이 기기에 남아요.',
+	'push.host':         '호스트',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'github.com처럼 이름만 적어 주세요 — https://도, 포트도, 경로도 필요 없어요. 인증되는 건 이 호스트로 가는 푸시뿐이고, 다른 곳의 저장소는 토큰을 보내지 않고 거부해요.',
+	'push.token':        '토큰',
+	'push.token_ph':     '푸시할 수 있는 토큰을 붙여넣기',
+	'push.token_note':   '푸시할 수 있는 토큰이면 충분하고, 그 이상은 전혀 필요 없어요. Daimond는 푸시만, 그것도 빨리 감기만, origin으로만 보내요. 토큰이 허용하더라도 force, delete, mirror와 다른 리모트는 거부돼요. 이 칸을 비우고 저장하면 지워져요.',
+	'push.save':         '저장',
+	'push.privacy':      '토큰은 암호문구로 암호화되어 이 브라우저에만 남아요. 다시 보여 주지 않고, 저희에게 보내지 않고, 모델에게도 주지 않아요. 계정이 없으면 암호화할 것이 없어서 이 탭에서만 유지되고, 새로 고치면 다시 물어봐요.',
+	'push.set':          '설정됨: 푸시는 {host}로 가요.',
+	'push.none':         '설정 안 됨: 여기에 토큰을 저장하기 전까지 푸시는 모두 거부돼요.',
+	'push.saved':        '저장했어요. 암호문구로 암호화되고, 잠금을 풀 때마다 다시 쓰여요.',
+	'push.cleared':      '지웠어요. 여기에 토큰을 저장하기 전까지 푸시는 다시 거부돼요.',
+	'push.session_only': '이 탭에서만 유지돼요. 계정이 없으면 암호화할 것이 없어서 새로 고치면 다시 물어봐요. 계속 두려면 계정을 만들어 주세요.',
+	'push.err_host':     '푸시가 갈 호스트를 github.com처럼 적어 주세요. 자격 증명을 지우려면 토큰 칸을 비우면 돼요.',
+	'push.err_not_held': '받아들여지지 않아서 푸시 자격 증명이 없어요. 호스트와 토큰을 확인하고 다시 시도해 주세요.',
+	'push.not_resealed': '암호문구는 바뀌었지만 푸시 토큰을 새 암호문구로 다시 암호화하지 못했어요. 새로 고치기 전까지는 푸시가 돼요. 계속 쓰려면 토큰을 다시 설정해 주세요.',
 
 	// ── 이 계정을 동기화하는 기기 ──────────────────────────────
 	'devices.on_platform': '{platform}의 {brand}',

@@ -823,6 +823,7 @@
 	'drawer.models': 'Modèles',
 	'drawer.version': 'Version',
 	'drawer.credits': 'Crédits',
+	'drawer.push':    'Push',
 
 	// ── Dialogs ────────────────────────────────────────────────
 	'dlg.are_you_sure': 'Vous êtes sûr ?',
@@ -862,6 +863,33 @@
 	'home.sec_console':      'Console',
 	'home.console_open':     'Ouvrir la console d’exploitation',
 	'home.console_note':     'Ce compte détient le rôle {role}. La console s’ouvre dans un nouvel onglet et suit cette session.',
+	'home.sec_push':         'Push',
+	'home.push_setup':       'Configurer git push…',
+	'home.push_to':          '{host} — changer le jeton de push…',
+	'home.push_help':        'Avec un jeton, Daimond peut pousser ce qu’il a déjà validé. Sans jeton il valide toujours, mais chaque push est refusé.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Donnez un jeton à Daimond et il pourra pousser le travail déjà validé. Sans jeton il peut toujours valider, mais chaque push est refusé et le travail reste sur cette machine.',
+	'push.host':         'Hôte',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'Le nom seul, comme github.com — pas de https://, pas de port, pas de chemin. Seuls les push vers cet hôte sont authentifiés ; un dépôt ailleurs est refusé plutôt qu’atteint avec votre jeton.',
+	'push.token':        'Jeton',
+	'push.token_ph':     'Collez un jeton autorisé à pousser',
+	'push.token_note':   'Un jeton autorisé à pousser suffit ; il n’en faut jamais plus. Daimond ne fait que pousser, uniquement en avance rapide et uniquement vers origin — force, delete, mirror et tout autre dépôt distant sont refusés quoi que permette le jeton. Videz ce champ et enregistrez pour le retirer.',
+	'push.save':         'Enregistrer',
+	'push.privacy':      'Le jeton est chiffré avec votre phrase secrète et reste dans ce navigateur ; il n’est plus jamais affiché, jamais envoyé chez nous et jamais confié à un modèle. Sans compte il n’y a rien pour le chiffrer : il ne vaut alors que pour cet onglet, et il vous sera redemandé après un rechargement.',
+	'push.set':          'Défini : un push atteint {host}.',
+	'push.none':         'Non défini : chaque push est refusé tant qu’aucun jeton n’est enregistré ici.',
+	'push.saved':        'Enregistré. Chiffré avec votre phrase secrète et repris à chaque déverrouillage.',
+	'push.cleared':      'Retiré. Les push sont de nouveau refusés tant qu’aucun jeton n’est enregistré ici.',
+	'push.session_only': 'Valable pour cet onglet seulement : sans compte il n’y a rien pour le chiffrer, un rechargement le redemandera donc. Créez un compte pour le conserver.',
+	'push.err_host':     'Indiquez l’hôte visé par le push, comme github.com, ou videz le champ du jeton pour retirer les identifiants.',
+	'push.err_not_held': 'Cela n’a pas été accepté : aucun identifiant de push n’est conservé. Vérifiez l’hôte et le jeton, puis réessayez.',
+	'push.not_resealed': 'Votre phrase secrète a changé, mais le jeton de push n’a pas pu être rechiffré avec elle. Le push fonctionne jusqu’au rechargement ; redonnez le jeton pour le conserver.',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} sur {platform}',

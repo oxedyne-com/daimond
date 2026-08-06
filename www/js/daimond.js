@@ -131,7 +131,11 @@ import init, {
 		// `maxOut` of 0 means AUTO: let `maxOutFor` pick per model. See the
 		// "How long a reply may be" section below for why one number for every
 		// model was the wrong shape.
-		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, tools: true };
+		//
+		// `pushToken` is deliberately NOT in the stored shape and never read back: the
+		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
+		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, tools: true,
+			pushHost: '', pushUser: '', pushToken: '', pushTokenEnc: '' };
 		if (raw) {
 			try {
 				var j = JSON.parse(raw);
@@ -149,6 +153,14 @@ import init, {
 				// Zero means the engine's own default, which is also what an absent field means.
 				if (typeof j.maxRounds === 'number') cfg.maxRounds = j.maxRounds;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
+				// The push credential. The host and the user name it travels as are not
+				// secrets and are read as written; the token is only ever read WRAPPED,
+				// and a plaintext `pushToken` sitting in the stored blob -- which nothing
+				// here writes -- is ignored rather than picked up, so a hand-edited or
+				// migrated store cannot promote one into use.
+				if (typeof j.pushHost === 'string') cfg.pushHost = j.pushHost;
+				if (typeof j.pushUser === 'string') cfg.pushUser = j.pushUser;
+				if (typeof j.pushTokenEnc === 'string') cfg.pushTokenEnc = j.pushTokenEnc;
 			} catch (e) { /* keep defaults */ }
 		}
 		return cfg;
@@ -157,6 +169,16 @@ import init, {
 	// Persist the config. When a passphrase identity is in use the API key is
 	// stored *encrypted* (`apiKeyEnc`) and never in the clear; otherwise it is
 	// stored plaintext (the skippable, browser-only path).
+	//
+	// The PUSH token has no such fallback and there is only one line here that
+	// writes it: `pushTokenEnc`. A provider key is somebody else's bearer token
+	// against somebody else's billing and its worst case is a bill; a push token
+	// writes to the user's own repositories, and the plaintext path exists so that
+	// a browser-only user can get started at all -- not so that a repository-write
+	// credential can be left in `localStorage` for any script that ever reaches
+	// this origin. With no identity to wrap it under, nothing is stored: the
+	// credential is handed to the engine for this tab and asked for again after a
+	// reload, and the panel says so rather than quietly forgetting it.
 	function saveCfg(c) {
 		localStorage.setItem(CFG_KEY, JSON.stringify({
 			baseUrl:   c.baseUrl || '',
@@ -166,11 +188,167 @@ import init, {
 			maxOut:    c.maxOut || 0,
 		maxRounds: c.maxRounds || 0,
 			tools:     c.tools !== false,
+			// Written on every save, not only by the push panel: this function
+			// rebuilds the stored object from scratch, so a field it does not know
+			// about is a field the next unrelated save DELETES.
+			pushHost:     c.pushHost || '',
+			pushUser:     c.pushUser || '',
+			pushTokenEnc: c.pushTokenEnc || '',
 		}));
 	}
 
 	function cfgReady(cfg) {
 		return !!(cfg.baseUrl && cfg.model && cfg.apiKey);
+	}
+
+	// ── The credential a push travels with ─────────────────────
+	//
+	// The engine holds it in ONE `thread_local` belonging to the wasm instance, and
+	// a reload builds a fresh instance -- so the engine's copy is gone on every
+	// load, and every account boundary (switch, add, erase, restore, take an
+	// update) IS a reload. The page is therefore the only thing that can bring it
+	// back, and it has to do so on every path that ends in a usable app: a push
+	// that worked yesterday and silently refuses today is the failure this exists
+	// to prevent.
+	//
+	// There is exactly one such path, and it is established from the code rather
+	// than assumed. A reload always locks -- `identity.js` holds the wrapping key
+	// in memory alone, so `isUnlocked()` is false at boot however the tab got there
+	// -- and every way past the gate ends in `completeUnlock`: a typed passphrase
+	// and a freshly created account both through `idPrimary`, a passkey and a
+	// passkey adoption both through `passkeyUnlock`. `completeUnlock` awaits
+	// `afterUnlock`, which is where the replay goes. The one boot that does NOT
+	// reach it is the browser-only path with no identity at all -- and that path
+	// has nothing stored to replay, because storing it needs an identity to wrap
+	// it under.
+	//
+	// So: `afterUnlock` replays, `lockApp` clears, `doChangePassphrase` re-seals,
+	// and nothing else touches it.
+
+	/// Hand the held credential to the engine, or clear it there.
+	///
+	/// The engine holds one credential for the whole wasm instance rather than one
+	/// per agent, so any built app will do; `tools()` is simply the one that always
+	/// exists. An empty token CLEARS it, which is what makes this the same call for
+	/// setting and for forgetting.
+	///
+	/// # Returns
+	/// Whether a credential is held afterwards.
+	function applyPushCred() {
+		try {
+			return !!tools().set_push_cred(
+				cfg.pushHost || '', cfg.pushUser || '', cfg.pushToken || '');
+		} catch (e) {
+			// A host the engine will not have, or a token carrying something that
+			// cannot travel in a header. This is the SILENT path -- the replay, and the
+			// clear -- so there is nobody to tell; the panel reports its own failures
+			// where the user is standing in front of it. A credential the engine
+			// refuses is a credential that is not held, which is the safe reading.
+			return false;
+		}
+	}
+
+	/// The host the ENGINE says a push would reach, or empty.
+	///
+	/// Asked of the engine and never of storage. Those two differ in exactly the
+	/// case that matters: a reload empties the engine's copy, and a panel drawn
+	/// from `localStorage` would report a push configured while every push was
+	/// being refused.
+	function pushHostHeld() {
+		try { return tools().push_host() || ''; } catch (e) { return ''; }
+	}
+
+	/// The user name a token travels as at `host`.
+	///
+	/// Inferred rather than asked for, and that is the whole reason there are two
+	/// boxes and not three. It is a per-forge constant and not a choice: GitHub
+	/// wants `x-access-token`, which the engine supplies for an empty value, and
+	/// GitLab wants `oauth2`. A box labelled "user name" is a box a person fills in
+	/// with their own login, which authenticates nowhere and fails with a message
+	/// that names neither the box nor the reason.
+	///
+	/// # Arguments
+	/// * `host` - The bare host, as typed.
+	function pushUserFor(host) {
+		return /gitlab/i.test(String(host || '')) ? 'oauth2' : '';
+	}
+
+	/// Draw the push panel: the host that is set, and an empty token box.
+	///
+	/// The token box starts empty every time and is emptied again after a save. The
+	/// token is write-only from here on -- there is no accessor for it in the
+	/// engine and no reason for it to be back on screen, and a field redrawn with a
+	/// secret in it is a secret in the DOM for anything that can read the DOM.
+	function fillPushSettings() {
+		var h = document.getElementById('cfg-push-host');
+		if (h) h.value = cfg.pushHost || '';
+		setSecret(document.getElementById('cfg-push-token'), '');
+		var n = document.getElementById('push-note');
+		if (n) n.textContent = '';
+		renderPushState();
+	}
+
+	/// The one line that says what a push would do right now.
+	function renderPushState() {
+		var el = document.getElementById('push-state');
+		if (!el) return;
+		var held = pushHostHeld();
+		el.textContent = held ? t('push.set', { host: held }) : t('push.none');
+	}
+
+	/// Take what is in the two boxes and make it the credential, or remove the one
+	/// held.
+	///
+	/// The engine is asked BEFORE anything is stored, because the engine is the one
+	/// place that decides what a host and a token may be -- so a refusal leaves
+	/// nothing behind in storage to be replayed on the next load.
+	async function savePushCred() {
+		var note = document.getElementById('push-note');
+		var hostEl = document.getElementById('cfg-push-host');
+		var tokEl  = document.getElementById('cfg-push-token');
+		if (!note || !hostEl || !tokEl) return;
+		var host  = (hostEl.value || '').trim();
+		var token = getSecret(tokEl).trim();
+		note.textContent = '';
+		// An empty token REMOVES the credential rather than storing an empty one, so
+		// it is not an error and it needs no host. Same call, and the engine's own
+		// rule: "there is no credential" is a sentence a model can act on where
+		// "authentication failed" is not.
+		if (!token) {
+			cfg.pushHost = ''; cfg.pushUser = ''; cfg.pushToken = ''; cfg.pushTokenEnc = '';
+			saveCfg(cfg);
+			applyPushCred();
+			hostEl.value = '';
+			setSecret(tokEl, '');
+			renderPushState();
+			note.textContent = t('push.cleared');
+			return;
+		}
+		if (!host) { note.textContent = t('push.err_host'); hostEl.focus(); return; }
+		var user = pushUserFor(host);
+		var held;
+		try { held = tools().set_push_cred(host, user, token); }
+		catch (e) { note.textContent = friendlyError(e); hostEl.focus(); return; }
+		if (!held) { note.textContent = t('push.err_not_held'); return; }
+		// The engine folds the host -- 'GitHub.com/' becomes 'github.com' -- so what
+		// is stored is what a push will actually reach, and the box agrees with it.
+		cfg.pushHost  = pushHostHeld() || host;
+		cfg.pushUser  = user;
+		cfg.pushToken = token;
+		// Wrapped, or not stored at all. There is no plaintext fallback here: see
+		// `saveCfg`. The host and the inferred user name are not secrets and are
+		// kept either way, so a browser-only user retypes only the token.
+		var kept = false;
+		cfg.pushTokenEnc = '';
+		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
+			try { cfg.pushTokenEnc = await DaimondIdentity.wrap(token); kept = true; }
+			catch (e) { cfg.pushTokenEnc = ''; }
+		}
+		saveCfg(cfg);
+		hostEl.value = cfg.pushHost;
+		setSecret(tokEl, '');
+		renderPushState();
+		note.textContent = kept ? t('push.saved') : t('push.session_only');
 	}
 
 	// ── How long a reply may be ────────────────────────────────
@@ -4794,7 +4972,7 @@ import init, {
 	// settings view is MOVED into a modal card and a form falls back to a
 	// dialog. One settings form exists in the document; it changes host.
 	var DaimondAdmin = (function () {
-		var body, homeView, settingsView, creditsView, releaseView, formView, modal, slot, closeBtn;
+		var body, homeView, settingsView, creditsView, releaseView, pushView, formView, modal, slot, closeBtn;
 		var adminWrap, titleEl;   // #admin (toggles .admin-open) and the drawer title
 		var drawerOpen = false;
 		// Which of the two forms is on screen. The panel used to hold one view (Settings, which
@@ -4819,7 +4997,7 @@ import init, {
 		/// a child of `body` already.
 		function toPanel() {
 			if (formView && formView.parentNode !== body) body.appendChild(formView);
-			[settingsView, creditsView, releaseView].forEach(function (v) {
+			[settingsView, creditsView, releaseView, pushView].forEach(function (v) {
 				if (v && v.parentNode !== body) body.insertBefore(v, formView);
 			});
 			modal.style.display = 'none';
@@ -4929,6 +5107,7 @@ import init, {
 			// on it and re-opened with the whole release history still hanging below
 			// whatever was asked for next.
 			if (releaseView) releaseView.style.display = 'none';
+			if (pushView) pushView.style.display = 'none';
 			if (homeView) homeView.style.display = 'none';
 			curView = null;
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
@@ -4944,6 +5123,7 @@ import init, {
 			settingsView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
 			if (releaseView) releaseView.style.display = 'none';
+			if (pushView) pushView.style.display = 'none';
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
@@ -4958,6 +5138,7 @@ import init, {
 			homeView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
 			if (releaseView) releaseView.style.display = 'none';
+			if (pushView) pushView.style.display = 'none';
 			curView = settingsView;
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
@@ -4974,6 +5155,7 @@ import init, {
 			homeView.style.display = 'none';
 			settingsView.style.display = 'none';
 			if (creditsView) creditsView.style.display = 'none';
+			if (pushView) pushView.style.display = 'none';
 			curView = releaseView;
 			releaseView.style.display = '';
 			if (window.DaimondRelease) DaimondRelease.render(document.getElementById('rel-list'));
@@ -4988,6 +5170,7 @@ import init, {
 			homeView.style.display = 'none';
 			settingsView.style.display = 'none';
 			if (releaseView) releaseView.style.display = 'none';
+			if (pushView) pushView.style.display = 'none';
 			curView = creditsView;
 			creditsView.style.display = '';
 			var n = document.getElementById('credits-note');
@@ -5004,6 +5187,25 @@ import init, {
 			if (window.DaimondAutoReload) DaimondAutoReload.render();
 			if (available()) { toPanel(); showDrawer(t('drawer.credits')); }
 			else toModal(t('drawer.credits'));
+		}
+
+		/// Show the push credential: which host a push reaches, and the box to set it.
+		///
+		/// Its own view rather than a row in Models for the reason given in
+		/// `index.html`: a token that writes to the user's repositories is not the
+		/// same kind of secret as a key that buys tokens from a provider.
+		function push() {
+			endForm();
+			homeView.style.display = 'none';
+			settingsView.style.display = 'none';
+			if (creditsView) creditsView.style.display = 'none';
+			if (releaseView) releaseView.style.display = 'none';
+			if (!pushView) return;
+			curView = pushView;
+			pushView.style.display = '';
+			fillPushSettings();
+			if (available()) { toPanel(); showDrawer(t('drawer.push')); }
+			else toModal(t('drawer.push'));
 		}
 
 		/// The cog: open the Admin drawer on its menu, or close it if it is open.
@@ -5125,6 +5327,11 @@ import init, {
 					item(t('home.create_account'), function () { showIdentity('create'); });
 					homeView.appendChild(el('div', 'admin-note', t('home.account_note')));
 				}
+				// Offered here too, and not only to an account holder: the machine hand
+				// and its git toolkit work with no identity at all, and a person who has
+				// skipped the account screen still has repositories. What DIFFERS without
+				// an account is only how long the token lasts, and the panel says so.
+				pushSection();
 				return;
 			}
 
@@ -5196,6 +5403,9 @@ import init, {
 			});
 			homeView.appendChild(el('div', 'admin-note', t('home.prompts_note')));
 
+			// Where a push goes, and the token it goes with.
+			pushSection();
+
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
@@ -5222,6 +5432,21 @@ import init, {
 				b.addEventListener('click', fn);
 				homeView.appendChild(b);
 				return b;
+			}
+
+			/// The way through to the push credential, with the host it currently
+			/// reaches written on the line.
+			///
+			/// Read from the ENGINE and not from what the page last saved, because those
+			/// two differ in exactly the case this whole arrangement exists for: a reload
+			/// empties the engine's copy, and a drawer drawn from storage would say a
+			/// push was configured while every push was being refused.
+			function pushSection() {
+				homeView.appendChild(el('div', 'admin-sec', t('home.sec_push')));
+				var held = pushHostHeld();
+				var b = item(held ? t('home.push_to', { host: held }) : t('home.push_setup'),
+					function () { push(); });
+				b.title = t('home.push_help');
 			}
 		}
 
@@ -5674,6 +5899,12 @@ import init, {
 		function clear() {
 			endForm();
 			setSecret(document.getElementById('cfg-api-key'), '');
+			// The push token goes with it. It is masked, so what a half-filled box
+			// leaves behind is not on screen -- but it is on `el._real`, which is
+			// exactly the copy a locked app must not still be holding.
+			setSecret(document.getElementById('cfg-push-token'), '');
+			var pn = document.getElementById('push-note');
+			if (pn) pn.textContent = '';
 			document.getElementById('byok-note').textContent = '';
 			document.getElementById('credits-balance').textContent = '';
 			document.getElementById('credits-packs').innerHTML = '';
@@ -5687,6 +5918,7 @@ import init, {
 			settingsView = document.getElementById('admin-models');
 			creditsView  = document.getElementById('admin-credits');
 			releaseView  = document.getElementById('admin-release');
+			pushView     = document.getElementById('admin-push');
 			formView     = document.getElementById('admin-form');
 			modal        = document.getElementById('settings-modal');
 			slot         = document.getElementById('settings-slot');
@@ -5704,6 +5936,8 @@ import init, {
 			var relRow = document.getElementById('astat-release');
 			if (relRow) relRow.addEventListener('click', release);
 			if (window.DaimondRelease) DaimondRelease.paintRow();
+			var pushBtn = document.getElementById('push-save');
+			if (pushBtn) pushBtn.addEventListener('click', function () { savePushCred(); });
 			var addBtn = document.getElementById('models-add');
 			if (addBtn) addBtn.addEventListener('click', function () {
 				var f = document.getElementById('byok-form');
@@ -5739,7 +5973,7 @@ import init, {
 
 		return {
 			init: init, available: available, settings: settings, credits: credits,
-			release: release,
+			release: release, push: push,
 			toggle: toggleSettings,
 			home: home, form: form, closeModal: closeModal, clear: clear, status: status,
 			close: closeAdmin,
@@ -9106,7 +9340,7 @@ import init, {
 
 		/// The toolchains this build can grant, in the order they are offered.
 		///
-		/// The same four names `Toolkit::all` gives, and they are names rather than labels
+		/// The same five names `Toolkit::all` gives, and they are names rather than labels
 		/// because the name is what is STORED and what reaches `Toolkit::parse`. The label is
 		/// only ever how it is written on a button.
 		var KITS = [
@@ -9114,6 +9348,12 @@ import init, {
 			{ name: 'node',   label: 'Node' },
 			{ name: 'python', label: 'Python' },
 			{ name: 'go',     label: 'Go' },
+			// Not cosmetic, and the odd one out: `git` itself is already reachable, so
+			// what this grants is the user's own configuration -- their name, their
+			// email, and `core.hooksPath`. Without it a fenced git runs with NO hooks,
+			// and an unreadable hooks directory is indistinguishable from an empty one,
+			// so the credential-scanning pre-commit hook silently does not run.
+			{ name: 'git',    label: 'Git' },
 		];
 
 		/// Draw the toolchain grants for the open Diamond.
@@ -14458,6 +14698,11 @@ import init, {
 		// key already inside the wasm -- so locking must forget all three, or it locks the door
 		// and leaves the keys in it.
 		cfg.apiKey = '';
+		// And the push credential, which is a key in the door exactly as the others
+		// are: it lives in the engine, nothing else clears it, and a locked Daimond
+		// that can still push to the user's repositories is not locked.
+		cfg.pushToken = '';
+		applyPushCred();
 		if (window.DaimondModels) DaimondModels.lock();
 		chats.forEach(function (c) { c.app = null; });
 		resetDiamondApps();
@@ -14794,6 +15039,17 @@ import init, {
 		if (cfg.apiKeyEnc && DaimondIdentity.isUnlocked()) {
 			try { cfg.apiKey = await DaimondIdentity.unwrap(cfg.apiKeyEnc); } catch (e) { cfg.apiKey = ''; }
 		}
+		// The push credential, on the same footing and for a harder reason: the
+		// engine's copy did not survive the reload that brought us here, and nothing
+		// else in the app will ever put it back. Every path that ends in a usable app
+		// passes through this function -- see "The credential a push travels with".
+		if (cfg.pushTokenEnc && DaimondIdentity.isUnlocked()) {
+			try { cfg.pushToken = await DaimondIdentity.unwrap(cfg.pushTokenEnc); }
+			catch (e) { cfg.pushToken = ''; }
+		}
+		// Called even with nothing to replay: an empty token clears, so a credential
+		// left standing from before a lock cannot outlive it into the next unlock.
+		applyPushCred();
 		// Every provider's key is sealed under the same passphrase, and unusable until now.
 		if (window.DaimondModels) {
 			await DaimondModels.unseal();
@@ -15489,6 +15745,7 @@ import init, {
 		if (!next) return;
 
 		var plain = cfg.apiKey;                      // held decrypted while unlocked
+		var pushPlain = cfg.pushToken;               // likewise, and sealed under the old one
 		var r;
 		try { r = await DaimondIdentity.changePassphrase(cur, next); }
 		catch (e) { r = { ok: false }; }
@@ -15497,6 +15754,14 @@ import init, {
 		if (plain) {
 			try { cfg.apiKeyEnc = await DaimondIdentity.wrap(plain); saveCfg(cfg); }
 			catch (e) { noticeDialog(t('changepass.careful'), t('changepass.key_not_resealed')); return; }
+		}
+		// The push token is sealed under the passphrase that has just changed, so
+		// without this it would unwrap to nothing on the next load and every push
+		// would be refused with no reason on screen. The engine's copy is untouched,
+		// so pushing goes on working until the tab is reloaded.
+		if (pushPlain) {
+			try { cfg.pushTokenEnc = await DaimondIdentity.wrap(pushPlain); saveCfg(cfg); }
+			catch (e) { noticeDialog(t('changepass.careful'), t('push.not_resealed')); return; }
 		}
 		// The passkey seals a copy of the passphrase and of the wrapped key, both
 		// of which have just changed, so it opens onto something that no longer
@@ -16537,6 +16802,10 @@ import init, {
 		// generated, so there is nothing weak or reused to save, and a manager
 		// holding it is what stops it being retyped on a phone all day.
 		installSecretMask(document.getElementById('cfg-api-key'), '');
+		// The push token is masked the same way and for the same reason: it is a
+		// credential against the user's own repositories, and a real password field
+		// is what invites a manager to file it away.
+		installSecretMask(document.getElementById('cfg-push-token'), '');
 		// The eye toggles reveal a passphrase field, so a long one typed on a
 		// phone can be checked. Each remembers its own state; the icon swaps
 		// between an open and a struck-through eye.

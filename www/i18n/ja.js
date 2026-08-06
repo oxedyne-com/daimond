@@ -860,6 +860,7 @@
 	'drawer.models':  'モデル',
 	'drawer.version': 'バージョン',
 	'drawer.credits': 'クレジット',
+	'drawer.push':    'プッシュ',
 
 	// ── ダイアログ ─────────────────────────────────────────────
 	'dlg.are_you_sure': 'よろしいですか？',
@@ -897,6 +898,33 @@
 	'home.sec_console':      'コンソール',
 	'home.console_open':     '運用コンソールを開く',
 	'home.console_note':     'このアカウントは {role} の役割を持っています。コンソールは新しいタブで開き、このサインインを引き継ぎます。',
+	'home.sec_push':         'プッシュ',
+	'home.push_setup':       'git push を設定…',
+	'home.push_to':          '{host} — プッシュ用トークンを変更…',
+	'home.push_help':        'トークンがあれば、コミット済みの内容を Daimond がプッシュできます。なければコミットはできますが、プッシュはすべて拒否されます。',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'トークンを渡すと、Daimond はコミット済みの作業をプッシュできます。トークンがなくてもコミットはできますが、プッシュはすべて拒否され、作業はこの端末に残ります。',
+	'push.host':         'ホスト',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'github.com のように名前だけを入れてください。https:// もポートもパスも不要です。認証されるのはこのホストへのプッシュだけで、ほかの場所のリポジトリはトークンを渡さずに拒否されます。',
+	'push.token':        'トークン',
+	'push.token_ph':     'プッシュできるトークンを貼り付け',
+	'push.token_note':   'プッシュできるトークンで十分で、それ以上の権限は要りません。Daimond が行うのはプッシュだけ、しかも早送りのみ、宛先は origin のみです。トークンが許していても、force・delete・mirror やほかのリモートは拒否されます。この欄を空にして保存すると削除されます。',
+	'push.save':         '保存',
+	'push.privacy':      'トークンはパスフレーズで暗号化され、このブラウザの中だけに残ります。二度と表示されず、こちらにも送られず、モデルにも渡りません。アカウントがない場合は暗号化する鍵がないため、このタブの間だけ保持され、再読み込みのあとにもう一度尋ねられます。',
+	'push.set':          '設定済み: プッシュ先は {host} です。',
+	'push.none':         '未設定: ここにトークンを保存するまで、プッシュはすべて拒否されます。',
+	'push.saved':        '保存しました。パスフレーズで暗号化され、ロックを解除するたびに再び使われます。',
+	'push.cleared':      '削除しました。ここにトークンを保存するまで、プッシュはまた拒否されます。',
+	'push.session_only': 'このタブの間だけ保持します。アカウントがないと暗号化する鍵がないため、再読み込みでもう一度尋ねられます。残すにはアカウントを作ってください。',
+	'push.err_host':     'プッシュ先のホストを github.com のように入力してください。認証情報を削除するにはトークン欄を空にします。',
+	'push.err_not_held': '受け付けられなかったため、プッシュ用の認証情報は保持されていません。ホストとトークンを確かめて、もう一度お試しください。',
+	'push.not_resealed': 'パスフレーズは変わりましたが、プッシュ用トークンを新しいパスフレーズで暗号化し直せませんでした。再読み込みまではプッシュできます。残すにはトークンを設定し直してください。',
 
 	// ── このアカウントを同期する端末 ───────────────────────────
 	'devices.on_platform': '{platform} 上の {brand}',

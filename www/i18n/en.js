@@ -115,6 +115,7 @@
 	'drawer.models':  'Models',
 	'drawer.version': 'Version',
 	'drawer.credits': 'Credits',
+	'drawer.push':    'Push',
 
 	// ── Dialogs ────────────────────────────────────────────────
 	'dlg.are_you_sure': 'Are you sure?',
@@ -152,6 +153,33 @@
 	'home.sec_console':      'Console',
 	'home.console_open':     'Open the operator console',
 	'home.console_note':     'This account holds the {role} role. The console opens in a new tab and follows this sign-in.',
+	'home.sec_push':         'Push',
+	'home.push_setup':       'Set up git push…',
+	'home.push_to':          '{host} — change the push token…',
+	'home.push_help':        'A token lets Daimond push what it has already committed. Without one it still commits, but every push is refused.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Give Daimond a token and it can push work you have already committed. Without one it can still commit, but every push is refused and the work stays on this machine.',
+	'push.host':         'Host',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'Just the name, as in github.com — no https://, no port, no path. Only pushes to this host are authenticated; a repository anywhere else is refused rather than reached with your token.',
+	'push.token':        'Token',
+	'push.token_ph':     'Paste a token with push access',
+	'push.token_note':   'A token that may push is enough; it never needs more. Daimond pushes only, only fast-forward, and only to origin — force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.',
+	'push.save':         'Save',
+	'push.privacy':      'The token is encrypted under your passphrase and kept in this browser; it is never shown again, never sent to us, and never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and you will be asked for it again after a reload.',
+	'push.set':          'Set: a push reaches {host}.',
+	'push.none':         'Not set: every push is refused until a token is saved here.',
+	'push.saved':        'Saved. Encrypted under your passphrase, and used again each time you unlock.',
+	'push.cleared':      'Removed. Pushes are refused again until a token is saved here.',
+	'push.session_only': 'Held for this tab only: with no account there is nothing to encrypt it with, so a reload will ask for it again. Create an account to keep it.',
+	'push.err_host':     'Enter the host the push goes to, as in github.com, or empty the token box to remove the credential.',
+	'push.err_not_held': 'That was not accepted, so no push credential is held. Check the host and the token and try again.',
+	'push.not_resealed': 'Your passphrase changed, but the push token could not be re-encrypted under it. Pushing works until you reload; set the token again to keep it.',
 
 	// ── The devices that sync this account ─────────────────────
 	// The list is what it says it is: devices that have SYNCED. A linked device

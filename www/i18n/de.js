@@ -824,6 +824,7 @@
 	'drawer.models': 'Modelle',
 	'drawer.version': 'Version',
 	'drawer.credits': 'Guthaben',
+	'drawer.push':    'Push',
 
 	// ── Dialogs ────────────────────────────────────────────────
 	'dlg.are_you_sure': 'Bist du sicher?',
@@ -860,6 +861,33 @@
 	'home.sec_console':      'Konsole',
 	'home.console_open':     'Betreiberkonsole öffnen',
 	'home.console_note':     'Dieses Konto hat die Rolle {role}. Die Konsole öffnet sich in einem neuen Tab und folgt dieser Anmeldung.',
+	'home.sec_push':         'Push',
+	'home.push_setup':       'Git-Push einrichten…',
+	'home.push_to':          '{host} — Push-Token ändern…',
+	'home.push_help':        'Mit einem Token kann Daimond pushen, was es bereits committet hat. Ohne Token committet es weiterhin, aber jeder Push wird abgelehnt.',
+
+	// ── The credential a push travels with ─────────────────────
+	// Two boxes and no more: the user name a token travels as is a per-forge
+	// constant, so it is inferred from the host rather than asked for. Every line
+	// here says what happens if it is skipped, because "no credential" and
+	// "authentication failed" look identical from inside a refused push.
+	'push.lead':         'Gib Daimond ein Token, dann kann es bereits committete Arbeit pushen. Ohne Token committet es weiterhin, aber jeder Push wird abgelehnt und die Arbeit bleibt auf diesem Rechner.',
+	'push.host':         'Host',
+	'push.host_ph':      'github.com',
+	'push.host_note':    'Nur der Name, also github.com — kein https://, kein Port, kein Pfad. Nur Pushes zu diesem Host werden authentifiziert; ein Repository woanders wird abgelehnt, statt mit deinem Token angesprochen zu werden.',
+	'push.token':        'Token',
+	'push.token_ph':     'Token mit Push-Recht einfügen',
+	'push.token_note':   'Ein Token, das pushen darf, reicht; mehr braucht es nie. Daimond pusht nur, nur als Fast-Forward und nur nach origin — force, delete, mirror und jedes andere Remote werden abgelehnt, egal was das Token erlaubt. Feld leeren und speichern entfernt es.',
+	'push.save':         'Speichern',
+	'push.privacy':      'Das Token wird mit deiner Passphrase verschlüsselt und bleibt in diesem Browser; es wird nie wieder angezeigt, nie an uns gesendet und nie einem Modell gegeben. Ohne Konto gibt es nichts, womit es verschlüsselt werden könnte — dann gilt es nur für diesen Tab, und nach einem Neuladen wirst du wieder danach gefragt.',
+	'push.set':          'Gesetzt: ein Push geht an {host}.',
+	'push.none':         'Nicht gesetzt: jeder Push wird abgelehnt, bis hier ein Token gespeichert ist.',
+	'push.saved':        'Gespeichert. Mit deiner Passphrase verschlüsselt und bei jedem Entsperren wieder eingesetzt.',
+	'push.cleared':      'Entfernt. Pushes werden wieder abgelehnt, bis hier ein Token gespeichert ist.',
+	'push.session_only': 'Gilt nur für diesen Tab: ohne Konto gibt es nichts, womit es verschlüsselt werden könnte, also fragt ein Neuladen wieder danach. Lege ein Konto an, um es zu behalten.',
+	'push.err_host':     'Gib den Host an, zu dem gepusht wird, etwa github.com — oder leere das Token-Feld, um die Zugangsdaten zu entfernen.',
+	'push.err_not_held': 'Das wurde nicht angenommen, es sind also keine Push-Zugangsdaten hinterlegt. Prüfe Host und Token und versuche es erneut.',
+	'push.not_resealed': 'Deine Passphrase wurde geändert, aber das Push-Token konnte damit nicht neu verschlüsselt werden. Pushen funktioniert bis zum Neuladen; setze das Token danach erneut, um es zu behalten.',
 
 	// ── The devices that sync this account ─────────────────────
 	'devices.on_platform': '{brand} auf {platform}',

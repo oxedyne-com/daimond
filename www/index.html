@@ -283,6 +283,35 @@
 						</div>
 					</div>
 
+					<!-- Push: the credential a `git push` travels with. Its own view and not a
+					     row in Models, because a token that can WRITE to a repository is a
+					     different kind of secret from a key that buys tokens from a provider,
+					     and filing the two together invites pasting one into the other.
+
+					     Two boxes and no more. The user name a token travels as is a per-forge
+					     constant rather than a choice -- `x-access-token` at GitHub, `oauth2` at
+					     GitLab -- so it is inferred from the host; a third box asking for it
+					     would mostly be filled in with a person's own login, which fails to
+					     authenticate with a message that names neither box. -->
+					<div class="admin-view" id="admin-push" style="display:none">
+						<div class="settings-section">
+							<p class="cfg-lead" data-i18n="push.lead">Give Daimond a token and it can push work you have already committed. Without one it can still commit, but every push is refused and the work stays on this machine.</p>
+							<div id="push-state" class="cfg-fieldnote"></div>
+							<label class="cfg-fieldlabel" for="cfg-push-host" data-i18n="push.host">Host</label>
+							<input type="text" id="cfg-push-host" placeholder="github.com" data-i18n-placeholder="push.host_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+							<p class="cfg-fieldnote" data-i18n="push.host_note">Just the name, as in github.com — no https://, no port, no path. Only pushes to this host are authenticated; a repository anywhere else is refused rather than reached with your token.</p>
+							<!-- Built exactly as #cfg-api-key is, and masked by installSecretMask
+							     for the same reason: a real password field is what makes a browser
+							     or a manager offer to save it, and this one belongs in neither. -->
+							<label class="cfg-fieldlabel" for="cfg-push-token" data-i18n="push.token">Token</label>
+							<input type="text" id="cfg-push-token" placeholder="Paste a token with push access" data-i18n-placeholder="push.token_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+							<p class="cfg-fieldnote" data-i18n="push.token_note">A token that may push is enough; it never needs anything more. Daimond pushes only, only fast-forward, and only to origin — force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.</p>
+							<button type="button" id="push-save" data-i18n="push.save">Save</button>
+							<div id="push-note" class="login-error"></div>
+							<p class="cfg-hint" data-i18n="push.privacy">The token is encrypted under your passphrase and kept in this browser; it is never shown again, never sent to us, and never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and you will be asked for it again after a reload.</p>
+						</div>
+					</div>
+
 					<!-- A form, built on demand: a mailbox to add, a thing to configure. -->
 					<div class="admin-view" id="admin-form" style="display:none"></div>
 
