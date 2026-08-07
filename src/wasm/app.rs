@@ -871,6 +871,17 @@ impl DaimondApp {
     /// Every file under `diamonds/<id>/` travels, so a Diamond carried to another
     /// device arrives whole -- crystal, versions, log, deltas, tags and links --
     /// and a per-Diamond file added later needs nothing to learn its name.
+    /// What `export_diamond` would weigh, without building it. See
+    /// [`diamond::export_size`] -- the sync uses this to decide what fits BEFORE
+    /// materialising it, which is the difference between a bounded parcel and
+    /// the whole store in memory.
+    pub async fn export_diamond_size(&self, id: String) -> Result<f64, JsValue> {
+        match diamond::export_size(&id).await {
+            Ok(n)  => Ok(n as f64),
+            Err(e) => Err(to_js_err(e)),
+        }
+    }
+
     pub async fn export_diamond(&self, id: String) -> Result<String, JsValue> {
         diamond::export_diamond(&id).await.map_err(to_js_err)
     }

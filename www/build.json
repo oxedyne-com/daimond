@@ -1,1 +1,1 @@
-{"build":"c5a27d6cab90","note":"The store was being walked several times at once, and the phone has 15 Diamonds"}
+{"build":"b92ff2ac5494","note":"The sync built the whole store in memory, then threw most of it away"}

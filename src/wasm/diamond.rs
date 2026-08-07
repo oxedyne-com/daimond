@@ -1190,6 +1190,48 @@ fn is_safe_rel(rel: &str) -> bool {
 /// inside the pack.  It is a copy of what `.daimond/meta.json` says, not a
 /// second source of truth: an import lays the file down verbatim and the file
 /// wins from then on.
+/// What [`export_diamond`] would weigh, WITHOUT building it.
+///
+/// The sync builds a parcel under a byte budget, and it used to find out whether
+/// a Diamond fitted by exporting it and measuring the result -- so every Diamond
+/// was materialised in full, and the ones over budget were thrown away after the
+/// fact. The budget capped what was SENT and not what was HELD.
+///
+/// On this machine that is invisible. On a phone with fifteen Diamonds carrying
+/// un-pruned version history it is the whole store in memory at once, which is
+/// what an iPhone's tab is killed for. `list_dir` already reports each entry's
+/// size, so the answer costs a directory walk and not one byte of content.
+///
+/// An OVER-estimate by design: the JSON envelope and escaping only ever add to
+/// it, so a Diamond this says fits might still be trimmed by the caller, and one
+/// it says does not fit certainly does not.
+pub async fn export_size(id: &str) -> Outcome<u64> {
+    let root = diamond_dir(id);
+    if !res!(opfs::exists(FileRoot::Opfs, &root).await) {
+        return Ok(0);
+    }
+    let mut total: u64 = 0;
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
+        let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,
+        };
+        for (name, is_dir, size) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            if is_dir {
+                todo.push(child);
+            } else {
+                // The path travels in the envelope too, and a Diamond with many
+                // version files carries a lot of path.
+                total = total.saturating_add(size).saturating_add(child.len() as u64);
+            }
+        }
+    }
+    Ok(total)
+}
+
 pub async fn export_diamond(id: &str) -> Outcome<String> {
     let root = diamond_dir(id);
     if !res!(opfs::exists(FileRoot::Opfs, &root).await) {

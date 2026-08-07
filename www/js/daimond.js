@@ -2121,6 +2121,7 @@ import init, {
 	/// # Arguments
 	/// * `budget` - The most exported bytes the Diamonds may take of this parcel.
 	async function collectDiamonds(budget) {
+		trail('sync collect', 'budget ' + Math.round(budget / 1024) + ' kB');
 		var out = { list: [], left: [], complete: true }, tombs = loadDiamondTombs(), held;
 		try { held = JSON.parse(await diamondApp().list_diamonds()); }
 		catch (e) { out.complete = false; return out; }   // no store to read: send nothing, delete nothing
@@ -2133,6 +2134,29 @@ import init, {
 		var used = 0;
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
+			// MEASURE BEFORE MATERIALISING. This used to export every Diamond and
+			// then check the result against the budget, so the ones over budget
+			// were built in full and thrown away -- the budget capped what was
+			// SENT and not what was HELD. With fifteen Diamonds carrying un-pruned
+			// version history that is the whole store in memory at once, which is
+			// what killed an iPhone's tab on every boot for four sessions. The
+			// size comes from a directory walk and costs no content.
+			//
+			// The estimate is deliberately HIGH -- it counts bytes on disk plus
+			// the paths, and the JSON envelope only adds -- so a Diamond it
+			// rejects certainly would not have fitted. One it accepts is measured
+			// again below, exactly, because the envelope is what actually travels.
+			var size = null;
+			try {
+				if (typeof diamondApp().export_diamond_size === 'function') {
+					size = await diamondApp().export_diamond_size(d.id);
+				}
+			} catch (e) { size = null; }        // an older engine: fall back to measuring after
+			if (size !== null && used + size > budget) {
+				out.left.push({ id: d.id, name: d.name || d.id });
+				out.complete = false;
+				continue;                        // never exported, so never held
+			}
 			try { data = await diamondApp().export_diamond(d.id); }
 			catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
 			// `continue`, not `break`: one enormous Diamond must not stop the small
@@ -2140,6 +2164,7 @@ import init, {
 			if (used + data.length > budget) {
 				out.left.push({ id: d.id, name: d.name || d.id });
 				out.complete = false;
+				data = null;                     // let it go before the next one is read
 				continue;
 			}
 			used += data.length;
@@ -2154,6 +2179,8 @@ import init, {
 				data:    data,
 			});
 		}
+		trail('sync collected', out.list.length + ' of ' + held.length
+			+ ', ' + Math.round(used / 1024) + ' kB, ' + out.left.length + ' left behind');
 		return out;
 	}
 
