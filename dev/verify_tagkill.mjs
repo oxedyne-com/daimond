@@ -31,7 +31,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // The mock model is connected but never called: nothing here reaches a provider.
 // It is connected because the rail's "+" refuses to create a Diamond without one.
-const s = await open({ name: 'tagkill' });
+const s = await open({ name: 'tagkill', defaults: false });
 const p = s.page;
 
 /// The store's own answer: every Diamond and the tags actually written down.

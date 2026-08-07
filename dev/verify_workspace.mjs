@@ -180,7 +180,15 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 // (a MutationObserver at document-start, because the registry is read during
 // boot and a DOMContentLoaded listener is a race against it), and the page is
 // reloaded so boot sees it.
+//
+// HOW MANY dock panels the product ships is the product's business, so it is
+// measured here rather than written down. It said `=== 5` and phase H's Pending
+// panel made it six, which failed a check for a panel that was working
+// perfectly — the same shape as the sentence above about the Terminal, one
+// release later. What this section needs is not a number but ONE MORE THAN
+// THERE WERE.
 {
+	const before = await dockZone();
 	await p.addInitScript(() => {
 		const add = () => {
 			if (document.getElementById('panel-scratch')) return true;
@@ -209,8 +217,9 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 	await signInAs(s, 'workspace');
 	await p.waitForTimeout(2500);
 	const dockPanels = await dockZone();
-	check('a fifth dock panel is registered from the markup, as any panel is',
-		dockPanels.includes('scratch') && dockPanels.length === 5, dockPanels.join(', '));
+	check('one more dock panel is registered from the markup, as any panel is',
+		dockPanels.includes('scratch') && dockPanels.length === before.length + 1,
+		`${before.length} -> ${dockPanels.length}: ${dockPanels.join(', ')}`);
 	const smallest = await p.evaluate(() => {
 		const g = window.DaimondPanels.grids();
 		return Math.min(...Object.keys(g).filter(k => g[k]).map(k => g[k].cols * g[k].rows));

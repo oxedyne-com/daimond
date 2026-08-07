@@ -53,7 +53,7 @@ const check = (ok, what) => {
 const PROFILE = scratch('graphedit-profile');
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
-const s = await open({ name: 'graphedit', connect: false, profile: PROFILE });
+const s = await open({ name: 'graphedit', connect: false, profile: PROFILE, defaults: false });
 const { page } = s;
 await page.waitForTimeout(2500);
 

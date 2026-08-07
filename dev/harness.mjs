@@ -85,6 +85,10 @@ export async function open(opts = {}) {
 		extension = null,		// path to an unpacked extension, headed only
 		connect   = true,		// skip to test the disconnected state
 		signIn    = true,		// skip to test the gate itself
+		// The two default Diamonds the app seeds on a first boot. Pass false when
+		// the test COUNTS Diamonds, or pause leaves, and needs to own the set --
+		// see `clearDiamonds` below for why they are removed rather than skipped.
+		defaults  = true,
 		// A fixed profile directory, so a run keeps the identity — and therefore the
 		// GATEWAY ACCOUNT — of the run before it. Without one, every run mints a new
 		// account, and nothing that needs an entitlement (mail, a pack) can be tested
@@ -129,10 +133,50 @@ export async function open(opts = {}) {
 	const s = { browser, page, errs, logs, name };
 
 	if (signIn) await signInAs(s, name);
+	if (signIn && !defaults) await clearDiamonds(s);
 	if (signIn && connect) await connectMock(s);
 
 	s.close = async () => { await browser.close(); };
 	return s;
+}
+
+/// Empty the rail, for a test that owns the Diamond set.
+///
+/// A FRESH PROFILE IS NO LONGER EMPTY. The app seeds two default Diamonds on the
+/// first boot of an account (`seedDefaultDiamonds`), which notes2 asks for: an
+/// arriving user should not face a blank rail. A verifier that builds a fixture
+/// and then COUNTS — the graph pane's stats line, the tag filter, the pause
+/// parcel, "the rail did not gain a Diamond nothing lists" — was written when a
+/// new account held nothing, and two it did not create read as a defect in
+/// whatever it was measuring.
+///
+/// Deleting them AFTER the boot that made them is deliberate: the app records
+/// that it has already offered them, so nothing offers again and the rail stays
+/// empty for the rest of the run. Suppressing the seed instead would mean a flag
+/// in shipped code that exists only for tests, and would have to be written into
+/// the account's own localStorage namespace before a boot that has not happened.
+///
+/// The pause tree is cleared with them. The defaults are seeded PAUSED, at the
+/// leaf, so their ids travel in the sync parcel and outlive the Diamonds that
+/// named them.
+export async function clearDiamonds(s) {
+	const { page } = s;
+	const gone = await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		let list = [];
+		try { list = JSON.parse(await app.list_diamonds()); } catch (e) { return 0; }
+		for (const d of list) { try { await app.delete_diamond(d.id); } catch (e) { /* already gone */ } }
+		try { window.DaimondPause.forget('root'); } catch (e) { /* module not up */ }
+		return list.length;
+	});
+	if (!gone) return 0;
+	// Redrawn from the store the way a person would see it, rather than by poking
+	// the rail: a reload is the one path guaranteed to agree with what is on disk.
+	// It lands on the lock screen, hence the second sign-in.
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(s, s.name);
+	return gone;
 }
 
 /// The chats as they are actually stored.

@@ -114,78 +114,126 @@ fn delta_path(id: &str, version: u64) -> String {
 // │ Migration                                                      │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Move the whole Diamond root from `foci/` to `diamonds/`, so a workspace made before the
-/// Focus -> Diamond rename opens with every pursuit intact.
+/// Is there an EARLIER Diamond root whose entries have NOT been taken over?
 ///
-/// This runs before [`list`] reads the root, and before the per-Diamond [`migrate`], because
-/// everything below depends on the new root existing.  Without it a user's Foci would
-/// simply not be found: `list_dir("diamonds")` would fail, the rail would come up empty, and
-/// every crystal, version and fold record would read as though it had never existed.
-///
-/// The logs are rewritten too.  A log record's `delta_ref` holds a *path* written when the
-/// fold was applied, so every historical record still points into `foci/`; left alone,
-/// "view this delta" would fail on every fold the user has.  The rewrite is `foci/<id>/`
-/// to `diamonds/<id>/`, which covers both the `.red/` and `.daimond/` store layouts, so a
-/// workspace old enough to need both migrations gets this one first and the store move
-/// second.
-///
-/// Idempotent, and it never clobbers: a workspace already migrated has no `foci/` to move,
-/// and one holding both roots is left entirely alone rather than merged.  Returns whether
-/// anything moved.
-/// Is there an EARLIER Diamond root still waiting to be moved to `diamonds/`?
-///
-/// Exists because [`migrate_root`] refuses to move one once `diamonds/` is there --
-/// deliberately, since merging two roots is how a workspace loses work -- and that
-/// makes creating a Diamond into an empty store an irreversible act for anybody
-/// whose old store has not arrived yet. A restored backup, a sync from an older
-/// device, a folder adopted later: any of them can bring a `foci/` that will then
-/// never be found.
-///
-/// So a caller that is about to create a Diamond UNASKED -- which is only the
-/// default Diamonds -- asks this first and does nothing when the answer is yes.
-/// A caller acting on the user's own press does not need to: they have asked.
+/// After [`migrate_root`]'s merge, this is true only of a genuine id collision -- an id
+/// present in both roots, which is the one case the merge leaves alone.  It used to answer
+/// the much larger question "is there an old root that will now never be found", which the
+/// merge has made unaskable.
 pub async fn legacy_root_waiting() -> Outcome<bool> {
-    if res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
-        return Ok(false);       // already on the current root; nothing is waiting
-    }
     for legacy in LEGACY_ROOT_DIRS.iter() {
-        if res!(opfs::exists(FileRoot::Opfs, legacy).await) {
+        let entries = match opfs::list_dir(FileRoot::Opfs, legacy).await {
+            Ok(e)  => e,
+            Err(_) => continue,         // no such root here
+        };
+        if entries.iter().any(|(_, is_dir, _)| *is_dir) {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
+/// Bring the Diamond root forward from `foci/` or `facets/` to `diamonds/`, so a workspace
+/// made before the Focus -> Diamond rename opens with every pursuit intact.
+///
+/// This runs before [`list`] reads the root, and before the per-Diamond [`migrate`], because
+/// everything below depends on the new root existing.  Without it a user's Foci would simply
+/// not be found: `list_dir("diamonds")` would fail, the rail would come up empty, and every
+/// crystal, version and fold record would read as though it had never existed.
+///
+/// Idempotent, and it never clobbers.  A workspace already migrated has nothing to move.  A
+/// workspace holding BOTH roots has the entries that do not collide moved across, and the
+/// ones that do left exactly where they are.
+///
+/// THE MERGE REPLACES A REFUSAL.  Until 2026-08-07 a workspace that arrived holding both
+/// roots was left alone entirely, which sounds cautious and is not: the old root is a
+/// directory nothing reads, so those Diamonds were invisible for ever -- and the state was
+/// reachable by an ordinary sequence of events, since creating a single Diamond makes
+/// `diamonds/` exist and a backup, a sync from an older device or a folder adopted afterwards
+/// can each bring an older root along later.  Moving an entry whose id is not already in
+/// `diamonds/` overwrites nothing, so it is strictly safer than leaving it unreachable.  A
+/// genuine id collision is the one case where merging really could lose work, and it is the
+/// one case this does not attempt.
+///
+/// Returns whether anything moved.
 async fn migrate_root() -> Outcome<bool> {
-    if res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
-        return Ok(false);       // already on the current root
-    }
-    // Whichever earlier root this workspace holds, taken newest-first so that a
-    // workspace somehow holding both is moved from the one nearer to current.
-    let mut from: Option<&str> = None;
+    let mut moved = false;
+    // Newest legacy root first, so a workspace somehow holding both is taken from
+    // the one nearer to current and the older one merges around what it left.
     for legacy in LEGACY_ROOT_DIRS.iter().rev() {
-        if res!(opfs::exists(FileRoot::Opfs, legacy).await) {
-            from = Some(legacy);
-            break;
+        if !res!(opfs::exists(FileRoot::Opfs, legacy).await) {
+            continue;
+        }
+        if res!(migrate_one_root(legacy).await) {
+            moved = true;
         }
     }
-    let legacy = match from {
-        Some(l) => l,
-        None    => return Ok(false),    // a new workspace: nothing to move
-    };
-    res!(opfs::move_entry(FileRoot::Opfs, legacy, ROOT_DIR).await);
+    Ok(moved)
+}
 
-    // Every log points at its deltas by a path that has just moved.  Named for what it holds --
-    // the entries of the root this function has only now created -- so it cannot be mistaken for
-    // the rail's own walk of the store further down, which answers a different question.
-    let moved = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
+/// Take `legacy` over into `diamonds/`, whole if it can and entry by entry if it cannot.
+async fn migrate_one_root(legacy: &str) -> Outcome<bool> {
+    // Nothing to merge into: the whole directory in one move.  Cheaper, and it
+    // carries anything a `list_dir` walk would not report.
+    if !res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
+        res!(opfs::move_entry(FileRoot::Opfs, legacy, ROOT_DIR).await);
+        let ids = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
+            Ok(e)  => e.into_iter().filter(|(_, d, _)| *d).map(|(n, _, _)| n).collect(),
+            Err(_) => Vec::new(),       // moved, but nothing to walk
+        };
+        res!(rewrite_delta_refs(legacy, &ids).await);
+        return Ok(true);
+    }
+
+    // Both roots. Move what does not collide; leave what does.
+    let entries = match opfs::list_dir(FileRoot::Opfs, legacy).await {
         Ok(e)  => e,
-        Err(_) => return Ok(true),      // moved, but nothing to walk
+        Err(_) => return Ok(false),
     };
-    for (id, is_dir, _size) in moved {
+    let mut ids: Vec<String> = Vec::new();
+    let mut collisions = 0usize;
+    for (name, is_dir, _size) in entries {
         if !is_dir {
             continue;
         }
+        let to = fmt!("{}/{}", ROOT_DIR, name);
+        if res!(opfs::exists(FileRoot::Opfs, &to).await) {
+            // The same id in both roots.  Which copy is the user's current work is
+            // not answerable from here, and overwriting the one they can see with
+            // one they cannot is the loss this whole function exists to avoid.
+            collisions += 1;
+            console_log(&fmt!(
+                "A Diamond '{}' is in both '{}' and '{}'; the older copy is left where it is.",
+                name, legacy, ROOT_DIR,
+            ));
+            continue;
+        }
+        let from = fmt!("{}/{}", legacy, name);
+        res!(opfs::move_entry(FileRoot::Opfs, &from, &to).await);
+        ids.push(name);
+    }
+    if ids.is_empty() && collisions > 0 {
+        return Ok(false);
+    }
+    res!(rewrite_delta_refs(legacy, &ids).await);
+    // An emptied legacy root is deleted, so the next boot has nothing to walk and
+    // `legacy_root_waiting` stops reporting a root that holds nothing.  One that
+    // still holds a collision stays, because it still holds the user's work.
+    if collisions == 0 {
+        if let Err(e) = opfs::delete_entry(FileRoot::Opfs, legacy, true).await {
+            console_log(&fmt!("The emptied '{}' root could not be removed: {}.", legacy, e));
+        }
+    }
+    Ok(!ids.is_empty())
+}
+
+/// Point every moved Diamond's log at its deltas under the new root.
+///
+/// A log record's `delta_ref` holds a *path* written when the fold was applied, so every
+/// historical record still names `legacy/<id>/`; left alone, "view this delta" would fail on
+/// every fold the user has.
+async fn rewrite_delta_refs(legacy: &str, ids: &[String]) -> Outcome<()> {
+    for id in ids {
         // The log is wherever this Diamond's store currently is, and a workspace
         // old enough to predate the Red -> Daimond rename may still be on
         // `.red/` -- [`migrate`] has not run yet, and cannot, because it
@@ -209,7 +257,7 @@ async fn migrate_root() -> Outcome<bool> {
             }
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 

@@ -5,22 +5,38 @@
 //
 //   A leaf is binary. A branch shows green when every leaf under it plays, red
 //   when none does, and amber otherwise. AMBER IS DERIVED AND CAN NEVER BE SET.
-//   Clicking a branch pauses all its leaves, or resumes them all.
+//   Pausing a branch pauses all its leaves; resuming it resumes them all.
+//
+// THE CONTROL IS THREE THINGS, and this file was rewritten for that. It was one
+// button drawn from `data-state`, which put a green PLAY triangle on a running
+// node — the colour said "running" while the shape said "play" and the only
+// thing pressing it could do was pause. Now:
+//
+//   a LIGHT      state only, never pressable, so amber cannot be set at all
+//   a PAUSE      a verb
+//   a PLAY       a verb
+//
+// Both verbs are always present; the inapplicable one is DISABLED, not hidden.
+// On a leaf exactly one is ever live. ON AN AMBER BRANCH BOTH ARE — which is
+// the property one button could not have: a single control had to guess, and
+// `clickWould` guessed resume-all with nothing on screen to say so.
 //
 // A test that pauses one thing and reads the flag back confirms the script. So
 // this enumerates: every subset of the leaf set is built directly, and then
-// EVERY control on the page is clicked from it, and the result is judged
-// against a rule this file computes for itself from a tree it builds for
+// EVERY verb of EVERY control on the page is pressed from it, and the result is
+// judged against a rule this file computes for itself from a tree it builds for
 // itself out of the rail's DOM. `DaimondPause._core` is never consulted —
 // checking the module against its own arithmetic would agree with it right up
 // to the case that is wrong.
 //
 // WHAT THIS FILE LOCKS DOWN.
 //
-//  A. Amber is unreachable by clicking. From all 2^n leaf states, no click on
-//     any single control leaves that control amber; the leaves under it come
-//     out uniform; the leaves outside it do not move; and the widget draws what
-//     the module says.
+//  A. A verb does what it says, from all 2^n leaf states: pause leaves the node
+//     red, play leaves it green, neither ever leaves it amber; the leaves under
+//     it come out uniform; the leaves outside it do not move; and the light
+//     draws what the module says.
+//  A2. WHICH VERB IS OFFERED matches the state — pause alone when running, play
+//     alone when paused, BOTH when amber — and the light is not a control.
 //  B. A branch agrees with its leaves — for the empty case, the all-paused
 //     case, the all-playing case, and every mixed case in between.
 //  C. The global control IS the root: pausing it pauses every leaf including
@@ -30,9 +46,10 @@
 //     a resumed agent sends nothing while the leaf is set.
 //  E. Pause does not pause reading: a paused Diamond still opens, its crystal
 //     still renders, and the workspace still lists.
-//  F. The control is reachable and named: a button, in the tab order, answering
-//     Enter and Space, with an accessible name that says which node it governs
-//     and what the click will do.
+//  F. The verbs are reachable and named: real buttons, in the tab order,
+//     answering Enter and Space, each with an accessible name that says which
+//     node it governs and which verb it is — and the light beside them is
+//     named, unfocusable and inert.
 //
 // PROVED RED. Two ways. `--unbuilt` neuters the three new pieces before the app
 // boots — no widget is built, no tree is registered, and the pump reads the old
@@ -233,16 +250,38 @@ const byId   = new Map(nodes.map((n) => [n.id, n]));
 check(leaves.length >= 5, `the page carries enough leaves to search (${leaves.length}: ${leaves.join(', ')})`,
 	leaves.length < 5 ? JSON.stringify(leaves) : null);
 
-/// Every control on the page, and the node each governs.
-const controls = () => p.evaluate(() => [...document.querySelectorAll('.pptw')].map((b) => ({
-	node: b.dataset.pauseNode, name: b.dataset.pauseName,
-	state: b.dataset.state, label: b.getAttribute('aria-label'),
-	tag: b.tagName.toLowerCase(),
-	inTabOrder: b.matches('a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'),
-	iconHidden: [...b.querySelectorAll('svg')].every((g) => g.getAttribute('aria-hidden') === 'true'),
-	where: b.closest('.diamond-box') ? 'diamond' : b.closest('.chat-box') ? 'chat'
-		: b.closest('#pptw-global-row') ? 'global' : 'other',
-})));
+/// Every control on the page, and the node each governs. A control is now the
+/// GROUP — the light and the two verbs — so each is read as its three parts.
+const controls = () => p.evaluate(() => [...document.querySelectorAll('.pptw')].map((g) => {
+	const lamp = g.querySelector('.pptw-lamp');
+	const part = (b) => ({
+		act: b.dataset.act,
+		tag: b.tagName.toLowerCase(),
+		disabled: !!b.disabled,
+		label: b.getAttribute('aria-label'),
+		// Enabled buttons are in the tab order; a DISABLED one is deliberately
+		// not, and must not be counted against it.
+		inTabOrder: b.matches('button:not([disabled]),[tabindex]:not([tabindex="-1"])') || b.disabled,
+		iconHidden: [...b.querySelectorAll('svg')].every((s) => s.getAttribute('aria-hidden') === 'true'),
+	});
+	return {
+		node: g.dataset.pauseNode, name: g.dataset.pauseName,
+		state: g.dataset.state,
+		tag: g.tagName.toLowerCase(),
+		lamp: lamp ? {
+			tag: lamp.tagName.toLowerCase(),
+			role: lamp.getAttribute('role'),
+			label: lamp.getAttribute('aria-label'),
+			// Focusable at all? `tabIndex >= 0` is the browser's own answer, and it
+			// is 0 for a <button> even without the attribute.
+			focusable: lamp.tabIndex >= 0,
+			iconHidden: [...lamp.querySelectorAll('svg')].every((s) => s.getAttribute('aria-hidden') === 'true'),
+		} : null,
+		acts: [...g.querySelectorAll('.pptw-act')].map(part),
+		where: g.closest('.diamond-box') ? 'diamond' : g.closest('.chat-box') ? 'chat'
+			: g.closest('#pptw-global-row') ? 'global' : 'other',
+	};
+}));
 
 const ctl = await controls();
 check(ctl.length >= 5, `a control is on each placement (${ctl.length} found)`,
@@ -261,74 +300,113 @@ check(ctl.filter((c) => c.where === 'chat').length >= 2, 'one on each chat tile'
 	`${ctl.filter((c) => c.where === 'chat').length}`);
 
 // ── F. Reachable and named ──────────────────────────────────────────
-check(ctl.length > 0 && ctl.every((c) => c.tag === 'button'),
-	'every control is a real <button>', JSON.stringify(ctl.map((c) => c.tag)));
-check(ctl.length > 0 && ctl.every((c) => c.inTabOrder),
-	'every control is in the tab order, like the rest of the rail');
-check(ctl.length > 0 && ctl.every((c) => c.iconHidden),
-	'its icon is aria-hidden, so it is not read out beside its own label');
-check(ctl.length > 0 && ctl.every((c) => c.label && /[\p{L}\p{N}]/u.test(c.label)),
-	'every control has an accessible name that is not bare punctuation',
-	JSON.stringify(ctl.map((c) => c.label).slice(0, 3)));
-// The name has to say WHICH node and WHAT the click does; five lights on a rail
-// that all announce "Pause" are five identical controls.
+const acts = ctl.flatMap((c) => c.acts);
+check(ctl.length > 0 && ctl.every((c) => c.acts.length === 2),
+	'every control carries exactly two verbs', JSON.stringify(ctl.map((c) => c.acts.length)));
+check(ctl.length > 0 && ctl.every((c) => JSON.stringify(c.acts.map((a) => a.act)) === '["pause","play"]'),
+	'and they are pause then play, in that order everywhere',
+	JSON.stringify(ctl.map((c) => c.acts.map((a) => a.act))));
+check(acts.length > 0 && acts.every((a) => a.tag === 'button'),
+	'every verb is a real <button>', JSON.stringify([...new Set(acts.map((a) => a.tag))]));
+check(acts.length > 0 && acts.every((a) => a.inTabOrder),
+	'every live verb is in the tab order, like the rest of the rail');
+check(acts.length > 0 && acts.every((a) => a.iconHidden),
+	'its glyph is aria-hidden, so it is not read out beside its own label');
+check(acts.length > 0 && acts.every((a) => a.label && /[\p{L}\p{N}]/u.test(a.label)),
+	'every verb has an accessible name that is not bare punctuation',
+	JSON.stringify(acts.map((a) => a.label).slice(0, 3)));
+
+// THE LIGHT IS NOT A CONTROL. This is what makes "amber can never be set" true
+// by construction: there is no press that could set it.
+const lamps = ctl.map((c) => c.lamp);
+check(lamps.length > 0 && lamps.every((l) => l && l.tag !== 'button'),
+	'the light is not a button', JSON.stringify(lamps.map((l) => l && l.tag)));
+check(lamps.length > 0 && lamps.every((l) => l && !l.focusable),
+	'and it is not focusable — nothing about it says it can be pressed',
+	JSON.stringify(lamps.map((l) => l && l.focusable)));
+check(lamps.length > 0 && lamps.every((l) => l && l.role === 'img' && l.label && /[\p{L}\p{N}]/u.test(l.label)),
+	'but it is still announced, and says what it is showing',
+	JSON.stringify(lamps.map((l) => l && l.label).slice(0, 3)));
+check(lamps.length > 0 && lamps.every((l) => l && l.iconHidden),
+	'with its own glyph hidden behind that name');
+
+// The names have to say WHICH node; five rails of "Pause" are five identical
+// controls. The verb's name says the ACT, the light's says the STATE — never
+// the other way round, which is the whole fault this rebuild answers.
 {
-	const names = ctl.filter((c) => c.where !== 'global').map((c) => c.label);
+	const names = ctl.filter((c) => c.where !== 'global').flatMap((c) => c.acts.map((a) => a.label));
 	check(names.length > 0 && new Set(names).size === names.length,
-		'no two controls announce the same thing', JSON.stringify(names));
+		'no two verbs on the page announce the same thing', JSON.stringify(names));
 	const alpha = ctl.find((c) => c.name === 'Alpha');
-	check(!!alpha && /Alpha/.test(alpha.label || '') && /(Pause|Resume)/.test(alpha.label || ''),
-		'the name carries the node and the action', JSON.stringify(alpha && alpha.label));
+	const aPause = alpha && alpha.acts.find((a) => a.act === 'pause');
+	const aPlay  = alpha && alpha.acts.find((a) => a.act === 'play');
+	check(!!aPause && /Alpha/.test(aPause.label || '') && /Pause/i.test(aPause.label || ''),
+		'the pause verb names the node and says pause', JSON.stringify(aPause && aPause.label));
+	check(!!aPlay && /Alpha/.test(aPlay.label || '') && /Resume|Play/i.test(aPlay.label || ''),
+		'the play verb names the node and says resume', JSON.stringify(aPlay && aPlay.label));
+	check(!!alpha && /Alpha/.test(alpha.lamp.label || '')
+		&& /running|paused/i.test(alpha.lamp.label || '')
+		&& !/^(Pause|Resume)\b/i.test(alpha.lamp.label || ''),
+		'and the light names the node and its STATE, never an action',
+		JSON.stringify(alpha && alpha.lamp.label));
 }
 
-// ── A. Amber is unreachable by clicking ─────────────────────────────
+// ── A. A verb does what it says ─────────────────────────────────────
 //
-// Every subset of the leaves, times every control. The leaves are set DIRECTLY
-// -- never through a control -- so the starting state is genuinely arbitrary
-// rather than something a click could reach.
+// Every subset of the leaves, times every control, times BOTH verbs. The leaves
+// are set DIRECTLY — never through a control — so the starting state is
+// genuinely arbitrary rather than something a press could reach.
+//
+// A disabled button is pressed too, and is expected to do nothing: `click()` on
+// a disabled <button> dispatches no event, and that IS the guard against the
+// state changing under a verb the page said was unavailable.
 const sweep = await p.evaluate(({ leaves, nodeIds }) => {
 	const rows = [];
 	if (!window.DaimondPause) return rows;
-	const btnFor = (n) => document.querySelector(`.pptw[data-pause-node="${n}"]`);
-	const live = nodeIds.filter(btnFor);
+	const grpFor = (n) => document.querySelector(`.pptw[data-pause-node="${n}"]`);
+	const live = nodeIds.filter(grpFor);
 	for (let m = 0; m < (1 << leaves.length); m++) {
 		for (const node of live) {
-			DaimondPause.set('root', true);
-			for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
-			const before = leaves.map((l) => DaimondPause.isPaused(l));
-			const b = btnFor(node);
-			const shown = b.dataset.state;
-			b.click();
-			rows.push({
-				m, node, shown,
-				after:   b.dataset.state,
-				said:    DaimondPause.state(node),
-				beforeL: before,
-				afterL:  leaves.map((l) => DaimondPause.isPaused(l)),
-			});
+			for (const act of ['pause', 'play']) {
+				DaimondPause.set('root', true);
+				for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
+				const before = leaves.map((l) => DaimondPause.isPaused(l));
+				const g = grpFor(node);
+				const b = g.querySelector('.pptw-act.pptw-' + act);
+				const shown = g.dataset.state;
+				const wasDisabled = !!(b && b.disabled);
+				if (b) b.click();
+				rows.push({
+					m, node, act, shown, wasDisabled,
+					after:   g.dataset.state,
+					said:    DaimondPause.state(node),
+					beforeL: before,
+					afterL:  leaves.map((l) => DaimondPause.isPaused(l)),
+				});
+			}
 		}
 	}
 	return rows;
 }, { leaves, nodeIds: nodes.map((n) => n.id) });
 
-check(sweep.length > 0, `the sweep ran (${sweep.length} clicks over ${1 << leaves.length} leaf states)`);
+check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leaves.length} leaf states)`);
 
 {
 	// Every judgement below requires the sweep to have RUN. A page with no
-	// controls on it makes "no click reaches amber" true and meaningless, and a
+	// controls on it makes "no press reaches amber" true and meaningless, and a
 	// check that cannot fail is not evidence.
 	const ran = sweep.length > 0;
 	const amber = sweep.filter((r) => r.after === 'mixed' || r.said === 'mixed');
 	check(ran && amber.length === 0,
-		'NO click on any control, from any of the leaf states, leaves that control amber',
+		'NO press of either verb, from any of the leaf states, leaves that control amber',
 		amber.length ? `${amber.length} did, e.g. ${JSON.stringify(amber[0])}` : null);
 
 	const disagree = sweep.filter((r) => r.after !== r.said);
 	check(ran && disagree.length === 0,
-		'the widget always draws what the module says the node is',
+		'the light always draws what the module says the node is',
 		disagree.length ? JSON.stringify(disagree[0]) : null);
 
-	// The leaves under the clicked node come out uniform, and everything else
+	// The leaves under the pressed node come out uniform, and everything else
 	// is left exactly as it was.
 	const smeared = [], bled = [];
 	for (const r of sweep) {
@@ -340,17 +418,99 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} clicks over ${1 << leave
 		for (const [, i] of outSet) if (r.afterL[i] !== r.beforeL[i]) { bled.push(r); break; }
 	}
 	check(ran && smeared.length === 0,
-		'a click sets EVERY leaf under the node it was on, to the same thing',
+		'a press sets EVERY leaf under the node it was on, to the same thing',
 		smeared.length ? JSON.stringify(smeared[0]) : null);
 	check(ran && bled.length === 0,
 		'and touches no leaf outside it',
 		bled.length ? JSON.stringify(bled[0]) : null);
 
-	// Wholly playing pauses; anything else — including amber — resumes.
-	const wrongWay = sweep.filter((r) => r.after !== (r.shown === 'play' ? 'pause' : 'play'));
+	// THE VERB, NOT THE STATE, DECIDES. Pause leaves it red and play leaves it
+	// green, from wherever it started — which is what one button could not say.
+	const wrongWay = sweep.filter((r) => r.after !== (r.act === 'pause' ? 'pause' : 'play'));
 	check(ran && wrongWay.length === 0,
-		'a node wholly playing pauses; a paused OR amber node resumes',
+		'pause always ends paused and play always ends playing, from every state',
 		wrongWay.length ? JSON.stringify(wrongWay[0]) : null);
+
+	// A verb the page had greyed out changed nothing — which is the same thing
+	// as saying the disabled attribute is real rather than cosmetic.
+	const ghostPress = sweep.filter((r) => r.wasDisabled
+		&& JSON.stringify(r.beforeL) !== JSON.stringify(r.afterL));
+	check(ran && ghostPress.length === 0,
+		'a disabled verb changes nothing when it is pressed',
+		ghostPress.length ? JSON.stringify(ghostPress[0]) : null);
+	const disabledSeen = sweep.filter((r) => r.wasDisabled).length;
+	check(ran && disabledSeen > 0,
+		`a disabled verb was really pressed in the sweep (${disabledSeen} times)`);
+}
+
+// ── A2. Which verb is offered, and the light offers none ────────────
+//
+// The fault this rebuild answers is not arithmetic, it is what the control SAYS
+// is available. Running offers pause. Paused offers play. Amber offers BOTH —
+// with one button a mixed branch had to guess, and it guessed silently.
+{
+	const offered = await p.evaluate(({ leaves, nodeIds }) => {
+		const rows = [];
+		if (!window.DaimondPause) return rows;
+		const grpFor = (n) => document.querySelector(`.pptw[data-pause-node="${n}"]`);
+		const live = nodeIds.filter(grpFor);
+		for (let m = 0; m < (1 << leaves.length); m++) {
+			DaimondPause.set('root', true);
+			for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
+			for (const node of live) {
+				const g = grpFor(node);
+				rows.push({
+					node, state: g.dataset.state,
+					live: [...g.querySelectorAll('.pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act),
+				});
+			}
+		}
+		return rows;
+	}, { leaves, nodeIds: nodes.map((n) => n.id) });
+
+	const want = { play: ['pause'], pause: ['play'], mixed: ['pause', 'play'] };
+	const wrong = offered.filter((r) => JSON.stringify(r.live) !== JSON.stringify(want[r.state]));
+	check(offered.length > 0 && wrong.length === 0,
+		'the verb offered is the one that can be done: pause when running, play when paused',
+		wrong.length ? `${wrong.length} wrong, e.g. ${JSON.stringify(wrong[0])}` : `${offered.length} node-states`);
+	const ambers = offered.filter((r) => r.state === 'mixed');
+	check(ambers.length > 0,
+		`an amber branch was reached in this enumeration (${ambers.length} node-states)`);
+	check(ambers.length > 0 && ambers.every((r) => r.live.length === 2),
+		'AND AN AMBER BRANCH OFFERS BOTH — the thing one button could not do',
+		JSON.stringify(ambers.filter((r) => r.live.length !== 2)[0] || null));
+
+	// The light itself. Pressing it — the way a finger would — must move nothing
+	// at all.
+	//
+	// A DIAMOND TILE's light, which is the hard case: the tile is itself a click
+	// target, so a press that is not swallowed opens the Diamond. Aiming at a
+	// light and navigating instead is the mis-tap this has to rule out, and it is
+	// only visible on a control that sits on something clickable.
+	const inert = await p.evaluate(() => {
+		DaimondPause.set('root', true);
+		const g = document.querySelector('.diamond-box .pptw');
+		if (!g) return null;
+		const lamp = g.querySelector('.pptw-lamp');
+		const before = DaimondPause.pausedIds().join(',');
+		const wasOpen = ((document.getElementById('current-session-name') || {}).textContent || '').trim();
+		lamp.click();
+		lamp.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		lamp.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+		return {
+			before, after: DaimondPause.pausedIds().join(','),
+			cursor: getComputedStyle(lamp).cursor,
+			wasOpen, nowOpen: ((document.getElementById('current-session-name') || {}).textContent || '').trim(),
+		};
+	});
+	check(!!inert && inert.before === inert.after,
+		'and pressing the LIGHT changes nothing — amber cannot be set because nothing sets it',
+		JSON.stringify(inert));
+	check(!!inert && inert.wasOpen === inert.nowOpen,
+		'nor does it open the tile it sits on, which is what a mis-tap would otherwise do',
+		`${JSON.stringify(inert && inert.wasOpen)} -> ${JSON.stringify(inert && inert.nowOpen)}`);
+	check(!!inert && inert.cursor !== 'pointer',
+		'nor does it dress itself as pressable', JSON.stringify(inert && inert.cursor));
 }
 
 // ── B. A branch agrees with its leaves ──────────────────────────────
@@ -427,7 +587,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} clicks over ${1 << leave
 		// would then judge a state left over from the sweep above.
 		for (const id of DaimondPause.pausedIds()) DaimondPause.set(id, true);
 		const before = DaimondPause.pausedIds();
-		const b = document.querySelector('#pptw-global .pptw');
+		const b = document.querySelector('#pptw-global .pptw-pause');
 		if (!b) return { before, after: null, tiles: [], keys: [] };
 		b.click();
 		return {
@@ -451,36 +611,51 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} clicks over ${1 << leave
 		'one store holds the whole tree', JSON.stringify(paused.keys));
 
 	const back = await p.evaluate(() => {
-		const b = document.querySelector('#pptw-global .pptw');
+		const b = document.querySelector('#pptw-global .pptw-play');
 		if (!b) return null;
 		b.click();
 		return { ids: DaimondPause.pausedIds(), tiles: [...document.querySelectorAll('.pptw')].map((x) => x.dataset.state) };
 	});
 	check(!!back && back.ids.length === 0 && back.tiles.length > 0 && back.tiles.every((x) => x === 'play'),
-		'and clicking it again resumes everything', JSON.stringify(back));
+		'and its play verb resumes everything', JSON.stringify(back));
 }
 
 // ── F (continued). Enter and Space ──────────────────────────────────
+//
+// The verbs, one at a time and in both directions, because two buttons means
+// the keyboard has to reach the RIGHT one — a Tab order that skips the live
+// verb is a control a keyboard cannot work.
 {
+	await p.evaluate(() => DaimondPause.set('root', true));
 	const node = await p.evaluate(() => {
-		const b = document.querySelector('.diamond-box .pptw');
-		if (!b) return null;
+		const g = document.querySelector('.diamond-box .pptw');
+		if (!g) return null;
+		const b = g.querySelector('.pptw-pause');
 		b.focus();
-		return { node: b.dataset.pauseNode, focused: document.activeElement === b, state: b.dataset.state };
+		return { node: g.dataset.pauseNode, focused: document.activeElement === b, state: g.dataset.state };
 	});
-	check(!!node && node.focused, 'a control takes the focus');
+	check(!!node && node.focused, 'the pause verb takes the focus');
 	if (node) {
 		await p.keyboard.press('Enter');
 		await p.waitForTimeout(200);
 		const afterEnter = await p.evaluate((n) => DaimondPause.state(n), node.node);
-		check(afterEnter !== node.state, 'Enter on it toggles the node', `${node.state} -> ${afterEnter}`);
+		check(afterEnter === 'pause', 'Enter on it pauses the node', `${node.state} -> ${afterEnter}`);
+		// The pause verb is now disabled, so the focus has to be moved to the
+		// other one by hand — which is exactly what a person does.
+		const onPlay = await p.evaluate(() => {
+			const b = document.querySelector('.diamond-box .pptw .pptw-play');
+			b.focus();
+			return { focused: document.activeElement === b, disabled: b.disabled };
+		});
+		check(onPlay.focused && !onPlay.disabled,
+			'and the play verb beside it is live and takes the focus', JSON.stringify(onPlay));
 		await p.keyboard.press(' ');
 		await p.waitForTimeout(200);
 		const afterSpace = await p.evaluate((n) => DaimondPause.state(n), node.node);
-		check(afterSpace === node.state, 'and Space toggles it back', `-> ${afterSpace}`);
+		check(afterSpace === 'play', 'Space on THAT one resumes it', `-> ${afterSpace}`);
 	}
-	// A real pointer click, through the browser's own hit-testing: the tile
-	// underneath opens on click, and the light must not open it.
+	// A real pointer press, through the browser's own hit-testing: the tile
+	// underneath opens on click, and a verb must not open it.
 	const opened = await p.evaluate(() => {
 		for (const id of DaimondPause.pausedIds()) DaimondPause.set(id, true);
 		const box = document.querySelector('.diamond-box');
@@ -489,15 +664,15 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} clicks over ${1 << leave
 			id: box.dataset.id, ids: DaimondPause.pausedIds(),
 		};
 	});
-	const hit = await clickReal(p, '.diamond-box .pptw');
-	check(hit, 'there is a light on a Diamond tile for a pointer to hit');
+	const hit = await clickReal(p, '.diamond-box .pptw .pptw-pause');
+	check(hit, 'there is a pause verb on a Diamond tile for a pointer to hit');
 	await p.waitForTimeout(400);
 	const afterClick = await p.evaluate(() => ({
 		name: (document.getElementById('current-session-name') || {}).textContent || '',
 		ids: DaimondPause.pausedIds(),
 	}));
 	check(hit && opened.ids.length === 0 && afterClick.ids.length > 0,
-		'a pointer click on the light pauses the Diamond, from nothing paused',
+		'a pointer press on it pauses the Diamond, from nothing paused',
 		`${JSON.stringify(opened.ids)} -> ${JSON.stringify(afterClick.ids)}`);
 	check(hit && afterClick.name === opened.name,
 		'and does NOT open the tile it sits on', `${JSON.stringify(opened.name)} -> ${JSON.stringify(afterClick.name)}`);
@@ -563,37 +738,72 @@ out.push('--- self-test: breaking each property in the live page');
 {
 	const r = await p.evaluate(() => {
 		DaimondPause.set('root', true);
-		const b = document.querySelector('.diamond-box .pptw');
-		if (!b) return { was: 'no control', now: 'no control at all' };
-		const twin = b.cloneNode(true);
-		b.parentNode.replaceChild(twin, b);
+		const g = document.querySelector('.diamond-box .pptw');
+		if (!g) return { was: 'no control', now: 'no control at all' };
+		const twin = g.cloneNode(true);
+		g.parentNode.replaceChild(twin, g);
 		const was = DaimondPause.state(twin.dataset.pauseNode);
-		twin.click();
+		twin.querySelector('.pptw-pause').click();
 		const now = DaimondPause.state(twin.dataset.pauseNode);
 		return { was, now };
 	});
-	red(r.was === r.now, 'a control that lost its listener fails the toggle rule');
+	red(r.was === r.now, 'a verb that lost its listener fails the "pause ends paused" rule');
 	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));
 	await p.waitForTimeout(200);
+}
+
+// (a2) THE REGRESSION THIS REBUILD ANSWERS, planted: a control that offers the
+// verb it is ALREADY in — a running node offering play. That is one button's
+// whole failure mode, drawn as two.
+{
+	const r = await p.evaluate(() => {
+		DaimondPause.set('root', true);
+		const g = document.querySelector('.diamond-box .pptw');
+		if (!g) return null;
+		const play = g.querySelector('.pptw-play');
+		play.disabled = false;			// running, and yet play is on offer
+		const live = [...g.querySelectorAll('.pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act);
+		return { state: g.dataset.state, live };
+	});
+	const want = { play: ['pause'], pause: ['play'], mixed: ['pause', 'play'] };
+	red(!!r && JSON.stringify(r.live) !== JSON.stringify(want[r.state]),
+		'a running node that offers play is caught by the offered-verb rule');
+	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));
+	await p.waitForTimeout(200);
+}
+
+// (a3) And the other half of it: a light dressed as a button. If the lamp were
+// focusable it would be pressable, and amber would stop being unreachable by
+// construction.
+{
+	const r = await p.evaluate(() => {
+		const lamp = document.querySelector('.diamond-box .pptw .pptw-lamp');
+		if (!lamp) return null;
+		lamp.tabIndex = 0;
+		const bad = lamp.tabIndex >= 0;
+		lamp.removeAttribute('tabindex');
+		return { bad, restored: lamp.tabIndex >= 0 };
+	});
+	red(!!r && r.bad && !r.restored, 'a focusable light is a light that can be pressed, and is caught');
 }
 
 // (b) A painted state frozen away from the module's answer.
 {
 	const r = await p.evaluate(() => {
 		DaimondPause.set('root', true);
-		const b = document.querySelector('.chat-box .pptw');
-		if (!b) return { said: 'no control', painted: 'no control' };
-		DaimondPause.set(b.dataset.pauseNode, false);		// really paused
-		b.dataset.state = 'play';							// but drawn green
-		return { said: DaimondPause.state(b.dataset.pauseNode), painted: b.dataset.state };
+		const g = document.querySelector('.chat-box .pptw');
+		if (!g) return { said: 'no control', painted: 'no control' };
+		DaimondPause.set(g.dataset.pauseNode, false);		// really paused
+		g.dataset.state = 'play';							// but drawn green
+		return { said: DaimondPause.state(g.dataset.pauseNode), painted: g.dataset.state };
 	});
-	red(r.said !== r.painted, 'a widget whose colour stops tracking the module is caught');
+	red(r.said !== r.painted, 'a light whose colour stops tracking the module is caught');
 	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));
 	await p.waitForTimeout(200);
 	const fixed = await p.evaluate(() => {
-		const b = document.querySelector('.chat-box .pptw');
-		if (!b) return { said: 'no control', painted: 'none' };
-		return { said: DaimondPause.state(b.dataset.pauseNode), painted: b.dataset.state };
+		const g = document.querySelector('.chat-box .pptw');
+		if (!g) return { said: 'no control', painted: 'none' };
+		return { said: DaimondPause.state(g.dataset.pauseNode), painted: g.dataset.state };
 	});
 	red(fixed.said === fixed.painted, 'and it agrees again once the repaint runs');
 }
@@ -634,14 +844,15 @@ out.push('--- self-test: breaking each property in the live page');
 {
 	const r = await p.evaluate(() => {
 		DaimondPause.set('root', true);
-		const b = document.querySelector('#pptw-global .pptw');
-		if (!b) return null;
-		const twin = b.cloneNode(true);
-		twin.addEventListener('click', function () { DaimondPause.toggle('root/chats'); });
-		b.parentNode.replaceChild(twin, b);
-		twin.click();
+		const g = document.querySelector('#pptw-global .pptw');
+		if (!g) return null;
+		const twin = g.cloneNode(true);
+		twin.querySelector('.pptw-pause')
+			.addEventListener('click', function () { DaimondPause.set('root/chats', false); });
+		g.parentNode.replaceChild(twin, g);
+		twin.querySelector('.pptw-pause').click();
 		const ids = DaimondPause.pausedIds();
-		twin.parentNode.replaceChild(b, twin);		// the real control back
+		twin.parentNode.replaceChild(g, twin);		// the real control back
 		DaimondPause.set('root', true);
 		return ids;
 	});
@@ -649,11 +860,11 @@ out.push('--- self-test: breaking each property in the live page');
 		'a global control wired to a section no longer pauses the worker pump');
 	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));
 	const good = await p.evaluate(() => {
-		const b = document.querySelector('#pptw-global .pptw');
-		if (!b) return [];
-		b.click();
+		const g = document.querySelector('#pptw-global .pptw');
+		if (!g) return [];
+		g.querySelector('.pptw-pause').click();
 		const ids = DaimondPause.pausedIds();
-		b.click();
+		g.querySelector('.pptw-play').click();
 		return ids;
 	});
 	red(good && good.indexOf('root/workers') !== -1, 'and the real one pauses it again');
@@ -744,8 +955,8 @@ await s.close();
 	// Release it through the GLOBAL CONTROL -- the button, not the module -- and
 	// the same agent goes. Measured at the network again, in the other
 	// direction: the pump reads the tree, so releasing the tree lets it out.
-	const released = await clickReal(p2, '#pptw-global .pptw');
-	check(released, 'there is a global control to release the hold with');
+	const released = await clickReal(p2, '#pptw-global .pptw-play');
+	check(released, 'there is a global play verb to release the hold with');
 	for (let i = 0; i < 40 && mockLog().length - before === 0; i++) await p2.waitForTimeout(300);
 	const after = mockLog().length - before;
 	const status = await p2.evaluate(() =>

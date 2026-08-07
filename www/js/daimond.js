@@ -6867,9 +6867,33 @@ import init, {
 	// back to the root, which on a new account has no leaves and reads green.
 	var PAUSE_WEB = 'root/web';
 
-	// The glyph, knocked out of the lamp with `fill-rule="evenodd"` so it reads
-	// against whatever the tile's ground happens to be. One path, three `d`s: the
-	// disc is the same in all three, and only the hole changes.
+	// ── The three parts, and why they are three ────────────────
+	//
+	// The control was briefly ONE button, drawn from `data-state`. That is wrong
+	// in the way a control can only be wrong once someone uses it: a running node
+	// drew a green PLAY triangle, so the shape said "play" while the only thing
+	// pressing it could do was pause. The user's words: *"A green play button
+	// shows the state (green) but the option available to me is not to play but
+	// to pause."* A verb glyph cannot be a noun.
+	//
+	// So state and action are separated, and the action is separated in two:
+	//
+	//   1. A LIGHT. State only, and never clickable — which is also what makes
+	//      "amber can never be set" (pause.js §1.1) true by construction rather
+	//      than by convention. There is no press that could set it.
+	//   2. A PAUSE button. Two bars.
+	//   3. A PLAY button. A triangle.
+	//
+	// Both buttons are always present and the inapplicable one is DISABLED, not
+	// hidden, so a row never reflows and each control keeps a fixed position
+	// under the thumb. On a leaf exactly one is ever live. On an amber branch
+	// BOTH are — which is the thing one button could not do: with a single
+	// control a mixed branch has to guess, and `clickWould` guessed resume-all
+	// silently, where now the user is simply offered both.
+	//
+	// The lamp's glyph, knocked out of the disc with `fill-rule="evenodd"` so it
+	// reads against whatever the tile's ground happens to be. One path, three
+	// `d`s: the disc is the same in all three and only the hole changes.
 	var PPTW_DISC = 'M8 .8a7.2 7.2 0 1 0 0 14.4A7.2 7.2 0 0 0 8 .8z';
 	var PPTW_D = {
 		// A triangle centred on its CENTROID, not on its bounding box: 6, 6 and
@@ -6883,6 +6907,13 @@ import init, {
 		// A single bar, the indeterminate-checkbox shape: neither running nor
 		// stopped, and legible at this size where a half-and-half glyph is mush.
 		mixed: PPTW_DISC + 'M4.4 7h7.2v2H4.4z',
+	};
+	// The buttons' glyphs: the same two shapes with no disc around them, so a
+	// verb never wears the lamp's clothes. Both are centroid-centred on 8,8 for
+	// the same reason the lamp's triangle is.
+	var PPTW_ACT = {
+		pause: 'M4.5 3.2h2.6v9.6H4.5zM8.9 3.2h2.6v9.6H8.9z',
+		play:  'M5.2 3.2 13.5 8 5.2 12.8z',
 	};
 
 	/// The mailboxes and their folders, read from the store `mail.js` keeps.
@@ -6962,21 +6993,38 @@ import init, {
 	}
 
 	/// Draw one control to the state of the node it governs.
-	function paintPause(b) {
-		var node = b.dataset.pauseNode;
+	///
+	/// `g` is the GROUP — the light and the two buttons together. The light says
+	/// what is, the buttons say what can be done, and this is the only place
+	/// either is decided.
+	function paintPause(g) {
+		var node = g.dataset.pauseNode;
 		var st = 'play';
 		try { st = DaimondPause.state(node) || 'play'; } catch (e) { /* module not up */ }
-		b.dataset.state = st;
-		var g = b.querySelector('.pptw-glyph');
-		if (g) g.setAttribute('d', PPTW_D[st] || PPTW_D.play);
-		// Which node, and what the click does — both, because five lights on a
-		// rail otherwise announce as five identical "button", and a light that
-		// says only its colour does not say what pressing it would achieve.
-		var name = b.dataset.pauseName || t('pause.this');
-		var label = t(st === 'play' ? 'pause.act_pause' : 'pause.act_play', { name: name })
-			+ ' — ' + t('pause.state_' + st);
-		b.setAttribute('aria-label', label);
-		b.title = label;
+		g.dataset.state = st;
+		// The name goes on the light as well as on the buttons: a rail of five
+		// lights otherwise announces as five identical "image", and a colour with
+		// no subject names nothing.
+		var name = g.dataset.pauseName || t('pause.this');
+		var lamp = g.querySelector('.pptw-lamp');
+		if (lamp) {
+			var d = lamp.querySelector('.pptw-glyph');
+			if (d) d.setAttribute('d', PPTW_D[st] || PPTW_D.play);
+			var say = name + ' — ' + t('pause.state_' + st);
+			lamp.setAttribute('aria-label', say);
+			lamp.title = say;
+		}
+		// Which button is live is the whole answer to "what can I do from here".
+		// Running: only pause. Paused: only play. Mixed: BOTH, which is the case
+		// a single button had to guess at.
+		var acts = g.querySelectorAll('.pptw-act');
+		for (var i = 0; i < acts.length; i++) {
+			var b = acts[i], act = b.dataset.act;		// 'pause' or 'play'
+			b.disabled = (st === 'play' && act === 'play') || (st === 'pause' && act === 'pause');
+			var label = t(act === 'pause' ? 'pause.act_pause' : 'pause.act_play', { name: name });
+			b.setAttribute('aria-label', label);
+			b.title = label;
+		}
 	}
 
 	/// Repaint every control on the page. A node's state is a walk of the leaves
@@ -6987,8 +7035,9 @@ import init, {
 		for (var i = 0; i < list.length; i++) paintPause(list[i]);
 	}
 
-	/// One pause control, ready to place. `name` is what the node is called in
-	/// words; it goes into the accessible name and nowhere else.
+	/// One pause control — light, pause, play — ready to place. `name` is what
+	/// the node is called in words; it goes into the accessible names and
+	/// nowhere else.
 	/// Is there anything under this node for a control to act on?
 	///
 	/// True for a leaf, and for a branch with at least one leaf beneath it. False
@@ -7016,24 +7065,50 @@ import init, {
 		// does not exist yet is worse than no control, so there is none until there
 		// is something to govern.
 		if (!pauseGoverns(nodeId)) return null;
-		var b = document.createElement('button');
-		b.type = 'button';
-		b.className = 'pptw';
-		b.dataset.pauseNode = nodeId;
-		b.dataset.pauseName = name || '';
+		var g = document.createElement('span');
+		g.className = 'pptw';
+		g.dataset.pauseNode = nodeId;
+		g.dataset.pauseName = name || '';
+		// The whole strip swallows the press, not just the two buttons. It sits on
+		// a tile that opens on click, and a finger that lands on the light — or in
+		// the 1px between two verbs — must not open the Diamond it was aiming to
+		// pause. What the light does is nothing, everywhere, which is the claim the
+		// design rests on.
+		g.addEventListener('click', function (e) { e.stopPropagation(); });
+
+		// The light. A <span role="img">, not a button and not focusable: there
+		// is no press that could set amber, so amber cannot be set. Its label is
+		// filled in by `paintPause`.
+		var lamp = document.createElement('span');
+		lamp.className = 'pptw-lamp';
+		lamp.setAttribute('role', 'img');
 		// A constant string: nothing here comes from the user or a model.
-		b.innerHTML = '<svg class="pptw-ic" viewBox="0 0 16 16" aria-hidden="true">'
+		lamp.innerHTML = '<svg class="pptw-ic" viewBox="0 0 16 16" aria-hidden="true">'
 			+ '<path class="pptw-glyph" fill-rule="evenodd" d="' + PPTW_D.play + '"/></svg>';
-		b.addEventListener('click', function (e) {
-			// The light sits inside a tile that opens on click. Pressing it must
-			// pause the Diamond, never open it — and Enter and Space arrive here
-			// too, because a <button> makes them clicks.
-			e.stopPropagation();
-			e.preventDefault();
-			try { DaimondPause.toggle(nodeId); } catch (err) { /* module not up */ }
+		g.appendChild(lamp);
+
+		// The two verbs. `set(node, playing)` and never `toggle` — the point of
+		// two buttons is that neither has to work out what was meant.
+		['pause', 'play'].forEach(function (act) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'pptw-act pptw-' + act;
+			b.dataset.act = act;
+			b.innerHTML = '<svg class="pptw-ic" viewBox="0 0 16 16" aria-hidden="true">'
+				+ '<path d="' + PPTW_ACT[act] + '"/></svg>';
+			b.addEventListener('click', function (e) {
+				// The control sits inside a tile that opens on click. Pressing it
+				// must pause the Diamond, never open it — and Enter and Space
+				// arrive here too, because a <button> makes them clicks.
+				e.stopPropagation();
+				e.preventDefault();
+				try { DaimondPause.set(nodeId, act === 'play'); } catch (err) { /* module not up */ }
+			});
+			g.appendChild(b);
 		});
-		paintPause(b);
-		return b;
+
+		paintPause(g);
+		return g;
 	}
 
 	/// Place a control, if there is one to place. `pauseWidget` returns null for a
@@ -7046,8 +7121,9 @@ import init, {
 
 	/// The shared bits of chrome another module may place, but must not redraw.
 	///
-	/// `pauseWidget` is the one control of §1.1 and its DOM belongs here, exactly
-	/// as the governor's does. The Email panel needs four of them — the section,
+	/// `pauseWidget` is the one control of §1.1 — three parts, one drawing — and
+	/// its DOM belongs here, exactly as the governor's does. The Email panel
+	/// needs four of them — the section,
 	/// the mailbox, its `self` leaf and each folder — and a second drawing over
 	/// there would be a second thing to keep in step with the state names, which
 	/// would drift the first time either changed.
@@ -7523,9 +7599,17 @@ import init, {
 						} catch (e) { toast(t('trig.copy_failed'), true); }
 					}));
 					row.appendChild(trigBtn('✕', t('trig.remove'), async function () {
-						var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
-							t('trig.remove'), { title: t('trig.remove'), danger: true });
-						if (!ok) return;
+						// An action with nothing written in it and nothing armed is the
+						// one the user just added by pressing `+`, and asking them to
+						// confirm the deletion of an empty thing is the friction that
+						// made `+` feel one-way. There is nothing to lose, so there is
+						// nothing to ask. Anything with an instruction still asks.
+						var blank = !ta.on && !(ta.instruction || '').trim() && !(ta.context || '').trim();
+						if (!blank) {
+							var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
+								t('trig.remove'), { title: t('trig.remove'), danger: true });
+							if (!ok) return;
+						}
 						await Triggers.remove(opts.id, ta.id);
 						draw();
 					}));
@@ -7551,8 +7635,14 @@ import init, {
 				// than a trigger that does not fire is one that fires empty.
 				ta.on = false;
 				await Triggers.set(opts.id, ta);
+				// Add, and stop. Opening the editor over the new row put its own ✕
+				// behind a modal, so at the moment of the press nothing on screen
+				// undid it: press `+` by mistake and a Diamond is armed with no
+				// visible way back until the editor is dismissed. Notes2 asks for
+				// add-then-choose in any case — actions are *"added with a + icon,
+				// and selected for editing from a pulldown"* — so the row's own ✎
+				// is the way in and its ✕ is the way back.
 				draw();
-				editTrigger(opts.id, ta, draw);
 			});
 			add.appendChild(sel); add.appendChild(plus);
 			host.appendChild(add);
@@ -14232,26 +14322,17 @@ import init, {
 
 	/// Offer the two default Diamonds, once per account.
 	///
-	/// **NOT CALLED, and the reason is data loss.** `migrate_root`
-	/// (`src/wasm/diamond.rs`) moves an older root -- `foci/`, `facets/` -- to
-	/// `diamonds/` and REFUSES once `diamonds/` exists, deliberately, because
-	/// merging two roots is how a workspace loses work. Creating a Diamond makes
-	/// `diamonds/` exist. So seeding these two on the first boot of a fresh account
-	/// makes every LATER arrival of an old store -- a restored backup, a sync from
-	/// an older device, a folder adopted afterwards -- unmigratable, with the user's
-	/// Diamonds sitting in a directory nothing reads.
+	/// This was withheld for a release. `migrate_root` (`src/wasm/diamond.rs`) used
+	/// to REFUSE to move an older root -- `foci/`, `facets/` -- once `diamonds/`
+	/// existed, and creating a Diamond is what makes `diamonds/` exist. So seeding
+	/// two on the first boot of a fresh account made every LATER arrival of an old
+	/// store -- a restored backup, a sync from an older device, a folder adopted
+	/// afterwards -- unmigratable for ever, with the user's Diamonds in a directory
+	/// nothing reads.
 	///
-	/// `legacy_diamond_root_waiting` below closes the case where the old store is
-	/// already there, and does not close the case where it arrives later, which is
-	/// the one that matters. `verify_diamondroot` demonstrates it: green before this
-	/// function existed, red after.
-	///
-	/// **What it needs first:** `migrate_root` should MERGE rather than refuse when
-	/// the two roots share no id. Moving entries that do not collide overwrites
-	/// nothing, so it is strictly safer than today's refusal -- which already leaves
-	/// any user holding both roots permanently stuck, with or without this function.
-	/// That is a change to a migration path and wants its own tests; it is written
-	/// up rather than rushed at the end of a session.
+	/// `migrate_root` now MERGES the entries that do not collide, so the act of
+	/// creating a Diamond no longer strands anything. The two guards below stay:
+	/// they were right on their own terms, and one of them still is.
 	async function seedDefaultDiamonds() {
 		try { if (localStorage.getItem(DEFAULTS_KEY) === '1') return; }
 		catch (e) { return; }                       // private mode: never seed twice
@@ -14274,20 +14355,18 @@ import init, {
 			try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { /* next boot asks again */ }
 			return;
 		}
-		// AND NOT WHEN AN OLDER STORE IS STILL WAITING TO BE MIGRATED.
+		// AND NOT WHILE AN OLDER STORE IS STILL PART-MIGRATED.
 		//
-		// `migrate_root` moves `foci/` (or `facets/`) to `diamonds/` and REFUSES once
-		// `diamonds/` exists -- deliberately, because merging two roots is how a
-		// workspace loses work. Creating a Diamond makes `diamonds/` exist. So on the
-		// first boot of a fresh account, seeding these two would make every later
-		// arrival of an old store -- a restored backup, a sync from an older device,
-		// a folder adopted afterwards -- unmigratable FOR EVER, with the user's
-		// Diamonds sitting in a directory nothing reads.
+		// `migrate_root` now merges what does not collide, so creating a Diamond no
+		// longer strands an old root, and this guard is no longer what stands between
+		// this feature and data loss. What it still answers is narrower and true: an
+		// id present in BOTH roots is one the merge deliberately left behind, and a
+		// boot that is still resolving a user's own Diamonds is not a boot to put two
+		// unasked ones into.
 		//
-		// Caught by `verify_diamondroot`, which was green before this feature and red
-		// after it, and which is why the flag below is NOT set on this branch: the
-		// question has to be asked again once the old store has arrived and been
-		// moved. A Diamond the user creates themselves is not affected — they asked.
+		// The flag below is NOT set on this branch: the question has to be asked
+		// again once the collision is gone. A Diamond the user creates themselves is
+		// not affected -- they asked.
 		try {
 			if (await diamondApp().legacy_diamond_root_waiting()) return;
 		} catch (e) { return; }     // an older wasm cannot answer; do not risk it
@@ -17539,12 +17618,13 @@ import init, {
 		renderSessionList();
 		var firstChat = chats.find(function (c) { return !c.diamondId; });
 		if (firstChat) { selectChat(firstChat); } else { renderEmptyState(); }
-		// `seedDefaultDiamonds` is NOT called. See its own note: creating a Diamond
-		// makes `diamonds/` exist, and `migrate_root` then refuses for ever to move a
-		// legacy root that arrives afterwards. The rest of phase H does not depend on
-		// it, and losing somebody's Diamonds is not a price worth paying for two
-		// example ones.
-		loadDiamonds();
+		// The two defaults are offered only after the rail's own Diamonds are read
+		// and any older root has been merged -- `list_diamonds` is what runs
+		// `migrate_root` -- so the "only into an empty rail" rule is answered from
+		// the store as it finally stands, not as it stood mid-migration.
+		loadDiamonds().then(function () {
+			return seedDefaultDiamonds();
+		}).catch(function () { /* a store that is not up seeds nothing */ });
 		Pending.load();
 		Pending.render();
 		startTriggerClock();

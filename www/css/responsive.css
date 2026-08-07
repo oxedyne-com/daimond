@@ -190,6 +190,17 @@
    the one that was being lost, and it is the way to the theme, the skin and the
    reading size -- the bar itself gets smaller: a shorter wordmark, tighter gaps
    and the compact 34px touch box. Everything stays reachable. */
+/* A Diamond's model rows stack below the phone breakpoint.
+   The label holds a fixed 116px so three pulldowns line up their left edges —
+   which is right on a desktop and wrong at 380px, where 116 plus the gap leaves
+   the select too narrow for its own text and it overflowed the card by 19px.
+   `verify_raildialogs` measured it at warm-dark-380. Stacked, each control gets
+   the whole width and the column they were lining up for is moot. */
+@media (max-width: 760px) {
+	.tile-dlg-model { flex-direction: column; align-items: stretch; gap: 4px; }
+	.tile-dlg-model .tile-model-chip { flex: 0 0 auto; width: auto; text-align: left; }
+}
+
 @media (max-width: 360px) {
 	.topbar { gap: 8px; }
 	.brand-wordmark { height: 20px; }

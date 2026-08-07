@@ -45,7 +45,7 @@ const note = (ok, what, why) => { if (!ok) known.push(`${what}\n        ${why}`)
 const PROFILE = scratch('graph-profile');
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
-const s = await open({ name: 'graph', connect: false, profile: PROFILE });
+const s = await open({ name: 'graph', connect: false, profile: PROFILE, defaults: false });
 const { page } = s;
 await page.waitForTimeout(2500);
 
@@ -401,7 +401,7 @@ await s.close();
 // ── 11. The empty paths, on a profile that has never held anything ──
 const PROFILE_B = scratch('graph-profile-empty');
 fs.rmSync(PROFILE_B, { recursive: true, force: true });
-const b = await open({ name: 'graphB', connect: false, profile: PROFILE_B });
+const b = await open({ name: 'graphB', connect: false, profile: PROFILE_B, defaults: false });
 await b.page.waitForTimeout(2000);
 await b.page.evaluate(() => { DaimondPanels.show('graph'); DaimondGraph.refresh(); });
 await b.page.waitForTimeout(1000);

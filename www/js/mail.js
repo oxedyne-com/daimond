@@ -250,7 +250,8 @@
 	/// One pause control, from the module that owns the drawing of it.
 	///
 	/// THE MOUNT POINT for the shared widget. `DaimondUI.pauseWidget(nodeId,
-	/// name)` returns a painted `<button class="pptw">` that repaints itself on
+	/// name)` returns a painted `<span class="pptw">` — a light and two verb
+	/// buttons — that repaints itself on
 	/// `daimond:pause`; mail.js only says where one goes. Absent — the widget is
 	/// another phase's — the slot stays empty and everything else in the panel
 	/// still works, which is the whole reason it is asked for rather than drawn.

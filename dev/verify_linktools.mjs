@@ -32,7 +32,7 @@ const check = (name, pass, detail) => {
 };
 
 clearMockLog();
-const s = await open({ name: 'linktools' });
+const s = await open({ name: 'linktools', defaults: false });
 const p = s.page;
 await p.waitForTimeout(2000);
 
@@ -152,9 +152,32 @@ await steer(`@tool link_list {"node":"diamond:${VOICE}"}`);
 const afterNode = lastRequest();
 const nodeReply = (afterNode?.messages || []).filter(m => m.role === 'tool')
 	.map(m => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n');
+// THIS TURN'S tool replies, not the whole request's.
+//
+// A daimon is PERSISTENT as of phase E: its conversation travels to the engine
+// and back, so every request now carries the earlier turns' tool replies as
+// well as this one's. Counting `"id":` across the whole request therefore
+// counted the first `link_list` too and read one record as three.
+//
+// The property has not changed and is still worth checking -- ONE record,
+// found from either end -- so it is measured where it lives: the replies after
+// the last user message, which is this turn's.
+const turnReplies = (() => {
+	const msgs = (afterNode && afterNode.messages) || [];
+	let from = -1;
+	for (let i = msgs.length - 1; i >= 0; i--) { if (msgs[i].role === 'user') { from = i; break; } }
+	return msgs.slice(from + 1).filter(m => m.role === 'tool')
+		.map(m => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+		.join('\n');
+})();
+// And the store itself, which is the thing the check is really about: a second
+// copy would be a second record, whatever any request happens to carry.
+const stored = JSON.parse(await call('all_links'));
+check('the store holds exactly one record for the pair', stored.length === 1,
+	stored.map(x => x.id).join(', '));
 check('asking from the far end finds the same one record, not a second copy',
-	nodeReply.includes(link.id) && (nodeReply.match(/"id":/g) || []).length === 1,
-	nodeReply.slice(0, 200));
+	turnReplies.includes(link.id) && (turnReplies.match(/"id":/g) || []).length === 1,
+	turnReplies.slice(0, 200));
 
 // ── A revision keeps what a re-assertion destroys ─────────────────────────
 const revised = await call('update_link', [link.owner, link.id, 'Supersedes', 'Rewritten.']);

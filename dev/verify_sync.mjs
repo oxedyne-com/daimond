@@ -167,7 +167,7 @@ async function restartGateway() {
 	return 'the gateway did not come back on :9002';
 }
 
-const s = await open({ name: 'sync', signIn: true, connect: true });
+const s = await open({ name: 'sync', signIn: true, connect: true, defaults: false });
 const { page } = s;
 let child = null;		// a second REAL device, paired in at (12)
 

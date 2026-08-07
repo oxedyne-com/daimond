@@ -87,7 +87,7 @@ const LEAF_B = 'root/diamonds/pausesync-b/self';
 const PROFILE = scratch('pw', 'pausesync');
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
-const s = await open({ name: 'pausesync', profile: PROFILE });
+const s = await open({ name: 'pausesync', profile: PROFILE, defaults: false });
 const { page } = s;
 let child = null;
 

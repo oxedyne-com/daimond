@@ -136,20 +136,101 @@ await p.waitForTimeout(2500);
 const again = await p.$eval('#diamond-list', e => e.textContent);
 check('a second boot leaves it alone', /Ancient pursuit/.test(again), again.trim().slice(0, 60));
 
-// ── Non-clobbering: both roots present is not ours to reconcile ─────────
-const clobber = await p.evaluate(async () => {
+// ── Both roots present: MERGE what does not collide ─────────────────────
+//
+// This used to assert the opposite — "the old one is left alone rather than
+// merged" — and that refusal was the hazard, not the safeguard. `diamonds/`
+// exists the moment anyone creates a single Diamond, so a `foci/` arriving
+// afterwards (a restored backup, a sync from an older device, a folder adopted
+// later) went into a directory nothing reads and stayed there for ever. Moving
+// an id that is not already present overwrites nothing, so it is strictly safer
+// than leaving it unreachable.
+const merged = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
-	// Recreate an old root alongside the new one, holding a DIFFERENT Diamond.
-	await mod.write_file('foci/intruder/brief.md', 'should not be touched');
-	await mod.write_file('foci/intruder/.daimond/meta.json',
-		'{"name":"Intruder","brief_version":0,"updated":1}');
+	// An old root alongside the new one, holding a DIFFERENT Diamond, the way a
+	// restored backup arrives.
+	await mod.write_file('foci/latecomer/crystal.md', 'a pursuit that arrived afterwards');
+	await mod.write_file('foci/latecomer/.daimond/meta.json',
+		'{"name":"Latecomer","brief_version":0,"updated":1}');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-	await app.list_diamonds();                     // triggers migrate_root again
-	try { return { old: await mod.read_file('foci/intruder/brief.md') }; }
-	catch (e) { return { old: null }; }
+	const listed = await app.list_diamonds();      // triggers migrate_root again
+	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
+	return {
+		listed,
+		moved:   await read('diamonds/latecomer/crystal.md'),
+		leftOld: await read('foci/latecomer/crystal.md'),
+		// The original Diamond of this file, which must not have moved or changed.
+		ancient: await read('diamonds/ancient1/crystal.md'),
+	};
 });
-check('with both roots present, the old one is left alone rather than merged',
-	clobber.old === 'should not be touched', String(clobber.old));
+check('a Diamond that arrives in an old root AFTERWARDS is taken into diamonds/',
+	merged.moved === 'a pursuit that arrived afterwards', String(merged.moved).slice(0, 50));
+check('and it is in the list, so the user can actually see it',
+	/Latecomer/.test(merged.listed), merged.listed.slice(0, 120));
+check('the emptied old root is gone, not left as a second place to look',
+	merged.leftOld === null, String(merged.leftOld));
+check('and the Diamond already in diamonds/ was not disturbed',
+	/An ancient pursuit/.test(merged.ancient || ''), String(merged.ancient).slice(0, 40));
+
+// ── A genuine id collision is the one case the merge does NOT attempt ───
+//
+// Which copy is the user's current work is not answerable from inside the
+// migration, and overwriting the one they can see with one they cannot is the
+// loss the whole function exists to avoid. So it stays where it is, and
+// `legacy_root_waiting` keeps saying so.
+// A collision is planted ALONGSIDE a clean entry, and that pairing is the point.
+//
+// `move_entry` refuses to clobber on its own, so a merge that simply tried every
+// entry would still overwrite nothing — but it would THROW on the collision and
+// abandon the walk, stranding whatever had not been reached. Recognising the
+// collision by name and stepping over it is what turns a failure into an
+// outcome. Measured as such: the migration must complete WITHOUT ERROR. That is
+// order-independent, where "the entry behind it still arrived" is not — OPFS
+// does not promise the order a directory iterates in, so the stranded entry may
+// or may not be the one this file happened to plant second.
+const logsBefore = s.logs.length;
+const collide = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	// The SAME id as the Diamond already in diamonds/, with different content...
+	await mod.write_file('foci/ancient1/crystal.md', 'a DIFFERENT pursuit under the same id');
+	await mod.write_file('foci/ancient1/.daimond/meta.json',
+		'{"name":"Impostor","brief_version":0,"updated":1}');
+	// ...and a clean one that sorts AFTER it, so a walk that stops on the
+	// collision never reaches it.
+	await mod.write_file('foci/zzlater/crystal.md', 'behind the collision in the walk');
+	await mod.write_file('foci/zzlater/.daimond/meta.json',
+		'{"name":"Behind it","brief_version":0,"updated":1}');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
+	const listed = await app.list_diamonds();
+	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
+	return {
+		listed,
+		current: await read('diamonds/ancient1/crystal.md'),
+		old:     await read('foci/ancient1/crystal.md'),
+		behind:  await read('diamonds/zzlater/crystal.md'),
+		waiting: await app.legacy_diamond_root_waiting(),
+	};
+});
+check('a colliding id does NOT overwrite the copy the user can see',
+	/An ancient pursuit/.test(collide.current || ''), String(collide.current).slice(0, 40));
+check('and the old copy is still there, not deleted out from under them',
+	collide.old === 'a DIFFERENT pursuit under the same id', String(collide.old).slice(0, 50));
+check('the clean entry beside it still came across',
+	collide.behind === 'behind the collision in the walk', String(collide.behind));
+{
+	// A COLLISION IS AN OUTCOME, NOT A FAILURE. If the walk throws on it instead
+	// of stepping over it, everything it had not yet reached is stranded — and
+	// which entries those are is down to an iteration order nothing promises.
+	const failed = s.logs.slice(logsBefore)
+		.filter((l) => /root could not be migrated/i.test(l));
+	check('and the migration completed without erroring out of the walk',
+		failed.length === 0, failed.length ? failed[0].slice(0, 160) : 'no migration error logged');
+}
+check('and the store says an older root is still waiting, so nothing seeds over it',
+	collide.waiting === true, String(collide.waiting));
+check('the rail shows one of them, not two rows for one id',
+	(collide.listed.match(/"id":"ancient1"/g) || []).length === 1,
+	collide.listed.slice(0, 120));
 
 await s.close();
 

@@ -167,34 +167,67 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 label.addbtn { cursor: pointer; }
 .rail-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 0 6px 4px; }
 
-/* ── The PPTW: one control, three states ──────────────────────────
+/* ── The PPTW: a light and two verbs ──────────────────────────────
    Drawn identically wherever it appears -- at the head of the rail for the
    root of the tree, on each Diamond tile, on each chat tile, and (phase G and
    H) on each mailbox, folder and triggered action.
 
-   Colour AND glyph carry the state, never colour alone: green with a play
-   triangle runs, red with two bars is held, amber with a single bar is mixed.
-   The glyph is knocked out of the lamp with fill-rule="evenodd", so it reads
-   against whatever ground the tile happens to have in whichever palette.
+   THREE parts, not one. A single button drawn from the state put a green PLAY
+   triangle on a running node: the colour said "running" and the shape said
+   "play", while the only thing pressing it could do was pause. A verb glyph
+   cannot be a noun. So the light says what IS and the buttons say what CAN BE
+   DONE, and neither borrows the other's language.
 
-   Amber is derived and can never be set, so there is no third affordance here
-   -- hover and focus say only "this can be pressed". */
+   Colour AND glyph carry the state on the light, never colour alone: green
+   with a triangle runs, red with two bars is held, amber with a single bar is
+   mixed. The glyph is knocked out of the disc with fill-rule="evenodd", so it
+   reads against whatever ground the tile happens to have in whichever palette.
+
+   The light is not a button and takes no hover, no focus ring and no pointer
+   cursor. Amber is derived and can never be set -- with nothing to press, that
+   is true by construction rather than by convention. */
 .pptw {
+	flex: none; display: inline-flex; align-items: center; gap: 1px;
+	line-height: 0;
+	/* NOT the tile's pointer, which is inherited. A tile says "press me and I
+	   open"; this strip does not open anything, and the light is not pressable
+	   at all. It also keeps the light out of the keyboard census: an element
+	   drawn as clickable that no key can reach is a defect by definition, and
+	   the light's whole point is that it is not clickable. */
+	cursor: default;
+}
+.pptw-lamp {
+	flex: none; width: 18px; height: 18px;
+	display: flex; align-items: center; justify-content: center;
+	color: var(--text-muted);
+}
+.pptw[data-state="play"]  .pptw-lamp { color: var(--ok); }
+.pptw[data-state="pause"] .pptw-lamp { color: var(--danger); }
+.pptw[data-state="mixed"] .pptw-lamp { color: var(--warn); }
+
+/* The two verbs. Both are always present and the inapplicable one is DISABLED
+   rather than hidden, so a row never reflows under the thumb and pause is
+   always in the same place. On an amber branch both are live -- which is the
+   case one button had to guess at. */
+.pptw-act {
 	flex: none; width: 20px; height: 20px; padding: 0;
 	display: flex; align-items: center; justify-content: center;
-	border: none; border-radius: 50%; background: none;
-	line-height: 0; color: var(--text-muted);
+	border: none; border-radius: var(--radius-sm); background: none;
+	line-height: 0; color: var(--text-secondary); cursor: pointer;
 }
-/* Centred by the flex box above and by the viewBox: the disc sits at 8,8 of
-   0 0 16 16, so the INK is on the box's centre, not merely the sprite. 18px,
-   not 14: at 14 the pause bars came out 1.4 device pixels wide and read as a
-   smudge rather than as two bars. */
-.pptw-ic { width: 18px; height: 18px; display: block; fill: currentColor; }
-.pptw[data-state="play"]  { color: var(--ok); }
-.pptw[data-state="pause"] { color: var(--danger); }
-.pptw[data-state="mixed"] { color: var(--warn); }
-.pptw:hover { filter: brightness(1.2); }
-.pptw:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pptw-act:disabled { cursor: default; }
+.pptw-act:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-hover); }
+.pptw-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Dimmed, not gone. A disabled verb still says what the control can do; it is
+   the state that says why it cannot be done now. */
+.pptw-act:disabled { color: var(--text-muted); opacity: 0.32; }
+
+/* Centred by the flex box above and by the viewBox: the ink sits at 8,8 of
+   0 0 16 16, so it is on the box's centre and not merely the sprite. 14 on the
+   lamp so the disc clears the two verbs beside it; 12 on the verbs, where a
+   bare glyph needs less room than one knocked out of a disc. */
+.pptw-lamp .pptw-ic { width: 14px; height: 14px; display: block; fill: currentColor; }
+.pptw-act  .pptw-ic { width: 12px; height: 12px; display: block; fill: currentColor; }
 
 /* The global control's own row, above the Diamonds list.
    Deliberately NOT a .railhead and deliberately not dressed as one. Given the
@@ -1864,12 +1897,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .trig-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .trig-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
 .trig-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Where a light would be, on the one action that has none: `prompted` is the
-   daimon answering you, and `/self` is already its control. */
-.trig-spacer { display: inline-block; width: 18px; flex: none; }
+/* Where a control would be, on the one action that has none: `prompted` is the
+   daimon answering you, and `/self` is already its control. 60px is the group's
+   own width -- 18 for the lamp, 20 for each verb, 1 of gap between them -- so
+   the name beside it starts on the same edge as every other row's. */
+.trig-spacer { display: inline-block; width: 60px; flex: none; }
+/* `--border-strong`, not `--border`: a divider separates two things that are
+   already there, and a control's edge has to say the control IS there. Phase H
+   copied this rule from a box rather than from a button. */
 .trig-btn {
 	flex: none; width: 26px; height: 26px; border-radius: var(--radius-sm);
-	background: var(--bg-tertiary); border: 1px solid var(--border);
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
 	color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1;
 }
 .trig-btn:hover { border-color: var(--accent); color: var(--text-primary); }

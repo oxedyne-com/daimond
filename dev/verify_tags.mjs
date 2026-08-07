@@ -27,7 +27,7 @@
 import fs from 'node:fs';
 import { open, shot, errors, signInAs, mockLog, clearMockLog, scratch } from './harness.mjs';
 
-const s = await open({ name: 'tags' });
+const s = await open({ name: 'tags', defaults: false });
 const { page } = s;
 const out = [];
 const say = (ok, what) => { out.push(`${ok ? 'PASS' : 'FAIL'}  ${what}`); return ok; };
@@ -791,7 +791,7 @@ check(errsA.length === 0, `no console errors beyond the offline gateway: ${JSON.
 await s.close();
 
 // A fresh profile: nothing of the first session is on this disk.
-const b = await open({ name: 'tagsB' });
+const b = await open({ name: 'tagsB', defaults: false });
 await b.page.click('#user-row');
 await b.page.waitForTimeout(400);
 const chooser = b.page.waitForEvent('filechooser', { timeout: 15000 });
