@@ -1,1 +1,1 @@
-{"build":"87cceb66f1a5","note":"A wasm panic had nowhere to say what it was"}
+{"build":"73ccbb07bcb2","note":"Instrument list_diamonds from inside, because a hang reports nothing"}

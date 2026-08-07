@@ -79,6 +79,33 @@ fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
     }
 }
 
+/// Write one line into the durable trail from Rust.
+///
+/// The same reflective call [`report_panic`] makes, exposed for the places where
+/// a step can hang rather than fail. A hang has no error to report and no panic
+/// to hook -- the caller's `Promise` simply never settles -- so the only way to
+/// find it is for the code to say where it got to before it stopped.
+///
+/// Costs a JS call, so it goes at the boundaries of long operations and never
+/// inside a per-file loop.
+pub fn trail(what: &str, detail: &str) {
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None    => return,
+    };
+    let t = match js_sys::Reflect::get(&win, &JsValue::from_str("DaimondTrail")) {
+        Ok(t)  => t,
+        Err(_) => return,
+    };
+    let n = match js_sys::Reflect::get(&t, &JsValue::from_str("note")) {
+        Ok(n)  => n,
+        Err(_) => return,
+    };
+    if let Ok(f) = n.dyn_into::<js_sys::Function>() {
+        let _ = f.call2(&t, &JsValue::from_str(what), &JsValue::from_str(detail));
+    }
+}
+
 /// Panic on purpose, so the hook itself can be proved rather than assumed.
 ///
 /// A diagnostic that has never been seen working is a diagnostic nobody should

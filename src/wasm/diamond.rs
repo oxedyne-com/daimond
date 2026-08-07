@@ -173,6 +173,7 @@ async fn migrate_root() -> Outcome<bool> {
 
 /// Take `legacy` over into `diamonds/`, whole if it can and entry by entry if it cannot.
 async fn migrate_one_root(legacy: &str) -> Outcome<bool> {
+    crate::wasm::entry::trail("migrate_one_root", legacy);
     // Nothing to merge into: the whole directory in one move.  Cheaper, and it
     // carries anything a `list_dir` walk would not report.
     if !res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
@@ -554,20 +555,29 @@ pub async fn delete(id: &str) -> Outcome<()> {
 /// that, and a Diamond the user can see and cannot open is a bug they can report, while one
 /// that has silently vanished is a bug they can only mourn.
 pub async fn list() -> Outcome<String> {
+    // INSTRUMENTED, because this is the call that hangs on one iPhone and a hang
+    // has nothing to report: no error, no panic, just a `Promise` that never
+    // settles. Four diagnoses were made from reading this file and all four were
+    // wrong. The lines below are what the device says about itself.
+    crate::wasm::entry::trail("list_diamonds", "start");
+
     // Before the root is read, because before the rename the root itself was elsewhere.
+    crate::wasm::entry::trail("list", "migrate_root");
     if let Err(e) = migrate_root().await {
         console_log(&fmt!("The diamonds/ root could not be migrated from an earlier one: {}", e));
     }
     // A missing `diamonds/` root simply means no Diamonds yet.
     let entries = match opfs::list_dir(FileRoot::Opfs, ROOT_DIR).await {
         Ok(e)  => e,
-        Err(_) => return Ok("[]".to_string()),
+        Err(_) => { crate::wasm::entry::trail("list", "no diamonds/ root"); return Ok("[]".to_string()); },
     };
+    crate::wasm::entry::trail("list", &fmt!("{} entries", entries.len()));
     let mut rows: Vec<(String, Meta)> = Vec::new();
     for (name, is_dir, _size) in entries {
         if !is_dir {
             continue;
         }
+        crate::wasm::entry::trail("list entry", &name);
         // Before the metadata is read, because before the rename it was somewhere else.
         if let Err(e) = migrate(&name).await {
             console_log(&fmt!("Diamond '{}' could not be migrated to .daimond/: {}", name, e));
