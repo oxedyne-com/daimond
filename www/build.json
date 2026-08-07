@@ -1,1 +1,1 @@
-{"build":"73ccbb07bcb2","note":"Instrument list_diamonds from inside, because a hang reports nothing"}
+{"build":"c5a27d6cab90","note":"The store was being walked several times at once, and the phone has 15 Diamonds"}

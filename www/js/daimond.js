@@ -8466,6 +8466,10 @@ import init, {
 		/// promise that makes -- and a second copy of a focus trap is a second
 		/// thing to keep right, which is how the two would drift apart.
 		keepFocusIn:     keepFocusIn,
+		/// Re-read the Diamonds and redraw the rail. Published for
+		/// `verify_diamondwalk`, which has to ask for several walks at once to
+		/// prove they coalesce into one.
+		loadDiamonds:    function () { return loadDiamonds(); },
 		/// Draw the lock card. Published for `verify_reloadloop`, which has to
 		/// open it on demand to prove the trail appears on a looping app and NOT
 		/// on a working one -- and the only honest way to check that is through
@@ -14555,16 +14559,53 @@ import init, {
 	}
 
 	/// Reload the Diamonds list from the store and re-render the rail.
-	async function loadDiamonds() {
-		try {
-			var json = await diamondApp().list_diamonds();
-			diamonds = JSON.parse(json);
-		} catch (e) { diamonds = []; }
-		renderDiamondList();
-		// The triggers travel with the Diamonds: the pause tree needs a leaf per
-		// action, and the tick needs to know what is armed. Read here rather than
-		// on a timer, because this is every occasion on which the set can change.
-		try { await Triggers.reload(); } catch (e) { /* the module is not up */ }
+	// A walk of the store that is already running, and whether anyone asked for
+	// another while it ran. See `loadDiamonds`.
+	var _diamondWalk  = null;
+	var _diamondAgain = false;
+
+	/// Read the Diamonds from the store and draw the rail.
+	///
+	/// SINGLE FLIGHT, and this is not a tidiness measure. `list_diamonds` walks
+	/// the whole root and reads each Diamond's metadata, which is one round trip
+	/// through OPFS per Diamond. On a desktop that is a few milliseconds each and
+	/// nobody notices. On the iPhone that has been looping for four sessions it is
+	/// 100-500ms each across FIFTEEN Diamonds -- several seconds for one walk --
+	/// and the trail from the device shows a second walk starting while the first
+	/// was on its fourth entry, and a third starting after that:
+	///
+	///     list_diamonds start ... list entry (4 of 15) ... list_diamonds start
+	///
+	/// Fourteen callers reach this function and most are event-driven, so on a
+	/// slow store they overlap by construction rather than by accident. Coalescing
+	/// them is correct wherever it is called from, which is why it is fixed here
+	/// and not at the callers.
+	///
+	/// A caller that has just WRITTEN to the store needs fresh data, not a join
+	/// onto a walk that began before their write -- so an ask that arrives during
+	/// a walk sets `_diamondAgain` and gets one more walk afterwards. At most two,
+	/// never concurrent.
+	function loadDiamonds() {
+		if (_diamondWalk) { _diamondAgain = true; return _diamondWalk; }
+		_diamondWalk = (async function () {
+			for (;;) {
+				_diamondAgain = false;
+				try {
+					var json = await diamondApp().list_diamonds();
+					diamonds = JSON.parse(json);
+				} catch (e) { diamonds = []; }
+				renderDiamondList();
+				// The triggers travel with the Diamonds: the pause tree needs a leaf
+				// per action, and the tick needs to know what is armed. Read here
+				// rather than on a timer, because this is every occasion on which the
+				// set can change.
+				try { await Triggers.reload(); } catch (e) { /* the module is not up */ }
+				if (!_diamondAgain) return;
+			}
+		})();
+		var done = function () { _diamondWalk = null; };
+		_diamondWalk.then(done, done);
+		return _diamondWalk;
 	}
 
 	/// A Diamond's tags, tolerating the Diamonds written before tags existed.

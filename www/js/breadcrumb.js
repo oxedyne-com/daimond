@@ -96,7 +96,19 @@
 	// An unhandled error or rejection is exactly what a phone cannot show, and
 	// exactly what would explain a screen that goes away again.
 	window.addEventListener('error', function (e) {
-		note('page error', (e && e.message) || '?');
+		// WHERE, not just what. `"Script error."` with no detail is the browser
+		// refusing to describe an error it considers cross-origin, and it is all
+		// the phone's trail has said for four rounds. `filename` and `lineno`
+		// survive that redaction in most engines; when they do not, an empty
+		// filename is itself the answer -- it says the error came from a script
+		// the page cannot see into, which is a different hunt entirely.
+		var where = '';
+		if (e && e.filename) {
+			where = String(e.filename).replace(/^https?:\/\/[^/]+/, '') + ':' + (e.lineno || 0);
+		} else if (e) {
+			where = '(no filename: cross-origin or wasm)';
+		}
+		note('page error', ((e && e.message) || '?') + ' @ ' + where);
 	});
 	window.addEventListener('unhandledrejection', function (e) {
 		var r = e && e.reason;
