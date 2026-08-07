@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,16 +38,16 @@
 	<h1>Dépenses</h1>
 	<p class="lede">La vue Dépenses montre où va votre argent, et elle tient les deux pots séparés. Ce sont des comptes différents dans des monnaies différentes : Daimond les montre donc comme deux pistes et ne les additionne jamais.</p>
 
-	<h2>Deux pots, tenus séparés</h2>
+	<h2 id="s1">Deux pots, tenus séparés</h2>
 	<ul>
 		<li><strong>Inférence.</strong> Les appels de modèle eux-mêmes, facturés sur votre propre clé de fournisseur. Daimond les tarife et les enregistre sur cet appareil, tour par tour, pour que vous voyiez le coût de vos dépenses sur votre clé sans que rien n’en passe par nous.</li>
 		<li><strong>Crédits.</strong> Le solde prépayé que la passerelle dépense pour les quelques choses qui quittent le navigateur : récupérer une page, synchroniser ou envoyer du courrier, la synchronisation entre appareils, et garder votre espace de travail dans le <a href="email-web-files.html">stockage en ligne</a>.</li>
 	</ul>
 
-	<h2>L’ouvrir</h2>
+	<h2 id="s2">L’ouvrir</h2>
 	<p>Ouvrez la vue Dépenses depuis le <strong>compteur de dépenses</strong> de la barre du haut, ou depuis un lien de la vue <span class="ui">Crédits</span> du panneau d’administration. Elle montre chaque pot avec un chiffre principal, un graphique quotidien, une ventilation par catégorie et un tableau simple des mouvements, si bien qu’une écriture n’est jamais un mystère.</p>
 
-	<h2>Protection contre les coûts qui s’emballent</h2>
+	<h2 id="s3">Protection contre les coûts qui s’emballent</h2>
 	<p>Un espace de travail capable de faire tourner beaucoup d’agents à la fois peut, en principe, dépenser vite. Le danger n’est pas un gros total mensuel — c’est une <em>pointe de débit</em> : un éventail qui brûle du crédit en quelques secondes avant que vous ne puissiez réagir. Daimond est bâti pour attraper cette pointe, pas seulement pour totaliser après coup. Quatre mesures agissent ensemble, et aucune ne vous demande de fixer une limite à l’avance.</p>
 	<ul>
 		<li><strong>Un contrôle de rythme avant qu’un éventail ne parte.</strong> Ce que coûte le lancement d’un lot d’agents est connu avant qu’aucun d’eux ne démarre. Quand un lot irait plus vite que votre propre rythme récent, Daimond le met en pause et vous demande une fois, avec le nombre et l’estimation dans la question. Quelques agents d’un coût ordinaire n’y arrivent jamais ; cinquante d’un coup, si. La mesure du « trop vite » est votre propre normale, apprise de vos dépenses récentes : il n’y a donc rien à régler.</li>

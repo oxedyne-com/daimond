@@ -1720,5 +1720,12 @@
 	'settings.fold_model_own': 'El modelo propio de la conversación',
 	'settings.fold_model_group': 'Plegar en su lugar con',
 	'settings.fold_model_note': 'Cuando una conversación supera su ventana se resume, y el resumen pasa a ser lo que el modelo recuerda. Esto elige quién lo escribe. Solo lo usan los chats del mismo proveedor: cualquier otro se pliega con su propio modelo.',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond se ha reiniciado {n} veces en el último minuto. Esto es lo que hizo: cópialo en un informe de error.',
+	'trail.copy':            'Copiar',
+	'trail.copied':          'Copiado',
+	'trail.clear':           'Borrar',
 	});
 })();

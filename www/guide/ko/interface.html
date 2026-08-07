@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -174,16 +176,16 @@
 		<figcaption>이름 붙은 구역들. <strong>상단 바가</strong> 위를 가로질러요. 그 아래로 세 구역이 있어요. <strong>레일</strong> (왼쪽) — 칸막이 위에는 하고 있는 일, 아래에는 관리 패널. <strong>스테이지</strong> (가운데)는 대화를 위한 곳, 그리고 <strong>독</strong> (오른쪽)은 메일, 작업 공간, 에이전트를 담아요.</figcaption>
 	</figure>
 
-	<h2>레일 — 왼쪽</h2>
+	<h2 id="s1">레일 — 왼쪽</h2>
 	<p>레일은 끌 수는 있어도 없앨 수는 없는 칸막이로 나뉘어요. 칸막이 위는 지금 하고 있는 일, 아래는 관리 패널이에요.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Diamonds</h3>
+			<h3 id="s2">Diamonds</h3>
 			<p>내가 이어 가는 취지들이에요. Diamond은 어떤 일에 대해 채팅이 알려 준 것을 담고 있어서, 다음 구간이 이미 아는 데서 시작해요. 쌓여 가면 검색과 태그로 찾으세요. 새로 만들 때 누를 것은 <strong>＋</strong> — 옆은 <strong>Diamonds</strong>.</p>
 		</div>
 		<div class="card">
-			<h3>채팅</h3>
+			<h3 id="s3">채팅</h3>
 			<p>내 대화예요. 새로 시작할 때 누를 것은 <strong>＋</strong> — 옆은 <strong>채팅</strong>이에요. 어떤 채팅이든 누르면 가운데로 돌아와요.</p>
 		</div>
 	</div>
@@ -195,7 +197,7 @@
 
 	<p>Diamonds과 채팅을 자세히 다루는 곳은 <a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>.</p>
 
-	<h3>관리 패널</h3>
+	<h3 id="s4">관리 패널</h3>
 	<p>칸막이 아래의 관리 패널은 이 기계의 상태를 한눈에 보여 줘요. 설정이 팝업이 아니라 여기 있어서 그 옆에서 채팅이 살아 있어요 — 앱 비밀번호가 무엇인지 Daimond에게 물으면서, 그것을 묻는 칸을 화면에 그대로 둘 수 있죠. 손댈 수 있는 줄은 모두 그 이름이 가리키는 것을 여는 버튼이에요.</p>
 	<ul>
 		<li> <strong>신원 줄</strong> — 이 기기에서 내가 누구인지 — 옆에 설정 톱니가 있어요.</li>
@@ -206,7 +208,7 @@
 		<li><strong>작업 공간 저장</strong> 행들. 작업 공간이 있을 수 있는 자리마다 파일이 공간을 얼마나 쓰는지 보여 줘요.</li>
 	</ul>
 
-	<h3>지금 돌리고 있는 버전</h3>
+	<h3 id="s5">지금 돌리고 있는 버전</h3>
 	<p> <span class="ui">버전</span> 행은 빌드 번호가 아니라 이름과 지난 시간으로 읽혀요 — <span class="ui">버전 · Albany · 오늘</span> — 이런 식이에요. 릴리스에는 서호주 지명이 알파벳 순으로 붙어서, 순서를 따로 찾아보지 않아도 읽혀요. 이름이 표시하는 것은 <strong>이정표</strong>이지 빌드가 아니에요. Daimond은 하루에도 여러 번 빌드를 내놓으니, 하나하나에 이름을 붙이면 소음이 돼요. 줄에 커서를 올리면 빌드 id와 공개된 날짜가 나와요.</p>
 	<p>줄을 누르면 관리 패널에 <strong>릴리스 이력이</strong> 열려요. 위에서 아래로 읽어요.</p>
 	<ul>
@@ -218,64 +220,64 @@
 	<div class="note"><strong>예정 항목이 달라 보이는 것은 실제로 다르기 때문이에요.</strong> 빌드 id도 봉인 번호도 없고, 아직 만들어지지 않았으며 날짜도 약속하지 않았다고 말로 밝혀요. 그 아래는 모두 봉인되어 확인할 수 있어요. 의향의 표명은 그 어느 쪽도 아니니, 기록의 권위를 빌려서는 안 돼요.</div>
 	<p>예전 빌드로 돌아가는 길은 없고, 이건 빠뜨린 게 아니라 고른 것이에요. 예전 빌드에 머물면 너무 오래된 클라이언트와는 말하지 않겠다는 게이트웨이 자신의 거절에 부딪혀요. 이미 고쳐진 보안 결함을 안고 있을 수도 있는데, 제공자 키와 신원과 패스키를 지닌 앱에서는 큰일이에요. 그리고 예전 빌드가 더 새로운 로컬 자료를 — 파일, 내구성 저널, 다른 기기에서 온 동기화 꾸러미를 — 만나면 잘못 읽을 위험이 있어요. 변화가 마음에 들지 않는 마음에는, 무엇이 바뀌었는지 분명히 말하는 것으로 그 변화에서 답해요. 이 이력의 메모가 그걸 위해 있어요.</p>
 
-	<h2>스테이지 — 가운데</h2>
+	<h2 id="s6">스테이지 — 가운데</h2>
 	<p>스테이지는 한가운데 구역이에요. 여기 서는 것들은 혼자 서거나 나란히 둘이 서고, 오른쪽에 들어가는 일은 없어요. 자리가 둘인 뜻은, 무언가를 하려고 대화를 떠나지 않아도 된다는 거예요. 메시지를 읽고, 페이지를 보고, 문서를 읽는 동안 daimon이 그 옆에 있어서 언제든 물어볼 수 있어요.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>AI — 채팅</h3>
+			<h3 id="s7">AI — 채팅</h3>
 			<p>daimon과 이야기하는 곳이에요. 여기 기본으로 있는 손님이고, 스테이지가 비려 할 때면 언제나 돌아와요. 내 메시지, 답, 그리고 도구 단계가 여기 나와요.</p>
 		</div>
 		<div class="card">
-			<h3>웹</h3>
+			<h3 id="s8">웹</h3>
 			<p>웹 페이지예요. 페이지를 보여 줄 수도, 조작할 수도 있어요. 머리글에서 열거나, Daimond이 링크를 따라갈 때 열려요.</p>
 		</div>
 		<div class="card">
-			<h3>문서</h3>
+			<h3 id="s9">문서</h3>
 			<p>컴파일된 문서(PDF 같은 것). 읽을 자리를 넉넉히 줘요.</p>
 		</div>
 		<div class="card">
-			<h3>메시지</h3>
+			<h3 id="s10">메시지</h3>
 			<p>메일 한 통. 메일에서 열어 채팅 옆에서 읽어요.</p>
 		</div>
 		<div class="card">
-			<h3>도구</h3>
+			<h3 id="s11">도구</h3>
 			<p>Daimond이 할 수 있는 일, 그리고 나머지는 얼마인지. 여는 곳은 <span class="ui">도구</span> 행이에요.</p>
 		</div>
 		<div class="card">
-			<h3>작성</h3>
+			<h3 id="s12">작성</h3>
 			<p>메일을 써요. 여기서 저절로 보내지는 것은 없어요 — <span class="ui">보내기</span> 버튼만 메일을 회선에 올리고, 누를 수 있는 사람은 나뿐이에요.</p>
 		</div>
 	</div>
 
 	<p>스테이지 손님은 저마다 머리글에 닫기 버튼을 가지고 있어요. 닫은 패널은 사라지지 않아요. 칩은 상단 바에 채워지지 않은 모습으로 남고, 칩을 누르면 돌아와요.</p>
 
-	<h2>독 — 오른쪽</h2>
+	<h2 id="s13">독 — 오른쪽</h2>
 	<p>독은 끌어다 쓰는 원천을 담아요. 하나를 닫아도 칩은 상단 바에 남고, 칩을 누르면 다시 들어와요. 독을 어떻게 나눌지는 — 따라서 한 번에 패널을 몇 개나 담을지는 — 모양 메뉴의 <strong>독 분할</strong> 항목에서 정해요. 아래에서 설명해요.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>메일</h3>
+			<h3 id="s14">메일</h3>
 			<p>내 메일함과 그 안에 든 것. 메일함을 추가하고, 동기화하고, 메시지를 스테이지에 열어요.</p>
 		</div>
 		<div class="card">
-			<h3>작업 공간</h3>
+			<h3 id="s15">작업 공간</h3>
 			<p>내 파일을 평범한 나무로. 에이전트의 파일 도구가 여기를 읽고 써요.</p>
 		</div>
 		<div class="card">
-			<h3>에이전트</h3>
+			<h3 id="s16">에이전트</h3>
 			<p>돌고 있는 에이전트 실행을 일어나는 그대로. 몇이 일하고 있는지 수도 나와요.</p>
 		</div>
 		<div class="card">
-			<h3>지출</h3>
+			<h3 id="s17">지출</h3>
 			<p>무엇에 얼마를 썼는지. 자세한 곳은 <a href="spending.html">지출</a>.</p>
 		</div>
 	</div>
 
-	<h2>상단 바</h2>
+	<h2 id="s18">상단 바</h2>
 	<p>위쪽에는 브랜드 마크, 계기, 그리고 <strong>패널 칩</strong> 줄이 있고, 맨 오른쪽에는 <strong>모양과 배치</strong> 메뉴를 여는 버튼이 있어요.</p>
 
-	<h3>칩</h3>
+	<h3 id="s19">칩</h3>
 	<p>어느 패널이든 열려 있든 닫혀 있든 칩이 있고, 하나를 누르면 그 패널이 켜지고 꺼져요. 열린 패널의 칩은 채워져 있어서, 이 줄은 화면에 무엇이 있는지 보여 주는 지도로 읽혀요. 칩이 부르기가 아니라 켜고 끄기인 데는 이유가 있어요. 닫힌 패널에만 칩이 있다면 앱이 가장 빌 때 줄이 가장 길어지고, 하나를 쓸 때마다 모든 칩이 옆으로 밀려요. 자리를 지키는 칩이라야 위치를 익힐 수 있어요. (에이전트는 <em>모든</em>이라는 말의 예외예요. 첫 에이전트가 돌기 전까지는 비켜 있어요.)</p>
 	<p>칩은 구역별로 묶여 있어요 — 레일, 그다음 스테이지, 그다음 독 — 묶음 사이에는 가는 칸막이가 있고, 화면의 구역과 같은 순서로 왼쪽에서 오른쪽으로 놓여요. 그래서 칩은 그것이 여는 패널이 나타날 쪽에 있어요. 알아 둘 만한 표시가 둘 있어요.</p>
 	<ul>
@@ -283,14 +285,14 @@
 		<li>닫힌 독 칩은 <strong>독이 가득 찼을 때 회색이 돼요</strong>. 툴팁이 고칠 방법을 알려 줘요: 모양 메뉴에서 더 큰 분할을 고르거나, 독 패널 하나를 닫으세요.</li>
 	</ul>
 
-	<h3>고정한 패널과 패널 모음</h3>
+	<h3 id="s20">고정한 패널과 패널 모음</h3>
 	<p>상단 바에 어떤 칩을 둘지는 내가 정해요. 어떤 패널이든 <strong>고정할 수</strong> 있고 풀 수도 있어요. 푼 것들은 줄 끝의 <span class="ui">⋯</span> 칩 뒤에 들어가고, 거기 몇 개가 있는지 수가 붙어요. 누르면 <strong>패널 모음</strong>이 열려요: 있는 모든 패널이 이름으로 검색되고, 구역별로 묶이고, 줄마다 고정 조작과 그 패널이 열려 있는지가 붙어요. 줄을 누르면 칩처럼 패널이 열리거나 닫혀요.</p>
 	<p>줄이 빠짐없지 않아도 되는 것은 패널 모음이 빠짐없기 때문이에요. 얼마나 자주 쓰는지로 순위가 매겨지지도 않아요. 스스로 자리를 바꾸는 줄은, 자리를 고정해서 기르려는 몸의 기억을 무너뜨리니까요.</p>
 
-	<h3>명령 팔레트</h3>
+	<h3 id="s21">명령 팔레트</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> (Mac에서는) — 입력만으로 어떤 패널이나 설정에도 닿는 검색 상자가 열려요. 화살표 키로 결과 사이를 옮기고, <span class="ui">Enter</span> 키로 강조된 것을 실행하고, <span class="ui">Esc</span> 로 닫아요. 패널, 팔레트, 네 가지 글자 크기, 독 배치가 나열돼요. 칩이 보이는 패널로 가는 가장 빠른 길은 아니에요. 패널이 몇 개든 빠짐없이 남는 길이에요.</p>
 
-	<h3>By keyboard, and by ear</h3>
+	<h3 id="s22">By keyboard, and by ear</h3>
 	<p>Daimond can be driven without a mouse. <span class="ui">Tab</span> moves through the controls in the order they are drawn, <span class="ui">Enter</span> 또는 <span class="ui">Space</span> operates the one you are on, and <span class="ui">Esc</span> closes whatever is open — the appearance menu, the gallery, the palette. This is not a separate mode: it is the same interface, reached a different way.</p>
 	<p>Where you are is drawn <em>outside</em> the control, as a ring standing off from its edge. That is worth a sentence because it used to be drawn as a change to the control's own border, which is only legible when the resting border is nearly invisible — so making the borders visible would have taken the focus ring away on every palette at once. Drawn outside, against the surface behind it, it survives the whole range: it is measured on all eleven palettes, and the faintest of them is still four and a half times the contrast the standard asks for.</p>
 	<p>Two places are worth knowing about:</p>
@@ -301,7 +303,7 @@
 	<p>With a screen reader, an answer is announced <strong>once, when it has arrived</strong> — "Daimond answered, 120 words" — and not as it is written. That is deliberate, and it is the opposite of what a live region would do: an answer arrives a few characters at a time, and a region marked live is read out on every change, so the answer would be recited at you in fragments for as long as the model kept typing. A running commentary is the kind of thing people switch off, and an app whose announcements have been switched off looks answerable and is not. One sentence per turn is less, and it is usable.</p>
 	<p>The window has named regions and real headings throughout, so a screen reader's own list of landmarks and headings is a working table of contents for the app. If you find something you cannot reach or cannot hear, that is a fault rather than a limit — say so.</p>
 
-	<h3>모양과 배치</h3>
+	<h3 id="s23">모양과 배치</h3>
 	<p>오른쪽 위 버튼은 Daimond이 무엇을 하는지가 아니라 어떻게 보이고 어떻게 앉는지에 대한 선택을 모아 둔 메뉴 하나를 열어요.</p>
 	<ul>
 		<li><strong>테마</strong> — 팔레트 목록이고, 세 가지 묶음으로 나뉘어 있어요: <span class="ui">밝게</span>, <span class="ui">중간</span> 그리고 <span class="ui">어둡게</span>. 묶음은 찾는 방법이고, 그 안에서는 취향껏 고르면 돼요. 다만 <span class="ui">호박빛</span>만은 그리는 모든 것에서 파란빛을 빼요. 밤늦게 읽기 위한 거예요. 이 안내서는 Daimond 안에서 보일 때 앱이 입은 팔레트를 그대로 입어요.</li>
@@ -310,10 +312,10 @@
 		<li><strong>독 분할</strong> — <span class="ui">자동</span>, <span class="ui">1</span> 열, <span class="ui">2×2</span>, <span class="ui">2×3</span> 또는 <span class="ui">3×2</span>, 저마다 고르는 격자 모양으로 그려져요. 분할은 <em>독이 패널을 몇 개나 담을 수 있는지</em>도 정해요. 열 곱하기 행이에요. 한 열이면 넷, 2×2면 넷, 2×3이나 3×2면 여섯이에요. <span class="ui">자동</span> 쪽은 창이 정하게 두고, 두 번째 열이 정말 들어갈 만해지면 그때 가져가요. 더 작은 격자로 옮기면 더 들어가지 않는 패널이 가장 최근에 연 것부터 닫혀요 — 조용히 떨어지는 게 아니라 닫히는 것이라, 저마다 보이고 누를 수 있는 칩으로 돌아가요.</li>
 	</ul>
 
-	<h3>배치를 Diamond과 함께 남기기</h3>
+	<h3 id="s24">배치를 Diamond과 함께 남기기</h3>
 	<p>Diamond을 고른 상태에서는 모양 메뉴가 지금의 패널 배치를 그 Diamond과 함께 남기겠다고 물어봐요. 그 Diamond을 다시 열면 배치가 돌아와서, 하던 일로 돌아가는 것이 필요한 패널을 손으로 다시 짜맞추는 일이 되지 않아요. 저장은 부탁할 때만 해요 — 짐작하지도 않고, 뒤에서 하지도 않아요. 말없이 패널을 닫는 전환은 작업이 사라진 것처럼 읽히니까요. 메뉴에서는 저장한 배치를 고치거나 잊게 할 수도 있어요.</p>
 
-	<h2>좁은 화면에서는</h2>
+	<h2 id="s25">좁은 화면에서는</h2>
 	<p>휴대폰 너비 아래에서는 칩과 패널 모음이 휴대폰 껍데기에 자리를 내줘요. 같은 물음에 더 적은 자리로 답하는 방식이죠. 채팅이 바닥이 되고, 패널은 그 위로 끌 수 있는 시트로 올라오고, 레일은 왼쪽 위 버튼으로 여는 서랍이 돼요. 아래쪽에 놓인 줄 — <span class="ui">채팅</span>, <span class="ui">메일</span>, <span class="ui">파일</span>, <span class="ui">에이전트</span> — 이 줄로 오가요. 잃는 것은 없어요. 같은 패널을 한 번에 하나씩 보여 줄 뿐이에요.</p>
 
 	<div class="next">

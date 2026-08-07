@@ -1760,5 +1760,12 @@
 	'settings.fold_model_own': '그 대화 자신의 모델',
 	'settings.fold_model_group': '대신 이것으로 접기',
 	'settings.fold_model_note': '대화가 창을 넘어서면 요약되고, 그 요약이 모델이 기억하는 내용이 됩니다. 여기서 그것을 쓸 모델을 고릅니다. 같은 제공자의 대화만 이를 쓰고, 나머지는 각자의 모델로 접습니다.',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond이 지난 1분 동안 {n}번 다시 시작되었습니다. 아래가 그 기록입니다. 버그 신고에 붙여넣으세요.',
+	'trail.copy':            '복사',
+	'trail.copied':          '복사됨',
+	'trail.clear':           '지우기',
 	});
 })();

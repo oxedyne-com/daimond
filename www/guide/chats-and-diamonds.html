@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
 <script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
 </head>
 <body>
 
@@ -36,29 +38,29 @@
 	<h1>Chats &amp; Diamonds</h1>
 	<p class="lede">A chat is a conversation with the daimon. A Diamond is a durable container for a pursuit — where what you have worked out about a piece of work is kept, so that later work starts from it. This page covers starting and reading chats, the turn controls, folding a chat into a Diamond, the workspace a Diamond works in, and organising the Diamonds you accumulate.</p>
 
-	<h2>Starting and returning to a chat</h2>
+	<h2 id="s1">Starting and returning to a chat</h2>
 	<p>Choose <span class="ui">New chat</span> — the <strong>＋</strong> beside <strong>Chats</strong> at the top of the rail. Type in the box at the bottom of the centre panel and send with <span class="ui">➤</span>. Every chat you start is listed under <strong>Chats</strong> in the rail; click one to bring it back to the centre. A new chat starts on your default model; you can change the model for just that chat from the selector in its header.</p>
 
 	<p>While an answer is arriving you can keep typing. A message sent then is <strong>queued</strong> rather than lost: it appears under the thread as a dashed bubble, and goes as its own turn the moment the answer finishes. Click a queued bubble to take it back into the box and change it, or its <span class="ui">×</span> to drop it. Pressing <span class="ui">■</span> to stop the answer hands anything queued behind it back to you, unsent — stopping means stopping.</p>
 
-	<h2>Reading a long conversation</h2>
+	<h2 id="s2">Reading a long conversation</h2>
 	<p>A conversation grows quickly, so the chat header carries controls to keep it readable. They sit at the top-right of the centre panel.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Steps</h3>
+			<h3 id="s3">Steps</h3>
 			<p>The <span class="ui">Steps</span> button shows or hides the tool steps in the thread — the work the agent did between your message and its answer. Hide them to read just the conversation; show them to see what it actually did.</p>
 		</div>
 		<div class="card">
-			<h3>Collapse</h3>
+			<h3 id="s4">Collapse</h3>
 			<p>The <span class="ui">−</span> button collapses every answer, leaving what you asked. It is the quickest way to skim a long thread, and it is also how you start picking turns to fold.</p>
 		</div>
 		<div class="card">
-			<h3>Jump back</h3>
+			<h3 id="s5">Jump back</h3>
 			<p>The <span class="ui">↑</span> button jumps back to your last message. Press it again to walk back through the ones before it.</p>
 		</div>
 		<div class="card">
-			<h3>Jump to the end</h3>
+			<h3 id="s6">Jump to the end</h3>
 			<p>The <span class="ui">↓</span> button returns to the bottom of the chat, and starts the walk again — so the next <span class="ui">↑</span> goes to your last message rather than carrying on from where you had got to.</p>
 		</div>
 	</div>
@@ -68,7 +70,7 @@
 		<figcaption>Collapsing the answers leaves what you asked, and turns on the controls for selecting turns to fold.</figcaption>
 	</figure>
 
-	<h2>Folding a chat into a Diamond</h2>
+	<h2 id="s7">Folding a chat into a Diamond</h2>
 	<p>When a conversation has worked something out, you fold it: you keep what you learnt and drop the back-and-forth that produced it. What you fold into is a <strong>Diamond</strong>.</p>
 
 	<p>Two units make up a Diamond:</p>
@@ -77,7 +79,7 @@
 		<li>A <strong>crystal</strong> is what the folds have accumulated: the shape of the work, the steps in their order, and the checks you found the hard way. A Diamond is a crystal together with the chain of folds that produced it.</li>
 	</ul>
 
-	<h3>Selecting turns and folding them</h3>
+	<h3 id="s8">Selecting turns and folding them</h3>
 	<p>Collapse the thread with <span class="ui">−</span>, then pick the turns worth keeping. A row of controls appears in the header for this:</p>
 	<ul>
 		<li><span class="ui">Select all</span> — mark every turn.</li>
@@ -93,15 +95,15 @@
 		<figcaption>Selecting a Diamond shows its command surface in place of the chat, where you steer and fold the method.</figcaption>
 	</figure>
 
-	<h2>Working a Diamond</h2>
+	<h2 id="s9">Working a Diamond</h2>
 	<p>Diamonds are listed above your chats in the rail; add one with the <strong>＋</strong> beside <strong>Diamonds</strong>. Selecting a Diamond replaces the chat in the centre with its command surface — a compact view where you steer the work and fold further improvements into it. You can tell which face the panel is showing without reading it: on a Diamond the panel takes the Daimond mark beside the name and squares its corners, against the rounded corners of everything else on screen. The conversation returns the moment you pick a chat again, because Daimond is built around the conversation and comes back to it whenever the stage would otherwise be empty.</p>
 
-	<h3>What a Diamond does, and what it does not</h3>
+	<h3 id="s10">What a Diamond does, and what it does not</h3>
 	<p>A Diamond retains; it does not run. Nothing executes a crystal. There is no workflow engine behind a Diamond, nothing schedules it, nothing chains one Diamond to another, and there is no saved job waiting to fire. Returning to a Diamond does not set it going — and neither does leaving it alone, since a Diamond at rest stays exactly as you left it.</p>
 
 	<p>So <em>picking it up again</em> means you steer it again, with everything it has learnt already in hand. That is the whole of the claim, and it is worth more than it sounds. The crystal is prose, and prose is what a model reads best: it is handed to the daimon as context when you work the Diamond, and to every worker dispatched from it. What you worked out once reaches the work again without you retyping it — or remembering that you should.</p>
 
-	<h2>The crystal and its history</h2>
+	<h2 id="s11">The crystal and its history</h2>
 	<p>The crystal is a real file — <strong>crystal.md</strong>, in the Diamond's own folder in your workspace. You can open it, read it, and edit it yourself, like any other file.</p>
 
 	<p>Every write to a crystal snapshots a version, so a crystal has a history and nothing is written over. The history lists every version, newest first, each with what produced it:</p>
@@ -113,7 +115,7 @@
 
 	<div class="note"><strong>Restore is not destructive.</strong> The text that was current is kept in the history first, so restoring an older version adds to the history rather than replacing it — a restore you did not mean can itself be undone.</div>
 
-	<h2>Artefacts</h2>
+	<h2 id="s12">Artefacts</h2>
 	<p>A Diamond also keeps track of what its work touched: the files written and the pages opened while you were working on it. You do not have to record any of this. Daimond already notes every tool an agent uses, so the list is read off what happened — and it is gathered at the moment you accept a fold.</p>
 
 	<p>Files that were only <em>read</em> are left out on purpose. An agent may open forty files looking for one thing, and listing all forty would bury the one that mattered. What is kept is what the work produced, and the pages you asked to see.</p>
@@ -127,24 +129,24 @@
 
 	<div class="note">A file you have since renamed or deleted <strong>says so</strong> when you try to open it, rather than quietly doing nothing. A list of dead links that pretends otherwise is worse than no list.</div>
 
-	<h2>The workspace of a Diamond</h2>
+	<h2 id="s13">The workspace of a Diamond</h2>
 	<p>A Diamond has a <strong>workspace</strong>: the files and folders you keep with it. You put them there — a daimon cannot add to its own workspace, so it works with what it has been given and asks you when it needs more.</p>
 
 	<p><strong>It is a view of your files, not a box holding them.</strong> Nothing is copied when you attach something: the file stays where it is and the Diamond points at it. Attach the same folder to two Diamonds and there is still one folder — an edit made through either is the file the other reads. Taking something out of a Diamond's workspace only detaches it; the file itself is untouched, and only a deliberate delete removes it. The word <em>workspace</em> invites you to expect a copy, and there is none.</p>
 
 	<p>A Diamond also has a directory of its own, always in its workspace and always writable, so its daimon has somewhere to work before you have attached anything — the crystal lives there. A folder can be attached to be <strong>consulted rather than edited</strong>, which lets a daimon read it and refuses every write. And the <a href="email-web-files.html">Workspace</a> panel shows either all your files or only the ones this Diamond holds, whichever suits the work in front of you.</p>
 
-	<h3>What a daimon can open</h3>
+	<h3 id="s14">What a daimon can open</h3>
 	<p><strong>A daimon can only open the files in its Diamond's workspace.</strong> Nothing outside it is readable or writable — not by the daimon, and not by any worker it dispatches. This is not an instruction in a prompt that a model may or may not honour: the check sits in the compiled code, at the one door every file tool passes through, and that code is in the published bundle, which is built reproducibly. So it is a claim you can check rather than one you have to take on trust.</p>
 
 	<p>What it does not cover belongs in the same breath. It settles what a daimon can reach, not where what it reads ends up: whatever it opens is sent to your model provider with the rest of the turn. And it guards against an agent that is mistaken, or has been talked into something: a turn that has just read a web page or an email carrying instructions from a stranger, and gone looking on their behalf, still reaches nothing outside this Diamond's workspace. It is not a guard against a provider that misuses what you send it, or against a build that is not the one we published; those are answered by <a href="accounts.html">what leaves the browser</a> and by the <a href="interface.html">sealed record of every build</a>, not by this.</p>
 
-	<h2>Dispatching workers</h2>
+	<h2 id="s15">Dispatching workers</h2>
 	<p>Some tasks want work done rather than merely recorded. For those, the Diamond's daimon dispatches a <strong>worker agent</strong>. Each worker runs in its own context with the workspace file tools, and is given the standing instructions and this Diamond's crystal. That crystal is the whole of what it knows about your pursuit — a worker cannot see your conversation, so the task it is handed must say everything else it needs.</p>
 
 	<p>Up to <strong>eight</strong> workers run at once; the rest queue. The daimon dispatches them and its turn ends there: it does not receive their output. Each reports a summary, and you fold the ones worth keeping in by hand — which is what keeps the choice of what enters a crystal yours. Live runs appear in the <strong>Agents</strong> panel in the dock.</p>
 
-	<h3>Holding and stopping agents</h3>
+	<h3 id="s16">Holding and stopping agents</h3>
 	<p>The Agents panel header carries three controls that act on <em>every</em> agent at once, and the same three ride on each tile so you can act on one:</p>
 	<ul>
 		<li><strong>Pause</strong> <span class="ui">⏸</span> — hang up what is running and hold the queue. A running agent keeps whatever it had produced; a waiting one simply does not start. Nothing new launches until you resume. This is the brake for a fan-out that is spending faster than you meant.</li>
@@ -155,7 +157,7 @@
 
 	<p>Two limits are worth knowing. A worker cannot dispatch another worker, so delegation goes one level and stops. And one Diamond is steered at a time, so there is no second Diamond working away while your back is turned.</p>
 
-	<h2>Tags</h2>
+	<h2 id="s17">Tags</h2>
 	<p>Diamonds accumulate, so they can be tagged. A tag is a short label you choose. The editor suggests four to start from — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> and <strong>org</strong> — but Daimond imposes no taxonomy on you, and you can type whatever suits your work.</p>
 
 	<p>What you type is tidied: a tag is lowercased, trimmed and deduplicated, with up to <strong>8</strong> tags on a Diamond and up to <strong>24</strong> characters in each. Tags are stored in the Diamond's own meta, on this device, like everything else.</p>

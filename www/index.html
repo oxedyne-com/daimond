@@ -878,6 +878,10 @@
 <!-- accounts.js FIRST: it installs the per-account storage namespace before any
      module reads or writes localStorage. -->
 <script src="js/accounts.js"></script>
+<!-- breadcrumb.js immediately after: it records the boot itself, and an error
+     thrown by anything below has to land in the trail rather than in a console
+     nobody on a phone can open. -->
+<script src="js/breadcrumb.js"></script>
 <!-- i18n.js next: it owns the language and the display currency, and every
      money formatter in the app funnels through it. The English table follows
      immediately, because it is both the baseline and the fallback. -->

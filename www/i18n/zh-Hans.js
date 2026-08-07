@@ -1756,5 +1756,12 @@
 	'settings.fold_model_own': '对话自己的模型',
 	'settings.fold_model_group': '改用以下模型折叠',
 	'settings.fold_model_note': '对话超出窗口时会被总结，而这份摘要会成为模型所记得的内容。这里选择由谁来写。只有同一供应商的对话会用到它——其余的都用自己的模型折叠。',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond 在过去一分钟内重启了 {n} 次。以下是它的记录，请复制到错误报告中。',
+	'trail.copy':            '复制',
+	'trail.copied':          '已复制',
+	'trail.clear':           '清除',
 	});
 })();

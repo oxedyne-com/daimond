@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
 <script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
 </head>
 <body>
 
@@ -36,15 +38,15 @@
 	<h1>Accounts &amp; privacy</h1>
 	<p class="lede">An account in Daimond is a passphrase held on this device. There is no account on a server: your identity, your keys and your files live only in this browser. This page covers the passphrase, sharing a browser with other people, and what stays private.</p>
 
-	<h2>Your account is a passphrase</h2>
+	<h2 id="s1">Your account is a passphrase</h2>
 	<p>On first run Daimond offers to <strong>protect this device</strong>. You give a name and a passphrase, and that passphrase becomes your account. It does two jobs: it encrypts your stored provider key and mail credentials so an onlooker cannot read them, and it is the identity that signs you in for credits. Nothing about it leaves the browser.</p>
 
 	<div class="note"><strong>The passphrase is never stored and cannot be recovered.</strong> Daimond keeps only the encrypted data, not the passphrase that unlocks it. If you forget it, the encrypted keys and credentials are gone — so keep it somewhere safe. You can carry on without one by choosing <span class="ui">Skip for now</span>, but a provider key is best added once a passphrase is protecting it.</div>
 
-	<h2>A faster unlock with a passkey</h2>
+	<h2 id="s2">A faster unlock with a passkey</h2>
 	<p>Once a passphrase is protecting the app, you can add a <strong>passkey</strong> for a faster unlock: a face, a fingerprint, or a security key, the same passwordless sign-in your device already offers. A passkey does not replace the passphrase, it unseals it for you, so the passphrase stays the root and the always-available fallback, and a lost passkey costs you nothing as long as you still hold the passphrase. None of this reaches a server: the unlock happens entirely on the device, and the credits service only ever sees a public key.</p>
 
-	<h2>The account controls</h2>
+	<h2 id="s3">The account controls</h2>
 	<p>Your identity sits at the top of the admin panel, bottom-left. The admin home lists the controls for it:</p>
 
 	<figure class="shot" data-shot="accounts-switch">
@@ -61,7 +63,7 @@
 		<li><span class="ui">Forget this identity…</span> — remove the identity and its encrypted data from this browser for good.</li>
 	</ul>
 
-	<h2>More than one person on one browser</h2>
+	<h2 id="s4">More than one person on one browser</h2>
 	<p>Daimond holds one account at a time in a browser, so sharing a computer is a matter of locking and, if needed, replacing:</p>
 	<ul>
 		<li><strong>Stepping away.</strong> Choose <span class="ui">Log out</span> to lock the app. Your chats, keys and files remain on the device but cannot be read without your passphrase, so the next person cannot see your work.</li>
@@ -69,11 +71,11 @@
 		<li><strong>Handing the browser to someone else for good.</strong> Choose <span class="ui">Forget this identity…</span> to clear your account, and the next person chooses <span class="ui">Create an account…</span> to make their own.</li>
 	</ul>
 
-	<h2>Moving your account between devices</h2>
+	<h2 id="s5">Moving your account between devices</h2>
 	<p>Your account is a signing key held in this browser, and the passphrase does not recreate it — it only decrypts the copy already stored here, so the same passphrase in a fresh browser starts a <em>separate</em> account with its own credits and no Pro. Two things carry the key across and nothing else does: <span class="ui">Link another device</span>, which shows a pairing code to type into the new browser, and a passkey, which stands a new device up in one gesture. Do one of them <strong>before</strong> you remove a browser, not after — once its storage is gone the key is gone with it. Take an <span class="ui">Export a backup</span> as well, because it carries the chats, Diamonds and workspace files that the key does not.</p>
 	<div class="note"><strong>A backup holds everything you have written.</strong> Not the key — importing it does not make anyone you — but every chat, Diamond and workspace file is in it as plain text, so keep it as private as the work itself.</div>
 
-	<h2>What stays private</h2>
+	<h2 id="s6">What stays private</h2>
 	<p>Your passphrase, provider keys, mail credentials, chats, Diamonds and files live in this browser and are not sent to us. What we hold on the gateway is money and ciphertext: your credit balance and licences, and, for cross-device sync, one encrypted parcel we cannot open. We do not have the key, so we cannot read your work.</p>
 	<p>It helps to know exactly where data goes. Your messages go to a model provider when you connect your own key, or through our metered service when you spend credits on a model. Fetching a web page to read, and syncing or sending mail, pass through the gateway to reach the outside world. And a sync carries an encrypted parcel between your own devices. So the honest claim is not that nothing ever leaves, but this: with your own key, your chats and files never leave in the clear, and you can watch only ciphertext leave for our servers.</p>
 	<div class="note"><strong>You need not take that on trust.</strong> Daimond's client — the code that runs in this browser and decides what is sent — is open source. You can read it, build it, and open your browser's network panel to confirm for yourself that only ciphertext leaves. The one claim every private tool makes, we let you check: the source is at <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>

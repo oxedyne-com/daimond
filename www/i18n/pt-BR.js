@@ -1720,5 +1720,12 @@
 	'settings.fold_model_own': 'O modelo da própria conversa',
 	'settings.fold_model_group': 'Dobrar, em vez disso, com',
 	'settings.fold_model_note': 'Quando uma conversa passa da janela dela, é resumida, e o resumo passa a ser o que o modelo lembra. Isto escolhe quem o escreve. Só conversas no mesmo provedor usam — qualquer outra dobra com o modelo dela mesma.',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'O Daimond reiniciou {n} vezes no último minuto. Isto é o que ele fez — copie para um relatório de erro.',
+	'trail.copy':            'Copiar',
+	'trail.copied':          'Copiado',
+	'trail.clear':           'Limpar',
 	});
 })();

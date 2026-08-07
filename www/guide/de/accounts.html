@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,19 +38,19 @@
 	<h1>Konten &amp; Privatsphäre</h1>
 	<p class="lede">Ein Konto in Daimond ist eine Passphrase, die auf diesem Gerät liegt. Es gibt kein Konto auf einem Server: Ihre Identität, Ihre Schlüssel und Ihre Dateien liegen nur in diesem Browser. Diese Seite behandelt die Passphrase, das Teilen eines Browsers mit anderen Menschen und was privat bleibt.</p>
 
-	<h2>Ihr Konto ist eine Passphrase</h2>
+	<h2 id="s1">Ihr Konto ist eine Passphrase</h2>
 	<p>Beim ersten Start bietet Daimond an, <strong>dieses Gerät zu schützen</strong>. Sie geben einen Namen und eine Passphrase an, und diese Passphrase wird Ihr Konto. Sie hat zwei Aufgaben: Sie verschlüsselt Ihren gespeicherten Anbieterschlüssel und die Mail-Zugangsdaten, sodass ein Mitleser sie nicht lesen kann, und sie ist die Identität, mit der Sie sich für Guthaben anmelden. Nichts davon verlässt den Browser.</p>
 
 	<div class="note"><strong>Die Passphrase wird nie gespeichert und lässt sich nicht wiederherstellen.</strong> Daimond bewahrt nur die verschlüsselten Daten auf, nicht die Passphrase, die sie öffnet. Wenn Sie sie vergessen, sind die verschlüsselten Schlüssel und Zugangsdaten weg — bewahren Sie sie also sicher auf. Sie können auch ohne eine weitermachen: Ihre Wahl ist dann <span class="ui">Vorerst überspringen</span>, aber ein Anbieterschlüssel wird am besten hinzugefügt, wenn ihn schon eine Passphrase schützt.</div>
 
-	<h2>Schneller entsperren mit einem Passkey</h2>
+	<h2 id="s2">Schneller entsperren mit einem Passkey</h2>
 	<p>Sobald eine Passphrase die App schützt, können Sie einen <strong>Passkey</strong> zum schnelleren Entsperren hinzufügen: ein Gesicht, einen Fingerabdruck oder einen Sicherheitsschlüssel — dieselbe passwortlose Anmeldung, die Ihr Gerät ohnehin anbietet. Ein Passkey ersetzt die Passphrase nicht, er entsiegelt sie für Sie; die Passphrase bleibt also die Wurzel und der immer verfügbare Rückweg, und ein verlorener Passkey kostet Sie nichts, solange Sie die Passphrase noch haben. Nichts davon erreicht einen Server: Das Entsperren geschieht vollständig auf dem Gerät, und der Guthabendienst sieht immer nur einen öffentlichen Schlüssel.</p>
 
-	<h2>Die Bedienelemente für das Konto</h2>
+	<h2 id="s3">Die Bedienelemente für das Konto</h2>
 	<p>Ihre Identität sitzt oben im Verwaltungsfeld unten links. Die Verwaltungsstartseite führt die Bedienelemente dafür auf:</p>
 
 	<figure class="shot" data-shot="accounts-switch">
-		<img alt="Die Bedienelemente für das Konto im Verwaltungsfeld: Namen ändern, Passphrase ändern, ein Backup exportieren oder importieren, abmelden und diese Identität vergessen." src="shots/accounts-switch.png" loading="lazy">
+		<img alt="Die Bedienelemente für das Konto im Verwaltungsfeld: Namen ändern, Passphrase ändern, ein Backup exportieren oder importieren, abmelden und diese Identität vergessen." src="../shots/accounts-switch.png" loading="lazy">
 		<figcaption>Die Bedienelemente für das Konto: Namen oder Passphrase ändern, sichern oder wiederherstellen, abmelden oder die Identität ganz vergessen.</figcaption>
 	</figure>
 
@@ -61,7 +63,7 @@
 		<li><span class="ui">Diese Identität vergessen…</span> — die Identität und ihre verschlüsselten Daten endgültig aus diesem Browser entfernen.</li>
 	</ul>
 
-	<h2>Mehr als eine Person an einem Browser</h2>
+	<h2 id="s4">Mehr als eine Person an einem Browser</h2>
 	<p>Daimond hält in einem Browser immer nur ein Konto; einen Rechner zu teilen ist also eine Sache des Sperrens und, falls nötig, des Ersetzens:</p>
 	<ul>
 		<li><strong>Kurz weg.</strong> Wählen Sie <span class="ui">Abmelden</span> zum Sperren der App. Ihre Chats, Schlüssel und Dateien bleiben auf dem Gerät, lassen sich ohne Ihre Passphrase aber nicht lesen; die nächste Person sieht Ihre Arbeit also nicht.</li>
@@ -69,11 +71,11 @@
 		<li><strong>Den Browser endgültig weitergeben.</strong> Wählen Sie <span class="ui">Diese Identität vergessen…</span> zum Löschen Ihres Kontos, und die nächste Person wählt <span class="ui">Konto anlegen…</span> für ein eigenes.</li>
 	</ul>
 
-	<h2>Ihr Konto zwischen Geräten bewegen</h2>
+	<h2 id="s5">Ihr Konto zwischen Geräten bewegen</h2>
 	<p>Ihr Konto ist ein Signaturschlüssel, der in diesem Browser liegt, und die Passphrase erzeugt ihn nicht neu — sie entschlüsselt nur die hier bereits gespeicherte Kopie. Dieselbe Passphrase in einem frischen Browser beginnt deshalb ein <em>eigenes</em> Konto mit eigenem Guthaben und ohne Pro. Zwei Dinge tragen den Schlüssel hinüber, sonst nichts: <span class="ui">Weiteres Gerät verknüpfen</span>, das einen Kopplungscode zeigt, den Sie im neuen Browser eintippen, und ein Passkey, der ein neues Gerät in einer Geste einrichtet. Tun Sie eines davon, <strong>bevor</strong> Sie einen Browser entfernen, nicht danach — ist sein Speicher erst weg, ist der Schlüssel mit ihm weg. Nutzen Sie außerdem <span class="ui">Backup exportieren</span> — das trägt die Chats, Diamonds und Workspace-Dateien, die der Schlüssel nicht trägt.</p>
 	<div class="note"><strong>Ein Backup enthält alles, was Sie geschrieben haben.</strong> Nicht den Schlüssel — wer es importiert, wird dadurch nicht zu Ihnen — aber jeder Chat, jedes Diamond und jede Workspace-Datei steht darin im Klartext, also halten Sie es so privat wie die Arbeit selbst.</div>
 
-	<h2>Was privat bleibt</h2>
+	<h2 id="s6">Was privat bleibt</h2>
 	<p>Ihre Passphrase, Anbieterschlüssel, Mail-Zugangsdaten, Chats, Diamonds und Dateien liegen in diesem Browser und werden nicht an uns gesendet. Was wir auf dem Gateway halten, ist Geld und Chiffrat: Ihr Guthabensaldo und Ihre Lizenzen und, für die geräteübergreifende Synchronisierung, ein verschlüsseltes Paket, das wir nicht öffnen können. Wir haben den Schlüssel nicht, also können wir Ihre Arbeit nicht lesen.</p>
 	<p>Es hilft, genau zu wissen, wohin Daten gehen. Ihre Nachrichten gehen an einen Modellanbieter, wenn Sie Ihren eigenen Schlüssel verbinden, oder durch unseren abgerechneten Dienst, wenn Sie Guthaben für ein Modell ausgeben. Eine Webseite zum Lesen zu holen und Mail zu synchronisieren oder zu senden, läuft über das Gateway hinaus in die Welt. Und eine Synchronisierung trägt ein verschlüsseltes Paket zwischen Ihren eigenen Geräten. Die ehrliche Aussage ist also nicht, dass nie etwas hinausgeht, sondern diese: Mit Ihrem eigenen Schlüssel verlassen Ihre Chats und Dateien das Gerät nie im Klartext, und zu unseren Servern sehen Sie nur Chiffrat abgehen.</p>
 	<div class="note"><strong>Sie müssen das nicht glauben.</strong> Daimonds Client — der Code, der in diesem Browser läuft und entscheidet, was gesendet wird — ist quelloffen. Sie können ihn lesen, ihn bauen und das Netzwerkfenster Ihres Browsers öffnen, um sich selbst zu vergewissern, dass nur Chiffrat hinausgeht. Die eine Behauptung, die jedes private Werkzeug aufstellt, lassen wir Sie prüfen: Die Quelle liegt bei <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>

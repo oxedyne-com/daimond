@@ -1998,3 +1998,49 @@ body.resizing { cursor: col-resize; user-select: none; }
 	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6;
 	text-align: center; max-width: 34rem; margin: 12vh auto 0; padding: 0 16px;
 }
+
+/* ── The trail on the lock screen ────────────────────────────────────────────
+   Only on screen when the app has booted three times in ninety seconds, which
+   is not something a person does. It exists because a loop on an iPhone could
+   be described but never seen: reading a browser console on iOS needs a Mac
+   attached, so three reports produced two wrong diagnoses and no evidence. */
+.id-trail {
+	margin-top: 1rem;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--border);
+	text-align: left;
+}
+.id-trail-lead {
+	margin: 0 0 0.5rem;
+	font-size: var(--fs-xs);
+	color: var(--danger);
+}
+/* Monospace and scrollable: it is a log, and a log that wraps into prose
+   cannot be read at a glance on a phone. */
+.id-trail-text {
+	margin: 0;
+	max-height: 34vh;
+	overflow: auto;
+	padding: 0.5rem 0.6rem;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	font-family: var(--font-mono);
+	font-size: var(--fs-3xs-2xs);
+	line-height: 1.5;
+	color: var(--text-secondary);
+	white-space: pre;
+	-webkit-overflow-scrolling: touch;
+}
+.id-trail-acts { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.id-trail-btn {
+	flex: 1;
+	padding: 0.4rem 0.6rem;
+	font-size: var(--fs-xs);
+	color: var(--text-secondary);
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+}
+.id-trail-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.id-trail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

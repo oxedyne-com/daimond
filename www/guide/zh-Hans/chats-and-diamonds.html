@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,39 +38,39 @@
 	<h1>聊天与 Diamonds</h1>
 	<p class="lede">一场聊天是与 daimon 的一次对话。一个 Diamond 是某项追求的持久容器 —— 你在一件工作上想明白的东西存在那里，往后的工作就从它开始。这一页讲怎么开始和阅读聊天、轮次的控制项、把一场聊天折叠进 Diamond、Diamond 做事所在的工作区，以及怎么整理越积越多的 Diamonds。</p>
 
-	<h2>开始一场聊天，以及回到它</h2>
+	<h2 id="s1">开始一场聊天，以及回到它</h2>
 	<p>选择 <span class="ui">新建聊天</span> ——就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong> ，它在侧栏顶部。在中间面板底部的框里输入内容，然后用 <span class="ui">➤</span>发送。你开的每一场聊天都列在 <strong>聊天</strong> 下面，就在侧栏里；点一个，它就回到中间。新聊天从你的默认模型开始；在聊天头部的选择器里，你可以只为这一场换一个模型。</p>
 
 	<p>回答还在往外来的时候，你可以接着打字。这时发出的消息会被 <strong>排队</strong> 而不是丢掉：它以一个虚线气泡出现在会话下面，等回答一结束，就作为独立的一轮发出去。点一下排队的气泡，可以把它取回输入框改一改，或者点它的 <span class="ui">×</span> 把它丢掉。按 <span class="ui">■</span> 停下回答时，排在它后面的东西会原样退还给你，不会发出 —— 停就是停。</p>
 
-	<h2>读一场长对话</h2>
+	<h2 id="s2">读一场长对话</h2>
 	<p>对话涨得很快，所以聊天的头部备了几个控制项，好让它保持可读。它们在中间面板的右上角。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>步骤</h3>
+			<h3 id="s3">步骤</h3>
 			<p> <span class="ui">步骤</span> 按钮用来显示或隐藏会话里的工具步骤 —— 也就是智能体在你的消息和它的回答之间做的活。隐藏它们，只读对话；显示它们，看它到底做了什么。</p>
 		</div>
 		<div class="card">
-			<h3>折叠</h3>
+			<h3 id="s4">折叠</h3>
 			<p> <span class="ui">−</span> 按钮把每一条回答都折起来，只留下你问的话。这是快速扫一遍长会话最省事的办法，也是你挑选要折叠的轮次的起点。</p>
 		</div>
 		<div class="card">
-			<h3>跳回</h3>
+			<h3 id="s5">跳回</h3>
 			<p> <span class="ui">↑</span> 按钮跳回你最后发的那条消息。再按一次，可以继续往前翻。</p>
 		</div>
 		<div class="card">
-			<h3>跳到末尾</h3>
+			<h3 id="s6">跳到末尾</h3>
 			<p> <span class="ui">↓</span> 按钮回到聊天的最下面，并且重新开始往回走 —— 于是下一次按 <span class="ui">↑</span> 会到你最后那条消息，而不是从你刚才走到的地方接着往前。</p>
 		</div>
 	</div>
 
 	<figure class="shot" data-shot="chat-turns">
-		<img alt="一场聊天，回答都已折起，露出问过的问题，头部是挑选轮次的控制项。" src="shots/chat-turns.png" loading="lazy">
+		<img alt="一场聊天，回答都已折起，露出问过的问题，头部是挑选轮次的控制项。" src="../shots/chat-turns.png" loading="lazy">
 		<figcaption>把回答折起来，剩下的就是你问过的话，同时也打开了挑选轮次来折叠的控制项。</figcaption>
 	</figure>
 
-	<h2>把一场聊天折叠进 Diamond</h2>
+	<h2 id="s7">把一场聊天折叠进 Diamond</h2>
 	<p>一场对话把某件事想明白之后，你就折叠它：留下你学到的，扔掉产生它的那些来回。你折进去的那个东西叫 <strong>Diamond</strong>.</p>
 
 	<p>一个 Diamond 由两样东西构成：</p>
@@ -77,7 +79,7 @@
 		<li>一个 <strong>晶体</strong> 是这些折叠累积起来的东西：这件工作的形状、按顺序排好的步骤，以及你吃过苦头才发现的那些检查点。一个 Diamond，就是一块晶体，加上产生它的那一串折叠。</li>
 	</ul>
 
-	<h3>挑出轮次，把它们折叠起来</h3>
+	<h3 id="s8">挑出轮次，把它们折叠起来</h3>
 	<p>用 <span class="ui">−</span>把会话折起来，然后挑出值得留下的轮次。头部会为此出现一行控制项：</p>
 	<ul>
 		<li><span class="ui">全选</span> —— 勾上每一轮。</li>
@@ -89,19 +91,19 @@
 	<div class="note"><strong>没有东西会自己被吸收进去。</strong> 晶体绝不会在后台生长：轮次是你挑的，折叠本身也只是一个提案 —— 智能体重写晶体，把结果拿给你看，你接受或者拒绝。晶体只会因为你说了才改变。</div>
 
 	<figure class="shot" data-shot="diamond-fold">
-		<img alt="Diamond 的操作面取代聊天显示出来，带着引导方法和折叠方法的控制项。" src="shots/diamond-fold.png" loading="lazy">
+		<img alt="Diamond 的操作面取代聊天显示出来，带着引导方法和折叠方法的控制项。" src="../shots/diamond-fold.png" loading="lazy">
 		<figcaption>选中一个 Diamond，它的操作面就取代聊天出现，你在那里引导工作、折叠方法。</figcaption>
 	</figure>
 
-	<h2>经营一个 Diamond</h2>
+	<h2 id="s9">经营一个 Diamond</h2>
 	<p>Diamonds 列在侧栏里、你的聊天上方；新建一个，按 <strong>＋</strong> 紧挨着 <strong>Diamonds</strong>。选中一个 Diamond，中间的聊天就被它的操作面取代 —— 一个紧凑的视图，你在那里引导这件工作，把新的改进折叠进去。不用读字也看得出面板正显示哪一面：在 Diamond 上，面板会在名字旁边挂上 Daimond 标记，并把四角变方，与屏幕上其余一切的圆角形成对照。你一旦再点回某个聊天，对话立刻回来 —— 因为 Daimond 是围绕对话建起来的，只要舞台本来会空着，它就回到对话。</p>
 
-	<h3>Diamond 做什么，不做什么</h3>
+	<h3 id="s10">Diamond 做什么，不做什么</h3>
 	<p>Diamond 只保留，不运行。没有任何东西会执行一块晶体。Diamond 背后没有工作流引擎，没有东西给它排期，没有东西把一个 Diamond 串到另一个上，也没有存着的任务等着触发。回到一个 Diamond 不会让它跑起来 —— 放着不管也一样，因为静止的 Diamond 就停在你离开时的样子。</p>
 
 	<p>所以 <em>重新拿起它</em> 就是说你重新引导它，而它已经学到的一切都还在手边。这就是全部的主张，而它比听上去更值钱。晶体是散文，散文正是模型最会读的东西：你经营这个 Diamond 时，它作为上下文交给 daimon，也交给从它派出的每一个工人。你想明白过一次的东西，不用重新打一遍就再次抵达工作 —— 也不用你记得应该这么做。</p>
 
-	<h2>晶体和它的历史</h2>
+	<h2 id="s11">晶体和它的历史</h2>
 	<p>晶体是一个真实的文件 —— <strong>crystal.md</strong>，就在你工作区里这个 Diamond 自己的文件夹下。你可以打开它、读它，也可以像对待任何别的文件那样自己编辑它。</p>
 
 	<p>每一次写入晶体都会存下一个版本，所以晶体有历史，没有东西被盖掉。历史把每一个版本都列出来，最新的在前，每一条都标明是什么产生了它：</p>
@@ -113,7 +115,7 @@
 
 	<div class="note"><strong>恢复不会毁掉东西。</strong> 当前的文本会先存进历史，所以恢复一个旧版本是往历史里添一笔，而不是替换它 —— 一次并非本意的恢复，自己也能撤销。</div>
 
-	<h2>产物</h2>
+	<h2 id="s12">产物</h2>
 	<p>一个 Diamond 还会记下它的工作碰过什么：写出来的文件，以及你做它的时候打开过的页面。这些都不用你记。Daimond 本来就记着智能体用过的每一个工具，所以这份清单是从发生过的事里读出来的 —— 并且是在你接受一次折叠的那一刻收集的。</p>
 
 	<p>只被 <em>读过</em> 的文件是故意不收进来的。智能体为了找一样东西，可能打开四十个文件，把四十个都列出来，会把真正要紧的那一个埋掉。留下的是这件工作产出的东西，以及你要求看的页面。</p>
@@ -127,24 +129,24 @@
 
 	<div class="note">一个你后来改了名或删掉的文件 <strong>会明说</strong> —— 在你试着打开它的时候，而不是悄无声息地什么都不做。一份装作没事的死链清单，比没有清单更糟。</div>
 
-	<h2>Diamond 的工作区</h2>
+	<h2 id="s13">Diamond 的工作区</h2>
 	<p>每个 Diamond 都有一个 <strong>工作区</strong>：你和它一起存放的文件和文件夹。放进去的人是你 —— daimon 不能往自己的工作区里添东西，所以它只用手上已有的东西做事，不够的时候会问你。</p>
 
 	<p><strong>它是你文件的一个视图，不是装着文件的盒子。</strong> Nothing is copied when you attach something: the file stays where it is and the Diamond points at it. Attach the same folder to two Diamonds and there is still one folder — an edit made through either is the file the other reads. Taking something out of a Diamond's workspace only detaches it; the file itself is untouched, and only a deliberate delete removes it. The word <em>工作区</em> invites you to expect a copy, and there is none.</p>
 
 	<p>每个 Diamond 还有一个自己的目录，始终在它的工作区里，始终可写，这样在你还没添加任何东西之前，它的 daimon 就已经有地方干活了 —— 晶体就住在那里。一个文件夹可以添加成 <strong>只供查阅、不供编辑</strong>，这样 daimon 能读它，而一切写入都会被拒绝。而 <a href="email-web-files.html">工作区</a> 面板既可以显示你的全部文件，也可以只显示这个 Diamond 持有的那些，看眼前的活需要哪一种。</p>
 
-	<h3>daimon 能打开什么</h3>
+	<h3 id="s14">daimon 能打开什么</h3>
 	<p><strong>daimon 只能打开它所属 Diamond 的工作区里的文件。</strong> 工作区之外的东西读不了也写不了 —— daimon 不行，它派出的任何工人也不行。这不是提示词里一条模型可能遵守、也可能不遵守的指令：这道检查在编译后的代码里，在每个文件工具都必经的那一扇门上；那份代码就在已发布的构建包里，而构建包是可复现地构建出来的。所以这是一个你可以自己核对的说法，而不是一个你只能选择相信的说法。</p>
 
 	<p>它管不到的地方，也要一并说清楚。它决定的是 daimon 能够到哪里，不是它读到的东西最后去哪里：它打开的一切，都会连同这一轮的其余内容一起发给你的模型提供商。它防的是一个弄错了、或者被人说动了的智能体 —— 一轮对话刚读完一个带着陌生人指令的网页或一封邮件，转而替那个陌生人去找东西，它仍然够不到这个 Diamond 的工作区之外的任何东西。它防不了滥用你所发送内容的提供商，也防不了一份不是我们发布的构建；回答这两件事的是 <a href="accounts.html">离开浏览器的东西</a> 以及 <a href="interface.html">每一次构建的封存记录</a>，不是这道边界。</p>
 
-	<h2>派出工人</h2>
+	<h2 id="s15">派出工人</h2>
 	<p>有些任务要的是把活干了，而不只是记下来。对这些任务，Diamond 的 daimon 会派出一个 <strong>工人智能体</strong>。每个工人在自己的上下文里运行，带着工作区的文件工具，并拿到常设指令和这个 Diamond 的晶体。那块晶体就是它对你这项追求所知的全部 —— 工人看不到你的对话，所以交给它的任务必须把其余需要的东西都说清楚。</p>
 
 	<p>最多 <strong>八个</strong> 工人同时运行，其余的排队。daimon 把它们派出去，它这一轮就到此为止：它不接收它们的输出。每个工人回报一份摘要，值得留下的由你亲手折叠进去 —— 这正是让“什么能进晶体”始终归你决定的地方。正在跑的运行出现在停靠区的 <strong>智能体</strong> 面板里。</p>
 
-	<h3>按住和停掉智能体</h3>
+	<h3 id="s16">按住和停掉智能体</h3>
 	<p>智能体面板的头部有三个控制项，一次作用于 <em>每一个</em> 智能体；同样的三个也挂在每一张卡片上，好让你只对其中一个动手：</p>
 	<ul>
 		<li><strong>暂停</strong> <span class="ui">⏸</span> —— 把正在跑的挂起来，把队列按住。正在跑的智能体保留它已经做出来的东西；在等的那个干脆不开始。在你恢复之前，不会有新的启动。这是给一次花钱比你想的还快的扇出准备的刹车。</li>
@@ -155,7 +157,7 @@
 
 	<p>有两条限制值得知道。工人不能再派工人，所以委派只走一层就停。而且同一时间只引导一个 Diamond，所以不会有第二个 Diamond 在你没看着的时候自顾自地干活。</p>
 
-	<h2>标签</h2>
+	<h2 id="s17">标签</h2>
 	<p>Diamonds 会越积越多，所以可以给它们打标签。标签就是你自己定的一个短词。编辑器给了四个起步的建议 —— <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 和 <strong>org</strong> —— 但 Daimond 不给你强加任何分类法，你可以打任何顺手的词。</p>
 
 	<p>你打的字会被理一遍：标签会转成小写、去掉两头的空白、去重；一个 Diamond 上最多 <strong>8</strong> 个标签，每个标签最多 <strong>24</strong> 个字符。标签和别的东西一样，存在这个 Diamond 自己的元数据里，就在这台设备上。</p>

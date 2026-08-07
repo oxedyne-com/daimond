@@ -1723,5 +1723,12 @@
 	'settings.fold_model_own': 'Le modèle propre de la conversation',
 	'settings.fold_model_group': 'Replier plutôt avec',
 	'settings.fold_model_note': 'Quand une conversation dépasse sa fenêtre, elle est résumée, et le résumé devient ce dont le modèle se souvient. Ceci choisit qui l’écrit. Seuls les chats du même fournisseur l’utilisent — tous les autres se replient avec leur propre modèle.',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond a redémarré {n} fois durant la dernière minute. Voici ce qu’il a fait — copiez-le dans un rapport de bogue.',
+	'trail.copy':            'Copier',
+	'trail.copied':          'Copié',
+	'trail.clear':           'Effacer',
 	});
 })();

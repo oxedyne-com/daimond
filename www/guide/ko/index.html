@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -39,21 +41,21 @@
 	<p>내가 시키지 않는 한 기기에서 나가는 것은 없어요. Daimond이 바깥 세상에 손을 뻗는 것은 내가 청할 때뿐이에요. 내 모델 제공자를 연결했을 때 메시지가 그 제공자에게 가고, 크레딧을 써서 모델을 돌리거나 페이지를 가져오거나 메일을 동기화할 때, 그리고 두 번째 기기를 연결할 때예요. 나머지는 모두 이 브라우저에 남고, 무엇이 어디로 가는지 그리고 그것을 어떻게 스스로 확인할 수 있는지는 <a href="accounts.html">계정 &amp; 프라이버시</a> 페이지에 자세히 적어 뒀어요.</p>
 
 	<figure class="shot" data-shot="getting-started">
-		<img alt="처음 켰을 때의 Daimond 작업 공간: 왼쪽에 Diamonds과 채팅 레일, 가운데에 채팅 패널, 왼쪽 아래에 관리 패널." src="shots/getting-started.png" loading="lazy">
+		<img alt="처음 켰을 때의 Daimond 작업 공간: 왼쪽에 Diamonds과 채팅 레일, 가운데에 채팅 패널, 왼쪽 아래에 관리 패널." src="../shots/getting-started.png" loading="lazy">
 		<figcaption>처음 켰을 때의 Daimond. 대화는 가운데에 있고, 관리 패널은 왼쪽 아래에 있어요.</figcaption>
 	</figure>
 
-	<h2>첫 답까지 가는 가장 짧은 길</h2>
+	<h2 id="s1">첫 답까지 가는 가장 짧은 길</h2>
 	<p>세 단계예요. 저마다 화면에서 보이는 조작 하나를 가리켜요.</p>
 
 	<ol class="steps">
 		<li>
-			<h3>계정 만들기</h3>
+			<h3 id="s2">계정 만들기</h3>
 			<p>처음 켰을 때 Daimond은 <strong>이 기기를 보호하는</strong> 것을 암호문구로 권해요. 이름과 암호문구를 입력하고, <span class="ui">계정 만들기</span>를 고르세요. 암호문구는 저장한 키와 메일 자격 정보를 암호화하고, 이 기기에서 나를 나타내는 신원이 돼요. 어디로도 보내지 않으니 안전한 곳에 적어 두세요 — 잃어버리면 암호화된 자료는 사라져요.</p>
 			<p> <span class="ui">지금은 건너뛰기</span> 쪽을 골라 암호문구를 나중에 정할 수도 있어요. 다만 제공자 키를 연결하는 일은, 그것을 지켜 줄 암호문구가 이미 있을 때 가장 잘 풀려요.</p>
 		</li>
 		<li>
-			<h3>모델 연결하기, 또는 크레딧 사기</h3>
+			<h3 id="s3">모델 연결하기, 또는 크레딧 사기</h3>
 			<p>daimon에게는 생각할 모델이 필요해요. 주는 길은 둘이고, 둘 다 왼쪽 아래 관리 패널에서 갈 수 있어요.</p>
 			<ul>
 				<li><strong>내 키 가져오기.</strong>  <span class="ui">모델</span> 행을 열고, <span class="ui">+ 제공자 추가</span>를 골라 제공자를 고르고, API 키를 붙여 넣고, 기본 모델에 별을 달아요. 그러면 메시지는 내 계정으로 그 제공자에게 곧바로 가요.</li>
@@ -62,17 +64,17 @@
 			<p>둘 중 하나면 충분해요. 자세한 것은 <a href="models.html">모델 &amp; 크레딧</a> 페이지를 보세요.</p>
 		</li>
 		<li>
-			<h3>채팅 시작하기</h3>
+			<h3 id="s4">채팅 시작하기</h3>
 			<p> <span class="ui">새 채팅</span> 항목을 레일 맨 위에서 고르고 (누를 것은 <strong>＋</strong> — 옆은 <strong>채팅</strong>), 가운데 패널 아래 입력칸에 메시지를 쓰고, <span class="ui">➤</span>로 보내요. 그 가운데 패널이 daimon과 이야기하는 곳이고, Daimond은 그 대화를 중심으로 지어졌어요.</p>
 		</li>
 	</ol>
 
-	<h2>지금 보고 있는 것</h2>
+	<h2 id="s5">지금 보고 있는 것</h2>
 	<p>화면에는 세 구역이 있어요. 왼쪽에 있는 <strong>레일</strong> 구역은 지금 하고 있는 일을 늘어놓고, 움직일 수 있는 칸막이 아래에 <strong>관리 패널</strong>을 둬요. 가운데에 있는 <strong>스테이지</strong> 구역은 대화와, 그 옆에서 읽는 것을 담아요. 오른쪽에 있는 <strong>독</strong> 구역은 끌어다 쓰는 원천을 담아요 — 메일, 작업 공간, 돌고 있는 에이전트, 그리고 지출이에요.</p>
 	<p>위쪽에서는 어느 패널이든 눌러서 열고 닫는 칩이 있고, 맨 오른쪽 버튼이 테마와 글자 크기, 독 분할을 정해요. 첫 답까지 가는 데 둘 다 필요하지 않아요. 둘 다 자세히 적어 둔 곳은 <a href="interface.html">인터페이스</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
-		<img alt="왼쪽 아래 관리 패널: 신원 줄, 모델 줄, 크레딧 줄, 도구 줄, 그리고 작업 공간 저장 줄." src="shots/admin-panel.png" loading="lazy">
+		<img alt="왼쪽 아래 관리 패널: 신원 줄, 모델 줄, 크레딧 줄, 도구 줄, 그리고 작업 공간 저장 줄." src="../shots/admin-panel.png" loading="lazy">
 		<figcaption>관리 패널. 줄마다 이 기계에 대한 물음 하나에 답하고, 손댈 수 있는 것은 버튼이에요.</figcaption>
 	</figure>
 

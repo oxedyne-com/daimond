@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
 <script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
 </head>
 <body>
 
@@ -36,16 +38,16 @@
 	<h1>Spending</h1>
 	<p class="lede">The Spending view shows where your money goes, and it keeps the two pots apart. They are different accounts in different currencies, so Daimond shows them as two tracks and never adds them together.</p>
 
-	<h2>Two pots, kept apart</h2>
+	<h2 id="s1">Two pots, kept apart</h2>
 	<ul>
 		<li><strong>Inference.</strong> The model calls themselves, billed to your own provider key. Daimond prices and records them on this device, per turn, so you can see the cost of your own key spend without any of it passing through us.</li>
 		<li><strong>Credits.</strong> The prepaid balance the gateway spends on the few things that leave the browser: fetching a page, syncing or sending mail, cross-device sync, and keeping your workspace in <a href="email-web-files.html">cloud storage</a>.</li>
 	</ul>
 
-	<h2>Opening it</h2>
+	<h2 id="s2">Opening it</h2>
 	<p>Open the Spending view from the <strong>spend meter</strong> in the top bar, or from a link in the <span class="ui">Credits</span> view. It shows each pot with a headline figure, a daily graph, a breakdown by category, and a plain table of movements, so a charge is never a mystery.</p>
 
-	<h2>Protection from runaway costs</h2>
+	<h2 id="s3">Protection from runaway costs</h2>
 	<p>A workspace that can run many agents at once can, in principle, spend fast. The danger is not a large monthly total — it is a <em>rate spike</em>: a fan-out that burns through credit in seconds before you can react. Daimond is built to catch that spike, not merely to tally the total after the fact. Four measures work together, and none of them asks you to set a limit in advance.</p>
 	<ul>
 		<li><strong>A pace check before a fan-out runs.</strong> The cost of dispatching a batch of agents is known before any of them starts. When a batch would run faster than your own recent pace, Daimond pauses it and asks you once, with the number and the estimate on the prompt. A few agents of ordinary cost never reach it; a sudden fifty do. The measure of &ldquo;too fast&rdquo; is your own normal, learned from your recent spend, so there is nothing to configure.</li>

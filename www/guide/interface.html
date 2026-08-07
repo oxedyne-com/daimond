@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../css/variables.css">
 <link rel="stylesheet" href="../css/guide.css">
 <script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
 </head>
 <body>
 
@@ -174,16 +176,16 @@
 		<figcaption>The named regions. The <strong>top bar</strong> runs across the top; below it, three zones: the <strong>rail</strong> (left) — what you work on, above a divider, with the admin panel below — the <strong>stage</strong> (centre) for the conversation, and the <strong>dock</strong> (right) holding Email, Workspace and Agents.</figcaption>
 	</figure>
 
-	<h2>The rail — left</h2>
+	<h2 id="s1">The rail — left</h2>
 	<p>The rail is split by a divider you can drag but not remove. Above the divider is what you are working on; below it is the admin panel.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Diamonds</h3>
+			<h3 id="s2">Diamonds</h3>
 			<p>The pursuits you keep. A Diamond holds what a chat taught you about a piece of work, so the next stretch of it starts from what you know. Search and tag them as they accumulate. Add one with the <strong>＋</strong> beside <strong>Diamonds</strong>.</p>
 		</div>
 		<div class="card">
-			<h3>Chats</h3>
+			<h3 id="s3">Chats</h3>
 			<p>Your conversations. Start one with the <strong>＋</strong> beside <strong>Chats</strong>; click any chat to bring it back to the centre.</p>
 		</div>
 	</div>
@@ -195,7 +197,7 @@
 
 	<p>Diamonds and chats are covered in full on <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>.</p>
 
-	<h3>The admin panel</h3>
+	<h3 id="s4">The admin panel</h3>
 	<p>Below the divider, the admin panel is the state of the machine at a glance. Settings live here rather than in a pop-up, so a chat stays live beside them — you can ask Daimond what an app password is while the box asking for one is still on screen. Each row that can be acted on is a button that opens the thing it names:</p>
 	<ul>
 		<li>An <strong>identity row</strong> — who you are on this device — with a settings cog beside it.</li>
@@ -206,7 +208,7 @@
 		<li><strong>Workspace storage</strong> rows, showing how much space your files use in each of the places a workspace can live.</li>
 	</ul>
 
-	<h3>Which version you are running</h3>
+	<h3 id="s5">Which version you are running</h3>
 	<p>The <span class="ui">Version</span> row reads as a name and an age — <span class="ui">Version · Albany · today</span> — rather than as a build number. Releases are named after Western Australian places in alphabetical order, so their sequence is legible without looking anything up. A name marks a <strong>milestone</strong>, not a build: Daimond ships several builds a day, and a name for each one would be noise. Hovering the row gives the build id and the date it was published.</p>
 	<p>Clicking the row opens the <strong>release history</strong> in the admin panel. It reads from the top down:</p>
 	<ul>
@@ -218,64 +220,64 @@
 	<div class="note"><strong>The planned entry looks different because it is different.</strong> It carries no build id and no seal number, and says in words that it is not built yet and not promised for a date. Everything below it is sealed and checkable; a statement of intent is neither, and should not borrow the authority of a record.</div>
 	<p>There is no way back to an older build, and that is a choice rather than an omission. A pinned old build walks into the gateway's own refusal to talk to a client that is too old; it can hold a security fault that has since been fixed, which matters in an app holding your provider keys, your identity and your passkeys; and an old build meeting newer local data — your files, the durability journal, a sync parcel from another device — risks reading it wrong. Dislike of a change is answered at the change, by saying plainly what changed, which is what the notes in this history are for.</p>
 
-	<h2>The stage — centre</h2>
+	<h2 id="s6">The stage — centre</h2>
 	<p>The stage is the middle zone. Its occupants take the stage on their own or two side by side, and never dock at the right. The point of two seats is that you never leave the conversation to do a thing: read the message, watch the page, read the document, with the daimon still beside it to be asked about it.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>AI — the chat</h3>
+			<h3 id="s7">AI — the chat</h3>
 			<p>Where you talk to the daimon. This is the default occupant and it returns whenever the stage would otherwise be empty. Your messages, the answers, and any tool steps appear here.</p>
 		</div>
 		<div class="card">
-			<h3>Web</h3>
+			<h3 id="s8">Web</h3>
 			<p>A web page, where a page can be shown or driven. Opened from the header or when Daimond follows a link.</p>
 		</div>
 		<div class="card">
-			<h3>Doc</h3>
+			<h3 id="s9">Doc</h3>
 			<p>A compiled document (such as a PDF), given room to read.</p>
 		</div>
 		<div class="card">
-			<h3>Message</h3>
+			<h3 id="s10">Message</h3>
 			<p>A single mail message, opened from Email, read beside the chat.</p>
 		</div>
 		<div class="card">
-			<h3>Tools</h3>
+			<h3 id="s11">Tools</h3>
 			<p>What Daimond can do, and what the rest would cost. Opened from the <span class="ui">Tools</span> row.</p>
 		</div>
 		<div class="card">
-			<h3>Compose</h3>
+			<h3 id="s12">Compose</h3>
 			<p>Writing a mail message. Nothing here sends by itself — only the <span class="ui">Send</span> button puts mail on the wire, and only you can press it.</p>
 		</div>
 	</div>
 
 	<p>Each stage guest has a header with a close button. A closed panel does not vanish: its chip stays in the top bar, unfilled, and clicking the chip brings it back.</p>
 
-	<h2>The dock — right</h2>
+	<h2 id="s13">The dock — right</h2>
 	<p>The dock holds the sources you pull from. Closing one leaves its chip in the top bar; clicking the chip docks it again. How the dock tiles, and therefore how many panels it will hold at once, is yours to set under <strong>Dock tiling</strong> in the appearance menu, described below.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Email</h3>
+			<h3 id="s14">Email</h3>
 			<p>Your mailboxes and what is in them. Add a mailbox, sync, and open a message onto the stage.</p>
 		</div>
 		<div class="card">
-			<h3>Workspace</h3>
+			<h3 id="s15">Workspace</h3>
 			<p>Your files, as an ordinary tree. The agent's file tools read and write here.</p>
 		</div>
 		<div class="card">
-			<h3>Agents</h3>
+			<h3 id="s16">Agents</h3>
 			<p>Live agent runs, as they happen, with a count of how many are working.</p>
 		</div>
 		<div class="card">
-			<h3>Spending</h3>
+			<h3 id="s17">Spending</h3>
 			<p>What you have spent, and on what. Covered in full on <a href="spending.html">Spending</a>.</p>
 		</div>
 	</div>
 
-	<h2>The top bar</h2>
+	<h2 id="s18">The top bar</h2>
 	<p>Across the top sit the brand mark, a meter, a row of <strong>panel chips</strong>, and a button at the far right that opens the <strong>appearance and layout</strong> menu.</p>
 
-	<h3>The chips</h3>
+	<h3 id="s19">The chips</h3>
 	<p>Every panel has a chip, whether it is open or shut, and clicking one toggles that panel. An open panel's chip is filled in, so the row reads as a map of what is on screen. The chips are toggles rather than summons for a reason: if only the closed panels had one, the row would be longest when the app was emptiest, and every chip would shift sideways each time one was used. A chip that stays put is one you can learn the position of. (Agents is the exception to <em>every</em>: it keeps out of the way until the first agent runs.)</p>
 	<p>The chips are grouped by zone — rail, then stage, then dock — with a thin divider between the groups, running left to right in the same order the zones do on screen. So a chip sits on the side the panel it opens will appear on. Two marks are worth knowing:</p>
 	<ul>
@@ -283,14 +285,14 @@
 		<li>A closed dock chip is <strong>greyed out when the dock is full</strong>. Its tooltip points at the fix: choose a larger tiling in the appearance menu, or close a dock panel.</li>
 	</ul>
 
-	<h3>Pinned panels, and the gallery</h3>
+	<h3 id="s20">Pinned panels, and the gallery</h3>
 	<p>You decide which chips sit in the top bar. Any panel can be <strong>pinned</strong> or unpinned; the unpinned ones live behind a <span class="ui">⋯</span> chip at the end of the row, with a count of how many are back there. Clicking it opens the <strong>gallery</strong>: every panel there is, searchable by name, grouped by zone, each row carrying a pin control and saying whether that panel is open. Clicking a row opens or closes the panel as a chip would.</p>
 	<p>The row is allowed to be incomplete only because the gallery is not. Nothing is ranked by how often you use it, either: a row that reorders itself would destroy the muscle memory that fixed positions exist to build.</p>
 
-	<h3>The palette</h3>
+	<h3 id="s21">The palette</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> on a Mac — opens a search box that reaches any panel or any setting by typing. Arrow keys move through the results, <span class="ui">Enter</span> runs the highlighted one, and <span class="ui">Esc</span> closes it. It lists the panels, the palettes, the four text sizes and the dock tilings. It is never the fastest route to a panel you can see a chip for; it is the route that stays complete however many panels there are.</p>
 
-	<h3>By keyboard, and by ear</h3>
+	<h3 id="s22">By keyboard, and by ear</h3>
 	<p>Daimond can be driven without a mouse. <span class="ui">Tab</span> moves through the controls in the order they are drawn, <span class="ui">Enter</span> or <span class="ui">Space</span> operates the one you are on, and <span class="ui">Esc</span> closes whatever is open — the appearance menu, the gallery, the palette. This is not a separate mode: it is the same interface, reached a different way.</p>
 	<p>Where you are is drawn <em>outside</em> the control, as a ring standing off from its edge. That is worth a sentence because it used to be drawn as a change to the control's own border, which is only legible when the resting border is nearly invisible — so making the borders visible would have taken the focus ring away on every palette at once. Drawn outside, against the surface behind it, it survives the whole range: it is measured on all eleven palettes, and the faintest of them is still four and a half times the contrast the standard asks for.</p>
 	<p>Two places are worth knowing about:</p>
@@ -301,7 +303,7 @@
 	<p>With a screen reader, an answer is announced <strong>once, when it has arrived</strong> — "Daimond answered, 120 words" — and not as it is written. That is deliberate, and it is the opposite of what a live region would do: an answer arrives a few characters at a time, and a region marked live is read out on every change, so the answer would be recited at you in fragments for as long as the model kept typing. A running commentary is the kind of thing people switch off, and an app whose announcements have been switched off looks answerable and is not. One sentence per turn is less, and it is usable.</p>
 	<p>The window has named regions and real headings throughout, so a screen reader's own list of landmarks and headings is a working table of contents for the app. If you find something you cannot reach or cannot hear, that is a fault rather than a limit — say so.</p>
 
-	<h3>Appearance and layout</h3>
+	<h3 id="s23">Appearance and layout</h3>
 	<p>The button at the top right opens one menu holding the choices about how Daimond looks and sits, as opposed to what it does:</p>
 	<ul>
 		<li><strong>Theme</strong> — a list of palettes, grouped into three bands: <span class="ui">Light</span>, <span class="ui">Intermediate</span> and <span class="ui">Dark</span>. The band is how you find one; within it the choice is taste, except <span class="ui">Amber</span>, which holds the blue out of everything it draws for reading late at night. This guide wears whatever palette the app is wearing when it is shown inside Daimond.</li>
@@ -310,10 +312,10 @@
 		<li><strong>Dock tiling</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> column, <span class="ui">2×2</span>, <span class="ui">2×3</span> or <span class="ui">3×2</span>, each drawn as the grid it selects. The tiling also decides <em>how many panels the dock can hold</em>, which is its columns times its rows: four in one column, four at 2×2, six at either 2×3 or 3×2. <span class="ui">Auto</span> lets the window decide, taking a second column once there is genuinely room for one. Moving to a smaller grid closes whichever panels no longer fit, most recently opened first — they are closed rather than dropped quietly, so each goes back to being a chip you can see and click.</li>
 	</ul>
 
-	<h3>Keeping an arrangement with a Diamond</h3>
+	<h3 id="s24">Keeping an arrangement with a Diamond</h3>
 	<p>When a Diamond is selected, the appearance menu offers to keep the current arrangement of panels with it. Opening that Diamond again puts the arrangement back, so returning to a piece of work does not mean reassembling by hand the panels it needs. It is saved only when you ask — never inferred, and never in the background — because a switch that silently closed panels would read as work being lost. The menu also lets you update a saved arrangement, or forget it.</p>
 
-	<h2>On a narrow screen</h2>
+	<h2 id="s25">On a narrow screen</h2>
 	<p>Below the phone width the chips and the gallery give way to the phone shell, which answers the same question with less room: the chat is the floor, a panel rises over it as a sheet you can drag, and the rail becomes a drawer opened by the button at the top left. A row along the bottom — <span class="ui">Chat</span>, <span class="ui">Email</span>, <span class="ui">Files</span>, <span class="ui">Agents</span> — moves between them. Nothing is lost; it is the same panels, shown one at a time.</p>
 
 	<div class="next">

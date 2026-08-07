@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,16 +38,16 @@
 	<h1>Ausgaben</h1>
 	<p class="lede">Die Ansicht „Ausgaben“ zeigt, wohin Ihr Geld geht, und hält die beiden Töpfe auseinander. Es sind verschiedene Konten in verschiedenen Währungen; Daimond zeigt sie deshalb als zwei Spuren und addiert sie nie zusammen.</p>
 
-	<h2>Zwei Töpfe, getrennt gehalten</h2>
+	<h2 id="s1">Zwei Töpfe, getrennt gehalten</h2>
 	<ul>
 		<li><strong>Inferenz.</strong> Die Modellaufrufe selbst, abgerechnet über Ihren eigenen Anbieterschlüssel. Daimond bepreist und verbucht sie auf diesem Gerät, Zug um Zug, sodass Sie die Kosten Ihres eigenen Schlüssels sehen, ohne dass etwas davon durch uns läuft.</li>
 		<li><strong>Guthaben.</strong> Das vorausbezahlte Guthaben, das das Gateway für die wenigen Dinge ausgibt, die den Browser verlassen: eine Seite holen, Mail synchronisieren oder senden, geräteübergreifende Synchronisierung und Ihren Arbeitsbereich im <a href="email-web-files.html">Cloud-Speicher halten</a>.</li>
 	</ul>
 
-	<h2>So öffnen Sie sie</h2>
+	<h2 id="s2">So öffnen Sie sie</h2>
 	<p>Öffnen Sie die Ansicht „Ausgaben“ über den <strong>Ausgabenzähler</strong> oben in der Leiste oder über einen Link in der Ansicht <span class="ui">Guthaben</span> . Sie zeigt jeden Topf mit einer Kennzahl, einer Tagesgrafik, einer Aufschlüsselung nach Kategorien und einer schlichten Tabelle der Bewegungen, sodass eine Buchung nie ein Rätsel bleibt.</p>
 
-	<h2>Schutz vor entlaufenen Kosten</h2>
+	<h2 id="s3">Schutz vor entlaufenen Kosten</h2>
 	<p>Ein Arbeitsbereich, der viele Agenten gleichzeitig laufen lassen kann, kann im Prinzip schnell Geld ausgeben. Die Gefahr ist nicht eine hohe Monatssumme — sie ist eine <em>Ausgabenspitze</em>: ein Auffächern, das Guthaben in Sekunden verbrennt, bevor Sie reagieren können. Daimond ist darauf gebaut, diese Spitze abzufangen, nicht bloß die Summe hinterher zu zählen. Vier Maßnahmen greifen ineinander, und keine verlangt von Ihnen, vorab ein Limit zu setzen.</p>
 	<ul>
 		<li><strong>Eine Tempoprüfung, bevor ein Auffächern läuft.</strong> Was es kostet, eine Gruppe von Agenten loszuschicken, steht fest, bevor einer von ihnen startet. Würde eine Gruppe schneller laufen als Ihr eigenes jüngstes Tempo, hält Daimond sie an und fragt einmal nach, mit der Anzahl und der Schätzung in der Rückfrage. Ein paar Agenten üblicher Kosten erreichen das nie; plötzliche fünfzig schon. Der Maßstab für „zu schnell“ ist Ihr eigenes Normalmaß, aus Ihren jüngsten Ausgaben gelernt — es gibt also nichts einzustellen.</li>

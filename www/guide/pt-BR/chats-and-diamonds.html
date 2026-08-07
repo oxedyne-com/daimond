@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,39 +38,39 @@
 	<h1>Chats &amp; Diamonds</h1>
 	<p class="lede">Um chat é uma conversa com o daimon. Um Diamond é um recipiente durável para um trabalho continuado — onde fica guardado o que você já esclareceu sobre esse trabalho, para que o trabalho seguinte comece dali. Esta página cobre como começar e ler chats, os controles de turno, dobrar um chat em um Diamond, o espaço de trabalho em que um Diamond trabalha e organizar os Diamonds que se acumulam.</p>
 
-	<h2>Começar um chat e voltar a ele</h2>
+	<h2 id="s1">Começar um chat e voltar a ele</h2>
 	<p>Escolha <span class="ui">Novo chat</span> — o <strong>＋</strong> ao lado de <strong>Chats</strong> no alto da barra lateral. Digite na caixa embaixo do painel central e envie com <span class="ui">➤</span>. Todo chat que você começa fica listado sob <strong>Chats</strong> na barra lateral; clique em um deles para trazê-lo de volta ao centro. Um chat novo começa no seu modelo padrão; você pode mudar o modelo só daquele chat pelo seletor no cabeçalho dele.</p>
 
 	<p>Enquanto uma resposta chega, você pode continuar digitando. Uma mensagem enviada nesse momento fica <strong>na fila</strong> em vez de se perder: ela aparece sob a conversa como um balão tracejado, e parte como um turno próprio assim que a resposta termina. Clique em um balão da fila para trazê-lo de volta à caixa e mudá-lo, ou no <span class="ui">×</span> dele para descartá-lo. Apertar <span class="ui">■</span> para parar a resposta devolve a você, sem enviar, tudo o que estava esperando atrás dela — parar quer dizer parar.</p>
 
-	<h2>Ler uma conversa longa</h2>
+	<h2 id="s2">Ler uma conversa longa</h2>
 	<p>Uma conversa cresce depressa, por isso o cabeçalho do chat traz controles para mantê-la legível. Eles ficam no canto superior direito do painel central.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Etapas</h3>
+			<h3 id="s3">Etapas</h3>
 			<p>O botão <span class="ui">Etapas</span> mostra ou oculta as etapas das ferramentas na conversa — o trabalho que o agente fez entre a sua mensagem e a resposta dele. Oculte-as para ler só a conversa; mostre-as para ver o que ele de fato fez.</p>
 		</div>
 		<div class="card">
-			<h3>Recolher</h3>
+			<h3 id="s4">Recolher</h3>
 			<p>O botão <span class="ui">−</span> recolhe todas as respostas, deixando o que você perguntou. É a forma mais rápida de correr os olhos por uma conversa longa, e é também assim que se começa a escolher turnos para dobrar.</p>
 		</div>
 		<div class="card">
-			<h3>Voltar</h3>
+			<h3 id="s5">Voltar</h3>
 			<p>O botão <span class="ui">↑</span> volta para a sua última mensagem. Aperte de novo para percorrer as anteriores.</p>
 		</div>
 		<div class="card">
-			<h3>Ir para o fim</h3>
+			<h3 id="s6">Ir para o fim</h3>
 			<p>O botão <span class="ui">↓</span> leva de volta ao pé do chat e recomeça o percurso — de modo que o próximo <span class="ui">↑</span> vai para a sua última mensagem em vez de continuar de onde você tinha chegado.</p>
 		</div>
 	</div>
 
 	<figure class="shot" data-shot="chat-turns">
-		<img alt="Um chat com as respostas recolhidas, mostrando as perguntas feitas e os controles de seleção de turnos no cabeçalho." src="shots/chat-turns.png" loading="lazy">
+		<img alt="Um chat com as respostas recolhidas, mostrando as perguntas feitas e os controles de seleção de turnos no cabeçalho." src="../shots/chat-turns.png" loading="lazy">
 		<figcaption>Recolher as respostas deixa o que você perguntou, e liga os controles para selecionar turnos a dobrar.</figcaption>
 	</figure>
 
-	<h2>Dobrar um chat em um Diamond</h2>
+	<h2 id="s7">Dobrar um chat em um Diamond</h2>
 	<p>Quando uma conversa esclareceu alguma coisa, você a dobra: guarda o que aprendeu e larga o vaivém que produziu isso. Aquilo em que você dobra é um <strong>Diamond</strong>.</p>
 
 	<p>Duas unidades compõem um Diamond:</p>
@@ -77,7 +79,7 @@
 		<li> <strong>Um cristal</strong> é o que as dobras acumularam: a forma do trabalho, os passos em sua ordem e as verificações que você descobriu do jeito difícil. Um Diamond é um cristal junto com a cadeia de dobras que o produziu.</li>
 	</ul>
 
-	<h3>Selecionar turnos e dobrá-los</h3>
+	<h3 id="s8">Selecionar turnos e dobrá-los</h3>
 	<p>Recolha a conversa com <span class="ui">−</span>, e então escolha os turnos que valem ser guardados. Uma fileira de controles aparece no cabeçalho para isso:</p>
 	<ul>
 		<li><span class="ui">Selecionar tudo</span> — marca todos os turnos.</li>
@@ -89,19 +91,19 @@
 	<div class="note"><strong>Nada é absorvido por conta própria.</strong> Um cristal nunca cresce em segundo plano: você escolhe os turnos que são oferecidos, e a própria dobra é uma proposta — o agente reescreve o cristal e mostra o resultado, que você aceita ou rejeita. Um cristal só muda porque você disse que sim.</div>
 
 	<figure class="shot" data-shot="diamond-fold">
-		<img alt="A superfície de comando do Diamond mostrada no lugar do chat, com controles para guiar e dobrar o método." src="shots/diamond-fold.png" loading="lazy">
+		<img alt="A superfície de comando do Diamond mostrada no lugar do chat, com controles para guiar e dobrar o método." src="../shots/diamond-fold.png" loading="lazy">
 		<figcaption>Selecionar um Diamond mostra a superfície de comando dele no lugar do chat, onde você guia e dobra o método.</figcaption>
 	</figure>
 
-	<h2>Trabalhar um Diamond</h2>
+	<h2 id="s9">Trabalhar um Diamond</h2>
 	<p>Os Diamonds ficam listados acima dos seus chats na barra lateral; adicione um com o <strong>＋</strong> ao lado de <strong>Diamonds</strong>. Selecionar um Diamond substitui o chat no centro pela superfície de comando dele — uma visão compacta onde você guia o trabalho e dobra nele outras melhorias. Dá para saber que face o painel está mostrando sem ler nada: num Diamond, o painel adota a marca do Daimond ao lado do nome e deixa os cantos retos, em contraste com os cantos arredondados de todo o resto da tela. A conversa volta no instante em que você escolhe um chat de novo, porque o Daimond é construído em torno da conversa e retorna a ela sempre que o palco ficaria vazio.</p>
 
-	<h3>O que um Diamond faz, e o que não faz</h3>
+	<h3 id="s10">O que um Diamond faz, e o que não faz</h3>
 	<p>Um Diamond retém; ele não executa. Nada executa um cristal. Não há motor de fluxo por trás de um Diamond, nada o agenda, nada encadeia um Diamond a outro, e não há tarefa salva esperando disparar. Voltar a um Diamond não o põe em marcha — nem deixá-lo em paz, já que um Diamond em repouso fica exatamente como você o deixou.</p>
 
 	<p>Então <em>retomá-lo</em> significa que você o guia de novo, com tudo o que ele já aprendeu em mãos. É essa toda a promessa, e ela vale mais do que parece. O cristal é prosa, e prosa é o que um modelo lê melhor: ele é entregue ao daimon como contexto quando você trabalha o Diamond, e a todo trabalhador despachado a partir dele. O que você esclareceu uma vez alcança o trabalho de novo sem que você o redigite — nem se lembre de que deveria.</p>
 
-	<h2>O cristal e o histórico dele</h2>
+	<h2 id="s11">O cristal e o histórico dele</h2>
 	<p>O cristal é um arquivo de verdade — <strong>crystal.md</strong>, na pasta do próprio Diamond dentro do seu espaço de trabalho. Você pode abri-lo, lê-lo e editá-lo você mesmo, como qualquer outro arquivo.</p>
 
 	<p>Toda escrita em um cristal congela uma versão, de modo que um cristal tem histórico e nada é sobrescrito. O histórico lista todas as versões, da mais nova para a mais antiga, cada uma com aquilo que a produziu:</p>
@@ -113,7 +115,7 @@
 
 	<div class="note"><strong>Restaurar não é destrutivo.</strong> O texto que era o atual é guardado antes no histórico, então restaurar uma versão antiga acrescenta ao histórico em vez de substituí-lo — uma restauração que você não queria pode ela mesma ser desfeita.</div>
 
-	<h2>Artefatos</h2>
+	<h2 id="s12">Artefatos</h2>
 	<p>Um Diamond também guarda o rastro do que o trabalho dele tocou: os arquivos escritos e as páginas abertas enquanto você trabalhava nele. Você não precisa registrar nada disso. O Daimond já anota cada ferramenta que um agente usa, então a lista é lida do que aconteceu — e é reunida no momento em que você aceita uma dobra.</p>
 
 	<p>Arquivos que foram apenas <em>lidos</em> ficam de fora de propósito. Um agente pode abrir quarenta arquivos procurando uma coisa, e listar os quarenta enterraria aquele que importava. O que se guarda é o que o trabalho produziu, e as páginas que você pediu para ver.</p>
@@ -127,24 +129,24 @@
 
 	<div class="note">Um arquivo que você renomeou ou excluiu depois <strong>diz isso</strong> quando você tenta abri-lo, em vez de simplesmente não fazer nada. Uma lista de links mortos que finge o contrário é pior do que lista nenhuma.</div>
 
-	<h2>O espaço de trabalho de um Diamond</h2>
+	<h2 id="s13">O espaço de trabalho de um Diamond</h2>
 	<p>Um Diamond tem um <strong>espaço de trabalho</strong>: os arquivos e as pastas que você guarda com ele. Quem os põe ali é você — um daimon não pode acrescentar nada ao próprio espaço de trabalho, então trabalha com o que lhe foi dado e pergunta a você quando precisa de mais.</p>
 
 	<p><strong>É uma vista dos seus arquivos, não uma caixa que os contém.</strong> Nothing is copied when you attach something: the file stays where it is and the Diamond points at it. Attach the same folder to two Diamonds and there is still one folder — an edit made through either is the file the other reads. Taking something out of a Diamond's workspace only detaches it; the file itself is untouched, and only a deliberate delete removes it. The word <em>espaço de trabalho</em> invites you to expect a copy, and there is none.</p>
 
 	<p>Um Diamond também tem um diretório próprio, sempre no seu espaço de trabalho e sempre gravável, para que o daimon dele tenha onde trabalhar antes de você ter anexado qualquer coisa — o cristal mora ali. Uma pasta pode ser anexada para ser <strong>consultada em vez de editada</strong>, o que permite que um daimon a leia e recusa toda escrita. E o painel <a href="email-web-files.html">Espaço</a> mostra ou todos os seus arquivos ou apenas os que este Diamond guarda, conforme convier ao trabalho à sua frente.</p>
 
-	<h3>O que um daimon pode abrir</h3>
+	<h3 id="s14">O que um daimon pode abrir</h3>
 	<p><strong>Um daimon só pode abrir os arquivos do espaço de trabalho do seu Diamond.</strong> Nada fora dele é legível ou gravável — nem pelo daimon, nem por qualquer trabalhador que ele despache. Isto não é uma instrução em um prompt que um modelo pode ou não honrar: a verificação está no código compilado, na única porta por onde passa toda ferramenta de arquivo, e esse código está no pacote publicado, que é construído de forma reproduzível. Portanto é uma afirmação que você pode conferir, e não uma que você tem de aceitar na confiança.</p>
 
 	<p>O que isso não cobre precisa ser dito no mesmo fôlego. Isso decide até onde um daimon pode chegar, não onde vai parar o que ele lê: tudo o que ele abre é enviado ao seu provedor de modelos junto com o resto do turno. E protege contra um agente que se enganou, ou que foi convencido de alguma coisa — um turno que acabou de ler uma página web ou um e-mail com instruções de um estranho, e saiu procurando em nome dele, ainda assim não alcança nada fora do espaço de trabalho deste Diamond. Não é uma proteção contra um provedor que use mal o que você lhe envia, nem contra uma versão que não seja a que publicamos; quem responde a essas duas coisas é <a href="accounts.html">o que sai do navegador</a> e o <a href="interface.html">registro selado de cada build</a>, não isto.</p>
 
-	<h2>Despachar trabalhadores</h2>
+	<h2 id="s15">Despachar trabalhadores</h2>
 	<p>Algumas tarefas querem trabalho feito, e não apenas registrado. Para essas, o daimon do Diamond despacha um <strong>agente trabalhador</strong>. Cada trabalhador roda no próprio contexto, com as ferramentas de arquivo do espaço de trabalho, e recebe as instruções permanentes e o cristal deste Diamond. Esse cristal é tudo o que ele sabe sobre o seu trabalho — um trabalhador não enxerga a sua conversa, então a tarefa que lhe é entregue precisa dizer todo o resto de que ele precisa.</p>
 
 	<p>Até <strong>oito</strong> trabalhadores rodam de uma vez; os demais entram na fila. O daimon os despacha e o turno dele termina aí: ele não recebe o que produzem. Cada um relata um resumo, e você dobra à mão os que valem ser guardados — é isso que faz com que a escolha do que entra em um cristal continue sendo sua. As execuções ao vivo aparecem no painel <strong>Agentes</strong> do dock.</p>
 
-	<h3>Segurar e parar agentes</h3>
+	<h3 id="s16">Segurar e parar agentes</h3>
 	<p>O cabeçalho do painel Agentes traz três controles que agem sobre <em>todo</em> agente de uma vez, e os mesmos três aparecem em cada bloco para que você aja sobre um só:</p>
 	<ul>
 		<li><strong>Pausar</strong> <span class="ui">⏸</span> — suspende o que está rodando e segura a fila. Um agente em execução guarda o que já tinha produzido; um que esperava simplesmente não começa. Nada de novo é lançado até você retomar. Este é o freio para um leque que está gastando mais rápido do que você pretendia.</li>
@@ -155,7 +157,7 @@
 
 	<p>Vale conhecer dois limites. Um trabalhador não pode despachar outro trabalhador, então a delegação desce um nível e para. E um Diamond é guiado de cada vez, então não há um segundo Diamond trabalhando enquanto você está de costas.</p>
 
-	<h2>Etiquetas</h2>
+	<h2 id="s17">Etiquetas</h2>
 	<p>Os Diamonds se acumulam, então podem ser etiquetados. Uma etiqueta é um rótulo curto que você escolhe. O editor sugere quatro para começar — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> e <strong>org</strong> — mas o Daimond não lhe impõe taxonomia nenhuma, e você pode digitar o que servir ao seu trabalho.</p>
 
 	<p>O que você digita é arrumado: uma etiqueta vai para minúsculas, é aparada e não se repete, com até <strong>8</strong> etiquetas em um Diamond e até <strong>24</strong> caracteres em cada uma. As etiquetas ficam guardadas nos metadados do próprio Diamond, neste dispositivo, como todo o resto.</p>

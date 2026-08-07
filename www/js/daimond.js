@@ -8465,6 +8465,11 @@ import init, {
 		/// promise that makes -- and a second copy of a focus trap is a second
 		/// thing to keep right, which is how the two would drift apart.
 		keepFocusIn:     keepFocusIn,
+		/// Draw the lock card. Published for `verify_reloadloop`, which has to
+		/// open it on demand to prove the trail appears on a looping app and NOT
+		/// on a working one -- and the only honest way to check that is through
+		/// the function the app itself calls.
+		showIdentity:    showIdentity,
 		composerHasText: function () { return !!(chatInput && chatInput.value && chatInput.value.trim()); },
 		// Post a message to the one conversation from somewhere other than the
 		// composer — the phone sheet's "Ask about this" pill. Goes through the
@@ -17637,6 +17642,9 @@ import init, {
 	/// protected nothing. This clears the rendered content, stops the app
 	/// spending money, and only then asks for the passphrase.
 	function lockApp() {
+		// In the trail, because "the app locked itself" and "the page reloaded"
+		// look identical from the outside and need completely different fixes.
+		try { DaimondTrail.note('lockApp', 'the user pressed log out'); } catch (e) {}
 		// Every chat that is still spending is stopped, not just the visible one.
 		chats.forEach(function (c) {
 			if (c._generating) {
@@ -17913,10 +17921,97 @@ import init, {
 		btn.disabled = !!(creating && idGenMode && wrote && !wrote.checked);
 	}
 
+	/// Put the app's own trail on the lock screen WHEN, AND ONLY WHEN, it is
+	/// looping.
+	///
+	/// This exists because of a bug that could not be seen. A phone reported
+	/// "unlock, the app appears for a second, the lock screen is back", three
+	/// times across three sessions, and it was diagnosed twice from reading code
+	/// rather than from evidence -- both times wrongly. Seeing a browser console
+	/// on iOS needs a Mac attached, so every report was a description.
+	///
+	/// The trigger is the loop itself: three boots inside ninety seconds is not
+	/// something a person does, and there is no point offering diagnostics to
+	/// somebody whose app is working. `breadcrumb.js` writes nothing but fixed
+	/// event names and a clock -- no key, no token, no message text -- so what
+	/// appears here is safe to read out and safe to paste.
+	function showTrailIfLooping() {
+		var card = document.querySelector('#identity-modal .modal-card');
+		if (!card || !window.DaimondTrail) return;
+		var old = document.getElementById('id-trail');
+		if (old) old.remove();
+
+		var rows = [];
+		try { rows = DaimondTrail.rows() || []; } catch (e) { return; }
+		var now = Date.now();
+		var boots = rows.filter(function (r) {
+			return r && r.w === 'boot' && now - r.t < 90000;
+		}).length;
+		if (boots < 3) return;
+
+		var wrap = document.createElement('div');
+		wrap.className = 'id-trail';
+		wrap.id = 'id-trail';
+
+		var lead = document.createElement('p');
+		lead.className = 'id-trail-lead';
+		lead.textContent = t('trail.looping', { n: boots });
+		wrap.appendChild(lead);
+
+		var pre = document.createElement('pre');
+		pre.className = 'id-trail-text';
+		pre.textContent = DaimondTrail.text();      // escaped via textContent
+		wrap.appendChild(pre);
+
+		var row = document.createElement('div');
+		row.className = 'id-trail-acts';
+		var copy = document.createElement('button');
+		copy.type = 'button';
+		copy.className = 'id-trail-btn';
+		copy.textContent = t('trail.copy');
+		copy.addEventListener('click', function () {
+			var text = DaimondTrail.text();
+			// `writeText` needs a permission a locked page may not have, and this
+			// is exactly the screen where nothing else works either. The textarea
+			// fallback is what makes the button honest on a phone.
+			var done = function () { copy.textContent = t('trail.copied'); };
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+			} else { fallback(text, done); }
+		});
+		var clear = document.createElement('button');
+		clear.type = 'button';
+		clear.className = 'id-trail-btn';
+		clear.textContent = t('trail.clear');
+		clear.addEventListener('click', function () {
+			try { DaimondTrail.clear(); } catch (e) {}
+			wrap.remove();
+		});
+		row.appendChild(copy); row.appendChild(clear);
+		wrap.appendChild(row);
+		card.appendChild(wrap);
+	}
+
+	/// Select-and-copy, for a browser that will not give the clipboard to this
+	/// page. Removed straight after, so nothing is left on screen.
+	function fallback(text, done) {
+		try {
+			var ta = document.createElement('textarea');
+			ta.value = text;
+			ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand('copy');
+			ta.remove();
+			done();
+		} catch (e) { /* nothing else to try; the text is on screen to be read */ }
+	}
+
 	function showIdentity(mode) {           // 'create' | 'unlock'
 		var m = document.getElementById('identity-modal');
 		var unlock = mode === 'unlock';
 		var name = (window.DaimondIdentity && DaimondIdentity.displayName()) || '';
+		showTrailIfLooping();
 		renderAccountPicker(unlock);
 		renderPasskeyOption(unlock);
 		// A device that just redeemed a pairing code reloads into unlock mode. The
@@ -18145,6 +18240,7 @@ import init, {
 		syncAccountFromIdentity();
 		await afterUnlock();
 		hideIdentity();
+		try { DaimondTrail.note('unlocked'); } catch (e) { /* no trail is not an error */ }
 		// Only now is the user entitled to see their content.
 		locked = false;
 		document.body.classList.remove('locked');
@@ -20279,6 +20375,7 @@ import init, {
 			document.body.classList.add('locked');
 			sessionNameEl.textContent = '';
 			chatInputBar.style.display = 'none';
+			try { DaimondTrail.note('lock screen', 'boot found a stored identity'); } catch (e) {}
 			showIdentity('unlock');
 			window.__DAIMOND_READY = true;
 			return;

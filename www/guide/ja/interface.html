@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -174,16 +176,16 @@
 		<figcaption>名前の付いた領域。 <strong>上部バー</strong> が上を横切ります。その下に三つのゾーン。 <strong>レール</strong> （左）— 仕切りの上に取り組んでいるもの、下に管理パネル。 <strong>ステージ</strong> （中央）は会話のため。そして <strong>ドック</strong> （右）はメール、作業領域、エージェントを収めます。</figcaption>
 	</figure>
 
-	<h2>レール — 左</h2>
+	<h2 id="s1">レール — 左</h2>
 	<p>レールは、ドラッグはできても外せない仕切りで分かれています。仕切りの上はあなたが取り組んでいるもの、下は管理パネルです。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Diamonds</h3>
+			<h3 id="s2">Diamonds</h3>
 			<p>あなたが持ち続ける取り組みです。Diamond は、ある仕事についてチャットが教えてくれたことを抱えているので、次の一区切りは分かっているところから始まります。たまってきたら検索とタグで探せます。新しく作るときに押すのは <strong>＋</strong> — 隣は <strong>Diamonds</strong>.</p>
 		</div>
 		<div class="card">
-			<h3>チャット</h3>
+			<h3 id="s3">チャット</h3>
 			<p>あなたの会話です。新しく始めるときに押すのは <strong>＋</strong> — 隣は <strong>チャット</strong>。どのチャットもクリックすると中央に戻ります。</p>
 		</div>
 	</div>
@@ -195,7 +197,7 @@
 
 	<p>Diamonds とチャットを詳しく扱っているのが <a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>.</p>
 
-	<h3>管理パネル</h3>
+	<h3 id="s4">管理パネル</h3>
 	<p>仕切りの下にある管理パネルは、機械の状態を一目で見せます。設定はポップアップではなくここにあるので、その横でチャットが生きたままです — アプリパスワードとは何かを Daimond に尋ねながら、それを求めている入力欄を画面に出しておけます。操作できる行はどれも、その名前が指すものを開くボタンです。</p>
 	<ul>
 		<li> <strong>識別情報の行</strong> — この端末でのあなたが誰か — 横に設定の歯車があります。</li>
@@ -206,7 +208,7 @@
 		<li><strong>作業領域の保存領域</strong> の行。作業領域が置けるそれぞれの場所で、ファイルがどれだけ使っているかを示します。</li>
 	</ul>
 
-	<h3>動かしているバージョン</h3>
+	<h3 id="s5">動かしているバージョン</h3>
 	<p> <span class="ui">バージョン</span> の行は、ビルド番号ではなく名前と経過として読めます — <span class="ui">バージョン · Albany · 今日</span> のように。リリースには西オーストラリアの地名がアルファベット順に付けられるので、並びは何も調べなくても読み取れます。名前が印すのは <strong>節目</strong>であって、ビルドではありません。Daimond は一日に何度もビルドを出すので、一つずつに名前を付ければ雑音になります。行にカーソルを合わせると、ビルド id と公開された日付が出ます。</p>
 	<p>行をクリックすると、管理パネルに <strong>リリースの履歴</strong> が開きます。上から下へ読みます。</p>
 	<ul>
@@ -218,64 +220,64 @@
 	<div class="note"><strong>予定の項目が違って見えるのは、実際に違うからです。</strong> ビルド id も封印の番号も持たず、まだ作られておらず、日付の約束もないと言葉で述べています。その下はすべて封印され、確かめられます。意向の表明はそのどちらでもなく、記録の権威を借りるべきではありません。</div>
 	<p>古いビルドに戻る道はありません。これは抜けではなく、選択です。古いビルドに留まれば、古すぎるクライアントとは話さないというゲートウェイ自身の拒否に行き当たります。すでに直された安全上の欠陥を抱えているかもしれず、それはプロバイダーの鍵、識別情報、パスキーを持つアプリでは重大です。そして古いビルドが新しいローカルのデータ — ファイル、耐久性のジャーナル、ほかの端末からの同期の荷物 — に出会えば、読み違える危険があります。変更が気に入らないという気持ちには、何が変わったのかをはっきり述べることで、変更のところで答えます。この履歴の注記は、そのためにあります。</p>
 
-	<h2>ステージ — 中央</h2>
+	<h2 id="s6">ステージ — 中央</h2>
 	<p>ステージは真ん中のゾーンです。ここに立つものは単独で、または二つ横に並んで立ち、右に格納されることはありません。席が二つある意味は、何かをするために会話を離れなくてよいということです。メッセージを読み、ページを見て、文書を読む — その横に daimon がいて、いつでも尋ねられます。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>AI — チャット</h3>
+			<h3 id="s7">AI — チャット</h3>
 			<p>daimon と話す場所です。ここの既定の住人で、ステージが空になりそうなときはいつでも戻ってきます。あなたのメッセージ、回答、そしてツールのステップがここに出ます。</p>
 		</div>
 		<div class="card">
-			<h3>ウェブ</h3>
+			<h3 id="s8">ウェブ</h3>
 			<p>ウェブページ。ページを表示することも、操作することもできます。ヘッダーから、または Daimond がリンクをたどったときに開きます。</p>
 		</div>
 		<div class="card">
-			<h3>文書</h3>
+			<h3 id="s9">文書</h3>
 			<p>コンパイルされた文書（PDF など）。読むための場所が与えられます。</p>
 		</div>
 		<div class="card">
-			<h3>メッセージ</h3>
+			<h3 id="s10">メッセージ</h3>
 			<p>一通のメール。メールから開き、チャットの横で読みます。</p>
 		</div>
 		<div class="card">
-			<h3>ツール</h3>
+			<h3 id="s11">ツール</h3>
 			<p>Daimond に何ができるか、そして残りはいくらか。開くのは <span class="ui">ツール</span> の行からです。</p>
 		</div>
 		<div class="card">
-			<h3>作成</h3>
+			<h3 id="s12">作成</h3>
 			<p>メールを書きます。ここでひとりでに送られるものはありません — <span class="ui">送信</span> ボタンだけがメールを回線に乗せ、押せるのはあなただけです。</p>
 		</div>
 	</div>
 
 	<p>ステージの客はどれもヘッダーに閉じるボタンを持っています。閉じたパネルは消えません。チップは上部バーに、塗りつぶされない形で残り、クリックすれば戻ってきます。</p>
 
-	<h2>ドック — 右</h2>
+	<h2 id="s13">ドック — 右</h2>
 	<p>ドックは、あなたが引き出す源を収めます。一つ閉じてもチップは上部バーに残り、チップをクリックすればまた格納されます。ドックをどう分割するか — つまり一度にいくつのパネルを収められるか — は、外観メニューの <strong>ドックの分割</strong> であなたが決めます。下で説明します。</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>メール</h3>
+			<h3 id="s14">メール</h3>
 			<p>あなたのメールボックスと、その中身。メールボックスを追加し、同期し、メッセージをステージに開きます。</p>
 		</div>
 		<div class="card">
-			<h3>作業領域</h3>
+			<h3 id="s15">作業領域</h3>
 			<p>あなたのファイルを、普通のツリーとして。エージェントのファイルツールはここを読み書きします。</p>
 		</div>
 		<div class="card">
-			<h3>エージェント</h3>
+			<h3 id="s16">エージェント</h3>
 			<p>動いているエージェントの実行を、そのまま。いくつ働いているかの数も出ます。</p>
 		</div>
 		<div class="card">
-			<h3>支出</h3>
+			<h3 id="s17">支出</h3>
 			<p>何にいくら使ったか。詳しくは <a href="spending.html">支出</a>.</p>
 		</div>
 	</div>
 
-	<h2>上部バー</h2>
+	<h2 id="s18">上部バー</h2>
 	<p>上部には、ブランドのマーク、メーター、 <strong>パネルのチップ</strong>の列、そしていちばん右に <strong>外観とレイアウト</strong> のメニューを開くボタンがあります。</p>
 
-	<h3>チップ</h3>
+	<h3 id="s19">チップ</h3>
 	<p>どのパネルにも、開いていても閉じていてもチップがあり、クリックするとそのパネルが切り替わります。開いているパネルのチップは塗りつぶされるので、この列は画面に何があるかの地図として読めます。チップが呼び出しではなく切り替えなのには理由があります。閉じているパネルだけにチップがあれば、アプリがいちばん空のときに列がいちばん長くなり、一つ使うたびにすべてのチップが横にずれます。動かないチップは、位置を覚えられるチップです。（エージェントは <em>すべての</em>という言い方の例外です。最初のエージェントが動くまでは出てきません。）</p>
 	<p>チップはゾーンごとにまとめられています — レール、次にステージ、そしてドック — 組のあいだには細い仕切りがあり、画面上のゾーンと同じ順で左から右へ並びます。ですからチップは、それが開くパネルが出てくる側にあります。知っておくとよい印が二つあります。</p>
 	<ul>
@@ -283,14 +285,14 @@
 		<li>閉じたドックのチップは、 <strong>ドックがいっぱいのときは灰色になります</strong>。ツールチップが直し方を示します。外観メニューでより大きい分割を選ぶか、ドックのパネルを一つ閉じてください。</li>
 	</ul>
 
-	<h3>ピン留めしたパネルと、パネルの一覧</h3>
+	<h3 id="s20">ピン留めしたパネルと、パネルの一覧</h3>
 	<p>上部バーにどのチップを置くかはあなたが決めます。どのパネルも <strong>ピン留め</strong> したり外したりできます。外したものは列の終わりにある <span class="ui">⋯</span> のチップの奥に入り、そこにいくつあるかの数が付きます。クリックすると <strong>パネルの一覧</strong>が開きます。あるかぎりのパネルが、名前で検索でき、ゾーンごとにまとまり、それぞれの行にピンの操作と、そのパネルが開いているかどうかが付いています。行をクリックすると、チップと同じようにパネルが開いたり閉じたりします。</p>
 	<p>列が欠けていてよいのは、一覧が欠けていないからです。使う頻度で順位が付くこともありません。並び替わる列は、位置を固定して育てようとしている体の記憶を壊してしまいます。</p>
 
-	<h3>コマンドパレット</h3>
+	<h3 id="s21">コマンドパレット</h3>
 	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> （Mac では）— 打つだけでどのパネルにもどの設定にも届く検索欄が開きます。矢印キーで結果のあいだを動き、 <span class="ui">Enter</span> で強調されたものを実行し、 <span class="ui">Esc</span> で閉じます。並ぶのはパネル、パレット、四つの文字サイズ、そしてドックの分割です。チップが見えているパネルへの最短経路ではありません。パネルがいくつあっても漏れがない経路です。</p>
 
-	<h3>By keyboard, and by ear</h3>
+	<h3 id="s22">By keyboard, and by ear</h3>
 	<p>Daimond can be driven without a mouse. <span class="ui">Tab</span> moves through the controls in the order they are drawn, <span class="ui">Enter</span> または <span class="ui">Space</span> operates the one you are on, and <span class="ui">Esc</span> closes whatever is open — the appearance menu, the gallery, the palette. This is not a separate mode: it is the same interface, reached a different way.</p>
 	<p>Where you are is drawn <em>outside</em> the control, as a ring standing off from its edge. That is worth a sentence because it used to be drawn as a change to the control's own border, which is only legible when the resting border is nearly invisible — so making the borders visible would have taken the focus ring away on every palette at once. Drawn outside, against the surface behind it, it survives the whole range: it is measured on all eleven palettes, and the faintest of them is still four and a half times the contrast the standard asks for.</p>
 	<p>Two places are worth knowing about:</p>
@@ -301,7 +303,7 @@
 	<p>With a screen reader, an answer is announced <strong>once, when it has arrived</strong> — "Daimond answered, 120 words" — and not as it is written. That is deliberate, and it is the opposite of what a live region would do: an answer arrives a few characters at a time, and a region marked live is read out on every change, so the answer would be recited at you in fragments for as long as the model kept typing. A running commentary is the kind of thing people switch off, and an app whose announcements have been switched off looks answerable and is not. One sentence per turn is less, and it is usable.</p>
 	<p>The window has named regions and real headings throughout, so a screen reader's own list of landmarks and headings is a working table of contents for the app. If you find something you cannot reach or cannot hear, that is a fault rather than a limit — say so.</p>
 
-	<h3>外観とレイアウト</h3>
+	<h3 id="s23">外観とレイアウト</h3>
 	<p>右上のボタンは、Daimond が何をするかではなく、どう見えてどう収まるかについての選択をまとめた一つのメニューを開きます。</p>
 	<ul>
 		<li><strong>テーマ</strong> — パレットの一覧。三つの帯にまとめてあります: <span class="ui">明るい</span>, <span class="ui">中間</span> と <span class="ui">暗い</span>。帯は見つけるためのもので、その中では好みで選べます。ただし <span class="ui">琥珀</span>だけは、描くものすべてから青を抜いてあり、夜遅くの読書のためのものです。この手引きは、Daimond の中で表示されているとき、アプリが着ているパレットをそのまま着ます。</li>
@@ -310,10 +312,10 @@
 		<li><strong>ドックの分割</strong> — <span class="ui">自動</span>, <span class="ui">1</span> 列、 <span class="ui">2×2</span>, <span class="ui">2×3</span> または <span class="ui">3×2</span>、それぞれ選ぶ格子の形で描かれます。分割は <em>ドックがいくつパネルを収められるか</em>も決めます。列かける行の数です。1 列なら四つ、2×2 なら四つ、2×3 でも 3×2 でも六つです。 <span class="ui">自動</span> はウィンドウに決めさせ、二列目が本当に入るようになったときに取ります。小さい格子に移ると、入らなくなったパネルが、最近開いたものから閉じられます — 黙って落とされるのではなく閉じられるので、それぞれが見えてクリックできるチップに戻ります。</li>
 	</ul>
 
-	<h3>配置を Diamond と一緒に残す</h3>
+	<h3 id="s24">配置を Diamond と一緒に残す</h3>
 	<p>Diamond を選んでいるとき、外観メニューは今のパネルの配置をその Diamond と一緒に残すことを申し出ます。その Diamond をもう一度開くと配置が戻るので、仕事に戻ることが、必要なパネルを手で組み直すことにはなりません。保存されるのはあなたが頼んだときだけです — 推測もしませんし、裏で行うこともありません。黙ってパネルを閉じる切り替えは、作業が失われたように読めるからです。メニューでは、保存した配置を更新することも、忘れさせることもできます。</p>
 
-	<h2>狭い画面では</h2>
+	<h2 id="s25">狭い画面では</h2>
 	<p>スマートフォンの幅より下では、チップとパネルの一覧はスマートフォンの外枠に道を譲ります。同じ問いに、より少ない場所で答える形です。チャットが床になり、パネルはその上にドラッグできるシートとして立ち上がり、レールは左上のボタンで開くドロワーになります。下辺に並ぶ列 — <span class="ui">チャット</span>, <span class="ui">メール</span>, <span class="ui">ファイル</span>, <span class="ui">エージェント</span> — で行き来します。失われるものはありません。同じパネルを、一度に一つずつ見せているだけです。</p>
 
 	<div class="next">

@@ -1721,5 +1721,12 @@
 	'settings.fold_model_own': 'Dem eigenen Modell des Gesprächs',
 	'settings.fold_model_group': 'Stattdessen falten mit',
 	'settings.fold_model_note': 'Wenn ein Gespräch über sein Fenster hinauswächst, wird es zusammengefasst, und die Zusammenfassung wird zu dem, woran sich das Modell erinnert. Dies wählt, was sie schreibt. Nur Chats beim selben Anbieter nutzen es – jeder andere Chat faltet mit seinem eigenen Modell.',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond wurde in der letzten Minute {n}-mal neu gestartet. Das ist der Verlauf — kopieren Sie ihn in einen Fehlerbericht.',
+	'trail.copy':            'Kopieren',
+	'trail.copied':          'Kopiert',
+	'trail.clear':           'Leeren',
 	});
 })();

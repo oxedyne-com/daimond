@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -174,16 +176,16 @@
 		<figcaption>Die benannten Bereiche. Die <strong>obere Leiste</strong> verläuft oben quer; darunter drei Zonen: die <strong>Leiste</strong> (links) — woran Sie arbeiten, über einem Trenner, mit dem Verwaltungsfeld darunter — die <strong>Bühne</strong> (Mitte) für das Gespräch und das <strong>Dock</strong> (rechts) mit E-Mail, Workspace und Agenten.</figcaption>
 	</figure>
 
-	<h2>Die Leiste — links</h2>
+	<h2 id="s1">Die Leiste — links</h2>
 	<p>Die Leiste wird von einem Trenner geteilt, den Sie ziehen, aber nicht entfernen können. Über dem Trenner steht, woran Sie arbeiten; darunter das Verwaltungsfeld.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Diamonds</h3>
+			<h3 id="s2">Diamonds</h3>
 			<p>Die Vorhaben, die Sie behalten. Ein Diamond hält, was ein Chat Ihnen über ein Stück Arbeit beigebracht hat, damit die nächste Strecke davon ausgeht, was Sie wissen. Suchen und taggen Sie sie, während sie sich ansammeln. Eines fügen Sie hinzu mit dem <strong>＋</strong> neben <strong>Diamonds</strong>.</p>
 		</div>
 		<div class="card">
-			<h3>Chats</h3>
+			<h3 id="s3">Chats</h3>
 			<p>Ihre Gespräche. Einen beginnen Sie mit dem <strong>＋</strong> neben <strong>Chats</strong>; klicken Sie einen Chat an, um ihn in die Mitte zurückzuholen.</p>
 		</div>
 	</div>
@@ -195,7 +197,7 @@
 
 	<p>Diamonds und Chats sind vollständig behandelt auf <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>.</p>
 
-	<h3>Das Verwaltungsfeld</h3>
+	<h3 id="s4">Das Verwaltungsfeld</h3>
 	<p>Unter dem Trenner ist das Verwaltungsfeld der Zustand der Maschine auf einen Blick. Einstellungen wohnen hier statt in einem Aufklappfenster, sodass ein Chat daneben lebendig bleibt — Sie können Daimond fragen, was ein App-Passwort ist, während das Feld, das danach fragt, noch auf dem Bildschirm steht. Jede Zeile, auf die man wirken kann, ist eine Schaltfläche, die öffnet, was sie benennt:</p>
 	<ul>
 		<li>Die <strong>Identitätszeile</strong> — wer Sie auf diesem Gerät sind — mit einem Zahnrad daneben.</li>
@@ -206,7 +208,7 @@
 		<li><strong>Speicher des Arbeitsbereichs</strong> — Zeilen, die zeigen, wie viel Platz Ihre Dateien an jedem der Orte belegen, an denen ein Arbeitsbereich liegen kann.</li>
 	</ul>
 
-	<h3>Welche Version Sie fahren</h3>
+	<h3 id="s5">Welche Version Sie fahren</h3>
 	<p>Die Zeile <span class="ui">Version</span> liest sich als Name und Alter — <span class="ui">Version · Albany · heute</span> — statt als Build-Nummer. Ausgaben tragen die Namen westaustralischer Orte in alphabetischer Reihenfolge, ihre Abfolge ist also lesbar, ohne dass man etwas nachschlagen muss. Ein Name markiert einen <strong>Meilenstein</strong>, keinen Build: Daimond liefert mehrere Builds am Tag aus, und ein Name für jeden wäre Lärm. Wenn Sie über die Zeile fahren, erscheinen die Build-ID und das Datum der Veröffentlichung.</p>
 	<p>Ein Klick auf die Zeile öffnet die <strong>Versionshistorie</strong> im Verwaltungsfeld. Sie liest sich von oben nach unten:</p>
 	<ul>
@@ -218,64 +220,64 @@
 	<div class="note"><strong>Der geplante Eintrag sieht anders aus, weil er anders ist.</strong> Er trägt keine Build-ID und keine Siegelnummer und sagt in Worten, dass er noch nicht gebaut und für kein Datum versprochen ist. Alles darunter ist versiegelt und prüfbar; eine Absichtserklärung ist beides nicht und sollte sich die Autorität eines Registers nicht ausleihen.</div>
 	<p>Es gibt keinen Weg zurück zu einem älteren Build, und das ist eine Entscheidung, kein Versäumnis. Ein festgehaltener alter Build läuft in die eigene Weigerung des Gateways, mit einem zu alten Client zu sprechen; er kann einen Sicherheitsfehler enthalten, der seither behoben wurde, was in einer App zählt, die Ihre Anbieterschlüssel, Ihre Identität und Ihre Passkeys hält; und ein alter Build, der auf neuere lokale Daten trifft — Ihre Dateien, das Haltbarkeitsjournal, ein Synchronisierungspaket von einem anderen Gerät — liest sie womöglich falsch. Der Unmut über eine Änderung wird an der Änderung beantwortet, indem klar gesagt wird, was sich geändert hat — wozu die Notizen in dieser Historie da sind.</p>
 
-	<h2>Die Bühne — Mitte</h2>
+	<h2 id="s6">Die Bühne — Mitte</h2>
 	<p>Die Bühne ist die mittlere Zone. Ihre Gäste nehmen die Bühne allein ein oder zu zweit nebeneinander und docken nie rechts an. Der Sinn der zwei Plätze ist, dass Sie für nichts das Gespräch verlassen müssen: die Nachricht lesen, die Seite ansehen, das Dokument lesen, mit dem Daimon weiter daneben, um ihn dazu zu fragen.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>KI — der Chat</h3>
+			<h3 id="s7">KI — der Chat</h3>
 			<p>Wo Sie mit dem Daimon sprechen. Das ist der Standardgast, und er kehrt zurück, wann immer die Bühne sonst leer wäre. Ihre Nachrichten, die Antworten und alle Werkzeugschritte erscheinen hier.</p>
 		</div>
 		<div class="card">
-			<h3>Web</h3>
+			<h3 id="s8">Web</h3>
 			<p>Eine Webseite, die gezeigt oder bedient werden kann. Geöffnet aus der Kopfzeile oder wenn Daimond einem Link folgt.</p>
 		</div>
 		<div class="card">
-			<h3>Dok</h3>
+			<h3 id="s9">Dok</h3>
 			<p>Ein übersetztes Dokument (etwa ein PDF), mit Raum zum Lesen.</p>
 		</div>
 		<div class="card">
-			<h3>Nachricht</h3>
+			<h3 id="s10">Nachricht</h3>
 			<p>Eine einzelne Mail-Nachricht, aus E-Mail geöffnet, neben dem Chat gelesen.</p>
 		</div>
 		<div class="card">
-			<h3>Werkzeuge</h3>
+			<h3 id="s11">Werkzeuge</h3>
 			<p>Was Daimond kann und was der Rest kosten würde. Geöffnet über die Zeile <span class="ui">Werkzeuge</span> im Verwaltungsfeld.</p>
 		</div>
 		<div class="card">
-			<h3>Verfassen</h3>
+			<h3 id="s12">Verfassen</h3>
 			<p>Eine Mail-Nachricht schreiben. Hier geht nichts von allein hinaus — nur die Schaltfläche <span class="ui">Senden</span> bringt Mail auf die Leitung, und nur Sie können sie drücken.</p>
 		</div>
 	</div>
 
 	<p>Jeder Bühnengast hat eine Kopfzeile mit einer Schaltfläche zum Schließen. Ein geschlossener Bereich verschwindet nicht: Sein Chip bleibt in der oberen Leiste, ungefüllt, und ein Klick auf den Chip holt ihn zurück.</p>
 
-	<h2>Das Dock — rechts</h2>
+	<h2 id="s13">Das Dock — rechts</h2>
 	<p>Das Dock hält die Quellen, aus denen Sie schöpfen. Einen zu schließen lässt seinen Chip in der oberen Leiste; ein Klick auf den Chip dockt ihn wieder an. Wie das Dock kachelt und damit, wie viele Bereiche es auf einmal hält, bestimmen Sie unter <strong>Dock-Raster</strong> im Darstellungsmenü, das unten beschrieben ist.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>E-Mail</h3>
+			<h3 id="s14">E-Mail</h3>
 			<p>Ihre Postfächer und was darin liegt. Ein Postfach hinzufügen, synchronisieren und eine Nachricht auf die Bühne öffnen.</p>
 		</div>
 		<div class="card">
-			<h3>Workspace</h3>
+			<h3 id="s15">Workspace</h3>
 			<p>Ihre Dateien als gewöhnlicher Baum. Die Dateiwerkzeuge des Agenten lesen und schreiben hier.</p>
 		</div>
 		<div class="card">
-			<h3>Agenten</h3>
+			<h3 id="s16">Agenten</h3>
 			<p>Laufende Agenten-Durchgänge, während sie geschehen, mit einer Zählung, wie viele arbeiten.</p>
 		</div>
 		<div class="card">
-			<h3>Ausgaben</h3>
+			<h3 id="s17">Ausgaben</h3>
 			<p>Was Sie ausgegeben haben und wofür. Vollständig behandelt auf <a href="spending.html">Ausgaben</a>.</p>
 		</div>
 	</div>
 
-	<h2>Die obere Leiste</h2>
+	<h2 id="s18">Die obere Leiste</h2>
 	<p>Oben quer sitzen die Marke, ein Zähler, eine Reihe von <strong>Bereichs-Chips</strong>, und ganz rechts eine Schaltfläche, die das Menü <strong>Darstellung und Layout</strong> öffnet.</p>
 
-	<h3>Die Chips</h3>
+	<h3 id="s19">Die Chips</h3>
 	<p>Jeder Bereich hat einen Chip, ob offen oder geschlossen, und ein Klick darauf schaltet diesen Bereich um. Der Chip eines offenen Bereichs ist gefüllt, die Reihe liest sich also als Karte dessen, was auf dem Bildschirm ist. Die Chips sind Umschalter und keine Rufknöpfe, und das aus einem Grund: Hätten nur die geschlossenen Bereiche einen, wäre die Reihe am längsten, wenn die App am leersten ist, und jeder Chip würde bei jeder Benutzung seitlich rutschen. Ein Chip, der bleibt, wo er ist, ist einer, dessen Platz Sie lernen können. (Agenten ist die Ausnahme von diesem <em>„jedes“</em>: Es hält sich zurück, bis der erste Agent läuft.)</p>
 	<p>Die Chips sind nach Zone gruppiert — Leiste, dann Bühne, dann Dock — mit einem dünnen Trenner zwischen den Gruppen, von links nach rechts in derselben Reihenfolge, in der die Zonen auf dem Bildschirm liegen. Ein Chip sitzt also auf der Seite, auf der der Bereich erscheinen wird, den er öffnet. Zwei Kennzeichen sind zu kennen:</p>
 	<ul>
@@ -283,14 +285,14 @@
 		<li>Ein geschlossener Dock-Chip ist <strong>ausgegraut, wenn das Dock voll ist</strong>. Sein Tooltip zeigt den Ausweg: ein größeres Raster im Darstellungsmenü wählen oder einen Dock-Bereich schließen.</li>
 	</ul>
 
-	<h3>Angeheftete Bereiche und die Galerie</h3>
+	<h3 id="s20">Angeheftete Bereiche und die Galerie</h3>
 	<p>Sie entscheiden, welche Chips in der oberen Leiste sitzen. Jeder Bereich lässt sich <strong>anheften</strong> oder lösen; die gelösten wohnen hinter einem <span class="ui">⋯</span> Chip am Ende der Reihe, mit einer Zählung, wie viele dort hinten sind. Ein Klick darauf öffnet die <strong>Galerie</strong>: jeden Bereich, den es gibt, nach Namen durchsuchbar, nach Zone gruppiert, jede Zeile mit einem Anheft-Element und der Angabe, ob dieser Bereich offen ist. Ein Klick auf eine Zeile öffnet oder schließt den Bereich, wie ein Chip es täte.</p>
 	<p>Die Reihe darf nur deshalb unvollständig sein, weil die Galerie es nicht ist. Nichts wird danach gereiht, wie oft Sie es benutzen: Eine Reihe, die sich selbst umsortiert, würde genau das Muskelgedächtnis zerstören, für das feste Plätze da sind.</p>
 
-	<h3>Die Palette</h3>
+	<h3 id="s21">Die Palette</h3>
 	<p><kbd>Strg</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> auf einem Mac — öffnet ein Suchfeld, das jeden Bereich und jede Einstellung durch Tippen erreicht. Die Pfeiltasten bewegen sich durch die Ergebnisse, <span class="ui">Enter</span> führt das hervorgehobene aus, und <span class="ui">Esc</span> schließt sie. Aufgeführt sind die Bereiche, die Farbschemata, die vier Textgrößen und die Dock-Aufteilungen. Zu einem Bereich, für den Sie einen Chip sehen, ist das nie der schnellste Weg; es ist der Weg, der vollständig bleibt, wie viele Bereiche es auch gibt.</p>
 
-	<h3>By keyboard, and by ear</h3>
+	<h3 id="s22">By keyboard, and by ear</h3>
 	<p>Daimond can be driven without a mouse. <span class="ui">Tab</span> moves through the controls in the order they are drawn, <span class="ui">Enter</span> oder <span class="ui">Space</span> operates the one you are on, and <span class="ui">Esc</span> closes whatever is open — the appearance menu, the gallery, the palette. This is not a separate mode: it is the same interface, reached a different way.</p>
 	<p>Where you are is drawn <em>outside</em> the control, as a ring standing off from its edge. That is worth a sentence because it used to be drawn as a change to the control's own border, which is only legible when the resting border is nearly invisible — so making the borders visible would have taken the focus ring away on every palette at once. Drawn outside, against the surface behind it, it survives the whole range: it is measured on all eleven palettes, and the faintest of them is still four and a half times the contrast the standard asks for.</p>
 	<p>Two places are worth knowing about:</p>
@@ -301,7 +303,7 @@
 	<p>With a screen reader, an answer is announced <strong>once, when it has arrived</strong> — "Daimond answered, 120 words" — and not as it is written. That is deliberate, and it is the opposite of what a live region would do: an answer arrives a few characters at a time, and a region marked live is read out on every change, so the answer would be recited at you in fragments for as long as the model kept typing. A running commentary is the kind of thing people switch off, and an app whose announcements have been switched off looks answerable and is not. One sentence per turn is less, and it is usable.</p>
 	<p>The window has named regions and real headings throughout, so a screen reader's own list of landmarks and headings is a working table of contents for the app. If you find something you cannot reach or cannot hear, that is a fault rather than a limit — say so.</p>
 
-	<h3>Darstellung und Layout</h3>
+	<h3 id="s23">Darstellung und Layout</h3>
 	<p>Die Schaltfläche oben rechts öffnet ein Menü mit den Entscheidungen darüber, wie Daimond aussieht und sitzt, im Unterschied dazu, was es tut:</p>
 	<ul>
 		<li><strong>Farbschema</strong> — eine Liste von Farbschemata, in drei Bändern gruppiert: <span class="ui">Hell</span>, <span class="ui">Mittel</span> und <span class="ui">Dunkel</span>. Das Band ist, wie Sie eines finden; darin ist die Wahl Geschmackssache — außer <span class="ui">Bernstein</span>, das aus allem, was es zeichnet, das Blau heraushält, für das Lesen spät am Abend. Dieses Handbuch trägt das Farbschema, das die App gerade trägt, wenn es in Daimond gezeigt wird.</li>
@@ -310,10 +312,10 @@
 		<li><strong>Dock-Raster</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> Spalte, <span class="ui">2×2</span>, <span class="ui">2×3</span> oder <span class="ui">3×2</span>, jeweils als das Raster gezeichnet, das sie wählt. Das Raster entscheidet auch, <em>wie viele Bereiche das Dock halten kann</em>, nämlich Spalten mal Zeilen: vier in einer Spalte, vier bei 2×2, sechs bei 2×3 oder 3×2. <span class="ui">Auto</span> lässt das Fenster entscheiden und nimmt eine zweite Spalte, sobald wirklich Platz dafür ist. Zu einem kleineren Raster zu wechseln schließt die Bereiche, die nicht mehr hineinpassen, die zuletzt geöffneten zuerst — sie werden geschlossen und nicht still fallen gelassen, jeder wird also wieder zu einem Chip, den Sie sehen und anklicken können.</li>
 	</ul>
 
-	<h3>Eine Anordnung bei einem Diamond behalten</h3>
+	<h3 id="s24">Eine Anordnung bei einem Diamond behalten</h3>
 	<p>Wenn ein Diamond gewählt ist, bietet das Darstellungsmenü an, die aktuelle Anordnung der Bereiche bei ihm zu behalten. Dieses Diamond wieder zu öffnen stellt die Anordnung her, zu einem Stück Arbeit zurückzukehren heißt also nicht, die Bereiche von Hand wieder zusammenzustellen, die es braucht. Sie wird nur gespeichert, wenn Sie es verlangen — nie erschlossen und nie im Hintergrund — denn ein Wechsel, der still Bereiche schlösse, läse sich wie verlorene Arbeit. Das Menü lässt Sie eine gespeicherte Anordnung auch aktualisieren oder vergessen.</p>
 
-	<h2>Auf einem schmalen Bildschirm</h2>
+	<h2 id="s25">Auf einem schmalen Bildschirm</h2>
 	<p>Unterhalb der Telefonbreite weichen die Chips und die Galerie der Telefonhülle, die dieselbe Frage mit weniger Platz beantwortet: Der Chat ist der Boden, ein Bereich steigt darüber als Blatt auf, das Sie ziehen können, und die Leiste wird zu einer Schublade, die die Schaltfläche oben links öffnet. Eine Reihe am unteren Rand — <span class="ui">Chat</span>, <span class="ui">E-Mail</span>, <span class="ui">Dateien</span>, <span class="ui">Agenten</span> — wechselt zwischen ihnen. Nichts geht verloren; es sind dieselben Bereiche, einer nach dem anderen gezeigt.</p>
 
 	<div class="next">

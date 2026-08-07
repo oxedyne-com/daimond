@@ -1862,5 +1862,12 @@
 	'term.no_relay_script':  'The terminal relay did not load in this page, so no terminal can be opened. That is a fault in the app rather than anything about your machine: reload Daimond.',
 	'term.no_renderer':      'The terminal itself did not load in this page, so there is nothing to draw one on. That is a fault in the app rather than anything about your machine: reload Daimond.',
 
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond has restarted {n} times in the last minute. This is what it did — copy it into a bug report.',
+	'trail.copy':            'Copy',
+	'trail.copied':          'Copied',
+	'trail.clear':           'Clear',
+
 	});
 })();

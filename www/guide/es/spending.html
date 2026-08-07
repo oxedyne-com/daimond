@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,16 +38,16 @@
 	<h1>Gastos</h1>
 	<p class="lede">La vista Gastos muestra a dónde va tu dinero, y mantiene los dos botes separados. Son cuentas distintas en monedas distintas, así que Daimond las muestra como dos pistas y nunca las suma.</p>
 
-	<h2>Dos botes, separados</h2>
+	<h2 id="s1">Dos botes, separados</h2>
 	<ul>
 		<li><strong>Inferencia.</strong> Las llamadas al modelo en sí, cargadas a la clave de tu propio proveedor. Daimond las tarifica y las anota en este dispositivo, turno a turno, para que veas lo que gastas con tu clave sin que nada de ello pase por nosotros.</li>
 		<li><strong>Créditos.</strong> El saldo prepagado que la pasarela gasta en las pocas cosas que salen del navegador: traer una página, sincronizar o enviar correo, la sincronización entre dispositivos y mantener tu espacio de trabajo en el <a href="email-web-files.html">almacenamiento en la nube</a>.</li>
 	</ul>
 
-	<h2>Cómo abrirla</h2>
+	<h2 id="s2">Cómo abrirla</h2>
 	<p>Abre la vista Gastos desde el <strong>medidor de gasto</strong> de la barra superior, o desde un enlace de la vista <span class="ui">Créditos</span> en el panel de administración. Muestra cada bote con una cifra principal, una gráfica diaria, un desglose por categorías y una tabla llana de movimientos, para que un cargo nunca sea un misterio.</p>
 
-	<h2>Protección frente a costes desbocados</h2>
+	<h2 id="s3">Protección frente a costes desbocados</h2>
 	<p>Un espacio de trabajo capaz de correr muchos agentes a la vez puede, en principio, gastar rápido. El peligro no es un total mensual grande: es un <em>pico de ritmo</em>: un despliegue que quema crédito en segundos antes de que puedas reaccionar. Daimond está hecho para atrapar ese pico, no solo para sumar el total después. Cuatro medidas actúan juntas, y ninguna te pide fijar un límite por adelantado.</p>
 	<ul>
 		<li><strong>Una comprobación de ritmo antes de que corra un despliegue.</strong> El coste de despachar un lote de agentes se conoce antes de que arranque ninguno. Cuando un lote correría más rápido que tu propio ritmo reciente, Daimond lo pausa y te pregunta una vez, con el número y la estimación en el aviso. Unos pocos agentes de coste corriente nunca llegan ahí; cincuenta de golpe sí. La medida de «demasiado rápido» es tu propia normalidad, aprendida de tu gasto reciente, así que no hay nada que configurar.</li>

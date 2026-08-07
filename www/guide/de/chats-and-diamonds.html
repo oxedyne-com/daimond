@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,39 +38,39 @@
 	<h1>Chats &amp; Diamonds</h1>
 	<p class="lede">Ein Chat ist ein Gespräch mit dem Daimon. Ein Diamond ist ein dauerhafter Behälter für ein Vorhaben — dort liegt, was Sie über ein Stück Arbeit herausgearbeitet haben, damit spätere Arbeit davon ausgeht. Diese Seite behandelt das Beginnen und Lesen von Chats, die Bedienelemente für Züge, das Einklappen eines Chats in ein Diamond, den Arbeitsbereich, in dem ein Diamond arbeitet, und das Ordnen der Diamonds, die sich ansammeln.</p>
 
-	<h2>Einen Chat beginnen und zu ihm zurückkehren</h2>
+	<h2 id="s1">Einen Chat beginnen und zu ihm zurückkehren</h2>
 	<p>Wählen Sie <span class="ui">Neuer Chat</span> — das <strong>＋</strong> neben <strong>Chats</strong> oben in der Leiste. Tippen Sie in das Feld unten im mittleren Bereich und senden Sie mit <span class="ui">➤</span>. Jeder Chat, den Sie beginnen, steht unter <strong>Chats</strong> in der Leiste; klicken Sie einen an, um ihn in die Mitte zurückzuholen. Ein neuer Chat startet mit Ihrem Standardmodell; das Modell nur für diesen Chat ändern Sie über die Auswahl in seiner Kopfzeile.</p>
 
 	<p>Während eine Antwort eintrifft, können Sie weitertippen. Eine dann gesendete Nachricht muss <strong>warten</strong> statt verloren zu gehen: Sie erscheint unter dem Verlauf als gestrichelte Blase und geht als eigener Zug hinaus, sobald die Antwort fertig ist. Klicken Sie auf eine wartende Blase, um sie zurück ins Feld zu holen und zu ändern; ein Klick auf ihr <span class="ui">×</span> verwirft sie. Drücken Sie <span class="ui">■</span> zum Anhalten der Antwort, und alles, was dahinter wartet, kommt ungesendet zu Ihnen zurück — anhalten heißt anhalten.</p>
 
-	<h2>Ein langes Gespräch lesen</h2>
+	<h2 id="s2">Ein langes Gespräch lesen</h2>
 	<p>Ein Gespräch wächst schnell, deshalb trägt die Kopfzeile des Chats Bedienelemente, die es lesbar halten. Sie sitzen oben rechts im mittleren Bereich.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3>Schritte</h3>
+			<h3 id="s3">Schritte</h3>
 			<p>Die <span class="ui">Schritte</span> blenden ein und aus, was der Agent zwischen Ihrer Nachricht und seiner Antwort getan hat. Blenden Sie sie aus, um nur das Gespräch zu lesen; blenden Sie sie ein, um zu sehen, was er tatsächlich getan hat.</p>
 		</div>
 		<div class="card">
-			<h3>Einklappen</h3>
+			<h3 id="s4">Einklappen</h3>
 			<p>Die <span class="ui">−</span> klappt jede Antwort ein und lässt stehen, was Sie gefragt haben. Das ist der schnellste Weg, einen langen Verlauf zu überfliegen, und zugleich der Anfang, wenn Sie Züge zum Einklappen wählen wollen.</p>
 		</div>
 		<div class="card">
-			<h3>Zurückspringen</h3>
+			<h3 id="s5">Zurückspringen</h3>
 			<p>Die <span class="ui">↑</span> springt zurück zu Ihrer letzten Nachricht. Drücken Sie sie erneut, um die davor durchzugehen.</p>
 		</div>
 		<div class="card">
-			<h3>Ans Ende springen</h3>
+			<h3 id="s6">Ans Ende springen</h3>
 			<p>Die <span class="ui">↓</span> kehrt an das Ende des Chats zurück und beginnt den Durchgang von vorn — sodass die nächste <span class="ui">↑</span> zu Ihrer letzten Nachricht geht, statt dort weiterzumachen, wo Sie aufgehört hatten.</p>
 		</div>
 	</div>
 
 	<figure class="shot" data-shot="chat-turns">
-		<img alt="Ein Chat mit eingeklappten Antworten, der die gestellten Fragen zeigt, und die Bedienelemente zur Zugauswahl in der Kopfzeile." src="shots/chat-turns.png" loading="lazy">
+		<img alt="Ein Chat mit eingeklappten Antworten, der die gestellten Fragen zeigt, und die Bedienelemente zur Zugauswahl in der Kopfzeile." src="../shots/chat-turns.png" loading="lazy">
 		<figcaption>Die Antworten einzuklappen lässt stehen, was Sie gefragt haben, und schaltet die Bedienelemente zum Auswählen von Zügen zum Einklappen ein.</figcaption>
 	</figure>
 
-	<h2>Einen Chat in ein Diamond einklappen</h2>
+	<h2 id="s7">Einen Chat in ein Diamond einklappen</h2>
 	<p>Wenn ein Gespräch etwas herausgearbeitet hat, klappen Sie es ein: Sie behalten, was Sie gelernt haben, und lassen das Hin und Her fallen, das dazu geführt hat. Eingeklappt wird in ein <strong>Diamond</strong>.</p>
 
 	<p>Zwei Einheiten machen ein Diamond aus:</p>
@@ -77,7 +79,7 @@
 		<li>Ein <strong>Kristall</strong> ist das, was die Einklappungen angesammelt haben: die Gestalt der Arbeit, die Schritte in ihrer Reihenfolge und die Prüfungen, die Sie auf die harte Tour gefunden haben. Ein Diamond ist ein Kristall zusammen mit der Kette von Einklappungen, die ihn hervorgebracht hat.</li>
 	</ul>
 
-	<h3>Züge auswählen und einklappen</h3>
+	<h3 id="s8">Züge auswählen und einklappen</h3>
 	<p>Klappen Sie den Verlauf zusammen mit <span class="ui">−</span>, dann wählen Sie die Züge, die es wert sind, behalten zu werden. Dafür erscheint eine Reihe von Bedienelementen in der Kopfzeile:</p>
 	<ul>
 		<li><span class="ui">Alle auswählen</span> — jeden Zug markieren.</li>
@@ -89,19 +91,19 @@
 	<div class="note"><strong>Nichts wird von allein aufgenommen.</strong> Ein Kristall wächst nie im Hintergrund: Sie wählen die Züge, die angeboten werden, und das Einklappen selbst ist ein Vorschlag — der Agent schreibt den Kristall um und zeigt Ihnen das Ergebnis, das Sie annehmen oder ablehnen. Ein Kristall ändert sich nur, weil Sie es gesagt haben.</div>
 
 	<figure class="shot" data-shot="diamond-fold">
-		<img alt="Die Kommandofläche des Diamonds anstelle des Chats, mit Bedienelementen zum Lenken und Einklappen der Methode." src="shots/diamond-fold.png" loading="lazy">
+		<img alt="Die Kommandofläche des Diamonds anstelle des Chats, mit Bedienelementen zum Lenken und Einklappen der Methode." src="../shots/diamond-fold.png" loading="lazy">
 		<figcaption>Ein ausgewähltes Diamond zeigt seine Kommandofläche anstelle des Chats, wo Sie die Methode lenken und einklappen.</figcaption>
 	</figure>
 
-	<h2>Ein Diamond bearbeiten</h2>
+	<h2 id="s9">Ein Diamond bearbeiten</h2>
 	<p>Diamonds stehen in der Leiste über Ihren Chats; eines fügen Sie hinzu mit dem <strong>＋</strong> neben <strong>Diamonds</strong>. Ein ausgewähltes Diamond ersetzt den Chat in der Mitte durch seine Kommandofläche — eine kompakte Ansicht, in der Sie die Arbeit lenken und weitere Verbesserungen einklappen. Sie sehen ohne Lesen, welches Gesicht der Bereich zeigt: Auf einem Diamond nimmt der Bereich die Daimond-Marke neben den Namen und macht seine Ecken eckig, gegen die runden Ecken von allem anderen auf dem Bildschirm. Das Gespräch kehrt zurück, sobald Sie wieder einen Chat wählen, denn Daimond ist um das Gespräch herum gebaut und kommt darauf zurück, wann immer die Bühne sonst leer wäre.</p>
 
-	<h3>Was ein Diamond tut und was nicht</h3>
+	<h3 id="s10">Was ein Diamond tut und was nicht</h3>
 	<p>Ein Diamond bewahrt; es läuft nicht. Nichts führt einen Kristall aus. Hinter einem Diamond steckt keine Workflow-Maschine, nichts plant es ein, nichts hängt ein Diamond an ein anderes, und es wartet kein gespeicherter Auftrag darauf, loszugehen. Zu einem Diamond zurückzukehren setzt es nicht in Gang — und es allein zu lassen ebenso wenig, denn ein ruhendes Diamond bleibt genau so, wie Sie es verlassen haben.</p>
 
 	<p>Also <em>es wieder aufnehmen</em> heißt, dass Sie es erneut lenken, mit allem, was es schon gelernt hat, zur Hand. Das ist der ganze Anspruch, und er ist mehr wert, als er klingt. Der Kristall ist Prosa, und Prosa liest ein Modell am besten: Er wird dem Daimon als Kontext gereicht, wenn Sie das Diamond bearbeiten, und jedem Arbeiter, der davon losgeschickt wird. Was Sie einmal herausgearbeitet haben, erreicht die Arbeit wieder, ohne dass Sie es neu tippen — oder daran denken müssen, dass Sie es sollten.</p>
 
-	<h2>Der Kristall und seine Historie</h2>
+	<h2 id="s11">Der Kristall und seine Historie</h2>
 	<p>Der Kristall ist eine echte Datei — <strong>crystal.md</strong>, im eigenen Ordner des Diamonds in Ihrem Arbeitsbereich. Sie können sie öffnen, lesen und selbst bearbeiten, wie jede andere Datei.</p>
 
 	<p>Jedes Schreiben in einen Kristall legt eine Version an, ein Kristall hat also eine Historie, und nichts wird überschrieben. Die Historie führt jede Version auf, die neueste zuerst, jeweils mit dem, was sie hervorgebracht hat:</p>
@@ -113,7 +115,7 @@
 
 	<div class="note"><strong>Wiederherstellen zerstört nichts.</strong> Der Text, der aktuell war, kommt zuerst in die Historie; eine ältere Version wiederherzustellen fügt der Historie also etwas hinzu, statt sie zu ersetzen — eine Wiederherstellung, die Sie nicht meinten, lässt sich selbst rückgängig machen.</div>
 
-	<h2>Artefakte</h2>
+	<h2 id="s12">Artefakte</h2>
 	<p>Ein Diamond merkt sich auch, was seine Arbeit berührt hat: die geschriebenen Dateien und die geöffneten Seiten, während Sie daran gearbeitet haben. Sie müssen davon nichts festhalten. Daimond notiert ohnehin jedes Werkzeug, das ein Agent benutzt, die Liste wird also von dem abgelesen, was geschehen ist — und sie wird in dem Moment eingesammelt, in dem Sie ein Einklappen annehmen.</p>
 
 	<p>Dateien, die nur <em>gelesen</em> wurden, bleiben mit Absicht draußen. Ein Agent öffnet vielleicht vierzig Dateien auf der Suche nach einer Sache, und alle vierzig aufzuführen würde die eine begraben, auf die es ankam. Behalten wird, was die Arbeit hervorgebracht hat, und die Seiten, um die Sie gebeten haben.</p>
@@ -127,24 +129,24 @@
 
 	<div class="note">Eine Datei, die Sie inzwischen umbenannt oder gelöscht haben, <strong>sagt das</strong> auch, wenn Sie sie öffnen wollen, statt stillschweigend nichts zu tun. Eine Liste toter Verweise, die etwas anderes vorgibt, ist schlimmer als gar keine Liste.</div>
 
-	<h2>Der Arbeitsbereich eines Diamonds</h2>
+	<h2 id="s13">Der Arbeitsbereich eines Diamonds</h2>
 	<p>Ein Diamond hat einen <strong>Arbeitsbereich</strong>: die Dateien und Ordner, die Sie bei ihm behalten. Sie legen sie dort ab — ein Daimon kann seinem eigenen Arbeitsbereich nichts hinzufügen, er arbeitet also mit dem, was er bekommen hat, und fragt Sie, wenn er mehr braucht.</p>
 
 	<p><strong>Er ist eine Sicht auf Ihre Dateien, kein Kasten, der sie enthält.</strong> Nothing is copied when you attach something: the file stays where it is and the Diamond points at it. Attach the same folder to two Diamonds and there is still one folder — an edit made through either is the file the other reads. Taking something out of a Diamond's workspace only detaches it; the file itself is untouched, and only a deliberate delete removes it. The word <em>Arbeitsbereich</em> invites you to expect a copy, and there is none.</p>
 
 	<p>Ein Diamond hat außerdem einen eigenen Ordner, immer in seinem Arbeitsbereich und immer beschreibbar, damit sein Daimon einen Platz zum Arbeiten hat, bevor Sie irgendetwas bei ihm behalten haben — dort liegt der Kristall. Ein Ordner kann auch so behalten werden, dass er <strong>eingesehen statt bearbeitet wird</strong>, was einem Daimon erlaubt, ihn zu lesen, und jeden Schreibzugriff verweigert. Und das Panel <a href="email-web-files.html">Arbeitsbereich</a> zeigt entweder alle Ihre Dateien oder nur die, die dieses Diamond behält, je nachdem, was zur Arbeit vor Ihnen passt.</p>
 
-	<h3>Was ein Daimon öffnen kann</h3>
+	<h3 id="s14">Was ein Daimon öffnen kann</h3>
 	<p><strong>Ein Daimon kann nur die Dateien im Arbeitsbereich seines Diamonds öffnen.</strong> Nichts außerhalb davon ist lesbar oder beschreibbar — weder für den Daimon noch für einen Arbeiter, den er losschickt. Das ist keine Anweisung in einem Prompt, an die ein Modell sich halten kann oder auch nicht: Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt im veröffentlichten Bundle, das reproduzierbar gebaut wird. Es ist also eine Behauptung, die Sie prüfen können, und keine, die Sie glauben müssen.</p>
 
 	<p>Was diese Grenze nicht abdeckt, gehört im selben Atemzug gesagt. Sie regelt, woran ein Daimon herankommt, nicht, wo das Gelesene landet: Was er öffnet, geht mit dem Rest des Zugs an Ihren Modellanbieter. Und sie schützt vor einem Agenten, der sich irrt oder zu etwas überredet worden ist: Ein Zug, der eben eine Webseite oder eine E-Mail mit Anweisungen eines Fremden gelesen hat und sich in dessen Auftrag auf die Suche gemacht hat, erreicht trotzdem nichts außerhalb des Arbeitsbereichs dieses Diamonds. Sie schützt nicht vor einem Anbieter, der missbraucht, was Sie ihm schicken, und nicht vor einem Build, der nicht der ist, den wir veröffentlicht haben; darauf antworten andere Dinge: <a href="accounts.html">was den Browser verlässt</a> und das <a href="interface.html">versiegelte Register jedes Builds</a> — diese Grenze nicht.</p>
 
-	<h2>Arbeiter losschicken</h2>
+	<h2 id="s15">Arbeiter losschicken</h2>
 	<p>Manche Aufgaben wollen getane Arbeit und nicht bloß festgehaltene. Dafür schickt der Daimon des Diamonds einen <strong>Arbeiter-Agenten</strong> los. Jeder Arbeiter läuft in seinem eigenen Kontext mit den Dateiwerkzeugen des Arbeitsbereichs und bekommt die ständigen Anweisungen und den Kristall dieses Diamonds. Dieser Kristall ist alles, was er über Ihr Vorhaben weiß — ein Arbeiter kann Ihr Gespräch nicht sehen, die Aufgabe, die er bekommt, muss also alles Übrige sagen, was er braucht.</p>
 
 	<p>Bis zu <strong>acht</strong> Arbeiter laufen gleichzeitig; der Rest wartet. Der Daimon schickt sie los, und damit endet sein Zug: Er empfängt ihre Ausgabe nicht. Jeder meldet eine Zusammenfassung, und Sie klappen die von Hand ein, die es wert sind — was die Wahl, was in einen Kristall kommt, bei Ihnen belässt. Laufende Durchgänge erscheinen im Panel <strong>Agenten</strong> im Dock.</p>
 
-	<h3>Agenten anhalten und stoppen</h3>
+	<h3 id="s16">Agenten anhalten und stoppen</h3>
 	<p>Die Kopfzeile des Agenten-Panels trägt drei Bedienelemente, die auf <em>alle</em> Agenten auf einmal wirken, und dieselben drei sitzen auf jeder Kachel, damit Sie auf einen einzelnen wirken können:</p>
 	<ul>
 		<li><strong>Pausieren</strong> <span class="ui">⏸</span> — anhalten, was läuft, und die Schlange halten. Ein laufender Agent behält, was er schon erzeugt hat; ein wartender startet einfach nicht. Nichts Neues startet, bis Sie fortsetzen. Das ist die Bremse für ein Auffächern, das schneller ausgibt, als Sie es meinten.</li>
@@ -155,7 +157,7 @@
 
 	<p>Zwei Grenzen sind zu kennen. Ein Arbeiter kann keinen weiteren Arbeiter losschicken, die Delegation geht also eine Ebene tief und hört auf. Und es wird immer nur ein Diamond gelenkt, es arbeitet also kein zweites Diamond vor sich hin, während Sie wegsehen.</p>
 
-	<h2>Tags</h2>
+	<h2 id="s17">Tags</h2>
 	<p>Diamonds sammeln sich an, sie lassen sich also taggen. Ein Tag ist ein kurzes Etikett, das Sie wählen. Der Editor schlägt vier für den Anfang vor — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> und <strong>org</strong> — aber Daimond zwingt Ihnen keine Systematik auf, und Sie können eintippen, was zu Ihrer Arbeit passt.</p>
 
 	<p>Was Sie eintippen, wird geglättet: Ein Tag wird kleingeschrieben, beschnitten und entdoppelt, mit bis zu <strong>8</strong> Tags auf einem Diamond und bis zu <strong>24</strong> Zeichen je Tag. Tags liegen in den eigenen Metadaten des Diamonds, auf diesem Gerät, wie alles andere.</p>

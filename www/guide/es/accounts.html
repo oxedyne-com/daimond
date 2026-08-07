@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,19 +38,19 @@
 	<h1>Cuentas y privacidad</h1>
 	<p class="lede">Una cuenta en Daimond es una frase de paso guardada en este dispositivo. No hay cuenta en ningún servidor: tu identidad, tus claves y tus archivos viven solo en este navegador. Esta página trata de la frase de paso, de compartir un navegador con otras personas y de lo que queda en privado.</p>
 
-	<h2>Tu cuenta es una frase de paso</h2>
+	<h2 id="s1">Tu cuenta es una frase de paso</h2>
 	<p>Al arrancar por primera vez, Daimond te ofrece <strong>proteger este dispositivo</strong>. Le das un nombre y una frase de paso, y esa frase de paso pasa a ser tu cuenta. Hace dos trabajos: cifra la clave de proveedor y las credenciales de correo que guardas, para que un mirón no pueda leerlas, y es la identidad con la que entras para los créditos. Nada de ello sale del navegador.</p>
 
 	<div class="note"><strong>La frase de paso no se guarda nunca y no se puede recuperar.</strong> Daimond conserva solo los datos cifrados, no la frase de paso que los abre. Si la olvidas, las claves y las credenciales cifradas se han ido, así que guárdala en un sitio seguro. Puedes seguir sin ella: tu elección es entonces <span class="ui">Ahora no</span>, pero una clave de proveedor se añade mejor cuando ya hay una frase de paso protegiéndola.</div>
 
-	<h2>Un desbloqueo más rápido con una passkey</h2>
+	<h2 id="s2">Un desbloqueo más rápido con una passkey</h2>
 	<p>Una vez que una frase de paso protege la aplicación, puedes añadir una <strong>passkey</strong> para desbloquearla más rápido: una cara, una huella o una llave de seguridad, el mismo inicio de sesión sin contraseña que tu dispositivo ya ofrece. Una passkey no sustituye a la frase de paso, te la abre; la frase de paso sigue siendo la raíz y el recurso siempre disponible, y perder una passkey no te cuesta nada mientras conserves la frase de paso. Nada de esto llega a ningún servidor: el desbloqueo ocurre por entero en el dispositivo, y el servicio de créditos solo llega a ver una clave pública.</p>
 
-	<h2>Los controles de la cuenta</h2>
+	<h2 id="s3">Los controles de la cuenta</h2>
 	<p>Tu identidad está arriba del panel de administración, abajo a la izquierda. La portada de administración enumera sus controles:</p>
 
 	<figure class="shot" data-shot="accounts-switch">
-		<img alt="Los controles de la cuenta en el panel de administración: cambiar el nombre, cambiar la frase de paso, exportar o importar una copia de seguridad, cerrar sesión y olvidar esta identidad." src="shots/accounts-switch.png" loading="lazy">
+		<img alt="Los controles de la cuenta en el panel de administración: cambiar el nombre, cambiar la frase de paso, exportar o importar una copia de seguridad, cerrar sesión y olvidar esta identidad." src="../shots/accounts-switch.png" loading="lazy">
 		<figcaption>Los controles de la cuenta: cambiar tu nombre o tu frase de paso, hacer o restaurar una copia, cerrar sesión, u olvidar la identidad por completo.</figcaption>
 	</figure>
 
@@ -61,7 +63,7 @@
 		<li><span class="ui">Olvidar esta identidad…</span> — quita para siempre de este navegador la identidad y sus datos cifrados.</li>
 	</ul>
 
-	<h2>Más de una persona en un mismo navegador</h2>
+	<h2 id="s4">Más de una persona en un mismo navegador</h2>
 	<p>Daimond guarda una cuenta cada vez en un navegador, así que compartir un ordenador es cuestión de bloquear y, si hace falta, sustituir:</p>
 	<ul>
 		<li><strong>Te levantas un momento.</strong> Elige <span class="ui">Cerrar sesión</span> para bloquear la aplicación. Tus chats, claves y archivos siguen en el dispositivo pero no se pueden leer sin tu frase de paso, así que la siguiente persona no ve tu trabajo.</li>
@@ -69,11 +71,11 @@
 		<li><strong>Entregas el navegador a otra persona para siempre.</strong> Elige <span class="ui">Olvidar esta identidad…</span> para borrar tu cuenta, y la siguiente persona elige <span class="ui">Crear una cuenta…</span> para hacerse la suya.</li>
 	</ul>
 
-	<h2>Llevar tu cuenta de un dispositivo a otro</h2>
+	<h2 id="s5">Llevar tu cuenta de un dispositivo a otro</h2>
 	<p>Tu cuenta es una clave de firma guardada en este navegador, y la frase de paso no la recrea: solo descifra la copia que ya está aquí, así que la misma frase de paso en un navegador nuevo empieza una cuenta <em>aparte</em> con su propio saldo y sin Pro. Dos cosas llevan la clave al otro lado, y ninguna más: <span class="ui">Vincular otro dispositivo</span>, que muestra un código de vinculación para teclear en el navegador nuevo, y una passkey, que levanta un dispositivo nuevo en un solo gesto. Haz una de las dos <strong>antes de</strong> quitar un navegador, no después: cuando su almacenamiento se va, la clave se va con él. Usa también <span class="ui">Exportar una copia de seguridad</span> — lleva los chats, Diamonds y archivos del espacio de trabajo que la clave no lleva.</p>
 	<div class="note"><strong>Una copia de seguridad contiene todo lo que has escrito.</strong> La clave no — importarla no convierte a nadie en ti — pero cada chat, Diamond y archivo del espacio de trabajo está ahí en texto plano, así que guárdala tan en privado como el propio trabajo.</div>
 
-	<h2>Lo que queda en privado</h2>
+	<h2 id="s6">Lo que queda en privado</h2>
 	<p>Tu frase de paso, tus claves de proveedor, tus credenciales de correo, tus chats, tus Diamonds y tus archivos viven en este navegador y no se nos envían. Lo que tenemos en la pasarela es dinero y texto cifrado: tu saldo de créditos y tus licencias y, para la sincronización entre dispositivos, un paquete cifrado que no podemos abrir. No tenemos la clave, así que no podemos leer tu trabajo.</p>
 	<p>Ayuda saber exactamente a dónde van los datos. Tus mensajes van a un proveedor de modelos cuando conectas tu propia clave, o pasan por nuestro servicio medido cuando gastas créditos en un modelo. Traer una página web para leerla, y sincronizar o enviar correo, pasan por la pasarela para llegar al mundo exterior. Y una sincronización lleva un paquete cifrado entre dispositivos tuyos. Así que la afirmación honesta no es que nunca salga nada, sino esta: con tu propia clave, tus chats y tus archivos no salen nunca en claro, y hacia nuestros servidores solo puedes ver salir texto cifrado.</p>
 	<div class="note"><strong>No hace falta que te fíes.</strong> El cliente de Daimond — el código que corre en este navegador y decide qué se envía — es de código abierto. Puedes leerlo, compilarlo y abrir el panel de red de tu navegador para comprobar por ti mismo que solo sale texto cifrado. La única afirmación que hace toda herramienta privada, te dejamos comprobarla: el código está en <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>

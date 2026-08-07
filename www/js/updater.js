@@ -26,10 +26,32 @@
 	/// What the app says.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
+	/// One line in the durable trail, for a bug that can only be seen on a phone.
+	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+
 	var SRC      = 'build.json';   // the version stamp, at the site root
 	var POLL_MS  = 120000;         // re-check on this timer while in the foreground
 	var KEY      = 'daimond-updated-to';
 	var FKEY     = 'daimond-forced-from';   // the build a forced reload last left, to break loops
+	// The last-resort cap on forced reloads, in localStorage.
+	//
+	// A forced reload is the one thing in this file that can loop, and the guard
+	// against it was `sessionStorage[FKEY] === booted` -- which is right, and
+	// which ONLY `onStale` consulted. The `daimond:idle` handler called
+	// `apply(true)` directly, so once `stale` was true every turn that ended
+	// forced another reload, with no loop-breaker at all, three lines below the
+	// loop-breaker. Both doors go through `force()` now.
+	//
+	// The cap below is what the per-build guard cannot do: `booted` is null while
+	// build.json has not been read and stays null if it cannot be read at all,
+	// which is the state a phone on a bad connection is in; and a standalone PWA
+	// on iOS can start a fresh session on each launch, so a loop that reloads the
+	// app is a loop that clears a sessionStorage guard. Three forced reloads in
+	// ninety seconds is not an update arriving, it is a tab that cannot settle.
+	var TKEY      = 'daimond-forced-at';
+	var COOLDOWN  = 90000;
+	var MAX_FORCED = 3;            // in one cooldown window, before it stops for good
+	var NKEY      = 'daimond-forced-n';
 
 	var booted   = null;           // the build id this tab is running
 	var pending  = null;           // a newer build id, once seen
@@ -61,17 +83,22 @@
 	/// tab, but even then it will NOT interrupt a running turn -- work in flight is never lost to
 	/// an update. The automatic path is stricter still: only a hidden, idle tab, with nothing
 	/// half-typed, so the user never sees a page reload out from under them.
+	/// Returns true only when it actually reloaded, so a caller can tell a reload
+	/// from one deferred until the turn ends. The forced path counts on that: a
+	/// guard spent on an attempt that was deferred is a guard that then refuses
+	/// the reload it was waiting for.
 	function apply(force) {
-		if (applying || !pending) return;
-		if (busy()) return;                       // never interrupt a running turn or agent
+		if (applying || !pending) return false;
+		if (busy()) return false;                 // never interrupt a running turn or agent
 		if (!force) {
-			if (!document.hidden) return;         // automatic: background tabs only
-			if (composerHasText()) return;        // and nothing half-typed
+			if (!document.hidden) return false;   // automatic: background tabs only
+			if (composerHasText()) return false;  // and nothing half-typed
 		}
 		applying = true;
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
 		location.reload();
+		return true;
 	}
 
 	var checking = false;
@@ -136,18 +163,88 @@
 	/// as the tab is idle, in the foreground too, but still never over a running turn. A once-per-build
 	/// guard stops a reload loop during the brief window where a new gateway is live but the new bundle
 	/// is not yet on disk: after one try from a given build, it leaves the chip red for the user.
-	function onStale() {
-		stale = true;
-		reflect();
+	/// May a FORCED reload happen right now?
+	///
+	/// One per cooldown, counted in localStorage so it survives the reload it is
+	/// guarding against. Returns false and leaves the chip red when it will not:
+	/// if reloading did not clear the staleness the first time, reloading again
+	/// is a loop, and a red chip the user can press is strictly better than an
+	/// app that will not stay open long enough to be used.
+	/// May a forced reload happen? Asked before every one, and it SPENDS NOTHING
+	/// -- see `spendForce`, which is called only once a reload really starts.
+	function mayForce() {
+		// THE PRIMARY GUARD IS PER BUILD, and it was already right: one forced
+		// reload from a given build, because if reloading did not change the
+		// build there is nothing a second reload can do. What was wrong was that
+		// only ONE of the two doors consulted it.
 		var guarded = false;
 		try { guarded = sessionStorage.getItem(FKEY) === booted; } catch (e) {}
+		if (guarded && booted) return false;
+
+		// A LAST RESORT, in localStorage so it survives the reload it guards
+		// against. The per-build guard above cannot help when `booted` is null --
+		// build.json unreadable, which is the state a phone on a bad connection
+		// is in -- and a standalone PWA on iOS can start a fresh session on each
+		// launch, so a loop that reloads the app is a loop that clears a
+		// sessionStorage guard. Three in ninety seconds is not an update
+		// arriving; it is a tab that cannot settle.
+		var now = Date.now(), at = 0, n = 0;
+		try { at = parseInt(localStorage.getItem(TKEY), 10) || 0; } catch (e) {}
+		try { n  = parseInt(localStorage.getItem(NKEY), 10) || 0; } catch (e) {}
+		if (now - at > COOLDOWN) n = 0;              // a quiet window: start counting again
+		if (n >= MAX_FORCED) return false;
+		return true;
+	}
+
+	/// Record a forced reload that is HAPPENING. Split from `mayForce` because a
+	/// forced reload is often deferred -- `apply` refuses over a running turn --
+	/// and marking the guard on the attempt made the tab refuse the very reload
+	/// it was waiting for the turn to end for. `verify_updates` caught exactly
+	/// that: "stale applies the moment the turn ends" went red.
+	function spendForce() {
+		var now = Date.now(), at = 0, n = 0;
+		try { at = parseInt(localStorage.getItem(TKEY), 10) || 0; } catch (e) {}
+		try { n  = parseInt(localStorage.getItem(NKEY), 10) || 0; } catch (e) {}
+		if (now - at > COOLDOWN) n = 0;
+		try { localStorage.setItem(TKEY, String(now)); } catch (e) {}
+		try { localStorage.setItem(NKEY, String(n + 1)); } catch (e) {}
+		try { if (booted) sessionStorage.setItem(FKEY, booted); } catch (e) {}
+	}
+
+	/// The one door a forced reload goes through. Both callers -- the gateway
+	/// refusing this tab, and a turn ending while it is already refused -- come
+	/// here, so neither can reload past the guard.
+	function force() {
+		if (!mayForce()) {
+			trail('forced reload REFUSED', 'loop guard held');
+			setChip('stale');
+			return false;
+		}
+		if (!apply(true)) return false;            // deferred over a running turn
+		trail('forced reload', 'the gateway refused this build');
+		spendForce();
+		return true;
+	}
+
+	/// A reload that WORKED clears the counter. Called from `init` when the build
+	/// on disk is not the one this tab last forced away from: whatever was wrong
+	/// is over, and the next genuine update must not be refused because of it.
+	function forgetForced() {
+		try {
+			localStorage.removeItem(TKEY);
+			localStorage.removeItem(NKEY);
+		} catch (e) {}
+	}
+
+	function onStale() {
+		trail('gateway says stale', booted || 'build unknown');
+		stale = true;
+		reflect();
 		readStamp().then(function (j) {
 			pending = (j && j.build) || pending || (booted ? booted + '!' : 'stale');
 			if (j && typeof j.note === 'string') note = j.note;
 			reflect();
-			if (guarded) { setChip('stale'); return; }   // already tried from this build; wait for a click
-			try { if (booted) sessionStorage.setItem(FKEY, booted); } catch (e) {}
-			apply(true);
+			force();
 		});
 	}
 
@@ -168,6 +265,13 @@
 		var first = await readStamp();
 		booted = first ? first.build : null;
 
+		// A reload that landed on a DIFFERENT build did its job, so the forced
+		// counter starts again. Without this, one bad afternoon leaves a phone
+		// refusing the next genuine update until the cooldown expires.
+		var forcedFrom = null;
+		try { forcedFrom = sessionStorage.getItem(FKEY); } catch (e) {}
+		if (booted && forcedFrom && forcedFrom !== booted) forgetForced();
+
 		if (booted && was && was === booted) {
 			note = first && typeof first.note === 'string' ? first.note : '';
 			setChip('done');
@@ -186,7 +290,11 @@
 		window.addEventListener('focus', poll);
 		// When a turn ends the app is idle again; a deferred update can go, and the chip settles.
 		window.addEventListener('daimond:idle', function () {
-			if (stale) { apply(true); return; }          // a forced reload was only waiting on the turn
+			// THROUGH `force`, not `apply(true)`. This line used to force a reload
+			// on every idle event for as long as `stale` was true, with no
+			// loop-breaker at all -- so a tab the gateway kept refusing reloaded
+			// again every time a turn ended, for ever.
+			if (stale) { force(); return; }              // was only waiting on the turn
 			if (pending) { reflect(); apply(false); }
 		});
 		// The gateway declared this tab too old: escalate to a forced reload.

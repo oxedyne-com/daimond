@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,58 +38,58 @@
 	<h1>Modèles &amp; crédits</h1>
 	<p class="lede">Un daimon pense avec un modèle. Vous pouvez apporter votre propre clé de fournisseur et payer ce fournisseur directement, ou acheter des crédits et laisser Daimond faire tourner un modèle pour vous. Cette page couvre les deux, et la façon de garder les crédits au niveau.</p>
 
-	<h2>Deux façons d’alimenter un daimon</h2>
+	<h2 id="s1">Deux façons d’alimenter un daimon</h2>
 	<div class="cards">
 		<div class="card">
-			<h3>Apporter votre propre clé</h3>
+			<h3 id="s2">Apporter votre propre clé</h3>
 			<p>Connectez un compte que vous avez déjà chez un fournisseur de modèles. Vos messages partent directement chez ce fournisseur ; Daimond n’est pas sur le chemin, et nous ne facturons rien.</p>
 		</div>
 		<div class="card">
-			<h3>Acheter des crédits</h3>
+			<h3 id="s3">Acheter des crédits</h3>
 			<p>Aucun compte de fournisseur à gérer. Daimond fait tourner le modèle pour vous et puise dans les crédits que vous avez achetés. Pas d’abonnement : vous gardez ce que vous achetez.</p>
 		</div>
 	</div>
 	<p>L’un ou l’autre suffit pour démarrer. Vous pouvez faire les deux — connecter une clé pour le travail de tous les jours et garder des crédits pour les moments où vous préférez ne pas en gérer.</p>
 
-	<h2>Connecter un fournisseur</h2>
+	<h2 id="s4">Connecter un fournisseur</h2>
 	<p>Ouvrez la ligne <span class="ui">Modèles</span> du panneau d’administration, en bas à gauche. Elle liste une clé pour chaque fournisseur que vous utilisez et indique sur quel modèle démarrent les nouveaux chats. Pour en ajouter un, choisissez <span class="ui">+ Ajouter un fournisseur</span> et répondez aux trois mêmes questions, quel que soit le fournisseur.</p>
 
 	<figure class="shot" data-shot="models-form">
-		<img alt="Le formulaire Ajouter un fournisseur : une liste déroulante de fournisseurs, une zone pour la clé d’API et une liste déroulante de modèle par défaut, avec un bouton Enregistrer et démarrer." src="shots/models-form.png" loading="lazy">
+		<img alt="Le formulaire Ajouter un fournisseur : une liste déroulante de fournisseurs, une zone pour la clé d’API et une liste déroulante de modèle par défaut, avec un bouton Enregistrer et démarrer." src="../shots/models-form.png" loading="lazy">
 		<figcaption>Ajouter un fournisseur : choisissez le fournisseur, collez la clé, mettez une étoile à un modèle par défaut, puis Enregistrer et démarrer.</figcaption>
 	</figure>
 
 	<ol class="steps">
 		<li>
-			<h3>Choisir un fournisseur</h3>
+			<h3 id="s5">Choisir un fournisseur</h3>
 			<p>Prenez dans la liste — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personnalisé</strong> pour tout autre service qui parle la même API chat-completions. Choisir Personnalisé fait apparaître une zone <strong>URL de base</strong> pour pointer Daimond vers ce service.</p>
 		</li>
 		<li>
-			<h3>Coller votre clé d’API</h3>
+			<h3 id="s6">Coller votre clé d’API</h3>
 			<p>Collez la clé de votre compte fournisseur dans la zone <strong>Clé d’API</strong> prévue à cet effet. Elle n’est stockée que sur cet appareil, enveloppée sous votre phrase secrète, et envoyée uniquement au fournisseur que vous avez choisi.</p>
 		</li>
 		<li>
-			<h3>Mettre une étoile à un modèle par défaut</h3>
+			<h3 id="s7">Mettre une étoile à un modèle par défaut</h3>
 			<p>Choisissez un <strong>Modèle par défaut</strong> dans la liste (ou tapez un identifiant de modèle pour un fournisseur personnalisé). C’est le modèle unique sur lequel démarrent les nouveaux chats et Diamonds. Puis choisissez <span class="ui">Enregistrer et démarrer</span>.</p>
 		</li>
 	</ol>
 
 	<div class="note"><strong>Tout reste sur cet appareil.</strong> Vos clés, vos chats et vos fichiers ne vivent que dans ce navigateur. Rien ne nous est envoyé — une clé de fournisseur que vous ajoutez parle à ce fournisseur, et à personne d’autre.</div>
 
-	<h3>Le modèle par défaut, et en choisir un autre pour un seul chat</h3>
+	<h3 id="s8">Le modèle par défaut, et en choisir un autre pour un seul chat</h3>
 	<p>Un modèle est celui par défaut, sur lequel commencent les nouveaux chats et Diamonds. N’importe quel modèle connecté peut être choisi pour un seul chat : ouvrez un chat et servez-vous du sélecteur de modèle dans son en-tête (en haut à droite du panneau central) pour ne changer que cette conversation, sans toucher au modèle par défaut.</p>
 
-	<h2>Acheter des crédits</h2>
+	<h2 id="s9">Acheter des crédits</h2>
 	<p>Ouvrez la ligne <span class="ui">Crédits</span> du panneau d’administration. Elle affiche votre solde et un ensemble de packs à acheter. Il n’y a pas d’abonnement : vous gardez ce que vous achetez, et rien n’est facturé à nouveau sauf si vous activez la recharge automatique.</p>
 
 	<figure class="shot" data-shot="credits">
-		<img alt="La vue Crédits : le solde courant, une rangée de packs de crédits à acheter, et les réglages de recharge automatique en dessous." src="shots/credits.png" loading="lazy">
+		<img alt="La vue Crédits : le solde courant, une rangée de packs de crédits à acheter, et les réglages de recharge automatique en dessous." src="../shots/credits.png" loading="lazy">
 		<figcaption>Crédits : votre solde, les packs à acheter, et les réglages de recharge automatique en dessous.</figcaption>
 	</figure>
 
 	<p>Le paiement se fait sur la page hébergée par le prestataire de paiement lui-même. Aucun numéro de carte, date d’expiration ou code de sécurité n’est jamais saisi dans Daimond : il n’y a donc rien ici qui puisse fuir.</p>
 
-	<h2>Recharge automatique</h2>
+	<h2 id="s10">Recharge automatique</h2>
 	<p>La recharge automatique est une consigne permanente d’acheter vos propres crédits quand ils s’épuisent, pour qu’un long travail ne s’arrête pas à mi-chemin. C’est le seul endroit où Daimond a le droit de débiter une carte enregistrée en votre absence : elle est donc délibérément explicite. Trois nombres la règlent, sous les packs dans la vue Crédits :</p>
 	<ul>
 		<li><strong>En dessous de</strong> — le solde auquel une recharge se déclenche.</li>

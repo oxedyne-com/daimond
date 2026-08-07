@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -36,58 +38,58 @@
 	<h1>Modelos y créditos</h1>
 	<p class="lede">Un daimon piensa con un modelo. Puedes traer la clave de tu propio proveedor y pagarle a él directamente, o comprar créditos y dejar que Daimond ejecute un modelo por ti. Esta página trata de ambas cosas, y de cómo mantener los créditos al día.</p>
 
-	<h2>Dos maneras de dar energía a un daimon</h2>
+	<h2 id="s1">Dos maneras de dar energía a un daimon</h2>
 	<div class="cards">
 		<div class="card">
-			<h3>Trae tu propia clave</h3>
+			<h3 id="s2">Trae tu propia clave</h3>
 			<p>Conecta una cuenta que ya tengas con un proveedor de modelos. Tus mensajes van directos a ese proveedor; Daimond no está en el camino, y nosotros no te cobramos nada.</p>
 		</div>
 		<div class="card">
-			<h3>Compra créditos</h3>
+			<h3 id="s3">Compra créditos</h3>
 			<p>Ninguna cuenta de proveedor que gestionar. Daimond ejecuta el modelo por ti y descuenta de los créditos que compraste. Sin suscripción: lo que compras es tuyo.</p>
 		</div>
 	</div>
 	<p>Con cualquiera de las dos basta para empezar. Puedes hacer las dos: conectar una clave para el trabajo diario y guardar créditos para cuando prefieras no gestionar ninguna.</p>
 
-	<h2>Conectar un proveedor</h2>
+	<h2 id="s4">Conectar un proveedor</h2>
 	<p>Abre la fila <span class="ui">Modelos</span> del panel de administración, abajo a la izquierda. Enumera una clave por cada proveedor que uses y muestra con qué modelo arrancan los chats nuevos. Para añadir uno, elige <span class="ui">+ Añadir proveedor</span> y responde a las mismas tres preguntas, sea quien sea el proveedor.</p>
 
 	<figure class="shot" data-shot="models-form">
-		<img alt="El formulario para añadir un proveedor: un desplegable de proveedor, una caja para la clave de API y un desplegable de modelo predeterminado, con un botón de guardar y empezar." src="shots/models-form.png" loading="lazy">
+		<img alt="El formulario para añadir un proveedor: un desplegable de proveedor, una caja para la clave de API y un desplegable de modelo predeterminado, con un botón de guardar y empezar." src="../shots/models-form.png" loading="lazy">
 		<figcaption>Añadir un proveedor: elige el proveedor, pega la clave, marca con una estrella un modelo predeterminado y luego Guardar y empezar.</figcaption>
 	</figure>
 
 	<ol class="steps">
 		<li>
-			<h3>Elige un proveedor</h3>
+			<h3 id="s5">Elige un proveedor</h3>
 			<p>Escoge de la lista — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, o <strong>Personalizado</strong> para cualquier otro servicio que hable la misma API de chat-completions. Al elegir «Personalizado» aparece una caja <strong>URL base</strong> para apuntar Daimond a ese servicio.</p>
 		</li>
 		<li>
-			<h3>Pega tu clave de API</h3>
+			<h3 id="s6">Pega tu clave de API</h3>
 			<p>Pega en la caja <strong>Clave de API</strong> la clave de la cuenta de tu proveedor. Se guarda solo en este dispositivo, envuelta bajo tu frase de paso, y se envía solo al proveedor que elegiste.</p>
 		</li>
 		<li>
-			<h3>Marca con una estrella un modelo predeterminado</h3>
+			<h3 id="s7">Marca con una estrella un modelo predeterminado</h3>
 			<p>Elige un <strong>Modelo predeterminado</strong> de la lista (o escribe un id de modelo si el proveedor es personalizado). Es el único modelo con el que arrancan los chats y los Diamonds nuevos. Luego elige <span class="ui">Guardar y empezar</span>.</p>
 		</li>
 	</ol>
 
 	<div class="note"><strong>Todo se queda en este dispositivo.</strong> Tus claves, chats y archivos viven solo en este navegador. No se nos envía nada: una clave de proveedor que añadas habla con ese proveedor, y con nadie más.</div>
 
-	<h3>El modelo predeterminado, y elegir otro para un solo chat</h3>
+	<h3 id="s8">El modelo predeterminado, y elegir otro para un solo chat</h3>
 	<p>Un modelo es el predeterminado con el que empiezan los chats y los Diamonds nuevos. Cualquier modelo conectado se puede elegir para un solo chat: abre un chat y usa el selector de modelo de su cabecera (arriba a la derecha del panel central) para cambiar solo esa conversación, sin cambiar el predeterminado.</p>
 
-	<h2>Comprar créditos</h2>
+	<h2 id="s9">Comprar créditos</h2>
 	<p>Abre la fila <span class="ui">Créditos</span> del panel de administración. Muestra tu saldo y un conjunto de paquetes que comprar. No hay suscripción: lo que compras es tuyo, y no se te vuelve a cobrar nada salvo que actives la recarga automática.</p>
 
 	<figure class="shot" data-shot="credits">
-		<img alt="La vista de Créditos: el saldo actual, una fila de paquetes de crédito que comprar y, debajo, los ajustes de la recarga automática." src="shots/credits.png" loading="lazy">
+		<img alt="La vista de Créditos: el saldo actual, una fila de paquetes de crédito que comprar y, debajo, los ajustes de la recarga automática." src="../shots/credits.png" loading="lazy">
 		<figcaption>Créditos: tu saldo, paquetes que comprar y, debajo, los ajustes de la recarga automática.</figcaption>
 	</figure>
 
 	<p>El pago se hace en la propia página alojada del proveedor de pagos. En Daimond no se escribe nunca ningún número de tarjeta, caducidad ni código de seguridad, así que aquí no hay nada que se pueda filtrar.</p>
 
-	<h2>Recarga automática</h2>
+	<h2 id="s10">Recarga automática</h2>
 	<p>La recarga automática es una orden permanente para comprar tus propios créditos cuando se te acaban, para que un trabajo largo no se pare a mitad. Es el único sitio donde Daimond puede cargar a una tarjeta guardada mientras tú no estás, así que es deliberadamente explícita. La fijan tres números, debajo de los paquetes en la vista de Créditos:</p>
 	<ul>
 		<li><strong>Cuando el saldo baje de</strong> — el saldo al que salta una recarga.</li>

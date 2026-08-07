@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -39,21 +41,21 @@
 	<p>Nada sai do seu dispositivo a menos que você mande. O Daimond alcança o mundo lá fora só a seu pedido: quando você conecta seu próprio provedor de modelos, e suas mensagens vão para esse provedor; quando você gasta créditos para rodar um modelo, buscar uma página ou sincronizar e-mail; e quando você vincula um segundo dispositivo. Todo o resto fica neste navegador, e <a href="accounts.html">Contas &amp; privacidade</a> expõe exatamente o que vai para onde, e como você mesmo pode conferir.</p>
 
 	<figure class="shot" data-shot="getting-started">
-		<img alt="O espaço de trabalho do Daimond na primeira execução: a barra lateral com Diamonds e Chats à esquerda, o painel de chat no centro e o painel de administração no canto inferior esquerdo." src="shots/getting-started.png" loading="lazy">
+		<img alt="O espaço de trabalho do Daimond na primeira execução: a barra lateral com Diamonds e Chats à esquerda, o painel de chat no centro e o painel de administração no canto inferior esquerdo." src="../shots/getting-started.png" loading="lazy">
 		<figcaption>O Daimond na primeira execução. A conversa fica no centro; o painel de administração fica no canto inferior esquerdo.</figcaption>
 	</figure>
 
-	<h2>O caminho mais curto até a primeira resposta</h2>
+	<h2 id="s1">O caminho mais curto até a primeira resposta</h2>
 	<p>Três passos. Cada um aponta para um controle que você vê na tela.</p>
 
 	<ol class="steps">
 		<li>
-			<h3>Criar uma conta</h3>
+			<h3 id="s2">Criar uma conta</h3>
 			<p>Na primeira execução, o Daimond propõe <strong>proteger este dispositivo</strong> com uma frase-senha. Digite seu nome e uma frase-senha, e então escolha <span class="ui">Criar conta</span>. A frase-senha criptografa as chaves e as credenciais de e-mail que você guardou, e é a sua identidade no dispositivo. Ela nunca é enviada a lugar nenhum, então guarde-a em um lugar seguro — se você a perder, os dados criptografados se vão.</p>
 			<p>Você também pode escolher <span class="ui">Agora não</span> e definir uma frase-senha depois, mas conectar a chave de um provedor funciona melhor quando já há uma frase-senha para protegê-la.</p>
 		</li>
 		<li>
-			<h3>Conectar um modelo, ou comprar créditos</h3>
+			<h3 id="s3">Conectar um modelo, ou comprar créditos</h3>
 			<p>Um daimon precisa de um modelo com que pensar. Há duas formas de lhe dar um, ambas a partir do painel de administração no canto inferior esquerdo:</p>
 			<ul>
 				<li><strong>Traga sua própria chave.</strong> Abra a linha <span class="ui">Modelos</span> e escolha <span class="ui">+ Adicionar provedor</span>, selecione um provedor, cole a chave de API dele e marque com a estrela um modelo padrão. Suas mensagens então vão direto para esse provedor, na sua própria conta.</li>
@@ -62,17 +64,17 @@
 			<p>Qualquer um dos dois basta. Veja <a href="models.html">Modelos &amp; créditos</a> para os detalhes.</p>
 		</li>
 		<li>
-			<h3>Começar um chat</h3>
+			<h3 id="s4">Começar um chat</h3>
 			<p>Escolha <span class="ui">Novo chat</span> no alto da barra lateral (o <strong>＋</strong> ao lado de <strong>Chats</strong>), digite uma mensagem na caixa embaixo do painel central e envie-a com <span class="ui">➤</span>. Esse painel central é onde você fala com o daimon, e o Daimond é construído em torno dessa conversa.</p>
 		</li>
 	</ol>
 
-	<h2>O que você está vendo</h2>
+	<h2 id="s5">O que você está vendo</h2>
 	<p>A tela tem três zonas. A <strong>barra lateral</strong> à esquerda lista aquilo em que você está trabalhando e, abaixo de um divisor móvel, o <strong>painel de administração</strong>. O <strong>palco</strong> no centro abriga a conversa e o que você estiver lendo ao lado dela. O <strong>dock</strong> à direita abriga as fontes de onde você puxa — o e-mail, o espaço de trabalho, os agentes em execução e seus gastos.</p>
 	<p>No alto, cada painel tem um chip em que você clica para abri-lo ou fechá-lo, e um botão na ponta direita define o tema, o tamanho do texto e a grade do dock. Nenhum dos dois é necessário até a primeira resposta; ambos estão detalhados em <a href="interface.html">A interface</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
-		<img alt="O painel de administração no canto inferior esquerdo: uma linha de identidade, uma linha Modelos, uma linha Créditos, uma linha Ferramentas e linhas de armazenamento do espaço de trabalho." src="shots/admin-panel.png" loading="lazy">
+		<img alt="O painel de administração no canto inferior esquerdo: uma linha de identidade, uma linha Modelos, uma linha Créditos, uma linha Ferramentas e linhas de armazenamento do espaço de trabalho." src="../shots/admin-panel.png" loading="lazy">
 		<figcaption>O painel de administração. Cada linha responde a uma pergunta sobre a máquina, e aquelas sobre as quais você pode agir são botões.</figcaption>
 	</figure>
 

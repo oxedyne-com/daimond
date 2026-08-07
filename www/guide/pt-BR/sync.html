@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -38,12 +40,12 @@
 
 	<p>O que viaja pelo gateway é um único pacote criptografado cuja chave só os seus dispositivos têm. A chave vem da sua frase-senha e nunca sai do navegador, então o servidor guarda o pacote mas não consegue abri-lo. Nada legível passa de um dispositivo a outro.</p>
 
-	<h2>Vincular um segundo dispositivo</h2>
+	<h2 id="s1">Vincular um segundo dispositivo</h2>
 	<p>Cada dispositivo cria a própria identidade, então digitar sua frase-senha em um dispositivo novo abriria uma conta <em>separada</em>, vazia — e não traria para lá a que você já tem. Para usar a conta que você já tem, você <strong>vincula</strong> o novo dispositivo a ela. São três passos.</p>
 
 	<ol class="steps">
 		<li>
-			<h3>No dispositivo que você já usa, abra a janela de vinculação</h3>
+			<h3 id="s2">No dispositivo que você já usa, abra a janela de vinculação</h3>
 			<p>Clique no botão <span class="ui">Vincular outro dispositivo</span> na barra superior. Ele mostra um QR code e um código de pareamento de uso único.</p>
 			<figure class="shot narrow" data-shot="pair-desktop">
 				<img src="img/pair-desktop.png" alt="A janela Vincular outro dispositivo, mostrando um QR code e um código de pareamento de uso único que expira em cerca de dez minutos.">
@@ -51,7 +53,7 @@
 			</figure>
 		</li>
 		<li>
-			<h3>No dispositivo novo, escaneie o QR code — ou digite o código</h3>
+			<h3 id="s3">No dispositivo novo, escaneie o QR code — ou digite o código</h3>
 			<p>Aponte a câmera do telefone novo para o QR code: ele abre o Daimond e preenche o código para você, de modo que você só toca em <span class="ui">Vincular este dispositivo</span>. Sem câmera? Abra o Daimond lá, escolha <span class="ui">Tem um código de pareamento?</span>, e digite o código. O código mostrado serve apenas para você conferir se ele bate com o do primeiro dispositivo.</p>
 			<figure class="shot narrow" data-shot="pair-mobile">
 				<img src="img/pair-mobile.png" alt="A janela Vincular este dispositivo em um telefone depois do escaneamento, com o código de pareamento já preenchido e um botão Vincular este dispositivo.">
@@ -59,18 +61,18 @@
 			</figure>
 		</li>
 		<li>
-			<h3>Desbloqueie com a mesma frase-senha</h3>
+			<h3 id="s4">Desbloqueie com a mesma frase-senha</h3>
 			<p>O dispositivo novo agora tem a sua conta. Desbloqueie-o com a <strong>mesma frase-senha que você usa no primeiro dispositivo</strong> — não uma nova — e seus chats e arquivos aparecem. Uma chave de acesso pode desbloqueá-lo mais rápido depois, quando você acrescentar uma ali.</p>
 		</li>
 	</ol>
 
 	<div class="note"><strong>A frase-senha é a mesma em toda parte, mas não viaja sozinha.</strong> Uma conta, uma frase-senha, em cada dispositivo que você vincula — e a frase-senha só decifra uma chave que o dispositivo já tem, então um navegador que nunca foi vinculado não tem nada para abrir. Se um dispositivo pedir que você <em>crie</em> uma frase-senha em vez de <em>digite</em> uma, ele está prestes a abrir uma conta nova, e vinculá-lo é a única coisa que trará a antiga.</div>
 
-	<h2>O que viaja</h2>
+	<h2 id="s5">O que viaja</h2>
 	<p>Qualquer arquivo viaja, seja de que tipo for. Uma fotografia, uma gravação, um PDF ou uma planilha chega aos seus outros dispositivos como o texto chega, até um gigabyte por arquivo.</p>
 	<p>O que sincroniza é também o que fica guardado no armazenamento na nuvem, de modo que um espaço de trabalho pode ser maior do que o dispositivo em que você o lê. Um arquivo que não está neste dispositivo no momento ainda aparece na árvore, marcado com uma nuvem, e desce quando você o pede. <a href="email-web-files.html">O Espaço de trabalho</a> expõe os três estados em que um arquivo pode estar, como o espaço é liberado conforme o navegador enche, e quanto custa o armazenamento na nuvem.</p>
 
-	<h2>Quanto custa</h2>
+	<h2 id="s6">Quanto custa</h2>
 	<p>A sincronização entre dispositivos faz parte do <strong>Pro</strong>, o desbloqueio único — não é assinatura, então continua comprado de uma vez, como o resto do Daimond. Sem o Pro, um dispositivo trabalha por conta própria; com ele, seus dispositivos ficam no mesmo passo. O Pro também liga o armazenamento na nuvem e o E-mail. Os corpos de arquivo maiores que a sincronização carrega ficam no armazenamento na nuvem, pagos com créditos e não por assinatura, com uma franquia gratuita antes que qualquer coisa seja medida.</p>
 
 	<div class="next">

@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -39,21 +41,21 @@
 	<p>除非你吩咐，什么都不会离开你的设备。Daimond 只在你要求时才伸向外面的世界：你连接自己的模型提供商时，你的消息会去那家提供商；你花额度跑模型、抓一个页面或同步邮件时；以及你关联第二台设备时。其余一切都留在这个浏览器里，而 <a href="accounts.html">账户与隐私</a> 把什么去了哪里、以及你自己怎么核实，都写得清清楚楚。</p>
 
 	<figure class="shot" data-shot="getting-started">
-		<img alt="首次运行时的 Daimond 工作区：左边是 Diamonds 和聊天的侧栏，中间是聊天面板，左下角是管理面板。" src="shots/getting-started.png" loading="lazy">
+		<img alt="首次运行时的 Daimond 工作区：左边是 Diamonds 和聊天的侧栏，中间是聊天面板，左下角是管理面板。" src="../shots/getting-started.png" loading="lazy">
 		<figcaption>首次运行时的 Daimond。对话在中间；管理面板在左下角。</figcaption>
 	</figure>
 
-	<h2>拿到第一个回答的最短路径</h2>
+	<h2 id="s1">拿到第一个回答的最短路径</h2>
 	<p>三步。每一步都指向屏幕上看得见的一个控制项。</p>
 
 	<ol class="steps">
 		<li>
-			<h3>创建一个账户</h3>
+			<h3 id="s2">创建一个账户</h3>
 			<p>首次运行时，Daimond 会提议 <strong>保护这台设备</strong> —— 用一句密码短语。输入你的名字和一句密码短语，然后选择 <span class="ui">创建账户</span>。这句密码短语会加密你保存的密钥和邮箱凭据，它也是你在这台设备上的身份。它不会被发到任何地方，所以请放在安全的地方 —— 弄丢了，加密的数据就没了。</p>
 			<p>你也可以选择 <span class="ui">暂时跳过</span> 留到以后再设密码短语；不过要连接提供商密钥，最好先有一句密码短语护着它。</p>
 		</li>
 		<li>
-			<h3>连接一个模型，或者买额度</h3>
+			<h3 id="s3">连接一个模型，或者买额度</h3>
 			<p>daimon 要有一个模型才能思考。给它一个的方式有两种，都在左下角的管理面板里：</p>
 			<ul>
 				<li><strong>带上你自己的密钥。</strong> 打开 <span class="ui">模型</span> 行，选择 <span class="ui">+ 添加提供商</span>，挑一家提供商，粘贴它的 API 密钥，再给一个默认模型加星。你的消息此后就直接去那家提供商，记在你自己的账户上。</li>
@@ -62,17 +64,17 @@
 			<p>两条随便哪一条都够用。细节见 <a href="models.html">模型与额度</a> 那一页。</p>
 		</li>
 		<li>
-			<h3>开始一场聊天</h3>
+			<h3 id="s4">开始一场聊天</h3>
 			<p>选择 <span class="ui">新建聊天</span> —— 它在侧栏顶部（就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong>），在中间面板底部的框里输入一条消息，然后用 <span class="ui">➤</span>发送。中间那个面板就是你和 daimon 说话的地方，而 Daimond 正是围绕这场对话建起来的。</p>
 		</li>
 	</ol>
 
-	<h2>你眼前是什么</h2>
+	<h2 id="s5">你眼前是什么</h2>
 	<p>屏幕分三个区域。左边的 <strong>侧栏</strong> 列出你正在做的东西，在一条可以移动的分隔线下面，是 <strong>管理面板</strong>。中间的 <strong>舞台</strong> 装着对话，以及你在它旁边读的任何东西。右边的 <strong>停靠区</strong> 装着你要取用的来源 —— 邮件、工作区、正在跑的智能体，还有你的支出。</p>
 	<p>顶上一排，每个面板都有一个标签，点它可以打开或关掉那个面板；最右边还有一个按钮，用来设置主题、字号，以及停靠区怎么分格。走到第一个回答为止，这两样你都用不上；两样都摊开在 <a href="interface.html">界面</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
-		<img alt="左下角的管理面板：一行身份、一行模型、一行额度、一行工具，以及几行工作区存储。" src="shots/admin-panel.png" loading="lazy">
+		<img alt="左下角的管理面板：一行身份、一行模型、一行额度、一行工具，以及几行工作区存储。" src="../shots/admin-panel.png" loading="lazy">
 		<figcaption>管理面板。每一行回答一个关于这台机器的问题，能动手的那些是按钮。</figcaption>
 	</figure>
 

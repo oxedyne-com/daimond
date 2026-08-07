@@ -1758,5 +1758,12 @@
 	'settings.fold_model_own': 'その会話自身のモデル',
 	'settings.fold_model_group': '代わりにこれで折りたたむ',
 	'settings.fold_model_note': '会話がウィンドウを超えると要約され、その要約がモデルの記憶になります。ここでそれを書くモデルを選びます。同じプロバイダーのチャットだけが使い、それ以外は自分のモデルで折りたたみます。',
+
+	// The durable trail, shown on the lock screen only when the app is
+	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
+	'trail.looping':         'Daimond はこの 1 分間に {n} 回再起動しました。以下がその記録です。不具合報告に貼り付けてください。',
+	'trail.copy':            'コピー',
+	'trail.copied':          'コピーしました',
+	'trail.clear':           '消去',
 	});
 })();

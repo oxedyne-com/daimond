@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
 <script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
 </head>
 <body>
 
@@ -39,21 +41,21 @@
 	<p>Nichts verlässt Ihr Gerät, wenn Sie es nicht anweisen. Daimond greift nur auf Ihre Anforderung hin nach außen: wenn Sie Ihren eigenen Modellanbieter verbinden, sodass Ihre Nachrichten an diesen Anbieter gehen; wenn Sie Guthaben ausgeben, um ein Modell laufen zu lassen, eine Seite zu holen oder E-Mail zu synchronisieren; und wenn Sie ein zweites Gerät verknüpfen. Alles andere bleibt in diesem Browser, und <a href="accounts.html">Konten &amp; Privatsphäre</a> legt genau dar, was wohin geht und wie Sie das selbst überprüfen können.</p>
 
 	<figure class="shot" data-shot="getting-started">
-		<img alt="Der Daimond-Arbeitsplatz beim ersten Start: die Leiste mit Diamonds und Chats links, das Chat-Feld in der Mitte und das Verwaltungsfeld unten links." src="shots/getting-started.png" loading="lazy">
+		<img alt="Der Daimond-Arbeitsplatz beim ersten Start: die Leiste mit Diamonds und Chats links, das Chat-Feld in der Mitte und das Verwaltungsfeld unten links." src="../shots/getting-started.png" loading="lazy">
 		<figcaption>Daimond beim ersten Start. Das Gespräch sitzt in der Mitte; das Verwaltungsfeld ist unten links.</figcaption>
 	</figure>
 
-	<h2>Der kürzeste Weg zur ersten Antwort</h2>
+	<h2 id="s1">Der kürzeste Weg zur ersten Antwort</h2>
 	<p>Drei Schritte. Jeder zeigt auf ein Bedienelement, das Sie auf dem Bildschirm sehen.</p>
 
 	<ol class="steps">
 		<li>
-			<h3>Ein Konto anlegen</h3>
+			<h3 id="s2">Ein Konto anlegen</h3>
 			<p>Beim ersten Start bietet Daimond an, <strong>dieses Gerät zu schützen</strong> – mit einer Passphrase. Geben Sie Ihren Namen und eine Passphrase ein und wählen Sie dann <span class="ui">Konto anlegen</span>. Die Passphrase verschlüsselt Ihre gespeicherten Schlüssel und Mail-Zugangsdaten und ist Ihre Identität auf dem Gerät. Sie wird nirgendwohin gesendet, bewahren Sie sie also sicher auf — geht sie verloren, sind die verschlüsselten Daten weg.</p>
 			<p>Sie können auch <span class="ui">Vorerst überspringen</span> wählen und die Passphrase später setzen, aber einen Anbieterschlüssel zu verbinden gelingt am besten, wenn bereits eine Passphrase da ist, die ihn schützt.</p>
 		</li>
 		<li>
-			<h3>Ein Modell verbinden oder Guthaben kaufen</h3>
+			<h3 id="s3">Ein Modell verbinden oder Guthaben kaufen</h3>
 			<p>Ein Daimon braucht ein Modell zum Denken. Es gibt zwei Wege, ihm eines zu geben, beide über das Verwaltungsfeld unten links:</p>
 			<ul>
 				<li><strong>Eigenen Schlüssel mitbringen.</strong> Öffnen Sie die Zeile <span class="ui">Modelle</span> , wählen Sie <span class="ui">+ Anbieter hinzufügen</span>, suchen Sie einen Anbieter aus, fügen Sie dessen API-Schlüssel ein und markieren Sie ein Standardmodell mit einem Stern. Ihre Nachrichten gehen dann direkt an diesen Anbieter, auf Ihr eigenes Konto.</li>
@@ -62,17 +64,17 @@
 			<p>Eines von beiden genügt. Siehe <a href="models.html">Modelle &amp; Guthaben</a> für die Einzelheiten.</p>
 		</li>
 		<li>
-			<h3>Einen Chat beginnen</h3>
+			<h3 id="s4">Einen Chat beginnen</h3>
 			<p>Wählen Sie <span class="ui">Neuer Chat</span> oben in der Leiste (das <strong>＋</strong> neben <strong>Chats</strong>), tippen Sie eine Nachricht in das Feld unten im mittleren Bereich und senden Sie sie mit <span class="ui">➤</span>. Dieser mittlere Bereich ist der Ort, an dem Sie mit dem Daimon sprechen, und Daimond ist um dieses Gespräch herum gebaut.</p>
 		</li>
 	</ol>
 
-	<h2>Was Sie da vor sich haben</h2>
+	<h2 id="s5">Was Sie da vor sich haben</h2>
 	<p>Der Bildschirm hat drei Zonen. Die <strong>Leiste</strong> links führt auf, woran Sie arbeiten, und darunter, hinter einem verschiebbaren Trenner, das <strong>Verwaltungsfeld</strong>. Die <strong>Bühne</strong> in der Mitte hält das Gespräch und alles, was Sie daneben lesen. Das <strong>Dock</strong> rechts hält die Quellen, aus denen Sie schöpfen — E-Mail, den Arbeitsbereich, laufende Agenten und Ihre Ausgaben.</p>
 	<p>Oben hat jeder Bereich einen Chip, den Sie zum Öffnen oder Schließen anklicken können, und eine Schaltfläche ganz rechts stellt Farbschema, Textgröße und die Aufteilung des Docks ein. Für die erste Antwort brauchen Sie weder das eine noch das andere; beides wird ausführlich erklärt auf <a href="interface.html">Die Oberfläche</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
-		<img alt="Das Verwaltungsfeld unten links: eine Zeile für die Identität, eine für Modelle, eine für Guthaben, eine für Werkzeuge und Zeilen für den Speicher des Arbeitsbereichs." src="shots/admin-panel.png" loading="lazy">
+		<img alt="Das Verwaltungsfeld unten links: eine Zeile für die Identität, eine für Modelle, eine für Guthaben, eine für Werkzeuge und Zeilen für den Speicher des Arbeitsbereichs." src="../shots/admin-panel.png" loading="lazy">
 		<figcaption>Das Verwaltungsfeld. Jede Zeile beantwortet eine Frage über die Maschine, und die, bei denen Sie etwas tun können, sind Schaltflächen.</figcaption>
 	</figure>
 
