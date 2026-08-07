@@ -17603,9 +17603,13 @@ import init, {
 
 	/// Draw the app for a user who is entitled to see it.
 	function renderAll() {
-		Workers.load();
-		Instructions.refresh();
-		Prompts.refresh();
+		trail('renderAll');
+		step('Workers.load', function () { return Workers.load(); });
+		// These two were called with no `await` and no `.catch`, so anything they
+		// threw became an unhandled rejection -- which is exactly what the phone's
+		// trail showed, twice per boot, from `opfs.rs` failing to open a path.
+		step('Instructions.refresh', function () { return Instructions.refresh(); });
+		step('Prompts.refresh', function () { return Prompts.refresh(); });
 		renderSessionList();
 		var firstChat = chats.find(function (c) { return !c.diamondId; });
 		if (firstChat) { selectChat(firstChat); } else { renderEmptyState(); }
@@ -17613,14 +17617,13 @@ import init, {
 		// and any older root has been merged -- `list_diamonds` is what runs
 		// `migrate_root` -- so the "only into an empty rail" rule is answered from
 		// the store as it finally stands, not as it stood mid-migration.
-		loadDiamonds().then(function () {
-			return seedDefaultDiamonds();
-		}).catch(function () { /* a store that is not up seeds nothing */ });
-		Pending.load();
-		Pending.render();
-		startTriggerClock();
-		updateSpend();
-		DaimondPanels.reflow();
+		step('loadDiamonds', function () {
+			return loadDiamonds().then(function () { return seedDefaultDiamonds(); });
+		});
+		step('Pending.load', function () { Pending.load(); Pending.render(); });
+		step('triggerClock', function () { startTriggerClock(); });
+		step('updateSpend', function () { updateSpend(); });
+		step('panels.reflow', function () { DaimondPanels.reflow(); });
 		if (!isMobile() && DaimondPanels.isOpen('work')) Files.onOpen();
 		// A panel that was already open when the app booted is never `show`n,
 		// so it would otherwise never ask the gateway what this account holds
@@ -17641,6 +17644,33 @@ import init, {
 	/// before a passphrase was typed. So it emptied the DOM of nothing and
 	/// protected nothing. This clears the rendered content, stops the app
 	/// spending money, and only then asks for the passphrase.
+	/// One line in the durable trail. See www/js/breadcrumb.js.
+	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+
+	/// Run a step of the boot and RECORD it, so a tab that dies part-way names
+	/// the step it died on.
+	///
+	/// The iPhone loop was invisible for three sessions because every diagnosis
+	/// came from reading code. The first trail from the device settled that the
+	/// tab is not reloading -- there is no `pagehide` anywhere in it -- but not
+	/// what kills it. These markers are what turn the next trail into an answer.
+	/// Deliberately fire-and-forget WITH a catch: a step that throws must be
+	/// recorded and must not take the rest of the boot with it, which is exactly
+	/// what `Instructions.refresh()` and `Prompts.refresh()` were doing.
+	function step(name, fn) {
+		try {
+			var r = fn();
+			if (r && typeof r.then === 'function') {
+				return r.then(function (v) { trail('ok ' + name); return v; },
+					function (e) { trail('FAILED ' + name, (e && (e.message || e)) || '?'); });
+			}
+			trail('ok ' + name);
+			return r;
+		} catch (e) {
+			trail('FAILED ' + name, (e && (e.message || e)) || '?');
+		}
+	}
+
 	function lockApp() {
 		// In the trail, because "the app locked itself" and "the page reloaded"
 		// look identical from the outside and need completely different fixes.
@@ -18127,17 +18157,18 @@ import init, {
 		applyPushCred();
 		// Every provider's key is sealed under the same passphrase, and unusable until now.
 		if (window.DaimondModels) {
+			trail('unseal keys');
 			await DaimondModels.unseal();
 			syncCfgFromModels();
 		}
 		try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best-effort */ }
 		// The settings are on screen now, not behind a button, so they must show
 		// the user's own provider and key rather than an empty form.
-		fillSettings();
+		step('fillSettings', function () { fillSettings(); });
 		// The gateway's auth is a signature from the device key, so it can only
 		// run now. It is fire-and-forget: a gateway that is down must not hold up
 		// a user who only ever wanted their own key.
-		connectGateway();
+		step('connectGateway', function () { return connectGateway(); });
 	}
 
 	async function idPrimary() {
@@ -18238,7 +18269,9 @@ import init, {
 		// show WHO an account is without unlocking it. The identity's keys are namespaced to the
 		// current account, so this names the right one.
 		syncAccountFromIdentity();
+		trail('afterUnlock start');
 		await afterUnlock();
+		trail('afterUnlock done');
 		hideIdentity();
 		try { DaimondTrail.note('unlocked'); } catch (e) { /* no trail is not an error */ }
 		// Only now is the user entitled to see their content.

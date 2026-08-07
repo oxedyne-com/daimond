@@ -21,12 +21,27 @@
 	'use strict';
 
 	var KEY = 'daimond-trail';
-	var MAX = 40;
+	// 200, not 40. Once the boot itself is instrumented a single cycle is about
+	// twenty rows, and forty held less than two -- so the trail would drop the
+	// beginning of the loop, which is the part that says what started it.
+	var MAX = 200;
 	var t0  = Date.now();
 
 	function read() {
 		try { return JSON.parse(localStorage.getItem(KEY) || '[]') || []; }
 		catch (e) { return []; }
+	}
+
+	/// fe2o3's `err!` colours its output, so an error crossing the wasm boundary
+	/// arrives wrapped in ANSI escapes. In a console they are colour; in a text
+	/// box they are `[91m[1m` in front of the only words that matter, and the
+	/// first trail from the phone was three-quarters escape codes.
+	function plain(s) {
+		return String(s)
+			.replace(/\u001b\[[0-9;]*m/g, '')
+			.replace(/\[[0-9]{1,2}(;[0-9]{1,2})*m/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
 	}
 
 	/// Add one event. `what` is a short fixed string from the app's own code --
@@ -45,8 +60,11 @@
 				// number after a large one, which is what makes a reload loop
 				// legible in the trail at a glance.
 				a: Date.now() - t0,
-				w: String(what).slice(0, 40),
-				d: detail == null ? undefined : String(detail).slice(0, 60),
+				w: plain(what).slice(0, 40),
+				// 200, not 60: the first trail from the phone cut every error off
+				// at `opfs.rs:477` -- the file and line, and none of the message
+				// that says WHICH path was missing, which is the whole question.
+				d: detail == null ? undefined : plain(detail).slice(0, 200),
 			});
 			if (rows.length > MAX) rows = rows.slice(rows.length - MAX);
 			localStorage.setItem(KEY, JSON.stringify(rows));
@@ -82,7 +100,7 @@
 	});
 	window.addEventListener('unhandledrejection', function (e) {
 		var r = e && e.reason;
-		note('unhandled rejection', (r && (r.message || r)) || '?');
+		note('unhandled rejection', (r && (r.message || r.toString ? r.toString() : r)) || '?');
 	});
 	// The page going away, and why it might be about to.
 	window.addEventListener('pagehide', function (e) {
