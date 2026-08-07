@@ -167,27 +167,28 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 label.addbtn { cursor: pointer; }
 .rail-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 0 6px 4px; }
 
-/* ── The PPTW: a light and two verbs ──────────────────────────────
+/* ── The PPTW: play, pause, traffic light ─────────────────────────
    Drawn identically wherever it appears -- at the head of the rail for the
    root of the tree, on each Diamond tile, on each chat tile, and (phase G and
    H) on each mailbox, folder and triggered action.
 
-   THREE parts, not one. A single button drawn from the state put a green PLAY
-   triangle on a running node: the colour said "running" and the shape said
-   "play", while the only thing pressing it could do was pause. A verb glyph
-   cannot be a noun. So the light says what IS and the buttons say what CAN BE
-   DONE, and neither borrows the other's language.
+   The name is the specification (notes2.txt line 3): "Pause/Play/Traffic light
+   widgets (PPTWs) for all spendable functions. Green = all spendable functions
+   active, Amber = some are active, Red = all paused." Play, pause, then the
+   light, on the right.
 
-   Colour AND glyph carry the state on the light, never colour alone: green
-   with a triangle runs, red with two bars is held, amber with a single bar is
-   mixed. The glyph is knocked out of the disc with fill-rule="evenodd", so it
-   reads against whatever ground the tile happens to have in whichever palette.
+   THE LIGHT CARRIES NOTHING BUT A COLOUR. It is a lamp, not an icon: no glyph,
+   no symbol, no shape inside it. A glyph in the light is a verb worn as a noun,
+   which is the fault the compact single button had -- a running node drew a
+   green PLAY triangle, so the shape said "play" while the only thing pressing
+   it could do was pause. Drawing that glyph inside the lamp puts the same
+   confusion one place to the right.
 
    The light is not a button and takes no hover, no focus ring and no pointer
    cursor. Amber is derived and can never be set -- with nothing to press, that
    is true by construction rather than by convention. */
 .pptw {
-	flex: none; display: inline-flex; align-items: center; gap: 1px;
+	flex: none; display: inline-flex; align-items: center; gap: 3px;
 	line-height: 0;
 	/* NOT the tile's pointer, which is inherited. A tile says "press me and I
 	   open"; this strip does not open anything, and the light is not pressable
@@ -196,14 +197,27 @@ label.addbtn { cursor: pointer; }
 	   the light's whole point is that it is not clickable. */
 	cursor: default;
 }
+/* 13px, not the buttons' 20: a lamp beside two glyphs has to read as a
+   different KIND of thing, and size is what says so when there is no shape
+   inside it to say it. A ring at 12% of the colour lifts it off a tile whose
+   ground happens to sit near the lamp's own hue. */
 .pptw-lamp {
-	flex: none; width: 18px; height: 18px;
-	display: flex; align-items: center; justify-content: center;
-	color: var(--text-muted);
+	flex: none; width: 13px; height: 13px; border-radius: 50%;
+	background: var(--text-muted);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 12%, transparent);
 }
-.pptw[data-state="play"]  .pptw-lamp { color: var(--ok); }
-.pptw[data-state="pause"] .pptw-lamp { color: var(--danger); }
-.pptw[data-state="mixed"] .pptw-lamp { color: var(--warn); }
+.pptw[data-state="play"]  .pptw-lamp {
+	background: var(--ok);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.pptw[data-state="pause"] .pptw-lamp {
+	background: var(--danger);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.pptw[data-state="mixed"] .pptw-lamp {
+	background: var(--warn);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 12%, transparent);
+}
 
 /* The two verbs. Both are always present and the inapplicable one is DISABLED
    rather than hidden, so a row never reflows under the thumb and pause is
@@ -223,11 +237,8 @@ label.addbtn { cursor: pointer; }
 .pptw-act:disabled { color: var(--text-muted); opacity: 0.32; }
 
 /* Centred by the flex box above and by the viewBox: the ink sits at 8,8 of
-   0 0 16 16, so it is on the box's centre and not merely the sprite. 14 on the
-   lamp so the disc clears the two verbs beside it; 12 on the verbs, where a
-   bare glyph needs less room than one knocked out of a disc. */
-.pptw-lamp .pptw-ic { width: 14px; height: 14px; display: block; fill: currentColor; }
-.pptw-act  .pptw-ic { width: 12px; height: 12px; display: block; fill: currentColor; }
+   0 0 16 16, so it is on the box's centre and not merely the sprite. */
+.pptw-act .pptw-ic { width: 12px; height: 12px; display: block; fill: currentColor; }
 
 /* The global control's own row, above the Diamonds list.
    Deliberately NOT a .railhead and deliberately not dressed as one. Given the
@@ -1898,10 +1909,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .trig-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
 .trig-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Where a control would be, on the one action that has none: `prompted` is the
-   daimon answering you, and `/self` is already its control. 60px is the group's
-   own width -- 18 for the lamp, 20 for each verb, 1 of gap between them -- so
+   daimon answering you, and `/self` is already its control. 59px is the group's
+   own width -- 20 for each verb, 13 for the lamp, 3 of gap between them -- so
    the name beside it starts on the same edge as every other row's. */
-.trig-spacer { display: inline-block; width: 60px; flex: none; }
+.trig-spacer { display: inline-block; width: 59px; flex: none; }
 /* `--border-strong`, not `--border`: a divider separates two things that are
    already there, and a control's edge has to say the control IS there. Phase H
    copied this rule from a box rather than from a button. */

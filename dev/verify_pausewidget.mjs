@@ -7,14 +7,20 @@
 //   when none does, and amber otherwise. AMBER IS DERIVED AND CAN NEVER BE SET.
 //   Pausing a branch pauses all its leaves; resuming it resumes them all.
 //
-// THE CONTROL IS THREE THINGS, and this file was rewritten for that. It was one
-// button drawn from `data-state`, which put a green PLAY triangle on a running
-// node — the colour said "running" while the shape said "play" and the only
-// thing pressing it could do was pause. Now:
+// THE CONTROL IS THREE THINGS, IN THE ORDER ITS NAME GIVES. notes2.txt line 3:
+// "Pause/Play/Traffic light widgets (PPTWs) for all spendable functions. Green
+// = all spendable functions active, Amber = some are active, Red = all paused."
 //
-//   a LIGHT      state only, never pressable, so amber cannot be set at all
-//   a PAUSE      a verb
-//   a PLAY       a verb
+//   a PLAY           a verb
+//   a PAUSE          a verb
+//   a TRAFFIC LIGHT  a coloured disc, LAST, with NOTHING inside it
+//
+// It was briefly one button drawn from `data-state`, which put a green PLAY
+// triangle on a running node — the colour said "running" while the shape said
+// "play" and the only thing pressing it could do was pause. The first rebuild
+// then put that same glyph inside the lamp and led with it, which is the same
+// confusion one place to the right. Both the ORDER and the EMPTINESS of the
+// light are checked below, because both have been got wrong.
 //
 // Both verbs are always present; the inapplicable one is DISABLED, not hidden.
 // On a leaf exactly one is ever live. ON AN AMBER BRANCH BOTH ARE — which is
@@ -275,8 +281,14 @@ const controls = () => p.evaluate(() => [...document.querySelectorAll('.pptw')].
 			// Focusable at all? `tabIndex >= 0` is the browser's own answer, and it
 			// is 0 for a <button> even without the attribute.
 			focusable: lamp.tabIndex >= 0,
-			iconHidden: [...lamp.querySelectorAll('svg')].every((s) => s.getAttribute('aria-hidden') === 'true'),
+			// EMPTY is the specification. Anything at all inside the lamp -- an
+			// svg, a path, a character -- is a glyph, and a glyph in a light is a
+			// verb worn as a noun.
+			inside: lamp.innerHTML.trim(),
+			kids: lamp.childElementCount,
 		} : null,
+		// The DOM order, which is the reading order and the tab order both.
+		order: [...g.children].map((e) => e.dataset.act || (e.classList.contains('pptw-lamp') ? 'lamp' : '?')),
 		acts: [...g.querySelectorAll('.pptw-act')].map(part),
 		where: g.closest('.diamond-box') ? 'diamond' : g.closest('.chat-box') ? 'chat'
 			: g.closest('#pptw-global-row') ? 'global' : 'other',
@@ -303,9 +315,12 @@ check(ctl.filter((c) => c.where === 'chat').length >= 2, 'one on each chat tile'
 const acts = ctl.flatMap((c) => c.acts);
 check(ctl.length > 0 && ctl.every((c) => c.acts.length === 2),
 	'every control carries exactly two verbs', JSON.stringify(ctl.map((c) => c.acts.length)));
-check(ctl.length > 0 && ctl.every((c) => JSON.stringify(c.acts.map((a) => a.act)) === '["pause","play"]'),
-	'and they are pause then play, in that order everywhere',
-	JSON.stringify(ctl.map((c) => c.acts.map((a) => a.act))));
+// THE ORDER IS THE SPECIFICATION, notes2.txt line 3 and the widget's own name.
+// Play, pause, then the traffic light on the right. Got this backwards once --
+// light first, with a glyph in it -- so it is pinned rather than assumed.
+check(ctl.length > 0 && ctl.every((c) => JSON.stringify(c.order) === '["play","pause","lamp"]'),
+	'PLAY, PAUSE, THEN THE LIGHT — in that order, at every placement',
+	JSON.stringify(ctl.map((c) => c.order)));
 check(acts.length > 0 && acts.every((a) => a.tag === 'button'),
 	'every verb is a real <button>', JSON.stringify([...new Set(acts.map((a) => a.tag))]));
 check(acts.length > 0 && acts.every((a) => a.inTabOrder),
@@ -327,8 +342,12 @@ check(lamps.length > 0 && lamps.every((l) => l && !l.focusable),
 check(lamps.length > 0 && lamps.every((l) => l && l.role === 'img' && l.label && /[\p{L}\p{N}]/u.test(l.label)),
 	'but it is still announced, and says what it is showing',
 	JSON.stringify(lamps.map((l) => l && l.label).slice(0, 3)));
-check(lamps.length > 0 && lamps.every((l) => l && l.iconHidden),
-	'with its own glyph hidden behind that name');
+// THE LIGHT IS EMPTY. Colour is the whole signal. A glyph inside it is a verb
+// worn as a noun — the exact fault the compact single button had, moved one
+// place to the right — so "nothing inside" is checked as literally as it reads.
+check(lamps.length > 0 && lamps.every((l) => l && l.kids === 0 && l.inside === ''),
+	'AND IT CARRIES NOTHING BUT A COLOUR — no glyph, no symbol, nothing inside it',
+	JSON.stringify(lamps.map((l) => l && l.inside).slice(0, 3)));
 
 // The names have to say WHICH node; five rails of "Pause" are five identical
 // controls. The verb's name says the ACT, the light's says the STATE — never
@@ -468,7 +487,8 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		return rows;
 	}, { leaves, nodeIds: nodes.map((n) => n.id) });
 
-	const want = { play: ['pause'], pause: ['play'], mixed: ['pause', 'play'] };
+	// In DOM order — play, pause, light — so a mixed branch reads ['play','pause'].
+	const want = { play: ['pause'], pause: ['play'], mixed: ['play', 'pause'] };
 	const wrong = offered.filter((r) => JSON.stringify(r.live) !== JSON.stringify(want[r.state]));
 	check(offered.length > 0 && wrong.length === 0,
 		'the verb offered is the one that can be done: pause when running, play when paused',
@@ -765,7 +785,8 @@ out.push('--- self-test: breaking each property in the live page');
 		const live = [...g.querySelectorAll('.pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act);
 		return { state: g.dataset.state, live };
 	});
-	const want = { play: ['pause'], pause: ['play'], mixed: ['pause', 'play'] };
+	// In DOM order — play, pause, light — so a mixed branch reads ['play','pause'].
+	const want = { play: ['pause'], pause: ['play'], mixed: ['play', 'pause'] };
 	red(!!r && JSON.stringify(r.live) !== JSON.stringify(want[r.state]),
 		'a running node that offers play is caught by the offered-verb rule');
 	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));

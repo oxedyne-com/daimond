@@ -6867,22 +6867,27 @@ import init, {
 	// back to the root, which on a new account has no leaves and reads green.
 	var PAUSE_WEB = 'root/web';
 
-	// ── The three parts, and why they are three ────────────────
+	// ── Play, pause, traffic light — in that order ─────────────
 	//
-	// The control was briefly ONE button, drawn from `data-state`. That is wrong
-	// in the way a control can only be wrong once someone uses it: a running node
-	// drew a green PLAY triangle, so the shape said "play" while the only thing
-	// pressing it could do was pause. The user's words: *"A green play button
-	// shows the state (green) but the option available to me is not to play but
-	// to pause."* A verb glyph cannot be a noun.
+	// The specification is notes2.txt line 3, and it is the widget's own name:
+	// "Pause/Play/Traffic light widgets (PPTWs) for all spendable functions.
+	// Green = all spendable functions active, Amber = some are active, Red = all
+	// paused."
 	//
-	// So state and action are separated, and the action is separated in two:
+	//   PLAY BUTTON    a triangle
+	//   PAUSE BUTTON   two bars
+	//   TRAFFIC LIGHT  a coloured disc, LAST, on the right
 	//
-	//   1. A LIGHT. State only, and never clickable — which is also what makes
-	//      "amber can never be set" (pause.js §1.1) true by construction rather
-	//      than by convention. There is no press that could set it.
-	//   2. A PAUSE button. Two bars.
-	//   3. A PLAY button. A triangle.
+	// THE LIGHT CARRIES NOTHING BUT A COLOUR. No glyph, no symbol, no shape
+	// inside it — it is a lamp. A glyph in the light is a verb worn as a noun,
+	// which is the fault the compact single button had: a running node drew a
+	// green PLAY triangle, so the shape said "play" while the only thing pressing
+	// it could do was pause. Putting the glyph back inside the lamp reintroduces
+	// exactly that confusion one place to the right.
+	//
+	// The light is never clickable, which is what makes "amber can never be set"
+	// (pause.js §1.1) true by construction rather than by convention: there is no
+	// press that could set it.
 	//
 	// Both buttons are always present and the inapplicable one is DISABLED, not
 	// hidden, so a row never reflows and each control keeps a fixed position
@@ -6891,29 +6896,12 @@ import init, {
 	// control a mixed branch has to guess, and `clickWould` guessed resume-all
 	// silently, where now the user is simply offered both.
 	//
-	// The lamp's glyph, knocked out of the disc with `fill-rule="evenodd"` so it
-	// reads against whatever the tile's ground happens to be. One path, three
-	// `d`s: the disc is the same in all three and only the hole changes.
-	var PPTW_DISC = 'M8 .8a7.2 7.2 0 1 0 0 14.4A7.2 7.2 0 0 0 8 .8z';
-	var PPTW_D = {
-		// A triangle centred on its CENTROID, not on its bounding box: 6, 6 and
-		// 12 average to exactly 8, which is where the eye puts it. Box-centring
-		// a triangle leaves it visibly leaning left.
-		play:  PPTW_DISC + 'M6 4.3 12 8 6 11.7z',
-		// Bars 2 units of 16 wide, which is 2.25 device pixels at this size. The
-		// first cut used 1.6 and the pair blurred into the disc: at an 18px lamp
-		// a stroke under two pixels is not a glyph, it is a smudge.
-		pause: PPTW_DISC + 'M5.2 4.4h2v7.2h-2zM8.8 4.4h2v7.2h-2z',
-		// A single bar, the indeterminate-checkbox shape: neither running nor
-		// stopped, and legible at this size where a half-and-half glyph is mush.
-		mixed: PPTW_DISC + 'M4.4 7h7.2v2H4.4z',
-	};
-	// The buttons' glyphs: the same two shapes with no disc around them, so a
-	// verb never wears the lamp's clothes. Both are centroid-centred on 8,8 for
-	// the same reason the lamp's triangle is.
+	// The two verb glyphs, centroid-centred on 8,8 of a 0 0 16 16 box: a triangle
+	// averaged over its three points sits where the eye puts it, where one
+	// centred on its bounding box leans visibly left.
 	var PPTW_ACT = {
-		pause: 'M4.5 3.2h2.6v9.6H4.5zM8.9 3.2h2.6v9.6H8.9z',
 		play:  'M5.2 3.2 13.5 8 5.2 12.8z',
+		pause: 'M4.5 3.2h2.6v9.6H4.5zM8.9 3.2h2.6v9.6H8.9z',
 	};
 
 	/// The mailboxes and their folders, read from the store `mail.js` keeps.
@@ -6994,22 +6982,21 @@ import init, {
 
 	/// Draw one control to the state of the node it governs.
 	///
-	/// `g` is the GROUP — the light and the two buttons together. The light says
-	/// what is, the buttons say what can be done, and this is the only place
+	/// `g` is the GROUP — the two buttons and the light together. The buttons say
+	/// what can be done, the light says what is, and this is the only place
 	/// either is decided.
 	function paintPause(g) {
 		var node = g.dataset.pauseNode;
 		var st = 'play';
 		try { st = DaimondPause.state(node) || 'play'; } catch (e) { /* module not up */ }
 		g.dataset.state = st;
-		// The name goes on the light as well as on the buttons: a rail of five
-		// lights otherwise announces as five identical "image", and a colour with
-		// no subject names nothing.
+		// The colour is the whole of the light, and `data-state` on the group is
+		// what carries it — see `.pptw-lamp` in app.css. Nothing is drawn INSIDE
+		// the lamp; the only thing set here is what it is called, because a colour
+		// alone announces as nothing at all to a screen reader.
 		var name = g.dataset.pauseName || t('pause.this');
 		var lamp = g.querySelector('.pptw-lamp');
 		if (lamp) {
-			var d = lamp.querySelector('.pptw-glyph');
-			if (d) d.setAttribute('d', PPTW_D[st] || PPTW_D.play);
 			var say = name + ' — ' + t('pause.state_' + st);
 			lamp.setAttribute('aria-label', say);
 			lamp.title = say;
@@ -7076,20 +7063,10 @@ import init, {
 		// design rests on.
 		g.addEventListener('click', function (e) { e.stopPropagation(); });
 
-		// The light. A <span role="img">, not a button and not focusable: there
-		// is no press that could set amber, so amber cannot be set. Its label is
-		// filled in by `paintPause`.
-		var lamp = document.createElement('span');
-		lamp.className = 'pptw-lamp';
-		lamp.setAttribute('role', 'img');
-		// A constant string: nothing here comes from the user or a model.
-		lamp.innerHTML = '<svg class="pptw-ic" viewBox="0 0 16 16" aria-hidden="true">'
-			+ '<path class="pptw-glyph" fill-rule="evenodd" d="' + PPTW_D.play + '"/></svg>';
-		g.appendChild(lamp);
-
-		// The two verbs. `set(node, playing)` and never `toggle` — the point of
-		// two buttons is that neither has to work out what was meant.
-		['pause', 'play'].forEach(function (act) {
+		// The two verbs, FIRST, in the order the widget is named for. `set(node,
+		// playing)` and never `toggle` — the point of two buttons is that neither
+		// has to work out what was meant.
+		['play', 'pause'].forEach(function (act) {
 			var b = document.createElement('button');
 			b.type = 'button';
 			b.className = 'pptw-act pptw-' + act;
@@ -7106,6 +7083,15 @@ import init, {
 			});
 			g.appendChild(b);
 		});
+
+		// The traffic light, LAST. A <span role="img">, not a button and not
+		// focusable: there is no press that could set amber, so amber cannot be
+		// set. It is EMPTY — the colour is the whole signal, and its label is
+		// filled in by `paintPause`.
+		var lamp = document.createElement('span');
+		lamp.className = 'pptw-lamp';
+		lamp.setAttribute('role', 'img');
+		g.appendChild(lamp);
 
 		paintPause(g);
 		return g;
