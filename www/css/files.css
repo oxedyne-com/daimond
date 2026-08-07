@@ -304,3 +304,37 @@
 .cloud-row.away .cloud-path { color: var(--text-secondary); }
 .cloud-size { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .cloud-pin  { font-size: var(--fs-2xs); }
+
+/* ── The System section: Daimond's own store ─────────────────────
+   Its own section under the tree, not part of it. The two resolve against
+   different roots — the tree against whatever workspace is active, this always
+   against the browser's own store — and a single list quietly spanning both is
+   the confusion dev/ROOT_SEPARATION.md exists to prevent. Collapsed by default:
+   it answers a question ("where is DAIMOND.md?") rather than being where the
+   work is. */
+.sys-sec { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
+.sys-head {
+	display: block; width: 100%; text-align: left; background: none; border: 0;
+	cursor: pointer; padding: 6px 12px; font-size: var(--fs-2xs);
+	text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted);
+}
+/* A disclosure triangle the section draws itself, from `aria-expanded` -- the
+   one place the state is written, so the picture cannot disagree with what a
+   screen reader is told. */
+.sys-head::before { content: '\25B8 '; display: inline-block; }
+.sys-head[aria-expanded="true"]::before { content: '\25BE '; }
+.sys-head:hover { color: var(--text-primary); }
+.sys-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sys-note { padding: 0 12px 6px; font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.5; }
+.sys-path { padding: 0 12px 4px; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); }
+/* No × and no rename: this section is for reading and editing, never for
+   destroying. A row here is a Diamond's whole directory as often as not. */
+.sys-row .files-res, .sys-row .files-del { display: none; }
+/* A row that can take focus has to SHOW it. These became focusable the hour they
+   were written -- they are `role="button"` -- and a focus ring is the other half
+   of that: a keyboard user who cannot see where they are is not being offered a
+   keyboard route, they are being offered a guess. */
+.sys-row:focus {
+	outline: 2px solid var(--accent); outline-offset: -2px;
+	background: var(--bg-secondary);
+}

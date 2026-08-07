@@ -118,6 +118,43 @@ pub struct Agent {
     pub fold_prompt:     Rc<RefCell<String>>,
 }
 
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Why a fold is happening                                        │
+// └───────────────────────────────────────────────────────────────┘
+
+/// What brought a fold about, which decides two things a boolean could not keep apart.
+///
+/// The distinction matters because [`Limits::learn_from_refusal`] moves the window DOWN
+/// and never up: it is the one occasion the provider speaks about its own size, and
+/// believing it is what lets a chat against an unpublished model recover.  A fold the
+/// user asked for carries no such news -- the prompt was never refused -- so taking it as
+/// a refusal would shrink the window on every press of a button, and a user who folded
+/// three times would end up with a quarter of the context they started with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fold {
+	/// Fold only if the estimate says the next prompt will not fit.
+	IfNeeded,
+	/// The provider refused this prompt, so fold whatever the estimate says -- and take
+	/// the refusal as the truth about the window.
+	Refused,
+	/// The user pressed Fold.  Fold regardless of the estimate, and learn nothing about
+	/// the window from it.
+	ByHand,
+}
+
+impl Fold {
+	/// Should the estimate be overridden and the conversation folded anyway?
+	fn forces(self) -> bool {
+		!matches!(self, Self::IfNeeded)
+	}
+
+	/// Does this fold carry news about how big the window really is?
+	fn teaches_window(self) -> bool {
+		matches!(self, Self::Refused)
+	}
+}
+
 impl Agent {
 
     pub fn new(llm: LlmClient, system_prompt: &str) -> Self {
@@ -189,6 +226,41 @@ impl Agent {
     /// * `from` - The agent whose limits are the right ones.
     pub fn adopt_limits(&self, from: &Agent) {
         *self.limits.borrow_mut() = from.limits();
+        // The fold PROMPT travels with them, for the same reason and by the same argument.
+        // It is not part of `Limits` because it is text rather than a figure, but it is the
+        // same setting: what the folding model is told.  Without this line a Diamond's
+        // daimon and its reducer folded on the user's chosen model -- `fold_model` rides in
+        // `Limits` -- while ignoring the instructions the user wrote for it in
+        // `prompts/compactor.md`, which is the half of the setting that is visible on disk.
+        *self.fold_prompt.borrow_mut() = from.fold_prompt.borrow().clone();
+    }
+
+    /// Fold this conversation because the user asked, not because it had to be folded.
+    ///
+    /// The same path a turn takes when the estimate says the next prompt will not fit --
+    /// there is deliberately no second folding routine -- but entered with [`Fold::ByHand`],
+    /// so nothing is learned about the window from a prompt the provider never saw.
+    ///
+    /// Returns whether anything actually moved.  It can be false: a conversation of six
+    /// messages or fewer has no tail to cut and no bulk to elide, and saying so is better
+    /// than a spinner that ends with the meter where it was.
+    ///
+    /// # Arguments
+    /// * `session` - The durable conversation, folded in place.
+    /// * `on_event` - Where the fold is announced, exactly as an automatic one is.
+    pub async fn fold_by_hand(
+        &self,
+        session:  &mut Session,
+        on_event: &mut impl FnMut(AgentEvent),
+    )
+        -> bool
+    {
+        // The working list a turn would build: the system prompt, then the conversation.
+        // Rebuilt here rather than borrowed because there is no turn in flight -- this is
+        // the user at rest, between turns, pressing a button.
+        let mut working = vec![ChatMessage::system(self.system_prompt.clone())];
+        working.extend(session.messages.iter().cloned());
+        self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await
     }
 
     /// Set what the model folding this agent's conversations is told.
@@ -316,7 +388,7 @@ impl Agent {
     ) -> Outcome<()> {
         let mut refolded = false;
         loop {
-            self.fold_if_needed(session, &mut working, 0, false, on_event).await;
+            self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
             let sent = compact::conversation_bytes(&working);
             let mut full = String::new();
             let result = self.llm.chat_stream(
@@ -347,7 +419,7 @@ impl Agent {
                 Err(e) => {
                     if !refolded && self.overflowed(&e, sent) {
                         refolded = true;
-                        if self.fold_if_needed(session, &mut working, 0, true, on_event).await {
+                        if self.fold_if_needed(session, &mut working, 0, Fold::Refused, on_event).await {
                             continue;
                         }
                     }
@@ -385,7 +457,7 @@ impl Agent {
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
-            self.fold_if_needed(session, &mut working, schema, false, on_event).await;
+            self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await;
             let mut sent = compact::conversation_bytes(&working);
 
             // Stream this round's assistant text as it arrives; the tool
@@ -404,7 +476,7 @@ impl Agent {
                         // that looks like the prompt being too long.
                         if !refolded && self.overflowed(&e, sent + schema) {
                             refolded = true;
-                            if self.fold_if_needed(session, &mut working, schema, true, on_event).await {
+                            if self.fold_if_needed(session, &mut working, schema, Fold::Refused, on_event).await {
                                 sent = compact::conversation_bytes(&working);
                                 continue;
                             }
@@ -596,23 +668,24 @@ impl Agent {
     /// * `session` - The durable conversation, folded in place.
     /// * `working` - This turn's message list, rebuilt from the session when anything moved.
     /// * `schema` - Bytes of tool definitions riding alongside the conversation.
-    /// * `force` - Fold whatever the estimate says, because the provider has already refused.
+    /// * `why` - What brought the fold about; see [`Fold`].
     /// * `on_event` - Where the user is told, since a silent fold is the one people hate.
     async fn fold_if_needed(
         &self,
         session:    &mut Session,
         working:    &mut Vec<ChatMessage>,
         schema:     u64,
-        force:      bool,
+        why:        Fold,
         on_event:   &mut impl FnMut(AgentEvent),
     )
         -> bool
     {
-        // Forced means the provider has already refused this prompt, which is the only
-        // occasion it ever says anything about the size of its window. Believing it is what
-        // lets a chat against a model nobody published a window for recover instead of
-        // folding to a budget that was never the real one.
-        if force {
+        // A refusal is the only occasion the provider ever says anything about the size of
+        // its window. Believing it is what lets a chat against a model nobody published a
+        // window for recover instead of folding to a budget that was never the real one --
+        // and it is why a fold the USER asked for must not come through here, since that
+        // one carries no news at all.
+        if why.teaches_window() {
             let refused = self.gauge.tokens(compact::conversation_bytes(working) + schema);
             self.limits.borrow_mut().learn_from_refusal(refused);
         }
@@ -622,7 +695,9 @@ impl Agent {
             (l.budget(cap), l.tail_budget(cap), l.fold_model.clone())
         };
         let before = compact::conversation_bytes(&session.messages);
-        if !force && self.gauge.tokens(compact::conversation_bytes(working) + schema) <= budget {
+        if !why.forces()
+            && self.gauge.tokens(compact::conversation_bytes(working) + schema) <= budget
+        {
             return false;
         }
 
@@ -1083,6 +1158,77 @@ mod tests {
         let a = make_test_agent();
         assert_ne!(a.fold_prompt(), crate::prompts::DEFAULT_REDUCER);
         assert!(!a.fold_prompt().contains("crystal"), "{}", a.fold_prompt());
+    }
+
+    #[test]
+    fn test_a_derived_agent_folds_by_the_instructions_the_user_wrote_00() {
+        // `fold_model` rides in `Limits` and so was adopted already; the fold PROMPT is
+        // text and did not, so a Diamond's daimon folded on the user's chosen model
+        // while ignoring what they had written for it in `prompts/compactor.md` -- the
+        // half of the setting that is visible on disk, and so the half whose absence
+        // looks like the file not being read at all.
+        let chat = make_test_agent();
+        chat.set_fold_prompt("Keep only the file names.");
+        let derived = Agent::new(chat.llm.clone(), "daimon");
+        assert_eq!(derived.fold_prompt(), compact_role_default(),
+            "a fresh agent starts on the shipped prompt");
+        derived.adopt_limits(&chat);
+        assert_eq!(derived.fold_prompt(), "Keep only the file names.");
+        // One way, like the figures: a worker must not rewrite the chat's.
+        derived.set_fold_prompt("something else");
+        assert_eq!(chat.fold_prompt(), "Keep only the file names.",
+            "the chat's fold prompt moved under it");
+    }
+
+    // ── Why a fold is happening ─────────────────────────────────────────
+
+    #[test]
+    fn test_only_a_providers_refusal_teaches_the_window_00() {
+        // The distinction the `Fold` enum exists for. `learn_from_refusal` moves the
+        // window DOWN and never up, so routing a user's button press through the same
+        // arm as a refusal would shrink the window on every press: fold three times and
+        // a third of the context is gone, with nothing on screen to say why.
+        assert!(Fold::Refused.teaches_window());
+        assert!(!Fold::ByHand.teaches_window(), "a hand fold shrinks the window");
+        assert!(!Fold::IfNeeded.teaches_window());
+        // Both of the other two override the estimate; only `IfNeeded` consults it.
+        assert!(Fold::Refused.forces());
+        assert!(Fold::ByHand.forces(), "a hand fold that consults the estimate is a no-op");
+        assert!(!Fold::IfNeeded.forces());
+    }
+
+    #[tokio::test]
+    async fn test_a_hand_fold_leaves_the_window_where_it_was_00() {
+        // The property stated as the user would see it, rather than as the enum states
+        // it: press Fold on a chat that is nowhere near full, and the window it is
+        // measured against must be the one it had a moment ago.
+        let a = make_test_agent();
+        a.set_context_window(32_768);
+        let mut s = Session::new("s".into(), "u".into(), "m".into());
+        for i in 0..12 {
+            s.messages.push(ChatMessage::user(fmt!("message {}", i)));
+        }
+        let mut seen = Vec::new();
+        let mut sink = |ev: AgentEvent| seen.push(ev);
+        let _ = a.fold_by_hand(&mut s, &mut sink).await;
+        assert_eq!(a.limits().window, 32_768,
+            "the user's own fold was read as a provider refusal");
+    }
+
+    #[tokio::test]
+    async fn test_a_hand_fold_of_a_short_conversation_says_nothing_moved_00() {
+        // `false` rather than a fold that changed nothing. Below `MIN_KEEP_MESSAGES`
+        // there is no tail to cut and no bulky tool result to shorten, and the honest
+        // answer is that this conversation cannot be made smaller -- not a spinner that
+        // ends with the meter exactly where it started.
+        let a = make_test_agent();
+        a.set_context_window(32_768);
+        let mut s = Session::new("s".into(), "u".into(), "m".into());
+        s.messages.push(ChatMessage::user("hello"));
+        let mut sink = |_ev: AgentEvent| {};
+        let moved = a.fold_by_hand(&mut s, &mut sink).await;
+        assert!(!moved, "a two-message conversation reported a fold");
+        assert_eq!(s.messages.len(), 1, "the one message was folded away");
     }
 
     /// What the compactor is told when the user has not said otherwise.

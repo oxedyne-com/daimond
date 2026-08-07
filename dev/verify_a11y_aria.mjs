@@ -80,7 +80,12 @@ const GLYPHS = new Set([
 	'button.tag-x|×',					// www/js/daimond.js:10043
 	// Not on screen in this run's state, but the same shape in the source:
 	// a bare × with a title and no aria-label.
-	'button.mail-del|×',				// www/js/mail.js:1317
+	//
+	// `button.mail-del` came OFF this census in phase G part two: the mailbox's
+	// closer cross is gone and Remove sits at the foot of its settings dialog,
+	// which is a labelled button with words in it. The fallback path in `mail.js`
+	// still draws one for a container that offers no dialog, and this app is not
+	// such a container.
 	'button.arte-drop|×',				// www/js/daimond.js:10200
 ]);
 

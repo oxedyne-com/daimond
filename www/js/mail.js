@@ -1176,9 +1176,39 @@
 	/// `auto` marks a poll the schedule asked for rather than the user. It changes
 	/// nothing about what is fetched — only how loudly the panel narrates it, and
 	/// whether a refusal is worth saying out loud to somebody who did not ask.
-	async function syncAccount(address, older, folder, auto) {
+	/// What is running now, so a second sync can wait for it instead of vanishing.
+	///
+	/// `state.busy` used to make `syncAccount` return at once, and every caller is
+	/// fire-and-forget -- so a fetch asked for while another was in flight simply did
+	/// not happen, silently, with the panel showing whatever was already on disk.
+	/// That is how `selectFolder` opened a folder for the first time and never
+	/// fetched it: it fires its first-batch sync without awaiting, and the folder
+	/// LIST refresh that runs beside it is enough to be holding `busy`.
+	///
+	/// Phase G made it much worse rather than causing it, by adding a background
+	/// poll that holds `busy` on its own schedule.
+	var syncTurn = Promise.resolve();
+
+	/// Fetch one folder.
+	///
+	/// A sync the USER asked for waits its turn; one the SCHEDULE asked for is still
+	/// dropped when something else is running, because the schedule comes round again
+	/// and a queue of automatic polls is a queue of bills. `auto` already carries
+	/// exactly that distinction.
+	function syncAccount(address, older, folder, auto) {
+		if (auto && state.busy) return Promise.resolve();
+		// `finally` on both arms: a sync that threw must not stop the next one, and
+		// a rejected chain would strand every later fetch for the life of the tab.
+		var next = syncTurn.then(
+			function () { return syncOne(address, older, folder, auto); },
+			function () { return syncOne(address, older, folder, auto); });
+		syncTurn = next.then(function () {}, function () {});
+		return next;
+	}
+
+	async function syncOne(address, older, folder, auto) {
 		var a = acct(address);
-		if (!a || state.busy) return;
+		if (!a) return;
 		var name = folder || a.folder || 'INBOX';
 		var f    = fld(a, name);
 		if (older && !f.firstUid) return;      // nothing held, so nothing to reach back from
@@ -1235,6 +1265,19 @@
 			if (f.uidValidity && j.uid_validity && j.uid_validity !== f.uidValidity) {
 				f.lastUid = 0;
 				f.firstUid = 0;
+				// KNOWN AND NOT FIXED HERE: the old generation's files stay on disk.
+				// A Maildir name carries the generation it was fetched under
+				// (`<uid>.<uidValidity>.daimond:2,`), so the re-fetch below writes
+				// every message again under a new name and nothing removes the old
+				// copies -- the panel then shows each message twice, and the folder
+				// row's count climbs with every change of generation. Measured, in a
+				// session that left thirteen copies of three messages on disk.
+				//
+				// Not fixed in this pass because the fix DELETES A USER'S MAIL, and
+				// `verify_mailfolders` cannot currently tell one run's files from
+				// another's (see the generation check in that file) -- so there is no
+				// way to prove the deletion right before shipping it. It needs a test
+				// that can see, and that needs the instrument fixed first.
 				f.uidValidity = j.uid_validity;
 				save();
 				state.note = t('mail.note.rebuilt');
@@ -1255,6 +1298,17 @@
 				if (!f.firstUid || m.uid < f.firstUid) f.firstUid = m.uid;
 			}
 			// What the cap left behind, so the panel can offer to go back for it.
+			// A trigger watches for mail ARRIVING, and this is the only place that
+			// knows any has. Announced rather than called directly: mail must not
+			// have to know what a triggered action is, and a second listener --
+			// a badge, a sound, a notification -- costs nothing to add later.
+			if (msgs.length) {
+				try {
+					window.dispatchEvent(new CustomEvent('daimond:mail-arrived', {
+						detail: { mailbox: a.address, folder: name, count: msgs.length },
+					}));
+				} catch (e) { /* an old browser: the sync still happened */ }
+			}
 			f.heldBack = j.held_back || 0;
 			f.limit    = j.limit || f.limit || 0;
 			f.lastSync = Date.now();
@@ -1811,16 +1865,26 @@
 					openSettings(a.address);
 				});
 				row.appendChild(gear);
-				var del = document.createElement('button');
-				del.className = 'mail-del';
-				del.title = t('mail.remove_mailbox');
-				del.setAttribute('aria-label', t('mail.remove_mailbox_named', { address: a.address }));
-				del.textContent = '×';
-				del.addEventListener('click', function (ev) {
-					ev.stopPropagation();
-					removeAccount(a.address);
-				});
-				row.appendChild(del);
+				// The closer cross is gone, and Remove is at the foot of what the gear
+				// opens. It was `opacity: 0` until hover -- no control at all on a phone
+				// -- and it put the one irreversible act on the row's most reachable
+				// pixel, beside the act of SELECTING the mailbox. Exactly the reasoning
+				// phase C applied to a tile, and exactly what notes2 asks for here.
+				//
+				// The one exception is a container with no dialog of its own to put it
+				// in: `openSettings` says so, and the cross stays for that case alone.
+				if (!(deps && typeof deps.bodyDialog === 'function')) {
+					var del = document.createElement('button');
+					del.className = 'mail-del';
+					del.title = t('mail.remove_mailbox');
+					del.setAttribute('aria-label', t('mail.remove_mailbox_named', { address: a.address }));
+					del.textContent = '×';
+					del.addEventListener('click', function (ev) {
+						ev.stopPropagation();
+						removeAccount(a.address);
+					});
+					row.appendChild(del);
+				}
 				rowAsButton(row, function () {
 					state.sel = a.address; save();
 					Promise.all([loadDigest(a.address), refreshDrafts()]).then(render);
@@ -2130,19 +2194,27 @@
 		return box;
 	}
 
-	/// Open a mailbox's settings.
+	/// Open a mailbox's settings, with Remove at the foot.
 	///
-	/// THE CONTAINER MOUNT POINT. `deps.bodyDialog(title, bodyEl, opts)` is asked
-	/// for first and is what should carry this once phase C's tile dialog exists —
-	/// that dialog owns the focus trap, the Escape handling and the Delete at its
-	/// foot. The stand-in below is here because the alternative was shipping a
-	/// gear that opens nothing; it borrows the app's own `.dlg` furniture so the
-	/// swap changes no pixels.
+	/// `deps.bodyDialog` is the container's own dialog -- phase C's, the one every
+	/// tile uses -- and it owns the focus trap, the Escape handling and the
+	/// destructive button at the foot. Notes2 asks for the mailbox's closer cross to
+	/// become "a delete button at bottom", which is word for word what it asks for a
+	/// tile, so it had better be the same dialog: two copies drift the first time
+	/// either is touched.
+	///
+	/// The stand-in below survives for a container that does not offer one. It has no
+	/// Remove, and that is the honest version rather than a second implementation of
+	/// the destructive path -- the row's own control is still there in that case.
 	function openSettings(address) {
 		var body  = settingsBody(address);
 		var title = tf('mail.cfg.title', 'Settings for {address}', { address: address });
 		if (deps && typeof deps.bodyDialog === 'function') {
-			return deps.bodyDialog(title, body, { okLabel: tf('dlg.done', 'Done') });
+			return deps.bodyDialog(title, body, {
+				okLabel:     tf('dlg.done', 'Done'),
+				deleteLabel: t('mail.remove_mailbox'),
+				onDelete:    function () { return removeAccount(address); },
+			});
 		}
 		var back = html('<div class="modal dlg"></div>');
 		var card = html('<div class="modal-card dlg-card"></div>');
@@ -2616,6 +2688,11 @@
 		/// held off the chip row until one is, since neither means anything
 		/// without somewhere for mail to come from.
 		hasAccounts: function () { return state.accounts.length > 0; },
+		/// The addresses configured, for a trigger that watches one of them. Names
+		/// only: nothing outside this module has any business with a password.
+		accounts: function () {
+			return state.accounts.map(function (a) { return a.address; });
+		},
 		onOpen:  onOpen,
 		clear:   clear,
 		// Cross-device sync (driven by sync.js through DaimondCore): what to put in
@@ -2623,6 +2700,11 @@
 		exportSync: exportSync,
 		applySync:  applySync,
 		sync:    function () { if (state.sel) syncAccount(state.sel); },
+		/// Open a draft the daimon wrote, for the user to check and send. Exposed
+		/// because the Pending panel is where an outgoing message is approved, and
+		/// approving one means opening it -- notes2 is explicit that the user
+		/// approves all outgoing mail, so nothing here sends on their behalf.
+		openDraft:    openDraft,
 		reload:  function () { load(); render(); },
 		/// The folder list held for an account, and the way to ask for it
 		/// again. Exposed so a test can see what the server offered without

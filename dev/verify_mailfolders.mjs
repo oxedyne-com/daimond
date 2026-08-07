@@ -34,13 +34,44 @@ const p = s.page;
 
 // Start from a mailbox with no folders on disk, so what appears was fetched by
 // this run rather than left by the last one.
-await p.evaluate(async () => {
-	const root = await navigator.storage.getDirectory();
+//
+// THROUGH `DaimondCloud.opfsRoot()`, NOT `navigator.storage.getDirectory()`. The
+// two are different directories for every account but the primary: the app's
+// files live under `d~<id>/`, and this profile's account is not the primary. So
+// this wipe hit an empty top-level `mail/` and left the real one untouched — for
+// every run this file has ever had.
+//
+// What that cost: `Sent` kept one message from the first run that ever synced it,
+// `selectFolder` correctly declined to fetch a folder that already had mail on
+// screen, and the watermark check below therefore read 0/0 and was blamed on the
+// product. It also meant EVERY other check here was reading whatever the last run
+// left, so a green line proved nothing about this one. Nine generations of the
+// same message were on disk by the time it was measured.
+const wiped = await p.evaluate(async () => {
+	// BOTH copies. Deleting the local one alone is not a wipe: this mailbox's files
+	// are backed by cloud residency, and the next thing that asks for one pulls the
+	// old run's copy straight back down — under its ORIGINAL name, so it reads as a
+	// message that arrived rather than one that was restored.
+	let forgotten = 0;
 	try {
-		const mail = await root.getDirectoryHandle('mail');
-		await mail.removeEntry('alice@test.local', { recursive: true });
-	} catch (e) { /* no mailbox yet, which is the state being asked for */ }
+		Object.keys(DaimondCloud.index() || {}).forEach((path) => {
+			if (path.indexOf('mail/alice@test.local/') === 0) {
+				DaimondCloud.forget(path); forgotten++;
+			}
+		});
+	} catch (e) { /* no cloud on this profile, which is also a clean slate */ }
+	const root = await DaimondCloud.opfsRoot();
+	let mail;
+	try { mail = await root.getDirectoryHandle('mail'); }
+	catch (e) { return 'no mail dir (' + forgotten + ' forgotten)'; }
+	try { await mail.removeEntry('alice@test.local', { recursive: true }); }
+	catch (e) { return 'no mailbox yet (' + forgotten + ' forgotten)'; }
+	// Prove it: a wipe that silently did nothing is what put this file wrong.
+	for await (const [n] of mail.entries()) if (n === 'alice@test.local') return 'STILL THERE';
+	return 'wiped (' + forgotten + ' forgotten)';
 });
+check('the mailbox on disk is cleared before the run, in the root the app uses',
+	/^(wiped|no mail dir|no mailbox yet)/.test(wiped), wiped);
 
 // Seed the account the way the add-dialog would, but pointed at the fixture:
 // the dialog infers security from the port and offers no plaintext, so a
@@ -180,6 +211,29 @@ const marks = await p.evaluate(() => {
 	return Object.fromEntries(Object.entries(a.folders)
 		.map(([k, v]) => [k, { dir: v.dir, lastUid: v.lastUid, uidValidity: v.uidValidity }]));
 });
+// WHOSE MAIL IS THIS? A Maildir name is `<uid>.<uidValidity>.daimond:2,`, and the
+// fixture mints a fresh `uidValidity` every time it starts — so a file stamped with
+// a generation this run never saw is a file from a previous run.
+//
+// That is not hypothetical. The wipe above is now correct and the directory IS
+// empty when this file starts, yet older generations reappear during the run:
+// they are restored from the account's CLOUD residency, which this file has never
+// cleared. Every check above was therefore reading whatever the last run left, and
+// a green line proved nothing about this one.
+//
+// Checked rather than tolerated, because the failure it caused was invisible: with
+// one stale message already in `Sent`, `selectFolder` correctly declines to fetch a
+// folder that has mail on screen — so Sent was never synced, its watermarks stayed
+// at zero, and the check below was read as a defect in the product for two
+// sessions running.
+const gens = new Set(disk.filter(f => /\.daimond:2,/.test(f))
+	.map(f => (f.split('/').pop() || '').split('.')[1]).filter(Boolean));
+check('the mail on disk is from THIS run, not restored from an earlier one',
+	gens.size <= 1,
+	gens.size + ' uidValidity generations on disk: ' + [...gens].join(', ')
+		+ (gens.size > 1 ? ' — cloud residency is putting earlier runs back; every check '
+			+ 'in this file above is reading them' : ''));
+
 check('the UID watermarks are kept per folder',
 	marks.INBOX && marks.Sent && marks.INBOX.lastUid > 0 && marks.Sent.lastUid > 0,
 	JSON.stringify(marks));

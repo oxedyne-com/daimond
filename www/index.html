@@ -355,6 +355,16 @@
 					     panel says which of its two faces is up. -->
 					<img class="chead-mark" id="chead-mark" src="assets/daimond_mark.svg" alt="" aria-hidden="true" style="display:none">
 					<span class="ctitle" id="current-session-name" role="heading" aria-level="2">No chat</span>
+					<!-- A Diamond's two faces. The crystal is the daimon's output; the chat
+					     is its conversation, which is persistent and was until now not shown
+					     at all. Only drawn on a Diamond — a chat has one face. -->
+					<div class="dview" id="diamond-view" role="group" style="display:none"
+					     data-i18n-aria-label="crystal.view_switch" aria-label="Which face of this Diamond">
+						<button class="dview-btn" id="dview-crystal" type="button" aria-pressed="true"
+						        data-i18n="crystal.view_crystal">Crystal</button>
+						<button class="dview-btn" id="dview-chat" type="button" aria-pressed="false"
+						        data-i18n="crystal.view_chat">Chat</button>
+					</div>
 					<div class="chead-right">
 						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;" data-i18n-title="chat.model_for_chat"></select>
 						<span class="cmeter" id="ai-meter"></span>
@@ -623,6 +633,28 @@
 		<!-- Dock panels below are relocated into their column by the layout engine. -->
 
 		<!-- Agents: live runs -->
+		<!-- Pending: what a daimon has proposed and is waiting on you for.
+		     Notes2: "we have the user approving all outgoing email, so this leads
+		     to the need for a new Dock panel, say 'Pending'". Every tile carries
+		     one Diamond, a priority the daimon set, a headline that expands, and
+		     the three answers: do it, discuss it, drop it. -->
+		<aside class="panel pending" id="panel-pending" data-panel="pending" data-zone="dock" data-label="Pending" data-i18n-label="panel.pending">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.pending">Pending</span>
+				<span class="rail-count" id="pending-count"></span>
+				<span class="pending-actions">
+					<select class="pending-sort" id="pending-sort" data-i18n-title="pending.sort" title="Sort">
+						<option value="priority" data-i18n="pending.by_priority">By priority</option>
+						<option value="newest" data-i18n="pending.by_newest">Newest first</option>
+						<option value="oldest" data-i18n="pending.by_oldest">Oldest first</option>
+					</select>
+					<button class="addbtn panel-close" data-close="pending" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="pending-list" id="pending-list"></div>
+		</aside>
+
 		<aside class="panel agents" id="panel-agents" data-panel="agents" data-zone="dock" data-label="Agents" data-i18n-label="panel.agents">
 			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.agents">Agents</span>
 				<span class="rail-count" id="agents-count"></span>
@@ -713,6 +745,25 @@
 				<div class="files-path"></div>
 				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false" data-i18n-placeholder="work.filter_ph"></div>
 				<div class="files-tree"></div>
+				<!-- Daimond's own store, which the tree above deliberately hides: a ×
+				     beside `diamonds/` would delete every Diamond you have. Hiding it
+				     answered the wrong question — what was wanted was to SEE it. Its
+				     own section because the two resolve against different roots, and a
+				     single tree quietly spanning both is the confusion
+				     dev/ROOT_SEPARATION.md exists to prevent. -->
+				<div class="sys-sec" id="sys-sec">
+					<!-- Not a `<details>`. Chrome leaves closed details content with a
+					     stale layout box that reports a size while refusing focus, so an
+					     accessibility check sees rows that look on screen and cannot be
+					     reached — and the fix for that is not more CSS, it is the
+					     disclosure the rest of this app already uses. -->
+					<button class="sys-head" id="sys-head" type="button" aria-expanded="false" aria-controls="sys-body" data-i18n="sys.head">System</button>
+					<div class="sys-body" id="sys-body" hidden>
+						<div class="sys-note" data-i18n="sys.note">Daimond’s own files. They live in the browser, not in the folder you have open, and they travel between your devices.</div>
+						<div class="sys-path" id="sys-path"></div>
+						<div class="sys-tree" id="sys-tree"></div>
+					</div>
+				</div>
 			</div>
 		</aside>
 
@@ -841,6 +892,7 @@
 <script src="js/ledger.js"></script>
 <script src="js/governor.js"></script>
 <script src="js/pause.js"></script>
+<script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase
      before any identity exists to hold it. -->

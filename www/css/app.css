@@ -468,6 +468,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .panel.ai .chead .ctitle { flex: 1 1 auto; min-width: 0; }
 .panel.ai.crystal-face { border-radius: 0; }
 .chead-right { display: flex; align-items: center; gap: 8px; flex: none; }
+/* The two faces of a Diamond, as one segmented control rather than two buttons:
+   they are one choice, and a pair of separate buttons reads as two actions. */
+.dview { display: flex; flex: none; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.dview-btn {
+	background: var(--bg-tertiary); border: 0; color: var(--text-muted);
+	padding: 3px 10px; font-size: var(--fs-2xs); white-space: nowrap;
+}
+.dview-btn + .dview-btn { border-left: 1px solid var(--border); }
+.dview-btn:hover { color: var(--text-primary); }
+.dview-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.dview-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cmeter { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }
 .chat-model-select { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-xs); padding: 3px 6px; max-width: 170px; }
 .chat-model-select:hover { border-color: var(--accent); color: var(--text-primary); }
@@ -948,6 +959,9 @@ button.tag-pool { cursor: pointer; }
 .acard .achips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 2px; }
 .acard .diamond-chip { font-weight: 500; }
 .acard .achip-model { font-family: var(--font-mono); font-size: var(--fs-3xs); line-height: 1.6; padding: 0 6px; border-radius: 20px; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); background: var(--bg-tertiary); border: 1px solid var(--border); }
+/* A worker routed by modality. Marked rather than recoloured: which model a run
+   is on is the fact, and how it came to be on it is a note about that fact. */
+.acard .achip-model.achip-vision { border-style: dashed; }
 
 .acard { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; padding: 8px 9px; flex: none; }
 .acard.running { border-color: var(--border-2); }
@@ -1054,9 +1068,18 @@ button.tag-pool { cursor: pointer; }
 .tile-active-top .tile-fold { margin-left: auto; }
 .tile-meter { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .tile-ctx { display: flex; align-items: center; gap: 4px; }
-.tile-ctx-bar { width: 32px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+/* `position: relative` so the fold mark can be placed along it, and the overflow
+   clip that keeps the fill inside the rounded ends keeps the mark inside too. */
+.tile-ctx-bar { position: relative; width: 32px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .tile-ctx-fill { display: block; height: 100%; background: var(--accent); }
 .tile-ctx-fill.high { background: var(--danger); }
+/* Where the conversation folds. A hairline rather than a colour change, so the
+   bar still reads as one quantity: the mark says where the threshold is, and
+   the fill going `.high` says it has been passed. */
+.tile-ctx-fold {
+	position: absolute; top: 0; bottom: 0; width: 1px;
+	background: var(--text-muted); opacity: 0.9;
+}
 .tile-ctx-pct { color: var(--text-secondary); }
 .tile-tok { white-space: nowrap; }
 .tile-cost { color: var(--text-secondary); white-space: nowrap; }
@@ -1305,6 +1328,16 @@ button.tag-pool { cursor: pointer; }
 .tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
 .tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
 .tile-dlg-seg { display: flex; gap: 6px; }
+/* One model row in the tile dialog: the label holds its width so three
+   pulldowns line up their left edges rather than stepping in and out with the
+   length of the words above them. */
+.tile-dlg-model { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+/* A FIXED width, not a minimum: "Workers, images" is longer than "Daimon" and a
+   min-width let it push its pulldown right, so three rows that are one setting
+   read as three unrelated ones. The label ellipsises rather than moving the
+   column it exists to line up. */
+.tile-dlg-model .tile-model-chip { flex: 0 0 116px; width: 116px; text-align: center; }
+.tile-dlg-model .tile-model { flex: 1 1 auto; min-width: 0; }
 .tile-dlg-level {
 	flex: 1;
 	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
@@ -1406,7 +1439,11 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .crystal-edit { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-edit:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .hist-list { display: flex; flex-direction: column; gap: 6px; }
-.hist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+/* Wraps, so a note can take a line of its own beneath the version and its
+   buttons rather than squeezing between them. A row with no note is unchanged:
+   two children, one line. */
+.hist-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; padding: 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.hist-note { flex: 1 0 100%; font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
 .hist-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .hist-ver { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-primary); }
 .hist-kind { font-size: var(--fs-xs); color: var(--text-secondary); }
@@ -1817,3 +1854,98 @@ body.resizing { cursor: col-resize; user-select: none; }
 .mode-pop .mode-row-name { color: var(--text-primary); font-size: var(--fs-xs); }
 .mode-pop .mode-row-blurb { color: var(--text-secondary); font-size: var(--fs-2xs); line-height: 1.4; }
 .mode-pop .mode-row:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Triggered actions, in a Diamond's settings dialog ───────────
+   One row per action: its light, what it is in words, and the way in.
+   Notes2 warns about clutter here by name — "To avoid clutter, Instruction and
+   Context should just show an edit button and a copy button" — so the two long
+   texts are behind buttons and never inline. Eight actions with their
+   instructions on the page would be a dialog nobody reads. */
+.trig-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.trig-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+.trig-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Where a light would be, on the one action that has none: `prompted` is the
+   daimon answering you, and `/self` is already its control. */
+.trig-spacer { display: inline-block; width: 18px; flex: none; }
+.trig-btn {
+	flex: none; width: 26px; height: 26px; border-radius: var(--radius-sm);
+	background: var(--bg-tertiary); border: 1px solid var(--border);
+	color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1;
+}
+.trig-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.trig-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.trig-add { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.trig-add .tile-model { flex: 1 1 auto; min-width: 0; }
+.trig-edit { display: flex; flex-direction: column; gap: 10px; }
+.trig-field { display: flex; flex-direction: column; gap: 4px; }
+.trig-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.trig-input, .trig-area {
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); color: var(--text-primary);
+	padding: 6px 8px; font-size: var(--fs-sm); width: 100%;
+}
+.trig-area { font-family: var(--font-mono); resize: vertical; min-height: 64px; }
+.trig-input:focus, .trig-area:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ── Pending ─────────────────────────────────────────────────────
+   A card per thing waiting on you. The headline is a button because it
+   EXPANDS: a panel of paragraphs cannot be scanned and a panel of one-liners
+   cannot be judged, so it is both and the reader chooses which. */
+.pending-actions { display: flex; align-items: center; gap: 6px; }
+.pending-sort { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-2xs); padding: 2px 4px; max-width: 120px; }
+.pending-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto; }
+.pend-card {
+	background: var(--bg-tertiary); border: 1px solid var(--border);
+	border-left-width: 3px; border-radius: var(--radius-sm); padding: 8px 10px;
+	display: flex; flex-direction: column; gap: 6px;
+}
+/* Priority as an EDGE, not a fill: the card stays readable and the column of
+   edges down the left is what makes a list scannable at a glance. */
+.pend-card.prio-high   { border-left-color: var(--danger); }
+.pend-card.prio-normal { border-left-color: var(--accent); }
+.pend-card.prio-low    { border-left-color: var(--border-strong); }
+.pend-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-2xs); color: var(--text-muted); }
+.pend-prio { background: transparent; border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: var(--fs-3xs); padding: 0 4px; }
+.pend-diamond { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pend-when { margin-left: auto; flex: none; }
+.pend-line {
+	background: none; border: 0; padding: 0; text-align: left;
+	color: var(--text-primary); font-size: var(--fs-sm); line-height: 1.4;
+}
+.pend-line:hover { color: var(--accent-text); }
+.pend-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pend-detail { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pend-files { display: flex; flex-wrap: wrap; gap: 4px; }
+.pend-file { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: var(--fs-3xs); padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pend-file:hover { color: var(--text-primary); border-color: var(--accent); }
+.pend-acts { display: flex; gap: 6px; }
+.pend-act { flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--bg-secondary); color: var(--text-secondary); padding: 4px 0; font-size: var(--fs-sm); }
+.pend-act:hover { color: var(--text-primary); }
+.pend-go:hover  { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.pend-no:hover  { border-color: var(--danger); color: var(--danger); }
+.pend-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── The `/` menu ────────────────────────────────────────────────
+   Skills have worked since seq 65 and nothing told anyone they existed. A `/`
+   alone in an empty composer lists them. Above the box, because the composer
+   sits at the foot of the panel and a menu below it would be off-screen. */
+.skill-menu {
+	position: fixed; z-index: 60; max-height: 40vh; overflow-y: auto;
+	background: var(--bg-secondary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+	display: flex; flex-direction: column; padding: 4px;
+}
+.skill-item {
+	background: none; border: 0; text-align: left; padding: 6px 10px;
+	border-radius: var(--radius-sm); color: var(--text-primary);
+	font-family: var(--font-mono); font-size: var(--fs-sm);
+}
+.skill-item:hover { background: var(--accent-soft); color: var(--accent-text); }
+.skill-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.skill-none { padding: 8px 10px; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; }
+/* An empty Diamond chat says what it is, rather than looking like a thread that
+   failed to load. Centred and quiet: it is a signpost, not a message. */
+.chat-msg-empty {
+	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6;
+	text-align: center; max-width: 34rem; margin: 12vh auto 0; padding: 0 16px;
+}

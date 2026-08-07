@@ -156,6 +156,7 @@ import init, {
 		// `pushToken` is deliberately NOT in the stored shape and never read back: the
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, crystalKb: 0, tools: true,
+			foldModel: '', foldProvider: '',
 			pushHost: '', pushUser: '', pushToken: '', pushTokenEnc: '' };
 		if (raw) {
 			try {
@@ -176,6 +177,13 @@ import init, {
 				// Kilobytes; zero is the engine's default ceiling, as an absent field is.
 				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
+				// What folds a conversation when it outgrows its window. Empty -- and an
+				// absent field -- means the conversation's own model, which is what the
+				// engine has always silently done. The provider travels with it for the
+				// same reason it does everywhere else: a bare model id no longer says
+				// which key to send it with.
+				if (typeof j.foldModel === 'string') cfg.foldModel = j.foldModel;
+				if (typeof j.foldProvider === 'string') cfg.foldProvider = j.foldProvider;
 				// The push credential. The host and the user name it travels as are not
 				// secrets and are read as written; the token is only ever read WRAPPED,
 				// and a plaintext `pushToken` sitting in the stored blob -- which nothing
@@ -212,6 +220,8 @@ import init, {
 		maxRounds: c.maxRounds || 0,
 			crystalKb: c.crystalKb || 0,
 			tools:     c.tools !== false,
+			foldModel:    c.foldModel || '',
+			foldProvider: c.foldProvider || '',
 			// Written on every save, not only by the push panel: this function
 			// rebuilds the stored object from scratch, so a field it does not know
 			// about is a field the next unrelated save DELETES.
@@ -697,8 +707,17 @@ import init, {
 	/// a decision the user made when the chat was created, and a device that did not receive them
 	/// would put this chat's workers back on whatever IT has starred. Empty means "not chosen", and
 	/// every reader takes that as the chat's own model -- never the default.
+	/// `diamondId` is what makes a record a DAIMON'S conversation rather than a chat.
+	///
+	/// It travels for the same reason the rest does: the daimon is persistent, and a
+	/// device that received the Diamond but not the conversation would show an empty
+	/// chat view beside a crystal full of work. One field, because everything else
+	/// about the record is the same — which is the whole reason a Diamond's chat is an
+	/// ordinary chat record and not a second kind of transcript with a second renderer,
+	/// a second store and a second merge.
 	function slimChat(c) {
 		return { id: c.id, name: c.name, messages: c.messages, model: c.model, provider: c.provider || '',
+			diamondId: c.diamondId || '',
 			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
 			status: c.status || 'active',
 			session: c.session || null,
@@ -1211,6 +1230,11 @@ import init, {
 	function hydrateChat(c) {
 		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : []), model: c.model,
 			provider: c.provider || '',
+			// Which Diamond's daimon this conversation belongs to, or '' for an
+			// ordinary chat. It has to come back: a record that lost it becomes a chat
+			// with a tile in the rail, and `daimonChat` — finding nothing bound to the
+			// Diamond — starts the daimon over with an empty conversation beside it.
+			diamondId: c.diamondId || '',
 			// A chat stored before workers had a model of their own carries neither, and reads
 			// as "the chat's own model" everywhere. See `slimChat`.
 			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
@@ -4191,6 +4215,24 @@ import init, {
 	// Which Diamond is being worked, for the surfaces that offer to act on it.
 	window.DaimondDiamond = {
 		current: function () { return currentDiamond ? { id: currentDiamond.id, name: currentDiamond.name } : null; },
+		/// Which face of this Diamond is up: `'crystal'` or `'chat'`.
+		view: function (id) { return diamondView(id || (currentDiamond && currentDiamond.id) || ''); },
+		/// Offer the two default Diamonds. See `seedDefaultDiamonds`: the boot
+		/// deliberately does not call this yet, because creating a Diamond blocks a
+		/// legacy root from ever migrating. Published so the behaviour stays exercised
+		/// and proven until the migration can merge, rather than rotting unused.
+		seedDefaults: function () { return seedDefaultDiamonds(); },
+		/// The daimon's own conversation record, made on first ask.
+		///
+		/// Published because it is the one part of a Diamond that is NOT reachable
+		/// through the Diamonds list: it is a chat record with no tile, so anything
+		/// outside this module that wants to know what a daimon has been told has no
+		/// other way to find it.
+		conversation: function (id) {
+			var f = diamonds.find(function (x) { return x.id === id; })
+				|| (currentDiamond && currentDiamond.id === id ? currentDiamond : null);
+			return f ? daimonChat(f) : null;
+		},
 	};
 
 	// The panel is reachable from the dock whether or not anything is running, but
@@ -6527,7 +6569,10 @@ import init, {
 		tombstone(chat.id);      // so a stale tab cannot resurrect it
 		persistChats();
 		if (current === chat) {
-			current = chats[0] || null;
+			// The next CHAT, never the next daimon: a daimon's record has no tile and
+			// is reached through its Diamond, so opening one as a chat would put a
+			// conversation on screen that the rail says does not exist.
+			current = chats.find(function (c) { return !c.diamondId; }) || null;
 			if (current) selectChat(current);
 			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
@@ -6879,12 +6924,27 @@ import init, {
 	function pauseTree() {
 		var dnodes = (diamonds || []).map(function (f) {
 			var base = DaimondPause.id('root', 'diamonds', f.id);
-			// A branch with one leaf today. Phase H's triggered actions join it,
-			// and nothing here has to change when they do.
-			return {
-				id: base, kind: 'diamond', label: f.name || t('rail.unnamed_diamond'),
-				children: [{ id: base + '/self', kind: 'daimon', label: f.name || t('rail.unnamed_diamond') }],
-			};
+			var kids = [
+				{ id: base + '/self', kind: 'daimon', label: f.name || t('rail.unnamed_diamond') },
+			];
+			// One leaf per triggered action, which is what makes a Diamond with a
+			// trigger held and a daimon running read amber without anyone having set
+			// amber anywhere. `pause.js` documented this shape before there were any.
+			//
+			// `prompted` is deliberately NOT among them: it is the daimon answering
+			// you, and `/self` is already its leaf. Two controls for one act would
+			// let a user pause the daimon and still be able to prompt it.
+			try {
+				(Triggers.of(f.id) || []).forEach(function (ta) {
+					if (ta.id === 'prompted') return;
+					kids.push({
+						id:    DaimondTriggers.node(f.id, ta.id),
+						kind:  'trigger',
+						label: triggerLabel(ta),
+					});
+				});
+			} catch (e) { /* the module is not up: a Diamond with its daimon alone */ }
+			return { id: base, kind: 'diamond', label: f.name || t('rail.unnamed_diamond'), children: kids };
 		});
 		var cnodes = (chats || []).map(function (c) {
 			return { id: DaimondPause.id('root', 'chats', c.id), kind: 'chat', label: c.name || t('pause.unnamed_chat') };
@@ -7269,6 +7329,18 @@ import init, {
 		note.textContent = t('tile.detail_note');
 		card.appendChild(note);
 
+		// ── Models. Only where the object HAS changeable models, which today is a
+		// Diamond: notes2 fixes a chat's models at creation and this dialog is not
+		// the place to quietly overturn that.
+		if (opts.models === 'diamond') mountDiamondModels(card, opts);
+
+		// ── Context. Only for a chat, which is the only thing here that HAS a durable
+		// conversation to fold; a Diamond's daimon has one from phase E.
+		if (opts.chat) mountContextSection(card, opts.chat);
+
+		// ── Triggered actions, for a Diamond.
+		if (opts.models === 'diamond') mountTriggers(card, opts);
+
 		// ── The foot. Delete on the left, away from Done, because a foot whose
 		// two buttons sit side by side puts the irreversible one under the thumb
 		// that meant to dismiss.
@@ -7313,6 +7385,481 @@ import init, {
 		return { card: card, close: close };
 	}
 
+	/// How full this conversation is, where it will fold, and a way to fold it now.
+	///
+	/// The figures existed and were unreachable: `FOLD_AT` is a constant in `compact.rs`,
+	/// and the window an agent is really folding against — which a provider's refusal can
+	/// have shrunk — had no getter at all. A user watching a meter climb could not tell
+	/// "nearly there" from "plenty of room", and had no way to act on it either way.
+	///
+	/// **Folding costs money.** The summary is written by a model, so the button says what
+	/// it is about to do rather than doing it and reporting afterwards.
+	function mountContextSection(card, chat) {
+		if (chat.status === 'pending') return;   // nothing has been said yet
+		card.appendChild(secHead(t('tile.dlg_context')));
+
+		var line = document.createElement('div');
+		line.className = 'tile-dlg-note';
+		function say() {
+			var win = chatWindow(chat);
+			var last = chat.lastPrompt || 0;
+			if (!win.window) { line.textContent = t('tile.context_unknown'); return; }
+			line.textContent = t('tile.context_line', {
+				used: fmtCtx(last),
+				all:  fmtCtx(win.window),
+				at:   Math.round(win.foldAt * 100),
+			});
+		}
+		say();
+		card.appendChild(line);
+
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-seg';
+		var fold = document.createElement('button');
+		fold.type = 'button';
+		fold.className = 'tile-dlg-level';
+		fold.textContent = t('tile.fold_context');
+		fold.title = t('tile.fold_context_help');
+		fold.addEventListener('click', async function () {
+			if (chat._generating) { toast(t('tile.fold_mid_turn'), true); return; }
+			var app = chat.app;
+			if (!app || typeof app.fold_now !== 'function') {
+				toast(t('tile.fold_unavailable'), true); return;
+			}
+			var ok = await confirmDialog(t('tile.fold_context_body'), t('tile.fold_context_ok'),
+				{ title: t('tile.fold_context_title'), danger: false });
+			if (!ok) return;
+			fold.disabled = true;
+			var moved = false;
+			try {
+				// The same sink a turn uses, and the same handling: a fold the user asked
+				// for is written into the thread and persisted exactly as an automatic one
+				// is. Anything less would leave the transcript quietly shorter than it was,
+				// which is the one thing `appendCompacted` exists to prevent.
+				moved = await app.fold_now(function (ev) {
+					if (!ev || ev.type !== 'compacted') return;
+					chat.messages.push({ role: 'fold_log', content: ev.content || '',
+						folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
+					if (current && current.id === chat.id) appendCompacted(ev.content || '');
+				});
+			} catch (e) {
+				fold.disabled = false;
+				noticeDialog(t('tile.fold_failed'), friendlyError(e));
+				return;
+			}
+			fold.disabled = false;
+			// A fold that moved nothing is said plainly rather than left as a button press
+			// with no consequence: below `MIN_KEEP_MESSAGES` there is no tail to cut.
+			if (!moved) { toast(t('tile.fold_nothing')); return; }
+			// The session on record is now the folded one, so the stored copy has to
+			// follow — otherwise a reload springs the conversation back to its full size
+			// and the fold the user paid for is undone.
+			try { chat.lastPrompt = app.last_prompt_tokens || chat.lastPrompt || 0; }
+			catch (e) { /* mid-turn read is impossible here; the turn is not running */ }
+			captureSession(chat, app);
+			persistChats();
+			say();
+			renderSessionList();
+		});
+		row.appendChild(fold);
+		card.appendChild(row);
+	}
+
+	/// A Diamond's triggered actions, in its own settings dialog.
+	///
+	/// Notes2 asks for exactly this shape: "new triggered actions (TAs) can be added
+	/// with a + icon, and selected for editing from a pulldown", and "To avoid
+	/// clutter, Instruction and Context should just show an edit button and a copy
+	/// button to facilitate copying between TAs and diamonds."
+	///
+	/// The clutter warning is the design. One row per action, each carrying its
+	/// pause light, what it is in words, and a way in — and the two long texts
+	/// behind Edit and Copy rather than two textareas apiece. Eight actions with
+	/// their instructions inline would be a dialog nobody could read.
+	function mountTriggers(card, opts) {
+		if (!window.DaimondTriggers) return;
+		card.appendChild(secHead(t('trig.head')));
+
+		var host = document.createElement('div');
+		host.className = 'trig-list';
+		card.appendChild(host);
+
+		function draw() {
+			host.innerHTML = '';
+			var list = Triggers.of(opts.id);
+			if (!list.length) {
+				host.appendChild(secNote(t('trig.none')));
+			}
+			list.forEach(function (ta) {
+				var row = document.createElement('div');
+				row.className = 'trig-row';
+				// `prompted` has no light of its own: the daimon's `/self` leaf is
+				// already the control for "may this Diamond answer me", and a second
+				// one would let a user pause the daimon and still prompt it.
+				if (ta.id !== 'prompted') {
+					mountPause(row, DaimondTriggers.node(opts.id, ta.id), triggerLabel(ta));
+				} else {
+					var spacer = document.createElement('span');
+					spacer.className = 'trig-spacer';
+					row.appendChild(spacer);
+				}
+				var name = document.createElement('span');
+				name.className = 'trig-name';
+				name.textContent = triggerLabel(ta);
+				row.appendChild(name);
+
+				if (ta.id !== 'prompted') {
+					row.appendChild(trigBtn('✎', t('trig.edit'), function () {
+						editTrigger(opts.id, ta, draw);
+					}));
+					row.appendChild(trigBtn('⧉', t('trig.copy'), async function () {
+						// The copy notes2 asks for: the two long texts, so an
+						// instruction written once can be pasted into another TA or
+						// another Diamond without being retyped.
+						try {
+							await navigator.clipboard.writeText(
+								(ta.instruction || '') + (ta.context ? '\n\n---\n\n' + ta.context : ''));
+							toast(t('trig.copied'));
+						} catch (e) { toast(t('trig.copy_failed'), true); }
+					}));
+					row.appendChild(trigBtn('✕', t('trig.remove'), async function () {
+						var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
+							t('trig.remove'), { title: t('trig.remove'), danger: true });
+						if (!ok) return;
+						await Triggers.remove(opts.id, ta.id);
+						draw();
+					}));
+				}
+				host.appendChild(row);
+			});
+
+			var add = document.createElement('div');
+			add.className = 'trig-add';
+			var sel = document.createElement('select');
+			sel.className = 'tile-model';
+			sel.setAttribute('aria-label', t('trig.add_kind'));
+			[['activity', 'trig.kind_activity'], ['mail', 'trig.kind_mail']].forEach(function (pair) {
+				var o = document.createElement('option');
+				o.value = pair[0]; o.textContent = t(pair[1]);
+				sel.appendChild(o);
+			});
+			var plus = trigBtn('+', t('trig.add'), async function () {
+				var ta = DaimondTriggers.blank(sel.value);
+				ta.id = sel.value + '-' + Date.now().toString(36);
+				// A NEW action starts off. It has no instruction yet, so arming it
+				// would arm something with nothing to say — and the one thing worse
+				// than a trigger that does not fire is one that fires empty.
+				ta.on = false;
+				await Triggers.set(opts.id, ta);
+				draw();
+				editTrigger(opts.id, ta, draw);
+			});
+			add.appendChild(sel); add.appendChild(plus);
+			host.appendChild(add);
+		}
+		draw();
+
+		var note = document.createElement('div');
+		note.className = 'tile-dlg-note';
+		note.textContent = t('trig.note', { path: 'diamonds/' + opts.id + '/triggers.json' });
+		card.appendChild(note);
+	}
+
+	function trigBtn(glyph, label, onClick) {
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'trig-btn';
+		b.textContent = glyph;
+		b.title = label;
+		b.setAttribute('aria-label', label);
+		b.addEventListener('click', onClick);
+		return b;
+	}
+
+	function secNote(words) {
+		var d = document.createElement('div');
+		d.className = 'tile-dlg-note';
+		d.textContent = words;
+		return d;
+	}
+
+	/// The editor for one triggered action.
+	async function editTrigger(diamondId, ta, done) {
+		var body = document.createElement('div');
+		body.className = 'trig-edit';
+
+		function field(labelKey, el) {
+			var wrap = document.createElement('label');
+			wrap.className = 'trig-field';
+			var lab = document.createElement('span');
+			lab.className = 'trig-label';
+			lab.textContent = t(labelKey);
+			wrap.appendChild(lab); wrap.appendChild(el);
+			body.appendChild(wrap);
+			return el;
+		}
+
+		if (ta.kind === 'activity') {
+			var mins = document.createElement('input');
+			mins.type = 'number'; mins.min = '1'; mins.max = '1440';
+			mins.value = String(ta.minutes || 30);
+			mins.className = 'trig-input';
+			field('trig.minutes', mins);
+			var mnote = document.createElement('div');
+			mnote.className = 'tile-dlg-note';
+			mnote.textContent = t('trig.minutes_note');
+			body.appendChild(mnote);
+			var mref = mins;
+		}
+		if (ta.kind === 'mail') {
+			var box = document.createElement('select');
+			box.className = 'trig-input';
+			var boxes = [];
+			try { boxes = (window.DaimondMail && DaimondMail.accounts && DaimondMail.accounts()) || []; }
+			catch (e) { boxes = []; }
+			if (!boxes.length) {
+				var o0 = document.createElement('option');
+				o0.value = ''; o0.textContent = t('trig.no_mailbox');
+				box.appendChild(o0);
+			}
+			boxes.forEach(function (addr) {
+				var o = document.createElement('option');
+				o.value = addr; o.textContent = addr;
+				box.appendChild(o);
+			});
+			if (ta.mailbox) box.value = ta.mailbox;
+			field('trig.mailbox', box);
+			var fol = document.createElement('input');
+			fol.type = 'text'; fol.className = 'trig-input';
+			fol.value = ta.folder || 'INBOX';
+			fol.placeholder = 'INBOX';
+			field('trig.folder', fol);
+			var bref = box, fref = fol;
+		}
+
+		var instr = document.createElement('textarea');
+		instr.className = 'trig-area'; instr.rows = 4;
+		instr.value = ta.instruction || '';
+		instr.placeholder = t('trig.instruction_ph');
+		field('trig.instruction', instr);
+
+		var ctx = document.createElement('textarea');
+		ctx.className = 'trig-area'; ctx.rows = 4;
+		ctx.value = ta.context || '';
+		ctx.placeholder = t('trig.context_ph');
+		field('trig.context', ctx);
+		var cnote = document.createElement('div');
+		cnote.className = 'tile-dlg-note';
+		cnote.textContent = t('trig.context_note');
+		body.appendChild(cnote);
+
+		await openBodyDialog(t('trig.edit_title', { what: triggerLabel(ta) }), body,
+			{ okLabel: t('common.save') });
+
+		var next = Object.assign({}, ta);
+		if (ta.kind === 'activity') next.minutes = Math.max(1, Math.round(Number(mref.value) || 30));
+		if (ta.kind === 'mail') { next.mailbox = bref.value || ''; next.folder = fref.value.trim() || 'INBOX'; }
+		next.instruction = instr.value;
+		// A changed context has NOT been sent, whatever was sent before. That is
+		// what a person means by changing it, and the alternative -- keeping the
+		// old stamp -- is a context the daimon never hears.
+		if ((ctx.value || '').trim() !== (ta.context || '').trim()) next.contextSent = '';
+		next.context = ctx.value;
+		await Triggers.set(diamondId, next);
+		if (done) done();
+	}
+
+	/// The three models a Diamond runs on, in its own settings dialog.
+	///
+	/// Which model a Diamond thinks with has been stored since Diamonds had models and
+	/// shown nowhere, so the only way to see it was to read `localStorage` — and the only
+	/// way to change it was to delete the Diamond and make another.
+	///
+	/// The three are not the same KIND of setting, and the dialog does not pretend they
+	/// are:
+	///
+	///   * **The daimon** is persistent, so changing it ends one daimon and starts
+	///     another. It is confirmed, and the change is written into the crystal's version
+	///     history, where the Diamond's other discontinuities are.
+	///   * **The workers** may be changed at any time and apply to NEW agents only. A
+	///     worker already running keeps the model it was dispatched with, because moving
+	///     it would bill one conversation to two models.
+	///   * **The vision worker** is the second half of the same setting, keyed by
+	///     modality. Empty means "use the text model", which is a real answer rather than
+	///     a missing one.
+	function mountDiamondModels(card, opts) {
+		if (!window.DaimondModels) return;
+		card.appendChild(secHead(t('tile.dlg_models')));
+
+		var rec = diamondModels()[opts.id] || {};
+		var own = diamondModel(opts.id);
+
+		/// One labelled pulldown. `onPick` gets `{provider, model}`.
+		function row(labelKey, helpKey, provider, model, allowNone, onPick) {
+			var r = document.createElement('div');
+			r.className = 'tile-dlg-model';
+			var lab = document.createElement('span');
+			lab.className = 'tile-model-chip';
+			lab.textContent = t(labelKey);
+			var sel = document.createElement('select');
+			sel.className = 'tile-model';
+			sel.title = t(helpKey);
+			sel.setAttribute('aria-label', t(helpKey));
+			populateModelSelect(sel, model || '', provider || '');
+			if (allowNone) {
+				// First, and selected when nothing is stored: "the same as the text one" is
+				// this setting's default and has to be reachable again once it is left.
+				var none = document.createElement('option');
+				none.value = ''; none.dataset.provider = '';
+				none.textContent = t('tile.model_same_as_text');
+				sel.insertBefore(none, sel.firstChild);
+				if (!model) sel.value = '';
+			}
+			sel.addEventListener('change', function () {
+				var p = DaimondModels.pick(sel);
+				// `pick` reads the selected option, so the "same as text" row comes back as
+				// an empty model — which is exactly what the store wants for absent.
+				onPick({ provider: p.provider || '', model: p.model || '' }, sel);
+			});
+			r.appendChild(lab); r.appendChild(sel);
+			card.appendChild(r);
+			return sel;
+		}
+
+		// ── The daimon.
+		var daimonSel = row('tile.model_daimon', 'tile.model_daimon_help',
+			own.provider, own.model, false, async function (p, sel) {
+				var before = diamondModel(opts.id);
+				if (p.model === before.model && p.provider === before.provider) return;
+				var ok = await confirmDialog(
+					t('tile.model_change_body', {
+						from: shortModel(before.model) || t('tile.model_none'),
+						to:   shortModel(p.model),
+					}),
+					t('tile.model_change_ok'),
+					{ title: t('tile.model_change_title'), danger: false });
+				if (!ok) {
+					// Put the pulldown back. A refused confirm that left the control showing
+					// the new model would be the app claiming a change it did not make.
+					populateModelSelect(sel, before.model || '', before.provider || '');
+					return;
+				}
+				setDiamondModel(opts.id, { provider: p.provider, model: p.model });
+				// A DaimondApp has no setter for its model, so the cached client for this
+				// Diamond has to go; `diamondApp` builds the new one on next use.
+				resetDiamondApps();
+				try {
+					await diamondApp(opts.id).record_model_change(opts.id,
+						t('tile.model_change_note', {
+							from: before.model || '?', to: p.model,
+						}));
+				} catch (e) {
+					// The setting is already written and in force. Say the history entry
+					// failed rather than implying the change did.
+					toast(t('tile.model_change_unlogged'), true);
+				}
+				if (currentDiamond && currentDiamond.id === opts.id) {
+					await refreshDiamondAfterChange();
+				} else {
+					bumpDiamonds(); await loadDiamonds();
+				}
+			});
+
+		// ── The workers, text.
+		row('tile.model_workers', 'tile.worker_model_help',
+			rec.workerProvider || own.provider, rec.workerModel || '', true, function (p) {
+				setDiamondModel(opts.id, { workerProvider: p.provider, workerModel: p.model });
+			});
+
+		// ── The workers, vision.
+		row('tile.model_vision', 'tile.model_vision_help',
+			rec.visionProvider || '', rec.visionModel || '', true, function (p) {
+				setDiamondModel(opts.id, { visionProvider: p.provider, visionModel: p.model });
+			});
+
+		var note = document.createElement('div');
+		note.className = 'tile-dlg-note';
+		note.textContent = t('tile.model_note');
+		card.appendChild(note);
+		return daimonSel;
+	}
+
+	/// A settings dialog for something that is not a tile: a title, a body somebody
+	/// else built, and Delete at the foot.
+	///
+	/// The mail module asked for this by name (`deps.bodyDialog`) and shipped a
+	/// stand-in of its own furniture because the alternative was a gear that opened
+	/// nothing. This is the real one, and it is deliberately the SAME dialog phase C
+	/// built: the same focus trap, the same Escape, the same Delete-on-the-left foot.
+	/// Notes2 asks for the mailbox's closer cross to become a Delete at the foot of
+	/// its settings dialog, which is the same sentence it uses about a tile — so it
+	/// had better be the same dialog, or the two will drift the first time either is
+	/// touched.
+	///
+	/// # Arguments
+	/// * `title` - The heading, which also names the dialog to the accessibility tree.
+	/// * `body` - An element to put under it.
+	/// * `opts.onDelete` - Async; called after the dialog closes. Omit for no Delete.
+	/// * `opts.deleteLabel` - What the destructive button says.
+	function openBodyDialog(title, body, opts) {
+		opts = opts || {};
+		var back = document.createElement('div');
+		back.className = 'modal dlg tile-dlg';
+		var card = document.createElement('div');
+		card.className = 'modal-card dlg-card tile-dlg-card';
+		card.setAttribute('role', 'dialog');
+		card.setAttribute('aria-modal', 'true');
+		var h = document.createElement('h2');
+		h.textContent = title || '';
+		h.id = 'body-dlg-h-' + (++_tileDlgSeq);
+		card.setAttribute('aria-labelledby', h.id);
+		card.appendChild(h);
+		if (body) card.appendChild(body);
+
+		var row = document.createElement('div');
+		row.className = 'dlg-actions tile-dlg-foot';
+		var del = null;
+		if (typeof opts.onDelete === 'function') {
+			del = document.createElement('button');
+			del.type = 'button';
+			del.className = 'dlg-ok danger tile-dlg-delete';
+			del.textContent = opts.deleteLabel || t('tile.dlg_delete');
+			row.appendChild(del);
+		}
+		var done = document.createElement('button');
+		done.type = 'button';
+		done.className = 'modal-close dlg-cancel tile-dlg-done';
+		done.textContent = opts.okLabel || t('dlg.done');
+		row.appendChild(done);
+		card.appendChild(row);
+		back.appendChild(card);
+		document.body.appendChild(back);
+
+		var prev = document.activeElement;
+		return new Promise(function (resolve) {
+			function close(v) {
+				document.removeEventListener('keydown', onKey, true);
+				back.remove();
+				if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+				resolve(v);
+			}
+			function onKey(e) {
+				if (e.key === 'Escape') { e.preventDefault(); close(true); }
+				else if (e.key === 'Tab') keepFocusIn(card, e);
+			}
+			document.addEventListener('keydown', onKey, true);
+			back.addEventListener('mousedown', function (e) { if (e.target === back) close(true); });
+			done.addEventListener('click', function () { close(true); });
+			if (del) del.addEventListener('click', async function () {
+				// The dialog goes first: a confirm drawn over its own opener reads as
+				// two modals, and the answer is about the mailbox, not about the dialog.
+				close(false);
+				await opts.onDelete();
+			});
+			done.focus();
+		});
+	}
+
 	/// One section heading inside a tile dialog.
 	function secHead(words) {
 		var d = document.createElement('div');
@@ -7345,7 +7892,13 @@ import init, {
 		// lock screen. Nothing draws while locked, no matter who asks.
 		if (locked) return;
 		sessionList.innerHTML = '';
-		if (chats.length === 0) {
+		// A daimon's conversation is a chat record and NOT a chat: it belongs to its
+		// Diamond, is reached through that Diamond's chat view, and has no tile of its
+		// own. This is the only place the difference shows — everything else that walks
+		// `chats` (spend, the fold-model sweep, "is anything generating", the sync
+		// parcel) wants it counted exactly like the rest.
+		var loose = chats.filter(function (c) { return !c.diamondId; });
+		if (loose.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
 			note.textContent = t('rail.no_chats');
@@ -7353,7 +7906,7 @@ import init, {
 			repaintPause();
 			return;
 		}
-		chats.forEach(function (s) { sessionList.appendChild(sessionBox(s)); });
+		loose.forEach(function (s) { sessionList.appendChild(sessionBox(s)); });
 		updateActiveSession();
 		// A chat appearing or going changes what is under the root, and the root's
 		// own light is not rebuilt here. `DaimondPause` announces when the STATE
@@ -7374,22 +7927,65 @@ import init, {
 		DaimondModels.fillSelect(sel, provider || '', selected || '');
 	}
 
+	/// Where a conversation folds, as a fraction of its window: `compact::FOLD_AT`.
+	///
+	/// Named here only so a tile whose agent has not been built yet can still draw the
+	/// mark. Where there IS an agent its own figure is preferred, because that is the one
+	/// actually in force.
+	var DEFAULT_FOLD_AT = 0.8;
+
+	/// The window this chat is really folding against, and where in it the fold happens.
+	///
+	/// Not simply what the provider publishes. A provider that refuses an oversized prompt
+	/// teaches the agent a SMALLER window (`Limits::learn_from_refusal`), and from then on
+	/// a meter drawn from the published figure is measuring against a window this chat has
+	/// already been told it does not have — reading comfortable while the next turn folds.
+	function chatWindow(s) {
+		var app = s && s.app;
+		if (app) {
+			try {
+				var learnt = app.context_window || 0;
+				if (learnt > 0) {
+					return { window: learnt, foldAt: app.fold_at || DEFAULT_FOLD_AT };
+				}
+			} catch (e) { /* an older wasm build has no getter */ }
+		}
+		var cw = window.DaimondPricing
+			? DaimondPricing.contextWindow(s.model, s.provider || '') : null;
+		var at = DEFAULT_FOLD_AT;
+		if (app) { try { at = app.fold_at || DEFAULT_FOLD_AT; } catch (e) { /* ditto */ } }
+		return { window: cw || 0, foldAt: at };
+	}
+
 	// The live per-chat meter: context-window fraction · tokens · cost.
 	function tileMeter(s) {
 		var wrap = document.createElement('div');
 		wrap.className = 'tile-meter';
 		var total = (s.promptTokens || 0) + (s.completionTokens || 0);
-		var cw = window.DaimondPricing ? DaimondPricing.contextWindow(s.model, s.provider || '') : null;
+		var win = chatWindow(s);
+		var cw = win.window;
 		var last = s.lastPrompt || 0;
 		if (cw && last > 0) {
 			var pct = Math.min(100, Math.round(last / cw * 100));
+			var foldPct = Math.round(win.foldAt * 100);
 			var ctx = document.createElement('span');
 			ctx.className = 'tile-ctx';
-			ctx.title = t('tile.context_used', { used: fmtCtx(last), all: fmtCtx(cw) });
+			ctx.title = t('tile.context_used_folds', {
+				used: fmtCtx(last), all: fmtCtx(cw), at: foldPct,
+			});
 			var bar = document.createElement('span'); bar.className = 'tile-ctx-bar';
-			var fill = document.createElement('span'); fill.className = 'tile-ctx-fill' + (pct >= 80 ? ' high' : '');
+			var fill = document.createElement('span');
+			fill.className = 'tile-ctx-fill' + (pct >= foldPct ? ' high' : '');
 			fill.style.width = pct + '%';
 			bar.appendChild(fill);
+			// Where the fold happens, drawn ON the bar. The number has existed in
+			// `compact.rs` since folding was written and has never been anywhere a user
+			// could see it, so a meter at 78% said nothing about whether that was nearly
+			// there or plenty of room.
+			var mark = document.createElement('span');
+			mark.className = 'tile-ctx-fold';
+			mark.style.left = foldPct + '%';
+			bar.appendChild(mark);
 			var lab = document.createElement('span'); lab.className = 'tile-ctx-pct'; lab.textContent = pct + '%';
 			ctx.appendChild(bar); ctx.appendChild(lab);
 			wrap.appendChild(ctx);
@@ -7477,6 +8073,10 @@ import init, {
 				id:       s.id,
 				name:     s.name,
 				node:     DaimondPause.id('root', 'chats', s.id),
+				// A chat's MODELS are fixed at creation, but its conversation is the only
+				// one in the app with a durable session — so this is where the context
+				// section goes, and the models section does not.
+				chat:     s,
 				onDelete: function () { return deleteChat(s); },
 			});
 		}));
@@ -7617,6 +8217,7 @@ import init, {
 			if (cw && chat.app.set_context_window) chat.app.set_context_window(cw);
 		} catch (e) { /* an older wasm build has no setter */ }
 		applyRoundLimit(chat.app);
+		applyFoldSettings(chat.app, chat.provider || '');
 		applyCrystalCap(chat.app);
 		// A rebuilt DaimondApp starts with an empty Session, so a chat reopened
 		// after a reload would send only its newest message and the model
@@ -7854,7 +8455,13 @@ import init, {
 		// exactly when the box is empty and they are wondering whether to wait. What
 		// then happens to what they type is said by the line above the bubbles, at
 		// the moment it matters -- there is not room for it here.
-		chatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');
+		// A paused Diamond says so in the box you would otherwise type into, exactly
+		// as its crystal's own box does. Both faces of a Diamond share one composer
+		// now, so both had to learn the same sentence.
+		chatInput.placeholder = g ? t('chat.queue_ph')
+			: (current && current.diamondId && diamondHeld(current.diamondId))
+				? t('crystal.steer_paused')
+				: t('chat.input_ph');
 		if (!g) hideSpinner();
 		syncConciseChip();           // the chip belongs to THIS chat, not the last one
 		renderQueue();               // this chat's own queue, not the last one's
@@ -7885,6 +8492,103 @@ import init, {
 
 	var CONCISE_SKILL = '.daimond/skills/concise.md';
 	var CONCISE_DIR   = '.daimond/skills';
+
+	// ── `/` says what it can do ──────────────────────────────────────
+	//
+	// Notes2: "We should have proper skills using '/'." They have worked since
+	// seq 65 — `src/skills.rs` resolves a `/name` before the turn starts — and
+	// nothing anywhere told the user they existed. A feature nobody can discover
+	// is a feature nobody has.
+	//
+	// So a `/` alone in an empty box lists what is there. Not a fuzzy palette and
+	// not a second command language: the names are file stems, the list is the
+	// directory, and picking one types the command you would have typed.
+	var _skillMenu = null;
+
+	function closeSkillMenu() {
+		if (!_skillMenu) return;
+		_skillMenu.remove();
+		_skillMenu = null;
+		document.removeEventListener('click', onSkillOutside, true);
+	}
+	function onSkillOutside(e) {
+		if (_skillMenu && !_skillMenu.contains(e.target) && e.target !== chatInput) closeSkillMenu();
+	}
+
+	/// Every skill this account can invoke, by name.
+	///
+	/// Read from the STORE, which is where `.daimond/skills` lives and where the
+	/// concise chip writes its own. A folder open in the workspace may carry more
+	/// — `skills.rs` searches both — and those are listed too, so the menu says
+	/// what a turn would actually find rather than half of it.
+	async function listSkills() {
+		var names = {};
+		function take(n) {
+			n = String(n || '').trim().replace(/\/$/, '');
+			if (/\.md$/i.test(n)) names[n.replace(/\.md$/i, '')] = 1;
+		}
+		// TWO FORMATS, and they are not the same. `store_list` is this app's own
+		// door and returns `name<TAB>kind<TAB>bytes`; `file_list` is the MODEL's
+		// tool and returns `name (n bytes)`. Parsing one with the other's reader
+		// silently found nothing -- which is exactly how a menu comes up empty
+		// beside a directory with two files in it.
+		try {
+			String(await Wasm.store_list(CONCISE_DIR) || '').split('\n')
+				.forEach(function (line) { if (line) take(line.split('\t')[0]); });
+		} catch (e) { /* nothing written yet */ }
+		if (folderOpen()) {
+			try {
+				var raw = await tools().run_tool('file_list', JSON.stringify({ path: CONCISE_DIR }));
+				if (typeof raw === 'string' && !/^\s*Error\b/i.test(raw)) {
+					raw.split('\n').forEach(function (line) {
+						var m = line.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
+						if (m) take(m[1]);
+					});
+				}
+			} catch (e) { /* the folder carries none */ }
+		}
+		return Object.keys(names).sort();
+	}
+
+	/// Show the list under the composer, or say there is nothing to show.
+	async function openSkillMenu() {
+		closeSkillMenu();
+		var names = await listSkills();
+		var menu = document.createElement('div');
+		menu.className = 'skill-menu';
+		menu.setAttribute('role', 'listbox');
+		menu.setAttribute('aria-label', t('skills.menu'));
+		if (!names.length) {
+			var none = document.createElement('div');
+			none.className = 'skill-none';
+			none.textContent = t('skills.none', { dir: CONCISE_DIR });
+			menu.appendChild(none);
+		}
+		names.forEach(function (n) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'skill-item';
+			b.setAttribute('role', 'option');
+			b.textContent = '/' + n;
+			b.addEventListener('click', function () {
+				closeSkillMenu();
+				// The command you would have typed, with the space after it, so the
+				// next thing you type is its argument.
+				chatInput.value = '/' + n + ' ';
+				chatInput.focus();
+			});
+			menu.appendChild(b);
+		});
+		document.body.appendChild(menu);
+		var r = chatInput.getBoundingClientRect();
+		menu.style.left = Math.max(8, r.left) + 'px';
+		menu.style.width = Math.min(r.width, 420) + 'px';
+		// Above the box, not below: the composer sits at the foot of the panel and
+		// a menu under it would be off the bottom of the window.
+		menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + 'px';
+		_skillMenu = menu;
+		setTimeout(function () { document.addEventListener('click', onSkillOutside, true); }, 0);
+	}
 
 	/// The first draft of what "concise" asks for. Deliberately short and
 	/// deliberately about SHAPE rather than length in words: a token budget in a
@@ -7966,6 +8670,16 @@ import init, {
 	async function sendUserMessage() {
 		var text = chatInput.value.trim();
 		if (!text) return;
+		// A Diamond's chat view uses this composer and this thread, but not this turn:
+		// a daimon's tools are pinned to its own directory, its fence is the Diamond's
+		// scope, and its turn records a crystal version when it writes one. The two
+		// part here, and only here.
+		if (current && current.diamondId) {
+			if (crystalBusy) return;
+			chatInput.value = ''; chatInput.style.height = 'auto';
+			doSteer(text);
+			return;
+		}
 		// A chat on a provider that is not the starred one must be judged on ITS provider's key.
 		// A chat with no provider yet (no chat open at all) falls back to the default, which is
 		// what it will be started on.
@@ -8797,6 +9511,9 @@ import init, {
 					return {
 						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
 						model: r.model, provider: r.provider || '', status: r.status, text: r.text, tools: r.tools,
+						// Which modality put this worker on this model. Without it a tile drawn
+						// after a reload cannot say why an image task is on the text model.
+						sees: !!r.sees,
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
 						// The cached share and the reported cost, so a tile drawn after a reload
 						// still says what the run actually cost rather than re-guessing it.
@@ -8840,6 +9557,11 @@ import init, {
 			revealAgents();
 			var self = this;
 			var wm = (pick && pick.model) ? pick : diamondWorkerModel(diamondId);
+			// The secondary is a map keyed by modality, so it is resolved per SPEC rather
+			// than once for the batch: one fan-out can quite reasonably be two agents reading
+			// code and one reading a screenshot. The text half is still resolved once, above,
+			// so a batch with no image in it behaves exactly as it did.
+			var vm = diamondVisionModel(diamondId);
 			// One batch per dispatch, so the reports can be gathered together when the
 			// LAST of them finishes rather than one at a time. A conductor that reads
 			// three reports in one round can say which two agree; one that reads them
@@ -8850,6 +9572,8 @@ import init, {
 				depth: (depth | 0), expected: specs.length, ids: [],
 			};
 			specs.forEach(function (spec) {
+				var route = self.routeFor(spec.task, wm, vm, !!(pick && pick.model));
+				var sees = route.sees, mm = route;
 				var run = {
 					id: 'w' + (++self.seq),
 					batch: batch,
@@ -8857,7 +9581,10 @@ import init, {
 					task: spec.task || '',
 					diamondId: diamondId,
 					diamondName: diamondName,
-					model: wm.model || '',
+					// Why this worker is on this model, so a run that fell back to the text
+					// model because no vision model is set says so instead of looking chosen.
+					sees: sees,
+					model: mm.model || '',
 					// The provider is the other half of the choice, and it has to travel with the
 					// model rather than be read off the starred default: the same model name sits
 					// behind two providers as often as not, and a worker sent with the wrong key
@@ -8893,6 +9620,35 @@ import init, {
 			this.persist();
 			this.render();
 			this.pump();
+		},
+
+		/// Which of the secondary models one task runs on, and why.
+		///
+		/// Its own method, and the one `dispatch` calls, so the routing RULE can be
+		/// asked about without dispatching anything — a rule about how money is spent
+		/// that could only be observed by spending it would be checked by nobody.
+		///
+		/// Returns `{ provider, model, sees }`. `sees` is why, not what: a run that
+		/// fell back to the text model because no vision model is set still carries
+		/// `sees: true`, which is what lets its tile say so.
+		///
+		/// # Arguments
+		/// * `task` - What the daimon asked for; the only signal available here.
+		/// * `text` - The text worker model for this Diamond.
+		/// * `vision` - The image worker model, already fallen back to `text` if unset.
+		/// * `supplied` - The caller named a model for the whole fan-out, which is the
+		///   user's own choice for this dispatch and is not second-guessed.
+		routeFor: function (task, text, vision, supplied) {
+			var sees = !supplied && taskWantsVision(task);
+			var m = sees ? vision : text;
+			return { provider: m.provider || '', model: m.model || '', sees: sees };
+		},
+
+		/// The same question asked from outside, for a Diamond, with its own models
+		/// resolved. What a verifier drives, and what a future settings preview would.
+		routeForDiamond: function (diamondId, task) {
+			return this.routeFor(task, diamondWorkerModel(diamondId),
+				diamondVisionModel(diamondId), false);
 		},
 
 		pump: function () {
@@ -8996,6 +9752,7 @@ import init, {
 			// could not read a file and could ask something else to read it.
 			var scope = async function () {
 				applyRoundLimit(run.app);
+				applyFoldSettings(run.app, run.provider || '');
 				applyCrystalCap(run.app);
 				await scopeAgentTo(run.app, run.diamondId);
 			};
@@ -9363,6 +10120,17 @@ import init, {
 			if (run.model) {
 				var mc = document.createElement('span'); mc.className = 'achip-model';
 				mc.textContent = shortModel(run.model); mc.title = run.model;
+				// A task that named an image was routed by modality, so the chip says which
+				// half of the secondary it got. Where no vision model is set that is the
+				// TEXT model — the fallback §1.4 asks for — and the title is where it says
+				// so, rather than the run looking as though somebody chose it.
+				if (run.sees) {
+					mc.classList.add('achip-vision');
+					var chose = diamondModels()[run.diamondId];
+					mc.title = (chose && chose.visionModel)
+						? t('agent.model_vision', { model: run.model })
+						: t('agent.model_vision_fallback', { model: run.model });
+				}
 				chips.appendChild(mc);
 			}
 			card.appendChild(chips);
@@ -9497,8 +10265,42 @@ import init, {
 	// What the file was called before the app was named Daimond. Kept only so
 	// that an existing workspace can be carried across; nothing else reads it.
 	var INSTRUCTIONS_FILE_WAS = 'RED.md';
+	// ── Two layers, because there are two authors ────────────────────
+	//
+	// `dev/ROOT_SEPARATION.md` §2.5(d) specifies this and seq 65 deferred it. The
+	// deferral's reason was that doing it half-way would leave the user's own rules
+	// surviving a root switch while the agent's prompt silently changed — so it is
+	// done here, with the role prompts (which move to the same rule below).
+	//
+	// * **Yours** lives in Daimond's own store and is always in force. It is who you
+	//   are and how you like to be worked with, and it does not stop being true
+	//   because you opened a different folder.
+	// * **The project's** lives at the root of the folder you have open, and is
+	//   appended below yours. It is what THIS work needs, it travels with the folder,
+	//   and it is the file a repository can carry for everyone who opens it.
+	//
+	// Yours first, because a project cannot be allowed to quietly overrule how you
+	// work — and because the later text is the more specific one, which is the order
+	// a model reads instructions in anyway.
+	//
+	// With no folder open the two resolve to the same file and the second read is
+	// skipped: one workspace, one layer, exactly as before.
+	/// Is a real folder open, as the ENGINE holds it?
+	///
+	/// Asked of the wasm rather than of the page's own `folderHandle`, which lives
+	/// inside the Files module and is a copy: the question is which root the file
+	/// tools will actually resolve against, and only one place knows that.
+	function folderOpen() {
+		try { return Wasm.workspace_mode() === 'folder'; }
+		catch (e) { return false; }
+	}
+
 	var Instructions = {
 		md: '',
+		/// The user's own, from the store. Always in force.
+		mine: '',
+		/// The open folder's, or '' when there is no folder or it carries none.
+		theirs: '',
 
 		/// Carry a pre-rename `RED.md` over to `DAIMOND.md`, once, in whichever
 		/// workspace is active.
@@ -9529,12 +10331,27 @@ import init, {
 		refresh: async function () {
 			var prev = this.md;
 			await this.migrate();
+			// Yours, from the store. `Wasm.store_read` and not `file_read`: with a
+			// folder open, `file_read` resolves against the FOLDER, so this would read
+			// the project's copy and call it the user's — and the user's own rules
+			// would vanish the moment they opened a project.
+			this.mine = '';
 			try {
-				var res = await tools().run_tool('file_read', JSON.stringify({ path: INSTRUCTIONS_FILE }));
-				this.md = (typeof res === 'string' && !/^\s*Error\b/i.test(res)) ? res : '';
-			} catch (e) {
-				this.md = '';
+				var own = await Wasm.store_read(INSTRUCTIONS_FILE);
+				if (typeof own === 'string') this.mine = own;
+			} catch (e) { /* nothing written yet */ }
+			// The project's, from the folder — and only when there IS one. With no
+			// folder open both paths resolve to the same file, and reading it twice
+			// would put the user's own rules into the prompt twice over.
+			this.theirs = '';
+			if (folderOpen()) {
+				try {
+					var proj = await tools().run_tool('file_read',
+						JSON.stringify({ path: INSTRUCTIONS_FILE }));
+					if (typeof proj === 'string' && !/^\s*Error\b/i.test(proj)) this.theirs = proj;
+				} catch (e) { /* a folder without one is the ordinary case */ }
 			}
+			this.md = this.layered();
 			// Existing agents hold a system prompt composed at construction, so a
 			// changed DAIMOND.md only takes effect on their next turn — rebuild them.
 			if (this.md !== prev) {
@@ -9546,6 +10363,19 @@ import init, {
 			}
 			this.render();
 			return this.md;
+		},
+
+		/// The two layers as one text, each under a heading that says whose it is.
+		///
+		/// Headed rather than run together, because a model that cannot tell them
+		/// apart cannot resolve a conflict between them — and where they conflict the
+		/// project's is the more specific instruction and should win, which is only
+		/// legible if it is visibly the project's.
+		layered: function () {
+			var mine = (this.mine || '').trim(), theirs = (this.theirs || '').trim();
+			if (!theirs) return mine;
+			if (!mine) return theirs;
+			return mine + '\n\n## For this project\n\n' + theirs;
 		},
 
 		/// The role prompt, plus the house rules, plus (for a worker) the crystal of
@@ -9569,8 +10399,12 @@ import init, {
 			if (!el) return;
 			if (!this.md.trim()) { el.style.display = 'none'; return; }
 			el.style.display = '';
-			el.textContent = '✦ ' + INSTRUCTIONS_FILE;
-			el.title = t('instructions.chip_help');
+			// Two layers get a chip that says two, because "your rules are in force" and
+			// "your rules AND this project's are in force" are different facts and the
+			// second is the one people are surprised by.
+			var both = !!(this.mine.trim() && this.theirs.trim());
+			el.textContent = '✦ ' + INSTRUCTIONS_FILE + (both ? ' ×2' : '');
+			el.title = both ? t('instructions.chip_two') : t('instructions.chip_help');
 		},
 	};
 
@@ -9579,9 +10413,16 @@ import init, {
 	// DAIMOND.md above is what the user ADDS to every agent. This is what each
 	// agent is told in the first place -- the prompt itself -- and it is theirs
 	// to change too: `prompts/chat.md`, `prompts/daimon.md`,
-	// `prompts/worker.md` and `prompts/reducer.md`, ordinary text files in the
-	// workspace, edited in the Doc panel like anything else and travelling with
-	// a real folder the same way.
+	// `prompts/worker.md`, `prompts/reducer.md` and `prompts/compactor.md`,
+	// ordinary text files edited in the Doc panel like anything else.
+	//
+	// They live in DAIMOND'S OWN STORE, not in whatever folder happens to be open.
+	// That is a change: they used to resolve against the active workspace, so
+	// opening a project silently put every agent back on its shipped prompt while
+	// the user's own DAIMOND.md carried on — the agent's instructions changing
+	// under them with nothing on screen to say so. `dev/ROOT_SEPARATION.md` §2.5(d)
+	// names this, and it is why the instructions and the prompts move together
+	// rather than one phase apart: half of it is worse than neither half.
 	//
 	// An absent or empty file means the shipped default, so deleting one is how
 	// a user puts the original back. The defaults themselves live in Rust
@@ -9595,7 +10436,7 @@ import init, {
 	var PROMPTS_DIR = 'prompts';
 	var Prompts = {
 		/// Role name -> the user's text, '' where they have written none.
-		md: { chat: '', daimon: '', worker: '', reducer: '' },
+		md: { chat: '', daimon: '', worker: '', reducer: '', compactor: '' },
 
 		/// Every role, with what to call it and what it is for -- the source for
 		/// the buttons in the Admin panel.
@@ -9606,6 +10447,13 @@ import init, {
 			{ id: 'daimon',    label: 'role.daimon',    blurb: 'role.daimon_help' },
 			{ id: 'worker',    label: 'role.worker',    blurb: 'role.worker_help' },
 			{ id: 'reducer',   label: 'role.reducer',   blurb: 'role.reducer_help' },
+			// The fifth, and the one that has been unreachable since it was written.
+			// `Role::Compactor` had a name, a label, a default prompt and a parser in
+			// Rust, and this list is the only thing that decides whether a role's file
+			// is ever read -- so `prompts/compactor.md` was a file a user could write
+			// and nothing would open. It is the model that summarises a conversation
+			// being folded: the one prompt whose output BECOMES the session's memory.
+			{ id: 'compactor', label: 'role.compactor', blurb: 'role.compactor_help' },
 		],
 
 		path: function (id) { return PROMPTS_DIR + '/' + id + '.md'; },
@@ -9646,13 +10494,14 @@ import init, {
 			for (var i = 0; i < renamed.length; i++) {
 				var from = this.path(renamed[i].from), to = this.path(renamed[i].to);
 				try {
-					var already = await tools().run_tool('file_read', JSON.stringify({ path: to }));
-					if (typeof already === 'string' && !/^\s*Error\b/i.test(already)) continue;
+					var already = '';
+					try { already = await Wasm.store_read(to); } catch (e2) { already = ''; }
+					if (already) continue;
 					// The CONTENT is carried into the new file, so it must be the bytes.
-					var old = await readBytes(from);
-					if (typeof old !== 'string' || /^\s*Error\b/i.test(old) || !old.trim()) continue;
-					await tools().run_tool('file_write', JSON.stringify({ path: to, content: old }));
-				} catch (e) { /* no workspace yet, or unreadable: nothing to carry */ }
+					var old = await Wasm.store_read(from);
+					if (typeof old !== 'string' || !old.trim()) continue;
+					await Wasm.store_write(to, old);
+				} catch (e) { /* nothing written yet, or unreadable: nothing to carry */ }
 			}
 		},
 
@@ -9663,11 +10512,10 @@ import init, {
 				var id = this.roles[i].id;
 				var was = this.md[id];
 				try {
-					var res = await tools().run_tool('file_read',
-						JSON.stringify({ path: this.path(id) }));
-					this.md[id] = (typeof res === 'string' && !/^\s*Error\b/i.test(res)) ? res : '';
+					var res = await Wasm.store_read(this.path(id));
+					this.md[id] = (typeof res === 'string') ? res : '';
 				} catch (e) {
-					this.md[id] = '';
+					this.md[id] = '';       // nothing written: the shipped default stands
 				}
 				if (this.md[id] !== was) changed = true;
 			}
@@ -9682,6 +10530,11 @@ import init, {
 					try {
 						_diamondApps[k].set_role_prompt('daimon',  self.md.daimon  || '');
 						_diamondApps[k].set_role_prompt('reducer', self.md.reducer || '');
+						// The compactor's is not this app's own prompt at all -- it is what
+						// the tool-less model folding its conversation is told -- so it is
+						// applied alongside the fold model rather than beside these two.
+						applyFoldSettings(_diamondApps[k],
+							_diamondAppProvider.get(_diamondApps[k]) || '');
 					} catch (e) { /* an app mid-turn keeps what it has */ }
 				});
 			}
@@ -9698,23 +10551,258 @@ import init, {
 		edit: async function (id) {
 			var path = this.path(id);
 			var cur = '';
-			try { cur = await tools().run_tool('file_read', JSON.stringify({ path: path })); }
-			catch (e) { cur = ''; }
-			if (typeof cur !== 'string' || /^\s*Error\b/i.test(cur) || !cur.trim()) {
-				try { await tools().run_tool('dir_create', JSON.stringify({ path: PROMPTS_DIR })); }
-				catch (e) { /* it may already be there, which is the state we want */ }
-				await tools().run_tool('file_write',
-					JSON.stringify({ path: path, content: this.defaultFor(id) }));
+			try { cur = await Wasm.store_read(path); } catch (e) { cur = ''; }
+			if (typeof cur !== 'string' || !cur.trim()) {
+				// `store_write` creates parents, so there is no directory to make first.
+				await Wasm.store_write(path, this.defaultFor(id));
 				await this.refresh();
 				try { Files.refresh(); } catch (e) { /* the tree redraws on its own next time */ }
 			}
-			Files.open(path);
+			// Opened through the STORE door, so the editor reads and writes the file
+			// that is actually in force -- not a same-named one in an open folder.
+			Files.open(path, { store: true });
 		},
 	};
 	// A service like the others: what each agent is told, and the way to change
 	// it. Exposed so the Admin panel, the verifiers and anything added later all
 	// go through the one implementation rather than reading the files again.
 	window.DaimondPrompts = Prompts;
+
+	// ── Pending: what a daimon has proposed and is waiting on you for ──
+	//
+	// Notes2: "at this stage we have the user approving all outgoing email, so
+	// this leads to the need for a new Dock panel, say 'Pending' with tiles for
+	// each action that must be approved by the user."
+	//
+	// Three answers, and all three take the tile away, because a list you have to
+	// tidy separately is a list that stops being read:
+	//
+	//   ✓  do it        the action runs
+	//   ?  discuss it   you land in that Diamond's chat with the details already
+	//                   sent -- which is what phase E built somewhere to land IN
+	//   ✕  drop it      it never happens
+	//
+	// PRIORITY IS SET BY THE DAIMON THAT RAISED IT (§5.3, settled with the user),
+	// and you may override it. Anything else means setting a priority by hand on
+	// every item, which nobody does twice.
+	var PENDING_KEY = 'daimond-pending';
+	var PRIORITIES  = ['high', 'normal', 'low'];
+
+	var Pending = {
+		items: [],
+
+		load: function () {
+			this.items = readJson(PENDING_KEY, []) || [];
+			if (!Array.isArray(this.items)) this.items = [];
+		},
+		save: function () {
+			try { localStorage.setItem(PENDING_KEY, JSON.stringify(this.items)); }
+			catch (e) { /* quota: it holds for this session */ }
+			this.render();
+			nudgeSync();
+		},
+
+		/// Raise one item. `kind` is what doing it would DO, and it is the only
+		/// field this module interprets: everything else is the daimon's words.
+		add: function (item) {
+			if (!item || !item.headline) return null;
+			var rec = {
+				id:        'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+				diamondId: item.diamondId || '',
+				diamondName: item.diamondName || '',
+				headline:  String(item.headline),
+				detail:    String(item.detail || ''),
+				kind:      item.kind || 'note',
+				// Resources the tile shows as a row of icons: files the action would
+				// touch, so what it acts ON is visible without expanding it.
+				files:     Array.isArray(item.files) ? item.files.slice(0, 8) : [],
+				priority:  PRIORITIES.indexOf(item.priority) >= 0 ? item.priority : 'normal',
+				at:        Date.now(),
+			};
+			this.items.push(rec);
+			this.save();
+			// Revealed the way a dispatch reveals Agents: the one moment there is
+			// something to answer and nobody has asked to watch for it.
+			try { if (!DaimondPanels.isOpen('pending')) DaimondPanels.show('pending'); }
+			catch (e) { /* the layout engine is not up */ }
+			return rec.id;
+		},
+
+		drop: function (id) {
+			this.items = this.items.filter(function (x) { return x.id !== id; });
+			this.save();
+		},
+
+		/// The sort the user chose. Priority first is the default, because the
+		/// question a list of things to approve answers is "what next".
+		sorted: function () {
+			var how = 'priority';
+			try { how = localStorage.getItem(PENDING_KEY + '-sort') || 'priority'; } catch (e) { /* default */ }
+			var out = this.items.slice();
+			if (how === 'newest') out.sort(function (a, b) { return b.at - a.at; });
+			else if (how === 'oldest') out.sort(function (a, b) { return a.at - b.at; });
+			else out.sort(function (a, b) {
+				var d = PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority);
+				// Oldest first WITHIN a priority: two things equally urgent are
+				// answered in the order they were asked.
+				return d !== 0 ? d : a.at - b.at;
+			});
+			return out;
+		},
+
+		render: function () {
+			var list = document.getElementById('pending-list');
+			var count = document.getElementById('pending-count');
+			if (!list) return;
+			if (count) count.textContent = this.items.length ? String(this.items.length) : '';
+			list.innerHTML = '';
+			if (!this.items.length) {
+				var none = document.createElement('div');
+				none.className = 'rail-note';
+				none.textContent = t('pending.empty');
+				list.appendChild(none);
+				return;
+			}
+			this.sorted().forEach(function (it) {
+				list.appendChild(Pending.tile(it));
+			});
+		},
+
+		tile: function (it) {
+			var box = document.createElement('div');
+			box.className = 'pend-card prio-' + it.priority;
+			box.dataset.id = it.id;
+
+			var head = document.createElement('div');
+			head.className = 'pend-head';
+			var prio = document.createElement('select');
+			prio.className = 'pend-prio';
+			prio.title = t('pending.priority');
+			prio.setAttribute('aria-label', t('pending.priority'));
+			PRIORITIES.forEach(function (pv) {
+				var o = document.createElement('option');
+				o.value = pv; o.textContent = t('pending.prio_' + pv);
+				prio.appendChild(o);
+			});
+			prio.value = it.priority;
+			prio.addEventListener('change', function () {
+				it.priority = prio.value;
+				Pending.save();
+			});
+			head.appendChild(prio);
+			if (it.diamondName) {
+				var chip = document.createElement('span');
+				chip.className = 'pend-diamond';
+				chip.textContent = it.diamondName;
+				head.appendChild(chip);
+			}
+			var when = document.createElement('span');
+			when.className = 'pend-when';
+			when.textContent = relTime(it.at);
+			head.appendChild(when);
+			box.appendChild(head);
+
+			// The headline, which EXPANDS. A panel of paragraphs cannot be scanned,
+			// and a panel of one-liners cannot be judged -- so it is both, and which
+			// one is up is the reader's choice.
+			var line = document.createElement('button');
+			line.type = 'button';
+			line.className = 'pend-line';
+			line.textContent = it.headline;                 // escaped via textContent
+			line.setAttribute('aria-expanded', 'false');
+			var body = document.createElement('div');
+			body.className = 'pend-detail';
+			body.style.display = 'none';
+			body.textContent = it.detail || t('pending.no_detail');
+			line.addEventListener('click', function () {
+				var on = body.style.display === 'none';
+				body.style.display = on ? '' : 'none';
+				line.setAttribute('aria-expanded', on ? 'true' : 'false');
+			});
+			box.appendChild(line);
+			box.appendChild(body);
+
+			if (it.files && it.files.length) {
+				var files = document.createElement('div');
+				files.className = 'pend-files';
+				it.files.forEach(function (path) {
+					var b = document.createElement('button');
+					b.type = 'button';
+					b.className = 'pend-file';
+					b.textContent = '📄 ' + String(path).split('/').pop();
+					b.title = path;
+					b.addEventListener('click', function () { Files.open(path); });
+					files.appendChild(b);
+				});
+				box.appendChild(files);
+			}
+
+			var acts = document.createElement('div');
+			acts.className = 'pend-acts';
+			var go = document.createElement('button');
+			go.type = 'button'; go.className = 'pend-act pend-go';
+			go.textContent = '✓'; go.title = t('pending.execute');
+			go.setAttribute('aria-label', t('pending.execute_named', { what: it.headline }));
+			go.addEventListener('click', function () { Pending.execute(it); });
+			var ask = document.createElement('button');
+			ask.type = 'button'; ask.className = 'pend-act pend-ask';
+			ask.textContent = '?'; ask.title = t('pending.discuss');
+			ask.setAttribute('aria-label', t('pending.discuss_named', { what: it.headline }));
+			ask.addEventListener('click', function () { Pending.discuss(it); });
+			var no = document.createElement('button');
+			no.type = 'button'; no.className = 'pend-act pend-no';
+			no.textContent = '✕'; no.title = t('pending.cancel');
+			no.setAttribute('aria-label', t('pending.cancel_named', { what: it.headline }));
+			no.addEventListener('click', function () { Pending.drop(it.id); });
+			acts.appendChild(go); acts.appendChild(ask); acts.appendChild(no);
+			box.appendChild(acts);
+			return box;
+		},
+
+		/// Do it. What that means depends on the kind, and there is exactly one
+		/// kind today: a draft the daimon wrote, which the mail panel sends.
+		execute: async function (it) {
+			if (it.kind === 'draft' && it.files && it.files[0] && window.DaimondMail) {
+				try { await DaimondMail.openDraft(it.files[0]); }
+				catch (e) { toast(friendlyError(e), true); return; }
+			} else {
+				// A note has nothing to run: approving it is acknowledging it, and
+				// saying so is better than a tick that quietly means nothing.
+				toast(t('pending.noted'));
+			}
+			Pending.drop(it.id);
+		},
+
+		/// Discuss it: back to the daimon that raised it, with the details already
+		/// sent. Phase E is what gave this somewhere to land -- before it there was
+		/// no conversation to return the user TO.
+		discuss: async function (it) {
+			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
+			if (!f) { toast(t('pending.diamond_gone'), true); Pending.drop(it.id); return; }
+			Pending.drop(it.id);
+			await selectDiamond(f, 'chat');
+			var text = t('pending.discuss_prompt', { headline: it.headline })
+				+ (it.detail ? '\n\n' + it.detail : '');
+			await doSteer(text);
+		},
+	};
+
+	// What is waiting on the user, published so a daimon's proposal can be raised
+	// from anywhere -- the mail panel, a tool, a trigger -- without a second copy
+	// of the store growing beside this one.
+	// One Diamond's triggered actions, read-only. Published so that anything
+	// building a picture of the pause tree -- the widget verifier does exactly
+	// this -- can ask what the leaves ARE rather than assuming a shape.
+	window.DaimondTriggersOf = function (id) { return Triggers.of(id).slice(); };
+
+	window.DaimondPendingView = {
+		add:   function (item) { return Pending.add(item); },
+		items: function () { return Pending.items.slice(); },
+		drop:  function (id) { return Pending.drop(id); },
+	};
+	// The two layers of standing instructions, for the same reason: what reaches
+	// every agent should be askable from outside the one function that composes it.
+	window.DaimondInstructions = Instructions;
 
 	// ── Credits (the Daimond gateway) ──────────────────────────────
 	// Daimond is free and BYOK by default; credits are for the user who does not want
@@ -11615,7 +12703,16 @@ import init, {
 			});
 		}
 
-		async function openFile(path) {
+		/// Open `path` in the Doc panel.
+		///
+		/// `opts.store` opens it from Daimond's OWN store rather than from the active
+		/// workspace. The distinction is not cosmetic: with a folder open, the two
+		/// roots hold DIFFERENT FILES under the same name, and `DAIMOND.md` is exactly
+		/// such a name. A store file read through the workspace door would show the
+		/// project's copy, and saving it would write the user's standing instructions
+		/// into the project.
+		async function openFile(path, opts) {
+			storeFile = !!(opts && opts.store);
 			// Ask the file itself before asking the tool: file_read is for text and
 			// refuses anything else, which is right for the agent and useless as a
 			// way to find out.
@@ -11790,7 +12887,7 @@ import init, {
 							return;
 						}
 					}
-					tools().run_tool('file_write', JSON.stringify({ path: path, content: content })).then(function () {
+					writeOpenFile(path, content).then(function () {
 						curContent = content; editing = false;
 						var pre = document.createElement('pre'); pre.className = 'files-view-body';
 						ta2.replaceWith(pre);
@@ -11801,6 +12898,7 @@ import init, {
 						nudgeSync();	// a saved edit outside a turn pushes on its own
 						if (path === INSTRUCTIONS_FILE) Instructions.refresh();
 						else if (path.indexOf(PROMPTS_DIR + '/') === 0) Prompts.refresh();
+						if (storeFile) sysList(sysDir);	// sizes move when a store file is saved
 					}).catch(function (e) {
 						editBtn.disabled = false; editBtn.textContent = '✔ ' + t('common.save');
 						fileMsg(t('files.save_failed', { reason: friendlyError(e) }));
@@ -12038,8 +13136,19 @@ import init, {
 		///
 		/// # Arguments
 		/// * `path` - Workspace-relative path.
+		/// Which door is currently open in the Doc panel: the store's, or the
+		/// workspace's. Set by `openFile` and read by every path that goes back to
+		/// disk for the same file — the read, the conflict check and the save.
+		var storeFile = false;
+
 		async function readRaw(path) {
-			return await Wasm.read_file(path);
+			return storeFile ? await Wasm.store_read(path) : await Wasm.read_file(path);
+		}
+
+		/// Write the file the Doc panel has open, through whichever door it came from.
+		function writeOpenFile(path, content) {
+			if (storeFile) return Wasm.store_write(path, content);
+			return tools().run_tool('file_write', JSON.stringify({ path: path, content: content }));
 		}
 
 		function renderFileBody() {
@@ -12084,7 +13193,126 @@ import init, {
 			syncLineNo();                        // after the file is let go, not before
 			DaimondPanels.hide('doc');
 		}
-		function onOpen() { if (!curFile) list(curDir); }
+		// ── The System section: Daimond's own store ──────────────────
+		//
+		// Notes2: *"When I choose the Browser workspace, I see only a mail folder
+		// and a test.md, where are all the system files like DAIMOND.md??"*
+		//
+		// They are where they always were — at the OPFS root — and `renderTree`
+		// filters them out on purpose, because a `×` beside `diamonds/` would
+		// delete every Diamond the user has. That answered the wrong question: the
+		// ask is to SEE the store, not to be able to destroy it from a file row.
+		//
+		// So it gets its own section, and the section is read-and-edit but never
+		// delete or rename. It also resolves against a DIFFERENT ROOT — always
+		// OPFS, whatever folder is open — which is the reason it is not simply
+		// unhidden in the tree above. `dev/ROOT_SEPARATION.md` §2.1: a single tree
+		// quietly spanning two roots is exactly the confusion that document exists
+		// to prevent.
+		var sysDir = '';
+
+		/// One directory of the store, listed through the OPFS-pinned door.
+		async function sysList(dir) {
+			var tree = document.getElementById('sys-tree');
+			var path = document.getElementById('sys-path');
+			if (!tree) return;
+			sysDir = dir || '';
+			if (path) path.textContent = '/' + sysDir;
+			var raw = '';
+			try { raw = await Wasm.store_list(sysDir); }
+			catch (e) { tree.innerHTML = ''; tree.appendChild(sysNote(friendlyError(e))); return; }
+			var rows = String(raw || '').split('\n').filter(Boolean).map(function (line) {
+				var bits = line.split('\t');
+				return { name: bits[0], dir: bits[1] === 'dir', size: parseInt(bits[2], 10) || 0 };
+			}).filter(function (e) {
+				// `.daimond` and friends stay hidden here too: they are the store's own
+				// bookkeeping, not files anybody edits, and a user who opens one and
+				// saves it has broken a Diamond rather than configured one.
+				return e.name && e.name.charAt(0) !== '.';
+			});
+			rows.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+			tree.innerHTML = '';
+			if (sysDir) {
+				var up = document.createElement('div');
+				up.className = 'files-row dir sys-row';
+				up.textContent = '📁 ..';
+				sysRowAsButton(up, t('sys.up'), function () {
+					var cut = sysDir.lastIndexOf('/');
+					sysList(cut < 0 ? '' : sysDir.slice(0, cut));
+				});
+				tree.appendChild(up);
+			}
+			if (!rows.length) { tree.appendChild(sysNote(t('sys.empty'))); return; }
+			rows.forEach(function (e) {
+				var full = sysDir ? (sysDir + '/' + e.name) : e.name;
+				var row = document.createElement('div');
+				row.className = 'files-row sys-row' + (e.dir ? ' dir' : '');
+				row.dataset.path = full;
+				var nm = document.createElement('span');
+				nm.className = 'files-name';
+				nm.textContent = (e.dir ? '📁 ' : '📄 ') + e.name;   // escaped
+				row.appendChild(nm);
+				if (!e.dir) {
+					var sz = document.createElement('span');
+					sz.className = 'files-size';
+					sz.textContent = fmtBytes(e.size);
+					row.appendChild(sz);
+				}
+				sysRowAsButton(row, e.name, function () {
+					if (e.dir) sysList(full); else openFile(full, { store: true });
+				});
+				tree.appendChild(row);
+			});
+		}
+
+		/// Make a store row behave as the button it already is.
+		///
+		/// A `<div>` with a click handler is reachable by pointer and by nothing else.
+		/// `verify_a11y_keyboard` keeps a census of the ones this app already has and
+		/// fails on a NEW one, which is how these two were caught the hour they were
+		/// written — the tree above them has the same fault and is grandfathered, and
+		/// a new section had no business joining it.
+		function sysRowAsButton(row, name, onGo) {
+			row.setAttribute('role', 'button');
+			row.setAttribute('tabindex', '0');
+			row.setAttribute('aria-label', name);
+			row.addEventListener('click', onGo);
+			row.addEventListener('keydown', function (ev) {
+				if (ev.key !== 'Enter' && ev.key !== ' ') return;
+				ev.preventDefault();
+				onGo();
+			});
+		}
+
+		function sysNote(words) {
+			var d = document.createElement('div');
+			d.className = 'files-empty';
+			d.textContent = words;
+			return d;
+		}
+
+		/// Wire the System section's disclosure, once.
+		function bindSystem() {
+			var head = document.getElementById('sys-head');
+			var body = document.getElementById('sys-body');
+			if (!head || !body || head.dataset.bound) return;
+			head.dataset.bound = '1';
+			head.addEventListener('click', function () {
+				var open = head.getAttribute('aria-expanded') === 'true';
+				head.setAttribute('aria-expanded', open ? 'false' : 'true');
+				body.hidden = open;
+				if (!open) sysList(sysDir);
+			});
+		}
+
+		function onOpen() {
+			bindSystem();
+			if (!curFile) list(curDir);
+			// Listed whether or not the section is expanded: it is cheap, it is local,
+			// and a `<details>` that shows a spinner the first time it is opened is a
+			// section people learn not to open.
+			sysList(sysDir);
+		}
 		/// Re-sync the panel with the workspace after a turn or a worker may have
 		/// changed it. With the tree showing, re-list. With a file open, reload it
 		/// to the agent's latest so the viewer is never stale -- unless the user is
@@ -12093,6 +13321,12 @@ import init, {
 		/// the agent's work.
 		async function refresh() {
 			if (!isOpen() || !listed) return;
+			// The store moves for reasons the workspace tree never sees — a Diamond
+			// made, a role prompt seeded, a sync landing — so it is relisted on every
+			// refresh rather than only when the panel opens. `onOpen` fires once, and
+			// a section listed at boot showed an empty store for the rest of the
+			// session.
+			sysList(sysDir);
 			if (!curFile) { list(curDir); return; }
 			var disk = null;
 			try { disk = await readRaw(curFile); }
@@ -12124,6 +13358,8 @@ import init, {
 			// not a string, and writing it as one silently corrupts it.
 			writeBytes:    writeWorkspaceBytes,
 			open:          openFile,
+			// Show the store section, and put it back at a given directory.
+			systemList:    sysList,
 			// Show a directory in the tree, whichever tree is showing.
 			browse:        function (p) { return list(p || ''); },
 			// Say the panel's own words again in a new language. The scope chips and
@@ -12652,17 +13888,35 @@ import init, {
 
 	/// Record what a Diamond thinks with, and what its workers think with.
 	///
-	/// `pick` carries both pairs -- `{ provider, model, workerProvider, workerModel }` -- so the one
-	/// record travels in the parcel's Diamonds section as it always did, and a device on an older
-	/// build simply arrives with the worker half empty.
+	/// `pick` carries every pair -- `{ provider, model, workerProvider, workerModel,
+	/// visionProvider, visionModel }` -- so the one record travels in the parcel's Diamonds
+	/// section as it always did, and a device on an older build simply arrives with the later
+	/// halves empty.
+	///
+	/// The secondary is a MAP keyed by modality, not one pair: notes2 asks for a worker model
+	/// per modality, and text and vision are the two the app can tell apart today. It is
+	/// stored flat rather than nested because the record is already in the sync parcel and a
+	/// nested object would have to be merged rather than adopted.
+	///
+	/// Fields absent from `pick` are left as they were, so a caller changing one model does
+	/// not have to carry the other two -- the first version of this took the whole record and
+	/// a dialog that set the worker model alone would have silently cleared the vision one.
 	function setDiamondModel(id, pick) {
-		if (!id || !pick || !pick.model) return;
+		if (!id || !pick) return;
 		var all = diamondModels();
+		var was = (all[id] && typeof all[id] === 'object') ? all[id] : {};
+		var keep = function (field, given) {
+			return (given === undefined || given === null) ? (was[field] || '') : (given || '');
+		};
+		var model = keep('model', pick.model);
+		if (!model) return;                       // a Diamond with no primary is not a record
 		all[id] = {
-			provider:       pick.provider || '',
-			model:          pick.model,
-			workerProvider: pick.workerProvider || '',
-			workerModel:    pick.workerModel || '',
+			provider:       keep('provider', pick.provider),
+			model:          model,
+			workerProvider: keep('workerProvider', pick.workerProvider),
+			workerModel:    keep('workerModel', pick.workerModel),
+			visionProvider: keep('visionProvider', pick.visionProvider),
+			visionModel:    keep('visionModel', pick.visionModel),
 		};
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
@@ -12693,6 +13947,457 @@ import init, {
 			if (r) return { provider: r.provider, model: r.model };
 		}
 		return diamondModel(id);
+	}
+
+	/// Which file extensions this app can actually hand a model as an image.
+	///
+	/// Not a general list of picture formats: it is exactly what `ImageMedia` in
+	/// `src/protocol.rs` sniffs and will attach as a content part. A `.tiff` in a task is
+	/// not an image as far as anything here is concerned, so routing that task to the
+	/// vision model would spend the more expensive model on a file it will be handed as
+	/// bytes anyway.
+	var IMAGE_EXT = /\.(png|jpe?g|gif|webp)\b/i;
+
+	/// Does this task look as though it will put an image in front of a model?
+	///
+	/// The signal available at dispatch, and the only one: `spawn_agent`'s schema is
+	/// `{name, task}` and stays that way, because the model must never be the thing that
+	/// decides what to spend money on. So the task TEXT is read for a path the daimon has
+	/// named, which is how a daimon asks a worker to look at a screenshot.
+	///
+	/// It is a guess, and a guess in one direction only: a task that names no image runs on
+	/// the text model, which is what every task did before there was a second one. What it
+	/// can get wrong is a worker that discovers an image for itself, and that one is not
+	/// knowable here at all.
+	function taskWantsVision(task) {
+		return IMAGE_EXT.test(String(task || ''));
+	}
+
+	/// The model this Diamond's workers run on for a task that carries an image.
+	///
+	/// Falls back to the text worker model, and says nothing clever about capability: there
+	/// is no `vision` flag anywhere in `models.js`, so the app cannot check that the model
+	/// the user chose can see, and pretending to would be worse than leaving the choice
+	/// theirs. A Diamond with no vision model set falls back to the text one — the run says
+	/// which model it got, so a fallback is visible rather than silent.
+	function diamondVisionModel(id) {
+		var m = diamondModels()[id];
+		if (m && m.visionModel) {
+			var r = window.DaimondModels
+				&& DaimondModels.resolve(m.visionProvider || '', m.visionModel);
+			if (r) return { provider: r.provider, model: r.model };
+		}
+		return diamondWorkerModel(id);
+	}
+
+	// ── A Diamond has two faces ──────────────────────────────────────
+	//
+	// Notes2, in the user's own words: *"The idea of just having a prompt box and
+	// hiding the chat sequence doesn't work. We need to reconceptualise Daimond as
+	// consisting of two types of chats, diamonds and chats, the first carrying context
+	// and scope. So a diamond should offer the crystal view and a chat view."*
+	//
+	// The crystal is the daimon's OUTPUT. The chat is its conversation, and until now
+	// there was not one: every steer built a fresh session, so the daimon could not be
+	// asked a follow-up question, and an answer that changed no file went into a
+	// dismissable box and was gone by the next steer. It is persistent now — the
+	// conversation goes to the engine and comes back on every turn — and this is where
+	// it is read.
+
+	/// Which face this Diamond is showing. Per Diamond, beside the app: it is a fact
+	/// about how you are working, not about the Diamond, and it should not travel to
+	/// another device any more than a scroll position should.
+	var DIAMOND_VIEW_KEY = 'daimond-diamond-view';
+
+	function diamondViews() { return readJson(DIAMOND_VIEW_KEY, {}) || {}; }
+
+	/// `'crystal'` or `'chat'`. Absent means crystal: the crystal is what a Diamond IS,
+	/// and the chat is what you open when you want to see how it got there.
+	function diamondView(id) {
+		return diamondViews()[id] === 'chat' ? 'chat' : 'crystal';
+	}
+
+	function setDiamondView(id, view) {
+		if (!id) return;
+		var all = diamondViews();
+		all[id] = (view === 'chat') ? 'chat' : 'crystal';
+		try { localStorage.setItem(DIAMOND_VIEW_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	function forgetDiamondView(id) {
+		var all = diamondViews();
+		if (!(id in all)) return;
+		delete all[id];
+		try { localStorage.setItem(DIAMOND_VIEW_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	/// This Diamond's daimon conversation, made on first use.
+	///
+	/// An ordinary chat record with a `diamondId`, which buys the existing renderer,
+	/// the existing store, the existing merge and the existing sync for nothing. What
+	/// it deliberately does NOT get is a tile in the Chats rail: it is reached through
+	/// its Diamond, because it is not a chat you started, it is a daimon you have been
+	/// talking to.
+	///
+	/// Its model is not frozen at creation the way a chat's is. A Diamond's primary may
+	/// be changed at any time (§1.3), so the record's model is refreshed from
+	/// `diamondModel` whenever it is asked for — a stale pair here would meter the turn
+	/// against a model the Diamond stopped using.
+	function daimonChat(f) {
+		if (!f || !f.id) return null;
+		var rec = chats.find(function (c) { return c.diamondId === f.id; });
+		var m = diamondModel(f.id);
+		if (!rec) {
+			rec = {
+				id: 'c' + (seq++),
+				diamondId: f.id,
+				name: f.name || t('rail.unnamed_diamond'),
+				app: null,                 // a daimon runs on `diamondApp`, never its own
+				messages: [],
+				model: m.model || '',
+				provider: m.provider || '',
+				status: 'active',
+				promptTokens: 0, completionTokens: 0, cachedTokens: 0, costUsd: 0,
+				prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0,
+				lastPrompt: 0,
+				updatedAt: 0,
+			};
+			chats.push(rec);
+			persistChats();
+		}
+		rec.model = m.model || rec.model;
+		rec.provider = m.provider || rec.provider;
+		// The Diamond's name is the conversation's name. Renaming the Diamond has to
+		// carry, or a merged store ends up with two records claiming one Diamond under
+		// two names and no way to tell which is current.
+		if (f.name && rec.name !== f.name) rec.name = f.name;
+		return rec;
+	}
+
+	// ── Triggered actions, and what they leave for you to answer ─────
+	//
+	// `www/js/triggers.js` holds the decisions -- what a TA is, when one is due,
+	// what text it sends, and whether the context goes with it. This is the half
+	// that touches the world: the files, the clock, the daimon and the panel.
+	//
+	// The files are at `diamonds/<id>/triggers.json`, in the open where the
+	// System section shows them, and they are the setting rather than a copy of
+	// it: edit the file and the next tick reads what you wrote.
+
+	function triggersPath(id) { return 'diamonds/' + id + '/triggers.json'; }
+
+	/// Every Diamond's TAs, read once and kept, because a tick that opened a file
+	/// per Diamond per minute would be a tick nobody could afford to leave on.
+	/// Reloaded when the file changes under us -- a save, a sync, an agent edit --
+	/// which is what `Triggers.reload` is for.
+	var _triggers = {};       // diamondId -> { v, actions: [...] }
+
+	var Triggers = {
+		/// This Diamond's actions, from the cache.
+		of: function (id) {
+			return (_triggers[id] && _triggers[id].actions) || [];
+		},
+
+		/// Read one Diamond's file. An absent file means the defaults -- every
+		/// Diamond has "Daimon Prompted" whether or not anyone has written it down.
+		load: async function (id) {
+			var raw = null;
+			try {
+				var text = await Wasm.store_read(triggersPath(id));
+				if (text && text.trim()) raw = JSON.parse(text);
+			} catch (e) { raw = null; }
+			_triggers[id] = raw
+				? DaimondTriggers.normalise(raw)
+				: DaimondTriggers.defaults();
+			return _triggers[id];
+		},
+
+		/// Read every Diamond's, for the tick and the pause tree.
+		reload: async function () {
+			var ids = (diamonds || []).map(function (f) { return f.id; });
+			for (var i = 0; i < ids.length; i++) await Triggers.load(ids[i]);
+			// A Diamond that has gone takes its cache with it, or the tree keeps a
+			// branch for something nobody can reach.
+			Object.keys(_triggers).forEach(function (id) {
+				if (ids.indexOf(id) === -1) delete _triggers[id];
+			});
+			repaintPause();
+		},
+
+		/// Write one Diamond's file, through the store door so a folder open in the
+		/// workspace cannot capture it.
+		save: async function (id) {
+			var rec = _triggers[id] || DaimondTriggers.defaults();
+			await Wasm.store_write(triggersPath(id), JSON.stringify(rec, null, '\t') + '\n');
+			bumpDiamonds();
+			repaintPause();
+		},
+
+		/// Add, change or drop one action, and write the file.
+		set: async function (id, action) {
+			var rec = _triggers[id] || (_triggers[id] = DaimondTriggers.defaults());
+			var i = rec.actions.findIndex(function (t) { return t.id === action.id; });
+			if (i >= 0) rec.actions[i] = action; else rec.actions.push(action);
+			await Triggers.save(id);
+		},
+		remove: async function (id, actionId) {
+			var rec = _triggers[id];
+			if (!rec) return;
+			rec.actions = rec.actions.filter(function (t) { return t.id !== actionId; });
+			try { DaimondPause.forget(DaimondTriggers.node(id, actionId)); }
+			catch (e) { /* module not up */ }
+			await Triggers.save(id);
+		},
+
+		/// Fire every action of every Diamond that this occasion is due on.
+		///
+		/// One turn per Diamond at most, however many of its actions matched: two
+		/// instructions arriving as two turns is two bills and a daimon answering
+		/// itself, and the second is what a conductor does when it is confused.
+		fire: async function (occasion) {
+			var ids = Object.keys(_triggers);
+			for (var i = 0; i < ids.length; i++) {
+				var id = ids[i];
+				var f = (diamonds || []).find(function (x) { return x.id === id; });
+				if (!f) continue;
+				var owed = DaimondTriggers.due(id, Triggers.of(id), occasion);
+				if (!owed.length) continue;
+				// The Diamond's own model has to be able to run, exactly as a hand
+				// steer checks. A trigger that opened the settings dialog on a timer
+				// would be the worst possible moment to ask.
+				if (!diamondCanRun(id)) continue;
+				var t = owed[0];
+				var msg = DaimondTriggers.compose(t, occasion.said);
+				var went = await steerFromTrigger(f, msg.text);
+				if (!went) continue;
+				// Only now. A refused or failed dispatch must not consume the one
+				// chance the context had to be delivered.
+				if (msg.sentContext !== t.contextSent) {
+					t.contextSent = msg.sentContext;
+					await Triggers.save(id);
+				}
+			}
+		},
+	};
+
+	// ── The two Diamonds that are there when you arrive ──────────────
+	//
+	// Notes2: "Lets create two default diamonds, 'Daimond Help' and 'Daimond
+	// Optimiser'. They have no special functionality different to a user-created
+	// diamond, and can be deleted by the user. Default diamonds start paused."
+	//
+	// Three things follow, and all three are the point:
+	//
+	//   * ORDINARY. They are made through `create_diamond` like any other, with
+	//     an ordinary crystal and an ordinary daimon. Nothing reads a flag on
+	//     them, and deleting one deletes it.
+	//   * PAUSED. Seeded paused at the leaf (`seedPaused`), not by setting a
+	//     branch — pause.js is explicit that a branch has no state and that
+	//     something which must start paused is seeded when it is created.
+	//   * ONCE. A user who deletes one has said something, and an app that put it
+	//     back on the next boot would be arguing. The flag records that they were
+	//     OFFERED, not that they exist.
+	var DEFAULTS_KEY = 'daimond-defaults-seeded';
+
+	var DEFAULT_DIAMONDS = [
+		{
+			name: 'Daimond Help',
+			crystal: '# Daimond Help\n\n'
+				+ 'Ask me how Daimond works and I will answer from what is actually here — '
+				+ 'the panels, the tools, the settings — rather than from a manual.\n\n'
+				+ '## What I know\n\n'
+				+ '- Nothing yet. Press play, ask a question, and this fills in.\n',
+			triggers: [],
+		},
+		{
+			name: 'Daimond Optimiser',
+			crystal: '# Daimond Optimiser\n\n'
+				+ 'I watch how you are working and suggest changes: a Diamond that '
+				+ 'wants splitting, a prompt that keeps being retyped, a model that is '
+				+ 'costing more than it is earning.\n\n'
+				+ '## What I have noticed\n\n'
+				+ '- Nothing yet.\n',
+			// Notes2 asks for this one specifically: "the Daimond Optimiser starts
+			// with an inactive 'Minutes of User Activity' TA, set for every 30 min."
+			// Inactive: `on: false`, and its pause leaf is seeded held as well, so
+			// both the record and the tree say the same thing.
+			triggers: [{
+				kind: 'activity', minutes: 30, on: false,
+				instruction: 'Look at what I have been working on and say, briefly, '
+					+ 'one thing that would make it go better. If nothing stands out, say so '
+					+ 'in one line and stop.',
+			}],
+		},
+	];
+
+	/// Offer the two default Diamonds, once per account.
+	///
+	/// **NOT CALLED, and the reason is data loss.** `migrate_root`
+	/// (`src/wasm/diamond.rs`) moves an older root -- `foci/`, `facets/` -- to
+	/// `diamonds/` and REFUSES once `diamonds/` exists, deliberately, because
+	/// merging two roots is how a workspace loses work. Creating a Diamond makes
+	/// `diamonds/` exist. So seeding these two on the first boot of a fresh account
+	/// makes every LATER arrival of an old store -- a restored backup, a sync from
+	/// an older device, a folder adopted afterwards -- unmigratable, with the user's
+	/// Diamonds sitting in a directory nothing reads.
+	///
+	/// `legacy_diamond_root_waiting` below closes the case where the old store is
+	/// already there, and does not close the case where it arrives later, which is
+	/// the one that matters. `verify_diamondroot` demonstrates it: green before this
+	/// function existed, red after.
+	///
+	/// **What it needs first:** `migrate_root` should MERGE rather than refuse when
+	/// the two roots share no id. Moving entries that do not collide overwrites
+	/// nothing, so it is strictly safer than today's refusal -- which already leaves
+	/// any user holding both roots permanently stuck, with or without this function.
+	/// That is a change to a migration path and wants its own tests; it is written
+	/// up rather than rushed at the end of a session.
+	async function seedDefaultDiamonds() {
+		try { if (localStorage.getItem(DEFAULTS_KEY) === '1') return; }
+		catch (e) { return; }                       // private mode: never seed twice
+		// Not on an empty app that has not finished booting: a create against a
+		// store that is not up would leave a half-made Diamond.
+		if (!window.DaimondPause || !window.DaimondTriggers) return;
+		// ONLY INTO AN EMPTY RAIL, and this is not a nicety.
+		//
+		// `verify_diamondroot` caught the reason: a boot that is also MIGRATING an
+		// older store -- adopting Diamonds from a folder, carrying pre-rename keys
+		// across -- was left holding the two new Diamonds and not the one it was
+		// migrating. Creating into a store that is mid-move is a way to lose a
+		// user's work, and there is no version of this feature worth that.
+		//
+		// It is also the better rule on its own terms. Notes2 wants the two defaults
+		// so that somebody arriving does not face an empty rail; a person who
+		// already has thirteen Diamonds is not that person and does not want two
+		// more. The flag is set either way, so this decision is taken once.
+		if ((diamonds || []).length) {
+			try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { /* next boot asks again */ }
+			return;
+		}
+		// AND NOT WHEN AN OLDER STORE IS STILL WAITING TO BE MIGRATED.
+		//
+		// `migrate_root` moves `foci/` (or `facets/`) to `diamonds/` and REFUSES once
+		// `diamonds/` exists -- deliberately, because merging two roots is how a
+		// workspace loses work. Creating a Diamond makes `diamonds/` exist. So on the
+		// first boot of a fresh account, seeding these two would make every later
+		// arrival of an old store -- a restored backup, a sync from an older device,
+		// a folder adopted afterwards -- unmigratable FOR EVER, with the user's
+		// Diamonds sitting in a directory nothing reads.
+		//
+		// Caught by `verify_diamondroot`, which was green before this feature and red
+		// after it, and which is why the flag below is NOT set on this branch: the
+		// question has to be asked again once the old store has arrived and been
+		// moved. A Diamond the user creates themselves is not affected — they asked.
+		try {
+			if (await diamondApp().legacy_diamond_root_waiting()) return;
+		} catch (e) { return; }     // an older wasm cannot answer; do not risk it
+		try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { return; }
+		for (var i = 0; i < DEFAULT_DIAMONDS.length; i++) {
+			var d = DEFAULT_DIAMONDS[i];
+			if ((diamonds || []).some(function (f) { return f.name === d.name; })) continue;
+			var id;
+			try { id = await diamondApp().create_diamond(d.name); }
+			catch (e) { continue; }                 // no store yet; the flag stops a retry loop
+			try { await diamondApp().write_crystal(id, d.crystal); } catch (e) { /* empty is fine */ }
+			// Held before it can ever run. Seeded at the leaf, so the Diamond's own
+			// light reads red rather than a branch pretending to hold state.
+			try { DaimondPause.seedPaused(DaimondPause.id('root', 'diamonds', id) + '/self'); }
+			catch (e) { /* module not up */ }
+			if (d.triggers.length) {
+				var rec = DaimondTriggers.defaults();
+				d.triggers.forEach(function (spec, n) {
+					var ta = DaimondTriggers.blank(spec.kind);
+					Object.keys(spec).forEach(function (k) { ta[k] = spec[k]; });
+					ta.id = spec.kind + '-' + (n + 1);
+					rec.actions.push(ta);
+					try { DaimondPause.seedPaused(DaimondTriggers.node(id, ta.id)); }
+					catch (e) { /* module not up */ }
+				});
+				_triggers[id] = rec;
+				try { await Triggers.save(id); } catch (e) { /* it holds in memory */ }
+			}
+		}
+		await loadDiamonds();
+	}
+
+	/// Is this Diamond's daimon held? The leaf, not the branch: a Diamond with a
+	/// trigger paused and a daimon running is amber, and amber must not read as
+	/// "you cannot type here".
+	function diamondHeld(id) {
+		if (!id) return false;
+		try {
+			return !!(window.DaimondPause
+				&& DaimondPause.isPaused(DaimondPause.id('root', 'diamonds', id) + '/self'));
+		} catch (e) { return false; }
+	}
+
+	/// One triggered action, in words. Used on its pause light and in its row, so
+	/// the two say the same thing.
+	function triggerLabel(ta) {
+		if (ta.kind === 'prompted') return t('trig.prompted');
+		if (ta.kind === 'activity') return t('trig.activity', { n: ta.minutes || 30 });
+		if (ta.kind === 'mail') {
+			return t('trig.mail', { folder: ta.folder || 'INBOX', mailbox: ta.mailbox || '?' });
+		}
+		return ta.kind;
+	}
+
+	// ── The clock a timer trigger counts on ──────────────────────────
+	//
+	// "N minutes of USER ACTIVITY". A timer on the wall clock would greet
+	// somebody returning to an overnight tab with eight turns they did not ask
+	// for and a bill to match, which is what this whole section of notes2 exists
+	// to prevent. So the page reports signs of life and the clock counts only the
+	// minutes something happened in.
+	var TRIGGER_TICK_MS = 60000;
+
+	function startTriggerClock() {
+		if (!window.DaimondTriggers) return;
+		// Mail arriving is the other occasion a TA fires on, and `mail.js`
+		// announces it rather than calling here: mail must not have to know what a
+		// triggered action is.
+		window.addEventListener('daimond:mail-arrived', function (ev) {
+			var d = (ev && ev.detail) || {};
+			Triggers.fire({ kind: 'mail', mailbox: d.mailbox, folder: d.folder })
+				.catch(function () { /* a failed trigger is not a failed sync */ });
+		});
+		['keydown', 'pointerdown', 'wheel'].forEach(function (ev) {
+			window.addEventListener(ev, DaimondTriggers.noteActivity, { passive: true });
+		});
+		setInterval(async function () {
+			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
+			var mins = DaimondTriggers.activityMinutes();
+			if (mins < 1) return;                    // nothing to be due yet
+			var before = mins;
+			await Triggers.fire({ kind: 'activity', minutes: mins });
+			// Reset only when something was owed at this size, or the clock would
+			// carry the same hour into every tick for the rest of the session and
+			// fire the moment anything is added.
+			var owed = Object.keys(_triggers).some(function (id) {
+				return DaimondTriggers.due(id, Triggers.of(id),
+					{ kind: 'activity', minutes: before }).length > 0;
+			});
+			if (owed) DaimondTriggers.resetActivity();
+		}, TRIGGER_TICK_MS);
+	}
+
+	/// Run one daimon turn on behalf of a trigger, wherever the user happens to be.
+	///
+	/// Returns whether the turn was actually started. A trigger fires into a
+	/// Diamond that may not be the one on screen, and `doSteer` works on
+	/// `currentDiamond` -- so this is where the two meet, and it refuses rather
+	/// than steering the wrong Diamond.
+	async function steerFromTrigger(f, text) {
+		if (crystalBusy) return false;              // a turn is already running
+		if (currentDiamond && currentDiamond.id !== f.id) {
+			// Deliberately not switching the user's screen. A timer that moved the
+			// centre out from under somebody mid-sentence is worse than a turn that
+			// waits for the next tick.
+			return false;
+		}
+		if (!currentDiamond) await selectDiamond(f);
+		await doSteer(text);
+		return true;
 	}
 
 	/// Can this Diamond actually think? That is a question about ITS provider's key, not the starred
@@ -12746,6 +14451,7 @@ import init, {
 			if (cw && app.set_context_window) app.set_context_window(cw);
 		} catch (e) { /* an older wasm build has no setter */ }
 		applyRoundLimit(app);
+		applyFoldSettings(app, a.provider || '');
 		applyCrystalCap(app);
 		_diamondApps[k] = app;
 		_diamondAppModel.set(app, a.model || '');
@@ -12784,6 +14490,10 @@ import init, {
 			diamonds = JSON.parse(json);
 		} catch (e) { diamonds = []; }
 		renderDiamondList();
+		// The triggers travel with the Diamonds: the pause tree needs a leaf per
+		// action, and the tick needs to know what is armed. Read here rather than
+		// on a timer, because this is every occasion on which the set can change.
+		try { await Triggers.reload(); } catch (e) { /* the module is not up */ }
 	}
 
 	/// A Diamond's tags, tolerating the Diamonds written before tags existed.
@@ -13337,6 +15047,13 @@ import init, {
 		try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', f.id)); }
 		catch (e) { /* module not up */ }
 		forgetTilePrefs(f.id);
+		forgetDiamondView(f.id);
+		// The daimon's conversation goes with its daimon. Left behind it would be a
+		// chat record with no tile, no Diamond and no way to reach it, sitting in
+		// IndexedDB and travelling in every sync parcel for the life of the account —
+		// and `daimonChat` would hand it back if the id were ever reused.
+		var dchat = chats.find(function (c) { return c.diamondId === f.id; });
+		if (dchat) removeChat(dchat);
 		try {
 			await diamondApp().delete_diamond(f.id);
 		} catch (e2) {
@@ -13414,6 +15131,8 @@ import init, {
 				// one with a trigger held and a daimon running reads amber here
 				// without anyone having set amber anywhere.
 				node: DaimondPause.id('root', 'diamonds', f.id),
+				// A Diamond's models may be changed after it is made; a chat's may not.
+				models:   'diamond',
 				onDelete: function () { return deleteDiamond(f); },
 			});
 		}));
@@ -13423,6 +15142,18 @@ import init, {
 		ver.className = 'session-box-ctx';
 		ver.textContent = 'v' + (f.crystal_version || 0);
 		meta.appendChild(ver);
+		// What this Diamond thinks with. Stored since Diamonds had models and drawn
+		// nowhere, so two Diamonds deliberately put on different models looked identical
+		// on the rail — and a fan-out is billed to this pair. Detail, so Simple hides it
+		// with the other model controls; the cog's dialog is where it is changed.
+		var dm = diamondModel(f.id);
+		if (dm && dm.model) {
+			var mchip = document.createElement('span');
+			mchip.className = 'tile-model-chip diamond-model';
+			mchip.textContent = shortModel(dm.model);
+			mchip.title = t('tile.diamond_model_help', { model: dm.model });
+			meta.appendChild(mchip);
+		}
 		if (f.updated) {
 			var upd = document.createElement('span');
 			upd.className = 'session-box-time';
@@ -13480,18 +15211,32 @@ import init, {
 	/// A document and a message used to be shown HERE, in place of the chat —
 	/// so reading your mail meant leaving the conversation. They are stage
 	/// panels now, and open beside it.
+	/// `'chat'` — an ordinary chat. `'focus'` — a Diamond's crystal. `'daimon'` — a
+	/// Diamond's conversation, which uses the chat's own thread and composer.
 	function showCentre(mode) {
 		centreMode = mode;
-		var diamondOn = (mode === 'focus');
-		crystalView.style.display    = diamondOn ? 'flex' : 'none';
-		chatOutputEl.style.display = diamondOn ? 'none' : '';
-		chatInputBar.style.display = diamondOn ? 'none' : '';
+		var crystalOn = (mode === 'focus');
+		var onDiamond = crystalOn || mode === 'daimon';
+		crystalView.style.display  = crystalOn ? 'flex' : 'none';
+		chatOutputEl.style.display = crystalOn ? 'none' : '';
+		chatInputBar.style.display = crystalOn ? 'none' : '';
 		// Which face is up, said in the panel's own shape: the crystal wears the
 		// mark and squares its corners against the rounded chrome everywhere else.
+		// A daimon's chat is a conversation, so it wears neither.
 		var ai = document.getElementById('panel-ai');
-		if (ai) ai.classList.toggle('crystal-face', diamondOn);
+		if (ai) ai.classList.toggle('crystal-face', crystalOn);
 		var mark = document.getElementById('chead-mark');
-		if (mark) mark.style.display = diamondOn ? '' : 'none';
+		if (mark) mark.style.display = crystalOn ? '' : 'none';
+		// The face switch belongs to a Diamond and nothing else: a chat has one face,
+		// and a switch offering it a second would be a control that does nothing.
+		var sw = document.getElementById('diamond-view');
+		if (sw) {
+			sw.style.display = onDiamond ? '' : 'none';
+			var cb = document.getElementById('dview-crystal');
+			var hb = document.getElementById('dview-chat');
+			if (cb) cb.setAttribute('aria-pressed', crystalOn ? 'true' : 'false');
+			if (hb) hb.setAttribute('aria-pressed', crystalOn ? 'false' : 'true');
+		}
 	}
 
 	/// Show one mail message on the stage, beside the chat — so it can be read
@@ -14020,20 +15765,48 @@ import init, {
 		tagExc = [];
 	}
 
-	async function selectDiamond(f) {
+	async function selectDiamond(f, view) {
 		currentDiamond = f;
 		signalDiamondChanged();
-		current = null;                            // a Diamond is not a chat
-		updateActiveSession();                     // clear chat highlight
 		updateActiveDiamond();
 		sessionNameEl.textContent = f.name;
 		aiMeter.textContent = 'crystal v' + (f.crystal_version || 0)
 			+ (f.updated ? ' · ' + relTime(f.updated) : '');
-		showCentre('focus');
+		var want = (view === 'chat' || view === 'crystal') ? view : diamondView(f.id);
+		if (view) setDiamondView(f.id, want);
 		// A Diamond that carries an arrangement is worked in it. Only an arrangement
 		// the user deliberately saved exists, so this never closes a panel behind
 		// their back on a Diamond they never arranged.
 		DaimondPanels.restoreArrangement(f.id);
+
+		if (want === 'chat') {
+			// `current` IS the daimon's record here, and that is the point: every
+			// machinery the thread has — the renderer, the queue, the interject box,
+			// the copy control, `_generating` — reads `current`, and pointing it at the
+			// daimon's conversation is what makes all of it work without a second copy.
+			// The turn itself still goes through `steer_crystal`, because a daimon's
+			// tools and fence are not a chat's; `sendUserMessage` is where the two part.
+			var rec = daimonChat(f);
+			current = rec;
+			curAsstDiv = null; curAsstText = ''; lastToolBlock = null;
+			updateActiveSession();
+			showCentre('daimon');
+			renderHistory(rec.messages);
+			// A thread with nothing in it reads as a thing that is broken rather than
+			// a thing that has not started. Say which -- and say what the two faces
+			// are FOR, since this is the moment somebody has just found the second one.
+			if (!rec.messages.length) {
+				var blank = document.createElement('div');
+				blank.className = 'chat-msg chat-msg-empty';
+				blank.textContent = t('crystal.chat_empty');
+				chatOutput.appendChild(blank);
+			}
+			syncComposer();
+			return;
+		}
+		current = null;                            // a Diamond's crystal is not a chat
+		updateActiveSession();                     // clear chat highlight
+		showCentre('focus');
 		// A proposal left pending on this Diamond is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderCrystal();
@@ -14171,6 +15944,16 @@ import init, {
 			when.textContent = r.ts ? relTime(r.ts) : '';
 			head.appendChild(ver); head.appendChild(kind); head.appendChild(when);
 			row.appendChild(head);
+			// What the version WAS. Every record has carried a note since folds were
+			// written and the list showed none of them, so a history of a busy Diamond
+			// read as a column of "fold, fold, fold, edit" — the versions were all
+			// there and none of them said anything about itself.
+			if (r.note) {
+				var note = document.createElement('div');
+				note.className = 'hist-note';
+				note.textContent = r.note;             // escaped via textContent (H5)
+				row.appendChild(note);
+			}
 
 			var acts = document.createElement('div');
 			acts.className = 'hist-acts';
@@ -15128,7 +16911,13 @@ import init, {
 		steer.className = 'steer-input';
 		steer.id = 'steer-input';
 		steer.rows = 1;
-		steer.placeholder = t('crystal.steer_ph');
+		// A paused Diamond says where its play control is, in the box you would
+		// otherwise type into and wonder. Notes2 asks for exactly this on the two
+		// default Diamonds, and it is right for every paused one: the alternative
+		// is typing a paragraph and being told no.
+		steer.placeholder = diamondHeld(currentDiamond && currentDiamond.id)
+			? t('crystal.steer_paused')
+			: t('crystal.steer_ph');
 		steer.addEventListener('input', function () {
 			steer.style.height = 'auto';
 			steer.style.height = Math.min(steer.scrollHeight, 120) + 'px';
@@ -15289,12 +17078,40 @@ import init, {
 		var diamondId = currentDiamond.id, diamondName = currentDiamond.name;
 		var dispatched = [], rejected = 0, replyText = '';
 		setCrystalReply('');   // clear any previous one-shot answer
+
+		// ── The daimon's conversation ────────────────────────────────
+		//
+		// Every steer is now a turn IN a conversation rather than a fresh session, so
+		// what happened is written down as it happens — the same message shapes a chat
+		// uses, drawn by the same renderer. `onScreen` is whether this Diamond's chat
+		// view is the thing the user is looking at: a steer can run from a gather round
+		// with the Diamond nowhere on screen, and drawing into the thread then would
+		// paint one Diamond's turn into another's.
+		var rec = daimonChat(currentDiamond);
+		var onScreen = !!(current && rec && current.id === rec.id && centreMode === 'daimon');
+		rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: Date.now() });
+		if (onScreen) appendUserMessage(instruction);
+		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
+		// which is what stops a reload, a sign-out or an update landing on top of work
+		// in flight -- counts it. Both read `_generating`, so a daimon turn that did not
+		// set it was a turn the rest of the app could not see was happening.
+		rec._generating = true;
+		// The Stop button aborts `current.app`, and a daimon's turn does not run on its
+		// own app -- it runs on the Diamond's, which is shared by every Diamond on the
+		// same model. Pointing the record at it is what makes Stop reach this turn;
+		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
+		// next use, so a stopped daimon does not leave a poisoned client behind.
+		rec.app = diamondApp(currentDiamond.id);
+		if (onScreen) { syncComposer(); showSpinner(); }
+
+		var sawError = false;
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
 			if (ev.type === 'text') {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
 				replyText += (ev.content || '');
+				if (onScreen) appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
 				if ((ev.name || '') === 'spawn_agent') {
 					var spec = null;
@@ -15306,13 +17123,50 @@ import init, {
 				} else {
 					setCrystalStatus('Steering… (' + ev.name + ')');
 				}
+				// Recorded whichever tool it was, including `spawn_agent`: the chat view
+				// is the account of what the daimon did, and a fan-out is the largest
+				// thing it does.
+				rec.messages.push({ role: 'tool_log', name: ev.name || '', args: ev.args || '',
+					content: '', mid: newMid(), ts: Date.now() });
+				if (onScreen) renderToolCall(ev.name || '', ev.args || '');
+			} else if (ev.type === 'tool_result') {
+				var last = rec.messages[rec.messages.length - 1];
+				if (last && last.role === 'tool_log' && !last.content) last.content = ev.content || '';
+				if (onScreen) renderToolResult(ev.name || '', ev.content || '');
+			} else if (ev.type === 'compacted') {
+				// The fold notes2 asks for by name: *"automatically and visibly folded at
+				// the context threshold"*. Visibly is this line.
+				rec.messages.push({ role: 'fold_log', content: ev.content || '',
+					folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
+				if (onScreen) appendCompacted(ev.content || '');
 			} else if (ev.type === 'error') {
+				sawError = true;
 				setCrystalStatus('Error: ' + (ev.content || ''));
+				rec.messages.push({ role: 'error_log', content: ev.content || '',
+					mid: newMid(), ts: Date.now() });
+				if (onScreen) appendError(ev.content || '');
 			}
 		};
 		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
 		try {
-			await fa.steer_crystal(diamondId, instruction, onEvent);
+			// The conversation goes out and comes back. It is what makes the daimon
+			// persistent, which is the whole of notes2's "the daimon is meant to be
+			// persistant": it used to build a fresh session per instruction, so it could
+			// not be asked a follow-up question.
+			var after = await fa.steer_crystal(diamondId, instruction,
+				(rec.session && rec.session.msgs) || [], onEvent);
+			if (onScreen) finalizeAssistant();
+			if (replyText) {
+				rec.messages.push({ role: 'assistant', content: replyText,
+					mid: newMid(), ts: Date.now() });
+			}
+			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
+				upto: '', uptoTs: 0 };
+			try {
+				rec.lastPrompt = fa.last_prompt_tokens || rec.lastPrompt || 0;
+			} catch (e) { /* the app is mid-turn nowhere here */ }
+			touchChat(rec);
+			persistChats();
 		// A daimon can now draw and drop links itself, and every other caller of
 		// `signalLinksChanged` is a user action — so without this the Graph pane
 		// and the Diamond's Links section stay stale until something unrelated
@@ -15323,12 +17177,29 @@ import init, {
 			await refreshDiamondAfterChange();
 			Files.refresh();
 		} catch (e) {
+			// A failure BEFORE the turn — an unresolvable `/name`, an unreadable crystal.
+			// A failure DURING one no longer arrives here: `steer_crystal` returns the
+			// conversation whatever happened, and reports the failure through the event
+			// sink, so the daimon does not forget a turn it was already billed for.
+			if (onScreen) { finalizeAssistant(); appendError(friendlyError(e)); }
+			rec.messages.push({ role: 'error_log', content: friendlyError(e),
+				mid: newMid(), ts: Date.now() });
+			persistChats();
 			setCrystalStatus(friendlyError(e));
+			rec._generating = false;
+			if (onScreen) syncComposer();
 			setCrystalBusy(false);
 			return;
 		}
+		rec._generating = false;
+		if (onScreen) syncComposer();
 		setCrystalBusy(false);
-		if (dispatched.length) {
+		// A turn that died part-way may still have asked for agents before it died.
+		// Starting them would be spending on the strength of a turn that failed, which
+		// is precisely what the user cannot see from here.
+		if (sawError && dispatched.length) {
+			setCrystalStatus(t('crystal.dispatch_after_error'));
+		} else if (dispatched.length) {
 			// The spend gate: a large fan-out pauses here for a look before
 			// a single worker is enqueued. A normal dispatch clears silently.
 			var cleared = await governorClearsDispatch(dispatched.length, diamondId);
@@ -15357,9 +17228,12 @@ import init, {
 			setCrystalStatus(rejected === 1
 				? 'An agent was requested with no task, so nothing was started.'
 				: rejected + ' agents were requested with no task, so nothing was started.');
-		} else if (replyText.trim()) {
-			// The turn neither dispatched nor edited its way to a visible change;
-			// it answered in words. Show them, so the steer was not for nothing.
+		} else if (replyText.trim() && !onScreen) {
+			// The turn neither dispatched nor edited its way to a visible change; it
+			// answered in words. On the CRYSTAL face there is nowhere else for those
+			// words to go, so they go in the reply box. In the chat view they are
+			// already in the thread, and putting them here as well would print the
+			// same answer twice.
 			setCrystalReply(replyText);
 		}
 	}
@@ -15663,8 +17537,17 @@ import init, {
 		Instructions.refresh();
 		Prompts.refresh();
 		renderSessionList();
-		if (chats.length) { selectChat(chats[0]); } else { renderEmptyState(); }
+		var firstChat = chats.find(function (c) { return !c.diamondId; });
+		if (firstChat) { selectChat(firstChat); } else { renderEmptyState(); }
+		// `seedDefaultDiamonds` is NOT called. See its own note: creating a Diamond
+		// makes `diamonds/` exist, and `migrate_root` then refuses for ever to move a
+		// legacy root that arrives afterwards. The rest of phase H does not depend on
+		// it, and losing somebody's Diamonds is not a price worth paying for two
+		// example ones.
 		loadDiamonds();
+		Pending.load();
+		Pending.render();
+		startTriggerClock();
 		updateSpend();
 		DaimondPanels.reflow();
 		if (!isMobile() && DaimondPanels.isOpen('work')) Files.onOpen();
@@ -17411,6 +19294,7 @@ import init, {
 		// whenever the settings are, not only when it is first built.
 		ReplyLength.render();
 		RoundLimit.render();
+		FoldModel.render();
 		CrystalCap.render();
 	}
 	/// A string from the table, or the English written here when the table has no
@@ -17614,6 +19498,131 @@ import init, {
 		catch (e) { /* an older wasm build has no setter */ }
 	}
 
+	/// Which model folds a conversation, and what it is told.
+	///
+	/// A fold is a real, paid call that runs every time a conversation outgrows its
+	/// window, and its output BECOMES the session's memory — so the model doing it is
+	/// worth choosing, and the choice was not on offer anywhere.
+	///
+	/// **It applies only to conversations on its own provider.** `Agent::summarise`
+	/// swaps the model id into a clone of the conversation's own client, so the fold
+	/// travels on the key already in use; a model id from another provider would be
+	/// refused by the wire, or — worse on an endpoint that shrugs — answered by
+	/// something else entirely. So the pair is stored and `applyFoldSettings` sets it
+	/// only where the provider matches. The note under the picker says this, because a
+	/// setting that silently does nothing on half the user's chats is worse than one
+	/// that is not offered at all.
+	var FoldModel = {
+		mount: function () {
+			if (document.getElementById('cfg-fold-model')) return true;
+			var anchor = document.getElementById('cfg-max-rounds');
+			var section = anchor && anchor.parentNode;
+			if (!section) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-fold-model');
+			lab.textContent = tOr('settings.fold_model', 'Fold with');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-fold-model';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.textContent = tOr('settings.fold_model_note',
+				'When a conversation outgrows its window it is summarised, and the summary '
+				+ 'becomes what the model remembers. This chooses what writes it. Only chats on '
+				+ 'the same provider use it — every other chat folds with its own model.');
+			// Under the round limit, which is the other bound on how a turn behaves.
+			var after = document.getElementById('cfg-max-rounds-note') || anchor;
+			section.insertBefore(lab, after.nextSibling);
+			section.insertBefore(sel, lab.nextSibling);
+			section.insertBefore(note, sel.nextSibling);
+			sel.addEventListener('change', function () { FoldModel.save(sel); });
+			return true;
+		},
+
+		render: function () {
+			if (!this.mount()) return;
+			var sel = document.getElementById('cfg-fold-model');
+			sel.innerHTML = '';
+			var own = document.createElement('option');
+			own.value = ''; own.dataset.provider = '';
+			own.textContent = tOr('settings.fold_model_own', 'The conversation’s own model');
+			sel.appendChild(own);
+			if (window.DaimondModels) {
+				// Every configured model, grouped by provider, exactly as the tile pickers
+				// are — and then the stored choice re-selected, which `fillSelect` does by
+				// provider and model together.
+				var group = document.createElement('optgroup');
+				group.label = tOr('settings.fold_model_group', 'Fold with instead');
+				sel.appendChild(group);
+				var scratch = document.createElement('select');
+				DaimondModels.fillSelect(scratch, cfg.foldProvider || '', cfg.foldModel || '');
+				while (scratch.firstChild) sel.appendChild(scratch.firstChild);
+			}
+			var want = (cfg.foldProvider || '') + ' ' + (cfg.foldModel || '');
+			var hit = false;
+			for (var i = 0; i < sel.options.length; i++) {
+				var o = sel.options[i];
+				if (((o.dataset.provider || '') + ' ' + o.value) === want) {
+					sel.selectedIndex = i; hit = true; break;
+				}
+			}
+			if (!hit) sel.selectedIndex = 0;
+		},
+
+		save: function (sel) {
+			var o = sel.options[sel.selectedIndex];
+			cfg.foldModel    = (o && o.value) || '';
+			cfg.foldProvider = (o && o.dataset.provider) || '';
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.foldModel = cfg.foldModel; stored.foldProvider = cfg.foldProvider;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota — the choice holds for this session */ }
+			// Live, not on next construction: the setting is one call on an existing app,
+			// so dropping every chat's agent to deliver it would throw away restored
+			// sessions for nothing.
+			chats.forEach(function (c) { applyFoldSettings(c.app, c.provider); });
+			Object.keys(_diamondApps).forEach(function (k) {
+				applyFoldSettings(_diamondApps[k], _diamondAppProvider.get(_diamondApps[k]) || '');
+			});
+			this.render();
+		},
+	};
+
+	/// Both halves of how this app folds: which model writes the summary, and what
+	/// that model is told.
+	///
+	/// One function because they are one setting seen twice. `set_fold_model` had been
+	/// exposed on the wasm since folding was written and called by nothing, and
+	/// `prompts/compactor.md` was a file the app never opened -- so a conversation was
+	/// folded by the chat's own model under a prompt nobody could read. Applied wherever
+	/// `applyRoundLimit` is, so an app built at any of the four construction sites gets
+	/// both.
+	///
+	/// The MODEL id alone goes across: `Agent::summarise` swaps it into a clone of this
+	/// app's own client, so the fold travels on the key the conversation is already
+	/// using. A fold model from a different provider is therefore refused by the wire
+	/// rather than silently billed to the wrong balance -- which is why the picker below
+	/// offers only models of the provider the app is on.
+	function applyFoldSettings(app, provider) {
+		if (!app) return;
+		// Same provider or nothing. See `FoldModel`: the fold rides on the conversation's
+		// own key, so a model id belonging to somebody else's endpoint is not a fold with
+		// a different model — it is a request that fails, or one answered by whatever that
+		// endpoint does with an unknown name.
+		var same = (cfg.foldProvider || '') === (provider || '');
+		try {
+			if (typeof app.set_fold_model === 'function') {
+				app.set_fold_model(same ? (cfg.foldModel || '') : '');
+			}
+		} catch (e) { /* an older wasm build has no setter */ }
+		try {
+			if (typeof app.set_role_prompt === 'function') {
+				app.set_role_prompt('compactor', (Prompts && Prompts.md.compactor) || '');
+			}
+		} catch (e) { /* an older wasm build does not know the role */ }
+	}
+
 	/// Any built agent, for a setting that is the engine's rather than an agent's.
 	function anyApp() {
 		for (var i = 0; i < chats.length; i++) { if (chats[i] && chats[i].app) return chats[i].app; }
@@ -17809,6 +19818,7 @@ import init, {
 		// reply-length row reads and the figure Automatic resolves to.
 		ReplyLength.render();
 		RoundLimit.render();
+		FoldModel.render();
 		CrystalCap.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
@@ -17856,7 +19866,14 @@ import init, {
 		syncSendMode();
 	});
 	chatInput.addEventListener('keydown', function (e) {
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendUserMessage(); }
+		if (e.key === 'Escape' && _skillMenu) { e.preventDefault(); closeSkillMenu(); return; }
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); closeSkillMenu(); sendUserMessage(); }
+	});
+	// A `/` alone in an empty box asks what there is. Anything after it is a
+	// command being typed, or a path, and the menu gets out of the way.
+	chatInput.addEventListener('input', function () {
+		if (chatInput.value === '/') openSkillMenu();
+		else closeSkillMenu();
 	});
 	chatSend.addEventListener('click', function () {
 		// In stop-mode the same button cancels the current chat's running turn -- but
@@ -17868,6 +19885,26 @@ import init, {
 	});
 	newSessionBtn.addEventListener('click', newChat);
 	if (newDiamondBtn) newDiamondBtn.addEventListener('click', createDiamond);
+	// The two faces of a Diamond. Each remembers itself per Diamond, so going back to
+	// one you were reading the conversation of puts you back in the conversation.
+	var pendSort = document.getElementById('pending-sort');
+	if (pendSort) {
+		try { pendSort.value = localStorage.getItem(PENDING_KEY + '-sort') || 'priority'; }
+		catch (e) { /* default */ }
+		pendSort.addEventListener('change', function () {
+			try { localStorage.setItem(PENDING_KEY + '-sort', pendSort.value); }
+			catch (e) { /* it holds for this session */ }
+			Pending.render();
+		});
+	}
+	['crystal', 'chat'].forEach(function (which) {
+		var b = document.getElementById('dview-' + which);
+		if (!b) return;
+		b.addEventListener('click', function () {
+			if (!currentDiamond) return;
+			selectDiamond(currentDiamond, which);
+		});
+	});
 	var linkGraphBtn = document.getElementById('link-graph-btn');
 	if (linkGraphBtn) linkGraphBtn.addEventListener('click', function () {
 		DaimondPanels.show('graph');
@@ -18034,6 +20071,11 @@ import init, {
 				showMessage:  showMessage,
 				showCompose:  showCompose,
 				mailDialog:   mailDialog,
+				// The mailbox settings dialog, which is phase C's tile dialog wearing a
+				// different body. Asked for by name in `mail.js` since phase G part one,
+				// which shipped a stand-in of the same furniture rather than a gear that
+				// opened nothing.
+				bodyDialog:   openBodyDialog,
 				// The caller names its own button. Removing a mailbox is destructive and
 				// wants a red Remove; fetching a mailbox down is not, and a red button
 				// on it would say the wrong thing about what is about to happen.

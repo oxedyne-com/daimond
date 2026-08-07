@@ -132,6 +132,30 @@ fn delta_path(id: &str, version: u64) -> String {
 /// Idempotent, and it never clobbers: a workspace already migrated has no `foci/` to move,
 /// and one holding both roots is left entirely alone rather than merged.  Returns whether
 /// anything moved.
+/// Is there an EARLIER Diamond root still waiting to be moved to `diamonds/`?
+///
+/// Exists because [`migrate_root`] refuses to move one once `diamonds/` is there --
+/// deliberately, since merging two roots is how a workspace loses work -- and that
+/// makes creating a Diamond into an empty store an irreversible act for anybody
+/// whose old store has not arrived yet. A restored backup, a sync from an older
+/// device, a folder adopted later: any of them can bring a `foci/` that will then
+/// never be found.
+///
+/// So a caller that is about to create a Diamond UNASKED -- which is only the
+/// default Diamonds -- asks this first and does nothing when the answer is yes.
+/// A caller acting on the user's own press does not need to: they have asked.
+pub async fn legacy_root_waiting() -> Outcome<bool> {
+    if res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
+        return Ok(false);       // already on the current root; nothing is waiting
+    }
+    for legacy in LEGACY_ROOT_DIRS.iter() {
+        if res!(opfs::exists(FileRoot::Opfs, legacy).await) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 async fn migrate_root() -> Outcome<bool> {
     if res!(opfs::exists(FileRoot::Opfs, ROOT_DIR).await) {
         return Ok(false);       // already on the current root
@@ -629,6 +653,41 @@ pub async fn write_crystal(id: &str, md: &str) -> Outcome<()> {
         version:   version,
         delta_ref: String::new(),
         note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Record that this Diamond's daimon changed model, in the crystal's own history.
+///
+/// A Diamond's primary model may be changed at any time, and because the daimon is
+/// meant to be persistent the change ends one daimon and starts another.  That is a
+/// discontinuity in the Diamond, so it is written where the Diamond's other
+/// discontinuities are written rather than left as a silent flip of a browser setting.
+///
+/// The crystal is snapshotted UNCHANGED.  There is nothing to edit -- the crystal is
+/// what the old daimon left and what the new one inherits -- and the version exists so
+/// that "what did this Diamond look like when it was still on the old model" is a
+/// question with an answer.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `note` - What changed, in the user's own language, for the history row to show.
+pub async fn record_model_change(id: &str, note: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let meta = res!(read_meta(id).await);
+    let parent = meta.version;
+    let crystal = res!(read_crystal(id).await);
+    let version = res!(snapshot(id, &crystal, now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "model",
+        agent:     "user".to_string(),
+        task:      "change model".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      note.to_string(),
     };
     append_log(id, &rec).await
 }

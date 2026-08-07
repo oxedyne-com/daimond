@@ -112,7 +112,21 @@ async function expectedTree(p) {
 				.map((a) => ({ address: a.address, folders: Object.keys(a.folders || {}), sel: a.folder || 'INBOX' }));
 		} catch (e) { /* none */ }
 		return {
-			diamonds: [...document.querySelectorAll('.diamond-box')].map((e) => e.dataset.id),
+			// Each Diamond with the triggered actions it holds. Phase H made a
+			// Diamond a branch with more than one leaf under it -- `pause.js`
+			// documented that shape long before there were any -- so a file that
+			// assumed one leaf per Diamond read every Diamond with a trigger as
+			// "mixed" where it wanted "pause", and its click sweep expected a leaf
+			// set that was one short.
+			diamonds: [...document.querySelectorAll('.diamond-box')].map((e) => ({
+				id: e.dataset.id,
+				triggers: (() => {
+					try {
+						return (window.DaimondTriggersOf ? DaimondTriggersOf(e.dataset.id) : [])
+							.filter((t) => t.id !== 'prompted').map((t) => t.id);
+					} catch (x) { return []; }
+				})(),
+			})),
 			chats:    [...document.querySelectorAll('.chat-box')].map((e) => e.dataset.id),
 			mail,
 		};
@@ -121,8 +135,10 @@ async function expectedTree(p) {
 		id: 'root',
 		children: [
 			{ id: 'root/diamonds', children: seen.diamonds.map((d) => ({
-				id: idOf('root', 'diamonds', d),
-				children: [{ id: idOf('root', 'diamonds', d, 'self') }],
+				id: idOf('root', 'diamonds', d.id),
+				children: [{ id: idOf('root', 'diamonds', d.id, 'self') }].concat(
+					(d.triggers || []).map((tid) =>
+						({ id: idOf('root', 'diamonds', d.id, 'triggers', tid) }))),
 			})) },
 			{ id: 'root/chats', children: seen.chats.map((c) => ({ id: idOf('root', 'chats', c) })) },
 			{ id: 'root/mail', children: seen.mail.map((a) => {
@@ -232,8 +248,15 @@ const ctl = await controls();
 check(ctl.length >= 5, `a control is on each placement (${ctl.length} found)`,
 	JSON.stringify(ctl.map((c) => c.where + ':' + c.node)));
 check(ctl.some((c) => c.where === 'global'), 'one at the top of the rail, above the Diamonds list');
-check(ctl.filter((c) => c.where === 'diamond').length === 2, 'one on each Diamond tile',
-	`${ctl.filter((c) => c.where === 'diamond').length} of 2`);
+// One per Diamond ON THE RAIL, whatever else the account holds. It used to be the
+// literal 2, which was the number of Diamonds this file happens to make -- and
+// phase H seeds two more (Daimond Help, Daimond Optimiser), so the constant said
+// four were two. A tile's own light is what is under test; the count of tiles is
+// the app's business.
+const tiles = await p.evaluate(() =>
+	document.querySelectorAll('#diamond-list .diamond-box').length);
+check(ctl.filter((c) => c.where === 'diamond').length === tiles, 'one on each Diamond tile',
+	`${ctl.filter((c) => c.where === 'diamond').length} of ${tiles}`);
 check(ctl.filter((c) => c.where === 'chat').length >= 2, 'one on each chat tile',
 	`${ctl.filter((c) => c.where === 'chat').length}`);
 

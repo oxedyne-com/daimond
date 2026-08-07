@@ -86,6 +86,61 @@ pub async fn read_file(path: String) -> Result<String, JsValue> {
     }
 }
 
+// ── Daimond's own store, pinned to OPFS ──────────────────────────────────
+//
+// Notes2: *"When I choose the Browser workspace, I see only a mail folder and a
+// test.md, where are all the system files like DAIMOND.md??"*
+//
+// They were where they have always been — at the OPFS root — and the Workspace
+// panel deliberately filtered them out, because a `×` beside `diamonds/` would
+// delete every Diamond the user has.  Hiding them answered the wrong question:
+// what was wanted is to SEE the store, not to be able to destroy it.
+//
+// These three are the read side of that, and they pin [`FileRoot::Opfs`] rather
+// than `Workspace` — which is the whole point.  With a real folder open,
+// `read_file` resolves against the folder, so a page asking for `DAIMOND.md`
+// gets the PROJECT'S copy and Daimond's own store stays invisible exactly when
+// the user is most likely to go looking for it.  `dev/ROOT_SEPARATION.md` §1.1
+// is the map of which resolver does what.
+
+/// List a directory in Daimond's own store (OPFS), never a real folder.
+///
+/// Returns one entry per line: `name\tdir|file\tbytes`.  A flat format because
+/// the caller is one function in `daimond.js` and a JSON dependency here would
+/// buy nothing; the names cannot contain a tab, since [`crate::tools`] refuses
+/// a path with a control character in it.
+///
+/// # Arguments
+/// * `path` - Store-relative, `""` or `"."` for the root.
+#[wasm_bindgen]
+pub async fn store_list(path: String) -> Result<String, JsValue> {
+    let entries = opfs::list_dir(FileRoot::Opfs, &path).await.map_err(to_js_err)?;
+    let mut out = String::new();
+    for (name, is_dir, size) in entries {
+        out.push_str(&fmt!("{}\t{}\t{}\n", name, if is_dir { "dir" } else { "file" }, size));
+    }
+    Ok(out)
+}
+
+/// Read a file from Daimond's own store (OPFS), never a real folder.
+#[wasm_bindgen]
+pub async fn store_read(path: String) -> Result<String, JsValue> {
+    match opfs::read_file(FileRoot::Opfs, &path).await {
+        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+        Err(e)    => Err(to_js_err(e)),
+    }
+}
+
+/// Write a file into Daimond's own store (OPFS), never a real folder.
+///
+/// The user editing their own standing instructions or a role prompt while a
+/// project folder is open: without this the save would land in the project and
+/// the file they were looking at would be unchanged.
+#[wasm_bindgen]
+pub async fn store_write(path: String, content: String) -> Result<(), JsValue> {
+    opfs::write_file(FileRoot::Opfs, &path, content.as_bytes()).await.map_err(to_js_err)
+}
+
 /// Point the file tools / Workspace at a real local folder (FSA mode).
 ///
 /// `handle` is a `FileSystemDirectoryHandle` from `showDirectoryPicker()`

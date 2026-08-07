@@ -417,13 +417,20 @@ impl DaimondApp {
 
     /// Set the user's replacement for a role's prompt, from `prompts/<role>.md`.
     ///
-    /// Only `daimon` and `reducer` are held here — a chat and a worker are
-    /// constructed with their prompt already composed (see the field docs). An
-    /// empty `text` means "use the default", which is how deleting the file puts
-    /// the shipped prompt back.
+    /// Only `daimon`, `reducer` and `compactor` are held here — a chat and a
+    /// worker are constructed with their prompt already composed (see the field
+    /// docs). An empty `text` means "use the default", which is how deleting the
+    /// file puts the shipped prompt back.
+    ///
+    /// The compactor is the odd one: it is not an agent this app builds but the
+    /// tool-less model that summarises a conversation being folded, so its text
+    /// goes to [`crate::agent::Agent::set_fold_prompt`] rather than into a field
+    /// here.  Every agent built from this one adopts it (see
+    /// [`crate::agent::Agent::adopt_limits`]), so the daimon and the reducer fold
+    /// by the same instructions the chat does.
     ///
     /// # Arguments
-    /// * `role` - The role's name: `daimon` or `reducer`.
+    /// * `role` - The role's name: `daimon`, `reducer` or `compactor`.
     /// * `text` - What the user wrote, or empty for the default.
     ///
     /// # Errors
@@ -438,6 +445,7 @@ impl DaimondApp {
         match which {
             Role::Daimon => *self.daimon_prompt.borrow_mut() = text,
             Role::Reducer   => *self.reducer_prompt.borrow_mut() = text,
+            Role::Compactor => self.agent.set_fold_prompt(&text),
             other => return Err(to_js_err(err!(
                 "The {} prompt is composed in the browser, not here; pass it to the \
                  constructor instead.", other.name(); Invalid, Input))),
@@ -688,6 +696,61 @@ impl DaimondApp {
         self.agent.set_fold_model(&model);
     }
 
+    /// The context window this agent is folding against, in tokens.
+    ///
+    /// Zero means nobody has published one and [`crate::agent::compact::DEFAULT_WINDOW`]
+    /// is assumed — so a caller drawing a meter should draw nothing rather than a full
+    /// one, exactly as it does for [`DaimondApp::last_prompt_tokens`].
+    ///
+    /// It is not simply the figure handed to [`DaimondApp::set_context_window`]: a
+    /// provider that refuses an oversized prompt teaches the agent a smaller one, and
+    /// after that the meter drawn from the published figure is measuring against a
+    /// window this chat has already been told it does not have.
+    #[wasm_bindgen(getter)]
+    pub fn context_window(&self) -> f64 {
+        self.agent.limits().window as f64
+    }
+
+    /// The fraction of the window at which this agent folds, between 0 and 1.
+    ///
+    /// The number exists in `compact.rs` and has never been visible anywhere: a user
+    /// watching a context meter climb had no way to know whether 78% meant "nearly
+    /// there" or "plenty of room".
+    #[wasm_bindgen(getter)]
+    pub fn fold_at(&self) -> f64 {
+        self.agent.limits().fold_at
+    }
+
+    /// Fold this conversation now, because the user asked.
+    ///
+    /// Resolves to `true` when something actually moved.  A short conversation cannot be
+    /// folded — there is no tail to cut below [`crate::agent::compact::MIN_KEEP_MESSAGES`]
+    /// and no bulky tool result to shorten — and `false` is how the caller says so instead
+    /// of reporting a fold that changed nothing.
+    ///
+    /// A paid call: the summary is written by a model.  The caller is the one that knows
+    /// whether the user has been told that, so nothing here asks.
+    ///
+    /// # Arguments
+    /// * `on_event` - The same sink a turn uses; the fold announces itself through it.
+    ///
+    /// # Errors
+    /// Refuses while a turn holds the session, rather than panicking the `RefCell` the
+    /// way a mid-turn `cached_tokens` read does.
+    pub async fn fold_now(&self, on_event: js_sys::Function) -> Result<bool, JsValue> {
+        let mut session = match self.session.try_borrow_mut() {
+            Ok(s)  => s,
+            Err(_) => return Err(to_js_err(err!(
+                "This chat is in the middle of a turn; wait for it to finish before \
+                 folding by hand."; Invalid, Conflict))),
+        };
+        let mut sink = |ev: AgentEvent| {
+            let js = event_to_js(&ev);
+            let _ = on_event.call1(&JsValue::NULL, &js);
+        };
+        Ok(self.agent.fold_by_hand(&mut session, &mut sink).await)
+    }
+
     // ── The credential a push travels with ───────────────────────────────
     //
     // **It does not survive a page reload, and nothing else clears it.**  Both halves are
@@ -922,6 +985,25 @@ impl DaimondApp {
         diamond::write_crystal(&id, &md).await.map_err(to_js_err)
     }
 
+    /// Is an earlier Diamond root still waiting to be moved to `diamonds/`?
+    ///
+    /// See [`diamond::legacy_root_waiting`]. Asked before anything creates a Diamond
+    /// that the user did not ask for, because creating one makes `diamonds/` exist and
+    /// a legacy root can then never be migrated.
+    pub async fn legacy_diamond_root_waiting(&self) -> Result<bool, JsValue> {
+        diamond::legacy_root_waiting().await.map_err(to_js_err)
+    }
+
+    /// Record in a Diamond's history that its daimon changed model.
+    ///
+    /// See [`diamond::record_model_change`].  The crystal is snapshotted unchanged;
+    /// what is being recorded is the discontinuity, not an edit.
+    pub async fn record_model_change(&self, id: String, note: String)
+        -> Result<(), JsValue>
+    {
+        diamond::record_model_change(&id, &note).await.map_err(to_js_err)
+    }
+
     /// Read a Diamond's append-only log as a JSON array of records.
     pub async fn log_read(&self, id: String) -> Result<String, JsValue> {
         diamond::log_read(&id).await.map_err(to_js_err)
@@ -934,22 +1016,51 @@ impl DaimondApp {
         diamond::read_version(&id, version as u64).await.map_err(to_js_err)
     }
 
-    /// Steer a Diamond's crystal: run one crystal-agent turn for `instruction`,
-    /// streaming [`AgentEvent`]s to `on_event`.  The agent's file tools
-    /// are scoped to `diamonds/<id>/`, so `file_read` / `file_write` on
-    /// `crystal.md` address the Diamond's crystal; it is stateless per
-    /// instruction, reconstructing context from the current crystal passed
-    /// in its system prompt.  When the turn leaves `crystal.md` changed, a
-    /// new version is snapshotted and an `edit` record logged.
+    /// Steer a Diamond's crystal: run one daimon turn for `instruction`, streaming
+    /// [`AgentEvent`]s to `on_event`, and return the daimon's conversation as it
+    /// stands afterwards.
+    ///
+    /// The agent's file tools are scoped to `diamonds/<id>/`, so `file_read` /
+    /// `file_write` on `crystal.md` address the Diamond's crystal.  When the turn
+    /// leaves `crystal.md` changed, a new version is snapshotted and an `edit`
+    /// record logged.
+    ///
+    /// **The daimon is persistent, and `prior` is how.** It used to be stateless per
+    /// instruction, rebuilding what it knew from the crystal in its system prompt and
+    /// nothing else — so it could not be asked a follow-up question, and the answer to
+    /// a question that changed no file went into a box and was gone on the next steer.
+    /// Notes2 says it plainly: *"the daimon is meant to be persistant"*. The
+    /// conversation lives in the browser's store beside the chats, exactly as a chat's
+    /// does, and travels through here on every turn.
+    ///
+    /// The turn is folded by the same figures as this app's own (see
+    /// [`crate::agent::Agent::adopt_limits`]), so a daimon that has been talked to for
+    /// a long time folds at its window rather than being refused by the provider —
+    /// which is the other half of what notes2 asks for: *"automatically and visibly
+    /// folded at the context threshold"*.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond.
+    /// * `instruction` - What the user said, before `/name` resolution.
+    /// * `prior` - The daimon's conversation so far, in the shape
+    ///   [`DaimondApp::export_session`] produces. Empty starts a new daimon.
+    /// * `on_event` - The event sink.
+    ///
+    /// # Returns
+    /// The conversation after the turn, to be stored and handed back next time.
+    /// Returned even though the turn may have failed part-way — a turn that got three
+    /// tool calls in before dying still happened, and dropping it would make the
+    /// daimon forget work it has already been billed for.
     pub async fn steer_crystal(
         &self,
         id:          String,
         instruction: String,
+        prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
-        -> Result<(), JsValue>
+        -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, on_event).await.map_err(to_js_err)
+        self.steer_inner(&id, instruction, prior, on_event).await.map_err(to_js_err)
     }
 
     /// Propose a fold: run a fresh reducer over the current crystal plus one
@@ -1134,9 +1245,10 @@ impl DaimondApp {
         &self,
         id:          &str,
         instruction: String,
+        prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
-        -> Outcome<()>
+        -> Outcome<js_sys::Array>
     {
         // A `/name` here matters more than in a chat, not less: a daimon's file tools are pinned to
         // `diamonds/<id>`, so it could not read a skill for itself even if it tried, and the prose
@@ -1210,20 +1322,59 @@ impl DaimondApp {
             fmt!("crystal:{}", id),
             self.session.borrow().model.clone(),
         );
+        // What this daimon already knows, made WHOLE before it is accepted -- the same
+        // repair `restore_session` does, and for the same reason: this list has been
+        // through the browser's store, which is merged across tabs and devices and
+        // restored from backups, so a conversation that has lost a tool reply somewhere
+        // along the way is a thing that will happen. It must cost this one call rather
+        // than every turn from here on.
+        let mut seeded: Vec<ChatMessage> = Vec::new();
+        for item in prior.iter() {
+            if let Some(m) = js_to_message(&item) {
+                seeded.push(m);
+            }
+        }
+        session.messages = pair_up(seeded);
+
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
             let _ = on_event.call1(&JsValue::NULL, &js);
         };
-        res!(agent.run_turn(&mut session, instruction, &registry, &mut sink).await);
+        let ran = agent.run_turn(&mut session, instruction, &registry, &mut sink).await;
         self.absorb_usage(&session);
 
         // If the crystal changed, snapshot a version and log the edit so
-        // every crystal mutation stays versioned and auditable.
+        // every crystal mutation stays versioned and auditable.  Attempted even when
+        // the turn ended badly: a turn that wrote the crystal and then died has still
+        // changed it, and leaving that version unrecorded is the one outcome with no
+        // way back.
         let after = diamond::read_crystal(id).await.unwrap_or_default();
         if after != before {
             res!(diamond::record_steer(id, &after, &typed).await);
         }
-        Ok(())
+        // The conversation goes back whichever way the turn went, and a failed turn is
+        // therefore NOT an error out of here. A turn that got three tool calls in before
+        // failing still happened and was still paid for, and throwing would take the
+        // whole conversation with it -- the daimon would forget work it has already been
+        // billed for, every time a provider hiccupped.
+        //
+        // Nothing is hidden by that. Every `Err` return inside `run_turn` is preceded by
+        // an `AgentEvent::Error` on this same sink, so the caller learns of the failure
+        // through the events it is already reading; what it also gets, now, is the
+        // conversation to keep. A failure BEFORE the turn -- an unresolvable `/name`, an
+        // unreadable crystal -- still throws, because there is nothing to keep.
+        if let Err(e) = ran {
+            // Logged rather than swallowed: the event carried the message, but a
+            // developer reading the console should not have to reconstruct which turn
+            // it belonged to.
+            web_sys::console::warn_1(&JsValue::from_str(
+                &fmt!("daimon turn on {} ended early: {}", id, e)));
+        }
+        let out = js_sys::Array::new();
+        for msg in session.messages.iter() {
+            out.push(&message_to_js(msg));
+        }
+        Ok(out)
     }
 
     /// Drive the reducer for one delta, returning the proposed crystal (see

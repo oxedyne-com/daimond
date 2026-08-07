@@ -288,14 +288,25 @@ try {
 	const rows = await page.$$('#mail-accounts .mail-acct');
 	check('both mailboxes are on the panel to be removed from it', rows.length === 2,
 		rows.length + ' rows');
+	// The closer cross is gone (phase G part two): Remove is at the foot of the
+	// gear's dialog, exactly as Delete is at the foot of a tile's. Two clicks now,
+	// and the second dialog is the CONFIRM -- so the button pressed for it has to be
+	// the topmost card's, not the first visible one, since the settings dialog also
+	// carries `.dlg-card`.
 	const target = await page.evaluateHandle((addr) => {
 		const row = [...document.querySelectorAll('#mail-accounts .mail-acct')]
 			.find(r => (r.querySelector('.mail-addr') || {}).textContent === addr);
-		return row ? row.querySelector('.mail-del') : null;
+		return row ? row.querySelector('.mail-gear') : null;
 	}, ADDR);
 	await target.asElement().click({ force: true });
+	await page.waitForSelector('.tile-dlg-delete', { timeout: 5000 });
+	await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
 	await page.waitForSelector('.modal.dlg .dlg-ok', { timeout: 5000 });
-	await page.click('.modal.dlg .dlg-ok', { force: true });
+	await page.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')]
+			.filter(c => c.getClientRects().length).pop();
+		card.querySelector('.dlg-ok').click();
+	});
 	await page.waitForTimeout(600);
 
 	const buried = await page.evaluate(async (addr) => {
