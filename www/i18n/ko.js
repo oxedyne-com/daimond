@@ -1729,7 +1729,6 @@
 	'sys.up': '상위 폴더로',
 	'trig.head': '이 Diamond 가 움직일 때',
 	'trig.none': '설정된 것이 없습니다. 이 Diamond 는 당신이 말을 걸 때만 답합니다.',
-	'trig.prompted': '당신이 말을 걸 때',
 	'trig.activity': '당신의 활동이 {n} 분 쌓인 뒤',
 	'trig.mail': '{folder} ({mailbox}) 에 메일이 도착할 때',
 	'trig.edit': '이 동작 편집',

@@ -1338,7 +1338,6 @@
 	// ── Triggered actions ──────────────────────────────────────
 	'trig.head':            'When this Diamond acts',
 	'trig.none':            'Nothing set. This Diamond answers when you prompt it and at no other time.',
-	'trig.prompted':        'When you prompt it',
 	'trig.activity':        'After {n} minutes of your activity',
 	'trig.mail':            'When mail arrives in {folder} ({mailbox})',
 	'trig.edit':            'Edit this action',

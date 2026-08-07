@@ -1689,7 +1689,6 @@
 	'sys.up': 'Subir una carpeta',
 	'trig.head': 'Cuándo actúa este Diamond',
 	'trig.none': 'Nada configurado. Este Diamond responde cuando lo llamas y en ningún otro momento.',
-	'trig.prompted': 'Cuando lo llamas',
 	'trig.activity': 'Tras {n} minutos de tu actividad',
 	'trig.mail': 'Cuando llega correo a {folder} ({mailbox})',
 	'trig.edit': 'Editar esta acción',

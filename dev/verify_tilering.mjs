@@ -18,12 +18,18 @@ await page.evaluate(() => {
 	document.documentElement.setAttribute('data-skin', 'warm');
 });
 await page.waitForTimeout(500);
-await page.waitForSelector('.session-box', { timeout: 8000 }).catch(() => {});
-const boxes = await page.$$('.session-box');
+// A CHAT tile, named by its list. `boxes[0]` was the first `.session-box` in the
+// document, and the Diamonds rail is above the chats — so on any account with a
+// Diamond this selected a Diamond tile, whose `closest('.session-list')` is null,
+// and every measurement below came back null. It has been failing that way, on a
+// file whose first line says "the selected chat tile".
+await page.waitForSelector('#session-list .session-box', { timeout: 8000 }).catch(() => {});
+const boxes = await page.$$('#session-list .session-box');
 if (boxes.length) { await boxes[0].click({ force: true }); await page.waitForTimeout(500); }
 
 const m = await page.evaluate(() => {
-	const box = document.querySelector('.session-box.active') || document.querySelector('.session-box');
+	const box = document.querySelector('#session-list .session-box.active')
+		|| document.querySelector('#session-list .session-box');
 	if (!box) return { err: 'no session box' };
 	const list = box.closest('.session-list');
 	const cs = getComputedStyle(box);

@@ -1727,7 +1727,6 @@
 	'sys.up': '一つ上のフォルダー',
 	'trig.head': 'この Diamond が動くとき',
 	'trig.none': '何も設定されていません。この Diamond はあなたが話しかけたときだけ答えます。',
-	'trig.prompted': 'あなたが話しかけたとき',
 	'trig.activity': 'あなたの活動が {n} 分続いたあと',
 	'trig.mail': '{folder}（{mailbox}）にメールが届いたとき',
 	'trig.edit': 'このアクションを編集',

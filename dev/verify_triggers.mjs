@@ -4,15 +4,18 @@
 // Diamonds. Seven properties, chosen because each one is a thing that would be
 // invisible if it were wrong:
 //
-//   1. The two default Diamonds are there, and they START PAUSED. A default
-//      Diamond that arrived running would spend on a schedule nobody set.
+//   1. The two default Diamonds are there. The Optimiser STARTS PAUSED, because
+//      it carries a timer that would otherwise spend on a schedule nobody set.
+//      Help does NOT, and carries no light at all: it has no triggered actions,
+//      so the only thing that makes it spend is the user typing to it.
 //   2. The Optimiser's timer action is there and is INACTIVE, in the record and
 //      on the pause tree both — notes2 asks for it by name.
 //   3. A trigger is a leaf of the pause tree, so a Diamond with one held and its
 //      daimon running reads amber without anyone setting amber.
-//   4. `prompted` has NO light of its own. The daimon's own leaf is already the
-//      control for "may this answer me", and a second one would let you pause
-//      the daimon and still prompt it.
+//   4. EVERY action has a light. There used to be one that did not — `prompted`,
+//      on every Diamond, drawn with a spacer where the widget goes — and the
+//      user's ruling removed it: typing a prompt IS the activation, so there is
+//      nothing there to arm and nothing to represent.
 //   5. The actions are FILES, at `diamonds/<id>/triggers.json`, where the System
 //      section shows them and a daimon can read them.
 //   6. Context is sent ONCE, and changing it makes it new again. Measured on the
@@ -79,19 +82,56 @@ try {
 	const rail = await p.evaluate(() =>
 		[...document.querySelectorAll('#diamond-list .diamond-box')].map(b => ({
 			name:  ((b.querySelector('.session-box-name') || {}).textContent || '').trim(),
+			// Whether there IS a widget, apart from what it says. An absent one
+			// and a present one with no state both read `''`, and the difference
+			// between them is now the point.
+			has:   !!b.querySelector('.pptw'),
 			state: (b.querySelector('.pptw') || {}).dataset ? b.querySelector('.pptw').dataset.state : '',
+			// Where it sits: the user's rule is that a light goes to the RIGHT of
+			// the name, hard against the cog, so a rail of mixed Diamonds keeps
+			// one left edge for its labels.
+			order: [...(b.querySelector('.session-box-header') || { children: [] }).children]
+				.map((el) => el.className.split(' ')[0]).join(','),
 			id:    b.dataset.id,
 		})));
 	const help = rail.find(r => /Daimond Help/.test(r.name));
 	const opt  = rail.find(r => /Daimond Optimiser/.test(r.name));
 	check(!!help, 'Daimond Help is there', rail.map(r => r.name).join(', ') || '(none)');
 	check(!!opt, 'Daimond Optimiser is there', rail.map(r => r.name).join(', ') || '(none)');
-	check(!!(help && help.state === 'pause'),
-		'Help starts PAUSED — a default that arrived running would spend unasked',
-		help && help.state);
-	check(!!(opt && opt.state === 'pause'), 'and so does the Optimiser', opt && opt.state);
+	// Help has NO triggered actions, so it has nothing that spends without being
+	// asked — and therefore no widget and no hold. This read "Help starts
+	// PAUSED", which was right while every Diamond carried a `prompted` action;
+	// with that gone, a red light on Help would be a control standing for a
+	// decision the user makes by typing.
+	check(!!(help && help.has === false),
+		'Help carries no traffic light — with no actions, prompting it IS the choice to run it',
+		help && JSON.stringify(help.order));
+	check(!!(opt && opt.has === true && opt.state === 'pause'),
+		'the Optimiser does, and starts PAUSED — it has a timer that would spend unasked',
+		opt && opt.state);
+	// The user's placement rule, measured rather than eyeballed: name first, then
+	// the light, then the cog. It used to be light, name, cog — so a rail of
+	// Diamonds with and without one had two different left edges for its labels.
+	check(!!(opt && /^session-box-name,pptw,tile-cog/.test(opt.order)),
+		'and it sits to the RIGHT of the name, hard against the cog',
+		opt && opt.order);
 
-	// ══ 7. And it says where the play control is ══════════════════════
+	// ══ 7. And a Diamond that IS held says where its play control is ══
+	if (opt) {
+		await p.evaluate((id) => {
+			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`).click();
+		}, opt.id);
+		await p.waitForTimeout(900);
+		const ph = await p.evaluate(() =>
+			(document.getElementById('steer-input') || {}).placeholder || '');
+		check(/paus/i.test(ph) && /play/i.test(ph),
+			'a paused Diamond’s input says where its play control is', ph);
+	}
+
+	// NOT VACUOUS, and this is the trap the change could have shipped: a Diamond
+	// with no actions must be TYPEABLE. Its `/self` leaf can still be paused in
+	// storage from an earlier release, and with no widget anywhere there would be
+	// no way on earth to release it.
 	if (help) {
 		await p.evaluate((id) => {
 			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`).click();
@@ -99,8 +139,9 @@ try {
 		await p.waitForTimeout(900);
 		const ph = await p.evaluate(() =>
 			(document.getElementById('steer-input') || {}).placeholder || '');
-		check(/paus/i.test(ph) && /play/i.test(ph),
-			'a paused Diamond’s input says where its play control is', ph);
+		check(!/paus/i.test(ph),
+			'and a Diamond with no light is never held — it cannot be, there is nothing to release it',
+			ph);
 	}
 
 	// ══ 2–4. The Optimiser's timer, and the pause tree ════════════════
@@ -114,7 +155,7 @@ try {
 				name:  ((r.querySelector('.trig-name') || {}).textContent || '').trim(),
 				light: r.querySelector('.pptw') ? r.querySelector('.pptw').dataset.state : '(none)',
 			})));
-		check(rows.length === 2, 'the Optimiser has two actions: prompted, and the timer',
+		check(rows.length === 1, 'the Optimiser has ONE action: the timer',
 			rows.map(r => r.name).join(' | '));
 		check(rows.some(r => /30 minutes/.test(r.name)),
 			'the timer is set for 30 minutes, as notes2 asks', rows.map(r => r.name).join(' | '));
@@ -122,10 +163,12 @@ try {
 		check(!!(timer && timer.light === 'pause'),
 			'and it starts INACTIVE, on the tree as well as in the record',
 			timer && timer.light);
-		const prompted = rows.find(r => !/minutes/.test(r.name));
-		check(!!(prompted && prompted.light === '(none)'),
-			'“when you prompt it” has no light of its own — the daimon’s own leaf is that control',
-			prompted && prompted.light);
+		// EVERY action has a light now. The one that did not — `prompted`, drawn
+		// with a spacer where the widget goes — is gone, because prompting a
+		// Diamond is the user asking rather than an arrangement to be armed.
+		check(rows.every(r => r.light !== '(none)'),
+			'and every action has a light — there is no longer one that is only decoration',
+			rows.map(r => r.light).join(' | '));
 
 		await p.evaluate(() => {
 			const done = document.querySelector('.tile-dlg-done');

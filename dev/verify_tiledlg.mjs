@@ -144,10 +144,45 @@ try {
 		};
 	});
 	check(!!dlg, 'the cog opens a dialog');
-	check(dlg && dlg.hasPause, 'the dialog carries the pause control');
+	// A Diamond with NO triggered actions has nothing that spends unbidden, so it
+	// has no pause node and the dialog shows no "Running" section — the same rule
+	// that takes the light off its tile. This read `hasPause` unconditionally and
+	// went red the day that became true, which said nothing about the dialog.
+	check(dlg && !dlg.hasPause,
+		'a Diamond with no actions gets no pause control — there is nothing to hold',
+		JSON.stringify(dlg && dlg.hasPause));
 	check(dlg && dlg.hasLevel === 2, 'the dialog offers Simple and Max', dlg && String(dlg.hasLevel));
 	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
 		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
+
+	// NOT VACUOUS. "No control" is also what a broken dialog shows, so arm the
+	// Diamond with a triggered action and reopen: now there IS something that
+	// spends unbidden, and the control has to appear.
+	{
+		await page.evaluate(() => {
+			const c = [...document.querySelectorAll('.tile-dlg-card .dlg-cancel, .tile-dlg-card .dlg-ok')].pop();
+			if (c) c.click(); else document.querySelector('.tile-dlg').remove();
+		});
+		await page.waitForTimeout(400);
+		await page.evaluate(async () => {
+			const id = document.querySelector('#diamond-list .session-box').dataset.id;
+			const ta = DaimondTriggers.blank('activity');
+			ta.id = 'activity-1';
+			ta.instruction = 'Say one useful thing.';
+			await DaimondCore.triggerSet(id, ta);
+		});
+		await page.waitForTimeout(600);
+		await openCog(page, '#diamond-list');
+		const armed = await page.evaluate(() =>
+			!!document.querySelector('.tile-dlg-card .pptw'));
+		check(armed, 'and a Diamond WITH one gets the control back', String(armed));
+		await page.evaluate(() => {
+			const c = [...document.querySelectorAll('.tile-dlg-card .dlg-cancel, .tile-dlg-card .dlg-ok')].pop();
+			if (c) c.click(); else document.querySelector('.tile-dlg').remove();
+		});
+		await page.waitForTimeout(400);
+		await openCog(page, '#diamond-list');
+	}
 
 	// ── 3. Delete asks first, and "no" leaves the tile alone ──
 	const before = await page.evaluate(() =>

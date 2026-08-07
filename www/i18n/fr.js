@@ -1692,7 +1692,6 @@
 	'sys.up': 'Dossier parent',
 	'trig.head': 'Quand ce Diamond agit',
 	'trig.none': 'Rien de réglé. Ce Diamond répond quand vous le sollicitez, et à aucun autre moment.',
-	'trig.prompted': 'Quand vous le sollicitez',
 	'trig.activity': 'Après {n} minutes de votre activité',
 	'trig.mail': 'Quand du courrier arrive dans {folder} ({mailbox})',
 	'trig.edit': 'Modifier cette action',

@@ -6977,6 +6977,21 @@ import init, {
 		});
 	}
 
+	/// Has this Diamond anything that can spend WITHOUT being asked?
+	///
+	/// A traffic light is for a spendable function, and a Diamond with no
+	/// triggered actions spends only when the user prompts it -- which the user
+	/// controls by not prompting. So it gets no node in the tree, no widget on
+	/// its tile, no "Running" section in its dialog, and it can never be held.
+	///
+	/// One function rather than four tests, because those four have to agree:
+	/// a Diamond showing no light while something still consulted a paused leaf
+	/// would be locked with nothing anywhere to release it.
+	function diamondAutomated(id) {
+		try { return (Triggers.of(id) || []).length > 0; }
+		catch (e) { return false; }		// the module is not up: nothing is armed
+	}
+
 	/// The live tree, as it stands at the moment it is asked.
 	///
 	/// Every branch carries a `children` array even when it is empty. A node with
@@ -6984,7 +6999,9 @@ import init, {
 	/// take a pause flag of its own: the root would write a phantom id nothing
 	/// could ever resume, and a new account's rail would open red.
 	function pauseTree() {
-		var dnodes = (diamonds || []).map(function (f) {
+		var dnodes = (diamonds || []).filter(function (f) {
+			return diamondAutomated(f.id);
+		}).map(function (f) {
 			var base = DaimondPause.id('root', 'diamonds', f.id);
 			var kids = [
 				{ id: base + '/self', kind: 'daimon', label: f.name || t('rail.unnamed_diamond') },
@@ -6992,13 +7009,8 @@ import init, {
 			// One leaf per triggered action, which is what makes a Diamond with a
 			// trigger held and a daimon running read amber without anyone having set
 			// amber anywhere. `pause.js` documented this shape before there were any.
-			//
-			// `prompted` is deliberately NOT among them: it is the daimon answering
-			// you, and `/self` is already its leaf. Two controls for one act would
-			// let a user pause the daimon and still be able to prompt it.
 			try {
 				(Triggers.of(f.id) || []).forEach(function (ta) {
-					if (ta.id === 'prompted') return;
 					kids.push({
 						id:    DaimondTriggers.node(f.id, ta.id),
 						kind:  'trigger',
@@ -7598,51 +7610,43 @@ import init, {
 			list.forEach(function (ta) {
 				var row = document.createElement('div');
 				row.className = 'trig-row';
-				// `prompted` has no light of its own: the daimon's `/self` leaf is
-				// already the control for "may this Diamond answer me", and a second
-				// one would let a user pause the daimon and still prompt it.
-				if (ta.id !== 'prompted') {
-					mountPause(row, DaimondTriggers.node(opts.id, ta.id), triggerLabel(ta));
-				} else {
-					var spacer = document.createElement('span');
-					spacer.className = 'trig-spacer';
-					row.appendChild(spacer);
-				}
+				// Every action has a light now. The one that did not -- `prompted`,
+				// with a spacer where the widget goes -- is gone: prompting a
+				// Diamond is the user asking, not an arrangement to be armed.
+				mountPause(row, DaimondTriggers.node(opts.id, ta.id), triggerLabel(ta));
 				var name = document.createElement('span');
 				name.className = 'trig-name';
 				name.textContent = triggerLabel(ta);
 				row.appendChild(name);
 
-				if (ta.id !== 'prompted') {
-					row.appendChild(trigBtn('✎', t('trig.edit'), function () {
-						editTrigger(opts.id, ta, draw);
-					}));
-					row.appendChild(trigBtn('⧉', t('trig.copy'), async function () {
-						// The copy notes2 asks for: the two long texts, so an
-						// instruction written once can be pasted into another TA or
-						// another Diamond without being retyped.
-						try {
-							await navigator.clipboard.writeText(
-								(ta.instruction || '') + (ta.context ? '\n\n---\n\n' + ta.context : ''));
-							toast(t('trig.copied'));
-						} catch (e) { toast(t('trig.copy_failed'), true); }
-					}));
-					row.appendChild(trigBtn('✕', t('trig.remove'), async function () {
-						// An action with nothing written in it and nothing armed is the
-						// one the user just added by pressing `+`, and asking them to
-						// confirm the deletion of an empty thing is the friction that
-						// made `+` feel one-way. There is nothing to lose, so there is
-						// nothing to ask. Anything with an instruction still asks.
-						var blank = !ta.on && !(ta.instruction || '').trim() && !(ta.context || '').trim();
-						if (!blank) {
-							var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
-								t('trig.remove'), { title: t('trig.remove'), danger: true });
-							if (!ok) return;
-						}
-						await Triggers.remove(opts.id, ta.id);
-						draw();
-					}));
-				}
+				row.appendChild(trigBtn('✎', t('trig.edit'), function () {
+					editTrigger(opts.id, ta, draw);
+				}));
+				row.appendChild(trigBtn('⧉', t('trig.copy'), async function () {
+					// The copy notes2 asks for: the two long texts, so an
+					// instruction written once can be pasted into another TA or
+					// another Diamond without being retyped.
+					try {
+						await navigator.clipboard.writeText(
+							(ta.instruction || '') + (ta.context ? '\n\n---\n\n' + ta.context : ''));
+						toast(t('trig.copied'));
+					} catch (e) { toast(t('trig.copy_failed'), true); }
+				}));
+				row.appendChild(trigBtn('✕', t('trig.remove'), async function () {
+					// An action with nothing written in it and nothing armed is the
+					// one the user just added by pressing `+`, and asking them to
+					// confirm the deletion of an empty thing is the friction that
+					// made `+` feel one-way. There is nothing to lose, so there is
+					// nothing to ask. Anything with an instruction still asks.
+					var blank = !ta.on && !(ta.instruction || '').trim() && !(ta.context || '').trim();
+					if (!blank) {
+						var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
+							t('trig.remove'), { title: t('trig.remove'), danger: true });
+						if (!ok) return;
+					}
+					await Triggers.remove(opts.id, ta.id);
+					draw();
+				}));
 				host.appendChild(row);
 			});
 
@@ -8144,9 +8148,6 @@ import init, {
 		// Editable label — the single place a chat is named (D-UI: one source).
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
-		// A chat is a leaf: binary, and the same control as everywhere else.
-		mountPause(header, DaimondPause.id('root', 'chats', s.id),
-			s.name || t('pause.unnamed_chat'));
 		var label = document.createElement('input');
 		label.className = 'tile-label';
 		label.value = s.name; label.spellcheck = false;
@@ -8187,6 +8188,16 @@ import init, {
 		});
 		label.addEventListener('change', function () { renameChat(s, label.value); });
 		header.appendChild(label);
+		// A chat is a leaf: binary, and the same control as everywhere else — and
+		// in the same PLACE as everywhere else, which is the point of moving it.
+		//
+		// The user asked for the Diamond tile's light to sit right of the label and
+		// hard against the cog, "for visual consistency". Leaving the chat tile's
+		// on the left would have defeated exactly that: the two lists sit one above
+		// the other in one rail, and a screenshot of it showed Diamonds with the
+		// control on the right and a chat with it on the left. One rule, both lists.
+		mountPause(header, DaimondPause.id('root', 'chats', s.id),
+			s.name || t('pause.unnamed_chat'));
 		header.appendChild(tileCog(s.name, function () {
 			openTileDialog({
 				id:       s.id,
@@ -8519,6 +8530,13 @@ import init, {
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
 		loadDiamonds:    function () { return loadDiamonds(); },
+		/// Add or change one triggered action, and write it.
+		///
+		/// Published for `verify_pausewidget`, which needs Diamonds that HAVE
+		/// something to govern: with `prompted` gone, a Diamond nobody has
+		/// automated carries no pause node and no widget at all, so a file about
+		/// the widget has nothing to point at unless it can arm one first.
+		triggerSet:      function (id, action) { return Triggers.set(id, action); },
 		/// Draw the lock card. Published for `verify_reloadloop`, which has to
 		/// open it on demand to prove the trail appears on a looping app and NOT
 		/// on a working one -- and the only honest way to check that is through
@@ -14233,8 +14251,9 @@ import init, {
 			return (_triggers[id] && _triggers[id].actions) || [];
 		},
 
-		/// Read one Diamond's file. An absent file means the defaults -- every
-		/// Diamond has "Daimon Prompted" whether or not anyone has written it down.
+		/// Read one Diamond's file. An absent file means the defaults, which is
+		/// now NO actions: a Diamond nobody has automated acts when it is prompted
+		/// and at no other time.
 		load: async function (id) {
 			var raw = null;
 			try {
@@ -14265,6 +14284,15 @@ import init, {
 			var rec = _triggers[id] || DaimondTriggers.defaults();
 			await Wasm.store_write(triggersPath(id), JSON.stringify(rec, null, '\t') + '\n');
 			bumpDiamonds();
+			// THE RAIL, not only the lights. Whether a Diamond's tile carries a
+			// traffic light at all now depends on whether it has any actions, so
+			// adding the first one and deleting the last one both change the tile
+			// itself -- and `repaintPause` only repaints widgets that are already
+			// drawn. `bumpDiamonds` tells the other TABS; nothing told this one.
+			// Cheap on purpose: `renderDiamondList` redraws from the Diamonds
+			// already in hand, where `loadDiamonds` would walk the store again --
+			// seven seconds of it on the phone, for a fact we have just written.
+			try { renderDiamondList(); } catch (e) { /* nothing drawn yet */ }
 			repaintPause();
 		},
 
@@ -14423,11 +14451,14 @@ import init, {
 			try { id = await diamondApp().create_diamond(d.name); }
 			catch (e) { continue; }                 // no store yet; the flag stops a retry loop
 			try { await diamondApp().write_crystal(id, d.crystal); } catch (e) { /* empty is fine */ }
-			// Held before it can ever run. Seeded at the leaf, so the Diamond's own
-			// light reads red rather than a branch pretending to hold state.
-			try { DaimondPause.seedPaused(DaimondPause.id('root', 'diamonds', id) + '/self'); }
-			catch (e) { /* module not up */ }
+			// Held before it can ever run -- but ONLY where there is something to
+			// run unbidden. A Diamond with no triggered actions carries no widget
+			// and no pause node, so seeding its leaf red would leave it held with
+			// nothing anywhere to release it. Nor does it need to be: with no TA it
+			// spends when the user prompts it and at no other time.
 			if (d.triggers.length) {
+				try { DaimondPause.seedPaused(DaimondPause.id('root', 'diamonds', id) + '/self'); }
+				catch (e) { /* module not up */ }
 				var rec = DaimondTriggers.defaults();
 				d.triggers.forEach(function (spec, n) {
 					var ta = DaimondTriggers.blank(spec.kind);
@@ -14447,8 +14478,16 @@ import init, {
 	/// Is this Diamond's daimon held? The leaf, not the branch: a Diamond with a
 	/// trigger paused and a daimon running is amber, and amber must not read as
 	/// "you cannot type here".
+	///
+	/// A Diamond with no triggered actions is NEVER held, whatever the tree
+	/// happens to remember. It has no widget on its tile and no node in the pause
+	/// panel -- there is nothing to spend without being asked -- so a leaf left
+	/// paused from before its last action was deleted would lock the user out of
+	/// a Diamond with no control anywhere to release it. That is the trap this
+	/// line exists to close.
 	function diamondHeld(id) {
 		if (!id) return false;
+		if (!diamondAutomated(id)) return false;
 		try {
 			return !!(window.DaimondPause
 				&& DaimondPause.isPaused(DaimondPause.id('root', 'diamonds', id) + '/self'));
@@ -14458,7 +14497,6 @@ import init, {
 	/// One triggered action, in words. Used on its pause light and in its row, so
 	/// the two say the same thing.
 	function triggerLabel(ta) {
-		if (ta.kind === 'prompted') return t('trig.prompted');
 		if (ta.kind === 'activity') return t('trig.activity', { n: ta.minutes || 30 });
 		if (ta.kind === 'mail') {
 			return t('trig.mail', { folder: ta.folder || 'INBOX', mailbox: ta.mailbox || '?' });
@@ -15264,12 +15302,6 @@ import init, {
 		});
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
-		// The Diamond's own traffic light, bound to the branch that carries its
-		// daimon and (from phase H) its triggered actions — so a Diamond with a
-		// trigger paused and a daimon running reads amber here without anyone
-		// having to set amber anywhere.
-		mountPause(header, DaimondPause.id('root', 'diamonds', f.id),
-			f.name || t('rail.unnamed_diamond'));
 		var name = document.createElement('span');
 		name.className = 'session-box-name';
 		name.textContent = f.name;                 // escaped via textContent (H5)
@@ -15283,15 +15315,44 @@ import init, {
 				.catch(function (e2) { noticeDialog(t('rail.rename_failed'), friendlyError(e2)); });
 		});
 		header.appendChild(name);
+		// The Diamond's own traffic light, bound to the branch that carries its
+		// daimon and its triggered actions — so a Diamond with a trigger paused
+		// and a daimon running reads amber here without anyone having set amber
+		// anywhere.
+		//
+		// AFTER THE NAME, right-aligned against the cog rather than in front of
+		// the label. The user's call, and it is the consistent one: a tile that
+		// has a widget and one that has not then differ only in what sits beside
+		// the cog, so a rail of mixed Diamonds keeps one left edge for its names.
+		//
+		// And ONLY where there is something to pause. A Diamond with no triggered
+		// actions spends when the user prompts it and at no other time, so a
+		// control for it would stand for a decision already made by typing.
+		//
+		// ASKED HERE, and it has to be. Dropping the Diamond from `pauseTree` does
+		// NOT stop the widget by itself: `pauseGoverns` answers `true` for a node
+		// it cannot find in the tree -- deliberately, because that is how a TA's
+		// own leaf gets a control -- so a TA-less Diamond would otherwise draw a
+		// green light that governed nothing and could not be turned off. Which is
+		// the very fault `pauseWidget`'s own comment records from the Email panel.
+		if (diamondAutomated(f.id)) {
+			mountPause(header, DaimondPause.id('root', 'diamonds', f.id),
+				f.name || t('rail.unnamed_diamond'));
+		}
 		header.appendChild(tileCog(f.name, function () {
 			openTileDialog({
 				id:   f.id,
 				name: f.name,
 				// The BRANCH, not the `self` leaf: a Diamond's control stands for
-				// its daimon and (from phase H) its triggered actions together, so
-				// one with a trigger held and a daimon running reads amber here
-				// without anyone having set amber anywhere.
-				node: DaimondPause.id('root', 'diamonds', f.id),
+				// its daimon and its triggered actions together, so one with a
+				// trigger held and a daimon running reads amber here without
+				// anyone having set amber anywhere.
+				//
+				// Null where the Diamond has no actions, on the same rule and for
+				// the same reason as the tile: the dialog's whole "Running" section
+				// is skipped when there is no node, so it does not offer a control
+				// the tile has just declined to show.
+				node: diamondAutomated(f.id) ? DaimondPause.id('root', 'diamonds', f.id) : '',
 				// A Diamond's models may be changed after it is made; a chat's may not.
 				models:   'diamond',
 				onDelete: function () { return deleteDiamond(f); },

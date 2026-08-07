@@ -146,10 +146,16 @@ async function expectedTree(p) {
 				triggers: (() => {
 					try {
 						return (window.DaimondTriggersOf ? DaimondTriggersOf(e.dataset.id) : [])
-							.filter((t) => t.id !== 'prompted').map((t) => t.id);
+							.map((t) => t.id);
 					} catch (x) { return []; }
 				})(),
-			})),
+			// A Diamond with NO triggered actions is not in the tree at all --
+			// not even a `self` leaf. It has nothing that spends without being
+			// asked, so there is nothing to hold; the `prompted` action that used
+			// to give every Diamond one has been removed as decoration. Filtered
+			// here rather than mapped to an empty node, because an empty branch
+			// and an absent one are different things to `leavesUnder`.
+			})).filter((d) => d.triggers.length > 0),
 			chats:    [...document.querySelectorAll('.chat-box')].map((e) => e.dataset.id),
 			mail,
 		};
@@ -235,6 +241,23 @@ async function newDiamond(name) {
 }
 await newDiamond('Alpha');
 await newDiamond('Beta');
+
+// GIVE THEM SOMETHING TO GOVERN. A Diamond with no triggered actions has no
+// pause node and no widget — prompting it is the activation, so a control would
+// stand for a decision already made by typing. That is the product rule, and it
+// leaves this file, which is about the WIDGET, with nothing to point at. So each
+// of these two gets a timer, exactly as the Optimiser ships with one.
+await p.evaluate(async () => {
+	const ids = [...document.querySelectorAll('.diamond-box')].map((e) => e.dataset.id);
+	for (const id of ids) {
+		if ((DaimondTriggersOf(id) || []).length) continue;   // the Optimiser has one already
+		const ta = DaimondTriggers.blank('activity');
+		ta.id = 'activity-1';
+		ta.instruction = 'Say one useful thing.';
+		await DaimondCore.triggerSet(id, ta);
+	}
+});
+await p.waitForTimeout(700);
 await newChat(s);
 await p.click('#new-session-btn', { force: true });
 await p.waitForTimeout(400);

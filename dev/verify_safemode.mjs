@@ -219,19 +219,25 @@ check(await p.evaluate(() => !!(window.DaimondSafe && DaimondSafe.on && DaimondS
 		try {
 			DaimondSafe.set(false, 'user');
 			DaimondTrail.clear();
-			// Two, not three: this page's own reload writes the third.
-			for (var i = 0; i < 2; i++) DaimondTrail.note('boot', 'test');
+			// FOUR, and the count is worth explaining. A killed start is a `boot`
+			// with no `pagehide` between it and the boot before it, so N boots in a
+			// row are N-1 killed starts — the first has nothing before it to
+			// judge against. And the reload below is a REAL one, so it writes a
+			// real `pagehide` and its own boot does not count either. Four
+			// consecutive boots is therefore the smallest trail that presents
+			// three killed starts to a page that is about to load.
+			for (var i = 0; i < 4; i++) DaimondTrail.note('boot', 'test');
 		} catch (e) {}
 	});
 	await p.reload({ waitUntil: 'domcontentloaded' });
 	await p.waitForTimeout(400);
 	const armed = await p.evaluate(() => ({
-		on:    window.DaimondSafe.on(),
-		why:   window.DaimondSafe.why(),
-		boots: window.DaimondSafe.boots(),
+		on:     window.DaimondSafe.on(),
+		why:    window.DaimondSafe.why(),
+		killed: window.DaimondSafe.killed(),
 	}));
 	check(armed.on === true && armed.why === 'auto',
-		'three boots in ninety seconds arms a safe start with nobody pressing anything',
+		'three KILLED starts in ninety seconds arms a safe start with nobody pressing anything',
 		JSON.stringify(armed));
 
 	// NOT VACUOUS. It must NOT arm on an app that is merely being used.
@@ -240,10 +246,32 @@ check(await p.evaluate(() => !!(window.DaimondSafe && DaimondSafe.on && DaimondS
 	});
 	await p.reload({ waitUntil: 'domcontentloaded' });
 	await p.waitForTimeout(400);
-	const quiet = await p.evaluate(() => ({ on: window.DaimondSafe.on(), boots: window.DaimondSafe.boots() }));
+	const quiet = await p.evaluate(() => ({ on: window.DaimondSafe.on(), killed: window.DaimondSafe.killed() }));
 	check(quiet.on === false,
 		'and a single ordinary start does not arm one',
 		JSON.stringify(quiet));
+
+	// AND THIS IS THE ONE THAT MATTERS. Three RELOADS in ninety seconds is a
+	// developer, a flaky connection, or this very suite driving the app — and
+	// counting boots alone could not tell that from a phone whose tab is being
+	// killed. Each reload leaves a `pagehide`; the phone's trail never has one.
+	// Without this distinction a safe start would arm inside the test suite and
+	// turn sync off for people whose app is working perfectly.
+	await p.evaluate(() => {
+		try { DaimondSafe.set(false, 'user'); DaimondTrail.clear(); } catch (e) {}
+	});
+	for (let i = 0; i < 3; i++) {
+		await p.reload({ waitUntil: 'domcontentloaded' });
+		await p.waitForTimeout(250);
+	}
+	const reloaded = await p.evaluate(() => ({
+		on:     window.DaimondSafe.on(),
+		boots:  window.DaimondSafe.boots(),
+		killed: window.DaimondSafe.killed(),
+	}));
+	check(reloaded.on === false && reloaded.boots >= 3 && reloaded.killed < 3,
+		'but three ORDINARY RELOADS do not — a reload says pagehide on its way out, and a killed tab cannot',
+		JSON.stringify(reloaded));
 }
 
 const noise = /favicon|401|402|426|502|Unauthorized|Payment|Bad Gateway/i;

@@ -1912,7 +1912,6 @@ body.resizing { cursor: col-resize; user-select: none; }
    daimon answering you, and `/self` is already its control. 59px is the group's
    own width -- 20 for each verb, 13 for the lamp, 3 of gap between them -- so
    the name beside it starts on the same edge as every other row's. */
-.trig-spacer { display: inline-block; width: 59px; flex: none; }
 /* `--border-strong`, not `--border`: a divider separates two things that are
    already there, and a control's edge has to say the control IS there. Phase H
    copied this rule from a box rather than from a button. */

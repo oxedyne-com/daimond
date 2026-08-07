@@ -70,10 +70,45 @@
 		return n;
 	}
 
+	/// How many of those starts followed a tab that was KILLED rather than one
+	/// that went away tidily.
+	///
+	/// THIS IS THE WHOLE ARMING RULE, and counting boots alone was not good
+	/// enough. Three starts in ninety seconds is also a developer pressing
+	/// reload, a person on a bad connection, or a verifier driving the app --
+	/// and arming a safe start on any of those turns sync off for somebody whose
+	/// app is fine. It would have done exactly that inside this project's own
+	/// test suite.
+	///
+	/// The distinction is the one hard fact four sessions of hunting have
+	/// established: THE LOOPING TAB IS NOT RELOADING. A reload -- deliberate,
+	/// forced or scripted -- fires `pagehide` on the way out, every time. The
+	/// phone's trail has never contained one. So a boot with no `pagehide`
+	/// between it and the boot before it is a tab that was taken away, which is
+	/// the only thing a safe start is for.
+	function killedStarts() {
+		var rows = [];
+		try { rows = (window.DaimondTrail && DaimondTrail.rows()) || []; } catch (e) { return 0; }
+		var now = Date.now(), n = 0, sawExit = true;	// nothing before the first boot
+		for (var i = 0; i < rows.length; i++) {
+			var r = rows[i];
+			if (!r) continue;
+			if (r.w === 'pagehide') { sawExit = true; continue; }
+			if (r.w !== 'boot') continue;
+			if (!sawExit && now - r.t < WINDOW_MS) n++;
+			sawExit = false;
+		}
+		return n;
+	}
+
 	// Arm on the way in, before anything else has had a chance to start. This
 	// runs at script load and not on DOMContentLoaded: sync.js consults `on()`
 	// from `ready()`, and `ready()` is asked the moment a session exists.
-	if (!on() && bootsRecently() >= BOOTS) {
+	//
+	// On KILLED starts, not merely on starts. See `killedStarts`: a reload of any
+	// kind leaves a `pagehide` behind it, and turning sync off for somebody who
+	// pressed reload three times would be a worse bug than the one being hunted.
+	if (!on() && killedStarts() >= BOOTS) {
 		set(true, 'auto');
 	}
 	// Say so on EVERY boot, not only the one that armed it. A trail that showed
@@ -82,9 +117,10 @@
 	if (on()) trail('safe start', why() === 'auto' ? 'armed by the loop' : 'chosen by the user');
 
 	window.DaimondSafe = {
-		on:    on,
-		why:   why,
-		set:   set,
-		boots: bootsRecently,
+		on:     on,
+		why:    why,
+		set:    set,
+		boots:  bootsRecently,
+		killed: killedStarts,
 	};
 })();

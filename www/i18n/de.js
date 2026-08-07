@@ -1690,7 +1690,6 @@
 	'sys.up': 'Einen Ordner nach oben',
 	'trig.head': 'Wann dieser Diamond handelt',
 	'trig.none': 'Nichts eingestellt. Dieser Diamond antwortet, wenn du ihn ansprichst, und sonst nie.',
-	'trig.prompted': 'Wenn du ihn ansprichst',
 	'trig.activity': 'Nach {n} Minuten deiner Aktivität',
 	'trig.mail': 'Wenn Post in {folder} ({mailbox}) eintrifft',
 	'trig.edit': 'Diese Aktion bearbeiten',

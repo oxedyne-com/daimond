@@ -5,14 +5,21 @@
    automation. … new triggered actions (TAs) can be added with a
    + icon, and selected for editing from a pulldown."
 
-   A triggered action is: something happens, and a Diamond's
-   daimon is sent an instruction about it. Three triggers ship,
-   which are the three notes2 names:
+   A triggered action is: something happens WITHOUT THE USER
+   ASKING, and a Diamond's daimon is sent an instruction about it.
+   Two triggers ship:
 
-     Daimon Prompted             you typed something to it
      N minutes of user activity  a timer that only runs while
                                  you are actually working
      Email arrival in folder X   mail landed where you said
+
+   Notes2 named a third, "Daimon Prompted", on every Diamond by
+   default. It was built and then removed: prompting a Diamond is
+   the user asking, so there was nothing there to arm, and the row
+   ended up with a spacer where every other one has a widget. A
+   Diamond nobody has automated therefore has NO actions -- which
+   is what takes the traffic light off its tile, since it has
+   nothing that can spend unbidden.
 
    ── The three rules that decide everything below ──
 
@@ -57,15 +64,26 @@
 
 	/// Every trigger kind, with what it needs and what it sends.
 	///
-	/// `payload` is what reaches the daimon, and it is not the same for all
-	/// three: a prompt carries what the user typed, and a timer or an arrival
-	/// carries the instruction the user wrote when they set the TA up. Notes2
-	/// states both, and the difference is the reason `fire` takes the occasion
-	/// rather than composing from the record alone.
+	/// `needs` is what a kind cannot fire without. What REACHES the daimon is the
+	/// same for both of them -- the instruction the user wrote when they set the
+	/// TA up -- so there is no longer a `payload` field to say which; the kind
+	/// whose payload was "whatever the user just typed" is gone.
+	///
+	/// THERE IS NO `prompted` KIND. There was: notes2 said every Diamond carries
+	/// a "Daimon Prompted" TA, defaulting to on. It was built, and it was
+	/// decoration -- it had no light of its own (the daimon's `/self` leaf is
+	/// already that control), no edit, no copy, no delete, and a spacer where
+	/// every other row has a widget. The user's ruling, and it is the simpler
+	/// model: TYPING A PROMPT IS THE ACTIVATION. There is nothing to arm, so
+	/// there is nothing to represent, and a Diamond nobody has automated has no
+	/// triggered actions at all.
+	///
+	/// Removing the kind is also the migration. `normalise` drops an action whose
+	/// kind it does not know, so a `triggers.json` written by an earlier release
+	/// loses its `prompted` row the first time it is read.
 	var KINDS = {
-		prompted: { payload: 'user',        needs: [] },
-		activity: { payload: 'instruction', needs: ['minutes'] },
-		mail:     { payload: 'instruction', needs: ['mailbox', 'folder'] },
+		activity: { needs: ['minutes'] },
+		mail:     { needs: ['mailbox', 'folder'] },
 	};
 
 	/// A TA as stored. `id` is stable for the life of the action, because it is
@@ -74,7 +92,7 @@
 	function blank(kind) {
 		return {
 			id:          '',
-			kind:        kind || 'prompted',
+			kind:        kind || 'activity',
 			on:          true,
 			target:      '',        // '' means the Diamond that owns the TA
 			instruction: '',
@@ -90,16 +108,20 @@
 		};
 	}
 
-	/// The record every Diamond has whether or not the user has touched it.
+	/// The record a Diamond starts with, which is an EMPTY one.
 	///
-	/// Notes2: "Currently a diamond daimon is always on, so every diamond has the
-	/// first TA ('Daimon Prompted') which defaults to on (play)." It is a real
-	/// record rather than an implied one so that it has a pause leaf like the
-	/// rest -- an always-on thing with no control is the decoration rule again.
+	/// Notes2 asked for a first TA on every Diamond -- "Daimon Prompted", always
+	/// on -- and it was built. The user has since ruled it out, and the reason is
+	/// the rule this whole module is built on: a TA is an arrangement for the
+	/// Diamond to spend WITHOUT being asked. Prompting it is being asked. There
+	/// is nothing there to arm or hold, which is why that row ended up with a
+	/// spacer where every other one has a light.
+	///
+	/// So a Diamond nobody has automated has no actions, and therefore nothing
+	/// spendable of its own -- which is what takes the traffic light off an
+	/// ordinary Diamond's tile. See `pauseTree` in daimond.js.
 	function defaults() {
-		var t = blank('prompted');
-		t.id = 'prompted';
-		return { v: 1, actions: [t] };
+		return { v: 1, actions: [] };
 	}
 
 	/// Normalise whatever came off disk. A file the user has edited by hand is
@@ -124,12 +146,10 @@
 			seen[t.id] = 1;
 			out.actions.push(t);
 		});
-		// The always-there one. Added rather than assumed, and only when the file
-		// does not already carry it -- a user who deleted it has said something.
-		if (!out.actions.some(function (t) { return t.id === 'prompted'; })
-			&& !raw) {
-			out.actions.unshift(defaults().actions[0]);
-		}
+		// Nothing is added. There used to be an always-there `prompted` action put
+		// back here; a Diamond with no actions is now the ordinary case and means
+		// exactly what it says -- this Diamond acts when you prompt it, and at no
+		// other time.
 		return out;
 	}
 
@@ -145,9 +165,9 @@
 		for (var i = 0; i < needs.length; i++) {
 			if (!t[needs[i]]) return false;
 		}
-		if (KINDS[t.kind].payload === 'instruction' && !String(t.instruction || '').trim()) {
-			return false;
-		}
+		// Every kind sends the instruction the user wrote, so an empty one is a
+		// TA that would send nothing.
+		if (!String(t.instruction || '').trim()) return false;
 		return true;
 	}
 
@@ -173,11 +193,8 @@
 	///
 	/// # Arguments
 	/// * `t` - The triggered action.
-	/// * `said` - What the user typed, for a `prompted` TA. Ignored otherwise.
-	function compose(t, said) {
-		var body = (KINDS[t.kind] && KINDS[t.kind].payload === 'user')
-			? String(said || '')
-			: String(t.instruction || '');
+	function compose(t) {
+		var body = String(t.instruction || '');
 		var ctx = String(t.context || '').trim();
 		var fresh = ctx && hash(ctx) !== t.contextSent;
 		return {

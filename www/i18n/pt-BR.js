@@ -1689,7 +1689,6 @@
 	'sys.up': 'Subir uma pasta',
 	'trig.head': 'Quando este Diamond age',
 	'trig.none': 'Nada definido. Este Diamond responde quando você o chama, e em nenhum outro momento.',
-	'trig.prompted': 'Quando você o chama',
 	'trig.activity': 'Depois de {n} minutos de atividade sua',
 	'trig.mail': 'Quando chega correio em {folder} ({mailbox})',
 	'trig.edit': 'Editar esta ação',

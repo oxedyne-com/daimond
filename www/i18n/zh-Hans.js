@@ -1725,7 +1725,6 @@
 	'sys.up': '上一级文件夹',
 	'trig.head': '这个 Diamond 何时行动',
 	'trig.none': '没有设置。这个 Diamond 只在你提问时回答，其他时候都不动。',
-	'trig.prompted': '当你向它提问时',
 	'trig.activity': '在你活动 {n} 分钟之后',
 	'trig.mail': '当 {folder}（{mailbox}）收到邮件时',
 	'trig.edit': '编辑这个动作',
