@@ -8755,6 +8755,25 @@ import init, {
 		MAX: 8,
 		seq: 0,
 
+		// ── Gather ──────────────────────────────────────────────
+		// One dispatch is one BATCH, and when its last worker reaches a terminal
+		// state the reports go back to the daimon that sent them as a new round.
+		// Before this, fan-out existed and gather did not: a worker's text landed
+		// on a tile and only a person pressing "Fold in" moved it, which is the
+		// CRYSTAL's path and not the conductor's read. So the daimon could not
+		// compare two workers, notice that one contradicted another, or iterate.
+		//
+		// Not persisted. A batch is only meaningful while its workers are in
+		// flight, and a tab that died mid-fan-out comes back with its agents
+		// marked `interrupted` -- there is no round to resume, and inventing one
+		// on reload would re-spend on a turn the user never saw.
+		batches: {},
+		batchSeq: 0,
+		// How many gather rounds may follow one another. A daimon that answers
+		// every report by dispatching again is iterating, which is the point; one
+		// that does it for ever is a bill. Three is enough for read-compare-act.
+		MAX_GATHER_DEPTH: 3,
+
 		// Slots 1..MAX, handed to a worker when it starts and returned when it
 		// ends. Slot 0 is the chat's own key, and never a worker's.
 		slotFree: null,
@@ -8816,14 +8835,24 @@ import init, {
 		/// model and spends the same key, and it is a parameter rather than something read here
 		/// because the model must never be the thing that decides what to spend money on: that is
 		/// why `spawn_agent`'s schema is still `{name, task}`.
-		dispatch: function (diamondId, diamondName, specs, tainted, pick) {
+		dispatch: function (diamondId, diamondName, specs, tainted, pick, depth) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
 			var wm = (pick && pick.model) ? pick : diamondWorkerModel(diamondId);
+			// One batch per dispatch, so the reports can be gathered together when the
+			// LAST of them finishes rather than one at a time. A conductor that reads
+			// three reports in one round can say which two agree; one that reads them
+			// singly cannot compare anything.
+			var batch = 'b' + (++self.batchSeq);
+			this.batches[batch] = {
+				diamondId: diamondId, diamondName: diamondName,
+				depth: (depth | 0), expected: specs.length, ids: [],
+			};
 			specs.forEach(function (spec) {
 				var run = {
 					id: 'w' + (++self.seq),
+					batch: batch,
 					name: spec.name || ('agent-' + self.seq),
 					task: spec.task || '',
 					diamondId: diamondId,
@@ -8851,6 +8880,7 @@ import init, {
 					costUsd: 0,
 					app: null,
 				};
+				self.batches[batch].ids.push(run.id);
 				self.runs.unshift(run);
 				self.queue.push(run);
 				// Open the agent in the write-ahead log, so a tab that dies while it works recovers
@@ -8870,6 +8900,62 @@ import init, {
 			while (this.active < this.MAX && this.queue.length) {
 				this.start(this.queue.shift());
 			}
+		},
+
+		/// Has every worker of `batch` finished, and if so, hand its reports back
+		/// to the daimon that dispatched them.
+		///
+		/// Terminal means done, error OR stopped: a batch one of whose workers the
+		/// user stopped is finished, and waiting for it would strand the round for
+		/// ever. `paused` is NOT terminal -- a paused worker is going to be resumed,
+		/// and its report belongs in the round with the others.
+		///
+		/// The report carries each worker's name, how it ended and its text. A
+		/// worker that errored says so rather than being left out: "one of the
+		/// three could not do it" is exactly the kind of thing a conductor has to
+		/// know, and silently dropping it would make two agreeing reports look
+		/// unanimous.
+		gather: function (batch) {
+			var b = batch && this.batches[batch];
+			if (!b) return;
+			var self = this;
+			var mine = this.runs.filter(function (r) { return r.batch === batch; });
+			if (mine.length < b.expected) return;		// not all enqueued yet
+			var terminal = function (s) { return s === 'done' || s === 'error' || s === 'stopped'; };
+			if (!mine.every(function (r) { return terminal(r.status); })) return;
+			delete this.batches[batch];			// once only, whatever follows
+
+			if (workersHeld()) return;			// the pump is held: no new spending
+			if (b.depth >= this.MAX_GATHER_DEPTH) {
+				setCrystalStatus('Agents finished. Not reporting back: '
+					+ this.MAX_GATHER_DEPTH + ' rounds of dispatch is the limit.');
+				return;
+			}
+			// The Diamond must still exist and still be the one on screen. A gather
+			// round steers a Diamond, and steering one the user has navigated away
+			// from would spend on a surface they are not looking at.
+			if (!currentDiamond || currentDiamond.id !== b.diamondId) return;
+			if (!diamondCanRun(b.diamondId)) return;
+
+			var parts = mine.slice().reverse().map(function (r) {
+				var head = '### ' + (r.name || r.id)
+					+ (r.status === 'done' ? '' : ' — ' + r.status);
+				var body = (r.text || '').trim();
+				return head + '\n' + (body || '(no report)');
+			});
+			var instruction = 'The ' + (mine.length === 1 ? 'worker you dispatched has'
+					: mine.length + ' workers you dispatched have')
+				+ ' finished. Their reports follow. Read them, say what they add up to, and'
+				+ ' write anything worth keeping into the crystal. Do not dispatch again'
+				+ ' unless something is genuinely unresolved.\n\n' + parts.join('\n\n');
+
+			setCrystalStatus(mine.length === 1
+				? 'Agent finished; reporting back.'
+				: mine.length + ' agents finished; reporting back.');
+			// Deferred, so this does not run inside the finishing worker's `finally`:
+			// doSteer sets crystalBusy, and re-entering the pump from under it is how
+			// a turn ends up racing its own bookkeeping.
+			setTimeout(function () { doSteer(instruction, b.depth + 1); }, 0);
 		},
 
 		start: async function (run) {
@@ -9069,6 +9155,11 @@ import init, {
 				if (window.DaimondJournal) DaimondJournal.agentClose(run.id, run.status, run.promptTokens, run.completionTokens);
 				this.render();
 				this.pump();
+				// This worker's batch may now be complete, in which case its reports go
+				// back to the daimon that sent them. After `pump()`, so a queued worker
+				// of the same batch has been started and the batch is not called
+				// finished while one of its own is still waiting for a slot.
+				this.gather(run.batch);
 				// A finished agent may leave the app idle; let a deferred update settle.
 				if (this.active === 0) { try { window.dispatchEvent(new Event('daimond:idle')); } catch (e) {} }
 			}
@@ -9372,6 +9463,14 @@ import init, {
 			return card;
 		},
 	};
+
+	// The worker pump, on the same footing as DaimondMail, DaimondModels and
+	// DaimondPause: the Agents panel is a real surface and its state is worth
+	// reading from outside. Here rather than beside `window.DaimondUI`, because
+	// that runs long before this literal is assigned and would publish `undefined`.
+	// `dev/verify_gather.mjs` sets MAX_GATHER_DEPTH to 0 through this to restore
+	// the pre-gather behaviour and prove its checks against it.
+	window.DaimondWorkers = Workers;
 
 	// A DaimondApp used only to run file tools directly (no LLM turn), rooted at the
 	// active workspace. Shared by the Workspace panel and the instructions loader.
@@ -15148,11 +15247,28 @@ import init, {
 
 	/// Steer the crystal: run one crystal-agent turn, streaming its tool
 	/// activity to the Agents panel, then re-render the changed crystal.
-	async function doSteer() {
+	///
+	/// `preset` supplies the instruction instead of the input box, which is how a
+	/// batch of finished workers gets its reports back to the daimon that sent
+	/// them (see `Workers.gather`). `depth` counts how many gather rounds deep
+	/// this already is, so a daimon that answers every report by dispatching again
+	/// stops rather than fanning out for ever.
+	async function doSteer(presetArg, depthArg) {
 		if (crystalBusy || !currentDiamond) return;
+		// `doSteer` is wired straight to the Send button and to a key handler, so
+		// the first argument is USUALLY a DOM event, not an instruction. Taking it
+		// on trust made the MouseEvent the prompt: the box was never cleared, the
+		// event went to the model as the instruction, and every worker in the
+		// fan-out silently failed to start. `verify_slots` caught it -- 4/0 to 2/2 --
+		// which is why a new optional parameter on an existing handler has to say
+		// what it will accept rather than assume its callers.
+		var preset = (typeof presetArg === 'string') ? presetArg : '';
+		var depth  = (typeof depthArg === 'number') ? depthArg : 0;
 		var input = document.getElementById('steer-input');
-		if (!input) return;
-		var instruction = input.value.trim();
+		// A gather round carries its own words and may run with the Diamond's
+		// surface nowhere on screen, so it must not require the box.
+		if (!input && !preset) return;
+		var instruction = preset || (input ? input.value.trim() : '');
 		if (!instruction) return;
 		// Can THIS Diamond's model run? Asking whether the *default* provider is configured is the
 		// wrong question: it would stop a perfectly good Diamond steering because some other
@@ -15161,7 +15277,9 @@ import init, {
 			openSettings(t('crystal.no_key_steer'));
 			return;
 		}
-		input.value = ''; input.style.height = 'auto';
+		// Only what the user typed is cleared. A gather round never touched the box,
+		// and clearing it would throw away something half-written while workers ran.
+		if (input && !preset) { input.value = ''; input.style.height = 'auto'; }
 		setCrystalBusy(true);
 		setCrystalStatus(t('crystal.steering'));
 
@@ -15228,8 +15346,12 @@ import init, {
 				// On the model the user chose for THIS Diamond's workers -- not the starred
 				// default, which is what every worker used to be built on however the Diamond
 				// itself was pinned.
+				// The depth travels with the batch: when these workers finish, their
+				// reports come back as a round one deeper, and a daimon that answers
+				// every report by dispatching again runs out of room rather than
+				// fanning out for ever.
 				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted,
-					diamondWorkerModel(diamondId));
+					diamondWorkerModel(diamondId), (depth | 0));
 			}
 		} else if (rejected) {
 			setCrystalStatus(rejected === 1
