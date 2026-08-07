@@ -1765,5 +1765,18 @@
 	'trail.copy':            'コピー',
 	'trail.copied':          'コピーしました',
 	'trail.clear':           '消去',
+
+	// A safe start: the app opens without the sync engine, so a device that
+	// cannot stay open long enough to be used gets to be used. See safe.js.
+	'safe.armed':           'Daimond は同期せずに起動したため、開いたままになるはずです。この端末上のデータは安全です。同期を再びオンにするまで、他の端末に届かないだけです。',
+	'safe.offer':           'Daimond が開いたままにならない場合は、同期せずに起動してください。データはこの端末に残り、何も削除されません。',
+	'safe.turn_off':        '同期せずに起動',
+	'safe.turn_on':         '同期を再びオンにする',
+	'safe.chip':            '同期オフ（セーフ起動）',
+	'safe.chip_reason':     'Daimond は同期せずに起動したため、この端末のデータは他の端末に届いていません。失われたものはありません。すべてここにあります。',
+	'safe.chip_click':      'クリックすると同期を再びオンにします。',
+	'safe.turn_on_title':   '同期を再びオンにしますか？',
+	'safe.turn_on_ask':     'Daimond を再起動し、他の端末との同期をもう一度試みます。再び勝手に閉じるようになった場合は、自動的にセーフ起動に戻ります。',
+	'safe.turn_on_ok':      '同期ありで再起動',
 	});
 })();

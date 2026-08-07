@@ -1730,5 +1730,18 @@
 	'trail.copy':            'Copier',
 	'trail.copied':          'Copié',
 	'trail.clear':           'Effacer',
+
+	// A safe start: the app opens without the sync engine, so a device that
+	// cannot stay open long enough to be used gets to be used. See safe.js.
+	'safe.armed':           'Daimond a démarré sans synchronisation, il devrait donc rester ouvert. Votre travail est en sécurité sur cet appareil ; il ne parvient simplement pas à vos autres appareils tant que la synchronisation n’est pas réactivée.',
+	'safe.offer':           'Si Daimond ne reste pas ouvert, démarrez-le sans synchronisation. Votre travail reste sur cet appareil et rien n’est supprimé.',
+	'safe.turn_off':        'Démarrer sans synchronisation',
+	'safe.turn_on':         'Réactiver la synchronisation',
+	'safe.chip':            'Sync. désactivée (démarrage sûr)',
+	'safe.chip_reason':     'Daimond a démarré sans synchronisation, le travail de cet appareil ne parvient donc pas à vos autres appareils. Rien n’a été perdu — tout est toujours là.',
+	'safe.chip_click':      'Cliquez pour réactiver la synchronisation.',
+	'safe.turn_on_title':   'Réactiver la synchronisation ?',
+	'safe.turn_on_ask':     'Daimond va redémarrer et tenter de se synchroniser à nouveau avec vos autres appareils. S’il recommence à se fermer tout seul, il reviendra de lui-même au démarrage sûr.',
+	'safe.turn_on_ok':      'Redémarrer avec la synchronisation',
 	});
 })();

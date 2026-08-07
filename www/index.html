@@ -882,6 +882,10 @@
      thrown by anything below has to land in the trail rather than in a console
      nobody on a phone can open. -->
 <script src="js/breadcrumb.js"></script>
+<!-- safe.js next, and it must be next: it reads the trail breadcrumb.js has
+     just written to decide whether this app is looping, and sync.js consults
+     its answer from the first moment a session exists. -->
+<script src="js/safe.js"></script>
 <!-- i18n.js next: it owns the language and the display currency, and every
      money formatter in the app funnels through it. The English table follows
      immediately, because it is both the baseline and the fallback. -->

@@ -188,9 +188,38 @@
 		catch (e) { /* ignore */ }
 	}
 
+	/// One line in the durable trail, for a bug only a phone can see.
+	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
+
+	/// Lift a safe start, and reload so the engine gets its boot back.
+	///
+	/// A reload rather than a `start()` here: everything this file does at a boot
+	/// has already not happened, and half-starting it into a running page would
+	/// leave listeners registered twice. Asked first, because a mis-tap on a chip
+	/// must not throw away what the user is in the middle of.
+	async function turnSyncBackOn() {
+		var ok = true;
+		try {
+			if (window.DaimondCore && DaimondCore.confirm) {
+				ok = await DaimondCore.confirm(t('safe.turn_on_ask'), t('safe.turn_on_ok'),
+					{ title: t('safe.turn_on_title'), danger: false });
+			}
+		} catch (e) { ok = false; }			// no dialog available: do nothing rather than reload
+		if (!ok) return;
+		DaimondSafe.set(false, 'user');
+		location.reload();
+	}
+
 	/// Whether sync can run at all right now: an unlocked identity (for the key)
 	/// and an authenticated gateway session (for the mailbox).
+	///
+	/// A SAFE START is refused here and nowhere else. Every entry point in this
+	/// file already asks -- pull, push, the debounce, the wake channel, the
+	/// re-check after a tier change -- so one gate stops all of them, and there is
+	/// no second copy of the rule to fall out of step with this one. See safe.js
+	/// for why the app can be asked to start without sync at all.
 	function ready() {
+		if (window.DaimondSafe && DaimondSafe.on()) return false;
 		return !!(window.DaimondIdentity && DaimondIdentity.isUnlocked()
 			&& window.DaimondGateway && DaimondGateway.state && DaimondGateway.state().authed
 			&& window.DaimondCore && DaimondCore.collectSync);
@@ -312,6 +341,14 @@
 		// a trap sitting next to the pairing button.
 		c.addEventListener('click', function () {
 			if (c.dataset.state !== 'off') return;
+			// A safe start is the one "off" the user can lift themselves, so the
+			// press has to lift it rather than sell them a tier they may already
+			// hold. It takes effect on the next start, because everything this
+			// engine does at a boot has already not happened.
+			if (window.DaimondSafe && DaimondSafe.on()) {
+				turnSyncBackOn();
+				return;
+			}
 			if (window.DaimondAdmin && DaimondAdmin.credits) DaimondAdmin.credits(t('sync.off_pitch'));
 		});
 		var pair = document.getElementById('pair-link-btn');
@@ -410,6 +447,15 @@
 	/// being oversized, and telling it to go and shrink a Diamond would send it to
 	/// do work that changes nothing.
 	function restStatus() {
+		// ABOVE EVERYTHING. A safe start is the app deliberately not syncing, and
+		// it must never be silent: a device that quietly stopped saving to the
+		// account would be a worse bug than the one it was armed against. It is
+		// also the only state here the user can lift with one press, which is why
+		// it outranks refusals they can do nothing about.
+		if (window.DaimondSafe && DaimondSafe.on()) {
+			setStatus('off', t('safe.chip'), 0, t('safe.chip_reason') + '\n' + t('safe.chip_click'));
+			return;
+		}
 		if (!entitled)     { setStatus('off', t('sync.off'), 0, offReason()); return; }
 		if (tooLarge)      { showTooLarge(); return; }
 		// Below both of those. An account that may not sync at all, and a parcel
@@ -512,8 +558,16 @@
 		if (!j.present) { serverVersion = 0; saveVersion(); restStatus(); return 0; }
 		var state;
 		try {
+			// The size of what arrived, before it is opened. Three copies of this
+			// exist at once a moment from now -- the sealed blob, the plain text,
+			// and the object graph `JSON.parse` builds from it -- so on a phone
+			// this number is the single largest allocation the app ever makes, and
+			// until now nothing anywhere recorded it. Bytes only: no content.
+			trail('sync pull', Math.round((j.blob || '').length / 1024) + 'K sealed');
 			var plain = await DaimondIdentity.unwrap(j.blob);	// throws on a wrong key.
+			trail('sync parcel', Math.round(plain.length / 1024) + 'K plain');
 			state = JSON.parse(plain);
+			trail('sync parsed');
 		} catch (e) {
 			// Not readable at all, which is a DIFFERENT thing from readable and
 			// not mergeable, and the two must not be handled alike. What cannot
@@ -1085,6 +1139,11 @@
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// If we booted already authed (a returning unlocked tab), reconcile now.
 		if (ready()) onAuthed();
+		// A safe start reaches nothing that would paint the chip -- `ready()` is
+		// false, so every path above returns before `restStatus`. Say it here, or
+		// the one state the user has to be told about is the one state that never
+		// appears. Deferred a tick because the top bar is built by daimond.js.
+		if (window.DaimondSafe && DaimondSafe.on()) setTimeout(restStatus, 0);
 		log('started');
 	}
 

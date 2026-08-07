@@ -1767,5 +1767,18 @@
 	'trail.copy':            '복사',
 	'trail.copied':          '복사됨',
 	'trail.clear':           '지우기',
+
+	// A safe start: the app opens without the sync engine, so a device that
+	// cannot stay open long enough to be used gets to be used. See safe.js.
+	'safe.armed':           'Daimond가 동기화 없이 시작되었으므로 계속 열려 있어야 합니다. 이 기기의 작업은 안전합니다. 다시 켤 때까지 다른 기기로 전달되지 않을 뿐입니다.',
+	'safe.offer':           'Daimond가 계속 열려 있지 않으면 동기화 없이 시작하십시오. 작업은 이 기기에 남아 있으며 아무것도 삭제되지 않습니다.',
+	'safe.turn_off':        '동기화 없이 시작',
+	'safe.turn_on':         '동기화 다시 켜기',
+	'safe.chip':            '동기화 꺼짐(안전 시작)',
+	'safe.chip_reason':     'Daimond가 동기화 없이 시작되어 이 기기의 작업이 다른 기기에 전달되지 않고 있습니다. 손실된 것은 없습니다. 모두 그대로 있습니다.',
+	'safe.chip_click':      '클릭하면 동기화를 다시 켭니다.',
+	'safe.turn_on_title':   '동기화를 다시 켜시겠습니까?',
+	'safe.turn_on_ask':     'Daimond가 다시 시작하여 다른 기기와의 동기화를 재시도합니다. 다시 저절로 닫히기 시작하면 스스로 안전 시작으로 돌아갑니다.',
+	'safe.turn_on_ok':      '동기화와 함께 다시 시작',
 	});
 })();

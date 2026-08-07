@@ -161,6 +161,13 @@ check(reloads <= 1,
 	let panel = await p.$('#id-trail');
 	check(panel === null, 'a working app is offered no diagnostics');
 
+	// The app's own word for "Copy", asked of the app rather than spelled here:
+	// this suite runs under whatever locale the browser is in, and a hardcoded
+	// English label would be a second literal to go stale.
+	const t_copy = await p.evaluate(() => {
+		try { return DaimondI18n.t('trail.copy'); } catch (e) { return 'Copy'; }
+	});
+
 	// Three boots inside ninety seconds is not something a person does.
 	await p.evaluate(() => {
 		try {
@@ -183,7 +190,14 @@ check(reloads <= 1,
 	});
 	check(panel !== null && shown && shown.onLockCard,
 		'a looping app puts the trail on the lock screen by itself', JSON.stringify(shown && shown.lead));
-	check(!!shown && shown.lines >= 3 && shown.acts.length === 2,
+	// NAMED, not counted. This read `acts.length === 2` and went red the day a
+	// third control -- a safe start -- was added to the same row, which is the
+	// literal-count fault this suite has now committed three times: it fails on
+	// the release that makes the panel MORE useful, and says nothing about the
+	// thing it is for. What matters is that the trail is there and that a person
+	// with no console can get it off the device.
+	const copyable = !!shown && shown.acts.some((a) => a === t_copy);
+	check(!!shown && shown.lines >= 3 && copyable,
 		'with the trail in it and a way to copy it', JSON.stringify(shown));
 }
 

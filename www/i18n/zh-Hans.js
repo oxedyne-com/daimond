@@ -1763,5 +1763,18 @@
 	'trail.copy':            '复制',
 	'trail.copied':          '已复制',
 	'trail.clear':           '清除',
+
+	// A safe start: the app opens without the sync engine, so a device that
+	// cannot stay open long enough to be used gets to be used. See safe.js.
+	'safe.armed':           'Daimond 已在不同步的情况下启动，因此应该会保持打开。你的工作在本设备上是安全的，只是在重新开启同步之前不会传到你的其他设备。',
+	'safe.offer':           '如果 Daimond 无法保持打开，请在不同步的情况下启动它。你的工作会留在本设备上，不会删除任何内容。',
+	'safe.turn_off':        '不同步启动',
+	'safe.turn_on':         '重新开启同步',
+	'safe.chip':            '同步已关闭（安全启动）',
+	'safe.chip_reason':     'Daimond 在不同步的情况下启动，因此本设备的工作没有传到你的其他设备。没有任何内容丢失——都还在这里。',
+	'safe.chip_click':      '点击以重新开启同步。',
+	'safe.turn_on_title':   '重新开启同步？',
+	'safe.turn_on_ask':     'Daimond 将重新启动，并再次尝试与你的其他设备同步。如果它又开始自行关闭，会自动回到安全启动。',
+	'safe.turn_on_ok':      '带同步重新启动',
 	});
 })();

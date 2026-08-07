@@ -116,6 +116,36 @@ pub fn panic_on_purpose() {
     panic!("panic_on_purpose: proving the hook reports");
 }
 
+/// How much linear memory this module currently holds, in bytes.
+///
+/// WHY THIS EXISTS. The leading explanation for a phone that unlocks, shows the
+/// app for a second and dies is that iOS Safari is killing the tab for using too
+/// much memory -- there is no `pagehide`, so the tab is not reloading, it is
+/// being taken away. That has been an explanation for four sessions and has
+/// never once been a MEASUREMENT, because Safari exposes no
+/// `performance.memory`. Wasm does: the linear memory only ever grows, and its
+/// size is a number the module can read about itself.
+///
+/// Sampled at a high-water mark rather than on a timer (see `watchHeap` in
+/// daimond.js), so a trail carries the growth curve in a dozen rows rather than
+/// hundreds. If those rows climb to a few hundred megabytes and stop, the answer
+/// is memory and the argument is over; if the tab dies at forty, it never was.
+#[wasm_bindgen]
+pub fn heap_bytes() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // One page is 64 KiB, by the specification, and this is the only place
+        // the app can see its own footprint at all.
+        (core::arch::wasm32::memory_size(0) as f64) * 65536.0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // The host build has an ordinary allocator and no linear memory to
+        // report. Zero, so a caller reads "not measured" rather than a lie.
+        0.0
+    }
+}
+
 /// Install [`report_panic`], once.
 ///
 /// Idempotent by a flag rather than by asking: `std::panic::set_hook` replaces

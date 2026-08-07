@@ -54,6 +54,7 @@ import init, {
 	builtin_tools,
 	qr_matrix,
 	set_account_ns,
+	heap_bytes,
 	install_panic_hook,
 	set_workspace_dir,
 	use_opfs_workspace,
@@ -2323,9 +2324,15 @@ import init, {
 		// tombstone that did not already come from this device.
 		if (!incoming.length && !deletions.length) return;
 		var app = diamondApp(), local = {};
+		// The second `list_diamonds` walk on the looping phone starts right after
+		// `connectGateway`, and this is the only caller on that path that was
+		// never instrumented. Named apart from the walk inside the wasm so a
+		// trail can tell the two of them apart.
+		trail('sync apply list', incoming.length + ' in, ' + heapNote());
 		try {
 			JSON.parse(await app.list_diamonds()).forEach(function (d) { if (d && d.id) local[d.id] = d; });
 		} catch (e) { return; }
+		trail('sync apply listed', Object.keys(local).length + ' here, ' + heapNote());
 		var changed = false;
 		for (var j = 0; j < deletions.length; j++) {
 			var dead = deletions[j];
@@ -2493,9 +2500,17 @@ import init, {
 		var failed = [];
 		if (!remote || typeof remote !== 'object') return { failed: ['parcel'] };
 		/// Run one section, and NOTE a failure rather than let it out.
+		///
+		/// Both ends go into the durable trail. A section that reports its start
+		/// and never its finish is a section that never settled, and that absence
+		/// is the strongest signal the trail has -- it is how `loadDiamonds` was
+		/// found. The whole apply path was the last uninstrumented candidate for
+		/// the second `list_diamonds` walk seen on the looping phone.
 		async function section(name, fn) {
-			try { await fn(); }
+			trail('sync ' + name, heapNote());
+			try { await fn(); trail('sync ' + name + ' ok', heapNote()); }
 			catch (e) {
+				trail('sync ' + name + ' FAILED', (e && (e.message || e)) || '?');
 				failed.push(name);
 				// Loud on purpose: a merge that silently did half its work is the
 				// bug this whole function is shaped around.
@@ -8493,6 +8508,13 @@ import init, {
 		/// promise that makes -- and a second copy of a focus trap is a second
 		/// thing to keep right, which is how the two would drift apart.
 		keepFocusIn:     keepFocusIn,
+		/// The app's own confirm box. Published because a classic script that
+		/// needs one has nothing else to reach for, and the alternative it does
+		/// reach for is `window.confirm` -- an OS dialog with the origin in its
+		/// title, styled nothing like the app, blocking the page. sync.js asks
+		/// before lifting a safe start, and that was the one caller left doing it
+		/// natively.
+		confirm:         function (message, okLabel, opts) { return confirmDialog(message, okLabel, opts); },
 		/// Re-read the Diamonds and redraw the rail. Published for
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
@@ -17716,6 +17738,45 @@ import init, {
 	/// One line in the durable trail. See www/js/breadcrumb.js.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
 
+	/// The wasm module's own memory, in whole megabytes. Empty before the module
+	/// exists, which is the honest answer rather than a zero that reads as small.
+	function heapMb() {
+		try {
+			var b = heap_bytes();
+			return b > 0 ? Math.round(b / 1048576) : null;
+		} catch (e) { return null; }
+	}
+
+	/// A short "heap 64M" for a trail row, or '' when there is nothing to say.
+	function heapNote() {
+		var m = heapMb();
+		return m == null ? '' : 'heap ' + m + 'M';
+	}
+
+	/// Watch the wasm heap, and record it ONLY when it reaches a new high.
+	///
+	/// The leading explanation for the iPhone loop is that Safari is killing the
+	/// tab for using too much memory. That has never been measured, because
+	/// Safari exposes no `performance.memory` -- but wasm linear memory only ever
+	/// grows, and the module can read its own size (see `heap_bytes`). What this
+	/// leaves in the trail is a growth curve: a dozen rows saying where the
+	/// footprint got to and when, ending wherever the tab died.
+	///
+	/// High-water only, in 16 MB steps, so a boot writes about ten rows rather
+	/// than the several hundred a plain timer would -- which would push the
+	/// beginning of the loop out of a 200-row trail, and the beginning is the
+	/// part that says what started it.
+	var _heapHigh = 0;
+	function watchHeap() {
+		var STEP = 16;
+		setInterval(function () {
+			var m = heapMb();
+			if (m == null || m < _heapHigh + STEP) return;
+			_heapHigh = m;
+			trail('heap high', m + 'M');
+		}, 500);
+	}
+
 	/// Run a step of the boot and RECORD it, so a tab that dies part-way names
 	/// the step it died on.
 	///
@@ -17730,10 +17791,12 @@ import init, {
 		try {
 			var r = fn();
 			if (r && typeof r.then === 'function') {
-				return r.then(function (v) { trail('ok ' + name); return v; },
+				// The heap on the way OUT of every step, so a trail says which one
+				// the footprint grew across rather than only that it grew.
+				return r.then(function (v) { trail('ok ' + name, heapNote()); return v; },
 					function (e) { trail('FAILED ' + name, (e && (e.message || e)) || '?'); });
 			}
-			trail('ok ' + name);
+			trail('ok ' + name, heapNote());
 			return r;
 		} catch (e) {
 			trail('FAILED ' + name, (e && (e.message || e)) || '?');
@@ -18087,6 +18150,35 @@ import init, {
 			wrap.remove();
 		});
 		row.appendChild(copy); row.appendChild(clear);
+
+		// A safe start, offered where the user actually is. This screen is the
+		// only one a looping device stays on long enough to read, so the control
+		// that gets the app open again has to be here and not in a settings pane
+		// behind an app that will not stay up.
+		//
+		// It is usually already ON by the time this panel appears -- safe.js arms
+		// itself at the same three boots that show it -- so the button is normally
+		// the way BACK, and it says which of the two it is.
+		if (window.DaimondSafe) {
+			var safe = document.createElement('button');
+			safe.type = 'button';
+			safe.className = 'id-trail-btn';
+			safe.id = 'id-trail-safe';
+			var armed = DaimondSafe.on();
+			safe.textContent = armed ? t('safe.turn_on') : t('safe.turn_off');
+			safe.addEventListener('click', function () {
+				DaimondSafe.set(!armed, 'user');
+				location.reload();
+			});
+			row.appendChild(safe);
+			// And say plainly what state it is in, because "Turn sync back on" is
+			// a button, not an explanation.
+			var note = document.createElement('p');
+			note.className = 'id-trail-lead';
+			note.textContent = armed ? t('safe.armed') : t('safe.offer');
+			wrap.insertBefore(note, pre);
+		}
+
 		wrap.appendChild(row);
 		card.appendChild(wrap);
 	}
@@ -20437,6 +20529,8 @@ import init, {
 			// no file or line, a Promise that never settles, and a poisoned module.
 			// An iPhone looped on exactly that for four sessions.
 			try { install_panic_hook(); } catch (e) { /* an older bundle has none */ }
+			// And the footprint, from the moment there is one to read.
+			try { watchHeap(); } catch (e) { /* an older bundle cannot report it */ }
 			window.__DAIMOND_READY = true;
 			// Point OPFS at the current account's subdirectory BEFORE any file tool runs, so this
 			// account's workspace and Daimond's own state are isolated from every other account at

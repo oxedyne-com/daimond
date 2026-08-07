@@ -1869,5 +1869,18 @@
 	'trail.copied':          'Copied',
 	'trail.clear':           'Clear',
 
+	// A safe start: the app opens without the sync engine, so a device that
+	// cannot stay open long enough to be used gets to be used. See safe.js.
+	'safe.armed':            'Daimond has started without syncing, so it should stay open. Your work is safe on this device; it is just not travelling to your other devices until this is turned back on.',
+	'safe.offer':            'If Daimond will not stay open, start it without syncing. Your work stays on this device and nothing is deleted.',
+	'safe.turn_off':         'Start without syncing',
+	'safe.turn_on':          'Turn syncing back on',
+	'safe.chip':             'Sync off (safe start)',
+	'safe.chip_reason':      'Daimond started without syncing, so this device’s work is not reaching your other devices. Nothing has been lost — it is all still here.',
+	'safe.chip_click':       'Click to turn syncing back on.',
+	'safe.turn_on_title':    'Turn syncing back on?',
+	'safe.turn_on_ask':      'Daimond will restart and try to sync with your other devices again. If it starts closing itself again, it will go back to a safe start on its own.',
+	'safe.turn_on_ok':       'Restart with syncing',
+
 	});
 })();

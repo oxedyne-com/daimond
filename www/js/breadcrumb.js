@@ -21,6 +21,10 @@
 	'use strict';
 
 	var KEY = 'daimond-trail';
+	// The build this tab last confirmed it was running. `build.json` is fetched,
+	// so its id cannot be known at script load -- but the PREVIOUS boot's answer
+	// can, and on a looping device that is almost always the same one.
+	var BKEY = 'daimond-build-seen';
 	// 200, not 40. Once the boot itself is instrumented a single cycle is about
 	// twenty rows, and forty held less than two -- so the trail would drop the
 	// beginning of the loop, which is the part that says what started it.
@@ -87,11 +91,40 @@
 
 	function clear() { try { localStorage.removeItem(KEY); } catch (e) {} }
 
+	/// The build id, once `build.json` has actually been read. Called by
+	/// updater.js, which is the only thing that knows it.
+	///
+	/// WHY THIS EXISTS. A trail arrived from the phone that could have come from
+	/// either of two releases, and there was no way to tell which -- so the one
+	/// line it was taken to answer ("does the new marker appear?") could not be
+	/// read at all, and a release cycle was spent finding that out. A trail that
+	/// cannot be attributed to a build is not evidence.
+	function setBuild(id) {
+		if (!id) return;
+		var was = null;
+		try { was = localStorage.getItem(BKEY); } catch (e) {}
+		try { localStorage.setItem(BKEY, String(id)); } catch (e) {}
+		// The id EVERY time, not only when it changes: a loop that cycles through
+		// two builds and a loop stuck on one look identical otherwise.
+		note('build', String(id) + (was && was !== id ? ' (was ' + was + ')' : ''));
+	}
+
+	/// The build the LAST boot confirmed. A guess, marked as one with `~`.
+	function lastBuild() {
+		try { return localStorage.getItem(BKEY) || ''; } catch (e) { return ''; }
+	}
+
 	// The boot itself, which is the line that makes a loop visible: several
 	// "boot" rows a second or two apart is a reloading tab, and no amount of
 	// describing it over a chat says it as plainly.
+	//
+	// The build carried here is the one the PREVIOUS boot confirmed, marked `~`
+	// because this one has not read `build.json` yet and may be a newer release.
+	// A confirmed `build` row follows within a second; this is what a boot that
+	// dies before then still says.
 	note('boot', (document.visibilityState || '?')
-		+ ' ' + (window.matchMedia && matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser'));
+		+ ' ' + (window.matchMedia && matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser')
+		+ (lastBuild() ? ' ~' + lastBuild() : ''));
 
 	// An unhandled error or rejection is exactly what a phone cannot show, and
 	// exactly what would explain a screen that goes away again.
@@ -108,7 +141,21 @@
 		} else if (e) {
 			where = '(no filename: cross-origin or wasm)';
 		}
-		note('page error', ((e && e.message) || '?') + ' @ ' + where);
+		// The KIND of error, when the engine still hands over the object behind
+		// the redacted message. `"Script error."` says nothing; `RuntimeError`
+		// beside it says the throw came out of wasm, and a wasm trap and a
+		// scripting mistake need completely different fixes. This has been the
+		// only line in four trails and it has never named its own class.
+		var kind = '';
+		try {
+			var err = e && e.error;
+			if (err) {
+				kind = ' [' + (err.name || 'Error') + (err.message ? ': ' + err.message : '') + ']';
+				var frame = (err.stack || '').split('\n')[1];
+				if (frame) kind += ' ' + frame.trim().slice(0, 60);
+			}
+		} catch (e2) { /* an error object that will not be read is still an error */ }
+		note('page error', ((e && e.message) || '?') + ' @ ' + where + kind);
 	});
 	window.addEventListener('unhandledrejection', function (e) {
 		var r = e && e.reason;
@@ -119,5 +166,11 @@
 		note('pagehide', e && e.persisted ? 'into the back/forward cache' : 'unloading');
 	});
 
-	window.DaimondTrail = { note: note, text: text, clear: clear, rows: read };
+	window.DaimondTrail = {
+		note:     note,
+		text:     text,
+		clear:    clear,
+		rows:     read,
+		setBuild: setBuild,
+	};
 })();

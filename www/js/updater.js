@@ -264,6 +264,10 @@
 
 		var first = await readStamp();
 		booted = first ? first.build : null;
+		// Into the trail, and into storage for the next boot's `boot` row. Without
+		// it a trail from a device cannot be attributed to a release, and one
+		// already could not be -- which cost a whole cycle to discover.
+		try { window.DaimondTrail.setBuild(booted); } catch (e) {}
 
 		// A reload that landed on a DIFFERENT build did its job, so the forced
 		// counter starts again. Without this, one bad afternoon leaves a phone
