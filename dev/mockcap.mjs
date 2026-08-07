@@ -10,7 +10,12 @@
 //
 //   node dev/mockcap.mjs [port]        # default 9098
 //
-// Every request is appended to dev/mockcap.log as one JSON line carrying the
+// The port is `DAIMOND_CAP_PORT` (or argv[2]) and the log `DAIMOND_CAP_LOG`, so
+// this can be one fixture of a numbered world -- see dev/world.sh.  A shared log
+// is the trap the ports alone do not close: two suites appending to one file make
+// every assertion read another agent's traffic.
+//
+// Every request is appended to the log as one JSON line carrying the
 // `max_tokens` the client asked for, so a test can assert on what Daimond SENT
 // as well as on what it did with the reply.
 //
@@ -37,8 +42,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LOG  = path.join(HERE, 'mockcap.log');
-const PORT = Number(process.argv[2] || 9098);
+const LOG  = process.env.DAIMOND_CAP_LOG || path.join(HERE, 'mockcap.log');
+const PORT = Number(process.argv[2] || process.env.DAIMOND_CAP_PORT || 9098);
 
 /// Characters per token, for the cap arithmetic.
 const CHARS_PER_TOKEN = 4;

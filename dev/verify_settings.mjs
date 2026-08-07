@@ -1,6 +1,6 @@
 // A key the provider rejects must not be reported "Saved."/connected, and a
 // no-account stranger must have a way to create one from the credits pitch.
-import { open, errors } from './harness.mjs';
+import { open, errors, MOCK } from './harness.mjs';
 
 // The mock returns 401 on /models when asked (any key), so drive a rejected key.
 // We point at a base URL whose /models 401s: use the mock but with a path that
@@ -9,7 +9,7 @@ import { open, errors } from './harness.mjs';
 const s = await open({ name: 'settings', connect: false });
 
 // Open settings and try to save a key the model-fetch will reject.
-const result = await s.page.evaluate(async () => {
+const result = await s.page.evaluate(async (mock) => {
 	// Open settings.
 	const cog = document.getElementById('settings-btn');
 	if (cog) cog.click();
@@ -20,7 +20,7 @@ const result = await s.page.evaluate(async () => {
 	// Point at an endpoint whose /models returns 401 (the mock's /v1/models is
 	// 200, so instead use a URL that 404/401s): use a clearly-bad host path.
 	const url = document.getElementById('cfg-base-url');
-	url.value = 'http://127.0.0.1:9099/v1/chat/completions';
+	url.value = mock;
 	url.dispatchEvent(new Event('input', { bubbles: true }));
 	url.dispatchEvent(new Event('change', { bubbles: true }));
 	const key = document.getElementById('cfg-api-key');
@@ -35,7 +35,7 @@ const result = await s.page.evaluate(async () => {
 	save.click();
 	await new Promise(r => setTimeout(r, 400));
 	return { note: document.getElementById('byok-note').textContent };
-});
+}, MOCK);
 console.log('after saving a rejected key, note:', JSON.stringify(result.note));
 const refused = /rejected/i.test(result.note);
 console.log('REJECTED KEY NOT REPORTED CONNECTED:', refused);

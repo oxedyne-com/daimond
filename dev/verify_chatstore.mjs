@@ -19,7 +19,8 @@
 //   3. When the store itself fails, the user is TOLD, standing on screen, with
 //      the one action that rescues the work: write it to a file now.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099).
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import { open, chat, signInAs, errors } from './harness.mjs';
 
 const ok = [], bad = [];

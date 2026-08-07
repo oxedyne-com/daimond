@@ -9,6 +9,9 @@ const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.m
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SP = new URL('shots/', import.meta.url).pathname;
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 const LOCS = ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans'];
 const PAGES = ['index.html', 'interface.html', 'models.html', 'chats-and-diamonds.html',
@@ -21,7 +24,7 @@ const problems = [];
 
 for (const loc of LOCS) {
 	for (const p of PAGES) {
-		const url = `http://localhost:8777/guide/${loc}/${p}`;
+		const url = `${APP}/guide/${loc}/${p}`;
 		const r = await page.goto(url, { waitUntil: 'networkidle' });
 		if (!r || !r.ok()) { problems.push(`${loc}/${p}: HTTP ${r ? r.status() : '?'}`); bad++; continue; }
 		checked++;
@@ -57,6 +60,6 @@ for (const loc of LOCS) {
 console.log(`rendered ${checked} translated pages`);
 if (problems.length) { console.log('\n' + problems.join('\n')); }
 console.log(bad ? `\n${bad} PROBLEMS` : '\nNO OVERFLOW ANYWHERE');
-await page.goto('http://localhost:8777/guide/ja/interface.html', { waitUntil: 'networkidle' });
+await page.goto(`${APP}/guide/ja/interface.html`, { waitUntil: 'networkidle' });
 await page.screenshot({ path: `${SP}/guide-ja-interface.png`, fullPage: false });
 await browser.close();

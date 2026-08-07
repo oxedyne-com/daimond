@@ -19,8 +19,8 @@
 //
 //   node dev/verify_mailsync.mjs
 //
-// Needs the app on :8777 and the gateway on :9002 (sync is Pro-gated, so the
-// account is granted Pro the one way the gateway grants it).
+// Needs the app (DAIMOND_PORT, default 8777) and the gateway on :9002 (sync is Pro-
+// gated, so the account is granted Pro the one way the gateway grants it).
 import { open, scratch } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import path from 'node:path';

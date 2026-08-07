@@ -75,6 +75,37 @@
 		applyH(detentH(name));		// height is instant; only the slide animates
 	}
 
+	/// Hide a guest's own title when the sheet has just said the same thing.
+	///
+	/// A panel's `.ctitle` is its NAME while it is empty and a live title once it
+	/// holds something — a URL, a filename, a subject — so no CSS selector can
+	/// tell the two apart, and the stylesheet's attempt to name the offenders was
+	/// wrong: it claimed Tools was the only panel that repeated the sheet's label,
+	/// and rendering all nine showed Message over Message, Graph over Graph, and a
+	/// blank 44px band over Doc, whose title is empty and whose closer is hidden
+	/// on a phone. Compose ("New message") and Web (a live URL) are real subtitles
+	/// and are left alone.
+	///
+	/// The test is what is on the screen, made when the guest is raised, so a
+	/// panel that later gains a real title keeps it. And a head is dropped only
+	/// when it says nothing new AND holds nothing but its own closer: the
+	/// Terminal's head repeats the label and carries Start and Stop, and a
+	/// terminal you cannot start is not a terminal.
+	function hideRedundantHead(el, sheetLabel) {
+		var head = el.querySelector('.chead, .railhead');
+		if (!head) return;
+		var title = head.querySelector('.ctitle');
+		var said = title ? (title.textContent || '').trim() : '';
+		var same = !said || said.toLowerCase() === String(sheetLabel || '').trim().toLowerCase();
+		var ctrls = head.querySelectorAll('button, a[href], input, select, [role="button"]');
+		var kept = 0;
+		for (var i = 0; i < ctrls.length; i++) {
+			// The panel's own closer is what the sheet's own ✕ already is.
+			if (!ctrls[i].classList.contains('panel-close')) kept++;
+		}
+		head.classList.toggle('head-said-twice', same && kept === 0);
+	}
+
 	/// Raise a guest. The element is MOVED into the sheet (the same idiom
 	/// the desktop layout engine uses to reorder panels); the desktop's
 	/// apply() skips reordering on a phone, so it stays put until closed.
@@ -87,6 +118,7 @@
 		bodyEl.appendChild(el);
 		guest = id;
 		titleEl.textContent = label(id);
+		hideRedundantHead(el, label(id));
 		document.body.classList.add('sheet-open');
 		sheetEl.classList.add('open');
 		if (NO_ASK[id]) askWrap.classList.add('hidden');

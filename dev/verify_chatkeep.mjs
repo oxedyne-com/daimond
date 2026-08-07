@@ -24,7 +24,8 @@
 //      the merge persists it before it saves.
 //   4. `refresh()` does not read past a write of this tab's own.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099). No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 import { open, chat, errors } from './harness.mjs';
 
 const ok = [], bad = [];

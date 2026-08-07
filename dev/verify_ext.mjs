@@ -6,9 +6,10 @@
 // files, and a real fetch of a transparency log, and returns the right verdict —
 // green for a sealed build, red for one not in the log.
 //
-// The log normally lives on GitHub (an origin the site cannot control). Here it
-// is served locally (serve.mjs) and passed in, so the check runs offline against
-// the same chain. Needs dev/serve.mjs on :8777 and a generated www/manifest.json.
+// The log normally lives on GitHub (an origin the site cannot control). Here it is
+// served locally (serve.mjs) and passed in, so the check runs offline against the same
+// chain. Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and a generated
+// www/manifest.json.
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -17,14 +18,17 @@ import { pathToFileURL } from 'node:url';
 const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
-const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT = `${ROOT}/verify/ext`;
 // Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
 // imported, so this stays standalone and does not load the harness.
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const PROFILE = path.join(SCRATCH, 'verify-ext');
 fs.mkdirSync(PROFILE, { recursive: true });
-const APP = 'http://localhost:8777';
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => { (pass ? ok : bad).push(name); console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : '')); };

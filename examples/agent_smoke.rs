@@ -60,6 +60,13 @@ async fn run() -> Outcome<()> {
             }
             AgentEvent::Done => println!("\n[done]"),
             AgentEvent::Error(e) => println!("\n[error] {}", e),
+            // Printed rather than ignored: a smoke run whose turn was folded, cut
+            // short by the provider, or interrupted looks identical to one that
+            // simply answered, and the difference is the whole point of running it.
+            AgentEvent::Compacted { folded, kept, note } =>
+                println!("\n[compacted] folded {} kept {} — {}", folded, kept, note),
+            AgentEvent::Truncated => println!("\n[truncated] the provider cut the reply short"),
+            AgentEvent::Interjected(text) => println!("\n[interjected] {}", text),
         }
     };
     res!(agent.run_turn(&mut session, prompt, &registry, &mut on_event).await);

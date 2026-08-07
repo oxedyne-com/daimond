@@ -28,6 +28,27 @@
 // build whose wasm predates that edge must refuse the terminal rather than fail
 // to boot.
 import * as Wasm from '../pkg/oxedyne_daimond.js';
+
+/// Read a file's BYTES, for anything that is not a model.
+///
+/// `run_tool('file_read')` is a MODEL-FACING RENDERING, not a file reader: it
+/// prefixes every line with its number and a TAB, says when it truncates, and
+/// wraps anything under an untrusted path in an envelope. Handed to something
+/// that treats the result as the file, every line gains `1\t`, `2\t`, and so on.
+///
+/// This has shipped as a live bug FOUR times, each found only after the last was
+/// written down: the Doc panel showed and then SAVED the numbered rendering; the
+/// Email panel read every message header through it and showed "(unknown)"; the
+/// `conductor` -> `daimon` prompt migration wrote the numbered text into the new
+/// file; and the Web panel rendered an agent-written page with the numbers in it.
+/// The rule is one line long and keeps being missed, so it now has one function
+/// to be missed in.
+///
+/// Use `run_tool('file_read')` ONLY to ask a model-shaped question — chiefly "does
+/// this file exist", where the answer is the error prefix and not the content.
+function readBytes(path) {
+	return Wasm.read_file(path);
+}
 import init, {
 	DaimondApp,
 	builtin_tools,
@@ -1881,6 +1902,10 @@ import init, {
 		var app; try { app = tools(); } catch (e) { return; }
 		var base  = readJson(SYNC_FILEBASE_KEY, {});
 		var local = (await collectFiles()).files;
+		// What this round establishes the two devices actually HOLD IN COMMON, path by path.
+		// It is not "everything local", which is what the baseline used to be set to on the way
+		// out of here -- see the commit below.
+		var agreed = {}, gone = {};
 		var paths = {};
 		Object.keys(local).forEach(function (p) { paths[p] = 1; });
 		Object.keys(remoteFiles).forEach(function (p) { paths[p] = 1; });
@@ -1888,13 +1913,13 @@ import init, {
 			if (!Object.prototype.hasOwnProperty.call(paths, p)) continue;
 			var l = local[p], r = remoteFiles[p];
 			if (r == null) continue;								// only local has it: keep, it will push.
-			if (l == null) { await writeSyncFile(app, p, r); continue; }	// only remote: adopt.
+			if (l == null) { await writeSyncFile(app, p, r); agreed[p] = fileHash(r); continue; }	// only remote: adopt.
 			var lh = fileHash(l), rh = fileHash(r);
-			if (lh === rh) continue;								// identical.
+			if (lh === rh) { agreed[p] = lh; continue; }			// identical: genuinely shared.
 			var bh = base[p] || null;
 			var localChanged  = (lh !== bh);
 			var remoteChanged = (rh !== bh);
-			if (remoteChanged && !localChanged) { await writeSyncFile(app, p, r); }
+			if (remoteChanged && !localChanged) { await writeSyncFile(app, p, r); agreed[p] = rh; }
 			else if (localChanged && !remoteChanged) { /* keep local; it will push. */ }
 			else { await writeSyncFile(app, p + '.synced', r); }	// both diverged: preserve both.
 		}
@@ -1908,10 +1933,39 @@ import init, {
 				if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
 				var lv = local[bp];
 				if (lv == null) continue;							// already gone here.
-				if (fileHash(lv) === base[bp]) await deleteSyncFile(app, bp);	// unchanged: honour the delete.
+				if (fileHash(lv) === base[bp]) { await deleteSyncFile(app, bp); gone[bp] = 1; }	// unchanged: honour the delete.
 			}
 		}
-		await commitFileBaseline();
+		// ONLY what was shared. This used to be `commitFileBaseline()`, which records every file
+		// this device is holding -- including one created here and never yet sent anywhere. The
+		// baseline means "the state both devices agreed on", and the deletion branch above reads
+		// it as exactly that: a path in the baseline that a COMPLETE remote census does not carry
+		// is treated as deleted there and removed here. So a file that had never left this device
+		// was entered as agreed by the pull that carried no news of it, and the next complete
+		// census from the other device deleted it. A file cannot be agreed until it has been sent,
+		// and the moment it has is a successful push -- which is what `commitFileBaseline` is for
+		// and where sync.js already calls it.
+		await commitAgreedFiles(agreed, gone);
+	}
+
+	/// Fold what this round proved the two devices hold in common into the fork point, and drop
+	/// what was deleted. Paths this device kept a newer copy of are deliberately absent: the
+	/// other side has not seen them yet, and recording agreement early is what turned a pull into
+	/// a delete.
+	///
+	/// # Arguments
+	/// * `agreed` - Path to hash, for the paths both devices now hold identically.
+	/// * `gone` - Paths the merge has just deleted here, which leave the fork point with them.
+	function commitAgreedFiles(agreed, gone) {
+		var base = readJson(SYNC_FILEBASE_KEY, {}), next = {};
+		// Carry forward what was already agreed, minus anything the merge just deleted here --
+		// leaving a deleted path in the fork point would put the same question to the next round.
+		Object.keys(base).forEach(function (p) {
+			if (!Object.prototype.hasOwnProperty.call(gone || {}, p)) next[p] = base[p];
+		});
+		Object.keys(agreed).forEach(function (p) { next[p] = agreed[p]; });
+		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(next)); }
+		catch (e) { /* best effort */ }
 	}
 
 	/// The serialisable state to encrypt and push: every stored chat, both
@@ -1961,9 +2015,17 @@ import init, {
 	/// the smallest device still had to hold the whole workspace — the ceiling
 	/// the chunk store exists to lift. A file now stays in cloud storage until
 	/// it is asked for, by the user or by the agent through `file_fetch`.
-	async function applyChunked(remoteChunked) {
+	/// # Arguments
+	/// * `remoteChunked` - The other device's cloud index.
+	/// * `base` - The fork point, READ BEFORE THIS ROUND MOVED IT. It must be an argument:
+	///   `applyFiles` runs first in `applySync` and ends in `commitFileBaseline`, which rewrites
+	///   the cloud baseline to whatever this device is holding right now. Reading the key here
+	///   therefore compared local against itself, `localChanged` was false for every path, the
+	///   remote won unconditionally, and `cloud.js`'s both-sides-diverged branch -- the one that
+	///   preserves the loser as `.synced` -- could never run at all.
+	async function applyChunked(remoteChunked, base) {
 		if (!window.DaimondCloud || !filesSyncable()) return;
-		DaimondCloud.merge(remoteChunked, readJson(SYNC_CLOUDBASE_KEY, {}));
+		DaimondCloud.merge(remoteChunked, base || {});
 		await DaimondCloud.refreshPaths();
 	}
 
@@ -2392,11 +2454,15 @@ import init, {
 		// Diamond or a file failing below never costs the user the answer to "how
 		// many devices". A parcel without a given field is a no-op throughout.
 		await section('devices',  function () { mergeDevices(remote.devices); });
+		// Read before any section runs: `applyFiles` commits a new fork point on its way
+		// out, so a later reader gets this round's own state rather than the one both
+		// devices last agreed on.
+		var cloudBase = readJson(SYNC_CLOUDBASE_KEY, {});
 		await section('chats',    function () { applyChats(remote); });
 		await section('diamonds', function () { return applyDiamonds(remote); });
 		await section('files',    function () { return applyFiles(remote.files, remote.filesComplete === true); });
 		// The large files held in the chunk store, reconstructed on demand.
-		await section('chunked',  function () { return applyChunked(remote.chunked); });
+		await section('chunked',  function () { return applyChunked(remote.chunked, cloudBase); });
 		// The providers, their model lists and their sealed keys. A parcel without
 		// the field is a device that predates it, so a v1 parcel still applies.
 		await section('models',   function () {
@@ -6451,6 +6517,13 @@ import init, {
 		chat._interject = [];
 		if (current === chat) renderQueue();
 		chats = chats.filter(function (c) { return c.id !== chat.id; });
+		// A paused chat that is deleted must not leave its flag behind: the id is
+		// unreachable, so the Chats section would stay amber with nothing on the
+		// rail to resume.
+		try { DaimondPause.forget(DaimondPause.id('root', 'chats', chat.id)); }
+		catch (e) { /* module not up */ }
+		// Same reasoning for how the tile drew itself: an id nobody can reach.
+		forgetTilePrefs(chat.id);
 		tombstone(chat.id);      // so a stale tab cannot resurrect it
 		persistChats();
 		if (current === chat) {
@@ -6459,6 +6532,23 @@ import init, {
 			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
 		renderSessionList();
+	}
+
+	/// Delete a chat, asking first. THE way a chat is removed by hand.
+	///
+	/// One function rather than a handler on a button, because Delete moved from
+	/// the tile's corner into the foot of its dialog and a second copy of the
+	/// confirm would be a second place for it to be forgotten. `removeChat` above
+	/// does the work and asks nothing -- it is also what a sync deletion uses,
+	/// where there is nobody to ask.
+	async function deleteChat(chat) {
+		var n = (chat.messages || []).length;
+		var msg = n
+			? tn('tile.delete_chat_body', n, { name: chat.name })
+			: t('tile.delete_chat_empty', { name: chat.name });
+		if (!await confirmDialog(msg, t('tile.delete_chat'), { title: t('tile.delete_chat') })) return false;
+		removeChat(chat);
+		return true;
 	}
 
 	// ── Fold a chat into a Diamond (§7.2) ────────────────────────
@@ -6709,6 +6799,540 @@ import init, {
 		chatOutput.appendChild(wrap);
 	}
 
+	// ── The PPTW: one control, three states ────────────────────
+	//
+	// `www/js/pause.js` holds the state and answers the questions; this owns the
+	// DOM, exactly as the governor is split. Three placements ship here — the
+	// global control at the head of the rail, one on each Diamond tile, one on
+	// each chat tile — and all three are the same button, so phase G's mailboxes
+	// and phase H's triggers are a call each rather than a fourth drawing.
+	//
+	// Colour is the state and so is the glyph: green plays, red is paused, amber
+	// is mixed. Amber is DERIVED — clicking a branch pauses every leaf under it
+	// or resumes them all — so the widget has no third action and never offers
+	// one. The accessible name carries both halves: which node, and what the
+	// click will do.
+
+	var PAUSE_WORKERS = 'root/workers';
+	// Fetching a page through the gateway. Not one of notes2's six placements
+	// and it has no control of its own yet — the Web panel is phase C's surface,
+	// and a light on it before that would be the only traffic light in the app
+	// with nowhere to sit. It is in the TREE from today regardless: a spend with
+	// no node is a spend with no pause, and enforcement was otherwise falling
+	// back to the root, which on a new account has no leaves and reads green.
+	var PAUSE_WEB = 'root/web';
+
+	// The glyph, knocked out of the lamp with `fill-rule="evenodd"` so it reads
+	// against whatever the tile's ground happens to be. One path, three `d`s: the
+	// disc is the same in all three, and only the hole changes.
+	var PPTW_DISC = 'M8 .8a7.2 7.2 0 1 0 0 14.4A7.2 7.2 0 0 0 8 .8z';
+	var PPTW_D = {
+		// A triangle centred on its CENTROID, not on its bounding box: 6, 6 and
+		// 12 average to exactly 8, which is where the eye puts it. Box-centring
+		// a triangle leaves it visibly leaning left.
+		play:  PPTW_DISC + 'M6 4.3 12 8 6 11.7z',
+		// Bars 2 units of 16 wide, which is 2.25 device pixels at this size. The
+		// first cut used 1.6 and the pair blurred into the disc: at an 18px lamp
+		// a stroke under two pixels is not a glyph, it is a smudge.
+		pause: PPTW_DISC + 'M5.2 4.4h2v7.2h-2zM8.8 4.4h2v7.2h-2z',
+		// A single bar, the indeterminate-checkbox shape: neither running nor
+		// stopped, and legible at this size where a half-and-half glyph is mush.
+		mixed: PPTW_DISC + 'M4.4 7h7.2v2H4.4z',
+	};
+
+	/// The mailboxes and their folders, read from the store `mail.js` keeps.
+	///
+	/// Read rather than asked for: `DaimondMail` publishes no list of accounts,
+	/// and phase G owns that file. The nodes exist NOW so the root counts
+	/// everything that can spend from the day the root ships — a section that
+	/// appears later would quietly change the answer the global light gives.
+	function pauseMailNodes() {
+		var j;
+		try { j = JSON.parse(localStorage.getItem('daimond-mail') || '{}'); }
+		catch (e) { return []; }
+		var accts = Array.isArray(j.accounts) ? j.accounts : [];
+		return accts.filter(function (a) { return a && a.address; }).map(function (a) {
+			// The mailbox's own polling is a `self` leaf beside the folders, so a
+			// node that both spends and has children never needs the "only leaves
+			// hold state" rule to make an exception for it.
+			var kids = [{
+				id:    DaimondPause.id('root', 'mail', a.address, 'self'),
+				kind:  'mailself',
+				label: t('pause.mail_polling'),
+			}];
+			var names = Object.keys(a.folders || {});
+			var sel = a.folder || 'INBOX';
+			if (names.indexOf(sel) === -1) names.push(sel);
+			names.sort().forEach(function (n) {
+				kids.push({ id: DaimondPause.id('root', 'mail', a.address, n), kind: 'folder', label: n });
+			});
+			return { id: DaimondPause.id('root', 'mail', a.address), kind: 'mailbox', label: a.address, children: kids };
+		});
+	}
+
+	/// The live tree, as it stands at the moment it is asked.
+	///
+	/// Every branch carries a `children` array even when it is empty. A node with
+	/// no array at all is a LEAF, so an empty Diamonds section emitted bare would
+	/// take a pause flag of its own: the root would write a phantom id nothing
+	/// could ever resume, and a new account's rail would open red.
+	function pauseTree() {
+		var dnodes = (diamonds || []).map(function (f) {
+			var base = DaimondPause.id('root', 'diamonds', f.id);
+			// A branch with one leaf today. Phase H's triggered actions join it,
+			// and nothing here has to change when they do.
+			return {
+				id: base, kind: 'diamond', label: f.name || t('rail.unnamed_diamond'),
+				children: [{ id: base + '/self', kind: 'daimon', label: f.name || t('rail.unnamed_diamond') }],
+			};
+		});
+		var cnodes = (chats || []).map(function (c) {
+			return { id: DaimondPause.id('root', 'chats', c.id), kind: 'chat', label: c.name || t('pause.unnamed_chat') };
+		});
+		return {
+			id: 'root', kind: 'root', label: t('pause.everything'),
+			children: [
+				{ id: 'root/diamonds', kind: 'section', label: t('rail.diamonds'), children: dnodes },
+				{ id: 'root/chats',    kind: 'section', label: t('rail.chats'),    children: cnodes },
+				{ id: 'root/mail',     kind: 'section', label: t('pause.mail'),    children: pauseMailNodes() },
+				{ id: PAUSE_WORKERS,   kind: 'workers', label: t('pause.workers') },
+				{ id: PAUSE_WEB,       kind: 'web',     label: t('pause.web') },
+			],
+		};
+	}
+
+	/// Draw one control to the state of the node it governs.
+	function paintPause(b) {
+		var node = b.dataset.pauseNode;
+		var st = 'play';
+		try { st = DaimondPause.state(node) || 'play'; } catch (e) { /* module not up */ }
+		b.dataset.state = st;
+		var g = b.querySelector('.pptw-glyph');
+		if (g) g.setAttribute('d', PPTW_D[st] || PPTW_D.play);
+		// Which node, and what the click does — both, because five lights on a
+		// rail otherwise announce as five identical "button", and a light that
+		// says only its colour does not say what pressing it would achieve.
+		var name = b.dataset.pauseName || t('pause.this');
+		var label = t(st === 'play' ? 'pause.act_pause' : 'pause.act_play', { name: name })
+			+ ' — ' + t('pause.state_' + st);
+		b.setAttribute('aria-label', label);
+		b.title = label;
+	}
+
+	/// Repaint every control on the page. A node's state is a walk of the leaves
+	/// under it and the page carries a handful of both, so this is cheap enough
+	/// to run on every announcement rather than working out who moved.
+	function repaintPause(root) {
+		var list = (root || document).querySelectorAll('.pptw');
+		for (var i = 0; i < list.length; i++) paintPause(list[i]);
+	}
+
+	/// One pause control, ready to place. `name` is what the node is called in
+	/// words; it goes into the accessible name and nowhere else.
+	/// Is there anything under this node for a control to act on?
+	///
+	/// True for a leaf, and for a branch with at least one leaf beneath it. False
+	/// for a branch that is currently empty — a mail section with no mailbox, a
+	/// Diamonds section on a new account.
+	function pauseGoverns(nodeId) {
+		try {
+			var t = DaimondPause._core, tree = pauseTree();
+			var n = t.findNode(tree, nodeId);
+			if (!n) return true;			// not in the tree: a leaf by its own id
+			return t.leavesUnder(n).length > 0;
+		} catch (e) { return true; }		// never let this stop a control being drawn
+	}
+
+	function pauseWidget(nodeId, name) {
+		// A branch with nothing under it gets no control, and this is the one place
+		// that can know it. The rule of §1.1 says an empty branch reads GREEN —
+		// nothing is being withheld — and that clicking a branch writes its leaves,
+		// of which it has none. Both are right, and together they make a light that
+		// says "running" and does nothing when pressed.
+		//
+		// It went unnoticed until the Email panel's mount points switched on: with
+		// no mailbox configured, `root/mail` is an empty branch, so the panel drew a
+		// green light that could not be turned off. A control for something that
+		// does not exist yet is worse than no control, so there is none until there
+		// is something to govern.
+		if (!pauseGoverns(nodeId)) return null;
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'pptw';
+		b.dataset.pauseNode = nodeId;
+		b.dataset.pauseName = name || '';
+		// A constant string: nothing here comes from the user or a model.
+		b.innerHTML = '<svg class="pptw-ic" viewBox="0 0 16 16" aria-hidden="true">'
+			+ '<path class="pptw-glyph" fill-rule="evenodd" d="' + PPTW_D.play + '"/></svg>';
+		b.addEventListener('click', function (e) {
+			// The light sits inside a tile that opens on click. Pressing it must
+			// pause the Diamond, never open it — and Enter and Space arrive here
+			// too, because a <button> makes them clicks.
+			e.stopPropagation();
+			e.preventDefault();
+			try { DaimondPause.toggle(nodeId); } catch (err) { /* module not up */ }
+		});
+		paintPause(b);
+		return b;
+	}
+
+	/// Place a control, if there is one to place. `pauseWidget` returns null for a
+	/// branch with nothing under it, and `appendChild(null)` throws.
+	function mountPause(parent, nodeId, name) {
+		var w = pauseWidget(nodeId, name);
+		if (w) parent.appendChild(w);
+		return w;
+	}
+
+	/// The shared bits of chrome another module may place, but must not redraw.
+	///
+	/// `pauseWidget` is the one control of §1.1 and its DOM belongs here, exactly
+	/// as the governor's does. The Email panel needs four of them — the section,
+	/// the mailbox, its `self` leaf and each folder — and a second drawing over
+	/// there would be a second thing to keep in step with the state names, which
+	/// would drift the first time either changed.
+	/// One drawing of the cog, so the app cannot grow two.
+	///
+	/// The Email panel had its own copy of the same 500-character path, which is
+	/// how an icon set drifts: a change to one is a change to one. Returns a fresh
+	/// element each call, because an SVG node cannot be in two places at once.
+	function cogIcon() {
+		var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('class', 'ic');
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('aria-hidden', 'true');
+		var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+		c.setAttribute('cx', '12'); c.setAttribute('cy', '12'); c.setAttribute('r', '3');
+		var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		// `COG_D` is declared with the tile dialog further down; `var` hoists it
+		// through this function scope and nothing calls this before load.
+		p.setAttribute('d', COG_D);
+		svg.appendChild(c); svg.appendChild(p);
+		return svg;
+	}
+
+	window.DaimondUI = { pauseWidget: pauseWidget, cogIcon: cogIcon };
+
+	// ── The worker pump's hold, folded into the tree ───────────
+	//
+	// There used to be two pauses: `daimond-workers-paused` and, once the tree
+	// existed, `root/workers`. Two flags for one hold is two answers to "are the
+	// workers running", so the pump now reads the leaf and the old key is
+	// migrated away on the first load that finds it.
+
+	/// Is the pump held? The whole answer is one leaf's flag, cheap enough to sit
+	/// in front of every launch.
+	function workersHeld() {
+		try { return !!(window.DaimondPause && DaimondPause.isPaused(PAUSE_WORKERS)); }
+		catch (e) { return false; }
+	}
+
+	// What the pump was last reconciled to, so an announcement that did not move
+	// the hold does not restart every paused worker.
+	var lastHold = null;
+
+	/// Hold or release the pump, writing the leaf rather than a flag beside it.
+	function setWorkersHeld(v) {
+		lastHold = !!v;
+		try { if (window.DaimondPause) DaimondPause.set(PAUSE_WORKERS, !v); }
+		catch (e) { /* module not up: the pump falls back to running */ }
+	}
+
+	/// Bring the pump into line with the tree, for a hold set from somewhere
+	/// else — the global control, another device's parcel, the root going red.
+	function reconcileWorkers() {
+		var want = workersHeld();
+		if (want === lastHold) return;
+		if (want) Workers.pauseAll(); else Workers.resumeAll();
+	}
+
+	/// Carry an old worker hold onto the leaf, once.
+	///
+	/// A user who paused their workers yesterday must not find them running
+	/// today: dropping the flag rather than migrating it is a silent resume, and
+	/// a wrong resume costs money where a wrong pause costs a click.
+	function migrateWorkerHold() {
+		var old;
+		try { old = localStorage.getItem(WORKERS_PAUSED_KEY); } catch (e) { return; }
+		if (old === null) return;
+		if (old === '1') {
+			try { if (window.DaimondPause) DaimondPause.seedPaused(PAUSE_WORKERS); } catch (e) { /* ignore */ }
+		}
+		// And nothing writes it again, so this runs at most once per account.
+		try { localStorage.removeItem(WORKERS_PAUSED_KEY); } catch (e) { /* already gone */ }
+	}
+
+	if (window.DaimondPause) {
+		DaimondPause.setTree(pauseTree);
+		window.addEventListener('daimond:pause', function () {
+			repaintPause();
+			reconcileWorkers();
+		});
+	}
+
+	/// Put the global control in the slot the rail leaves for it.
+	///
+	/// Built here rather than written into index.html so there is ONE drawing of
+	/// the widget: a second copy in markup is a second thing to keep in step with
+	/// the state names, and it would drift the first time one of them changed.
+	function initPauseUi() {
+		var slot = document.getElementById('pptw-global');
+		if (!slot || !window.DaimondPause) return;
+		slot.innerHTML = '';
+		mountPause(slot, DaimondPause.ROOT, t('pause.everything'));
+	}
+
+	// ── The tile's own dialog, and what the cog replaced ───────
+	//
+	// Notes2 replaced the global Compact/Breathe spacing with something aimed
+	// at the real complaint: a power user wants the numbers on screen and a
+	// new user wants a quiet rail. That is a choice per OBJECT, not per app, so
+	// it is made where the object is -- a cog in the top right of every tile,
+	// opening a dialog that carries the tile's pause control, its level of
+	// detail, and, at the foot, Delete.
+	//
+	// The closer cross is gone. It was `opacity: 0` until hover, which is no
+	// control at all on a phone, and it put the one irreversible act on the
+	// tile's most reachable pixel while opening the tile had no keyboard route
+	// at all. Delete now sits at the foot of a dialog you had to open, behind a
+	// confirm; the cog is what the corner offers instead.
+
+	/// How each tile is drawn, and how it talks: browser-side, per tile id.
+	///
+	/// `{ <tileId>: { detail: 'simple' | 'max', concise: true } }`.
+	///
+	/// Here rather than in the chat record because a chat record is content --
+	/// it goes through `slimChat`'s whitelist, into IndexedDB and out in the
+	/// sync parcel -- and how big a tile draws itself is not a fact about the
+	/// conversation. Here rather than in `cfg` because the choice is per tile
+	/// and `cfg` is one global object rebuilt from scratch on every `saveCfg`.
+	/// `daimond-diamond-models` is the precedent: a browser-side choice about
+	/// an object, keyed by its id, beside the app rather than inside the store.
+	///
+	/// Deliberately NOT synced. Two devices are two screens, and a phone that
+	/// adopted a desktop's Max view would be the busiest possible rail on the
+	/// smallest possible screen.
+	var TILE_PREFS_KEY = 'daimond-tile-prefs';
+
+	function tilePrefs() { return readJson(TILE_PREFS_KEY, {}) || {}; }
+
+	/// One tile's preferences, always an object so a caller never guards.
+	function tilePref(id) {
+		var p = tilePrefs()[id];
+		return (p && typeof p === 'object') ? p : {};
+	}
+
+	/// Write one field, leaving the rest of that tile's record alone.
+	function setTilePref(id, field, value) {
+		if (!id) return;
+		var all = tilePrefs();
+		var rec = (all[id] && typeof all[id] === 'object') ? all[id] : {};
+		rec[field] = value;
+		all[id] = rec;
+		try { localStorage.setItem(TILE_PREFS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	/// Forget a tile's preferences, for an object being deleted. A record for an
+	/// id nobody can reach would sit in storage for the life of the account.
+	function forgetTilePrefs(id) {
+		if (!id) return;
+		var all = tilePrefs();
+		if (!(id in all)) return;
+		delete all[id];
+		try { localStorage.setItem(TILE_PREFS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	/// 'simple' or 'max'. Absent means SIMPLE: the quiet rail is the default the
+	/// user asked for, and Max is the thing a power user goes and turns on.
+	function tileDetail(id) { return tilePref(id).detail === 'max' ? 'max' : 'simple'; }
+
+	/// Is this chat's concise chip lit?
+	function tileConcise(id) { return tilePref(id).concise === true; }
+
+	// A cog, drawn rather than typed. `⚙` is a font's idea of a cog and comes
+	// out as a smudge at 16px in the faces this app ships; the chevrons beside
+	// the composer were redrawn for the same reason.
+	//
+	// A toothed body, not a hub with spokes around it. The first drawing here was
+	// eight radial ticks that did not touch the centre disc, and magnified it was
+	// plainly a SUN -- the brightness control, on a settings button. Teeth join
+	// the body; rays do not. Same path as the mailbox gear, so the app has one
+	// cog rather than two.
+	var COG_D = 'M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2v.2'
+		+ 'a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1'
+		+ 'a1.7 1.7 0 00-1.2-2.9H2.9a2 2 0 110-4H3a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1'
+		+ 'a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V2.9a2 2 0 114 0V3'
+		+ 'a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9'
+		+ 'a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z';
+
+	/// The cog in a tile's top right. `name` is what the tile is called, so five
+	/// tiles do not announce as five identical "Settings".
+	function tileCog(name, onOpen) {
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'tile-cog';
+		b.title = t('tile.settings');
+		b.setAttribute('aria-label', t('tile.settings_named', { name: name || '' }));
+		b.setAttribute('aria-haspopup', 'dialog');
+		// A constant string: nothing here comes from the user or a model.
+		b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+			+ '<circle cx="12" cy="12" r="3"/><path d="' + COG_D + '"/></svg>';
+		b.addEventListener('click', function (e) {
+			// The tile opens on click; the cog must not open it as well.
+			e.stopPropagation();
+			e.preventDefault();
+			onOpen();
+		});
+		return b;
+	}
+
+	/// The tile's dialog: pause, detail, and Delete at the foot.
+	///
+	/// `opts` is `{ id, name, node, onDelete }` -- `node` being the pause node
+	/// this tile's control binds to. Built here rather than through `dialog()`
+	/// because that helper's body is a message and an input, and this one is a
+	/// column of controls with a destructive act underneath them; it wears the
+	/// same `.modal` furniture so Escape, the backdrop and the focus trap behave
+	/// exactly as they do everywhere else.
+	var _tileDlgSeq = 0;		// so each dialog's heading id is its own
+
+	function openTileDialog(opts) {
+		var back = document.createElement('div');
+		back.className = 'modal dlg tile-dlg';
+		var card = document.createElement('div');
+		card.className = 'modal-card dlg-card tile-dlg-card';
+		card.setAttribute('role', 'dialog');
+		card.setAttribute('aria-modal', 'true');
+
+		var h = document.createElement('h2');
+		h.textContent = opts.name || t('tile.settings');
+		// Named by its own heading. `a11y_report.md` §5 counts every dialog in the
+		// app as an unlabelled div, so a new one does not join them: the words are
+		// already on screen and this is what points the tree at them.
+		h.id = 'tile-dlg-h-' + (++_tileDlgSeq);
+		card.setAttribute('aria-labelledby', h.id);
+		card.appendChild(h);
+
+		// ── Pause. The same widget as the rail and the tile, never a second
+		// drawing of it: two pictures of one state drift the first time either
+		// changes.
+		var sayPause = null;		// set only where a pause control was placed
+		if (window.DaimondPause && opts.node) {
+			card.appendChild(secHead(t('tile.dlg_running')));
+			var prow = document.createElement('div');
+			prow.className = 'tile-dlg-pause';
+			mountPause(prow, opts.node, opts.name || '');
+			var pwords = document.createElement('span');
+			pwords.className = 'tile-dlg-pause-words';
+			sayPause = function () {
+				var st = 'play';
+				try { st = DaimondPause.state(opts.node) || 'play'; } catch (e) { /* module not up */ }
+				pwords.textContent = t('pause.state_' + st);
+			};
+			sayPause();
+			window.addEventListener('daimond:pause', sayPause);
+			prow.appendChild(pwords);
+			card.appendChild(prow);
+		}
+
+		// ── Detail. Two words, and the tile behind the dialog changes as they
+		// are pressed, so the choice is seen rather than described.
+		card.appendChild(secHead(t('tile.dlg_detail')));
+		var seg = document.createElement('div');
+		seg.className = 'tile-dlg-seg';
+		var btns = {};
+		['simple', 'max'].forEach(function (level) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'tile-dlg-level';
+			b.dataset.level = level;
+			b.textContent = t('tile.detail_' + level);
+			b.title = t('tile.detail_' + level + '_help');
+			b.addEventListener('click', function () {
+				setTilePref(opts.id, 'detail', level);
+				paintLevel();
+				applyTileDetail(opts.id);
+			});
+			btns[level] = b;
+			seg.appendChild(b);
+		});
+		function paintLevel() {
+			var now = tileDetail(opts.id);
+			Object.keys(btns).forEach(function (k) {
+				btns[k].setAttribute('aria-pressed', k === now ? 'true' : 'false');
+			});
+		}
+		paintLevel();
+		card.appendChild(seg);
+		var note = document.createElement('div');
+		note.className = 'tile-dlg-note';
+		note.textContent = t('tile.detail_note');
+		card.appendChild(note);
+
+		// ── The foot. Delete on the left, away from Done, because a foot whose
+		// two buttons sit side by side puts the irreversible one under the thumb
+		// that meant to dismiss.
+		var row = document.createElement('div');
+		row.className = 'dlg-actions tile-dlg-foot';
+		var del = document.createElement('button');
+		del.type = 'button';
+		del.className = 'dlg-ok danger tile-dlg-delete';
+		del.textContent = t('tile.dlg_delete');
+		var done = document.createElement('button');
+		done.type = 'button';
+		done.className = 'modal-close dlg-cancel tile-dlg-done';
+		done.textContent = t('dlg.done');
+		row.appendChild(del);
+		row.appendChild(done);
+		card.appendChild(row);
+
+		back.appendChild(card);
+		document.body.appendChild(back);
+
+		var prev = document.activeElement;
+		function close() {
+			document.removeEventListener('keydown', onKey, true);
+			if (sayPause) window.removeEventListener('daimond:pause', sayPause);
+			back.remove();
+			if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+		}
+		function onKey(e) {
+			if (e.key === 'Escape') { e.preventDefault(); close(); }
+			else if (e.key === 'Tab') keepFocusIn(card, e);
+		}
+		document.addEventListener('keydown', onKey, true);
+		back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
+		done.addEventListener('click', close);
+		del.addEventListener('click', async function () {
+			// The dialog goes first: a confirm drawn over its own opener reads as
+			// two modals, and the answer is about the tile, not about the dialog.
+			close();
+			await opts.onDelete();
+		});
+		done.focus();
+		return { card: card, close: close };
+	}
+
+	/// One section heading inside a tile dialog.
+	function secHead(words) {
+		var d = document.createElement('div');
+		d.className = 'tile-dlg-head';
+		d.textContent = words;
+		return d;
+	}
+
+	/// Put a tile's chosen level of detail onto its box, so the CSS can act on
+	/// it. Cheap enough to call on any tile at any time, and it is what lets the
+	/// dialog change the rail behind itself without a re-render.
+	function applyTileDetail(id) {
+		var boxes = document.querySelectorAll('.session-box[data-id="' + cssId(id) + '"]');
+		for (var i = 0; i < boxes.length; i++) boxes[i].dataset.detail = tileDetail(id);
+	}
+
+	/// Escape an id for use inside an attribute selector. Chat and Diamond ids
+	/// are generated, but a quote in one would otherwise break the selector.
+	function cssId(id) { return String(id == null ? '' : id).replace(/["\\]/g, '\\$&'); }
+
 	function updateActiveSession() {
 		sessionList.querySelectorAll('.session-box').forEach(function (box) {
 			box.classList.toggle('active', current && box.dataset.id === current.id);
@@ -6726,10 +7350,15 @@ import init, {
 			note.className = 'rail-note';
 			note.textContent = t('rail.no_chats');
 			sessionList.appendChild(note);
+			repaintPause();
 			return;
 		}
 		chats.forEach(function (s) { sessionList.appendChild(sessionBox(s)); });
 		updateActiveSession();
+		// A chat appearing or going changes what is under the root, and the root's
+		// own light is not rebuilt here. `DaimondPause` announces when the STATE
+		// moves; nothing announces when the tree does.
+		repaintPause();
 	}
 
 	// Populate a <select> with the cached model list, keeping `selected` (and
@@ -6793,10 +7422,16 @@ import init, {
 		var box = document.createElement('div');
 		box.className = 'session-box chat-box ' + status + (current && s.id === current.id ? ' active' : '');
 		box.dataset.id = s.id;
+		// How much of itself this tile draws. Simple by default; the cog's dialog
+		// is where it changes, and the CSS is what acts on it.
+		box.dataset.detail = tileDetail(s.id);
 
 		// Editable label — the single place a chat is named (D-UI: one source).
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
+		// A chat is a leaf: binary, and the same control as everywhere else.
+		mountPause(header, DaimondPause.id('root', 'chats', s.id),
+			s.name || t('pause.unnamed_chat'));
 		var label = document.createElement('input');
 		label.className = 'tile-label';
 		label.value = s.name; label.spellcheck = false;
@@ -6837,25 +7472,14 @@ import init, {
 		});
 		label.addEventListener('change', function () { renameChat(s, label.value); });
 		header.appendChild(label);
-		var closeBtn = document.createElement('button');
-		closeBtn.className = 'session-box-close';
-		closeBtn.textContent = '×'; closeBtn.title = t('tile.remove_chat');
-		// A title loses to text content in the accessible-name chain, so without
-		// this the button announces as "×" -- and with five chats on screen, as
-		// five identical "×". The label carries the row's own name.
-		closeBtn.setAttribute('aria-label', t('tile.remove_chat_named', { name: s.name }));
-		closeBtn.addEventListener('click', async function (e) {
-			e.stopPropagation();
-			// Deleting a chat destroys its whole history with no undo, so it is
-			// confirmed — as deleting a Diamond already was.
-			var n = (s.messages || []).length;
-			var msg = n
-				? tn('tile.delete_chat_body', n, { name: s.name })
-				: t('tile.delete_chat_empty', { name: s.name });
-			if (!await confirmDialog(msg, t('tile.delete_chat'), { title: t('tile.delete_chat') })) return;
-			removeChat(s);
-		});
-		header.appendChild(closeBtn);
+		header.appendChild(tileCog(s.name, function () {
+			openTileDialog({
+				id:       s.id,
+				name:     s.name,
+				node:     DaimondPause.id('root', 'chats', s.id),
+				onDelete: function () { return deleteChat(s); },
+			});
+		}));
 		box.appendChild(header);
 
 		if (status === 'pending') {
@@ -6897,7 +7521,9 @@ import init, {
 			// silently on whatever model happened to be starred. A worker is dispatched by a
 			// Diamond's daimon, so this is what a Diamond cut from this chat inherits.
 			var wrow = document.createElement('div');
-			wrow.className = 'tile-pending';
+			// Its own class, so Simple can take the whole row away: the "Workers"
+			// chip on its own would be a label naming a control that is not there.
+			wrow.className = 'tile-pending tile-worker-row';
 			var wlab = document.createElement('span');
 			wlab.className = 'tile-model-chip';
 			wlab.textContent = t('tile.workers');
@@ -6976,6 +7602,9 @@ import init, {
 			Instructions.compose(SYSTEM_PROMPT(), ''), cfg.tools !== false);
 		chat.model    = a.model;
 		chat.provider = a.provider || chat.provider || '';
+		// A chat freezing its model is a use of it. Recorded here rather than in the
+		// pulldown, because a model picked and never run is not one anybody uses.
+		try { DaimondModels.noteUse(chat.provider, chat.model); } catch (e) { /* never block a turn */ }
 		// How big this model's window is, so a long chat is folded before the provider
 		// refuses it rather than after. `contextWindow` returns null for a model nobody
 		// publishes a figure for, and a null is left alone: the agent's own default
@@ -7227,7 +7856,111 @@ import init, {
 		// the moment it matters -- there is not room for it here.
 		chatInput.placeholder = g ? t('chat.queue_ph') : t('chat.input_ph');
 		if (!g) hideSpinner();
+		syncConciseChip();           // the chip belongs to THIS chat, not the last one
 		renderQueue();               // this chat's own queue, not the last one's
+	}
+
+	// ── The concise chip ───────────────────────────────────────
+	//
+	// Notes2 asks for "a 'concise' chip in the chat header" that injects a
+	// `/concise` call into user input. The skill machinery is already there and
+	// is machinery rather than convention: `parse_command` in the wasm resolves
+	// a leading `/name` to the file's own text BEFORE the turn starts, and a
+	// name that resolves to nothing REFUSES the turn rather than falling
+	// through to ordinary chat.
+	//
+	// Two things follow, and both are why this is not a hidden prompt tweak:
+	//
+	//   * The instruction is a file — `.daimond/skills/concise.md` — that the
+	//     user can read, edit and take with the folder. What "concise" means is
+	//     theirs to decide, and the seeded text is only a first draft.
+	//   * The prefix goes on the message ITSELF, so the transcript shows what
+	//     was actually asked. A chip that quietly changed the request and left
+	//     the thread looking untouched would be the same silent failure the
+	//     slash machinery exists to end.
+	//
+	// A message the user has already begun with a `/` is left alone: two
+	// commands in one message means only the first resolves, so prefixing would
+	// silently swallow the one they typed.
+
+	var CONCISE_SKILL = '.daimond/skills/concise.md';
+	var CONCISE_DIR   = '.daimond/skills';
+
+	/// The first draft of what "concise" asks for. Deliberately short and
+	/// deliberately about SHAPE rather than length in words: a token budget in a
+	/// prompt is a number a model will cheerfully ignore.
+	function conciseSeed() {
+		return '---\n'
+			+ 'name: concise\n'
+			+ 'description: Answer briefly.\n'
+			+ '---\n\n'
+			+ '# Concise\n\n'
+			+ 'Answer in as few words as carry the answer.\n\n'
+			+ '- Lead with the answer. No preamble, no restatement of the question.\n'
+			+ '- No summary at the end, and no offer of further help.\n'
+			+ '- Prose over lists unless the answer really is a list.\n'
+			+ '- Say the reason only where not saying it would leave the answer unusable.\n'
+			+ '- Where the honest answer is "it depends", say what it depends on and stop.\n\n'
+			+ 'This is your own file: edit it to say what brevity means to you.\n';
+	}
+
+	/// Make sure the skill the chip invokes actually exists. Resolves true when
+	/// it does.
+	///
+	/// A `run_tool` RESOLVES with its error text rather than rejecting, so a
+	/// refusal and a success look identical to `try`/`catch`; the reply is read
+	/// as well as awaited. Seeded on the way in rather than at boot: a user who
+	/// never presses the chip gets no file they did not ask for.
+	async function ensureConciseSkill() {
+		try {
+			var cur = await tools().run_tool('file_read', JSON.stringify({ path: CONCISE_SKILL }));
+			if (typeof cur === 'string' && !/^\s*Error\b/i.test(cur) && cur.trim()) return true;
+		} catch (e) { /* not there, or no workspace yet */ }
+		try {
+			await tools().run_tool('dir_create', JSON.stringify({ path: CONCISE_DIR }));
+		} catch (e) { /* it may already be there, which is the state wanted */ }
+		try {
+			var res = await tools().run_tool('file_write',
+				JSON.stringify({ path: CONCISE_SKILL, content: conciseSeed() }));
+			if (typeof res === 'string' && /^\s*Error\b/i.test(res)) return false;
+		} catch (e) { return false; }
+		try { Files.refresh(); } catch (e) { /* the tree redraws on its own next time */ }
+		return true;
+	}
+
+	/// Draw the chip to the chat on screen. Hidden where there is no chat: a
+	/// toggle bound to nothing is a control that remembers the wrong thing.
+	function syncConciseChip() {
+		var chip = document.getElementById('concise-chip');
+		if (!chip) return;
+		var on = !!(current && tileConcise(current.id));
+		chip.style.display = current ? '' : 'none';
+		chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+		chip.classList.toggle('accent', on);
+	}
+
+	/// Turn the chip on or off for the chat on screen.
+	async function toggleConcise() {
+		if (!current) return;
+		var want = !tileConcise(current.id);
+		if (want && !await ensureConciseSkill()) {
+			// A lit chip whose skill is not on disk would refuse every turn with
+			// "no such skill", which reads as the chip being broken rather than as
+			// the workspace being unreachable. So it stays off, and says why.
+			await noticeDialog(t('chat.concise_failed_title'), t('chat.concise_failed'));
+			return;
+		}
+		setTilePref(current.id, 'concise', want);
+		syncConciseChip();
+	}
+
+	/// What the turn actually carries. `/concise` goes on the front of the
+	/// message so the request the model receives, and the transcript the user
+	/// reads, are the same string.
+	function conciseText(chat, text) {
+		if (!chat || !tileConcise(chat.id)) return text;
+		if (/^\s*\//.test(text)) return text;		// their own command wins
+		return '/concise ' + text;
 	}
 
 	async function sendUserMessage() {
@@ -7246,6 +7979,10 @@ import init, {
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
+		// The chip's state at the moment of TYPING is what travels, including into
+		// the queue: a message held behind a running turn was asked for under the
+		// chip as it stood then, not as it stands when the queue drains.
+		text = conciseText(chat, text);
 		// Mid-turn. A turn is a round of requests, not one, and the message list is
 		// rebuilt between them -- so what is typed now can reach the model IN this
 		// turn, at the seam after the tool replies go back (see `run_tool_loop`).
@@ -7733,7 +8470,9 @@ import init, {
 						reminted = true; authFail = false;
 						// The generation this app froze, so a key already replaced by another agent's
 						// mint is simply taken rather than bought again.
-						try { await DaimondModels.remint(chat._gen); }
+						// The node this chat spends against travels with the mint: a paused
+					// chat must not buy a fresh key to carry on with.
+					try { await DaimondModels.remint(chat._gen, DaimondPause.id('root', 'chats', chat.id)); }
 						catch (e2) {
 							// The key could not be replaced, so the balance is gone rather than merely
 							// capped. Say the thing the user can act on: a raw 401 would send them
@@ -7955,13 +8694,15 @@ import init, {
 	// genuinely faster, but an unbounded fan-out would hammer the provider's
 	// rate limit — hence a small pool, with the rest queued.
 	var WORKERS_KEY = 'daimond-workers';
+	// The pump's own hold used to live here, in a key of its own. It is a LEAF of
+	// the pause tree now — `root/workers`, held by `www/js/pause.js` — so this key
+	// is read once, migrated onto the leaf, and deleted. See migrateWorkerHold.
 	var WORKERS_PAUSED_KEY = 'daimond-workers-paused';
 	// The user-authored "carry on" line for a resumed worker: a paused worker
 	// was hung up mid-task, and resuming seeds a fresh session with its
 	// transcript so far plus this nudge, so the model continues rather than
 	// starts over. See Workers.resume.
 	var RESUME_NUDGE = 'Continue the task from where you left off. Do not repeat work already done above.';
-	function savePausedFlag(v) { try { localStorage.setItem(WORKERS_PAUSED_KEY, v ? '1' : ''); } catch (e) { /* storage full */ } }
 
 	// The predictive spend gate on a fan-out. The cost of dispatching N
 	// workers is known BEFORE any of them runs — N times what a worker
@@ -7972,11 +8713,25 @@ import init, {
 	// merely notes, and it exists for exactly the "fifty agents in a
 	// blink" case. It fails open: if the governor is somehow absent, the
 	// dispatch proceeds as it always did.
-	async function governorClearsDispatch(n) {
+	async function governorClearsDispatch(n, diamondId) {
 		if (!window.DaimondGovernor) return true;
 		var a;
-		try { a = DaimondGovernor.assessDispatch(n); } catch (e) { return true; }
-		if (!a || !a.needsConfirm) return true;
+		try {
+			// The node the fan-out would spend against, so the gate can refuse a
+			// paused daimon before it prices anything.
+			a = DaimondGovernor.assessDispatch(n, DaimondPause.id('root', 'diamonds', diamondId, 'self'));
+		} catch (e) { return true; }
+		if (!a) return true;
+		// A REFUSAL comes first and is not a spend question. Shown through the
+		// fan-out confirm it would read as "this will cost you, carry on?" — the
+		// opposite of what happened, since nothing was dispatched and nothing was
+		// spent. It is a notice, and there is no "run anyway".
+		if (a.refused) {
+			noticeDialog(t('pause.refused_title'), a.refusal || t('pause.refused.dispatch',
+				{ node: DaimondPause.label(a.node || '') }));
+			return false;
+		}
+		if (!a.needsConfirm) return true;
 		var msg = tn('gov.fanout_body', n,
 				{ total: fmtUsd(a.predicted), each: fmtUsd(a.perWorker) })
 			+ (a.runSpent > 0 ? ' ' + t('gov.burst_spent', { spent: fmtUsd(a.runSpent) }) : '')
@@ -7989,7 +8744,9 @@ import init, {
 		runs: [],
 		queue: [],
 		active: 0,
-		paused: false,			// global hold: while set, pump launches nothing new
+		// The global hold is NOT a field here any more: it is `root/workers` in
+		// the pause tree, read through workersHeld(). Two flags for one hold was
+		// two answers to "are the workers running".
 		// Each concurrent worker runs on its OWN minted key — its "slot" — so
 		// parallel workers never share a key and their requests cannot race a
 		// shared cap into an overspend. The pool is still bounded so a fan-out does
@@ -8031,7 +8788,10 @@ import init, {
 		},
 
 		load: function () {
-			try { this.paused = localStorage.getItem(WORKERS_PAUSED_KEY) === '1'; } catch (e) { /* storage blocked */ }
+			// Carry an old hold onto the leaf before anything reads it, then take
+			// the leaf as the pump's starting point.
+			migrateWorkerHold();
+			lastHold = workersHeld();
 			var stored = readJson(WORKERS_KEY, []);
 			if (!stored.length) return;
 			var self = this;
@@ -8106,7 +8866,7 @@ import init, {
 		},
 
 		pump: function () {
-			if (this.paused) return;	// a global pause launches nothing new
+			if (workersHeld()) return;	// the pause tree's leaf launches nothing new
 			while (this.active < this.MAX && this.queue.length) {
 				this.start(this.queue.shift());
 			}
@@ -8161,6 +8921,7 @@ import init, {
 					run.app = new DaimondApp(s.url, s.key, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
 						Instructions.compose(Prompts.role('worker'), crystal), true);
 					window_(run.model, DaimondModels.CREDITS);
+					try { DaimondModels.noteUse(DaimondModels.CREDITS, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				} else {
 					var a = appCfgFor(run);
@@ -8168,18 +8929,26 @@ import init, {
 					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, maxOutFor(run.model, a.provider || run.provider),
 						Instructions.compose(Prompts.role('worker'), crystal), true);
 					window_(run.model, a.provider || run.provider);
+					try { DaimondModels.noteUse(a.provider || run.provider, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
 				}
 			};
 			// On credits, take a slot and mint its own key before building. A slot the
 			// account cannot afford (its siblings have reserved the balance) fails here
 			// as "no credits" rather than falling back to a shared key.
+			// A worker spends against the daimon that dispatched it, so that is the
+			// node the mint is told about.
+			var runNode = DaimondPause.id('root', 'diamonds', run.diamondId, 'self');
 			if (onCredits) {
 				run.slot = self.takeSlot();
 				try {
-					await DaimondModels.mintSlot(run.slot);
+					await DaimondModels.mintSlot(run.slot, runNode);
 				} catch (e) {
-					run.status = 'error';
+					// A refusal because the Diamond is PAUSED is a hold, not a failure.
+					// The mint throws an error carrying `.paused` precisely so the two
+					// can be told apart: an agent shown as failed when the user paused
+					// it is a bug report from your future self.
+					run.status = e && e.paused ? 'paused' : 'error';
 					run.text = friendlyError(e);
 					self.giveSlot(run.slot); DaimondModels.forgetSlot(run.slot);
 					this.active--; this.render(); this.pump();
@@ -8240,7 +9009,7 @@ import init, {
 					// This worker owns its slot, so it re-mints ITS OWN key — told which
 					// generation it froze, so a key already replaced by its own retry is
 					// taken rather than bought a second time.
-					try { await DaimondModels.remintSlot(run.slot, run._gen); }
+					try { await DaimondModels.remintSlot(run.slot, run._gen, runNode); }
 					catch (e2) {
 						throw new Error('Your Daimond credits have run out. Top up in Credits, or '
 							+ 'switch to a provider key of your own, then dispatch this agent again.');
@@ -8368,8 +9137,7 @@ import init, {
 		/// nothing new launches until resumed. The one action that stems a runaway
 		/// fan-out at a stroke: latent work stops spending immediately.
 		pauseAll: function () {
-			this.paused = true;
-			savePausedFlag(true);
+			setWorkersHeld(true);
 			var self = this;
 			this.runs.slice().forEach(function (r) {
 				if (r.status === 'running' || r.status === 'queued') self.pause(r);
@@ -8379,20 +9147,25 @@ import init, {
 
 		/// Resume every paused worker and release the pool.
 		resumeAll: function () {
-			this.paused = false;
-			savePausedFlag(false);
+			setWorkersHeld(false);
 			var self = this;
 			this.runs.slice().forEach(function (r) {
 				if (r.status === 'paused') self.resume(r);
 			});
 			this.render();
+			// And pump, which resuming the paused runs alone does not do. A run
+			// resumed INDIVIDUALLY while the hold was on is queued and not
+			// started; releasing the hold has to start it, or it waits for ever
+			// on the next dispatch. Reachable before this phase and reachable
+			// now from the global control, which releases the hold without
+			// touching any run.
+			this.pump();
 		},
 
 		/// Stop every worker in flight, waiting or paused -- the kill switch. Each
 		/// keeps whatever it managed to do, as a stopped tile; Clear removes them.
 		stopAll: function () {
-			this.paused = false;
-			savePausedFlag(false);
+			setWorkersHeld(false);
 			var self = this;
 			this.runs.slice().forEach(function (r) {
 				if (r.status === 'running' || r.status === 'queued' || r.status === 'paused') self.stop(r);
@@ -8776,7 +9549,8 @@ import init, {
 				try {
 					var already = await tools().run_tool('file_read', JSON.stringify({ path: to }));
 					if (typeof already === 'string' && !/^\s*Error\b/i.test(already)) continue;
-					var old = await tools().run_tool('file_read', JSON.stringify({ path: from }));
+					// The CONTENT is carried into the new file, so it must be the bytes.
+					var old = await readBytes(from);
 					if (typeof old !== 'string' || /^\s*Error\b/i.test(old) || !old.trim()) continue;
 					await tools().run_tool('file_write', JSON.stringify({ path: to, content: old }));
 				} catch (e) { /* no workspace yet, or unreadable: nothing to carry */ }
@@ -10960,7 +11734,7 @@ import init, {
 				// second one the tool could not reach.
 				if (!window.DaimondTypst) await import('./typst.js');
 				// Always compile the freshest source from OPFS.
-				var src = await tools().run_tool('file_read', JSON.stringify({ path: path }));
+				var src = await readBytes(path);
 				var out = await window.DaimondTypst.compile(src);
 				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
@@ -11851,6 +12625,8 @@ import init, {
 		try {
 			app = new DaimondApp(base, a.apiKey || '', a.model || 'none',
 				maxOutFor(a.model, a.provider), SYSTEM_PROMPT(), true);
+			// A Diamond's daimon, likewise.
+			try { DaimondModels.noteUse(a.provider, a.model); } catch (e) { /* never block a turn */ }
 		} catch (e) {
 			app = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none',
 				AUTO_MAX, SYSTEM_PROMPT(), true);
@@ -12116,7 +12892,7 @@ import init, {
 		setAgc('agents-pause', active > 0);
 		setAgc('agents-play',  nPause > 0);
 		setAgc('agents-stop',  active + nPause > 0);
-		grp.classList.toggle('holding', Workers.paused && nPause > 0);
+		grp.classList.toggle('holding', workersHeld() && nPause > 0);
 		grp.style.display = (active + nPause) > 0 ? '' : 'none';
 	}
 	function setAgc(id, on) {
@@ -12423,6 +13199,7 @@ import init, {
 			note.className = 'rail-note';
 			note.textContent = t('rail.no_diamonds');
 			diamondList.appendChild(note);
+			repaintPause();
 			return;
 		}
 		// Already most-recently-updated first: `list_diamonds` sorts on `updated`.
@@ -12432,10 +13209,55 @@ import init, {
 			none.className = 'rail-note';
 			none.textContent = t('rail.no_match');
 			diamondList.appendChild(none);
+			repaintPause();
 			return;
 		}
 		shown.forEach(function (f) { diamondList.appendChild(diamondBox(f)); });
 		updateActiveDiamond();
+		// A Diamond appearing or going moves the root and the section above it,
+		// and neither of those lights is rebuilt here.
+		repaintPause();
+	}
+
+	/// Delete a Diamond, asking first. THE way a Diamond is removed by hand.
+	///
+	/// Lifted out of the closer cross it used to hang on, because Delete now sits
+	/// at the foot of the tile's dialog and there must be exactly one path that
+	/// asks, forgets the arrangement, forgets the pause flags and lays the
+	/// tombstone. Resolves true when the Diamond went.
+	async function deleteDiamond(f) {
+		if (!await confirmDialog(t('rail.delete_diamond_body', { name: f.name }),
+			t('rail.delete_diamond'), { title: t('rail.delete_diamond') })) return false;
+		// A deleted Diamond's arrangement has nothing left to restore, and the
+		// layout blob is rewritten whole on every change, so leaving it would
+		// grow the write for ever.
+		DaimondPanels.forgetArrangement(f.id);
+		// And its pause flags, for the same reason: a leaf id nobody can reach
+		// keeps the Diamonds section — and the root above it — amber for ever,
+		// and travels in every sync parcel for the life of the account.
+		try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', f.id)); }
+		catch (e) { /* module not up */ }
+		forgetTilePrefs(f.id);
+		try {
+			await diamondApp().delete_diamond(f.id);
+		} catch (e2) {
+			noticeDialog(t('rail.delete_failed'), friendlyError(e2));
+			return false;
+		}
+		// Before the rail is redrawn, so the next push carries the deletion:
+		// without a tombstone the other device still holds this Diamond and
+		// simply hands it back on the following pull.
+		diamondTombstone(f.id);
+		if (currentDiamond && currentDiamond.id === f.id) {
+			currentDiamond = null;
+			signalDiamondChanged();
+			sessionNameEl.textContent = t('chat.no_chat');
+			showCentre('chat');
+			renderEmptyState();
+		}
+		bumpDiamonds();
+		loadDiamonds();
+		return true;
 	}
 
 	function diamondBox(f) {
@@ -12443,6 +13265,8 @@ import init, {
 		var box = document.createElement('div');
 		box.className = 'session-box diamond-box' + (active ? ' active' : '');
 		box.dataset.id = f.id;
+		// How much of itself this tile draws — the cog's dialog sets it.
+		box.dataset.detail = tileDetail(f.id);
 		// The row IS the control, so it has to be one to the keyboard and to a
 		// screen reader as well as to the pointer. It was a div with a click
 		// handler whose only focusable child was the x that deletes it, so
@@ -12455,14 +13279,20 @@ import init, {
 		if (active) box.setAttribute('aria-current', 'true');
 		box.addEventListener('keydown', function (e) {
 			if (e.key !== 'Enter' && e.key !== ' ') return;
-			// Not when the press belongs to something inside the row -- the
-			// closer, or a tag chip -- which answer for themselves.
+			// Not when the press belongs to something inside the row -- the cog,
+			// the light, or a tag chip -- which answer for themselves.
 			if (e.target !== box) return;
 			e.preventDefault();
 			box.click();
 		});
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
+		// The Diamond's own traffic light, bound to the branch that carries its
+		// daimon and (from phase H) its triggered actions — so a Diamond with a
+		// trigger paused and a daimon running reads amber here without anyone
+		// having to set amber anywhere.
+		mountPause(header, DaimondPause.id('root', 'diamonds', f.id),
+			f.name || t('rail.unnamed_diamond'));
 		var name = document.createElement('span');
 		name.className = 'session-box-name';
 		name.textContent = f.name;                 // escaped via textContent (H5)
@@ -12476,30 +13306,18 @@ import init, {
 				.catch(function (e2) { noticeDialog(t('rail.rename_failed'), friendlyError(e2)); });
 		});
 		header.appendChild(name);
-		var del = document.createElement('button');
-		del.className = 'session-box-close';
-		del.textContent = '×';
-		del.title = t('rail.delete_diamond');
-		del.setAttribute('aria-label', t('rail.delete_diamond_named', { name: f.name }));
-		del.addEventListener('click', async function (e) {
-			e.stopPropagation();
-			if (!await confirmDialog(t('rail.delete_diamond_body', { name: f.name }),
-				t('rail.delete_diamond'), { title: t('rail.delete_diamond') })) return;
-			// A deleted Diamond's arrangement has nothing left to restore, and the
-			// layout blob is rewritten whole on every change, so leaving it would
-			// grow the write for ever.
-			DaimondPanels.forgetArrangement(f.id);
-			diamondApp().delete_diamond(f.id).then(function () {
-				// Before the rail is redrawn, so the next push carries the deletion:
-				// without a tombstone the other device still holds this Diamond and
-				// simply hands it back on the following pull.
-				diamondTombstone(f.id);
-				if (currentDiamond && currentDiamond.id === f.id) { currentDiamond = null; signalDiamondChanged(); sessionNameEl.textContent = t('chat.no_chat'); showCentre('chat'); renderEmptyState(); }
-				bumpDiamonds();
-				loadDiamonds();
-			}).catch(function (e2) { noticeDialog(t('rail.delete_failed'), friendlyError(e2)); });
-		});
-		header.appendChild(del);
+		header.appendChild(tileCog(f.name, function () {
+			openTileDialog({
+				id:   f.id,
+				name: f.name,
+				// The BRANCH, not the `self` leaf: a Diamond's control stands for
+				// its daimon and (from phase H) its triggered actions together, so
+				// one with a trigger held and a daimon running reads amber here
+				// without anyone having set amber anywhere.
+				node: DaimondPause.id('root', 'diamonds', f.id),
+				onDelete: function () { return deleteDiamond(f); },
+			});
+		}));
 		var meta = document.createElement('div');
 		meta.className = 'session-box-meta';
 		var ver = document.createElement('span');
@@ -13294,7 +14112,7 @@ import init, {
 				seeDelta.title = t('crystal.delta_help');
 				seeDelta.addEventListener('click', async function () {
 					var d = '';
-					try { d = await tools().run_tool('file_read', JSON.stringify({ path: dref })); }
+					try { d = await readBytes(dref); }
 					catch (e) { noticeDialog(t('crystal.read_delta_failed'), friendlyError(e)); return; }
 					noticeDialog(t('crystal.delta_at', { v: v }), d || t('crystal.empty_paren'), { pre: true });
 				});
@@ -14377,6 +15195,11 @@ import init, {
 		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
 		try {
 			await fa.steer_crystal(diamondId, instruction, onEvent);
+		// A daimon can now draw and drop links itself, and every other caller of
+		// `signalLinksChanged` is a user action — so without this the Graph pane
+		// and the Diamond's Links section stay stale until something unrelated
+		// redraws them, and the world model looks like it did not take.
+		signalLinksChanged();
 			meterDiamondTurn(fa);
 			setCrystalStatus('');
 			await refreshDiamondAfterChange();
@@ -14390,7 +15213,7 @@ import init, {
 		if (dispatched.length) {
 			// The spend gate: a large fan-out pauses here for a look before
 			// a single worker is enqueued. A normal dispatch clears silently.
-			var cleared = await governorClearsDispatch(dispatched.length);
+			var cleared = await governorClearsDispatch(dispatched.length, diamondId);
 			if (!cleared) {
 				setCrystalStatus(dispatched.length === 1
 					? 'Agent not started.'
@@ -14848,6 +15671,12 @@ import init, {
 		if (window.DaimondGateway && DaimondGateway.logout) {
 			try { await DaimondGateway.logout(); } catch (e) { /* go anyway */ }
 		}
+		// The pause tree is per account and is held in memory as well as on disk.
+		// The reload below empties it anyway — every account boundary here is a
+		// reload — but that is an implementation detail, and one account's pauses
+		// colouring another's rail would be a money bug, not a cosmetic one. Not
+		// dead code: a guard against the day the reload goes.
+		try { if (window.DaimondPause) DaimondPause.reset(); } catch (e) { /* ignore */ }
 		DaimondAccounts.setCurrent(id);
 		location.reload();
 	}
@@ -15518,6 +16347,12 @@ import init, {
 			try { await DaimondGateway.logout(); } catch (e) { /* erase anyway */ }
 		}
 		try { DaimondIdentity.reset(); } catch (e) { /* ignore */ }
+		// Drop the pause tree held in memory as well as the one on disk. Every
+		// account boundary in this app happens to be a full page reload today, so
+		// this has no live effect — but the reload is an implementation detail and
+		// has changed before, and one account's pauses colouring another's rail is
+		// a money bug rather than a cosmetic one. Not dead code: a guard.
+		try { if (window.DaimondPause) DaimondPause.reset(); } catch (e) { /* ignore */ }
 		// Sweep every store this account owns. removeItem is namespaced to the current account, so
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
 		// here; the explicit list is what the old, single-account reset erased.
@@ -15526,6 +16361,11 @@ import init, {
 			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-diamond-models',
 			 'daimond-agents-revealed', 'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
 			 'daimond-mail', 'daimond-hands',
+			 // The pause tree. The PRIMARY account's keys are un-namespaced, so a
+			 // set left behind here is inherited whole by the next account made in
+			 // this browser: a Diamond that starts paused for no reason the user
+			 // can see, and no way to work out why.
+			 'daimond-pause',
 			 // The device roster and this device's own id. An account made here
 			 // afterwards is a new account, and it must not inherit the erased
 			 // one's identity as a device or the devices it used to sync with.
@@ -16940,6 +17780,10 @@ import init, {
 	});
 	applyToolsVisibility();
 
+	var conciseChip = document.getElementById('concise-chip');
+	if (conciseChip) conciseChip.addEventListener('click', function () { toggleConcise(); });
+	syncConciseChip();
+
 	// ── Collapse, select, fold, jump ───────────────────────────
 	collapseBtn = document.getElementById('collapse-btn');
 	selectTools = document.getElementById('select-tools');
@@ -17049,9 +17893,17 @@ import init, {
 		});
 		DaimondPanels.init();
 		DaimondAdmin.init();
+		initPauseUi();
 		if (window.DaimondMail) {
 			DaimondMail.init({
 				writeBytes:   Files.writeBytes,
+				// Mail reads message BYTES, so it must not go through
+				// `run_tool('file_read')` — that is the model-facing rendering, which
+				// numbers every line and wraps an untrusted path in an envelope.
+				// `parseHeaders` saw `1\tFrom: …` and matched nothing, so every message
+				// in the panel read "(unknown) / (no subject)". Same fault as the Doc
+				// panel's, in a second place. See `readRaw` at :11835.
+				readText:     function (path) { return Wasm.read_file(path); },
 				openFile:     Files.open,
 				refreshFiles: Files.refresh,
 				runTool:      function (name, args) {
@@ -17119,7 +17971,7 @@ import init, {
 			// Web panel can open a page the agent has just written there. Returns
 			// the text, or throws if there is no such file.
 			readFile: function (path) {
-				return tools().run_tool('file_read', JSON.stringify({ path: path }));
+				return readBytes(path);
 			},
 		});
 		// The machine hand is the browser build's route to a process, and the `run`

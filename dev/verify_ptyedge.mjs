@@ -417,7 +417,14 @@ const WASM_PATCHES = {
 	'w-noroot': ['if !machine.rooted() {', 'if false {'],
 	'w-nopair': ['if extract_json_bool(&st, "paired") != Some(true) {', 'if false {'],
 	'w-nocwd': ['if !inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro) {', 'if false {'],
-	'w-tainted': ['extract_json_bool(ask, "tainted") == Some(true));', 'false);'],
+	// The anchor carried `));` because the test used to sit inline inside
+	// `withholds_net(…)`. It was lifted into a binding on 2026-08-02 (05e3748) and
+	// this break has not matched since — so the property it exists to prove has
+	// not been proved for five days, and neither has `w-argvkit`, which is built
+	// after it. The build threw, the cache kept whatever had been made, and the
+	// guard above then skipped the rebuild for ever. Same intent, current shape.
+	'w-tainted': ['let tainted = extract_json_bool(ask, "tainted") == Some(true);',
+		'let tainted = false;'],
 	'w-argvkit': ['bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "toolkits").unwrap_or_default()));',
 		'bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "argv").unwrap_or_default()));'],
 };
@@ -430,6 +437,16 @@ const WASM_PATCHES = {
 function buildWasm(name) {
 	const out = path.join(BROKEN, name, 'pkg');
 	const orig = fs.readFileSync(PTY_RS, 'utf8');
+	// The file's own timestamps, kept so the restore below can put them back.
+	//
+	// The staleguard that protects this verifier compares MTIMES, not content, so
+	// restoring the bytes is not enough: writing `orig` back stamps the file
+	// `now`, which is necessarily later than the app's wasm was built, and the
+	// NEXT run of this file -- or of verify_scope or verify_wsident -- refuses
+	// with "that bundle is not this source". The verifier poisoned its own
+	// precondition, and three verifiers then read as red for a day with nothing
+	// wrong in the tree: `git diff` on pty.rs was empty every time anyone looked.
+	const when = fs.statSync(PTY_RS);
 	try {
 		if (name !== 'whole') {
 			const [from, to] = WASM_PATCHES[name];
@@ -449,13 +466,32 @@ function buildWasm(name) {
 			{ cwd: ROOT, env, stdio: 'pipe' });
 	} finally {
 		fs.writeFileSync(PTY_RS, orig);
+		// Byte-identical content, so the original mtime is the truthful one.
+		try { fs.utimesSync(PTY_RS, when.atime, when.mtime); } catch (e) { /* best effort */ }
 	}
 	return out;
 }
 
-if (PROVE || !fs.existsSync(path.join(BROKEN, 'whole/pkg/oxedyne_daimond.js'))) {
-	console.log('\nBuilding the wasm packages the pty_request checks are proved against.');
-	for (const name of ['whole', ...Object.keys(WASM_PATCHES)]) {
+// Build every package that is not already there — not "build them all if `whole`
+// is missing".
+//
+// The old guard asked only whether `whole` existed, and the packages are built in
+// a loop that takes minutes. Interrupt it once -- a timeout, a missing display,
+// Ctrl-C -- and the tree keeps `whole` plus however many breaks got made. Every
+// later run then sees `whole` and skips the loop entirely, so the first absent
+// package is loaded from a directory that does not exist, the page never reaches
+// `__ready`, and the run dies on a bare 30-second `waitForFunction` timeout that
+// names nothing. That is exactly how this file failed: six of eight packages on
+// disk, `w-tainted` and `w-argvkit` never built, and nothing in the output said
+// so. Checking each one costs a `statSync` and makes a partial build
+// self-repairing.
+const PKGS = ['whole', ...Object.keys(WASM_PATCHES)];
+const missing = PKGS.filter((n) => !fs.existsSync(path.join(BROKEN, n, 'pkg/oxedyne_daimond.js')));
+if (PROVE || missing.length) {
+	const todo = PROVE ? PKGS : missing;
+	console.log(`\nBuilding ${todo.length} wasm package(s) the pty_request checks are proved`
+		+ ` against${PROVE ? '' : ` (${PKGS.length - todo.length} already built)`}.`);
+	for (const name of todo) {
 		process.stdout.write(`  building ${name} … `);
 		const t0 = Date.now();
 		buildWasm(name);
@@ -641,15 +677,32 @@ async function grant(answer = 'allow', ms = 15000) {
 	return false;
 }
 
-/// How many hand processes this profile has running. The one-link property is
-/// what keeps it at one: Chrome starts a fresh host per connection, so a second
-/// port is a second process and a second approval question.
-function hands() {
+/// Every hand pid on the machine right now, launcher arms excluded.
+function handPids() {
 	const r = spawnSync('pgrep', ['-fa', HAND], { encoding: 'utf8' });
 	return (r.stdout || '').split('\n')
 		// The launcher arm is the same binary re-executed to apply a fence and
 		// then become the command, so it is not a second host.
-		.filter((l) => l.trim() && l.indexOf('--daimond-hand-launch') < 0).length;
+		.filter((l) => l.trim() && l.indexOf('--daimond-hand-launch') < 0)
+		.map((l) => l.trim().split(/\s+/)[0]);
+}
+
+/// The hands that were ALREADY running before this verifier started, which are
+/// none of its business.
+///
+/// `hands()` used to count every `daimond-hand` on the machine. On this developer's
+/// own workstation that includes the one serving their REAL browser -- a hand
+/// parented to /opt/google/chrome/chrome, paired to their live Daimond session and
+/// running for days. So the one-link check read 2 and failed, on a machine where
+/// nothing was wrong, purely because the person running the suite also uses the
+/// product. Killing it is not an option: it is a live session, not a leftover.
+const HANDS_BEFORE = new Set(handPids());
+
+/// How many hand processes THIS RUN has started. The one-link property is what
+/// keeps it at one: Chrome starts a fresh host per connection, so a second port
+/// is a second process and a second approval question.
+function hands() {
+	return handPids().filter((pid) => !HANDS_BEFORE.has(pid)).length;
 }
 
 // ┌───────────────────────────────────────────────────────────────┐

@@ -19,7 +19,7 @@
 //
 //   node dev/verify_guidemachine.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway, no model, no extension.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model, no extension.
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +31,9 @@ const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-li
 const OUT = path.join(os.homedir(), '.cache/daimond/guide-shots');
 fs.mkdirSync(OUT, { recursive: true });
 
-const BASE = 'http://localhost:8777/guide';
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const BASE = (process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`) + '/guide';
 const PAGE = 'machine-operations.html';
 /// Every other English page, each of which must link here.
 const SIBLINGS = ['index.html', 'interface.html', 'models.html', 'chats-and-diamonds.html',

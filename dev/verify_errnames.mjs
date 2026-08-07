@@ -17,10 +17,10 @@
 //   node dev/verify_errnames.mjs
 //   node dev/verify_errnames.mjs byok-badurl
 //
-// Needs dev/serve.mjs on :8777. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway.
 
 import fs from 'node:fs';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, MOCK } from './harness.mjs';
 
 let failures = 0, skips = 0;
 const skipped = [];
@@ -158,7 +158,7 @@ const CASES = [
 		reach: openByok,
 		act:   async (page) => {
 			await fill(page, '#cfg-provider', 'custom');
-			await fill(page, '#cfg-base-url', 'http://127.0.0.1:9099/v1/chat/completions');
+			await fill(page, '#cfg-base-url', MOCK);
 			await fill(page, '#cfg-api-key', '');
 			await pressLabel(page, '#admin-models', 'Save & start');
 		},

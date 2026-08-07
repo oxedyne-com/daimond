@@ -8,7 +8,8 @@
 //
 //   node dev/verify_pro.mjs
 //
-// Needs the release gateway (it starts its own on :9002) and dev/serve.mjs :8777.
+// Needs the release gateway (it starts its own on :9002) and dev/serve.mjs
+// (DAIMOND_PORT, default 8777).
 
 import fs from 'node:fs';
 import os from 'node:os';

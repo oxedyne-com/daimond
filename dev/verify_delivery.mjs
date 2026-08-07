@@ -10,9 +10,9 @@
 // point). Here it is routed to the LOCAL verify/transparency.jsonl, so the
 // "sealed in the public log" check can pass offline against the same chain.
 //
-// Needs dev/serve.mjs on :8777 and a generated www/manifest.json
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and a generated www/manifest.json
 // (node dev/stamp-build.mjs && node verify/manifest.mjs).
-import { open } from './harness.mjs';
+import { open, APP } from './harness.mjs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +46,7 @@ const waitVerdict = async () => {
 };
 
 // ── 1. A clean served build verifies green ──────────────────────────
-await page.goto('http://localhost:8777/verify.html', { waitUntil: 'domcontentloaded' });
+await page.goto(`${APP}/verify.html`, { waitUntil: 'domcontentloaded' });
 let v = await waitVerdict();
 check('a clean served build reports OK', /\bok\b/.test(v.klass), v.headline);
 check('the public-log seal check passed', v.checks.some(c => /sealed in the public log/.test(c) && !/NOT/.test(c)),
@@ -57,7 +57,7 @@ check('the per-file check passed', v.checks.some(c => /every served file matches
 // ── 2. A tampered served file is caught ─────────────────────────────
 await page.route('**/js/render.js', r => r.fulfill({
 	status: 200, contentType: 'text/javascript', body: '/* TAMPERED */\n' }));
-await page.goto('http://localhost:8777/verify.html', { waitUntil: 'domcontentloaded' });
+await page.goto(`${APP}/verify.html`, { waitUntil: 'domcontentloaded' });
 v = await waitVerdict();
 check('a tampered served file fails the verdict', /\bno\b/.test(v.klass), v.headline);
 check('the tampered file is named as differing',

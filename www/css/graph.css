@@ -5,6 +5,12 @@
  * theme. The one thing that is not a palette colour is the halo behind an edge
  * label, which is painted in the panel's own background so a word can sit on a
  * line and still be read; that too is a variable.
+ *
+ * The pane is now edited as well as read, so there are three more things to
+ * style than there were: the strip of controls above the picture, the menu the
+ * right button opens, and the small form a link is edited in. All three float
+ * INSIDE the panel card, which clips, so graph.js clamps them to it rather than
+ * letting one hang off an edge and disappear.
  */
 
 /* The panel is a stage card like the AI, the Web page and a message, but it is
@@ -17,6 +23,8 @@
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+	/* The menu and the link form are positioned against this card. */
+	position: relative;
 }
 
 /* The picture is drawn at a fixed scale and panned by scrolling, rather than
@@ -33,6 +41,12 @@
 	display: block;
 	/* SVG text inherits nothing from the page by default. */
 	font-family: var(--font);
+	/* A press and a sweep is a drag here, not a text selection. The mousedown
+	   handler refuses the selection as well; this is the belt, so a gesture that
+	   starts somewhere the handler does not run still cannot leave the picture
+	   striped in highlight. The stats line below is left selectable. */
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 /* ── Nodes ──────────────────────────────────────────────────── */
@@ -61,6 +75,21 @@
 .graph-node.cycled .graph-node-box {
 	stroke: var(--warn);
 	stroke-width: 1.5;
+}
+
+/* Being dragged. No transition on the transform: the box has to be under the
+   pointer, and a box easing towards where the pointer was is a box that is not
+   where the user is holding it. */
+.graph-node.dragging { cursor: grabbing; }
+.graph-node.dragging .graph-node-box {
+	stroke: var(--accent);
+	stroke-width: 1.5;
+}
+
+/* The Diamond a link is being drawn FROM, while it is being drawn. */
+.graph-node.link-source .graph-node-box {
+	stroke: var(--accent);
+	stroke-width: 2;
 }
 
 .graph-node-name {
@@ -92,6 +121,16 @@
 }
 .graph-edge:hover .graph-edge-line { stroke: var(--accent); }
 
+/* The wide invisible twin that takes the clicks. 1.4 pixels of stroke is not
+   something a pointer can be asked to hit, and widening the drawn line to make
+   it hittable would be letting the interaction decide how the picture looks. */
+.graph-edge-hit {
+	fill: none;
+	stroke: transparent;
+	stroke-width: 16;
+	cursor: pointer;
+}
+
 /* A closing edge -- the one that makes a cycle a cycle. Dashed and in the
    warning colour, because the instrument's job is to make it visible, not to
    pretend the graph is a tree. */
@@ -102,6 +141,7 @@
 
 .graph-arrow      { fill: var(--text-muted); }
 .graph-arrow.back { fill: var(--warn); }
+.graph-arrow.live { fill: var(--accent); }
 
 /* The relation, sitting on its own line. `paint-order` puts the stroke down
    first, so the halo is painted UNDER the glyphs rather than over them. */
@@ -116,6 +156,23 @@
 	stroke-linejoin: round;
 	pointer-events: none;
 }
+
+/* ── The live arrow ─────────────────────────────────────────── */
+/* The only moving thing in the pane. It follows the pointer while a link is
+   being drawn and is thrown away when the gesture ends; nothing about it is
+   ever stored, which is why the picture is still a function of the store. */
+.graph-live-line {
+	fill: none;
+	stroke: var(--accent);
+	stroke-width: 1.6;
+	stroke-dasharray: 5 4;
+	pointer-events: none;
+}
+.graph-live { pointer-events: none; }
+
+/* While a link is being aimed, the pointer says what a click will do. */
+.graph-body.linking { cursor: crosshair; }
+.graph-body.panning { cursor: grabbing; }
 
 /* ── Furniture ──────────────────────────────────────────────── */
 
@@ -144,3 +201,157 @@
 }
 /* The stats line is the panel's foot, not part of what scrolls. */
 .graph-body > .graph-stats { position: sticky; bottom: 0; background: var(--bg-secondary); }
+
+/* ── The control strip ──────────────────────────────────────── */
+/* Above the picture and outside the scroller, so it neither scrolls away nor
+   competes with the picture for the panel's own head. */
+.graph-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 10px 6px;
+	border-bottom: 1px solid var(--border);
+	min-width: 0;
+}
+
+.graph-btn {
+	flex: none;
+	font: inherit;
+	font-size: var(--fs-2xs);
+	line-height: 1.4;
+	padding: 3px 10px;
+	border-radius: var(--radius-sm);
+	border: 1px solid var(--border-2);
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
+	cursor: pointer;
+}
+.graph-btn:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+	border-color: var(--border-strong);
+}
+/* Armed. The pressed state has to read as pressed without the label changing,
+   or the button says one thing and means another. */
+.graph-btn.on {
+	background: var(--accent-soft);
+	border-color: var(--accent);
+	color: var(--accent-text);
+}
+.graph-btn.primary {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--on-fill);
+}
+.graph-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.graph-btn.danger { color: var(--danger); }
+.graph-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+
+/* What the mode is waiting for, said where the control that armed it is. */
+.graph-say {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+}
+.graph-say.warn { color: var(--warn); }
+
+/* ── The right-click menu ───────────────────────────────────── */
+
+.graph-menu {
+	position: absolute;
+	z-index: 30;
+	min-width: 170px;
+	padding: 4px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+}
+
+.graph-menu-item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	font: inherit;
+	font-size: var(--fs-xs);
+	padding: 5px 9px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-primary);
+	cursor: pointer;
+}
+.graph-menu-item:hover { background: var(--bg-hover); }
+.graph-menu-item.danger { color: var(--danger); }
+.graph-menu-sep {
+	height: 1px;
+	margin: 4px 2px;
+	background: var(--border);
+}
+
+/* ── The link form ──────────────────────────────────────────── */
+
+.graph-edit {
+	position: absolute;
+	z-index: 31;
+	width: 260px;
+	padding: 10px 12px 11px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius);
+	background: var(--bg-tertiary);
+	box-shadow: 0 8px 26px rgba(0, 0, 0, 0.32);
+}
+
+.graph-edit-head {
+	font-size: var(--fs-xs);
+	color: var(--text-primary);
+	margin-bottom: 8px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.graph-edit-lab {
+	display: block;
+	font-size: var(--fs-3xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+	margin: 6px 0 3px;
+}
+
+.graph-edit-input,
+.graph-edit-note {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font: inherit;
+	font-size: var(--fs-xs);
+	padding: 4px 7px;
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius-sm);
+	background: var(--bg-primary);
+	color: var(--text-primary);
+}
+.graph-edit-note { resize: vertical; min-height: 40px; }
+.graph-edit-input:focus,
+.graph-edit-note:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Why saving is not quite an edit. Said in the form rather than discovered
+   afterwards, because the timestamp is the thing a later reader sorts by. */
+.graph-edit-why {
+	margin-top: 7px;
+	font-size: var(--fs-3xs);
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+
+.graph-edit-row {
+	display: flex;
+	gap: 6px;
+	margin-top: 10px;
+}

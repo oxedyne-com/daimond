@@ -33,7 +33,8 @@
 // dev/verify_fsa.mjs uses, and for the same reason: what the picker returns is
 // a FileSystemDirectoryHandle, and OPFS hands out that very type.
 //
-// Run with dev/serve.mjs up (:8777). No gateway, no hand, no mock model.
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up. No gateway, no hand, no mock
+// model.
 //
 //	node dev/verify_droots.mjs
 //

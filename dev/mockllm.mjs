@@ -42,8 +42,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LOG  = path.join(HERE, 'mockllm.log');
-const PORT = Number(process.argv[2] || 9099);
+// The log is per-world, not per-repo: two mocks appending to one file make every
+// assertion that reads it see another agent's traffic.  See dev/world.sh.
+const LOG  = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
+const PORT = Number(process.argv[2] || process.env.DAIMOND_MOCK_PORT || 9099);
 
 const MODELS = [
 	'mock/fast',

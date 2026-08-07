@@ -17,13 +17,14 @@
 // session's own message list across the boundary, ids and all.
 //
 // WHAT IS ASSERTED, and against what. Not the app's belief about what it sent —
-// the MOCK PROVIDER'S OWN LOG of what actually arrived (dev/mockllm.log). The
+// the MOCK PROVIDER'S OWN LOG of what actually arrived (DAIMOND_MOCK_LOG). The
 // pairing rule is re-implemented here, independently of the Rust that repairs
 // it, and applied to every request in the log rather than to the one this test
 // is about: a fix that makes turn two legal by making turn three illegal has
 // fixed nothing.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099).
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import { open, chat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
 
 const ok = [], bad = [];

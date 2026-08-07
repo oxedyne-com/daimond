@@ -20,7 +20,7 @@
 // The gateway is not running locally (/api/* is a 502 from dev/serve.mjs), so its four calls and
 // the provider behind the minted key are FETCH-stubbed — the store is never touched, and every
 // assertion below is against the real wasm, the real models.js and the real DOM.
-import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, MOCK } from './harness.mjs';
+import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, APP, MOCK } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -143,7 +143,7 @@ check('unlocking mints a key (the balance is asked for models, not just shown)',
 const clientApi = await page.evaluate(() => window.DaimondGateway.clientApi());
 check('the mint sends x-daimond-api', (gw.mintHead || {})['x-daimond-api'] === String(clientApi),
 	`sent ${JSON.stringify((gw.mintHead || {})['x-daimond-api'])}, gateway.js says ${clientApi}`);
-const modelsSrc = await (await fetch('http://localhost:8777/js/models.js')).text();
+const modelsSrc = await (await fetch(`${APP}/js/models.js`)).text();
 check('...read from gateway.js rather than copied — one copy of that number exists in the client',
 	/DaimondGateway\.clientApi\(\)/.test(modelsSrc) && !/CLIENT_API\s*=/.test(modelsSrc),
 	'models.js reads the version and declares none of its own');

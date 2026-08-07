@@ -112,8 +112,9 @@ const shape = await p.evaluate(() => {
 		role: row.getAttribute('role'),
 		focusable: row.matches(FOCUS_SEL),
 		label: row.getAttribute('aria-label'),
-		// The destructive control inside it, and whether it says WHICH row it is on.
-		delLabel: (row.querySelector('.session-box-close') || {}).ariaLabel || null,
+		// The cog that replaced the closer cross, and whether it says WHICH row
+		// it is on: five tiles must not announce as five identical "Settings".
+		delLabel: (row.querySelector('.tile-cog') || {}).ariaLabel || null,
 	};
 });
 if (shape) {
@@ -121,8 +122,8 @@ if (shape) {
 	check('a Diamond row is in the tab order', shape.focusable === true);
 	check('a Diamond row says its own name', !!shape.label && shape.label.trim().length > 0,
 		JSON.stringify(shape.label));
-	// §5: two Diamonds must not present two identical "x".
-	check('the delete button names the Diamond it would delete',
+	// §5: two Diamonds must not present two identical controls.
+	check('the cog names the Diamond it would open the settings of',
 		!!shape.delLabel && shape.delLabel !== '×' && shape.delLabel.trim().length > 1,
 		JSON.stringify(shape.delLabel));
 }

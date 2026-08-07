@@ -51,6 +51,23 @@
 	flex: none;
 }
 .mail-accounts .mail-fine { padding: 4px 4px 0; }
+
+/* One control for all of mail, and the one manual refresh, above the list.
+   Deliberately not dressed as a section heading: the rail found that a row led
+   by a light and set in small caps reads as a section that has lost its
+   alignment (app.css:207). Sentence case, a rule under it, the light leading. */
+.mail-globals {
+	display: flex; align-items: center; gap: 6px;
+	padding: 4px 2px 6px;
+	margin-bottom: 4px;
+	border-bottom: 1px solid var(--border);
+}
+.mail-globals-label {
+	flex: 1; min-width: 0;
+	font-size: var(--fs-sm); font-weight: 500;
+	color: var(--text-secondary);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .mail-acct {
 	display: flex; align-items: center; gap: 6px;
 	padding: 6px 8px;
@@ -75,6 +92,20 @@
 }
 .mail-acct:hover .mail-del { opacity: 1; }
 .mail-del:hover { color: var(--danger); }
+
+/* The gear stays visible. `.mail-del` above appears on hover, which on a phone
+   means never; a control the user has been told to press must not be one they
+   cannot find. Muted until hovered, so it does not compete with the address. */
+.mail-gear {
+	flex: none;
+	display: flex; align-items: center; justify-content: center;
+	width: 20px; height: 20px; padding: 0;
+	border: 0; background: none; color: var(--text-muted);
+	cursor: pointer;
+}
+.mail-gear .ic { width: 14px; height: 14px; }
+.mail-gear:hover { color: var(--text-primary); }
+.mail-gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 50%; }
 
 /* ── The messages ────────────────────────────────────────────── */
 
@@ -294,12 +325,19 @@
 }
 .compose-att:hover { border-color: var(--danger); color: var(--danger); }
 
+/* Wraps, because at 380px it did not: the row ran 22px past the panel and cut
+   "Discard" in half, so the one control that undoes the message was the one the
+   phone hid. A second row of buttons is the right answer here rather than a
+   horizontal scroll — a control a person has to find by swiping is one they will
+   not find. `nowrap` on the buttons themselves stops "Save draft" folding to two
+   lines while its neighbours stay at one, which left the row visibly ragged. */
 .compose-foot {
 	flex: none;
-	display: flex; align-items: center; gap: 8px;
+	display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
 	padding: 10px 14px;
 	border-top: 1px solid var(--border);
 }
+.compose-send, .compose-btn { white-space: nowrap; }
 .compose-send {
 	background: var(--accent); color: var(--on-fill, #fff);
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
@@ -369,3 +407,59 @@
 }
 .mail-folder { padding-left: calc(8px + var(--folder-depth, 0) * 10px); }
 .mail-folder[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+
+/* How much is in a folder. Tabular figures so a column of counts lines up on
+   its units rather than wandering with the width of a 1; muted, because the
+   folder's name is what the eye is looking for and the number is the answer to
+   a question it has not asked yet. */
+.mail-count {
+	flex: none;
+	min-width: 3ch; text-align: right;
+	font-size: var(--fs-2xs);
+	font-variant-numeric: tabular-nums;
+	color: var(--text-secondary);
+	white-space: nowrap;
+}
+/* A figure that can no longer be trusted on its own. Dimmed rather than
+   coloured: it is not a warning, it is an old number, and the age sits beside
+   it saying how old. */
+.mail-count.stale { color: var(--text-muted); }
+
+/* ── A mailbox's settings ──────────────────────────────────────
+   One tile per folder: its pause control, its name, what it holds, and how
+   often it goes and looks. The tiles are the dialog's whole body — the Delete
+   that belongs at the foot of it is phase C's and is not here yet. */
+.mail-cfg { display: flex; flex-direction: column; gap: 6px; }
+.mail-cfg > .mail-fine { margin-bottom: 4px; }
+.mail-tile {
+	display: flex; align-items: center; gap: 8px;
+	padding: 7px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+}
+/* The mailbox's own switch governs every tile under it, so it is set apart
+   from them rather than being read as one more folder. */
+.mail-tile-self { background: var(--bg-secondary); border-color: var(--border-strong); }
+.mail-tile-self .mail-fine { flex: none; }
+.mail-tile-name {
+	flex: 1; min-width: 0;
+	font-size: var(--fs-sm);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-every {
+	flex: none; max-width: 46%;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 4px 6px; font-size: var(--fs-xs);
+}
+.mail-every:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* At a phone's width a tile cannot hold four things on one line: the folder
+   name ellipsised to nothing so that a pulldown could keep its full width.
+   The pulldown drops to a second line and takes the whole of it. */
+@media (max-width: 460px) {
+	.mail-tile { flex-wrap: wrap; }
+	.mail-every { max-width: none; width: 100%; }
+}

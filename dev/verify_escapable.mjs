@@ -23,8 +23,8 @@
 //   node dev/verify_escapable.mjs
 //   node dev/verify_escapable.mjs 'Change passphrase'      # one dialog
 //
-// Needs dev/serve.mjs on :8777. No gateway: every dialog here is reachable
-// without one, and any that is not is SKIPPED out loud rather than passed.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway: every dialog here is
+// reachable without one, and any that is not is SKIPPED out loud rather than passed.
 
 import fs from 'node:fs';
 import { open, scratch, shot } from './harness.mjs';
@@ -191,6 +191,34 @@ const DIALOGS = [
 		close:    null,
 		escape:   true,
 		viewport: { width: 900, height: 820 },
+	},
+	{
+		// Phase C's per-tile dialog. It carries Delete at its foot, so being able
+		// to get out of it without pressing anything is not a nicety: a user who
+		// opened it to look must be able to leave it the two ways they know.
+		name:   'Tile dialog (Diamond cog)',
+		// A model IS connected here: making a Diamond is how a tile comes to
+		// exist, and a rail with no tiles has no cog to press.
+		open:   {},
+		reach:  async (page) => {
+			await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
+			await page.waitForTimeout(250);
+			await press(page, '#new-diamond-btn');
+			await page.waitForSelector('.dlg-card', { timeout: 8000 });
+			await page.evaluate(() => {
+				const card = [...document.querySelectorAll('.dlg-card')].find((c) => c.getClientRects().length);
+				const inp = card.querySelector('input.dlg-input');
+				inp.value = 'Escapable';
+				inp.dispatchEvent(new Event('input', { bubbles: true }));
+				card.querySelector('.dlg-ok').click();
+			});
+			await page.waitForSelector('#diamond-list .tile-cog', { timeout: 10000 });
+			await press(page, '#diamond-list .tile-cog');
+			await page.waitForSelector('.tile-dlg-card', { timeout: 8000 });
+		},
+		sel:    '.tile-dlg-card',
+		close:  '.tile-dlg-done',
+		escape: true,
 	},
 	{
 		name:   'Appearance menu',

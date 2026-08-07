@@ -34,7 +34,7 @@
 //   node dev/verify_guidefacts.mjs            the checks
 //   node dev/verify_guidefacts.mjs --prove    each check, against broken text
 //
-// Needs dev/serve.mjs on :8777.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,8 +43,11 @@ import { pathToFileURL } from 'node:url';
 const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
-const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
-const BASE = 'http://localhost:8777/guide';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const BASE = (process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`) + '/guide';
 const OUT = path.join(os.homedir(), '.cache/daimond/guide-shots');
 fs.mkdirSync(OUT, { recursive: true });
 

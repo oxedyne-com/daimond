@@ -8,6 +8,12 @@
 //
 //   node dev/serve.mjs            # from the app root
 //
+// The port is `DAIMOND_PORT`, default 8777, and the gateway it proxies to is
+// `DAIMOND_GW_PORT`, default 9002.  Both are settable so that several agents can
+// each hold a whole world -- server, mock provider and browser profile -- at once;
+// with one fixed port only one browser harness could run at a time, and no agent
+// could see its own work.  `dev/world.sh N` prints a matching set.
+//
 // No dependencies; plain Node http.
 
 import http from 'node:http';
@@ -16,8 +22,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = normalize(join(fileURLToPath(import.meta.url), '..', '..', 'www'));
-const PORT = 8777;
-const GATEWAY = { host: '127.0.0.1', port: 9002 };
+const PORT = Number(process.env.DAIMOND_PORT || 8777);
+const GATEWAY = { host: '127.0.0.1', port: Number(process.env.DAIMOND_GW_PORT || 9002) };
 
 const TYPES = {
 	'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',

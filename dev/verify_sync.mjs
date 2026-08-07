@@ -1,8 +1,9 @@
 // verify_sync.mjs — a user's work travels between devices through the gateway's
 // encrypted mailbox, and two devices editing at once converge rather than clobber.
 //
-// This drives the real client engine (sync.js) against the REAL gateway (/api/sync),
-// so it needs the dev stack up: the app on :8777 and the gateway on :9002.
+// This drives the real client engine (sync.js) against the REAL gateway (/api/sync), so
+// it needs the dev stack up: the app (DAIMOND_PORT, default 8777) and the gateway on
+// :9002.
 //
 //   1. Sign in, make a chat, push. The mailbox holds a version >= 1, and its blob
 //      is ciphertext — the plaintext codeword must NOT appear in it.
@@ -381,17 +382,22 @@ try {
 		return r;
 	};
 
-	/// Delete the named Diamond through its own × button, answering the confirm —
-	/// the call site that has to write the tombstone.
+	/// Delete the named Diamond the way a person does — the cog, then Delete at
+	/// the foot of its dialog, then the confirm. This is the call site that has
+	/// to write the tombstone.
 	const removeDiamond = async (name) => {
 		const found = await page.evaluate((nm) => {
 			const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
 				.find(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === nm);
 			if (!box) return false;
-			box.querySelector('.session-box-close').click();
+			const cog = box.querySelector('.tile-cog');
+			if (!cog) return false;
+			cog.click();
 			return true;
 		}, name);
 		if (!found) return 'not in the rail';
+		await page.waitForSelector('.tile-dlg-delete', { timeout: 8000 });
+		await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
 		await page.waitForSelector('.dlg-card', { timeout: 8000 });
 		await page.evaluate(() => {
 			const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);

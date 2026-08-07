@@ -34,7 +34,8 @@ const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
-const ROOT	= '/home/jason/usr/code/web/apps/oxedyne/daimond';
+import { fileURLToPath } from 'node:url';
+const ROOT	= path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT	= `${ROOT}/ext`;
 // The SHIPPED manifest names one origin and it is not this test server. The dev
 // origins live in the generated build alone, so that the release artefact cannot
@@ -59,7 +60,7 @@ fs.chmodSync(MOCK, 0o755);
 const PROFILE	= path.join(SCRATCH, 'verify-hand');
 // The stub page only has to be on an origin the manifest lets speak to the
 // extension. It is not the app: nothing here needs the app -- and it is not the
-// dev server either, so the two must not fight over 8777. The port is CHOSEN
+// dev server either, so the two must not fight over its port. The port is CHOSEN
 // below, from the first free one, and the dev build is then generated to trust
 // whichever that was. That is what lets this run beside `dev/serve.mjs`.
 const FIRST	= Number(process.env.HAND_PORT || 8877);

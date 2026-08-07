@@ -18,7 +18,7 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::rand::Rand;
 use oxedyne_fe2o3_jdat::prelude::*;
 
-use crate::protocol::{ChatMessage, ToolCall};
+use crate::protocol::{ChatMessage, ContentPart, ImagePart, MessageContent, ToolCall};
 
 // Native transport imports — the hand-rolled TLS client lives behind
 // tokio + rustls, which do not target wasm32.
@@ -646,6 +646,7 @@ impl LlmClient {
         on_token:   &mut impl FnMut(&str),
         notify:     bool,
     ) -> Outcome<ChatOnceResponse> {
+        let images = res!(self.vision_guard(messages));
         let body = self.build_body(messages, tools, true);
         let mut waited = 0u64;
         let mut retries = 0u32;
@@ -688,11 +689,11 @@ impl LlmClient {
                     // unrepeatable.
                     let started = emitted || acc.has_output();
                     if started || !e.retryable {
-                        return Err(e.err);
+                        return Err(self.vision_error(e.err, images));
                     }
                     let delay = match self.retry.next_delay(retries, waited, e.after_ms) {
                         Some(d) => d,
-                        None    => return Err(e.err),
+                        None    => return Err(self.vision_error(e.err, images)),
                     };
                     waited += delay;
                     retries += 1;
@@ -721,6 +722,7 @@ impl LlmClient {
         messages:   &[ChatMessage],
         tools:      Option<&str>,
     ) -> Outcome<ChatOnceResponse> {
+        let images = res!(self.vision_guard(messages));
         let body = self.build_body(messages, tools, false);
         let mut waited = 0u64;
         let mut retries = 0u32;
@@ -731,11 +733,11 @@ impl LlmClient {
                     // Nothing streams on this path, so there is never a partial
                     // to protect -- only the classification matters.
                     if !e.retryable {
-                        return Err(e.err);
+                        return Err(self.vision_error(e.err, images));
                     }
                     let delay = match self.retry.next_delay(retries, waited, e.after_ms) {
                         Some(d) => d,
-                        None    => return Err(e.err),
+                        None    => return Err(self.vision_error(e.err, images)),
                     };
                     waited += delay;
                     retries += 1;
@@ -777,6 +779,63 @@ impl LlmClient {
         })
     }
 
+    /// Refuse, before the request is built, to send an image to a model known not to see.
+    ///
+    /// Returns how many images the conversation carries, which is zero on nearly every turn and
+    /// is what [`vision_error`](Self::vision_error) needs afterwards.
+    ///
+    /// The refusal names the model, because that is the fact the user has to act on: the app
+    /// cannot tell them which model to pick, but it can tell them the one they picked is the
+    /// reason nothing was looked at.  A provider's own 400 says none of that -- at best it names
+    /// a content type.
+    ///
+    /// # Arguments
+    /// * `messages` - The conversation about to be sent.
+    fn vision_guard(&self, messages: &[ChatMessage]) -> Outcome<usize> {
+        let images: usize = messages.iter().map(|m| m.content().images().count()).sum();
+        if images == 0 || model_can_see(&self.model) {
+            return Ok(images);
+        }
+        Err(err!(
+            "The model '{}' cannot see. This turn carries {} image{} and that model takes text \
+             only, so it would answer as though nothing had been shown to it. Choose a model with \
+             vision and read the file again.",
+            self.model, images, if images == 1 { "" } else { "s" };
+            Invalid, Input, Unimplemented))
+    }
+
+    /// Say what a failed request that carried images most likely failed for.
+    ///
+    /// [`vision_guard`](Self::vision_guard) can only refuse a model it has been told about, and no
+    /// list of those is ever complete -- Daimond takes an arbitrary endpoint and an arbitrary
+    /// model id.  So the second half of the answer is here: when a turn that carried images comes
+    /// back refused, and the provider's words are about images, the model is named and the reason
+    /// is said plainly, with the provider's own sentence kept after it rather than replaced.
+    ///
+    /// A failure with no images in the turn, or whose text says nothing about them, is returned
+    /// exactly as it arrived.  Guessing at an unrelated failure would be worse than saying nothing.
+    ///
+    /// # Arguments
+    /// * `e` - The error the provider produced.
+    /// * `images` - How many images the refused turn carried.
+    fn vision_error(&self, e: Error<ErrTag>, images: usize) -> Error<ErrTag> {
+        if images == 0 {
+            return e;
+        }
+        let low = fmt!("{}", e).to_lowercase();
+        let about_images = [
+            "image", "vision", "multimodal", "media_type", "media type", "image_url",
+        ].iter().any(|m| low.contains(m));
+        if !about_images {
+            return e;
+        }
+        err!(
+            "The model '{}' could not be shown the {} image{} in this turn -- it appears not to \
+             see. Choose a model with vision. The provider said: {}",
+            self.model, images, if images == 1 { "" } else { "s" }, e;
+            Invalid, Input, Unimplemented)
+    }
+
     /// Build the JSON request body for the OpenAI-compatible API.
     ///
     /// `tools` (if present) is a ready-made JSON array injected as the
@@ -797,6 +856,14 @@ impl LlmClient {
     /// The OpenAI-compatible request body.
     ///
     /// See [`build_body`](Self::build_body) for the shared contract.
+    ///
+    /// One thing here is not a straight translation of the message list.  A `tool` message on this
+    /// side may hold text and nothing else -- the content-part union for that role has no image
+    /// member -- so an image returned by a tool cannot ride in the reply that returned it.  It is
+    /// re-homed instead: the tool reply carries its text, and the images from a whole RUN of tool
+    /// replies are emitted together in one `user` message directly after the run.  After the run
+    /// and not between the replies, because a run of `tool` messages answers one assistant turn
+    /// and a message of another role wedged inside it is a conversation the API rejects.
     fn build_openai_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool)
         -> String
     {
@@ -805,13 +872,34 @@ impl LlmClient {
         out.push('{');
         out.push_str(&fmt!("\"model\":\"{}\",", self.model));
         out.push_str("\"messages\":[");
+        let mut first = true;
+        // Images lifted out of the tool replies of the run now being emitted.
+        let mut carried: Vec<String> = Vec::new();
         for (i, msg) in messages.iter().enumerate() {
-            if i > 0 { out.push(','); }
+            if !matches!(msg, ChatMessage::Tool { .. }) && !carried.is_empty() {
+                if !first { out.push(','); }
+                out.push_str(&tool_image_message(&carried));
+                carried.clear();
+                first = false;
+            }
+            if let ChatMessage::Tool { content, .. } = msg {
+                for img in content.images() {
+                    carried.push(fmt!(
+                        "{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:{};base64,{}\"}}}}",
+                        img.media.mime(), img.base64()));
+                }
+            }
+            if !first { out.push(','); }
+            first = false;
             if marks.contains(&i) {
                 out.push_str(&message_to_json_cached(msg));
             } else {
                 out.push_str(&message_to_json(msg));
             }
+        }
+        if !carried.is_empty() {
+            if !first { out.push(','); }
+            out.push_str(&tool_image_message(&carried));
         }
         out.push_str("],");
         if let Some(t) = tools {
@@ -866,8 +954,8 @@ impl LlmClient {
         // The system prompt, hoisted.  Several system messages become one
         // block: the API takes a single system field, and the model reads a
         // joined prompt exactly as it read separate messages.
-        let sys: Vec<&str> = messages.iter().filter_map(|m| match m {
-            ChatMessage::System { content } => Some(content.as_str()),
+        let sys: Vec<String> = messages.iter().filter_map(|m| match m {
+            ChatMessage::System { content } => Some(content.as_text().into_owned()),
             _ => None,
         }).collect();
         if !sys.is_empty() {
@@ -891,14 +979,22 @@ impl LlmClient {
                 ChatMessage::User { content } => {
                     // An empty text block is rejected outright, where the
                     // OpenAI side simply carries the empty string through.
-                    if !content.is_empty() {
-                        pending.push(text_block(content, marks.contains(&i)));
-                    }
+                    pending.extend(anthropic_blocks(content, marks.contains(&i)));
                 }
                 ChatMessage::Tool { tool_call_id, content } => {
-                    pending.push(fmt!(
-                        "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":\"{}\"}}",
-                        json_escape(tool_call_id), json_escape(content)));
+                    // A `tool_result` takes either a string or an array of blocks, and this side
+                    // -- unlike OpenAI's -- takes an image among them.  So a screenshot stays
+                    // attached to the call that produced it rather than being re-homed.
+                    if content.has_image() {
+                        let blocks = anthropic_blocks(content, false);
+                        pending.push(fmt!(
+                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":[{}]}}",
+                            json_escape(tool_call_id), blocks.join(",")));
+                    } else {
+                        pending.push(fmt!(
+                            "{{\"type\":\"tool_result\",\"tool_use_id\":\"{}\",\"content\":\"{}\"}}",
+                            json_escape(tool_call_id), json_escape(&content.as_text())));
+                    }
                 }
                 ChatMessage::Assistant { content, tool_calls } => {
                     if !pending.is_empty() {
@@ -911,8 +1007,10 @@ impl LlmClient {
                     if let Some(tc) = tool_calls.first() {
                         blocks.extend(self.carry_get(&tc.id));
                     }
-                    if !content.is_empty() {
-                        blocks.push(text_block(content, false));
+                    // Assistant turns are the model's own words; an image cannot appear in one.
+                    let said = content.as_text();
+                    if !said.is_empty() {
+                        blocks.push(text_block(&said, false));
                     }
                     for tc in tool_calls {
                         let args = if tc.arguments.trim_start().starts_with('{') {
@@ -1327,7 +1425,7 @@ impl LlmClient {
     /// `fetch` + CORS + transport path end-to-end without a valid key.
     pub async fn probe_status(&self) -> Outcome<u16> {
         let messages = [crate::protocol::ChatMessage::User {
-            content: "ping".to_string(),
+            content: MessageContent::text("ping"),
         }];
         let body = self.build_body(&messages, None, false);
         let resp = res!(self.wasm_fetch_raw(&body).await);
@@ -2273,6 +2371,97 @@ fn text_block(text: &str, cached: bool) -> String {
     }
 }
 
+/// An Anthropic `image` content block, base64 source.
+///
+/// The shape is the one the Messages API publishes:
+/// `{"type":"image","source":{"type":"base64","media_type":…,"data":…}}`.  Key order matters to
+/// nothing but the fixture that pins it, and it is the documentation's order.
+///
+/// A cache breakpoint may sit on an image block as on any other, and it has to be able to: the
+/// breakpoint caches everything up to the block it is on, so a message whose last block is the
+/// image would otherwise have no legal place to put one and would silently lose the cache.
+///
+/// # Arguments
+/// * `img` - The image; its bytes are base64-encoded here, once per request.
+/// * `cached` - Whether to attach an ephemeral `cache_control` marker.
+fn image_block(img: &ImagePart, cached: bool) -> String {
+    let mark = if cached { ",\"cache_control\":{\"type\":\"ephemeral\"}" } else { "" };
+    fmt!(
+        "{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"{}\",\
+         \"data\":\"{}\"}}{}}}",
+        img.media.mime(), img.base64(), mark)
+}
+
+/// A message's content as Anthropic content blocks, in order.
+///
+/// The cache marker goes on the LAST block, because a breakpoint caches the prefix up to and
+/// including the block it sits on -- putting it on the first of several would leave the rest of
+/// the message re-billed on every turn, which is the opposite of what marking it was for.
+///
+/// # Arguments
+/// * `content` - What the message carries.
+/// * `cached` - Whether this message is a cache breakpoint.
+fn anthropic_blocks(content: &MessageContent, cached: bool) -> Vec<String> {
+    let parts: Vec<&ContentPart> = match content {
+        MessageContent::Text(s) => {
+            // An empty text block is rejected outright, where the OpenAI side simply carries the
+            // empty string through.
+            return if s.is_empty() { Vec::new() } else { vec![text_block(s, cached)] };
+        },
+        MessageContent::Parts(parts) => parts.iter().collect(),
+    };
+    let last = parts.len().saturating_sub(1);
+    let mut out = Vec::with_capacity(parts.len());
+    for (i, p) in parts.iter().enumerate() {
+        match p {
+            ContentPart::Text(t) if t.is_empty() => {},
+            ContentPart::Text(t)  => out.push(text_block(t, cached && i == last)),
+            ContentPart::Image(m) => out.push(image_block(m, cached && i == last)),
+        }
+    }
+    out
+}
+
+/// The `user` message that carries images lifted out of a run of OpenAI tool replies.
+///
+/// The leading sentence is not decoration: without it the model receives images with no statement
+/// of where they came from, and the turn reads as the user having pasted them.
+///
+/// # Arguments
+/// * `blocks` - Ready-made `image_url` parts, in the order the tools returned them.
+fn tool_image_message(blocks: &[String]) -> String {
+    fmt!(
+        "{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"{}\"}},{}]}}",
+        json_escape("[The images returned by the tool calls above, in order.]"),
+        blocks.join(","))
+}
+
+/// A message's content as the OpenAI `content` field: a JSON string, or an array of parts.
+///
+/// A bare string whenever there is no image, because that is what every OpenAI-compatible router
+/// has always been sent and the array form buys nothing.  With an image it becomes the documented
+/// parts array, where an image is `{"type":"image_url","image_url":{"url":"data:…;base64,…"}}` --
+/// the `url` field takes "a URL or a base64 encoded data URL", so the bytes ride in an RFC 2397
+/// data URL rather than in a field of their own.
+///
+/// # Arguments
+/// * `content` - What the message carries.
+fn openai_content(content: &MessageContent) -> String {
+    match content {
+        MessageContent::Text(s) => fmt!("\"{}\"", json_escape(s)),
+        MessageContent::Parts(parts) => {
+            let items: Vec<String> = parts.iter().map(|p| match p {
+                ContentPart::Text(t) =>
+                    fmt!("{{\"type\":\"text\",\"text\":\"{}\"}}", json_escape(t)),
+                ContentPart::Image(m) => fmt!(
+                    "{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:{};base64,{}\"}}}}",
+                    m.media.mime(), m.base64()),
+            }).collect();
+            fmt!("[{}]", items.join(","))
+        },
+    }
+}
+
 /// Whether `model` takes Anthropic's adaptive thinking configuration.
 ///
 /// Adaptive is the only form worth sending: `budget_tokens` is removed on every
@@ -2300,6 +2489,33 @@ pub(crate) fn model_takes_adaptive_thinking(model: &str) -> bool {
         "claude-sonnet-4-6",
     ];
     ADAPTIVE.iter().any(|id| m.contains(id))
+}
+
+/// Whether `model` can be shown an image.
+///
+/// The test is a list of what is KNOWN BLIND, not a list of what is known to see, and the default
+/// is that a model sees.  That direction is chosen deliberately: nearly every model a user would
+/// configure today is multimodal, an allow-list would refuse every model released after this line
+/// was written, and the cost of getting it wrong in this direction is one clear error from
+/// [`LlmClient::vision_error`] rather than a refusal to try.  The names are matched as substrings
+/// because a router spells the same model half a dozen ways (`openai/gpt-3.5-turbo`,
+/// `gpt-3.5-turbo-0125`), and the family is what is blind, not the spelling.
+///
+/// # Arguments
+/// * `model` - The model id, in whatever form the user configured it.
+pub(crate) fn model_can_see(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    const BLIND: [&str; 8] = [
+        "gpt-3.5",
+        "text-davinci",
+        "o1-mini",
+        "o1-preview",
+        "claude-instant",
+        "claude-1",
+        "claude-2",
+        "embedding",
+    ];
+    !BLIND.iter().any(|id| m.contains(id))
 }
 
 /// Translate an OpenAI-shaped tool array into the Anthropic one.
@@ -2340,14 +2556,17 @@ fn openai_tools_to_anthropic(tools: &str) -> String {
 }
 
 /// The character length of a message's payload, as a stand-in for its tokens.
+///
+/// An image counts its own bytes here rather than its token cost, because this figure decides
+/// only WHERE the prompt-cache breakpoints go, and what matters for that is what the message
+/// weighs on the wire -- which for an image is its bytes.
 fn message_len(msg: &ChatMessage) -> usize {
-    match msg {
-        ChatMessage::System { content } => content.len(),
-        ChatMessage::User { content }   => content.len(),
-        ChatMessage::Assistant { content, tool_calls } => content.len()
-            + tool_calls.iter().map(|tc| tc.name.len() + tc.arguments.len()).sum::<usize>(),
-        ChatMessage::Tool { content, .. } => content.len(),
+    let content = msg.content();
+    let mut n = content.text_len() + content.images().map(|i| i.data.len()).sum::<usize>();
+    if let ChatMessage::Assistant { tool_calls, .. } = msg {
+        n += tool_calls.iter().map(|tc| tc.name.len() + tc.arguments.len()).sum::<usize>();
     }
+    n
 }
 
 /// Serialise a `ChatMessage` with an Anthropic prompt-cache breakpoint on it.
@@ -2362,35 +2581,63 @@ fn message_to_json_cached(msg: &ChatMessage) -> String {
         ChatMessage::User { content }   => ("user", content),
         _ => return message_to_json(msg),
     };
+    // With an image in it the content is already an array, and the marker goes on the last block
+    // rather than replacing the whole thing with one text block -- which would drop the image.
+    //
+    // On this side the marker goes on the last TEXT part and nowhere else. `cache_control` is an
+    // Anthropic field that routers pass through; putting it inside an `image_url` part would put
+    // an unrecognised key somewhere every OpenAI-compatible server validates strictly, to buy a
+    // cache hit on a request that is mostly image bytes anyway. A message ending in an image
+    // simply is not a breakpoint.
+    if let MessageContent::Parts(parts) = content {
+        let last = parts.iter().rposition(|p| matches!(p, ContentPart::Text(_)))
+            .unwrap_or(usize::MAX);
+        let items: Vec<String> = parts.iter().enumerate().map(|(i, p)| match p {
+            ContentPart::Text(t) if i == last => fmt!(
+                "{{\"type\":\"text\",\"text\":\"{}\",\"cache_control\":{{\"type\":\"ephemeral\"}}}}",
+                json_escape(t)),
+            ContentPart::Text(t) => fmt!("{{\"type\":\"text\",\"text\":\"{}\"}}", json_escape(t)),
+            ContentPart::Image(m) => fmt!(
+                "{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:{};base64,{}\"}}}}",
+                m.media.mime(), m.base64()),
+        }).collect();
+        return fmt!("{{\"role\":\"{}\",\"content\":[{}]}}", role, items.join(","));
+    }
     fmt!(
         "{{\"role\":\"{}\",\"content\":[{{\"type\":\"text\",\"text\":\"{}\",\
          \"cache_control\":{{\"type\":\"ephemeral\"}}}}]}}",
-        role, json_escape(content))
+        role, json_escape(&content.as_text()))
 }
 
 /// Serialise a `ChatMessage` to an OpenAI-API JSON object, including
 /// assistant `tool_calls` and the `tool` role — which `datmap_to_json`
 /// does not carry.
+/// Only the `user` role may carry an image on this side; `system`, `assistant` and `tool` take a
+/// string or text parts and nothing else.  A message of another role that somehow holds one is
+/// flattened to the `[image …]` stand-in rather than sent as a part the API would reject; the
+/// tool results that legitimately produce images are re-homed by
+/// [`build_openai_body`](LlmClient::build_openai_body) instead.
 fn message_to_json(msg: &ChatMessage) -> String {
     match msg {
         ChatMessage::System { content } =>
-            fmt!("{{\"role\":\"system\",\"content\":\"{}\"}}", json_escape(content)),
+            fmt!("{{\"role\":\"system\",\"content\":\"{}\"}}", json_escape(&content.as_text())),
         ChatMessage::User { content } =>
-            fmt!("{{\"role\":\"user\",\"content\":\"{}\"}}", json_escape(content)),
+            fmt!("{{\"role\":\"user\",\"content\":{}}}", openai_content(content)),
         ChatMessage::Assistant { content, tool_calls } => {
+            let text = json_escape(&content.as_text());
             if tool_calls.is_empty() {
-                fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"}}", json_escape(content))
+                fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"}}", text)
             } else {
                 let calls: Vec<String> = tool_calls.iter().map(|tc| fmt!(
                     "{{\"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\"arguments\":\"{}\"}}}}",
                     json_escape(&tc.id), json_escape(&tc.name), json_escape(&tc.arguments))).collect();
                 fmt!("{{\"role\":\"assistant\",\"content\":\"{}\",\"tool_calls\":[{}]}}",
-                    json_escape(content), calls.join(","))
+                    text, calls.join(","))
             }
         }
         ChatMessage::Tool { tool_call_id, content } =>
             fmt!("{{\"role\":\"tool\",\"tool_call_id\":\"{}\",\"content\":\"{}\"}}",
-                json_escape(tool_call_id), json_escape(content)),
+                json_escape(tool_call_id), json_escape(&content.as_text())),
     }
 }
 
@@ -3139,6 +3386,8 @@ fn dat_to_json(d: &Dat) -> String {
 pub mod tests {
     use super::*;
 
+    use crate::protocol::ImageMedia;
+
     #[test]
     fn test_extract_json_string() {
         let json = r#"{"choices":[{"delta":{"content":"hello"}}]}"#;
@@ -3410,7 +3659,7 @@ pub mod tests {
     #[test]
     fn test_message_to_json_assistant_tool_calls() {
         let msg = ChatMessage::Assistant {
-            content: String::new(),
+            content: MessageContent::text(""),
             tool_calls: vec![ToolCall {
                 id: "c1".to_string(),
                 name: "shell".to_string(),
@@ -3457,8 +3706,8 @@ pub mod tests {
         );
         let client = LlmClient::new("api.test.com", 443, "/v1/chat", "key", "model", 4096, tls);
         let messages = vec![
-            ChatMessage::System { content: "You are helpful".to_string() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system("You are helpful".to_string()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_request_body(&messages);
         assert!(body.contains("\"model\":\"model\""));
@@ -3588,8 +3837,8 @@ pub mod tests {
     fn test_cache_breakpoints_for_a_claude_model() {
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         let messages = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_body(&messages, None, true);
         // The system message carries a breakpoint, in the content-block form the
@@ -3607,8 +3856,8 @@ pub mod tests {
     fn test_no_cache_control_for_a_model_that_does_not_take_it() {
         let client = test_client("api.fireworks.ai", 443, "accounts/fireworks/models/glm-5p2");
         let messages = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_body(&messages, None, true);
         assert!(!body.contains("cache_control"),
@@ -3624,8 +3873,8 @@ pub mod tests {
         // not sent.
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         let messages = vec![
-            ChatMessage::System { content: "Be brief.".to_string() },
-            ChatMessage::User { content: "Hi".to_string() },
+            ChatMessage::system("Be brief.".to_string()),
+            ChatMessage::user("Hi".to_string()),
         ];
         assert!(!client.build_body(&messages, None, true).contains("cache_control"));
     }
@@ -3635,7 +3884,7 @@ pub mod tests {
         // The tools render ahead of the system message, so a large tool array is
         // itself most of what the breakpoint caches.
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
-        let messages = vec![ChatMessage::System { content: "Be brief.".to_string() }];
+        let messages = vec![ChatMessage::system("Be brief.".to_string())];
         assert!(!client.build_body(&messages, None, true).contains("cache_control"));
         let tools = "[".to_string() + &"x".repeat(CACHE_MIN_PREFIX_CHARS) + "]";
         assert!(client.build_body(&messages, Some(&tools), true).contains("cache_control"));
@@ -3647,10 +3896,10 @@ pub mod tests {
         // so everything settled before it is read from the cache next round.
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         let messages = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "first".to_string() },
-            ChatMessage::Assistant { content: "ok".to_string(), tool_calls: Vec::new() },
-            ChatMessage::User { content: "second".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant("ok".to_string()),
+            ChatMessage::user("second".to_string()),
         ];
         let body = client.build_body(&messages, None, true);
         assert!(body.contains("\"text\":\"second\",\"cache_control\""),
@@ -3664,7 +3913,7 @@ pub mod tests {
     fn test_a_marked_message_still_round_trips_its_escapes() {
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         let messages = vec![
-            ChatMessage::System { content: long_system() + "say \"hi\"\n" },
+            ChatMessage::system(long_system() + "say \"hi\"\n"),
         ];
         let body = client.build_body(&messages, None, true);
         assert!(body.contains("say \\\"hi\\\"\\n"), "escapes broke: {}", body);
@@ -3727,15 +3976,235 @@ pub mod tests {
         test_client_at("api.anthropic.com", 443, "/v1/messages", model)
     }
 
+    // ── Images on the wire ───────────────────────────────────────────────────
+    //
+    // The fixtures below are NOT what this code produces; they are what the two providers publish,
+    // copied out of their own documents, and every one of them says where it came from.  A
+    // serialisation test written the other way round -- build with our encoder, read with our
+    // parser -- proves only that the two halves agree with each other, which they would go on
+    // doing while both were wrong.
+
+    /// The one-pixel PNG from Anthropic's vision documentation, base64 exactly as printed there.
+    ///
+    /// Source: `platform.claude.com/docs/en/build-with-claude/vision`, the "Multiple images"
+    /// example, `image1_data`.  Using the provider's own bytes rather than bytes of this test's
+    /// invention means the encoder is checked against a string a provider published, not against
+    /// itself.
+    const DOC_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nG\
+                               P4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+    /// Those bytes, decoded.
+    fn doc_png() -> Vec<u8> {
+        oxedyne_fe2o3_text::base64::decode(DOC_PNG_B64).expect("the documented base64 must decode")
+    }
+
+    /// An image part holding the documented PNG.
+    fn doc_image(source: &str) -> ImagePart {
+        ImagePart::new(ImageMedia::Png, doc_png(), source.to_string())
+    }
+
+    /// The base64 encoder agrees with the provider on the provider's own bytes.
+    ///
+    /// The fixtures below all embed [`DOC_PNG_B64`]; if the encoder disagreed with Anthropic about
+    /// how those bytes are spelled, every one of them would fail for a reason that had nothing to
+    /// do with the shape being tested.  This isolates that.
+    #[test]
+    fn test_the_base64_encoding_matches_the_providers_own_string() {
+        let bytes = doc_png();
+        assert!(!bytes.is_empty(), "the documented base64 decoded to nothing");
+        assert_eq!(DOC_PNG_B64, oxedyne_fe2o3_text::base64::encode(&bytes),
+            "our base64 disagrees with the string Anthropic published for these bytes");
+    }
+
+    /// An Anthropic image block is the block Anthropic documents.
+    ///
+    /// Fixture source: `platform.claude.com/docs/en/build-with-claude/vision`, "Base64-encoded
+    /// image example", the cURL request body -- `{"type":"image","source":{"type":"base64",
+    /// "media_type":…,"data":…}}`, in that key order.
+    #[test]
+    fn test_an_anthropic_image_block_is_the_documented_shape() {
+        let want = fmt!(
+            "{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"image/png\",\
+             \"data\":\"{}\"}}}}", DOC_PNG_B64);
+        let client = anth_client("claude-opus-5");
+        let msgs = vec![ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Image(doc_image("shots/after.png")),
+            ContentPart::Text("Describe this image.".to_string()),
+        ]))];
+        let body = client.build_anthropic_body(&msgs, None, true);
+        assert!(body.contains(&want), "the image block is not the documented one.\nwant: {}\ngot:  {}",
+            want, body);
+        // The image precedes the text, as the documentation recommends and as the part order says.
+        let img = body.find("\"type\":\"image\"").expect("no image block");
+        let txt = body.find("Describe this image.").expect("no text block");
+        assert!(img < txt, "the parts were reordered");
+    }
+
+    /// An OpenAI image part is the part OpenAI documents.
+    ///
+    /// Fixture source: OpenAI's own OpenAPI specification, schema
+    /// `ChatCompletionRequestMessageContentPartImage` -- `type` is the constant `"image_url"`, and
+    /// `image_url.url` is documented as "URL of the image. This can be a URL or a base64 encoded
+    /// data URL".  The data URL itself is RFC 2397 syntax, `data:<media-type>;base64,<data>`.
+    /// `detail` is optional and defaults to `"auto"`, so it is not sent.
+    #[test]
+    fn test_an_openai_image_part_is_the_documented_shape() {
+        let want = fmt!(
+            "{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:image/png;base64,{}\"}}}}",
+            DOC_PNG_B64);
+        let client = test_client("api.example.com", 443, "gpt-5.6");
+        let msgs = vec![ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text("What is in this image?".to_string()),
+            ContentPart::Image(doc_image("shots/after.png")),
+        ]))];
+        let body = client.build_openai_body(&msgs, None, true);
+        assert!(body.contains(&want), "the image part is not the documented one.\nwant: {}\ngot:  {}",
+            want, body);
+        assert!(body.contains("\"content\":[{\"type\":\"text\",\"text\":\"What is in this image?\"}"),
+            "an image turns the content into the documented parts array: {}", body);
+    }
+
+    /// A message with no image keeps the bare-string content it always had.
+    ///
+    /// The parts array is legal for text too, and switching every message to it would have been
+    /// simpler -- and would have changed the bytes of every request every router has ever been
+    /// sent, for nothing.
+    #[test]
+    fn test_text_only_content_stays_a_bare_string_on_both_sides() {
+        let msgs = vec![ChatMessage::user("Hello".to_string())];
+        let openai = test_client("api.example.com", 443, "gpt-5.6")
+            .build_openai_body(&msgs, None, true);
+        assert!(openai.contains("{\"role\":\"user\",\"content\":\"Hello\"}"),
+            "text content grew an array: {}", openai);
+        let anth = anth_client("claude-opus-5").build_anthropic_body(&msgs, None, true);
+        assert!(anth.contains("{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Hello\"}]}"),
+            "the Anthropic user turn is not the block form it always was: {}", anth);
+    }
+
+    /// Anthropic takes an image inside a `tool_result`; OpenAI does not, and the image is re-homed
+    /// into a `user` turn after the run of tool replies rather than dropped.
+    ///
+    /// Source for the asymmetry: Anthropic's `tool_result` content is documented as a string or an
+    /// array of text and image blocks; OpenAI's tool-message content part union
+    /// (`ChatCompletionRequestToolMessageContentPart`) has a text member and no image member.
+    #[test]
+    fn test_a_tool_result_image_rides_the_reply_on_one_side_and_a_user_turn_on_the_other() {
+        let msgs = vec![
+            ChatMessage::user("look at the page".to_string()),
+            ChatMessage::assistant_calling("", vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "file_read".to_string(),
+                arguments: r#"{"path":"shots/after.png"}"#.to_string(),
+            }]),
+            ChatMessage::tool("call_1".to_string(), MessageContent::parts(vec![
+                ContentPart::Text("Read the image shots/after.png.".to_string()),
+                ContentPart::Image(doc_image("shots/after.png")),
+            ])),
+        ];
+
+        let anth = anth_client("claude-opus-5").build_anthropic_body(&msgs, None, true);
+        assert!(anth.contains("\"type\":\"tool_result\",\"tool_use_id\":\"call_1\",\"content\":["),
+            "the Anthropic tool result should carry blocks: {}", anth);
+        let result_at = anth.find("tool_result").expect("no tool_result");
+        let image_at  = anth.find("\"type\":\"image\"").expect("no image block");
+        assert!(image_at > result_at, "the image left the tool result it belongs to");
+
+        let openai = test_client("api.example.com", 443, "gpt-5.6")
+            .build_openai_body(&msgs, None, true);
+        // The tool reply itself is text only -- the API has nowhere else to put an image.
+        let tool_msg = openai.find("\"role\":\"tool\"").expect("no tool message");
+        let img_at   = openai.find("image_url").expect("the image was dropped");
+        assert!(img_at > tool_msg, "an image_url was put inside the tool reply");
+        assert!(openai[tool_msg..img_at].contains("\"role\":\"user\""),
+            "the image should be re-homed into a user turn after the run: {}", openai);
+    }
+
+    /// A cache breakpoint survives a message that ends in an image.
+    ///
+    /// The marker caches everything up to the block it sits on. If it could only go on a text
+    /// block, a user turn whose last part is the screenshot would carry no marker at all and the
+    /// whole prefix would be re-billed on every round of the turn -- silently, since nothing
+    /// fails.
+    #[test]
+    fn test_a_cache_breakpoint_survives_a_message_that_ends_in_an_image() {
+        let ends_in_image = MessageContent::parts(vec![
+            ContentPart::Text("here".to_string()),
+            ContentPart::Image(doc_image("shots/after.png")),
+        ]);
+        let blocks = anthropic_blocks(&ends_in_image, true);
+        assert_eq!(2, blocks.len());
+        assert!(!blocks[0].contains("cache_control"),
+            "the marker must be on the LAST block, not the first: {}", blocks[0]);
+        assert!(blocks[1].contains("\"cache_control\":{\"type\":\"ephemeral\"}"),
+            "a message ending in an image lost its cache breakpoint: {}", blocks[1]);
+
+        // And the marker is not attached when the message is not a breakpoint.
+        let plain = anthropic_blocks(&ends_in_image, false);
+        assert!(!plain.iter().any(|b| b.contains("cache_control")));
+    }
+
+    /// A model on the known-blind list is refused before the request is built, by name.
+    #[test]
+    fn test_a_model_that_cannot_see_is_refused_by_name() {
+        let client = test_client("api.example.com", 443, "openai/gpt-3.5-turbo-0125");
+        let msgs = vec![ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Image(doc_image("shots/after.png")),
+        ]))];
+        let e = client.vision_guard(&msgs).expect_err("a blind model must be refused");
+        let msg = fmt!("{}", e);
+        assert!(msg.contains("gpt-3.5-turbo-0125"), "the refusal must name the model: {}", msg);
+        assert!(msg.contains("cannot see"), "the refusal must say what is wrong: {}", msg);
+        // And a turn with no image goes through on the same model, because the model is only
+        // unusable for the thing it cannot do.
+        assert_eq!(0, client.vision_guard(&[ChatMessage::user("hi".to_string())])
+            .expect("text must still be allowed"));
+    }
+
+    /// A model NOT on the list is allowed through -- the list is of what is known blind, not of
+    /// what is known to see, so a model released tomorrow is not refused today.
+    #[test]
+    fn test_an_unknown_model_is_assumed_to_see() {
+        assert!(model_can_see("some-vendor/brand-new-model-9"));
+        assert!(model_can_see("claude-opus-5"));
+        assert!(!model_can_see("gpt-3.5-turbo"));
+        assert!(!model_can_see("anthropic/claude-2.1"));
+    }
+
+    /// When the provider refuses a turn that carried images and its words are about images, the
+    /// error names the model and says it cannot see -- with the provider's own sentence kept.
+    #[test]
+    fn test_a_provider_refusal_about_images_is_rewritten_to_name_the_model() {
+        let client = test_client("api.example.com", 443, "some-router/mystery-model");
+        let raw = err!("HTTP error: 400 Bad Request: invalid_request_error: \
+                        this model does not support image_url content"; Invalid, Input);
+        let out = fmt!("{}", client.vision_error(raw, 1));
+        assert!(out.contains("some-router/mystery-model"), "the model must be named: {}", out);
+        assert!(out.contains("not to see"), "it must say what is wrong: {}", out);
+        assert!(out.contains("400 Bad Request"), "the provider's own words must survive: {}", out);
+    }
+
+    /// A failure unrelated to images is handed back untouched, even on a turn that carried one.
+    #[test]
+    fn test_an_unrelated_failure_is_not_blamed_on_the_images() {
+        let client = test_client("api.example.com", 443, "some-router/mystery-model");
+        let raw = err!("HTTP error: 401 Unauthorized"; Invalid, Input);
+        let out = fmt!("{}", client.vision_error(raw, 1));
+        assert!(out.contains("401 Unauthorized"), "the provider's words were lost: {}", out);
+        assert!(!out.contains("not to see"),
+            "an unrelated failure was rewritten as a vision failure: {}", out);
+        assert!(!out.contains("mystery-model"),
+            "an unrelated failure was rewritten as a vision failure: {}", out);
+    }
+
     #[test]
     fn test_the_system_prompt_is_hoisted_out_of_the_messages() {
         // The Messages API has no system role: a system message left in the
         // array is a 400, and one silently dropped is an agent with no rules.
         let client = anth_client("claude-opus-5");
         let msgs = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::System { content: "And be brief.".to_string() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::system("And be brief.".to_string()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_anthropic_body(&msgs, None, true);
         assert!(body.contains("\"system\":[{\"type\":\"text\""),
@@ -3753,10 +4222,10 @@ pub mod tests {
         // blocks are in different places from the OpenAI ones.
         let client = anth_client("claude-opus-5");
         let msgs = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "first".to_string() },
-            ChatMessage::Assistant { content: "ok".to_string(), tool_calls: Vec::new() },
-            ChatMessage::User { content: "second".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant("ok".to_string()),
+            ChatMessage::user("second".to_string()),
         ];
         let body = client.build_anthropic_body(&msgs, None, true);
         assert_eq!(body.matches("\"cache_control\":{\"type\":\"ephemeral\"}").count(), 2,
@@ -3779,8 +4248,8 @@ pub mod tests {
         // The gate is the model id, and it must still be the model id here.
         let client = test_client_at("api.example.com", 443, "/v1/messages", "some-other-model");
         let msgs = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_anthropic_body(&msgs, None, true);
         assert!(!body.contains("cache_control"),
@@ -3794,9 +4263,9 @@ pub mod tests {
         // sending two consecutive user messages is a different conversation.
         let client = anth_client("claude-opus-5");
         let msgs = vec![
-            ChatMessage::User { content: "list and read".to_string() },
+            ChatMessage::user("list and read".to_string()),
             ChatMessage::Assistant {
-                content: String::new(),
+                content: MessageContent::text(""),
                 tool_calls: vec![
                     ToolCall { id: "t1".to_string(), name: "file_list".to_string(),
                         arguments: "{}".to_string() },
@@ -3804,8 +4273,8 @@ pub mod tests {
                         arguments: r#"{"path":"a.txt"}"#.to_string() },
                 ],
             },
-            ChatMessage::Tool { tool_call_id: "t1".to_string(), content: "a.txt".to_string() },
-            ChatMessage::Tool { tool_call_id: "t2".to_string(), content: "hello".to_string() },
+            ChatMessage::tool("t1".to_string(), "a.txt".to_string()),
+            ChatMessage::tool("t2".to_string(), "hello".to_string()),
         ];
         let body = client.build_anthropic_body(&msgs, None, false);
         assert_eq!(body.matches("\"role\":\"user\"").count(), 2,
@@ -3853,7 +4322,7 @@ pub mod tests {
             assert!(!model_takes_adaptive_thinking(id), "{} must not be sent adaptive", id);
         }
         // And the request follows the gate.
-        let msgs = [ChatMessage::User { content: "Hi".to_string() }];
+        let msgs = [ChatMessage::user("Hi".to_string())];
         let on = anth_client("claude-opus-5").build_anthropic_body(&msgs, None, true);
         assert!(on.contains("\"thinking\":{\"type\":\"adaptive\",\"display\":\"summarized\"}"),
             "{}", on);
@@ -3869,9 +4338,9 @@ pub mod tests {
         // empty user message would then fail every turn of the conversation.
         let client = anth_client("claude-opus-5");
         let msgs = vec![
-            ChatMessage::User { content: "hello".to_string() },
-            ChatMessage::Assistant { content: String::new(), tool_calls: Vec::new() },
-            ChatMessage::User { content: String::new() },
+            ChatMessage::user("hello".to_string()),
+            ChatMessage::assistant(String::new()),
+            ChatMessage::user(String::new()),
         ];
         let body = client.build_anthropic_body(&msgs, None, true);
         assert!(!body.contains("\"text\":\"\""), "an empty text block was sent: {}", body);
@@ -3886,7 +4355,7 @@ pub mod tests {
         // `max_tokens` caps thinking AND the reply together here, and the app's
         // internal default is 4096 -- chosen when it only ever meant the reply.
         // Left alone, a hard question is answered with a truncated sentence.
-        let msgs = [ChatMessage::User { content: "Hi".to_string() }];
+        let msgs = [ChatMessage::user("Hi".to_string())];
         let c = anth_client("claude-opus-5");
         assert_eq!(c.max_tokens, 4096, "the fixture no longer reflects the app's default");
         let streamed = c.build_anthropic_body(&msgs, None, true);
@@ -3907,8 +4376,8 @@ pub mod tests {
         // the other dialect, and none of them may notice this.
         let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         let msgs = vec![
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "Hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("Hello".to_string()),
         ];
         let body = client.build_body(&msgs, None, true);
         assert!(body.contains("\"stream_options\":{\"include_usage\":true}"), "{}", body);
@@ -4453,7 +4922,7 @@ pub mod tests {
             Reply::answer(),
         ]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
         let started = std::time::Instant::now();
@@ -4494,7 +4963,7 @@ pub mod tests {
     async fn test_a_400_is_never_retried() {
         let (port, seen) = start_stub(vec![Reply::bad_request()]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
         let result = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
@@ -4513,7 +4982,7 @@ pub mod tests {
             Reply::answer(),
         ]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
         let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
@@ -4539,7 +5008,7 @@ pub mod tests {
             status: 400, reason: "Bad Request", headers: Vec::new(), body: over.to_string(),
         }]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
 
         let e = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
             Ok(_)  => panic!("a 400 must not be reported as success"),
@@ -4619,7 +5088,7 @@ pub mod tests {
             "data: [DONE]\n\n".to_string(),
         ], reset_after: None }]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "write the file".to_string() }];
+        let msgs = [ChatMessage::user("write the file".to_string())];
 
         let r = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
             Ok(r)  => r,
@@ -4655,7 +5124,7 @@ pub mod tests {
         let (port, seen) = start_stub(vec![Reply::too_many(None)]).await;
         let mut client = stub_client(port);
         client.retry.max_attempts = 3;
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
 
         let result = client.chat_stream_tools(&msgs, None, &mut |_| {}).await;
         assert!(result.is_err());
@@ -4670,7 +5139,7 @@ pub mod tests {
         let (port, seen) = start_stub(vec![Reply::too_many(Some(60))]).await;
         let mut client = stub_client(port);
         client.retry.max_total_wait_ms = 2_000;
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
 
         let started = std::time::Instant::now();
         let result = client.chat_stream_tools(&msgs, None, &mut |_| {}).await;
@@ -4695,7 +5164,7 @@ pub mod tests {
             Reply::answer(),
         ]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
         let _ = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
@@ -4726,7 +5195,7 @@ pub mod tests {
             Reply::answer(),
         ]).await;
         let client = stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
 
         let _ = client.chat_stream_tools(&msgs, None, &mut |t| tokens.push(t.to_string())).await;
@@ -4743,8 +5212,8 @@ pub mod tests {
         let (port, seen) = start_stub(vec![Reply::answer()]).await;
         let client = stub_client(port);
         let msgs = [
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("hello".to_string()),
         ];
         let _ = client.chat_stream_tools(&msgs, None, &mut |_| {}).await;
 
@@ -4778,8 +5247,8 @@ pub mod tests {
         let tools = r#"[{"type":"function","function":{"name":"file_read",
             "description":"Read a file","parameters":{"type":"object","properties":{}}}}]"#;
         let msgs = [
-            ChatMessage::System { content: long_system() },
-            ChatMessage::User { content: "hello".to_string() },
+            ChatMessage::system(long_system()),
+            ChatMessage::user("hello".to_string()),
         ];
         let resp = match client.chat_stream_tools(&msgs, Some(tools), &mut |_| {}).await {
             Ok(r)  => r,
@@ -4822,7 +5291,7 @@ pub mod tests {
 
         // Round one: the model thinks, then asks for a tool.
         let first = match client.chat_stream_tools(
-            &[ChatMessage::User { content: "read a.txt".to_string() }],
+            &[ChatMessage::user("read a.txt".to_string())],
             Some(tools), &mut |_| {}).await
         {
             Ok(r)  => r,
@@ -4837,12 +5306,12 @@ pub mod tests {
         // Round two: the agent loop's shape -- the assistant turn that asked,
         // then the result.
         let round_two = vec![
-            ChatMessage::User { content: "read a.txt".to_string() },
+            ChatMessage::user("read a.txt".to_string()),
             ChatMessage::Assistant {
-                content:    String::new(),
+                content:    MessageContent::text(""),
                 tool_calls: first.tool_calls.clone(),
             },
-            ChatMessage::Tool { tool_call_id: "toolu_1".to_string(), content: "hello".to_string() },
+            ChatMessage::tool("toolu_1".to_string(), "hello".to_string()),
         ];
         if let Err(e) = client.chat_stream_tools(&round_two, Some(tools), &mut |_| {}).await {
             panic!("round two failed: {}", e);
@@ -4882,20 +5351,20 @@ pub mod tests {
             Reply::anth_answer(),
         ]).await;
         let client = anth_stub_client(port);
-        let msgs = [ChatMessage::User { content: "hello".to_string() }];
+        let msgs = [ChatMessage::user("hello".to_string())];
         let _ = client.chat_stream_tools(&msgs, None, &mut |_| {}).await;
 
         // A later turn quoting a DIFFERENT call: the held reasoning belongs to
         // `toolu_1`, and nothing may hand it to `toolu_other`.
         let elsewhere = vec![
-            ChatMessage::User { content: "hello".to_string() },
+            ChatMessage::user("hello".to_string()),
             ChatMessage::Assistant {
-                content:    String::new(),
+                content:    MessageContent::text(""),
                 tool_calls: vec![ToolCall { id: "toolu_other".to_string(),
                     name: "file_read".to_string(), arguments: "{}".to_string() }],
             },
             ChatMessage::Tool { tool_call_id: "toolu_other".to_string(),
-                content: "x".to_string() },
+                content: MessageContent::text("x") },
         ];
         let _ = client.chat_stream_tools(&elsewhere, None, &mut |_| {}).await;
         let body = match seen.lock() {
@@ -4922,7 +5391,7 @@ pub mod tests {
         let call = |id: &str| ToolCall {
             id: id.to_string(), name: "file_read".to_string(), arguments: "{}".to_string() };
 
-        let mut working = vec![ChatMessage::User { content: "read them".to_string() }];
+        let mut working = vec![ChatMessage::user("read them".to_string())];
         for _ in 0..2 {
             let r = match client.chat_stream_tools(&working, None, &mut |_| {}).await {
                 Ok(r)  => r,
@@ -4930,8 +5399,8 @@ pub mod tests {
             };
             let id = r.tool_calls[0].id.clone();
             working.push(ChatMessage::Assistant {
-                content: String::new(), tool_calls: vec![call(&id)] });
-            working.push(ChatMessage::Tool { tool_call_id: id, content: "ok".to_string() });
+                content: MessageContent::text(""), tool_calls: vec![call(&id)] });
+            working.push(ChatMessage::tool(id, "ok".to_string()));
         }
         let _ = client.chat_stream_tools(&working, None, &mut |_| {}).await;
 

@@ -14,7 +14,7 @@
 //
 //   node dev/shot_stack.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway.
 
 import { open, signInAs } from './harness.mjs';
 import { execFileSync } from 'node:child_process';

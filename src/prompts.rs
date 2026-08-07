@@ -135,9 +135,20 @@ impl Role {
 		if !self.has_tools() {
 			return body.to_string();
 		}
-		fmt!("{}\n\n{}", body, SAFETY_CLAUSE)
+		fmt!("{}\n\n{}\n\n{}", body, VISION_NOTE, SAFETY_CLAUSE)
 	}
 }
+
+/// That an image file can be read and looked at, appended to every role that holds the file tools.
+///
+/// Composed in rather than written into each default prompt, for the same reason
+/// [`SAFETY_CLAUSE`] is: a user who edits their prompt would otherwise silently lose it, and an
+/// agent that does not know it can look will describe a screenshot from its filename.
+pub const VISION_NOTE: &str =
+	"## Looking at images\n\n\
+	 A PNG, JPEG, GIF or WebP read with file_read comes back as the picture itself, not as a \
+	 refusal — so when the answer is on the screen rather than in the source, take or find a \
+	 screenshot and read it, and say what you can see.";
 
 /// The rules an edit cannot remove, appended to every role that holds tools.
 ///
@@ -193,7 +204,7 @@ pub const DEFAULT_CHAT: &str =
 /// instruction to a file edit or to one or more errors, never to chat.
 pub const DEFAULT_DAIMON: &str =
 	"You are the daimon of this Diamond. You take instructions from the user \
-	 and act; you do not converse. Two things are yours to do.\n\n\
+	 and act; you do not converse. Three things are yours to do.\n\n\
 	 First, the crystal. `crystal.md` is the reduced state of this Diamond. Edit it \
 	 with your file tools when the user tells you something worth keeping. It has a \
 	 size limit, because it is a summary: when detail is worth keeping but too long \
@@ -206,6 +217,15 @@ pub const DEFAULT_DAIMON: &str =
 	 several agents at once, call `spawn_agent` several times in the SAME turn \
 	 — they then run in parallel. If the user asks for two agents, call it \
 	 twice. Each reports back a summary the user can fold into the crystal.\n\n\
+	 Third, the graph. The Diamonds, files and pages are joined by links, and \
+	 those links are the world model this Diamond sits in — what supersedes \
+	 what, what produced what, what contradicts what. Read them with \
+	 `link_list`: with a node for one thing's relations, or with none for the \
+	 whole shape of the work. Consult it before you conclude two things are \
+	 unrelated, and record a relation you establish with `link_add`, in a word \
+	 or two, so the next daimon does not have to work it out again. \
+	 `link_remove` takes one back out; a link the user drew themselves is \
+	 theirs, so ask before removing it.\n\n\
 	 Files already in the workspace that belong to this Diamond — ones the user \
 	 put there, or found, or wrote themselves — are recorded with \
 	 `artefact_add`. Anything an agent produces is recorded on its own, so this \
@@ -476,6 +496,28 @@ mod tests {
 	#[test]
 	fn test_an_unknown_role_is_refused_rather_than_defaulted() {
 		assert!(Role::parse("wizard").is_err());
+	}
+
+	/// Every role that holds the file tools is told an image can be read and looked at -- and is
+	/// still told it after the user has replaced the prompt with their own.
+	///
+	/// An agent that does not know it can look will answer from a filename, which is the failure
+	/// the whole capability exists to end.
+	#[test]
+	fn test_every_tool_holding_role_is_told_it_can_look_at_an_image() {
+		for r in Role::all() {
+			let default = r.compose("");
+			let edited  = r.compose("Just do what I say.");
+			if r.has_tools() {
+				assert!(default.contains("file_read comes back as the picture"),
+					"{} is not told it can see", r.name());
+				assert!(edited.contains("file_read comes back as the picture"),
+					"{} loses the note when the user edits the prompt", r.name());
+			} else {
+				assert!(!default.contains("file_read comes back as the picture"),
+					"{} holds no tools and should not be told about them", r.name());
+			}
+		}
 	}
 
 	#[test]

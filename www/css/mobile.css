@@ -178,9 +178,14 @@
 		text-overflow: ellipsis;
 	}
 	.msheet-close {
-		margin-top: 4px;
-		width: 32px;
-		height: 32px;
+		margin-top: 0;
+		/* 40px, matching the guest's own lifted controls that now sit beside it
+		   (see `#msheet .panel > .railhead`): two icon buttons on one row at two
+		   different sizes read as two different kinds of control. It is also the
+		   larger thumb target of the two, which on a phone is the right way to
+		   settle a tie. */
+		width: 40px;
+		height: 40px;
 		flex: none;
 		display: flex;
 		align-items: center;
@@ -217,18 +222,83 @@
 	   carries its own head then said it twice, one line apart and in two
 	   different cases -- "Spending" over "SPENDING". The guest keeps its
 	   controls; the sheet keeps the title. */
-	#msheet .panel > .railhead { justify-content: flex-end; }
+	/* Dropping the name left a row holding nothing but its controls, and it kept
+	   a full band of the sheet to itself: 44px directly under the sheet's own
+	   closer, with the whole width beside the one refresh button empty. It read
+	   as a title that had gone missing rather than one that had moved. Lift the
+	   strip into the grabber's row, just left of the closer, where a panel's
+	   controls sit everywhere else in the app. Positioned against `#msheet`
+	   (the nearest positioned ancestor), so it costs the body nothing: 8px is
+	   the grabber's own top padding and 52px clears the 32px closer and its
+	   12px of padding. Only Spending is ever raised into a sheet with this kind
+	   of head -- the other three are bottom-bar destinations, which keep their
+	   names and their own rows. */
+	#msheet .panel > .railhead {
+		position: absolute;
+		top: 8px;
+		/* 12px of grabber padding, the 40px closer, and 8px between them. */
+		right: 60px;
+		z-index: 1;
+		padding: 0;
+		justify-content: flex-end;
+	}
+	/* Beside the sheet's own borderless closer, a bordered box reads as the
+	   heavier of two controls that do the same kind of job. Same size, same
+	   weight, same ink. */
+	#msheet .panel > .railhead button {
+		width: 40px;
+		height: 40px;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+	}
+	#msheet .panel > .railhead button:active { background: var(--accent-soft); }
 	#msheet .panel > .railhead > span:first-child { display: none; }
-	/* Tools is the one stage panel whose .chead repeats the sheet label
-	   verbatim and holds nothing else but a second close button -- drop the
-	   row. The other stage heads carry live titles (the doc name, the URL,
-	   the message subject) and stay. */
-	#msheet .panel.tools > .chead { display: none; }
+	/* The lifted strip is out of flow, so the title's box still runs the full
+	   width and a long panel name would ellipsise UNDER the buttons. Give the
+	   title back the room the strip is standing in. */
+	#msheet:has(.panel > .railhead) .msheet-title { padding-right: 40px; }
+	/* A guest whose own head says what the sheet has just said. This USED to
+	   name Tools as the only such panel; rendering all nine showed Message over
+	   Message, Graph over Graph, and a blank 44px band over Doc. The test cannot
+	   live here -- a `.ctitle` is the panel's name while it is empty and a live
+	   title once it holds a URL, a filename or a subject, and no selector tells
+	   those apart -- so `DaimondSheet.open` makes it when the guest is raised
+	   and marks the head. See hideRedundantHead in mobile.js. */
+	#msheet .panel > .chead.head-said-twice,
+	#msheet .panel > .railhead.head-said-twice { display: none; }
 	/* The Terminal's head is not droppable -- Start and Stop live in it, and a
 	   terminal you cannot start is not a terminal -- so only the duplicated NAME
 	   goes. What is left is the program's own title and the two controls, which
 	   is what the head is for. */
 	#msheet .panel.termpanel > .chead > .ctitle { display: none; }
+	/* With the name gone and no program running there is no title either, so the
+	   Terminal's head drew the same blank band Spending's did: 44px under the
+	   sheet's own closer holding two buttons at the far right. Same answer --
+	   lift the controls into the grabber's row, and let what remains collapse to
+	   the height of whatever the program calls itself (nothing, until one is
+	   started) rather than to a header's minimum. */
+	#msheet .panel.termpanel > .chead {
+		min-height: 0;
+		padding: 0 14px;
+		border-bottom: none;
+	}
+	#msheet .panel.termpanel > .chead > .chead-right {
+		position: absolute;
+		top: 8px;
+		right: 60px;
+		z-index: 1;
+		gap: 4px;
+	}
+	#msheet .panel.termpanel > .chead > .chead-right button {
+		width: 40px;
+		height: 40px;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+	}
+	#msheet .panel.termpanel > .chead > .chead-right button:active { background: var(--accent-soft); }
+	#msheet:has(.panel.termpanel) .msheet-title { padding-right: 96px; }
 
 	/* The ask pill: the composer, relocated. "Ask about THIS" is the
 	   whole thesis — read the thing, and the daimon is still there to

@@ -19,7 +19,8 @@
 //   * a whole import still lands, which is what stops the fix above from being
 //     "never write the metadata".
 //
-// Run with dev/serve.mjs up (:8777). No gateway, no hand, no mock model.
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up. No gateway, no hand, no mock
+// model.
 //
 //	node dev/verify_crystalgap.mjs
 //

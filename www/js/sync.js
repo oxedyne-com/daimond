@@ -67,6 +67,16 @@
    sitting here, and both used to leave "Synced" on the chip -- put
    there by the pull that was only ever half of the round.
 
+   THE PARCEL CARRIES THE PAUSE TREE. Which Diamonds, mailboxes and
+   folders may spend is a fact about the ACCOUNT, not about the
+   browser it was set in: a device paused on one desk that spends
+   freely on the other is the control not working. pause.js holds
+   that state and answers for it, so it is attached here, at the
+   wire, rather than reached for from the collector. Its snapshot is
+   a SORTED list and a stamp that moves only when the set does --
+   which is the whole of what keeps two collects byte-identical, and
+   the reason nothing in this file may stamp on the way in.
+
    AND NOW THE GATEWAY SAYS WHEN. Every trigger above is something
    that happened on THIS device, so a window left open and unfocused
    on a second desk had none: no turn ends there, nothing is renamed,
@@ -418,6 +428,65 @@
 		return t('sync.off_reason') + '\n' + t('sync.off_click');
 	}
 
+	// ── The parcel ─────────────────────────────────────────────
+	// Everything daimond.js owns comes from `collectSync`/`applySync`. The pause
+	// tree does not: pause.js holds it, and hanging it here keeps the collector
+	// free of a module it has no other business with. Both functions are the ONLY
+	// way a parcel is packed or unpacked in this file, so what a verifier drives
+	// and what a push sends cannot drift apart.
+
+	/// What push() sends: the core parcel with the pause tree on the end.
+	///
+	/// `snapshot()` sorts and stamps only on a real change, so two collects with
+	/// nothing between them are byte-identical -- which is the whole contract the
+	/// no-op guard in push() rests on. Attached last, so its position in the
+	/// serialisation never moves either.
+	async function collectParcel() {
+		var state = await DaimondCore.collectSync();
+		try { if (window.DaimondPause) state.pause = DaimondPause.snapshot(); }
+		catch (e) { log('pause snapshot failed', e); }
+		// Where the Diamonds sit in the graph, under the same rule: sorted keys,
+		// three fields each, stamped per Diamond rather than once over the map --
+		// two devices that each moved a different Diamond must keep both moves,
+		// where a whole-map stamp would let the later one silently replace the
+		// other's whole arrangement. The pan is deliberately NOT carried: it is a
+		// scroll offset into a picture whose size depends on this window.
+		try { if (window.DaimondGraph) state.graph = DaimondGraph.snapshot(); }
+		catch (e) { log('graph snapshot failed', e); }
+		return state;
+	}
+
+	/// Merge a parcel into this device. Returns the sections that would not apply.
+	///
+	/// Pause goes FIRST, because a merge that cannot finish must not also lose the
+	/// news about what may spend: a Diamond section that fails costs a name, a
+	/// pause that fails costs money. And nothing here may stamp on the way in --
+	/// `adopt()` moves the stamp only for a record that is later or larger, so
+	/// applying a parcel this device already agrees with leaves the next parcel
+	/// unchanged. A section that restamped itself on apply is exactly the
+	/// `touchSelfDevice` bug that had a freshly paired phone always holding news,
+	/// and two devices pushing at each other about once a second.
+	async function applyParcel(state) {
+		var failed = [];
+		if (window.DaimondPause) {
+			try { DaimondPause.adopt(state && state.pause); }
+			catch (e) { log('pause adopt failed', e); failed.push('pause'); }
+		}
+		// Always through `adopt`, never by writing `daimond-graph`: graph.js caches
+		// the record in memory and re-reads it only on a cross-tab `storage` event
+		// or an account switch, so a same-tab write is invisible to it and the next
+		// save overwrites it.
+		if (window.DaimondGraph) {
+			try { DaimondGraph.adopt(state && state.graph); }
+			catch (e) { log('graph adopt failed', e); failed.push('graph'); }
+		}
+		var report = null;
+		try { report = await DaimondCore.applySync(state); }
+		catch (e) { log('applySync threw', e); report = { failed: ['all'] }; }
+		var core = (report && Array.isArray(report.failed)) ? report.failed : [];
+		return failed.concat(core);
+	}
+
 	// ── Pull ───────────────────────────────────────────────────
 
 	/// Fetch the current blob, decrypt it, and merge it into local state.
@@ -461,10 +530,7 @@
 			if (!quiet) restStatus();
 			return serverVersion;
 		}
-		var report = null;
-		try { report = await DaimondCore.applySync(state); }
-		catch (e) { log('applySync threw', e); report = { failed: ['all'] }; }
-		lastFailed = (report && Array.isArray(report.failed)) ? report.failed : [];
+		lastFailed = await applyParcel(state);
 		serverVersion = j.version | 0;
 		saveVersion();
 		noteSynced();
@@ -499,7 +565,7 @@
 		inFlight = true;
 		try {
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
-				var state = await DaimondCore.collectSync();
+				var state = await collectParcel();
 				var plain = JSON.stringify(state);
 				if (plain === lastPushed && serverVersion > 0) {
 					// Nothing new to send -- but the round is not wasted, and this
@@ -1000,6 +1066,14 @@
 			else scheduleFocusPull();
 		});
 		window.addEventListener('focus', scheduleFocusPull);
+		// Pausing something is a change to what this account may spend, and nothing
+		// else here would notice one: it ends no turn, touches no Diamond and
+		// leaves the tab where it was. It only announces on a REAL move -- `set`
+		// returns false and stays quiet when the set is unchanged, and so does an
+		// `adopt` that took nothing new -- so a pull that agreed with us schedules
+		// no push, which is what stops the two devices telling each other.
+		try { if (window.DaimondPause) DaimondPause.subscribe(nudge); }
+		catch (e) { /* no pause module in this build */ }
 		// A session becoming available (unlock → gateway bootstrap) starts it all.
 		window.addEventListener('daimond:authed', function () { onAuthed(); });
 		// The channel is torn down when the page goes, so the gateway is not left
@@ -1029,6 +1103,13 @@
 		push:    function () { return push(); },
 		nudge:   nudge,
 		recheck: recheck,
+		/// Exactly what a push would send, and exactly what a pull would merge.
+		///
+		/// A verifier comparing `DaimondCore.collectSync()` is comparing the core
+		/// parcel only, and would miss anything hung on it here -- so the fixed
+		/// point has to be measured through these two rather than around them.
+		parcel:  function () { return collectParcel(); },
+		apply:   function (state) { return applyParcel(state); },
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },
 		/// The wake channel, as it stands. Nothing in the app turns on this; it

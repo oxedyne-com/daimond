@@ -53,7 +53,10 @@
 :root[data-skin="warm"] .top-meter { opacity: 0.6; }
 :root[data-skin="warm"] .top-meter:hover { opacity: 1; }
 
-/* Section headers lose the ALL-CAPS engineering shout for a friendly weight. */
+/* Section headers lose the ALL-CAPS engineering shout for a friendly weight.
+   The global pause row is NOT one of them -- it is a switch, already in
+   sentence case in both skins, and dressing it as a header is what made it
+   look like a third section with its alignment lost. */
 :root[data-skin="warm"] .railhead > span:first-child,
 :root[data-skin="warm"] .pop-head,
 :root[data-skin="warm"] .admin-sec {

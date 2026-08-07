@@ -86,10 +86,16 @@ check('an ordinary folder comes back by its own name',
 	Object.keys(byName).join(' | '));
 
 // The picker itself: what a person sees and can click.
+//
+// `label` reads `.mail-addr`, the span holding the NAME, and not the row -- see
+// the note at the second reader below. There are two of these blocks in this
+// file and they must agree; fixing only the other one moved the failure from
+// "All Mail is offered" to "an ordinary folder keeps the server's own spelling"
+// and taught nothing.
 const rows = await p.$$eval('#mail-folders .mail-folder', els => els.map(e => ({
 	name:  e.getAttribute('data-folder'),
 	role:  e.getAttribute('data-role') || '',
-	label: e.textContent.trim(),
+	label: (e.querySelector('.mail-addr') || e).textContent.trim(),
 	on:    e.classList.contains('on'),
 	off:   e.getAttribute('aria-disabled') === 'true',
 })));
@@ -239,10 +245,15 @@ await p.waitForFunction(
 	{ timeout: 15000 },
 ).catch(() => {});
 
+// The NAME is `.mail-addr`, not the row. Phase G put a count and an age beside
+// it, so the row's own textContent reads `All mailnever—` and every label check
+// here failed against an app that was drawing the name correctly. Reading the
+// element that holds the thing being asserted is the fix; the count phrase is
+// `verify_mailrefresh`'s to prove, and it does so against broken code.
 const g = await p.$$eval('#mail-folders .mail-folder', els => els.map(e => ({
 	name:  e.getAttribute('data-folder'),
 	role:  e.getAttribute('data-role') || '',
-	label: e.textContent.trim(),
+	label: (e.querySelector('.mail-addr') || e).textContent.trim(),
 	on:    e.classList.contains('on'),
 	off:   e.getAttribute('aria-disabled') === 'true',
 })));

@@ -41,7 +41,8 @@ import { pathToFileURL } from 'node:url';
 const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
-const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT = `${ROOT}/ext`;
 const OUT = path.join(os.homedir(), '.cache/daimond/grant-shots');
 fs.mkdirSync(OUT, { recursive: true });
@@ -68,7 +69,7 @@ const m = (code, key) => MSG[code][key].message;
 
 /// A hand that fences, keeps a journal, and names its folder — what the window
 /// is drawn for on a working Linux machine.
-const CAPS = 'fence:linux landlock:abi-8 seccomp journal root:/home/jason/work ws:8f3a1c home:/home/jason';
+const CAPS = 'fence:linux landlock:abi-8 seccomp journal root:/home/u/work ws:8f3a1c home:/home/u';
 const ORIGIN = 'https://daimond.oxedyne.com';
 
 // ── The server ───────────────────────────────────────────────────────
@@ -269,7 +270,7 @@ const MUST_SURFACE = (code) => [
 	['how far it reaches',	m(code, 'grant_hand_lead')],
 	['how much it weighs',	m(code, 'grant_hand_strongest')],
 	['which page asked',	ORIGIN],
-	['which folder',	'/home/jason/work'],
+	['which folder',	'/home/u/work'],
 	['the way out',		m(code, 'grant_deny')],
 	['the way in',		m(code, 'grant_hand_allow')],
 ];
@@ -461,7 +462,7 @@ if (!PROVE) {
 			return got;
 		};
 		const none   = await say3('fence:none');
-		const real   = await say3('fence:linux landlock:abi-8 journal root:/home/jason/work');
+		const real   = await say3('fence:linux landlock:abi-8 journal root:/home/u/work');
 		const silent = await say3('');
 		say(!/folders the workspace/.test(none.body) && /cannot limit which files/.test(none.body),
 			'a fenceless machine is not described as fencing anything', none.body);

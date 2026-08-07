@@ -15,6 +15,9 @@ const CHROME = `${os.homedir()}/.cache/ms-playwright/chromium-1229/chrome-linux6
 const cfg = JSON.parse(fs.readFileSync(path.join(HERE, '.secrets/testcfg.json'), 'utf8'));
 const MODEL = cfg.models.value;
 const CDP_PORT = 9223;
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 // Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
 // imported, so this stays standalone and does not load the harness.
@@ -34,7 +37,7 @@ const browser = await chromium.launchPersistentContext(path.join(SCRATCH, 'real-
 const page = browser.pages()[0] || await browser.newPage();
 page.on('console', m => { if (m.type() === 'error') console.log('PAGEERR:', m.text().slice(0, 200)); });
 
-await page.goto('http://localhost:8777', { waitUntil: 'domcontentloaded' });
+await page.goto(APP, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#id-primary', { timeout: 20000 });
 
 // Skip the passphrase (browser-only mode) so the key is simply set; a throwaway

@@ -7,11 +7,12 @@
 // gateway mint a DISTINCT slot per worker, and each worker's real provider
 // request carries its OWN slot key — never a shared one, never the chat's.
 //
-// The gateway is not run; its /api/inference-key is fetch-stubbed to hand back a
-// key keyed to the slot in the request body, exactly as the real one now keys by
-// slot. The provider endpoint is stubbed to record which bearer key each request
-// used. Everything else is the real wasm, the real models.js and the real
-// daimond.js Workers pool. Needs dev/serve.mjs :8777 and dev/mockllm.mjs :9099.
+// The gateway is not run; its /api/inference-key is fetch-stubbed to hand back a key
+// keyed to the slot in the request body, exactly as the real one now keys by slot. The
+// provider endpoint is stubbed to record which bearer key each request used. Everything
+// else is the real wasm, the real models.js and the real daimond.js Workers pool. Needs
+// dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs (DAIMOND_MOCK_PORT,
+// default 9099).
 import { open, signInAs, shot, MOCK } from './harness.mjs';
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };

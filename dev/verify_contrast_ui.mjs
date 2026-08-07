@@ -24,7 +24,8 @@
 //   two are compared. A model that agrees with the engine it is modelling is
 //   worth something; one that has never been checked against it is not.
 //
-// Run: node dev/verify_contrast_ui.mjs   (needs dev/serve.mjs on :8777)
+// Run: node dev/verify_contrast_ui.mjs   (needs dev/serve.mjs -- DAIMOND_PORT,
+// default 8777)
 
 import fs from 'node:fs';
 import path from 'node:path';

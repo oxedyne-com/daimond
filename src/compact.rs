@@ -38,7 +38,7 @@
 //! touched at all.
 
 use crate::llm::{extract_json_string, extract_json_string_array};
-use crate::protocol::{ChatMessage, ToolCall};
+use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -122,6 +122,36 @@ pub const FOLD_INPUT_CAP: u64 = 48_000;
 
 /// Bytes of a tool result kept when it is elided in place.
 pub const TOOL_ELISION_CAP: usize = 400;
+
+/// The side of the square block of pixels a vision model charges one token for.
+///
+/// From Anthropic's vision documentation: "Claude views images in patches instead of pixels. Each
+/// patch is a 28x28-pixel block of the image, referred to as a visual token. An image, therefore,
+/// costs ceil(width / 28) x ceil(height / 28) visual tokens."  OpenAI tiles differently -- 85
+/// tokens plus 170 per 512-pixel tile after fitting the image inside 2048x2048 with a 768-pixel
+/// short edge -- and comes out LOWER on every size worth sending, so the one formula here is the
+/// dearer of the two and therefore the safe one to budget against.
+pub const IMAGE_PATCH_PX: u64 = 28;
+
+/// The most visual tokens one image can cost, whatever its size.
+///
+/// The provider downscales anything bigger before it charges for it, so the patch count above is
+/// bounded: 4,784 on the high-resolution tier (long edge 2,576 px), 1,568 on the standard tier
+/// (long edge 1,568 px).  The higher figure is the one used, because nothing in the browser knows
+/// which tier a configured model sits in, and a budget that overstates folds a turn early where
+/// one that understates has the provider refuse it.
+pub const IMAGE_TOKEN_CAP: u64 = 4_784;
+
+/// Tokens per byte for an image whose pixel dimensions this build cannot read.
+///
+/// PNG and JPEG headers are read directly, so this covers GIF and WebP and a file whose header is
+/// damaged.  Measured against this repository's own screenshots -- 1500x950 in 199,280 bytes is
+/// 1,836 visual tokens (0.0092 tokens per byte) and 390x844 in 52,783 bytes is 434 (0.0082) -- and
+/// then set several times higher, because the two formats it actually covers compress harder for
+/// the same pixel count and because overstating is the direction to err in.  It is bounded above
+/// by [`IMAGE_TOKEN_CAP`] regardless, so a large file is charged the ceiling rather than a
+/// runaway figure.
+const FALLBACK_IMAGE_TOKENS_PER_BYTE: f64 = 0.05;
 
 /// Tokens the summarising call may generate.
 pub const FOLD_MAX_TOKENS: u32 = 1_400;
@@ -277,13 +307,61 @@ impl Gauge {
 // │ Measuring                                                      │
 // └───────────────────────────────────────────────────────────────┘
 
+/// What one image costs the model, in tokens.
+///
+/// Pixels, not bytes.  A screenshot is the clearest case: 1500x950 weighs 199,280 bytes on disk,
+/// which the text ratio of 0.27 prices at 53,806 tokens; the provider charges 1,836.  Left alone,
+/// that thirty-fold overstatement puts a single screenshot most of the way through a 131k budget
+/// and folds the conversation on the turn it was read -- and on every turn after it, since the
+/// fold cannot shrink what it is mis-measuring.  A feature that cannot survive its own first use
+/// is not a feature, which is why this function exists.
+///
+/// See [`IMAGE_PATCH_PX`] for the formula and where it comes from, [`IMAGE_TOKEN_CAP`] for the
+/// ceiling, and [`FALLBACK_IMAGE_TOKENS_PER_BYTE`] for the formats whose header this build cannot
+/// read.
+///
+/// # Arguments
+/// * `img` - The image part being measured.
+pub fn image_tokens(img: &ImagePart) -> u64 {
+	let raw = match img.dims() {
+		Some((w, h)) => {
+			let cols = (w as u64).div_ceil(IMAGE_PATCH_PX);
+			let rows = (h as u64).div_ceil(IMAGE_PATCH_PX);
+			cols.saturating_mul(rows)
+		},
+		None => (img.data.len() as f64 * FALLBACK_IMAGE_TOKENS_PER_BYTE).ceil() as u64,
+	};
+	raw.min(IMAGE_TOKEN_CAP).max(1)
+}
+
+/// What one image costs in the currency the rest of this module counts in: bytes.
+///
+/// Everything here -- the tail budget, the elision target, the fold trigger -- is measured in
+/// bytes and converted to tokens once, by [`Gauge`].  An image has no honest byte count in that
+/// sense, so it is given the byte count that WOULD produce its token count at the default ratio.
+/// Two things follow, and both are the point: every existing byte-denominated calculation keeps
+/// working untouched, and the gauge's learned ratio stays near the ratio for text, because the
+/// image is no longer being fed to it as thirty times its own weight.
+///
+/// # Arguments
+/// * `img` - The image part being measured.
+pub fn image_bytes(img: &ImagePart) -> u64 {
+	(image_tokens(img) as f64 / DEFAULT_TOKENS_PER_BYTE).ceil() as u64
+}
+
 /// Bytes one message costs on the wire, its role framing and any tool calls included.
 ///
 /// Bytes rather than characters: multi-byte text overstates slightly, and overstating is
 /// the direction a size estimate should err in.
+///
+/// An image is counted by [`image_bytes`], NOT by its own length -- see there for why the
+/// difference is the whole of this feature's viability.
 pub fn msg_bytes(m: &ChatMessage) -> u64 {
 	// The JSON around every message: the role, the two keys, the braces and the commas.
-	let mut n = m.content().len() as u64 + 32;
+	let mut n = m.content().text_len() as u64 + 32;
+	for img in m.content().images() {
+		n += image_bytes(img);
+	}
 	match m {
 		ChatMessage::Assistant { tool_calls, .. } => {
 			for tc in tool_calls {
@@ -490,8 +568,8 @@ pub fn ledger_of(msgs: &[ChatMessage]) -> Ledger {
 		};
 		for (k, tc) in calls.iter().enumerate() {
 			let reply = match msgs.get(i + 1 + k) {
-				Some(ChatMessage::Tool { content, .. }) => content.as_str(),
-				_ => "",
+				Some(ChatMessage::Tool { content, .. }) => content.as_text(),
+				_ => std::borrow::Cow::Borrowed(""),
 			};
 			let ok = !reply.trim_start().starts_with("Error");
 			record(&mut l, tc, ok);
@@ -547,17 +625,17 @@ fn record(l: &mut Ledger, tc: &ToolCall, ok: bool) {
 /// One message as a line of transcript for the summarising call.
 fn render_one(m: &ChatMessage) -> String {
 	match m {
-		ChatMessage::System { content } => fmt!("[system] {}", clip(content, 600)),
-		ChatMessage::User { content }   => fmt!("user: {}", clip(content, 2_000)),
+		ChatMessage::System { content } => fmt!("[system] {}", clip(&content.as_text(), 600)),
+		ChatMessage::User { content }   => fmt!("user: {}", clip(&content.as_text(), 2_000)),
 		ChatMessage::Assistant { content, tool_calls } => {
-			let mut s = fmt!("assistant: {}", clip(content, 2_000));
+			let mut s = fmt!("assistant: {}", clip(&content.as_text(), 2_000));
 			for tc in tool_calls {
 				s.push_str(&fmt!("\n  calls {}({})", tc.name, clip(&tc.arguments, 240)));
 			}
 			s
 		},
 		ChatMessage::Tool { content, .. } =>
-			fmt!("  result ({} bytes): {}", content.len(), clip(content, 300)),
+			fmt!("  result ({} bytes): {}", content.text_len(), clip(&content.as_text(), 300)),
 	}
 }
 
@@ -682,12 +760,10 @@ pub fn notice(folded: usize, summary: &str, ledger: &Ledger, why: Option<&str>) 
 /// # Arguments
 /// * `max_rounds` - The limit that was reached.
 pub fn round_limit_note(max_rounds: usize) -> ChatMessage {
-	ChatMessage::System {
-		content: fmt!(
-			"[Daimond stopped the previous turn after {} tool-call rounds, which is its \
-			 limit. The assistant did not choose to stop and the task may be unfinished; \
-			 say where it had got to before carrying on.]", max_rounds),
-	}
+	ChatMessage::system(fmt!(
+		"[Daimond stopped the previous turn after {} tool-call rounds, which is its \
+		 limit. The assistant did not choose to stop and the task may be unfinished; \
+		 say where it had got to before carrying on.]", max_rounds))
 }
 
 
@@ -715,7 +791,7 @@ pub fn fold(msgs: &[ChatMessage], cut: usize, notice: String) -> Outcome<Vec<Cha
 			Invalid, Input));
 	}
 	let mut out = Vec::with_capacity(msgs.len() - cut + 1);
-	out.push(ChatMessage::User { content: notice });
+	out.push(ChatMessage::user(notice));
 	out.extend_from_slice(&msgs[cut..]);
 	let before = orphan_count(msgs);
 	let after  = orphan_count(&out);
@@ -741,6 +817,15 @@ pub fn fold(msgs: &[ChatMessage], cut: usize, notice: String) -> Outcome<Vec<Cha
 /// keeps its `tool_calls` untouched -- only its prose is shortened -- so the block it opens
 /// stays answerable.
 ///
+/// IMAGES GO FIRST, in a pass of their own before any prose is touched.  Three reasons, in the
+/// order they matter: an image is the largest single thing a transcript can hold, so dropping one
+/// buys more room than shortening every tool result in the conversation; it is the least
+/// re-readable, because nothing in the text can stand in for what it showed; and it is the most
+/// cheaply recovered, because the ledger already records which file was read and `file_read` will
+/// fetch it again.  The line left in its place names that file -- see [`ImagePart::elision`] --
+/// so an elided image is a pointer, not a hole.  A user's own image is dropped too, unlike a
+/// user's own words: the words cannot be recovered and the file can.
+///
 /// Returns how many messages were shrunk.
 ///
 /// # Arguments
@@ -760,27 +845,38 @@ pub fn elide_bulk(
 	}
 	let last = msgs.len().saturating_sub(keep_last);
 	let mut n = 0;
+
+	// Pass one: the images, oldest first.
+	for i in 0..last {
+		if total <= target_bytes {
+			return n;
+		}
+		if !msgs[i].content().has_image() {
+			continue;
+		}
+		let before = msg_bytes(&msgs[i]);
+		msgs[i] = msgs[i].with_content(msgs[i].content().without_images());
+		total = total.saturating_sub(before.saturating_sub(msg_bytes(&msgs[i])));
+		n += 1;
+	}
+
+	// Pass two: the prose, as before.
 	for i in 0..last {
 		if total <= target_bytes {
 			break;
 		}
 		let len = match &msgs[i] {
-			ChatMessage::Tool { content, .. } if content.len() > TOOL_ELISION_CAP => content.len(),
-			ChatMessage::Assistant { content, .. } if content.len() > TOOL_ELISION_CAP =>
-				content.len(),
+			ChatMessage::Tool { content, .. } if content.text_len() > TOOL_ELISION_CAP =>
+				content.text_len(),
+			ChatMessage::Assistant { content, .. } if content.text_len() > TOOL_ELISION_CAP =>
+				content.text_len(),
 			_ => continue,
 		};
 		let shrunk = fmt!(
 			"{}\n[the remaining {} bytes were folded away to fit the context window; read it \
 			 again if you need it]",
-			clip(msgs[i].content(), TOOL_ELISION_CAP), len - TOOL_ELISION_CAP.min(len));
-		msgs[i] = match &msgs[i] {
-			ChatMessage::Tool { tool_call_id, .. } =>
-				ChatMessage::Tool { tool_call_id: tool_call_id.clone(), content: shrunk.clone() },
-			ChatMessage::Assistant { tool_calls, .. } =>
-				ChatMessage::Assistant { content: shrunk.clone(), tool_calls: tool_calls.clone() },
-			other => other.clone(),
-		};
+			clip(&msgs[i].text(), TOOL_ELISION_CAP), len - TOOL_ELISION_CAP.min(len));
+		msgs[i] = msgs[i].with_content(MessageContent::text(shrunk.clone()));
 		total = total.saturating_sub((len - shrunk.len().min(len)) as u64);
 		n += 1;
 	}
@@ -857,7 +953,7 @@ mod tests {
 	/// An assistant turn asking for one tool call.
 	fn asks(id: &str, name: &str, args: &str) -> ChatMessage {
 		ChatMessage::Assistant {
-			content:    String::new(),
+			content:    MessageContent::text(""),
 			tool_calls: vec![ToolCall {
 				id: id.to_string(), name: name.to_string(), arguments: args.to_string(),
 			}],
@@ -866,12 +962,191 @@ mod tests {
 
 	/// The reply to one.
 	fn replies(id: &str, body: &str) -> ChatMessage {
-		ChatMessage::Tool { tool_call_id: id.to_string(), content: body.to_string() }
+		ChatMessage::tool(id.to_string(), body.to_string())
 	}
 
-	fn user(s: &str) -> ChatMessage { ChatMessage::User { content: s.to_string() } }
+	fn user(s: &str) -> ChatMessage { ChatMessage::user(s.to_string()) }
 	fn says(s: &str) -> ChatMessage {
-		ChatMessage::Assistant { content: s.to_string(), tool_calls: Vec::new() }
+		ChatMessage::assistant(s.to_string())
+	}
+
+	// ── Images ───────────────────────────────────────────────────────────────
+
+	/// One of this repository's own screenshots, read off disk.
+	///
+	/// A real file rather than a synthesised one, because the numbers in [`image_tokens`]'s
+	/// documentation were measured against these two files: a test built on a fabricated header
+	/// would confirm the arithmetic and say nothing about whether the arithmetic describes a
+	/// screenshot.
+	///
+	/// # Arguments
+	/// * `name` - The file under `shots/`.
+	fn shot(name: &str) -> ImagePart {
+		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("shots").join(name);
+		let data = std::fs::read(&path)
+			.unwrap_or_else(|e| panic!("the fixture {} must be readable: {}", path.display(), e));
+		let media = crate::protocol::ImageMedia::sniff(&data).expect("the fixture must be an image");
+		ImagePart::new(media, data, fmt!("shots/{}", name))
+	}
+
+	/// A tool reply carrying a screenshot, as `file_read` produces one.
+	fn replies_with_image(id: &str, name: &str) -> ChatMessage {
+		ChatMessage::tool(id.to_string(), MessageContent::parts(vec![
+			crate::protocol::ContentPart::Text(fmt!("Read the image shots/{}.", name)),
+			crate::protocol::ContentPart::Image(shot(name)),
+		]))
+	}
+
+	/// An image is charged by its area, and the figures in the documentation are the figures a
+	/// real screenshot produces.
+	///
+	/// The formula is Anthropic's published one -- ceil(w/28) x ceil(h/28) visual tokens -- so
+	/// this is checking our arithmetic against a provider's rule and two files on disk, not
+	/// against another function of ours.
+	#[test]
+	fn test_a_screenshot_costs_what_the_provider_charges_for_its_area() {
+		let big = shot("mobile-desktop-after.png");
+		assert_eq!(Some((1500, 950)), big.dims(), "the fixture is not the size the docs assume");
+		// ceil(1500/28) = 54 columns, ceil(950/28) = 34 rows.
+		assert_eq!(54 * 34, image_tokens(&big));
+
+		let small = shot("mobile-sheet-web.png");
+		assert_eq!(Some((390, 844)), small.dims());
+		assert_eq!(14 * 31, image_tokens(&small));
+	}
+
+	/// The catastrophe this whole change exists to prevent: a screenshot priced as if it were
+	/// text.
+	///
+	/// 199,280 bytes at the text ratio of 0.27 is 53,806 tokens -- most of a 131k budget, on a
+	/// file the provider charges 1,836 for. Priced that way, the conversation folds on the turn
+	/// the screenshot is read and on every turn after it.
+	#[test]
+	fn test_an_image_is_not_priced_as_if_it_were_text() {
+		let img = shot("mobile-desktop-after.png");
+		let as_text = (img.data.len() as f64 * DEFAULT_TOKENS_PER_BYTE) as u64;
+		let actual  = image_tokens(&img);
+		assert!(as_text > actual * 20,
+			"the fixture no longer demonstrates the overstatement: {} vs {}", as_text, actual);
+
+		// What the module actually counts.
+		let msg = ChatMessage::user(MessageContent::parts(vec![
+			crate::protocol::ContentPart::Image(img.clone()),
+		]));
+		let charged = msg_bytes(&msg);
+		let gauge = Gauge::default();
+		assert!(gauge.tokens(charged) < 2_200,
+			"a screenshot is being charged {} tokens", gauge.tokens(charged));
+		assert!(gauge.tokens(charged) >= actual,
+			"a screenshot is being charged less than the provider will");
+
+		// And it does not, on its own, trip the fold.
+		let limits = Limits { window: 131_072, ..Limits::default() };
+		assert!(charged < limits.budget(4_096) / 4,
+			"one screenshot took a quarter of the budget: {} of {}",
+			charged, limits.budget(4_096));
+	}
+
+	/// A format whose header this build cannot read is estimated from its bytes and bounded by the
+	/// same ceiling, rather than falling through to the text ratio.
+	#[test]
+	fn test_an_unreadable_header_falls_back_to_a_bounded_estimate() {
+		// A RIFF/WEBP wrapper with nothing decodable inside it.
+		let mut data = b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec();
+		data.resize(300_000, 0x5A);
+		let img = ImagePart::new(crate::protocol::ImageMedia::WebP, data, "big.webp".to_string());
+		assert_eq!(None, img.dims(), "this build should not claim to read a WebP header");
+		assert_eq!(IMAGE_TOKEN_CAP, image_tokens(&img), "the fallback must be capped");
+
+		let small = ImagePart::new(
+			crate::protocol::ImageMedia::WebP,
+			b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec(),
+			"tiny.webp".to_string());
+		assert!(image_tokens(&small) >= 1, "an image never costs nothing");
+		assert!(image_tokens(&small) < 100, "a tiny file must not be charged the ceiling");
+	}
+
+	/// Elision drops the images before it shortens any prose.
+	///
+	/// Ordered that way because an image is the largest thing in the transcript and the least
+	/// re-readable; the assertion is that the prose is still whole once the images have gone.
+	#[test]
+	fn test_elision_drops_images_before_it_touches_prose() {
+		let mut v = vec![
+			user("look at these"),
+			asks("call_0", "file_read", r#"{"path":"shots/mobile-desktop-after.png"}"#),
+			replies_with_image("call_0", "mobile-desktop-after.png"),
+			asks("call_1", "file_read", r#"{"path":"src/main.rs"}"#),
+			replies("call_1", &"z".repeat(4_000)),
+			says("done"),
+		];
+		let before = conversation_bytes(&v);
+		// A target that the images alone can meet.
+		let target = before - msg_bytes(&v[2]) / 2;
+		let n = elide_bulk(&mut v, target, 1);
+		assert_eq!(1, n, "exactly the image message should have been touched");
+		assert!(!v[2].content().has_image(), "the image survived");
+		assert_eq!(4_000, v[4].content().text_len(), "the prose was shortened before it had to be");
+	}
+
+	/// An elided image leaves the file's name behind, so the model can read it again.
+	#[test]
+	fn test_an_elided_image_says_which_file_it_was() {
+		let mut v = vec![
+			user("look"),
+			asks("call_0", "file_read", r#"{"path":"shots/mobile-desktop-after.png"}"#),
+			replies_with_image("call_0", "mobile-desktop-after.png"),
+			says("done"),
+		];
+		elide_bulk(&mut v, 100, 1);
+		let left = v[2].text();
+		assert!(!v[2].content().has_image(), "the image should have gone");
+		assert!(left.contains("shots/mobile-desktop-after.png"),
+			"the elision must name the file: {}", left);
+		assert!(left.contains("read it again"), "it must say what to do: {}", left);
+		// The pairing the provider checks is untouched.
+		assert_eq!(0, orphan_count(&v));
+		assert!(matches!(v[2], ChatMessage::Tool { .. }), "the role changed");
+	}
+
+	/// Elision still gets a conversation under the target when the images alone are not enough.
+	#[test]
+	fn test_images_then_prose_reaches_the_target() {
+		let mut v = vec![user("go")];
+		for r in 0..4 {
+			let id = fmt!("call_{}", r);
+			v.push(asks(&id, "file_read", r#"{"path":"x"}"#));
+			v.push(if r % 2 == 0 {
+				replies_with_image(&id, "mobile-sheet-web.png")
+			} else {
+				replies(&id, &"q".repeat(8_000))
+			});
+		}
+		v.push(says("done"));
+		let target = 4_000;
+		elide_bulk(&mut v, target, 1);
+		assert!(conversation_bytes(&v) <= target + 2_000,
+			"elision left {} bytes against a target of {}", conversation_bytes(&v), target);
+		assert!(!v.iter().any(|m| m.content().has_image()), "an image survived");
+		assert_eq!(0, orphan_count(&v));
+	}
+
+	/// The fold's own input cap counts an image at its token cost too, so a folded conversation
+	/// carrying screenshots does not produce a summarising call that is itself refused.
+	#[test]
+	fn test_the_fold_input_cap_measures_an_image_by_its_tokens() {
+		let v = vec![
+			user("go"),
+			asks("call_0", "file_read", r#"{"path":"shots/mobile-desktop-after.png"}"#),
+			replies_with_image("call_0", "mobile-desktop-after.png"),
+		];
+		assert!(conversation_bytes(&v) < FOLD_INPUT_CAP,
+			"one screenshot exceeded the whole fold input cap: {} of {}",
+			conversation_bytes(&v), FOLD_INPUT_CAP);
+		// And what the summariser is shown names the file rather than carrying it.
+		let r = render_for_fold(&v, FOLD_INPUT_CAP);
+		assert!(r.contains("shots/mobile-desktop-after.png"), "{}", r);
+		assert!(!r.contains("iVBORw0KGgo"), "base64 reached the summarising call: {}", r);
 	}
 
 	/// A conversation of `rounds` complete tool blocks, each carrying a fat result.
@@ -914,7 +1189,7 @@ mod tests {
 	#[test]
 	fn test_two_calls_in_one_turn_need_two_replies_00() {
 		let both = ChatMessage::Assistant {
-			content: String::new(),
+			content: MessageContent::text(""),
 			tool_calls: vec![
 				ToolCall { id: fmt!("a"), name: fmt!("file_read"), arguments: fmt!("{{}}") },
 				ToolCall { id: fmt!("b"), name: fmt!("file_list"), arguments: fmt!("{{}}") },
@@ -929,7 +1204,7 @@ mod tests {
 	#[test]
 	fn test_replies_out_of_order_do_not_count_as_paired_00() {
 		let both = ChatMessage::Assistant {
-			content: String::new(),
+			content: MessageContent::text(""),
 			tool_calls: vec![
 				ToolCall { id: fmt!("a"), name: fmt!("file_read"), arguments: fmt!("{{}}") },
 				ToolCall { id: fmt!("b"), name: fmt!("file_list"), arguments: fmt!("{{}}") },
@@ -1052,8 +1327,8 @@ mod tests {
 		];
 		let n = elide_bulk(&mut v, 3_000, 1);
 		assert_eq!(n, 1, "the assistant's own turn should have been shortened");
-		assert!(v[1].content().len() < 1_000, "{}", v[1].content().len());
-		assert_eq!(v[0].content().len(), 5_000, "the user's own words were shortened");
+		assert!(v[1].content().text_len() < 1_000, "{}", v[1].content().text_len());
+		assert_eq!(v[0].content().text_len(), 5_000, "the user's own words were shortened");
 	}
 
 	#[test]
@@ -1062,7 +1337,7 @@ mod tests {
 		let mut v = vec![
 			user("go"),
 			ChatMessage::Assistant {
-				content:    "z".repeat(5_000),
+				content:    MessageContent::text("z".repeat(5_000)),
 				tool_calls: vec![ToolCall {
 					id: fmt!("a"), name: fmt!("file_read"), arguments: fmt!("{{}}") }],
 			},
@@ -1071,7 +1346,7 @@ mod tests {
 		];
 		elide_bulk(&mut v, 500, 1);
 		assert_eq!(orphan_count(&v), 0, "the block lost its call");
-		assert!(v[1].content().len() < 1_000);
+		assert!(v[1].content().text_len() < 1_000);
 	}
 
 	#[test]
@@ -1165,7 +1440,7 @@ mod tests {
 			Err(e) => panic!("{}", e),
 		};
 		assert_eq!(out[0].role(), "user");
-		assert!(out[0].content().contains("Daimond folded"));
+		assert!(out[0].text().contains("Daimond folded"));
 	}
 
 	// ── The round limit ──────────────────────────────────────────────────────
@@ -1177,10 +1452,10 @@ mod tests {
 		let n = round_limit_note(150);
 		assert_eq!(n.role(), "system",
 			"a limit the app imposed must not be said in the model's own voice");
-		assert!(n.content().contains("Daimond stopped"), "{}", n.content());
-		assert!(n.content().contains("did not choose to stop"), "{}", n.content());
-		assert!(n.content().contains("may be unfinished"), "{}", n.content());
-		assert!(n.content().contains("150"), "{}", n.content());
+		assert!(n.text().contains("Daimond stopped"), "{}", n.text());
+		assert!(n.text().contains("did not choose to stop"), "{}", n.text());
+		assert!(n.text().contains("may be unfinished"), "{}", n.text());
+		assert!(n.text().contains("150"), "{}", n.text());
 	}
 
 	#[test]
@@ -1234,7 +1509,7 @@ mod tests {
 		elide_bulk(&mut v, 100, 4);
 		let last_tool = v.iter().rposition(|m| matches!(m, ChatMessage::Tool { .. }))
 			.expect("a reply");
-		assert_eq!(v[last_tool].content().len(), 5_000,
+		assert_eq!(v[last_tool].content().text_len(), 5_000,
 			"the newest result was elided; that is the one the model is working from");
 	}
 
@@ -1243,8 +1518,8 @@ mod tests {
 		let mut v = session(3, 5_000);
 		elide_bulk(&mut v, 100, 0);
 		let t = v.iter().find(|m| matches!(m, ChatMessage::Tool { .. })).expect("a reply");
-		assert!(t.content().contains("folded away"), "{}", t.content());
-		assert!(t.content().contains("read it again"), "{}", t.content());
+		assert!(t.text().contains("folded away"), "{}", t.text());
+		assert!(t.text().contains("read it again"), "{}", t.text());
 	}
 
 	// ── The budget ───────────────────────────────────────────────────────────
@@ -1463,12 +1738,12 @@ mod tests {
 		assert!(pairing_is_whole(&out), "the folded conversation would be rejected");
 		// And it still knows what it did: the earliest file it read is named in the note,
 		// and the latest is still in the conversation verbatim.
-		assert!(out[0].content().contains("src/f0.rs"),
+		assert!(out[0].text().contains("src/f0.rs"),
 			"the fold forgot the first file it read: {}", out[0].content());
 		let tail_mentions = out.iter().skip(1).any(|m| match m {
 			ChatMessage::Assistant { tool_calls, .. } =>
 				tool_calls.iter().any(|tc| tc.arguments.contains("src/f39.rs")),
-			_ => m.content().contains("src/f39.rs"),
+			_ => m.text().contains("src/f39.rs"),
 		});
 		assert!(tail_mentions, "the newest work was folded away instead of kept");
 	}

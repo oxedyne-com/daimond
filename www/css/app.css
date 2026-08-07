@@ -167,6 +167,53 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 label.addbtn { cursor: pointer; }
 .rail-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 0 6px 4px; }
 
+/* ── The PPTW: one control, three states ──────────────────────────
+   Drawn identically wherever it appears -- at the head of the rail for the
+   root of the tree, on each Diamond tile, on each chat tile, and (phase G and
+   H) on each mailbox, folder and triggered action.
+
+   Colour AND glyph carry the state, never colour alone: green with a play
+   triangle runs, red with two bars is held, amber with a single bar is mixed.
+   The glyph is knocked out of the lamp with fill-rule="evenodd", so it reads
+   against whatever ground the tile happens to have in whichever palette.
+
+   Amber is derived and can never be set, so there is no third affordance here
+   -- hover and focus say only "this can be pressed". */
+.pptw {
+	flex: none; width: 20px; height: 20px; padding: 0;
+	display: flex; align-items: center; justify-content: center;
+	border: none; border-radius: 50%; background: none;
+	line-height: 0; color: var(--text-muted);
+}
+/* Centred by the flex box above and by the viewBox: the disc sits at 8,8 of
+   0 0 16 16, so the INK is on the box's centre, not merely the sprite. 18px,
+   not 14: at 14 the pause bars came out 1.4 device pixels wide and read as a
+   smudge rather than as two bars. */
+.pptw-ic { width: 18px; height: 18px; display: block; fill: currentColor; }
+.pptw[data-state="play"]  { color: var(--ok); }
+.pptw[data-state="pause"] { color: var(--danger); }
+.pptw[data-state="mixed"] { color: var(--warn); }
+.pptw:hover { filter: brightness(1.2); }
+.pptw:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The global control's own row, above the Diamonds list.
+   Deliberately NOT a .railhead and deliberately not dressed as one. Given the
+   section-header look, "EVERYTHING" sat a light's width to the right of
+   "DIAMONDS" and "CHATS" and read as a third section that had lost its
+   alignment. It is not a section, it is a switch: sentence case, a rule under
+   it, and the light leading the way it leads on every tile below. The row's
+   leading ink starts on the same 4px as the section labels, so the two kinds
+   of row share a left edge without pretending to be the same kind. */
+.pptw-head {
+	display: flex; align-items: center; gap: 6px;
+	padding: 4px 4px 6px; border-bottom: 1px solid var(--border);
+}
+.pptw-slot { display: flex; flex: none; }
+.pptw-head-label {
+	flex: 1; font-size: var(--fs-sm); font-weight: 500;
+	color: var(--text-secondary); white-space: nowrap;
+}
+
 .user-info { flex: 1; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; }
 #logout-btn:hover { color: var(--danger); }
 
@@ -344,7 +391,13 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-console-link:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* ── Chats list (sessions) ───────────────────────────────────── */
-.session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px; padding-bottom: 2px; }
+/* 4px of side padding, which is what `.railhead` and `.pptw-head` above it
+   already use. The two lists disagreed -- Diamonds sat on 6px and Chats on 0 --
+   so a Diamond tile's card was 6px narrower than a chat tile's and their two
+   columns of pause lights were 6px apart down the rail. On 4px every leading
+   edge in the rail starts in the same place: the global light, the section
+   labels, and both kinds of tile. */
+.session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px; padding: 0 4px 2px; }
 
 .new-session-panel { display: flex; gap: 6px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); flex: none; }
 .new-session-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 8px; font-size: var(--fs-sm); }
@@ -360,11 +413,45 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box.active .session-box-name { color: var(--accent-text); }
 .session-box-rename { flex: 1; min-width: 0; background: var(--bg-primary); border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--text-primary); padding: 2px 6px; font-size: var(--fs-sm); }
 .session-box-rename:focus { outline: none; }
-.session-box-close { background: none; border: none; color: var(--text-muted); font-size: var(--fs-lg); padding: 0 3px; border-radius: var(--radius-sm); opacity: 0; transition: opacity 0.1s; flex-shrink: 0; }
-.session-box:hover .session-box-close { opacity: 1; }
-.session-box-close:hover { color: var(--danger); }
+/* The cog that replaced the closer cross. Always visible, never on hover: the
+   cross was `opacity: 0` until the pointer arrived, which is no control at all
+   on a phone -- and it put the one irreversible act on the tile's easiest
+   pixel. 20px square, the same box the pause light opposite it wears, so the
+   two ends of the header row sit on one line and one baseline. */
+.tile-cog {
+	flex: none; width: 20px; height: 20px; padding: 0;
+	display: flex; align-items: center; justify-content: center;
+	background: none; border: none; border-radius: var(--radius-sm);
+	line-height: 0; color: var(--text-muted);
+}
+.tile-cog:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tile-cog:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .session-box-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; font-family: var(--font-mono); }
 .session-box-ctx, .session-box-cost, .session-box-time { font-size: var(--fs-2xs); color: var(--text-muted); }
+
+/* ── Simple and Max, per tile ────────────────────────────────────
+   Simple is the default and hides the things a new user does not need on the
+   rail: the model pulldowns, the model chip, the live meter, the version and
+   the timestamp. Max shows them. Kept in CSS off `data-detail` rather than by
+   building a different tile, so every handler is wired either way -- a hidden
+   pulldown still answers `DaimondModels.pick`, so Start on a Simple tile starts
+   on exactly the model the tile holds rather than on nothing.
+
+   What Simple does NOT hide: the pause light, the name, the queue badge, the
+   pending-fold badge and the tags. The first three are money or work in
+   flight, and the last two are how a Diamond is found. */
+.session-box[data-detail="simple"] .tile-model,
+.session-box[data-detail="simple"] .tile-worker-row,
+.session-box[data-detail="simple"] .tile-model-chip,
+.session-box[data-detail="simple"] .tile-meter,
+.session-box[data-detail="simple"] .session-box-ctx,
+.session-box[data-detail="simple"] .session-box-time { display: none; }
+/* A meta row whose every child is hidden still costs its top margin. Its own
+   rule, because an unsupported `:has()` would otherwise drop the whole list
+   above with it. */
+.session-box[data-detail="simple"] .session-box-meta:not(:has(.tag-sm, .tag-more, .diamond-pending)) {
+	display: none;
+}
 
 /* ── Center panel ────────────────────────────────────────────── */
 .chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); min-height: var(--header-h); }
@@ -513,11 +600,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 
 /* Diamonds rail list — reuses .session-box styling via the shared class. A long
    list scrolls rather than squeezing the chats out of the pane above it. */
-.diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 4px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 
 /* Find a Diamond: a search box that is always there, and the standing tag pool
    beneath it. */
-.diamond-find { display: flex; flex-direction: column; gap: 5px; padding: 0 6px; flex: none; }
+.diamond-find { display: flex; flex-direction: column; gap: 5px; padding: 0 4px; flex: none; }
 .diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
 .diamond-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .diamond-search::placeholder { color: var(--text-muted); }
@@ -849,7 +936,13 @@ button.tag-pool { cursor: pointer; }
 
 /* ── Agents panel ────────────────────────────────────────────── */
 .agents-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.agents-empty { font-size: var(--fs-xs); color: var(--text-muted); padding: 2px 6px; }
+/* 10px, which is the inset every dock panel's first body line now takes. The
+   four disagreed — Agents 6, Email 10, Spending 14, Workspace 11 — and four
+   panels side by side in one dock with four different left edges is the kind of
+   thing you see without being able to name. 10 reads well against the 4px
+   header without moving the header. Email already had it; mail.css, files.css
+   and spend.css carry the same number. */
+.agents-empty { font-size: var(--fs-xs); color: var(--text-muted); padding: 2px 10px; }
 .agent-find { padding-top: 2px; padding-bottom: 2px; }
 /* Chips on an agent tile: parent Diamond, its inherited tags, the model. */
 .acard .achips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 2px; }
@@ -891,7 +984,12 @@ button.tag-pool { cursor: pointer; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 400px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
 .modal-card h2 { font-size: var(--fs-2xl); margin-bottom: 16px; }
-.settings-section { margin-bottom: 20px; }
+/* The 8px that puts every Admin view on one left edge. `#admin-scroll` gives
+   8px to all of them; Home's rows add another 8 of their own (`.admin-item`,
+   `.admin-sec`) and the form views added none, so switching from Home to Models
+   or Credits shifted every word 8px left. Measured off the ink: Home 16, Models
+   8, Credits 8. */
+.settings-section { margin-bottom: 20px; padding: 0 8px; }
 .settings-section h3 { font-size: var(--fs-lg); margin-bottom: 12px; color: var(--text-secondary); }
 .settings-section form { display: flex; flex-direction: column; gap: 10px; }
 .settings-section input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
@@ -1194,6 +1292,38 @@ button.tag-pool { cursor: pointer; }
 .dlg-actions .dlg-ok.danger:hover { filter: brightness(1.1); }
 .tile-fold.folded { color: var(--text-secondary); border-style: dashed; }
 
+/* ── A tile's own dialog (the cog) ───────────────────────────────
+   Same `.modal` / `.modal-card` furniture as every other dialog, so Escape,
+   the backdrop and the focus trap behave the way they do everywhere. What is
+   different is the foot: Delete is what the closer cross became, so it is here
+   rather than in the corner of the tile. */
+.tile-dlg-head {
+	font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em;
+	color: var(--text-muted); margin: 14px 0 6px;
+}
+.tile-dlg-card h2 { margin-bottom: 4px; overflow-wrap: anywhere; }
+.tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
+.tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
+.tile-dlg-seg { display: flex; gap: 6px; }
+.tile-dlg-level {
+	flex: 1;
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); color: var(--text-secondary);
+	padding: 8px 10px; font-size: var(--fs-sm);
+}
+.tile-dlg-level:hover { border-color: var(--accent); color: var(--text-primary); }
+.tile-dlg-level[aria-pressed="true"] {
+	background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text);
+}
+.tile-dlg-level:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tile-dlg-note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; margin-top: 8px; }
+/* Delete does not sit shoulder to shoulder with Done: a foot whose two buttons
+   are the same size and touching puts the irreversible one under the thumb that
+   meant to dismiss. It takes what it needs and Done takes the rest. */
+.tile-dlg-foot { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+.tile-dlg-foot .tile-dlg-delete { flex: 0 0 auto; }
+.tile-dlg-foot .tile-dlg-done { flex: 1; }
+
 
 /* Locked: lockApp() empties the panels of the user's content, so the shell
    is left standing but bare. Nothing of theirs is on screen behind the card. */
@@ -1297,8 +1427,20 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 :root[data-ink="dark"] button.tag-chip:hover { background: hsl(var(--tag-h, 0) 74% 88%); border-color: hsl(var(--tag-h, 0) 50% 66%); }
 
 /* On a Diamond box, beside v{n} and the time. The +N stands for the tags that
-   did not fit and names them on hover. */
-.tag-more { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); cursor: default; }
+   did not fit and names them on hover.
+
+   Shaped like the chips it stands for, in a neutral. It was bare monospace grey
+   beside three coloured pills, and when the meta row wrapped it landed alone on
+   the second line under `v0` and read as debris rather than as "and two more
+   tags". Same pill, same size, no hue — it is not a tag, it is a count of
+   them. */
+.tag-more {
+	display: inline-flex; align-items: center;
+	font-family: var(--font); font-size: var(--fs-3xs); line-height: 1.6;
+	padding: 0 6px; border-radius: 20px; white-space: nowrap;
+	background: var(--bg-tertiary); color: var(--text-muted);
+	border: 1px solid var(--border); cursor: default;
+}
 .tag-active { padding-right: 3px; }
 /* The closer owns the pill's right end cap: a full-height square flush with
    the edge, so its centre falls exactly on the cap's centre (half the chip's
@@ -1391,7 +1533,11 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 20px; }
 .tag-none { font-size: var(--fs-xs); color: var(--text-muted); font-style: italic; }
 .tag-add { display: flex; gap: 6px; }
-.tag-input { flex: 1; max-width: 200px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 4px 8px; }
+/* No `max-width`. `flex: 1` already sizes it against the "+ Add" beside it, and
+   the cap on top of that stopped the row 116px short of a 376px card while every
+   chip row above it ran the full width — one row in the editor that did not
+   reach the edge the rest reach. */
+.tag-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 4px 8px; }
 .tag-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .tag-input::placeholder { color: var(--text-muted); }
 /* The two boxes: what is on the Diamond, and the pool everything comes from.
@@ -1588,8 +1734,17 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .web-takeover { margin-top: 6px; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 18px; font-size: var(--fs-base); }
 .web-takeover:hover { background: var(--accent-hover); }
 
-/* A stage panel's header reuses the AI panel's chrome. */
-.web .chead, .doc .chead, .msg .chead { gap: 8px; }
+/* A stage panel's header reuses the AI panel's chrome.
+
+   And it WRAPS. `.chead-right` is `flex: none` and only `.panel.ai .ctitle`
+   carried `min-width: 0`, so in a narrow stage seat these three heads squeezed
+   the title to nothing and then pushed the button row out of the panel: at a
+   205px seat the head overflowed by 23px and the close button sat at 205..227
+   — entirely outside the panel it closes, so the Web panel could not be shut
+   from its own header. Measured at three widths; 300 and 250 were still inside.
+   A row that drops is a row you can still press. */
+.web .chead, .doc .chead, .msg .chead { gap: 8px; flex-wrap: wrap; row-gap: 4px; }
+.web .ctitle, .doc .ctitle, .msg .ctitle { flex: 1 1 auto; min-width: 0; }
 /* The document panel holds one of two renderings: a text view or a PDF. Both
    fill the panel; whichever is showing, the other is display:none. */
 .doc-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }

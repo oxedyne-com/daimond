@@ -39,4 +39,38 @@ CARGO_DIR=$(cd "${CARGO_HOME:-$HOME/.cargo}" && pwd -P)
 # own standard library to /rustc/<hash>, so those two are the whole story.
 export RUSTFLAGS="--remap-path-prefix=$CARGO_DIR=/cargo --remap-path-prefix=$ROOT=/build ${RUSTFLAGS:-}"
 
-exec wasm-pack build --target web --out-dir www/pkg "$@"
+wasm-pack build --target web --out-dir www/pkg "$@"
+
+# ── Say which kind of bundle this is ────────────────────────────────────
+#
+# The two prefixes above are the whole story ONLY in the mirror, where
+# `Cargo.toml` pins fe2o3 by git revision so its sources come from under
+# $CARGO_DIR. The DEV tree links fe2o3 by path, at ~/usr/code/rust/fe2o3, which is
+# outside both remapped prefixes -- so every `err!` and every panic in fe2o3
+# bakes this machine's home directory into the bundle, and a build made here can
+# never be reproduced by a stranger.
+#
+# That is fine for testing and fatal for sealing, and the difference is invisible
+# unless somebody thinks to look. It was NOT looked at for two releases: seq 66
+# and 67 were sealed from a dev build, so for three days the transparency log
+# named a bundle nobody outside this machine could produce. The check costs
+# nothing, so it runs every time rather than being remembered.
+#
+# It greps for THIS BUILDER'S home directory, not for `/home/` generally. The
+# broader pattern also matches `/home/you/project/src/main.rs`, which is a
+# deliberate literal in `src/tools.rs` -- the file tools' own description, telling
+# a model that an absolute path is refused rather than followed. A correct,
+# reproducible mirror build therefore reported "DEV BUILD - 1 line" and would have
+# been withheld from a release for a documentation example. A check that cries
+# wolf on a good build gets ignored on a bad one, which is the failure this check
+# exists to prevent.
+BAKED=$(grep -ac "$HOME" www/pkg/oxedyne_daimond_bg.wasm || true)
+echo
+if [ "$BAKED" -eq 0 ]; then
+	echo "build-wasm: REPRODUCIBLE — no home directory in the bundle. Safe to seal."
+else
+	echo "build-wasm: DEV BUILD — $BAKED line(s) of this machine's home directory are in"
+	echo "  the bundle, because fe2o3 is linked by PATH here and only the mirror pins it"
+	echo "  by revision. Fine to test with. DO NOT SEAL IT: build in the mirror instead,"
+	echo "  per \"Deploying\" in ~/usr/SYSTEM.md, and let repro-check.sh confirm it."
+fi

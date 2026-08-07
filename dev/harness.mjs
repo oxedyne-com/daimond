@@ -30,14 +30,21 @@ const { chromium } = await import(pathToFileURL(PW).href);
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots');
 
-export const APP   = 'http://localhost:8777';
-export const MOCK  = 'http://127.0.0.1:9099/v1/chat/completions';
+/// The dev server, the mock provider and the mock's log together make one
+/// "world".  They are all settable so several agents can each hold one and drive
+/// their own browser; `dev/world.sh N` prints a consistent set.  A shared mock log
+/// is the trap the ports alone do not close -- two suites appending to one file
+/// make every `mockLog` assertion read another agent's traffic.
+export const APP   = process.env.DAIMOND_APP
+	|| `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
+export const MOCK  = process.env.DAIMOND_MOCK
+	|| `http://127.0.0.1:${process.env.DAIMOND_MOCK_PORT || 9099}/v1/chat/completions`;
 export const MODEL = 'mock/fast';
 export const PASS  = 'testpass1234';
 export const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
-const MOCK_LOG = path.join(HERE, 'mockllm.log');
+const MOCK_LOG = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
 
 /// Scratch root for browser profiles and test artefacts.
 ///

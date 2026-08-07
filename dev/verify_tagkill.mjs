@@ -17,7 +17,8 @@
 //
 //   node dev/verify_tagkill.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway; the model is never called.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway; the model is never
+// called.
 
 import { open, shot, errors } from './harness.mjs';
 

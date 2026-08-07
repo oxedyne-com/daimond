@@ -30,8 +30,8 @@
 // client says about it, and the "names nothing" case exists precisely to be the
 // deletion that must not be collected and must be reported.
 //
-// Needs dev/serve.mjs (:8777) and a daimond_gateway on :9002; it starts its own
-// if none is up, and stops what it started.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and a daimond_gateway on :9002; it
+// starts its own if none is up, and stops what it started.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';

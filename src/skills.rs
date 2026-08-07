@@ -29,7 +29,7 @@
 //! model before the turn starts, rather than an instruction to the model to go and read it.
 //!
 //! The first is a slash command, `/name the rest of the message`, which is what a person types.
-//! It is resolved by [`parse_command`] against the directories [`COMMAND_DIRS`] names, and a name
+//! It is resolved by [`parse_command`] against the directories [`command_dirs`] names, and a name
 //! that resolves to no file is REFUSED rather than sent on as ordinary chat: a user who types
 //! `/pickup` and gets a plausible answer that skipped the workflow has no way to tell.
 //!
@@ -185,18 +185,82 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The subdirectory of a skill directory that holds executable code.
 const SCRIPTS_DIR: &str = "scripts";
 
+/// The file that names any FURTHER directories a `/name` command should look in, one
+/// workspace-relative directory per line.  Absent is the ordinary case and means the only place
+/// searched is [`SKILLS_DIR`].
+///
+/// This file exists because two facts pull against each other.  A person who has been typing
+/// `/pickup` for months keeps their skills wherever they already keep them, and copying every one
+/// of them into a second directory before the app will honour a command it told them to type is
+/// not a fix.  But the layout of one person's home directory is not a fact about Daimond, and a
+/// build that carries it publishes where its author keeps their files -- `src/` is carved into a
+/// public mirror.  So the search path is *data in the workspace*, not a constant in the binary:
+/// the shipped artefact is identical for everybody, and the person with the directories writes one
+/// short file naming them.
+///
+/// It sits under `.daimond/`, which the file tools refuse to write ([`crate::tools::DAIMOND_DIR`]),
+/// and that placement is load-bearing rather than tidy.  A skill is injected verbatim as the user
+/// speaking, so whoever controls the search path controls what counts as the user's own words: a
+/// model able to add a directory here could point the resolver at content it had downloaded and
+/// have it trusted.  The search path is the user's to set and nobody else's.
+pub const SEARCH_PATH_FILE: &str = ".daimond/skills.path";
+
+/// The most directories the search path may add.
+///
+/// Every directory costs two file reads on every slash command, including the ones that resolve to
+/// nothing, so an unbounded list turns a mistyped `/pickpu` into an unbounded number of reads.
+/// Eight is far past what a person keeps and small enough that the worst case is unremarkable.
+const MAX_SEARCH_DIRS: usize = 8;
+
+/// Read [`SEARCH_PATH_FILE`]'s text into the extra directories a `/name` should be looked for in.
+///
+/// One workspace-relative directory per line.  Blank lines and lines beginning `#` are comments.
+/// An entry is DROPPED, rather than the file rejected, when it is absolute, names a `..` or `.`
+/// component, or repeats one already listed -- a typo in a preferences file should cost the user
+/// the line they got wrong and nothing else.  Refusing the escapes here is the same rule
+/// [`command_paths`] applies to the skill name: nothing in this path may reach outside the
+/// workspace.
+///
+/// # Arguments
+/// * `text` - The file's whole text.
+pub fn parse_search_path(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let dir = line.trim().trim_end_matches('/');
+        if dir.is_empty() || dir.starts_with('#') {
+            continue;                                   // blank, or a comment
+        }
+        if dir.starts_with('/') || dir.starts_with('~') || dir.starts_with('\\') {
+            continue;                                   // not workspace-relative
+        }
+        if dir.split('/').any(|seg| seg == ".." || seg == "." || seg.is_empty()) {
+            continue;                                   // reaches out, or is not a path at all
+        }
+        if dir == SKILLS_DIR || out.iter().any(|d| d == dir) {
+            continue;                                   // already searched
+        }
+        out.push(dir.to_string());
+        if out.len() >= MAX_SEARCH_DIRS {
+            break;
+        }
+    }
+    out
+}
+
 /// The directories a `/name` command looks in, in order, each workspace-relative.
 ///
-/// The first is Daimond's own, and the one [`list_skills`] walks.  The two after it are the layout
-/// the user's standing instructions (`DAIMOND.md`) already name, and they are here for one reason:
-/// a `/name` the user has been typing for months must keep working, rather than every skill having
-/// to be copied into a second place before the app will honour a command it told them to type.
-/// Anything Daimond itself creates goes in the first.
-pub const COMMAND_DIRS: [&str; 3] = [
-    SKILLS_DIR,
-    "code/ai/context/dump/skills/claude",
-    "code/ai/context/dump/skills/agents",
-];
+/// Daimond's own is always first and is the one [`list_skills`] walks, so a skill Daimond created
+/// is never shadowed by one it did not.  Whatever the workspace's [`SEARCH_PATH_FILE`] added
+/// follows, in the order it named them.
+///
+/// # Arguments
+/// * `extra` - The directories from [`parse_search_path`], or an empty slice.
+pub fn command_dirs(extra: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(1 + extra.len());
+    out.push(SKILLS_DIR.to_string());
+    out.extend(extra.iter().cloned());
+    out
+}
 
 
 /// A slash command the user typed: `/name` and everything after it.
@@ -210,7 +274,7 @@ pub struct Command {
 
 /// Read a leading `/name` slash command out of a message, or `None` where there is none.
 ///
-/// The name must be a whole token: a message beginning `/home/jason/usr` is a path the user typed,
+/// The name must be a whole token: a message beginning `/home/u/notes` is a path the user typed,
 /// and reading it as a command would refuse an ordinary message that was never one -- which is a
 /// worse failure than missing a command, because the user's words are then thrown away.
 ///
@@ -226,7 +290,7 @@ pub fn parse_command(input: &str) -> Option<Command> {
         return None;                            // a bare `/`, or `//…`
     }
     match rest[len..].chars().next() {
-        Some(c) if !c.is_whitespace() => return None,   // `/home/jason`, `/v1.2` — not a command
+        Some(c) if !c.is_whitespace() => return None,   // `/home/u`, `/v1.2` — not a command
         _ => {},
     }
     Some(Command {
@@ -244,12 +308,14 @@ pub fn parse_command(input: &str) -> Option<Command> {
 ///
 /// # Arguments
 /// * `name` - The skill's name, as typed after the slash.
-pub fn command_paths(name: &str) -> Vec<String> {
+/// * `extra` - Any further directories from the workspace's [`SEARCH_PATH_FILE`].
+pub fn command_paths(name: &str, extra: &[String]) -> Vec<String> {
     if name.is_empty() || !name.chars().all(is_ident) {
         return Vec::new();
     }
-    let mut out = Vec::with_capacity(COMMAND_DIRS.len() * 2);
-    for dir in COMMAND_DIRS {
+    let dirs = command_dirs(extra);
+    let mut out = Vec::with_capacity(dirs.len() * 2);
+    for dir in &dirs {
         out.push(fmt!("{}/{}/{}", dir, name, SKILL_FILE));
         out.push(fmt!("{}/{}.md", dir, name));
     }
@@ -282,15 +348,20 @@ pub fn compose_command(name: &str, path: &str, body: &str, args: &str) -> String
 /// `/name` quietly passed on as ordinary chat produces a perfectly plausible answer that skipped
 /// the workflow, and the user believes the workflow ran.
 ///
+/// The directories are the ones actually searched, passed in rather than assumed, so a user who
+/// has added their own through [`SEARCH_PATH_FILE`] is told about those too -- and one who has
+/// added a directory that is not being searched can see that from the same sentence.
+///
 /// # Arguments
 /// * `name` - The name they typed after the slash.
-pub fn no_such_skill(name: &str) -> String {
+/// * `dirs` - The directories that were searched, workspace-relative.
+pub fn no_such_skill(name: &str, dirs: &[String]) -> String {
     fmt!(
         "There is no skill called '{}', so nothing ran -- this message was not sent to the model. \
         Daimond looked for '{}/SKILL.md' and '{}.md' under each of {}, in your workspace and in \
-        Daimond's own storage. Write one of those files, or send the message again without the \
-        leading slash.",
-        name, name, name, COMMAND_DIRS.join(", "))
+        Daimond's own storage. Write one of those files, name another directory in '{}', or send \
+        the message again without the leading slash.",
+        name, name, name, dirs.join(", "), SEARCH_PATH_FILE)
 }
 
 
@@ -734,7 +805,7 @@ mod tests {
         // away and nothing is sent -- and an absolute path is the commonest thing a person starts
         // a message with in this app.
         for not_a_command in [
-            "/home/jason/usr/code",
+            "/home/u/ws/src",
             "/etc/passwd is world readable",
             "/v1.2",
             "//comment",
@@ -752,25 +823,83 @@ mod tests {
 
     #[test]
     fn test_a_command_is_looked_for_where_the_user_actually_keeps_skills() {
-        let paths = command_paths("pickup");
-        // Daimond's own directory, both forms.
-        assert!(paths.contains(&fmt!(".daimond/skills/pickup/SKILL.md")), "{:?}", paths);
-        assert!(paths.contains(&fmt!(".daimond/skills/pickup.md")), "{:?}", paths);
-        // And the layout the standing instructions name, which is where the skills the user has
-        // been typing `/pickup` at for months actually live. Without it the command resolves to
-        // nothing in the one workspace it has to work in.
-        assert!(paths.contains(&fmt!("code/ai/context/dump/skills/claude/pickup/SKILL.md")),
-            "{:?}", paths);
-        assert!(paths.contains(&fmt!("code/ai/context/dump/skills/agents/pickup/SKILL.md")),
-            "{:?}", paths);
+        // With nothing configured, ONE directory is searched: Daimond's own. Nothing in the binary
+        // names anybody's home layout -- `src/` is carved into a public mirror, and a constant
+        // that named the author's directories published where the author keeps their files.
+        let plain = command_paths("pickup", &[]);
+        assert_eq!(vec![
+                fmt!(".daimond/skills/pickup/SKILL.md"),
+                fmt!(".daimond/skills/pickup.md"),
+            ], plain, "a shipped build must look in Daimond's own directory and nowhere else");
+
+        // And wherever else the workspace says. A person who has been typing `/pickup` for months
+        // keeps their skills where they already keep them; without this the command resolves to
+        // nothing in the one workspace it has to work in. It still works -- from the workspace's
+        // own search path rather than from the binary.
+        let extra = parse_search_path("# where my skills live\nnotes/skills\nteam/skills\n");
+        let paths = command_paths("pickup", &extra);
+        assert!(paths.contains(&fmt!("notes/skills/pickup/SKILL.md")), "{:?}", paths);
+        assert!(paths.contains(&fmt!("notes/skills/pickup.md")),       "{:?}", paths);
+        assert!(paths.contains(&fmt!("team/skills/pickup/SKILL.md")),  "{:?}", paths);
         // Daimond's own comes first: a skill it created must not be shadowed by one it did not.
         assert!(paths[0].starts_with(SKILLS_DIR), "{:?}", paths);
 
         // A name that is not a bare identifier reaches nothing at all, so nothing that skipped
         // `parse_command` can walk out of the skills directories with one.
         for bad in ["../../etc/passwd", "a/b", "", "a b"] {
-            assert!(command_paths(bad).is_empty(), "{:?} produced paths", bad);
+            assert!(command_paths(bad, &extra).is_empty(), "{:?} produced paths", bad);
         }
+    }
+
+    #[test]
+    fn test_the_shipped_binary_carries_nobodys_home_directory() {
+        // The finding this answers: the search path was a compiled-in constant holding one
+        // developer's own directories, and `src/` is carved into a public mirror. The property is
+        // not "those two strings are gone" but that NO directory beyond Daimond's own is compiled
+        // in -- a replacement constant with different personal paths would fail this too.
+        assert_eq!(vec![fmt!(".daimond/skills")], command_dirs(&[]),
+            "a build with no workspace configuration must know exactly one skills directory");
+
+        // And the whole file agrees, comments included: a path in a doc comment is published
+        // exactly as surely as a path in a constant, and the two personal paths that were here
+        // sat in both. The needles are assembled at run time so that this test's own text is not
+        // the thing it finds.
+        let src = std::fs::read_to_string(fmt!("{}/src/skills.rs", env!("CARGO_MANIFEST_DIR")))
+            .expect("this file must be readable from the manifest directory");
+        let needles = [
+            fmt!("/{}/{}", "home", "jason"),
+            fmt!("{}/{}/dump", "code/ai", "context"),
+        ];
+        for needle in &needles {
+            assert!(!src.contains(needle.as_str()),
+                "'{}' is still in src/skills.rs, and src/ is published", needle);
+        }
+    }
+
+    #[test]
+    fn test_a_search_path_cannot_reach_out_of_the_workspace() {
+        // The file is the user's, so a line that is merely wrong costs that line and no more --
+        // but a line that reaches out of the workspace is dropped, because a skill is injected
+        // verbatim as the user speaking and the search path decides what counts as theirs.
+        let dropped = parse_search_path(
+            "/etc\n\
+            ~/secrets\n\
+            ../../etc\n\
+            skills/../../out\n\
+            ./here\n\
+            a//b\n\
+            \\\\server\\share\n");
+        assert!(dropped.is_empty(), "these reach outside the workspace: {:?}", dropped);
+
+        // Duplicates and Daimond's own directory are dropped as already-searched, so a well-meant
+        // line cannot make every refusal cost twice the reads.
+        assert_eq!(vec![fmt!("a")],
+            parse_search_path(".daimond/skills\na\na\na/\n"));
+
+        // And the list is bounded: an unbounded file turns one mistyped command into an unbounded
+        // number of file reads.
+        let many: String = (0..40).map(|n| fmt!("d{}\n", n)).collect();
+        assert_eq!(MAX_SEARCH_DIRS, parse_search_path(&many).len());
     }
 
     #[test]
@@ -799,37 +928,52 @@ mod tests {
 
     #[test]
     fn test_a_command_that_names_no_skill_says_nothing_ran() {
-        let msg = no_such_skill("pickup");
+        let dirs = command_dirs(&parse_search_path("notes/skills\n"));
+        let msg  = no_such_skill("pickup", &dirs);
         // The part the user cannot otherwise find out. A `/name` quietly passed on as chat
         // produces a plausible answer that skipped the workflow, and they believe it ran.
         assert!(msg.contains("nothing ran"), "{}", msg);
         assert!(msg.contains("not sent to the model"), "{}", msg);
         // What it looked for, so they can see whether they wrote the file somewhere else.
         assert!(msg.contains("pickup"), "{}", msg);
-        for dir in COMMAND_DIRS {
+        for dir in &dirs {
             assert!(msg.contains(dir), "the refusal does not say it looked in {}: {}", dir, msg);
         }
+        // Including the directory the WORKSPACE added, which is the half a user who has moved
+        // their skills most needs to see -- and the file that would add another.
+        assert!(msg.contains("notes/skills"), "{}", msg);
+        assert!(msg.contains(SEARCH_PATH_FILE), "{}", msg);
         // And the way out, for a message that was never meant as a command.
         assert!(msg.contains("without the leading slash"), "{}", msg);
     }
 
     #[test]
     fn test_a_command_the_user_types_ends_with_the_files_own_text_in_the_message() {
-        // The whole chain in one test, over a workspace laid out the way the user's really is:
-        // what they type, the paths that are searched, the file that is found, and what the model
-        // is finally handed. Every link but one is the code the page runs -- the read itself is
-        // OPFS there and `std::fs` here.
+        // The whole chain in one test, over a workspace laid out the way a real one is -- the
+        // skills somewhere of the user's own choosing, and a search-path file that says where.
+        // What they type, the paths that are searched, the file that is found, and what the model
+        // is finally handed. Every link but one is the code the page runs -- the reads are OPFS
+        // there and `std::fs` here.
         let ws  = tmp_ws();
-        let rel = "code/ai/context/dump/skills/claude/pickup/SKILL.md";
+        let rel = "notes/skills/pickup/SKILL.md";
         let abs = ws.resolve(rel).expect("resolve");
         std::fs::create_dir_all(abs.parent().expect("a parent")).expect("create dirs");
         std::fs::write(&abs, "---\nname: pickup\ndescription: Resume work\n---\n\
-            Read the newest handover in code/ai/claude/handover/.").expect("write the skill");
+            Read the newest handover in notes/handover/.").expect("write the skill");
+
+        // The one short file that makes the user's own layout work, with nothing about it in the
+        // binary. Written where the file tools refuse to write, because the search path decides
+        // what text is trusted as the user's own.
+        let path_abs = ws.resolve(SEARCH_PATH_FILE).expect("resolve the search path file");
+        std::fs::create_dir_all(path_abs.parent().expect("a parent")).expect("create dirs");
+        std::fs::write(&path_abs, "# my skills\nnotes/skills\n").expect("write the search path");
 
         let typed = "/pickup daimond";
         let cmd   = parse_command(typed).expect("a command");
+        let extra = parse_search_path(
+            &std::fs::read_to_string(&path_abs).expect("read the search path"));
         let mut found = None;
-        for path in command_paths(&cmd.name) {
+        for path in command_paths(&cmd.name, &extra) {
             let abs = match ws.resolve(&path) {
                 Ok(p)  => p,
                 Err(_) => continue,
@@ -846,7 +990,7 @@ mod tests {
         let sent = compose_command(&sk.name, &path, &sk.body, &cmd.args);
         // The file's own words, which is the whole point: not a path for the model to fetch, and
         // not a hope that it will.
-        assert!(sent.contains("Read the newest handover in code/ai/claude/handover/."), "{}", sent);
+        assert!(sent.contains("Read the newest handover in notes/handover/."), "{}", sent);
         assert!(sent.contains("User request: daimond"), "{}", sent);
         // And what the model gets is not what the user typed. A `/pickup` passed through as chat
         // is the silent failure this replaces.

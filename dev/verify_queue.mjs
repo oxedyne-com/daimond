@@ -14,7 +14,8 @@
 //
 //   node dev/verify_queue.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import { open, newChat, shot, errors } from './harness.mjs';
 

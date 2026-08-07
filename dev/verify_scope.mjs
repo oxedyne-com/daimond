@@ -41,7 +41,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { open as openApp, scratch } from './harness.mjs';
+import { open as openApp, scratch, MOCK } from './harness.mjs';
 import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
@@ -141,8 +141,12 @@ check('install.sh registers the real binary in the test profile', inst.status ==
 process.env.DAIMOND_HAND_JOURNAL_DIR = JOURNAL;
 delete process.env.DAIMOND_HAND_ROOT;
 
-await serve('dev server', ['dev/serve.mjs'], 8777);
-await serve('mock provider', ['dev/mockllm.mjs'], 9099);
+// What the children will bind: `serve.mjs` reads DAIMOND_PORT and `mockllm.mjs`
+// DAIMOND_MOCK_PORT, so the wait below is asking about the port they chose.
+const APP_PORT  = Number(process.env.DAIMOND_PORT || 8777);
+const MOCK_PORT = Number(process.env.DAIMOND_MOCK_PORT || 9099);
+await serve('dev server', ['dev/serve.mjs'], APP_PORT);
+await serve('mock provider', ['dev/mockllm.mjs'], MOCK_PORT);
 
 // ── The browser ─────────────────────────────────────────────────────
 
@@ -177,13 +181,13 @@ try {
 	await page.evaluate(() => window.DaimondHand._setWaitsForTest({ grace: 30000, slack: 60000, hello: 20000 }));
 
 	// Two Diamonds, made through the app's own edge so they are real store entries.
-	const ids = await page.evaluate(async () => {
+	const ids = await page.evaluate(async (mock) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
-		const app = new mod.DaimondApp('http://127.0.0.1:9099/v1/chat/completions', 'k', 'mock', 256, '', true);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		const a = await app.create_diamond('Alpha');
 		const c = await app.create_diamond('Beta');
 		return { a, c };
-	});
+	}, MOCK);
 	check('two Diamonds exist', !!ids.a && !!ids.c, JSON.stringify(ids));
 
 	// Their workspace directories, on the granted folder — which is the workspace
@@ -216,9 +220,9 @@ try {
 		}));
 	}, GRANT);
 
-	const fenced = await page.evaluate(async ({ id, root }) => {
+	const fenced = await page.evaluate(async ({ id, root, mock }) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
-		const app = new mod.DaimondApp('http://127.0.0.1:9099/v1/chat/completions', 'k', 'mock', 256, '', true);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		const before = JSON.parse(app.diamond_scope());
 		app.set_diamond_scope('diamonds/' + id, '[]', '[]', '[]');
 		const after = JSON.parse(app.diamond_scope());
@@ -229,7 +233,7 @@ try {
 			cwd: 'diamonds/' + id, cols: 80, rows: 24,
 		})));
 		return { before, after, req, root };
-	}, { id: ids.a, root: GRANT });
+	}, { id: ids.a, root: GRANT, mock: MOCK });
 
 	check('an unscoped agent declares no allow-list at all',
 		Array.isArray(fenced.before.allow) && fenced.before.allow.length === 0
@@ -292,15 +296,15 @@ try {
 		JSON.stringify(unscoped).slice(0, 200));
 
 	// ── The toolkit grant, which only exists through this same call ──
-	const kits = await page.evaluate(async (id) => {
+	const kits = await page.evaluate(async ({ id, mock }) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
-		const app = new mod.DaimondApp('http://127.0.0.1:9099/v1/chat/completions', 'k', 'mock', 256, '', true);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		await app.set_toolkits(id, JSON.stringify(['rust', 'nonsense']));
 		const list = JSON.parse(await app.list_diamonds());
 		const row = list.find((d) => d.id === id) || {};
 		app.set_diamond_scope('diamonds/' + id, '[]', '[]', JSON.stringify(row.toolkits || []));
 		return { stored: row.toolkits || [], scope: JSON.parse(app.diamond_scope()) };
-	}, ids.a);
+	}, { id: ids.a, mock: MOCK });
 	check('a toolkit grant is stored, and an unknown name is dropped rather than kept',
 		JSON.stringify(kits.stored) === '["rust"]', JSON.stringify(kits.stored));
 	check('and it reaches the turn\'s bounds, which is the only way a fence ever sees one',

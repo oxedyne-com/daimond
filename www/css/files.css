@@ -12,11 +12,25 @@
 .files-actions { display: flex; gap: 4px; align-items: center; }
 
 /* Workspace root mode: OPFS sandbox vs an open real folder (FSA). */
+/* The chips total 418px, and the Workspace sheet is 380px wide on a phone, so
+   the row wraps -- and the second row was then clipped by the foot of the sheet.
+   It scrolls sideways below the breakpoint instead: a control on a second row
+   the sheet cuts off is one nobody can reach, where a control reached by a swipe
+   at least exists. 10px is the dock's one body inset. */
 .files-mode {
 	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
 	padding: 6px 10px;
 	border-bottom: 1px solid var(--border);
 	flex: none;
+}
+@media (max-width: 760px) {
+	.files-mode {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.files-mode::-webkit-scrollbar { display: none; }
+	.files-mode > * { flex: 0 0 auto; }
 }
 .files-mode-chip {
 	display: inline-flex; align-items: center; gap: 4px;

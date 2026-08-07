@@ -9,7 +9,10 @@
 	height: 100%;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 12px 14px 24px;
+	/* 10px is the dock's one body inset, so Agents, Email, Workspace and
+	   Spending all start on the same edge under a 4px header. Four panels used
+	   to start at 6, 10, 14 and 11. */
+	padding: 12px 10px 24px;
 	font-size: var(--fs-sm);
 	color: var(--text-primary);
 }

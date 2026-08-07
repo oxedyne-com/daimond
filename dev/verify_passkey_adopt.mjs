@@ -14,8 +14,8 @@
 //
 //   node dev/verify_passkey_adopt.mjs
 //
-// Needs dev/serve.mjs on :8777 AND the gateway on :9002 — the whole point is
-// that the bundle round-trips through the gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) AND the gateway on :9002 — the whole
+// point is that the bundle round-trips through the gateway.
 //
 // HARNESS LIMIT: a virtual authenticator's hmac-secret cannot be exported, so a
 // genuinely second browser cannot be given the same PRF secret. The "new device"

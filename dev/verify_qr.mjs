@@ -1,9 +1,9 @@
 // verify_qr.mjs — device pairing shows a scannable QR, and a scanned #pair=
 // deep link lands on the redeem dialog with the code filled in.
 //
-// Drives the real wasm QR encoder (fe2o3_graphics::qr, exposed as
-// window.DaimondQR) and the real pairing UI against the live gateway, so it
-// needs the dev stack up: the app on :8777 and the gateway on :9002.
+// Drives the real wasm QR encoder (fe2o3_graphics::qr, exposed as window.DaimondQR) and
+// the real pairing UI against the live gateway, so it needs the dev stack up: the app
+// (DAIMOND_PORT, default 8777) and the gateway on :9002.
 //
 //   1. DaimondQR.matrix(url) returns a square module grid of a sane size.
 //   2. "Link another device" draws a QR canvas with real dark modules.

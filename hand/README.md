@@ -36,9 +36,13 @@ to inject into. Redirection and pipes become structured fields (`stdin`, `cwd`,
 through bash because it grew out of a terminal; there is no such history here, so
 the problem can simply not exist.
 
-The environment is not the model's to set, for the same reason: a model that
-could name environment variables could set `LD_PRELOAD`, or carry a stolen value
-out through one.
+The `env` field is not the model's to set: a model that could name environment
+variables through it could set `LD_PRELOAD`, or carry a stolen value out through
+one. That screen covers the field and not the request. `/usr/bin/env` and
+`/bin/sh` are in the read-only system base, and both take an environment out of
+their own arguments, so a command can still choose what it runs with — from
+inside the fence, using only what the fence already grants. What bounds that is
+the compartment, not the screen: see `REVIEW.md` §3.13.
 
 ## The three tiers
 

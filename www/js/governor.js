@@ -255,15 +255,49 @@
 		_obs = _obs.filter(function (o) { return o.t >= cutoff; });
 	}
 
+	// ── The pause, answered through the same gate ──────────────
+	// A paused node comes back REFUSED rather than thrown, so the
+	// caller has one path and not two. The rate gate asks; a pause
+	// does not, and `refused` is what says which of the two this is.
+
+	/// What the app says. The table lives in i18n/en.js.
+	function tr(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// The words for a refusal: what was not done, and where the control
+	/// is. English until the key exists, so nothing shows a bare key.
+	function pauseWords(node) {
+		var s = tr('pause.refused.dispatch', { node: node });
+		if (s === 'pause.refused.dispatch') {
+			s = 'Paused: ' + node + ' — no agents were dispatched and nothing was spent. '
+				+ 'Press play on it to resume.';
+		}
+		return s;
+	}
+
 	/// Assess a dispatch of `n` workers against the current burst.
 	/// Pure decision, live inputs. daimond.js turns a
 	/// `needsConfirm: true` into the app's own confirm modal.
-	function assessDispatch(n) {
+	///
+	/// `node` is the pause-tree leaf dispatching — a Diamond's `self`, or
+	/// a triggered action. A paused one adds `refused: true`, the node
+	/// and the words; `needsConfirm` rides with it so a caller written
+	/// before the pause existed still stops rather than dispatching.
+	/// Only the pump's own leaf is left out of this: pausing the pump
+	/// QUEUES work rather than refusing it, which is what the hold in
+	/// daimond.js has always meant and what resuming it puts back.
+	function assessDispatch(n, node) {
 		// A dispatch that lands after a pause opens its own burst, so
 		// its budget is fresh rather than charged with an idle history.
 		var t = now();
 		var spent = (t - _lastObs > BURST_GAP_MS) ? 0 : _burstSpent;
-		return decideDispatch(n, baseline(), spent, budget());
+		var d = decideDispatch(n, baseline(), spent, budget());
+		d.refused = !!(node && window.DaimondPause && DaimondPause.isPaused(node));
+		if (d.refused) {
+			d.needsConfirm = true;
+			d.pauseNode    = node;
+			d.refusal      = pauseWords(node);
+		}
+		return d;
 	}
 
 	/// The current state for the quiet meter: level, live rate, and

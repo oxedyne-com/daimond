@@ -21,13 +21,16 @@
 //
 //   node dev/verify_workermodel.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. Starts its own
-// second provider on :9097 and stops it at the end.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). Starts its own second provider on :9097 and stops
+// it at the end.
 
 import http from 'node:http';
 import { open, clearMockLog, mockLog, shot, errors } from './harness.mjs';
 
-const PORT2  = Number(process.env.DAIMOND_MOCK2_PORT || 9097);
+// Offset by the world, so two worlds do not fight over one second provider.
+const PORT2  = Number(process.env.DAIMOND_MOCK2_PORT
+	|| 9097 + (Number(process.env.DAIMOND_PORT || 8777) - 8777));
 const URL2   = `http://127.0.0.1:${PORT2}/v1/chat/completions`;
 const KEY2   = 'key-two-only-mock2-holds-this';
 const MODEL2 = 'mock2/worker';

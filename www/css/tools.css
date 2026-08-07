@@ -25,7 +25,13 @@
 
 .tools-card {
 	display: grid;
-	grid-template-columns: 1fr auto;
+	/* `minmax(0, 1fr)`, not `1fr`: a `1fr` track's automatic minimum is its
+	   MIN-CONTENT, and a tool name is one unbreakable monospace identifier. In
+	   a narrow stage seat `typst_compile` therefore pushed the card 7px wider
+	   than its own box at 205px and 22px at 190px, so the card's right border
+	   was drawn outside the panel it lives in. A zero minimum lets the track
+	   shrink and the name below wrap instead. */
+	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 4px 12px;
 	padding: 10px 12px;
@@ -42,6 +48,11 @@
 	font-size: var(--fs-sm-base); font-weight: 600;
 	color: var(--text-primary);
 	font-family: var(--font-mono);
+	/* `break-word`, not `anywhere`: it breaks only when the identifier alone
+	   will not fit, so a name that does fit is never split for the sake of it.
+	   Wrapping rather than truncating, because which tool this is is the one
+	   thing the card must say. */
+	overflow-wrap: break-word;
 }
 .tools-card.locked .tools-name { font-family: inherit; }
 .tools-blurb {

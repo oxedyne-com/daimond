@@ -13,8 +13,8 @@
 //     pinned version, and the header that makes its edge answer a browser at all.
 //     A hardcoded `Authorization: Bearer` got a 401 and read as a bad key.
 //
-// So this asserts the ADDRESS AND HEADERS ON THE WIRE, intercepted at the browser,
-// not what the app believes it sent. Needs dev/serve.mjs (:8777).
+// So this asserts the ADDRESS AND HEADERS ON THE WIRE, intercepted at the browser, not
+// what the app believes it sent. Needs dev/serve.mjs (DAIMOND_PORT, default 8777).
 import { open, errors } from './harness.mjs';
 
 const ok = [], bad = [];

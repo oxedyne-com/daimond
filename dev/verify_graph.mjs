@@ -22,7 +22,8 @@
 //          └─ diamond:Xray, then Xray deleted   (dangling)
 //        Echo — linked to nothing at all
 //
-// Run with dev/serve.mjs up on :8777.  No gateway needed, so it belongs in phase 1.
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up.  No gateway needed, so it
+// belongs in phase 1.
 
 import fs from 'node:fs';
 import { open, shot, errors, signInAs, scratch } from './harness.mjs';

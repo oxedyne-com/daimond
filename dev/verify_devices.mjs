@@ -28,7 +28,8 @@
 //
 //   node dev/verify_devices.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 import fs from 'node:fs';
 import { open, shot, scratch } from './harness.mjs';
 

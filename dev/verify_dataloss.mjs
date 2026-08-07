@@ -16,9 +16,9 @@
 //     balance and the Pro licence went with the identity. The export carries the
 //     wrapped identity now, and the string says what it can and cannot do.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099). No gateway: the sync
-// engine is driven against a stubbed mailbox, which is what makes the commit
-// gate observable at all.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway: the sync engine is driven against a
+// stubbed mailbox, which is what makes the commit gate observable at all.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

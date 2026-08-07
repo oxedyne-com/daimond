@@ -15,7 +15,8 @@
 //
 //   node dev/verify_foldall.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import { open, chat, shot, errors } from './harness.mjs';
 

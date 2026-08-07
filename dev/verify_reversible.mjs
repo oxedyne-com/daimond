@@ -29,8 +29,9 @@
 //   node dev/verify_reversible.mjs
 //   node dev/verify_reversible.mjs 'Change passphrase'      # one surface
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway: these
-// are gates, drawers, panels and dialogs only.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway: these are gates, drawers, panels and
+// dialogs only.
 
 import fs from 'node:fs';
 import { open, scratch } from './harness.mjs';
@@ -171,6 +172,37 @@ const SURFACES = [
 		root:   '#panel-doc',
 		leaves: ['Download', '← Back', 'Close panel'],
 		commits: ['✔ Save', 'Saving…'],
+	},
+	{
+		// Phase C's per-tile dialog. Simple and Max both have to be a door you
+		// can walk back through: a detail level you can raise and not lower is
+		// the one-way door this file exists to find, and this dialog is now the
+		// only place either is chosen.
+		name:   'Tile dialog (Diamond cog)',
+		open:   {},		// a model is connected: a Diamond is what makes the tile
+		reach:  async (page) => {
+			await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
+			await page.waitForTimeout(250);
+			await click(page, '#new-diamond-btn');
+			await page.waitForSelector('.dlg-card', { timeout: 8000 });
+			await page.evaluate(() => {
+				const card = [...document.querySelectorAll('.dlg-card')].find((c) => c.getClientRects().length);
+				const inp = card.querySelector('input.dlg-input');
+				inp.value = 'Reversible';
+				inp.dispatchEvent(new Event('input', { bubbles: true }));
+				card.querySelector('.dlg-ok').click();
+			});
+			await page.waitForSelector('#diamond-list .tile-cog', { timeout: 10000 });
+			await click(page, '#diamond-list .tile-cog');
+			await page.waitForSelector('.tile-dlg-card', { timeout: 8000 });
+		},
+		ready:  '.tile-dlg-card',
+		root:   '.tile-dlg-card',
+		// Delete leaves by destroying the thing the dialog is about, and Done
+		// leaves by shutting it. Neither is a door that closes behind you inside
+		// the room. The pause light is NOT here: it is a toggle, and it must be
+		// searched.
+		leaves: ['Delete', 'Done'],
 	},
 ];
 

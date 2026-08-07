@@ -87,7 +87,7 @@ which is why each one cites code.
 | 1.18 | Scoped workers cannot run with a default `cwd` | **closed** |
 | 1.19 | `id` neither unique nor bounded | **closed** |
 | 1.20 | A Diamond's crystal agent could reach another Diamond | **closed** |
-| 3.13 | `screen_env` is past through `argv`, not through `env` | **open** |
+| 3.13 | `screen_env` is past through `argv`, not through `env` | **closed by correction** — the claim, not the code |
 
 **One open, and it is not an escape.** 1.9 and 1.12 were one thing and both are
 now closed: a worker is scoped by its own Diamond, and a second bound composes
@@ -102,6 +102,12 @@ what a command runs *with* is the user's decision — because `/usr/bin/env` and
 `/bin/sh` are inside every fence and both take an environment out of their own
 arguments, which no screen of the `env` field can see. The paragraph above about
 the release gates was written before it and is left as written.
+
+**3.13 is now closed the other way round: the claim was corrected, not the code**
+(2026-08-07). It is the only finding in this document resolved by changing what
+`README.md` promises rather than what the hand does, and the reasoning is at the
+end of its entry. Behaviour is unchanged and every measurement in the entry still
+reproduces.
 
 **Both compartment escapes are closed, and each closed by a different layer.**
 1.1 was Landlock's own carve; 1.2 and 1.3 needed a mechanism Landlock does not
@@ -713,9 +719,8 @@ Case 4 is the one that matters: a real shared object, in a directory the command
 can write, loaded with **no diagnostic and exit 0**. The contrast between 4 and
 2 is what makes 4 a success rather than a silent ignore.
 
-**OPEN.** Nothing here is fixed, and it is recorded rather than patched because a
-patch would be the third guess at where the boundary is. What the exposure is
-meanwhile:
+**The exposure**, which the resolution below narrows the claim to rather than
+removes:
 
 * **Not an escape from the fence.** Everything in cases 1–4 runs inside the same
   Landlock ruleset and the same seccomp filter as any other command; the preloaded
@@ -741,6 +746,60 @@ export a variable. The two candidates that are not string matching are (a) an
 allow-list of programs the base may execute, which is a much larger decision than
 this finding, and (b) refusing `LD_*` at the *loader* rather than at the request,
 which on Linux means the filter, not `exec.rs`.
+
+**CLOSED BY CORRECTING THE CLAIM, 2026-08-07 — the behaviour is unchanged.**
+
+Of the two candidates above, (b) is not available. `execve` carries its
+environment as a pointer to an array of pointers, and `seccomp.rs:27` states the
+reason it cannot be read there: *"a seccomp filter cannot dereference a
+pointer."* The kernel hands the filter `seccomp_data` — the syscall number, the
+instruction pointer and six argument registers — and nothing they point at. So
+"refuse `LD_*` at the loader" is not a smaller version of this fix; on a
+seccomp-bpf filter it is not a fix at all, and reaching it would mean a `ptrace`
+supervisor or an LSM of our own. Candidate (a), an allow-list of executables,
+decides what the Machine tier is *for* — a general shell for the user's own
+toolchain, or a menu — and that is a product decision, not a defect repair. It
+is not made here.
+
+Which leaves the third option, and on the evidence it is the right one: the
+guarantee is narrower than `README.md` states, so `README.md` should state the
+narrower guarantee. A promise that is 90% true is worse than a smaller one that
+is wholly true, because it is the 10% nobody checks. The sentence at
+`README.md:39-41` — *"The environment is not the model's to set, for the same
+reason: a model that could name environment variables could set `LD_PRELOAD`, or
+carry a stolen value out through one."* — should read:
+
+> The `env` field is not the model's to set: a model that could name environment
+> variables through it could set `LD_PRELOAD`, or carry a stolen value out
+> through one. That screen covers the field and not the request. `/usr/bin/env`
+> and `/bin/sh` are in the read-only system base, and both take an environment
+> out of their own arguments, so a command can still choose what it runs with —
+> from inside the fence, using only what the fence already grants. What bounds
+> that is the compartment, not the screen: see `REVIEW.md` §3.13.
+
+Three reasons this is the resolution and not a retreat:
+
+* **The compartment is what the document is about, and it holds.** Cases 1–4 run
+  inside the same Landlock ruleset and the same filter as any other command. The
+  finding never was an escape, and closing it does not make one.
+* **The false half of the sentence was the dangerous half.** A reader deciding
+  whether to grant the Machine tier weighs what it promises. "The environment is
+  not the model's to set" invites them to believe a command cannot choose its own
+  loader, which is exactly what a `.so` written into the workspace does. Naming
+  that is worth more than a screen that string-matching would defeat.
+* **Nothing is silently dropped.** `TMPDIR` and `TERM` are past the same way and
+  the corrected sentence covers them, because it stops claiming the request is
+  screened at all. The pty half is likewise honest: `export LD_PRELOAD=…` in an
+  interactive shell is the ordinary way to set a variable, and the corrected text
+  no longer implies otherwise.
+
+The `README.md` edit itself is the lead's — this document does not own that file
+— and it is the one line this finding leaves outstanding.
+
+**`screen_git_push` is NOT closed by this**, and the paragraph below still
+stands. The two are the same shape but not the same finding: one is a claim about
+the environment, and the other is a credential guard whose bypass has a
+consequence outside the fence.
 
 **The same shape appears in the new `screen_git_push`** (`exec.rs`, the section
 comment says so at the point of definition): it matches `argv[0]` by basename, so

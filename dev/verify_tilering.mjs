@@ -1,6 +1,6 @@
 // The selected chat tile under the Breathe spacing: is its ring inside the box
 // the list is entitled to clip?
-import { open, shot, newChat } from '/home/jason/usr/code/web/apps/oxedyne/daimond/dev/harness.mjs';
+import { open, shot, newChat } from './harness.mjs';
 
 const SP = new URL('shots/', import.meta.url).pathname;
 const s = await open({ name: 'tile' });

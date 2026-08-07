@@ -7,7 +7,8 @@
 //
 //   node dev/shot_phasea.mjs [outdir]
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, signInAs, newChat, chat, scratch } from './harness.mjs';

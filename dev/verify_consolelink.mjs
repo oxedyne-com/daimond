@@ -1,7 +1,7 @@
 // Does the Home drawer show the console link to an account that holds a role?
 // The network path is the gateway's and is already proven by the console page
 // itself; what is under test here is the drawer's own logic.
-import { open, shot } from '/home/jason/usr/code/web/apps/oxedyne/daimond/dev/harness.mjs';
+import { open, shot } from './harness.mjs';
 
 const s = await open({ name: 'consolelink' });
 const { page } = s;

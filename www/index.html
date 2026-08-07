@@ -151,6 +151,17 @@
 		     while the box asking for one is still on screen. -->
 		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Diamonds" data-i18n-label="panel.rail">
 			<div class="rail-top" id="rail-top">
+				<!-- The global pause, which is not a seventh setting: it is the ROOT
+				     of the tree every other traffic light hangs off, so it is green
+				     only while everything that could spend is running, red only when
+				     none of it is, and amber the rest of the time. It sits above the
+				     Diamonds list because that is the first thing the eye reaches,
+				     and because a hold on everything belongs over everything.
+				     The control itself is built in daimond.js, which owns the DOM. -->
+				<div class="pptw-head" id="pptw-global-row">
+					<span class="pptw-slot" id="pptw-global"></span>
+					<span class="pptw-head-label" title="Pause or resume everything that can spend: every Diamond, every chat, the workers, the mailboxes and any page fetched for you." data-i18n="pause.everything" data-i18n-title="pause.everything_help">Everything</span>
+				</div>
 				<!-- Diamonds above, Chats below, which is the way the ground is:
 				     you mine in the conversation underneath and what you bring up
 				     is cut and polished above it. The order is not decoration --
@@ -363,6 +374,13 @@
 							aria-haspopup="dialog" aria-expanded="false" aria-controls="hand-mode-pop"
 							title="Permission mode: what Daimond does without asking"
 							data-i18n-title="permmode.chip_help"><span class="mode-chip-dot" aria-hidden="true"></span><span class="mode-chip-txt" id="hand-mode-chip-txt">Guarded</span></button>
+						<!-- Concise: a standing toggle that puts the `/concise` skill in
+						     front of every turn this chat sends. A skill, not a hidden
+						     system-prompt tweak, so what it asks for is a file in the
+						     workspace the user can read and edit. -->
+						<button class="chip-btn" id="concise-chip" aria-pressed="false" style="display:none"
+							title="Ask for short answers in this chat" data-i18n="chat.concise"
+							data-i18n-title="chat.concise_help">Concise</button>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 					</div>
@@ -822,6 +840,7 @@
 <script src="js/pricing.js"></script>
 <script src="js/ledger.js"></script>
 <script src="js/governor.js"></script>
+<script src="js/pause.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase
      before any identity exists to hold it. -->

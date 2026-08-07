@@ -17,7 +17,8 @@
 // And it checks the two contrast floors on a light and a dark palette: 4.5:1 for
 // the word (it is text) and 3:1 for the dot (it is a non-text indicator).
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099).
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

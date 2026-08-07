@@ -21,7 +21,7 @@
 //   node dev/verify_focus.mjs
 //   node dev/verify_focus.mjs 'Change passphrase'
 //
-// Needs dev/serve.mjs on :8777. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway.
 
 import fs from 'node:fs';
 import { open, scratch } from './harness.mjs';

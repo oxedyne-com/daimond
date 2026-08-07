@@ -1,6 +1,6 @@
 // The starter tags in a language that is not English: are they offered, and
 // does adopting one file the word the chip showed?
-import { open, shot } from '/home/jason/usr/code/web/apps/oxedyne/daimond/dev/harness.mjs';
+import { open, shot } from './harness.mjs';
 
 const s = await open({ name: 'starters' });
 const { page } = s;

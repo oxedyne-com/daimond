@@ -5,8 +5,9 @@
 // ledger) to prove the wiring: the module is present, its live decision runs,
 // its state escalates to amber after a burst, and no console error is thrown.
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. The gateway is
-// NOT needed — the governor never touches it.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). The gateway is NOT needed — the governor never
+// touches it.
 import { open, shot } from './harness.mjs';
 
 const ok = [], bad = [];

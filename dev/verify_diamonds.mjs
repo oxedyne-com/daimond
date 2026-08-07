@@ -19,7 +19,7 @@
 //
 // It also covers the two silent failures beside it: a create whose read-back
 // finds nothing must SAY so, and a create must never land behind a filter.
-import { open, signInAs, connectMock, shot, scratch, PASS } from './harness.mjs';
+import { open, signInAs, connectMock, shot, scratch, PASS, APP } from './harness.mjs';
 import fs from 'node:fs';
 
 // How long another window is allowed to take to notice. The `storage` event is
@@ -71,16 +71,22 @@ async function create(p, name) {
 	return r;
 }
 
-/// Delete the named Diamond through its own × button, answering the confirm.
+/// Delete the named Diamond the way a person does: the cog in its corner, then
+/// Delete at the foot of the dialog, then the confirm. The closer cross it used
+/// to press is gone (phase C).
 async function remove(p, name) {
 	const found = await p.evaluate((nm) => {
 		const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
 			.find(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === nm);
 		if (!box) return false;
-		box.querySelector('.session-box-close').click();
+		const cog = box.querySelector('.tile-cog');
+		if (!cog) return false;
+		cog.click();
 		return true;
 	}, name);
 	if (!found) return 'not in the rail';
+	await p.waitForSelector('.tile-dlg-delete', { timeout: 8000 });
+	await p.evaluate(() => document.querySelector('.tile-dlg-delete').click());
 	await p.waitForSelector('.dlg-card', { timeout: 8000 });
 	await p.evaluate(() => {
 		const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
@@ -94,7 +100,7 @@ async function remove(p, name) {
 async function secondWindow(s) {
 	const p2 = await s.browser.newPage();
 	p2.on('pageerror', e => s.errs.push('page2: ' + e.message));
-	await p2.goto('http://localhost:8777', { waitUntil: 'domcontentloaded' });
+	await p2.goto(APP, { waitUntil: 'domcontentloaded' });
 	await signInAs({ page: p2 }, s.name);
 	await p2.waitForTimeout(600);
 	return p2;

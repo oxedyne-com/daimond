@@ -165,8 +165,12 @@ check('install.sh registers the real binary in the test profile', inst.status ==
 process.env.DAIMOND_HAND_JOURNAL_DIR = JOURNAL;
 delete process.env.DAIMOND_HAND_ROOT;
 
-await serve('dev server', ['dev/serve.mjs'], 8777);
-await serve('mock provider', ['dev/mockllm.mjs'], 9099);
+// What the children will bind: `serve.mjs` reads DAIMOND_PORT and `mockllm.mjs`
+// DAIMOND_MOCK_PORT, so the wait below is asking about the port they chose.
+const APP_PORT  = Number(process.env.DAIMOND_PORT || 8777);
+const MOCK_PORT = Number(process.env.DAIMOND_MOCK_PORT || 9099);
+await serve('dev server', ['dev/serve.mjs'], APP_PORT);
+await serve('mock provider', ['dev/mockllm.mjs'], MOCK_PORT);
 
 // The one toolchain folder this machine is asked about. Read only, never
 // written: the point is that a fence may NAME it, not that anything changes.

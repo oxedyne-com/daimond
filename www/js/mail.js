@@ -29,6 +29,20 @@
 	function t(k, v)     { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
 
+	/// The same, with English standing in for a key the tables do not carry yet.
+	///
+	/// The string tables are not this phase's to edit, and a key added here
+	/// before the translator reaches it would otherwise put `mail.every.off` on
+	/// screen. `t` answers a missing key with the key itself, which is the test.
+	/// Same device as gateway.js's `pauseWords`, for the same reason.
+	function tf(k, english, v) {
+		var s = t(k, v);
+		if (s !== k) return s;
+		return String(english).replace(/\{(\w+)\}/g, function (_, n) {
+			return (v && v[n] != null) ? String(v[n]) : '';
+		});
+	}
+
 	var LS      = 'daimond-mail';
 	// Mailboxes removed on purpose, by address. The parcel merges by union, so an
 	// account deleted here and still held on the other device would be handed
@@ -36,6 +50,27 @@
 	// the gateway would be taken again. See the sync section below.
 	var TOMBS   = 'daimond-mail-tombs';
 	var deps    = null;              // { writeBytes, openFile, refreshFiles, runTool, showDoc }
+
+	/// Read a message file's BYTES, as bytes.
+	///
+	/// NOT `run_tool('file_read')`. That is the model-facing rendering: it prefixes
+	/// every line with its number and a TAB, and everything under `mail/` is an
+	/// untrusted path, so the result also arrives wrapped in an envelope. Handed to
+	/// `parseHeaders`, `1\tFrom: …` matches nothing — which is why every message in
+	/// the panel read "(unknown)" and "(no subject)".
+	///
+	/// The Doc panel had exactly this fault and was fixed by reading through
+	/// `Wasm.read_file`; mail was not, and stayed broken. `Wasm` is an ES module
+	/// import inside daimond.js and unreachable from here, so it arrives as
+	/// `deps.readText`. If it is absent the panel says so rather than quietly
+	/// showing the numbered rendering as if it were the message.
+	async function readText(path) {
+		if (deps && typeof deps.readText === 'function') return await deps.readText(path);
+		console.error('mail: deps.readText is missing, so message headers cannot be read; '
+			+ 'see DaimondMail.init in daimond.js');
+		return '';
+	}
+
 	var els     = {};
 	var state   = {
 		accounts: [],                // [{address, host, port, user, pass (wrapped), folder, folders:{}}]
@@ -136,7 +171,10 @@
 	function blankFolder(name) {
 		return {
 			dir: dirFor(name), uidValidity: 0, lastUid: 0, firstUid: 0,
-			heldBack: 0, limit: 0, lastSync: 0,
+			// `count` is how many messages this folder held at `lastSync`, which is
+			// the only honest reading of a number on a folder row. Zero and
+			// never-synced are different states and the row says so.
+			heldBack: 0, limit: 0, lastSync: 0, lastTry: 0, count: 0,
 		};
 	}
 
@@ -159,6 +197,237 @@
 		return state.accounts.find(function (a) { return a.address === address; }) || null;
 	}
 
+	// ── The pause tree, as mail sees it ─────────────────────────────
+	// The ids are DaimondPause's and are built with its own escaper: a folder
+	// called `INBOX/Sub` would otherwise invent a level in the tree.
+	//
+	//   root/mail/<address>            the mailbox      branch
+	//   root/mail/<address>/self       its own polling  LEAF
+	//   root/mail/<address>/<folder>   one folder       LEAF
+	//
+	// Nothing here draws a control. The widget is daimond.js's, asked for through
+	// `pptw()` below, so there is one drawing of it in the app.
+
+	function pauseId() {
+		if (!window.DaimondPause) return Array.prototype.join.call(arguments, '/');
+		return DaimondPause.id.apply(null, arguments);
+	}
+	function mailNode()                { return pauseId('root', 'mail'); }
+	function boxNode(address)          { return pauseId('root', 'mail', address); }
+	function selfNode(address)         { return pauseId('root', 'mail', address, 'self'); }
+	function folderNode(address, name) { return pauseId('root', 'mail', address, name); }
+
+	function heldNode(node) {
+		return !!(node && window.DaimondPause && DaimondPause.isPaused(node));
+	}
+
+	/// Which node refuses a poll of this folder, or '' when none does. The
+	/// folder's own leaf answers first, then the mailbox's.
+	///
+	/// The tree does NOT derive this. `self` is a SIBLING of the folders, not
+	/// their ancestor, so a mailbox whose `self` is held and whose folders play
+	/// is 'mixed' to `stateOf` and 'not paused' to `isPaused` on any folder leaf.
+	/// "A paused mailbox must not go on reaching the server one folder at a time"
+	/// is a rule laid OVER the tree rather than read out of it, which is why it
+	/// is written twice: here, so a held folder is never scheduled, and at the
+	/// wire in gateway.js:275, so one that is scheduled anyway never leaves.
+	function pollStop(address, name) {
+		var f = folderNode(address, name);
+		if (heldNode(f)) return f;
+		var s = selfNode(address);
+		if (heldNode(s)) return s;
+		return '';
+	}
+
+	/// The refusal, in words: what was not done, and where the control is.
+	/// The key is gateway.js's, so the sentence is translated once.
+	function pausedWords(node) {
+		return tf('pause.refused.mail',
+			'Paused: {node} — the mailbox was not contacted and nothing was spent. '
+			+ 'Press play on it to resume.', { node: node });
+	}
+
+	/// One pause control, from the module that owns the drawing of it.
+	///
+	/// THE MOUNT POINT for the shared widget. `DaimondUI.pauseWidget(nodeId,
+	/// name)` returns a painted `<button class="pptw">` that repaints itself on
+	/// `daimond:pause`; mail.js only says where one goes. Absent — the widget is
+	/// another phase's — the slot stays empty and everything else in the panel
+	/// still works, which is the whole reason it is asked for rather than drawn.
+	function pptw(nodeId, name) {
+		var slot = document.createElement('span');
+		slot.className = 'pptw-slot';
+		var mk = window.DaimondUI && DaimondUI.pauseWidget;
+		if (typeof mk !== 'function') return slot;
+		try { slot.appendChild(mk(nodeId, name)); } catch (e) { /* leave it empty */ }
+		return slot;
+	}
+
+	// ── How often a folder refreshes itself ─────────────────────────
+	//
+	// WHERE THE SETTING LIVES, and why it is not in `a.folders`.
+	//
+	// `a.folders[name]` is this DEVICE's account of what is on this device's
+	// disk — uidvalidity, watermarks, the last sync — and the sync parcel
+	// deliberately carries none of it (see the section below). A refresh
+	// frequency is the opposite kind of fact: it is what the user asked for, it
+	// is true of the mailbox rather than of the disk, and a person who sets
+	// their inbox to fifteen minutes on the laptop means it on the phone too.
+	// So it lives in its own map on the account, `a.refresh`, and it travels.
+	//
+	// TRAVELLING MEANS STABLE BYTES. sync.js skips a push when the parcel
+	// stringifies to what it last sent, so a map serialised in enumeration order
+	// would make this device always have news and two devices would push at each
+	// other for ever. That has happened here twice; `dev/verify_parcelstable.mjs`
+	// is the check. Hence `sortedRefresh`: sorted keys, integer seconds, no
+	// stamp of its own — the account's existing `touched` decides the merge, and
+	// it moves only when the user changes something.
+	//
+	// Seconds, not minutes, because the unit a test needs is not the unit a
+	// person picks from and the store should not make them the same choice.
+
+	/// The frequencies the dialog offers, in seconds. 0 is "manual only", which
+	/// is what every folder is until someone says otherwise: a mailbox that
+	/// started polling on its own the moment it was added would spend the user's
+	/// credits on a decision they never made.
+	var EVERY = [0, 300, 900, 1800, 3600, 14400, 43200, 86400];
+
+	function refreshMap(a) {
+		if (!a) return {};
+		if (!a.refresh || typeof a.refresh !== 'object') a.refresh = {};
+		return a.refresh;
+	}
+
+	/// How often this folder refreshes itself, in seconds; 0 for manual only.
+	function refreshOf(a, name) {
+		var v = refreshMap(a)[name];
+		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// Set it. `touched` moves because this is a statement about the mailbox and
+	/// has to win the cross-device merge against a device that has not heard it.
+	function setRefresh(address, name, secs) {
+		var a = acct(address);
+		if (!a || !name) return false;
+		secs = (typeof secs === 'number' && isFinite(secs) && secs > 0) ? Math.floor(secs) : 0;
+		var m = refreshMap(a);
+		if (refreshOf(a, name) === secs) return false;
+		if (secs) m[name] = secs; else delete m[name];
+		// The folder needs a record for its watermarks and for the pause tree,
+		// which daimond.js builds out of this map (daimond.js:6819). A folder
+		// scheduled but never opened would otherwise have no leaf, and pausing
+		// the mailbox would walk straight past it.
+		fld(a, name);
+		a.touched = Math.max(Date.now(), ms(a.touched) + 1);
+		save();
+		arm();
+		render();
+		return true;
+	}
+
+	/// The map as it travels: sorted keys, integer seconds, nothing else.
+	function sortedRefresh(a) {
+		var m = refreshMap(a), out = {};
+		Object.keys(m).sort().forEach(function (k) {
+			var v = refreshOf(a, k);
+			if (v) out[k] = v;
+		});
+		return out;
+	}
+
+	// ── The schedule ────────────────────────────────────────────────
+	// One timer for the whole app, re-armed to the next folder that falls due.
+	// Not one timer per folder: a dozen folders across three mailboxes would be
+	// a dozen timers to cancel on every account change, and the one thing this
+	// must never do is go on polling a mailbox that has been removed.
+
+	var timer     = null;
+	var TICK_MIN  = 250;		// never busier than this, whatever a folder asks for
+	var TICK_MAX  = 60000;		// and never asleep longer, so a resume is felt
+
+	/// When this folder is next due, in epoch ms; 0 when it is never due.
+	/// A folder with a frequency and no attempt behind it is due NOW, which is
+	/// what setting one means.
+	///
+	/// The clock runs from the last ATTEMPT, not the last success. A sync that
+	/// failed leaves `lastSync` where it was, so scheduling off that alone would
+	/// find the folder overdue on the very next tick and hammer a server that is
+	/// down four times a second. An interval is how often to try.
+	function dueAt(a, name) {
+		var secs = refreshOf(a, name);
+		if (!secs) return 0;
+		var f = a.folders && a.folders[name];
+		var last = Math.max((f && ms(f.lastSync)) || 0, (f && ms(f.lastTry)) || 0);
+		return last ? last + secs * 1000 : 1;
+	}
+
+	/// Can anything be polled at all? A locked device cannot unwrap the
+	/// password, and an account without the entitlement has no mailbox to poll.
+	function canPoll() {
+		if (state.unlocked === false) return false;
+		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
+		return true;
+	}
+
+	/// Poll the one folder that is furthest overdue, then re-arm.
+	///
+	/// One per tick on purpose: `syncAccount` refuses to run while another sync
+	/// is in flight, so firing six at once would drop five of them silently and
+	/// leave their watermarks unmoved. Re-arming after each is the queue.
+	async function tick() {
+		timer = null;
+		var now = Date.now(), pick = null, worst = 0;
+		state.accounts.forEach(function (a) {
+			Object.keys(refreshMap(a)).sort().forEach(function (n) {
+				var d = dueAt(a, n);
+				if (!d || d > now) return;
+				if (pollStop(a.address, n)) return;	// held: not polled, not stamped
+				if (!pick || d < worst) { pick = { address: a.address, name: n }; worst = d; }
+			});
+		});
+		if (pick && !state.busy && !state.draining) {
+			await syncAccount(pick.address, false, pick.name, true);
+		}
+		arm();
+	}
+
+	/// Re-arm the timer to whichever folder falls due first.
+	///
+	/// Called from `render()`, so every state change that could move a due time —
+	/// a sync finishing, a frequency changing, an account arriving in a parcel,
+	/// the device unlocking — re-arms without each of them having to remember to.
+	function arm() {
+		if (timer) { clearTimeout(timer); timer = null; }
+		if (typeof setTimeout !== 'function') return;
+		var scheduled = false, soonest = 0, now = Date.now();
+		state.accounts.forEach(function (a) {
+			Object.keys(refreshMap(a)).forEach(function (n) {
+				var d = dueAt(a, n);
+				if (!d) return;
+				scheduled = true;
+				if (pollStop(a.address, n)) return;
+				if (!soonest || d < soonest) soonest = d;
+			});
+		});
+		if (!scheduled) return;
+		// A schedule exists but nothing can act on it — the device is locked, or
+		// every folder is held. Look again shortly rather than never: the unlock
+		// and the resume both happen outside this module.
+		if (!soonest || !canPoll()) {
+			timer = setTimeout(function () { tick(); }, TICK_MAX);
+			return;
+		}
+		// A sync already in flight makes every overdue folder look due on the next
+		// tick, and `syncAccount` refuses a second one. Look again in a second
+		// rather than spinning at the floor while a large fetch runs.
+		var floor = (state.busy || state.draining) ? 1000 : TICK_MIN;
+		var wait = Math.max(floor, Math.min(TICK_MAX, soonest - now));
+		timer = setTimeout(function () { tick(); }, wait);
+	}
+
+	// A resume has to be felt without waiting out the current sleep.
+	try { if (window.DaimondPause) DaimondPause.subscribe(arm); } catch (e) { /* not up */ }
+
 	// ── Travelling in the sync parcel ───────────────────────────────
 	// A user who has linked two devices has one account, and mail configured on
 	// one of them and not the other is half a mailbox. So the accounts ride in the
@@ -176,6 +445,10 @@
 	//     The plaintext password exists only for the length of one request and is
 	//     never stored, so there is nothing readable here to carry.
 	//   * `sel`, which mailbox is being looked at — a small courtesy, and cheap.
+	//   * `refresh`, how often each folder polls itself. A statement about the
+	//     mailbox, not about this device's disk: a person who sets their inbox to
+	//     fifteen minutes on the laptop means it on the phone. Sorted keys and
+	//     integer seconds, for the determinism rule at the foot of this comment.
 	//   * NOT `folders`, and nothing under it. Every UID, uidvalidity, watermark
 	//     and lastSync in there describes what is on THIS device's disk. Carrying
 	//     it would tell the other device it already holds mail it has never
@@ -196,6 +469,20 @@
 	/// loses the merge.
 	function ms(v) {
 		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
+	}
+
+	/// A refresh map off the wire, reduced to what this module will act on:
+	/// string keys, whole positive seconds, sorted. A parcel is another device's
+	/// word for it, and a `-1` in there would arm a timer that fires for ever.
+	function cleanRefresh(m) {
+		var out = {};
+		if (!m || typeof m !== 'object') return out;
+		Object.keys(m).sort().forEach(function (k) {
+			var v = m[k];
+			if (!k) return;
+			if (typeof v === 'number' && isFinite(v) && v > 0) out[k] = Math.floor(v);
+		});
+		return out;
 	}
 
 	/// The mailboxes deleted on purpose, by address, with anything past its TTL
@@ -236,6 +523,10 @@
 				smtpPort: a.smtpPort | 0,
 				user:     String(a.user || ''),
 				pass:     String(a.pass || ''),		// wrapped; see above
+				// Always present, even empty: absent has to keep meaning "that
+				// device predates the setting", or clearing the last schedule
+				// could never travel.
+				refresh:  sortedRefresh(a),
 				touched:  ms(a.touched),
 			};
 			// Only where it has been set: it decides whether the gateway opens the
@@ -286,6 +577,7 @@
 					user:     String(r.user || r.address),
 					pass:     String(r.pass || ''),
 					touched:  ms(r.touched),
+					refresh:  cleanRefresh(r.refresh),
 					// This device's own view of the mailbox, built fresh: the mail
 					// itself is fetched here rather than carried.
 					folder:   'INBOX',
@@ -307,6 +599,9 @@
 			// the one that works here: it means that device never had one.
 			if (r.pass) mine.pass = String(r.pass);
 			if (r.security) mine.security = String(r.security);
+			// Absent means the other device predates the setting and has nothing
+			// to say about it; an empty map is a real answer and clears ours.
+			if (r.refresh && typeof r.refresh === 'object') mine.refresh = cleanRefresh(r.refresh);
 			mine.touched  = ms(r.touched);
 			updated++;
 		});
@@ -780,7 +1075,7 @@
 		var out = [];
 		for (var i = 0; i < names.length; i++) {
 			var path = dir + '/' + names[i];
-			var raw = await deps.runTool('file_read', { path: path });
+			var raw = await readText(path);
 			if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) continue;
 			var hs = parseHeaders(raw);
 			out.push({
@@ -798,7 +1093,7 @@
 	/// Read a draft file back into the thing the compose panel edits. A draft an agent
 	/// wrote is an ordinary message file, so it opens the same way.
 	async function readDraft(address, path) {
-		var raw = await deps.runTool('file_read', { path: path });
+		var raw = await readText(path);
 		if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) {
 			throw new Error(t('mail.err.draft_unreadable'));
 		}
@@ -878,15 +1173,37 @@
 	/// held. With `older` set it reaches *backwards* instead, for the batch just below the oldest
 	/// message held — which is the only way to reach mail older than the first batch, since a
 	/// mailbox is never pulled down whole.
-	async function syncAccount(address, older, folder) {
+	/// `auto` marks a poll the schedule asked for rather than the user. It changes
+	/// nothing about what is fetched — only how loudly the panel narrates it, and
+	/// whether a refusal is worth saying out loud to somebody who did not ask.
+	async function syncAccount(address, older, folder, auto) {
 		var a = acct(address);
 		if (!a || state.busy) return;
 		var name = folder || a.folder || 'INBOX';
 		var f    = fld(a, name);
 		if (older && !f.firstUid) return;      // nothing held, so nothing to reach back from
+
+		// REFUSED WHERE THE REQUEST IS MADE. `gwFetch` refuses it again at the
+		// wire (gateway.js:269), which is what makes the hold real; this is the
+		// half that keeps a held folder from starting a sync it cannot finish,
+		// and that names the control to press. A scheduler that respected a pause
+		// and a fetch that did not would be decoration.
+		var stop = pollStop(address, name);
+		if (stop) {
+			if (!auto) { state.err = pausedWords(stop); state.note = ''; render(); }
+			return;
+		}
+
 		state.busy = true; state.err = '';
-		state.note = t(older ? 'mail.note.fetching_older' : 'mail.note.syncing',
-			{ address: address, folder: labelFor(a, name) });
+		// When this folder was last TRIED, which is what the schedule counts from.
+		// See `dueAt`: a failure must cost an interval, not nothing.
+		f.lastTry = Date.now();
+		// An automatic poll says nothing on the way in. A line that appeared every
+		// five minutes to announce a sync nobody asked for would train the reader
+		// to ignore the one place this panel has to say anything.
+		state.note = auto ? state.note
+			: t(older ? 'mail.note.fetching_older' : 'mail.note.syncing',
+				{ address: address, folder: labelFor(a, name) });
 		render();
 		try {
 			if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
@@ -946,8 +1263,13 @@
 
 			await rebuildIndex(a, name);
 			await loadDigest(a.address, name);
+			save();		// the count `loadDigest` just took, kept across a reload
 			var parts = [];
 			if (!msgs.length) {
+				// An automatic poll that found nothing leaves the panel as it was.
+				// The folder row already carries the count and its as-at, which is
+				// where "I looked and there was nothing" belongs.
+				if (auto) { state.note = state.note || ''; return; }
 				parts.push(t(older ? 'mail.note.no_older' : 'mail.note.up_to_date'));
 			} else {
 				parts.push(tn(older ? 'mail.note.older' : 'mail.note.new', msgs.length));
@@ -1067,7 +1389,7 @@
 
 		for (var i = 0; i < names.length; i++) {
 			var name = names[i].replace(/\/$/, '');
-			var raw = await deps.runTool('file_read', { path: dir + '/' + name });
+			var raw = await readText(dir + '/' + name);
 			if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) continue;
 			var hs = parseHeaders(raw);
 			out.push({
@@ -1085,6 +1407,15 @@
 
 	async function loadDigest(address, folder) {
 		state.msgs = await readMailbox(address, folder);
+		// What the folder holds, recorded where a row can read it without listing
+		// the directory again — the panel draws a dozen rows and reads none of
+		// them off disk. These are the messages the server handed over, so the
+		// number's as-at is the folder's last sync and nothing fresher: nothing
+		// new lands in a Maildir without a sync putting it there.
+		var a = acct(address);
+		if (!a) return;
+		var f = fld(a, folder || a.folder || 'INBOX');
+		if (f) f.count = state.msgs.length;
 	}
 
 	// ── The gateway ─────────────────────────────────────────────────
@@ -1247,6 +1578,14 @@
 				password: password,
 			});
 			state.folders[address] = { busy: false, err: '', list: shapeFolders(j.folders) };
+			// A record per selectable folder. It is what the folder rows read their
+			// count out of, and it is what daimond.js builds the pause tree from
+			// (daimond.js:6819) — so without it, a folder the gear dialog offers a
+			// control for would not be walked when the mailbox itself is paused.
+			// A record is watermarks at zero; it fetches nothing and says nothing
+			// beyond "this folder exists".
+			state.folders[address].list.forEach(function (e) { if (e.selectable) fld(a, e.name); });
+			save();
 			// A folder that is no longer there cannot go on being the selected
 			// one, or every sync would ask for a mailbox the server has not got.
 			var list = state.folders[address].list;
@@ -1283,6 +1622,83 @@
 		if (!state.msgs.length && !fld(a, name).lastSync) syncAccount(a.address, false, name);
 	}
 
+	/// The folders this app has anything to say about: the ones it already holds
+	/// mail from, the ones with a schedule, and the one on screen. The inbox is
+	/// always among them, because every mailbox has one.
+	///
+	/// NOT every folder the server lists. `a.folders` carries a record for each of
+	/// those, so that the pause tree has a leaf for each — but a record is not the
+	/// same as a folder anybody has asked for, and a refresh that pulled a first
+	/// batch out of forty Gmail labels would be a bill rather than a refresh.
+	function trackedFolders(a) {
+		var seen = {}, out = [];
+		var add = function (n) { if (n && !seen[n]) { seen[n] = 1; out.push(n); } };
+		add('INBOX');
+		add(a.folder || 'INBOX');
+		Object.keys(a.folders || {}).forEach(function (n) {
+			if (ms(a.folders[n] && a.folders[n].lastSync)) add(n);
+		});
+		Object.keys(refreshMap(a)).forEach(add);
+		return out;
+	}
+
+	/// Every folder of a mailbox that could be refreshed: the server's own list
+	/// where it has answered, and what this device tracks where it has not.
+	function allFolders(a) {
+		var cache = a && state.folders[a.address];
+		var list  = (cache && cache.list) || null;
+		if (!list) return trackedFolders(a);
+		var out = list.filter(function (f) { return f.selectable; })
+			.map(function (f) { return f.name; });
+		return out.length ? out : trackedFolders(a);
+	}
+
+	/// How many folders the manual refresh would touch, across how many
+	/// mailboxes. The button's tooltip carries it, so the size of the thing is
+	/// known BEFORE it is pressed rather than reported afterwards: every folder
+	/// costs a call whether or not anything has arrived in it.
+	function refreshScale() {
+		var n = 0;
+		state.accounts.forEach(function (a) { n += allFolders(a).length; });
+		return { folders: n, boxes: state.accounts.length };
+	}
+
+	/// The manual refresh, doing what its name has always claimed: every folder
+	/// of every mailbox.
+	///
+	/// It used to re-list the folders of the selected mailbox and nothing else,
+	/// which is neither what the tooltip said nor what anybody reading "refresh"
+	/// expects. Listing is free and is done first, so the walk that follows is of
+	/// the folders the server has NOW.
+	///
+	/// Held folders are skipped and counted, not silently dropped: a refresh that
+	/// quietly did less than it said is the thing this function exists to end.
+	async function refreshAll() {
+		if (state.busy || state.draining) return;
+		var boxes = state.accounts.map(function (a) { return a.address; });
+		if (!boxes.length) return;
+		var done = 0, held = 0;
+		for (var i = 0; i < boxes.length; i++) {
+			await loadFolders(boxes[i], true);
+		}
+		for (var j = 0; j < boxes.length; j++) {
+			var a = acct(boxes[j]);
+			if (!a) continue;
+			var names = allFolders(a);
+			for (var k = 0; k < names.length; k++) {
+				if (pollStop(a.address, names[k])) { held++; continue; }
+				await syncAccount(a.address, false, names[k], true);
+				done++;
+			}
+		}
+		state.note = held
+			? tf('mail.refreshed_held', '{done} folders refreshed in {boxes} mailboxes; '
+				+ '{held} held by a pause.', { done: done, boxes: boxes.length, held: held })
+			: tf('mail.refreshed', '{done} folders refreshed in {boxes} mailboxes.',
+				{ done: done, boxes: boxes.length });
+		render();
+	}
+
 	/// Email rides Pro now, so the button opens the Pro surface in Credits
 	/// rather than a checkout of its own. The purchase, the return handling and
 	/// the "you own it" confirmation all live in one place.
@@ -1297,6 +1713,41 @@
 	function fmtMinor(n) {
 		return window.DaimondGateway ? DaimondGateway.fmtMoney(n, 'usd') : ('$' + (n / 100).toFixed(2));
 	}
+	var HOUR = 3600000;
+
+	/// What a folder row says about how much is in it, and when that was true.
+	///
+	/// The number is the messages the server handed over as at the folder's last
+	/// sync, which is not the same thing as what is in the folder now — so the
+	/// row never shows a bare figure. A folder never fetched shows no number at
+	/// all: zero would say "I looked and it is empty", and that is a lie somebody
+	/// will act on. A figure gone stale carries its age beside it in the row,
+	/// because a `title` is a thing nobody can hover on a phone.
+	function countPhrase(a, name) {
+		var f    = a && a.folders && a.folders[name];
+		var last = (f && ms(f.lastSync)) || 0;
+		if (!last) {
+			return {
+				text: '—', when: ago(0), stale: true,
+				title: tf('mail.count.never',
+					'Not fetched yet, so there is no count to show.'),
+			};
+		}
+		var n = (f && f.count) | 0;
+		// Stale at twice its own period, or after an hour where it has none: a
+		// folder polled every five minutes whose figure is twenty minutes old has
+		// missed a poll, and an unscheduled one is only ever as fresh as the last
+		// time somebody pressed refresh.
+		var stale = (Date.now() - last) > Math.max(refreshOf(a, name) * 2000, HOUR);
+		var title = tf('mail.count.asat', '{n} messages, as at {when}.',
+			{ n: fmtCount(n), when: ago(last) });
+		if (f && f.heldBack) {
+			title += ' ' + tf('mail.count.more',
+				'{n} more were waiting on the server then.', { n: fmtCount(f.heldBack) });
+		}
+		return { text: fmtCount(n), when: ago(last), stale: stale, title: title };
+	}
+
 	function ago(ts) {
 		if (!ts) return t('mail.ago.never');
 		var s = Math.floor((Date.now() - ts) / 1000);
@@ -1334,11 +1785,32 @@
 		// The mailboxes.
 		els.accounts.innerHTML = '';
 		if (state.unlocked !== false) {
+			els.accounts.appendChild(globalRow());
 			state.accounts.forEach(function (a) {
 				var row = document.createElement('div');
 				row.className = 'mail-acct' + (a.address === state.sel ? ' on' : '');
-				row.innerHTML = '<span class="mail-addr">' + esc(a.address) + '</span>'
-					+ '<span class="mail-when">' + esc(ago(a.lastSync)) + '</span>';
+				// The mailbox's own control leads the row, as it leads every row on
+				// the rail. It governs the BRANCH: pressing it pauses the mailbox's
+				// own polling and every folder under it at once, and it shows amber
+				// when only some of them are held.
+				row.appendChild(pptw(boxNode(a.address), a.address));
+				row.appendChild(html('<span class="mail-addr">' + esc(a.address) + '</span>'));
+				row.appendChild(html('<span class="mail-when">' + esc(ago(a.lastSync)) + '</span>'));
+				var gear = document.createElement('button');
+				gear.className = 'mail-gear';
+				gear.title = tf('mail.settings', 'Mailbox settings');
+				gear.setAttribute('aria-label',
+					tf('mail.settings_named', 'Settings for {address}', { address: a.address }));
+				// A cog, drawn as the app draws its icons: a stroked path in a
+				// 24-unit box, so it sits on the same grid as the railhead's.
+				// One drawing of the cog for the whole app. This file used to hold its
+				// own copy of the same path, which is how an icon set drifts.
+				if (window.DaimondUI && DaimondUI.cogIcon) gear.appendChild(DaimondUI.cogIcon());
+				gear.addEventListener('click', function (ev) {
+					ev.stopPropagation();
+					openSettings(a.address);
+				});
+				row.appendChild(gear);
 				var del = document.createElement('button');
 				del.className = 'mail-del';
 				del.title = t('mail.remove_mailbox');
@@ -1428,6 +1900,46 @@
 		} else if (state.sel && state.unlocked !== false) {
 			els.list.appendChild(html('<div class="mail-fine">' + t('mail.nothing_yet') + '</div>'));
 		}
+
+		// One re-arming point for the schedule. Every change that could move a due
+		// time — a sync finishing, a frequency changing, a mailbox arriving in a
+		// parcel, the device unlocking — already ends here, so none of them has to
+		// remember the timer.
+		arm();
+	}
+
+	/// The row above the mailbox list: one control for all of mail, and the one
+	/// manual refresh.
+	///
+	/// The pause control governs `root/mail`, the branch every mailbox hangs
+	/// from — the honest "global" for this panel. It is deliberately NOT `root`:
+	/// the rail already carries that one, and a second control for the same node
+	/// in a second place is two answers to one question.
+	///
+	/// Sentence case and a rule under it, not a section heading. The rail learnt
+	/// that the hard way: dressed as a heading, a row led by a light reads as a
+	/// section that has lost its alignment (see `.pptw-head`, app.css:207).
+	function globalRow() {
+		var row = document.createElement('div');
+		row.className = 'mail-globals';
+		row.appendChild(pptw(mailNode(), tf('pause.mail', 'Mail')));
+		row.appendChild(html('<span class="mail-globals-label">'
+			+ esc(tf('mail.all_mailboxes', 'All mailboxes')) + '</span>'));
+		var b = document.createElement('button');
+		b.className = 'mail-refresh';
+		// The size of it, before it is pressed. Every folder costs a call whether
+		// or not anything has arrived in it, and a person with forty Gmail labels
+		// should be able to see that coming.
+		var sc = refreshScale();
+		b.title = tf('mail.refresh_all',
+			'Refresh every folder of every mailbox — {folders} folders in {boxes} mailboxes',
+			{ folders: sc.folders, boxes: sc.boxes });
+		b.setAttribute('aria-label', b.title);
+		b.textContent = '⟳';
+		b.disabled = !!(state.busy || state.draining) || !state.accounts.length;
+		b.addEventListener('click', function () { refreshAll(); });
+		row.appendChild(b);
+		return row;
 	}
 
 	/// The folder picker: which of the account's mailboxes the list below is
@@ -1442,13 +1954,11 @@
 		var cache = state.folders[a.address] || {};
 		var list  = cache.list || [{ name: 'INBOX', role: '', selectable: true }];
 
-		var head = html('<div class="mail-folders-head">'
-			+ '<span>' + esc(t('mail.folders')) + '</span>'
-			+ '<button class="mail-refresh" title="' + esc(t('mail.folders_refresh')) + '"'
-			+ (cache.busy ? ' disabled' : '') + '>⟳</button></div>');
-		var hb = head.querySelector('.mail-refresh');
-		hb.addEventListener('click', function () { loadFolders(a.address, true); });
-		els.folders.appendChild(head);
+		// The refresh that used to sit here now leads the panel, beside the pause
+		// control that supplements it: it acts on every mailbox, so a head scoped
+		// to one mailbox was the wrong place to press it from.
+		els.folders.appendChild(html('<div class="mail-folders-head">'
+			+ '<span>' + esc(t('mail.folders')) + '</span></div>'));
 
 		var box = document.createElement('div');
 		box.className = 'mail-folder-list';
@@ -1462,13 +1972,37 @@
 			var depth = f.delimiter ? f.name.split(f.delimiter).length - 1 : 0;
 			if (depth > 0) row.style.setProperty('--folder-depth', depth);
 			row.innerHTML = '<span class="mail-addr">' + esc(labelFor(a, f.name)) + '</span>';
+			// How much is in it, and when that was true. A container holds no mail,
+			// so it gets no number rather than a nought.
+			var c = null;
+			if (f.selectable) {
+				c = countPhrase(a, f.name);
+				// The age comes FIRST and the number last, so the numbers make a
+				// column down the right edge. Put the age after and every count
+				// with an age beside it steps left, which is exactly the reading
+				// the column exists to give: which folder holds the most.
+				//
+				// It is shown only where the figure can no longer be trusted on its
+				// own. On a fresh one it is noise, and the title carries it anyway.
+				if (c.stale) {
+					row.appendChild(html('<span class="mail-when">' + esc(c.when) + '</span>'));
+				}
+				var cnt = document.createElement('span');
+				cnt.className = 'mail-count' + (c.stale ? ' stale' : '');
+				cnt.textContent = c.text;
+				cnt.title = c.title;
+				row.appendChild(cnt);
+			}
 			if (!f.selectable) {
 				// A container, not a mailbox: `[Gmail]` holds folders, not mail. It is
 				// not made operable and stays out of the tab order, which is the whole
 				// of what `aria-disabled` is claiming here.
 				row.setAttribute('aria-disabled', 'true');
 			} else {
-				rowAsButton(row, function () { selectFolder(f.name); }, labelFor(a, f.name));
+				// The count is read out with the name: a screen reader cannot hover
+				// the title, and "as at" is the half of the number that matters.
+				rowAsButton(row, function () { selectFolder(f.name); },
+					labelFor(a, f.name) + ' — ' + c.title);
 				if (f.name === (a.folder || 'INBOX')) row.setAttribute('aria-current', 'true');
 			}
 			box.appendChild(row);
@@ -1487,6 +2021,173 @@
 		var d = document.createElement('div');
 		d.innerHTML = s;
 		return d.firstElementChild || d;
+	}
+
+	// ── A mailbox's settings ────────────────────────────────────────
+
+	/// How often, in words. The frequencies are a fixed list and each gets its
+	/// own key: "every {n} minutes" is a sentence a translator cannot decline
+	/// without knowing the number, and there are only eight of them.
+	var EVERY_EN = {
+		0:     'Manual only',
+		300:   'Every 5 minutes',
+		900:   'Every 15 minutes',
+		1800:  'Every 30 minutes',
+		3600:  'Every hour',
+		14400: 'Every 4 hours',
+		43200: 'Every 12 hours',
+		86400: 'Once a day',
+	};
+	function everyLabel(secs) {
+		return EVERY_EN[secs] ? tf('mail.every.' + secs, EVERY_EN[secs])
+			: tf('mail.every.secs', 'Every {n} seconds', { n: secs });
+	}
+
+	/// The frequency picker for one folder.
+	function everySelect(a, name) {
+		var sel = document.createElement('select');
+		sel.className = 'mail-every';
+		var cur  = refreshOf(a, name);
+		var opts = EVERY.slice();
+		// A frequency set from outside the list — a test, or a parcel from a
+		// build that offered a different list — stays offered rather than being
+		// silently rounded to whatever is nearest.
+		if (opts.indexOf(cur) < 0) opts.push(cur);
+		opts.sort(function (x, y) { return x - y; });
+		opts.forEach(function (v) {
+			var o = document.createElement('option');
+			o.value = String(v);
+			o.textContent = everyLabel(v);
+			if (v === cur) o.selected = true;
+			sel.appendChild(o);
+		});
+		sel.setAttribute('aria-label',
+			tf('mail.every_for', 'How often {folder} refreshes itself',
+				{ folder: labelFor(a, name) }));
+		sel.addEventListener('change', function () {
+			setRefresh(a.address, name, parseInt(sel.value, 10) || 0);
+		});
+		return sel;
+	}
+
+	/// The body of a mailbox's settings dialog: one tile per folder, each with
+	/// its own pause control and how often it refreshes itself.
+	///
+	/// Returns the element and nothing else. The dialog that carries it is phase
+	/// C's tile dialog, and so is the Delete that belongs at its foot in place of
+	/// the closer cross on the mailbox row — neither is built here.
+	function settingsBody(address) {
+		var a = acct(address);
+		var box = document.createElement('div');
+		box.className = 'mail-cfg';
+		if (!a) return box;
+
+		box.appendChild(html('<p class="mail-fine">'
+			+ esc(tf('mail.cfg.head', 'How often each folder goes and looks, and '
+				+ 'which of them are allowed to. Every refresh costs credits, so '
+				+ 'nothing polls until you say so.')) + '</p>'));
+
+		// The mailbox's own leaf, first, because it governs everything below it.
+		// It carries no frequency of its own: what the user schedules is folders,
+		// and this is the switch that holds all of them at once.
+		var self = document.createElement('div');
+		self.className = 'mail-tile mail-tile-self';
+		self.appendChild(pptw(selfNode(address), tf('pause.mail_polling', 'Mailbox polling')));
+		self.appendChild(html('<span class="mail-tile-name">'
+			+ esc(tf('pause.mail_polling', 'Mailbox polling')) + '</span>'));
+		self.appendChild(html('<span class="mail-fine">'
+			+ esc(tf('mail.cfg.self', 'Holds every folder below.')) + '</span>'));
+		box.appendChild(self);
+
+		// The server's list where it has answered, and what this device tracks
+		// where it has not: a locked or offline device should still show the
+		// folders it holds mail for rather than the inbox alone.
+		var cache = state.folders[address] || {};
+		var names = (cache.list || []).filter(function (f) { return f.selectable; })
+			.map(function (f) { return f.name; });
+		if (!names.length) names = trackedFolders(a);
+
+		names.forEach(function (n) {
+			var tile = document.createElement('div');
+			tile.className = 'mail-tile';
+			tile.setAttribute('data-folder', n);
+			tile.appendChild(pptw(folderNode(address, n), labelFor(a, n)));
+			tile.appendChild(html('<span class="mail-tile-name">'
+				+ esc(labelFor(a, n)) + '</span>'));
+			// The same reading as the folder row, in the same order: the age where
+			// the figure can no longer be trusted, then the figure. This is the one
+			// screen where somebody is deciding how often a folder should look, so
+			// a `title` nobody can hover on a phone is not enough on its own.
+			var c = countPhrase(a, n);
+			if (c.stale) tile.appendChild(html('<span class="mail-when">' + esc(c.when) + '</span>'));
+			var cnt = html('<span class="mail-count' + (c.stale ? ' stale' : '') + '">'
+				+ esc(c.text) + '</span>');
+			cnt.title = c.title;
+			tile.appendChild(cnt);
+			tile.appendChild(everySelect(a, n));
+			box.appendChild(tile);
+		});
+		return box;
+	}
+
+	/// Open a mailbox's settings.
+	///
+	/// THE CONTAINER MOUNT POINT. `deps.bodyDialog(title, bodyEl, opts)` is asked
+	/// for first and is what should carry this once phase C's tile dialog exists —
+	/// that dialog owns the focus trap, the Escape handling and the Delete at its
+	/// foot. The stand-in below is here because the alternative was shipping a
+	/// gear that opens nothing; it borrows the app's own `.dlg` furniture so the
+	/// swap changes no pixels.
+	function openSettings(address) {
+		var body  = settingsBody(address);
+		var title = tf('mail.cfg.title', 'Settings for {address}', { address: address });
+		if (deps && typeof deps.bodyDialog === 'function') {
+			return deps.bodyDialog(title, body, { okLabel: tf('dlg.done', 'Done') });
+		}
+		var back = html('<div class="modal dlg"></div>');
+		var card = html('<div class="modal-card dlg-card"></div>');
+		var h = document.createElement('h2');
+		h.id = 'mail-cfg-title';
+		h.textContent = title;
+		// Named and declared, which the app's own dialogs are not yet
+		// (dev/a11y_report.md §5). A stand-in is no reason to repeat a defect.
+		card.setAttribute('role', 'dialog');
+		card.setAttribute('aria-modal', 'true');
+		card.setAttribute('aria-labelledby', h.id);
+		card.appendChild(h);
+		card.appendChild(body);
+		var row = html('<div class="dlg-actions"></div>');
+		var ok  = document.createElement('button');
+		ok.type = 'button';
+		ok.className = 'dlg-ok';
+		ok.textContent = tf('dlg.done', 'Done');
+		row.appendChild(ok);
+		card.appendChild(row);
+		back.appendChild(card);
+		document.body.appendChild(back);
+
+		var prev = document.activeElement;
+		function close() {
+			document.removeEventListener('keydown', onKey, true);
+			back.remove();
+			if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+		}
+		function onKey(e) {
+			if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+			if (e.key !== 'Tab') return;
+			// Keep Tab inside the card. Without it the focus ring walks off into the
+			// panel behind and a keyboard user cannot get back to Done.
+			var f = card.querySelectorAll('button, select, [tabindex]:not([tabindex="-1"])');
+			if (!f.length) return;
+			var first = f[0], last = f[f.length - 1];
+			if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+			else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+		}
+		document.addEventListener('keydown', onKey, true);
+		back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
+		ok.addEventListener('click', close);
+		ok.focus();
+		return Promise.resolve(true);
 	}
 
 	/// Make a row behave as the button it already is.
@@ -1599,7 +2300,7 @@
 	}
 
 	async function openMessage(m) {
-		var raw = await deps.runTool('file_read', { path: m.file });
+		var raw = await readText(m.file);
 		if (typeof raw !== 'string' || /^\s*Error\b/i.test(raw)) {
 			state.err = t('mail.err.msg_unreadable');
 			render();
@@ -1822,6 +2523,11 @@
 		tombstone(address);
 		state.accounts = state.accounts.filter(function (a) { return a.address !== address; });
 		delete state.folders[address];
+		// Every pause flag under the mailbox goes with it. A stale leaf id is
+		// harmless to `isPaused`, but it would hold `root/mail` amber for ever and
+		// travel in the parcel for the life of the account.
+		try { if (window.DaimondPause) DaimondPause.forget(boxNode(address)); }
+		catch (e) { /* module not up */ }
 		if (state.sel === address) {
 			state.sel = (state.accounts[0] && state.accounts[0].address) || null;
 			state.msgs = [];
@@ -1884,6 +2590,9 @@
 
 	/// Logging out clears the user's content from the DOM. Mail is theirs.
 	function clear() {
+		// Before the accounts go: a timer armed against a mailbox that has just
+		// left the page would poll a mailbox nobody is signed in to.
+		if (timer) { clearTimeout(timer); timer = null; }
 		state.accounts = [];
 		state.msgs = [];
 		state.drafts = [];
@@ -1925,6 +2634,37 @@
 		loadFolders:  function (address, force) { return loadFolders(address || state.sel, force); },
 		folder:       function () { var a = acct(state.sel); return (a && a.folder) || 'INBOX'; },
 		selectFolder: selectFolder,
+		/// How often a folder refreshes itself, in seconds; 0 for manual only.
+		/// Seconds rather than the dialog's eight choices, so a verifier can ask
+		/// for an interval short enough to watch without waiting five minutes.
+		refreshOf:    function (address, name) { return refreshOf(acct(address || state.sel), name); },
+		setRefresh:   setRefresh,
+		/// Every folder of every mailbox, which is what the panel's one refresh
+		/// button does.
+		refreshAll:   refreshAll,
+		/// What the folder rows say they hold, and when that was true. Exposed so
+		/// a test can read the number without parsing it back out of the DOM.
+		counts:       function (address) {
+			var a = acct(address || state.sel);
+			if (!a) return {};
+			var out = {};
+			Object.keys(a.folders || {}).sort().forEach(function (n) {
+				var f = a.folders[n] || {};
+				out[n] = {
+					count:    f.count | 0,
+					lastSync: ms(f.lastSync),
+					every:    refreshOf(a, n),
+					// The row's own words, so a test asserts what the user reads
+					// rather than a number the row might be dressing differently.
+					says:     countPhrase(a, n),
+				};
+			});
+			return out;
+		},
+		/// The gear dialog's body, for the container that will carry it and for a
+		/// test that wants to read the tiles without opening a modal.
+		settingsBody: settingsBody,
+		openSettings: openSettings,
 		/// Where a folder's messages sit in the workspace.
 		folderDir:    function (address, name) { return mailboxDir(address || state.sel, name); },
 		compose: function () {

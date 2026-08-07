@@ -21,7 +21,8 @@
 // reconnects the folder through `reconnectFolder`/`activateFolder`, and only
 // then resolves. Nothing about the transfer's own code path is faked.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099). No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 import { open, errors } from './harness.mjs';
 
 const ok = [], bad = [];

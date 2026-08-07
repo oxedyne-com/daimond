@@ -23,7 +23,8 @@
 // on a suite summary, and "the migration is proven" would then be a claim
 // resting on a test that never ran.
 //
-// Run with dev/serve.mjs up (:8777). No gateway, no hand, no mock model.
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up. No gateway, no hand, no mock
+// model.
 import fs from 'node:fs';
 import { open, signInAs } from './harness.mjs';
 

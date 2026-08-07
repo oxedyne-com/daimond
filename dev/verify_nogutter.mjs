@@ -25,7 +25,7 @@
 //
 //   node dev/verify_nogutter.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway.
 
 import fs from 'node:fs';
 import { open, scratch, shot } from './harness.mjs';

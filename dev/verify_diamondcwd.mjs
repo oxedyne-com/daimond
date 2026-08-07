@@ -24,7 +24,7 @@
 // a directory that does not exist on this machine, which is a different fact.
 // dev/verify_scope.mjs drives the real binary for what the fence contains.
 //
-// Run with dev/serve.mjs up (:8777).
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up.
 //
 //	node dev/verify_diamondcwd.mjs
 import { open } from './harness.mjs';

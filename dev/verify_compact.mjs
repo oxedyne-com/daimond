@@ -27,8 +27,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(HERE);
 const { open, newChat, transcript, shot, connectMock } = await import(path.join(HERE, 'harness.mjs'));
 
-const LOG   = path.join(HERE, 'ctxmock.log');
-const PORT  = 9188;
+// The refusing provider follows the world, so two worlds neither fight over the
+// port nor read one another's log.  A world is numbered by its offset from 8777.
+const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
+const LOG   = process.env.DAIMOND_CTX_LOG
+	|| path.join(HERE, WORLD ? `ctxmock-${WORLD}.log` : 'ctxmock.log');
+const PORT  = Number(process.env.DAIMOND_CTX_PORT || 9188 + WORLD);
 const LIMIT = 12000;
 const MOCK  = `http://127.0.0.1:${PORT}/v1/chat/completions`;
 const MODEL = 'mock/fast';
@@ -95,7 +99,7 @@ const say = async (s, text, waitMs = 6000) => {
 /// Start the mock and wait for it to answer, so a slow start is not read as a refusal.
 async function startMock() {
 	const child = spawn('node', [path.join(HERE, 'ctxmock.mjs'), String(PORT), String(LIMIT)],
-		{ stdio: ['ignore', 'ignore', 'inherit'] });
+		{ stdio: ['ignore', 'ignore', 'inherit'], env: { ...process.env, DAIMOND_CTX_LOG: LOG } });
 	for (let i = 0; i < 50; i++) {
 		try {
 			const r = await fetch(`http://127.0.0.1:${PORT}/v1/models`);

@@ -26,8 +26,9 @@
 //
 //   node dev/verify_interject.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. A verifier that
-// reports "Daimond could not answer" is missing the mock, not finding a bug.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). A verifier that reports "Daimond could not answer"
+// is missing the mock, not finding a bug.
 
 import { open, newChat, shot, errors, signInAs } from './harness.mjs';
 
@@ -58,9 +59,10 @@ const toasts = () => p.evaluate(() => window.__toasts.slice());
 // What actually went out on the wire, captured by wrapping the page's own
 // `fetch`. The claim being checked is about the request the model received, and
 // nothing the app draws is evidence of that -- the DOM is the app marking its own
-// homework. dev/mockllm.log holds the same thing from the server's side, but it
-// is ONE file shared by every verifier on the machine, so a second suite running
-// concurrently truncates it mid-pass; this reads the bytes this page sent.
+// homework. The mock's own log holds the same thing from the server's side, but a
+// suite that does not set DAIMOND_MOCK_LOG shares one file with every other on the
+// machine, and a concurrent run truncates it mid-pass; this reads the bytes this
+// page sent.
 await p.evaluate(() => {
 	window.__sent = [];
 	const orig = window.fetch;

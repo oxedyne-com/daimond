@@ -36,6 +36,7 @@ use crate::diamond_link::{
 	normalise_rel,
 	parse_links,
 	union_links,
+	update_link_in,
 	write_links,
 };
 use crate::diamond_meta::{Meta, normalise_tags};
@@ -797,6 +798,60 @@ pub async fn add_link(
     // eventually come back over it carrying the links it had instead.
     touch_after_link(owner).await;
     Ok(id)
+}
+
+/// Whether a Diamond is actually here, judged by the one file every Diamond has.
+///
+/// Written for the link tools, and needed because they let something OTHER than the page
+/// choose the owner.  Every earlier caller of [`add_link`] passed an id it had just read off
+/// the rail; a model passes a string it wrote, and a mistyped one would have a sidecar
+/// written for it -- which creates the directory, and [`all_links`] walks directories rather
+/// than the rail, so the graph would gain links belonging to a Diamond nothing lists.  That
+/// is the same hazard [`union_links_from`] guards against, arriving from the other side.
+pub async fn diamond_exists(id: &str) -> bool {
+    if id.trim().is_empty() {
+        return false;
+    }
+    opfs::exists(FileRoot::Opfs, &meta_path(id)).await.unwrap_or(false)
+}
+
+/// Revise the relation and note of a link already in a Diamond's sidecar.
+/// Returns whether anything moved.
+///
+/// The store had `add_link` and `remove_link` and nothing between them, so every
+/// surface that let a person correct a relation did it by deleting the record and
+/// asserting a fresh one -- a new id and a new `ts`.  That loses the one fact
+/// nothing else holds: when the two things were FIRST said to be related.  A
+/// relation is a judgement about a joining that already existed, and refining the
+/// judgement is not a new joining.  [`update_link_in`] therefore edits the record
+/// in place and this writes it back.
+///
+/// The ends are not revisable: a link between two OTHER things is a new claim and
+/// costs a new record, which [`add_link`] already makes.
+///
+/// Nothing is written when nothing moved, and that is load-bearing rather than an
+/// optimisation.  A write stamps the Diamond, the merge reads that stamp, and a
+/// no-op that stamped would make this device the fresher copy for having done
+/// nothing -- carrying its whole directory over a real edit made elsewhere.
+///
+/// **A revision does not travel by [`union_links_from`].**  The union keys on the
+/// id and keeps the copy already held, precisely so a link is never merged field
+/// by field; what carries a revision is the stamp, and the wholesale merge that
+/// reads it -- exactly as for [`remove_link`].
+///
+/// # Arguments
+/// * `owner`   - The Diamond whose sidecar holds the record.
+/// * `link_id` - The link to revise.
+/// * `rel`     - The relation it should now carry; may be empty.
+/// * `note`    - The note it should now carry; may be empty.
+pub async fn update_link(owner: &str, link_id: &str, rel: &str, note: &str) -> Outcome<bool> {
+    let mut links = res!(read_links(owner).await);
+    if !update_link_in(&mut links, link_id, rel, note) {
+        return Ok(false);
+    }
+    res!(write_links_for(owner, &links).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
 }
 
 /// Remove a link from a Diamond's sidecar.  Returns whether one went.

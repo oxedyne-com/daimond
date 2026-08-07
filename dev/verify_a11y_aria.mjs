@@ -42,7 +42,8 @@
 //
 //   node dev/verify_a11y_aria.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import fs from 'node:fs';
 import { open, newChat, scratch } from './harness.mjs';
@@ -64,7 +65,6 @@ const note = (what, why) => known.push(`${what}\n        ${why}`);
 // text content. All are written up in dev/a11y_report.md §4 and §10; the census
 // is here so the NEXT one fails this run instead of joining them.
 const GLYPHS = new Set([
-	'button.session-box-close|×',		// remove a chat / delete a Diamond
 	'button#settings-btn.icon-btn|⚙',
 	'button#collapse-btn.chip-btn|−',
 	'button#chat-send|➤',
@@ -393,12 +393,11 @@ check(freshMute.length === 0,
 	freshMute.length ? JSON.stringify(freshMute) : null);
 note(`${mute.length} controls on screen announce as a punctuation mark or as nothing`,
 	'Chrome\'s accname for each is the character printed on it: Send is "➤", Settings is '
-	+ '"⚙", delete-a-Diamond and remove-a-chat are both "×". Each carries a correct '
-	+ '`title`, which loses to text content. See a11y_report.md §4.');
-note('Two Diamonds give two buttons that both announce "×"',
-	'www/js/daimond.js:9143 sets one fixed title for every row (t(\'rail.delete_diamond\'), '
-	+ 'no name in it), so a screen-reader user meets a list of identical delete buttons. '
-	+ 'See a11y_report.md §5.');
+	+ '"⚙". Each carries a correct `title`, which loses to text content. See '
+	+ 'a11y_report.md §4.');
+// The pair of identical "×" delete buttons that used to be noted here is gone:
+// phase C replaced the tile\'s closer cross with a cog whose accessible name
+// carries the tile\'s own name, and moved Delete into the dialog it opens.
 
 // ── 7. Icons are silent ─────────────────────────────────────────────
 const loud = await page.evaluate(LOUD_ICONS);

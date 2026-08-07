@@ -46,9 +46,10 @@
 //
 //   node dev/verify_termpanel.mjs
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099; both are started
-// here if they are not already up. Without the mock provider every model turn
-// fails and the app reads as broken when it is only unattended.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099); both are started here if they are not already up.
+// Without the mock provider every model turn fails and the app reads as broken when it
+// is only unattended.
 
 import fs from 'node:fs';
 import net from 'node:net';
@@ -248,8 +249,12 @@ async function serve(name, args, port) {
 	}
 	throw new Error(`${name} did not come up on ${port}`);
 }
-await serve('dev server', ['dev/serve.mjs'], 8777);
-await serve('mock provider', ['dev/mockllm.mjs'], 9099);
+// What the children will bind: `serve.mjs` reads DAIMOND_PORT and `mockllm.mjs`
+// DAIMOND_MOCK_PORT, so the wait below is asking about the port they chose.
+const APP_PORT  = Number(process.env.DAIMOND_PORT || 8777);
+const MOCK_PORT = Number(process.env.DAIMOND_MOCK_PORT || 9099);
+await serve('dev server', ['dev/serve.mjs'], APP_PORT);
+await serve('mock provider', ['dev/mockllm.mjs'], MOCK_PORT);
 
 const { open: openApp, shot } = await import('./harness.mjs');
 

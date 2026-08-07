@@ -520,11 +520,8 @@ impl DaimondApp {
             // never stored, so a persisted `system` role is dropped here
             // rather than duplicated into the working conversation.
             match js_prop(&item, "role").unwrap_or_default().as_str() {
-                "user"      => session.messages.push(ChatMessage::User { content }),
-                "assistant" => session.messages.push(ChatMessage::Assistant {
-                    content,
-                    tool_calls: Vec::new(),
-                }),
+                "user"      => session.messages.push(ChatMessage::user(content)),
+                "assistant" => session.messages.push(ChatMessage::assistant(content)),
                 _ => continue,
             }
         }
@@ -640,11 +637,8 @@ impl DaimondApp {
     pub fn append_message(&self, role: String, content: String) {
         let mut session = self.session.borrow_mut();
         match role.as_str() {
-            "user"      => session.messages.push(ChatMessage::User { content }),
-            "assistant" => session.messages.push(ChatMessage::Assistant {
-                content,
-                tool_calls: Vec::new(),
-            }),
+            "user"      => session.messages.push(ChatMessage::user(content)),
+            "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
         }
     }
@@ -767,8 +761,11 @@ impl DaimondApp {
     /// file-browser panel (list/read/delete) that act on OPFS directly.
     /// Tool errors are returned as `Error: …` text (never a rejection), so
     /// the browser can surface them inline.
+    ///
+    /// The TEXT of the result: a panel draws strings, and an image read this way is named rather
+    /// than carried. The model's route to an image is the agent loop, where the part survives.
     pub async fn run_tool(&self, name: String, args_json: String) -> String {
-        self.registry.dispatch(&name, &args_json).await
+        self.registry.dispatch(&name, &args_json).await.as_text().into_owned()
     }
 
     // ── Diamond / crystal / fold surface ─────────────────────────────────
@@ -839,6 +836,26 @@ impl DaimondApp {
         -> Result<String, JsValue>
     {
         diamond::add_link(&owner, &from, &to, &rel, &note, &by).await.map_err(to_js_err)
+    }
+
+    /// Revise a link's relation and note in place.  True when anything moved.
+    ///
+    /// The way to correct a relation, and the reason it exists is that the
+    /// alternative destroys evidence: removing the record and asserting a fresh
+    /// one mints a new id and a new timestamp, so the moment the two things were
+    /// first said to be related is gone, and anything holding the old id is left
+    /// holding nothing.  The ends are not revisable -- a link between two other
+    /// things is a new claim, and `add_link` makes it.
+    pub async fn update_link(
+        &self,
+        owner:   String,
+        link_id: String,
+        rel:     String,
+        note:    String,
+    )
+        -> Result<bool, JsValue>
+    {
+        diamond::update_link(&owner, &link_id, &rel, &note).await.map_err(to_js_err)
     }
 
     /// Remove a link from a Diamond's sidecar.  True when one went.
@@ -1168,6 +1185,15 @@ impl DaimondApp {
                 Tool::DirCreate,
                 // The daimon commands agents; the workers do the work.
                 Tool::SpawnAgent,
+                // The world model.  These three are the daimon's and not the chat's, on the same
+                // ground `spawn_agent` is: a link is kept ON a Diamond, and this is the only turn
+                // that HAS one -- its `path_prefix` names the Diamond, so `link_add` knows where
+                // the record goes without the model having to be right about it.  A chat is scoped
+                // to no Diamond, so every write it made would be aimed by an argument the model
+                // chose at a Diamond it does not belong to.
+                Tool::LinkList,
+                Tool::LinkAdd,
+                Tool::LinkRemove,
             ],
             ctx,
         );
@@ -1313,48 +1339,83 @@ async fn open_command(msg: String) -> Opened {
         Some(c) => c,
         None    => return Opened::Send(msg),    // not a command; an ordinary message
     };
-    match read_skill(&cmd.name).await {
-        Some((path, text)) => {
-            let sk = crate::skills::parse_skill(&text, &cmd.name);
-            Opened::Send(crate::skills::compose_command(&sk.name, &path, &sk.body, &cmd.args))
-        },
-        None => Opened::Refuse(crate::skills::no_such_skill(&cmd.name)),
-    }
-}
-
-/// Read the skill a `/name` invoked, as `(path, text)`, or `None` where no such file is there.
-///
-/// Two roots, not one.  The user's real folder is where their skills actually live, and it is not
-/// open in Browser mode -- so a lookup that knew only about it would answer "no such skill" for
-/// every skill they have, in the one mode that always works.  Daimond's own OPFS store is the
-/// place that is always there, and it is searched second so a real folder's copy wins.  Nothing
-/// syncs between the two: putting a skill in the sandbox is a file the user writes there (through
-/// the Workspace panel, like any other), and making that automatic would need a sync of
-/// `.daimond/skills` on folder open, which is not built here.
-///
-/// A file that exists but is blank is passed over rather than injected: an empty skill is
-/// indistinguishable, once in front of the model, from no skill at all, and the refusal that
-/// follows at least names what was looked for.
-///
-/// # Arguments
-/// * `name` - The skill's name, as typed after the slash.
-async fn read_skill(name: &str) -> Option<(String, String)> {
     let mut roots = vec![crate::tools::FileRoot::Workspace];
     // Only while a folder is open are these two different stores; without one they are the same
     // directory, and searching it twice would double the cost of every refusal.
     if crate::wasm::opfs::workspace_mode() == "folder" {
         roots.push(crate::tools::FileRoot::Opfs);
     }
+    // What was actually searched, for the refusal.  Each store brings its own search path, so this
+    // is a union and not a constant -- a user who named a directory in the folder they have open
+    // should be told it was looked in, and one who named it in the other store should be able to
+    // see from the same sentence that it was not.
+    let mut looked_in: Vec<String> = Vec::new();
     for root in roots {
-        for path in crate::skills::command_paths(name) {
-            let bytes = match crate::wasm::opfs::read_file(root, &path).await {
-                Ok(b)  => b,
-                Err(_) => continue,     // not there, or not readable: try the next place
-            };
-            if let Ok(text) = String::from_utf8(bytes) {
-                if !text.trim().is_empty() {
-                    return Some((path, text));
-                }
+        let extra = search_path(root).await;
+        for dir in crate::skills::command_dirs(&extra) {
+            if !looked_in.contains(&dir) {
+                looked_in.push(dir);
+            }
+        }
+        if let Some((path, text)) = read_skill(root, &cmd.name, &extra).await {
+            let sk = crate::skills::parse_skill(&text, &cmd.name);
+            return Opened::Send(
+                crate::skills::compose_command(&sk.name, &path, &sk.body, &cmd.args));
+        }
+    }
+    Opened::Refuse(crate::skills::no_such_skill(&cmd.name, &looked_in))
+}
+
+/// The extra directories this store's own `.daimond/skills.path` names, or none.
+///
+/// A store without the file is the ordinary case, not a fault: nothing is logged and the only
+/// place searched is Daimond's own skills directory.  See [`crate::skills::SEARCH_PATH_FILE`] for
+/// why the list is data in the workspace rather than a constant in the binary.
+///
+/// # Arguments
+/// * `root` - The store to read it from.
+async fn search_path(root: crate::tools::FileRoot) -> Vec<String> {
+    let bytes = match crate::wasm::opfs::read_file(root, crate::skills::SEARCH_PATH_FILE).await {
+        Ok(b)  => b,
+        Err(_) => return Vec::new(),
+    };
+    match String::from_utf8(bytes) {
+        Ok(text) => crate::skills::parse_search_path(&text),
+        Err(_)   => Vec::new(),
+    }
+}
+
+/// Read the skill a `/name` invoked out of ONE store, as `(path, text)`, or `None` where no such
+/// file is there.
+///
+/// Two stores are searched, not one, and [`open_command`] is where that happens.  The user's real
+/// folder is where their skills actually live, and it is not open in Browser mode -- so a lookup
+/// that knew only about it would answer "no such skill" for every skill they have, in the one mode
+/// that always works.  Daimond's own OPFS store is the place that is always there, and it is
+/// searched second so a real folder's copy wins.  Nothing syncs between the two: putting a skill
+/// in the sandbox is a file the user writes there (through the Workspace panel, like any other),
+/// and making that automatic would need a sync of `.daimond/skills` on folder open, which is not
+/// built here.
+///
+/// A file that exists but is blank is passed over rather than injected: an empty skill is
+/// indistinguishable, once in front of the model, from no skill at all, and the refusal that
+/// follows at least names what was looked for.
+///
+/// # Arguments
+/// * `root` - The store to search.
+/// * `name` - The skill's name, as typed after the slash.
+/// * `extra` - The directories this store's own search path added, beyond Daimond's.
+async fn read_skill(root: crate::tools::FileRoot, name: &str, extra: &[String])
+    -> Option<(String, String)>
+{
+    for path in crate::skills::command_paths(name, extra) {
+        let bytes = match crate::wasm::opfs::read_file(root, &path).await {
+            Ok(b)  => b,
+            Err(_) => continue,     // not there, or not readable: try the next place
+        };
+        if let Ok(text) = String::from_utf8(bytes) {
+            if !text.trim().is_empty() {
+                return Some((path, text));
             }
         }
     }
@@ -1378,6 +1439,16 @@ fn refuse(msg: &str) -> Error<ErrTag> {
 /// Convert a [`ChatMessage`] to a plain JS object mirroring
 /// [`ChatMessage::to_datmap`], so the browser can store the conversation the
 /// model holds without inventing a second shape for it.
+///
+/// **`content` crosses this boundary as a STRING, always -- an image is written as the line that
+/// names it and its bytes stay in Rust.**  Not an oversight; the alternative was weighed and
+/// refused.  What is on the other side of this function is `chat.session.msgs`, which the browser
+/// puts in its own store and hands back on the next reload, and which the journal's write-ahead
+/// log copies through on every turn.  Carrying a megabyte of base64 there would put a screenshot
+/// into the store, into the sync parcel, and into the log, on every turn that held one -- to buy
+/// what?  The model does not need it: the line names the file, `file_read` fetches it again, and
+/// a reloaded chat is a chat the model is re-reading anyway.  It is the same trade
+/// `crate::compact::elide_bulk` makes when the window fills, made for the same reason.
 fn message_to_js(msg: &ChatMessage) -> JsValue {
     let obj = js_sys::Object::new();
     let set = |k: &str, v: &JsValue| {
@@ -1387,15 +1458,15 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
     match msg {
         ChatMessage::System { content } => {
             set("role", &JsValue::from_str("system"));
-            set("content", &JsValue::from_str(content));
+            set("content", &JsValue::from_str(&content.as_text()));
         }
         ChatMessage::User { content } => {
             set("role", &JsValue::from_str("user"));
-            set("content", &JsValue::from_str(content));
+            set("content", &JsValue::from_str(&content.as_text()));
         }
         ChatMessage::Assistant { content, tool_calls } => {
             set("role", &JsValue::from_str("assistant"));
-            set("content", &JsValue::from_str(content));
+            set("content", &JsValue::from_str(&content.as_text()));
             // Written only when there are any, exactly as the JDAT form does, so an
             // ordinary answer keeps the shape it always had.
             if !tool_calls.is_empty() {
@@ -1417,7 +1488,7 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
         ChatMessage::Tool { tool_call_id, content } => {
             set("role", &JsValue::from_str("tool"));
             set("tool_call_id", &JsValue::from_str(tool_call_id));
-            set("content", &JsValue::from_str(content));
+            set("content", &JsValue::from_str(&content.as_text()));
         }
     }
     obj.into()
@@ -1432,10 +1503,10 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
 fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
     let content = js_prop(item, "content").unwrap_or_default();
     match js_prop(item, "role").unwrap_or_default().as_str() {
-        "system" => Some(ChatMessage::System { content }),
-        "user"   => Some(ChatMessage::User { content }),
+        "system" => Some(ChatMessage::system(content)),
+        "user"   => Some(ChatMessage::user(content)),
         "tool"   => match js_prop(item, "tool_call_id") {
-            Some(id) if !id.is_empty() => Some(ChatMessage::Tool { tool_call_id: id, content }),
+            Some(id) if !id.is_empty() => Some(ChatMessage::tool(id, content)),
             _ => None,
         },
         "assistant" => {
@@ -1455,7 +1526,7 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
                     }
                 }
             }
-            Some(ChatMessage::Assistant { content, tool_calls })
+            Some(ChatMessage::assistant_calling(content, tool_calls))
         }
         _ => None,
     }

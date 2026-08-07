@@ -32,7 +32,8 @@
 //   node dev/verify_sweep_desktop.mjs            # the whole sweep
 //   node dev/verify_sweep_desktop.mjs --quick    # dark + light only, for edits
 //
-// Needs dev/serve.mjs on :8777 and dev/mockllm.mjs on :9099. No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import fs from 'node:fs';
 import path from 'node:path';

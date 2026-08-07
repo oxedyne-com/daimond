@@ -17,7 +17,8 @@
 //   - what it replaced is gone from the request
 //   - after a reload, still gone, and the notice is still there
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099).
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import { open, chat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
 
 const ok = [], bad = [];

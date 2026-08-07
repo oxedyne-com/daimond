@@ -26,7 +26,8 @@
 // write into a stranger's storage at this browser), and everything un-prefixed
 // is restored as it always was.
 //
-// Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099). No gateway.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099). No gateway.
 import fs from 'node:fs';
 import { open, errors, signInAs, scratch } from './harness.mjs';
 

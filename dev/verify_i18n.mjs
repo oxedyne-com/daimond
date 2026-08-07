@@ -14,7 +14,7 @@
 //
 //   node dev/verify_i18n.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway and no model.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';

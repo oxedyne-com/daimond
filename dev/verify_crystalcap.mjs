@@ -26,7 +26,8 @@
 //
 //   node dev/verify_crystalcap.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway, no mock LLM: nothing here runs a turn.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no mock LLM: nothing
+// here runs a turn.
 import fs from 'node:fs';
 import { open, scratch } from './harness.mjs';
 

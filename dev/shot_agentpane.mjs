@@ -1,8 +1,9 @@
 // shot_agentpane.mjs — visual + behavioural check of the agents panel's new
 // chips (parent Diamond, inherited tags, model) and its Diamonds-style search/filter.
 //
-// Drives the real UI: two tagged Diamonds, a small fan-out from each, then the
-// search box and a Diamond-chip filter. Needs dev/serve.mjs :8777 + dev/mockllm.mjs.
+// Drives the real UI: two tagged Diamonds, a small fan-out from each, then the search
+// box and a Diamond-chip filter. Needs dev/serve.mjs (DAIMOND_PORT, default 8777) +
+// dev/mockllm.mjs.
 import { open, shot } from './harness.mjs';
 
 const s = await open({ name: 'agentpane-shot', signIn: true, connect: true });

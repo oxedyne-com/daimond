@@ -18,7 +18,7 @@
 // in English, which is the daimon's language and not the user's; and a locale
 // we do not ship falls back to English rather than to a blank window.
 //
-// Needs dev/serve.mjs on :8777. Run it headed, under xvfb:
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). Run it headed, under xvfb:
 //	xvfb-run -a node dev/verify_ext_i18n.mjs
 import path from 'node:path';
 import os from 'node:os';
@@ -29,7 +29,8 @@ import { pathToFileURL } from 'node:url';
 const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
-const ROOT = '/home/jason/usr/code/web/apps/oxedyne/daimond';
+import { fileURLToPath } from 'node:url';
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 const EXT = `${ROOT}/ext`;
 // The SHIPPED manifest names one origin, and it is not this dev server, so the
 // BROWSER is given the generated dev build -- the same files, linked, with the
@@ -40,7 +41,9 @@ const EXT_DEV = await extDev();
 const EXTID = 'mpliijponglmmffjnonahhignkpkhmij';
 // Not /tmp -- see the SCRATCH note in harness.mjs.
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
-const APP = 'http://localhost:8777';
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 const SITE_PORT = Number(process.env.EXTI18N_PORT || 9123);
 const SITE = `http://127.0.0.1:${SITE_PORT}`;
 

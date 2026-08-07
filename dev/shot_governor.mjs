@@ -5,7 +5,8 @@
 // runs — the "fifty agents in a blink" case, stopped at the door. Then a small
 // fan-out to show it clears silently.
 //
-// Needs dev/serve.mjs :8777 and dev/mockllm.mjs :9099.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
+// (DAIMOND_MOCK_PORT, default 9099).
 import { open, shot } from './harness.mjs';
 
 const s = await open({ name: 'governor-shot', signIn: true, connect: true });

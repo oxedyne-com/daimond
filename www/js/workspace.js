@@ -612,8 +612,18 @@
 	}
 
 	/// Place a popover under the control that opened it, kept inside the window.
+	///
+	/// The `left: 0` before the measurement is load-bearing. A fixed box's
+	/// shrink-to-fit width is capped by the room to the RIGHT of wherever it
+	/// currently sits, and the pop still carries the `left` from its last open —
+	/// so after a resize or a rotation, `offsetWidth` reported the width the old
+	/// position allowed rather than the width the content wants. The Appearance
+	/// menu came back 272px instead of 350px on every open after the first, and
+	/// its dock-tiling row wrapped into two ragged lines. Measuring from the left
+	/// edge lets it be its full width before anything is decided from it.
 	function openPop(pop, anchor) {
 		pop.hidden = false;
+		pop.style.left = '0px';
 		var r = anchor.getBoundingClientRect();
 		var w = pop.offsetWidth;
 		var left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);

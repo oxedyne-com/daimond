@@ -97,11 +97,379 @@ impl ToolCall {
     }
 }
 
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Message content                                                │
+// └───────────────────────────────────────────────────────────────┘
+
+/// An image format both wire dialects accept.
+///
+/// An enum rather than a free `String` media type, because the set is closed: Anthropic's
+/// Messages API takes exactly these four and rejects anything else, and OpenAI's `image_url`
+/// carries the same four in a `data:` URL.  A media type the model cannot decode is a provider
+/// 400, which is the failure this type exists to make unreachable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImageMedia {
+    Png,
+    Jpeg,
+    Gif,
+    WebP,
+}
+
+impl ImageMedia {
+
+    /// The IANA media type, as both dialects spell it.
+    pub fn mime(&self) -> &'static str {
+        match self {
+            Self::Png  => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Gif  => "image/gif",
+            Self::WebP => "image/webp",
+        }
+    }
+
+    /// The media type read from the bytes themselves, or `None` when they are not an image.
+    ///
+    /// Sniffed rather than taken from the file extension: the extension is whatever the user
+    /// typed, and a `.png` holding JPEG bytes is a provider 400 with a message about the media
+    /// type that names the wrong one.  The magic numbers are each format's own header --
+    /// PNG's signature, JPEG's start-of-image marker, GIF's version string, and RIFF/WEBP.
+    ///
+    /// # Arguments
+    /// * `bytes` - The start of the file; four bytes are enough for three of the four.
+    pub fn sniff(bytes: &[u8]) -> Option<Self> {
+        const PNG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        if bytes.len() >= 8 && bytes[..8] == PNG {
+            return Some(Self::Png);
+        }
+        if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
+            return Some(Self::Jpeg);
+        }
+        if bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a") {
+            return Some(Self::Gif);
+        }
+        // RIFF containers hold more than WebP, so the form marker at offset 8 decides.
+        if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+            return Some(Self::WebP);
+        }
+        None
+    }
+
+    /// The media type spelled the way [`mime`](Self::mime) spells it, for reading a stored part
+    /// back.  An unknown string is refused rather than guessed: a part whose media type cannot be
+    /// named cannot be sent.
+    pub fn from_mime(s: &str) -> Option<Self> {
+        match s {
+            "image/png"  => Some(Self::Png),
+            "image/jpeg" => Some(Self::Jpeg),
+            "image/gif"  => Some(Self::Gif),
+            "image/webp" => Some(Self::WebP),
+            _ => None,
+        }
+    }
+}
+
+/// An image inside a message, held as the bytes that came off disk.
+///
+/// Bytes rather than base64: base64 is a wire encoding, and holding it would mean storing a third
+/// more than the image weighs and re-decoding it to read the header.  It is encoded once per
+/// request, in whichever dialect is being spoken, by the serialiser that needs it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImagePart {
+    /// What the bytes are, sniffed from the bytes.
+    pub media:  ImageMedia,
+    /// The file's own bytes, undecoded.
+    pub data:   Vec<u8>,
+    /// Where it came from, as the model asked for it.
+    ///
+    /// The whole reason an elided image is not a loss: the line left behind names the file, and
+    /// the model can read it again.  See `crate::compact::elide_bulk`.
+    pub source: String,
+}
+
+impl ImagePart {
+
+    /// A new part from bytes whose media type has already been settled.
+    ///
+    /// # Arguments
+    /// * `media` - What the bytes are.
+    /// * `data` - The file's bytes.
+    /// * `source` - The path the model asked for.
+    pub fn new(media: ImageMedia, data: Vec<u8>, source: String) -> Self {
+        Self { media, data, source }
+    }
+
+    /// The image's pixel dimensions, or `None` when this build cannot read that format's header.
+    ///
+    /// Header-only for both formats it knows -- neither reads a pixel -- because the only caller
+    /// is the token estimate, which runs on every request of a long turn.  GIF and WebP return
+    /// `None` and are estimated from their bytes instead; see `crate::compact::image_tokens`.
+    pub fn dims(&self) -> Option<(usize, usize)> {
+        match self.media {
+            ImageMedia::Png  => oxedyne_fe2o3_graphics::png::dimensions(&self.data).ok(),
+            ImageMedia::Jpeg => oxedyne_fe2o3_graphics::jpeg::dimensions(&self.data).ok(),
+            ImageMedia::Gif | ImageMedia::WebP => None,
+        }
+    }
+
+    /// The bytes as base64, which is the form both dialects put on the wire.
+    pub fn base64(&self) -> String {
+        oxedyne_fe2o3_text::base64::encode(&self.data)
+    }
+
+    /// The one line an elided image leaves behind, naming the file so it can be read again.
+    pub fn elision(&self) -> String {
+        fmt!("[image {} ({}, {} bytes) was dropped to fit the context window; read it again if \
+             you need to look at it]", self.source, self.media.mime(), self.data.len())
+    }
+}
+
+/// One piece of a message's content.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContentPart {
+    Text(String),
+    Image(ImagePart),
+}
+
+/// What a message carries.
+///
+/// Two shapes rather than always a list, because the shapes are not equally common: nearly every
+/// message in a session is plain text, and a list-of-one-text-part would make every caller,
+/// every serialiser and every byte count walk a vector to find the string it already had.
+/// [`Text`](Self::Text) is that case named, and [`Parts`](Self::Parts) is the case that needs a
+/// list -- which today means an image, and tomorrow whatever else a model can be shown.
+///
+/// The invariant that keeps the two from drifting: [`Parts`](Self::Parts) is only ever built by
+/// [`parts`](Self::parts), which collapses an all-text list back to [`Text`](Self::Text).  So two
+/// contents that say the same thing compare equal, and no serialiser has to handle a `Parts`
+/// carrying nothing but a string.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MessageContent {
+    /// Plain text -- the overwhelmingly common case.
+    Text(String),
+    /// An ordered list of parts, at least one of which is not text.
+    Parts(Vec<ContentPart>),
+}
+
+impl Default for MessageContent {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
+/// Content displays as its text, with each image named -- see [`MessageContent::as_text`].
+///
+/// Worth having rather than making every caller reach for `as_text`: the places that format a
+/// message are error messages, log lines and test failures, and each of them wants exactly the
+/// rendering `as_text` produces.
+impl std::fmt::Display for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_text())
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self { Self::Text(s) }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self { Self::Text(s.to_string()) }
+}
+
+impl MessageContent {
+
+    /// Plain text content -- one call, which is what the common case deserves.
+    pub fn text<S: Into<String>>(s: S) -> Self {
+        Self::Text(s.into())
+    }
+
+    /// Content from a list of parts, collapsed to [`Text`](Self::Text) when nothing in it needs
+    /// the list form.  See the type's own note on why that collapse is the invariant.
+    pub fn parts(parts: Vec<ContentPart>) -> Self {
+        if parts.iter().all(|p| matches!(p, ContentPart::Text(_))) {
+            let mut s = String::new();
+            for p in &parts {
+                if let ContentPart::Text(t) = p {
+                    if !s.is_empty() && !t.is_empty() {
+                        s.push('\n');
+                    }
+                    s.push_str(t);
+                }
+            }
+            return Self::Text(s);
+        }
+        Self::Parts(parts)
+    }
+
+    /// The content as text, with each image standing in for itself by name.
+    ///
+    /// Borrowed in the common case and built only when there are parts, so the panels, the ledger
+    /// and the fold rendering -- all of which want a string and none of which can look at an
+    /// image -- pay nothing on an ordinary message.
+    pub fn as_text(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Text(s) => std::borrow::Cow::Borrowed(s.as_str()),
+            Self::Parts(parts) => {
+                let mut out = String::new();
+                for p in parts {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    match p {
+                        ContentPart::Text(t)  => out.push_str(t),
+                        ContentPart::Image(i) => out.push_str(&fmt!(
+                            "[image {} ({}, {} bytes)]", i.source, i.media.mime(), i.data.len())),
+                    }
+                }
+                std::borrow::Cow::Owned(out)
+            },
+        }
+    }
+
+    /// Bytes of TEXT this content carries; an image's payload is not counted here.
+    ///
+    /// The separation is deliberate and is the whole of the token-accounting fix: an image costs
+    /// what its pixels cost, not what its bytes cost, so it is measured by
+    /// `crate::compact::image_bytes` instead and never by the text ratio.
+    pub fn text_len(&self) -> usize {
+        match self {
+            Self::Text(s) => s.len(),
+            Self::Parts(parts) => parts.iter().map(|p| match p {
+                ContentPart::Text(t) => t.len(),
+                // The `[image …]` stand-in a renderer would put here, near enough.
+                ContentPart::Image(i) => i.source.len() + 32,
+            }).sum(),
+        }
+    }
+
+    /// Whether there is nothing to send.  An image alone is not empty.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Text(s) => s.is_empty(),
+            Self::Parts(parts) => parts.is_empty(),
+        }
+    }
+
+    /// The images this content carries, in order.
+    pub fn images(&self) -> impl Iterator<Item = &ImagePart> {
+        let slice: &[ContentPart] = match self {
+            Self::Text(_) => &[],
+            Self::Parts(parts) => parts.as_slice(),
+        };
+        slice.iter().filter_map(|p| match p {
+            ContentPart::Image(i) => Some(i),
+            ContentPart::Text(_)  => None,
+        })
+    }
+
+    /// Whether there is an image in here.
+    pub fn has_image(&self) -> bool {
+        self.images().next().is_some()
+    }
+
+    /// The same content with every image replaced by the line that names it.
+    ///
+    /// What elision does to an image, and why elision is not a loss: the file is still named, and
+    /// `file_read` will fetch it again.  See `crate::compact::elide_bulk`.
+    pub fn without_images(&self) -> Self {
+        match self {
+            Self::Text(_) => self.clone(),
+            Self::Parts(parts) => Self::parts(parts.iter().map(|p| match p {
+                ContentPart::Text(t)  => ContentPart::Text(t.clone()),
+                ContentPart::Image(i) => ContentPart::Text(i.elision()),
+            }).collect()),
+        }
+    }
+
+    /// Serialise to JDAT: a bare string for text, a list of typed maps for parts.
+    ///
+    /// The text case keeps the shape the store has always written, which is what lets a session
+    /// snapshot round-trip without the reader knowing anything new.
+    pub fn to_dat(&self) -> Dat {
+        match self {
+            Self::Text(s) => dat!(s.clone()),
+            Self::Parts(parts) => {
+                let items: Vec<Dat> = parts.iter().map(|p| {
+                    let mut m = DaticleMap::new();
+                    match p {
+                        ContentPart::Text(t) => {
+                            m.insert(dat!("type"), dat!("text"));
+                            m.insert(dat!("text"), dat!(t.clone()));
+                        },
+                        ContentPart::Image(i) => {
+                            m.insert(dat!("type"), dat!("image"));
+                            m.insert(dat!("media_type"), dat!(i.media.mime()));
+                            m.insert(dat!("source"), dat!(i.source.clone()));
+                            // Bytes, not base64: the store holds what the file held, and BU64 is
+                            // the byte vector JDAT reads back without a decode step.
+                            m.insert(dat!("data"), Dat::BU64(i.data.clone()));
+                        },
+                    }
+                    Dat::Map(m)
+                }).collect();
+                Dat::List(items)
+            },
+        }
+    }
+
+    /// Read back what [`to_dat`](Self::to_dat) wrote.
+    ///
+    /// A part that cannot be read -- an unknown media type, missing bytes -- is dropped rather
+    /// than refusing the message: half a conversation read back is worth more to the user than an
+    /// error, and the same reasoning already governs `ChatMessage::from_datmap`.
+    pub fn from_dat(d: &Dat) -> Outcome<Self> {
+        match d {
+            Dat::Str(s) => Ok(Self::Text(s.clone())),
+            Dat::List(items) => {
+                let mut parts = Vec::with_capacity(items.len());
+                for item in items {
+                    let m = match item {
+                        Dat::Map(m) => m,
+                        _ => continue,
+                    };
+                    let kind = match m.get(&dat!("type")) {
+                        Some(Dat::Str(s)) => s.as_str(),
+                        _ => continue,
+                    };
+                    match kind {
+                        "text" => {
+                            if let Some(Dat::Str(t)) = m.get(&dat!("text")) {
+                                parts.push(ContentPart::Text(t.clone()));
+                            }
+                        },
+                        "image" => {
+                            let media = match m.get(&dat!("media_type")) {
+                                Some(Dat::Str(s)) => match ImageMedia::from_mime(s) {
+                                    Some(mt) => mt,
+                                    None => continue,
+                                },
+                                _ => continue,
+                            };
+                            let data = match m.get(&dat!("data")) {
+                                Some(Dat::BU64(b)) => b.clone(),
+                                _ => continue,
+                            };
+                            let source = match m.get(&dat!("source")) {
+                                Some(Dat::Str(s)) => s.clone(),
+                                _ => String::new(),
+                            };
+                            parts.push(ContentPart::Image(ImagePart::new(media, data, source)));
+                        },
+                        _ => continue,
+                    }
+                }
+                Ok(Self::parts(parts))
+            },
+            _ => Err(err!("MessageContent: expected a string or a list of parts."; Invalid, Input)),
+        }
+    }
+}
+
+
 /// A single message in a conversation, mirroring the OpenAI API format.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
-    System { content: String },
-    User { content: String },
+    System { content: MessageContent },
+    User { content: MessageContent },
     /// Assistant turn, with whatever tool calls it asked for.
     ///
     /// The calls are part of the message and are persisted with it.  They used to be
@@ -109,12 +477,39 @@ pub enum ChatMessage {
     /// merely lossy: the assistant turn came back bare and the `tool` replies that
     /// followed it answered nothing, and an OpenAI-compatible provider rejects that
     /// outright on every subsequent turn.
-    Assistant { content: String, tool_calls: Vec<ToolCall> },
+    Assistant { content: MessageContent, tool_calls: Vec<ToolCall> },
     /// Tool call result returned to the LLM.
-    Tool { tool_call_id: String, content: String },
+    Tool { tool_call_id: String, content: MessageContent },
 }
 
 impl ChatMessage {
+
+    /// A system message.  One call, because the common case is a bare string.
+    pub fn system<C: Into<MessageContent>>(content: C) -> Self {
+        Self::System { content: content.into() }
+    }
+
+    /// A user message.
+    pub fn user<C: Into<MessageContent>>(content: C) -> Self {
+        Self::User { content: content.into() }
+    }
+
+    /// An assistant message that asked for nothing.
+    pub fn assistant<C: Into<MessageContent>>(content: C) -> Self {
+        Self::Assistant { content: content.into(), tool_calls: Vec::new() }
+    }
+
+    /// An assistant message and the tool calls it made.
+    pub fn assistant_calling<C: Into<MessageContent>>(content: C, tool_calls: Vec<ToolCall>)
+        -> Self
+    {
+        Self::Assistant { content: content.into(), tool_calls }
+    }
+
+    /// A tool reply, paired to the call it answers.
+    pub fn tool<C: Into<MessageContent>>(tool_call_id: String, content: C) -> Self {
+        Self::Tool { tool_call_id, content: content.into() }
+    }
 
     /// Serialise to a JDAT map, for the session store and the session export.
     ///
@@ -137,15 +532,15 @@ impl ChatMessage {
         match self {
             Self::System { content } => {
                 m.insert(dat!("role"), dat!("system"));
-                m.insert(dat!("content"), dat!(content.clone()));
+                m.insert(dat!("content"), content.to_dat());
             }
             Self::User { content } => {
                 m.insert(dat!("role"), dat!("user"));
-                m.insert(dat!("content"), dat!(content.clone()));
+                m.insert(dat!("content"), content.to_dat());
             }
             Self::Assistant { content, tool_calls } => {
                 m.insert(dat!("role"), dat!("assistant"));
-                m.insert(dat!("content"), dat!(content.clone()));
+                m.insert(dat!("content"), content.to_dat());
                 // Written only when there are any, so an ordinary answer's map is the
                 // shape it always was and a reader of an older snapshot sees no change.
                 if !tool_calls.is_empty() {
@@ -158,7 +553,7 @@ impl ChatMessage {
             Self::Tool { tool_call_id, content } => {
                 m.insert(dat!("role"), dat!("tool"));
                 m.insert(dat!("tool_call_id"), dat!(tool_call_id.clone()));
-                m.insert(dat!("content"), dat!(content.clone()));
+                m.insert(dat!("content"), content.to_dat());
             }
         }
         m
@@ -171,8 +566,8 @@ impl ChatMessage {
             _ => return Err(err!("ChatMessage: missing 'role'."; Invalid, Input)),
         };
         let content = match m.get(&dat!("content")) {
-            Some(Dat::Str(s)) => s.clone(),
-            _ => return Err(err!("ChatMessage: missing 'content'."; Invalid, Input)),
+            Some(d) => res!(MessageContent::from_dat(d)),
+            None => return Err(err!("ChatMessage: missing 'content'."; Invalid, Input)),
         };
         match role.as_str() {
             "system" => Ok(Self::System { content }),
@@ -215,12 +610,36 @@ impl ChatMessage {
         }
     }
 
-    pub fn content(&self) -> &str {
+    /// What this message carries, whole.
+    pub fn content(&self) -> &MessageContent {
         match self {
             Self::System { content }
             | Self::User { content }
             | Self::Assistant { content, .. }
             | Self::Tool { content, .. } => content,
+        }
+    }
+
+    /// What this message says, as text, with any image standing in for itself by name.
+    ///
+    /// Borrowed on an ordinary message; see [`MessageContent::as_text`].
+    pub fn text(&self) -> std::borrow::Cow<'_, str> {
+        self.content().as_text()
+    }
+
+    /// The same message with its content replaced.  Role, tool calls and pairing id are kept,
+    /// which is what makes an in-place elision safe: nothing a provider pairs on is touched.
+    ///
+    /// # Arguments
+    /// * `content` - What to put in place of the old content.
+    pub fn with_content(&self, content: MessageContent) -> Self {
+        match self {
+            Self::System { .. } => Self::System { content },
+            Self::User { .. }   => Self::User { content },
+            Self::Assistant { tool_calls, .. } =>
+                Self::Assistant { content, tool_calls: tool_calls.clone() },
+            Self::Tool { tool_call_id, .. } =>
+                Self::Tool { tool_call_id: tool_call_id.clone(), content },
         }
     }
 }
@@ -534,12 +953,132 @@ pub fn generate_session_id() -> String {
 // └───────────────────────────────────────────────────────────────┘
 
 #[cfg(test)]
+mod content_tests {
+    use super::*;
+
+    /// The one-pixel PNG Anthropic prints in its vision documentation, decoded.
+    ///
+    /// Source: `platform.claude.com/docs/en/build-with-claude/vision`.  Real bytes from a real
+    /// provider document rather than a header this test invented, so the sniffer is being checked
+    /// against a file the world agrees is a PNG.
+    fn doc_png() -> Vec<u8> {
+        oxedyne_fe2o3_text::base64::decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLv\
+             AAAAAElFTkSuQmCC").expect("the documented base64 must decode")
+    }
+
+    /// Each format is recognised from its own header, and a RIFF container that is not a WebP is
+    /// not mistaken for one.
+    #[test]
+    fn test_the_media_type_is_read_from_the_bytes() {
+        assert_eq!(Some(ImageMedia::Png), ImageMedia::sniff(&doc_png()));
+        assert_eq!(Some(ImageMedia::Jpeg), ImageMedia::sniff(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0]));
+        assert_eq!(Some(ImageMedia::Gif), ImageMedia::sniff(b"GIF89a\x01\x00"));
+        assert_eq!(Some(ImageMedia::WebP), ImageMedia::sniff(b"RIFF\x24\x00\x00\x00WEBPVP8 "));
+        // A WAV is a RIFF too, and is not an image.
+        assert_eq!(None, ImageMedia::sniff(b"RIFF\x24\x00\x00\x00WAVEfmt "));
+        assert_eq!(None, ImageMedia::sniff(b"fn main() {}"));
+        assert_eq!(None, ImageMedia::sniff(b""));
+    }
+
+    /// The media type survives a round trip through its own spelling, and an unknown spelling is
+    /// refused rather than guessed.
+    #[test]
+    fn test_a_media_type_round_trips_through_its_mime() {
+        for m in [ImageMedia::Png, ImageMedia::Jpeg, ImageMedia::Gif, ImageMedia::WebP] {
+            assert_eq!(Some(m), ImageMedia::from_mime(m.mime()));
+        }
+        assert_eq!(None, ImageMedia::from_mime("image/tiff"));
+    }
+
+    /// A list of nothing but text collapses back to text, so two contents that say the same thing
+    /// are the same content.
+    #[test]
+    fn test_an_all_text_parts_list_collapses() {
+        let c = MessageContent::parts(vec![
+            ContentPart::Text("one".to_string()),
+            ContentPart::Text("two".to_string()),
+        ]);
+        assert_eq!(MessageContent::text("one\ntwo"), c);
+        assert!(!c.has_image());
+
+        let with_image = MessageContent::parts(vec![
+            ContentPart::Text("look".to_string()),
+            ContentPart::Image(ImagePart::new(ImageMedia::Png, doc_png(), "a.png".to_string())),
+        ]);
+        assert!(matches!(with_image, MessageContent::Parts(_)));
+        assert!(with_image.has_image());
+        assert_eq!(1, with_image.images().count());
+    }
+
+    /// An image's bytes are not counted as text, and its stand-in names it.
+    #[test]
+    fn test_an_image_is_named_in_the_text_and_not_weighed_as_text() {
+        let c = MessageContent::parts(vec![
+            ContentPart::Text("look".to_string()),
+            ContentPart::Image(ImagePart::new(
+                ImageMedia::Png, vec![0u8; 100_000], "shots/a.png".to_string())),
+        ]);
+        assert!(c.text_len() < 200, "the image's bytes were counted as text: {}", c.text_len());
+        let t = c.as_text();
+        assert!(t.contains("shots/a.png"), "{}", t);
+        assert!(t.contains("image/png"), "{}", t);
+    }
+
+    /// Dropping the images leaves a line naming each, and nothing else changes.
+    #[test]
+    fn test_dropping_the_images_leaves_their_names() {
+        let c = MessageContent::parts(vec![
+            ContentPart::Text("here it is".to_string()),
+            ContentPart::Image(ImagePart::new(
+                ImageMedia::Png, doc_png(), "shots/a.png".to_string())),
+        ]);
+        let out = c.without_images();
+        assert!(!out.has_image());
+        let t = out.as_text();
+        assert!(t.contains("here it is"), "the prose was lost: {}", t);
+        assert!(t.contains("shots/a.png"), "the file was not named: {}", t);
+        assert!(t.contains("read it again"), "the model was not told what to do: {}", t);
+    }
+
+    /// A message carrying an image survives storage byte for byte.
+    ///
+    /// The store is where a session lives between turns; a part that cannot be written and read
+    /// back is a part the model loses on the first reload, silently.
+    #[test]
+    fn test_a_message_with_an_image_round_trips_through_the_store() {
+        let img = ImagePart::new(ImageMedia::Png, doc_png(), "shots/a.png".to_string());
+        let msg = ChatMessage::tool("call_1".to_string(), MessageContent::parts(vec![
+            ContentPart::Text("Read the image shots/a.png.".to_string()),
+            ContentPart::Image(img.clone()),
+        ]));
+        let back = ChatMessage::from_datmap(&msg.to_datmap()).expect("read back");
+        assert_eq!(msg, back);
+        let got = back.content().images().next().expect("the image was lost").clone();
+        assert_eq!(img.data, got.data, "the bytes changed in storage");
+        assert_eq!(ImageMedia::Png, got.media);
+        assert_eq!("shots/a.png", got.source);
+    }
+
+    /// Plain text still writes the bare string the store has always held, so a snapshot from
+    /// before this change reads back unchanged.
+    #[test]
+    fn test_plain_text_keeps_the_shape_the_store_always_had() {
+        let msg = ChatMessage::user("hello".to_string());
+        let m = msg.to_datmap();
+        assert_eq!(Some(&dat!("hello")), m.get(&dat!("content")),
+            "text content is no longer a bare string in the store");
+        assert_eq!(msg, ChatMessage::from_datmap(&m).expect("read back"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_chat_message_roundtrip() {
-        let msg = ChatMessage::User { content: "Hello".to_string() };
+        let msg = ChatMessage::user("Hello".to_string());
         let dm = msg.to_datmap();
         let msg2 = ChatMessage::from_datmap(&dm).unwrap();
         assert_eq!(msg, msg2);
@@ -549,7 +1088,7 @@ mod tests {
     fn test_chat_message_tool_roundtrip() {
         let msg = ChatMessage::Tool {
             tool_call_id: "call_123".to_string(),
-            content: "42".to_string(),
+            content: MessageContent::text("42"),
         };
         let dm = msg.to_datmap();
         let msg2 = ChatMessage::from_datmap(&dm).unwrap();
@@ -559,8 +1098,8 @@ mod tests {
     #[test]
     fn test_session_roundtrip() {
         let mut s = Session::new("s1".to_string(), "Test".to_string(), "glm-5p2".to_string());
-        s.messages.push(ChatMessage::User { content: "Hi".to_string() });
-        s.messages.push(ChatMessage::Assistant { content: "Hello!".to_string(), tool_calls: Vec::new() });
+        s.messages.push(ChatMessage::user("Hi".to_string()));
+        s.messages.push(ChatMessage::assistant("Hello!".to_string()));
         let dm = s.to_datmap();
         let s2 = Session::from_datmap(&dm).unwrap();
         assert_eq!(s.id, s2.id);
@@ -678,9 +1217,9 @@ mod tests {
     /// turn that asked for a tool, the reply, and the answer.
     fn session_with_a_tool_call() -> Session {
         let mut s = Session::new(fmt!("s1"), fmt!("Work"), fmt!("glm-5.2"));
-        s.messages.push(ChatMessage::User { content: fmt!("read the parser") });
+        s.messages.push(ChatMessage::user(fmt!("read the parser")));
         s.messages.push(ChatMessage::Assistant {
-            content:    fmt!("Looking."),
+            content:    MessageContent::text(fmt!("Looking.")),
             tool_calls: vec![ToolCall {
                 id:        fmt!("call_abc"),
                 name:      fmt!("file_read"),
@@ -689,10 +1228,10 @@ mod tests {
         });
         s.messages.push(ChatMessage::Tool {
             tool_call_id: fmt!("call_abc"),
-            content:      fmt!("fn parse() {{}}"),
+            content:      MessageContent::text(fmt!("fn parse() {{}}")),
         });
         s.messages.push(ChatMessage::Assistant {
-            content: fmt!("It is one function."), tool_calls: Vec::new(),
+            content: MessageContent::text(fmt!("It is one function.")), tool_calls: Vec::new(),
         });
         s
     }
@@ -755,7 +1294,7 @@ mod tests {
     fn test_an_assistant_turn_that_asked_for_nothing_is_stored_as_it_always_was_00() {
         // The key is written only when there are calls, so nothing changes for the
         // ordinary answer -- and a reader of an older snapshot sees the same map.
-        let m = ChatMessage::Assistant { content: fmt!("Hello."), tool_calls: Vec::new() };
+        let m = ChatMessage::assistant(fmt!("Hello."));
         assert!(m.to_datmap().get(&dat!("tool_calls")).is_none());
         assert_eq!(ChatMessage::from_datmap(&m.to_datmap()).ok(), Some(m));
     }
@@ -769,7 +1308,7 @@ mod tests {
         m.insert(dat!("content"), dat!("older"));
         match ChatMessage::from_datmap(&m) {
             Ok(ChatMessage::Assistant { content, tool_calls }) => {
-                assert_eq!(content, "older");
+                assert_eq!(content.as_text(), "older");
                 assert!(tool_calls.is_empty());
             }
             Ok(other) => panic!("it came back as {}", other.role()),

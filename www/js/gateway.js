@@ -200,6 +200,158 @@
 		if (moved) announce();
 	}
 
+	// ── The pause, refused where credits are committed ─────────
+	//
+	// A pause the widget respects and the network does not is decoration, so the
+	// gateway routes that COST are refused here rather than in the interface. The
+	// refusal is an ordinary 423 with `ok: false` and a sentence, so every caller
+	// shows it through the error path it already has and none of them needs to
+	// learn a second one.
+	//
+	// SYNC IS DELIBERATELY ABSENT from this table, and that is a decision rather
+	// than an omission. `/api/sync` is how a paired device catches up; a device
+	// that stopped syncing while paused would come back holding stale work,
+	// resolve it against the parcel, and the failure — a device stranded, or a
+	// merge fought out days later — is worse than the fraction of a cent a parcel
+	// costs. Pause is a control on what SPENDS on the user's behalf while they
+	// are not looking; a sync is the account being itself.
+	//
+	// Reading is likewise absent: `/api/mail/folders`, `/api/mail/accounts` and
+	// `/api/balance` list what is already there, and a paused Diamond still
+	// opens.
+
+	/// What the app says. The table lives in i18n/en.js.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// The words for a refusal: what was not done, and where the control is.
+	/// English until the key exists, so nothing shows a bare key.
+	function pauseWords(key, node, english) {
+		var s = t(key, { node: node });
+		return (s === key) ? ('Paused: ' + node + ' — ' + english
+			+ ' Press play on it to resume.') : s;
+	}
+
+	/// Is this node paused? A leaf's own flag, and cheap enough to sit in front
+	/// of every request.
+	function held(node) {
+		return !!(node && window.DaimondPause && DaimondPause.isPaused(node));
+	}
+
+	/// A node id, escaped the way the tree escapes one. Only ever reached with
+	/// the module present; `spendRefusal` answers null before it gets here.
+	function pid() {
+		return DaimondPause.id.apply(null, arguments);
+	}
+
+	/// Is EVERYTHING paused? The global control at the top of the rail is the
+	/// root of the same tree, so this is what it means when a spend cannot be
+	/// attributed to a leaf of its own.
+	function allHeld() {
+		if (!window.DaimondPause) return false;
+		return DaimondPause.state(DaimondPause.ROOT) === 'pause';
+	}
+
+	/// The body a request carries, parsed, or an empty object. Every body in
+	/// this app is a JSON string; anything else simply names no node.
+	function bodyOf(opts) {
+		try {
+			var b = opts && opts.body;
+			return (typeof b === 'string' && b) ? (JSON.parse(b) || {}) : {};
+		} catch (e) { return {}; }
+	}
+
+	/// Whether this request is refused by the pause tree, and in whose name.
+	/// Returns `{ node, message }`, or null for the great majority of calls that
+	/// cost nothing and are never held.
+	///
+	/// The path is matched on its own, before the query: `path === query` is a
+	/// mistake this tree has made before.
+	function spendRefusal(path, opts) {
+		if (!window.DaimondPause) return null;
+		var p = String(path || '').split('?')[0];
+		if (p.indexOf('/api/mail/') === 0 || p.indexOf('/api/web/') === 0) {
+			var b = bodyOf(opts);
+			if (p === '/api/mail/sync' || p === '/api/mail/send') {
+				var own = pid(DaimondPause.ROOT, 'mail', b.address, 'self');
+				// A sync is the FOLDER's spend; a send, and a poll that names no
+				// folder, is the mailbox's own. Either leaf holds it: a paused
+				// mailbox must not go on reaching the server one folder at a time.
+				var leaf = (p === '/api/mail/sync' && b.mailbox)
+					? pid(DaimondPause.ROOT, 'mail', b.address, b.mailbox)
+					: own;
+				var stop = held(leaf) ? leaf : (held(own) ? own : '');
+				if (stop) {
+					return { node: stop, message: pauseWords('pause.refused.mail', stop,
+						'the mailbox was not contacted and nothing was spent.') };
+				}
+				return null;
+			}
+			if (p === '/api/web/fetch' || p === '/api/web/head') {
+				// A page fetch is charged to whoever asked for it, when the caller
+				// says so — and otherwise to the Web panel's own leaf, with the
+				// global control behind that. `root/web` is not in §1.1's list of
+				// node ids because notes2 never asked for a control on the Web
+				// panel; it is read here so that the day the rail grows one, this
+				// obeys it without another change. Until then a page fetch is held
+				// only by the global pause, which is a gap and is reported as one.
+				var who = (typeof b.node === 'string' && b.node) ? b.node
+					: pid(DaimondPause.ROOT, 'web');
+				var hold = held(who) ? who : (allHeld() ? DaimondPause.ROOT : '');
+				if (hold) {
+					return { node: hold, message: pauseWords('pause.refused.web', hold,
+						'the page was not fetched and nothing was spent.') };
+				}
+			}
+		}
+		return null;
+	}
+
+	/// The refusal as a reply, so a caller reads it the way it reads every other
+	/// refusal: a status, `ok: false`, and a sentence. 423 Locked, because the
+	/// request was well formed and the door is shut on purpose — and because
+	/// nothing in this app treats a 423 as anything but its message (401 renews,
+	/// 426 reloads, and both would be wrong here).
+	function refusedReply(r) {
+		return new Response(JSON.stringify({ ok: false, paused: true, node: r.node, error: r.message }), {
+			status:  423,
+			headers: { 'content-type': 'application/json' },
+		});
+	}
+
+	/// The last point before a request leaves the page, for the two callers that
+	/// hold their own `fetch` rather than coming through `gwFetch`: the Web
+	/// panel's `gw()` (web.js) and anything added beside it. Narrow on purpose —
+	/// a path not in the spend table is handed straight to the real `fetch`,
+	/// untouched and unwrapped.
+	///
+	/// Cooperative would be better and is the follow-up: a caller that asked
+	/// `spendRefusal` itself could show the sentence in its own panel instead of
+	/// taking it off a 423. This is the guard that holds until then, and it is
+	/// here because the alternative — a spend boundary that only the honest
+	/// callers respect — is the decoration this whole phase exists to avoid.
+	function guardFetch() {
+		if (typeof window === 'undefined' || !window.fetch || window.fetch.__daimondPause) return;
+		var real = window.fetch;
+		var wrapped = function (input, init) {
+			var url = '';
+			try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch (e) { url = ''; }
+			var p = url;
+			// Same-origin absolute forms reduce to their path; anything else is
+			// somebody else's host and is not ours to hold.
+			if (p.indexOf('http') === 0) {
+				try { var u = new URL(p); p = (u.origin === location.origin) ? u.pathname : ''; }
+				catch (e) { p = ''; }
+			}
+			if (p.indexOf('/api/') === 0) {
+				var r = spendRefusal(p, init || (typeof input === 'object' ? input : null));
+				if (r) return Promise.resolve(refusedReply(r));
+			}
+			return real.apply(window, arguments);
+		};
+		wrapped.__daimondPause = true;
+		window.fetch = wrapped;
+	}
+
 	// ── A session that has gone ────────────────────────────────
 	//
 	// The gateway's session lives an hour and nothing ever renewed it. The only
@@ -350,6 +502,11 @@
 	/// directly -- see the notes at `redeem()` in pairing.js and `getBlob()` in
 	/// passkey.js.
 	async function gwFetch(path, opts) {
+		// A paused node never reaches the network. Here as well as in the guard
+		// over `fetch`, because this is the one copy of the gateway rule and a
+		// reader looking for what a call does looks here.
+		var stop = spendRefusal(path, opts);
+		if (stop) return refusedReply(stop);
 		var r = await fetch(path, opts);
 		probeVersion(r);
 		// A call the bootstrap is making itself cannot answer a 401 by
@@ -691,5 +848,11 @@
 		/// The contract version this build speaks, for a caller making its own
 		/// gateway request. There is one copy of this number and it lives here.
 		clientApi:      function () { return CLIENT_API; },
+		/// Whether the pause tree refuses this call, and in whose name. For a
+		/// caller that holds its own `fetch` and would rather show the sentence
+		/// in its own panel than read it off a 423.
+		spendRefusal:   spendRefusal,
 	};
+
+	guardFetch();
 })();

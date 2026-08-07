@@ -25,7 +25,7 @@
 // Nothing here contacts a remote and no real credential is used: the token is a
 // literal that is not a token.
 //
-// Run with dev/serve.mjs on :8777. No gateway and no model needed.
+// Run with dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model needed.
 //
 //   node dev/verify_gitcred.mjs
 

@@ -1,9 +1,9 @@
 // shot_agentctl.mjs — behavioural check of the Agents panel's pause / resume /
 // stop controls (header, acting on all) and the running/paused/queued tally.
 //
-// Drives the real UI: a fan-out of slow (@long) workers, then Pause-all →
-// Resume-all → Stop-all, asserting the tiles' state and the header at each step.
-// Needs dev/serve.mjs :8777 + dev/mockllm.mjs.
+// Drives the real UI: a fan-out of slow (@long) workers, then Pause-all → Resume-all →
+// Stop-all, asserting the tiles' state and the header at each step. Needs dev/serve.mjs
+// (DAIMOND_PORT, default 8777) + dev/mockllm.mjs.
 import { open, shot } from './harness.mjs';
 
 const s = await open({ name: 'agentctl-shot', signIn: true, connect: true });

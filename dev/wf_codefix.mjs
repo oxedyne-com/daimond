@@ -8,7 +8,17 @@ import { open, chat, errors } from './harness.mjs';
 
 const cfg = JSON.parse(fs.readFileSync('dev/.secrets/testcfg.json', 'utf8'));
 const MODEL = cfg.models.value;   // gpt-oss-120b (value)
-const SEED = fs.readFileSync('/home/jason/usr/scratch/daimond-test/rustcalc/src/lib.rs', 'utf8');
+// The rustcalc fixture is not in this repository — it is a scratch project one
+// developer keeps outside it, so the path is a setting and not a constant.
+// `dev/` is carved into a public mirror, and a home directory baked in here is
+// both a leak and a script nobody else can run.
+const FIXTURE = process.env.DAIMOND_RUSTCALC
+	|| `${process.env.HOME}/usr/scratch/daimond-test/rustcalc`;
+if (!fs.existsSync(FIXTURE)) {
+	console.log(`SKIP wf_codefix — no rustcalc fixture at ${FIXTURE}; set DAIMOND_RUSTCALC.`);
+	process.exit(0);
+}
+const SEED = fs.readFileSync(`${FIXTURE}/src/lib.rs`, 'utf8');
 
 function connectReal(page) {
   return page.evaluate(async (c) => {
@@ -62,10 +72,10 @@ const edited = await s.page.evaluate(async () => {
   try { const root=await navigator.storage.getDirectory(); const d=await root.getDirectoryHandle('rustcalc'); const sub=await d.getDirectoryHandle('src'); const fh=await sub.getFileHandle('lib.rs'); return await (await fh.getFile()).text(); }
   catch(e){ return '(missing: '+e+')'; }
 });
-const verifyDir = '/home/jason/usr/scratch/daimond-test/rustcalc-verify';
+const verifyDir = `${FIXTURE}-verify`;
 fs.rmSync(verifyDir, { recursive: true, force: true });
 fs.mkdirSync(verifyDir+'/src', { recursive: true });
-fs.copyFileSync('/home/jason/usr/scratch/daimond-test/rustcalc/Cargo.toml', verifyDir+'/Cargo.toml');
+fs.copyFileSync(`${FIXTURE}/Cargo.toml`, verifyDir+'/Cargo.toml');
 fs.writeFileSync(verifyDir+'/src/lib.rs', edited);
 let testOut = '', pass = false;
 try { testOut = execSync('cargo test 2>&1', { cwd: verifyDir, encoding: 'utf8' }); pass = /test result: ok/.test(testOut) && !/FAILED/.test(testOut); }

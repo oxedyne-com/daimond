@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::llm::LlmClient;
 use crate::prompts::Role;
-use crate::protocol::{AgentEvent, ChatMessage, Session};
+use crate::protocol::{AgentEvent, ChatMessage, MessageContent, Session};
 use crate::tools::ToolRegistry;
 
 /// Folding a conversation that has outgrown the model's context window.
@@ -267,7 +267,7 @@ impl Agent {
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
         // Append the user message to the persisted history.
-        session.messages.push(ChatMessage::User { content: user_msg });
+        session.messages.push(ChatMessage::user(user_msg));
 
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
@@ -292,7 +292,7 @@ impl Agent {
                 sys.push_str("\n\n");
                 sys.push_str(brief.trim());
             }
-            working.push(ChatMessage::System { content: sys });
+            working.push(ChatMessage::system(sys));
         }
         working.extend(session.messages.iter().cloned());
 
@@ -329,7 +329,7 @@ impl Agent {
             match result {
                 Ok(resp) => {
                     let content = if resp.content.is_empty() { full } else { resp.content };
-                    session.messages.push(ChatMessage::Assistant { content, tool_calls: Vec::new() });
+                    session.messages.push(ChatMessage::assistant(content));
                     session.prompt_tokens += resp.prompt_tokens;
                     session.completion_tokens += resp.completion_tokens;
                     session.cached_tokens += resp.cached_tokens;
@@ -439,7 +439,7 @@ impl Agent {
             // streamed and end the turn cleanly, without an error.
             if resp.aborted {
                 session.messages.push(ChatMessage::Assistant {
-                    content: resp.content, tool_calls: Vec::new(),
+                    content: MessageContent::text(resp.content), tool_calls: Vec::new(),
                 });
                 on_event(AgentEvent::Done);
                 return Ok(());
@@ -449,7 +449,7 @@ impl Agent {
                 // Final answer — its text has already streamed via the
                 // token callback, so it is not re-emitted here.
                 session.messages.push(ChatMessage::Assistant {
-                    content: resp.content, tool_calls: Vec::new(),
+                    content: MessageContent::text(resp.content), tool_calls: Vec::new(),
                 });
                 on_event(AgentEvent::Done);
                 return Ok(());
@@ -462,7 +462,7 @@ impl Agent {
             // bearing tool_calls be followed by a tool reply for each of them,
             // which the loop below then supplies.
             let asked = ChatMessage::Assistant {
-                content: resp.content.clone(),
+                content: MessageContent::text(resp.content.clone()),
                 tool_calls: resp.tool_calls.clone(),
             };
             working.push(asked.clone());
@@ -478,12 +478,24 @@ impl Agent {
                 // same thing again and is cut in the same place. Told what actually
                 // happened, it splits the work instead.
                 let result = if cut_short(resp.truncated, &tc.arguments) {
-                    truncated_call_note(self.llm.max_tokens)
+                    // The cap that was SENT, not the one configured. The note says the number so
+                    // the model can size its next call by it, and telling a model its reply was
+                    // cut at 4,096 when it was cut at 32,000 sends it splitting the work eight
+                    // times finer than it needs to.
+                    MessageContent::text(truncated_call_note(self.reply_cap()))
                 } else {
                     registry.dispatch(&tc.name, &tc.arguments).await
                 };
-                on_event(AgentEvent::ToolResult { name: tc.name.clone(), result: result.clone() });
-                let reply = ChatMessage::Tool { tool_call_id: tc.id.clone(), content: result };
+                // The event carries the TEXT of the result and not the image. Everything
+                // downstream of it -- the panel, the journal's write-ahead log, the transcript on
+                // screen -- renders a string, and an image inside that string would be a base64
+                // wall in a tile. The image travels in the message instead, where the model is
+                // the only reader of it.
+                on_event(AgentEvent::ToolResult {
+                    name:   tc.name.clone(),
+                    result: result.as_text().into_owned(),
+                });
+                let reply = ChatMessage::tool(tc.id.clone(), result);
                 working.push(reply.clone());
                 session.messages.push(reply);
             }
@@ -499,7 +511,7 @@ impl Agent {
             // reject the whole thing.
             for said in self.take_interjections() {
                 on_event(AgentEvent::Interjected(said.clone()));
-                let msg = ChatMessage::User { content: said };
+                let msg = ChatMessage::user(said);
                 working.push(msg.clone());
                 session.messages.push(msg);
             }
@@ -526,13 +538,42 @@ impl Agent {
     // │ Folding a conversation that no longer fits                 │
     // └───────────────────────────────────────────────────────────┘
 
+    /// The output cap this turn's requests will ACTUALLY carry, which is not always the one the
+    /// client was configured with.
+    ///
+    /// [`crate::compact::Limits::budget`] subtracts the reply from the window to decide how big a
+    /// prompt may be, so it has to be given the figure the provider will be sent.  It was being
+    /// given `llm.max_tokens`, and on the one path that matters that is the wrong figure by a
+    /// factor of eight: a streamed Anthropic request to a model that takes adaptive thinking is
+    /// sent `THINKING_MIN_MAX_TOKENS`, because thinking is billed as output and counts against the
+    /// same cap.
+    ///
+    /// **On a large window the error is invisible and on a small one it is fatal.**  With 131,072
+    /// tokens the fraction ceiling is the lower of the two and wins whatever the reserve says.  But
+    /// a window is not always the published one: [`Limits::learn_from_refusal`] sets it from a
+    /// provider's refusal, and at 40,000 the old figure reserved 5,120 tokens for a reply that may
+    /// run to 32,000, left a budget the conversation already fitted, folded nothing, sent the same
+    /// prompt, and was refused again -- a turn with no way out, arrived at by the very mechanism
+    /// that exists to recover from the first refusal.
+    ///
+    /// The agent always streams (see [`Agent::run_streaming`] and the tool loop), so the streaming
+    /// half of the client's rule is a constant here and only the model has to be asked about.
+    fn reply_cap(&self) -> u32 {
+        match self.llm.dialect {
+            crate::llm::Dialect::Anthropic
+                if crate::llm::model_takes_adaptive_thinking(&self.llm.model) =>
+                    self.llm.max_tokens.max(crate::llm::THINKING_MIN_MAX_TOKENS),
+            _ => self.llm.max_tokens,
+        }
+    }
+
     /// Whether a failed round was the provider refusing an oversized prompt.
     ///
     /// # Arguments
     /// * `e` - The error the call returned.
     /// * `bytes` - Bytes of prompt that were refused.
     fn overflowed(&self, e: &Error<ErrTag>, bytes: u64) -> bool {
-        let budget = self.limits.borrow().budget(self.llm.max_tokens);
+        let budget = self.limits.borrow().budget(self.reply_cap());
         compact::looks_like_overflow(&fmt!("{}", e), self.gauge.tokens(bytes), budget)
     }
 
@@ -577,7 +618,8 @@ impl Agent {
         }
         let (budget, tail, model) = {
             let l = self.limits.borrow();
-            (l.budget(self.llm.max_tokens), l.tail_budget(self.llm.max_tokens), l.fold_model.clone())
+            let cap = self.reply_cap();
+            (l.budget(cap), l.tail_budget(cap), l.fold_model.clone())
         };
         let before = compact::conversation_bytes(&session.messages);
         if !force && self.gauge.tokens(compact::conversation_bytes(working) + schema) <= budget {
@@ -692,9 +734,9 @@ impl Agent {
         }
         llm.max_tokens = compact::FOLD_MAX_TOKENS;
         let msgs = vec![
-            ChatMessage::System { content: self.fold_prompt() },
-            ChatMessage::User { content: fmt!(
-                "Here is the earlier part of the conversation.\n\n{}", rendered) },
+            ChatMessage::system(self.fold_prompt()),
+            ChatMessage::user(fmt!(
+                "Here is the earlier part of the conversation.\n\n{}", rendered)),
         ];
         let resp = res!(llm.chat_once(&msgs, None).await);
         session.prompt_tokens     += resp.prompt_tokens;
@@ -936,9 +978,9 @@ mod tests {
         let a = make_test_agent();
         a.interject("actually, target wasm");
         let taken = a.take_interjections();
-        let msg = ChatMessage::User { content: taken[0].clone() };
+        let msg = ChatMessage::user(taken[0].clone());
         assert_eq!(msg.role(), "user");
-        assert_eq!(msg.content(), "actually, target wasm");
+        assert_eq!(msg.text(), "actually, target wasm");
     }
 
     // ── What bounds a turn ──────────────────────────────────────────────
@@ -1097,9 +1139,9 @@ mod tests {
         a.set_context_window(8_192);
         let mut session = Session::new(fmt!("s1"), fmt!("long"), fmt!("model"));
         for i in 0..40 {
-            session.messages.push(ChatMessage::User { content: fmt!("step {}", i) });
+            session.messages.push(ChatMessage::user(fmt!("step {}", i)));
             session.messages.push(ChatMessage::Assistant {
-                content: "x".repeat(2_000), tool_calls: Vec::new(),
+                content: MessageContent::text("x".repeat(2_000)), tool_calls: Vec::new(),
             });
         }
         let registry = no_tools();
@@ -1210,10 +1252,10 @@ mod tests {
                 _ => None,
             })
             .expect("the cut call must still be answered, or the conversation is illegal");
-        assert!(reply.contains("cut off at the output limit"), "{}", reply);
-        assert!(reply.contains("smaller pieces"), "{}", reply);
+        assert!(reply.as_text().contains("cut off at the output limit"), "{}", reply);
+        assert!(reply.as_text().contains("smaller pieces"), "{}", reply);
         // Nothing was written: the arguments never reached the dispatcher.
-        assert!(!reply.contains("Wrote"), "{}", reply);
+        assert!(!reply.as_text().contains("Wrote"), "{}", reply);
     }
 
     /// A registry holding one tool, so a turn takes the agentic path.
@@ -1262,6 +1304,183 @@ mod tests {
         assert!(cut_short(true, s));
     }
 
+    /// An agent whose provider is Anthropic and whose model takes adaptive thinking, which is the
+    /// one combination the client silently raises the output cap for.
+    fn thinking_agent(max_tokens: u32) -> Agent {
+        let tls = build_test_tls_config();
+        let llm = LlmClient::new("api.anthropic.com", 443, "/v1/messages", "key",
+            "claude-opus-5", max_tokens, tls);
+        Agent::new(llm, "You are Daimond.")
+    }
+
+    /// How a turn recovers from a refusal: fold to the budget, send it, and be refused again
+    /// whenever the prompt plus the reply the client will ask for still exceeds the window.
+    ///
+    /// Returns how many refusals it took to fit, and the prompt budget that finally did -- because
+    /// the count alone understates the harm.  Each refusal costs a whole round trip AND teaches
+    /// [`Limits::learn_from_refusal`] a smaller window, which is permanent for the session and
+    /// never revised upward, so a needless refusal leaves the app folding a large model as though
+    /// it were a small one for the rest of the conversation.
+    ///
+    /// The iteration is bounded: what is under test is a loop that need not terminate, and a test
+    /// that reproduced it faithfully would not return.
+    ///
+    /// # Arguments
+    /// * `a` - The agent, whose limits are ground down in place exactly as a real turn grinds them.
+    /// * `window` - The provider's real window, which the app does not know and must discover.
+    /// * `cap` - The output cap the budget is computed against; the bug is passing the wrong one.
+    fn recovery(a: &Agent, window: u64, cap: u32) -> Option<(usize, u64)> {
+        for round in 0..40 {
+            let prompt = a.limits.borrow().budget(cap);
+            // The whole request: what is sent, plus the room the client asks the provider to
+            // leave for the answer. That sum is what the provider measures against its window.
+            if prompt + (a.reply_cap() as u64) <= window {
+                return Some((round, prompt));
+            }
+            // Refused. The app learns from the size of the PROMPT, which is all it sent.
+            if !a.limits.borrow_mut().learn_from_refusal(prompt) {
+                return None;         // nothing left to learn: the same prompt goes out for ever
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_the_reply_cap_is_the_one_the_client_will_actually_send_00() {
+        // A streamed Anthropic request to a thinking model is sent 32,000 whatever the client was
+        // configured with, because thinking is billed as output and counts against the same cap.
+        assert_eq!(32_000, thinking_agent(4_096).reply_cap());
+        // A cap already above the floor is its own figure.
+        assert_eq!(50_000, thinking_agent(50_000).reply_cap());
+        // And nothing else is raised: not an Anthropic model that takes no adaptive thinking...
+        let tls = build_test_tls_config();
+        let old = Agent::new(LlmClient::new("api.anthropic.com", 443, "/v1/messages", "key",
+            "claude-3-5-sonnet-20241022", 4_096, tls.clone()), "x");
+        assert_eq!(4_096, old.reply_cap());
+        // ...nor an OpenAI-dialect endpoint, whose max_tokens bounds the answer alone.
+        let oa = Agent::new(LlmClient::new("api.test.com", 443, "/v1/chat/completions", "key",
+            "claude-opus-5", 4_096, tls), "x");
+        assert_eq!(4_096, oa.reply_cap());
+    }
+
+    #[test]
+    fn test_a_budget_blind_to_the_real_reply_refuses_its_way_down_the_window_00() {
+        // `budget` subtracts the reply from the window to decide how big a prompt may be, so it
+        // has to be given the figure the provider will be SENT. Handed `llm.max_tokens` it
+        // reserved 5,120 for a reply that may run to 32,000. On the published 131,072 window the
+        // fraction ceiling is the lower of the two and wins anyway, so nothing shows; on a window
+        // learned from a refusal -- the mechanism that exists to recover from the first one -- the
+        // prompt is legal by the app's arithmetic and refused by the provider, over and over.
+        let window = 100_000;
+
+        // Told the truth, the fold fits first time and the learned window is left alone.
+        let fixed = thinking_agent(4_096);
+        fixed.set_context_window(window);
+        assert_eq!(32_000, fixed.reply_cap());
+        assert_eq!(Some((0, 66_976)), recovery(&fixed, window, fixed.reply_cap()),
+            "the budget must leave room for the reply the client asks for");
+        assert_eq!(window, fixed.limits().window, "and must not have to learn anything");
+
+        // Blind, it sends 80,000 against a 100,000 window with 32,000 of reply behind it, is
+        // refused, and pays for the mistake twice: a wasted round trip, and a window permanently
+        // taught to be 60,000 -- `learn_from_refusal` never revises upward, so every later fold in
+        // this session is made against a model 40% smaller than the real one.
+        let blind = thinking_agent(4_096);
+        blind.set_context_window(window);
+        assert_eq!(Some((1, 48_000)), recovery(&blind, window, blind.llm.max_tokens),
+            "the old figure must cost a refusal it did not need to");
+        assert_eq!(60_000, blind.limits().window, "and mis-teach the window for the rest of the run");
+        // And the conversation pays: the fold that finally goes out is a third smaller than the
+        // one the honest figure would have sent, on the same model, for no reason.
+        assert!(48_000 < 66_976);
+    }
+
+    #[test]
+    fn test_a_small_learned_window_recovers_in_one_refusal_rather_than_three_00() {
+        // The case the fix is really for. At 40,000 the reply is most of the window, so a budget
+        // that ignores it is wrong by a factor of eight and the grinding-down is visible: the
+        // blind figure is refused three times and lands on a 2,366-token conversation, the honest
+        // one is refused once and keeps two and a half times that.
+        let honest = thinking_agent(4_096);
+        honest.set_context_window(40_000);
+        let (h_rounds, h_prompt) = recovery(&honest, 40_000, honest.reply_cap())
+            .expect("the honest figure converges");
+
+        let blind = thinking_agent(4_096);
+        blind.set_context_window(40_000);
+        let (b_rounds, b_prompt) = recovery(&blind, 40_000, blind.llm.max_tokens)
+            .expect("the blind figure converges too, eventually");
+
+        assert_eq!((1, 6_092), (h_rounds, h_prompt));
+        assert_eq!((3, 2_366), (b_rounds, b_prompt));
+        assert!(h_rounds < b_rounds, "the fix must cost fewer round trips");
+        assert!(h_prompt > b_prompt, "and leave more of the conversation standing");
+    }
+
+    /// A dead-endpoint agent whose dialect and model are the ones the client raises the output cap
+    /// for, so a fold's arithmetic is exercised under the figure that actually goes out.
+    fn dead_thinking_agent() -> Agent {
+        let tls = build_test_tls_config();
+        let mut llm = LlmClient::new("127.0.0.1", 1, "/v1/messages", "key",
+            "claude-opus-5", 4_096, tls);
+        llm.retry.max_attempts = 1;
+        Agent::new(llm, "You are Daimond.")
+    }
+
+    #[tokio::test]
+    async fn test_whether_to_fold_is_decided_by_the_reply_that_will_be_sent_00() {
+        // The two arithmetics above are only worth anything if the fold ASKS them, so this pins
+        // the call site rather than the function. The window is 100,000; the honest budget is
+        // 66,976 and the blind one 80,000, so a conversation sitting between the two folds under
+        // the figure that will be sent and does not fold under the figure that was configured --
+        // and not folding is a prompt the provider refuses.
+        let a = dead_thinking_agent();
+        a.set_context_window(100_000);
+        let mut session = Session::new(fmt!("s1"), fmt!("long"), fmt!("claude-opus-5"));
+        for i in 0..70 {
+            session.messages.push(ChatMessage::user(fmt!("step {}", i)));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text("x".repeat(4_000)), tool_calls: Vec::new(),
+            });
+        }
+        // The conversation is deliberately built into the gap, and the gap is asserted rather
+        // than assumed: a change to the gauge or to `FOLD_AT` that closed it would otherwise make
+        // this test pass while testing nothing.
+        let tokens = a.gauge.tokens(compact::conversation_bytes(&session.messages));
+        let honest = a.limits().budget(a.reply_cap());
+        let blind  = a.limits().budget(a.llm.max_tokens);
+        assert!(honest < tokens && tokens <= blind,
+            "{} tokens is not between the honest budget {} and the blind one {}",
+            tokens, honest, blind);
+
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+        assert_eq!(1, events.iter().filter(|e| matches!(e, AgentEvent::Compacted { .. })).count(),
+            "a conversation over the real budget was sent unfolded");
+    }
+
+    #[test]
+    fn test_the_reserve_is_capped_at_half_the_window_and_that_is_not_this_files_call_00() {
+        // Recorded rather than asserted away, because the fix here does not finish the job.
+        // `Limits::budget` never gives the reply more than half the window, so wherever the window
+        // is below twice the output cap the reserve is short however truthful the figure handed to
+        // it: on 40,000 the reply may be 32,000 and at most 20,000 is set aside. What this file
+        // owes is the true figure, and it now passes it; the clamp belongs to `compact.rs`, and a
+        // build whose learned window falls under twice its cap wants a lower CAP, not a bigger
+        // prompt.
+        let a = thinking_agent(4_096);
+        a.set_context_window(40_000);
+        let honest = a.limits().budget(a.reply_cap());
+        let blind  = a.limits().budget(a.llm.max_tokens);
+        assert_eq!(32_000, blind, "blind, the fold fraction was left untouched");
+        assert_eq!(18_976, honest, "honest, the clamped reserve of 20,000 is taken out");
+        assert!(honest + 20_000 <= 40_000, "the clamped reserve must at least be honoured");
+        assert!(honest + (a.reply_cap() as u64) > 40_000,
+            "and the clamp still leaves a gap, which is compact.rs's to close");
+    }
+
     #[test]
     fn test_the_budget_leaves_room_for_the_reply_00() {
         // `max_tokens` on the client is what the model may generate, and it is counted
@@ -1276,9 +1495,9 @@ mod tests {
     #[test]
 fn test_agent_message_building() {
         let mut session = Session::new("s1".to_string(), "Test".to_string(), "model".to_string());
-        session.messages.push(ChatMessage::User { content: "Hello".to_string() });
+        session.messages.push(ChatMessage::user("Hello".to_string()));
         assert_eq!(session.messages.len(), 1);
         assert_eq!(session.messages[0].role(), "user");
-        assert_eq!(session.messages[0].content(), "Hello");
+        assert_eq!(session.messages[0].text(), "Hello");
     }
 }

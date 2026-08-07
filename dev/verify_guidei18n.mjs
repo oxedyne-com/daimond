@@ -8,6 +8,9 @@ const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.m
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SP = new URL('shots/', import.meta.url).pathname;
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 const browser = await chromium.launch({ executablePath: CHROME });
 const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
@@ -15,7 +18,7 @@ let bad = 0;
 const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); if (!ok) bad++; };
 
 // Standalone, no framer: frame.js must still dress it from the OS preference.
-await page.goto('http://localhost:8777/guide/de/index.html', { waitUntil: 'networkidle' });
+await page.goto(`${APP}/guide/de/index.html`, { waitUntil: 'networkidle' });
 const st = await page.evaluate(() => {
 	const r = document.documentElement;
 	const cs = getComputedStyle(document.body);
@@ -53,7 +56,7 @@ const kept = await page.evaluate(() => document.documentElement.getAttribute('da
 check(kept === 'linen', `an unknown palette leaves the current one alone (${kept})`);
 
 // The language change: English page, told the app is now German.
-await page.goto('http://localhost:8777/guide/index.html', { waitUntil: 'networkidle' });
+await page.goto(`${APP}/guide/index.html`, { waitUntil: 'networkidle' });
 await page.evaluate(() => window.postMessage({ daimondGuide: 'style', locale: 'de' }, '*'));
 await page.waitForTimeout(600);
 check(/\/guide\/de\/index\.html$/.test(page.url()), `a German app moves the reader to the German page (${page.url()})`);
@@ -75,7 +78,7 @@ await page.waitForTimeout(400);
 check(/\/guide\/index\.html$/.test(page.url()), `a path dressed as a locale is refused (${page.url()})`);
 
 // Every link on the German page must resolve.
-await page.goto('http://localhost:8777/guide/de/index.html', { waitUntil: 'networkidle' });
+await page.goto(`${APP}/guide/de/index.html`, { waitUntil: 'networkidle' });
 const links = await page.$$eval('a[href]', as => as.map(a => a.href).filter(h => h.startsWith('http')));
 const dead = [];
 for (const href of [...new Set(links)]) {

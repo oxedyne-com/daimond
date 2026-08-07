@@ -41,6 +41,39 @@
 	function t(k, v)     { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
 
+	// ── The pause, refused where the money is committed ─────────────
+	// A pause the widget respects and the network does not is decoration, so it
+	// is checked HERE, in front of the mint, rather than trusted to whatever
+	// asked. `isPaused` is a set lookup, which is why it can sit in front of
+	// every one.
+
+	/// The worker pump's leaf. Every slot key (>=1) is that pump spending,
+	/// whichever Diamond asked for it, so one node gates the lot.
+	function workersNode() {
+		return window.DaimondPause ? DaimondPause.id(DaimondPause.ROOT, 'workers') : 'root/workers';
+	}
+
+	/// Is this node paused? Absent module means nothing is, which is the state
+	/// the app was in before the tree existed.
+	function held(node) {
+		return !!(node && window.DaimondPause && DaimondPause.isPaused(node));
+	}
+
+	/// The refusal a pause produces: an Error naming the node and how to start
+	/// it again. `paused` marks it so a caller can show a held spend calmly
+	/// rather than as a fault, and `pauseNode` says which control to point at.
+	function pauseError(node) {
+		var s = t('pause.refused.turn', { node: node });
+		if (s === 'pause.refused.turn') {
+			s = 'Paused: ' + node + ' — no turn was started and nothing was spent. '
+				+ 'Press play on it to resume.';
+		}
+		var e = new Error(s);
+		e.paused    = true;
+		e.pauseNode = node;
+		return e;
+	}
+
 	var KEY     = 'daimond-models-v2';
 	var OLD_KEY = 'daimond-byok';           // the single-provider config this replaces
 	// Providers deleted on purpose, by id. The sync merge is a UNION, so a row
@@ -394,7 +427,16 @@
 	/// the gateway gives each slot its OWN capped key -- so parallel workers never
 	/// share a key, and their concurrent requests cannot race a shared cap into an
 	/// overspend. A body naming no slot is slot 0, which is the chat's own key.
-	async function mintRequest(slot) {
+	///
+	/// `node` is the pause-tree leaf the turn belongs to, when the caller knows
+	/// it — a chat's leaf, a Diamond's `self`. A mint is where a turn commits, so
+	/// a paused leaf is refused here and no request goes out. A slot of 1 or more
+	/// is the worker pump spending, and that leaf is checked whether the caller
+	/// names one or not: the pump is the same pump however the work reached it.
+	async function mintRequest(slot, node) {
+		var stop = held(node) ? node
+			: (((slot | 0) >= 1 && held(workersNode())) ? workersNode() : '');
+		if (stop) throw pauseError(stop);
 		var head = { 'content-type': 'application/json' };
 		if (window.DaimondGateway && DaimondGateway.clientApi) {
 			head['x-daimond-api'] = String(DaimondGateway.clientApi());
@@ -428,8 +470,11 @@
 		return j;
 	}
 
-	async function mint() {
-		var j           = await mintRequest(0);
+	/// `node` is the leaf the mint is for, when there is one. The mint at unlock
+	/// belongs to no leaf and passes none: gating it would leave a paused chat's
+	/// pause holding the whole account keyless.
+	async function mint(node) {
+		var j           = await mintRequest(0, node);
 		var url         = chatUrl(j.url);
 		plain[CREDITS]  = j.key;                // memory, and nowhere else — see `plain`.
 		mintGen++;                              // this key's generation; the last one is revoked.
@@ -524,14 +569,20 @@
 	///
 	/// Between them, N agents holding one spent key produce exactly ONE mint, whether they fail
 	/// at the same instant or one after another.
-	async function remint(gen) {
+	///
+	/// `node` is the leaf whose turn wants the key. Checked BEFORE the coalescing
+	/// guards, so a paused chat neither mints nor takes the key another caller is
+	/// minting: joining a mint in flight is how a paused leaf would go on running
+	/// on somebody else's key.
+	async function remint(gen, node) {
+		if (held(node)) throw pauseError(node);
 		if (typeof gen === 'number' && gen < mintGen && plain[CREDITS]) return plain[CREDITS];
 		if (minting) return await minting;
 		minting = (async function () {
 			delete plain[CREDITS];
 			credits.state = 'minting';
 			try {
-				await mint();
+				await mint(node);
 			} catch (e) {
 				standDown(e && e.noCredits ? 'nocredits' : 'failed', e && e.message ? e.message : String(e));
 				throw e;
@@ -558,8 +609,12 @@
 	var slots = {};   // slot(>=1) -> { key, url, gen }
 
 	/// Mint (or replace) the key for a worker slot, returning `{ key, url, gen }`.
-	async function mintSlot(slot) {
-		var j = await mintRequest(slot);
+	///
+	/// `node` is the leaf that asked for the worker — the Diamond's `self`, or a
+	/// triggered action. The worker pump's own leaf is checked regardless; see
+	/// `mintRequest`.
+	async function mintSlot(slot, node) {
+		var j = await mintRequest(slot, node);
 		var s = slots[slot] || (slots[slot] = { key: '', url: '', gen: 0 });
 		s.key  = j.key;
 		s.url  = chatUrl(j.url);
@@ -572,10 +627,15 @@
 
 	/// A fresh key for a slot whose key was refused — unless another mint has
 	/// already replaced it, the same generation guard `remint` uses, per slot.
-	async function remintSlot(slot, gen) {
+	async function remintSlot(slot, gen, node) {
+		// Before the generation guard, for the reason `remint` checks before its
+		// own: handing back a key somebody else minted is still the paused node
+		// carrying on.
+		if (held(node)) throw pauseError(node);
+		if (held(workersNode())) throw pauseError(workersNode());
 		var s = slots[slot];
 		if (s && typeof gen === 'number' && gen < s.gen && s.key) return s;
-		return await mintSlot(slot);
+		return await mintSlot(slot, node);
 	}
 
 	/// A slot's live `{ key, url, gen }`, or null if it holds none yet.
@@ -1543,6 +1603,84 @@
 	/// curious what Claude would say. So the group says which it is and the option says it
 	/// again — the group heading is gone the moment the pulldown is closed, and by then the
 	/// choice is made.
+	// ── Favourites ──────────────────────────────────────────────
+	//
+	// A working setup reaches a dozen models across four providers, and the two or
+	// three a person actually works with are scattered through the list in provider
+	// order. The pulldown is a native `<select>`, so finding one means scrolling a
+	// list whose order is about where a model is BILLED rather than about how often
+	// it is wanted.
+	//
+	// So the most-used float to the top, in a group of their own. Nothing is starred
+	// by hand: what a person uses is already the answer, and a second kind of star
+	// beside the default's would make both mean less.
+	//
+	// USE, not selection. A model chosen in a pulldown and never run is not a model
+	// anybody uses, so the count is incremented where a turn actually commits to
+	// one — a chat freezing its model, a Diamond's daimon, a dispatched worker.
+	//
+	// NOT carried in the sync parcel, deliberately. Merging two devices' counters is
+	// either wrong (summing double-counts on every round trip) or pointless (taking
+	// the larger throws one device's history away), and the list earns itself again
+	// on a new device within a few turns. If it ever travels, it should travel as
+	// the ordered KEYS with one stamp, not as the counters.
+
+	var USE_KEY = 'daimond-model-use';	// per account; accounts.js namespaces daimond-*
+
+	/// How many float to the top. Five is about a screen's worth on a phone, and
+	/// small enough that the group stays a shortlist and not a second copy of the list.
+	var FAV_MAX = 5;
+	/// Below this there is nothing to scroll, so the group would be clutter.
+	var FAV_MIN_MODELS = 8;
+	/// And a shortlist of one is not a shortlist.
+	var FAV_MIN = 2;
+	/// The most entries kept; beyond it the least recently used are dropped, so a
+	/// long-lived account cannot grow this without bound.
+	var USE_MAX = 60;
+
+	function useKey(provider, model) { return (provider || '') + ' ' + (model || ''); }
+
+	function readUse() {
+		try {
+			var o = JSON.parse(localStorage.getItem(USE_KEY) || 'null');
+			return (o && typeof o === 'object') ? o : {};
+		} catch (e) { return {}; }
+	}
+
+	/// Record that a turn is about to run on this model.
+	function noteUse(provider, model) {
+		if (!model) return;
+		var use = readUse();
+		var k = useKey(provider, model);
+		var e = use[k] || { n: 0, t: 0 };
+		use[k] = { n: (e.n || 0) + 1, t: Date.now() };
+		var keys = Object.keys(use);
+		if (keys.length > USE_MAX) {
+			keys.sort(function (a, b) { return (use[a].t || 0) - (use[b].t || 0); });
+			for (var i = 0; i < keys.length - USE_MAX; i++) delete use[keys[i]];
+		}
+		try { localStorage.setItem(USE_KEY, JSON.stringify(use)); } catch (e2) { /* quota */ }
+	}
+
+	/// The favourites, most used first, filtered to models that still exist on a
+	/// provider that is still listed — a model whose provider was removed must not
+	/// go on being offered from the top.
+	function favourites(list) {
+		var use = readUse();
+		var live = {};
+		list.forEach(function (p) {
+			p.models.forEach(function (m) { live[useKey(p.id, m)] = { p: p, m: m }; });
+		});
+		return Object.keys(use)
+			.filter(function (k) { return live[k]; })
+			.sort(function (a, b) {
+				var d = (use[b].n || 0) - (use[a].n || 0);
+				return d !== 0 ? d : (use[b].t || 0) - (use[a].t || 0);
+			})
+			.slice(0, FAV_MAX)
+			.map(function (k) { return { provider: live[k].p, model: live[k].m }; });
+	}
+
 	function fillSelect(sel, provider, model) {
 		sel.innerHTML = '';
 		var list = providers().filter(function (p) { return p.count > 0; });
@@ -1559,6 +1697,51 @@
 
 		var d   = getDefault();
 		var dup = dupes();
+
+		/// One option, wherever it is drawn. The favourites group holds a SECOND
+		/// element for the same model, and the two must carry the same meaning — a
+		/// shortcut that read differently from the row it stands for would be worse
+		/// than no shortcut, because the economy marking is the part that matters.
+		///
+		/// `inFav` adds the provider's name, and that is not an inconsistency but
+		/// the opposite. A row's full meaning includes the group heading above it;
+		/// under "Favourites" that heading is gone, so reproducing only the row's
+		/// own text would LOSE information — and two providers offering the same
+		/// model under the user's own key would then draw two identical shortcuts.
+		function optionFor(p, m, inFav) {
+			var twin = !!dup[baseName(m)];
+			var o = document.createElement('option');
+			o.value = m;
+			o.dataset.provider = p.id;
+			o.dataset.paid     = p.paid ? '1' : '';
+			o.textContent = m
+				+ (p.paid ? ' · ' + t('models.econ_credits') : twin ? ' · ' + t('models.econ_own') : '')
+				+ (inFav ? ' · ' + p.name : '')
+				+ (d.provider === p.id && d.model === m ? '  ★' : '');
+			o.title = p.name + ' · ' + m + ' — '
+				+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
+					: t('models.model_own', { provider: p.name }));
+			o.disabled = !p.ready;
+			return o;
+		}
+
+		// The shortlist first, when there is a list worth shortening. Every model
+		// here appears again under its own provider: this is a shortcut to a row,
+		// not a category of its own, and somebody looking for a model by who bills
+		// for it must still find it where they expect.
+		var total = list.reduce(function (n, p) { return n + p.models.length; }, 0);
+		var favs  = total >= FAV_MIN_MODELS ? favourites(list) : [];
+		if (favs.length >= FAV_MIN) {
+			var fg = document.createElement('optgroup');
+			fg.label = t('models.favourites');
+			favs.forEach(function (f) {
+				var o = optionFor(f.provider, f.model, true);
+				o.dataset.fav = '1';
+				fg.appendChild(o);
+			});
+			sel.appendChild(fg);
+		}
+
 		list.forEach(function (p) {
 			var g = document.createElement('optgroup');
 			// Only the credits group is relabelled. A row that spends the user's own provider
@@ -1573,21 +1756,7 @@
 						? 'models.top_up_to_use' : 'models.connecting') + ')')
 				: p.name + (p.sealed ? ' (' + t('models.sealed_unlock') + ')'
 					: p.hasKey ? '' : ' (' + t('models.no_key') + ')');
-			p.models.forEach(function (m) {
-				var twin = !!dup[baseName(m)];
-				var o = document.createElement('option');
-				o.value = m;
-				o.dataset.provider = p.id;
-				o.dataset.paid     = p.paid ? '1' : '';
-				o.textContent = m
-					+ (p.paid ? ' · ' + t('models.econ_credits') : twin ? ' · ' + t('models.econ_own') : '')
-					+ (d.provider === p.id && d.model === m ? '  ★' : '');
-				o.title = p.name + ' · ' + m + ' — '
-					+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
-						: t('models.model_own', { provider: p.name }));
-				o.disabled = !p.ready;
-				g.appendChild(o);
-			});
+			p.models.forEach(function (m) { g.appendChild(optionFor(p, m)); });
 			sel.appendChild(g);
 		});
 
@@ -1633,6 +1802,8 @@
 
 	window.DaimondModels = {
 		render:         render,
+		noteUse:        noteUse,
+		favourites:     favourites,
 		fillSelect:     fillSelect,
 		pick:           pick,
 		init:           init,

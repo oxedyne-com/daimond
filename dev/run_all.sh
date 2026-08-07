@@ -19,9 +19,11 @@
 # what C needs, and runs C. Anything that cannot be provisioned SKIPS loudly -- a
 # verifier that silently did not run is worse than one that failed.
 #
-# Needs `dev/serve.mjs` on :8777 and `dev/mockllm.mjs` on :9099 (without the mock
-# every `@tool` call quietly does nothing). Start those yourself; this script does
-# not, so a suite run never kills a server you were using.
+# Needs `dev/serve.mjs` (`DAIMOND_PORT`, default 8777) and `dev/mockllm.mjs`
+# (`DAIMOND_MOCK_PORT`, default 9099) -- without the mock every `@tool` call quietly
+# does nothing. Start those yourself; this script does not, so a suite run never
+# kills a server you were using.  `bash dev/world.sh N --env` prints a matching set,
+# and $DAIMOND_SCRATCH below then keeps this run's logs and profiles to itself.
 #
 #   LOG=/tmp/suite.log bash dev/run_all.sh          # everything
 #   bash dev/run_all.sh verify_tags verify_doc      # just these
@@ -57,7 +59,7 @@ SMTPD=${SMTPD:-dev/smtpd.mjs}
 # too exits 0 with a SKIP line when :9002 is clear, which phase 1 guarantees, so
 # the session-renewal path had never run under this suite and had been reported
 # as passing every time.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew"
+NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew verify_pausesync"
 # Of those, the two that also need an entitled account (and, for compose, mail).
 NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
 
@@ -107,11 +109,22 @@ verify_scope verify_kitfence verify_pty verify_ptyedge verify_sweep_mobile"
 # verify_handreal builds the hand from source before it can drive it, and a cold
 # release build of the hand is minutes rather than seconds. verify_ptyedge builds
 # a whole wasm package per property it proves against broken code.
+#
+# verify_reversible and verify_sweep_desktop were never listed here, so both drew
+# the 180s default and both were killed by it -- reported as exit 124 and carried
+# for days as unexplained reds. Neither is broken: reversible passes in 209s
+# (measured 2026-08-07) because it opens every control on every surface in its own
+# isolated session, and sweep_desktop walks every skin against both spacings, the
+# same shape of matrix verify_sweep_mobile already gets 900s for. A budget is a
+# claim about how long a thing takes; an unlisted verifier makes that claim by
+# accident.
 slow_for() {
 	case "$1" in
 		verify_style)                     echo 600 ;;
 		verify_scope|verify_kitfence)     echo 600 ;;
+		verify_reversible)                echo 420 ;;
 		verify_sweep_mobile)              echo 900 ;;
+		verify_sweep_desktop)             echo 900 ;;
 		verify_handreal)                  echo 900 ;;
 		verify_ptyedge)                   echo 2400 ;;
 		*)                                echo 180 ;;
@@ -146,6 +159,15 @@ run_one() {
 			out=$(timeout "$(slow_for "$name")" node "dev/$name.mjs" $extra 2>&1)
 			code=$? ;;
 	esac
+	# Keep the WHOLE output, not just the line the summary quotes.
+	#
+	# Only the last line survived here, so diagnosing any red meant running the
+	# verifier again by hand -- and for the ones that need a gateway, a grant and
+	# mail fixtures, that means reproducing the provisioning this script already
+	# did. Every red chased in this session cost a second full run for want of a
+	# file that had already been captured and thrown away.
+	mkdir -p "$SCRATCH/out"
+	printf '%s\n' "$out" > "$SCRATCH/out/$name.log"
 	tail=$(echo "$out" | grep -vE "Skipping host" | tail -1)
 	# Two spellings, because both are in the tree: `SKIPPED: <why>` and
 	# `SKIP <name> — <why>`. Only the first was recognised, so verify_gwretry,
@@ -160,6 +182,7 @@ run_one() {
 	else
 		fail=$((fail+1)); failed="$failed $name"
 		say "FAIL  $name (exit $code)  — $tail"
+		say "      full output: $SCRATCH/out/$name.log"
 	fi
 }
 

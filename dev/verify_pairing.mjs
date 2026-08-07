@@ -1,8 +1,9 @@
 // verify_pairing.mjs — an identity travels to a second device through a one-time
 // gateway code, so the new device becomes the SAME account.
 //
-// Needs the dev stack up (app :8777, gateway :9002). Device B is simulated by
-// wiping the local identity and redeeming the code in the same page.
+// Needs the dev stack up: the app (DAIMOND_PORT, default 8777) and the gateway on
+// :9002. Device B is simulated by wiping the local identity and redeeming the code in
+// the same page.
 //
 // The second half runs a REAL second device: its own browser profile, its own
 // localStorage, no identity of its own. That is the only way to prove the

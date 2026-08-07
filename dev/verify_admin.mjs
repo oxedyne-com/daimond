@@ -2,9 +2,9 @@
 // feed, and the dashboard (KPIs, revenue + consumption charts, world map,
 // tables) rendering end to end.
 //
-// Self-contained: it spawns the release gateway on :9002 (reading the operator
-// token from gateway/keys/admin_token.txt) and dev/serve.mjs on :8777, seeds a
-// handful of accounts and webhook-credited top-ups so the views have something
+// Self-contained: it spawns the release gateway on :9002 (reading the operator token
+// from gateway/keys/admin_token.txt) and dev/serve.mjs (DAIMOND_PORT, default 8777),
+// seeds a handful of accounts and webhook-credited top-ups so the views have something
 // to draw, then drives the real /console/ page in a real browser.
 //
 //   node dev/verify_admin.mjs
@@ -25,7 +25,9 @@ const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
 const SHOTS = path.join(HERE, 'shots');
 const GW_URL = 'http://127.0.0.1:9002';
-const APP    = 'http://localhost:8777';
+// The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
+// so this stays standalone and does not load the harness.
+const APP    = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
 const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');

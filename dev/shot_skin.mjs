@@ -1,5 +1,9 @@
 import { open, chat } from './harness.mjs';
-const S = '/home/jason/usr/code/web/apps/oxedyne/daimond/dev/shots';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+// This checkout's own shots directory; an absolute path here is one
+// developer's layout, and dev/ is carved into a public mirror.
+const S = path.join(path.dirname(fileURLToPath(import.meta.url)), 'shots');
 const s = await open({ name: 'skinshot' });
 const { page } = s;
 // Give it a chat so the surface isn't just the empty state.

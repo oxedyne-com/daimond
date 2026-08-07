@@ -3,8 +3,9 @@
 // for-byte, without the gateway ever seeing its plaintext.
 //
 // This drives the REAL client (chunks.js + daimond.js) against the REAL gateway
-// (/api/chunk + /api/sync), so it needs the dev stack up: the app on :8777 and a
-// gateway on :9002. It starts its own gateway so the run is self-contained.
+// (/api/chunk + /api/sync), so it needs the dev stack up: the app (DAIMOND_PORT,
+// default 8777) and a gateway on :9002. It starts its own gateway so the run is
+// self-contained.
 //
 //   1. Sign in. Write a 200 KiB file — well over the 128 KiB inline ceiling, so
 //      it is offloaded to chunks rather than carried in the blob.

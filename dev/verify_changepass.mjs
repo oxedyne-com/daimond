@@ -10,7 +10,8 @@
 //
 //   node dev/verify_changepass.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway and no model: this is the login only.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model: this is
+// the login only.
 
 import { open, PASS } from './harness.mjs';
 

@@ -1,0 +1,318 @@
+// verify_tiledlg.mjs — the cog, the dialog, and Delete at its foot.
+//
+// Phase C put a cog in the top right of every Diamond and chat tile and moved
+// Delete into the dialog it opens. Four properties follow, and each is written
+// as a SEARCH of the page rather than as "press this, expect that" — a check
+// that names one button passes on a page where that button is the only thing
+// left.
+//
+//   1. Every tile carries a cog, and NO tile carries a closer cross.
+//   2. Delete is reachable from the dialog, it is the ONLY way to remove a
+//      tile by hand, and it asks before it acts.
+//   3. Simple really hides what Max shows, per tile, and the choice survives a
+//      reload.
+//   4. Answering "no" to the confirm leaves the tile exactly where it was.
+//
+// Every check is gated on the thing it needs existing: a page with no tiles
+// satisfies "no cross on any tile" for free, so the tile count is asserted
+// first and the run refuses to be quietly vacuous.
+//
+//   node dev/verify_tiledlg.mjs
+//
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway; nothing spends.
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { open, scratch } from './harness.mjs';
+
+const OUT = path.join(os.homedir(), '.cache/daimond/tiledlg-shots');
+fs.mkdirSync(OUT, { recursive: true });
+
+let failures = 0;
+const check = (cond, msg, detail) => {
+	console.log((cond ? '  ok   ' : '  FAIL ') + msg + (detail != null ? ' — ' + detail : ''));
+	if (!cond) failures++;
+};
+
+/// A screenshot that is PROVEN to exist. `shot()` in the harness swallows a
+/// failed capture, and under load on this box capture has silently failed for
+/// an hour at a time, so a clean run is not evidence that anything was taken.
+async function snap(page, name, sel) {
+	const p = path.join(OUT, name + '.png');
+	try {
+		const target = sel ? await page.$(sel) : page;
+		if (!target) { console.log(`  note  no ${sel} to photograph`); return null; }
+		await target.screenshot({ path: p, timeout: 8000 });
+	} catch (e) { console.log(`  note  screenshot ${name} failed: ${String(e).split('\n')[0]}`); return null; }
+	if (!fs.existsSync(p) || fs.statSync(p).size < 500) { console.log(`  note  screenshot ${name} is not on disk`); return null; }
+	return p;
+}
+
+/// Make a Diamond through the dialog a person uses.
+async function makeDiamond(page, name) {
+	await page.evaluate(() => document.getElementById('new-diamond-btn').click());
+	await page.waitForSelector('.dlg-card', { timeout: 8000 });
+	await page.evaluate((nm) => {
+		const card = [...document.querySelectorAll('.dlg-card')].find((c) => c.getClientRects().length);
+		const inp = card.querySelector('input.dlg-input');
+		inp.value = nm;
+		inp.dispatchEvent(new Event('input', { bubbles: true }));
+		card.querySelector('.dlg-ok').click();
+	}, name);
+	await page.waitForTimeout(1500);
+}
+
+/// Make a chat tile (pending is enough: it is a tile with a cog).
+async function makeChat(page) {
+	await page.evaluate(() => document.getElementById('new-session-btn').click());
+	await page.waitForTimeout(700);
+}
+
+/// Open the cog dialog of the first tile in `listSel`.
+async function openCog(page, listSel) {
+	const hit = await page.evaluate((sel) => {
+		const box = document.querySelector(sel + ' .session-box');
+		if (!box) return 'no tile';
+		const cog = box.querySelector('.tile-cog');
+		if (!cog) return 'no cog';
+		cog.click();
+		return 'ok';
+	}, listSel);
+	if (hit !== 'ok') throw new Error(hit);
+	await page.waitForSelector('.tile-dlg-card', { timeout: 8000 });
+	await page.waitForTimeout(200);
+}
+
+const s = await open({ name: 'tiledlg', profile: scratch('pw', 'tiledlg-' + process.pid) });
+const { page } = s;
+try {
+	await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
+	await page.waitForTimeout(200);
+	await makeDiamond(page, 'Alpha');
+	await makeChat(page);
+
+	// ── 0. The gate. Without tiles, every property below is vacuous. ──
+	const counts = await page.evaluate(() => ({
+		diamonds: document.querySelectorAll('#diamond-list .session-box').length,
+		chats:    document.querySelectorAll('#session-list .session-box').length,
+	}));
+	check(counts.diamonds >= 1 && counts.chats >= 1,
+		'the rail holds a Diamond and a chat to judge',
+		`${counts.diamonds} Diamond(s), ${counts.chats} chat(s)`);
+	if (!(counts.diamonds >= 1 && counts.chats >= 1)) {
+		console.log('\nnothing to test against — refusing to report a vacuous pass.');
+		await s.close();
+		process.exit(1);
+	}
+	await snap(page, 'rail-with-cogs', '#panel-rail');
+
+	// ── 1. A cog on every tile, a cross on none ──
+	const corner = await page.evaluate(() => {
+		const boxes = [...document.querySelectorAll('.session-box')];
+		return {
+			total:   boxes.length,
+			withCog: boxes.filter((b) => b.querySelector('.tile-cog')).length,
+			crosses: document.querySelectorAll('.session-box-close').length,
+			// Anything at all in a tile whose visible words are a lone multiplication
+			// sign: the cross by shape rather than by the class it used to wear.
+			crossy: boxes.flatMap((b) => [...b.querySelectorAll('button')])
+				.filter((x) => /^[×xX✕✖]$/.test((x.textContent || '').trim())).length,
+		};
+	});
+	check(corner.withCog === corner.total, 'every tile carries a cog',
+		`${corner.withCog} of ${corner.total}`);
+	check(corner.crosses === 0 && corner.crossy === 0, 'no tile carries a closer cross',
+		`${corner.crosses} by class, ${corner.crossy} by shape`);
+
+	// ── 2. The dialog, and Delete at its foot ──
+	await openCog(page, '#diamond-list');
+	await snap(page, 'diamond-dialog', '.tile-dlg-card');
+	const dlg = await page.evaluate(() => {
+		const card = document.querySelector('.tile-dlg-card');
+		if (!card) return null;
+		const btns = [...card.querySelectorAll('button')];
+		const del = card.querySelector('.tile-dlg-delete');
+		const foot = card.querySelector('.tile-dlg-foot');
+		return {
+			hasPause: !!card.querySelector('.pptw'),
+			hasLevel: card.querySelectorAll('.tile-dlg-level').length,
+			hasDelete: !!del,
+			deleteInFoot: !!(del && foot && foot.contains(del)),
+			// The foot is the last block of the card: "at the bottom of the dialog".
+			footLast: !!(foot && card.lastElementChild === foot),
+			labels: btns.map((b) => (b.textContent || '').trim()),
+		};
+	});
+	check(!!dlg, 'the cog opens a dialog');
+	check(dlg && dlg.hasPause, 'the dialog carries the pause control');
+	check(dlg && dlg.hasLevel === 2, 'the dialog offers Simple and Max', dlg && String(dlg.hasLevel));
+	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
+		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
+
+	// ── 3. Delete asks first, and "no" leaves the tile alone ──
+	const before = await page.evaluate(() =>
+		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
+	await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
+	await page.waitForTimeout(500);
+	const asked = await page.evaluate(() => {
+		const dlgs = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+			.filter((c) => c.getClientRects().length && !c.classList.contains('tile-dlg-card'));
+		return dlgs.length ? (dlgs[0].querySelector('.dlg-msg') || {}).textContent || '(no message)' : null;
+	});
+	check(asked !== null, 'Delete asks before it acts', asked ? asked.slice(0, 60) + '…' : 'nothing was asked');
+	await snap(page, 'delete-confirm', '.modal.dlg .dlg-card');
+	// Say no.
+	await page.evaluate(() => {
+		const c = [...document.querySelectorAll('.modal.dlg .dlg-cancel')].pop();
+		if (c) c.click();
+	});
+	await page.waitForTimeout(700);
+	const after = await page.evaluate(() =>
+		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
+	check(JSON.stringify(before) === JSON.stringify(after),
+		'saying no leaves the Diamond where it was', `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+
+	// ── 4. Delete really deletes, when the answer is yes ──
+	await openCog(page, '#diamond-list');
+	await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
+	await page.waitForTimeout(400);
+	await page.evaluate(() => {
+		const okb = [...document.querySelectorAll('.modal.dlg .dlg-ok')].pop();
+		if (okb) okb.click();
+	});
+	await page.waitForTimeout(1800);
+	const left = await page.evaluate(() =>
+		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
+	check(!left.includes('Alpha'), 'saying yes removes the Diamond', JSON.stringify(left));
+
+	// ── 5. Simple hides, Max shows, and the choice survives a reload ──
+	//
+	// The Diamond is TAGGED first, and that is not decoration. Simple also drops
+	// the whole meta row when nothing in it is a tag — so on an untagged tile the
+	// timestamp is invisible whether or not the rule that hides it exists, and
+	// the check passed against CSS with that rule deleted. Proved by deleting it:
+	// the run stayed green. A tag keeps the row on screen, so what is being
+	// measured is the rule and not the row.
+	await makeDiamond(page, 'Beta');
+	await page.evaluate(() => {
+		const box = document.querySelector('#diamond-list .session-box');
+		const meta = box.querySelector('.session-box-meta');
+		const chip = document.createElement('span');
+		chip.className = 'tag-chip tag-sm';
+		chip.textContent = 'kept';
+		meta.appendChild(chip);
+	});
+	await page.waitForTimeout(200);
+	const shownAt = () => page.evaluate(() => {
+		const box = document.querySelector('#diamond-list .session-box');
+		if (!box) return null;
+		// PRESENT and VISIBLE are different questions. A check that only asks
+		// "is it on screen?" passes on a page where the element was never built,
+		// which is the vacuous pass this whole file exists to avoid.
+		const st = (sel) => {
+			const e = box.querySelector(sel);
+			return { present: !!e, visible: !!e && e.getClientRects().length > 0 };
+		};
+		return { detail: box.dataset.detail, ver: st('.session-box-ctx'), time: st('.session-box-time'),
+			meta: st('.session-box-meta') };
+	});
+	const simple = await shownAt();
+	check(simple && simple.detail === 'simple', 'a new tile starts Simple', simple && simple.detail);
+	check(simple && simple.ver.present && simple.time.present && simple.meta.visible,
+		'the tile really has a version, a timestamp and a visible meta row to hide',
+		JSON.stringify(simple));
+	check(simple && !simple.ver.visible && !simple.time.visible,
+		'Simple hides the version and the timestamp', JSON.stringify(simple));
+	await snap(page, 'tile-simple', '#diamond-list .session-box');
+
+	await openCog(page, '#diamond-list');
+	await page.evaluate(() => {
+		const b = [...document.querySelectorAll('.tile-dlg-level')].find((x) => x.dataset.level === 'max');
+		b.click();
+	});
+	await page.waitForTimeout(300);
+	await page.evaluate(() => document.querySelector('.tile-dlg-done').click());
+	await page.waitForTimeout(300);
+	const max = await shownAt();
+	check(max && max.detail === 'max' && max.ver.visible && max.time.visible,
+		'Max shows what Simple hid', JSON.stringify(max));
+	await snap(page, 'tile-max', '#diamond-list .session-box');
+
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await page.waitForTimeout(1200);
+	// Back through the gate.
+	await page.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
+	if (await page.$('#id-pass')) {
+		await page.fill('#id-pass', 'testpass1234');
+		await page.evaluate(() => document.getElementById('id-primary').click());
+		await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: 15000 }).catch(() => {});
+	}
+	await page.waitForTimeout(2500);
+	const afterReload = await shownAt();
+	check(afterReload && afterReload.detail === 'max',
+		'the choice survives a reload', afterReload && JSON.stringify(afterReload));
+
+	// ── 5b. And back again. A level you can raise and not lower is the one-way
+	// door verify_reversible hunts; it cannot see this one, because its
+	// signature does not read `aria-pressed`, so it is asserted here.
+	await openCog(page, '#diamond-list');
+	await page.evaluate(() => {
+		const b = [...document.querySelectorAll('.tile-dlg-level')].find((x) => x.dataset.level === 'simple');
+		b.click();
+	});
+	await page.waitForTimeout(300);
+	await page.evaluate(() => document.querySelector('.tile-dlg-done').click());
+	await page.waitForTimeout(300);
+	const backToSimple = await shownAt();
+	check(backToSimple && backToSimple.detail === 'simple'
+		&& !backToSimple.ver.visible && !backToSimple.time.visible,
+		'Max can be turned back to Simple', backToSimple && JSON.stringify(backToSimple));
+
+	// ── 6. Nothing else deletes a tile ──
+	//
+	// Searched, not enumerated: every control inside a tile is pressed on a
+	// fresh page, and the rail is counted afterwards. A tile that vanished
+	// without a confirm is a second delete path, whatever it is called.
+	const railBefore = await page.evaluate(() =>
+		document.querySelectorAll('.session-box').length);
+	const controls = await page.evaluate(() => [...document.querySelectorAll('.session-box')]
+		.flatMap((b, bi) => [...b.querySelectorAll('button, input, select')]
+			.map((c, ci) => ({ bi, ci, what: c.className || c.tagName }))));
+	let vanished = [];
+	for (const c of controls) {
+		const gone = await page.evaluate(({ bi, ci }) => {
+			const boxes = [...document.querySelectorAll('.session-box')];
+			const box = boxes[bi];
+			if (!box) return null;
+			const ctl = [...box.querySelectorAll('button, input, select')][ci];
+			if (!ctl) return null;
+			const was = boxes.length;
+			ctl.click();
+			return { was };
+		}, c);
+		if (!gone) continue;
+		await page.waitForTimeout(250);
+		const now = await page.evaluate(() => ({
+			tiles: document.querySelectorAll('.session-box').length,
+			modal: !!document.querySelector('.modal.dlg'),
+		}));
+		if (now.tiles < gone.was && !now.modal) vanished.push(c.what);
+		// Put anything that opened back down.
+		await page.keyboard.press('Escape');
+		await page.waitForTimeout(150);
+	}
+	check(vanished.length === 0, 'no control on a tile deletes it without asking',
+		vanished.length ? vanished.join(', ') : `${controls.length} control(s) pressed, ${railBefore} tile(s) standing`);
+
+	// 502 is the dev server proxying to a gateway that is not running, which is
+	// the ordinary state of a browser-only run and not a fault of the page.
+	const errs = s.errs.filter((e) => !/favicon/i.test(e) && !/502 \(Bad Gateway\)/.test(e));
+	check(errs.length === 0, 'no console errors', errs.slice(0, 3).join(' | ') || 'none');
+} finally {
+	await s.close();
+}
+
+console.log(failures === 0
+	? `\ntiledlg: the cog is the corner and Delete is the foot. Shots in ${OUT}`
+	: `\ntiledlg: ${failures} failure(s). Shots in ${OUT}`);
+process.exit(failures === 0 ? 0 : 1);

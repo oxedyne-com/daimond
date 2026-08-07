@@ -18,7 +18,7 @@
 //	   second grant window), and collects the answer as its own tool result;
 //	E  after the late window there is no watcher left: the reply changes nothing.
 //
-// Needs dev/serve.mjs on :8777. No gateway, no model, no extension.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model, no extension.
 //
 //   node dev/verify_webwatch.mjs            # all cases
 //   WEBWATCH_CASES=AB node dev/verify_webwatch.mjs

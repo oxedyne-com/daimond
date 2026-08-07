@@ -49,7 +49,10 @@ const SCRATCH	= process.env.DAIMOND_SCRATCH || join(os.homedir(), '.cache/daimon
 const OUT	= join(SCRATCH, 'ext-dev');
 
 /// The port `dev/serve.mjs` binds, and therefore the one the dev build trusts.
-export const DEV_PORT = Number(process.env.DAIMOND_DEV_PORT || 8777);
+///
+/// It follows `DAIMOND_PORT`, so a dev build made inside a numbered world (see
+/// `dev/world.sh`) trusts that world's server rather than the default one.
+export const DEV_PORT = Number(process.env.DAIMOND_DEV_PORT || process.env.DAIMOND_PORT || 8777);
 
 /// The origins a developer needs and a user must never have.
 ///
@@ -89,8 +92,8 @@ async function shipped() {
 /// Builds the dev tree and returns its path.
 ///
 /// # Arguments
-/// * `port` - The dev server's port. A test that cannot have 8777 -- because a
-///   developer is already serving on it -- gets a build of its own rather than
+/// * `port` - The dev server's port. A test that cannot have the world's -- because
+///   a developer is already serving on it -- gets a build of its own rather than
 ///   fighting for the port.
 ///
 /// # Returns

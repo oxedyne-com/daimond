@@ -12,7 +12,7 @@
 //
 // Run with dev/serve.mjs up. No gateway needed. The log is fed in over a data:
 // URL so this does not depend on the network or on what is published today.
-import { open, signInAs, errors } from './harness.mjs';
+import { open, signInAs, errors, APP } from './harness.mjs';
 import { readFile } from 'node:fs/promises';
 import { parseLog, verifyChain, entryHash, nextEntry } from '../verify/lib.mjs';
 
@@ -48,7 +48,7 @@ const check = (name, pass, detail) => {
 // reports what you are RUNNING rather than what has most recently been
 // published -- reporting the latter told a stale tab it was current.
 const running = await (async () => {
-	const r = await fetch('http://localhost:8777/build.json').catch(() => null);
+	const r = await fetch(`${APP}/build.json`).catch(() => null);
 	const j = r && r.ok ? await r.json() : null;
 	return (j && j.build) || 'cccccccccccc';
 })();

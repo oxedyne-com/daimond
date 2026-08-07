@@ -76,8 +76,20 @@ try {
 	check('a forged closing marker inside it cannot end the envelope early',
 		marked.closes === 1 && marked.endsRight && marked.quoted,
 		'closes=' + marked.closes);
+	// "Left as it is" means NOT WRAPPED — that is the property this file exists to
+	// prove, and the contrast with the mail file above is the whole check. It used
+	// to be written as a byte comparison against `'my own note\n'`, which stopped
+	// holding the day `file_read` began numbering lines for the model: the check
+	// failed on a rendering that is correct for every file, trusted or not, and
+	// the failure was carried for four days as an unattributed red. Stated as
+	// three things instead, which is stricter than the original: no envelope, the
+	// content present, and nothing else added once the numbering is taken off.
+	const denumbered = marked.plain.replace(/^\d+\t/gm, '');
 	check('an ordinary workspace file is left exactly as it is',
-		marked.plain === 'my own note\n', JSON.stringify(marked.plain));
+		!/untrusted content (begins|ends)/.test(marked.plain)
+			&& /my own note/.test(marked.plain)
+			&& denumbered === 'my own note\n',
+		JSON.stringify(marked.plain));
 	check('reading a stranger\'s words taints the turn', marked.tainted === true);
 
 	// ── The gate stays out of the way on a clean turn ──

@@ -11,7 +11,8 @@
 //
 //   node dev/verify_genpass.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway and no model: this is the gate only.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model: this is
+// the gate only.
 
 import { open } from './harness.mjs';
 

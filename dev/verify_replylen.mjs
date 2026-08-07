@@ -28,8 +28,8 @@
 // the number the meter draws is compared against what the provider actually
 // sent, not against another part of the app.
 //
-// Needs: dev/serve.mjs on :8777, and dev/mockcap.mjs on :9098 (started here if
-// it is not already up).
+// Needs `dev/serve.mjs` (`DAIMOND_PORT`, default 8777) and `dev/mockcap.mjs`
+// (`DAIMOND_CAP_PORT`, default 9098), the latter started here if it is not up.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,8 +39,13 @@ import { fileURLToPath } from 'node:url';
 import { open, signInAs, connectMock, chat, newChat, shot } from './harness.mjs';
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
-const CAP_LOG = path.join(HERE, 'mockcap.log');
-const CAP_URL = 'http://127.0.0.1:9098/v1/chat/completions';
+// The cap mock is a world fixture like the LLM mock, so its port and log follow
+// the world's.  `dev/world.sh` numbers a world by its offset from port 8777.
+const WORLD    = Number(process.env.DAIMOND_PORT || 8777) - 8777;
+const CAP_PORT = Number(process.env.DAIMOND_CAP_PORT || 9098 + WORLD);
+const CAP_LOG  = process.env.DAIMOND_CAP_LOG
+	|| path.join(HERE, WORLD ? `mockcap-${WORLD}.log` : 'mockcap.log');
+const CAP_URL = `http://127.0.0.1:${CAP_PORT}/v1/chat/completions`;
 const MODEL   = 'cap/plain';
 
 /// What the mock reports as round 0's prompt; round k reports (k+1) times it.
@@ -62,11 +67,12 @@ const up = (url) => new Promise((res) => {
 	r.setTimeout(700, () => { r.destroy(); res(false); });
 });
 
+const CAP_MODELS = `http://127.0.0.1:${CAP_PORT}/v1/models`;
 let spawned = null;
-if (!(await up('http://127.0.0.1:9098/v1/models'))) {
-	spawned = spawn('node', [path.join(HERE, 'mockcap.mjs'), '9098'],
-		{ stdio: 'ignore', detached: false });
-	for (let i = 0; i < 20 && !(await up('http://127.0.0.1:9098/v1/models')); i++) {
+if (!(await up(CAP_MODELS))) {
+	spawned = spawn('node', [path.join(HERE, 'mockcap.mjs'), String(CAP_PORT)],
+		{ stdio: 'ignore', detached: false, env: { ...process.env, DAIMOND_CAP_LOG: CAP_LOG } });
+	for (let i = 0; i < 20 && !(await up(CAP_MODELS)); i++) {
 		await new Promise(r => setTimeout(r, 200));
 	}
 }

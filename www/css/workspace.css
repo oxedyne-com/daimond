@@ -146,7 +146,14 @@
    and what else was available are one glance rather than two. */
 .seg { display: flex; gap: 3px; flex-wrap: wrap; padding: 2px 6px 8px; }
 .seg button {
-	flex: 1 1 auto;
+	/* `flex-basis: 0`, not `auto`: with `auto` each option starts from the width
+	   of its own contents and only the SPARE room is shared out, so a row of
+	   five tiles came out 66.3 / 54.6 / 65.6 / 65.6 / 76.6px — the "1" tile 22px
+	   narrower than "3x2" beside it. A segmented control that divides its row
+	   unevenly reads as five buttons rather than one control, which is the
+	   opposite of what a segment is for. From a zero basis the row divides
+	   exactly, and `min-width` still stops it collapsing on a phone. */
+	flex: 1 1 0;
 	min-width: 54px;
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border-strong);
@@ -214,7 +221,13 @@
 /* A grid option drawn as the grid it selects, because "2 x 3" is a description
    of a picture and the picture is smaller than the sentence. */
 .grid-opt { display: flex; flex-direction: column; align-items: center; gap: 5px; }
-.grid-opt .cells { display: grid; gap: 2px; }
+/* Every picture is a different height -- one column of four is 30px, three of
+   two is 14px -- and the caption sits under whatever its own picture ends at,
+   so the five words came out on five different lines, a visible zigzag along
+   the row. Reserving the tallest picture's height and centring the rows in it
+   puts every caption on one line. 30px is 4 rows of 6px with 3 gaps of 2px,
+   which is the tallest grid the engine offers. */
+.grid-opt .cells { display: grid; gap: 2px; min-height: 30px; align-content: center; }
 .grid-opt .cells i {
 	display: block;
 	width: 9px; height: 6px;

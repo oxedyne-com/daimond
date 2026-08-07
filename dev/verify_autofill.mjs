@@ -9,9 +9,10 @@
 //
 //   node dev/verify_autofill.mjs
 //
-// Needs dev/serve.mjs on :8777. No gateway and no model: this is the gate only.
+// Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model: this is
+// the gate only.
 
-import { open, PASS } from './harness.mjs';
+import { open, PASS, APP } from './harness.mjs';
 
 let failures = 0;
 const check = (cond, msg, detail) => {
@@ -59,7 +60,7 @@ check(shape.auto === 'current-password', 'unlocking tags it current-password', s
 
 // The token a manager reads is in the served markup, so it is right from the
 // moment the form is parsed — the JS in showIdentity only re-states it.
-const markup = await (await fetch('http://localhost:8777/index.html')).text();
+const markup = await (await fetch(`${APP}/index.html`)).text();
 const tag = (markup.match(/<input[^>]*id="id-pass"[^>]*>/) || [''])[0];
 check(/type="password"/.test(tag) && /autocomplete="current-password"/.test(tag),
 	'and the served HTML carries both before any script runs', tag.slice(0, 90) + '…');

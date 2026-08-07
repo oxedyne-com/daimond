@@ -169,13 +169,12 @@
 	.tagf-pool, .tagf-active { max-height: calc(6em + 16px); }
 	.addbtn { width: 34px; height: 34px; font-size: var(--fs-xl); }
 	.icon-btn { padding: 8px 10px; font-size: var(--fs-2xl); }
-	.session-box-close { opacity: 1; font-size: var(--fs-3xl); padding: 4px 8px; }
-	/* These named classes that do not exist (`.files-row-del`, `.diamond-box-close`),
-	   so on touch the file buttons stayed hidden and could not be reached at all.
-	   The real classes are `.files-del` and `.session-box-close`, and the file
-	   buttons hide with `visibility`, not `opacity`. */
+	/* These named classes that do not exist (`.files-row-del`), so on touch the
+	   file buttons stayed hidden and could not be reached at all. The real class
+	   is `.files-del`, and the file buttons hide with `visibility`, not
+	   `opacity`. The tile's closer cross was removed in phase C -- Delete lives
+	   at the foot of the cog dialog now -- so its three rules went with it. */
 	.files-row .files-del { visibility: visible; opacity: 1; }
-	.session-box .session-box-close { opacity: 1; }
 
 	/* A tablet keeps the desktop bar and its chip row, where the controls were
 	   23-36px tall. They grow in HEIGHT only: the chip row already has more

@@ -2,9 +2,9 @@
 // (the client per-turn ledger) and credits (the gateway ledger), each as a
 // graph, a breakdown and a table.
 //
-// Drives the real panel (spend.js) with a seeded client ledger and against the
-// REAL gateway (/api/ledger), so it needs the dev stack up: the app on :8777
-// and the gateway on :9002.
+// Drives the real panel (spend.js) with a seeded client ledger and against the REAL
+// gateway (/api/ledger), so it needs the dev stack up: the app (DAIMOND_PORT, default
+// 8777) and the gateway on :9002.
 //
 //   1. The panel opens and both sections render, no console errors.
 //   2. Inference: a seeded ledger draws bars and a per-model table; the headline

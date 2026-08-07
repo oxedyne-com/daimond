@@ -199,6 +199,53 @@ pub fn normalise_note(note: &str) -> String {
 	note.trim().chars().take(MAX_NOTE_LEN).collect()
 }
 
+/// Change the relation and note of the link with `id`, keeping everything that
+/// identifies it.  True when one was found and something about it moved.
+///
+/// **This is what a delete plus a fresh assertion is not.**  Re-asserting an
+/// edited link mints a new [`Link::id`] and a new [`Link::ts`], so the record of
+/// when the relationship was FIRST claimed is lost and every reader that named
+/// the old id is left naming nothing.  A relation is a judgement about two
+/// things that were already joined, and refining the judgement does not make it
+/// a different joining, so the id and the timestamp are held and only what was
+/// actually revised is written.
+///
+/// The ends are not editable here, and deliberately: changing `from` or `to`
+/// makes it a link between two other things, which is a new claim and should
+/// cost a new record.
+///
+/// Nothing false is returned as a success.  An unchanged relation and note write
+/// nothing, which is what stops the surface stamping the Diamond -- and the
+/// stamp is what the merge reads, so a no-op that stamped would make one device
+/// fresher than the other for having done nothing (see
+/// [`crate::wasm::diamond::update_link`]).
+///
+/// # Arguments
+/// * `links` - The owner's sidecar, edited in place.
+/// * `id` - The link to revise.
+/// * `rel` - The new relation, normalised as [`normalise_rel`] leaves it.
+/// * `note` - The new note, bounded as [`normalise_note`] leaves it.
+pub fn update_link_in(links: &mut [Link], id: &str, rel: &str, note: &str) -> bool {
+	// A blank id names no link.  Matching one would revise every hand-written
+	// record in the sidecar at once, since that is exactly what those carry.
+	if id.trim().is_empty() {
+		return false;
+	}
+	let (rel, note) = (normalise_rel(rel), normalise_note(note));
+	for l in links.iter_mut() {
+		if l.id != id {
+			continue;
+		}
+		if l.rel == rel && l.note == note {
+			return false;
+		}
+		l.rel  = rel;
+		l.note = note;
+		return true;
+	}
+	false
+}
+
 /// Parse a whole sidecar, skipping blank and unreadable lines.
 ///
 /// A line that will not parse is dropped rather than failing the read: a
@@ -469,6 +516,90 @@ mod tests {
 		assert_eq!("Keep This Case, and  the  spacing.",
 			normalise_note("  Keep This Case, and  the  spacing.  "));
 		assert_eq!(MAX_NOTE_LEN, normalise_note(&"x".repeat(MAX_NOTE_LEN + 500)).chars().count());
+	}
+
+	// ── Revising a link: the same claim, said better ─────────────────
+
+	#[test]
+	fn test_a_revision_keeps_the_id_and_the_first_assertion_time() {
+		// The whole reason this exists. Delete-plus-re-add mints a new id and a
+		// new `ts`, so the record of when the two things were first said to be
+		// related is destroyed by an edit to the WORDING of the relation.
+		let mut links = vec![link("diamond:a", "diamond:b", "relates to")];
+		links[0].id = fmt!("east");
+		assert!(update_link_in(&mut links, "east", "Supersedes", "the newer figures"));
+		assert_eq!("east", links[0].id, "the id must survive the revision");
+		assert_eq!(1_700_000_000_000, links[0].ts, "and so must the first assertion");
+		assert_eq!("supersedes", links[0].rel, "a revised relation is normalised like any other");
+		assert_eq!("the newer figures", links[0].note);
+		// And the ends are untouched: this revises a claim, it does not move it.
+		assert_eq!("diamond:a", links[0].from.to_ref());
+		assert_eq!("diamond:b", links[0].to.to_ref());
+	}
+
+	#[test]
+	fn test_a_revision_that_changes_nothing_reports_nothing() {
+		// The caller writes only when it is told something moved, and writing is
+		// what stamps the Diamond. A no-op that reported a change would make this
+		// device fresher than the other for having done nothing, and the merge
+		// would then carry this copy over a genuine edit made elsewhere.
+		let mut links = vec![link("diamond:a", "diamond:b", "informs")];
+		links[0].id   = fmt!("east");
+		links[0].note = fmt!("as written");
+		assert!(!update_link_in(&mut links, "east", "informs", "as written"));
+		// Normalisation is applied BEFORE the comparison, so a relation that
+		// differs only in case or spacing is the same relation.
+		assert!(!update_link_in(&mut links, "east", "  INFORMS  ", "as written"));
+	}
+
+	#[test]
+	fn test_a_revision_touches_only_the_link_it_names() {
+		let mut links = vec![
+			link("diamond:a", "diamond:b", "informs"),
+			link("diamond:a", "diamond:c", "informs"),
+		];
+		links[0].id = fmt!("east");
+		links[1].id = fmt!("west");
+		assert!(update_link_in(&mut links, "west", "supersedes", ""));
+		assert_eq!("informs", links[0].rel, "the link that was not named must not move");
+		assert_eq!("supersedes", links[1].rel);
+	}
+
+	#[test]
+	fn test_an_id_that_names_no_link_revises_nothing() {
+		let mut links = vec![link("diamond:a", "diamond:b", "informs")];
+		links[0].id = fmt!("east");
+		assert!(!update_link_in(&mut links, "nosuch", "supersedes", ""));
+		assert_eq!("informs", links[0].rel);
+	}
+
+	#[test]
+	fn test_a_blank_id_does_not_revise_every_hand_written_link_at_once() {
+		// A link written by hand carries no id, so an empty id matches all of
+		// them -- and one careless call would rewrite the relation on every
+		// hand-written record in the sidecar.
+		let mut links = parse_links(concat!(
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"rel\":\"informs\"}\n",
+			"{\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"informs\"}\n",
+		));
+		assert!(!update_link_in(&mut links, "", "supersedes", "wholesale"));
+		assert!(!update_link_in(&mut links, "   ", "supersedes", "wholesale"));
+		assert!(links.iter().all(|l| l.rel == "informs"), "nothing may have moved");
+	}
+
+	#[test]
+	fn test_a_revision_does_not_travel_by_union_and_the_union_does_not_undo_it() {
+		// The union keys on the id and keeps the copy already here, so a revision
+		// is NOT how an edit reaches the other device -- the stamp is, and the
+		// merge carries the Diamond wholesale on it. What matters here is the
+		// other half: the stale copy coming back must not silently un-revise the
+		// edit, and it does not, because a held id is never taken twice.
+		let mut mine = vec![with_id("east", "diamond:b")];
+		let stale    = mine.clone();
+		assert!(update_link_in(&mut mine, "east", "supersedes", "revised here"));
+		assert!(union_links(&mine, &stale).is_none(), "the stale copy is the same record");
+		assert_eq!("supersedes", mine[0].rel);
+		assert_eq!("revised here", mine[0].note);
 	}
 
 	// ── The sidecar: hand-editable, so forgiving ─────────────────────
