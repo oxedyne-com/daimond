@@ -54,6 +54,7 @@ import init, {
 	builtin_tools,
 	qr_matrix,
 	set_account_ns,
+	install_panic_hook,
 	set_workspace_dir,
 	use_opfs_workspace,
 	compose_prompt,
@@ -20363,6 +20364,11 @@ import init, {
 		mshow(document.body.dataset.mpanel || 'ai');
 		try {
 			await init();               // instantiate the wasm module
+			// FIRST, before anything can panic. A wasm panic with no hook is the
+			// most opaque failure this app can produce: a bare "Script error." with
+			// no file or line, a Promise that never settles, and a poisoned module.
+			// An iPhone looped on exactly that for four sessions.
+			try { install_panic_hook(); } catch (e) { /* an older bundle has none */ }
 			window.__DAIMOND_READY = true;
 			// Point OPFS at the current account's subdirectory BEFORE any file tool runs, so this
 			// account's workspace and Daimond's own state are isolated from every other account at

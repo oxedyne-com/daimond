@@ -30,6 +30,7 @@ use oxedyne_fe2o3_core::rand::Rand;
 use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use web_sys::FileSystemDirectoryHandle;
 
 
@@ -38,6 +39,70 @@ use web_sys::FileSystemDirectoryHandle;
 /// generation), but the field must be set.
 const PROBE_MAX_TOKENS: u32 = 16;
 
+
+/// Send a Rust panic somewhere a person can read it.
+///
+/// WHY THIS EXISTS. There was no panic hook at all, and a wasm panic without one
+/// is the most opaque failure this app can produce: the browser reports a bare
+/// `"Script error."` with no file, no line and no message, the `Promise` the
+/// call was made through NEVER SETTLES, and the module is left poisoned. An
+/// iPhone looped on exactly that for four sessions -- the trail showed
+/// `unlocked`, then `Script error.`, then the step that had started simply never
+/// reporting either way, and then the tab dying. Every diagnosis was a guess
+/// because the one thing that knew what happened had nowhere to say it.
+///
+/// The panic goes to the console AND to `window.DaimondTrail`, which is durable
+/// and survives the reload -- a console nobody can open on a phone is the reason
+/// this took four attempts.
+///
+/// Installed by [`install_panic_hook`], called from every entry point that can
+/// be the first one, because there is no `#[wasm_bindgen(start)]` here.
+fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
+    let msg = fmt!("{}", info);
+    console_log(&msg);
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None    => return,          // a worker: the console line is all there is
+    };
+    // `window.DaimondTrail.note('wasm panic', msg)`, reached reflectively so a
+    // page without the trail is simply a page that gets the console line.
+    let trail = match js_sys::Reflect::get(&win, &JsValue::from_str("DaimondTrail")) {
+        Ok(t)  => t,
+        Err(_) => return,
+    };
+    let note = match js_sys::Reflect::get(&trail, &JsValue::from_str("note")) {
+        Ok(n)  => n,
+        Err(_) => return,
+    };
+    if let Ok(f) = note.dyn_into::<js_sys::Function>() {
+        let _ = f.call2(&trail, &JsValue::from_str("WASM PANIC"), &JsValue::from_str(&msg));
+    }
+}
+
+/// Panic on purpose, so the hook itself can be proved rather than assumed.
+///
+/// A diagnostic that has never been seen working is a diagnostic nobody should
+/// trust the silence of. `verify_wasmpanic` calls this and requires the trail to
+/// name the file and the line.
+#[wasm_bindgen]
+pub fn panic_on_purpose() {
+    panic!("panic_on_purpose: proving the hook reports");
+}
+
+/// Install [`report_panic`], once.
+///
+/// Idempotent by a flag rather than by asking: `std::panic::set_hook` replaces
+/// whatever is there, and replacing it on every call would be harmless but
+/// wasteful on a path that runs per Diamond.
+#[wasm_bindgen]
+pub fn install_panic_hook() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    std::panic::set_hook(Box::new(report_panic));
+}
 
 /// Run a `fe2o3_core` call path in the browser and return a one-line
 /// summary — the F2 proof that the gated core *runs*, not merely

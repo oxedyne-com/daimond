@@ -1,1 +1,1 @@
-{"build":"23f7e0707fb9","note":"Instrument the boot, because the phone's trail settled what it is NOT"}
+{"build":"87cceb66f1a5","note":"A wasm panic had nowhere to say what it was"}

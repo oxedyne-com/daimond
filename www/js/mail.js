@@ -65,7 +65,23 @@
 	/// `deps.readText`. If it is absent the panel says so rather than quietly
 	/// showing the numbered rendering as if it were the message.
 	async function readText(path) {
-		if (deps && typeof deps.readText === 'function') return await deps.readText(path);
+		if (deps && typeof deps.readText === 'function') {
+			// `Wasm.read_file` REJECTS on a missing path; `run_tool('file_read')`,
+			// which this replaced, returned an "Error: …" STRING. Every caller
+			// below still tests the returned value for that string, so the switch
+			// left four call sites whose error branch could never be reached and
+			// whose rejection escaped instead.
+			//
+			// On a device with no `mail/` directory -- a phone that has never
+			// opened the Email panel -- that produced two unhandled rejections on
+			// every boot, which is what the first usable trail from an iPhone
+			// showed. Restoring the contract here fixes all four at once.
+			try {
+				return await deps.readText(path);
+			} catch (e) {
+				return 'Error: ' + ((e && (e.message || e)) || 'unreadable');
+			}
+		}
 		console.error('mail: deps.readText is missing, so message headers cannot be read; '
 			+ 'see DaimondMail.init in daimond.js');
 		return '';
