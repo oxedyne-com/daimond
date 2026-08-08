@@ -106,6 +106,33 @@ pub fn trail(what: &str, detail: &str) {
     }
 }
 
+/// Grow the linear memory on purpose, so the gauge itself can be proved.
+///
+/// WHY THIS EXISTS, and it is the same reason [`panic_on_purpose`] exists. The
+/// heap gauge read exactly 1 MB through every local experiment — fifteen
+/// Diamonds, seven hundred and fifty version files, twenty engine instances —
+/// and a number that never moves is indistinguishable from a number that cannot.
+/// The phone's trail shows it going 1 → 235 → 1639, so it is not stuck there;
+/// but "it moved once on a device I cannot inspect" is not proof that it tracks
+/// allocation, and four sessions were lost to instruments nobody had watched
+/// working.
+///
+/// Allocates `mb` megabytes, touches every page so nothing is optimised away,
+/// and leaks it deliberately: linear memory never shrinks, so returning it would
+/// prove nothing about the number this reports.
+#[wasm_bindgen]
+pub fn grow_on_purpose(mb: u32) -> f64 {
+    let bytes = (mb as usize) * 1_048_576;
+    let mut v: Vec<u8> = Vec::with_capacity(bytes);
+    // Written, not merely reserved: an untouched reservation can be a mapping
+    // the allocator has not asked the runtime for yet.
+    for i in 0..bytes {
+        v.push((i & 0xff) as u8);
+    }
+    std::mem::forget(v);
+    heap_bytes()
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller

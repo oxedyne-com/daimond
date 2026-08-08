@@ -55,6 +55,7 @@ import init, {
 	qr_matrix,
 	set_account_ns,
 	heap_bytes,
+	grow_on_purpose,
 	install_panic_hook,
 	set_workspace_dir,
 	use_opfs_workspace,
@@ -8552,6 +8553,18 @@ import init, {
 		heapBytes:       function () { try { return heap_bytes(); } catch (e) { return -1; } },
 		/// The Diamond engine, for a probe that needs to make Diamonds in bulk.
 		diamondApp:      function () { return diamondApp(); },
+		/// One bare engine instance. Published for `probe_diamondheap`, which has
+		/// to price a `DaimondApp` in WASM LINEAR MEMORY — the only kind
+		/// `heapBytes` can see, and therefore the only kind that can explain a
+		/// phone reaching 235 MB across `connectGateway`.
+		newApp:          function (base, key, model) {
+			return new DaimondApp(base, key, model, 256, SYSTEM_PROMPT(), true);
+		},
+		/// Grow the wasm heap on purpose, so the gauge can be PROVED rather than
+		/// trusted. A diagnostic nobody has watched working is a diagnostic whose
+		/// silence means nothing — the panic hook taught this app that once
+		/// already. Used only by `probe_diamondheap`.
+		growOnPurpose:   function (mb) { return grow_on_purpose(mb); },
 		/// Draw the lock card. Published for `verify_reloadloop`, which has to
 		/// open it on demand to prove the trail appears on a looping app and NOT
 		/// on a working one -- and the only honest way to check that is through
