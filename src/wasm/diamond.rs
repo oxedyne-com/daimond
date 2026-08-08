@@ -1425,7 +1425,21 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         res!(opfs::delete_entry(FileRoot::Opfs, &dir, true).await);
     }
     for (rel, body) in writes {
-        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), body.as_bytes()).await);
+        // THE METADATA IS REBUILT, NOT COPIED. Every other file in an export is
+        // the user's content and travels byte for byte; `meta.json` is a record
+        // this app owns, and writing another device's copy verbatim is how a
+        // damaged one spreads. Two of one user's Diamonds arrived carrying a
+        // metadata file of 117 MB and 702 MB, and reading it killed their phone
+        // (see `read_meta`) — a normaliser existed the whole time and this path
+        // went round it.
+        //
+        // Round-tripping through `Meta` is lossless for a healthy file and
+        // bounded for a sick one: `from_json` now caps the tags, so what lands on
+        // disk is a few hundred bytes whatever arrived. The sender is not asked
+        // to be well-behaved, which is the only assumption worth making about the
+        // other end of a sync.
+        let text = if rel == meta_rel { Meta::from_json(&body).to_json() } else { body };
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
     Ok(())
 }
