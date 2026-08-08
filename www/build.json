@@ -1,1 +1,1 @@
-{"build":"d02ff6eebdff","note":"Every file write handed JS a view into wasm memory and then awaited"}
+{"build":"f794f1592ff4","note":"A guard so a view into wasm memory cannot come back"}

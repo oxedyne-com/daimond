@@ -664,3 +664,4 @@ pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
     }
     Ok(false)
 }
+

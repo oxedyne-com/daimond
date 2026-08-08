@@ -9910,3 +9910,94 @@ impl Tool {
 
 }
 
+
+#[cfg(test)]
+mod no_wasm_memory_views {
+    use std::fs;
+    use std::path::Path;
+
+    use oxedyne_fe2o3_core::prelude::*;
+
+    /// The two forbidden calls, ASSEMBLED rather than written out.
+    ///
+    /// Spelled whole, this file would match its own matcher and its own
+    /// fixtures, and the guard would fail on a clean tree — which is how a
+    /// check gets deleted rather than fixed. Split here, no line of source
+    /// contains either name, and the self-test below still proves the needles
+    /// find what they are for.
+    const WRITE: &str = concat!("write_with_u8", "_array");
+    const VIEW:  &str = concat!("Uint8Array", "::view");
+
+    /// No file write may hand JavaScript a view into wasm linear memory.
+    ///
+    /// WHY THIS IS A TEST AND NOT A COMMENT. `write_with_u8_array(&[u8])` and
+    /// `Uint8Array::view(&[u8])` are zero-copy: they describe a region of this
+    /// module's own heap, and JavaScript reads them later. Held across an
+    /// `await`, a heap that grows in the meantime replaces the backing
+    /// `ArrayBuffer`, and the view stops meaning what it meant.
+    ///
+    /// It cost a user every Diamond name on their phone. `opfs::write_file`
+    /// awaited such a view; their heap was growing at the time; all fifteen
+    /// `meta.json` files came out 216 MB of raw heap, identical in length, with
+    /// no name, no tags and not one quote character in the first 64 KB.
+    ///
+    /// It is a RACE, which is why it never fired on the desktop and fired
+    /// constantly on the phone: an OPFS write there takes hundreds of
+    /// milliseconds, so a growth landing inside one goes from unlikely to
+    /// routine. And it amplifies — the corrupt file is large, reading it grows
+    /// the heap further, and the next write is corrupted with a bigger payload.
+    ///
+    /// The zero-copy API is the ordinary, obvious, documented one, so the next
+    /// person to write a file here will reach for it again. This is what stops
+    /// them: copy onto the JavaScript heap first — `Uint8Array::new_with_length`
+    /// then `copy_from` — and hand over a buffer nothing in wasm can move.
+    ///
+    /// It lives in `tools.rs` rather than beside the code it guards because
+    /// `mod wasm` is `#[cfg(target_arch = "wasm32")]`, so a test in there never
+    /// runs on the host and would have been a guard that could not fail.
+    #[test]
+    fn test_no_write_hands_javascript_a_view_into_wasm_memory() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders: Vec<String> = Vec::new();
+        walk(&dir, &mut offenders);
+        assert!(offenders.is_empty(),
+            "a zero-copy view into wasm memory reached a JS call that may await:\n  {}\n\
+             Copy it first: `Uint8Array::new_with_length(n)` then `copy_from(bytes)`.",
+            offenders.join("\n  "));
+    }
+
+    /// NOT VACUOUS: the patterns must be findable at all, or a typo in them
+    /// would make this test pass over a tree full of offenders.
+    #[test]
+    fn test_the_guard_can_actually_find_something() {
+        let mut hits: Vec<String> = Vec::new();
+        scan_text(&fmt!("let v = {}(&bytes);", VIEW), Path::new("probe.rs"), &mut hits);
+        scan_text(&fmt!("w.{}(content)", WRITE), Path::new("probe.rs"), &mut hits);
+        assert_eq!(hits.len(), 2, "the guard's own patterns must match the thing it forbids");
+        // And prose about the hazard is not an instance of it.
+        let mut none: Vec<String> = Vec::new();
+        scan_text(&fmt!("// never call {} here", WRITE), Path::new("probe.rs"), &mut none);
+        assert!(none.is_empty(), "a comment naming the hazard must not read as the hazard");
+    }
+
+    fn walk(dir: &Path, out: &mut Vec<String>) {
+        let entries = match fs::read_dir(dir) { Ok(e) => e, Err(_) => return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() { walk(&path, out); continue; }
+            if path.extension().map(|e| e != "rs").unwrap_or(true) { continue; }
+            if let Ok(text) = fs::read_to_string(&path) { scan_text(&text, &path, out); }
+        }
+    }
+
+    fn scan_text(text: &str, path: &Path, out: &mut Vec<String>) {
+        for (n, line) in text.lines().enumerate() {
+            // The doc comment above names both patterns, so what is plainly
+            // prose about the hazard must not be counted as the hazard.
+            let code = line.split("//").next().unwrap_or("");
+            if code.contains(WRITE) || code.contains(VIEW) {
+                out.push(fmt!("{}:{}: {}", path.display(), n + 1, line.trim()));
+            }
+        }
+    }
+}
