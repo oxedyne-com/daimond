@@ -8544,6 +8544,14 @@ import init, {
 		/// widget looks identical to one that fell out of the tree, and the
 		/// difference is whether "pause Everything" still stops it spending.
 		pauseTree:       function () { return pauseTree(); },
+		/// The wasm module's own linear memory, in bytes. Published for
+		/// `probe_diamondheap`, which hunts the 1.6 GB that `list_diamonds`
+		/// allocates on a phone. The desktop will not be killed for it, but the
+		/// number is the same here as there — which is what makes the fault
+		/// findable on a machine the author can actually inspect.
+		heapBytes:       function () { try { return heap_bytes(); } catch (e) { return -1; } },
+		/// The Diamond engine, for a probe that needs to make Diamonds in bulk.
+		diamondApp:      function () { return diamondApp(); },
 		/// Draw the lock card. Published for `verify_reloadloop`, which has to
 		/// open it on demand to prove the trail appears on a looping app and NOT
 		/// on a working one -- and the only honest way to check that is through
@@ -11144,27 +11152,59 @@ import init, {
 
 	async function connectGateway() {
 		if (!window.DaimondGateway) return;
+		// THE HEAP, PART BY PART, AND THIS IS WHY.
+		//
+		// The phone's trail says the heap is 1 MB through five boot steps and
+		// 235 MB by the time this function resolves, then 1639 MB half a second
+		// later, and then the tab is killed. It was first read as the Diamond walk,
+		// because the walk's `list entry` lines were the only clock ticks visible
+		// in that window — but `probe_diamondheap` then showed fifteen Diamonds
+		// with seven hundred and fifty version files between them cost NOTHING.
+		// So the walk is not it, and this function is where the growth actually
+		// straddles. Its parts are separated here so the next trail says which.
+		//
+		// Growth only, so a healthy boot writes nothing at all.
+		var was = 0;
+		try { was = Math.round(heap_bytes() / 1048576); } catch (e) { /* older bundle */ }
+		var grew = function (part) {
+			var now = 0;
+			try { now = Math.round(heap_bytes() / 1048576); } catch (e) { return; }
+			if (now > was) { trail('HEAP GREW', part + ' +' + (now - was) + 'M -> ' + now + 'M'); was = now; }
+		};
 		await DaimondGateway.bootstrap();
+		grew('gw.bootstrap');
 		renderCredits();
 		updateSpend();
 		DaimondAdmin.status();          // the credits and the account dot just changed
+		grew('credits+spend+admin');
 		// bootstrap() has just read the balance, so this is the first moment the models a
 		// balance buys can be known. A first-time user with credits and no key of their own
 		// goes from "no model connected" to several hundred models here, and nowhere else.
-		syncCredits();
+		//
+		// STILL FIRE-AND-FORGET. It was tempting to `await` it so its cost landed
+		// against its own name, and that would have been a behaviour change wearing
+		// an instrument's clothes: a slow or hanging credits row would then hold up
+		// the boot, which is the one thing the comment above forbids. Measured in a
+		// callback instead, settled either way so a rejection cannot escape.
+		var afterCredits = function () { grew('syncCredits'); };
+		try { syncCredits().then(afterCredits, afterCredits); }
+		catch (e) { afterCredits(); }
 		// The Email panel's entitlement is a signed read, so it could not have
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
 		// unreachable when it is fine.
 		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		grew('mail.onOpen');
 		// And what this account has unlocked, for the same reason: at boot there was no
 		// session to ask under, so the rail could count what Daimond is born with and
 		// nothing the user has bought.
 		if (window.DaimondTools) DaimondTools.reload();
+		grew('tools.reload');
 		// There is a session now, so the sync engine can reach its mailbox: pull
 		// the other devices' state and begin pushing this one's. Fire-and-forget,
 		// like everything else that hangs off the gateway.
 		try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* best effort */ }
+		grew('authed dispatch');
 	}
 
 	// A Diamond DaimondApp's counters are cumulative across every steer and fold IT has run, so a

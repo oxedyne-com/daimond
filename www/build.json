@@ -1,1 +1,1 @@
-{"build":"1ed272fe0714","note":"The walk itself is the bug: 15 Diamonds take the heap to 1639 MB"}
+{"build":"8b024a290c22","note":"The walk was not it either: a probe disproves my own last commit"}
