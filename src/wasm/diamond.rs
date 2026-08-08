@@ -351,9 +351,54 @@ pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
 // └───────────────────────────────────────────────────────────────┘
 
 /// Read a Diamond's metadata.
+/// The most a `meta.json` may be worth reading.
+///
+/// It holds a name, a version, two stamps, at most eight tags of at most
+/// twenty-four characters, and a short list of toolkit names. A kilobyte is a
+/// generous one; sixty-four is beyond argument. Anything past this is damage.
+const META_MAX: u32 = 65_536;
+
+/// Read a Diamond's metadata, WITHOUT trusting the file's size.
+///
+/// THIS IS THE iPHONE LOOP. Two of one user's fifteen Diamonds had a `meta.json`
+/// of roughly 117 MB and 702 MB, and this function read them whole — twice over,
+/// because `from_utf8_lossy().to_string()` copies again. The device's own trail
+/// caught it in the act:
+///
+///     list entry 19fb11892cdc heap 1M
+///     HEAP GREW  read_meta +234M -> 235M
+///     …
+///     HEAP GREW  read_meta +1404M -> 1639M
+///     boot                                  <- the tab is gone
+///
+/// Wasm linear memory never shrinks, so 1.6 GB stood for the life of the tab and
+/// iOS took it away — on every boot, which is the whole of the login loop that
+/// ran for five sessions and produced seven wrong diagnoses.
+///
+/// So the size is asked BEFORE the bytes are, and only the front of an oversized
+/// file is read. That is a graceful degradation rather than a refusal: `to_json`
+/// writes `name`, `crystal_version`, `updated` and `touched` FIRST, so a 64 KB
+/// prefix still recovers everything that orders the rail and drives the merge.
+/// What is lost is tags — which is the right thing to lose, because the tags
+/// array is the only unbounded field in the file and therefore the prime
+/// suspect for what made it enormous.
+///
+/// A Diamond whose metadata is damaged must still LIST and still OPEN. Dropping
+/// it would be answering a bug the user can report with one they can only mourn.
 async fn read_meta(id: &str) -> Outcome<Meta> {
-    let bytes = res!(opfs::read_file(FileRoot::Opfs, &meta_path(id)).await);
-    let s = String::from_utf8_lossy(&bytes).to_string();
+    let (bytes, total) = res!(opfs::read_file_capped(FileRoot::Opfs, &meta_path(id), META_MAX).await);
+    if total > META_MAX as f64 {
+        // Loud, and in the durable trail: this is data damage, the user cannot
+        // see it, and the next write is about to heal it silently.
+        crate::wasm::entry::trail("META HUGE",
+            &fmt!("{} is {}KB — read the first {}KB only", id,
+                (total / 1024.0) as u64, META_MAX / 1024));
+        console_log(&fmt!(
+            "Diamond '{}' has a metadata file of {} bytes, which cannot be right. Only the first \
+             {} were read; its tags are dropped and will be rewritten on the next change.",
+            id, total as u64, META_MAX));
+    }
+    let s = String::from_utf8_lossy(&bytes);
     Ok(Meta::from_json(&s))
 }
 

@@ -102,7 +102,15 @@ impl Meta {
 			// touch anything would overwrite the other's copy of all of them.
 			touched: extract_json_number(s, "touched")
 				.unwrap_or_else(|| extract_json_number(s, "updated").unwrap_or(0)),
-			tags:    extract_json_string_array(s, "tags").unwrap_or_default(),
+			// NORMALISED ON THE WAY IN, not only on the way out. `normalise_tags`
+			// caps the list at MAX_TAGS and each tag at MAX_TAG_LEN, and it was
+			// applied to what a caller SET and never to what was read back — so a
+			// `meta.json` that had somehow acquired a huge tags array kept it
+			// through every read-modify-write for ever, and nothing could heal it.
+			// One of a user's Diamonds reached 702 MB, and reading it killed the
+			// tab (see `read_meta`). Normalising here means the very next write
+			// puts the file right.
+			tags:    normalise_tags(&extract_json_string_array(s, "tags").unwrap_or_default()),
 			// Postdates every Diamond already on a device, and an absent field means no grant --
 			// which is both the honest reading and the safe one. A toolkit is off by default.
 			kits:    normalise_kits(
@@ -295,15 +303,51 @@ mod tests {
 		// A tag is an arbitrary string, so it can hold the very characters the
 		// JSON it is written into uses. Written naively, `he said "hi"` closes
 		// the string early and the file no longer parses.
+		//
+		// Every tag here is one `normalise_tags` would leave ALONE — lowercase,
+		// single-spaced, short — so what is measured is the ESCAPING and nothing
+		// else. It used to include `two\nlines`, which stopped surviving verbatim
+		// the day reads began normalising; that is the normaliser working, not the
+		// escaping failing, and the two now have a test each.
 		let tags = vec![
 			fmt!("he said \"hi\""),
 			fmt!("back\\slash"),
-			fmt!("two\nlines"),
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
 		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
+	}
+
+	#[test]
+	fn test_reading_normalises_tags_so_a_damaged_file_heals() {
+		// THE READ PATH NORMALISES, and it did not use to. `normalise_tags` was
+		// applied to what a caller SET and never to what came back off disk, so a
+		// `meta.json` that had acquired more tags than the cap allows kept them
+		// through every read-modify-write for ever. One of a user's Diamonds
+		// reached 702 MB that way and reading it killed the tab.
+		//
+		// Written straight into the JSON rather than through `Meta`, because a
+		// `Meta` built by this process is exactly what CANNOT produce the file
+		// under test.
+		let many: Vec<String> = (0..40).map(|i| fmt!("\"Tag {}\"", i)).collect();
+		let json = fmt!(
+			"{{\"name\":\"N\",\"crystal_version\":1,\"updated\":2,\"touched\":2,\
+			  \"tags\":[{}],\"toolkits\":[]}}", many.join(","));
+		let back = Meta::from_json(&json);
+		assert_eq!(back.tags.len(), MAX_TAGS,
+			"forty tags off disk must come back capped, or nothing ever heals the file");
+		assert_eq!(back.tags[0], "tag 0", "and normalised, not merely truncated");
+		// And the very next write puts the file right.
+		assert!(back.to_json().len() < json.len(),
+			"the rewrite must be smaller than what was read, or the damage persists");
+
+		// Whitespace inside a tag collapses on the way in, exactly as it does on
+		// the way out, so the two paths cannot disagree about what a tag IS.
+		let nl = Meta::from_json(
+			"{\"name\":\"N\",\"crystal_version\":1,\"updated\":2,\"touched\":2,\
+			  \"tags\":[\"two\\nlines\"],\"toolkits\":[]}");
+		assert_eq!(nl.tags, vec![fmt!("two lines")]);
 	}
 
 	#[test]

@@ -53,6 +53,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
+    Blob,
     File,
     FileSystemDirectoryHandle,
     FileSystemFileHandle,
@@ -491,6 +492,53 @@ pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
     let bytes = js_sys::Uint8Array::new(&buf_val).to_vec();
     Ok(bytes)
+}
+
+/// Read at most `max` bytes of a file, and say how big the whole thing is.
+///
+/// WHY THIS EXISTS. `read_file` above reads whatever is on disk into memory, and
+/// on an iPhone that killed the app. A `meta.json` — a name, a version, two
+/// stamps and a few tags — had grown to hundreds of megabytes on two of one
+/// user's Diamonds, and `read_meta` slurped it on every boot: the device's own
+/// trail recorded `HEAP GREW read_meta +1404M -> 1639M`, and iOS took the tab
+/// away a second later. Wasm linear memory never shrinks, so every boot did it
+/// again, which is the whole of the login loop that ran for five sessions.
+///
+/// The size comes off the `File` handle, which costs nothing — a `Blob` knows
+/// its length without anyone reading it — and only the prefix is materialised.
+/// Returns `(bytes, total)` so a caller can tell a whole small file from the
+/// front of a huge one and say so.
+///
+/// A file this reads a prefix of is a file something is wrong with. The caller
+/// decides what to do about that; what this guarantees is that finding out
+/// cannot cost more than `max`.
+pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(Vec<u8>, f64)> {
+    let handle = res!(resolve_root(root, path).await);
+    let components = res!(jail_components(path));
+    let (dir, leaf) = res!(open_parent(&handle, components).await);
+
+    let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
+        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
+        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
+    let blob_val = res!(JsFuture::from(file_handle.get_file()).await
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    let file: File = res!(blob_val.dyn_into()
+        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+
+    let total = file.size();
+    // The whole file when it fits, and only the front of it when it does not.
+    // `slice` hands back another Blob and copies nothing until it is read.
+    let want: &Blob = file.as_ref();
+    let part = if total > max as f64 {
+        res!(want.slice_with_i32_and_i32(0, max as i32)
+            .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)))
+    } else {
+        want.clone()
+    };
+    let buf_val = res!(JsFuture::from(part.array_buffer()).await
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
 }
 
 /// Read the entries of `dir`, returning `(name, is_dir, size)` per entry.
