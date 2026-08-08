@@ -399,7 +399,26 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
             id, total as u64, META_MAX));
     }
     let s = String::from_utf8_lossy(&bytes);
-    Ok(Meta::from_json(&s))
+    let meta = Meta::from_json(&s);
+    if total > META_MAX as f64 {
+        // AND PUT IT RIGHT, HERE, rather than waiting for something else to
+        // write. A read that merely tolerates the damage leaves 702 MB on disk
+        // for ever, and the file's SIZE has consequences of its own: the sync
+        // budget is estimated from bytes on disk (`export_size`), so an
+        // unrepaired Diamond is one the account can never send again. The user
+        // saw exactly that — the loop stopped and a notice said fifteen Diamonds
+        // would not fit.
+        //
+        // Safe because `to_json` writes the name, the version and both stamps
+        // FIRST, so the 64 KB prefix carried all of them; what is dropped is the
+        // tags array, which is the damage. Best-effort: a repair that cannot be
+        // written must not stop the Diamond being listed.
+        match write_meta(id, &meta).await {
+            Ok(())  => crate::wasm::entry::trail("META HEALED", id),
+            Err(e)  => console_log(&fmt!("Diamond '{}' could not have its metadata repaired: {}", id, e)),
+        }
+    }
+    Ok(meta)
 }
 
 /// Write a Diamond's metadata.
