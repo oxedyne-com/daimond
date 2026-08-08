@@ -128,10 +128,11 @@ try {
 			'a paused Diamond’s input says where its play control is', ph);
 	}
 
-	// NOT VACUOUS, and this is the trap the change could have shipped: a Diamond
-	// with no actions must be TYPEABLE. Its `/self` leaf can still be paused in
-	// storage from an earlier release, and with no widget anywhere there would be
-	// no way on earth to release it.
+	// A Diamond whose TILE has no light must still be typeable when nothing has
+	// paused it, and must still have a release valve when something has. It is
+	// left in the pause tree deliberately — the global control writes through
+	// that tree, so dropping it out would mean "pause Everything" no longer
+	// stopped it spending.
 	if (help) {
 		await p.evaluate((id) => {
 			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`).click();
@@ -139,9 +140,16 @@ try {
 		await p.waitForTimeout(900);
 		const ph = await p.evaluate(() =>
 			(document.getElementById('steer-input') || {}).placeholder || '');
-		check(!/paus/i.test(ph),
-			'and a Diamond with no light is never held — it cannot be, there is nothing to release it',
-			ph);
+		check(!/paus/i.test(ph), 'a Diamond with no light on its tile is not held', ph);
+
+		const reach = await p.evaluate((id) => ({
+			// In the tree, so the global control still reaches it.
+			inTree: !!DaimondPause._core.findNode(DaimondCore.pauseTree(),
+				DaimondPause.id('root', 'diamonds', id) + '/self'),
+		}), help.id);
+		check(reach.inTree,
+			'but it IS in the pause tree, so “pause Everything” still stops it spending',
+			JSON.stringify(reach));
 	}
 
 	// ══ 2–4. The Optimiser's timer, and the pause tree ════════════════

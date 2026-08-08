@@ -1,1 +1,1 @@
-{"build":"cc838cf3dd3a","note":"Prompting a Diamond is asking it, so it was never a triggered action"}
+{"build":"1ed272fe0714","note":"The walk itself is the bug: 15 Diamonds take the heap to 1639 MB"}

@@ -106,6 +106,14 @@ pub fn trail(what: &str, detail: &str) {
     }
 }
 
+/// The linear memory in whole megabytes, for a trail line.
+///
+/// Separate from [`heap_bytes`] because the JS side wants bytes and every caller
+/// in Rust wants a short number to put beside what it just did.
+pub fn heap_mb() -> u32 {
+    (heap_bytes() / 1_048_576.0) as u32
+}
+
 /// Panic on purpose, so the hook itself can be proved rather than assumed.
 ///
 /// A diagnostic that has never been seen working is a diagnostic nobody should

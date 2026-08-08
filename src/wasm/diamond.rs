@@ -577,19 +577,43 @@ pub async fn list() -> Outcome<String> {
         if !is_dir {
             continue;
         }
-        crate::wasm::entry::trail("list entry", &name);
+        // THE HEAP, PER CALL, AND THIS IS WHY.
+        //
+        // The phone's trail settled that wasm linear memory reaches 1639 MB
+        // inside this loop and that the tab is killed a second later. It reaches
+        // 235 MB across the first three entries and 1639 MB across the next four,
+        // and it does so with the sync engine switched off — so the walk itself is
+        // the whole of it. What the trail could NOT say is which of the three
+        // calls below allocates, because they were one line together.
+        //
+        // Growth only, and only when it crosses a megabyte, so an ordinary walk
+        // writes one row per entry rather than four. Six diagnoses of this bug
+        // were made by reading source and all six were wrong; this is the line
+        // that makes a seventh unnecessary.
+        let mut was = crate::wasm::entry::heap_mb();
+        crate::wasm::entry::trail("list entry", &fmt!("{} heap {}M", name, was));
+        let grew = |phase: &str, was: &mut u32| {
+            let now = crate::wasm::entry::heap_mb();
+            if now > *was {
+                crate::wasm::entry::trail("HEAP GREW", &fmt!("{} +{}M -> {}M", phase, now - *was, now));
+                *was = now;
+            }
+        };
         // Before the metadata is read, because before the rename it was somewhere else.
         if let Err(e) = migrate(&name).await {
             console_log(&fmt!("Diamond '{}' could not be migrated to .daimond/: {}", name, e));
         }
+        grew("migrate", &mut was);
         // And before the crystal is read, because it was called brief.md.
         if let Err(e) = migrate_crystal_file(&name).await {
             console_log(&fmt!("Diamond '{}' could not have its crystal renamed: {}", name, e));
         }
+        grew("migrate_crystal", &mut was);
         let meta = match read_meta(&name).await {
             Ok(m)  => m,
             Err(_) => continue, // not a Diamond dir / no metadata
         };
+        grew("read_meta", &mut was);
         rows.push((name, meta));
     }
     // Most-recently updated first.

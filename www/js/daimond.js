@@ -6979,14 +6979,18 @@ import init, {
 
 	/// Has this Diamond anything that can spend WITHOUT being asked?
 	///
-	/// A traffic light is for a spendable function, and a Diamond with no
-	/// triggered actions spends only when the user prompts it -- which the user
-	/// controls by not prompting. So it gets no node in the tree, no widget on
-	/// its tile, no "Running" section in its dialog, and it can never be held.
+	/// This decides whether its TILE carries a traffic light, and nothing else.
+	/// A widget on the tile is a standing offer to hold something that runs on
+	/// its own; a Diamond with no triggered actions has nothing of the kind, and
+	/// a control for it would stand for a decision the user makes by typing.
 	///
-	/// One function rather than four tests, because those four have to agree:
-	/// a Diamond showing no light while something still consulted a paused leaf
-	/// would be locked with nothing anywhere to release it.
+	/// IT DOES NOT DECIDE MEMBERSHIP OF THE PAUSE TREE, and an earlier version of
+	/// this change had it do both. That was wrong twice over. The tree is what
+	/// the GLOBAL control writes through, so dropping a Diamond out of it meant
+	/// pausing "Everything" no longer stopped that Diamond spending — which is
+	/// the one promise §Transparent Control makes. And it left the object with no
+	/// release valve at all. Every Diamond and every chat stays a leaf; the
+	/// question here is only what gets DRAWN on a tile.
 	function diamondAutomated(id) {
 		try { return (Triggers.of(id) || []).length > 0; }
 		catch (e) { return false; }		// the module is not up: nothing is armed
@@ -6999,9 +7003,10 @@ import init, {
 	/// take a pause flag of its own: the root would write a phantom id nothing
 	/// could ever resume, and a new account's rail would open red.
 	function pauseTree() {
-		var dnodes = (diamonds || []).filter(function (f) {
-			return diamondAutomated(f.id);
-		}).map(function (f) {
+		// EVERY Diamond, whether or not it is automated. The tile may draw no
+		// widget for it (see `diamondAutomated`), but the global control writes
+		// through this tree, and "pause Everything" has to mean everything.
+		var dnodes = (diamonds || []).map(function (f) {
 			var base = DaimondPause.id('root', 'diamonds', f.id);
 			var kids = [
 				{ id: base + '/self', kind: 'daimon', label: f.name || t('rail.unnamed_diamond') },
@@ -8188,16 +8193,13 @@ import init, {
 		});
 		label.addEventListener('change', function () { renameChat(s, label.value); });
 		header.appendChild(label);
-		// A chat is a leaf: binary, and the same control as everywhere else — and
-		// in the same PLACE as everywhere else, which is the point of moving it.
+		// NO TRAFFIC LIGHT ON AN ORDINARY CHAT. The user's ruling: "ordinary chats
+		// do not need a pptw", which is the same rule that took it off an
+		// unautomated Diamond — a widget is for what spends WITHOUT being asked,
+		// and a chat spends when you type in it and at no other time.
 		//
-		// The user asked for the Diamond tile's light to sit right of the label and
-		// hard against the cog, "for visual consistency". Leaving the chat tile's
-		// on the left would have defeated exactly that: the two lists sit one above
-		// the other in one rail, and a screenshot of it showed Diamonds with the
-		// control on the right and a chat with it on the left. One rule, both lists.
-		mountPause(header, DaimondPause.id('root', 'chats', s.id),
-			s.name || t('pause.unnamed_chat'));
+		// notes2 never asked for one here either; it names global, mail-panel,
+		// mailbox, folder, diamond tile and TA. This one arrived in phase B.
 		header.appendChild(tileCog(s.name, function () {
 			openTileDialog({
 				id:       s.id,
@@ -8537,6 +8539,11 @@ import init, {
 		/// automated carries no pause node and no widget at all, so a file about
 		/// the widget has nothing to point at unless it can arm one first.
 		triggerSet:      function (id, action) { return Triggers.set(id, action); },
+		/// The pause tree as it stands. Published so a verifier can ask whether an
+		/// object the global control must reach is actually IN it — a tile with no
+		/// widget looks identical to one that fell out of the tree, and the
+		/// difference is whether "pause Everything" still stops it spending.
+		pauseTree:       function () { return pauseTree(); },
 		/// Draw the lock card. Published for `verify_reloadloop`, which has to
 		/// open it on demand to prove the trail appears on a looping app and NOT
 		/// on a working one -- and the only honest way to check that is through
@@ -14452,10 +14459,11 @@ import init, {
 			catch (e) { continue; }                 // no store yet; the flag stops a retry loop
 			try { await diamondApp().write_crystal(id, d.crystal); } catch (e) { /* empty is fine */ }
 			// Held before it can ever run -- but ONLY where there is something to
-			// run unbidden. A Diamond with no triggered actions carries no widget
-			// and no pause node, so seeding its leaf red would leave it held with
-			// nothing anywhere to release it. Nor does it need to be: with no TA it
-			// spends when the user prompts it and at no other time.
+			// run unbidden. A Diamond with no triggered actions draws no widget on
+			// its tile, so arriving red would mean a new user's Diamond refusing to
+			// answer with no light in front of them to explain it. It does not need
+			// holding either: with no TA it spends when prompted and at no other
+			// time. (It is still IN the pause tree, so "pause Everything" holds it.)
 			if (d.triggers.length) {
 				try { DaimondPause.seedPaused(DaimondPause.id('root', 'diamonds', id) + '/self'); }
 				catch (e) { /* module not up */ }
@@ -14479,15 +14487,12 @@ import init, {
 	/// trigger paused and a daimon running is amber, and amber must not read as
 	/// "you cannot type here".
 	///
-	/// A Diamond with no triggered actions is NEVER held, whatever the tree
-	/// happens to remember. It has no widget on its tile and no node in the pause
-	/// panel -- there is nothing to spend without being asked -- so a leaf left
-	/// paused from before its last action was deleted would lock the user out of
-	/// a Diamond with no control anywhere to release it. That is the trap this
-	/// line exists to close.
+	/// A Diamond with no widget on its TILE can still be held — by the global
+	/// control, or from its own settings dialog, both of which write this leaf.
+	/// So this asks the tree and nothing else. The release valve is the reason it
+	/// is safe to ask: see `diamondAutomated`.
 	function diamondHeld(id) {
 		if (!id) return false;
-		if (!diamondAutomated(id)) return false;
 		try {
 			return !!(window.DaimondPause
 				&& DaimondPause.isPaused(DaimondPause.id('root', 'diamonds', id) + '/self'));
@@ -15348,11 +15353,12 @@ import init, {
 				// trigger held and a daimon running reads amber here without
 				// anyone having set amber anywhere.
 				//
-				// Null where the Diamond has no actions, on the same rule and for
-				// the same reason as the tile: the dialog's whole "Running" section
-				// is skipped when there is no node, so it does not offer a control
-				// the tile has just declined to show.
-				node: diamondAutomated(f.id) ? DaimondPause.id('root', 'diamonds', f.id) : '',
+				// ALWAYS, even where the tile draws no widget. This dialog is the
+				// release valve: a Diamond held by the global control needs
+				// somewhere to be let go from, and taking the light off the tile
+				// is a statement about clutter, not about whether the object can
+				// be paused.
+				node: DaimondPause.id('root', 'diamonds', f.id),
 				// A Diamond's models may be changed after it is made; a chat's may not.
 				models:   'diamond',
 				onDelete: function () { return deleteDiamond(f); },

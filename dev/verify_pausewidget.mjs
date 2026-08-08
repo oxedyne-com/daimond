@@ -149,13 +149,11 @@ async function expectedTree(p) {
 							.map((t) => t.id);
 					} catch (x) { return []; }
 				})(),
-			// A Diamond with NO triggered actions is not in the tree at all --
-			// not even a `self` leaf. It has nothing that spends without being
-			// asked, so there is nothing to hold; the `prompted` action that used
-			// to give every Diamond one has been removed as decoration. Filtered
-			// here rather than mapped to an empty node, because an empty branch
-			// and an absent one are different things to `leavesUnder`.
-			})).filter((d) => d.triggers.length > 0),
+			// EVERY Diamond is in the tree, automated or not. Its TILE may draw no
+			// widget — the `prompted` action that used to give each one something
+			// to hold is gone — but the global control writes through this tree,
+			// and "pause Everything" has to mean everything.
+			})),
 			chats:    [...document.querySelectorAll('.chat-box')].map((e) => e.dataset.id),
 			mail,
 		};
@@ -331,7 +329,13 @@ const tiles = await p.evaluate(() =>
 	document.querySelectorAll('#diamond-list .diamond-box').length);
 check(ctl.filter((c) => c.where === 'diamond').length === tiles, 'one on each Diamond tile',
 	`${ctl.filter((c) => c.where === 'diamond').length} of ${tiles}`);
-check(ctl.filter((c) => c.where === 'chat').length >= 2, 'one on each chat tile',
+// NONE on a chat tile, at the user's ruling: "ordinary chats do not need a
+// pptw". Same rule as an unautomated Diamond — a widget is a standing offer to
+// hold something that runs on its own, and a chat spends when you type in it and
+// at no other time. A chat is still a LEAF of the tree, so the global control
+// reaches it; what has gone is the drawing, not the governance.
+check(ctl.filter((c) => c.where === 'chat').length === 0,
+	'and NONE on a chat tile — a chat spends only when you type in it',
 	`${ctl.filter((c) => c.where === 'chat').length}`);
 
 // ── F. Reachable and named ──────────────────────────────────────────
@@ -835,7 +839,10 @@ out.push('--- self-test: breaking each property in the live page');
 {
 	const r = await p.evaluate(() => {
 		DaimondPause.set('root', true);
-		const g = document.querySelector('.chat-box .pptw');
+		// A DIAMOND tile, not a chat: chat tiles no longer draw a control at all,
+		// so a self-test aimed at one proves nothing about the sweep. The
+		// Diamonds here are armed with a timer at the top of this file.
+		const g = document.querySelector('.diamond-box .pptw');
 		if (!g) return { said: 'no control', painted: 'no control' };
 		DaimondPause.set(g.dataset.pauseNode, false);		// really paused
 		g.dataset.state = 'play';							// but drawn green
@@ -845,7 +852,7 @@ out.push('--- self-test: breaking each property in the live page');
 	await p.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:pause')));
 	await p.waitForTimeout(200);
 	const fixed = await p.evaluate(() => {
-		const g = document.querySelector('.chat-box .pptw');
+		const g = document.querySelector('.diamond-box .pptw');
 		if (!g) return { said: 'no control', painted: 'none' };
 		return { said: DaimondPause.state(g.dataset.pauseNode), painted: g.dataset.state };
 	});

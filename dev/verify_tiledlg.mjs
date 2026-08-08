@@ -144,26 +144,37 @@ try {
 		};
 	});
 	check(!!dlg, 'the cog opens a dialog');
-	// A Diamond with NO triggered actions has nothing that spends unbidden, so it
-	// has no pause node and the dialog shows no "Running" section — the same rule
-	// that takes the light off its tile. This read `hasPause` unconditionally and
-	// went red the day that became true, which said nothing about the dialog.
-	check(dlg && !dlg.hasPause,
-		'a Diamond with no actions gets no pause control — there is nothing to hold',
+	// THE DIALOG ALWAYS CARRIES IT, even for a Diamond whose tile draws none.
+	// Taking the light off an unautomated tile is a statement about clutter; the
+	// object is still in the pause tree, still held by the global control, and
+	// this dialog is where it can be let go from. A version of this change that
+	// dropped the node here too left such a Diamond with no release valve at all.
+	check(dlg && dlg.hasPause,
+		'the dialog carries the pause control — it is the release valve for a tile with no light',
 		JSON.stringify(dlg && dlg.hasPause));
 	check(dlg && dlg.hasLevel === 2, 'the dialog offers Simple and Max', dlg && String(dlg.hasLevel));
 	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
 		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
 
-	// NOT VACUOUS. "No control" is also what a broken dialog shows, so arm the
-	// Diamond with a triggered action and reopen: now there IS something that
-	// spends unbidden, and the control has to appear.
+	// AND THE TILE IS THE OTHER HALF OF THE RULE: no light until the Diamond has
+	// something that spends unbidden, then one. Measured on the tile rather than
+	// in the dialog, because that is where the user's instruction applies.
 	{
 		await page.evaluate(() => {
 			const c = [...document.querySelectorAll('.tile-dlg-card .dlg-cancel, .tile-dlg-card .dlg-ok')].pop();
 			if (c) c.click(); else document.querySelector('.tile-dlg').remove();
 		});
 		await page.waitForTimeout(400);
+		// THE FIRST TILE, not any tile in the list. `#diamond-list .session-box
+		// .pptw` matches a light inside ANY box, and the Optimiser ships with a
+		// timer and therefore a light — so this said "true" for a tile that has
+		// none. Scope it to the box being talked about.
+		const bare = await page.evaluate(() => {
+			const b = document.querySelector('#diamond-list .session-box');
+			return !!(b && b.querySelector('.pptw'));
+		});
+		check(!bare, 'a Diamond with no actions carries no light on its TILE', String(bare));
+
 		await page.evaluate(async () => {
 			const id = document.querySelector('#diamond-list .session-box').dataset.id;
 			const ta = DaimondTriggers.blank('activity');
@@ -172,15 +183,23 @@ try {
 			await DaimondCore.triggerSet(id, ta);
 		});
 		await page.waitForTimeout(600);
-		await openCog(page, '#diamond-list');
-		const armed = await page.evaluate(() =>
-			!!document.querySelector('.tile-dlg-card .pptw'));
-		check(armed, 'and a Diamond WITH one gets the control back', String(armed));
-		await page.evaluate(() => {
-			const c = [...document.querySelectorAll('.tile-dlg-card .dlg-cancel, .tile-dlg-card .dlg-ok')].pop();
-			if (c) c.click(); else document.querySelector('.tile-dlg').remove();
+		const armed = await page.evaluate(() => {
+			const b = document.querySelector('#diamond-list .session-box');
+			return {
+				has:   !!b.querySelector('.pptw'),
+				order: [...b.querySelector('.session-box-header').children]
+					.map((el) => el.className.split(' ')[0]).join(','),
+			};
 		});
-		await page.waitForTimeout(400);
+		check(armed.has, 'and one WITH an action grows one', JSON.stringify(armed));
+		check(/^session-box-name,pptw,tile-cog/.test(armed.order),
+			'to the right of the name, hard against the cog', armed.order);
+		// And no chat tile has one at all — the user's ruling, and the same rule:
+		// a chat spends when you type in it and at no other time.
+		const chat = await page.evaluate(() =>
+			!!document.querySelector('#session-list .session-box .pptw'));
+		check(!chat, 'while an ordinary chat carries none at all', String(chat));
+
 		await openCog(page, '#diamond-list');
 	}
 
