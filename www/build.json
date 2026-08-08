@@ -1,1 +1,1 @@
-{"build":"968a73c2ff5d","note":"The sync switch was somewhere nobody looks; it is on the admin panel now"}
+{"build":"d02ff6eebdff","note":"Every file write handed JS a view into wasm memory and then awaited"}

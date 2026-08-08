@@ -385,7 +385,29 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
     let writable: FileSystemWritableFileStream = res!(writable_val.dyn_into()
         .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", leaf; IO, File, Write)));
 
-    let write_promise = res!(writable.write_with_u8_array(content)
+    // COPIED INTO A JS-OWNED BUFFER FIRST, AND THIS IS NOT AN OPTIMISATION.
+    //
+    // `write_with_u8_array(&[u8])` hands JavaScript a `Uint8Array` VIEW over wasm
+    // linear memory — zero-copy, and pointing straight into this module's heap.
+    // The write is then AWAITED. If wasm memory grows while that await is
+    // outstanding, the engine replaces the backing `ArrayBuffer` and the view no
+    // longer describes the bytes it was made from.
+    //
+    // THIS WROTE 216 MB OF RAW WASM MEMORY INTO EVERY ONE OF A USER'S FIFTEEN
+    // `meta.json` FILES. Their phone's heap had ballooned to 235 MB, every write
+    // in that window landed the wrong bytes, and all fifteen files came out
+    // byte-identical in length — 235 MB of heap less a small offset — containing
+    // no JSON at all: no name, no tags, not one quote character in the first
+    // 64 KB. The Diamond names were not corrupted, they were overwritten with a
+    // photograph of the heap.
+    //
+    // `Uint8Array::new_with_length` allocates on the JAVASCRIPT heap, and
+    // `copy_from` copies out of wasm memory immediately, before anything can be
+    // awaited. Growing the wasm heap afterwards cannot touch it. The cost is one
+    // copy of the file being written, which is the correct price.
+    let buf = js_sys::Uint8Array::new_with_length(content.len() as u32);
+    buf.copy_from(content);
+    let write_promise = res!(writable.write_with_buffer_source(&buf)
         .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
     res!(JsFuture::from(write_promise).await
         .map_err(|e| err!("OPFS: write '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
