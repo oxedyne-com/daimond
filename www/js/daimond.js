@@ -19772,6 +19772,10 @@ import init, {
 		RoundLimit.render();
 		FoldModel.render();
 		CrystalCap.render();
+		// The sync switch and the diagnostics trail. Built here rather than in the
+		// markup because every other settings row is, and because both are
+		// useless on a page where `DaimondSafe`/`DaimondTrail` did not load.
+		try { TrailRow.mount(); } catch (e) { /* the row is not worth an error */ }
 	}
 	/// A string from the table, or the English written here when the table has no
 	/// entry for it yet.
@@ -19894,6 +19898,100 @@ import init, {
 	/// right figure depends on how the person works. A Diamond holding one project's state wants
 	/// far less than one standing in for a whole field of them, and only the user knows which
 	/// they are building.
+	/// A way to read the app's own trail WHEN THE APP IS WORKING.
+	///
+	/// The trail has only ever appeared on the lock screen, and only once the app
+	/// has booted three times in ninety seconds — deliberately, because
+	/// diagnostics offered to somebody whose app works are noise. That was right
+	/// while the only question was a loop. It stopped being right the moment the
+	/// loop was FIXED: the lines that say what was wrong with this account —
+	/// `META HUGE`, `META SHAPE`, `META HEALED` — are written on a boot that then
+	/// works perfectly, and the user had no way on earth to reach them.
+	///
+	/// So it lives in Settings too, behind a button, saying nothing until pressed.
+	var TrailRow = {
+		mount: function () {
+			if (document.getElementById('cfg-trail-btn')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section || !window.DaimondTrail) return false;
+
+			// A PLAIN SWITCH FOR SYNC, always here, on or off.
+			//
+			// Safe mode only ever armed ITSELF, on a loop, and the only control
+			// was a chip that appeared once it had. So a user asked to turn sync
+			// off had nowhere to do it and no way to find that out — which is
+			// exactly what happened, at the worst possible moment, while their
+			// data was being rewritten. A switch that exists only in the failure
+			// it was built for is not a switch.
+			if (window.DaimondSafe) {
+				var slab = document.createElement('label');
+				slab.className = 'cfg-fieldlabel';
+				slab.textContent = tOr('settings.sync', 'Syncing');
+				var sbtn = document.createElement('button');
+				sbtn.type = 'button';
+				sbtn.className = 'id-trail-btn';
+				sbtn.id = 'cfg-sync-btn';
+				var on = !DaimondSafe.on();
+				sbtn.textContent = on
+					? tOr('safe.turn_off', 'Stop syncing this device')
+					: tOr('safe.turn_on', 'Turn syncing back on');
+				var snote = document.createElement('p');
+				snote.className = 'cfg-fieldnote';
+				snote.textContent = on
+					? tOr('settings.sync_on_note',
+						'This device is sending its work to your other devices. Stopping is '
+						+ 'immediate and loses nothing — everything stays here.')
+					: tOr('settings.sync_off_note',
+						'This device is not syncing. Its work is safe here and is not reaching '
+						+ 'your other devices.');
+				sbtn.addEventListener('click', function () {
+					DaimondSafe.set(on, 'user');    // on → we are turning it OFF
+					location.reload();
+				});
+				section.insertBefore(slab, form);
+				section.insertBefore(sbtn, form);
+				section.insertBefore(snote, form);
+			}
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.textContent = tOr('settings.trail', 'Diagnostics');
+			var btn = document.createElement('button');
+			btn.type = 'button';
+			btn.className = 'id-trail-btn';
+			btn.id = 'cfg-trail-btn';
+			btn.textContent = tOr('settings.trail_copy', 'Copy the app’s own trail');
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.textContent = tOr('settings.trail_note',
+				'A short list of what Daimond last did — event names and a clock, no keys, no '
+				+ 'message text, nothing from your files. Safe to read and safe to paste into a '
+				+ 'bug report.');
+			var out = document.createElement('pre');
+			out.className = 'id-trail-text';
+			out.id = 'cfg-trail-text';
+			out.hidden = true;
+			btn.addEventListener('click', function () {
+				var text = '';
+				try { text = DaimondTrail.text(); } catch (e) { text = ''; }
+				out.textContent = text || tOr('settings.trail_empty', 'Nothing recorded yet.');
+				out.hidden = false;
+				// Shown as well as copied: the clipboard is refused often enough on
+				// a phone that a button which only copies is a button that sometimes
+				// does nothing and says it worked.
+				var done = function () { btn.textContent = tOr('trail.copied', 'Copied'); };
+				if (text && navigator.clipboard && navigator.clipboard.writeText) {
+					navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+				} else if (text) { fallback(text, done); }
+			});
+			section.insertBefore(lab, form);
+			section.insertBefore(btn, form);
+			section.insertBefore(note, form);
+			section.insertBefore(out, form);
+			return true;
+		},
+	};
+
 	var CrystalCap = {
 		/// The ladder offered, in kilobytes. The user's own figure is added when it is off the
 		/// ladder, so opening the panel never silently changes their setting.

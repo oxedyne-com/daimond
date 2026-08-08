@@ -40,7 +40,7 @@ use crate::diamond_link::{
 	write_links,
 };
 use crate::diamond_meta::{Meta, normalise_tags};
-use crate::llm::json_escape;
+use crate::llm::{extract_json_string, json_escape};
 use crate::protocol::generate_session_id;
 use crate::tools::FileRoot;
 use crate::wasm::{js_prop, js_str, opfs};
@@ -358,6 +358,32 @@ pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
 /// generous one; sixty-four is beyond argument. Anything past this is damage.
 const META_MAX: u32 = 65_536;
 
+/// A Diamond's name, read back off its crystal's opening heading.
+///
+/// The last resort for a Diamond whose `meta.json` lost its name. A crystal
+/// opens `# <name>` by construction — the default Diamonds are written that way
+/// and every fold preserves the heading — so it is the one place the name
+/// survives outside the metadata. `read_crystal` already falls back to the
+/// newest version snapshot when `crystal.md` is missing, so this reaches even a
+/// Diamond whose crystal has gone.
+///
+/// Returns `None` rather than a guess when there is no heading to read: an
+/// invented name would be worse than an empty one, because the user could not
+/// tell it from the name they chose.
+async fn name_from_crystal(id: &str) -> Option<String> {
+    let text = read_crystal(id).await.ok()?;
+    for line in text.lines().take(20) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("# ") {
+            let name: String = rest.trim().chars().take(80).collect();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
 /// Read a Diamond's metadata, WITHOUT trusting the file's size.
 ///
 /// THIS IS THE iPHONE LOOP. Two of one user's fifteen Diamonds had a `meta.json`
@@ -399,6 +425,28 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
             id, total as u64, META_MAX));
     }
     let s = String::from_utf8_lossy(&bytes);
+    if total > META_MAX as f64 {
+        // THE SHAPE OF THE DAMAGE, BEFORE THE REPAIR ERASES IT.
+        //
+        // The repair below is about to rewrite this file, and once it has, the
+        // only record of what went wrong is gone. What is still not known is how
+        // a metadata file reached 702 MB: forty million short tags, or one
+        // enormous one, or a `name` that grew, are three different bugs with
+        // three different fixes.
+        //
+        // COUNTS AND LENGTHS ONLY, never the text of a tag. A tag is something
+        // the user typed, and `breadcrumb.js` promises the trail holds nothing
+        // that could not be read aloud in a bug report. The shape answers the
+        // question and the content is not needed for it.
+        let prefix = &s[..s.len().min(META_MAX as usize)];
+        let quotes = prefix.matches('"').count();
+        let commas = prefix.matches(',').count();
+        let tags_at = prefix.find("\"tags\":").map(|i| i as i64).unwrap_or(-1);
+        let name_len = extract_json_string(prefix, "name").map(|n| n.len()).unwrap_or(0);
+        crate::wasm::entry::trail("META SHAPE",
+            &fmt!("{} name={}B tags@{} quotes={} commas={} in first {}KB",
+                id, name_len, tags_at, quotes, commas, META_MAX / 1024));
+    }
     let meta = Meta::from_json(&s);
     if total > META_MAX as f64 {
         // AND PUT IT RIGHT, HERE, rather than waiting for something else to
@@ -413,9 +461,19 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
         // FIRST, so the 64 KB prefix carried all of them; what is dropped is the
         // tags array, which is the damage. Best-effort: a repair that cannot be
         // written must not stop the Diamond being listed.
-        match write_meta(id, &meta).await {
-            Ok(())  => crate::wasm::entry::trail("META HEALED", id),
-            Err(e)  => console_log(&fmt!("Diamond '{}' could not have its metadata repaired: {}", id, e)),
+        // AND NEVER OVER A NAME IT COULD NOT READ. If the prefix did not yield a
+        // name, the parse did not find what it expected and the file is not the
+        // shape assumed here. Keeping 702 MB on disk is a bad outcome; replacing
+        // a Diamond's name with nothing is a worse one, and it is not reversible.
+        // The oversized file stays, `read_meta` keeps coping with it, and the
+        // trail says the repair declined.
+        if meta.name.trim().is_empty() {
+            crate::wasm::entry::trail("META NOT HEALED", &fmt!("{} — no name parsed, file left alone", id));
+        } else {
+            match write_meta(id, &meta).await {
+                Ok(())  => crate::wasm::entry::trail("META HEALED", id),
+                Err(e)  => console_log(&fmt!("Diamond '{}' could not have its metadata repaired: {}", id, e)),
+            }
         }
     }
     Ok(meta)
@@ -673,11 +731,32 @@ pub async fn list() -> Outcome<String> {
             console_log(&fmt!("Diamond '{}' could not have its crystal renamed: {}", name, e));
         }
         grew("migrate_crystal", &mut was);
-        let meta = match read_meta(&name).await {
+        let mut meta = match read_meta(&name).await {
             Ok(m)  => m,
             Err(_) => continue, // not a Diamond dir / no metadata
         };
         grew("read_meta", &mut was);
+        // A NAMELESS DIAMOND GETS ITS NAME BACK OFF ITS OWN CRYSTAL.
+        //
+        // This exists because a repair of mine destroyed fifteen of them. An
+        // earlier build rebuilt every imported `meta.json` and wrote whatever it
+        // parsed, so one sync left a user with fifteen tiles carrying nothing but
+        // a cog. The guards in `import_diamond` and `read_meta` stop it happening
+        // again; this is what puts right the accounts it already happened to.
+        //
+        // The crystal opens `# <name>` — `seedDefaultDiamonds` writes it that way
+        // and so does every fold — so the heading is the name, recoverable from
+        // the one file a Diamond certainly has. Written back, so it costs one
+        // read per damaged Diamond once and nothing ever again.
+        if meta.name.trim().is_empty() {
+            if let Some(from_crystal) = name_from_crystal(&name).await {
+                crate::wasm::entry::trail("NAME RECOVERED", &name);
+                meta.name = from_crystal;
+                if let Err(e) = write_meta(&name, &meta).await {
+                    console_log(&fmt!("Diamond '{}' could not keep its recovered name: {}", name, e));
+                }
+            }
+        }
         rows.push((name, meta));
     }
     // Most-recently updated first.
@@ -1452,12 +1531,35 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
         // (see `read_meta`) — a normaliser existed the whole time and this path
         // went round it.
         //
-        // Round-tripping through `Meta` is lossless for a healthy file and
-        // bounded for a sick one: `from_json` now caps the tags, so what lands on
-        // disk is a few hundred bytes whatever arrived. The sender is not asked
-        // to be well-behaved, which is the only assumption worth making about the
-        // other end of a sync.
-        let text = if rel == meta_rel { Meta::from_json(&body).to_json() } else { body };
+        // ONLY WHERE THERE IS DAMAGE, AND NEVER OVER A NAME IT COULD NOT READ.
+        //
+        // The first version of this rebuilt EVERY imported `meta.json`, healthy
+        // or not, and it cost the user every Diamond name on their phone in one
+        // sync: fifteen tiles with nothing on them but a cog. A repair that runs
+        // on undamaged input is not a repair, it is a rewrite — and a rewrite
+        // that drops what it failed to parse is data loss dressed as a fix.
+        //
+        // So: a file of a sane size is written through untouched, exactly as
+        // every other file in the export is. An oversized one is rebuilt, and
+        // even then only if the rebuild recovered a name — because a nameless
+        // Meta means the parse did not find what it was looking for, and the
+        // right answer to that is to keep the bytes and let `read_meta` deal with
+        // them, not to overwrite them with blanks.
+        let text = if rel == meta_rel && body.len() > META_MAX as usize {
+            let rebuilt = Meta::from_json(&body);
+            if rebuilt.name.trim().is_empty() {
+                crate::wasm::entry::trail("META KEPT",
+                    &fmt!("{} is {}KB but its name did not parse — left as it came",
+                        id, body.len() / 1024));
+                body
+            } else {
+                crate::wasm::entry::trail("META REBUILT",
+                    &fmt!("{} {}KB -> {}B", id, body.len() / 1024, rebuilt.to_json().len()));
+                rebuilt.to_json()
+            }
+        } else {
+            body
+        };
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
     Ok(())
