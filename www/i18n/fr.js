@@ -1742,5 +1742,16 @@
 	'safe.turn_on_title':   'Réactiver la synchronisation ?',
 	'safe.turn_on_ask':     'Daimond va redémarrer et tenter de se synchroniser à nouveau avec vos autres appareils. S’il recommence à se fermer tout seul, il reviendra de lui-même au démarrage sûr.',
 	'safe.turn_on_ok':      'Redémarrer avec la synchronisation',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        'Synchronisation et diagnostic',
+	'settings.sync':        'Synchronisation',
+	'settings.sync_on_note': 'Cet appareil envoie son travail à vos autres appareils. L’arrêt est immédiat et ne perd rien — tout reste ici.',
+	'settings.sync_off_note': 'Cet appareil ne se synchronise pas. Son travail est en sécurité ici et ne parvient pas à vos autres appareils.',
+	'settings.trail':       'Diagnostic',
+	'settings.trail_copy':  'Copier le journal de l’application',
+	'settings.trail_note':  'Ce que Daimond vient de faire — des noms d’événements et une horloge, aucune clé, aucun texte de message, rien de vos fichiers. Sans risque à coller dans un rapport de bogue.',
+	'settings.trail_empty': 'Rien d’enregistré pour l’instant.',
 	});
 })();

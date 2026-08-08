@@ -1881,5 +1881,16 @@
 	'safe.turn_on_ask':      'Daimond will restart and try to sync with your other devices again. If it starts closing itself again, it will go back to a safe start on its own.',
 	'safe.turn_on_ok':       'Restart with syncing',
 
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        'Syncing and diagnostics',
+	'settings.sync':        'Syncing',
+	'settings.sync_on_note': 'This device is sending its work to your other devices. Stopping is immediate and loses nothing — everything stays here.',
+	'settings.sync_off_note': 'This device is not syncing. Its work is safe here and is not reaching your other devices.',
+	'settings.trail':       'Diagnostics',
+	'settings.trail_copy':  'Copy the app’s own trail',
+	'settings.trail_note':  'What Daimond last did — event names and a clock, no keys, no message text, nothing from your files. Safe to paste into a bug report.',
+	'settings.trail_empty': 'Nothing recorded yet.',
 	});
 })();

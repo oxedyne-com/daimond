@@ -1777,5 +1777,16 @@
 	'safe.turn_on_title':   '同期を再びオンにしますか？',
 	'safe.turn_on_ask':     'Daimond を再起動し、他の端末との同期をもう一度試みます。再び勝手に閉じるようになった場合は、自動的にセーフ起動に戻ります。',
 	'safe.turn_on_ok':      '同期ありで再起動',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        '同期と診断',
+	'settings.sync':        '同期',
+	'settings.sync_on_note': 'この端末は作業内容を他の端末に送信しています。停止は即座に反映され、何も失われません。すべてこの端末に残ります。',
+	'settings.sync_off_note': 'この端末は同期していません。作業内容はこの端末に安全に保管され、他の端末には届きません。',
+	'settings.trail':       '診断',
+	'settings.trail_copy':  'アプリの記録をコピー',
+	'settings.trail_note':  'Daimond が直前に行ったこと — イベント名と時刻のみで、鍵もメッセージ本文もファイルの内容も含みません。バグ報告に貼り付けても安全です。',
+	'settings.trail_empty': 'まだ何も記録されていません。',
 	});
 })();

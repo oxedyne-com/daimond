@@ -1739,5 +1739,16 @@
 	'safe.turn_on_title':   'Religar a sincronização?',
 	'safe.turn_on_ask':     'O Daimond vai reiniciar e tentar sincronizar novamente com seus outros dispositivos. Se voltar a se fechar sozinho, ele retorna ao início seguro por conta própria.',
 	'safe.turn_on_ok':      'Reiniciar com sincronização',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        'Sincronização e diagnóstico',
+	'settings.sync':        'Sincronização',
+	'settings.sync_on_note': 'Este dispositivo está enviando seu trabalho para os seus outros dispositivos. Parar é imediato e não perde nada — tudo continua aqui.',
+	'settings.sync_off_note': 'Este dispositivo não está sincronizando. O trabalho dele está seguro aqui e não chega aos seus outros dispositivos.',
+	'settings.trail':       'Diagnóstico',
+	'settings.trail_copy':  'Copiar o registro do próprio aplicativo',
+	'settings.trail_note':  'O que o Daimond fez por último — nomes de eventos e um relógio, sem chaves, sem texto de mensagens, nada dos seus arquivos. Seguro para colar num relatório de erro.',
+	'settings.trail_empty': 'Nada registrado ainda.',
 	});
 })();

@@ -1740,5 +1740,16 @@
 	'safe.turn_on_title':   'Synchronisierung wieder einschalten?',
 	'safe.turn_on_ask':     'Daimond startet neu und versucht erneut, sich mit Ihren anderen Geräten zu synchronisieren. Wenn es sich wieder von selbst schließt, kehrt es von allein zum sicheren Start zurück.',
 	'safe.turn_on_ok':      'Mit Synchronisierung neu starten',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        'Synchronisierung und Diagnose',
+	'settings.sync':        'Synchronisierung',
+	'settings.sync_on_note': 'Dieses Gerät sendet seine Arbeit an Ihre anderen Geräte. Das Stoppen wirkt sofort und geht mit keinem Verlust einher — alles bleibt hier.',
+	'settings.sync_off_note': 'Dieses Gerät synchronisiert nicht. Seine Arbeit ist hier sicher und erreicht Ihre anderen Geräte nicht.',
+	'settings.trail':       'Diagnose',
+	'settings.trail_copy':  'Eigenes Protokoll der App kopieren',
+	'settings.trail_note':  'Was Daimond zuletzt getan hat — Ereignisnamen und eine Uhrzeit, keine Schlüssel, keine Nachrichtentexte, nichts aus Ihren Dateien. Kann bedenkenlos in einen Fehlerbericht eingefügt werden.',
+	'settings.trail_empty': 'Noch nichts aufgezeichnet.',
 	});
 })();

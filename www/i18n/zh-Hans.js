@@ -1775,5 +1775,16 @@
 	'safe.turn_on_title':   '重新开启同步？',
 	'safe.turn_on_ask':     'Daimond 将重新启动，并再次尝试与你的其他设备同步。如果它又开始自行关闭，会自动回到安全启动。',
 	'safe.turn_on_ok':      '带同步重新启动',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        '同步与诊断',
+	'settings.sync':        '同步',
+	'settings.sync_on_note': '本设备正在把工作发送到你的其他设备。停止会立即生效，且不会丢失任何内容——一切都留在本机。',
+	'settings.sync_off_note': '本设备未在同步。它的工作安全地留在本机，不会传到你的其他设备。',
+	'settings.trail':       '诊断',
+	'settings.trail_copy':  '复制应用自己的记录',
+	'settings.trail_note':  'Daimond 最近做了什么——只有事件名称和时间，没有密钥、没有消息正文、没有你的文件内容。可以放心粘贴到错误报告中。',
+	'settings.trail_empty': '尚无记录。',
 	});
 })();

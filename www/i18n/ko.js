@@ -1779,5 +1779,16 @@
 	'safe.turn_on_title':   '동기화를 다시 켜시겠습니까?',
 	'safe.turn_on_ask':     'Daimond가 다시 시작하여 다른 기기와의 동기화를 재시도합니다. 다시 저절로 닫히기 시작하면 스스로 안전 시작으로 돌아갑니다.',
 	'safe.turn_on_ok':      '동기화와 함께 다시 시작',
+
+	// The sync switch and the durable trail, both reachable from the admin
+	// panel. See safe.js and breadcrumb.js.
+	'home.sec_sync':        '동기화 및 진단',
+	'settings.sync':        '동기화',
+	'settings.sync_on_note': '이 기기는 작업을 다른 기기로 보내고 있습니다. 중지는 즉시 적용되며 잃는 것은 없습니다. 모두 이 기기에 남습니다.',
+	'settings.sync_off_note': '이 기기는 동기화하지 않습니다. 작업은 이곳에 안전하게 있으며 다른 기기로 전달되지 않습니다.',
+	'settings.trail':       '진단',
+	'settings.trail_copy':  '앱의 자체 기록 복사',
+	'settings.trail_note':  'Daimond가 마지막으로 한 일 — 이벤트 이름과 시각뿐이며, 키도 메시지 본문도 파일 내용도 없습니다. 버그 보고서에 붙여넣어도 안전합니다.',
+	'settings.trail_empty': '아직 기록된 것이 없습니다.',
 	});
 })();
