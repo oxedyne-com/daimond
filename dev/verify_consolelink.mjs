@@ -19,6 +19,18 @@ await page.route('**/api/admin*', route => route.fulfill({
 }));
 
 // Open the Home drawer by the cog, which is what a user reaches for.
+//
+// The cog TOGGLES, so this first puts the drawer away. `open()` does not leave
+// it in a known state: `connectMock` drives the model form through the same
+// cog and does not close it afterwards. This test used to click once and find
+// the drawer open, but only because a bug elsewhere -- unlocking reopened it,
+// so connectMock's click was closing rather than opening. Fixing that bug
+// flipped the parity and failed this test, which was never really testing the
+// cog. Normalise, then open.
+await page.evaluate(() => {
+	document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+});
+await page.waitForTimeout(400);
 await page.click('#settings-btn', { force: true });
 await page.waitForTimeout(900);
 await page.waitForTimeout(800);

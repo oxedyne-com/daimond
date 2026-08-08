@@ -5306,6 +5306,19 @@ import init, {
 		/// The resting menu, shown IN the open drawer: the account's controls and
 		/// the way to connect a model. Reached by the cog, the identity row, or Back.
 		function home() {
+			homeContent();
+			showDrawer(t('drawer.admin'), false);
+		}
+
+		/// Put the home view in order WITHOUT summoning the drawer.
+		///
+		/// Rendering and opening used to be one call, and unlocking used it to
+		/// bring the account's controls up to date -- so every sign-in ended with
+		/// the Admin drawer standing open over the app, whether or not the user
+		/// had closed it the time before. The drawer is a transient surface, as
+		/// its own stylesheet says: summoned, and gone again when finished.
+		/// Nothing but a deliberate act of the user's should open it.
+		function homeContent() {
 			endForm();
 			toPanel();
 			settingsView.style.display = 'none';
@@ -5315,7 +5328,6 @@ import init, {
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
-			showDrawer(t('drawer.admin'), false);
 		}
 		var closeModal = closeAdmin;
 
@@ -5761,6 +5773,10 @@ import init, {
 		// time and the drawer had already decided never to ask again.
 		var consoleRole = null;
 		var consoleAsking = false;
+		// Failed asks this page, so a momentary outage retries and a gateway
+		// that is properly down does not spin.
+		var consoleTries = 0;
+		var CONSOLE_MAX_TRIES = 3;
 		function renderConsoleLink() {
 			// An account with no role gets no link and no repeat questions.
 			if (consoleRole === 'none') return;
@@ -5788,6 +5804,7 @@ import init, {
 					return r.json();
 				}).then(function (j) {
 					consoleAsking = false;
+					consoleTries = 0;
 					consoleRole = (j && j.role) ? j.role : 'none';
 					if (consoleRole !== 'none') renderHome();
 				}).catch(function () {
@@ -5795,6 +5812,20 @@ import init, {
 					// time the drawer is drawn, rather than never.
 					consoleAsking = false;
 					consoleRole = 'error';
+					// And ask again shortly, without waiting for that. Until now
+					// the ONLY retry was closing the drawer and opening it, so a
+					// role-holder whose one ask happened to fail sat looking at a
+					// drawer with no way into the console and nothing saying why.
+					// Only while the view is actually up: a closed drawer asks
+					// again when it opens, and needs no timer to do it.
+					if (consoleTries < CONSOLE_MAX_TRIES
+						&& homeView && homeView.style.display !== 'none') {
+						consoleTries++;
+						setTimeout(function () {
+							if (consoleRole === 'error'
+								&& homeView.style.display !== 'none') renderHome();
+						}, 1200 * consoleTries);
+					}
 				});
 				return;
 			}
@@ -6212,7 +6243,8 @@ import init, {
 			init: init, available: available, settings: settings, credits: credits,
 			release: release, push: push,
 			toggle: toggleSettings,
-			home: home, form: form, closeModal: closeModal, clear: clear, status: status,
+			home: home, homeContent: homeContent, form: form, closeModal: closeModal,
+			clear: clear, status: status,
 			close: closeAdmin,
 		};
 	})();
@@ -18609,7 +18641,8 @@ import init, {
 		document.body.classList.remove('locked');
 		renderAll();
 		updateUserRow();
-		DaimondAdmin.home();
+		// The CONTENT, not the drawer: unlocking is not a request to open Admin.
+		DaimondAdmin.homeContent();
 		DaimondAdmin.status();
 	}
 
