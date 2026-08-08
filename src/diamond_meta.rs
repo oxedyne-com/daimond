@@ -493,3 +493,34 @@ mod tests {
 		assert_eq!(vec![fmt!("rust"), fmt!("node")], Meta::from_json(&meta.to_json()).kits);
 	}
 }
+
+#[cfg(test)]
+mod real_file_tests {
+	use super::*;
+
+	#[test]
+	fn test_a_real_meta_json_off_a_users_disk_parses_whole() {
+		// Verbatim from a user's laptop, read out of OPFS. Pasted here because a
+		// release of mine rebuilt every imported `meta.json` and left fifteen
+		// Diamonds with no name, and the theory was that the file was not in the
+		// shape this parser expects. It is. The theory was wrong, and this is what
+		// makes that a fact rather than an opinion.
+		let real = "{\"name\":\"AI labelling\",\"crystal_version\":2,\"updated\":1785923558559,\
+			\"touched\":1785923558559,\"tags\":[\"open source\",\"project\"],\"toolkits\":[]}";
+		let m = Meta::from_json(real);
+		assert_eq!(m.name, "AI labelling");
+		assert_eq!(m.version, 2);
+		assert_eq!(m.updated, 1785923558559);
+		assert_eq!(m.touched, 1785923558559);
+		assert_eq!(m.tags, vec![fmt!("open source"), fmt!("project")]);
+
+		// And one written before `toolkits` existed, which is the other real shape
+		// on that disk.
+		let older = "{\"name\":\"81b Redfern Street North Perth\",\"crystal_version\":0,\
+			\"updated\":1785547737996,\"touched\":1785547737996,\
+			\"tags\":[\"location\",\"residence\",\"property\"]}";
+		let o = Meta::from_json(older);
+		assert_eq!(o.name, "81b Redfern Street North Perth");
+		assert!(o.kits.is_empty());
+	}
+}

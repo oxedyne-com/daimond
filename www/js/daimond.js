@@ -5594,6 +5594,55 @@ import init, {
 			// Where a push goes, and the token it goes with.
 			pushSection();
 
+			// ── Syncing, and the app's own trail ──────────────────
+			//
+			// HERE, in the panel a person actually opens, and not only in the
+			// Models view. Both of these were put behind the settings form first
+			// and the user could not find either — the sync switch at the moment
+			// they had been asked to turn syncing off, which made it useless
+			// exactly when it mattered. A control nobody can find is a control
+			// that does not exist.
+			homeView.appendChild(el('div', 'admin-sec', tOr('home.sec_sync', 'Syncing and diagnostics')));
+			if (window.DaimondSafe) {
+				var syncing = !DaimondSafe.on();
+				item(syncing
+					? tOr('safe.turn_off', 'Stop syncing this device')
+					: tOr('safe.turn_on', 'Turn syncing back on'), function () {
+					DaimondSafe.set(syncing, 'user');       // syncing → we are turning it OFF
+					location.reload();
+				});
+				homeView.appendChild(el('div', 'admin-note', syncing
+					? tOr('settings.sync_on_note',
+						'This device is sending its work to your other devices. Stopping is '
+						+ 'immediate and loses nothing — everything stays here.')
+					: tOr('settings.sync_off_note',
+						'This device is not syncing. Its work is safe here and is not reaching '
+						+ 'your other devices.')));
+			}
+			if (window.DaimondTrail) {
+				var trailOut = el('div', 'admin-note', '');
+				trailOut.style.whiteSpace = 'pre-wrap';
+				trailOut.style.userSelect = 'text';
+				trailOut.hidden = true;
+				var tb = item(tOr('settings.trail_copy', 'Copy the app’s own trail'), function () {
+					var text = '';
+					try { text = DaimondTrail.text(); } catch (e) { text = ''; }
+					// SHOWN as well as copied. The clipboard is refused often enough
+					// on a phone that a button which only copies is one that
+					// sometimes does nothing and reports success.
+					trailOut.textContent = text || tOr('settings.trail_empty', 'Nothing recorded yet.');
+					trailOut.hidden = false;
+					var done = function () { tb.textContent = tOr('trail.copied', 'Copied'); };
+					if (text && navigator.clipboard && navigator.clipboard.writeText) {
+						navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+					} else if (text) { fallback(text, done); }
+				});
+				homeView.appendChild(trailOut);
+				homeView.appendChild(el('div', 'admin-note', tOr('settings.trail_note',
+					'What Daimond last did — event names and a clock, no keys, no message text, '
+					+ 'nothing from your files.')));
+			}
+
 			// Several people can share this browser, each with their own account. Switching locks
 			// this one first (its keys are forgotten), then reloads into the other.
 			if (window.DaimondAccounts) {
