@@ -83,13 +83,13 @@ await page.click('#new-diamond-btn');
 await page.waitForSelector('.dlg-input', { timeout: 8000 });
 await page.fill('.dlg-input', 'Audit');
 await page.click('.dlg-ok');
-await page.waitForSelector('#steer-input', { timeout: 10000 });
+await page.waitForSelector('#chat-input', { timeout: 10000 });
 await page.waitForTimeout(400);
 const steer = '@tools spawn_agent {"name":"a","task":"inspect one"} ;; '
 	+ 'spawn_agent {"name":"b","task":"inspect two"} ;; '
 	+ 'spawn_agent {"name":"c","task":"inspect three"}';
-await page.fill('#steer-input', steer);
-await page.click('#steer-send');
+await page.fill('#chat-input', steer);
+await page.click('#chat-send');
 
 // Wait for all three workers to finish (Workers.active back to 0).
 const until = async (fn, ms = 25000) => {

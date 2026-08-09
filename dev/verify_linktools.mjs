@@ -45,13 +45,13 @@ const call = (fn, args = []) => p.evaluate(async ({ fn, args }) => {
 
 /// Steer the open Diamond and wait for the turn to end.
 async function steer(text) {
-	await p.waitForSelector('#steer-input', { timeout: 10000 });
-	await p.fill('#steer-input', text);
-	await p.click('#steer-send');
+	await p.waitForSelector('#chat-input', { timeout: 10000 });
+	await p.fill('#chat-input', text);
+	await p.click('#chat-send');
 	const t0 = Date.now();
 	while (Date.now() - t0 < 30000) {
 		const busy = await p.evaluate(() => {
-			const b = document.getElementById('steer-send');
+			const b = document.getElementById('chat-send');
 			return b ? b.disabled : false;
 		});
 		if (!busy) break;
@@ -76,7 +76,7 @@ await p.click('#new-diamond-btn');
 await p.waitForSelector('.dlg-input', { timeout: 8000 });
 await p.fill('.dlg-input', 'Ship the launch');
 await p.click('.dlg-ok');
-await p.waitForSelector('#steer-input', { timeout: 10000 });
+await p.waitForSelector('#chat-input', { timeout: 10000 });
 await p.waitForTimeout(800);
 
 const ids = JSON.parse(await call('list_diamonds')).reduce((acc, d) => {

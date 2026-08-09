@@ -13,14 +13,14 @@ await s.page.waitForTimeout(1200);
 await shot(s, 'steer-0-after-newfocus');
 
 const state = await s.page.evaluate(() => ({
-	steer: !!document.getElementById('steer-input'),
+	steer: !!document.getElementById('chat-input'),
 	reply: !!document.getElementById('crystal-reply'),
 }));
 console.log('state after new diamond:', JSON.stringify(state));
 
 // If we have a steer input, drive a text-only steer.
 if (state.steer) {
-	await s.page.fill('#steer-input', '@text I need one clarification: which platform first?');
+	await s.page.fill('#chat-input', '@text I need one clarification: which platform first?');
 	await s.page.keyboard.press('Enter');
 	await s.page.waitForTimeout(4000);
 	const r = await s.page.evaluate(() => {

@@ -158,6 +158,8 @@
 	'chat.select_all': 'Tout sélectionner',
 	'chat.deselect_all': 'Tout désélectionner',
 	'chat.fold_selected': 'Replier la sélection',
+	'chat.fold_now': 'Plier',
+	'chat.fold_now_help': 'Plier cette conversation maintenant, en gardant un résumé de ce qui précède.',
 	'chat.steps': 'Étapes',
 	'chat.concise': 'Concis',
 	'chat.concise_help': 'Demande des réponses brèves dans ce chat. Chaque message part avec la compétence /concise, un fichier de votre espace de travail que vous pouvez modifier.',
@@ -480,11 +482,6 @@
 	'pair.look_carried': 'Votre thème, votre langue et la disposition des panneaux ont suivi. À partir d’ici, cet appareil garde les siens — modifiez l’un sans toucher à l’autre.',
 
 	// ── The appearance menu ────────────────────────────────────
-	'menu.shape': 'Forme',
-	'menu.shape_sharp': 'Net',
-	'menu.shape_warm': 'Chaleureux',
-	'menu.shape_sharp_help': 'Angles nets et une typographie compacte.',
-	'menu.shape_warm_help': 'Angles plus arrondis et plus d’espace entre les éléments.',
 	'menu.view': 'Affichage',
 	'menu.view_simple': 'Simple',
 	'menu.view_max': 'Max',
@@ -1217,12 +1214,8 @@
 	'crystal.delta_help': 'L’entrée brute d’où vient ce repliage',
 	'crystal.delta_at': 'Delta replié à la v{v}',
 	'crystal.read_delta_failed': 'Impossible de lire le delta',
-	'crystal.steer': 'Orienter',
-	'crystal.steer_ph': 'Orientez le cristal (une instruction, pas un chat)…',
 	'crystal.steering': 'Orientation…',
-	'crystal.fold_ph': 'Repliez un delta (un résultat d’agent ou d’ouvrier terminé)…',
 	'crystal.no_key_steer': 'Le fournisseur de ce Diamond n’a pas de clé lisible — déverrouillez, ou ajoutez-en une, pour l’orienter.',
-	'crystal.no_key_fold': 'Le fournisseur de ce Diamond n’a pas de clé lisible — déverrouillez, ou ajoutez-en une, pour replier un delta.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefact',
@@ -1696,7 +1689,7 @@
 	'pending.noted': 'Noté, et retiré de la liste.',
 	'pending.diamond_gone': 'Le Diamond qui a soulevé ceci n’est plus là : il n’y a personne avec qui en discuter.',
 	'pending.discuss_prompt': 'Il faut qu’on en discute davantage avant que j’approuve : « {headline} »',
-	'crystal.steer_paused': 'En pause — appuyez sur lecture sur la tuile de ce Diamond pour le réveiller.',
+	'crystal.steer_paused': 'En pause — appuyez sur play sur sa tuile',
 	'crystal.view_switch': 'Quelle face de ce Diamond',
 	'crystal.view_crystal': 'Cristal',
 	'crystal.view_chat': 'Chat',

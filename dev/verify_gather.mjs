@@ -60,7 +60,7 @@ clearMockLog();
 
 // Two workers in one turn, each answering with something the other does not say,
 // so a round that carries both can be told from a round that carries one.
-await page.fill('#steer-input',
+await page.fill('#chat-input',
 	'@tools spawn_agent {"name":"alpha","task":"say ALPHAFOUND"} '
 	+ ';; spawn_agent {"name":"beta","task":"say BETAFOUND"}');
 await page.keyboard.press('Enter');

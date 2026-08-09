@@ -13,7 +13,7 @@ await s.page.click('.dlg-ok');
 await s.page.waitForTimeout(1000);
 
 // Steer with three spawn_agent calls in one turn.
-await s.page.fill('#steer-input',
+await s.page.fill('#chat-input',
 	'@tools spawn_agent {"name":"alpha","task":"do A"} ;; spawn_agent {"name":"beta","task":"do B"} ;; spawn_agent {"name":"gamma","task":"do C"}');
 await s.page.keyboard.press('Enter');
 await s.page.waitForTimeout(1500);

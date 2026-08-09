@@ -159,6 +159,8 @@
 	'chat.select_all': 'Alle auswählen',
 	'chat.deselect_all': 'Auswahl aufheben',
 	'chat.fold_selected': 'Ausgewählte einklappen',
+	'chat.fold_now': 'Falten',
+	'chat.fold_now_help': 'Diese Unterhaltung jetzt falten und eine Zusammenfassung des Bisherigen behalten.',
 	'chat.steps': 'Schritte',
 	'chat.concise': 'Knapp',
 	'chat.concise_help': 'Kurze Antworten in diesem Chat. Jede Nachricht geht mit der Fähigkeit /concise hinaus – einer Datei in deinem Arbeitsbereich, die du bearbeiten kannst.',
@@ -481,11 +483,6 @@
 	'pair.look_carried': 'Design, Sprache und Panel-Anordnung sind mit übergekommen. Ab hier behält dieses Gerät seine eigenen — ändere das eine, ohne das andere zu berühren.',
 
 	// ── The appearance menu ────────────────────────────────────
-	'menu.shape': 'Form',
-	'menu.shape_sharp': 'Kantig',
-	'menu.shape_warm': 'Warm',
-	'menu.shape_sharp_help': 'Enge Ecken und eine kompakte Schrift.',
-	'menu.shape_warm_help': 'Rundere Ecken und mehr Raum zwischen den Dingen.',
 	'menu.view': 'Ansicht',
 	'menu.view_simple': 'Einfach',
 	'menu.view_max': 'Max',
@@ -1215,12 +1212,8 @@
 	'crystal.delta_help': 'Die rohe Eingabe, aus der dieses Einklappen entstand',
 	'crystal.delta_at': 'Delta eingeklappt bei v{v}',
 	'crystal.read_delta_failed': 'Das Delta ließ sich nicht lesen',
-	'crystal.steer': 'Lenken',
-	'crystal.steer_ph': 'Lenke den Kristall (eine Anweisung, kein Chat)…',
 	'crystal.steering': 'Wird gelenkt…',
-	'crystal.fold_ph': 'Ein Delta einklappen (ein fertiges Agenten- oder Arbeiterergebnis)…',
 	'crystal.no_key_steer': 'Der Anbieter dieses Diamonds hat keinen lesbaren Schlüssel — entsperre, oder füge einen hinzu, um es zu lenken.',
-	'crystal.no_key_fold': 'Der Anbieter dieses Diamonds hat keinen lesbaren Schlüssel — entsperre, oder füge einen hinzu, um ein Delta einzuklappen.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} Artefakt',
@@ -1694,7 +1687,7 @@
 	'pending.noted': 'Vermerkt und von der Liste genommen.',
 	'pending.diamond_gone': 'Der Diamond, der dies aufgeworfen hat, ist fort, also gibt es niemanden, mit dem man es besprechen könnte.',
 	'pending.discuss_prompt': 'Wir müssen das noch besprechen, bevor ich zustimme: „{headline}“',
-	'crystal.steer_paused': 'Pausiert – drücke auf der Kachel dieses Diamonds auf Play, um ihn zu wecken.',
+	'crystal.steer_paused': 'Pausiert — Play auf der Kachel',
 	'crystal.view_switch': 'Welche Seite dieses Diamonds',
 	'crystal.view_crystal': 'Kristall',
 	'crystal.view_chat': 'Chat',

@@ -818,14 +818,15 @@ button.tag-pool { cursor: pointer; }
 .crystal-body .crystal-empty { color: var(--text-muted); font-style: italic; }
 .crystal-controls { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 
-/* Steer row: an instruction command line, distinct from a chat thread. */
-.steer-row { display: flex; align-items: flex-end; gap: 8px; }
-.steer-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
-.steer-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
-.steer-input::placeholder { color: var(--text-muted); }
-.steer-send { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius); padding: 9px 13px; font-size: var(--fs-xl); flex-shrink: 0; }
-.steer-send:hover { background: var(--accent-hover); }
-.steer-send:disabled { opacity: 0.4; cursor: default; }
+/* THE COMPOSER SITS BELOW THE CRYSTAL, not above it.
+   `.chat-input-bar` comes BEFORE `.crystal-view` in the document, because it
+   was written when only the chat thread ever used it and the crystal carried a
+   steer box of its own. That box is gone and the composer is shared, so on the
+   crystal face the source order puts the box at the top of the page -- above
+   the document it is meant to sit under. Ordered explicitly rather than moved
+   in the markup, because the chat face wants the source order it already has. */
+.panel.ai.crystal-face .crystal-view   { order: 1; }
+.panel.ai.crystal-face .chat-input-bar { order: 2; }
 
 /* Artefact strip: what this Diamond produced or consulted. A count that hides at
    zero and opens a list, rather than a list that is always there taking room
@@ -946,12 +947,6 @@ button.tag-pool { cursor: pointer; }
 }
 
 /* Fold-a-delta control: enter a delta, propose a fold (writes nothing). */
-.fold-row { display: flex; align-items: flex-end; gap: 8px; }
-.fold-delta { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); padding: 8px 12px; font-size: var(--fs-sm); resize: none; max-height: 100px; line-height: 1.5; }
-.fold-delta:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
-.fold-btn { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 12px; font-size: var(--fs-sm); flex-shrink: 0; white-space: nowrap; }
-.fold-btn:hover { border-color: var(--accent); }
-.fold-btn:disabled { opacity: 0.4; cursor: default; }
 .crystal-status { font-size: var(--fs-xs); color: var(--text-muted); font-family: var(--font-mono); min-height: 14px; }
 /* --panel-2 and --text were never declared, so this box fell back to a white
    wash and a white hover: invisible surface on the light themes, invisible × on

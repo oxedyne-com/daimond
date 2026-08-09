@@ -279,9 +279,43 @@ export async function signInAs(s, name) {
 ///
 /// A new chat is a *pending tile*: it carries a model and a Start button, and
 /// becomes a live chat only when Start is pressed.  The harness presses it.
+/// Say something to the Diamond on screen, through the composer it now uses.
+///
+/// The crystal used to carry its own `#steer-input`, and every test typed into
+/// that. It is gone: a Diamond's daimon is a persistent chat, so there is ONE
+/// composer for it and it lives in the chat face. `sendUserMessage` routes a
+/// Diamond's message to `doSteer`, so this is the same code path the steer box
+/// drove -- only reached the way a person now reaches it.
+///
+/// Selects the chat face first, because the composer is not on screen while the
+/// crystal face is up.
+export async function steerDiamond(s, text) {
+	const p = s.page;
+	const chat = await p.$('#dview-chat');
+	if (chat) { await chat.click({ force: true }); await p.waitForTimeout(400); }
+	await p.waitForSelector('#chat-input', { timeout: 10000 });
+	await p.fill('#chat-input', text);
+	await p.click('#chat-send', { force: true });
+}
+
 export async function newChat(s) {
 	const { page } = s;
-	if (await page.isVisible('#chat-input')) return;
+	// "A composer is on screen" is NOT "we are in a chat", and the difference
+	// arrived when a Diamond's crystal face gained the shared composer. Before
+	// that, a visible `#chat-input` could only mean a chat; now it also means a
+	// Diamond, whose composer talks to its daimon. Returning early there sent
+	// every `chat()` call to the daimon instead of to a chat -- silently, with
+	// the turns landing somewhere the test never looked.
+	//
+	// The face switch is the honest test: it is drawn for a Diamond and for
+	// nothing else.
+	const inChat = await page.evaluate(() => {
+		const ci = document.getElementById('chat-input');
+		const vis = e => !!e && !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+		const sw = document.getElementById('diamond-view');
+		return vis(ci) && !vis(sw);
+	});
+	if (inChat) return;
 	// The Admin drawer opens over the rail on a not-connected profile
 	// ("Connect a model"), and since the rail gained its Diamonds/Chats
 	// divider the + button sits under it. A force-click dispatches at the

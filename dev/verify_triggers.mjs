@@ -123,7 +123,7 @@ try {
 		}, opt.id);
 		await p.waitForTimeout(900);
 		const ph = await p.evaluate(() =>
-			(document.getElementById('steer-input') || {}).placeholder || '');
+			(document.getElementById('chat-input') || {}).placeholder || '');
 		check(/paus/i.test(ph) && /play/i.test(ph),
 			'a paused Diamond’s input says where its play control is', ph);
 	}
@@ -139,7 +139,7 @@ try {
 		}, help.id);
 		await p.waitForTimeout(900);
 		const ph = await p.evaluate(() =>
-			(document.getElementById('steer-input') || {}).placeholder || '');
+			(document.getElementById('chat-input') || {}).placeholder || '');
 		check(!/paus/i.test(ph), 'a Diamond with no light on its tile is not held', ph);
 
 		const reach = await p.evaluate((id) => ({

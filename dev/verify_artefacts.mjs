@@ -161,7 +161,7 @@ check('each row says what kind of thing it is',
 const inserted = await p.evaluate(async () => {
 	document.querySelector('.arte-row .arte-use').click();
 	await new Promise(r => setTimeout(r, 300));
-	const box = document.getElementById('steer-input');
+	const box = document.getElementById('chat-input');
 	return box ? box.value : null;
 });
 check('a row can put its reference in the steer box',

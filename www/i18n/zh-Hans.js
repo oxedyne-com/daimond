@@ -228,6 +228,8 @@
 	'chat.select_all':     '全选',
 	'chat.deselect_all':   '取消全选',
 	'chat.fold_selected':  '折叠所选',
+	'chat.fold_now': '折叠',
+	'chat.fold_now_help': '立即折叠此对话，保留此前内容的摘要。',
 	'chat.steps':          '步骤',
 	'chat.concise': '简短',
 	'chat.concise_help': '在这个聊天里要求简短的回答。你发出的每条消息都会带上 /concise 技能，那是工作区里一个你可以编辑的文件。',
@@ -623,11 +625,6 @@
 	'pair.look_carried': '你的主题、语言和面板布局也一并带了过来。从这里开始，这台设备自己保管这些 — 改一边不会动到另一边。',
 
 	// ── 外观菜单 ───────────────────────────────────────────────
-	'menu.shape': '形状',
-	'menu.shape_sharp': '锐利',
-	'menu.shape_warm': '温润',
-	'menu.shape_sharp_help': '直角边角与紧凑字形。',
-	'menu.shape_warm_help': '更圆的边角与更宽松的间距。',
 	'menu.view': '视图',
 	'menu.view_simple': '简洁',
 	'menu.view_max': '完整',
@@ -1246,12 +1243,8 @@
 	'crystal.delta_help':     '这次折叠所依据的原始输入',
 	'crystal.delta_at':       '在 v{v} 折叠进来的增量',
 	'crystal.read_delta_failed': '读不出这份增量',
-	'crystal.steer':          '引导',
-	'crystal.steer_ph':       '引导这块晶体（写一条指令，不是聊天）…',
 	'crystal.steering':       '引导中…',
-	'crystal.fold_ph':        '折叠一份增量（一个已完成的智能体／工人结果）…',
 	'crystal.no_key_steer':   '这个 Diamond 的提供商没有可读的密钥 — 请解锁，或添加一个，才能引导它。',
-	'crystal.no_key_fold':    '这个 Diamond 的提供商没有可读的密钥 — 请解锁，或添加一个，才能折叠增量。',
 
 	// ── 产物 ───────────────────────────────────────────────────
 	'arte.count.one':      '{n} 件产物',
@@ -1729,7 +1722,7 @@
 	'pending.noted': '已知悉，并从列表中移除。',
 	'pending.diamond_gone': '提出这件事的 Diamond 已经没有了，所以没人可以谈。',
 	'pending.discuss_prompt': '在我同意之前，这件事我们还需要再谈谈：“{headline}”',
-	'crystal.steer_paused': '已暂停——在这个 Diamond 的卡片上按播放即可唤醒它。',
+	'crystal.steer_paused': '已暂停 — 请在磁贴上按播放',
 	'crystal.view_switch': '这个 Diamond 的哪一面',
 	'crystal.view_crystal': '晶体',
 	'crystal.view_chat': '对话',

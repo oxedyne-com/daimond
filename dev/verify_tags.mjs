@@ -737,7 +737,7 @@ await page.waitForTimeout(600);
 await page.click('.crystal-act', { force: true });
 await page.waitForTimeout(400);
 clearMockLog();
-await page.fill('#steer-input', 'Say hello.');
+await page.fill('#chat-input', 'Say hello.');
 await page.keyboard.press('Enter');
 for (let i = 0; i < 40; i++) { if (mockLog().length) break; await page.waitForTimeout(400); }
 await page.waitForTimeout(1000);

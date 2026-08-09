@@ -150,15 +150,15 @@ try {
 	await page.waitForSelector('.dlg-input', { timeout: 8000 });
 	await page.fill('.dlg-input', 'Held');
 	await page.click('.dlg-ok', { force: true });
-	await page.waitForSelector('#steer-input', { timeout: 10000 });
+	await page.waitForSelector('#chat-input', { timeout: 10000 });
 	await page.waitForTimeout(400);
 
 	const steer = '@tools spawn_agent {"name":"a","task":"one"} ;; '
 		+ 'spawn_agent {"name":"b","task":"two"} ;; '
 		+ 'spawn_agent {"name":"c","task":"three"}';
 	const before = slotMints();
-	await page.fill('#steer-input', steer);
-	await page.click('#steer-send', { force: true });
+	await page.fill('#chat-input', steer);
+	await page.click('#chat-send', { force: true });
 	await page.waitForTimeout(7000);
 	check('a paused worker pump dispatches nothing and mints nothing',
 		slotMints() === before, 'slot mints ' + JSON.stringify(net.mint));
@@ -190,8 +190,8 @@ try {
 	check('and a resumed pump mints — so the silence above was the pause',
 		net.mint.length > beforeDirect, afterDirect + ' — mints ' + JSON.stringify(net.mint));
 
-	await page.fill('#steer-input', steer);
-	await page.click('#steer-send', { force: true });
+	await page.fill('#chat-input', steer);
+	await page.click('#chat-send', { force: true });
 	await page.waitForTimeout(9000);
 	check('and a resumed pump dispatches again',
 		slotMints() > before, 'slot mints ' + JSON.stringify(net.mint));
@@ -357,7 +357,7 @@ try {
 			crystal: !!(body && body.textContent.trim().length > 0),
 			shown:   !!(view && view.style.display !== 'none'),
 			files:   document.querySelectorAll('#panel-work .files-tree *').length,
-			steer:   !!document.getElementById('steer-input'),
+			steer:   !!document.getElementById('chat-input'),
 		};
 	});
 	check('a paused Diamond still opens and its crystal still renders',

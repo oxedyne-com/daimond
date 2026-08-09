@@ -209,7 +209,7 @@ check('the Diamond records both pairs',
 const TASK1 = 'INSPECT-THE-LEDGER-ALPHA';
 clearMockLog();
 seen.length = 0;
-await p.fill('#steer-input',
+await p.fill('#chat-input',
 	`@tools spawn_agent {"name":"alpha","task":"${TASK1}"}`);
 await p.keyboard.press('Enter');
 const ran1 = await until(async () => mock2For(TASK1).length > 0, 30000);
@@ -260,7 +260,7 @@ check('a Diamond written by an older build carries no worker model',
 const TASK2 = 'INSPECT-THE-LEDGER-BETA';
 clearMockLog();
 seen.length = 0;
-await p.fill('#steer-input', `@tools spawn_agent {"name":"beta","task":"${TASK2}"}`);
+await p.fill('#chat-input', `@tools spawn_agent {"name":"beta","task":"${TASK2}"}`);
 await p.keyboard.press('Enter');
 const ran2 = await until(async () => sharedFor(TASK2).length > 0, 30000);
 await p.waitForTimeout(1200);

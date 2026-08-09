@@ -158,6 +158,8 @@
 	'chat.select_all': 'Seleccionar todo',
 	'chat.deselect_all': 'Deseleccionar todo',
 	'chat.fold_selected': 'Plegar lo seleccionado',
+	'chat.fold_now': 'Plegar',
+	'chat.fold_now_help': 'Plegar esta conversación ahora, conservando un resumen de lo anterior.',
 	'chat.steps': 'Pasos',
 	'chat.concise': 'Conciso',
 	'chat.concise_help': 'Pide respuestas breves en este chat. Cada mensaje sale con la habilidad /concise, que es un archivo de tu espacio de trabajo que puedes editar.',
@@ -480,11 +482,6 @@
 	'pair.look_carried': 'Tu tema, tu idioma y la disposición de los paneles también han venido. A partir de aquí este dispositivo tiene los suyos: cambia uno sin tocar el otro.',
 
 	// ── The appearance menu ────────────────────────────────────
-	'menu.shape': 'Forma',
-	'menu.shape_sharp': 'Nítida',
-	'menu.shape_warm': 'Cálida',
-	'menu.shape_sharp_help': 'Esquinas marcadas y una tipografía compacta.',
-	'menu.shape_warm_help': 'Esquinas más redondeadas y más espacio entre las cosas.',
 	'menu.view': 'Vista',
 	'menu.view_simple': 'Simple',
 	'menu.view_max': 'Máx',
@@ -1214,12 +1211,8 @@
 	'crystal.delta_help': 'La entrada en bruto con la que se hizo este plegado',
 	'crystal.delta_at': 'Delta plegado en la v{v}',
 	'crystal.read_delta_failed': 'No se pudo leer el delta',
-	'crystal.steer': 'Dirigir',
-	'crystal.steer_ph': 'Dirige el cristal (una instrucción, no un chat)…',
 	'crystal.steering': 'Dirigiendo…',
-	'crystal.fold_ph': 'Pliega un delta (el resultado terminado de un agente o trabajador)…',
 	'crystal.no_key_steer': 'El proveedor de este Diamond no tiene una clave legible: desbloquea, o añade una, para dirigirlo.',
-	'crystal.no_key_fold': 'El proveedor de este Diamond no tiene una clave legible: desbloquea, o añade una, para plegar un delta.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefacto',
@@ -1693,7 +1686,7 @@
 	'pending.noted': 'Anotado, y fuera de la lista.',
 	'pending.diamond_gone': 'El Diamond que planteó esto ya no está, así que no hay con quién hablarlo.',
 	'pending.discuss_prompt': 'Tenemos que hablar más de esto antes de que lo apruebe: «{headline}»',
-	'crystal.steer_paused': 'En pausa: pulsa reproducir en la ficha de este Diamond para despertarlo.',
+	'crystal.steer_paused': 'En pausa — pulsa play en su tarjeta',
 	'crystal.view_switch': 'Qué cara de este Diamond',
 	'crystal.view_crystal': 'Cristal',
 	'crystal.view_chat': 'Chat',

@@ -3021,19 +3021,21 @@ import init, {
 			// a choice, so it becomes Simple.
 			saved = (SKIN_AS_FOUND === 'sharp') ? 'max' : 'simple';
 		}
-		// A skin that was actually stored is a choice and is kept, so somebody who
-		// deliberately decoupled the two keeps their combination. With none
-		// stored there is nothing to preserve, and the view sets the shape.
-		setView(saved, { keepSkin: !!SKIN_AS_FOUND });
+		setView(saved);
 	}
 
-	/// Choose the view. Sets the skin with it unless the caller is only
-	/// restoring what was already on the page.
-	function setView(view, opts) {
+	/// Choose the view. The shape follows it, always.
+	///
+	/// There is no separate Shape control any more. Offering one was a
+	/// half-measure: it left two controls doing one job, and the case it was
+	/// kept for -- wanting rounded corners AND every figure -- is speculative
+	/// against the certainty of a second setting nobody understands the point
+	/// of. The view is the one decision.
+	function setView(view) {
 		if (!VIEWS[view]) view = 'simple';
 		document.documentElement.setAttribute('data-view', view);
 		try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* private mode */ }
-		if (!(opts && opts.keepSkin)) setSkin(VIEWS[view]);
+		setSkin(VIEWS[view]);
 		// Every tile that is FOLLOWING the view has to be repainted. The ones
 		// that are not must not be touched -- see `tileDetail`.
 		try { repaintTileDetail(); } catch (e) { /* the rail is not up yet */ }
@@ -7862,49 +7864,63 @@ import init, {
 		fold.className = 'tile-dlg-level';
 		fold.textContent = t('tile.fold_context');
 		fold.title = t('tile.fold_context_help');
-		fold.addEventListener('click', async function () {
-			if (chat._generating) { toast(t('tile.fold_mid_turn'), true); return; }
-			var app = chat.app;
-			if (!app || typeof app.fold_now !== 'function') {
-				toast(t('tile.fold_unavailable'), true); return;
-			}
-			var ok = await confirmDialog(t('tile.fold_context_body'), t('tile.fold_context_ok'),
-				{ title: t('tile.fold_context_title'), danger: false });
-			if (!ok) return;
-			fold.disabled = true;
-			var moved = false;
-			try {
-				// The same sink a turn uses, and the same handling: a fold the user asked
-				// for is written into the thread and persisted exactly as an automatic one
-				// is. Anything less would leave the transcript quietly shorter than it was,
-				// which is the one thing `appendCompacted` exists to prevent.
-				moved = await app.fold_now(function (ev) {
-					if (!ev || ev.type !== 'compacted') return;
-					chat.messages.push({ role: 'fold_log', content: ev.content || '',
-						folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
-					if (current && current.id === chat.id) appendCompacted(ev.content || '');
-				});
-			} catch (e) {
-				fold.disabled = false;
-				noticeDialog(t('tile.fold_failed'), friendlyError(e));
-				return;
-			}
-			fold.disabled = false;
-			// A fold that moved nothing is said plainly rather than left as a button press
-			// with no consequence: below `MIN_KEEP_MESSAGES` there is no tail to cut.
-			if (!moved) { toast(t('tile.fold_nothing')); return; }
-			// The session on record is now the folded one, so the stored copy has to
-			// follow — otherwise a reload springs the conversation back to its full size
-			// and the fold the user paid for is undone.
-			try { chat.lastPrompt = app.last_prompt_tokens || chat.lastPrompt || 0; }
-			catch (e) { /* mid-turn read is impossible here; the turn is not running */ }
-			captureSession(chat, app);
-			persistChats();
-			say();
-			renderSessionList();
-		});
+		fold.addEventListener('click', function () { return foldChatNow(chat, fold); });
 		row.appendChild(fold);
 		card.appendChild(row);
+	}
+
+	/// Fold a chat's context now, on the user's say-so.
+	///
+	/// One implementation, two callers: the tile dialog and the Fold button in
+	/// the chat header. Folding is an action taken MID-FLOW -- you do it when a
+	/// thread has grown heavy, not when you are configuring something -- so it
+	/// belongs on the surface as well as in the dialog, and both must be the
+	/// same fold.
+	///
+	/// # Arguments
+	/// * `chat` - The conversation to fold.
+	/// * `btn` - The control pressed, disabled while it runs.
+	async function foldChatNow(chat, btn) {
+		var fold = btn || {};
+		if (chat._generating) { toast(t('tile.fold_mid_turn'), true); return; }
+		var app = chat.app;
+		if (!app || typeof app.fold_now !== 'function') {
+			toast(t('tile.fold_unavailable'), true); return;
+		}
+		var ok = await confirmDialog(t('tile.fold_context_body'), t('tile.fold_context_ok'),
+			{ title: t('tile.fold_context_title'), danger: false });
+		if (!ok) return;
+		fold.disabled = true;
+		var moved = false;
+		try {
+			// The same sink a turn uses, and the same handling: a fold the user asked
+			// for is written into the thread and persisted exactly as an automatic one
+			// is. Anything less would leave the transcript quietly shorter than it was,
+			// which is the one thing `appendCompacted` exists to prevent.
+			moved = await app.fold_now(function (ev) {
+				if (!ev || ev.type !== 'compacted') return;
+				chat.messages.push({ role: 'fold_log', content: ev.content || '',
+					folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
+				if (current && current.id === chat.id) appendCompacted(ev.content || '');
+			});
+		} catch (e) {
+			fold.disabled = false;
+			noticeDialog(t('tile.fold_failed'), friendlyError(e));
+			return;
+		}
+		fold.disabled = false;
+		// A fold that moved nothing is said plainly rather than left as a button press
+		// with no consequence: below `MIN_KEEP_MESSAGES` there is no tail to cut.
+		if (!moved) { toast(t('tile.fold_nothing')); return; }
+		// The session on record is now the folded one, so the stored copy has to
+		// follow — otherwise a reload springs the conversation back to its full size
+		// and the fold the user paid for is undone.
+		try { chat.lastPrompt = app.last_prompt_tokens || chat.lastPrompt || 0; }
+		catch (e) { /* mid-turn read is impossible here; the turn is not running */ }
+		captureSession(chat, app);
+		persistChats();
+		say();
+		renderSessionList();
 	}
 
 	/// A Diamond's triggered actions, in its own settings dialog.
@@ -9065,6 +9081,7 @@ import init, {
 				: t('chat.input_ph');
 		if (!g) hideSpinner();
 		syncConciseChip();           // the chip belongs to THIS chat, not the last one
+		syncFoldBtn();               // and so does Fold
 		renderQueue();               // this chat's own queue, not the last one's
 	}
 
@@ -9242,6 +9259,21 @@ import init, {
 		chip.style.display = current ? '' : 'none';
 		chip.setAttribute('aria-pressed', on ? 'true' : 'false');
 		chip.classList.toggle('accent', on);
+	}
+
+	/// Show Fold in the header when there is a persistent conversation to fold.
+	///
+	/// A Diamond's daimon only. A throwaway chat has nothing worth folding into a
+	/// summary -- notes2 fixes its models at creation and expects it to be
+	/// discarded -- and a control that does nothing useful is worse than an
+	/// absent one.
+	function syncFoldBtn() {
+		var b = document.getElementById('chat-fold-btn');
+		if (!b) return;
+		// The DAIMON face only. In the crystal face there is no conversation on
+		// screen, so a Fold there would act on something the reader cannot see;
+		// and an ordinary chat is meant to be thrown away rather than folded.
+		b.style.display = (centreMode === 'daimon' && current && current.diamondId) ? '' : 'none';
 	}
 
 	/// Turn the chip on or off for the chat on screen.
@@ -14689,8 +14721,20 @@ import init, {
 
 	function diamondViews() { return readJson(DIAMOND_VIEW_KEY, {}) || {}; }
 
-	/// `'crystal'` or `'chat'`. Absent means crystal: the crystal is what a Diamond IS,
-	/// and the chat is what you open when you want to see how it got there.
+	/// `'crystal'` or `'chat'`. Absent means CRYSTAL, and the user's own words for
+	/// why: *"the opening when clicking a diamond should be the crystal, that's
+	/// the entire point, it['s] a summary of the diamond"*.
+	///
+	/// Worth stating what this costs, because it was briefly changed and changed
+	/// back. The crystal face carries NO COMPOSER -- the steer box that used to
+	/// sit under it is gone, since a daimon is a persistent conversation and one
+	/// composer is enough. So landing here means landing somewhere you cannot
+	/// type, and the way to type is the face switch in the header.
+	///
+	/// That is acceptable, and only because the switch is ALWAYS VISIBLE beside
+	/// the Diamond's name. The rule it has to satisfy is the one the whole
+	/// Simple view is built on: hide information, never the affordance. A reader
+	/// who wants to say something can see, without hunting, where to go.
 	function diamondView(id) {
 		return diamondViews()[id] === 'chat' ? 'chat' : 'crystal';
 	}
@@ -16127,7 +16171,20 @@ import init, {
 		var onDiamond = crystalOn || mode === 'daimon';
 		crystalView.style.display  = crystalOn ? 'flex' : 'none';
 		chatOutputEl.style.display = crystalOn ? 'none' : '';
-		chatInputBar.style.display = crystalOn ? 'none' : '';
+		// THE COMPOSER STAYS ON BOTH FACES OF A DIAMOND.
+		//
+		// It used to be hidden here, because the crystal carried its own "steer"
+		// box underneath it. That box is gone -- a daimon is one persistent
+		// conversation, so a second place to type into it was two ways to say the
+		// same thing. But removing the box and keeping this line would have made
+		// the crystal a DEAD END: the face you land on, by design, with no way to
+		// say anything from it.
+		//
+		// What "redundant" meant was a second composer, not no composer. So the
+		// one composer shows under whichever face is up, and what is typed goes
+		// to the daimon either way -- `sendUserMessage` already routes a Diamond's
+		// message through `doSteer`.
+		chatInputBar.style.display = (crystalOn && !onDiamond) ? 'none' : '';
 		// Which face is up, said in the panel's own shape: the crystal wears the
 		// mark and squares its corners against the rounded chrome everywhere else.
 		// A daimon's chat is a conversation, so it wears neither.
@@ -16135,6 +16192,8 @@ import init, {
 		if (ai) ai.classList.toggle('crystal-face', crystalOn);
 		var mark = document.getElementById('chead-mark');
 		if (mark) mark.style.display = crystalOn ? '' : 'none';
+		// Fold belongs to the face that shows the conversation.
+		try { syncFoldBtn(); } catch (e) { /* not wired yet at first paint */ }
 		// The face switch belongs to a Diamond and nothing else: a chat has one face,
 		// and a switch offering it a second would be a control that does nothing.
 		var sw = document.getElementById('diamond-view');
@@ -16712,9 +16771,15 @@ import init, {
 			syncComposer();
 			return;
 		}
-		current = null;                            // a Diamond's crystal is not a chat
-		updateActiveSession();                     // clear chat highlight
+		// `current` is the daimon's own conversation on BOTH faces, because both
+		// share the composer and the composer sends to `current`. It used to be
+		// nulled here on the reading that "a Diamond's crystal is not a chat" --
+		// true of what is DISPLAYED, and false of what the box at the bottom
+		// talks to. The thread stays hidden; only the destination is set.
+		current = daimonChat(f);
+		updateActiveSession();
 		showCentre('focus');
+		syncComposer();
 		// A proposal left pending on this Diamond is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderCrystal();
@@ -17169,7 +17234,9 @@ import init, {
 			useBtn.textContent = '\u21b3';
 			useBtn.title = t('arte.refer_help');
 			useBtn.addEventListener('click', function () {
-				var box = document.getElementById('steer-input');
+				// The Diamond's composer, which is the chat one -- there is no
+				// separate steer box any more, and this used to name it.
+				var box = document.getElementById('chat-input');
 				if (!box) return;
 				box.value = (box.value ? box.value.replace(/\s*$/, ' ') : '') + rest + ' ';
 				box.focus();
@@ -17812,62 +17879,25 @@ import init, {
 			renderArtefacts();
 		});
 
-		// Steer row — an instruction command surface, not a chat thread.
-		var steerRow = document.createElement('div');
-		steerRow.className = 'steer-row';
-		var steer = document.createElement('textarea');
-		steer.className = 'steer-input';
-		steer.id = 'steer-input';
-		steer.rows = 1;
-		// A paused Diamond says where its play control is, in the box you would
-		// otherwise type into and wonder. Notes2 asks for exactly this on the two
-		// default Diamonds, and it is right for every paused one: the alternative
-		// is typing a paragraph and being told no.
-		steer.placeholder = diamondHeld(currentDiamond && currentDiamond.id)
-			? t('crystal.steer_paused')
-			: t('crystal.steer_ph');
-		steer.addEventListener('input', function () {
-			steer.style.height = 'auto';
-			steer.style.height = Math.min(steer.scrollHeight, 120) + 'px';
-		});
-		steer.addEventListener('keydown', function (e) {
-			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSteer(); }
-		});
-		var steerSend = document.createElement('button');
-		steerSend.className = 'steer-send';
-		steerSend.id = 'steer-send';
-		steerSend.title = t('crystal.steer');
-		steerSend.setAttribute('aria-label', t('crystal.steer'));
-		steerSend.textContent = '➤';
-		steerSend.addEventListener('click', doSteer);
-		steerRow.appendChild(steer); steerRow.appendChild(steerSend);
-
-		// Fold row — enter a delta, propose a fold (writes nothing).
-		var foldRow = document.createElement('div');
-		foldRow.className = 'fold-row';
-		var delta = document.createElement('textarea');
-		delta.className = 'fold-delta';
-		delta.id = 'fold-delta';
-		delta.rows = 1;
-		delta.placeholder = t('crystal.fold_ph');
-		delta.addEventListener('input', function () {
-			delta.style.height = 'auto';
-			delta.style.height = Math.min(delta.scrollHeight, 100) + 'px';
-		});
-		var foldBtn = document.createElement('button');
-		foldBtn.className = 'fold-btn';
-		foldBtn.id = 'fold-propose';
-		foldBtn.textContent = t('agents.fold_in');
-		foldBtn.addEventListener('click', doFoldPropose);
-		foldRow.appendChild(delta); foldRow.appendChild(foldBtn);
-
+		// NO INPUT BOXES HERE. The crystal used to carry two: a "steer" box, on
+		// the reading that a crystal is a thing you send instructions to, and a
+		// fold-delta box beside it. Both are gone.
+		//
+		// A Diamond now has two faces and its daimon is a PERSISTENT CHAT, so
+		// there is one composer for it and it lives in the chat view. Steering was
+		// the word for talking to a daimon before it had a conversation to talk
+		// into; keeping the box would be a second way to say the same thing, in a
+		// place that no longer means anything different.
+		//
+		// `doSteer` itself stays: triggered actions, gather rounds and the
+		// conductor all call it with a preset, and it already tolerates the box
+		// being absent. Folding moved to a button in the chat header, where the
+		// conversation being folded actually is.
 		crystalControls.appendChild(status);
 		crystalControls.appendChild(reply);
 		crystalControls.appendChild(linkSec);
 		crystalControls.appendChild(arte);
 		crystalControls.appendChild(arteList);
-		crystalControls.appendChild(steerRow);
-		crystalControls.appendChild(foldRow);
 		// The header the section was just given is empty until this fills it, and
 		// the controls are rebuilt by the tag editor and the history view as well
 		// as by the crystal -- so it is filled from here, where every one of them
@@ -17902,10 +17932,10 @@ import init, {
 
 	function setCrystalBusy(busy) {
 		crystalBusy = busy;
-		['steer-send', 'fold-propose'].forEach(function (id) {
-			var el = document.getElementById(id);
-			if (el) el.disabled = busy;
-		});
+		// The crystal has no buttons of its own to disable any more; the chat
+		// composer and the header's Fold both answer `crystalBusy` themselves.
+		var fh = document.getElementById('chat-fold-btn');
+		if (fh) fh.disabled = busy;
 	}
 
 	/// Say, in the crystal itself, that a reducer is running.
@@ -17961,9 +17991,10 @@ import init, {
 		// what it will accept rather than assume its callers.
 		var preset = (typeof presetArg === 'string') ? presetArg : '';
 		var depth  = (typeof depthArg === 'number') ? depthArg : 0;
-		var input = document.getElementById('steer-input');
-		// A gather round carries its own words and may run with the Diamond's
-		// surface nowhere on screen, so it must not require the box.
+		// The one composer. `doSteer` still reads a box when it was called from
+		// one, and tolerates its absence: a gather round, a trigger and the
+		// conductor all pass a preset and may run with nothing on screen.
+		var input = document.getElementById('chat-input');
 		if (!input && !preset) return;
 		var instruction = preset || (input ? input.value.trim() : '');
 		if (!instruction) return;
@@ -18149,48 +18180,6 @@ import init, {
 	/// Propose a fold: run the reducer over the current crystal plus the
 	/// delta, then show the diff for the user to Accept or Reject.  Writes
 	/// nothing — the advisory half of the fold.
-	async function doFoldPropose() {
-		if (crystalBusy || !currentDiamond) return;
-		var deltaEl = document.getElementById('fold-delta');
-		if (!deltaEl) return;
-		var delta = deltaEl.value.trim();
-		if (!delta) return;
-		if (!diamondCanRun(currentDiamond.id)) {
-			openSettings(t('crystal.no_key_fold'));
-			return;
-		}
-		setCrystalBusy(true);
-		setCrystalStatus(t('fold.proposing'));
-		showCrystalSpinner();
-		var current_md, proposed;
-		var fa = diamondApp(currentDiamond.id);   // this Diamond's model, not the starred one
-		try {
-			current_md = await fa.read_crystal(currentDiamond.id);
-			proposed = await fa.fold_propose(currentDiamond.id, delta);
-		} catch (e) {
-			meterDiamondTurn(fa);
-			hideCrystalSpinner();
-			setCrystalStatus(friendlyError(e));
-			setCrystalBusy(false);
-			toast(friendlyError(e), true);
-			return;
-		}
-		meterDiamondTurn(fa);
-		hideCrystalSpinner();
-		setCrystalStatus('');
-		setCrystalBusy(false);
-		// As in foldChatInto: an empty proposal is a failure, not a deletion of
-		// everything the crystal says.
-		if (!proposed || !String(proposed).trim()) {
-			toast(t('fold.empty_reply'), true);
-			return;
-		}
-		pendingFolds[currentDiamond.id] = {
-			base: current_md, proposed: proposed, delta: delta, chatId: null, chatName: null,
-		};
-		renderFoldDiff(currentDiamond.id);
-		renderDiamondList();
-	}
 
 	/// Show the fold diff (current vs proposed) with Accept and Reject.
 	/// Every line is escaped via textContent (H5); nothing is written
@@ -21143,6 +21132,10 @@ import init, {
 
 	var conciseChip = document.getElementById('concise-chip');
 	if (conciseChip) conciseChip.addEventListener('click', function () { toggleConcise(); });
+	var chatFoldBtn = document.getElementById('chat-fold-btn');
+	if (chatFoldBtn) chatFoldBtn.addEventListener('click', function () {
+		if (current) foldChatNow(current, chatFoldBtn);
+	});
 	syncConciseChip();
 
 	// ── Collapse, select, fold, jump ───────────────────────────

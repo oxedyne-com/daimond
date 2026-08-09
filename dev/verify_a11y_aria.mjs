@@ -73,7 +73,6 @@ const GLYPHS = new Set([
 	'button#web-back.icon-btn|‹',
 	'button#web-reload.icon-btn|⟳',
 	'button#web-pop.icon-btn|↗',
-	'button#steer-send.steer-send|➤',	// the crystal's own send
 	'iframe#web-frame.web-frame|',		// a Tab stop announced only as "frame"
 	// The tag editor's remove-a-tag ×. Its neighbour four rules down --
 	// poolCloser at www/js/daimond.js:10091 -- sets the aria-label this one wants.

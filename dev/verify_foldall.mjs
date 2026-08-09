@@ -59,8 +59,12 @@ const diffState = () => p.evaluate(() => {
 	return {
 		lines: lines.length, add, del,
 		accept: !!acc, acceptEnabled: !!acc && !acc.disabled,
-		propose: !!document.getElementById('fold-propose'),
-		proposeDisabled: !!(document.getElementById('fold-propose') || {}).disabled,
+		// The crystal's own delta box and Propose button are gone -- a Diamond
+		// has one composer, in the chat face -- so what "not stuck" means now is
+		// that the SELECTION path can be used again: `crystalBusy` released, and
+		// Fold selected offered.
+		foldSel: !!document.getElementById('sel-fold'),
+		foldSelDisabled: !!(document.getElementById('sel-fold') || {}).disabled,
 	};
 });
 const dialogText = () => p.evaluate(() => {
@@ -159,7 +163,7 @@ await p.evaluate((name) => {
 await sleep(1200);
 const d2 = await diffState();
 check('and the crystal is not left disabled by the failure',
-	d2.propose && !d2.proposeDisabled, `propose present=${d2.propose} disabled=${d2.proposeDisabled}`);
+	d2.foldSel && !d2.foldSelDisabled, `fold-selected present=${d2.foldSel} disabled=${d2.foldSelDisabled}`);
 
 // ── 3. A Diamond deleted under the picker is refused loudly ──────────
 // The realistic case: another tab deletes it while the picker is open. The rail

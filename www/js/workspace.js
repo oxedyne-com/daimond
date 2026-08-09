@@ -383,32 +383,6 @@
 			menuEl.appendChild(el('div', 'pop-note', t('menu.view_note')));
 		}
 
-		// Shape, on its own and after the view, because the view already sets it
-		// and this is the escape hatch rather than the main road. Somebody who
-		// wants big rounded targets AND every figure -- an eyesight case, and a
-		// real one -- sets Max and then comes here. A view chosen later resets it,
-		// which is the right way round: the common control wins by default and
-		// the uncommon one is always available again.
-		if (window.DaimondSkin) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.shape')));
-			var skinNow = DaimondSkin.get();
-			var sseg = el('div', 'seg');
-			['sharp', 'warm'].forEach(function (id) {
-				var sb = el('button', null, t('menu.shape_' + id));
-				sb.setAttribute('aria-pressed', id === skinNow ? 'true' : 'false');
-				sb.title = t('menu.shape_' + id + '_help');
-				sb.addEventListener('click', function () {
-					// Only the shape. Choosing a rounder look used to also move a
-					// dark palette to light; the two axes are orthogonal and the
-					// rows now say so in their own names.
-					DaimondSkin.set(id);
-					renderMenu();
-				});
-				sseg.appendChild(sb);
-			});
-			menuEl.appendChild(sseg);
-		}
-
 		// Theme. A pulldown rather than a row of buttons: ten palettes in three
 		// bands is a list to look down, and a segmented control of ten would eat
 		// the menu and still not say which of them are light. The bands are the

@@ -184,8 +184,8 @@ await p.waitForTimeout(2000);
 
 // Steering is a paid turn. It must go to the Diamond's OWN provider.
 const steered = await p.evaluate(() => {
-	const box = document.getElementById('steer-input');
-	const go  = document.getElementById('steer-send');
+	const box = document.getElementById('chat-input');
+	const go  = document.getElementById('chat-send');
 	if (!box || !go) return false;
 	box.value = 'tighten it';
 	box.dispatchEvent(new Event('input', { bubbles: true }));

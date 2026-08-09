@@ -557,7 +557,7 @@ gw.spent = [liveKey];
 gw.onlyFor = WORKER_SAYS;
 const mintsBefore4 = gw.mints;
 clearMockLog();
-await page.fill('#steer-input',
+await page.fill('#chat-input',
 	'@tools spawn_agent {"name":"w1","task":"@text one"} ;; spawn_agent {"name":"w2","task":"@text two"} ;; spawn_agent {"name":"w3","task":"@text three"}');
 await page.keyboard.press('Enter');
 await page.waitForTimeout(14000);
@@ -600,7 +600,7 @@ await shot(s, 'credits-workers');
 // A worker that genuinely cannot heal says "top up", not 401.
 gw.spent = [keyN(gw.mints)]; gw.refuse = true; gw.bal = 0;
 const mintsBefore5 = gw.mints;
-await page.fill('#steer-input', '@tool spawn_agent {"name":"w4","task":"@text four"}');
+await page.fill('#chat-input', '@tool spawn_agent {"name":"w4","task":"@text four"}');
 await page.keyboard.press('Enter');
 await page.waitForTimeout(12000);
 runs = await agents();

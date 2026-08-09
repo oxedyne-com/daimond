@@ -228,6 +228,8 @@
 	'chat.select_all':     'すべて選択',
 	'chat.deselect_all':   '選択を解除',
 	'chat.fold_selected':  '選択分をたたむ',
+	'chat.fold_now': '折りたたむ',
+	'chat.fold_now_help': 'この会話を今すぐ折りたたみ、これまでの要約を残します。',
 	'chat.steps':          'ステップ',
 	'chat.concise': '簡潔',
 	'chat.concise_help': 'このチャットで短い答えを求めます。送るメッセージはすべて /concise スキルとともに出ていきます。これはワークスペース内の、編集できるファイルです。',
@@ -624,11 +626,6 @@
 	'pair.look_carried': 'テーマ、言語、パネルの配置も一緒に移りました。ここから先はこの端末が自分のものとして持ちます — 片方を変えても、もう片方には影響しません。',
 
 	// ── 外観メニュー ───────────────────────────────────────────
-	'menu.shape': '形',
-	'menu.shape_sharp': 'シャープ',
-	'menu.shape_warm': 'ウォーム',
-	'menu.shape_sharp_help': '角は直角に、書体は詰めて。',
-	'menu.shape_warm_help': '角を丸く、要素の間にゆとりを。',
 	'menu.view': '表示',
 	'menu.view_simple': 'シンプル',
 	'menu.view_max': '最大',
@@ -1248,12 +1245,8 @@
 	'crystal.delta_help':     'このたたみ込みのもとになった生の入力',
 	'crystal.delta_at':       'v{v} でたたみ込まれた差分',
 	'crystal.read_delta_failed': '差分を読み取れませんでした',
-	'crystal.steer':          '導く',
-	'crystal.steer_ph':       '結晶を導く（チャットではなく指示）…',
 	'crystal.steering':       '導いています…',
-	'crystal.fold_ph':        '差分をたたみ込む（終わったエージェントやワーカーの成果）…',
 	'crystal.no_key_steer':   'この Diamond のプロバイダーには読める鍵がありません — ロックを解除するか鍵を追加すると、導けます。',
-	'crystal.no_key_fold':    'この Diamond のプロバイダーには読める鍵がありません — ロックを解除するか鍵を追加すると、差分をたたみ込めます。',
 
 	// ── 成果物 ─────────────────────────────────────────────────
 	'arte.count.one':      '成果物 {n} 件',
@@ -1731,7 +1724,7 @@
 	'pending.noted': '了解し、リストから外しました。',
 	'pending.diamond_gone': 'これを出した Diamond はもうないので、相談する相手がいません。',
 	'pending.discuss_prompt': '承認する前に、これについてもう少し話し合う必要があります：「{headline}」',
-	'crystal.steer_paused': '一時停止中 — この Diamond のタイルで再生を押すと動き出します。',
+	'crystal.steer_paused': '一時停止中 — タイルで再生を押してください',
 	'crystal.view_switch': 'この Diamond のどちらの面か',
 	'crystal.view_crystal': 'クリスタル',
 	'crystal.view_chat': 'チャット',

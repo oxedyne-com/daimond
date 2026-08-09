@@ -158,6 +158,8 @@
 	'chat.select_all': 'Selecionar tudo',
 	'chat.deselect_all': 'Desmarcar tudo',
 	'chat.fold_selected': 'Dobrar o selecionado',
+	'chat.fold_now': 'Dobrar',
+	'chat.fold_now_help': 'Dobrar esta conversa agora, mantendo um resumo do que veio antes.',
 	'chat.steps': 'Etapas',
 	'chat.concise': 'Conciso',
 	'chat.concise_help': 'Peça respostas curtas neste chat. Cada mensagem sai com a habilidade /concise, que é um arquivo do seu espaço de trabalho que você pode editar.',
@@ -480,11 +482,6 @@
 	'pair.look_carried': 'Seu tema, seu idioma e a disposição dos painéis vieram junto. Daqui em diante este dispositivo tem os seus — mude um sem mexer no outro.',
 
 	// ── The appearance menu ────────────────────────────────────
-	'menu.shape': 'Forma',
-	'menu.shape_sharp': 'Nítida',
-	'menu.shape_warm': 'Suave',
-	'menu.shape_sharp_help': 'Cantos retos e tipografia compacta.',
-	'menu.shape_warm_help': 'Cantos mais arredondados e mais espaço entre os elementos.',
 	'menu.view': 'Exibição',
 	'menu.view_simple': 'Simples',
 	'menu.view_max': 'Máx',
@@ -1214,12 +1211,8 @@
 	'crystal.delta_help': 'A entrada bruta de que esta dobra foi feita',
 	'crystal.delta_at': 'Delta dobrado na v{v}',
 	'crystal.read_delta_failed': 'Não foi possível ler o delta',
-	'crystal.steer': 'Guiar',
-	'crystal.steer_ph': 'Guie o cristal (uma instrução, não um chat)…',
 	'crystal.steering': 'Guiando…',
-	'crystal.fold_ph': 'Dobre um delta (o resultado pronto de um agente ou trabalhador)…',
 	'crystal.no_key_steer': 'O provedor deste Diamond não tem uma chave legível — desbloqueie, ou adicione uma, para guiá-lo.',
-	'crystal.no_key_fold': 'O provedor deste Diamond não tem uma chave legível — desbloqueie, ou adicione uma, para dobrar um delta.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefato',
@@ -1693,7 +1686,7 @@
 	'pending.noted': 'Anotado, e tirado da lista.',
 	'pending.diamond_gone': 'O Diamond que levantou isto não existe mais, então não há com quem conversar a respeito.',
 	'pending.discuss_prompt': 'Precisamos conversar mais sobre isto antes de eu aprovar: “{headline}”',
-	'crystal.steer_paused': 'Pausado — aperte reproduzir no bloco deste Diamond para acordá-lo.',
+	'crystal.steer_paused': 'Pausado — toque em play no bloco',
 	'crystal.view_switch': 'Qual face deste Diamond',
 	'crystal.view_crystal': 'Cristal',
 	'crystal.view_chat': 'Conversa',

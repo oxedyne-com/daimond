@@ -230,6 +230,8 @@
 	'chat.select_all':     '모두 선택',
 	'chat.deselect_all':   '선택 해제',
 	'chat.fold_selected':  '선택한 것 접기',
+	'chat.fold_now': '접기',
+	'chat.fold_now_help': '이 대화를 지금 접고 이전 내용의 요약을 남깁니다.',
 	'chat.steps':          '단계',
 	'chat.concise': '간결',
 	'chat.concise_help': '이 채팅에서 짧은 답을 요청합니다. 보내는 모든 메시지가 /concise 스킬과 함께 나갑니다. 작업 공간에 있는, 편집할 수 있는 파일입니다.',
@@ -626,11 +628,6 @@
 	'pair.look_carried': '테마와 언어, 패널 배치도 함께 넘어왔어요. 여기서부터는 이 기기가 자기 것으로 가져가요 — 한쪽을 바꿔도 다른 쪽은 그대로예요.',
 
 	// ── 모양 메뉴 ──────────────────────────────────────────────
-	'menu.shape': '모양',
-	'menu.shape_sharp': '샤프',
-	'menu.shape_warm': '웜',
-	'menu.shape_sharp_help': '각진 모서리와 조밀한 서체.',
-	'menu.shape_warm_help': '둥근 모서리와 여유로운 간격.',
 	'menu.view': '보기',
 	'menu.view_simple': '심플',
 	'menu.view_max': '최대',
@@ -1250,12 +1247,8 @@
 	'crystal.delta_help':     '이 접기의 바탕이 된 날것의 입력',
 	'crystal.delta_at':       'v{v}에서 접어 넣은 델타',
 	'crystal.read_delta_failed': '델타를 읽지 못했어요',
-	'crystal.steer':          '이끌기',
-	'crystal.steer_ph':       '결정체를 이끄세요 (채팅이 아니라 지시예요)…',
 	'crystal.steering':       '이끄는 중…',
-	'crystal.fold_ph':        '델타를 접어 넣으세요 (끝난 에이전트나 일꾼의 결과)…',
 	'crystal.no_key_steer':   '이 Diamond의 제공자에는 읽을 수 있는 키가 없어요 — 잠금을 풀거나 키를 추가하면 이끌 수 있어요.',
-	'crystal.no_key_fold':    '이 Diamond의 제공자에는 읽을 수 있는 키가 없어요 — 잠금을 풀거나 키를 추가하면 델타를 접어 넣을 수 있어요.',
 
 	// ── 산출물 ─────────────────────────────────────────────────
 	'arte.count.one':      '산출물 {n}개',
@@ -1733,7 +1726,7 @@
 	'pending.noted': '확인했고 목록에서 내렸습니다.',
 	'pending.diamond_gone': '이것을 올린 Diamond 가 사라져서 상의할 상대가 없습니다.',
 	'pending.discuss_prompt': '승인하기 전에 이것을 더 이야기해야 합니다: “{headline}”',
-	'crystal.steer_paused': '일시 정지됨 — 이 Diamond 타일에서 재생을 누르면 깨어납니다.',
+	'crystal.steer_paused': '일시정지 — 타일에서 재생을 누르세요',
 	'crystal.view_switch': '이 Diamond 의 어느 면',
 	'crystal.view_crystal': '크리스털',
 	'crystal.view_chat': '대화',
