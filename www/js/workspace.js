@@ -345,10 +345,9 @@
 
 	var menuEl;
 
-	/// The word each stored spacing id is shown as. The ids are `sharp` and
-	/// `warm` in storage and will stay that way; this is the only place the two
-	/// vocabularies meet.
-	var SPACING_WORD = { sharp: 'compact', warm: 'breathe' };
+	/// The view ids, in the order they are offered. Simple first: it is the
+	/// default and the one a new reader should meet.
+	var VIEW_IDS = ['simple', 'max'];
 
 	function renderMenu() {
 		menuEl = menuEl || document.getElementById('settings-menu');
@@ -360,25 +359,49 @@
 		// orthogonal to the palette chosen below. The two settings are stored
 		// under their original ids, because a rename that moved them would clear
 		// the choice of everyone already using one; only the words changed.
+		// The view: Simple or Max. This replaced Compact/Breathe, which was the
+		// SKIN under a name that described only half of what people wanted from
+		// it. Choosing a view sets the skin with it -- shape and density are two
+		// expressions of one intent, and "airy shape, maximum density" is a
+		// combination nobody wants. Not a lock, though: the palette below is
+		// untouched, and a skin chosen afterwards stays chosen.
+		if (window.DaimondView) {
+			menuEl.appendChild(el('div', 'pop-head', t('menu.view')));
+			var viewNow = DaimondView.get();
+			var vseg = el('div', 'seg');
+			VIEW_IDS.forEach(function (id) {
+				var vb = el('button', null, t('menu.view_' + id));
+				vb.setAttribute('aria-pressed', id === viewNow ? 'true' : 'false');
+				vb.title = t('menu.view_' + id + '_help');
+				vb.addEventListener('click', function () {
+					DaimondView.set(id);
+					renderMenu();
+				});
+				vseg.appendChild(vb);
+			});
+			menuEl.appendChild(vseg);
+			menuEl.appendChild(el('div', 'pop-note', t('menu.view_note')));
+		}
+
+		// Shape, on its own and after the view, because the view already sets it
+		// and this is the escape hatch rather than the main road. Somebody who
+		// wants big rounded targets AND every figure -- an eyesight case, and a
+		// real one -- sets Max and then comes here. A view chosen later resets it,
+		// which is the right way round: the common control wins by default and
+		// the uncommon one is always available again.
 		if (window.DaimondSkin) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.spacing')));
+			menuEl.appendChild(el('div', 'pop-head', t('menu.shape')));
 			var skinNow = DaimondSkin.get();
 			var sseg = el('div', 'seg');
 			['sharp', 'warm'].forEach(function (id) {
-				var pair = [id];
-				var word = SPACING_WORD[id];
-				var sb = el('button', null, t('menu.spacing_' + word));
-				sb.setAttribute('aria-pressed', pair[0] === skinNow ? 'true' : 'false');
-				sb.title = t('menu.spacing_' + word + '_help');
+				var sb = el('button', null, t('menu.shape_' + id));
+				sb.setAttribute('aria-pressed', id === skinNow ? 'true' : 'false');
+				sb.title = t('menu.shape_' + id + '_help');
 				sb.addEventListener('click', function () {
-					// Only the spacing. Choosing "Breathe" used to also move a dark
-					// palette to light, on the reading that the warm skin WAS a light
-					// airy look -- but the two axes are orthogonal, and the row now
-					// says so in its own name. Reaching for more room and being given
-					// a different palette is a setting changing a setting nobody
-					// touched, and with a list of palettes to choose from it would
-					// throw away a considered choice.
-					DaimondSkin.set(pair[0]);
+					// Only the shape. Choosing a rounder look used to also move a
+					// dark palette to light; the two axes are orthogonal and the
+					// rows now say so in their own names.
+					DaimondSkin.set(id);
 					renderMenu();
 				});
 				sseg.appendChild(sb);

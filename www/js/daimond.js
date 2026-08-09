@@ -2957,6 +2957,99 @@ import init, {
 		set:  setSkin,
 	};
 
+	// ── View: Max or Simple ────────────────────────────────────
+	//
+	// Not "more" and "less". The difference between somebody with six Diamonds
+	// on a wide screen and somebody meeting the app today is WHERE A CONTROL
+	// LIVES relative to the thing it controls:
+	//
+	//   Simple  one object at a time, controls inside it. Open the tile, change
+	//           it, close it.
+	//   Max     many objects at once, controls hoisted out, so they can be
+	//           COMPARED and changed without navigating.
+	//
+	// Comparison is the job Max exists for. "Which of my six Diamonds is on the
+	// expensive model" cannot be answered by opening six dialogs. That rule also
+	// says what Max is not: a control nobody compares and nobody changes in
+	// flight has no business on a tile, however much room there is.
+	//
+	// Two invariants, both asserted in dev/verify_view.mjs:
+	//
+	//   1. **Simple hides information, never affordances.** Everything reachable
+	//      in Max is reachable in Simple within one more click, and the way in --
+	//      the cog -- is always visible. Hide the route as well as the detail and
+	//      the mode becomes one where the reader concludes the app is broken.
+	//   2. **Simple never hides a warning, an error or a spending control.**
+	//      Notes2 opens on the Transparent Control Principle; a display
+	//      preference that hid a traffic light would contradict the app's own
+	//      first rule. The pause widget is in BOTH views.
+	//
+	// This replaces the Compact/Breathe control, which was the SKIN. Shape and
+	// density are two expressions of one intent -- a dense layout needs tight
+	// corners not to look absurd, a calm one needs room -- so choosing a view
+	// sets the skin too. That is consistent with keeping the skin separate from
+	// the PALETTE and not in tension with it: palette is taste, shape and density
+	// are both about handling information. Couple what is one decision.
+	//
+	// It is a default and not a lock: the skin control remains, so somebody who
+	// wants big rounded targets AND every figure can still have both.
+	//
+	// Every stored choice migrates for free and correctly. `sharp` meant "the
+	// most on screen at once", which is Max; `warm` meant calm, which is Simple.
+	// An UNSET skin is not a choice, so it becomes Simple -- the quiet default
+	// notes2 asks for.
+	var VIEWS = { max: 'sharp', simple: 'warm' };
+	var VIEW_KEY = 'daimond-view';
+
+	/// The skin as STORED, read before `initSkin` runs.
+	///
+	/// `initSkin` writes its own default, so by the time it has run every account
+	/// has `sharp` in storage whether the user chose it or not -- and a migration
+	/// reading it afterwards would hand Max to every new account, which is the
+	/// opposite of the quiet default notes2 asks for. Captured here, at load, so
+	/// "never chose" stays distinguishable from "chose Compact".
+	var SKIN_AS_FOUND = (function () {
+		try { return localStorage.getItem('daimond-skin'); } catch (e) { return null; }
+	})();
+
+	function initView() {
+		var saved = null;
+		try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+		if (!VIEWS[saved]) {
+			// No view chosen yet: inherit from the skin the user already picked,
+			// which is the same decision under its old name. An unset skin is not
+			// a choice, so it becomes Simple.
+			saved = (SKIN_AS_FOUND === 'sharp') ? 'max' : 'simple';
+		}
+		// A skin that was actually stored is a choice and is kept, so somebody who
+		// deliberately decoupled the two keeps their combination. With none
+		// stored there is nothing to preserve, and the view sets the shape.
+		setView(saved, { keepSkin: !!SKIN_AS_FOUND });
+	}
+
+	/// Choose the view. Sets the skin with it unless the caller is only
+	/// restoring what was already on the page.
+	function setView(view, opts) {
+		if (!VIEWS[view]) view = 'simple';
+		document.documentElement.setAttribute('data-view', view);
+		try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* private mode */ }
+		if (!(opts && opts.keepSkin)) setSkin(VIEWS[view]);
+		// Every tile that is FOLLOWING the view has to be repainted. The ones
+		// that are not must not be touched -- see `tileDetail`.
+		try { repaintTileDetail(); } catch (e) { /* the rail is not up yet */ }
+		try { window.dispatchEvent(new Event('daimond:view')); } catch (e) {}
+	}
+
+	function viewNow() {
+		return document.documentElement.getAttribute('data-view') === 'max' ? 'max' : 'simple';
+	}
+
+	window.DaimondView = {
+		list: function () { return Object.keys(VIEWS); },
+		get:  viewNow,
+		set:  setView,
+	};
+
 	// ── Repainting after a language or currency change ─────────
 	// The surfaces that are ALWAYS on screen are redrawn at once: the admin
 	// status header, the spend readout at the foot of the rail, and the Credits
@@ -4277,6 +4370,14 @@ import init, {
 				|| (currentDiamond && currentDiamond.id === id ? currentDiamond : null);
 			return f ? daimonChat(f) : null;
 		},
+		/// What a Diamond may touch: its own directory, what is attached, what is
+		/// attached read-only, and its toolchains.
+		///
+		/// Published because it is exactly what `scopeAgentTo` hands the engine
+		/// before dispatching an agent, so it is the only honest way to ask from
+		/// outside "what will this Diamond actually be allowed to see". Read-only:
+		/// a grant is made by attaching, not by calling this.
+		bounds: function (id) { return Files.bounds(id); },
 	};
 
 	// The panel is reachable from the dock whether or not anything is running, but
@@ -5933,16 +6034,21 @@ import init, {
 			// connection that has actually failed; it may not overrule one that has not.
 			var arow = document.getElementById('astat-account');
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
-			if (locked || !st.authed) {
-				row('astat-account', 'off', '',
-					!navigator.onLine ? t('astat.offline')
-						: st.offline ? t('astat.service_unreachable')
-						: t('astat.no_account'));
-			} else {
-				row('astat-account', 'ok', '', t('astat.credits'),
-					st.credits === null ? '—' : DaimondGateway.fmtMoney(st.credits, st.currency));
-			}
+			// NOT gated on having a Daimond account, and that was the bug: the
+			// money rows used to be drawn only for an authed account, so somebody
+			// running on their own key with no account -- the commonest BYOK case
+			// there is -- saw nothing at all about the money paying for their work.
+			// Whether there is an account is one input to what may be said, not a
+			// precondition for saying anything.
+			if (!locked && moneyRows(st, arow)) return;
+			arow.style.display = '';
+			row('astat-account', 'off', '',
+				locked ? t('astat.locked')
+					: !navigator.onLine ? t('astat.offline')
+					: st.offline ? t('astat.service_unreachable')
+					: t('astat.no_account'));
 			arow.title = t('astat.credits_help');
+			byokRow(null);
 
 			// Pro: whether this identity owns the one-time unlock, and a way in if
 			// not. It sits on its own row, next to credits but distinct from them --
@@ -5957,6 +6063,93 @@ import init, {
 			// The workspace: OPFS is evictable, and a user who cannot see it
 			// filling up cannot know to get anything out of it.
 			storage();
+		}
+
+		/// The money rows: up to two, each named by whose money it is.
+		///
+		/// The wording rules live in `js/money.js` and are tested there. This
+		/// function does the drawing and nothing else, so a change to what may
+		/// honestly be said is made in one place.
+		///
+		/// The row this replaced said "Credits" and showed the Daimond balance
+		/// alone -- so somebody running on their own key read "Credits $0.00"
+		/// while that key was paying for everything.
+		/// Returns whether it drew anything, so the caller can fall back to
+		/// saying why there is nothing to draw.
+		function moneyRows(st, arow) {
+			var M = window.DaimondMoney;
+			if (!M) return false;          // a stripped build: the caller's line is better than none
+			var provs = [];
+			try { provs = (window.DaimondModels && DaimondModels.providers()) || []; }
+			catch (e) { provs = []; }
+			// What has gone through each provider, so a key nobody can read a
+			// balance for can still say what it has cost. Most providers will
+			// not report a balance, so this is the common case rather than a
+			// fallback for an odd one.
+			try {
+				if (window.DaimondLedger && DaimondLedger.perProvider) {
+					var spend = {};
+					DaimondLedger.perProvider(0).forEach(function (r2) { spend[r2.provider] = r2.usd || 0; });
+					provs.forEach(function (p) { p.spentUsd = spend[p.id] || 0; });
+				}
+			} catch (e) { /* the figures simply stay unknown */ }
+
+			var rate = null;
+			try {
+				var g = window.DaimondGovernor && DaimondGovernor.status();
+				if (g && typeof g.rateUsdMin === 'number') rate = g.rateUsdMin;
+			} catch (e) { /* no rate: no runway, which money.js handles */ }
+
+			var list = M.rows({
+				// Whether there is a Daimond account is an INPUT here, not a gate.
+				authed:        !!st.authed,
+				creditsUsd:    (st.credits === null || st.credits === undefined)
+					? null : (st.credits / 100),
+				creditsLabel:  t('money.daimond_credits'),
+				ownManyLabel:  t('money.own_keys'),
+				ownOneLabel:   function (name) { return t('money.own_key', { provider: name }); },
+				providers:     provs,
+				rateUsdPerMin: rate,
+			});
+
+			if (!list.length) {
+				// Nothing true to say about any pot. Not a dash -- an empty place
+				// where a figure goes reads as zero -- and not a blank row either:
+				// the caller says WHY instead.
+				byokRow(null);
+				return false;
+			}
+			var first = list[0];
+			arow.style.display = '';
+			row('astat-account', first.tone, '', first.label, moneyValue(first));
+			arow.title = moneyTitle(first);
+			byokRow(list.length > 1 ? list[1] : null);
+			return true;
+		}
+
+		/// What a money row shows: the consequence when it is at risk, the
+		/// figure otherwise.
+		function moneyValue(r) {
+			if (r.atRisk && r.minutes !== null) {
+				return t('money.left_at_rate', { mins: Math.max(1, Math.round(r.minutes)) });
+			}
+			if (r.kind === 'spent') return t('money.spent_so_far', { amt: fmtUsd(r.usd) });
+			return (r.kind === 'estimate' ? '≈' : '') + fmtUsd(r.usd);
+		}
+		function moneyTitle(r) {
+			if (r.kind === 'spent')    return t('money.spent_help');
+			if (r.kind === 'estimate') return t('money.estimate_help');
+			return t('astat.credits_help');
+		}
+
+		/// The second money row, drawn only when there is a second pot.
+		function byokRow(r) {
+			var el2 = document.getElementById('astat-byok');
+			if (!el2) return;
+			if (!r) { el2.style.display = 'none'; return; }
+			el2.style.display = '';
+			row('astat-byok', r.tone, '', r.label, moneyValue(r));
+			el2.title = moneyTitle(r);
 		}
 
 		/// The Pro row: owned, or an invitation to own it. Shown only when the
@@ -7391,7 +7584,10 @@ import init, {
 		if (!id) return;
 		var all = tilePrefs();
 		var rec = (all[id] && typeof all[id] === 'object') ? all[id] : {};
-		rec[field] = value;
+		// `null` CLEARS. A stored null is not the same as an absent field: it is
+		// what "follow the global" has to be, and a record that keeps the key
+		// around invites a later reader to treat it as a value.
+		if (value === null) delete rec[field]; else rec[field] = value;
 		all[id] = rec;
 		try { localStorage.setItem(TILE_PREFS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
@@ -7406,9 +7602,40 @@ import init, {
 		try { localStorage.setItem(TILE_PREFS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
-	/// 'simple' or 'max'. Absent means SIMPLE: the quiet rail is the default the
-	/// user asked for, and Max is the thing a power user goes and turns on.
-	function tileDetail(id) { return tilePref(id).detail === 'max' ? 'max' : 'simple'; }
+	/// 'simple' or 'max' for one tile, resolved through the cascade.
+	///
+	/// The global view is the DEFAULT for every tile; a per-tile choice is an
+	/// override that sticks. A tile with no override follows the view, including
+	/// when the view changes later.
+	///
+	/// **A tile stores "unset", never a copy of the view**, and that is the whole
+	/// correctness of this feature. Writing `max` into every tile when the view
+	/// is set to Max would leave them all dense the moment the view went back to
+	/// Simple, and the global control would look broken with no way to explain
+	/// it. `verify_view` proves this by switching the view twice.
+	function tileDetail(id) {
+		var own = tilePref(id).detail;
+		if (own === 'max' || own === 'simple') return own;
+		return (window.DaimondView ? DaimondView.get() : 'simple');
+	}
+
+	/// Whether this tile is following the view rather than holding its own
+	/// choice, so the dialog can show a real `Default` state.
+	function tileFollows(id) {
+		var own = tilePref(id).detail;
+		return !(own === 'max' || own === 'simple');
+	}
+
+	/// Repaint every tile that is following the view. The ones holding an
+	/// override are deliberately left alone: an override that moved with the
+	/// view would not be an override.
+	function repaintTileDetail() {
+		var boxes = document.querySelectorAll('.session-box[data-id]');
+		for (var i = 0; i < boxes.length; i++) {
+			var id = boxes[i].dataset.id;
+			if (id && tileFollows(id)) boxes[i].dataset.detail = tileDetail(id);
+		}
+	}
 
 	/// Is this chat's concise chip lit?
 	function tileConcise(id) { return tilePref(id).concise === true; }
@@ -7505,15 +7732,18 @@ import init, {
 		var seg = document.createElement('div');
 		seg.className = 'tile-dlg-seg';
 		var btns = {};
-		['simple', 'max'].forEach(function (level) {
+		// Three states, not two, and the third is the important one. Without a
+		// `Default` there is no way back to following the view: one tap on a tile
+		// detaches it for ever, and nobody would guess why that tile alone stopped
+		// answering the global control.
+		['default', 'simple', 'max'].forEach(function (level) {
 			var b = document.createElement('button');
 			b.type = 'button';
 			b.className = 'tile-dlg-level';
 			b.dataset.level = level;
-			b.textContent = t('tile.detail_' + level);
-			b.title = t('tile.detail_' + level + '_help');
 			b.addEventListener('click', function () {
-				setTilePref(opts.id, 'detail', level);
+				if (level === 'default') setTilePref(opts.id, 'detail', null);
+				else setTilePref(opts.id, 'detail', level);
 				paintLevel();
 				applyTileDetail(opts.id);
 			});
@@ -7521,10 +7751,18 @@ import init, {
 			seg.appendChild(b);
 		});
 		function paintLevel() {
-			var now = tileDetail(opts.id);
+			var follows = tileFollows(opts.id);
+			var now = follows ? 'default' : tileDetail(opts.id);
 			Object.keys(btns).forEach(function (k) {
 				btns[k].setAttribute('aria-pressed', k === now ? 'true' : 'false');
+				btns[k].title = t('tile.detail_' + k + '_help');
 			});
+			// Default says what it currently RESOLVES to, so choosing it is not a
+			// guess about what the app will do next.
+			btns['default'].textContent = t('tile.detail_default',
+				{ what: t('tile.detail_' + (window.DaimondView ? DaimondView.get() : 'simple')) });
+			btns.simple.textContent = t('tile.detail_simple');
+			btns.max.textContent = t('tile.detail_max');
 		}
 		paintLevel();
 		card.appendChild(seg);
@@ -7671,15 +7909,20 @@ import init, {
 
 	/// A Diamond's triggered actions, in its own settings dialog.
 	///
-	/// Notes2 asks for exactly this shape: "new triggered actions (TAs) can be added
-	/// with a + icon, and selected for editing from a pulldown", and "To avoid
-	/// clutter, Instruction and Context should just show an edit button and a copy
-	/// button to facilitate copying between TAs and diamonds."
+	/// Notes2 asks for exactly this shape and it is built as written: "new
+	/// triggered actions (TAs) can be added with a + icon, and selected for
+	/// editing from a pulldown", and "To avoid clutter, Instruction and Context
+	/// should just show an edit button and a copy button to facilitate copying
+	/// between TAs and diamonds."
 	///
-	/// The clutter warning is the design. One row per action, each carrying its
-	/// pause light, what it is in words, and a way in — and the two long texts
-	/// behind Edit and Copy rather than two textareas apiece. Eight actions with
-	/// their instructions inline would be a dialog nobody could read.
+	/// So: one pulldown naming every action, one panel showing the chosen one,
+	/// and the two long texts behind Edit and Copy rather than two textareas
+	/// apiece. The clutter warning is the design — every action expanded at once
+	/// is a dialog nobody can read, and it gets worse with each action added.
+	///
+	/// The one thing the pulldown costs is the at-a-glance view of what is armed,
+	/// so the armed state rides in the option text: a reader looking at one
+	/// action can still see that another is running.
 	function mountTriggers(card, opts) {
 		if (!window.DaimondTriggers) return;
 		card.appendChild(secHead(t('trig.head')));
@@ -7688,83 +7931,104 @@ import init, {
 		host.className = 'trig-list';
 		card.appendChild(host);
 
+		// Which action is open. Held by id and not by index, so a redraw after a
+		// removal keeps the reader where they were rather than throwing them to
+		// whatever action now sits in that slot.
+		var chosen = null;
+
+		function armed(actionId) {
+			try { return !DaimondPause.isPaused(DaimondTriggers.node(opts.id, actionId)); }
+			catch (e) { return false; }
+		}
+
 		function draw() {
 			host.innerHTML = '';
 			var list = Triggers.of(opts.id);
 			if (!list.length) {
 				host.appendChild(secNote(t('trig.none')));
-			}
-			list.forEach(function (ta) {
-				var row = document.createElement('div');
-				row.className = 'trig-row';
-				// Every action has a light now. The one that did not -- `prompted`,
-				// with a spacer where the widget goes -- is gone: prompting a
-				// Diamond is the user asking, not an arrangement to be armed.
-				mountPause(row, DaimondTriggers.node(opts.id, ta.id), triggerLabel(ta));
-				var name = document.createElement('span');
-				name.className = 'trig-name';
-				name.textContent = triggerLabel(ta);
-				row.appendChild(name);
+			} else {
+				if (!list.some(function (x) { return x.id === chosen; })) chosen = list[0].id;
+				var ta = list.filter(function (x) { return x.id === chosen; })[0];
 
-				row.appendChild(trigBtn('✎', t('trig.edit'), function () {
-					editTrigger(opts.id, ta, draw);
-				}));
-				row.appendChild(trigBtn('⧉', t('trig.copy'), async function () {
-					// The copy notes2 asks for: the two long texts, so an
-					// instruction written once can be pasted into another TA or
-					// another Diamond without being retyped.
-					try {
-						await navigator.clipboard.writeText(
-							(ta.instruction || '') + (ta.context ? '\n\n---\n\n' + ta.context : ''));
-						toast(t('trig.copied'));
-					} catch (e) { toast(t('trig.copy_failed'), true); }
-				}));
-				row.appendChild(trigBtn('✕', t('trig.remove'), async function () {
+				// ── The chooser ────────────────────────────────
+				var pick = document.createElement('div');
+				pick.className = 'trig-pick';
+				// The light belongs beside the pulldown and not inside the panel:
+				// it is the control the reader reaches for most, and it should not
+				// move when the chosen action changes shape.
+				mountPause(pick, DaimondTriggers.node(opts.id, ta.id), triggerLabel(ta));
+
+				var sel = document.createElement('select');
+				sel.className = 'tile-model trig-choose';
+				sel.setAttribute('aria-label', t('trig.choose'));
+				list.forEach(function (x) {
+					var o = document.createElement('option');
+					o.value = x.id;
+					o.textContent = t(armed(x.id) ? 'trig.opt_on' : 'trig.opt_off',
+						{ what: triggerLabel(x) });
+					sel.appendChild(o);
+				});
+				sel.value = chosen;
+				sel.addEventListener('change', function () { chosen = sel.value; draw(); });
+				pick.appendChild(sel);
+
+				pick.appendChild(trigBtn('✕', t('trig.remove'), async function () {
 					// An action with nothing written in it and nothing armed is the
 					// one the user just added by pressing `+`, and asking them to
 					// confirm the deletion of an empty thing is the friction that
 					// made `+` feel one-way. There is nothing to lose, so there is
 					// nothing to ask. Anything with an instruction still asks.
-					var blank = !ta.on && !(ta.instruction || '').trim() && !(ta.context || '').trim();
+					var blank = !armed(ta.id) && !(ta.instruction || '').trim()
+						&& !(ta.context || '').trim();
 					if (!blank) {
 						var ok = await confirmDialog(t('trig.remove_body', { what: triggerLabel(ta) }),
 							t('trig.remove'), { title: t('trig.remove'), danger: true });
 						if (!ok) return;
 					}
 					await Triggers.remove(opts.id, ta.id);
+					// No need to clear `chosen`: draw() falls back whenever it
+					// names an action that is no longer there, which is the same
+					// guard that survives an action removed on another device.
 					draw();
 				}));
-				host.appendChild(row);
-			});
+				host.appendChild(pick);
+				host.appendChild(triggerPanel(opts.id, ta, draw));
+			}
 
 			var add = document.createElement('div');
 			add.className = 'trig-add';
-			var sel = document.createElement('select');
-			sel.className = 'tile-model';
-			sel.setAttribute('aria-label', t('trig.add_kind'));
+			var kind = document.createElement('select');
+			kind.className = 'tile-model';
+			kind.setAttribute('aria-label', t('trig.add_kind'));
 			[['activity', 'trig.kind_activity'], ['mail', 'trig.kind_mail']].forEach(function (pair) {
 				var o = document.createElement('option');
 				o.value = pair[0]; o.textContent = t(pair[1]);
-				sel.appendChild(o);
+				kind.appendChild(o);
 			});
 			var plus = trigBtn('+', t('trig.add'), async function () {
-				var ta = DaimondTriggers.blank(sel.value);
-				ta.id = sel.value + '-' + Date.now().toString(36);
-				// A NEW action starts off. It has no instruction yet, so arming it
-				// would arm something with nothing to say — and the one thing worse
-				// than a trigger that does not fire is one that fires empty.
+				var ta = DaimondTriggers.blank(kind.value);
+				ta.id = kind.value + '-' + Date.now().toString(36);
+				// A NEW action starts off, and starting it off means seeding the
+				// PAUSE TREE, not writing `on: false` into the record.
+				//
+				// `DaimondTriggers.allowed` asks the tree and never reads `on` --
+				// deliberately, so a pause arriving from another device between the
+				// schedule and the fire is honoured. So the record's `on` is a
+				// mirror, and a new action that only set the mirror was armed. It
+				// could not fire while it had no instruction, because `ready`
+				// refuses an action with nothing to say -- but it went live the
+				// moment the user wrote one, without anyone pressing play. The
+				// light said so all along; nothing was reading the light.
 				ta.on = false;
 				await Triggers.set(opts.id, ta);
-				// Add, and stop. Opening the editor over the new row put its own ✕
-				// behind a modal, so at the moment of the press nothing on screen
-				// undid it: press `+` by mistake and a Diamond is armed with no
-				// visible way back until the editor is dismissed. Notes2 asks for
-				// add-then-choose in any case — actions are *"added with a + icon,
-				// and selected for editing from a pulldown"* — so the row's own ✎
-				// is the way in and its ✕ is the way back.
+				try { DaimondPause.seedPaused(DaimondTriggers.node(opts.id, ta.id)); }
+				catch (e) { /* pause module absent in a stripped build */ }
+				// Added, and chosen: the pulldown is how an action is reached, so
+				// the one just added had better be the one it is showing.
+				chosen = ta.id;
 				draw();
 			});
-			add.appendChild(sel); add.appendChild(plus);
+			add.appendChild(kind); add.appendChild(plus);
 			host.appendChild(add);
 		}
 		draw();
@@ -7773,6 +8037,166 @@ import init, {
 		note.className = 'tile-dlg-note';
 		note.textContent = t('trig.note', { path: 'diamonds/' + opts.id + '/triggers.json' });
 		card.appendChild(note);
+	}
+
+	/// The chosen action's own settings: what sets it off, and its two texts.
+	///
+	/// The trigger's own fields are inline and save as they are changed — a
+	/// number of minutes and a folder name are small enough that a Save button
+	/// would be more ceremony than the change. The two long texts are not: they
+	/// get the edit-and-copy pair notes2 asks for, so that an instruction
+	/// written once can be carried to another action or another Diamond.
+	function triggerPanel(diamondId, ta, done) {
+		var panel = document.createElement('div');
+		panel.className = 'trig-panel';
+
+		function field(labelKey, el) {
+			var wrap = document.createElement('label');
+			wrap.className = 'trig-field';
+			var lab = document.createElement('span');
+			lab.className = 'trig-label';
+			lab.textContent = t(labelKey);
+			wrap.appendChild(lab); wrap.appendChild(el);
+			panel.appendChild(wrap);
+			return el;
+		}
+		async function patch(fn) {
+			var next = Object.assign({}, ta);
+			fn(next);
+			await Triggers.set(diamondId, next);
+			ta = next;
+		}
+
+		if (ta.kind === 'activity') {
+			var mins = document.createElement('input');
+			mins.type = 'number'; mins.min = '1'; mins.max = '1440';
+			mins.value = String(ta.minutes || 30);
+			mins.className = 'trig-input';
+			mins.addEventListener('change', function () {
+				patch(function (n) { n.minutes = Math.max(1, Math.round(Number(mins.value) || 30)); });
+			});
+			field('trig.minutes', mins);
+			var mnote = document.createElement('div');
+			mnote.className = 'tile-dlg-note';
+			mnote.textContent = t('trig.minutes_note');
+			panel.appendChild(mnote);
+		}
+		if (ta.kind === 'mail') {
+			var box = document.createElement('select');
+			box.className = 'trig-input';
+			var boxes = [];
+			try { boxes = (window.DaimondMail && DaimondMail.accounts && DaimondMail.accounts()) || []; }
+			catch (e) { boxes = []; }
+			if (!boxes.length) {
+				var o0 = document.createElement('option');
+				o0.value = ''; o0.textContent = t('trig.no_mailbox');
+				box.appendChild(o0);
+			}
+			boxes.forEach(function (addr) {
+				var o = document.createElement('option');
+				o.value = addr; o.textContent = addr;
+				box.appendChild(o);
+			});
+			if (ta.mailbox) box.value = ta.mailbox;
+			box.addEventListener('change', function () {
+				patch(function (n) { n.mailbox = box.value || ''; });
+			});
+			field('trig.mailbox', box);
+
+			var fol = document.createElement('input');
+			fol.type = 'text'; fol.className = 'trig-input';
+			fol.value = ta.folder || 'INBOX';
+			fol.placeholder = 'INBOX';
+			fol.addEventListener('change', function () {
+				patch(function (n) { n.folder = fol.value.trim() || 'INBOX'; });
+			});
+			field('trig.folder', fol);
+		}
+
+		panel.appendChild(longText('trig.instruction', 'trig.instruction_ph',
+			function () { return ta.instruction || ''; },
+			function (v) {
+				return patch(function (n) { n.instruction = v; });
+			}));
+
+		panel.appendChild(longText('trig.context', 'trig.context_ph',
+			function () { return ta.context || ''; },
+			function (v) {
+				return patch(function (n) {
+					// A changed context has NOT been sent, whatever was sent before.
+					// That is what a person means by changing it, and the alternative
+					// -- keeping the old stamp -- is a context the daimon never hears.
+					if ((v || '').trim() !== (ta.context || '').trim()) n.contextSent = '';
+					n.context = v;
+				});
+			}));
+
+		var cnote = document.createElement('div');
+		cnote.className = 'tile-dlg-note';
+		cnote.textContent = t('trig.context_note');
+		panel.appendChild(cnote);
+
+		/// One long text: what it says in a phrase, then Edit and Copy.
+		function longText(labelKey, phKey, get, set) {
+			var row = document.createElement('div');
+			row.className = 'trig-text-row';
+
+			var lab = document.createElement('span');
+			lab.className = 'trig-label';
+			lab.textContent = t(labelKey);
+			row.appendChild(lab);
+
+			// What is in there, in the smallest honest form: the opening words,
+			// or a plain statement that it is empty. A row of two buttons with
+			// nothing between them cannot be told from another row of two buttons.
+			var gist = document.createElement('span');
+			gist.className = 'trig-gist';
+			var cur = (get() || '').trim();
+			if (cur) {
+				gist.textContent = cur.length > 60 ? cur.slice(0, 60) + '…' : cur;
+				gist.title = cur;
+			} else {
+				gist.textContent = t('trig.nothing_written');
+				gist.classList.add('empty');
+			}
+			row.appendChild(gist);
+
+			row.appendChild(trigBtn('✎', t('trig.edit_this', { what: t(labelKey) }), async function () {
+				var next = await editLongText(t(labelKey), get(), t(phKey));
+				await set(next);
+				if (done) done();
+			}));
+			row.appendChild(trigBtn('⧉', t('trig.copy_this', { what: t(labelKey) }), async function () {
+				try {
+					await navigator.clipboard.writeText(get());
+					toast(t('trig.copied'));
+				} catch (e) { toast(t('trig.copy_failed'), true); }
+			}));
+			return row;
+		}
+
+		return panel;
+	}
+
+	/// Edit one long text in a dialog of its own.
+	///
+	/// Closing keeps what was typed, including an empty box -- clearing an
+	/// instruction is a thing a person may mean to do. That is the contract
+	/// `openBodyDialog` already has everywhere else in this file (it has one
+	/// button and Escape means the same as pressing it), and a single dialog
+	/// that threw work away on Escape would be the surprising one.
+	async function editLongText(title, value, placeholder) {
+		var body = document.createElement('div');
+		body.className = 'trig-edit';
+		var area = document.createElement('textarea');
+		area.className = 'trig-area'; area.rows = 8;
+		area.value = value || '';
+		area.placeholder = placeholder || '';
+		area.setAttribute('aria-label', title);
+		body.appendChild(area);
+		await openBodyDialog(t('trig.edit_title', { what: title }), body,
+			{ okLabel: t('common.save') });
+		return area.value;
 	}
 
 	function trigBtn(glyph, label, onClick) {
@@ -7794,91 +8218,6 @@ import init, {
 	}
 
 	/// The editor for one triggered action.
-	async function editTrigger(diamondId, ta, done) {
-		var body = document.createElement('div');
-		body.className = 'trig-edit';
-
-		function field(labelKey, el) {
-			var wrap = document.createElement('label');
-			wrap.className = 'trig-field';
-			var lab = document.createElement('span');
-			lab.className = 'trig-label';
-			lab.textContent = t(labelKey);
-			wrap.appendChild(lab); wrap.appendChild(el);
-			body.appendChild(wrap);
-			return el;
-		}
-
-		if (ta.kind === 'activity') {
-			var mins = document.createElement('input');
-			mins.type = 'number'; mins.min = '1'; mins.max = '1440';
-			mins.value = String(ta.minutes || 30);
-			mins.className = 'trig-input';
-			field('trig.minutes', mins);
-			var mnote = document.createElement('div');
-			mnote.className = 'tile-dlg-note';
-			mnote.textContent = t('trig.minutes_note');
-			body.appendChild(mnote);
-			var mref = mins;
-		}
-		if (ta.kind === 'mail') {
-			var box = document.createElement('select');
-			box.className = 'trig-input';
-			var boxes = [];
-			try { boxes = (window.DaimondMail && DaimondMail.accounts && DaimondMail.accounts()) || []; }
-			catch (e) { boxes = []; }
-			if (!boxes.length) {
-				var o0 = document.createElement('option');
-				o0.value = ''; o0.textContent = t('trig.no_mailbox');
-				box.appendChild(o0);
-			}
-			boxes.forEach(function (addr) {
-				var o = document.createElement('option');
-				o.value = addr; o.textContent = addr;
-				box.appendChild(o);
-			});
-			if (ta.mailbox) box.value = ta.mailbox;
-			field('trig.mailbox', box);
-			var fol = document.createElement('input');
-			fol.type = 'text'; fol.className = 'trig-input';
-			fol.value = ta.folder || 'INBOX';
-			fol.placeholder = 'INBOX';
-			field('trig.folder', fol);
-			var bref = box, fref = fol;
-		}
-
-		var instr = document.createElement('textarea');
-		instr.className = 'trig-area'; instr.rows = 4;
-		instr.value = ta.instruction || '';
-		instr.placeholder = t('trig.instruction_ph');
-		field('trig.instruction', instr);
-
-		var ctx = document.createElement('textarea');
-		ctx.className = 'trig-area'; ctx.rows = 4;
-		ctx.value = ta.context || '';
-		ctx.placeholder = t('trig.context_ph');
-		field('trig.context', ctx);
-		var cnote = document.createElement('div');
-		cnote.className = 'tile-dlg-note';
-		cnote.textContent = t('trig.context_note');
-		body.appendChild(cnote);
-
-		await openBodyDialog(t('trig.edit_title', { what: triggerLabel(ta) }), body,
-			{ okLabel: t('common.save') });
-
-		var next = Object.assign({}, ta);
-		if (ta.kind === 'activity') next.minutes = Math.max(1, Math.round(Number(mref.value) || 30));
-		if (ta.kind === 'mail') { next.mailbox = bref.value || ''; next.folder = fref.value.trim() || 'INBOX'; }
-		next.instruction = instr.value;
-		// A changed context has NOT been sent, whatever was sent before. That is
-		// what a person means by changing it, and the alternative -- keeping the
-		// old stamp -- is a context the daimon never hears.
-		if ((ctx.value || '').trim() !== (ta.context || '').trim()) next.contextSent = '';
-		next.context = ctx.value;
-		await Triggers.set(diamondId, next);
-		if (done) done();
-	}
-
 	/// The three models a Diamond runs on, in its own settings dialog.
 	///
 	/// Which model a Diamond thinks with has been stored since Diamonds had models and
@@ -9294,6 +9633,21 @@ import init, {
 		catch (e) { appendError('Could not start agent: ' + String(e)); return; }
 
 		var umid = newMid();
+		// Scored HERE, before the message joins the record, because what is being
+		// measured is this message as a reaction to the turn before it. Counters
+		// move and the text is dropped -- see signals.js, which never keeps it and
+		// never says what it found in these words.
+		try {
+			if (window.DaimondSignals) {
+				DaimondSignals.noteUserMessage({
+					diamondId:  chat.diamondId || (currentDiamond && currentDiamond.id) || '',
+					text:       text,
+					prevModel:  chat.model || '',
+					prevTools:  (chat._lastTurnTools || []).slice(),
+				});
+			}
+		} catch (e) { /* the index is best-effort and must never cost a turn */ }
+		chat._lastTurnTools = [];
 		appendUserMessage(text);
 		chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
 		// The composer stays live: what is typed while this runs is queued, not lost.
@@ -9362,6 +9716,19 @@ import init, {
 			} else if (ev.type === 'tool_result') {
 				if (pendingTool) { pendingTool.content = ev.content || ''; pendingTool = null; }
 				if (J) J.toolDone(umid, chat.id, pendingCallId, ev.content || '', toolFailed(ev.content || ''));
+				// Which tools this turn used, and whether they refused. Kept on the
+				// chat so the NEXT user message can be attributed to them: a tool
+				// whose turns keep needing correcting is the one thing here that no
+				// error rate can show, because it is not failing.
+				try {
+					if (window.DaimondSignals) {
+						DaimondSignals.noteTool(ev.name || '', !toolFailed(ev.content || ''));
+						if (ev.name) {
+							if (!chat._lastTurnTools) chat._lastTurnTools = [];
+							if (chat._lastTurnTools.indexOf(ev.name) < 0) chat._lastTurnTools.push(ev.name);
+						}
+					}
+				} catch (e) { /* best-effort */ }
 				pendingCallId = null;
 				if (!owns()) return;
 				renderToolResult(ev.name || '', ev.content || '');
@@ -9588,6 +9955,23 @@ import init, {
 		if (entry && window.DaimondGovernor) {
 			try { DaimondGovernor.observe(entry); } catch (e) { /* governor is best-effort */ }
 		}
+		// The ledger carries no Diamond, deliberately -- it is the account's
+		// money and the governor learns a rate from it. Cost PER DIAMOND is a
+		// different question and it is asked here, where the answer is known.
+		try {
+			if (entry && window.DaimondSignals) {
+				DaimondSignals.noteTurn({
+					ts:        entry.t,
+					diamondId: (currentDiamond && currentDiamond.id) || '',
+					model:     entry.m || '',
+					usd:       entry.u || 0,
+				});
+			}
+		} catch (e) { /* best-effort */ }
+		// Rewritten after each metered turn rather than on a timer: it is built
+		// from counters, so it costs a string and a file write, and a digest
+		// that lags the work it describes is worth less than no digest at all.
+		try { writeUsageDigest(); } catch (e) { /* best-effort */ }
 	}
 
 	// The global spend readout at the foot of the Diamonds/Chats panel: session
@@ -14509,30 +14893,158 @@ import init, {
 			crystal: '# Daimond Help\n\n'
 				+ 'Ask me how Daimond works and I will answer from what is actually here — '
 				+ 'the panels, the tools, the settings — rather than from a manual.\n\n'
+				+ 'The user guide is mirrored at `system/guide/`, one file per page. '
+				+ 'Search it before answering, and say which page an answer came from.\n\n'
 				+ '## What I know\n\n'
 				+ '- Nothing yet. Press play, ask a question, and this fills in.\n',
+			// Granted sight of system/guide. See writeGuideMirror.
+			guide: true,
 			triggers: [],
 		},
 		{
 			name: 'Daimond Optimiser',
 			crystal: '# Daimond Optimiser\n\n'
-				+ 'I watch how you are working and suggest changes: a Diamond that '
-				+ 'wants splitting, a prompt that keeps being retyped, a model that is '
-				+ 'costing more than it is earning.\n\n'
+				+ 'I notice what should have been written down, what should have been '
+				+ 'cheaper, and what should have been automatic -- and hand you the '
+				+ 'change, not the chart.\n\n'
+				+ 'What I read is `system/usage/digest.md`: counts of turns, spend, '
+				+ 'models and tool calls, kept on this device. I never see what any '
+				+ 'conversation was about.\n\n'
 				+ '## What I have noticed\n\n'
 				+ '- Nothing yet.\n',
 			// Notes2 asks for this one specifically: "the Daimond Optimiser starts
 			// with an inactive 'Minutes of User Activity' TA, set for every 30 min."
 			// Inactive: `on: false`, and its pause leaf is seeded held as well, so
 			// both the record and the tree say the same thing.
+			// Granted sight of system/usage, where the signal index writes what it
+			// has counted. See writeUsageDigest.
+			usage: true,
 			triggers: [{
 				kind: 'activity', minutes: 30, on: false,
-				instruction: 'Look at what I have been working on and say, briefly, '
-					+ 'one thing that would make it go better. If nothing stands out, say so '
-					+ 'in one line and stop.',
+				instruction: 'Read system/usage/digest.md. Say, briefly, the one thing '
+					+ 'that would make the work go better, and cite the number you got it '
+					+ 'from. If nothing stands out, say so in one line and stop -- a '
+					+ 'week with nothing to report is a real answer.',
 			}],
 		},
 	];
+
+	/// Where the Optimiser reads about how the account is being used.
+	///
+	/// notes2 #51 asks for the two default Diamonds to be given a scope covering
+	/// what they need, and for the Optimiser that is "a lot of things, possibly
+	/// everything, but as a minimum all LLM sessions". A scope cannot express
+	/// that: a scope is workspace folders, and the ledger is `localStorage`
+	/// while chats are in IndexedDB. Neither is a path, so a scope naming them
+	/// would grant reach over nothing.
+	///
+	/// So the shape is turned around. What the Optimiser needs is WRITTEN INTO A
+	/// FOLDER, and the folder is what it is granted -- which it then reads with
+	/// the file tools it already has, with no new tool and no new capability.
+	var USAGE_DIR = 'system/usage';
+
+	/// Write the digest, and make sure the Optimiser can read it.
+	///
+	/// Called after a turn and on demand. Cheap: the index is counters, and the
+	/// digest is built from them rather than from any transcript.
+	async function writeUsageDigest() {
+		if (!window.DaimondSignals) return;
+		var md;
+		try {
+			md = DaimondSignals.digest((diamonds || []).map(function (d) {
+				return { id: d.id, name: d.name };
+			}));
+		} catch (e) { return; }
+		try {
+			await Files.writeBytes(USAGE_DIR + '/digest.md', new TextEncoder().encode(md));
+		} catch (e) { /* no store yet, or no room; the next turn tries again */ }
+	}
+
+	/// Where Daimond Help reads the user guide.
+	///
+	/// The guide ships INSIDE the bundle, at `www/guide/`, as HTML. A daimon's
+	/// file tools reach the workspace and nothing else, so Help -- the Diamond
+	/// whose whole job is explaining the app -- could not read the manual it
+	/// exists to explain. notes2 #51 asks for it to be given "the Browser
+	/// folders they need"; there is no such folder, so one is made.
+	///
+	/// Mirrored from `guide/search-index.js`, which already ships for the human
+	/// search box, so there is no second copy of the guide to drift. One file per
+	/// guide page rather than one big one: a daimon then searches for the page it
+	/// needs and reads that, instead of pulling eighty kilobytes into its context
+	/// to answer one question.
+	var GUIDE_DIR = 'system/guide';
+	var GUIDE_STAMP = 'daimond-guide-mirror';
+
+	/// Write the mirror, if this build has not already written it.
+	///
+	/// Keyed by build id: the guide changes with the app, so a copy made by an
+	/// older build is a copy that describes an app the user is no longer running.
+	async function writeGuideMirror() {
+		// Read from `build.json` rather than from whatever updater.js last
+		// noticed: this has to be right on a first boot too, and on a first boot
+		// nothing has noticed anything yet.
+		var build = '';
+		try {
+			var bj = await (await fetch('build.json', { cache: 'no-store' })).json();
+			build = (bj && bj.build) || '';
+		} catch (e) { build = ''; }         // unstamped dev tree: mirror every boot
+		try { if (build && localStorage.getItem(GUIDE_STAMP) === build) return; }
+		catch (e) { return; }               // private mode: skip rather than rewrite every boot
+
+		var idx;
+		try {
+			var txt = await (await fetch('guide/search-index.js', { cache: 'no-store' })).text();
+			// The file is `window.GUIDE_INDEX = {...};` -- parsed rather than
+			// executed, because a mirror is not a reason to run a script.
+			idx = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+		} catch (e) { return; }             // no guide in this build; nothing to mirror
+		var secs = (idx && idx.sections) || [];
+		if (!secs.length) return;
+
+		// Group by page, keeping the order the guide itself uses.
+		var pages = {}, order = [];
+		secs.forEach(function (s) {
+			var p = (s.p || 'guide.html').replace(/\.html$/, '');
+			if (!pages[p]) { pages[p] = []; order.push(p); }
+			pages[p].push(s);
+		});
+
+		var enc = new TextEncoder();
+		var contents = ['# The Daimond user guide',
+			'',
+			'A plain-text mirror of the guide that ships with this build (' + (build || 'unstamped') + ').',
+			'Search these files rather than guessing; each is one page of the guide.',
+			''];
+		for (var i = 0; i < order.length; i++) {
+			var name = order[i];
+			var rows = pages[name];
+			var out = ['# ' + (rows[0].t || name), ''];
+			rows.forEach(function (s) {
+				if (s.t) out.push('## ' + s.t);
+				if (s.b) { out.push(''); out.push(s.b); }
+				out.push('');
+			});
+			try { await Files.writeBytes(GUIDE_DIR + '/' + name + '.md', enc.encode(out.join('\n'))); }
+			catch (e) { return; }           // no store, or no room: leave the stamp unset
+			contents.push('- `' + name + '.md` — ' + (rows[0].t || name));
+		}
+		try { await Files.writeBytes(GUIDE_DIR + '/README.md', enc.encode(contents.join('\n'))); }
+		catch (e) { return; }
+		try { if (build) localStorage.setItem(GUIDE_STAMP, build); } catch (e) {}
+	}
+
+	/// Grant a Diamond read-only sight of a folder, the way an attachment does.
+	///
+	/// `consulted` is the relation `attachmentsOf` reads as read-only, so this
+	/// is the same grant a user makes by attaching a folder and marking it so --
+	/// not a private back door with different rules.
+	async function grantConsulted(diamondId, path) {
+		try {
+			await diamondApp().add_link(diamondId, 'diamond:' + diamondId,
+				'dir:' + path, 'consulted', '', 'user');
+		} catch (e) { /* the Diamond simply will not see it; nothing else breaks */ }
+	}
 
 	/// Offer the two default Diamonds, once per account.
 	///
@@ -14612,6 +15124,22 @@ import init, {
 				});
 				_triggers[id] = rec;
 				try { await Triggers.save(id); } catch (e) { /* it holds in memory */ }
+			}
+			// The Optimiser is given sight of the usage folder, because that is
+			// what notes2 #51 asks for and a scope over the ledger cannot be
+			// written. Read-only, by the same `consulted` relation an attached
+			// folder uses -- it reports on how the account is worked and has no
+			// business writing there.
+			if (d.usage) {
+				await writeUsageDigest();
+				await grantConsulted(id, USAGE_DIR);
+			}
+			// And Help is given the guide, for the same reason and by the same
+			// means: the manual it exists to explain ships inside the bundle,
+			// where a daimon's file tools cannot reach it.
+			if (d.guide) {
+				await writeGuideMirror();
+				await grantConsulted(id, GUIDE_DIR);
 			}
 		}
 		await loadDiamonds();
@@ -15522,6 +16050,24 @@ import init, {
 			upd.textContent = relTime(f.updated);
 			meta.appendChild(upd);
 		}
+		// What this Diamond has cost. Hoisted onto the tile in Max because it is
+		// the question no other surface answers: the spend readout at the foot of
+		// the rail is the account's total, and "which Diamond is eating the
+		// money" needs them side by side. The figure comes from the signal index,
+		// which counts it per Diamond for the Optimiser.
+		try {
+			if (window.DaimondSignals) {
+				var ix = DaimondSignals.snapshot();
+				var mine = ix && ix.diamonds && ix.diamonds[f.id];
+				if (mine && (mine.usd || 0) > 0) {
+					var sp = document.createElement('span');
+					sp.className = 'session-box-spend';
+					sp.textContent = fmtUsd(mine.usd);
+					sp.title = t('tile.spend_help', { turns: mine.turns || 0 });
+					meta.appendChild(sp);
+				}
+			}
+		} catch (e) { /* no index yet: the tile simply says nothing about cost */ }
 		// Tags sit with the other plain facts of the Diamond. Only the first few
 		// show, so one heavily-filed Diamond cannot push the rest off the rail;
 		// a Diamond with no tags adds nothing here and looks exactly as it did
@@ -20629,6 +21175,8 @@ import init, {
 	async function boot() {
 		initTheme();
 		initSkin();
+		// After the skin: the view inherits from it on a first run.
+		initView();
 		// Only the provider API key is masked as text-with-bullets now. It is
 		// somebody else's bearer credential against somebody else's billing, so
 		// there is no reason for it to reach a personal keychain. The passphrase

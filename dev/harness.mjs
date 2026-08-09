@@ -111,10 +111,25 @@ export async function open(opts = {}) {
 	// and identity are that session's alone, so sessions may run in parallel.
 	const profileDir = profile || scratch('pw', `${name}-${process.pid}`);
 	fs.mkdirSync(profileDir, { recursive: true });
+	// DISPLAY is dropped for a headless run, and it is the reason half the
+	// clicks in this tree are forced.
+	//
+	// This session's DISPLAY is an X display forwarded over SSH to a laptop that
+	// is usually asleep. A headless Chrome still consults it, and when nothing
+	// answers the compositor never produces a frame -- so requestAnimationFrame
+	// never fires, Playwright's "stable" actionability check waits forever for a
+	// second frame, and every ordinary click times out on a button that is
+	// perfectly fine. Measured on a blank page: with DISPLAY set, no frames in
+	// either headless mode; with it unset, frames, clicks and screenshots all
+	// work. A headed run genuinely needs the display, so it keeps it.
+	const env = { ...process.env };
+	if (!headed) delete env.DISPLAY;
+
 	const browser = await chromium.launchPersistentContext(profileDir, {
 		executablePath: CHROME,
 		headless:       false,		// the flag above decides; MV3 needs a real browser
 		args,
+		env,
 		viewport:       { width: 1500, height: 950 },
 	});
 

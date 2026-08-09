@@ -157,26 +157,36 @@ try {
 		await p.evaluate((id) => {
 			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`).click();
 		}, opt.id);
-		await p.waitForSelector('.tile-dlg-card .trig-row', { timeout: 8000 });
-		const rows = await p.evaluate(() =>
-			[...document.querySelectorAll('.tile-dlg-card .trig-row')].map(r => ({
-				name:  ((r.querySelector('.trig-name') || {}).textContent || '').trim(),
-				light: r.querySelector('.pptw') ? r.querySelector('.pptw').dataset.state : '(none)',
-			})));
-		check(rows.length === 1, 'the Optimiser has ONE action: the timer',
-			rows.map(r => r.name).join(' | '));
-		check(rows.some(r => /30 minutes/.test(r.name)),
-			'the timer is set for 30 minutes, as notes2 asks', rows.map(r => r.name).join(' | '));
-		const timer = rows.find(r => /minutes/.test(r.name));
-		check(!!(timer && timer.light === 'pause'),
-			'and it starts INACTIVE, on the tree as well as in the record',
-			timer && timer.light);
-		// EVERY action has a light now. The one that did not — `prompted`, drawn
-		// with a spacer where the widget goes — is gone, because prompting a
-		// Diamond is the user asking rather than an arrangement to be armed.
-		check(rows.every(r => r.light !== '(none)'),
-			'and every action has a light — there is no longer one that is only decoration',
-			rows.map(r => r.light).join(' | '));
+		// The actions are named by the chooser's options now, not by a row each:
+		// notes2 asks for them to be "selected for editing from a pulldown", so
+		// the pulldown is the census of what a Diamond has.
+		await p.waitForSelector('.tile-dlg-card .trig-choose', { timeout: 8000 });
+		const rows = await p.evaluate(() => {
+			const sel = document.querySelector('.tile-dlg-card .trig-choose');
+			const light = document.querySelector('.tile-dlg-card .trig-pick .pptw');
+			return {
+				names: [...sel.options].map(o => o.textContent.trim()),
+				chosen: sel.value,
+				light: light ? light.dataset.state : '(none)',
+			};
+		});
+		check(rows.names.length === 1, 'the Optimiser has ONE action: the timer',
+			rows.names.join(' | '));
+		check(rows.names.some(n => /30 minutes/.test(n)),
+			'the timer is set for 30 minutes, as notes2 asks', rows.names.join(' | '));
+		check(rows.light === 'pause',
+			'and it starts INACTIVE, on the tree as well as in the record', rows.light);
+		// EVERY action has a light. The one that did not — `prompted`, drawn with
+		// a spacer where the widget goes — is gone, because prompting a Diamond
+		// is the user asking rather than an arrangement to be armed. The light now
+		// sits beside the pulldown and belongs to whichever action is chosen, and
+		// the option text carries the state of the ones that are not.
+		check(rows.light !== '(none)',
+			'and the chosen action has a light — there is no longer one that is only decoration',
+			rows.light);
+		check(rows.names.every(n => /^[▶⏸]/.test(n)),
+			'and every option says whether that action is running, so the pulldown hides no state',
+			rows.names.join(' | '));
 
 		await p.evaluate(() => {
 			const done = document.querySelector('.tile-dlg-done');

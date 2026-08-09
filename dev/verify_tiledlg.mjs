@@ -135,7 +135,7 @@ try {
 		const foot = card.querySelector('.tile-dlg-foot');
 		return {
 			hasPause: !!card.querySelector('.pptw'),
-			hasLevel: card.querySelectorAll('.tile-dlg-level').length,
+			levels: [...card.querySelectorAll('.tile-dlg-level')].map(b => b.dataset.level),
 			hasDelete: !!del,
 			deleteInFoot: !!(del && foot && foot.contains(del)),
 			// The foot is the last block of the card: "at the bottom of the dialog".
@@ -152,7 +152,12 @@ try {
 	check(dlg && dlg.hasPause,
 		'the dialog carries the pause control — it is the release valve for a tile with no light',
 		JSON.stringify(dlg && dlg.hasPause));
-	check(dlg && dlg.hasLevel === 2, 'the dialog offers Simple and Max', dlg && String(dlg.hasLevel));
+	// By the LEVELS it offers, not by how many buttons there are. Counting was
+	// wrong the moment a third state arrived: a tile also has to be able to go
+	// back to following the global view, and `Default` is that state.
+	check(dlg && ['default', 'simple', 'max'].every(l => (dlg.levels || []).indexOf(l) >= 0),
+		'the dialog offers Default, Simple and Max — Default is how a tile goes back to following the view',
+		dlg && (dlg.levels || []).join(','));
 	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
 		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
 

@@ -473,13 +473,40 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; font-family: var(--font-mono); }
 .session-box-ctx, .session-box-cost, .session-box-time { font-size: var(--fs-2xs); color: var(--text-muted); }
 
-/* ── Simple and Max, per tile ────────────────────────────────────
-   Simple is the default and hides the things a new user does not need on the
-   rail: the model pulldowns, the model chip, the live meter, the version and
-   the timestamp. Max shows them. Kept in CSS off `data-detail` rather than by
-   building a different tile, so every handler is wired either way -- a hidden
-   pulldown still answers `DaimondModels.pick`, so Start on a Simple tile starts
-   on exactly the model the tile holds rather than on nothing.
+/* ── Simple and Max ──────────────────────────────────────────────
+   EVERY RULE FOR THE TWO VIEWS LIVES IN THIS BLOCK. Put one beside its own
+   component and nobody can answer "what does Simple hide?" without grepping,
+   and the answer rots silently the first time a class is renamed.
+
+   The two views are not "more" and "less". They differ in WHERE A CONTROL LIVES
+   relative to the thing it controls:
+
+     Simple  one object at a time, controls inside it -- open the tile, change
+             it, close it.
+     Max     many objects at once, controls hoisted onto the tile, so they can
+             be COMPARED and changed without navigating.
+
+   Comparison is the job Max exists for: "which of my six Diamonds is on the
+   expensive model" cannot be answered by opening six dialogs. That also says
+   what does NOT belong on a Max tile -- anything nobody compares and nobody
+   changes mid-flow stays in the dialog however much room there is. Delete,
+   rename, the triggered-action editor and scope are all in that group.
+
+   Two invariants, both asserted in dev/verify_view.mjs:
+
+     1. Simple hides INFORMATION, never AFFORDANCES. Everything reachable in Max
+        is reachable in Simple within one more click, and the way in -- the cog
+        -- is always visible. Hide the route as well as the detail and the
+        reader concludes the app is broken.
+     2. Simple never hides a warning, an error, or a SPENDING CONTROL. Notes2
+        opens on the Transparent Control Principle; a display preference that
+        hid a traffic light would contradict the app's own first rule.
+
+   Hidden with CSS rather than by building a different tile, so every handler is
+   wired either way -- a hidden pulldown still answers `DaimondModels.pick`, so
+   Start on a Simple tile starts on the model the tile holds rather than on
+   nothing. `display: none` also takes an element out of the tab order, so this
+   costs nothing in keyboard terms.
 
    What Simple does NOT hide: the pause light, the name, the queue badge, the
    pending-fold badge and the tags. The first three are money or work in
@@ -496,6 +523,29 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box[data-detail="simple"] .session-box-meta:not(:has(.tag-sm, .tag-more, .diamond-pending)) {
 	display: none;
 }
+/* Per-object spend is a Max thing and a new one: "which Diamond is eating the
+   money" is comparable across objects and unanswerable anywhere else in the
+   app. It is information, not a control, so hiding it in Simple does not touch
+   invariant 2 -- the light and the global spend readout are both still there. */
+.session-box[data-detail="simple"] .session-box-spend { display: none; }
+.session-box-spend { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Simple is a DESIGN, not a subtraction. Take the room the hidden rows leave
+   and give it to what is left, or the tile reads as the dense one with holes in
+   it rather than as a calm one. Bigger target, fewer things in it. */
+[data-view="simple"] .session-box[data-detail="simple"] {
+	padding-top: 10px;
+	padding-bottom: 10px;
+}
+[data-view="simple"] .session-box[data-detail="simple"] .session-box-name { font-size: var(--fs-md); }
+
+/* The status header in Simple: seven rows of mostly-static reassurance is the
+   most intimidating thing on a first run. Simple keeps what is ACTIONABLE or
+   WRONG -- money, and anything amber or off -- and drops the rest. Nothing here
+   is a control, and every one of them is still in the drawer. */
+[data-view="simple"] #astat-tools,
+[data-view="simple"] #astat-release,
+[data-view="simple"] #astat-store-native { display: none; }
 
 /* ── Center panel ────────────────────────────────────────────── */
 .chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); min-height: var(--header-h); }
@@ -1922,6 +1972,29 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .trig-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .trig-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The chooser: the light, the pulldown naming every action, and the way to
+   remove the one showing. One row, and it does not change shape when a
+   different action is chosen -- the light is the control reached for most and
+   it should not move under the pointer. */
+.trig-pick { display: flex; align-items: center; gap: 6px; padding: 2px 0 6px; }
+.trig-choose { flex: 1 1 auto; min-width: 0; }
+/* The chosen action's own settings, set in from the chooser so it reads as
+   belonging to it rather than as the next thing down the dialog. */
+.trig-panel {
+	display: flex; flex-direction: column; gap: 8px;
+	padding: 8px 0 2px 10px;
+	border-left: 2px solid var(--border);
+}
+/* A long text: what it says, then Edit and Copy. The gist is what stops two
+   of these rows being indistinguishable from each other. */
+.trig-text-row { display: flex; align-items: center; gap: 6px; }
+.trig-text-row .trig-label { flex: none; }
+.trig-gist {
+	flex: 1 1 auto; min-width: 0;
+	font-size: var(--fs-sm); color: var(--text-secondary);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trig-gist.empty { color: var(--text-muted); font-style: italic; }
 .trig-add { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .trig-add .tile-model { flex: 1 1 auto; min-width: 0; }
 .trig-edit { display: flex; flex-direction: column; gap: 10px; }

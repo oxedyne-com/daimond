@@ -218,6 +218,10 @@
 					</div>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
+					<!-- The second money row: the user's own provider key, when they have
+					     one. Two economies sit side by side here and each row names whose
+					     money it is -- see js/money.js. -->
+					<button class="astat-row astat-btn" id="astat-byok" style="display:none"></button>
 					<button class="astat-row astat-btn" id="astat-pro"></button>
 					<button class="astat-row astat-btn" id="astat-tools"></button>
 					<button class="astat-row astat-btn" id="astat-hand"></button>
@@ -898,6 +902,13 @@
 <script src="js/render.js"></script>
 <script src="js/pricing.js"></script>
 <script src="js/ledger.js"></script>
+<!-- money.js: which pot of money a figure belongs to, and what may honestly be
+     said about it. Pure wording rules, before the app that draws them. -->
+<script src="js/money.js"></script>
+<!-- signals.js: the local usage index the Optimiser reads. After ledger.js,
+     which it does not depend on but sits beside conceptually: the ledger is the
+     account's money, this is how the account is worked. -->
+<script src="js/signals.js"></script>
 <script src="js/governor.js"></script>
 <script src="js/pause.js"></script>
 <script src="js/triggers.js"></script>
