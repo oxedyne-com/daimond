@@ -539,13 +539,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 }
 [data-view="simple"] .session-box[data-detail="simple"] .session-box-name { font-size: var(--fs-md); }
 
-/* The status header in Simple: seven rows of mostly-static reassurance is the
-   most intimidating thing on a first run. Simple keeps what is ACTIONABLE or
-   WRONG -- money, and anything amber or off -- and drops the rest. Nothing here
-   is a control, and every one of them is still in the drawer. */
-[data-view="simple"] #astat-tools,
-[data-view="simple"] #astat-release,
-[data-view="simple"] #astat-store-native { display: none; }
+/* THE STATUS HEADER IS NOT TRIMMED IN SIMPLE, and the reason is invariant 1.
+   Simple hid three of its rows for a while -- Tools, Version and the machine
+   workspace -- on the grounds that seven rows of mostly-static reassurance is
+   the most intimidating thing on a first run. That was wrong, and wrong by the
+   rule written above it: every one of those rows is a BUTTON. Version opens the
+   release history and the transparency log; Tools opens the panel whose whole
+   purpose is telling a user what this app can do, which they will never ask for
+   if they do not know it exists. Hiding them removes the ROUTE, not the detail,
+   which is the one thing Simple may never do.
+
+   `verify_release` caught it by failing to click a row that had quietly gone. */
 
 /* ── Center panel ────────────────────────────────────────────── */
 .chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); min-height: var(--header-h); }

@@ -200,6 +200,22 @@ try {
 		check(vis.name, 'and the name');
 		// ══ INVARIANT 1: the way in is always visible ═════════════════
 		check(vis.cog, 'and the cog, which is the route to everything Simple hides');
+
+		// The status header is rows of BUTTONS -- Version opens the release
+		// history, Tools opens the panel that tells a user what the app can do.
+		// Simple hid three of them for a while, which removes the route rather
+		// than the detail. That is invariant 1, and it needs its own check
+		// because the temptation to tidy the header will come back.
+		const head = await p.evaluate(() => {
+			const v = id => {
+				const e = document.getElementById(id);
+				return !!e && getComputedStyle(e).display !== 'none';
+			};
+			return { model: v('astat-model'), tools: v('astat-tools'), release: v('astat-release') };
+		});
+		check(head.tools && head.release && head.model,
+			'Simple keeps every status row that is a way IN -- hiding a button hides a route',
+			JSON.stringify(head));
 	}
 
 	// ══ INVARIANT 1, in full: nothing is Max-only ═════════════════════

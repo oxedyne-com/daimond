@@ -6105,8 +6105,15 @@ import init, {
 			var list = M.rows({
 				// Whether there is a Daimond account is an INPUT here, not a gate.
 				authed:        !!st.authed,
+				// A number, for the runway arithmetic. The FIGURE the reader sees is
+				// formatted from the minor units and the account's own currency --
+				// see `moneyValue`. Dividing by 100 here and printing the result as
+				// dollars is how a GBP balance came to be shown with a $ in front
+				// of it; verify_credits caught exactly that.
 				creditsUsd:    (st.credits === null || st.credits === undefined)
 					? null : (st.credits / 100),
+				creditsMinor:  st.credits,
+				creditsCurrency: st.currency,
 				creditsLabel:  t('money.daimond_credits'),
 				ownManyLabel:  t('money.own_keys'),
 				ownOneLabel:   function (name) { return t('money.own_key', { provider: name }); },
@@ -6135,8 +6142,16 @@ import init, {
 			if (r.atRisk && r.minutes !== null) {
 				return t('money.left_at_rate', { mins: Math.max(1, Math.round(r.minutes)) });
 			}
-			if (r.kind === 'spent') return t('money.spent_so_far', { amt: fmtUsd(r.usd) });
-			return (r.kind === 'estimate' ? '≈' : '') + fmtUsd(r.usd);
+			// The Daimond balance is the account's own money, in the account's own
+			// currency, and the gateway's formatter is the one that knows both. A
+			// provider's balance is quoted in USD by the provider, so that one is
+			// USD and saying otherwise would be a conversion nobody performed.
+			var money = (r.key === 'credits' && r.minor !== null && r.minor !== undefined
+					&& window.DaimondGateway)
+				? DaimondGateway.fmtMoney(r.minor, r.currency)
+				: fmtUsd(r.usd);
+			if (r.kind === 'spent') return t('money.spent_so_far', { amt: money });
+			return (r.kind === 'estimate' ? '≈' : '') + money;
 		}
 		function moneyTitle(r) {
 			if (r.kind === 'spent')    return t('money.spent_help');
@@ -15141,6 +15156,7 @@ import init, {
 			if (await diamondApp().legacy_diamond_root_waiting()) return;
 		} catch (e) { return; }     // an older wasm cannot answer; do not risk it
 		try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { return; }
+		var grants = [];
 		for (var i = 0; i < DEFAULT_DIAMONDS.length; i++) {
 			var d = DEFAULT_DIAMONDS[i];
 			if ((diamonds || []).some(function (f) { return f.name === d.name; })) continue;
@@ -15169,24 +15185,30 @@ import init, {
 				_triggers[id] = rec;
 				try { await Triggers.save(id); } catch (e) { /* it holds in memory */ }
 			}
-			// The Optimiser is given sight of the usage folder, because that is
-			// what notes2 #51 asks for and a scope over the ledger cannot be
-			// written. Read-only, by the same `consulted` relation an attached
-			// folder uses -- it reports on how the account is worked and has no
-			// business writing there.
-			if (d.usage) {
-				await writeUsageDigest();
-				await grantConsulted(id, USAGE_DIR);
-			}
-			// And Help is given the guide, for the same reason and by the same
-			// means: the manual it exists to explain ships inside the bundle,
-			// where a daimon's file tools cannot reach it.
-			if (d.guide) {
-				await writeGuideMirror();
-				await grantConsulted(id, GUIDE_DIR);
-			}
+			if (d.usage) grants.push({ id: id, dir: USAGE_DIR, write: writeUsageDigest });
+			if (d.guide) grants.push({ id: id, dir: GUIDE_DIR, write: writeGuideMirror });
 		}
 		await loadDiamonds();
+
+		// The FOLDERS come after every Diamond is made and rendered, and that
+		// ordering is not tidiness.
+		//
+		// Writing them is slow -- the guide mirror fetches an 87 KB index, parses
+		// it and writes nine files -- and doing it inside the loop put seconds
+		// between creating one Diamond and seeding the NEXT one's triggers. A
+		// render landing in that gap shows a Diamond that should carry a traffic
+		// light without one, which is a spending control briefly missing from a
+		// tile. `verify_triggers` caught exactly that, intermittently: green run
+		// alone, red under the load of a full suite.
+		//
+		// The grants are what notes2 #51 asks for -- the Optimiser given sight of
+		// how the account is worked, Help given the guide it exists to explain --
+		// each read-only, by the same `consulted` relation any attached folder
+		// uses.
+		for (var g = 0; g < grants.length; g++) {
+			try { await grants[g].write(); } catch (e) { continue; }
+			await grantConsulted(grants[g].id, grants[g].dir);
+		}
 	}
 
 	/// Is this Diamond's daimon held? The leaf, not the branch: a Diamond with a

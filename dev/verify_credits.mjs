@@ -227,10 +227,13 @@ const railRow = await page.evaluate(() => {
 	out.restored = read();
 	return out;
 });
+// `/credits/i`, not `/Credits/`: the row names whose money it is now
+// ("Daimond credits"), because a bare "Credits" beside a funded key of the
+// user's own was read as their own balance being empty.
 check('the rail\'s status row shows the balance the app holds',
-	/Credits/.test(railRow.online) && /8\.40/.test(railRow.online), JSON.stringify(railRow.online));
+	/credits/i.test(railRow.online) && /8\.40/.test(railRow.online), JSON.stringify(railRow.online));
 check('...and still shows it when the browser wrongly claims to be offline',
-	/Credits/.test(railRow.lying) && /8\.40/.test(railRow.lying), JSON.stringify(railRow.lying));
+	/credits/i.test(railRow.lying) && /8\.40/.test(railRow.lying), JSON.stringify(railRow.lying));
 check('...and is unchanged once the browser tells the truth again',
 	railRow.restored === railRow.online, JSON.stringify(railRow.restored));
 
@@ -678,7 +681,12 @@ const zero = await b.page.evaluate(() => {
 	const n = document.getElementById('astat-account');
 	return n ? n.textContent : 'MISSING';
 });
-check('a zero balance is still reported as a figure', /Credits/.test(zero) && /0\.00/.test(zero),
+// By MEANING, not by the old label. The row used to read "Credits"; it now names
+// whose money it is ("Daimond credits"), because a user funding their work with
+// their own key read a bare "Credits $0.00" as being broke. What must still be
+// true is that a zero balance is stated as a figure rather than left blank.
+check('a zero balance is still reported as a figure',
+	/credits/i.test(zero) && /0\.00/.test(zero),
 	JSON.stringify(zero));
 
 // And with no session there is no figure to report, so the row says which of the three reasons

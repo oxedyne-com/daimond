@@ -73,7 +73,13 @@
 :root[data-skin="warm"] .doc,
 :root[data-skin="warm"] .msg,
 :root[data-skin="warm"] .compose,
-:root[data-skin="warm"] .tools {
+:root[data-skin="warm"] .tools,
+/* The terminal panel was added after this list and never joined it, so under
+   the warm skin it kept a hard border while every sibling wore a shadow. It was
+   invisible for as long as the warm skin was the one nobody had by default;
+   Simple made warm the default and `verify_termpanel` said so at once -- it
+   measures this panel against the AI panel across all eleven palettes. */
+:root[data-skin="warm"] .termpanel {
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }

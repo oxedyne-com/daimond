@@ -131,7 +131,14 @@
 				exactUsd: (typeof st.creditsUsd === 'number') ? st.creditsUsd : null,
 				spentUsd: (typeof st.creditsSpentUsd === 'number') ? st.creditsSpentUsd : null,
 			}, rate);
-			if (r) out.push(r);
+			if (r) {
+				// Carried through untouched so the caller can print the account's own
+				// currency. This module does arithmetic and never formatting: a
+				// balance in minor units is the only lossless form of it.
+				r.minor    = st.creditsMinor;
+				r.currency = st.creditsCurrency;
+				out.push(r);
+			}
 		}
 
 		// The user's own keys. One provider is named; several are not, because
