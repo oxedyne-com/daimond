@@ -23,6 +23,19 @@
 	'common.cancel':       '取消',
 	'common.save':         '保存',
 
+	// 复制标识符。`copy.aria` 把每个 `what_` 包起来，读屏听到的是
+	// “复制构建 ID”，而不是五个按钮都只叫“复制”。每个片段都以中文起头，
+	// 这样“复制”后面不会直接贴上一串西文。
+	'copy.aria':               '复制{what}',
+	'copy.failed':             '无法复制',
+	'copy.nothing':            '没有可复制的内容',
+	'copy.what_build':         '构建 ID',
+	'copy.what_build_n':       '构建 ID {id}',
+	'copy.what_fingerprint':   '你的账户指纹',
+	'copy.what_device':        '设备 {name} 的 ID',
+	'copy.what_model':         '模型 ID {id}',
+	'copy.what_default_model': '默认模型 ID',
+
 	// ── 顶栏 ───────────────────────────────────────────────────
 	'topbar.menu':        '菜单',
 	'topbar.open_menu':   '打开菜单',
@@ -158,7 +171,7 @@
 	'models.remove':               '移除 {provider}',
 	'models.starts_on':            '新聊天从这个模型开始：{model}',
 	'models.no_default':           '还没有默认模型 — 在上面给一个加星。',
-	'models.none_yet':             '还没有模型 — 到模型设置里添加一个提供商密钥',
+	'models.none_yet':             '还没有提供商',
 	'models.err_refused':          '账户服务拒绝了（HTTP {status}）。',
 	'models.err_bad_key':          '账户服务发来一个 Daimond 用不了的密钥。',
 	'models.err_no_key':           '那家提供商还没有密钥。',
@@ -972,6 +985,10 @@
 	'devices.rename_body':  '给这台设备起个你喜欢的名字，好和别的设备区分开。把框留空，名字就会回到“{derived}”。名字和你自己的加密数据存在一起，只会传到你自己的其他设备上。',
 	'devices.rename_aria':  '重命名{name}',
 	'devices.note':        '这些设备在同步这个账户。设备同步过一次之后才会出现在这里，所以有你的账户、却从未同步过的设备不会列出来。这里没法让哪台设备退出登录：关联的设备和这台持有同样的密钥，只能在那台设备上处理。',
+	'devices.remove_aria': '移除{name}',
+	'devices.remove_body': '“{name}”会从这个列表里去掉。这并不会让那台设备退出登录：关联的设备和这台持有同样的密钥，所以只要它还在用，下次同步时它自己又会回到列表里。',
+	'devices.remove':      '移除',
+	'devices.remove_title':'移除这台设备',
 
 	// ── 侧栏下方的状态行 ───────────────────────────────────────
 	'astat.offline':             '离线',
@@ -1064,6 +1081,11 @@
 	'tile.fold_all':       '全部折叠',
 	'tile.folded_help':    '已经折叠进“{name}” — 再折叠一次，就能把之后新增的内容加进去。',
 	'tile.fold_all_help':  '把整场聊天折叠进一个 Diamond',
+	'tile.dlg_colour':  '颜色',
+	'tile.colour_bg':   '背景',
+	'tile.colour_fg':   '文字',
+	'tile.colour_clear':'改回主题的颜色',
+	'tile.colour_faint':'这两个颜色配在一起不好读 — {ratio}:1，而这么大的字通常以 {min}:1 为下限。就按你选的留着。',
 
 	// ── 支出管束 ───────────────────────────────────────────────
 	'gov.past_budget': '远超这次运行的预算',
@@ -1679,7 +1701,7 @@
 	'tile.model_workers': '工人',
 	'tile.model_vision': '工人（图像）',
 	'tile.model_vision_help': '当任务里提到图像时工人所用的模型。Daimond 无法检查一个模型能否看图，所以这个选择由你来定。',
-	'tile.model_same_as_text': '与文本模型相同',
+	'tile.model_same_as_text': '与代蒙相同',
 	'tile.model_none': '无',
 	'tile.diamond_model_help': '这个 Diamond 用 {model} 思考。',
 	'tile.model_note': '工人会保留启动时的模型。新模型从下一个派出的工人开始生效。',
@@ -1765,6 +1787,7 @@
 	'trig.context': '上下文',
 	'trig.context_ph': '它第一次需要的背景，也只在第一次需要……',
 	'trig.context_note': '只在第一条指令前发送一次。改动它，就会再发一次。',
+	'trig.section': '自动触发的动作',
 	'role.compactor': '上下文折叠',
 	'role.compactor_help': '总结一段已经超出窗口的对话。它的答复会成为这段对话所记得的内容。',
 	'settings.fold_model': '用来折叠的模型',

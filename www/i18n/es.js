@@ -20,6 +20,18 @@
 	'common.cancel': 'Cancelar',
 	'common.save': 'Guardar',
 
+	// Copying an identifier. `copy.aria` wraps each `what_` so a reader hears
+	// "Copiar el ID de la compilación" rather than five buttons all called Copiar.
+	'copy.aria': 'Copiar {what}',
+	'copy.failed': 'No se pudo copiar',
+	'copy.nothing': 'No hay nada que copiar',
+	'copy.what_build': 'el ID de la compilación',
+	'copy.what_build_n': 'el ID de la compilación {id}',
+	'copy.what_fingerprint': 'la huella de tu cuenta',
+	'copy.what_device': 'el ID de {name}',
+	'copy.what_model': 'el ID del modelo {id}',
+	'copy.what_default_model': 'el ID del modelo predeterminado',
+
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menú',
 	'topbar.open_menu': 'Abrir el menú',
@@ -711,7 +723,7 @@
 	'models.remove': 'Quitar {provider}',
 	'models.starts_on': 'Los chats nuevos arrancan con: {model}',
 	'models.no_default': 'Todavía no hay modelo predeterminado: marca uno arriba con la estrella.',
-	'models.none_yet': 'Todavía no hay modelos: añade una clave de proveedor en Modelos',
+	'models.none_yet': 'Aún no hay proveedor',
 	'models.err_refused': 'El servicio de cuentas rechazó la petición (HTTP {status}).',
 	'models.err_bad_key': 'El servicio de cuentas envió una clave que Daimond no puede usar.',
 	'models.err_no_key': 'Ese proveedor todavía no tiene clave.',
@@ -932,6 +944,10 @@
 	'devices.rename_body': 'Llama a este dispositivo como quieras, para distinguirlo de los demás. Si dejas el campo vacío, vuelve a llamarse «{derived}». El nombre se guarda junto a tus propios datos cifrados y solo viaja a tus otros dispositivos.',
 	'devices.rename_aria': 'Renombrar {name}',
 	'devices.note': 'Estos dispositivos sincronizan esta cuenta. Un dispositivo aparece aquí en cuanto ha sincronizado, así que uno que tenga tu cuenta pero nunca haya sincronizado no sale en la lista. Aquí no se puede cerrar la sesión de ningún dispositivo: un dispositivo enlazado tiene las mismas claves que este, así que hay que resolverlo en el propio dispositivo.',
+	'devices.remove_aria': 'Quitar {name}',
+	'devices.remove_body': '«{name}» sale de esta lista. Eso no cierra su sesión: un dispositivo enlazado tiene las mismas claves que este, así que, si sigue en uso, volverá a ponerse en la lista la próxima vez que sincronice.',
+	'devices.remove': 'Quitar',
+	'devices.remove_title': 'Quitar este dispositivo',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Sin conexión',
@@ -1024,6 +1040,11 @@
 	'tile.fold_all': 'Plegar todo',
 	'tile.folded_help': 'Ya plegado en «{name}»: pliega otra vez para añadir lo nuevo desde entonces.',
 	'tile.fold_all_help': 'Plegar este chat entero en un Diamond',
+	'tile.dlg_colour': 'Color',
+	'tile.colour_bg': 'Fondo',
+	'tile.colour_fg': 'Texto',
+	'tile.colour_clear': 'Usar los colores del tema',
+	'tile.colour_faint': 'Estos dos son difíciles de leer juntos — {ratio}:1, cuando {min}:1 es el mínimo habitual para texto de este tamaño. Se queda como lo has elegido.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Muy por encima de tu presupuesto',
@@ -1643,7 +1664,7 @@
 	'tile.model_workers': 'Trabajadores',
 	'tile.model_vision': 'Trabajadores, imágenes',
 	'tile.model_vision_help': 'El modelo con el que corre un trabajador cuando su tarea nombra una imagen. Daimond no puede comprobar si un modelo ve, así que la elección es tuya.',
-	'tile.model_same_as_text': 'Igual que el modelo de texto',
+	'tile.model_same_as_text': 'Igual que el daimon',
 	'tile.model_none': 'ninguno',
 	'tile.diamond_model_help': 'Este Diamond piensa con {model}.',
 	'tile.model_note': 'Un trabajador conserva el modelo con el que empezó. Un modelo nuevo se aplica al siguiente que se despache.',
@@ -1729,6 +1750,7 @@
 	'trig.context': 'Contexto',
 	'trig.context_ph': 'Antecedentes que necesita la primera vez, y solo la primera vez…',
 	'trig.context_note': 'Se envía una vez, delante de la primera instrucción. Cámbialo y se envía de nuevo.',
+	'trig.section': 'Acciones automáticas',
 	'role.compactor': 'Plegado de contexto',
 	'role.compactor_help': 'Resume una conversación que ha superado su ventana. Su respuesta pasa a ser lo que el chat recuerda.',
 	'settings.fold_model': 'Plegar con',

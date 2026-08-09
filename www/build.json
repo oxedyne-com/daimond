@@ -1,1 +1,1 @@
-{"build":"fd8aab60b5b4","note":"Fixes: closing a dialog no longer strands the keyboard, and the diagnostics trail can be put away again"}
+{"build":"65eb77be630f","note":"The Graph becomes a canvas, Diamonds take colours, and every identifier has a copy button"}

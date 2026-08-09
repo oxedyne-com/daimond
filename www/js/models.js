@@ -41,6 +41,27 @@
 	function t(k, v)     { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
 
+	/// A string from the table, or the English written here when the table has no
+	/// entry for it yet. The twin of `tOr` in daimond.js, and for the same reason:
+	/// a control reading "copy.what_model" is worse than one reading English while
+	/// the key is on its way. `vars` fills `{name}` placeholders in either.
+	function tOr(key, fallback, vars) {
+		var s = t(key, vars);
+		if (s !== key) return s;
+		if (!vars) return fallback;
+		return String(fallback).replace(/\{(\w+)\}/g, function (whole, k) {
+			return vars[k] != null ? String(vars[k]) : whole;
+		});
+	}
+
+	/// The app's copy button, or nothing when daimond.js has not published it yet.
+	/// A missing button is a row without a convenience; a thrown error here would
+	/// be a Models panel that does not draw.
+	function copyBtn(what, get) {
+		if (!(window.DaimondUI && DaimondUI.copyBtn)) return null;
+		return DaimondUI.copyBtn(what, get);
+	}
+
 	// ── The pause, refused where the money is committed ─────────────
 	// A pause the widget respects and the network does not is decoration, so it
 	// is checked HERE, in front of the mint, rather than trusted to whatever
@@ -1551,7 +1572,22 @@
 							: t('models.model_own', { provider: p.name }))
 						+ (twin ? '\n' + t('models.model_twin', { provider: p.name }) : '');
 					mr.addEventListener('click', function () { setDefault(p.id, m); render(); });
-					body.appendChild(mr);
+					// A model id is a string people paste -- into a config, into a support
+					// message, into another provider's console -- and clicking the row here
+					// picks a default rather than selecting the text. The copy sits OUTSIDE
+					// the row, because the row is a button and a button cannot hold one.
+					// Named by the id itself: a long catalogue of buttons all called "Copy
+					// model id" tells a listener nothing about which model each one is.
+					var cb = copyBtn(tOr('copy.what_model', 'model id {id}', { id: m }), m);
+					if (cb) {
+						var mrow = document.createElement('div');
+						mrow.className = 'models-modelrow';
+						mrow.appendChild(mr);
+						mrow.appendChild(cb);
+						body.appendChild(mrow);
+					} else {
+						body.appendChild(mr);
+					}
 				});
 
 				// The credits row is not the user's to remove. It is their balance: taking it out of
@@ -1577,6 +1613,13 @@
 		foot.textContent = d.provider && d.model
 			? t('models.starts_on', { model: providerName(d.provider) + ' · ' + d.model })
 			: t('models.no_default');
+		// The one model id worth copying without opening a provider first. It copies
+		// the BARE id, not the sentence around it: the sentence names the provider
+		// for a reader, and nothing takes it as input.
+		if (d.provider && d.model) {
+			var fc = copyBtn(tOr('copy.what_default_model', 'the default model id'), d.model);
+			if (fc) foot.appendChild(fc);
+		}
 		el.appendChild(foot);
 	}
 

@@ -169,14 +169,27 @@
 
 /* Residency controls on a row: fetch, pin, free up space. Like .files-del they
    stay out of the way until the row is under the pointer -- except a pin, which
-   is a standing state and must be visible without hunting for it. */
-.files-res {
+   is a standing state and must be visible without hunting for it.
+   The pin is its OWN class rather than a `.files-res` modifier, because the two
+   want different type sizes and a shared class can only carry one. Everything
+   else about them is identical, so the shape is stated once for both. */
+.files-res, .files-pin {
 	background: transparent; border: none; color: var(--text-secondary);
-	cursor: pointer; font-size: var(--fs-sm); padding: 0 3px; visibility: hidden;
+	cursor: pointer; padding: 0 3px; visibility: hidden;
 }
-.files-row:hover .files-res { visibility: visible; }
-.files-res:hover { color: var(--accent); }
-.files-res.files-pin.on { visibility: visible; opacity: 0.9; }
+/* '⤓', '⤒' and '◈' are dingbats drawn well inside their em box -- the same
+   reason `.files-ren` needs a size of its own. At the 13px they had, they
+   carried visibly less ink than the 15px '×' on the same row and read as specks
+   rather than as controls. A step ABOVE the cross, not level with it, because
+   the cross fills its box and these do not. */
+.files-res { font-size: var(--fs-xl); }
+/* '📌' is an emoji: the platform draws it at full size in a colour font, so it
+   was never the undersized one and the bump above would only have inflated it. */
+.files-pin { font-size: var(--fs-sm); }
+.files-row:hover .files-res,
+.files-row:hover .files-pin { visibility: visible; }
+.files-res:hover, .files-pin:hover { color: var(--accent); }
+.files-pin.on { visibility: visible; opacity: 0.9; }
 /* A cloud row is the user's file, safe, and simply not here at the moment --
    so it is quieter than a held file, never struck through or greyed to junk. */
 .files-row.cloud .files-name { color: var(--text-secondary); }
@@ -199,6 +212,13 @@
 }
 .files-row:hover .files-del { visibility: visible; }
 .files-del:hover { color: var(--danger); }
+/* The rename pencil borrows `.files-del` for its shape and needs a size of its
+   own: '✎' is drawn well inside its em box where '×' fills it, so at the same
+   nominal 15px the pencil carried about half the ink of the cross beside it and
+   looked like a fleck. It is not a delete either, so it keeps the neutral
+   hover. */
+.files-ren { font-size: var(--fs-2xl); }
+.files-ren:hover { color: var(--text-primary); }
 
 /* The file VIEW now lives in the Doc panel (see app.css, .doc-view): a document
    you have opened is something you are attending to, and belongs on the stage.
@@ -329,7 +349,7 @@
 .sys-path { padding: 0 12px 4px; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); }
 /* No × and no rename: this section is for reading and editing, never for
    destroying. A row here is a Diamond's whole directory as often as not. */
-.sys-row .files-res, .sys-row .files-del { display: none; }
+.sys-row .files-res, .sys-row .files-pin, .sys-row .files-del { display: none; }
 /* A row that can take focus has to SHOW it. These became focusable the hour they
    were written -- they are `role="button"` -- and a focus ring is the other half
    of that: a keyboard user who cannot see where they are is not being offered a

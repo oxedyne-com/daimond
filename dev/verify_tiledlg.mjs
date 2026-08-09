@@ -6,11 +6,16 @@
 // that names one button passes on a page where that button is the only thing
 // left.
 //
-//   1. Every tile carries a cog, and NO tile carries a closer cross.
+//   1. Every tile carries a cog, and NO tile carries a closer cross. The
+//      DIALOG has one, in its title row — that is the way out of a window of
+//      settings, and it is not on the tile, which is the whole point of the
+//      change: the irreversible act is no longer on the tile's easiest pixel.
 //   2. Delete is reachable from the dialog, it is the ONLY way to remove a
 //      tile by hand, and it asks before it acts.
-//   3. Simple really hides what Max shows, per tile, and the choice survives a
-//      reload.
+//   3. The dialog carries the settings the tile does not show — the pause
+//      control and the two colours — and carries no level control, because
+//      Simple and Max are global (notes3). Simple really hides what Max shows,
+//      and that choice, being the view's, survives a reload.
 //   4. Answering "no" to the confirm leaves the tile exactly where it was.
 //
 // Every check is gated on the thing it needs existing: a page with no tiles
@@ -133,9 +138,30 @@ try {
 		const btns = [...card.querySelectorAll('button')];
 		const del = card.querySelector('.tile-dlg-delete');
 		const foot = card.querySelector('.tile-dlg-foot');
+		const closer = card.querySelector('.tile-dlg-title .tile-dlg-done');
 		return {
 			hasPause: !!card.querySelector('.pptw'),
-			levels: [...card.querySelectorAll('.tile-dlg-level')].map(b => b.dataset.level),
+			// By `[data-level]`, which is what the deleted per-tile control was
+			// marked with. `.tile-dlg-level` on its own is now worn by the colour
+			// reset and by Fold context in a chat's dialog, so a bare-class check
+			// would report a control that is not the one being asked about.
+			levels: [...card.querySelectorAll('[data-level]')].map(b => b.dataset.level),
+			// The way out, which is a cross in the title row and no longer a Done
+			// at the foot. It keeps `tile-dlg-done` deliberately: that class has
+			// never meant "the button that says Done", it means "the control that
+			// finishes with this dialog", and half the suite reaches for it.
+			closerInTitle: !!closer,
+			closerNotInFoot: !!(closer && foot && !foot.contains(closer)),
+			closerNamed: !!(closer && (closer.getAttribute('aria-label') || '').trim()),
+			// The colours, by the field each writes rather than by how many
+			// pickers happen to be there.
+			swatches: [...card.querySelectorAll('.tile-dlg-swatch')].map(i => ({
+				id: i.id, type: i.type,
+				// The label earns its click: `htmlFor` pointing at this input is
+				// what makes the word a way into the control it names.
+				labelled: !!card.querySelector(`label.tile-dlg-label[for="${i.id}"]`),
+			})),
+			hasClear: !!card.querySelector('.tile-dlg-clear'),
 			hasDelete: !!del,
 			deleteInFoot: !!(del && foot && foot.contains(del)),
 			// The foot is the last block of the card: "at the bottom of the dialog".
@@ -152,24 +178,103 @@ try {
 	check(dlg && dlg.hasPause,
 		'the dialog carries the pause control — it is the release valve for a tile with no light',
 		JSON.stringify(dlg && dlg.hasPause));
-	// By the LEVELS it offers, not by how many buttons there are. Counting was
-	// wrong the moment a third state arrived: a tile also has to be able to go
-	// back to following the global view, and `Default` is that state.
-	check(dlg && ['default', 'simple', 'max'].every(l => (dlg.levels || []).indexOf(l) >= 0),
-		'the dialog offers Default, Simple and Max — Default is how a tile goes back to following the view',
-		dlg && (dlg.levels || []).join(','));
+	// The level control is GONE, and this is the check that says so. It used to
+	// assert which levels were offered; the property it was protecting — that a
+	// tile can always be got back into step with the global view — is now kept
+	// by there being nothing here that can take it out of step in the first
+	// place, so that is what is asserted instead.
+	check(dlg && (dlg.levels || []).length === 0,
+		'the dialog offers no level control — Simple and Max are global, so a tile cannot detach itself',
+		dlg && ((dlg.levels || []).join(',') || 'none'));
+	// The way out. Named as well as drawn: a lone × with no accessible name is a
+	// button a screen reader announces as "×".
+	check(dlg && dlg.closerInTitle && dlg.closerNotInFoot,
+		'the way out is a cross in the title row, not a Done at the foot',
+		dlg && JSON.stringify({ inTitle: dlg.closerInTitle, notInFoot: dlg.closerNotInFoot }));
+	check(dlg && dlg.closerNamed, 'and it says what it is to a reader who cannot see it');
+	// The colours, by the field each picker writes. Two pickers is not the
+	// property — a background and a text colour is.
+	check(dlg && (dlg.swatches || []).some(i => /-bg-/.test(i.id))
+		&& (dlg.swatches || []).some(i => /-fg-/.test(i.id)),
+		'the dialog offers a background colour and a text colour',
+		dlg && JSON.stringify((dlg.swatches || []).map(i => i.id)));
+	check(dlg && (dlg.swatches || []).length > 0
+		&& (dlg.swatches || []).every(i => i.type === 'color' && i.labelled),
+		'each is a real colour input with a label bound to it, so the word focuses the control it names',
+		dlg && JSON.stringify(dlg.swatches));
+	check(dlg && dlg.hasClear, 'and there is a way back to the theme’s own colours');
 	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
 		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
+
+	// ── The colours, driven rather than described ──
+	//
+	// A picker that paints the tile and writes nothing is the failure worth
+	// catching: `daimond-tile-prefs` is what the Graph reads to paint the same
+	// Diamond, so a colour that reached the rail and not the store is a colour
+	// the picture never hears about.
+	{
+		const tileId = await page.evaluate(() =>
+			document.querySelector('#diamond-list .session-box').dataset.id);
+		const painted = await page.evaluate(() => {
+			const card = document.querySelector('.tile-dlg-card');
+			const put = (which, hex) => {
+				const inp = [...card.querySelectorAll('.tile-dlg-swatch')]
+					.find(i => new RegExp('-' + which + '-').test(i.id));
+				if (!inp) return null;
+				inp.value = hex;
+				inp.dispatchEvent(new Event('input', { bubbles: true }));
+				return hex;
+			};
+			const bg = put('bg', '#123456');
+			const fg = put('fg', '#abcdef');
+			const box = document.querySelector('#diamond-list .session-box');
+			const name = box.querySelector('.session-box-name');
+			return { bg, fg, back: box.style.backgroundColor,
+				ink: name ? name.style.color : '' };
+		});
+		const rec = await page.evaluate((i) =>
+			JSON.parse(localStorage.getItem('daimond-tile-prefs') || '{}')[i] || {}, tileId);
+		check(rec.bg === '#123456' && rec.fg === '#abcdef',
+			'the pickers write both colours into daimond-tile-prefs, which is where the Graph reads them',
+			JSON.stringify(rec));
+		check(/18,\s*52,\s*86/.test(painted.back || ''),
+			'and the tile takes the background at once, not at the next reload', painted.back);
+		// The ink is the other half: the stylesheet colours the name, the meta and
+		// the chips individually, so a tile that took a background and kept its old
+		// text is the failure this half exists for.
+		check(/171,\s*205,\s*239/.test(painted.ink || ''),
+			'and the words inside it take the text colour with it', painted.ink);
+
+		await page.evaluate(() => document.querySelector('.tile-dlg-card .tile-dlg-clear').click());
+		await page.waitForTimeout(250);
+		const cleared = await page.evaluate((i) => ({
+			rec: JSON.parse(localStorage.getItem('daimond-tile-prefs') || '{}')[i] || {},
+			back: document.querySelector('#diamond-list .session-box').style.backgroundColor,
+		}), tileId);
+		// A stored empty string is not the same as an absent field: "the theme's
+		// own" IS the absence, and a record that keeps the key around invites a
+		// later reader to treat it as a value.
+		check(!('bg' in cleared.rec) && !('fg' in cleared.rec),
+			'the reset takes both fields OUT of the record rather than storing an empty one',
+			JSON.stringify(cleared.rec));
+		check(!cleared.back, 'so the tile is drawn in the theme’s colours again',
+			JSON.stringify(cleared.back));
+	}
 
 	// AND THE TILE IS THE OTHER HALF OF THE RULE: no light until the Diamond has
 	// something that spends unbidden, then one. Measured on the tile rather than
 	// in the dialog, because that is where the user's instruction applies.
 	{
+		// Closed by the control that means "finished with this dialog", which is
+		// the cross. Reaching for the last `.dlg-ok` in the card would now press
+		// DELETE: the foot holds nothing else since Done left it.
 		await page.evaluate(() => {
-			const c = [...document.querySelectorAll('.tile-dlg-card .dlg-cancel, .tile-dlg-card .dlg-ok')].pop();
+			const c = document.querySelector('.tile-dlg-card .tile-dlg-done');
 			if (c) c.click(); else document.querySelector('.tile-dlg').remove();
 		});
 		await page.waitForTimeout(400);
+		check(await page.evaluate(() => !document.querySelector('.tile-dlg-card')),
+			'the closer cross really closes the dialog');
 		// THE FIRST TILE, not any tile in the list. `#diamond-list .session-box
 		// .pptw` matches a light inside ANY box, and the Optimiser ships with a
 		// timer and therefore a light — so this said "true" for a tile that has
@@ -246,6 +351,12 @@ try {
 
 	// ── 5. Simple hides, Max shows, and the choice survives a reload ──
 	//
+	// Driven through `DaimondView`, which is the whole of the control now: the
+	// dialog no longer offers a level, so the only way to change what a tile
+	// draws is the one control in the appearance menu. What is measured is still
+	// the TILE, because the tile is where a user would notice the rule failing.
+	// The view's own segmented control is verify_view's subject.
+	//
 	// The Diamond is TAGGED first, and that is not decoration. Simple also drops
 	// the whole meta row when nothing in it is a tag — so on an untagged tile the
 	// timestamp is invisible whether or not the rule that hides it exists, and
@@ -284,13 +395,7 @@ try {
 		'Simple hides the version and the timestamp', JSON.stringify(simple));
 	await snap(page, 'tile-simple', '#diamond-list .session-box');
 
-	await openCog(page, '#diamond-list');
-	await page.evaluate(() => {
-		const b = [...document.querySelectorAll('.tile-dlg-level')].find((x) => x.dataset.level === 'max');
-		b.click();
-	});
-	await page.waitForTimeout(300);
-	await page.evaluate(() => document.querySelector('.tile-dlg-done').click());
+	await page.evaluate(() => window.DaimondView.set('max'));
 	await page.waitForTimeout(300);
 	const max = await shownAt();
 	check(max && max.detail === 'max' && max.ver.visible && max.time.visible,
@@ -310,17 +415,21 @@ try {
 	const afterReload = await shownAt();
 	check(afterReload && afterReload.detail === 'max',
 		'the choice survives a reload', afterReload && JSON.stringify(afterReload));
+	// And it survived as the VIEW, which is the only place it is now written
+	// down. A tile that came back Max because something had stamped `max` into
+	// its own record would look identical here and be the bug notes3 removed.
+	const kept = await page.evaluate(() => ({
+		view: localStorage.getItem('daimond-view'),
+		prefs: localStorage.getItem('daimond-tile-prefs') || '{}',
+	}));
+	check(kept.view === 'max' && !/"detail"/.test(kept.prefs),
+		'and it survived as the view, with nothing written into the tile’s own record',
+		JSON.stringify(kept));
 
 	// ── 5b. And back again. A level you can raise and not lower is the one-way
 	// door verify_reversible hunts; it cannot see this one, because its
 	// signature does not read `aria-pressed`, so it is asserted here.
-	await openCog(page, '#diamond-list');
-	await page.evaluate(() => {
-		const b = [...document.querySelectorAll('.tile-dlg-level')].find((x) => x.dataset.level === 'simple');
-		b.click();
-	});
-	await page.waitForTimeout(300);
-	await page.evaluate(() => document.querySelector('.tile-dlg-done').click());
+	await page.evaluate(() => window.DaimondView.set('simple'));
 	await page.waitForTimeout(300);
 	const backToSimple = await shownAt();
 	check(backToSimple && backToSimple.detail === 'simple'

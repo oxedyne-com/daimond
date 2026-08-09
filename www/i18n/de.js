@@ -21,6 +21,19 @@
 	'common.cancel': 'Abbrechen',
 	'common.save': 'Speichern',
 
+	// Copying an identifier. `copy.aria` wraps each `what_` so a reader hears
+	// "Die Build-ID kopieren" rather than five buttons all called Kopieren.
+	// German puts the object first and the verb last, so `{what}` leads.
+	'copy.aria': '{what} kopieren',
+	'copy.failed': 'Kopieren nicht möglich',
+	'copy.nothing': 'Nichts zu kopieren',
+	'copy.what_build': 'Die Build-ID',
+	'copy.what_build_n': 'Build-ID {id}',
+	'copy.what_fingerprint': 'Deinen Konto-Fingerabdruck',
+	'copy.what_device': 'Die ID von {name}',
+	'copy.what_model': 'Modell-ID {id}',
+	'copy.what_default_model': 'Die ID des Standardmodells',
+
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menü',
 	'topbar.open_menu': 'Menü öffnen',
@@ -712,7 +725,7 @@
 	'models.remove': '{provider} entfernen',
 	'models.starts_on': 'Neue Chats starten mit: {model}',
 	'models.no_default': 'Noch kein Standardmodell — markiere oben eines mit dem Stern.',
-	'models.none_yet': 'Noch keine Modelle — füge unter Modelle einen Anbieter-Schlüssel hinzu',
+	'models.none_yet': 'Noch kein Anbieter',
 	'models.err_refused': 'Der Kontodienst hat abgelehnt (HTTP {status}).',
 	'models.err_bad_key': 'Der Kontodienst hat einen Schlüssel geschickt, den Daimond nicht nutzen kann.',
 	'models.err_no_key': 'Dieser Anbieter hat noch keinen Schlüssel.',
@@ -933,6 +946,10 @@
 	'devices.rename_body': 'Nenn dieses Gerät, wie du willst, damit du es von den anderen unterscheiden kannst. Lässt du das Feld leer, heißt es wieder „{derived}“. Der Name liegt bei deinen eigenen verschlüsselten Daten und geht nur an deine anderen Geräte.',
 	'devices.rename_aria': '{name} umbenennen',
 	'devices.note': 'Diese Geräte synchronisieren dieses Konto. Ein Gerät steht hier, sobald es einmal synchronisiert hat; eines, das dein Konto zwar hat, aber noch nie synchronisiert hat, fehlt in der Liste. Hier lässt sich kein Gerät abmelden: ein verbundenes Gerät hat dieselben Schlüssel wie dieses, also muss das am Gerät selbst erledigt werden.',
+	'devices.remove_aria': '{name} entfernen',
+	'devices.remove_body': '„{name}“ verschwindet aus dieser Liste. Abgemeldet wird das Gerät damit nicht: ein verbundenes Gerät hat dieselben Schlüssel wie dieses, also trägt es sich beim nächsten Sync wieder ein, solange es noch in Gebrauch ist.',
+	'devices.remove': 'Entfernen',
+	'devices.remove_title': 'Dieses Gerät entfernen',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Offline',
@@ -1025,6 +1042,11 @@
 	'tile.fold_all': 'Alles einklappen',
 	'tile.folded_help': 'Schon in „{name}“ eingeklappt — klapp erneut ein, um Neues seitdem aufzunehmen.',
 	'tile.fold_all_help': 'Diesen ganzen Chat in ein Diamond einklappen',
+	'tile.dlg_colour': 'Farbe',
+	'tile.colour_bg': 'Hintergrund',
+	'tile.colour_fg': 'Schrift',
+	'tile.colour_clear': 'Farben des Farbschemas verwenden',
+	'tile.colour_faint': 'Die beiden sind zusammen schwer zu lesen — {ratio}:1, wobei {min}:1 die übliche Untergrenze für Schrift dieser Größe ist. Bleibt so, wie du es gewählt hast.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Weit über deinem Laufbudget',
@@ -1644,7 +1666,7 @@
 	'tile.model_workers': 'Arbeiter',
 	'tile.model_vision': 'Arbeiter, Bilder',
 	'tile.model_vision_help': 'Das Modell, auf dem ein Arbeiter läuft, wenn seine Aufgabe ein Bild nennt. Daimond kann nicht prüfen, ob ein Modell sehen kann – die Wahl liegt bei dir.',
-	'tile.model_same_as_text': 'Wie das Textmodell',
+	'tile.model_same_as_text': 'Wie der Daimon',
 	'tile.model_none': 'keins',
 	'tile.diamond_model_help': 'Dieser Diamond denkt mit {model}.',
 	'tile.model_note': 'Ein Arbeiter behält das Modell, mit dem er begonnen hat. Ein neues Modell gilt für den nächsten entsandten.',
@@ -1730,6 +1752,7 @@
 	'trig.context': 'Kontext',
 	'trig.context_ph': 'Hintergrund, den er beim ersten Mal braucht, und nur beim ersten Mal…',
 	'trig.context_note': 'Einmal gesendet, vor der ersten Anweisung. Ändere ihn, und er wird erneut gesendet.',
+	'trig.section': 'Automatische Aktionen',
 	'role.compactor': 'Kontextfaltung',
 	'role.compactor_help': 'Fasst ein Gespräch zusammen, das über sein Fenster hinausgewachsen ist. Seine Antwort wird zu dem, woran sich der Chat erinnert.',
 	'settings.fold_model': 'Falten mit',

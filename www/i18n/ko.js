@@ -25,6 +25,19 @@
 	'common.cancel':       '취소',
 	'common.save':         '저장',
 
+	// 식별자 복사. `copy.aria`가 각 `what_`를 감싸므로 읽어 주는 이름이
+	// “빌드 ID 복사”가 되고, 버튼 다섯 개가 모두 “복사”라고만 하지 않아요.
+	// 조사 대신 띄어쓰기로 이어 붙여, 어떤 조각이 와도 자연스러워요.
+	'copy.aria':               '{what} 복사',
+	'copy.failed':             '복사하지 못했어요',
+	'copy.nothing':            '복사할 것이 없어요',
+	'copy.what_build':         '빌드 ID',
+	'copy.what_build_n':       '빌드 ID {id}',
+	'copy.what_fingerprint':   '계정 지문',
+	'copy.what_device':        '{name}의 ID',
+	'copy.what_model':         '모델 ID {id}',
+	'copy.what_default_model': '기본 모델 ID',
+
 	// ── 상단 바 ────────────────────────────────────────────────
 	'topbar.menu':        '메뉴',
 	'topbar.open_menu':   '메뉴 열기',
@@ -160,7 +173,7 @@
 	'models.remove':               '{provider} 지우기',
 	'models.starts_on':            '새 채팅이 시작할 모델: {model}',
 	'models.no_default':           '아직 기본 모델이 없어요 — 위에서 하나에 별을 달아 주세요.',
-	'models.none_yet':             '아직 모델이 없어요 — 모델 설정에서 제공자 키를 추가하세요',
+	'models.none_yet':             '제공자 없음',
 	'models.err_refused':          '계정 서비스가 거절했어요(HTTP {status}).',
 	'models.err_bad_key':          '계정 서비스가 Daimond이 쓸 수 없는 키를 보냈어요.',
 	'models.err_no_key':           '그 제공자에는 아직 키가 없어요.',
@@ -974,6 +987,10 @@
 	'devices.rename_body':  '다른 기기와 구별할 수 있게, 이 기기에 원하는 이름을 붙이세요. 칸을 비워 두면 이름이 다시 “{derived}”(으)로 돌아가요. 이름은 본인의 암호화된 자료와 함께 저장되고, 본인의 다른 기기로만 전해져요.',
 	'devices.rename_aria':  '{name} 이름 바꾸기',
 	'devices.note':        '이 기기들이 이 계정을 동기화해요. 한 번이라도 동기화한 기기가 여기에 나오니, 계정을 가지고 있어도 아직 동기화한 적이 없는 기기는 목록에 없어요. 여기서는 어떤 기기도 로그아웃시킬 수 없어요. 연결된 기기는 이 기기와 같은 키를 가지고 있어서, 그 기기에서 직접 처리해야 해요.',
+	'devices.remove_aria': '{name} 목록에서 빼기',
+	'devices.remove_body': '“{name}”이(가) 이 목록에서 빠져요. 그 기기를 로그아웃시키는 것은 아니에요. 연결된 기기는 이 기기와 같은 키를 가지고 있어서, 아직 쓰고 있는 기기라면 다음 동기화 때 스스로 다시 올라와요.',
+	'devices.remove':      '목록에서 빼기',
+	'devices.remove_title':'이 기기를 목록에서 빼기',
 
 	// ── 레일 아래의 상태 줄 ────────────────────────────────────
 	'astat.offline':             '오프라인',
@@ -1066,6 +1083,11 @@
 	'tile.fold_all':       '모두 접기',
 	'tile.folded_help':    '이미 “{name}”에 접혀 있어요 — 다시 접으면 그 뒤에 생긴 것을 더해요.',
 	'tile.fold_all_help':  '이 채팅 전체를 Diamond으로 접어 넣어요',
+	'tile.dlg_colour':  '색상',
+	'tile.colour_bg':   '배경',
+	'tile.colour_fg':   '글자',
+	'tile.colour_clear':'테마 색으로 되돌리기',
+	'tile.colour_faint':'이 둘은 같이 두면 읽기 힘들어요 — {ratio}:1인데, 이만한 크기의 글자는 보통 {min}:1이 최저선이에요. 고른 대로 두었어요.',
 
 	// ── 지출 조절기 ────────────────────────────────────────────
 	'gov.past_budget': '한 번 실행 예산을 한참 넘었어요',
@@ -1683,7 +1705,7 @@
 	'tile.model_workers': '작업자',
 	'tile.model_vision': '작업자, 이미지',
 	'tile.model_vision_help': '작업 내용에 이미지가 언급될 때 작업자가 쓰는 모델입니다. Daimond 는 모델이 볼 수 있는지 확인할 수 없으므로 선택은 당신 몫입니다.',
-	'tile.model_same_as_text': '텍스트 모델과 동일',
+	'tile.model_same_as_text': '다이몬과 동일',
 	'tile.model_none': '없음',
 	'tile.diamond_model_help': '이 Diamond 는 {model} 로 생각합니다.',
 	'tile.model_note': '작업자는 시작할 때의 모델을 유지합니다. 새 모델은 다음에 보내는 작업자부터 적용됩니다.',
@@ -1769,6 +1791,7 @@
 	'trig.context': '컨텍스트',
 	'trig.context_ph': '처음에 필요한 배경, 그리고 처음에만 필요한 배경…',
 	'trig.context_note': '첫 지시 앞에 한 번만 보냅니다. 바꾸면 다시 보냅니다.',
+	'trig.section': '스스로 하는 동작',
 	'role.compactor': '컨텍스트 접기',
 	'role.compactor_help': '창을 넘어선 대화를 요약합니다. 그 답이 대화가 기억하는 내용이 됩니다.',
 	'settings.fold_model': '접을 때 쓸 모델',

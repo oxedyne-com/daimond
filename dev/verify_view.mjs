@@ -18,11 +18,16 @@
 //   INVARIANT 2 -- Simple never hides a warning, an error, or a spending
 //     control. Notes2 opens on the Transparent Control Principle; a display
 //     preference that hid a traffic light would contradict the app's first rule.
-//   THE CASCADE -- the view is the default for every tile; a per-tile choice is
-//     an override; a tile with no override follows the view WHEN IT CHANGES.
-//     The trap: choosing Max must not write `max` into every tile, or switching
-//     back to Simple leaves them all dense and the global control looks broken.
-//   DEFAULT is a real state, so a tile can be put back to following the view.
+//   THE CASCADE -- the view is the ONE control of density: every tile follows
+//     it, and follows it back. The trap: choosing Max must not write `max` into
+//     every tile, or switching to Simple leaves them all dense and the global
+//     control looks broken.
+//   NOTHING PER TILE -- notes3 settled it: "Simple and Max are meant to be
+//     global". So the tile's own dialog offers no level control at all, and a
+//     `detail` left in storage by an older build is INERT. That second half is
+//     the one worth asserting: a stored override that still won would leave a
+//     tile permanently out of step with the view and no control in the app to
+//     mend it with, which is a worse state than the one the control removed.
 //   MIGRATION -- a stored `sharp` becomes Max and `warm` becomes Simple, so
 //     nobody's existing choice is cleared; an unset skin is not a choice and
 //     becomes Simple, the quiet default.
@@ -32,6 +37,7 @@
 //
 //   node dev/verify_view.mjs
 //   node dev/verify_view.mjs --break copy      # the view writes into every tile
+//   node dev/verify_view.mjs --break stuck     # a stored detail wins over the view
 //   node dev/verify_view.mjs --break light     # Simple hides the pause widget
 //   node dev/verify_view.mjs --break cog       # Simple hides the way in
 //
@@ -76,6 +82,24 @@ try {
 					return orig.call(this, v);
 				};
 			}
+			if (b === 'stuck') {
+				// The rule as it stood BEFORE notes3: a stored `detail` beats the
+				// view. Put back from OUTSIDE, because `tileDetail` is a closure --
+				// so what is restored is the behaviour rather than the line, which
+				// is all a check is entitled to notice. It lasts until a tile is
+				// rendered afresh, which is long enough: the cascade below reads
+				// the tiles straight after the view moves.
+				const orig = window.DaimondView.set;
+				window.DaimondView.set = function (v) {
+					const r = orig.call(this, v);
+					const all = JSON.parse(localStorage.getItem('daimond-tile-prefs') || '{}');
+					document.querySelectorAll('.session-box[data-id]').forEach(el => {
+						const d = (all[el.dataset.id] || {}).detail;
+						if (d) el.dataset.detail = d;
+					});
+					return r;
+				};
+			}
 		}, BREAK);
 	}
 
@@ -115,67 +139,84 @@ try {
 
 	const stored = await p.evaluate(() => localStorage.getItem('daimond-tile-prefs') || '{}');
 	check(!/"detail"/.test(stored),
-		'no tile has a stored detail, because none was chosen by hand', stored.slice(0, 120));
+		'and nothing wrote a per-tile detail on the way -- there is no control that can',
+		stored.slice(0, 120));
 
-	// ══ AN OVERRIDE IS AN OVERRIDE ════════════════════════════════════
-	// Set through the dialog, as a person does. A raw localStorage write would
-	// leave the DOM untouched and prove nothing about the running app.
+	// ══ THE TILE'S DIALOG HAS NO LEVEL IN IT ══════════════════════════
+	// The control that used to sit here is gone, and the check that used to press
+	// it is replaced by the reason it existed: a tile must not be able to detach
+	// itself from the view. It cannot, if there is nothing in the dialog to
+	// detach it with.
+	//
+	// Asked of `[data-level]` and not of `.tile-dlg-level`, which is still worn
+	// by controls that survived -- the colour reset here, Fold context in a
+	// chat's dialog. A bare-class check would now be satisfied by furniture that
+	// has nothing to do with the view.
 	await p.evaluate((id) => {
 		document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`).click();
 	}, ids[0]);
-	await p.waitForSelector('.tile-dlg-card .tile-dlg-seg', { timeout: 8000 });
+	await p.waitForSelector('.tile-dlg-card', { timeout: 8000 });
+	{
+		const dlg = await p.evaluate(() => {
+			const card = document.querySelector('.tile-dlg-card');
+			return {
+				levels: [...card.querySelectorAll('[data-level]')].map(b => b.dataset.level),
+				// The words as well as the markup: a control rebuilt under another
+				// class would pass a selector check and still be the thing notes3
+				// took out. Buttons only -- a model pulldown may legitimately hold
+				// a model with "max" in its name, and that is not a view control.
+				named: [...card.querySelectorAll('button')]
+					.map(b => (b.textContent || '').trim())
+					.filter(w => /^(simple|max)$/i.test(w)),
+				closer: !!card.querySelector('.tile-dlg-title .tile-dlg-done'),
+			};
+		});
+		check(dlg.levels.length === 0,
+			'the tile dialog offers no level control -- Simple and Max are global and nothing else',
+			dlg.levels.join(',') || 'none');
+		check(dlg.named.length === 0,
+			'and no button in it is labelled with either view',
+			dlg.named.join(',') || 'none');
+		// The way out moved to the top right and KEPT `tile-dlg-done`, which is
+		// what every close-path in the app and in this suite reaches for. If the
+		// class had gone with the button, those paths would silently stop closing
+		// anything.
+		check(dlg.closer, 'the way out is a cross in the title row, still classed tile-dlg-done');
+	}
 	await p.evaluate(() => {
-		[...document.querySelectorAll('.tile-dlg-card .tile-dlg-level')]
-			.find(b => b.dataset.level === 'max').click();
-		const d = document.querySelector('.tile-dlg-done'); if (d) d.click();
+		const d = document.querySelector('.tile-dlg-card .tile-dlg-done'); if (d) d.click();
 	});
 	await p.waitForTimeout(300);
-	{
-		const d = await detailOf();
-		check(d[0] === 'max', 'a tile with its own choice keeps it when the view says Simple', d.join(','));
-		check(d.slice(1).every(x => x === 'simple'),
-			'and the tiles without one still follow', d.join(','));
-	}
-	await setView('max');
-	await p.waitForTimeout(200);
-	// Now the override AGREES with the view; the interesting case is the reverse.
+	check(await p.evaluate(() => !document.querySelector('.tile-dlg-card')),
+		'and pressing it closes the dialog');
+
+	// ══ A DETAIL LEFT BY AN OLDER BUILD IS INERT ══════════════════════
+	// Written straight into storage on purpose: this is the state a user who
+	// pressed Max on a tile last month is carrying, and there is no longer any
+	// control that could produce it. What must not happen is that the tile obeys
+	// it, because then that user has one dense tile for ever with nothing in the
+	// app to mend it.
+	await p.evaluate((id) => {
+		const all = JSON.parse(localStorage.getItem('daimond-tile-prefs') || '{}');
+		all[id] = Object.assign({}, all[id], { detail: 'max' });
+		localStorage.setItem('daimond-tile-prefs', JSON.stringify(all));
+	}, ids[0]);
 	await setView('simple');
 	await p.waitForTimeout(200);
-	check((await detailOf())[0] === 'max',
-		'the override survives the view moving twice', (await detailOf()).join(','));
-
-	// ══ DEFAULT IS A REAL STATE ═══════════════════════════════════════
-	await p.evaluate((id) => {
-		document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`).click();
-	}, ids[0]);
-	await p.waitForSelector('.tile-dlg-card .tile-dlg-seg', { timeout: 8000 });
-	const seg = await p.evaluate(() =>
-		[...document.querySelectorAll('.tile-dlg-card .tile-dlg-level')]
-			.map(b => ({ level: b.dataset.level, text: b.textContent.trim(),
-				on: b.getAttribute('aria-pressed') === 'true' })));
-	check(seg.length === 3 && seg[0].level === 'default',
-		'the tile offers Default as well as Simple and Max -- otherwise one tap detaches it for ever',
-		seg.map(x => x.level).join(','));
-	check(/simple/i.test(seg[0].text),
-		'and Default says what it currently resolves to, so choosing it is not a guess',
-		seg[0].text);
-	check(seg.find(x => x.level === 'max').on === true,
-		'the tile holding an override shows that override as chosen',
-		JSON.stringify(seg.map(x => [x.level, x.on])));
-
-	// Pressing Default puts it back to following.
-	await p.evaluate(() => {
-		[...document.querySelectorAll('.tile-dlg-card .tile-dlg-level')]
-			.find(b => b.dataset.level === 'default').click();
-	});
-	await p.waitForTimeout(250);
-	check((await detailOf())[0] === 'simple',
-		'pressing Default puts the tile back to following the view',
+	check((await detailOf()).every(d => d === 'simple'),
+		'a tile carrying a stored detail still follows the view', (await detailOf()).join(','));
+	await setView('max');
+	await p.waitForTimeout(200);
+	await setView('simple');
+	await p.waitForTimeout(200);
+	check((await detailOf()).every(d => d === 'simple'),
+		'and goes on following it, so no tile is stranded out of step',
 		(await detailOf()).join(','));
-	await p.evaluate(() => {
-		const d = document.querySelector('.tile-dlg-done'); if (d) d.click();
-	});
-	await p.waitForTimeout(300);
+	// Taken away again, so the sections below measure tiles and not this fixture.
+	await p.evaluate((id) => {
+		const all = JSON.parse(localStorage.getItem('daimond-tile-prefs') || '{}');
+		if (all[id]) { delete all[id].detail; localStorage.setItem('daimond-tile-prefs', JSON.stringify(all)); }
+	}, ids[0]);
 
 	// ══ INVARIANT 2: Simple hides no spending control ═════════════════
 	await setView('simple');

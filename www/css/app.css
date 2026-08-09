@@ -13,6 +13,48 @@ button { cursor: pointer; }
 svg { display: block; }
 .ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.75; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
+/* ── Copy an identifier ──────────────────────────────────────────
+   One button, wherever a machine-readable string is on show: the build id in
+   the rail, the account fingerprint, a device id, a build in the version
+   history. It is deliberately quiet -- these sit beside values, not on top of
+   them -- and comes up to full strength on hover, on focus, and whenever the
+   pointer is anywhere on the line it belongs to.
+   `align-self: center` because several of its hosts are baseline-aligned rows:
+   a 20px box hung by a baseline overshoots the line and takes the row's height
+   with it, which is the same fault `.device-rename` had.
+   The 20px box sits UNDER the 24px target floor, and does so knowingly: these
+   are secondary controls beside a value, the touch surfaces of the app are
+   sized in mobile.css, and a 24px square in the 220px rail crowds the very
+   string it is there to serve.
+   The tick swaps in place on the same 24-unit grid, so a confirmation never
+   moves what is beside it. */
+.copy-id {
+	flex: none; align-self: center;
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 20px; height: 20px; padding: 0; margin-left: 2px;
+	border: 0; border-radius: 5px; background: transparent;
+	color: var(--text-muted); line-height: 0; cursor: pointer;
+	opacity: .6; transition: opacity 0.12s, color 0.12s;
+	/* For the hosts that are not flex rows -- the Models panel's footer is a
+	   block of text -- so the box rides the line rather than hanging off its
+	   baseline and stretching it. Ignored inside a flex container. */
+	vertical-align: middle;
+}
+.copy-id .ic { width: 13px; height: 13px; }
+.copy-id:hover, .copy-id:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
+/* The row a copy button sits on brings it up as the pointer arrives, so a
+   column of them does not compete with the values they belong to. */
+.astat-copyrow:hover .copy-id,
+.device-row:hover .copy-id,
+.account-fp:hover .copy-id,
+.models-default:hover .copy-id,
+.rel-row:hover .copy-id,
+.rel-build:hover .copy-id { opacity: 1; }
+/* Done, and not done. The colour is the confirmation; nothing moves. */
+.copy-id.copied { opacity: 1; color: var(--ok); }
+.copy-id.failed { opacity: 1; color: var(--danger); }
+.copy-id:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* Login */
 .login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; background: var(--bg-primary); }
 .login-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; width: 360px; max-width: 90vw; }
@@ -67,13 +109,18 @@ svg { display: block; }
 .made-by { position: relative; display: flex; align-items: center; margin: 0 4px; flex: none; }
 /* The two halves of the badge, laid over the artwork. Each is a real element
    with its own name, so a screen reader meets two claims rather than one
-   picture, and only the Oxedyne half is a link. */
+   picture, and each is now a link: the flame to Oxedyne, the chip to the
+   AI-disclosure mark it is claiming. */
 .made-by .mb-hit { position: absolute; top: 0; bottom: 0; width: 50%; display: block; }
 .made-by .mb-oxedyne { left: 0; }
-.made-by .mb-ai { right: 0; cursor: help; }
-.made-by .mb-oxedyne:hover ~ img { opacity: 0.85; }
+.made-by .mb-ai { right: 0; }
+/* The whole plate dims under either half, because the artwork is one file and
+   there is no half of it to dim on its own. Written on the parent rather than as
+   `.mb-oxedyne:hover ~ img`, which was what stood here and matched nothing: the
+   image is the FIRST child, so no sibling combinator can reach back to it. */
+.made-by:has(.mb-hit:hover) img { opacity: 0.85; }
 .made-by .mb-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.made-by img { height: calc((var(--logo-h) - 6px) * 2); width: auto; display: block; }
+.made-by img { height: calc((var(--logo-h) - 6px) * 2); width: auto; display: block; transition: opacity 0.15s ease; }
 .made-by:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 /* The phone stands the badge down entirely; the rule lives in responsive.css
    beside the account of why anything in this row may be dropped at all. */
@@ -164,6 +211,15 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
 .addbtn:disabled:hover { border-color: var(--border); color: var(--text-secondary); }
+/* A rail-head button that LATCHES has to look latched. `#link-graph-btn` opens
+   the Graph and closes it again, so it carries `aria-pressed` -- and a state a
+   screen reader announces while the screen shows nothing is half a control:
+   press it, the panel goes away, and the button looks exactly as it did. Same
+   treatment as `.tile-dlg-level[aria-pressed="true"]`, the app's other latched
+   button, so the two read as one idea. */
+.addbtn[aria-pressed="true"] {
+	background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text);
+}
 label.addbtn { cursor: pointer; }
 .rail-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 0 6px 4px; }
 
@@ -247,16 +303,30 @@ label.addbtn { cursor: pointer; }
    alignment. It is not a section, it is a switch: sentence case, a rule under
    it, and the light leading the way it leads on every tile below. The row's
    leading ink starts on the same 4px as the section labels, so the two kinds
-   of row share a left edge without pretending to be the same kind. */
+   of row share a left edge without pretending to be the same kind.
+
+   It also carries the rail's closer, at the far end. The cross used to sit on
+   the Diamonds head below, where a cross at the end of a row named "Diamonds"
+   reads as the closer of that section and was in fact the closer of the whole
+   rail. This row is the one that speaks for all of it, so the closer and the
+   pause now have the same scope and sit on the same line. The 4px right padding
+   is the same 4px the section headers use, so the cross keeps a right edge with
+   the buttons on the row below. */
 .pptw-head {
 	display: flex; align-items: center; gap: 6px;
 	padding: 4px 4px 6px; border-bottom: 1px solid var(--border);
 }
 .pptw-slot { display: flex; flex: none; }
+/* Ellipsised rather than nowrap alone: `flex: 1` gives it a zero basis but an
+   AUTO minimum, so a longer translation of "Everything" would refuse to shrink
+   and shove the closer off the end of the row. */
 .pptw-head-label {
-	flex: 1; font-size: var(--fs-sm); font-weight: 500;
+	flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 500;
 	color: var(--text-secondary); white-space: nowrap;
+	overflow: hidden; text-overflow: ellipsis;
 }
+/* The closer holds its 22px against a long label. */
+.pptw-head .panel-close { flex: none; }
 
 .user-info { flex: 1; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; }
 #logout-btn:hover { color: var(--danger); }
@@ -280,6 +350,15 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-status { display: flex; flex-direction: column; gap: 1px; flex: none; border-top: 1px solid var(--border); padding-top: 6px; }
 .astat-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text-secondary); min-width: 0; }
 .astat-row.astat-id { gap: 4px; padding: 0; }
+/* A status row that carries a copy button beside it. The row stays the button
+   it always was -- it opens what it names -- and the copy sits outside it,
+   because a button inside a button is neither valid nor clickable. */
+/* The wrapper takes the RIGHT padding its sibling rows carry on `.astat-row`.
+   Without it the copy button ends flush with the panel's edge -- measured at a
+   0px gap where every other row stands 4px off it -- and read as clipped. */
+.astat-copyrow { display: flex; align-items: center; padding-right: 4px; }
+.astat-copyrow > .astat-row { flex: 1 1 auto; min-width: 0; }
+.astat-copyslot { flex: none; display: flex; align-items: center; }
 .astat-btn { width: 100%; background: none; border: none; text-align: left; }
 .astat-btn:hover { background: var(--bg-hover); }
 .astat-label { flex: none; color: var(--text-muted); }
@@ -1150,7 +1229,27 @@ button.tag-pool { cursor: pointer; }
 .session-box.pending { border-style: dashed; }
 
 .tile-pending { display: flex; gap: 6px; margin-top: 7px; }
-.tile-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 5px 6px; }
+/* The name of a control on a tile -- "Workers", beside its pulldown. It wore
+   `.tile-model-chip` and so read as a VALUE: that pill is the badge a model's
+   name wears, and a label in one puts two pills on a row where only the right
+   one is data. The pill comes off; the word stays.
+   Sized for a rail tile and not for the dialog: `.tile-dlg-label` holds a fixed
+   116px column because three rows there have to line up, and a 260px tile has
+   no width to spare for a column of one. `flex: none` and no wrap, so the label
+   takes exactly its own width and the pulldown keeps the rest.
+   11px in the UI font rather than the chip's 10.5px monospace -- a word set in
+   a text face reads larger at the same measure than one set in mono, and this
+   is the smallest step at which a label is still comfortable. */
+.tile-row-label {
+	flex: none; align-self: center;
+	font-size: var(--fs-2xs); color: var(--text-secondary);
+	white-space: nowrap; cursor: pointer;
+}
+/* Asymmetric on purpose: the browser draws a select's arrow inside the padding
+   box, so a symmetric 6px leaves it all but touching the border. The arrow side
+   gets the air; the text side does not need it. This is the base every pulldown
+   in the app inherits, the dialog's larger one included. */
+.tile-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 5px 18px 5px 6px; }
 .tile-model:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .tile-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: var(--fs-xs); white-space: nowrap; }
 .tile-start:hover { background: var(--accent-hover); }
@@ -1411,26 +1510,128 @@ button.tag-pool { cursor: pointer; }
 /* ── A tile's own dialog (the cog) ───────────────────────────────
    Same `.modal` / `.modal-card` furniture as every other dialog, so Escape,
    the backdrop and the focus trap behave the way they do everywhere. What is
-   different is the foot: Delete is what the closer cross became, so it is here
-   rather than in the corner of the tile. */
+   different is the foot: it holds Delete, and only Delete. The way out of the
+   dialog is the cross in the title row, which is where a person looks for it;
+   a full-width "Done" at the bottom of a scrolling card is a button you have to
+   travel to in order to do nothing. */
 .tile-dlg-head {
 	font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em;
 	color: var(--text-muted); margin: 14px 0 6px;
 }
 .tile-dlg-card h2 { margin-bottom: 4px; overflow-wrap: anywhere; }
+/* The title row: the Diamond's name, and the way out. `flex-start` rather than
+   centre, because the name wraps -- a long one would otherwise drag the cross
+   down the side of it. The row carries the space the h2 used to carry itself,
+   so the margin comes off the heading; left on, it would open a gap under the
+   cross as well as under the words. */
+.tile-dlg-title {
+	display: flex; align-items: flex-start; justify-content: space-between;
+	gap: 12px; margin-bottom: 10px;
+}
+.tile-dlg-title h2 { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+/* The closer. Modelled on `.crystal-reply-x` but IN FLOW, not absolute.
+   `.crystal-reply-x` can be absolute because `.crystal-reply` is
+   `position: relative`; `.modal-card` is not positioned at all, so the same
+   rule here would resolve against the initial containing block -- the cross
+   would be placed 4px from the top of the VIEWPORT rather than of the card, and
+   would stay there while the card's content scrolled underneath it. The card is
+   `overflow-y: auto` and this dialog is long enough to use it.
+   28px square, which clears the 24px target floor without a touch override, and
+   the hover ground and focus ring the app's other quiet closers wear
+   (`.admin-back`). */
+.tile-dlg-x {
+	flex: none;
+	display: flex; align-items: center; justify-content: center;
+	width: 28px; height: 28px; padding: 0;
+	border: none; border-radius: var(--radius-sm); background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+/* No type size here any more: the cross is a drawn path, not a character, so it
+   takes the 16px `.ic` default every other closer in the app takes. The old
+   `font-size`/`line-height` pair existed to give the '×' glyph enough ink, and
+   sized nothing once the glyph went. */
+.tile-dlg-x:hover { color: var(--text-primary); background: var(--bg-hover); }
+.tile-dlg-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
 .tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
 .tile-dlg-seg { display: flex; gap: 6px; }
-/* One model row in the tile dialog: the label holds its width so three
-   pulldowns line up their left edges rather than stepping in and out with the
-   length of the words above them. */
+/* The colour reset closes the section above it, so it needs the air a section
+   break has. Without this it sat directly under the Text swatch and read as a
+   third row of the same control. */
+.tile-dlg-seg > .tile-dlg-clear { margin-top: 10px; }
+/* One labelled row in the tile dialog -- a model, a colour, anything with a
+   name on the left and a control on the right. `.tile-dlg-model` is the model
+   rows' own name and is listed beside it rather than replaced: the two classes
+   are emitted together, and either one alone still gets the row's shape. */
+.tile-dlg-field,
 .tile-dlg-model { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-/* A FIXED width, not a minimum: "Workers, images" is longer than "Daimon" and a
-   min-width let it push its pulldown right, so three rows that are one setting
-   read as three unrelated ones. The label ellipsises rather than moving the
-   column it exists to line up. */
-.tile-dlg-model .tile-model-chip { flex: 0 0 116px; width: 116px; text-align: center; }
-.tile-dlg-model .tile-model { flex: 1 1 auto; min-width: 0; }
+/* The label column. A FIXED width, not a minimum: "Workers, images" is longer
+   than "Daimon" and a min-width let it push its pulldown right, so three rows
+   that are one setting read as three unrelated ones. The label ellipsises
+   rather than moving the column it exists to line up.
+   It is set in the UI font at the dialog's own reading size, in sentence case,
+   and NOT in the small uppercase `.trig-label` wears. `.tile-dlg-head` -- the
+   section heading directly above these rows -- is already 11px uppercase muted
+   with the same letter-spacing, so a label drawn that way would be
+   indistinguishable from the heading over it and "MODELS / DAIMON / WORKERS"
+   would read as one flat list of small caps rather than a heading and the
+   fields under it. Two levels want two treatments.
+   `.tile-model-chip` is the selector the model rows used before they had a real
+   <label>, and is kept here so the column survives either markup. That class is
+   the badge a TILE wears to say which model is running -- monospace, a pill, a
+   ground and a border -- because there it is a piece of data; in a form's label
+   column it is a badge with nothing in it. The pill comes off either way. */
+.tile-dlg-label,
+.tile-dlg-model .tile-model-chip {
+	flex: 0 0 116px; width: 116px;
+	font-family: var(--font); font-size: var(--fs-sm);
+	color: var(--text-secondary);
+	background: none; border: 0; border-radius: 0;
+	padding: 0; text-align: left;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Only the real <label> claims to be pressable. The legacy span is not, and a
+   span drawn with a pointer that no key can reach is what verify_a11y_keyboard
+   calls a ghost. */
+.tile-dlg-label { cursor: pointer; }
+/* The pulldown is `.tile-model`, which is sized for a tile -- 12px type in a
+   5px box, which is right in a 260px rail and undersized in a dialog whose
+   other controls are 13px in a 8px box. It takes the dialog's measure here. */
+.tile-dlg-field .tile-model,
+.tile-dlg-model .tile-model {
+	flex: 1 1 auto; min-width: 0;
+	font-size: var(--fs-sm);
+	/* Room on the right for the browser's own arrow. A native select draws it
+	   inside the padding box, so with a symmetric 8px it sits all but touching
+	   the border and reads as a rendering fault rather than a control. The left
+	   stays at 8px: only the arrow side needs the air. */
+	padding: 7px 22px 7px 8px;
+	border-color: var(--border-strong);
+}
+/* A tile's colour. The browser draws the well itself, so the job here is to
+   stop it drawing the CHROME around it: left alone, `input[type=color]` comes
+   with a platform border and a grey plate that belong to no theme in this app.
+   The element keeps the app's own border and radius and 2px of padding, which
+   is what turns the native swatch into an inset chip rather than a flat block
+   with a line round it. Both engines' inner pseudo-elements are named because
+   Firefox and Chromium spell them differently and each ignores the other's. */
+.tile-dlg-swatch {
+	flex: none;
+	width: 52px; height: 28px; padding: 2px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+.tile-dlg-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+/* The FILL has to follow the frame's corner, less the 2px inset that separates
+   them. Hard-coded at 2px it sat as a near-square inside a 6px radius -- and
+   inside the warm skin's 10px, which is where it read as a mistake rather than
+   as a detail. `calc()` keeps the two in step if the token ever moves. */
+.tile-dlg-swatch::-webkit-color-swatch { border: 0; border-radius: calc(var(--radius-sm) - 2px); }
+.tile-dlg-swatch::-moz-color-swatch { border: 0; border-radius: calc(var(--radius-sm) - 2px); }
+.tile-dlg-swatch:hover { border-color: var(--accent); }
+.tile-dlg-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tile-dlg-level {
 	flex: 1;
 	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
@@ -1442,10 +1643,36 @@ button.tag-pool { cursor: pointer; }
 	background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text);
 }
 .tile-dlg-level:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "Use the theme's colours": the way back from a colour that was chosen. It
+   wears the same box as `.tile-dlg-level` and states it rather than inheriting
+   it, so it does not depend on that class outliving the control it was written
+   for. `flex: 0 0 auto` and not the segment's `flex: 1`: a segment divides its
+   width between choices that are alternatives to each other, and a lone reset
+   is not one of a set -- stretched across the row it would read as the row's
+   main action, which is the opposite of what it is.
+   It must stay BELOW `.tile-dlg-level`: an element carrying both classes takes
+   whichever comes last, and `flex: 1` winning here is the whole defect. */
+.tile-dlg-clear {
+	flex: 0 0 auto;
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); color: var(--text-secondary);
+	padding: 8px 10px; font-size: var(--fs-sm);
+}
+.tile-dlg-clear:hover { border-color: var(--accent); color: var(--text-primary); }
+.tile-dlg-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tile-dlg-note { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.5; margin-top: 8px; }
-/* Delete does not sit shoulder to shoulder with Done: a foot whose two buttons
-   are the same size and touching puts the irreversible one under the thumb that
-   meant to dismiss. It takes what it needs and Done takes the rest. */
+/* The same note in the palette's warning colour, for the one that says a chosen
+   pair of colours cannot be read. Colour ALONE, with no frame and no icon: it is
+   a remark, not a refusal, and the sentence carries the whole meaning for a
+   reader who sees no colour at all. The muted grey it replaces is deliberately
+   the only thing that changes -- a bordered callout here would read as an error,
+   and the choice is not an error. */
+.tile-dlg-note.warn { color: var(--warn); }
+/* The foot. Delete takes what it needs and no more -- it is the one thing in
+   here that cannot be undone, and a button stretched across the width of a
+   dialog is the button a person presses without reading it. Where a dialog
+   still ends in Done (`dialog()` builds one for the chat tile and others), Done
+   takes the rest of the row and Delete keeps its own width beside it. */
 .tile-dlg-foot { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
 .tile-dlg-foot .tile-dlg-delete { flex: 0 0 auto; }
 .tile-dlg-foot .tile-dlg-done { flex: 1; }
@@ -1459,28 +1686,52 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    These were a floating menu anchored to the user row. They live in the Admin
    panel's home view now: the device fingerprint is worth seeing, not worth a
    popup. */
-.account-fp { font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); padding: 0 8px 8px; overflow: hidden; text-overflow: ellipsis; }
+/* The fingerprint, with the button that copies it. A flex row rather than a
+   block, so the button keeps its place while the value takes whatever width is
+   left: as a block, the value's own ellipsis ate the button on a narrow rail. */
+.account-fp { display: flex; align-items: center; gap: 2px; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); padding: 0 8px 8px; }
+.account-fp-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The devices that sync this account. A row is a line of text with one quiet
-   control on it: a paired device holds the same keys as this one, so there is
-   nothing here to revoke, and the only thing a row can do is take a name. */
+/* The devices that sync this account. A row is a line of text with two quiet
+   controls on it: name it, or take it off the list.
+   Removing is not revoking, and the styling should not imply that it is.
+   Pairing hands the second device the SAME keypair, so nothing here can lock a
+   device out; the cross tidies a register of what has been seen. It is drawn as
+   the milder of the two acts on the row -- a danger colour on hover, and no
+   ground of its own -- rather than as a destructive button. */
 .device-row { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; font-size: var(--fs-sm); color: var(--text-primary); }
 /* The name shrinks first and the id takes the slack, so the id sits with the
    name it belongs to and the last-seen column stays flush right. */
 .device-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-id { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); }
 .device-when { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; text-align: right; }
-/* Naming a device. Muted until the row is under the pointer or the button has
-   the keyboard, so a column of pencils does not compete with the names. The tap
-   target stays 24px square whatever the reading size.
+/* Naming a device, and removing one. Muted until the row is under the pointer
+   or the button has the keyboard, so a column of pencils does not compete with
+   the names. The tap target stays 24px square whatever the reading size.
    Off the row's baseline, and only this one: three sizes of text SHOULD share a
    baseline, which is what the row asks for, but a 24px box has no business on
    one. Baseline-aligned it hung by the pencil's own baseline -- so the box
    overshot the line top and bottom, taking the row's height with it, and where
    the glyph sat depended on which font the platform found '✎' in. Centred, the
-   square is the row's and the glyph can come from anywhere. */
-.device-rename { flex: none; align-self: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-base); line-height: 1; cursor: pointer; opacity: .75; }
-.device-row:hover .device-rename, .device-rename:hover, .device-rename:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
+   square is the row's and the glyph can come from anywhere.
+   The type size is LARGER than the row it sits on, which for a word would be
+   wrong and for this glyph is what makes it legible: '✎' is a dingbat and is
+   drawn well inside its em box, so at the row's own 13px the pencil came out
+   around 8px of actual ink and read as a smudge. 18px of box gives it roughly
+   the ink a 13px letter has. The 24px target is untouched. The remove cross
+   takes the identical box: two controls of different sizes side by side on
+   every row would be a worse fault than either of them being wrong. */
+.device-rename, .device-remove { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-2xl); line-height: 1; cursor: pointer; opacity: .75; }
+.device-row:hover .device-rename, .device-rename:hover, .device-rename:focus-visible,
+.device-row:hover .device-remove, .device-remove:hover, .device-remove:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
+/* Removing a device is not renaming it, and the colour is the only thing on the
+   row that says so. The row-hover selectors are repeated with the button's own
+   state on the end: `.device-row:hover .device-remove` is more specific than a
+   bare `.device-remove:hover`, so without them the neutral colour above would
+   win at exactly the moment the pointer is on the cross. */
+.device-remove:hover, .device-remove:focus-visible,
+.device-row:hover .device-remove:hover,
+.device-row:hover .device-remove:focus-visible { color: var(--danger); }
 
 #id-name-row { margin-bottom: 8px; }
 #id-name { width: 100%; }
@@ -1753,6 +2004,18 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .models-econ { flex: none; font-family: var(--font); font-size: var(--fs-4xs); letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 5px; border-radius: 20px; border: 1px solid var(--border-2); color: var(--text-muted); background: var(--bg-tertiary); }
 .models-econ.paid { border-color: var(--accent-soft); color: var(--accent-text); background: var(--accent-soft); }
 .models-model.on .models-econ.paid { border-color: var(--accent); }
+
+/* A model row and the button that copies its id. The row stays the button it
+   was -- clicking it stars the model as the default -- and the copy sits beside
+   it rather than in it, since a button cannot hold another one.
+   `align-items: flex-start` for the same reason `.models-model` uses it: an id
+   is `word-break: break-all` in a column about 90px wide once the star and the
+   chips have taken their share of the rail, so two and three line rows are
+   normal here and the copy belongs on the id's first line. */
+.models-modelrow { display: flex; align-items: flex-start; gap: 2px; }
+.models-modelrow > .models-model { flex: 1 1 auto; min-width: 0; }
+.models-modelrow > .copy-id { align-self: flex-start; margin-top: 3px; }
+.models-modelrow:hover .copy-id { opacity: 1; }
 
 /* The gateway's own words about why it cannot sell inference. It writes better
    advice than this panel can ("bring your own model key to keep working"), so

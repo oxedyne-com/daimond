@@ -335,6 +335,11 @@ try {
 			name:    (r.querySelector('.device-name') || {}).textContent || '',
 			suffix:  (r.querySelector('.device-id') || {}).textContent || '',
 			buttons: r.querySelectorAll('button').length,
+			// What each control CLAIMS to do, which is the thing worth asserting on.
+			// A count cannot tell a rename from a revoke, and counting is what made
+			// this file go stale twice as controls were added beside it.
+			acts:    [...r.querySelectorAll('button')].map(b =>
+				((b.getAttribute('aria-label') || b.title || b.textContent || '').trim())),
 			rename:  r.querySelectorAll('button.device-rename').length,
 		}));
 		const notes = [...document.querySelectorAll('#admin-home .admin-note')].map(e => e.textContent);
@@ -351,8 +356,19 @@ try {
 		view.rows.map(r => r.text).join(' | '));
 	check('every row offers a rename — a device is named where it is listed',
 		view.rows.every(r => r.rename === 1), view.rows.map(r => r.rename).join(','));
-	check('and offers nothing else — nothing here pretends a device can be revoked',
-		view.rows.every(r => r.buttons === 1), view.rows.map(r => r.buttons).join(','));
+	// The property, stated as a property. Removing a line from this list is not a
+	// revocation and must never read as one: every paired device holds the SAME
+	// keypair (`identity.js` exportBundle hands over the wrapped private key), so
+	// no control here could revoke one even if it said it did.
+	//
+	// This was `buttons === 1` and went stale the moment a second control landed
+	// beside the rename, which is the ninth time a literal count has broken a
+	// check in this codebase. A count cannot tell a rename from a revoke; the
+	// words on the controls can.
+	const REVOKES = /revoke|sign ?out|log ?out|disconnect|unpair|deauthor/i;
+	const claims = view.rows.flatMap(r => r.acts).filter(a => REVOKES.test(a));
+	check('nothing here pretends a device can be revoked',
+		claims.length === 0, claims.join(' | ') || view.rows.flatMap(r => r.acts).join(' | '));
 	check('a named device shows the user\'s name in place of the derived description',
 		view.rows.some(r => r.name === 'Work desktop') && !view.rows.some(r => r.name === 'Firefox on Windows'),
 		view.rows.map(r => r.name).join(' | '));

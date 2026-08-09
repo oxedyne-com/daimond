@@ -20,6 +20,18 @@
 	'common.cancel': 'Cancelar',
 	'common.save': 'Salvar',
 
+	// Copying an identifier. `copy.aria` wraps each `what_` so a reader hears
+	// "Copiar o ID do build" rather than five buttons all called Copiar.
+	'copy.aria': 'Copiar {what}',
+	'copy.failed': 'Não foi possível copiar',
+	'copy.nothing': 'Não há nada para copiar',
+	'copy.what_build': 'o ID do build',
+	'copy.what_build_n': 'o ID do build {id}',
+	'copy.what_fingerprint': 'a impressão digital da sua conta',
+	'copy.what_device': 'o ID de {name}',
+	'copy.what_model': 'o ID do modelo {id}',
+	'copy.what_default_model': 'o ID do modelo padrão',
+
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menu',
 	'topbar.open_menu': 'Abrir o menu',
@@ -711,7 +723,7 @@
 	'models.remove': 'Remover {provider}',
 	'models.starts_on': 'Novos chats começam em: {model}',
 	'models.no_default': 'Ainda não há modelo padrão — marque um acima com a estrela.',
-	'models.none_yet': 'Ainda não há modelos — adicione uma chave de provedor em Modelos',
+	'models.none_yet': 'Ainda sem provedor',
 	'models.err_refused': 'O serviço de contas recusou (HTTP {status}).',
 	'models.err_bad_key': 'O serviço de contas enviou uma chave que o Daimond não pode usar.',
 	'models.err_no_key': 'Esse provedor ainda não tem chave.',
@@ -932,6 +944,10 @@
 	'devices.rename_body': 'Chame este dispositivo como quiser, para diferenciá-lo dos outros. Deixe o campo vazio para voltar a “{derived}”. O nome fica guardado junto com os seus próprios dados criptografados e só vai para os seus outros dispositivos.',
 	'devices.rename_aria': 'Renomear {name}',
 	'devices.note': 'Estes dispositivos sincronizam esta conta. Um dispositivo aparece aqui assim que sincroniza, então um que tenha sua conta mas nunca tenha sincronizado não fica listado. Nada aqui desconecta um dispositivo: um dispositivo vinculado tem as mesmas chaves que este, então isso tem que ser resolvido no próprio dispositivo.',
+	'devices.remove_aria': 'Remover {name}',
+	'devices.remove_body': '“{name}” sai desta lista. Isso não desconecta aquele dispositivo: um dispositivo vinculado tem as mesmas chaves que este, então, se ele ainda estiver em uso, ele mesmo volta para a lista na próxima sincronização.',
+	'devices.remove': 'Remover',
+	'devices.remove_title': 'Remover este dispositivo',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Offline',
@@ -1024,6 +1040,11 @@
 	'tile.fold_all': 'Dobrar tudo',
 	'tile.folded_help': 'Já dobrado em “{name}” — dobre de novo para acrescentar o que veio depois.',
 	'tile.fold_all_help': 'Dobrar este chat inteiro em um Diamond',
+	'tile.dlg_colour': 'Cor',
+	'tile.colour_bg': 'Fundo',
+	'tile.colour_fg': 'Texto',
+	'tile.colour_clear': 'Voltar às cores do tema',
+	'tile.colour_faint': 'Estas duas são difíceis de ler juntas — {ratio}:1, sendo {min}:1 o mínimo habitual para texto deste tamanho. Fica como você escolheu.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Bem acima do seu orçamento',
@@ -1643,7 +1664,7 @@
 	'tile.model_workers': 'Trabalhadores',
 	'tile.model_vision': 'Trabalhadores, imagens',
 	'tile.model_vision_help': 'O modelo em que um trabalhador roda quando sua tarefa cita uma imagem. O Daimond não tem como verificar se um modelo enxerga, então a escolha é sua.',
-	'tile.model_same_as_text': 'Igual ao modelo de texto',
+	'tile.model_same_as_text': 'Igual ao daimon',
 	'tile.model_none': 'nenhum',
 	'tile.diamond_model_help': 'Este Diamond pensa com {model}.',
 	'tile.model_note': 'Um trabalhador mantém o modelo com que começou. Um modelo novo vale para o próximo despachado.',
@@ -1729,6 +1750,7 @@
 	'trig.context': 'Contexto',
 	'trig.context_ph': 'O pano de fundo de que ele precisa na primeira vez, e só na primeira vez…',
 	'trig.context_note': 'Enviado uma vez, à frente da primeira instrução. Mude-o e ele é enviado de novo.',
+	'trig.section': 'Ações automáticas',
 	'role.compactor': 'Dobra de contexto',
 	'role.compactor_help': 'Resume uma conversa que passou da janela dela. A resposta passa a ser o que a conversa lembra.',
 	'settings.fold_model': 'Dobrar com',

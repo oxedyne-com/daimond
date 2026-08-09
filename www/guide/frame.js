@@ -1,5 +1,5 @@
-/* The guide's frame: how a guide page learns how to look, and which language to
- * be in.
+/* The guide's frame: how a guide page learns how to look, which language to be
+ * in, and where a jump to a heading lands.
  *
  * One file, loaded by every page, because the alternative is the same forty
  * lines pasted into every page of every language -- and the palette table
@@ -108,5 +108,71 @@
 	if (!root.hasAttribute('data-theme')) {
 		var light = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
 		wear(light ? 'light' : 'dark');
+	}
+
+	/* ── Where a jump lands ──────────────────────────────────────────────────
+	   The header is sticky at the top of the page, so scrolling a heading to
+	   the very top of the scrollport puts it UNDER the header: a reader who
+	   picks a search result, or follows a deep link into the guide, arrives at
+	   a heading they cannot see.
+
+	   `scroll-margin-top` on the target fixes all of those at once, because in
+	   every one of them it is the browser doing the scrolling -- a click on a
+	   search result, the browser's own fragment navigation, and any later
+	   `scrollIntoView`. Nothing has to know about the header except this.
+
+	   The height is measured rather than written down. The header wraps: nine
+	   nav links and a search box take one row on a wide screen and four on a
+	   narrow one, the German labels wrap where the English ones do not, and the
+	   reader can change the text size at any moment over the channel above. No
+	   single number is right for all of that. The rule is installed from here
+	   rather than kept in guide.css because the value in it can only come from
+	   JavaScript, and a rule split across two files is one that gets half
+	   changed. */
+
+	// Clear air between the header's lower edge and the heading it uncovers.
+	var GAP = 12;
+
+	/// Publish the header's height, for the rule below to keep clear of.
+	function headroom() {
+		var head = document.querySelector('.site-head');
+		if (!head) return;
+		var h = Math.round(head.getBoundingClientRect().height);
+		if (h > 0) root.style.setProperty('--guide-head-h', (h + GAP) + 'px');
+	}
+
+	/// The browser jumps to a fragment while the page is still parsing, long
+	/// before the header exists to be measured, so a deep link lands using the
+	/// fallback in the rule. Once the real height is known, put the reader
+	/// where they asked to be. Only on arrival: a `hashchange` after this
+	/// scrolls with the measured value already in hand.
+	function reland() {
+		var id = (location.hash || '').slice(1);
+		if (!id) return;
+		var el = document.getElementById(id);
+		if (el && el.scrollIntoView) el.scrollIntoView();
+	}
+
+	// Installed now, while the page is still in its head, so the rule is already
+	// in force for the browser's own jump to a fragment. 7rem is two wrapped
+	// header rows plus its padding: what a jump uses until the measurement
+	// lands, and what it keeps using on a page with no header at all.
+	var rule = document.createElement('style');
+	rule.textContent = 'main [id] { scroll-margin-top: var(--guide-head-h, 7rem); }';
+	document.head.appendChild(rule);
+
+	function settle() {
+		headroom();
+		reland();
+
+		var head = document.querySelector('.site-head');
+		if (head && window.ResizeObserver) new ResizeObserver(headroom).observe(head);
+		else window.addEventListener('resize', headroom);
+	}
+
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', settle);
+	} else {
+		settle();
 	}
 })();

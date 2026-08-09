@@ -17,15 +17,32 @@
  *
  * THE ONE ANIMATION, and why the guarantee survives it. While a link is being
  * drawn, an arrow follows the pointer; while a Diamond is being dragged, its
- * box follows the pointer. Both are pointer feedback and neither is stored:
- * they exist only between a mousedown and the mouseup that ends them, they are
- * drawn in a layer of their own that no serialisation of the picture includes,
- * and the moment the gesture finishes the picture is redrawn from the store as
- * it always was. There is still no force-direction and no randomness anywhere
- * below, and no measurement taken from the page is ever used to place anything
- * — a layout that asked the browser how wide a word came out would draw
- * differently at a different font size, and then two people comparing the same
- * store would be comparing two pictures.
+ * box follows the pointer AND the lines touching it are re-routed as it goes.
+ * All of that is pointer feedback and none of it is stored: it lives only
+ * between a mousedown and the mouseup that ends it, the arrow is drawn in a
+ * layer of its own that no serialisation of the picture includes, the re-routed
+ * lines are the same arithmetic the next draw does from the store, and the
+ * moment the gesture finishes the picture is redrawn from the store as it
+ * always was. Lines that waited for the mouseup were the alternative, and they
+ * showed a picture that was wrong for as long as the gesture lasted. There is
+ * still no force-direction and no randomness anywhere below, and no measurement
+ * taken from the page is ever used to place anything — a layout that asked the
+ * browser how wide a word came out would draw differently at a different font
+ * size, and then two people comparing the same store would be comparing two
+ * pictures.
+ *
+ * THE VIEW IS NOT THE PICTURE. The canvas runs well past the ink, so a Diamond
+ * can be dragged out into empty space rather than up against an edge, and "All"
+ * scales the drawing down until every box is on screen. Both are properties of
+ * this window, like the scroll offset that pans it: the scale multiplies the
+ * whole picture uniformly and no coordinate is ever computed from it, so two
+ * people reading one store still see one arrangement, whatever size their two
+ * windows made of it.
+ *
+ * COLOURS. A Diamond may carry a colour chosen elsewhere in the app and kept in
+ * `daimond-tile-prefs`. This module reads that store and never writes it; a
+ * missing, empty or malformed entry means the theme's own colour, which is what
+ * every Diamond had before.
  *
  * What is drawn:
  *   - Every Diamond is a node, including one nothing points at. An unlinked
@@ -33,8 +50,9 @@
  *     draw was never drawn — so it goes in a band of its own at the foot rather
  *     than being left out.
  *   - Every link whose BOTH ends are Diamonds is an edge, arrowed from `from`
- *     to `to`, labelled with its relation. Two links between the same pair are
- *     two lines, and their two relations are written at different points ALONG
+ *     to `to`, carrying its relations as chips stacked on the line — one chip
+ *     per relation, the same pills the Diamonds wear. Two links between the
+ *     same pair are two lines, and their chips sit at different points ALONG
  *     those lines, since a picture where one word covers another is not one
  *     anybody can check anything against.
  *   - A link to a file, a page or a chat is not a node. It is a count on the
@@ -47,13 +65,18 @@
  *     classification.
  *
  * What can be done to it:
- *   - Drag a Diamond to move it. Where it lands is written down.
+ *   - Drag a Diamond with either button to move it. Where it lands is written
+ *     down. The right button was asked for and the left was kept: a press that
+ *     does not travel still means what it always meant, a click on the left and
+ *     the menu on the right.
  *   - Arm "Link", click a source, click a target: a link is asserted, and the
  *     arrow follows the pointer in between. Escape, or a click on empty space,
  *     leaves the mode.
- *   - Click a link to edit its relation and its note, or to delete it.
+ *   - Click a link to edit its relations and its note, or to delete it.
  *   - Middle-drag to pan. Where the view was left is written down too.
  *   - Right-click for a menu, which carries "organise".
+ *   - "All" scales the picture to fit the window; the menu's "Reset the view"
+ *     puts it back to full size at the origin.
  */
 (function () {
 	'use strict';
@@ -88,8 +111,15 @@
 		'graph.menu_drop_link':  'Delete this link',
 		'graph.edit_title':      'Link',
 		'graph.new_title':       'New link',
-		'graph.rel_label':       'Relation',
-		'graph.rel_ph':          'part-of, blocks, supersedes…',
+		'graph.fit':             'All',
+		'graph.fit_help':        'Scale the picture until every Diamond is on screen.',
+		'graph.rels_label':      'Relations',
+		'graph.rel_add_ph':      'part-of, blocks… one at a time',
+		'graph.rel_add':         'Add this relation',
+		'graph.rel_pool':        'Already in use',
+		'graph.rel_none':        'No relation yet.',
+		'graph.rel_remove':      'Remove {rel}',
+		'graph.rel_full':        'A link carries {n} characters of relation in all, and that is the lot.',
 		'graph.note_label':      'Note',
 		'graph.note_ph':         'Whatever the relation does not say.',
 		'graph.save':            'Save',
@@ -159,6 +189,32 @@
 	// rather than a click. Below it the gesture still opens the Diamond, which is
 	// what a click on a node has always meant.
 	var DRAG_MIN = 4;
+	// How far the left and right points of a box stand out from its corners. The
+	// top and bottom edges keep their length; only the sides kink.
+	var KINK = 12;
+	// Where a line may meet a side, as fractions along it. Three points rather
+	// than one, so the lines leaving a box fan out towards what they go to
+	// instead of all crowding its middle.
+	var PORTS = [0.25, 0.5, 0.75];
+	// How far the canvas runs past the ink, on the right and below. The drawing
+	// used to end exactly where the last box did, which put a wall wherever the
+	// Diamonds happened to reach; this is what makes the space to drag INTO.
+	var ROOM = 900;
+	// What "All" may scale the picture to. It never enlarges: a store with two
+	// Diamonds in it blown up to fill a window would look like a different store
+	// from the same two Diamonds beside forty others.
+	var ZOOM_MIN = 0.12;
+	var ZOOM_MAX = 1;
+	// A relation chip on a line: its height, the space either side of the word,
+	// the gap between two stacked chips, and the size its type is pinned at.
+	var CHIP_H   = 15;
+	var CHIP_PAD = 7;
+	var CHIP_GAP = 3;
+	var CHIP_FS  = 11;
+	// Characters of relation a link holds in all, mirroring `MAX_REL_LEN` in
+	// `src/diamond_link.rs`. The store is the authority and truncates; knowing
+	// the number here is what lets the form refuse before anything is lost.
+	var REL_MAX = 32;
 
 	var bodyEl  = null;
 	var app     = null;     // the wasm handle, built once
@@ -180,7 +236,10 @@
 	///
 	/// Shape, and it is the shape asked of the sync parcel:
 	///
-	///   { v: 1, pos: { "<diamondId>": { x, y, t } }, pan: { x, y } }
+	///   { v: 1, pos: { "<diamondId>": { x, y, t } }, pan: { x, y }, zoom: 1 }
+	///
+	/// `pan` and `zoom` are this window's, not this account's, and neither goes
+	/// into the sync parcel: see [snapshot].
 	///
 	/// `t` is the wall-clock millisecond that position was last set, PER DIAMOND,
 	/// so two devices that moved two different Diamonds keep both moves. A single
@@ -192,14 +251,15 @@
 
 	function loadLayout() {
 		if (layout) return layout;
-		layout = { v: 1, pos: {}, pan: { x: 0, y: 0 } };
+		layout = { v: 1, pos: {}, pan: { x: 0, y: 0 }, zoom: 1 };
 		try {
 			var raw = localStorage.getItem(LAYOUT_KEY);
 			if (raw) {
 				var rec = JSON.parse(raw);
 				if (rec && typeof rec === 'object') {
-					layout.pos = sanePos(rec.pos);
-					layout.pan = sanePan(rec.pan);
+					layout.pos  = sanePos(rec.pos);
+					layout.pan  = sanePan(rec.pan);
+					layout.zoom = saneZoom(rec.zoom);
 				}
 			}
 		} catch (e) { /* blocked or corrupt: nothing has been moved */ }
@@ -225,6 +285,15 @@
 		var x = o ? Number(o.x) : 0, y = o ? Number(o.y) : 0;
 		return { x: isFinite(x) ? Math.max(0, Math.round(x)) : 0,
 		         y: isFinite(y) ? Math.max(0, Math.round(y)) : 0 };
+	}
+
+	/// The view scale, held to the range "All" can reach. A stored nought or a
+	/// stored nonsense would draw the picture at no size at all, which reads as
+	/// an empty pane rather than as a bad number.
+	function saneZoom(z) {
+		var n = Number(z);
+		if (!isFinite(n) || n <= 0) return 1;
+		return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n));
 	}
 
 	function saveLayout() {
@@ -310,6 +379,63 @@
 		return moved;
 	}
 
+	// ── The colours a Diamond was given ────────────────────────
+
+	/// Where the rest of the app keeps each tile's own look. READ ONLY here.
+	///
+	/// The record is `{ "<diamondId>": { bg: "#RRGGBB", fg: "#RRGGBB" }, … }` and
+	/// every part of it is optional: another module writes it, a person may have
+	/// hand-edited it, and an account that has never chosen a colour has no
+	/// record at all. So it is read like anything else that came from outside --
+	/// what parses as a colour is used and everything else is the theme's.
+	var TILE_KEY = 'daimond-tile-prefs';
+	var colourRaw = null;   // the record the picture on screen was painted from
+
+	/// A CSS hex colour, or nothing. Deliberately narrow: this string ends up in
+	/// a `fill`, and a value that is not a colour would either be ignored by the
+	/// renderer or, worse, be a colour nobody chose.
+	function hexOr(v) {
+		return (typeof v === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v.trim()))
+			? v.trim() : null;
+	}
+
+	/// Every Diamond's chosen colours, as `{ id: { bg, fg } }`, read fresh.
+	///
+	/// Once per draw rather than once per box, and never cached between draws:
+	/// the store is small, and a cache would need invalidating from a module
+	/// this one does not own.
+	function tileColours() {
+		var out = {};
+		try {
+			colourRaw = localStorage.getItem(TILE_KEY) || '';
+			var rec = JSON.parse(colourRaw || '{}');
+			if (!rec || typeof rec !== 'object') return out;
+			Object.keys(rec).forEach(function (id) {
+				var p = rec[id];
+				if (!p || typeof p !== 'object') return;
+				var bg = hexOr(p.bg), fg = hexOr(p.fg);
+				if (bg || fg) out[id] = { bg: bg, fg: fg };
+			});
+		} catch (e) { /* absent, blocked or corrupt: the theme's colours */ }
+		return out;
+	}
+
+	/// Draw again if, and only if, a Diamond's colours have moved since the last
+	/// draw.
+	///
+	/// The signals that a colour may have changed are not this module's, and one
+	/// of them fires whenever any Diamond is opened. Comparing the record itself
+	/// is one string compare, and it means a pane full of boxes is not rebuilt
+	/// every time somebody clicks one in the rail.
+	function refreshColours() {
+		if (!visible() || !lastStore) return;
+		var raw = '';
+		try { raw = localStorage.getItem(TILE_KEY) || ''; }
+		catch (e) { return; }
+		if (raw === colourRaw) return;
+		redraw();
+	}
+
 	// ── The wasm handle ────────────────────────────────────────
 
 	/// The `DaimondApp` this pane reads through, built on first use.
@@ -367,6 +493,38 @@
 	function diamondOf(ref) {
 		var s = String(ref || '');
 		return s.slice(0, 8) === 'diamond:' ? s.slice(8) : null;
+	}
+
+	// ── Relations ──────────────────────────────────────────────
+	// A link's `rel` is one string in the store and several relations on the
+	// screen. The comma is what separates them, chosen because it is the one
+	// character `normalise_rel` leaves alone -- it lowercases and collapses
+	// whitespace, so a relation cannot hold a comma by accident and the split is
+	// exact. A record written before this, holding "derives from", still reads
+	// back as the one relation it always was.
+
+	/// The relations a stored `rel` names, in the order they were written and
+	/// without repeats.
+	function relsOf(rel) {
+		var out = [], seen = {};
+		String(rel || '').split(',').forEach(function (part) {
+			var r = part.trim().replace(/\s+/g, ' ');
+			if (!r || seen[r]) return;
+			seen[r] = 1;
+			out.push(r);
+		});
+		return out;
+	}
+
+	/// The string those relations are stored as. No space after the comma: the
+	/// store allows thirty-two characters in all, and a space per relation is a
+	/// relation's worth of them.
+	function relsToStore(list) { return list.join(','); }
+
+	/// A typed relation as the store would keep it, or an empty string for one
+	/// that says nothing. The commas go because they are the separator.
+	function tidyRel(s) {
+		return String(s || '').replace(/,/g, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
 	}
 
 	// ── Reading the store ──────────────────────────────────────
@@ -653,6 +811,46 @@
 		return d;
 	}
 
+	/// The outline of a box: horizontal top and bottom, and two sides kinked out
+	/// to a point at the middle.
+	///
+	/// One string, because every box is one size. The points are where the lines
+	/// meet it — see [port] — so the shape and the wiring cannot drift apart.
+	var BOX_D = 'M' + KINK + ',0'
+		+ ' H' + (NODE_W - KINK)
+		+ ' L' + NODE_W + ',' + (NODE_H / 2)
+		+ ' L' + (NODE_W - KINK) + ',' + NODE_H
+		+ ' H' + KINK
+		+ ' L0,' + (NODE_H / 2)
+		+ ' Z';
+
+	/// A point on a box's outline: which side, and how far along it.
+	///
+	/// # Arguments
+	/// * `p`    - The box's top-left corner.
+	/// * `side` - `top`, `bottom`, `left` or `right`.
+	/// * `f`    - How far along that side, from 0 to 1.
+	///
+	/// The top and bottom run corner to corner, which is the box's width less
+	/// the two kinks. The sides are not straight, so the point is pulled in by
+	/// as much of the kink as it stands away from the middle — which is what
+	/// keeps an arrowhead ON the edge it lands against rather than beside it.
+	function port(p, side, f) {
+		var off = KINK * Math.abs(1 - 2 * f);
+		if (side === 'top')    return { x: p.x + KINK + f * (NODE_W - 2 * KINK), y: p.y };
+		if (side === 'bottom') return { x: p.x + KINK + f * (NODE_W - 2 * KINK), y: p.y + NODE_H };
+		if (side === 'left')   return { x: p.x + off, y: p.y + f * NODE_H };
+		return { x: p.x + NODE_W - off, y: p.y + f * NODE_H };
+	}
+
+	/// Which of the three ports on a side faces the other box, given how far off
+	/// centre it lies and how much of an offset counts as "off centre".
+	function portFor(d, span) {
+		if (d >  span) return PORTS[2];
+		if (d < -span) return PORTS[0];
+		return PORTS[1];
+	}
+
 	/// One Diamond.
 	function nodeEl(d, p, marks) {
 		var g = el('g', 'graph-node' + (marks.isolate ? ' isolate' : '')
@@ -660,9 +858,13 @@
 			+ (marks.source ? ' link-source' : ''));
 		g.setAttribute('data-diamond-id', d.id);
 		g.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
-		g.appendChild(attrs(el('rect', 'graph-node-box'), {
-			x: 0, y: 0, width: NODE_W, height: NODE_H, rx: 8, ry: 8,
-		}));
+		// A colour chosen for this Diamond elsewhere, handed to the stylesheet as
+		// a property rather than painted straight on: the rules below it keep
+		// their fallbacks, so a Diamond with no colour of its own still follows
+		// the theme through every state it has.
+		if (marks.bg) g.style.setProperty('--node-bg', marks.bg);
+		if (marks.fg) g.style.setProperty('--node-fg', marks.fg);
+		g.appendChild(attrs(el('path', 'graph-node-box'), { d: BOX_D }));
 		var name = d.name && d.name.trim() ? d.name : t('graph.unnamed');
 		var tx = attrs(el('text', 'graph-node-name'), { x: 12, y: NODE_H / 2 + 4 });
 		tx.textContent = clip(name);
@@ -690,14 +892,17 @@
 		return g;
 	}
 
+	/// Hold a fraction to its own side. Parallel lines are held apart by moving
+	/// where they meet the box, and a line held so far apart that it left the box
+	/// altogether would point at nothing.
+	function clamp01(f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
+
 	/// Where an edge leaves, where it lands, and the two control points that bow
 	/// it between them.
 	///
-	/// The LAYERED case is exactly what it always was -- out of the bottom of the
-	/// source, into the top of the target -- and it is the only case auto-layout
-	/// can produce, because a forward edge's target is always on a lower layer.
-	/// So a picture drawn from a store nothing has been dragged in is the picture
-	/// this module has always drawn, to the byte.
+	/// The LAYERED case is the ordinary one -- out of the bottom of the source,
+	/// into the top of the target -- and it is the only case auto-layout can
+	/// produce, because a forward edge's target is always on a lower layer.
 	///
 	/// Dragging can put a target level with its source or above it, and there
 	/// bottom-to-top would draw a line doubling back through both boxes. Only
@@ -705,84 +910,188 @@
 	/// side by side, and top-to-bottom when the target is mostly above. The
 	/// arrowhead therefore always lands on the edge of the box it points at and
 	/// never inside it.
+	///
+	/// WHICH POINT of a side, though, is no longer always the middle. Each side
+	/// offers three, and a line takes the one that faces where it is going: a
+	/// target well to the right is left from the right-hand port and entered at
+	/// the left-hand one. Four boxes hanging off one used to leave it through a
+	/// single point and cross each other doing it. This does change the picture a
+	/// store already draws -- the lines move, the boxes do not -- so it is not
+	/// the byte-for-byte picture of before, and it is still one picture per
+	/// store.
+	///
+	/// `nudge`, which holds parallel links apart, is spent along the same side:
+	/// it used to be pixels added to a coordinate, and pixels could push a line's
+	/// end clean off the box it belonged to. Along the top and bottom the two
+	/// come to the same distance; along a side it is bounded by the side.
 	function route(a, b, nudge) {
 		var ac = { x: a.x + NODE_W / 2, y: a.y + NODE_H / 2 };
 		var bc = { x: b.x + NODE_W / 2, y: b.y + NODE_H / 2 };
-		var p0, p1, p2, p3;
+		var dx = bc.x - ac.x, dv = bc.y - ac.y;
+		var flat = NODE_W - 2 * KINK;    // the length of the top and bottom edges
+		var p0, p1, p2, p3, f, n;
 		if (bc.y > ac.y) {
-			p0 = { x: ac.x + nudge, y: a.y + NODE_H };
-			p3 = { x: bc.x + nudge, y: b.y };
+			f  = portFor(dx, NODE_W / 2);
+			n  = nudge / flat;
+			p0 = port(a, 'bottom', clamp01(f + n));
+			p3 = port(b, 'top', clamp01(1 - f + n));
 			var dy = Math.max(24, p3.y - p0.y);
 			p1 = { x: p0.x, y: p0.y + dy * 0.42 };
 			p2 = { x: p3.x, y: p3.y - dy * 0.42 };
 			return { p0: p0, p1: p1, p2: p2, p3: p3 };
 		}
-		var dx = bc.x - ac.x, dv = bc.y - ac.y;
 		if (Math.abs(dx) >= Math.abs(dv)) {
 			var right = dx >= 0;
-			p0 = { x: right ? a.x + NODE_W : a.x, y: ac.y + nudge };
-			p3 = { x: right ? b.x : b.x + NODE_W, y: bc.y + nudge };
+			f  = portFor(dv, NODE_H / 2);
+			n  = nudge / NODE_H;
+			p0 = port(a, right ? 'right' : 'left', clamp01(f + n));
+			p3 = port(b, right ? 'left' : 'right', clamp01(1 - f + n));
 			var run = Math.max(24, Math.abs(p3.x - p0.x)) * 0.42 * (right ? 1 : -1);
 			p1 = { x: p0.x + run, y: p0.y };
 			p2 = { x: p3.x - run, y: p3.y };
 			return { p0: p0, p1: p1, p2: p2, p3: p3 };
 		}
-		p0 = { x: ac.x + nudge, y: a.y };
-		p3 = { x: bc.x + nudge, y: b.y + NODE_H };
+		f  = portFor(dx, NODE_W / 2);
+		n  = nudge / flat;
+		p0 = port(a, 'top', clamp01(f + n));
+		p3 = port(b, 'bottom', clamp01(1 - f + n));
 		var rise = Math.max(24, p0.y - p3.y) * 0.42;
 		p1 = { x: p0.x, y: p0.y - rise };
 		p2 = { x: p3.x, y: p3.y + rise };
 		return { p0: p0, p1: p1, p2: p2, p3: p3 };
 	}
 
-	/// One link, arrowed from its `from` end to its `to` end. `labelT` says how far
-	/// along the line its relation is written, which is what holds two relations
-	/// between one pair apart.
-	function edgeEl(e, pos, isBack, nudge, bow, labelT, names) {
+	// The hues a chip can take, and the hash that picks one. Both are copied from
+	// `tagHue` in daimond.js, deliberately and not happily: a tag has to be one
+	// colour wherever it appears, and the rail's chips are drawn by a function
+	// this module cannot reach. If either side is ever changed, the other has to
+	// change with it -- which is the argument for lifting the pair somewhere
+	// both can call.
+	var TAG_HUES = [10, 40, 75, 145, 190, 220, 265, 315];
+
+	/// A relation's hue, hashed from its name, so one relation is one colour
+	/// everywhere and stays that colour across reloads.
+	function hueOf(word) {
+		var h = 0;
+		for (var i = 0; i < word.length; i++) {
+			h = ((h << 5) - h + word.charCodeAt(i)) | 0;   // 31*h + c, 32-bit
+		}
+		h ^= h >>> 15;
+		h = Math.imul(h, 0x85ebca6b) | 0;
+		h ^= h >>> 13;
+		return TAG_HUES[Math.abs(h) % TAG_HUES.length];
+	}
+
+	/// Roughly how wide a word comes out, without asking the page.
+	///
+	/// A pill has to be as wide as the word inside it, and measuring the word is
+	/// the one thing this module may not do -- the answer would differ between
+	/// two machines and the two pictures would differ with it. So the chip's type
+	/// is pinned at [CHIP_FS] in the stylesheet and its width is estimated here,
+	/// from a per-character advance in three classes. It errs wide: a pill a
+	/// little roomy reads better than one a letter short.
+	function wordW(s) {
+		var em = 0;
+		for (var i = 0; i < s.length; i++) {
+			var c = s.charAt(i);
+			if (s.charCodeAt(i) > 0x2e80)                em += 1.0;   // CJK and the like
+			else if ('iljtIf.,:;\'!|` '.indexOf(c) >= 0) em += 0.34;
+			else if ('mwMW@'.indexOf(c) >= 0)            em += 0.92;
+			else if (c >= 'A' && c <= 'Z')               em += 0.68;
+			else em += 0.56;
+		}
+		return Math.round(em * CHIP_FS * 10) / 10;
+	}
+
+	/// The relations of one link, as chips stacked about the origin.
+	///
+	/// Stacked rather than strung out along the line: a row of chips would grow
+	/// sideways across whatever the line runs beside, and a link with three
+	/// relations would cover a box. The caller translates the whole group to the
+	/// point on the line the chips belong to; each chip is opaque, so the line
+	/// runs up to the edge of the stack and no further.
+	function chipStack(rels) {
+		var g = el('g', 'graph-chips');
+		var total = rels.length * CHIP_H + (rels.length - 1) * CHIP_GAP;
+		rels.forEach(function (word, i) {
+			var w = wordW(word) + CHIP_PAD * 2;
+			var y = -total / 2 + i * (CHIP_H + CHIP_GAP);
+			var c = el('g', 'graph-chip');
+			c.style.setProperty('--tag-h', hueOf(word));
+			c.appendChild(attrs(el('rect', 'graph-chip-box'), {
+				x: -w / 2, y: y, width: w, height: CHIP_H,
+				rx: CHIP_H / 2, ry: CHIP_H / 2,
+			}));
+			// The class the relation has always been written in, kept: this text
+			// IS the edge's label, whatever is drawn behind it.
+			var tx = attrs(el('text', 'graph-edge-label'), { x: 0, y: y + CHIP_H / 2 });
+			tx.textContent = word;
+			c.appendChild(tx);
+			g.appendChild(c);
+		});
+		return g;
+	}
+
+	/// The line one link is drawn as, and the point its chips sit at.
+	///
+	/// Split out of [edgeEl] because a drag recomputes exactly this, for every
+	/// line touching the box being moved, on each pointer move. `w` carries what
+	/// the draw decided about this link and a drag must not decide again: whether
+	/// it closes a cycle, how far it is held off its parallel neighbours, how far
+	/// it bows, and how far along it its chips ride.
+	function edgeGeom(e, pos, w) {
 		var a = pos[e.from], b = pos[e.to];
-		var g = el('g', 'graph-edge' + (isBack ? ' back' : ''));
+		var p0, p1, p2, p3;
+		if (w.isBack) {
+			// Out to the right of everything and back, so a closing edge never
+			// reads as one more step down the hierarchy.
+			p0 = port(a, 'right', 0.5);
+			p3 = port(b, 'right', 0.5);
+			p1 = { x: p0.x + w.bow, y: p0.y };
+			p2 = { x: p3.x + w.bow, y: p3.y };
+		} else {
+			var r = route(a, b, w.nudge);
+			p0 = r.p0; p1 = r.p1; p2 = r.p2; p3 = r.p3;
+		}
+		return {
+			d: 'M' + p0.x + ',' + p0.y + ' C' + p1.x + ',' + p1.y
+				+ ' ' + p2.x + ',' + p2.y + ' ' + p3.x + ',' + p3.y,
+			at: pointAt(p0, p1, p2, p3, w.labelT),
+		};
+	}
+
+	/// One link, arrowed from its `from` end to its `to` end. `w.labelT` says how
+	/// far along the line its chips ride, which is what holds the relations of two
+	/// links between one pair apart.
+	function edgeEl(e, pos, w, names) {
+		var g = el('g', 'graph-edge' + (w.isBack ? ' back' : ''));
 		g.setAttribute('data-link-id', e.id);
 		g.setAttribute('data-from', e.from);
 		g.setAttribute('data-to', e.to);
 		g.setAttribute('data-owner', e.owner || '');
 
-		var p0, p1, p2, p3;
-		if (isBack) {
-			// Out to the right of everything and back, so a closing edge never
-			// reads as one more step down the hierarchy.
-			p0 = { x: a.x + NODE_W, y: a.y + NODE_H / 2 };
-			p3 = { x: b.x + NODE_W, y: b.y + NODE_H / 2 };
-			p1 = { x: p0.x + bow, y: p0.y };
-			p2 = { x: p3.x + bow, y: p3.y };
-		} else {
-			var r = route(a, b, nudge);
-			p0 = r.p0; p1 = r.p1; p2 = r.p2; p3 = r.p3;
-		}
-		var d = 'M' + p0.x + ',' + p0.y + ' C' + p1.x + ',' + p1.y + ' ' + p2.x + ',' + p2.y + ' ' + p3.x + ',' + p3.y;
+		var geo = edgeGeom(e, pos, w);
 		// A wide invisible twin under the line, because 1.4 pixels of stroke is
 		// not something a pointer can be asked to hit. It carries the clicks; the
 		// drawn line carries the look.
-		g.appendChild(attrs(el('path', 'graph-edge-hit'), { d: d }));
-		var path = attrs(el('path', 'graph-edge-line'), {
-			d: d,
-			'marker-end': 'url(#' + (isBack ? 'gm-arrow-back' : 'gm-arrow') + ')',
-		});
-		g.appendChild(path);
+		g.appendChild(attrs(el('path', 'graph-edge-hit'), { d: geo.d }));
+		g.appendChild(attrs(el('path', 'graph-edge-line'), {
+			d: geo.d,
+			'marker-end': 'url(#' + (w.isBack ? 'gm-arrow-back' : 'gm-arrow') + ')',
+		}));
 
+		var rels  = relsOf(e.rel);
 		var lines = [t('graph.edge_tip', { from: names[e.from], to: names[e.to] })];
-		if (e.rel)  lines.push(t('graph.edge_rel', { rel: e.rel }));
-		if (e.note) lines.push(e.note);
-		if (isBack) lines.push(t('graph.back_edge'));
+		if (rels.length) lines.push(t('graph.edge_rel', { rel: rels.join(', ') }));
+		if (e.note)      lines.push(e.note);
+		if (w.isBack)    lines.push(t('graph.back_edge'));
 		lines.push(t('graph.edit_help'));
 		tip(g, lines.join('\n'));
 
-		if (e.rel) {
-			// The label rides its own line rather than floating beside it, so the
-			// halo behind it sits where the line it belongs to is.
-			var m  = pointAt(p0, p1, p2, p3, labelT);
-			var lt = attrs(el('text', 'graph-edge-label'), { x: m.x, y: m.y });
-			lt.textContent = e.rel;
-			g.appendChild(lt);
+		if (rels.length) {
+			var chips = chipStack(rels);
+			chips.setAttribute('transform', 'translate(' + geo.at.x + ',' + geo.at.y + ')');
+			g.appendChild(chips);
 		}
 		return g;
 	}
@@ -872,21 +1181,30 @@
 			if (b > maxBow) maxBow = b;
 		});
 
-		// The canvas is the ink plus its margin, measured off the boxes rather
-		// than off the layout, so a dragged Diamond can be scrolled to. For a
-		// store nothing has been dragged in this is the arithmetic the layout
-		// already did, to the pixel.
+		// The ink is the boxes plus their margin, measured off the boxes rather
+		// than off the layout, so a dragged Diamond can be scrolled to.
 		var maxX = 0, maxY = 0;
 		Object.keys(pos).forEach(function (id) {
 			if (pos[id].x + NODE_W > maxX) maxX = pos[id].x + NODE_W;
 			if (pos[id].y + NODE_H > maxY) maxY = pos[id].y + NODE_H;
 		});
-		var width  = maxX + PAD + (maxBow ? maxBow + 24 : 0);
-		var height = maxY + PAD;
+		var inkW = maxX + PAD + (maxBow ? maxBow + 24 : 0);
+		var inkH = maxY + PAD;
+		// And the canvas runs [ROOM] past it. The drawing used to stop dead where
+		// the last box did, so the edge of the picture chased the Diamonds about
+		// and there was nowhere to put one but where one already was. Room to the
+		// right and below only: a position is never negative (see [putPos]), so
+		// the other two edges are the origin and there is nothing past them.
+		var width  = inkW + ROOM;
+		var height = inkH + ROOM;
+		var zoom   = saneZoom(loadLayout().zoom);
 
+		// The scale is a property of this window, not of the picture: the viewBox
+		// is the drawing's own coordinates and only the size it is presented at
+		// moves, so every coordinate below is the coordinate the store implies.
 		var svg = attrs(el('svg', 'graph-svg'), {
 			viewBox: '0 0 ' + width + ' ' + height,
-			width: width, height: height,
+			width: Math.round(width * zoom), height: Math.round(height * zoom),
 			xmlns: SVGNS,
 		});
 		svg.setAttribute('id', 'graph-svg');
@@ -907,28 +1225,39 @@
 			(groups[k] || (groups[k] = [])).push(e);
 		});
 
+		// What the draw decides about each line, kept so a drag can redraw it
+		// without deciding any of it again.
+		var wire = {};
 		var edgesG = el('g', 'graph-edges');
 		c.edges.forEach(function (e) {
 			var isBack = !!cyc.back[e.id];
 			var grp    = groups[e.from + ' ' + e.to];
 			var lane   = grp.length > 1 ? grp.indexOf(e) - (grp.length - 1) / 2 : 0;
 			// A closing edge is already held off its neighbours by its own bow, so
-			// only a forward line is moved sideways; the label moves either way.
-			var nudge  = isBack ? 0 : lane * NUDGE;
-			var labelT = 0.5 + lane * Math.min(LABEL_T, LABEL_SPAN / grp.length);
-			edgesG.appendChild(edgeEl(e, pos, isBack, nudge, bows[e.id] || 0, labelT, names));
+			// only a forward line is moved sideways; the chips move either way.
+			wire[e.id] = {
+				isBack: isBack,
+				nudge:  isBack ? 0 : lane * NUDGE,
+				bow:    bows[e.id] || 0,
+				labelT: 0.5 + lane * Math.min(LABEL_T, LABEL_SPAN / grp.length),
+			};
+			edgesG.appendChild(edgeEl(e, pos, wire[e.id], names));
 		});
 		svg.appendChild(edgesG);
 
+		var colours = tileColours();
 		var nodesG = el('g', 'graph-nodes');
 		store.diamonds.forEach(function (d) {
 			if (!pos[d.id]) return;
+			var col = colours[d.id] || {};
 			nodesG.appendChild(nodeEl(d, pos[d.id], {
 				artefacts: c.artefact[d.id] || 0,
 				cycle:     !!cyc.onCycle[d.id],
 				isolate:   !touched[d.id],
 				placed:    !!placed[d.id],
 				source:    link.from === d.id,
+				bg:        col.bg,
+				fg:        col.fg,
 			}));
 		});
 		svg.appendChild(nodesG);
@@ -959,7 +1288,14 @@
 		// The band and the stats line say the same thing where the thing is.
 		bodyEl.appendChild(svg);
 
-		lastGeo = { pos: pos, edges: c.edges, names: names, width: width, height: height };
+		lastGeo = {
+			pos: pos, edges: c.edges, names: names,
+			width: width, height: height,
+			// The ink alone, which is what "All" scales to fit -- fitting the
+			// canvas would fit the empty room with it.
+			inkW: inkW, inkH: inkH,
+			wire: wire, zoom: zoom,
+		};
 		wireCanvas(svg);
 		if (link.from) drawLive(link.at);
 
@@ -1060,16 +1396,39 @@
 	// clamped to would lose the pan on every redraw.
 	var restoring = false;
 
-	/// Put the view back where it was left. The picture is drawn at a fixed scale
-	/// and panned by scrolling, so the pan IS the scroll offset.
+	/// Put the view back where it was left. The picture is panned by scrolling,
+	/// so the pan IS the scroll offset.
+	///
+	/// It assigns even when the offset is nought, because "All" leaves the view
+	/// at the origin and the scroller may be a long way from it. What it will not
+	/// do is assign an offset the scroller already has, which is a scroll event
+	/// for nothing on every redraw.
 	function restorePan() {
-		var p = loadLayout().pan;
 		if (!bodyEl) return;
-		if (!p.x && !p.y) return;
+		var p = loadLayout().pan;
+		if (bodyEl.scrollLeft === p.x && bodyEl.scrollTop === p.y) return;
 		restoring = true;
 		bodyEl.scrollLeft = p.x;
 		bodyEl.scrollTop  = p.y;
 		setTimeout(function () { restoring = false; }, 0);
+	}
+
+	/// Scale the picture until all of it is on screen, and go to the origin.
+	///
+	/// The window's size is asked for here, and nowhere else that matters: the
+	/// answer sets the size the SVG is PRESENTED at and never a coordinate, so
+	/// the arrangement two people compare is the same arrangement at two sizes.
+	/// It never enlarges past full size -- see [ZOOM_MAX].
+	function fitAll() {
+		if (!bodyEl || !lastGeo) return;
+		var vw = Math.max(40, bodyEl.clientWidth  - 8);
+		var vh = Math.max(40, bodyEl.clientHeight - 8);
+		var z  = saneZoom(Math.min(vw / Math.max(1, lastGeo.inkW), vh / Math.max(1, lastGeo.inkH)));
+		var l  = loadLayout();
+		l.zoom = z;
+		l.pan  = { x: 0, y: 0 };
+		saveLayout();
+		redraw();
 	}
 
 	function savePan() {
@@ -1079,20 +1438,20 @@
 		saveLayout();
 	}
 
+	/// Full size, at the origin. The way back from "All" as well as from a pan,
+	/// since both are the same view state.
 	function resetView() {
 		var l = loadLayout();
-		l.pan = { x: 0, y: 0 };
+		l.pan  = { x: 0, y: 0 };
+		l.zoom = 1;
 		saveLayout();
 		if (!bodyEl) return;
-		restoring = true;
-		bodyEl.scrollLeft = 0;
-		bodyEl.scrollTop  = 0;
-		setTimeout(function () { restoring = false; }, 0);
+		redraw();
 	}
 
 	// ── The toolbar ────────────────────────────────────────────
 
-	var bar = null, barLink = null, barOrg = null, barSay = null;
+	var bar = null, barLink = null, barOrg = null, barAll = null, barSay = null;
 
 	/// The strip above the picture. Built once, into the panel rather than into
 	/// the scrolling body, so it neither scrolls away nor is wiped by a redraw.
@@ -1114,11 +1473,18 @@
 		barOrg.title = t('graph.organise_help');
 		barOrg.addEventListener('click', function () { organise(); });
 
+		barAll = h('button', 'graph-btn', t('graph.fit'));
+		barAll.type = 'button';
+		barAll.id = 'graph-all-btn';
+		barAll.title = t('graph.fit_help');
+		barAll.addEventListener('click', function () { fitAll(); });
+
 		barSay = h('span', 'graph-say', '');
 		barSay.id = 'graph-say';
 
 		bar.appendChild(barLink);
 		bar.appendChild(barOrg);
+		bar.appendChild(barAll);
 		bar.appendChild(barSay);
 		p.insertBefore(bar, bodyEl);
 	}
@@ -1134,6 +1500,8 @@
 		barLink.setAttribute('aria-pressed', link.armed ? 'true' : 'false');
 		barOrg.textContent = t('graph.organise');
 		barOrg.title = t('graph.organise_help');
+		barAll.textContent = t('graph.fit');
+		barAll.title = t('graph.fit_help');
 		barSay.textContent = link.armed
 			? (link.from ? t('graph.pick_target', { name: nameOf(link.from) }) : t('graph.pick_source'))
 			: '';
@@ -1252,18 +1620,71 @@
 
 	// ── Dragging a Diamond ─────────────────────────────────────
 
-	var drag = null;    // { id, g, orig, from, moved }
+	var drag = null;    // { id, g, svg, button, orig, from, moved, pos, wires }
 
-	function startDrag(g, id, ev, svg) {
+	/// The lines touching one Diamond, with the elements that draw them and what
+	/// the draw decided about each. Gathered once, at the start of a gesture, so
+	/// no pointer move has to search the document.
+	function wiresFor(id, svg) {
+		var out = [];
+		if (!lastGeo) return out;
+		lastGeo.edges.forEach(function (e) {
+			if (e.from !== id && e.to !== id) return;
+			var w = lastGeo.wire[e.id];
+			var g = svg.querySelector('g.graph-edge[data-link-id="' + cssq(e.id) + '"]');
+			if (!w || !g) return;
+			out.push({
+				e: e, w: w,
+				line:  g.querySelector('path.graph-edge-line'),
+				hit:   g.querySelector('path.graph-edge-hit'),
+				chips: g.querySelector('g.graph-chips'),
+			});
+		});
+		return out;
+	}
+
+	/// # Arguments
+	/// * `button` - Which button is holding the box: the left, as it always was,
+	///              or the right, which drags and offers its menu only when the
+	///              press does not travel.
+	function startDrag(g, id, ev, svg, button) {
 		var at = atPoint(svg, ev);
+		var pos = {};
+		if (lastGeo) Object.keys(lastGeo.pos).forEach(function (k) { pos[k] = lastGeo.pos[k]; });
 		drag = {
-			id: id, g: g, svg: svg,
+			id: id, g: g, svg: svg, button: button,
 			orig: lastGeo && lastGeo.pos[id] ? { x: lastGeo.pos[id].x, y: lastGeo.pos[id].y } : { x: 0, y: 0 },
 			from: at, moved: false,
+			pos: pos, wires: wiresFor(id, svg),
 		};
 		g.classList.add('dragging');
 		document.addEventListener('mousemove', onDragMove, true);
 		document.addEventListener('mouseup', onDragUp, true);
+		// While the right button is holding a box, the browser's own menu is not
+		// wanted anywhere -- including outside the picture, where this module's
+		// own handler does not run.
+		if (button === 2) document.addEventListener('contextmenu', eatMenu, true);
+	}
+
+	function eatMenu(ev) { ev.preventDefault(); }
+
+	/// Put the box at a point, and the lines touching it with it.
+	///
+	/// The lines are the same arithmetic the next draw does from the store, run
+	/// against one position the store does not hold yet. Waiting for the mouseup
+	/// instead left every line hanging off where the box used to be for as long
+	/// as the gesture lasted, which is a picture that was wrong while it was
+	/// being looked at.
+	function moveTo(x, y) {
+		if (!drag) return;
+		drag.g.setAttribute('transform', 'translate(' + x + ',' + y + ')');
+		drag.pos[drag.id] = { x: x, y: y };
+		drag.wires.forEach(function (wr) {
+			var geo = edgeGeom(wr.e, drag.pos, wr.w);
+			if (wr.line)  wr.line.setAttribute('d', geo.d);
+			if (wr.hit)   wr.hit.setAttribute('d', geo.d);
+			if (wr.chips) wr.chips.setAttribute('transform', 'translate(' + geo.at.x + ',' + geo.at.y + ')');
+		});
 	}
 
 	function onDragMove(ev) {
@@ -1274,21 +1695,28 @@
 		drag.moved = true;
 		var x = Math.max(0, Math.round(drag.orig.x + dx));
 		var y = Math.max(0, Math.round(drag.orig.y + dy));
-		drag.g.setAttribute('transform', 'translate(' + x + ',' + y + ')');
 		drag.now = { x: x, y: y };
+		moveTo(x, y);
 		ev.preventDefault();
 	}
 
-	function onDragUp() {
+	function onDragUp(ev) {
 		if (!drag) return;
 		var d = drag;
 		endDrag();
-		if (!d.moved || !d.now) return;
+		if (!d.moved || !d.now) {
+			// A right press that went nowhere is not a drag; it is the menu, held
+			// back until the button came up so that moving would have cancelled
+			// it. Any other button ending the gesture just ends it, rather than
+			// standing in for the one that was pressed.
+			if (d.button === 2 && ev && ev.button === 2) openMenu(ev, { node: d.id, link: null });
+			return;
+		}
 		// The one write. Everything before it was the pointer moving a box about;
 		// this is what makes the picture reproduce.
 		putPos(d.id, d.now.x, d.now.y);
 		saveLayout();
-		swallowClick();
+		if (d.button === 2) swallowMenu(); else swallowClick();
 		redraw();
 	}
 
@@ -1302,14 +1730,23 @@
 		setTimeout(function () { suppressClick = false; }, 0);
 	}
 
+	/// Eat the menu some browsers raise on the mouseup that ended a right drag,
+	/// rather than on the mousedown that began it. Cleared on the next task, for
+	/// the same reason [swallowClick] is.
+	function swallowMenu() {
+		suppressMenu = true;
+		setTimeout(function () { suppressMenu = false; }, 0);
+	}
+
 	/// Put the box back and forget the gesture. Escape during a drag lands here,
-	/// so a drag begun by accident costs nothing.
+	/// so a drag begun by accident costs nothing -- and the lines go back with the
+	/// box, since they followed it out.
 	function abortDrag() {
 		if (!drag) return false;
 		var d = drag;
+		moveTo(d.orig.x, d.orig.y);
 		endDrag();
-		d.g.setAttribute('transform', 'translate(' + d.orig.x + ',' + d.orig.y + ')');
-		swallowClick();
+		if (d.button === 2) swallowMenu(); else swallowClick();
 		return true;
 	}
 
@@ -1318,6 +1755,7 @@
 		drag = null;
 		document.removeEventListener('mousemove', onDragMove, true);
 		document.removeEventListener('mouseup', onDragUp, true);
+		document.removeEventListener('contextmenu', eatMenu, true);
 	}
 
 	// ── Panning ────────────────────────────────────────────────
@@ -1438,20 +1876,20 @@
 		return true;
 	}
 
-	/// The link form: a relation, a note, and the two or three things that can be
-	/// done with them.
+	/// The link form: the relations, a note, and the two or three things that can
+	/// be done with them.
 	///
 	/// Deliberately small. The store's own words are that a relation is a word
 	/// and a note is a sentence, and a form with more fields than the record has
 	/// would be inviting the user to fill in something nothing reads.
 	///
-	/// SAVING AN EXISTING LINK RE-ASSERTS IT. The store has `add_link` and
-	/// `remove_link` and no update, and a link is deliberately never edited in
-	/// place -- `union_links` keys by id, so two copies sharing an id are one
-	/// record. An edit is therefore a delete and a fresh assertion, which gives
-	/// the link a new id and a new timestamp; the form says so rather than
-	/// letting the user discover it. `src/wasm/diamond.rs` wanting an
-	/// `update_link` is the real fix and is not one this module may make.
+	/// The relations are a SET, held in one field. There is one `rel` string in
+	/// the record and there will go on being one; the comma between the words is
+	/// what makes it several, and [relsOf] and [relsToStore] are the only two
+	/// places that know it. The store allows thirty-two characters of relation in
+	/// all, which is not many when they are shared out, so the form refuses a
+	/// word that will not fit rather than letting the store quietly cut one in
+	/// half.
 	function openEditor(spec) {
 		closeMenu();
 		closeEditor();
@@ -1468,17 +1906,105 @@
 		editor.appendChild(h('div', 'graph-edit-head',
 			nameOf(from) + ' → ' + nameOf(to)));
 
-		var relLab = h('label', 'graph-edit-lab', t('graph.rel_label'));
+		// The relations, as chips. A link used to carry one word in one field; it
+		// carries a set now, and the set is edited the way a Diamond's tags are --
+		// close a chip to drop it, click one from the pool to reuse it, type a
+		// word that is not in the pool yet. The pulldown stays on the box, since
+		// a word half typed is quicker completed than found among chips.
+		var rels    = l ? relsOf(l.rel) : [];
+		var relLab  = h('label', 'graph-edit-lab', t('graph.rels_label'));
+		var chipRow = h('div', 'graph-rel-row');
+		chipRow.id = 'graph-rel-chips';
 		var rel = h('input', 'graph-edit-input');
 		rel.type = 'text';
 		rel.id = 'graph-edit-rel';
-		rel.placeholder = t('graph.rel_ph');
-		rel.value = l ? (l.rel || '') : '';
+		rel.placeholder = t('graph.rel_add_ph');
 		rel.setAttribute('list', 'graph-rel-list');
+		rel.maxLength = REL_MAX;
 		relLab.setAttribute('for', rel.id);
+		var addBtn = h('button', 'graph-btn', '+');
+		addBtn.type = 'button';
+		addBtn.id = 'graph-rel-add';
+		addBtn.title = t('graph.rel_add');
+		var addRow = h('div', 'graph-rel-add');
+		addRow.appendChild(rel);
+		addRow.appendChild(addBtn);
+		var poolLab = h('div', 'graph-rel-pool-lab', t('graph.rel_pool'));
+		var poolRow = h('div', 'graph-rel-row graph-rel-pool');
+		var hint    = h('div', 'graph-rel-hint', '');
+
+		/// One chip, hued like the Diamonds' tags because it is the same kind of
+		/// thing: a word the user chose, and will choose again.
+		function chip(word, onclick) {
+			var c = h(onclick ? 'button' : 'span', 'tag-chip');
+			if (onclick) c.type = 'button';
+			c.style.setProperty('--tag-h', hueOf(word));
+			c.textContent = word;
+			if (onclick) c.addEventListener('click', function () { onclick(word); });
+			return c;
+		}
+
+		/// Draw the link's own relations and what is left in the pool.
+		function paintRels() {
+			chipRow.textContent = '';
+			if (!rels.length) chipRow.appendChild(h('span', 'graph-rel-none', t('graph.rel_none')));
+			rels.forEach(function (word) {
+				var c = chip(word, null);
+				var x = h('button', 'tag-x', '×');
+				x.type = 'button';
+				x.title = t('graph.rel_remove', { rel: word });
+				x.setAttribute('aria-label', t('graph.rel_remove', { rel: word }));
+				x.addEventListener('click', function () {
+					rels = rels.filter(function (u) { return u !== word; });
+					hint.textContent = '';
+					paintRels();
+				});
+				c.appendChild(x);
+				chipRow.appendChild(c);
+			});
+			var pool = relsInUse().filter(function (w) { return rels.indexOf(w) === -1; });
+			poolRow.textContent = '';
+			pool.forEach(function (word) { poolRow.appendChild(chip(word, addRel)); });
+			poolLab.style.display = pool.length ? '' : 'none';
+			poolRow.style.display = pool.length ? '' : 'none';
+		}
+
+		/// Take a typed or clicked word onto the link. False when it was refused
+		/// for want of room, which is the one refusal that has to stop a save --
+		/// the store would truncate, and a relation cut in half is a relation
+		/// nobody wrote.
+		function addRel(word) {
+			var w = tidyRel(word);
+			hint.textContent = '';
+			if (!w) return true;
+			if (rels.indexOf(w) !== -1) { rel.value = ''; paintRels(); return true; }
+			if (relsToStore(rels.concat([w])).length > REL_MAX) {
+				hint.textContent = t('graph.rel_full', { n: REL_MAX });
+				return false;
+			}
+			rels.push(w);
+			rel.value = '';
+			paintRels();
+			return true;
+		}
+
+		rel.addEventListener('keydown', function (e) {
+			// A comma is the separator the store uses, so typing one means the
+			// same thing as pressing Enter rather than going into the word.
+			if (e.key !== 'Enter' && e.key !== ',') return;
+			e.preventDefault();
+			addRel(rel.value);
+		});
+		addBtn.addEventListener('click', function () { addRel(rel.value); });
+
 		editor.appendChild(relLab);
-		editor.appendChild(rel);
+		editor.appendChild(chipRow);
+		editor.appendChild(addRow);
 		editor.appendChild(relations());
+		editor.appendChild(poolLab);
+		editor.appendChild(poolRow);
+		editor.appendChild(hint);
+		paintRels();
 
 		var noteLab = h('label', 'graph-edit-lab', t('graph.note_label'));
 		var note = h('textarea', 'graph-edit-note');
@@ -1496,7 +2022,11 @@
 		ok.type = 'button';
 		ok.id = 'graph-edit-ok';
 		ok.addEventListener('click', function () {
-			var r = rel.value, n = note.value;
+			// A word typed and not added is a word the user meant, so it is taken
+			// on the way out. If it will not fit, the form stays open saying so
+			// rather than saving without it.
+			if (!addRel(rel.value)) return;
+			var r = relsToStore(rels), n = note.value;
 			closeEditor();
 			if (isNew) addLink(from, to, r, n);
 			else       replaceLink(l, r, n);
@@ -1521,22 +2051,31 @@
 		rel.focus();
 	}
 
-	/// The relations already in use, offered as completions. Suggesting a word
-	/// the store already holds is what keeps `part-of` from becoming three
-	/// relations spelled three ways.
-	function relations() {
-		var seen = {}, list = h('datalist');
-		list.id = 'graph-rel-list';
-		if (lastStore) {
-			lastStore.links.forEach(function (l) {
-				var r = (l.rel || '').trim();
-				if (!r || seen[r]) return;
+	/// Every relation the store already holds, once each and in the links' own
+	/// order. Offering a word the store already holds is what keeps `part-of`
+	/// from becoming three relations spelled three ways.
+	function relsInUse() {
+		var seen = {}, out = [];
+		if (!lastStore) return out;
+		lastStore.links.forEach(function (l) {
+			relsOf(l.rel).forEach(function (r) {
+				if (seen[r]) return;
 				seen[r] = 1;
-				var o = document.createElement('option');
-				o.value = r;
-				list.appendChild(o);
+				out.push(r);
 			});
-		}
+		});
+		return out;
+	}
+
+	/// Those relations as a pulldown for the box they are typed into.
+	function relations() {
+		var list = h('datalist');
+		list.id = 'graph-rel-list';
+		relsInUse().forEach(function (r) {
+			var o = document.createElement('option');
+			o.value = r;
+			list.appendChild(o);
+		});
 		return list;
 	}
 
@@ -1608,6 +2147,7 @@
 	// ── Wiring the picture ─────────────────────────────────────
 
 	var suppressClick = false;
+	var suppressMenu  = false;
 
 	/// The one place a pointer meets the picture. Re-attached on every draw,
 	/// because the SVG is rebuilt on every draw.
@@ -1618,7 +2158,10 @@
 				startPan(ev);
 				return;
 			}
-			if (ev.button !== 0) return;
+			// The left button and the right both move a Diamond. The right was
+			// asked for; the left stays because a click on a box has always opened
+			// it and a press is how a click starts.
+			if (ev.button !== 0 && ev.button !== 2) return;
 			closeMenu();
 			var g = ev.target.closest ? ev.target.closest('.graph-node') : null;
 			// Not while linking: there the press is a pick, and a box that slid
@@ -1627,7 +2170,7 @@
 				// Or the browser sweeps a text selection across every label the
 				// pointer passes, which is what a press-and-move means to it.
 				ev.preventDefault();
-				startDrag(g, g.dataset.diamondId, ev, svg);
+				startDrag(g, g.dataset.diamondId, ev, svg, ev.button);
 			}
 		});
 
@@ -1659,6 +2202,10 @@
 
 		svg.addEventListener('contextmenu', function (ev) {
 			ev.preventDefault();
+			// The right button is holding a Diamond, or has just let one go after
+			// moving it. Either way this is not a request for a menu: a press on a
+			// box decides between the two at the mouseup, in [onDragUp].
+			if (drag || suppressMenu) return;
 			var node = ev.target.closest ? ev.target.closest('.graph-node') : null;
 			var edge = ev.target.closest ? ev.target.closest('.graph-edge') : null;
 			openMenu(ev, {
@@ -1771,6 +2318,18 @@
 
 		// The other half of the link UI says when a link changed.
 		document.addEventListener('daimond-links-changed', refreshIfVisible);
+		// A Diamond's own colours are chosen elsewhere in the app, and neither of
+		// these signals is only about colour -- so both go through the compare in
+		// [refreshColours] rather than straight to a redraw.
+		document.addEventListener('daimond-diamond-changed', refreshColours);
+		document.addEventListener('daimond-tile-prefs-changed', refreshColours);
+		// The one the colour pickers actually fire. It is named separately because
+		// the dialog knows it changed a COLOUR, where the two above are broader
+		// signals that merely might have. Both names are listened for rather than
+		// one renamed to the other: this pair was written in two places at once,
+		// and a picture that only repaints when something else happens to redraw it
+		// is exactly the kind of fault nobody notices until they are demonstrating.
+		document.addEventListener('daimond-tile-colour-changed', refreshColours);
 		// Another tab's Diamond mutation. OPFS fires nothing across tabs; this
 		// nonce in localStorage is the only signal there is.
 		window.addEventListener('storage', function (e) {
@@ -1783,6 +2342,10 @@
 				layout = null;
 				refreshIfVisible();
 			}
+			// And another tab gave a Diamond a colour, which the same suffix rule
+			// finds for the same reason.
+			if (e.key && e.key.length >= TILE_KEY.length
+				&& e.key.slice(-TILE_KEY.length) === TILE_KEY) refreshColours();
 		});
 		// Escape, from anywhere. Capture, so a form field inside the editor
 		// cannot swallow it first.
@@ -1841,6 +2404,10 @@
 		organise: organise,
 		/// Arm or disarm link mode; with no argument, toggle it.
 		linkMode: toggleLinkMode,
+		/// Scale the picture until every Diamond is on screen.
+		fitAll:   fitAll,
+		/// Full size, at the origin.
+		resetView: resetView,
 		/// Shut whatever is open, innermost first. Returns whether anything was.
 		escape:   dismiss,
 		/// The stored arrangement, for the sync parcel. Positions only: the pan is

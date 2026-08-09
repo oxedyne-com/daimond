@@ -2,9 +2,17 @@
  *
  * Every colour comes from the palette variables, never from a literal, so the
  * picture holds up in the dark, light and candy themes without a rule per
- * theme. The one thing that is not a palette colour is the halo behind an edge
- * label, which is painted in the panel's own background so a word can sit on a
- * line and still be read; that too is a variable.
+ * theme. There are two exceptions and both are colours somebody chose rather
+ * than colours a theme owns: the hue of a relation chip, which is hashed from
+ * the relation's own name so one word is one colour everywhere, and a Diamond's
+ * own fill, handed in as `--node-bg` from the store the rest of the app keeps
+ * it in. Both arrive as custom properties with the theme's colour as the
+ * fallback, so a Diamond nobody has coloured is drawn exactly as before.
+ *
+ * A box is a flattened hexagon rather than a rectangle: horizontal top and
+ * bottom, and the two sides kinked out to a point at the middle. Those points
+ * are where the lines meet it, and graph.js computes them from the same two
+ * numbers this file rounds the joins with.
  *
  * The pane is now edited as well as read, so there are three more things to
  * style than there were: the strip of controls above the picture, the menu the
@@ -27,9 +35,9 @@
 	position: relative;
 }
 
-/* The picture is drawn at a fixed scale and panned by scrolling, rather than
-   shrunk to fit: a verification instrument that quietly rescaled itself would
-   make two stores of different sizes look alike. */
+/* The picture is panned by scrolling, and scaled only when asked: an instrument
+   that quietly rescaled itself would make two stores of different sizes look
+   alike, so "All" is a button and never a reflex. */
 .graph-body {
 	flex: 1 1 auto;
 	min-height: 0;
@@ -53,19 +61,28 @@
 
 .graph-node { cursor: pointer; }
 
+/* The box. `--node-bg` is the colour this Diamond was given elsewhere in the
+   app; every rule below keeps the theme's own colour as its fallback, so the
+   two kinds of Diamond differ in one property and not in a ruleset each.
+   `stroke-linejoin: round` is what keeps the six corners from drawing spikes
+   where the sides kink. */
 .graph-node-box {
-	fill: var(--bg-tertiary);
+	fill: var(--node-bg, var(--bg-tertiary));
 	stroke: var(--border-2);
 	stroke-width: 1;
+	stroke-linejoin: round;
 }
+/* Hover moves the outline rather than the fill when a Diamond has a colour of
+   its own -- a chosen colour that changed under the pointer would read as a
+   different Diamond. */
 .graph-node:hover .graph-node-box {
-	fill: var(--bg-hover);
+	fill: var(--node-bg, var(--bg-hover));
 	stroke: var(--accent);
 }
 
 /* An unlinked Diamond is stated, not hidden: the same box, drawn quieter. */
 .graph-node.isolate .graph-node-box {
-	fill: var(--bg-primary);
+	fill: var(--node-bg, var(--bg-primary));
 	stroke: var(--border);
 	stroke-dasharray: 3 3;
 }
@@ -93,11 +110,11 @@
 }
 
 .graph-node-name {
-	fill: var(--text-primary);
+	fill: var(--node-fg, var(--text-primary));
 	font-size: var(--fs-sm);
 	dominant-baseline: alphabetic;
 }
-.graph-node.isolate .graph-node-name { fill: var(--text-secondary); }
+.graph-node.isolate .graph-node-name { fill: var(--node-fg, var(--text-secondary)); }
 
 /* The artefact count: files, pages and chats this Diamond is linked to, which
    are counted rather than drawn so they cannot crowd out the structure. */
@@ -143,19 +160,37 @@
 .graph-arrow.back { fill: var(--warn); }
 .graph-arrow.live { fill: var(--accent); }
 
-/* The relation, sitting on its own line. `paint-order` puts the stroke down
-   first, so the halo is painted UNDER the glyphs rather than over them. */
+/* ── The relation chips ─────────────────────────────────────── */
+/* A link's relations ride its own line as pills, one per relation, stacked when
+   there are several. They are the Diamonds' tag chips in another medium: the
+   same hue per word, the same shape. The halo the bare word used to be painted
+   with is gone with it -- a pill is opaque, so the line runs up to its edge and
+   stops there, which is the join the words never had.
+
+   The type is pinned at 11px rather than taken from `--fs-2xs`. The pill's
+   width is arithmetic in graph.js, done without asking the page how wide the
+   word came out, and type that floated against that arithmetic would sit in a
+   pill of the wrong size. */
+.graph-chip-box {
+	fill: hsl(var(--tag-h, 0) 30% 20%);
+	stroke: hsl(var(--tag-h, 0) 28% 34%);
+	stroke-width: 1;
+}
 .graph-edge-label {
-	fill: var(--text-secondary);
-	font-size: var(--fs-2xs);
+	fill: hsl(var(--tag-h, 0) 55% 78%);
+	font-size: 11px;
 	text-anchor: middle;
-	dominant-baseline: middle;
-	paint-order: stroke;
-	stroke: var(--bg-secondary);
-	stroke-width: 3px;
-	stroke-linejoin: round;
+	dominant-baseline: central;
 	pointer-events: none;
 }
+/* The light themes take the reverse, exactly as `.tag-chip` does in app.css:
+   pale pill, dark lettering, and neither side has to know which relations
+   exist. */
+:root[data-ink="dark"] .graph-chip-box {
+	fill: hsl(var(--tag-h, 0) 70% 94%);
+	stroke: hsl(var(--tag-h, 0) 45% 80%);
+}
+:root[data-ink="dark"] .graph-edge-label { fill: hsl(var(--tag-h, 0) 55% 30%); }
 
 /* ── The live arrow ─────────────────────────────────────────── */
 /* The only moving thing in the pane. It follows the pointer while a link is
@@ -341,13 +376,48 @@
 .graph-edit-input:focus,
 .graph-edit-note:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Why saving is not quite an edit. Said in the form rather than discovered
-   afterwards, because the timestamp is the thing a later reader sorts by. */
-.graph-edit-why {
+/* ── Relations, in the form ─────────────────────────────────── */
+/* The chips on the link, and under the box the ones the store already holds.
+   Both rows scroll rather than grow: the form floats inside the panel card,
+   which clips, and a link given six relations must not push its own buttons off
+   the bottom of it. */
+.graph-rel-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 3px;
+	max-height: 62px;
+	overflow-y: auto;
+}
+.graph-rel-add {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+.graph-rel-add .graph-edit-input { flex: 1 1 auto; min-width: 0; }
+.graph-rel-add .graph-btn { flex: none; padding: 3px 9px; }
+
+.graph-rel-none {
+	font-size: var(--fs-3xs);
+	color: var(--text-muted);
+}
+.graph-rel-pool-lab {
+	margin-top: 8px;
+	font-size: var(--fs-3xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+/* Said when a relation will not fit, beside the box it was refused from. In the
+   warning colour and not the muted one: it is the reason a save did not happen,
+   which is not a footnote. */
+.graph-rel-hint {
 	margin-top: 7px;
 	font-size: var(--fs-3xs);
 	line-height: 1.45;
-	color: var(--text-muted);
+	color: var(--warn);
 }
 
 .graph-edit-row {

@@ -115,16 +115,56 @@ try {
 	}, id);
 	await p.waitForSelector('.tile-dlg-card .trig-add', { timeout: 8000 });
 
-	// ══ A fresh Diamond has no actions ════════════════════════════════
+	// ══ A fresh Diamond has no actions, and says so with ONE button ═══
+	//
+	// notes3: "should simply show the plus icon button when no TAs are
+	// registered, and reveal the pulldown when clicked". Most Diamonds never have
+	// a triggered action, and for those the section was a pulldown, a kind
+	// chooser and a paragraph explaining that none of them had anything to do.
+	// So what is asserted is the whole of the section: one control, and nothing
+	// beside it.
 	{
 		const a = await area();
 		check(a.options.length === 0,
 			'a new Diamond starts with no actions, so there is nothing to choose',
 			a.options.join(' | ') || '(none)');
+		const bare = await p.evaluate(() => {
+			const host = document.querySelector('.tile-dlg-card .trig-list');
+			if (!host) return null;
+			const ctl = [...host.querySelectorAll('button, select, input, textarea')];
+			return {
+				controls: ctl.map(c => (c.textContent || '').trim() || c.tagName.toLowerCase()),
+				kinds: host.querySelectorAll('select').length,
+				// The explanatory line about triggers.json: worth saying once there
+				// IS a file to look in, and noise before that.
+				noteShown: [...document.querySelectorAll('.tile-dlg-card .tile-dlg-note')]
+					.some(n => /triggers\.json/.test(n.textContent || '')
+						&& n.style.display !== 'none'),
+			};
+		});
+		check(bare && bare.controls.length === 1 && bare.controls[0] === '+',
+			'and the section is a + and nothing else',
+			bare && JSON.stringify(bare.controls));
+		check(bare && bare.kinds === 0,
+			'with no kind pulldown standing open over an empty section',
+			bare && String(bare.kinds));
+		check(bare && !bare.noteShown,
+			'and nothing explaining where actions are kept, because there is no file yet');
 	}
 
 	// ══ 2. + adds AND chooses ═════════════════════════════════════════
+	//
+	// On an empty section the first press REVEALS the kind pulldown rather than
+	// creating anything -- what sets an action off is decided when it is made,
+	// and a + that quietly chose would put the mail case behind an action you
+	// then have to delete. So: press until the chooser is there, choose, press.
 	async function add(kind) {
+		await p.evaluate(() => {
+			if (document.querySelector('.tile-dlg-card .trig-add select')) return;
+			const plus = document.querySelector('.tile-dlg-card .trig-add button');
+			if (plus) plus.click();
+		});
+		await p.waitForSelector('.tile-dlg-card .trig-add select', { timeout: 6000 });
 		await p.evaluate((k) => {
 			const sel = document.querySelector('.tile-dlg-card .trig-add select');
 			sel.value = k;
@@ -132,6 +172,24 @@ try {
 			document.querySelector('.tile-dlg-card .trig-add button').click();
 		}, kind);
 		await p.waitForTimeout(400);
+	}
+
+	// The reveal itself, asserted once: pressing + on an empty section must not
+	// register an action. A + that created one would make the check above pass
+	// and the user's first press irreversible.
+	{
+		await p.evaluate(() => {
+			const plus = document.querySelector('.tile-dlg-card .trig-add button');
+			if (plus) plus.click();
+		});
+		await p.waitForTimeout(300);
+		const a = await area();
+		const revealed = await p.evaluate(() =>
+			!!document.querySelector('.tile-dlg-card .trig-add select'));
+		check(revealed, 'pressing + on an empty section reveals the kind pulldown');
+		check(a.options.length === 0,
+			'and registers nothing until a kind has been chosen -- the first press is not a commitment',
+			a.options.join(' | ') || '(none)');
 	}
 
 	await add('activity');

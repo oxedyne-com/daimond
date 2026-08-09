@@ -23,6 +23,20 @@
 	'common.cancel':       'キャンセル',
 	'common.save':         '保存',
 
+	// 識別子のコピー。`copy.aria` が各 `what_` を包むので、読み上げは
+	// 「ビルド IDをコピー」となり、五つのボタンが揃って「コピー」と
+	// 名乗ることがありません。`{what}` は仮名で終わることも欧文で終わる
+	// こともあるので、を の前に空白は入れません。
+	'copy.aria':               '{what}をコピー',
+	'copy.failed':             'コピーできませんでした',
+	'copy.nothing':            'コピーするものがありません',
+	'copy.what_build':         'ビルド ID',
+	'copy.what_build_n':       'ビルド ID {id}',
+	'copy.what_fingerprint':   'アカウントのフィンガープリント',
+	'copy.what_device':        '{name} の ID',
+	'copy.what_model':         'モデル ID {id}',
+	'copy.what_default_model': '既定のモデル ID',
+
 	// ── 上部バー ───────────────────────────────────────────────
 	'topbar.menu':        'メニュー',
 	'topbar.open_menu':   'メニューを開く',
@@ -158,7 +172,7 @@
 	'models.remove':               '{provider} を削除',
 	'models.starts_on':            '新しいチャットの開始モデル：{model}',
 	'models.no_default':           '既定のモデルがまだありません — 上のどれかに星を付けてください。',
-	'models.none_yet':             'モデルがまだありません — モデルの設定でプロバイダーの鍵を追加してください',
+	'models.none_yet':             'プロバイダーなし',
 	'models.err_refused':          'アカウントサービスに拒否されました（HTTP {status}）。',
 	'models.err_bad_key':          'アカウントサービスが、Daimond では使えない鍵を返しました。',
 	'models.err_no_key':           'そのプロバイダーにはまだ鍵がありません。',
@@ -972,6 +986,10 @@
 	'devices.rename_body':  'ほかの端末と見分けられるよう、この端末には好きな名前を付けられます。空欄のままにすると「{derived}」に戻ります。名前は暗号化されたデータと一緒に保存され、ご自身のほかの端末にだけ届きます。',
 	'devices.rename_aria':  '{name}の名前を変更',
 	'devices.note':        'これらの端末がこのアカウントを同期しています。一度でも同期した端末がここに出るので、アカウントを持っていてもまだ同期していない端末は載りません。ここから端末をサインアウトさせることはできません。つながった端末はこの端末と同じ鍵を持っているので、その端末自身で対処してください。',
+	'devices.remove_aria': '{name} を一覧から外す',
+	'devices.remove_body': '「{name}」をこの一覧から外します。その端末をサインアウトさせるわけではありません。つながった端末はこの端末と同じ鍵を持っているので、まだ使われていれば、次に同期したときに自分でまた並びます。',
+	'devices.remove':      '外す',
+	'devices.remove_title': 'この端末を一覧から外す',
 
 	// ── レールの下の状態行 ─────────────────────────────────────
 	'astat.offline':             'オフライン',
@@ -1064,6 +1082,11 @@
 	'tile.fold_all':       'すべてたたむ',
 	'tile.folded_help':    'すでに「{name}」にたたまれています。もう一度たたむと、その後の分を足せます。',
 	'tile.fold_all_help':  'このチャット全体を Diamond にたたみ込みます',
+	'tile.dlg_colour':     '色',
+	'tile.colour_bg':      '背景',
+	'tile.colour_fg':      '文字',
+	'tile.colour_clear':   'テーマの色に戻す',
+	'tile.colour_faint':   'この二色は一緒だと読みにくいです — {ratio}:1 で、この大きさの文字なら {min}:1 が普通の下限です。選んだままにしてあります。',
 
 	// ── 支出のガバナー ─────────────────────────────────────────
 	'gov.past_budget': '1 回の予算を大きく超えています',
@@ -1681,7 +1704,7 @@
 	'tile.model_workers': 'ワーカー',
 	'tile.model_vision': 'ワーカー（画像）',
 	'tile.model_vision_help': 'タスクが画像を指しているときにワーカーが使うモデルです。Daimond はモデルが画像を見られるか確認できないので、選択はあなたに委ねられます。',
-	'tile.model_same_as_text': 'テキストモデルと同じ',
+	'tile.model_same_as_text': 'ダイモンと同じ',
 	'tile.model_none': 'なし',
 	'tile.diamond_model_help': 'この Diamond は {model} で考えます。',
 	'tile.model_note': 'ワーカーは開始時のモデルを保ちます。新しいモデルは次に送り出されるものから適用されます。',
@@ -1767,6 +1790,7 @@
 	'trig.context': 'コンテキスト',
 	'trig.context_ph': '初回に必要な背景、そして初回にだけ必要な背景…',
 	'trig.context_note': '最初の指示の前に一度だけ送られます。変更するとまた送られます。',
+	'trig.section': 'きっかけで動くアクション',
 	'role.compactor': 'コンテキストの折りたたみ',
 	'role.compactor_help': 'ウィンドウを超えた会話を要約します。その答えがチャットの記憶になります。',
 	'settings.fold_model': '折りたたみに使うモデル',

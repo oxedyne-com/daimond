@@ -190,15 +190,23 @@
    the one that was being lost, and it is the way to the theme, the skin and the
    reading size -- the bar itself gets smaller: a shorter wordmark, tighter gaps
    and the compact 34px touch box. Everything stays reachable. */
-/* A Diamond's model rows stack below the phone breakpoint.
-   The label holds a fixed 116px so three pulldowns line up their left edges —
+/* A Diamond's labelled rows stack below the phone breakpoint.
+   The label holds a fixed 116px so the pulldowns line up their left edges —
    which is right on a desktop and wrong at 380px, where 116 plus the gap leaves
    the select too narrow for its own text and it overflowed the card by 19px.
    `verify_raildialogs` measured it at warm-dark-380. Stacked, each control gets
-   the whole width and the column they were lining up for is moot. */
+   the whole width and the column they were lining up for is moot.
+   Every name the rows and their labels go by is listed. Miss one and that row
+   alone keeps its 116px column and overflows the card exactly as before —
+   which is why the colour rows are named here as well as the model rows. */
 @media (max-width: 760px) {
+	.tile-dlg-field,
 	.tile-dlg-model { flex-direction: column; align-items: stretch; gap: 4px; }
+	.tile-dlg-label,
 	.tile-dlg-model .tile-model-chip { flex: 0 0 auto; width: auto; text-align: left; }
+	/* A swatch stretched to the card's width is a colour BAR, not a chip a
+	   thumb presses; it keeps its size and sits at the start of its own row. */
+	.tile-dlg-swatch { align-self: flex-start; }
 }
 
 @media (max-width: 360px) {

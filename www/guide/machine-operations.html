@@ -38,7 +38,7 @@
 	<h1>Machine Operations</h1>
 	<p class="lede">Daimond can run programs on your computer — a build, a test suite, a linter, a script — inside a compartment the kernel enforces. It is free, it is two commands at a terminal, and it works on Linux only. Read the box below before you type either of them.</p>
 
-	<div class="note stop"><strong>A snap or flatpak browser cannot do this, and cannot be made to.</strong> The installer detects one and refuses rather than writing into it, so you will meet this before you meet anything else — and on Ubuntu the default Chromium is a snap. <a href="#browser">Why, and what to install instead</a>.</div>
+	<div class="note stop"><strong>A snap or flatpak browser cannot do this, and cannot be made to.</strong> The installer detects one and refuses rather than writing into it, so you will meet this before you meet anything else — and on Ubuntu the default Chromium is a snap. <a href="#s2">Why, and what to install instead</a>.</div>
 
 	<h2 id="s1">Before you start</h2>
 	<p>Three things decide whether any of this will work. Checking them takes a minute; discovering them afterwards takes an hour, because the error the browser reports names none of them.</p>
@@ -56,7 +56,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>The installer writes one small file into the browser's profile directory, and that directory is created the first time the browser starts. Install a browser, never open it, and <code>install.sh</code> reports finding nothing — correctly, because there is nothing there yet.</p>
 
 	<h3 id="s4">3. Linux, with Landlock in the kernel</h3>
-	<p>The compartment is Landlock and seccomp, and both are Linux. Landlock arrived in Linux 5.13; <a href="#systems">Unconventional systems</a> sets out what older and unusual machines get. The hand does build and run on macOS and Windows, and will introduce itself to the page — but it reports that it can fence nothing, and Daimond then refuses every command rather than run one unfenced. The refusal names what is missing: macOS wants a sandbox profile applied through <code>sandbox_exec</code>, or App Sandbox entitlements if the hand ever ships in a bundle; Windows wants a Job Object to bound the process tree and an AppContainer SID to bound what it may open. Neither is built.</p>
+	<p>The compartment is Landlock and seccomp, and both are Linux. Landlock arrived in Linux 5.13; <a href="#s29">Unconventional systems</a> sets out what older and unusual machines get. The hand does build and run on macOS and Windows, and will introduce itself to the page — but it reports that it can fence nothing, and Daimond then refuses every command rather than run one unfenced. The refusal names what is missing: macOS wants a sandbox profile applied through <code>sandbox_exec</code>, or App Sandbox entitlements if the hand ever ships in a bundle; Windows wants a Job Object to bound the process tree and an AppContainer SID to bound what it may open. Neither is built.</p>
 
 	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your Daimond account is a signing key held in the browser you made it in. The passphrase does not recreate that key — it only decrypts the copy already stored there — so entering the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. Before you retire the old browser, do both of these in it:
 		<ul>
@@ -124,7 +124,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	</ul>
 	<p>Anything else is a whole sentence naming the path, the cause and the fix, because the hand has nowhere to print a code that anyone could look up.</p>
 	<pre><code>hand/target/release/daimond-hand --report</code></pre>
-	<p>prints what the compartment can actually enforce on <em>this</em> kernel and — at greater length — what it cannot. Read the second list rather than skimming it: on a kernel below Linux 7.1 it includes <a href="#sockets">a way out of the compartment entirely</a>. It also names the folder from <code>root.txt</code>, so a stale one shows up here rather than at the first command.</p>
+	<p>prints what the compartment can actually enforce on <em>this</em> kernel and — at greater length — what it cannot. Read the second list rather than skimming it: on a kernel below Linux 7.1 it includes <a href="#s20">a way out of the compartment entirely</a>. It also names the folder from <code>root.txt</code>, so a stale one shows up here rather than at the first command.</p>
 
 	<h3 id="s14">Read the journal</h3>
 	<pre><code>tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
@@ -227,7 +227,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s31">Partly</h3>
 	<ul>
 		<li><strong>Linux 5.13 to 6.6.</strong> Files are fenced, but Landlock has no network rules before Linux 6.7. So a command that would have to run with the network withheld is refused outright, with a sentence saying so, rather than run with the network it was supposed to lose. In practice that means Bypass works, and Guarded works until the turn reads something.</li>
-		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code>/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code>/snap</code> is granted, so a program installed that way is refused. What your distribution put under <code>/usr</code> is reachable in the same session. This is about the programs a command runs; a browser packaged that way is a separate problem, and a fatal one — see <a href="#browser">Before you start</a>.</li>
+		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code>/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code>/snap</code> is granted, so a program installed that way is refused. What your distribution put under <code>/usr</code> is reachable in the same session. This is about the programs a command runs; a browser packaged that way is a separate problem, and a fatal one — see <a href="#s2">Before you start</a>.</li>
 		<li><strong>Version managers other than the two that are known.</strong> The toolchain paths are a fixed list, and <code>~/.nvm</code> and <code>~/.pyenv</code> are the only version managers on it. <code>asdf</code>, <code>mise</code>, <code>volta</code>, <code>rbenv</code> and <code>sdkman</code> keep what they install under <code>~/.asdf</code>, <code>~/.local/share</code>, <code>~/.volta</code>, <code>~/.rbenv</code> and <code>~/.sdkman</code>, and none of those is granted by anything — including the Python grant, which covers <code>~/.local/bin</code> and <code>~/.local/lib</code> and pointedly not <code>~/.local/share</code>.</li>
 	</ul>
 

@@ -1452,6 +1452,11 @@ import init, {
 	// mergeDevices for why it cannot ride on `seen`.
 	var DEVICE_ID_KEY  = 'daimond-device-id';	// this device's own id
 	var DEVICES_KEY    = 'daimond-devices';		// the merged roster: id -> { name, label, created, namedAt, seen }
+	// Devices taken off the list on purpose. The roster is a UNION merge, so a
+	// line dropped here is simply handed back by the next parcel that carries it;
+	// a tombstone is how the removal survives that, exactly as it does for chats
+	// and Diamonds. What it is NOT is a revocation — see `removeDevice`.
+	var DEVICE_TOMBS_KEY = 'daimond-device-tombs';
 	// A name typed into the pairing dialog on a device that has no roster line
 	// yet. pairing.js writes it; the first collect here takes it and clears it.
 	var DEVICE_PAIR_LABEL_KEY = 'daimond-pair-label';
@@ -1599,14 +1604,44 @@ import init, {
 		return String(v).trim().slice(0, DEVICE_NAME_MAX);
 	}
 
-	/// The stored roster, with anything that is not a device dropped.
+	/// Whether a line has been removed and has not been heard from since.
+	///
+	/// The comparison is against `seen`, not a flat "is it tombstoned". A device
+	/// that is still in use refreshes its own stamp, and a line stamped AFTER the
+	/// removal is that device saying it is still here — which the list has to
+	/// show, because pretending otherwise is the dishonesty this whole section is
+	/// written to avoid.
+	function deviceRemoved(tombs, id, seen) {
+		return !!tombs[id] && ms(seen) <= tombs[id];
+	}
+
+	/// The stored roster, with anything that is not a device dropped, and
+	/// anything removed on purpose left out.
 	function loadDevices() {
 		var raw = readJson(DEVICES_KEY, {}), out = {};
 		if (!raw || typeof raw !== 'object') return out;
+		var tombs = loadTombMap(DEVICE_TOMBS_KEY);
 		Object.keys(raw).forEach(function (id) {
-			if (DEVICE_ID_RE.test(id) && raw[id] && typeof raw[id] === 'object') out[id] = deviceEntry(raw[id]);
+			if (!DEVICE_ID_RE.test(id) || !raw[id] || typeof raw[id] !== 'object') return;
+			if (deviceRemoved(tombs, id, raw[id].seen)) return;
+			out[id] = deviceEntry(raw[id]);
 		});
 		return out;
+	}
+
+	/// Take a device off the list.
+	///
+	/// It removes a LINE, and nothing more. Pairing hands the second device the
+	/// same keypair, so there is nothing here that could sign one out; what this
+	/// answers is the smaller and real complaint that the list fills with machines
+	/// the user no longer has. A device still in use writes itself back on its
+	/// next sync, and that is the honest outcome rather than a bug.
+	function removeDevice(id) {
+		if (!id || id === deviceId()) return null;	// this device would only re-mint itself
+		tombstoneIn(DEVICE_TOMBS_KEY, id);
+		var reg = loadDevices();
+		delete reg[id];
+		return saveDevices(reg);
 	}
 
 	/// Write the roster back, and return what was written.
@@ -1693,11 +1728,16 @@ import init, {
 	/// would win and the name would vanish, on the very device it was meant for.
 	/// With its own stamp the two decisions cross in either direction — the phone
 	/// keeps saying where it has been, the laptop keeps saying what it is called.
+	///
+	/// A removal is honoured here as well as in `loadDevices`, or the union would
+	/// hand the line straight back on the pull that carried it.
 	function mergeDevices(incoming) {
 		if (!incoming || typeof incoming !== 'object') return;
 		var reg = loadDevices(), changed = false;
+		var tombs = loadTombMap(DEVICE_TOMBS_KEY);
 		Object.keys(incoming).forEach(function (id) {
 			if (!DEVICE_ID_RE.test(id) || !incoming[id] || typeof incoming[id] !== 'object') return;
+			if (deviceRemoved(tombs, id, incoming[id].seen)) return;
 			var r = deviceEntry(incoming[id]), mine = reg[id];
 			if (!mine) { reg[id] = r; changed = true; return; }
 			// Strictly newer, like `seen`, and for the same reason: an equal stamp
@@ -2437,6 +2477,9 @@ import init, {
 			// device's own stamp only moves when it is stale, so the parcel is the
 			// same bytes between real changes and the push skip still holds.
 			devices:      collectDevices(),
+			// And which lines were taken off the list on purpose, so a removal on
+			// one device is not undone by the next parcel from the other.
+			deviceTombs:  loadTombMap(DEVICE_TOMBS_KEY),
 			// What the account has spent, turn by turn.
 			//
 			// The provider keys and their credit bases already travel, so without
@@ -2521,7 +2564,13 @@ import init, {
 		// The roster first: it is pure localStorage, and doing it here means a
 		// Diamond or a file failing below never costs the user the answer to "how
 		// many devices". A parcel without a given field is a no-op throughout.
-		await section('devices',  function () { mergeDevices(remote.devices); });
+		await section('devices',  function () {
+			// The tombstones first: `mergeDevices` reads them to decide what may
+			// union back in, so one arriving in this parcel has to be stored before
+			// the roster it applies to is merged.
+			mergeTombMap(DEVICE_TOMBS_KEY, remote.deviceTombs);
+			mergeDevices(remote.devices);
+		});
 		// Read before any section runs: `applyFiles` commits a new fork point on its way
 		// out, so a later reader gets this round's own state rather than the one both
 		// devices last agreed on.
@@ -3077,6 +3126,9 @@ import init, {
 			// Likewise the version row in the rail's status block, which release.js
 			// draws from its own strings.
 			try { if (window.DaimondRelease) DaimondRelease.paintRow(); } catch (e) { /* no log */ }
+			// And the copy button beside that row, which carries its spoken name
+			// rather than reading it, so nothing else would ever put it right.
+			try { mountBuildCopy(); } catch (e) { /* the rail is not up yet */ }
 			// And the two lists in the rail, which say "No Diamonds yet." and "No
 			// chats yet." to an empty account -- as permanently on screen as
 			// anything in the app, and for a new user the FIRST words they read.
@@ -4401,6 +4453,10 @@ import init, {
 	// the rendered HTML) to the clipboard.
 	var COPY_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>';
 	var TICK_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>';
+	// The app's closer, drawn rather than typed. The same path the static markup
+	// uses (www/index.html, every panel head), so a dialog built in JS wears the
+	// identical cross to one written in HTML.
+	var CLOSE_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 	function addMsgCopy(div, text) {
 		var btn = document.createElement('button');
 		btn.className = 'msg-copy';
@@ -4413,6 +4469,126 @@ import init, {
 			if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(flash, function () {});
 		});
 		div.appendChild(btn);
+	}
+
+	// ── Copying an identifier ──────────────────────────────────
+	//
+	// A build id, a fingerprint, a device id: strings a person cannot usefully
+	// retype and regularly has to hand on -- into a bug report, a support
+	// message, a config file, the other device. Every one of them gets the SAME
+	// button from the one function below, so the behaviour, the icon, the
+	// feedback and the spoken name are decided in a single place.
+
+	/// Put `text` on the clipboard, resolving when it is there.
+	///
+	/// `navigator.clipboard` is refused often enough on a phone -- an insecure
+	/// context, a locked page, a permission never granted -- that a button which
+	/// only tries it is a button that sometimes does nothing and reports success.
+	/// The select-and-copy `fallback` below is what makes it honest.
+	function copyToClipboard(text) {
+		return new Promise(function (resolve, reject) {
+			var s = String(text == null ? '' : text);
+			if (!s) { reject(new Error('nothing to copy')); return; }
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				navigator.clipboard.writeText(s).then(resolve, function () {
+					fallback(s, resolve, reject);
+				});
+			} else { fallback(s, resolve, reject); }
+		});
+	}
+
+	/// Say something to a screen reader without putting it on the screen.
+	///
+	/// The copy buttons are icon-only and their feedback is a tick, which is
+	/// nothing at all to a reader that does not see. The region is polite, so it
+	/// waits its turn rather than cutting across whatever is being read.
+	function sayQuietly(msg) {
+		var out = document.getElementById('copy-say');
+		if (!out) return;
+		// Cleared first: the same word twice running is otherwise announced once,
+		// and pressing two copy buttons in a row is the ordinary case here.
+		out.textContent = '';
+		setTimeout(function () { out.textContent = msg; }, 30);
+	}
+
+	/// A small button that copies one identifier.
+	///
+	/// `what` names the value for a screen reader -- "the build id", "the id of
+	/// Chrome on macOS" -- because a panel of five buttons all called "Copy"
+	/// teaches a listener nothing about which is which.
+	///
+	/// `get` may be a string or a function. A function is read at the press, so a
+	/// value that changes after the button was drawn (the build this tab runs, a
+	/// renamed device) is copied as it stands rather than as it was.
+	///
+	/// The tick replaces the icon in place -- same 24-unit grid, same box -- so
+	/// the confirmation never moves what sits beside it.
+	function idCopyBtn(what, get) {
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'copy-id';
+		var name = tOr('copy.aria', 'Copy {what}', { what: what });
+		b.title = name;
+		b.setAttribute('aria-label', name);
+		b.innerHTML = COPY_SVG;			// trusted markup, built here
+		var back = null;
+		function settle(cls, said) {
+			if (back) clearTimeout(back);
+			b.classList.remove('copied', 'failed');
+			b.classList.add(cls);
+			b.innerHTML = cls === 'copied' ? TICK_SVG : COPY_SVG;
+			sayQuietly(said);
+			back = setTimeout(function () {
+				b.classList.remove('copied', 'failed');
+				b.innerHTML = COPY_SVG;
+				back = null;
+			}, 1400);
+		}
+		b.addEventListener('click', function (e) {
+			// Several of these sit inside or beside a row that is itself a button.
+			// Copying must not also open what the row opens.
+			e.preventDefault();
+			e.stopPropagation();
+			var text = typeof get === 'function' ? get() : get;
+			text = String(text == null ? '' : text);
+			if (!text) { settle('failed', tOr('copy.nothing', 'Nothing to copy')); return; }
+			copyToClipboard(text).then(function () {
+				settle('copied', t('toast.copied'));
+			}, function () {
+				settle('failed', tOr('copy.failed', 'Could not copy'));
+			});
+		});
+		return b;
+	}
+
+	/// Put (or replace) the copy button beside the rail's version row.
+	///
+	/// Rebuilt rather than relabelled when the language changes: a button's
+	/// spoken name is written into it when it is made, so the one made at boot
+	/// would keep the language the app booted in for the rest of the session.
+	function mountBuildCopy() {
+		var host = document.getElementById('astat-release-copy');
+		if (!host) return;
+		host.innerHTML = '';
+		host.appendChild(idCopyBtn(tOr('copy.what_build', 'the build id'), buildId));
+	}
+
+	/// The build id THIS TAB is running, or '' before anything has read it.
+	///
+	/// The log entry is preferred because it is the id that has been published;
+	/// the updater's stamp is the same string read straight from `build.json`,
+	/// and is the answer whenever the app is running something the log has not
+	/// caught up with -- which is most of the time, since builds are sealed
+	/// several times a day.
+	function buildId() {
+		try {
+			var cur = window.DaimondRelease && DaimondRelease.current();
+			if (cur && cur.build) return cur.build;
+		} catch (e) { /* the log has not been read */ }
+		try {
+			if (window.DaimondUpdater && DaimondUpdater.booted()) return DaimondUpdater.booted();
+		} catch (e) { /* the updater has not polled */ }
+		return '';
 	}
 
 	// ── Turns ──────────────────────────────────────────────────
@@ -5530,9 +5706,37 @@ import init, {
 			if (pushView) pushView.style.display = 'none';
 			curView = releaseView;
 			releaseView.style.display = '';
-			if (window.DaimondRelease) DaimondRelease.render(document.getElementById('rel-list'));
+			if (window.DaimondRelease) {
+				var relList = document.getElementById('rel-list');
+				var drawn = DaimondRelease.render(relList);
+				// The build ids in the history are the strings a bug report quotes,
+				// so each gets the same button the rest of the app uses. Applied
+				// after the render rather than inside it: the rows come from the
+				// transparency log, and decorating them here keeps ONE copy helper
+				// for the whole app instead of a second one alongside it.
+				if (drawn && drawn.then) {
+					drawn.then(function () { addBuildCopies(relList); }, function () { /* no log */ });
+				} else { addBuildCopies(relList); }
+			}
 			if (available()) { toPanel(); showDrawer(t('drawer.version')); }
 			else toModal(t('drawer.version'));
+		}
+
+		/// Put a copy button beside every build id in the version history.
+		function addBuildCopies(list) {
+			if (!list) return;
+			var codes = list.querySelectorAll('.rel-build-head code, .rel-meta code');
+			for (var i = 0; i < codes.length; i++) {
+				var c = codes[i];
+				var id = (c.textContent || '').trim();
+				if (!id) continue;
+				// Named by the id itself: a panel can hold twenty of these, and
+				// twenty buttons called "Copy build id" tell a listener nothing
+				// about which build each one is.
+				c.parentNode.insertBefore(
+					idCopyBtn(tOr('copy.what_build_n', 'build {id}', { id: id }), id),
+					c.nextSibling);
+			}
 		}
 
 		/// Show the credits. They used to sit under the model settings, in one form that answered
@@ -5743,8 +5947,16 @@ import init, {
 			homeView.appendChild(el('div', 'admin-sec', t('home.sec_account')));
 			var fp = DaimondIdentity.fingerprint();
 			if (fp) {
-				var f = el('div', 'account-fp', fp);
+				// The fingerprint is a hash of the PUBLIC key, so it is safe to hand
+				// on -- and handing it on is the point: it is what tells a support
+				// message which account it is about. The value moves into a span of
+				// its own so the button can sit beside it without the ellipsis
+				// eating it on a narrow rail.
+				var f = el('div', 'account-fp');
 				f.title = t('home.fingerprint');
+				f.appendChild(el('span', 'account-fp-val', fp));
+				f.appendChild(idCopyBtn(tOr('copy.what_fingerprint',
+					'your account fingerprint'), fp));
 				homeView.appendChild(f);
 			}
 			item(t('home.change_name'),       doRename);
@@ -5917,10 +6129,13 @@ import init, {
 		/// The devices that sync this account: this one first, then the rest by
 		/// how recently they were seen.
 		///
-		/// The one thing a row can DO is take a name. Pairing hands the second
-		/// device the SAME keypair, so there is nothing here that a "remove" could
-		/// enforce — the honest surface is a list, a sentence, and the one control
-		/// that changes something real. The short id suffix stays even for a named
+		/// A row takes a name, and can be taken off the list. The second control
+		/// was withheld for a long time on the reasoning that pairing hands the
+		/// other device the same keypair, so nothing here could enforce a
+		/// revocation and a button pretending to would be worse than none. That
+		/// reasoning holds and the button does not claim otherwise: what it fixes
+		/// is a list filling with machines the user has not owned for a year, which
+		/// is what the author asked for. The short id suffix stays even for a named
 		/// device: it is what tells two lines apart while they are both still
 		/// called "Chrome on macOS".
 		function renderDevices() {
@@ -5940,6 +6155,14 @@ import init, {
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
+				// The row shows the last four characters, which is all that is
+				// needed to tell two lines apart; the button copies the WHOLE id,
+				// which is what a support message or a sync question actually
+				// needs. The id is a random number this device wrote down for this
+				// account -- it authorises nothing, and it is already in the roster
+				// every paired device holds.
+				r.appendChild(idCopyBtn(tOr('copy.what_device', 'the id of {name}',
+					{ name: shown }), id));
 				// Every row, not only this device's: the name carries a stamp of
 				// its own, so one typed here reaches the device it names.
 				var b = document.createElement('button');
@@ -5950,6 +6173,19 @@ import init, {
 				b.setAttribute('aria-label', b.title);
 				b.addEventListener('click', function () { askDeviceName(id); });
 				r.appendChild(b);
+				// Not on this device's own row. Removing the line the app is
+				// writing would only re-mint it on the next collect, so the
+				// control would do nothing and look broken.
+				if (id !== self) {
+					var rm = document.createElement('button');
+					rm.className = 'device-remove';
+					rm.type = 'button';
+					rm.textContent = '✕';
+					rm.title = tOr('devices.remove_aria', 'Remove {name}', { name: shown });
+					rm.setAttribute('aria-label', rm.title);
+					rm.addEventListener('click', function () { askRemoveDevice(id, shown); });
+					r.appendChild(rm);
+				}
 				homeView.appendChild(r);
 			});
 			homeView.appendChild(el('div', 'admin-note',
@@ -6076,6 +6312,32 @@ import init, {
 			// The name is the user's own words, so it travels only inside the sealed
 			// parcel — this asks for that parcel to go now rather than at the next
 			// change, and does nothing at all when sync is off.
+			if (window.DaimondSync && DaimondSync.nudge) {
+				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
+			}
+			renderHome();
+		}
+
+		/// Take a device off the list, having said plainly what that does and
+		/// what it does not.
+		///
+		/// The confirm carries the limit rather than hiding it. A person removing
+		/// a device is usually trying to sign it out, and this cannot do that —
+		/// telling them afterwards, when the line reappears, would be the worst
+		/// possible moment to find out.
+		async function askRemoveDevice(id, shown) {
+			var ok = await confirmDialog(
+				tOr('devices.remove_body',
+					'“{name}” comes off this list. It does not sign that device out: a linked '
+					+ 'device holds the same keys as this one, so if it is still in use it will '
+					+ 'put itself back the next time it syncs.', { name: shown }),
+				tOr('devices.remove', 'Remove'),
+				{ title: tOr('devices.remove_title', 'Remove this device'), danger: true });
+			if (!ok) return;
+			removeDevice(id);
+			// The removal travels only inside the sealed parcel; this asks for that
+			// parcel to go now rather than at the next change, and does nothing at
+			// all when sync is off.
 			if (window.DaimondSync && DaimondSync.nudge) {
 				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
 			}
@@ -6525,6 +6787,9 @@ import init, {
 			if (proRowEl) proRowEl.addEventListener('click', showPro);
 			var relRow = document.getElementById('astat-release');
 			if (relRow) relRow.addEventListener('click', release);
+			// The build id, beside the row that names the version. Its value is
+			// read at the press, not now: nothing has fetched build.json yet.
+			mountBuildCopy();
 			if (window.DaimondRelease) DaimondRelease.paintRow();
 			var pushBtn = document.getElementById('push-save');
 			if (pushBtn) pushBtn.addEventListener('click', function () { savePushCred(); });
@@ -7622,7 +7887,10 @@ import init, {
 		return svg;
 	}
 
-	window.DaimondUI = { pauseWidget: pauseWidget, cogIcon: cogIcon };
+	// `copyBtn` is published for the same reason `cogIcon` is: models.js draws a
+	// surface of its own and must wear the app's control rather than grow a
+	// second one that drifts from it.
+	window.DaimondUI = { pauseWidget: pauseWidget, cogIcon: cogIcon, copyBtn: idCopyBtn };
 
 	// ── The worker pump's hold, folded into the tree ───────────
 	//
@@ -7695,22 +7963,32 @@ import init, {
 
 	// ── The tile's own dialog, and what the cog replaced ───────
 	//
-	// Notes2 replaced the global Compact/Breathe spacing with something aimed
-	// at the real complaint: a power user wants the numbers on screen and a
-	// new user wants a quiet rail. That is a choice per OBJECT, not per app, so
-	// it is made where the object is -- a cog in the top right of every tile,
-	// opening a dialog that carries the tile's pause control, its level of
-	// detail, and, at the foot, Delete.
+	// A cog in the top right of every tile opens a dialog carrying the tile's
+	// pause control, its colours, its models, its triggered actions and, at the
+	// foot, Delete.
 	//
-	// The closer cross is gone. It was `opacity: 0` until hover, which is no
-	// control at all on a phone, and it put the one irreversible act on the
-	// tile's most reachable pixel while opening the tile had no keyboard route
-	// at all. Delete now sits at the foot of a dialog you had to open, behind a
+	// The tile's closer cross is gone. It was `opacity: 0` until hover, which is
+	// no control at all on a phone, and it put the one irreversible act on the
+	// tile's most reachable pixel while opening the tile had no keyboard route at
+	// all. Delete now sits at the foot of a dialog you had to open, behind a
 	// confirm; the cog is what the corner offers instead.
+	//
+	// LEVEL OF DETAIL IS NOT HERE ANY MORE. Simple and Max were a per-tile
+	// override on top of the global view, and the author's ruling in notes3 is
+	// that the two words are global and nothing else: *"Simple and Max are meant
+	// to be global"*. A stored `detail` field is therefore inert — see
+	// `tileDetail`, which no longer reads it — rather than migrated away, because
+	// what a tile that had one needs is to stop being stuck with it, and ignoring
+	// it is exactly that with no boot-time pass to get wrong.
 
 	/// How each tile is drawn, and how it talks: browser-side, per tile id.
 	///
-	/// `{ <tileId>: { detail: 'simple' | 'max', concise: true } }`.
+	/// `{ <tileId>: { bg: '#RRGGBB', fg: '#RRGGBB', concise: true } }`, where an
+	/// absent or empty colour means the theme's own.
+	///
+	/// `bg` and `fg` are a FIXED CONTRACT: the Graph reads this same store to
+	/// paint its nodes, so a Diamond coloured on the rail is the same colour in
+	/// the picture without either surface knowing about the other.
 	///
 	/// Here rather than in the chat record because a chat record is content --
 	/// it goes through `slimChat`'s whitelist, into IndexedDB and out in the
@@ -7720,9 +7998,8 @@ import init, {
 	/// `daimond-diamond-models` is the precedent: a browser-side choice about
 	/// an object, keyed by its id, beside the app rather than inside the store.
 	///
-	/// Deliberately NOT synced. Two devices are two screens, and a phone that
-	/// adopted a desktop's Max view would be the busiest possible rail on the
-	/// smallest possible screen.
+	/// Deliberately NOT synced. What a tile looks like is a fact about the screen
+	/// it is on, and two devices are two screens.
 	var TILE_PREFS_KEY = 'daimond-tile-prefs';
 
 	function tilePrefs() { return readJson(TILE_PREFS_KEY, {}) || {}; }
@@ -7756,43 +8033,78 @@ import init, {
 		try { localStorage.setItem(TILE_PREFS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	}
 
-	/// 'simple' or 'max' for one tile, resolved through the cascade.
+	/// How much a tile draws: `'simple'` or `'max'`, for every tile alike.
 	///
-	/// The global view is the DEFAULT for every tile; a per-tile choice is an
-	/// override that sticks. A tile with no override follows the view, including
-	/// when the view changes later.
-	///
-	/// **A tile stores "unset", never a copy of the view**, and that is the whole
-	/// correctness of this feature. Writing `max` into every tile when the view
-	/// is set to Max would leave them all dense the moment the view went back to
-	/// Simple, and the global control would look broken with no way to explain
-	/// it. `verify_view` proves this by switching the view twice.
-	function tileDetail(id) {
-		var own = tilePref(id).detail;
-		if (own === 'max' || own === 'simple') return own;
-		return (window.DaimondView ? DaimondView.get() : 'simple');
-	}
+	/// The attribute is still written per tile because that is what the
+	/// stylesheet acts on, but there is nothing per tile left to decide — the
+	/// view is the one control, so this is the view.
+	function tileDetail() { return viewNow(); }
 
-	/// Whether this tile is following the view rather than holding its own
-	/// choice, so the dialog can show a real `Default` state.
-	function tileFollows(id) {
-		var own = tilePref(id).detail;
-		return !(own === 'max' || own === 'simple');
-	}
-
-	/// Repaint every tile that is following the view. The ones holding an
-	/// override are deliberately left alone: an override that moved with the
-	/// view would not be an override.
+	/// Repaint every tile after a change of view.
 	function repaintTileDetail() {
 		var boxes = document.querySelectorAll('.session-box[data-id]');
-		for (var i = 0; i < boxes.length; i++) {
-			var id = boxes[i].dataset.id;
-			if (id && tileFollows(id)) boxes[i].dataset.detail = tileDetail(id);
-		}
+		var now = tileDetail();
+		for (var i = 0; i < boxes.length; i++) boxes[i].dataset.detail = now;
 	}
 
 	/// Is this chat's concise chip lit?
 	function tileConcise(id) { return tilePref(id).concise === true; }
+
+	// ── A tile's own colours ──────────────────────────────────
+	//
+	// Notes3: *"allow the user to change the tile background colour and the tile
+	// text colour. The colouring will carry over onto the Graph."* So the pair
+	// lives in the tile preferences, where the Graph can read it, and is applied
+	// here as inline style rather than as a class: a colour chosen from a picker
+	// is a value, and there is no finite set of classes it could come from.
+	//
+	// The text colour is written onto the CHILDREN as well as the box. The
+	// stylesheet names them individually -- `.session-box-name`, `.tile-label`
+	// and the meta spans each set their own `color` -- so a colour on the box
+	// alone would be overridden by every rule that mentions a child, and the tile
+	// would take a background and keep its old text.
+
+	/// `#RRGGBB`, or `''` for anything that is not one. A stored value reaches the
+	/// DOM as style, so it is checked rather than trusted.
+	function tileHex(v) {
+		return (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v)) ? v : '';
+	}
+
+	/// Which elements inside a tile carry their own text colour.
+	var TILE_INK = '.session-box-name, .tile-label, .session-box-ctx, .session-box-time,'
+		+ ' .session-box-cost, .session-box-spend, .tile-model-chip, .tile-row-label';
+
+	/// Paint one tile box from the stored pair. Both empty restores the theme's
+	/// own colours, because clearing an inline style is how a value stops
+	/// applying.
+	function paintTileColour(box, id) {
+		if (!box) return;
+		var p  = tilePref(id);
+		var bg = tileHex(p.bg), fg = tileHex(p.fg);
+		box.style.backgroundColor = bg;
+		box.style.color = fg;
+		// Also as custom properties, so anything drawn into the tile later can ask
+		// the tile what it is rather than reading storage a second time.
+		if (bg) box.style.setProperty('--tile-bg', bg); else box.style.removeProperty('--tile-bg');
+		if (fg) box.style.setProperty('--tile-fg', fg); else box.style.removeProperty('--tile-fg');
+		var ink = box.querySelectorAll(TILE_INK);
+		for (var i = 0; i < ink.length; i++) ink[i].style.color = fg;
+	}
+
+	/// Repaint every box that stands for this id, wherever it is drawn.
+	function applyTileColour(id) {
+		var boxes = document.querySelectorAll('.session-box[data-id="' + cssId(id) + '"]');
+		for (var i = 0; i < boxes.length; i++) paintTileColour(boxes[i], id);
+	}
+
+	/// Say that a tile's colours moved, for the surfaces that draw the same
+	/// object somewhere else. The Graph is the one that asked for it; the event
+	/// is how it hears without the rail knowing the Graph exists.
+	function signalTileColour(id) {
+		try {
+			document.dispatchEvent(new CustomEvent('daimond-tile-colour-changed', { detail: { id: id } }));
+		} catch (e) { /* best effort */ }
+	}
 
 	// A cog, drawn rather than typed. `⚙` is a font's idea of a cog and comes
 	// out as a smudge at 16px in the faces this app ships; the chevrons beside
@@ -7831,7 +8143,7 @@ import init, {
 		return b;
 	}
 
-	/// The tile's dialog: pause, detail, and Delete at the foot.
+	/// The tile's dialog: pause, colours, models, triggers, and Delete at the foot.
 	///
 	/// `opts` is `{ id, name, node, onDelete }` -- `node` being the pause node
 	/// this tile's control binds to. Built here rather than through `dialog()`
@@ -7839,6 +8151,11 @@ import init, {
 	/// column of controls with a destructive act underneath them; it wears the
 	/// same `.modal` furniture so Escape, the backdrop and the focus trap behave
 	/// exactly as they do everywhere else.
+	///
+	/// There is no Done button. A dialog that only holds settings has nothing to
+	/// confirm — everything in it has already taken effect by the time you would
+	/// press it — so the way out is the closer cross in the top right, which is
+	/// what a window of settings looks like everywhere else.
 	var _tileDlgSeq = 0;		// so each dialog's heading id is its own
 
 	function openTileDialog(opts) {
@@ -7849,14 +8166,36 @@ import init, {
 		card.setAttribute('role', 'dialog');
 		card.setAttribute('aria-modal', 'true');
 
+		// The title row: the object's name, and the way out beside it.
+		var top = document.createElement('div');
+		top.className = 'tile-dlg-title';
 		var h = document.createElement('h2');
-		h.textContent = opts.name || t('tile.settings');
+		h.textContent = opts.name || t('tile.settings');   // escaped via textContent (H5)
 		// Named by its own heading. `a11y_report.md` §5 counts every dialog in the
 		// app as an unlabelled div, so a new one does not join them: the words are
 		// already on screen and this is what points the tree at them.
 		h.id = 'tile-dlg-h-' + (++_tileDlgSeq);
 		card.setAttribute('aria-labelledby', h.id);
-		card.appendChild(h);
+		var x = document.createElement('button');
+		x.type = 'button';
+		// `tile-dlg-done` as well, because that class has never meant "the button
+		// that says Done" -- it means "the control that finishes with this
+		// dialog", which is what the rest of the app and the escapability checks
+		// reach for. The cross is that control now.
+		x.className = 'tile-dlg-x tile-dlg-done';
+		// The same drawn cross every other closer in the app wears, and not the '×'
+		// character. The button is a flex-centred 28px square, so the BOX was centred
+		// correctly -- but a glyph's ink is not centred within its own em box, and
+		// which box it gets depends on whichever font the platform found it in.
+		// Centre the ink, not the box: a path on the 24-unit grid is centred by
+		// geometry and cannot drift with the font.
+		x.innerHTML = CLOSE_SVG;		// trusted markup, built here
+		x.title = t('common.close');
+		// The visible character is gone, so the spoken name has to come from here.
+		x.setAttribute('aria-label', t('common.close'));
+		top.appendChild(h);
+		top.appendChild(x);
+		card.appendChild(top);
 
 		// ── Pause. The same widget as the rail and the tile, never a second
 		// drawing of it: two pictures of one state drift the first time either
@@ -7880,50 +8219,8 @@ import init, {
 			card.appendChild(prow);
 		}
 
-		// ── Detail. Two words, and the tile behind the dialog changes as they
-		// are pressed, so the choice is seen rather than described.
-		card.appendChild(secHead(t('tile.dlg_detail')));
-		var seg = document.createElement('div');
-		seg.className = 'tile-dlg-seg';
-		var btns = {};
-		// Three states, not two, and the third is the important one. Without a
-		// `Default` there is no way back to following the view: one tap on a tile
-		// detaches it for ever, and nobody would guess why that tile alone stopped
-		// answering the global control.
-		['default', 'simple', 'max'].forEach(function (level) {
-			var b = document.createElement('button');
-			b.type = 'button';
-			b.className = 'tile-dlg-level';
-			b.dataset.level = level;
-			b.addEventListener('click', function () {
-				if (level === 'default') setTilePref(opts.id, 'detail', null);
-				else setTilePref(opts.id, 'detail', level);
-				paintLevel();
-				applyTileDetail(opts.id);
-			});
-			btns[level] = b;
-			seg.appendChild(b);
-		});
-		function paintLevel() {
-			var follows = tileFollows(opts.id);
-			var now = follows ? 'default' : tileDetail(opts.id);
-			Object.keys(btns).forEach(function (k) {
-				btns[k].setAttribute('aria-pressed', k === now ? 'true' : 'false');
-				btns[k].title = t('tile.detail_' + k + '_help');
-			});
-			// Default says what it currently RESOLVES to, so choosing it is not a
-			// guess about what the app will do next.
-			btns['default'].textContent = t('tile.detail_default',
-				{ what: t('tile.detail_' + (window.DaimondView ? DaimondView.get() : 'simple')) });
-			btns.simple.textContent = t('tile.detail_simple');
-			btns.max.textContent = t('tile.detail_max');
-		}
-		paintLevel();
-		card.appendChild(seg);
-		var note = document.createElement('div');
-		note.className = 'tile-dlg-note';
-		note.textContent = t('tile.detail_note');
-		card.appendChild(note);
+		// ── Colour, which the tile takes at once and the Graph takes with it.
+		mountTileColour(card, opts);
 
 		// ── Models. Only where the object HAS changeable models, which today is a
 		// Diamond: notes2 fixes a chat's models at creation and this dialog is not
@@ -7937,21 +8234,16 @@ import init, {
 		// ── Triggered actions, for a Diamond.
 		if (opts.models === 'diamond') mountTriggers(card, opts);
 
-		// ── The foot. Delete on the left, away from Done, because a foot whose
-		// two buttons sit side by side puts the irreversible one under the thumb
-		// that meant to dismiss.
+		// ── The foot, which is now Delete and nothing else. Done has become the
+		// closer cross above, so the destructive act no longer shares a row with
+		// the thumb that meant to dismiss.
 		var row = document.createElement('div');
 		row.className = 'dlg-actions tile-dlg-foot';
 		var del = document.createElement('button');
 		del.type = 'button';
 		del.className = 'dlg-ok danger tile-dlg-delete';
 		del.textContent = t('tile.dlg_delete');
-		var done = document.createElement('button');
-		done.type = 'button';
-		done.className = 'modal-close dlg-cancel tile-dlg-done';
-		done.textContent = t('dlg.done');
 		row.appendChild(del);
-		row.appendChild(done);
 		card.appendChild(row);
 
 		back.appendChild(card);
@@ -7974,15 +8266,180 @@ import init, {
 		}
 		document.addEventListener('keydown', onKey, true);
 		back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
-		done.addEventListener('click', close);
+		x.addEventListener('click', close);
 		del.addEventListener('click', async function () {
 			// The dialog goes first: a confirm drawn over its own opener reads as
 			// two modals, and the answer is about the tile, not about the dialog.
 			close();
 			await opts.onDelete();
 		});
-		done.focus();
+		// The way out takes the focus, as Done used to: it is the control a reader
+		// arriving by keyboard most likely wants, and it is the one Escape mirrors.
+		x.focus();
 		return { card: card, close: close };
+	}
+
+	/// The tile's two colours, and a way back to the theme's own.
+	///
+	/// A native colour input is used rather than a palette of swatches. The
+	/// author asked for "the tile background colour and the tile text colour",
+	/// not for a set of approved ones, and every platform already has a picker
+	/// that people know how to drive — including one that reads out on a phone.
+	///
+	/// The tile behind the dialog changes as the picker moves, because a colour
+	/// described in a preview box is a colour you have to imagine against the
+	/// rail; the rail is right there.
+	function mountTileColour(card, opts) {
+		card.appendChild(secHead(tOr('tile.dlg_colour', 'Colour')));
+
+		/// One labelled picker. `field` is `'bg'` or `'fg'`.
+		function pick(field, labelText, fallback) {
+			var r = document.createElement('div');
+			r.className = 'tile-dlg-field tile-dlg-colour';
+			var lab = document.createElement('label');
+			lab.className = 'tile-dlg-label';
+			lab.textContent = labelText;
+			lab.htmlFor = 'tile-col-' + field + '-' + _tileDlgSeq;
+			var inp = document.createElement('input');
+			inp.type = 'color';
+			inp.className = 'tile-dlg-swatch';
+			inp.id = lab.htmlFor;
+			// An unset colour still has to show the picker something, so it shows
+			// what the tile is drawn in now — which is what the user is changing
+			// FROM, and the least surprising place for the picker to open.
+			inp.value = tileHex(tilePref(opts.id)[field]) || fallback;
+			inp.addEventListener('input', function () {
+				setTilePref(opts.id, field, inp.value);
+				applyTileColour(opts.id);
+				signalTileColour(opts.id);
+				sayContrast();
+			});
+			r.appendChild(lab); r.appendChild(inp);
+			card.appendChild(r);
+			return inp;
+		}
+
+		// Read off the tile itself rather than guessed, so the picker opens on the
+		// colour actually on screen in whichever theme and skin is up.
+		var box = document.querySelector('.session-box[data-id="' + cssId(opts.id) + '"]');
+		var seen = box ? getComputedStyle(box) : null;
+		var bgIn = pick('bg', tOr('tile.colour_bg', 'Background'), rgbHex(seen && seen.backgroundColor, '#1b1b1b'));
+		var fgIn = pick('fg', tOr('tile.colour_fg', 'Text'),       rgbHex(seen && seen.color,           '#e6e6e6'));
+
+		// Between the pickers and the way back to the theme's own colours, which is
+		// the one-press remedy: the trouble, and then what undoes it.
+		// `role="status"` so a reader who is not looking at the swatch is told the
+		// sentence has appeared -- politely, and only when it changes.
+		var faint = document.createElement('div');
+		faint.className = 'tile-dlg-note warn';
+		faint.setAttribute('role', 'status');
+		faint.hidden = true;
+		card.appendChild(faint);
+
+		/// Say when the pair now on screen is hard to read, and stop saying it when
+		/// it is not.
+		///
+		/// Whichever colour the user has NOT set is read off the tile rather than
+		/// assumed: there are eleven palettes and both light and dark ink, so a
+		/// guessed default would be wrong more often than right, and would warn
+		/// about pairs that are perfectly legible in the theme that is up.
+		function sayContrast() {
+			var p    = tilePref(opts.id);
+			var live = box ? getComputedStyle(box) : null;
+			var bg   = tileHex(p.bg) || (box ? paintedBg(box) : '');
+			var fg   = tileHex(p.fg) || rgbHex(live && live.color, '');
+			// No tile on screen and nothing stored: there is no pair to judge, and a
+			// warning drawn on a guess is worse than none.
+			if (!bg || !fg) { faint.hidden = true; return; }
+			var r = contrastRatio(bg, fg);
+			if (r >= TILE_CONTRAST_MIN) { faint.hidden = true; return; }
+			var words = tOr('tile.colour_faint',
+				'These two are hard to read together — {ratio}:1, where {min}:1 is the usual floor for text this size. Left as chosen.',
+				{ ratio: r.toFixed(1), min: TILE_CONTRAST_MIN.toFixed(1) });
+			if (faint.textContent !== words) faint.textContent = words;
+			faint.hidden = false;
+		}
+		sayContrast();
+
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-seg';
+		var clear = document.createElement('button');
+		clear.type = 'button';
+		clear.className = 'tile-dlg-level tile-dlg-clear';
+		clear.textContent = tOr('tile.colour_clear', 'Use the theme’s colours');
+		clear.addEventListener('click', function () {
+			setTilePref(opts.id, 'bg', null);
+			setTilePref(opts.id, 'fg', null);
+			applyTileColour(opts.id);
+			signalTileColour(opts.id);
+			// The pickers follow the tile back, or they would go on showing a
+			// colour nothing is painted in.
+			var now = box ? getComputedStyle(box) : null;
+			bgIn.value = rgbHex(now && now.backgroundColor, bgIn.value);
+			fgIn.value = rgbHex(now && now.color, fgIn.value);
+			sayContrast();
+		});
+		row.appendChild(clear);
+		card.appendChild(row);
+	}
+
+	// ── Whether a chosen pair can be read ─────────────────────
+	//
+	// The pickers take any two colours, and black on black is two valid answers.
+	// The ruling is to WARN AND ALLOW: the app does not argue with a deliberate
+	// act, and a colour is about as deliberate as an act gets. So nothing here
+	// blocks, overrides or nudges a value — it puts a sentence under the pickers
+	// and takes it away again when the pair is legible.
+
+	/// Below this ratio the dialog says so. WCAG's floor for ordinary text, and a
+	/// tile IS ordinary text: the name is 13px and the meta line 11px, nowhere
+	/// near the 18pt that would licence the looser 3:1. Warning at 3:1 would stay
+	/// silent through pairs no one can read at that size, and the cost of warning
+	/// too eagerly is one grey sentence, against a tile that cannot be read.
+	var TILE_CONTRAST_MIN = 4.5;
+
+	/// WCAG relative luminance of an `#RRGGBB`.
+	function srgbLum(hex) {
+		var v = [1, 3, 5].map(function (i) {
+			var c = parseInt(hex.substr(i, 2), 16) / 255;
+			return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+		});
+		return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+	}
+
+	/// The WCAG ratio between two `#RRGGBB`, from 1 (the same colour) to 21.
+	function contrastRatio(a, b) {
+		var la = srgbLum(a), lb = srgbLum(b);
+		return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+	}
+
+	/// What is actually painted behind an element: its own background, or the
+	/// first ancestor's that is not see-through.
+	///
+	/// A tile with no colour of its own has a TRANSPARENT background, so reading
+	/// `background-color` off it and stopping there would score every unset tile
+	/// against `rgba(0,0,0,0)` — black — and warn about pairs the reader can see
+	/// perfectly well. A partly transparent ground is taken at face value rather
+	/// than blended, which is close enough to decide a threshold on and is the
+	/// only case here that is an approximation.
+	function paintedBg(el) {
+		for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+			var c = rgbHex(getComputedStyle(n).backgroundColor, '');
+			if (c) return c;
+		}
+		return rgbHex(getComputedStyle(document.body).backgroundColor, '#1b1b1b');
+	}
+
+	/// A computed `rgb(...)` or `rgba(...)` as `#RRGGBB`, or `fallback` for
+	/// anything a colour input cannot open on: another colour space, or fully
+	/// transparent, whose channels are `0 0 0` and would offer black.
+	function rgbHex(v, fallback) {
+		var m = /^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/.exec(String(v || ''));
+		if (!m) return fallback;
+		if (m[4] !== undefined && Number(m[4]) === 0) return fallback;
+		return '#' + [1, 2, 3].map(function (i) {
+			return ('0' + (Number(m[i]) & 255).toString(16)).slice(-2);
+		}).join('');
 	}
 
 	/// How full this conversation is, where it will fold, and a way to fold it now.
@@ -8095,9 +8552,15 @@ import init, {
 	/// The one thing the pulldown costs is the at-a-glance view of what is armed,
 	/// so the armed state rides in the option text: a reader looking at one
 	/// action can still see that another is running.
+	///
+	/// A Diamond with no actions shows a `+` and nothing else. Notes3: *"should
+	/// simply show the plus icon button when no TAs are registered, and reveal
+	/// the pulldown when clicked"*. Most Diamonds have no triggered actions ever,
+	/// and for those the section was three controls and a paragraph explaining
+	/// that none of them had anything to do.
 	function mountTriggers(card, opts) {
 		if (!window.DaimondTriggers) return;
-		card.appendChild(secHead(t('trig.head')));
+		card.appendChild(secHead(tOr('trig.section', 'Triggered actions')));
 
 		var host = document.createElement('div');
 		host.className = 'trig-list';
@@ -8107,6 +8570,11 @@ import init, {
 		// removal keeps the reader where they were rather than throwing them to
 		// whatever action now sits in that slot.
 		var chosen = null;
+		// Whether the `+` has been pressed on an empty section. It reveals the
+		// kind pulldown rather than creating something, because what sets an
+		// action off is decided when it is made -- a `+` that silently chose one
+		// would put the mail case behind an action you have to delete.
+		var adding = false;
 
 		function armed(actionId) {
 			try { return !DaimondPause.isPaused(DaimondTriggers.node(opts.id, actionId)); }
@@ -8116,9 +8584,8 @@ import init, {
 		function draw() {
 			host.innerHTML = '';
 			var list = Triggers.of(opts.id);
-			if (!list.length) {
-				host.appendChild(secNote(t('trig.none')));
-			} else {
+			pathNote.style.display = list.length ? '' : 'none';
+			if (list.length) {
 				if (!list.some(function (x) { return x.id === chosen; })) chosen = list[0].id;
 				var ta = list.filter(function (x) { return x.id === chosen; })[0];
 
@@ -8161,6 +8628,10 @@ import init, {
 					// No need to clear `chosen`: draw() falls back whenever it
 					// names an action that is no longer there, which is the same
 					// guard that survives an action removed on another device.
+					// `adding` does have to be cleared, so that removing the last
+					// action leaves the section as an empty one rather than as one
+					// mid-way through an addition nobody asked for.
+					adding = false;
 					draw();
 				}));
 				host.appendChild(pick);
@@ -8169,6 +8640,13 @@ import init, {
 
 			var add = document.createElement('div');
 			add.className = 'trig-add';
+			// Nothing registered and nothing asked for: one button, which is the
+			// whole of the section until somebody wants an action.
+			if (!list.length && !adding) {
+				add.appendChild(trigBtn('+', t('trig.add'), function () { adding = true; draw(); }));
+				host.appendChild(add);
+				return;
+			}
 			var kind = document.createElement('select');
 			kind.className = 'tile-model';
 			kind.setAttribute('aria-label', t('trig.add_kind'));
@@ -8198,17 +8676,18 @@ import init, {
 				// Added, and chosen: the pulldown is how an action is reached, so
 				// the one just added had better be the one it is showing.
 				chosen = ta.id;
+				adding = false;
 				draw();
 			});
 			add.appendChild(kind); add.appendChild(plus);
 			host.appendChild(add);
 		}
-		draw();
 
-		var note = document.createElement('div');
-		note.className = 'tile-dlg-note';
-		note.textContent = t('trig.note', { path: 'diamonds/' + opts.id + '/triggers.json' });
-		card.appendChild(note);
+		// Where the actions live on disk. Only worth saying once there is a file
+		// to look in: a Diamond that has never had an action has no such path.
+		var pathNote = secNote(t('trig.note', { path: 'diamonds/' + opts.id + '/triggers.json' }));
+		draw();
+		card.appendChild(pathNote);
 	}
 
 	/// The chosen action's own settings: what sets it off, and its two texts.
@@ -8416,16 +8895,23 @@ import init, {
 		var own = diamondModel(opts.id);
 
 		/// One labelled pulldown. `onPick` gets `{provider, model}`.
+		///
+		/// The label is a `<label>`, not a `.tile-model-chip`. That class is what a
+		/// model NAME is drawn in on the tile — a mono pill with a border — so
+		/// wearing it here made three form labels look like three values, which is
+		/// the "rushed" the author was pointing at. It also earns the click: the
+		/// word now focuses the control it names.
 		function row(labelKey, helpKey, provider, model, allowNone, onPick) {
 			var r = document.createElement('div');
-			r.className = 'tile-dlg-model';
-			var lab = document.createElement('span');
-			lab.className = 'tile-model-chip';
+			r.className = 'tile-dlg-field tile-dlg-model';
+			var lab = document.createElement('label');
+			lab.className = 'tile-dlg-label';
 			lab.textContent = t(labelKey);
+			lab.htmlFor = 'tile-model-' + labelKey.replace(/[^a-z0-9]+/gi, '-') + '-' + _tileDlgSeq;
 			var sel = document.createElement('select');
 			sel.className = 'tile-model';
+			sel.id = lab.htmlFor;
 			sel.title = t(helpKey);
-			sel.setAttribute('aria-label', t(helpKey));
 			populateModelSelect(sel, model || '', provider || '');
 			if (allowNone) {
 				// First, and selected when nothing is stored: "the same as the text one" is
@@ -8593,14 +9079,6 @@ import init, {
 		return d;
 	}
 
-	/// Put a tile's chosen level of detail onto its box, so the CSS can act on
-	/// it. Cheap enough to call on any tile at any time, and it is what lets the
-	/// dialog change the rail behind itself without a re-render.
-	function applyTileDetail(id) {
-		var boxes = document.querySelectorAll('.session-box[data-id="' + cssId(id) + '"]');
-		for (var i = 0; i < boxes.length; i++) boxes[i].dataset.detail = tileDetail(id);
-	}
-
 	/// Escape an id for use inside an attribute selector. Chat and Diamond ids
 	/// are generated, but a quote in one would otherwise break the selector.
 	function cssId(id) { return String(id == null ? '' : id).replace(/["\\]/g, '\\$&'); }
@@ -8738,14 +9216,16 @@ import init, {
 		return wrap;
 	}
 
+	var _tileRowSeq = 0;		// so each tile's labelled control gets its own id
+
 	function sessionBox(s) {
 		var status = s.status || 'active';
 		var box = document.createElement('div');
 		box.className = 'session-box chat-box ' + status + (current && s.id === current.id ? ' active' : '');
 		box.dataset.id = s.id;
-		// How much of itself this tile draws. Simple by default; the cog's dialog
-		// is where it changes, and the CSS is what acts on it.
-		box.dataset.detail = tileDetail(s.id);
+		// How much of itself this tile draws, which is the global view and the
+		// CSS is what acts on it.
+		box.dataset.detail = tileDetail();
 
 		// Editable label — the single place a chat is named (D-UI: one source).
 		var header = document.createElement('div');
@@ -8851,15 +9331,28 @@ import init, {
 			// Diamond's daimon, so this is what a Diamond cut from this chat inherits.
 			var wrow = document.createElement('div');
 			// Its own class, so Simple can take the whole row away: the "Workers"
-			// chip on its own would be a label naming a control that is not there.
+			// label on its own would name a control that is not there.
 			wrow.className = 'tile-pending tile-worker-row';
-			var wlab = document.createElement('span');
-			wlab.className = 'tile-model-chip';
+			// A real <label>, not a `.tile-model-chip`. That pill is what a model's
+			// NAME wears, so a label in one read as a second value beside the
+			// pulldown rather than as the pulldown's name -- the same defect the
+			// Diamond dialog's three model rows had. Naming the control also makes
+			// the word a click target for it.
+			var wlab = document.createElement('label');
+			wlab.className = 'tile-row-label';
 			wlab.textContent = t('tile.workers');
+			wlab.htmlFor = 'tile-workers-' + (++_tileRowSeq);
+			// The word now forwards a click to the pulldown, so it has to stop the
+			// click the way the pulldown does -- otherwise the tile underneath takes
+			// it as well and choosing a worker model also switches conversation.
+			wlab.addEventListener('click', function (e) { e.stopPropagation(); });
 			var wsel = document.createElement('select');
 			wsel.className = 'tile-model tile-worker-model';
+			wsel.id = wlab.htmlFor;
 			wsel.title = t('tile.worker_model_help');
-			wsel.setAttribute('aria-label', t('tile.worker_model_help'));
+			// No `aria-label`: it would OVERRIDE the label element, leaving what a
+			// screen reader hears and what the eye reads as two different words.
+			// The longer sentence stays reachable as the title.
 			populateModelSelect(wsel, s.workerModel || s.model || cfg.model || '',
 				s.workerProvider || s.provider || '');
 			wsel.addEventListener('click', function (e) { e.stopPropagation(); });
@@ -8908,6 +9401,8 @@ import init, {
 			selectChat(s);
 			if (isMobile()) mshow('ai');
 		});
+		// Last, so every span this tile is made of is already in it.
+		paintTileColour(box, s.id);
 		return box;
 	}
 
@@ -13449,7 +13944,10 @@ import init, {
 			} else if (backed) {
 				var pinned = DaimondCloud.isPinned(full);
 				var pinB = document.createElement('button');
-				pinB.className = 'files-res files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
+				// Its OWN class, not a `.files-res` modifier: '📌' is an emoji and is
+				// drawn at full size already, where the arrows beside it are dingbats
+				// that need the type size raised to match. One class cannot do both.
+				pinB.className = 'files-pin' + (pinned ? ' on' : ''); pinB.textContent = '📌';
 				pinB.title = t(pinned ? 'files.pinned_help' : 'files.pin_help');
 				pinB.addEventListener('click', function (ev) {
 					ev.stopPropagation();
@@ -15089,7 +15587,13 @@ import init, {
 	//   * ONCE. A user who deletes one has said something, and an app that put it
 	//     back on the next boot would be arguing. The flag records that they were
 	//     OFFERED, not that they exist.
-	var DEFAULTS_KEY = 'daimond-defaults-seeded';
+	// The `-2` is a one-time re-ask, and it is deliberate. Every account that was
+	// already using the app when this feature shipped had the old flag written
+	// against a rule that then refused to seed -- the rail was not empty -- so the
+	// offer was recorded as made and never was. Bumping the name asks those
+	// accounts once more, now that the rule is right. Nobody gets a duplicate: the
+	// name check in `seedDefaultDiamonds` skips a Diamond that is already there.
+	var DEFAULTS_KEY = 'daimond-defaults-seeded-2';
 
 	var DEFAULT_DIAMONDS = [
 		{
@@ -15269,22 +15773,26 @@ import init, {
 		// Not on an empty app that has not finished booting: a create against a
 		// store that is not up would leave a half-made Diamond.
 		if (!window.DaimondPause || !window.DaimondTriggers) return;
-		// ONLY INTO AN EMPTY RAIL, and this is not a nicety.
+		// NOT ONLY INTO AN EMPTY RAIL, and the reasoning that said otherwise was
+		// wrong about what these two ARE.
 		//
-		// `verify_diamondroot` caught the reason: a boot that is also MIGRATING an
-		// older store -- adopting Diamonds from a folder, carrying pre-rename keys
-		// across -- was left holding the two new Diamonds and not the one it was
-		// migrating. Creating into a store that is mid-move is a way to lose a
-		// user's work, and there is no version of this feature worth that.
+		// It read them as onboarding furniture -- "so that somebody arriving does
+		// not face an empty rail" -- and concluded that a person with thirteen
+		// Diamonds is not that person. But Help and the Optimiser are not
+		// decoration: Help is the only thing that reads the guide mirror, and the
+		// Optimiser is the only thing that reads the usage digest. They are
+		// FEATURES, and withholding them from everybody who was already using the
+		// app meant the author himself never saw either of them -- notes3: "I do not
+		// see the Daimond Help or Daimond Optimiser diamonds at all."
 		//
-		// It is also the better rule on its own terms. Notes2 wants the two defaults
-		// so that somebody arriving does not face an empty rail; a person who
-		// already has thirteen Diamonds is not that person and does not want two
-		// more. The flag is set either way, so this decision is taken once.
-		if ((diamonds || []).length) {
-			try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { /* next boot asks again */ }
-			return;
-		}
+		// So the rail's contents no longer decide it. Two things still hold the
+		// line: the name check below never makes a second copy, and the flag means
+		// a Diamond somebody DELETES stays deleted rather than returning at the next
+		// boot.
+		//
+		// (`verify_diamondroot`'s reason for a guard here was never the rail's
+		// contents -- it was a boot that is still MIGRATING, and that guard is the
+		// separate one below, which stays.)
 		// AND NOT WHILE AN OLDER STORE IS STILL PART-MIGRATED.
 		//
 		// `migrate_root` now merges what does not collide, so creating a Diamond no
@@ -16158,8 +16666,8 @@ import init, {
 		var box = document.createElement('div');
 		box.className = 'session-box diamond-box' + (active ? ' active' : '');
 		box.dataset.id = f.id;
-		// How much of itself this tile draws — the cog's dialog sets it.
-		box.dataset.detail = tileDetail(f.id);
+		// How much of itself this tile draws — the global view sets it.
+		box.dataset.detail = tileDetail();
 		// The row IS the control, so it has to be one to the keyboard and to a
 		// screen reader as well as to the pointer. It was a div with a click
 		// handler whose only focusable child was the x that deletes it, so
@@ -16316,6 +16824,8 @@ import init, {
 			selectDiamond(f);
 			if (isMobile()) mshow('ai');
 		});
+		// Last, so every span this tile is made of is already in it.
+		paintTileColour(box, f.id);
 		return box;
 	}
 
@@ -18195,6 +18705,13 @@ import init, {
 		// paint one Diamond's turn into another's.
 		var rec = daimonChat(currentDiamond);
 		var onScreen = !!(current && rec && current.id === rec.id && centreMode === 'daimon');
+		// The OTHER face of the same Diamond. Both faces share one composer, so a
+		// steer is just as likely to be typed at the crystal -- which is the face
+		// a Diamond opens on -- and until now the crystal answered with twelve
+		// pixels of grey status text while the chat face got the bouncing dots.
+		// Notes3: *"There was no waiting animation, daimon chats should behave
+		// identically to normal chats."*
+		var onCrystal = !!(currentDiamond && centreMode === 'focus');
 		rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: Date.now() });
 		if (onScreen) appendUserMessage(instruction);
 		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
@@ -18209,6 +18726,26 @@ import init, {
 		// next use, so a stopped daimon does not leave a poisoned client behind.
 		rec.app = diamondApp(currentDiamond.id);
 		if (onScreen) { syncComposer(); showSpinner(); }
+		if (onCrystal) showCrystalSpinner();
+
+		// In the THREAD the dots stand for "nothing has come back yet", so the
+		// first thing that comes back takes them down -- exactly as `runTurn` does
+		// it, which is what "identically to normal chats" means.
+		//
+		// On the CRYSTAL face they stay up for the whole turn, and deliberately:
+		// there is no thread there, so a tool call puts nothing on screen and
+		// taking the dots down at the first one would leave the face looking idle
+		// while the daimon worked. They come down where the turn ends.
+		//
+		// Guarded by `onScreen`, which is also what put them up. A gather round
+		// can run this turn while the user watches an ordinary chat mid-answer,
+		// and an unguarded `hideSpinner` would take THAT chat's dots down.
+		var sawReply = false;
+		function replyStarted() {
+			if (sawReply || !onScreen) return;
+			sawReply = true;
+			hideSpinner();
+		}
 
 		var sawError = false;
 		var onEvent = function (ev) {
@@ -18217,8 +18754,10 @@ import init, {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
 				replyText += (ev.content || '');
+				replyStarted();
 				if (onScreen) appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
+				replyStarted();
 				if ((ev.name || '') === 'spawn_agent') {
 					var spec = null;
 					try { spec = JSON.parse(ev.args || '{}'); } catch (e) { spec = null; }
@@ -18247,6 +18786,7 @@ import init, {
 				if (onScreen) appendCompacted(ev.content || '');
 			} else if (ev.type === 'error') {
 				sawError = true;
+				replyStarted();
 				setCrystalStatus('Error: ' + (ev.content || ''));
 				rec.messages.push({ role: 'error_log', content: ev.content || '',
 					mid: newMid(), ts: Date.now() });
@@ -18287,6 +18827,8 @@ import init, {
 			// A failure DURING one no longer arrives here: `steer_crystal` returns the
 			// conversation whatever happened, and reports the failure through the event
 			// sink, so the daimon does not forget a turn it was already billed for.
+			replyStarted();
+			hideCrystalSpinner();
 			if (onScreen) { finalizeAssistant(); appendError(friendlyError(e)); }
 			rec.messages.push({ role: 'error_log', content: friendlyError(e),
 				mid: newMid(), ts: Date.now() });
@@ -18298,6 +18840,11 @@ import init, {
 			return;
 		}
 		rec._generating = false;
+		// The turn is over however it went, so the dots come down whether or not
+		// anything ever came back through the sink. `hideCrystalSpinner` is by id
+		// and harmless when the crystal has already been redrawn without one.
+		replyStarted();
+		hideCrystalSpinner();
 		if (onScreen) syncComposer();
 		setCrystalBusy(false);
 		// A turn that died part-way may still have asked for agents before it died.
@@ -19088,17 +19635,27 @@ import init, {
 
 	/// Select-and-copy, for a browser that will not give the clipboard to this
 	/// page. Removed straight after, so nothing is left on screen.
-	function fallback(text, done) {
+	///
+	/// `fail` is optional, and the callers that pass it are the ones with nothing
+	/// else on screen to fall back to -- a copy button beside an identifier says
+	/// "Copied" or it says nothing true at all, so it needs to know that
+	/// `execCommand` refused. The older callers show the text as well as copying
+	/// it, so they keep the original behaviour: report done, and let the reader
+	/// take it off the screen if the clipboard would not have it.
+	function fallback(text, done, fail) {
 		try {
 			var ta = document.createElement('textarea');
 			ta.value = text;
 			ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
 			document.body.appendChild(ta);
 			ta.select();
-			document.execCommand('copy');
+			var ok = document.execCommand('copy');
 			ta.remove();
-			done();
-		} catch (e) { /* nothing else to try; the text is on screen to be read */ }
+			if (ok || !fail) { done(); } else { fail(new Error('the clipboard refused')); }
+		} catch (e) {
+			// Nothing else to try. The text is on screen to be read.
+			if (fail) fail(e);
+		}
 	}
 
 	function showIdentity(mode) {           // 'create' | 'unlock'
@@ -19634,7 +20191,8 @@ import init, {
 			 // The device roster and this device's own id. An account made here
 			 // afterwards is a new account, and it must not inherit the erased
 			 // one's identity as a device or the devices it used to sync with.
-			 'daimond-devices', 'daimond-device-id'].forEach(function (k) { localStorage.removeItem(k); });
+			 'daimond-devices', 'daimond-device-id', 'daimond-device-tombs',
+			].forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
 
 		// OPFS. A namespaced account lives in one subdirectory, so remove just that. The primary
@@ -20572,9 +21130,17 @@ import init, {
 	/// not this file's to write — and a settings control reading
 	/// "settings.max_tokens" is worse than one reading English. Once the keys land
 	/// the table wins and these fallbacks go unused; nothing needs changing here.
-	function tOr(key, fallback) {
-		var s = t(key);
-		return s === key ? fallback : s;
+	///
+	/// `vars` fills `{name}` placeholders in whichever of the two is used, so a
+	/// fallback carrying one does not ship the braces to the screen while it
+	/// waits for its key.
+	function tOr(key, fallback, vars) {
+		var s = t(key, vars);
+		if (s !== key) return s;
+		if (!vars) return fallback;
+		return String(fallback).replace(/\{(\w+)\}/g, function (whole, k) {
+			return vars[k] != null ? String(vars[k]) : whole;
+		});
 	}
 
 	/// The round-limit setting: how many tool-call rounds one turn may take.
@@ -21276,6 +21842,17 @@ import init, {
 	});
 	var linkGraphBtn = document.getElementById('link-graph-btn');
 	if (linkGraphBtn) linkGraphBtn.addEventListener('click', function () {
+		// A toggle, not an opener. Pressing the same button again is how a person
+		// puts a panel away, and this one only ever opened: the way to close the
+		// Graph was to find its own closer, which is a different control in a
+		// different place from the one that summoned it.
+		//
+		// On a phone "open" is not "on screen" — a panel can be open in the engine
+		// while another is the one in the sheet — so an open Graph the user is not
+		// looking at is brought forward rather than closed, which is what pressing
+		// its button means there.
+		var showing = !isMobile() || document.body.dataset.mpanel === 'graph';
+		if (DaimondPanels.isOpen('graph') && showing) { DaimondPanels.hide('graph'); return; }
 		DaimondPanels.show('graph');
 		// Showing an already-open panel changes no attribute, so ask for the
 		// redraw explicitly rather than relying on the visibility observer.

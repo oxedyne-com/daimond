@@ -61,6 +61,11 @@
 <!-- Main app: browser-only, no server. The whole agent runs in wasm. -->
 <div id="app">
 
+	<!-- What the copy buttons say to a screen reader. They are icon-only and
+	     their confirmation is a tick, which is nothing at all to a reader that
+	     does not see; one polite region serves the lot. -->
+	<div class="vh" id="copy-say" role="status" aria-live="polite"></div>
+
 	<!-- Top bar -->
 	<header class="topbar" aria-labelledby="app-title">
 		<h1 class="vh" id="app-title">Daimond</h1>
@@ -86,8 +91,12 @@
 			</button>
 			<!-- Who made it, and how. Two marks in one plate: the Oxedyne flame on
 			     the left, the AI-disclosure chip on the right. They are separate
-			     claims and get separate hit areas — the flame leads to Oxedyne, the
-			     chip only says what it says until there is somewhere for it to lead.
+			     claims and get separate hit areas — the flame leads to Oxedyne, and
+			     the chip now leads to the mark it is claiming, at need2know.ai,
+			     which is where the disclosure is defined rather than merely
+			     asserted. Both open in a new tab and both carry
+			     rel="noopener noreferrer": an external target gets no handle on
+			     this window and no referrer off it.
 
 			     It sits at this end of the bar, in the place the README link held:
 			     a signature belongs where the maker's other marks are, not wedged
@@ -101,9 +110,9 @@
 				<a class="mb-hit mb-oxedyne" href="https://oxedyne.com" target="_blank" rel="noopener noreferrer"
 					title="Made by Oxedyne" aria-label="Made by Oxedyne"
 					data-i18n-title="topbar.made_by" data-i18n-aria-label="topbar.made_by"></a>
-				<span class="mb-hit mb-ai" role="img"
+				<a class="mb-hit mb-ai" href="https://need2know.ai/mostly-ai/code" target="_blank" rel="noopener noreferrer"
 					title="Code made with mostly AI" aria-label="Code made with mostly AI"
-					data-i18n-title="topbar.made_with_ai" data-i18n-aria-label="topbar.made_with_ai"></span>
+					data-i18n-title="topbar.made_with_ai" data-i18n-aria-label="topbar.made_with_ai"></a>
 			</span>
 			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide" data-i18n-title="topbar.guide" data-i18n-aria-label="topbar.guide_short">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
@@ -161,6 +170,20 @@
 				<div class="pptw-head" id="pptw-global-row">
 					<span class="pptw-slot" id="pptw-global"></span>
 					<span class="pptw-head-label" title="Pause or resume everything that can spend: every Diamond, every chat, the workers, the mailboxes and any page fetched for you." data-i18n="pause.everything" data-i18n-title="pause.everything_help">Everything</span>
+					<!-- The rail's closer, and it is the RAIL it closes. It stood on the
+					     Diamonds head below, in the run of buttons that make a Diamond
+					     and draw the graph, where it read as the closer of that section:
+					     a cross at the end of a row named "Diamonds" says it puts the
+					     Diamonds away, and it took the whole rail — the Chats, the
+					     status header and the Admin panel with it. This row is the only
+					     one in the rail that speaks for all of it, so the closer belongs
+					     here, above everything it acts on and beside the pause that has
+					     the same scope. `data-close` and the classes are unchanged; the
+					     handler in daimond.js binds by `[data-close]` and does not care
+					     where the button sits. -->
+					<button class="addbtn panel-close" data-close="rail" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
 				</div>
 				<!-- Diamonds above, Chats below, which is the way the ground is:
 				     you mine in the conversation underneath and what you bring up
@@ -172,13 +195,18 @@
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
 					<!-- The Diamonds and the links between them, drawn. It belongs on
-					     the rail head because the rail is the list the picture is of. -->
-					<button class="addbtn" id="link-graph-btn" title="Graph" aria-label="Graph" data-i18n-title="link.graph_open" data-i18n-aria-label="link.graph_open">
+					     the rail head because the rail is the list the picture is of.
+					     It TOGGLES the Graph rather than only opening it, so it is a
+					     latched button and says so: `aria-pressed` starts false because
+					     nothing is open before the layout engine has read the stored
+					     layout, and daimond.js sets it from there and on every press.
+					     The latched look is `.addbtn[aria-pressed="true"]` in app.css. -->
+					<button class="addbtn" id="link-graph-btn" aria-pressed="false" title="Graph" aria-label="Graph" data-i18n-title="link.graph_open" data-i18n-aria-label="link.graph_open">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5.5" r="2.5"/><circle cx="5.5" cy="18" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M10.6 7.6L6.9 15.9M13.4 7.6l3.7 8.3M8 18h8"/></svg>
 					</button>
-					<button class="addbtn panel-close" data-close="rail" title="Close panel" data-i18n-title="common.close_panel">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-					</button>
+					<!-- No closer on this row. It is one section of the rail and has
+					     nothing of its own to close; the rail's closer is on the
+					     Everything row above. -->
 				</div>
 				<!-- Narrow the rail by tag. A search box stood here too and has
 				     gone: a Diamond is found by what it is filed under, and two
@@ -214,7 +242,20 @@
 							<span class="user-avatar" id="user-avatar" aria-hidden="true">◈</span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
-						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">⚙</button>
+						<!-- The same cog every Diamond tile and every mailbox row wears,
+						     not the ⚙ character. A font glyph is drawn by whichever font
+						     the platform finds it in, at whatever weight and size that
+						     font gives it, so the one cog in the rail's status header
+						     read as a different icon from the cogs directly above it.
+						     The path is `COG_D` in js/daimond.js, which `DaimondUI.cogIcon`
+						     hands to the tiles and to mail.js; this copy is inline because
+						     the button is in the static markup and nothing builds it. Both
+						     must move together if the drawing ever changes.
+						     No size override: `.icon-btn .ic` and `.tile-cog .ic` both take
+						     the 16px default, which is what makes the two identical. -->
+						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2v.2a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00-1.2-2.9H2.9a2 2 0 110-4H3a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V2.9a2 2 0 114 0V3a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+						</button>
 					</div>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
@@ -225,7 +266,16 @@
 					<button class="astat-row astat-btn" id="astat-pro"></button>
 					<button class="astat-row astat-btn" id="astat-tools"></button>
 					<button class="astat-row astat-btn" id="astat-hand"></button>
-					<button class="astat-row astat-btn" id="astat-release" title="Version history" data-i18n-title="admin.version_history"></button>
+					<!-- The version row carries a copy button for the build id, which
+					     is the string a bug report has to quote. It sits OUTSIDE
+					     #astat-release rather than inside it: that row is itself a
+					     button (it opens the version history), and a button inside a
+					     button is neither valid nor clickable. The row keeps its id
+					     and its classes so release.js still paints it. -->
+					<div class="astat-copyrow">
+						<button class="astat-row astat-btn" id="astat-release" title="Version history" data-i18n-title="admin.version_history"></button>
+						<span class="astat-copyslot" id="astat-release-copy"></span>
+					</div>
 					<div class="astat-row" id="astat-store"></div>
 					<!-- The real folder, when the browser can open one. Its size is not a thing the
 					     browser will tell us, so it is asked for rather than assumed. -->

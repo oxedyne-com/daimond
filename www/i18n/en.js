@@ -31,12 +31,24 @@
 	'common.cancel':       'Cancel',
 	'common.save':         'Save',
 
+	// Copying an identifier. `copy.aria` wraps each `what_` so a reader hears
+	// "Copy the build id" rather than five buttons all called Copy.
+	'copy.aria':               'Copy {what}',
+	'copy.failed':             'Could not copy',
+	'copy.nothing':            'Nothing to copy',
+	'copy.what_build':         'the build id',
+	'copy.what_build_n':       'build {id}',
+	'copy.what_fingerprint':   'your account fingerprint',
+	'copy.what_device':        'the id of {name}',
+	'copy.what_model':         'model id {id}',
+	'copy.what_default_model': 'the default model id',
+
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu':        'Menu',
 	'topbar.open_menu':   'Open menu',
 	'topbar.brand':       'Daimond — the daimond.app home page',
 	'topbar.made_by': 'Made by Oxedyne',
-	'topbar.made_with_ai': 'Code made with mostly AI',
+	'topbar.made_with_ai': 'Code made mostly with AI',
 	'topbar.up_to_date':  'Daimond is up to date',
 	'topbar.guide':       'Open the user guide',
 	'topbar.guide_short': 'User guide',
@@ -198,6 +210,10 @@
 	'devices.rename_body':  'Call this device whatever you like, so you can tell it from the others. Leave the box empty to go back to “{derived}”. The name is stored with your own encrypted data and travels only to your other devices.',
 	'devices.rename_aria':  'Rename {name}',
 	'devices.note':        'These devices sync this account. A device appears here once it has synced, so one that holds your account but has never synced is not listed. Nothing here can sign a device out: a linked device holds the same keys as this one, so it has to be dealt with on the device itself.',
+	'devices.remove_aria': 'Remove {name}',
+	'devices.remove_body': '“{name}” comes off this list. It does not sign that device out: a linked device holds the same keys as this one, so if it is still in use it will put itself back the next time it syncs.',
+	'devices.remove':      'Remove',
+	'devices.remove_title':'Remove this device',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline':             'Offline',
@@ -286,7 +302,7 @@
 	'tile.model_workers': 'Workers',
 	'tile.model_vision': 'Workers, images',
 	'tile.model_vision_help': 'The model a worker runs on when its task names an image. Daimond cannot check that a model can see, so the choice is yours.',
-	'tile.model_same_as_text': 'Same as the text model',
+	'tile.model_same_as_text': 'Same as the daimon',
 	'tile.model_none': 'none',
 	'tile.diamond_model_help': 'This Diamond thinks with {model}.',
 	'tile.model_note': 'A worker keeps the model it started on. A new model applies to the next one dispatched.',
@@ -322,6 +338,11 @@
 	'tile.fold_all':       'Fold all',
 	'tile.folded_help':    'Already folded into "{name}" — fold again to add anything new since.',
 	'tile.fold_all_help':  'Fold this whole chat into a Diamond',
+	'tile.dlg_colour':  'Colour',
+	'tile.colour_bg':   'Background',
+	'tile.colour_fg':   'Text',
+	'tile.colour_clear':'Use the theme’s colours',
+	'tile.colour_faint':'These two are hard to read together — {ratio}:1, where {min}:1 is the usual floor for text this size. Left as chosen.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Well past your run budget',
@@ -399,7 +420,7 @@
 	'models.remove':               'Remove {provider}',
 	'models.starts_on':            'New chats start on: {model}',
 	'models.no_default':           'No default model yet — star one above.',
-	'models.none_yet':             'No models yet — add a provider key in Models',
+	'models.none_yet':             'No provider yet',
 	'models.err_refused':          'The account service refused (HTTP {status}).',
 	'models.err_bad_key':          'The account service sent a key Daimond cannot use.',
 	'models.err_no_key':           'That provider has no key yet.',
@@ -1378,6 +1399,7 @@
 	'trig.context':         'Context',
 	'trig.context_ph':      'Background it needs the first time, and only the first time…',
 	'trig.context_note':    'Sent once, in front of the first instruction. Change it and it is sent again.',
+	'trig.section':          'Triggered actions',
 
 	'role.compactor':       'Context fold',
 	'role.compactor_help':  'Summarises a conversation that has outgrown its window. Its answer becomes what the chat remembers.',

@@ -92,16 +92,28 @@ async function openCog(p, name) {
 	return true;
 }
 
+/// Close whatever dialogs are standing. The tile dialog's way out is the closer
+/// cross, which still carries `tile-dlg-done` — that class means "the control
+/// that finishes with this dialog" and never meant the word Done, so this path
+/// is unchanged by the cross replacing the button.
 const closeDialogs = (p) => p.evaluate(() => {
 	document.querySelectorAll('.tile-dlg .tile-dlg-done, .dlg-card .dlg-cancel')
 		.forEach(b => { try { b.click(); } catch {} });
 });
 
-/// Set a tile's detail through the dialog a person uses: the cog, then Simple or
-/// Max. Not by writing `localStorage` and reloading — the reload was costing the
-/// wasm a fresh boot on every check, and what is under test here is the rail as
-/// the user sees it change, which `applyTileDetail` does live.
-async function setDetail(p, box, level) {
+/// How much every tile draws. Simple and Max are global (notes3), so this is one
+/// call and not a visit to each tile's dialog: the per-tile level control is
+/// gone. Set live rather than by writing `localStorage` and reloading — the
+/// reload was costing the wasm a fresh boot on every check, and what is under
+/// test here is the rail as the user sees it change.
+async function setView(p, level) {
+	await p.evaluate((lv) => window.DaimondView.set(lv), level);
+	await p.waitForTimeout(250);
+}
+
+/// Open one tile's dialog from its cog. False when that tile has no cog, which
+/// is a failure worth naming rather than a selector timeout.
+async function openTile(p, box) {
 	const opened = await p.evaluate((sel) => {
 		const b = document.querySelector(sel);
 		const cog = b && b.querySelector('.tile-cog');
@@ -111,13 +123,6 @@ async function setDetail(p, box, level) {
 	}, box);
 	if (!opened) return false;
 	await p.waitForSelector('.tile-dlg-card', { timeout: 8000 });
-	await p.evaluate((lv) => {
-		const card = document.querySelector('.tile-dlg-card');
-		const b = [...card.querySelectorAll('.tile-dlg-level[data-level]')]
-			.find(x => x.dataset.level === lv);
-		if (b) b.click();
-	}, level);
-	await p.waitForTimeout(250);
 	return true;
 }
 
@@ -148,7 +153,9 @@ try {
 			.find(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Dee') || {}).dataset?.id || '');
 	check(!!dId, 'the Diamond was made', dId);
 	const dSel = `#diamond-list .diamond-box[data-id="${dId}"]`;
-	check(await setDetail(p, dSel, 'max'), 'the tile dialog opens from the cog');
+	check(await openTile(p, dSel), 'the tile dialog opens from the cog');
+	await closeDialogs(p);
+	await setView(p, 'max');
 
 	const chip = await p.evaluate((sel) => {
 		const c = document.querySelector(sel + ' .tile-model-chip.diamond-model');
@@ -163,14 +170,13 @@ try {
 		'the chip names the full model, not only the short form', chip && chip.title);
 
 	// ── And Simple hides it, because a model is detail. ──
-	await setDetail(p, dSel, 'simple');
+	await setView(p, 'simple');
 	const hidden = await p.evaluate((sel) => {
 		const c = document.querySelector(sel + ' .tile-model-chip.diamond-model');
 		return !c || c.getClientRects().length === 0;
 	}, dSel);
 	check(hidden, 'Simple hides the model chip with the other model controls');
-	await setDetail(p, dSel, 'max');
-	await closeDialogs(p);
+	await setView(p, 'max');
 	await p.waitForTimeout(300);
 
 	if (BREAK === 'noconfirm') {
@@ -190,21 +196,50 @@ try {
 
 	// ══ 2. The daimon's model changes, and it is recorded ═════════════
 	check(await openCog(p, 'Dee'), 'the cog opens the tile dialog');
+	// The label is a real `<label>` now, bound to its pulldown by `for`/`id`.
+	// It used to wear `.tile-model-chip`, which is the mono pill a model NAME is
+	// drawn in on the tile — so three form labels looked like three values, and
+	// the word did not focus the control it named.
 	const rows = await p.evaluate(() => {
 		const card = document.querySelector('.tile-dlg-card');
-		return [...card.querySelectorAll('.tile-dlg-model')].map(r => ({
-			label: (r.querySelector('.tile-model-chip') || {}).textContent || '',
-			options: [...(r.querySelector('select') || { options: [] }).options].map(o => o.value),
-		}));
+		return [...card.querySelectorAll('.tile-dlg-model')].map(r => {
+			const lab = r.querySelector('label.tile-dlg-label');
+			const sel = r.querySelector('select');
+			return {
+				label: lab ? (lab.textContent || '').trim() : '',
+				// Which of the three settings this row IS, taken from the control's
+				// own id rather than from the row's position: a row list read by
+				// index says nothing about which setting moved when one is added.
+				which: sel ? (/(daimon|workers|vision)/.exec(sel.id) || [''])[0] : '',
+				bound: !!(lab && sel && lab.htmlFor && lab.htmlFor === sel.id),
+				options: [...((sel || { options: [] }).options)].map(o => o.value),
+			};
+		});
 	});
-	check(rows.length === 3, 'three model rows: daimon, workers, workers-images', rows.length);
-	check(rows.length === 3 && rows[1].options[0] === '' && rows[2].options[0] === '',
-		'the two worker rows offer "same as the text model" as a real choice');
+	const rowFor = (w) => rows.find(r => r.which === w);
+	check(['daimon', 'workers', 'vision'].every(w => !!rowFor(w)),
+		'the dialog carries a row for each of the three settings: the daimon, the workers, and the workers’ eyes',
+		rows.map(r => r.which || '(unnamed)').join(', '));
+	check(rows.length > 0 && rows.every(r => r.label && r.bound),
+		'each is a real label bound to its own pulldown, so the word focuses the control it names',
+		JSON.stringify(rows.map(r => [r.label, r.bound])));
+	check(!!rowFor('workers') && !!rowFor('vision')
+		&& rowFor('workers').options.includes('') && rowFor('vision').options.includes(''),
+		'the two worker rows offer "same as the text model" as a real choice, which is what absent MEANS here');
+
+	// Each of the three reads below reaches the DAIMON's pulldown by the setting
+	// it carries -- `/daimon/` in the control's own id -- rather than by taking
+	// the first row on screen. The daimon is the only one of the three that is
+	// confirmed and written into the crystal's history, so a check that found a
+	// row by position would end up asserting the confirm against a setting that
+	// deliberately has none.
 
 	// A second model to move to. The mock serves whatever it is asked for, so any
 	// second name in the pulldown will do.
 	const other = await p.evaluate(() => {
-		const sel = document.querySelector('.tile-dlg-card .tile-dlg-model select');
+		const sel = [...document.querySelectorAll('.tile-dlg-card .tile-dlg-model select')]
+			.find(s => /daimon/.test(s.id));
+		if (!sel) return '';
 		const opts = [...sel.options].map(o => o.value).filter(Boolean);
 		return opts.find(v => v !== sel.value) || '';
 	});
@@ -215,7 +250,8 @@ try {
 		const before = await p.evaluate((id) =>
 			(JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[id] || {}).model || '', dId);
 		const move = (v) => p.evaluate((val) => {
-			const sel = document.querySelector('.tile-dlg-card .tile-dlg-model select');
+			const sel = [...document.querySelectorAll('.tile-dlg-card .tile-dlg-model select')]
+				.find(s => /daimon/.test(s.id));
 			sel.value = val;
 			sel.dispatchEvent(new Event('change', { bubbles: true }));
 		}, v);
@@ -248,7 +284,8 @@ try {
 		check(afterNo === before, 'a refused confirm leaves the model where it was',
 			`${before} → ${afterNo}`);
 		const putBack = await p.evaluate(() =>
-			(document.querySelector('.tile-dlg-card .tile-dlg-model select') || {}).value || '');
+			([...document.querySelectorAll('.tile-dlg-card .tile-dlg-model select')]
+				.find(s => /daimon/.test(s.id)) || {}).value || '');
 		check(putBack === before, 'and puts the pulldown back, rather than showing a change it did not make',
 			putBack);
 
@@ -356,12 +393,10 @@ try {
 	await p.fill('#chat-input', 'hello');
 	await p.click('#chat-send');
 	await p.waitForTimeout(2500);
-	// Max, or the meter is hidden by the detail CSS rather than absent.
+	// Max, or the meter is hidden by the view's CSS rather than absent.
 	const cId = await p.evaluate(() =>
 		(document.querySelector('#session-list .chat-box') || {}).dataset?.id || '');
-	const cSel = `#session-list .chat-box[data-id="${cId}"]`;
-	await setDetail(p, cSel, 'max');
-	await closeDialogs(p);
+	await setView(p, 'max');
 	await p.waitForTimeout(300);
 
 	const meter = await p.evaluate(() => {
@@ -408,7 +443,11 @@ try {
 	const ctxSec = await p.evaluate(() => {
 		const card = document.querySelector('.tile-dlg-card');
 		const heads = [...card.querySelectorAll('.tile-dlg-head')].map(h => h.textContent.trim());
-		const btn = [...card.querySelectorAll('.tile-dlg-level')]
+		// `.tile-dlg-level` is a BOX, not a meaning: the colour reset in this same
+		// dialog wears it too. The fold is the one inside the Context section, so
+		// the reset is excluded by class and the words settle which of what is
+		// left is being pressed.
+		const btn = [...card.querySelectorAll('.tile-dlg-level:not(.tile-dlg-clear)')]
 			.find(b => /fold/i.test(b.textContent || ''));
 		const notes = [...card.querySelectorAll('.tile-dlg-note')].map(n => n.textContent.trim());
 		return { heads, hasBtn: !!btn, notes };
@@ -424,7 +463,7 @@ try {
 	// MIN_KEEP_MESSAGES, so the honest answer is that nothing moved. ──
 	await p.evaluate(() => {
 		const card = document.querySelector('.tile-dlg-card');
-		[...card.querySelectorAll('.tile-dlg-level')]
+		[...card.querySelectorAll('.tile-dlg-level:not(.tile-dlg-clear)')]
 			.find(b => /fold/i.test(b.textContent || '')).click();
 	});
 	await p.waitForSelector('.dlg-card .dlg-ok', { timeout: 8000 });

@@ -17,6 +17,10 @@
 //   2. EVERY MODE IS ESCAPABLE.  Link mode, the context menu and the link form
 //      are each entered and then left, by Escape AND by the pointer.  A mode
 //      with no way out is the one-way door dev/verify_reversible.mjs exists for.
+//      The form edits a link's relations as a SET of chips -- one string in the
+//      store, comma-separated -- so adding one keeps the ones already there and
+//      closing a chip drops only that one.  A form that treated the set as a
+//      field would destroy a relation every time somebody added one.
 //   3. ORGANISE IS HONEST.  Run twice from one state it gives one arrangement,
 //      and it loses neither a Diamond nor a link.
 //   4. A CYCLE IS STILL DRAWN.  After a drag and after an organise, the closing
@@ -135,7 +139,10 @@ const geom = () => page.evaluate(() => {
 			d: (g.querySelector('path.graph-edge-line') || {}).getAttribute
 				? g.querySelector('path.graph-edge-line').getAttribute('d') : null,
 			dash: getComputedStyle(g.querySelector('path.graph-edge-line')).strokeDasharray,
-			label: (g.querySelector('text.graph-edge-label') || {}).textContent ?? null,
+			// A link carries a SET of relations, one chip each, so this is a list.
+			// Reading only the first would make a link that gained a second
+			// relation look unchanged.
+			labels: [...g.querySelectorAll('text.graph-edge-label')].map(t => t.textContent),
 		})).sort((a, b) => (a.id < b.id ? -1 : 1)),
 		band: (svg.querySelector('text.graph-band') || {}).textContent ?? null,
 		live: svg.querySelectorAll('g.graph-live path').length,
@@ -151,8 +158,11 @@ const stored = () => page.evaluate(() => {
 });
 
 /// Where a Diamond's box is on screen, so the pointer can be aimed at it.
+///
+/// The box is a PATH -- a flattened hexagon -- so it is asked for its rendered
+/// rectangle rather than for width and height it does not carry.
 const boxAt = (did) => page.evaluate((d) => {
-	const g = document.querySelector(`g.graph-node[data-diamond-id="${d}"] rect.graph-node-box`);
+	const g = document.querySelector(`g.graph-node[data-diamond-id="${d}"] path.graph-node-box`);
 	if (!g) return null;
 	const r = g.getBoundingClientRect();
 	return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
@@ -293,7 +303,20 @@ check(g2.edges.filter(e => e.back).every(e => /\d/.test(e.dash || '') && e.dash 
 // asked about.
 async function routingChecks(when) {
 const onPerimeter = await page.evaluate(() => {
-	const W = 176, H = 44, EPS = 0.6;
+	// The node is a flattened hexagon, not a rectangle: its left and right sides
+	// kink out by KINK at the vertical midpoint. These mirror `BOX_D` in
+	// www/js/graph.js and must move with it.
+	//
+	// This matters more than it looks. A point sitting exactly ON a slanted side is
+	// INSIDE the bounding box, so a perimeter test written against a rectangle
+	// rejects a perfectly placed arrowhead. That is what happened on the first run
+	// after the shape changed: the check called the app broken when the app was
+	// right, and the only case it got away with was a link arriving at a midpoint,
+	// where the hexagon happens to touch the bounding box.
+	const W = 176, H = 44, KINK = 12, EPS = 0.6;
+	/// How far in from the bounding box the outline sits at height `ly`: KINK at the
+	/// top and bottom edges, nothing at the waist.
+	const inset = (ly) => KINK * Math.min(Math.abs(ly - H / 2) / (H / 2), 1);
 	const at = (g) => {
 		const m = /translate\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/.exec(g.getAttribute('transform') || '');
 		return m ? { x: +m[1], y: +m[2] } : null;
@@ -307,12 +330,20 @@ const onPerimeter = await page.evaluate(() => {
 		if (!m) { bad.push([g.dataset.linkId, 'unreadable']); return; }
 		const x = +m[1], y = +m[2], b = pos[g.dataset.to];
 		if (!b) { bad.push([g.dataset.linkId, 'no target box']); return; }
-		const inX = x >= b.x - EPS && x <= b.x + W + EPS;
-		const inY = y >= b.y - EPS && y <= b.y + H + EPS;
-		const onV = Math.abs(y - b.y) < EPS || Math.abs(y - (b.y + H)) < EPS;
-		const onH = Math.abs(x - b.x) < EPS || Math.abs(x - (b.x + W)) < EPS;
-		// A closing edge lands on the right-hand side, which onH covers.
-		if (!((inX && onV) || (inY && onH))) bad.push([g.dataset.linkId, `(${x},${y}) vs box ${b.x},${b.y}`]);
+		const ly = y - b.y, lx = x - b.x;
+		const inY = ly >= -EPS && ly <= H + EPS;
+		// Top and bottom are flat, and shortened by KINK at each end.
+		const onFlat = (Math.abs(ly) < EPS || Math.abs(ly - H) < EPS)
+			&& lx >= KINK - EPS && lx <= W - KINK + EPS;
+		// The slanted sides: where the outline is at THIS height, not where the
+		// bounding box is.
+		const side = inset(ly);
+		const onSide = inY && (Math.abs(lx - side) < EPS || Math.abs(lx - (W - side)) < EPS);
+		if (!(onFlat || onSide)) {
+			bad.push([g.dataset.linkId,
+				`(${x},${y}) is ${lx.toFixed(1)},${ly.toFixed(1)} in a box whose outline `
+				+ `at that height runs ${side.toFixed(1)}..${(W - side).toFixed(1)}`]);
+		}
 	});
 	return bad;
 });
@@ -493,8 +524,21 @@ check(!ep.err, `the Delta → Echo line is reachable by a pointer: ${ep.err || J
 await page.mouse.click(ep.x, ep.y);
 await page.waitForTimeout(400);
 check(await formUp(), `clicking a link opens its form`);
-const rel0 = await page.evaluate(() => (document.getElementById('graph-edit-rel') || {}).value);
-check(rel0 === 'notes', `pre-filled with the link's own relation: ${JSON.stringify(rel0)}`);
+// The link's own relations are CHIPS, and the box beside them is empty. That is
+// the difference between a set and a field: what is already on the link is shown
+// as things you can drop one at a time, and what you type is a further one. A box
+// pre-filled with `notes` would mean that typing `supersedes` REPLACED it, which
+// is how a relation gets lost by being edited.
+const relForm = await page.evaluate(() => ({
+	typed: (document.getElementById('graph-edit-rel') || {}).value,
+	chips: [...document.querySelectorAll('#graph-rel-chips .tag-chip')]
+		.map(c => (c.textContent || '').replace(/×\s*$/, '').trim()),
+}));
+check(relForm.chips.includes('notes'),
+	`the link's own relation is shown as a chip: ${JSON.stringify(relForm.chips)}`);
+check(relForm.typed === '',
+	`and the box you type into starts empty, so a word typed there is an ADDITION: `
+	+ JSON.stringify(relForm.typed));
 await shot(s, 'graphedit-5-linkform');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
@@ -507,7 +551,14 @@ await page.click('#graph-edit-cancel', { force: true, timeout: 8000 });
 await page.waitForTimeout(300);
 check(!(await formUp()), `and so does its own Cancel`);
 
-// Now really edit it.
+// Now really edit it: a SECOND relation on a link that already has one.
+//
+// The word is left in the box rather than added with the `+`, because a word
+// typed and not added is a word the user meant and the form takes it on the way
+// out -- and because that is the path along which a set could quietly become a
+// replacement.  What must come back is BOTH relations: the store holds them as
+// one comma-separated string, and `notes` was never edited, so losing it here
+// would be data destroyed by the act of adding something.
 ep = await edgeAt(L.de);
 await page.mouse.click(ep.x, ep.y);
 await page.waitForTimeout(400);
@@ -517,12 +568,38 @@ await page.click('#graph-edit-ok', { force: true });
 await page.waitForTimeout(1000);
 const edited = JSON.parse(await wasm(async (app) => await app.all_links()))
 	.filter(l => l.from.endsWith(id.D) && l.to.endsWith(id.E));
-check(edited.length === 1 && edited[0].rel === 'supersedes' && edited[0].note === 'changed by the verifier',
-	`saving writes the new relation and note to the STORE, and leaves one link not two: `
+const editedRels = edited.length === 1
+	? String(edited[0].rel || '').split(',').map(r => r.trim()).filter(Boolean) : [];
+check(edited.length === 1 && editedRels.length === 2
+	&& editedRels.includes('notes') && editedRels.includes('supersedes')
+	&& edited[0].note === 'changed by the verifier',
+	`saving KEEPS the relation the link had and adds the new one, in one link not two: `
 	+ JSON.stringify(edited.map(l => [l.rel, l.note])));
 const drawnRel = (await geom()).edges.find(e => e.from === id.D && e.to === id.E);
-check(drawnRel && drawnRel.label === 'supersedes',
-	`and the picture says so without a reload: ${JSON.stringify(drawnRel && drawnRel.label)}`);
+const drawnWords = (drawnRel && drawnRel.labels) || [];
+check(drawnWords.includes('notes') && drawnWords.includes('supersedes'),
+	`and the picture carries a chip for each of them without a reload: ${JSON.stringify(drawnWords)}`);
+
+// And the other half of a set: closing a chip drops that relation and leaves the
+// rest. A × that only redrew the form would look right and save the old string.
+ep = await edgeAt(L.de);
+await page.mouse.click(ep.x, ep.y);
+await page.waitForTimeout(400);
+const dropped = await page.evaluate(() => {
+	const chip = [...document.querySelectorAll('#graph-rel-chips .tag-chip')]
+		.find(c => /^notes/.test((c.textContent || '').trim()));
+	if (!chip) return false;
+	chip.querySelector('.tag-x').click();
+	return true;
+});
+check(dropped, `the chip for a relation offers a way to drop it`);
+await page.click('#graph-edit-ok', { force: true });
+await page.waitForTimeout(1000);
+const afterDrop = JSON.parse(await wasm(async (app) => await app.all_links()))
+	.filter(l => l.from.endsWith(id.D) && l.to.endsWith(id.E));
+check(afterDrop.length === 1 && afterDrop[0].rel === 'supersedes',
+	`closing a chip drops that relation and keeps the others: `
+	+ JSON.stringify(afterDrop.map(l => l.rel)));
 
 // ── 8. A link drawn by clicking two Diamonds ─────────────────────
 const linksNow = () => wasm(async (app) => await app.all_links()).then(x => JSON.parse(x));

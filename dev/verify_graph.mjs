@@ -6,7 +6,9 @@
 // directions separately -- every stored link between two live Diamonds is drawn exactly
 // once, and every drawn edge names a link that is really there -- and then proves the
 // things a faithful picture also has to get right: which way the arrow points, which edge
-// closes a cycle, that two relations between one pair are two lines AND two readable words,
+// closes a cycle, that two relations between one pair are two lines AND two readable chips
+// (a link's relations are a set now, one chip apiece, and the store holds them as one
+// comma-separated string),
 // that an artefact is a count rather than a box, that a link to a deleted Diamond is
 // confessed in the stats and drawn nowhere, that no hint stands over the boxes it points at,
 // and that the same store draws the same bytes on every load.
@@ -110,11 +112,15 @@ const drawn = () => page.evaluate(() => {
 		hasSvg: !!svg,
 		edges: svg ? [...svg.querySelectorAll('g.graph-edges > g.graph-edge')].map(g => {
 			const path = g.querySelector('path.graph-edge-line');
-			const lab  = g.querySelector('text.graph-edge-label');
+			// A link carries a SET of relations, drawn as a chip each, so the
+			// labels are a list. A link with no relation has none, which is how an
+			// empty relation stays distinguishable from a blank one.
+			const labs = [...g.querySelectorAll('text.graph-edge-label')]
+				.map(t => t.textContent);
 			return {
 				lid:  g.dataset.linkId, from: g.dataset.from, to: g.dataset.to,
 				back: g.classList.contains('back'),
-				label: lab ? lab.textContent : null,
+				labels: labs,
 				d: path ? path.getAttribute('d') : null,
 				ends: path ? ends(path.getAttribute('d')) : null,
 				marker: path ? path.getAttribute('marker-end') : null,
@@ -122,11 +128,17 @@ const drawn = () => page.evaluate(() => {
 			};
 		}) : [],
 		nodes: svg ? [...svg.querySelectorAll('g.graph-nodes > g.graph-node')].map(g => {
-			const box = g.querySelector('rect.graph-node-box');
+			// The box is a PATH now -- a flattened hexagon, kinked out to a point
+			// at each side -- so there is no width or height attribute to read.
+			// Its extent is taken from the drawn geometry instead, which is what
+			// the direction checks want in any case: they ask where a line meets
+			// the box, and the box is whatever the box was drawn as.
+			const box = g.querySelector('path.graph-node-box');
+			const bb  = box ? box.getBBox() : null;
 			return {
 				did: g.dataset.diamondId, at: pos(g.getAttribute('transform')),
-				w: box ? +box.getAttribute('width') : null,
-				h: box ? +box.getAttribute('height') : null,
+				w: bb ? bb.width : null,
+				h: bb ? bb.height : null,
 				isolate: g.classList.contains('isolate'),
 				cycled:  g.classList.contains('cycled'),
 				name: (g.querySelector('text.graph-node-name') || {}).textContent ?? null,
@@ -157,18 +169,25 @@ check(stored.length === 9 && dd.length === 7 && live.length === 6,
 	`store: ${stored.length} links, ${dd.length} between live Diamonds, ${live.length} Diamonds`);
 
 // ── 1. Stored → drawn ────────────────────────────────────────────
+/// The relations one stored `rel` names, as graph.js reads it: one string in the
+/// record, comma-separated, and each of them a chip on the line.  Written here
+/// rather than imported so the picture is compared against the STORE's own
+/// meaning and not against the module's copy of it.
+const relsOf = (rel) => String(rel || '').split(',')
+	.map(r => r.trim().replace(/\s+/g, ' ')).filter(Boolean);
 let ones = 0, matched = 0, labelled = 0;
 for (const l of dd) {
 	const hits = g.edges.filter(e => e.lid === l.id);
 	if (hits.length === 1) ones++;
 	if (hits.length === 1 && hits[0].from === dref(l.from) && hits[0].to === dref(l.to)) matched++;
-	if (hits.length === 1 && hits[0].label === (l.rel ? l.rel : null)) labelled++;
+	if (hits.length === 1 && JSON.stringify(hits[0].labels) === JSON.stringify(relsOf(l.rel))) labelled++;
 }
 check(ones === dd.length, `every stored Diamond-to-Diamond link is drawn EXACTLY once: ${ones}/${dd.length}`);
 check(matched === dd.length, `each drawn edge carries the stored from/to: ${matched}/${dd.length}`);
 check(labelled === dd.length,
-	`the relation is the label, and an empty relation gets no label: ${labelled}/${dd.length}`
-	+ ` (empty-rel link ${linkName[L.cf]} label=${JSON.stringify((g.edges.find(e => e.lid === L.cf) || {}).label)})`);
+	`every relation the store names is a chip on that line, and an empty relation gets none:`
+	+ ` ${labelled}/${dd.length}`
+	+ ` (empty-rel link ${linkName[L.cf]} labels=${JSON.stringify((g.edges.find(e => e.lid === L.cf) || {}).labels)})`);
 
 // ── 2. Drawn → stored: no invented edges ─────────────────────────
 const byId = {};
@@ -274,52 +293,72 @@ check(!(g.nodes.find(n => n.did === id.F) || {}).cycled,
 
 // ── 5. Parallel edges ────────────────────────────────────────────
 const par = g.edges.filter(e => e.from === id.A && e.to === id.D);
-check(par.length === 2, `both relations between Alpha and Delta are drawn: ${par.map(e => e.label).join(', ')}`);
+const parWords = par.flatMap(e => e.labels);
+check(par.length === 2, `both relations between Alpha and Delta are drawn: ${parWords.join(', ')}`);
 check(par.length === 2 && par[0].d !== par[1].d && par[0].ends && par[1].ends
 	&& par[0].ends.x0 !== par[1].ends.x0,
 	`and are separated rather than laid on top of each other: x0 ${par.map(e => e.ends && e.ends.x0).join(' vs ')}`);
-check(par.length === 2 && new Set(par.map(e => e.label)).size === 2,
-	`each parallel line carries its own relation: ${JSON.stringify(par.map(e => e.label))}`);
+check(new Set(parWords).size === parWords.length && parWords.length === par.length,
+	`each parallel line carries its own relation: ${JSON.stringify(par.map(e => e.labels))}`);
 
-/// Where each label between one pair actually landed, read off the drawn document.
+/// Every relation drawn between one pair, and where on the SCREEN each of them landed.
 ///
 /// A measurement in the TEST is free; the same measurement inside the layout would not be,
 /// because a picture that placed a word by how wide the browser drew it would place it
 /// differently on another machine.  So this asks the document, and the pane never does.
-const labelsBetween = (pg, from, to) => pg.evaluate(({ from, to }) =>
+///
+/// Measured in client coordinates rather than in the SVG's own.  A relation is a chip
+/// inside a group the pane translates to a point on the line, so a chip's own `getBBox`
+/// is stated about its stack's origin and two chips on two different lines would both
+/// report the same place -- which would make the overlap check below say "no overlap"
+/// about words printed one over the other, and say it for ever.  The client rect is the
+/// only frame in which "these two words are on top of each other" is a question with an
+/// answer.  The chip's BOX is measured, not its text: the box is opaque and is what the
+/// reader sees one of covering the other.
+const relsDrawn = (pg, from, to) => pg.evaluate(({ from, to }) =>
 	[...document.querySelectorAll('#graph-body g.graph-edge')]
 		.filter(g => g.dataset.from === from && g.dataset.to === to)
-		.map(g => {
-			const tx = g.querySelector('text.graph-edge-label');
-			if (!tx) return null;
-			const bb = tx.getBBox();
+		.flatMap(g => [...g.querySelectorAll('g.graph-chip')].map(c => {
+			const tx = c.querySelector('text.graph-edge-label');
+			const r  = c.getBoundingClientRect();
 			return {
-				lid: g.dataset.linkId, text: tx.textContent,
-				ax: +tx.getAttribute('x'), ay: +tx.getAttribute('y'),
-				x: bb.x, y: bb.y, w: bb.width, h: bb.height,
+				lid: g.dataset.linkId, text: tx ? tx.textContent : '',
+				x: r.left, y: r.top, w: r.width, h: r.height,
+				cy: r.top + r.height / 2,
 			};
-		}).filter(Boolean), { from, to });
+		})), { from, to });
 
-/// The two labels between one pair, asserted apart in both senses: their anchors are a
-/// label's height apart, and the boxes the words actually occupy do not intersect.
-function labelsApart(boxes, what) {
-	const u = boxes[0], v = boxes[1];
-	const gap  = (u && v) ? Math.abs(u.ay - v.ay) : 0;
-	const need = (u && v) ? Math.max(u.h, v.h) : 0;
-	check(boxes.length === 2 && gap >= need,
-		`${what}: the two labels are set apart ALONG their own lines by at least a label's height — `
-		+ `${gap.toFixed(1)}px apart, a label is ${need.toFixed(1)}px tall `
-		+ `(${boxes.map(z => `${JSON.stringify(z.text)}@y=${z.ay.toFixed(1)}`).join(', ')})`);
-	const hit = !!(u && v)
-		&& !(u.x + u.w <= v.x || v.x + v.w <= u.x || u.y + u.h <= v.y || v.y + v.h <= u.y);
-	check(boxes.length === 2 && !hit,
-		`${what}: and the boxes the words occupy do not intersect — `
-		+ boxes.map(z => `${JSON.stringify(z.text)} [${z.x.toFixed(1)},${z.y.toFixed(1)} `
-			+ `${z.w.toFixed(1)}×${z.h.toFixed(1)}]`).join(' vs '));
+/// The relations between one pair, asserted apart in both senses: no two of them sit
+/// within a chip's height of each other along the lines, and no two of the boxes they
+/// are drawn in intersect.
+///
+/// Over every PAIR rather than over the first two.  Two links between one pair may carry
+/// any number of relations between them, and a check that read two entries would go on
+/// passing while a third was printed over one of them.
+function relsApart(chips, what) {
+	const pairs = [];
+	for (let i = 0; i < chips.length; i++)
+		for (let j = i + 1; j < chips.length; j++) pairs.push([chips[i], chips[j]]);
+	const tooClose = pairs.filter(([u, v]) => Math.abs(u.cy - v.cy) < Math.max(u.h, v.h));
+	check(chips.length > 1 && tooClose.length === 0,
+		`${what}: every relation is set apart ALONG the lines by at least a chip's height — `
+		+ `${chips.length} chip(s), `
+		+ (tooClose.length
+			? tooClose.map(([u, v]) => `${JSON.stringify(u.text)}@${u.cy.toFixed(1)} vs `
+				+ `${JSON.stringify(v.text)}@${v.cy.toFixed(1)}`).join('; ')
+			: chips.map(z => `${JSON.stringify(z.text)}@${z.cy.toFixed(1)}`).join(', ')));
+	const hit = pairs.filter(([u, v]) =>
+		!(u.x + u.w <= v.x || v.x + v.w <= u.x || u.y + u.h <= v.y || v.y + v.h <= u.y));
+	check(chips.length > 1 && hit.length === 0,
+		`${what}: and none of the boxes they are drawn in intersect — `
+		+ (hit.length
+			? hit.map(([u, v]) => `${JSON.stringify(u.text)} over ${JSON.stringify(v.text)}`).join('; ')
+			: chips.map(z => `${JSON.stringify(z.text)} [${z.x.toFixed(1)},${z.y.toFixed(1)} `
+				+ `${z.w.toFixed(1)}×${z.h.toFixed(1)}]`).join(' vs ')));
 }
-// Nudging the PATHS apart was never the whole job: a label rides its own path, so two
-// parallel labels landed at the same height and printed one over the other.
-labelsApart(await labelsBetween(page, id.A, id.D), 'Alpha ⇉ Delta');
+// Nudging the PATHS apart was never the whole job: a relation rides its own path, so two
+// parallel ones landed at the same height and printed one over the other.
+relsApart(await relsDrawn(page, id.A, id.D), 'Alpha ⇉ Delta');
 
 // ── 6. Artefacts, and a link to a Diamond that is gone ───────────
 const badged = g.nodes.filter(n => n.badge !== null);
@@ -383,7 +422,7 @@ check(g2.edges.length === before && !g2.edges.some(e => e.lid === newLink),
 	`and a removed link goes the same way: ${g2.edges.length} edge(s)`);
 
 // ── 10. A node opens its Diamond ─────────────────────────────────
-await page.click(`g.graph-node[data-diamond-id="${id.C}"] rect.graph-node-box`, { force: true });
+await page.click(`g.graph-node[data-diamond-id="${id.C}"] path.graph-node-box`, { force: true });
 await page.waitForTimeout(1200);
 const cur = await page.evaluate(() => (window.DaimondDiamond.current() || {}).id || null);
 check(cur === id.C, `clicking a node selects that Diamond: ${nameOf[cur] || cur} (wanted Charlie)`);
@@ -453,10 +492,12 @@ const longIds = await b.page.evaluate(async (a) => {
 }, bIds);
 await b.page.evaluate(() => DaimondGraph.refresh());
 await b.page.waitForTimeout(1000);
-const twoLong = await labelsBetween(b.page, bIds[0], bIds[1]);
-check(longIds.every(x => typeof x === 'string' && x.length > 0) && twoLong.length === 2,
+const twoLong = await relsDrawn(b.page, bIds[0], bIds[1]);
+check(longIds.every(x => typeof x === 'string' && x.length > 0)
+	&& ['is-a-precondition-for', 'supersedes-and-replaces']
+		.every(w => twoLong.some(z => z.text === w)),
 	`two long relations between one pair are both drawn and both labelled: ${JSON.stringify(twoLong.map(z => z.text))}`);
-labelsApart(twoLong, 'two long relations between one pair');
+relsApart(twoLong, 'two long relations between one pair');
 await shot(b, 'graph-parallel-labels');
 const errsB = errors(b).filter(e => !gatewayNoise.test(e));
 check(errsB.length === 0, `no console errors on the empty session: ${JSON.stringify(errsB.slice(0, 3))}`);

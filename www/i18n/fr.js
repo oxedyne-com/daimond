@@ -20,6 +20,18 @@
 	'common.cancel': 'Annuler',
 	'common.save': 'Enregistrer',
 
+	// Copying an identifier. `copy.aria` wraps each `what_` so a reader hears
+	// "Copier l’identifiant du build" rather than five buttons all called Copier.
+	'copy.aria': 'Copier {what}',
+	'copy.failed': 'Copie impossible',
+	'copy.nothing': 'Rien à copier',
+	'copy.what_build': 'l’identifiant du build',
+	'copy.what_build_n': 'l’identifiant du build {id}',
+	'copy.what_fingerprint': 'l’empreinte de votre compte',
+	'copy.what_device': 'l’identifiant de {name}',
+	'copy.what_model': 'l’identifiant du modèle {id}',
+	'copy.what_default_model': 'l’identifiant du modèle par défaut',
+
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu': 'Menu',
 	'topbar.open_menu': 'Ouvrir le menu',
@@ -711,7 +723,7 @@
 	'models.remove': 'Retirer {provider}',
 	'models.starts_on': 'Les nouveaux chats démarrent sur : {model}',
 	'models.no_default': 'Aucun modèle par défaut — mettez une étoile à l’un d’eux ci-dessus.',
-	'models.none_yet': 'Aucun modèle — ajoutez une clé de fournisseur dans Modèles',
+	'models.none_yet': 'Aucun fournisseur',
 	'models.err_refused': 'Le service de comptes a refusé (HTTP {status}).',
 	'models.err_bad_key': 'Le service de comptes a envoyé une clé que Daimond ne peut pas utiliser.',
 	'models.err_no_key': 'Ce fournisseur n’a pas encore de clé.',
@@ -935,6 +947,10 @@
 	'devices.rename_body': 'Appelez cet appareil comme vous voulez, pour le distinguer des autres. Laissez le champ vide pour revenir à « {derived} ». Le nom est conservé avec vos propres données chiffrées et ne voyage que vers vos autres appareils.',
 	'devices.rename_aria': 'Renommer {name}',
 	'devices.note': 'Ces appareils synchronisent ce compte. Un appareil apparaît ici dès qu’il a synchronisé une fois ; celui qui détient votre compte sans avoir jamais synchronisé n’y figure pas. Rien ici ne déconnecte un appareil : un appareil lié détient les mêmes clés que celui-ci, il faut donc s’en occuper sur l’appareil lui-même.',
+	'devices.remove_aria': 'Retirer {name}',
+	'devices.remove_body': '« {name} » disparaît de cette liste. Cela ne déconnecte pas cet appareil : un appareil lié détient les mêmes clés que celui-ci, donc s’il sert encore, il se remettra tout seul dans la liste à sa prochaine synchronisation.',
+	'devices.remove': 'Retirer',
+	'devices.remove_title': 'Retirer cet appareil',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Hors ligne',
@@ -1027,6 +1043,11 @@
 	'tile.fold_all': 'Tout replier',
 	'tile.folded_help': 'Déjà replié dans « {name} » — repliez encore pour ajouter ce qui est venu depuis.',
 	'tile.fold_all_help': 'Replier ce chat entier dans un Diamond',
+	'tile.dlg_colour': 'Couleur',
+	'tile.colour_bg': 'Fond',
+	'tile.colour_fg': 'Texte',
+	'tile.colour_clear': 'Reprendre les couleurs du thème',
+	'tile.colour_faint': 'Ces deux couleurs sont difficiles à lire ensemble — {ratio}:1, alors que {min}:1 est le plancher habituel pour du texte de cette taille. Laissé tel que vous l’avez choisi.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Bien au-delà de votre budget',
@@ -1646,7 +1667,7 @@
 	'tile.model_workers': 'Ouvriers',
 	'tile.model_vision': 'Ouvriers, images',
 	'tile.model_vision_help': 'Le modèle sur lequel tourne un ouvrier quand sa tâche nomme une image. Daimond ne peut pas vérifier qu’un modèle voit : le choix vous revient.',
-	'tile.model_same_as_text': 'Comme le modèle texte',
+	'tile.model_same_as_text': 'Comme le daimon',
 	'tile.model_none': 'aucun',
 	'tile.diamond_model_help': 'Ce Diamond pense avec {model}.',
 	'tile.model_note': 'Un ouvrier garde le modèle avec lequel il a commencé. Un nouveau modèle vaut pour le prochain envoyé.',
@@ -1732,6 +1753,7 @@
 	'trig.context': 'Contexte',
 	'trig.context_ph': 'Le fond dont il a besoin la première fois, et seulement la première fois…',
 	'trig.context_note': 'Envoyé une fois, devant la première instruction. Changez-le et il est envoyé de nouveau.',
+	'trig.section': 'Actions automatiques',
 	'role.compactor': 'Repliage du contexte',
 	'role.compactor_help': 'Résume une conversation qui a dépassé sa fenêtre. Sa réponse devient ce dont le chat se souvient.',
 	'settings.fold_model': 'Replier avec',

@@ -68,6 +68,25 @@
 	color: var(--text-secondary);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The one manual refresh, at the end of that row. It is a '⟳' rather than a
+   drawn icon, and the rule for it used to live down in the folders block where
+   it was born, sized at the folder head's 13px -- so beside the 20px pause and
+   play it read as a stray character rather than the third control on the row.
+   A 20px box, the same one `.pptw-act` wears two places to the left, and 18px
+   of type in it: the glyph is drawn inside its em box, so the same nominal size
+   as the verbs beside it would still come out smaller than them. */
+.mail-refresh {
+	flex: none;
+	display: flex; align-items: center; justify-content: center;
+	width: 20px; height: 20px; padding: 0;
+	border: 0; border-radius: var(--radius-sm); background: none;
+	color: var(--text-muted);
+	font-size: var(--fs-2xl); line-height: 1;
+	cursor: pointer;
+}
+.mail-refresh:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-hover); }
+.mail-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mail-refresh:disabled { opacity: 0.5; cursor: default; }
 .mail-acct {
 	display: flex; align-items: center; gap: 6px;
 	padding: 6px 8px;
@@ -103,7 +122,11 @@
 	border: 0; background: none; color: var(--text-muted);
 	cursor: pointer;
 }
-.mail-gear .ic { width: 14px; height: 14px; }
+/* 16px, which is what a Diamond tile's cog and the rail status header's cog are
+   drawn at. It is the same path from the same place, and the app was drawing it
+   at three sizes in three panels; 14 in a 20px box also left more air round it
+   than round anything else on the row. */
+.mail-gear .ic { width: 16px; height: 16px; }
 .mail-gear:hover { color: var(--text-primary); }
 .mail-gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 50%; }
 
@@ -386,18 +409,8 @@
 	letter-spacing: 0.04em;
 	color: var(--text-muted);
 }
-.mail-refresh {
-	margin-left: auto;
-	border: 0;
-	background: none;
-	color: var(--text-muted);
-	font-size: var(--fs-sm);
-	line-height: 1;
-	padding: 0 2px;
-	cursor: pointer;
-}
-.mail-refresh:hover { color: var(--text-primary); }
-.mail-refresh:disabled { opacity: 0.5; cursor: default; }
+/* `.mail-refresh` was declared here, next to the folder head it once sat in.
+   It moved to the globals row above and its rule went with it. */
 .mail-folder-list {
 	display: flex;
 	flex-direction: column;
