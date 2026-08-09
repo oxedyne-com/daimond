@@ -21,7 +21,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099).
-import { open, chat, signInAs, errors } from './harness.mjs';
+import { open, chat, signInAs, errors, contentText } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -192,7 +192,7 @@ check('the model\'s own copy is NOT shortened — it had the whole thing',
 	withTool.some(c => c.session && (c.session.msgs || []).some(m =>
 		m.role === 'tool' && typeof m.content === 'string' && m.content.length > 10000)),
 	JSON.stringify(withTool.map(c => (c.session ? (c.session.msgs || []).filter(m => m.role === 'tool')
-		.map(m => (m.content || '').length) : [])).flat()));
+		.map(m => contentText(m.content).length) : [])).flat()));
 
 // ── 5. When the store fails, the user is told, and can act ────────────────
 //

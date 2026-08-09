@@ -4370,6 +4370,24 @@ impl Tool {
                         Invalid, Input, Excessive));
                 }
                 let updated = data.replacen(&old, &new, 1);
+                // THE CRYSTAL'S THIRD DOOR.
+                //
+                // `Tool::FileWrite` has carried this check since the ceiling was built, and
+                // the store's own door catches a hand edit and a fold.  This one was missed,
+                // and a daimon that EDITS rather than rewrites walked straight past it.  The
+                // store's door does then fire -- but it reads the old length from disk, and
+                // by then the edit has landed, so `old == new` and the refusal arrives after
+                // the fact: `record_steer` errors, the turn fails, and an oversized crystal
+                // is left on disk with no version snapshot and no log record.  Refusing here
+                // means the file is never written at all, which is the only place the
+                // asymmetry below can still be honoured.
+                //
+                // `data` is the content BEFORE the replacement, so an edit that shrinks an
+                // already-oversized crystal is still allowed, exactly as at the other doors.
+                if is_crystal_path(&path) && crystal_write_refused(updated.len(), data.len()) {
+                    return Err(err!("file_edit: {}", crystal_cap_message(updated.len());
+                        Invalid, Input, Size));
+                }
                 res!(crate::wasm::opfs::write_file(ctx.root, &path, updated.as_bytes()).await);
                 // The edit is anchored to current on-disk content, so it merges
                 // safely; record the new state as this agent's latest view.

@@ -4873,6 +4873,71 @@ import init, {
 		else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 	}
 
+	/// Put the focus back where a dialog took it from.
+	///
+	/// `prev.focus()` on its own is not enough, and the reason is not exotic: the
+	/// panel underneath can REDRAW while the dialog stands over it. `renderHome`
+	/// does exactly that -- the console role probe calls it on every answer, and
+	/// when there is no gateway to answer it retries on a timer -- and the redraw
+	/// clears `homeView`, so the button the dialog means to hand the focus back to
+	/// no longer exists. `focus()` on a detached node throws nothing and does
+	/// nothing; the focus is simply left on `document.body`, and the next Tab
+	/// starts at the top of the app. Three dialogs failed `verify_focus` on that,
+	/// and every offline session met it.
+	///
+	/// So the opener is tried first, and if the focus did not land, whatever is
+	/// still standing takes it: an outer dialog if one is open, otherwise the
+	/// container the opener came from -- captured when the dialog opened, because
+	/// a redraw replaces a panel's CHILDREN and keeps the panel itself.
+	///
+	/// # Arguments
+	/// * `prev` - Whatever held the focus when the dialog opened.
+	/// * `host` - The nearest identified ancestor of `prev` at that moment.
+	function refocus(prev, host) {
+		if (tookFocus(prev)) return;
+		// The opener has gone. Hand the focus to whatever is still standing, and
+		// VISIBLE, and able to take it.
+		//
+		// Visibility is not a nicety here. `www/index.html` keeps six modals in the
+		// document with `display:none` -- settings, identity and the rest -- so
+		// "the topmost .modal-card" picks a hidden one, focusing anything inside it
+		// silently does nothing, and the focus is left on the body: the very
+		// failure this function exists to prevent, reintroduced by the fix for it.
+		// Hence `tookFocus`, which ASKS whether the focus actually moved rather
+		// than assuming `focus()` worked.
+		var cards = document.querySelectorAll('.modal .modal-card');
+		for (var i = cards.length - 1; i >= 0; i--) {
+			if (onScreen(cards[i]) && focusWithin(cards[i])) return;
+		}
+		if (host && host.isConnected && onScreen(host)) focusWithin(host);
+	}
+
+	/// Focus `el` and report whether it actually took it. `focus()` on a detached
+	/// or hidden element neither throws nor moves anything.
+	function tookFocus(el) {
+		if (!el || !el.isConnected || typeof el.focus !== 'function') return false;
+		try { el.focus(); } catch (e) { return false; }
+		return document.activeElement === el;
+	}
+
+	/// Whether an element is actually rendered, rather than merely present.
+	function onScreen(el) {
+		return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+	}
+
+	/// Give the focus to the first thing inside `scope` that will take it, or to
+	/// `scope` itself. `-1` keeps the container out of the tab order: it is a
+	/// landing place, not a stop.
+	function focusWithin(scope) {
+		var all = scope.querySelectorAll(
+			'button, [href], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])');
+		for (var i = 0; i < all.length; i++) {
+			if (onScreen(all[i]) && tookFocus(all[i])) return true;
+		}
+		if (!scope.hasAttribute('tabindex')) scope.setAttribute('tabindex', '-1');
+		return tookFocus(scope);
+	}
+
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
@@ -4935,10 +5000,14 @@ import init, {
 			document.body.appendChild(back);
 
 			var prev = document.activeElement;
+		// Captured while the opener is still in the document: a panel that redraws
+		// underneath replaces its CHILDREN and keeps its own box, so this survives
+		// where `prev` does not. See `refocus`.
+		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
 			function close(value) {
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
-				if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+				refocus(prev, prevHost);
 				resolve(value);
 			}
 			async function submit() {
@@ -5605,7 +5674,40 @@ import init, {
 		// The account's own controls. They used to be a floating menu anchored to
 		// the user row; a panel that exists to hold them is a better home than a
 		// popup that has to be dismissed.
+		/// Redraw the home view, keeping the focus where it was.
+		///
+		/// A REDRAW MUST NOT TAKE THE FOCUS WITH IT. `renderConsoleLink` calls this
+		/// on every answer from the console role probe, and when nothing answers it
+		/// retries on a timer at 1.2s, 2.4s and 3.6s -- which is every session with
+		/// no gateway. So a redraw lands about half a second AFTER a dialog has
+		/// handed the focus back to the button that opened it: the button is
+		/// replaced, and the focus falls to `document.body`, so the next Tab starts
+		/// at the top of the app.
+		///
+		/// That is what `verify_focus` was reporting against three dialogs, and the
+		/// cause was here rather than in any of them -- the restore worked and was
+		/// then undone. Measured with `dev/probe_focusrestore.mjs`: the focus is on
+		/// the opener at +50ms and +300ms, and on the body by +900ms.
+		///
+		/// Controls are matched back by their label, which is what identifies one to
+		/// the person using it. An item that has genuinely gone -- the panel now
+		/// offers something different -- simply keeps no focus, which is correct: it
+		/// is the container that survives, not a promise about its contents.
 		function renderHome() {
+			var hadFocus = homeView && document.activeElement
+				&& homeView.contains(document.activeElement)
+				? (document.activeElement.textContent || '').trim() : '';
+			renderHomeBody();
+			if (!hadFocus) return;
+			var again = null;
+			var all = homeView.querySelectorAll('button, [role="button"], input, select, textarea');
+			for (var i = 0; i < all.length; i++) {
+				if ((all[i].textContent || '').trim() === hadFocus) { again = all[i]; break; }
+			}
+			if (again && again.focus) { try { again.focus(); } catch (e) { /* not focusable now */ } }
+		}
+
+		function renderHomeBody() {
 			if (!homeView) return;
 			homeView.innerHTML = '';
 			var idOn = window.DaimondIdentity && DaimondIdentity.exists() && DaimondIdentity.isUnlocked();
@@ -5740,6 +5842,16 @@ import init, {
 				trailOut.style.userSelect = 'text';
 				trailOut.hidden = true;
 				var tb = item(tOr('settings.trail_copy', 'Copy the app’s own trail'), function () {
+					// A SECOND press puts it away again. Showing the trail used to be a
+					// one-way door: the text appeared, the button relabelled itself, and
+					// nothing on the screen returned it to how it was -- so a diagnostic
+					// somebody opened once sat over the panel for the rest of the session.
+					// `verify_reversible` calls that a trap and it is right.
+					if (!trailOut.hidden) {
+						trailOut.hidden = true;
+						tb.textContent = tOr('settings.trail_copy', 'Copy the app’s own trail');
+						return;
+					}
 					var text = '';
 					try { text = DaimondTrail.text(); } catch (e) { text = ''; }
 					// SHOWN as well as copied. The clipboard is refused often enough
@@ -7288,6 +7400,27 @@ import init, {
 		catch (e) { return false; }		// the module is not up: nothing is armed
 	}
 
+	/// The pause node a conversation spends against.
+	///
+	/// A DAIMON'S conversation is not an ordinary chat. It belongs to its Diamond,
+	/// it has no tile on the rail (`renderChats` draws only the loose ones), and
+	/// the Diamond's own `self` leaf already governs it. Giving it a second leaf
+	/// under `root/chats` governs one thing twice, and the two can disagree.
+	///
+	/// That is not hypothetical: seq 95 made `selectDiamond` set `current` on the
+	/// CRYSTAL face as well as the chat face, and `daimonChat` creates the record
+	/// on first call — so merely CLICKING a Diamond began minting an invisible
+	/// chat leaf. `root/chats` then read "mixed" with nothing on screen to explain
+	/// it, and "pause Everything" reported touching more leaves than the rail had
+	/// controls. `verify_pausewidget` has been red on exactly that since.
+	///
+	/// # Arguments
+	/// * `c` - A conversation record, loose or a daimon's.
+	function chatSpendNode(c) {
+		if (c && c.diamondId) return DaimondPause.id('root', 'diamonds', c.diamondId, 'self');
+		return DaimondPause.id('root', 'chats', c && c.id);
+	}
+
 	/// The live tree, as it stands at the moment it is asked.
 	///
 	/// Every branch carries a `children` array even when it is empty. A node with
@@ -7317,7 +7450,11 @@ import init, {
 			} catch (e) { /* the module is not up: a Diamond with its daimon alone */ }
 			return { id: base, kind: 'diamond', label: f.name || t('rail.unnamed_diamond'), children: kids };
 		});
-		var cnodes = (chats || []).map(function (c) {
+		// The LOOSE ones only. A daimon's conversation is governed by its Diamond's
+		// `self` leaf above; see `chatSpendNode`. This mirrors the rail exactly,
+		// which is the property that matters — every leaf in the tree is a control
+		// somebody can see, and every control somebody can see is a leaf.
+		var cnodes = (chats || []).filter(function (c) { return !c.diamondId; }).map(function (c) {
 			return { id: DaimondPause.id('root', 'chats', c.id), kind: 'chat', label: c.name || t('pause.unnamed_chat') };
 		});
 		return {
@@ -7821,11 +7958,15 @@ import init, {
 		document.body.appendChild(back);
 
 		var prev = document.activeElement;
+		// Captured while the opener is still in the document: a panel that redraws
+		// underneath replaces its CHILDREN and keeps its own box, so this survives
+		// where `prev` does not. See `refocus`.
+		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
 		function close() {
 			document.removeEventListener('keydown', onKey, true);
 			if (sayPause) window.removeEventListener('daimond:pause', sayPause);
 			back.remove();
-			if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+			refocus(prev, prevHost);
 		}
 		function onKey(e) {
 			if (e.key === 'Escape') { e.preventDefault(); close(); }
@@ -8416,11 +8557,15 @@ import init, {
 		document.body.appendChild(back);
 
 		var prev = document.activeElement;
+		// Captured while the opener is still in the document: a panel that redraws
+		// underneath replaces its CHILDREN and keeps its own box, so this survives
+		// where `prev` does not. See `refocus`.
+		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
 		return new Promise(function (resolve) {
 			function close(v) {
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
-				if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+				refocus(prev, prevHost);
 				resolve(v);
 			}
 			function onKey(e) {
@@ -9862,7 +10007,7 @@ import init, {
 						// mint is simply taken rather than bought again.
 						// The node this chat spends against travels with the mint: a paused
 					// chat must not buy a fresh key to carry on with.
-					try { await DaimondModels.remint(chat._gen, DaimondPause.id('root', 'chats', chat.id)); }
+					try { await DaimondModels.remint(chat._gen, chatSpendNode(chat)); }
 						catch (e2) {
 							// The key could not be replaced, so the balance is gone rather than merely
 							// capped. Say the thing the user can act on: a raw 401 would send them
@@ -19686,10 +19831,14 @@ import init, {
 			setGen(canGen);
 
 			var prev = document.activeElement;
+		// Captured while the opener is still in the document: a panel that redraws
+		// underneath replaces its CHILDREN and keeps its own box, so this survives
+		// where `prev` does not. See `refocus`.
+		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
 			function close(value) {
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
-				if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
+				refocus(prev, prevHost);
 				resolve(value);
 			}
 			function submit() {
@@ -20611,6 +20760,13 @@ import init, {
 			out.id = 'cfg-trail-text';
 			out.hidden = true;
 			btn.addEventListener('click', function () {
+				// A second press puts it away again; see the twin of this control in
+				// the account panel for why that matters.
+				if (!out.hidden) {
+					out.hidden = true;
+					btn.textContent = tOr('settings.trail_copy', 'Copy the app’s own trail');
+					return;
+				}
 				var text = '';
 				try { text = DaimondTrail.text(); } catch (e) { text = ''; }
 				out.textContent = text || tOr('settings.trail_empty', 'Nothing recorded yet.');

@@ -74,6 +74,26 @@ export const mockLog = () => {
 };
 export const clearMockLog = () => { try { fs.writeFileSync(MOCK_LOG, ''); } catch {} };
 
+/// The text of a message's `content`, whichever shape it arrived in.
+///
+/// A message's content is a plain string in the simple case and an ARRAY OF
+/// PARTS whenever the request carries anything else -- a cache marker, an image.
+/// A check written as `/x/.test(m.content || '')` sees `[object Object]` for the
+/// second kind and quietly matches nothing.
+///
+/// That is not hypothetical: it is why `verify_credits` reported "0 copies of
+/// the user message on the wire" and "0 worker request(s) landed" for weeks. The
+/// wire was fine and the app was fine; the assertion was reading the message in
+/// one shape and the app was sending it in the other. Use this rather than
+/// touching `content` directly.
+export const contentText = (content) => {
+	if (typeof content === 'string') return content;
+	if (Array.isArray(content)) {
+		return content.map((p) => (p && typeof p.text === 'string') ? p.text : '').join('');
+	}
+	return '';
+};
+
 /// Launch a browser, sign in, and connect the mock model.
 ///
 /// `name` seeds a distinct identity so parallel sessions never share state;

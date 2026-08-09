@@ -20,7 +20,7 @@
 // The gateway is not running locally (/api/* is a 502 from dev/serve.mjs), so its four calls and
 // the provider behind the minted key are FETCH-stubbed — the store is never touched, and every
 // assertion below is against the real wasm, the real models.js and the real DOM.
-import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, APP, MOCK } from './harness.mjs';
+import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, contentText, APP, MOCK } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -438,7 +438,7 @@ check('the recovered 401 was never written into the conversation',
 // twice, and that is invisible from the transcript, which shows the user's own bubble either way.
 const sent = mockLog();
 const asked = sent.length
-	? sent[sent.length - 1].messages.filter(m => m.role === 'user' && /Hello from a credits chat/.test(m.content || ''))
+	? sent[sent.length - 1].messages.filter(m => m.role === 'user' && /Hello from a credits chat/.test(contentText(m.content)))
 	: [];
 check('the mock was reached on the fresh key (so the next check can mean something)', sent.length === 1, `${sent.length} request(s)`);
 check('the retry asked the model the question ONCE, not twice (it is excluded from the restore)',
@@ -595,7 +595,7 @@ check('every agent finished its task',
 	runs.length === 3 && runs.filter(r => /one|two|three/i.test(r.text)).length === 3,
 	JSON.stringify(runs.map(r => r.text.slice(0, 60))));
 // The workers really did meet the spent key: otherwise this proves nothing about healing.
-const workerReqs = mockLog().filter(m => (m.messages || []).some(x => WORKER_SAYS.test(x.content || '')));
+const workerReqs = mockLog().filter(m => (m.messages || []).some(x => WORKER_SAYS.test(contentText(x.content))));
 check('the workers did reach the model on the new key (they were really refused first)',
 	workerReqs.length === 3, `${workerReqs.length} worker request(s) landed`);
 await shot(s, 'credits-workers');

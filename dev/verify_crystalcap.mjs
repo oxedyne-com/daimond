@@ -7,13 +7,22 @@
 // rides in the sync parcel.
 //
 // The rule is one function, `tools::crystal_write_refused`, and it is checked at
-// BOTH doors, which is the only reason it holds:
+// all THREE doors, which is the only reason it holds:
 //
-//   * `Tool::FileWrite`, which is how a DAIMON edits its crystal. The store sees
-//     that write only afterwards, when `record_steer` snapshots what is on disk,
-//     so a check there would be refusing a write that already happened.
+//   * `Tool::FileWrite`, which is how a DAIMON rewrites its crystal. The store
+//     sees that write only afterwards, when `record_steer` snapshots what is on
+//     disk, so a check there would be refusing a write that already happened.
+//   * `Tool::FileEdit`, which is how a daimon edits it IN PLACE. This door was
+//     missing until 2026-08-09, and the file said "BOTH doors" while a daimon
+//     that edited rather than rewrote walked past the ceiling entirely. The
+//     store's door did then fire, but too late to help: it reads the old length
+//     from disk, and by then the edit had landed, so `old == new`, the refusal
+//     arrived after the fact, `record_steer` errored, the turn failed, and an
+//     OVERSIZED CRYSTAL WAS LEFT ON DISK WITH NO VERSION SNAPSHOT AND NO LOG
+//     RECORD. Every assertion below used to go through the other two doors,
+//     which is exactly why nothing went red.
 //   * `diamond::snapshot`, which is how a HAND EDIT and a FOLD reach the file.
-//     They never touch the file tool, so the first door does not see them.
+//     They never touch the file tool, so the first two doors do not see them.
 //
 // And two things the ceiling must NOT do, each of which would be worse than
 // having no ceiling at all:
@@ -97,6 +106,27 @@ try {
 		r.storeOver  = await hand(big);
 		r.storeUnder = await hand(small);
 
+		// ── The daimon's OTHER door: file_edit ───────────────────────
+		// `file_edit` writes the file just as `file_write` does, so it needs the
+		// same ceiling. Anchored on a unique token, because the tool refuses an
+		// `old_string` that appears more than once and a run of identical letters
+		// matches itself many times over.
+		const edit = async (path, oldS, newS) => {
+			let msg;
+			try {
+				msg = String(await app.run_tool('file_edit',
+					JSON.stringify({ path, old_string: oldS, new_string: newS })));
+			} catch (e) { msg = String(e && e.message ? e.message : e); }
+			return { ok: /^Edited /.test(msg), msg: msg.replace(/\[[0-9;]*m/g, '') };
+		};
+		r.editSeed  = await write(dir + '/crystal.md', 'HEAD\n' + small);
+		r.editUnder = await edit(dir + '/crystal.md', 'HEAD', 'HEADER');
+		r.editOver  = await edit(dir + '/crystal.md', 'HEADER', 'z'.repeat(CAP + 500));
+		// The specific harm this door caused: not that the write was allowed, but
+		// that the turn then died at the store's door leaving the oversized bytes
+		// on disk, unsnapshotted and unlogged. So the file itself is the assertion.
+		r.afterEditRefusal = await read(dir + '/crystal.md');
+
 		// ── An already-oversized crystal can still be edited DOWN ────
 		// Seeded past the ceiling with the ceiling RAISED -- not with zero, which
 		// means the default (16 KiB) rather than "no ceiling", and which quietly
@@ -105,6 +135,12 @@ try {
 		const huge = 'z'.repeat(20 * 1024);
 		r.seeded = await write(dir + '/crystal.md', huge);
 		app.set_crystal_cap(CAP);
+		// The asymmetry has to hold at the edit door too, or a Diamond that
+		// predates the rule could be rewritten down to size but never edited down.
+		// A hair over half, so it matches once rather than twice.
+		r.editShrink   = await edit(dir + '/crystal.md', 'z'.repeat(10 * 1024 + 1), '');
+		// 20 KB less 10241 leaves 10239 -- still over, so the writes below are
+		// still shrinking and the chain that follows is unchanged.
 		r.shrinkToward = await write(dir + '/crystal.md', 'z'.repeat(5 * 1024));	// still over, but smaller
 		r.shrinkUnder  = await write(dir + '/crystal.md', small);					// and all the way down
 		r.growAgain    = await write(dir + '/crystal.md', 'z'.repeat(6 * 1024));	// over again: refused
@@ -129,6 +165,19 @@ try {
 		out.storeOver.msg);
 	check(names(out.storeOver.msg), 'and that refusal names the scope too', out.storeOver.msg);
 	check(out.storeUnder.ok, 'a hand edit under it is written', out.storeUnder.msg);
+
+	check(out.editSeed.ok, 'a crystal small enough to edit is in place', out.editSeed.msg);
+	check(out.editUnder.ok, 'an edit that keeps the crystal under the ceiling is written',
+		out.editUnder.msg);
+	check(!out.editOver.ok, 'an edit that would push it over is refused at the edit door',
+		out.editOver.msg);
+	check(names(out.editOver.msg), 'and that refusal names the scope as well', out.editOver.msg);
+	// The one that matters most: the old failure was not a permitted write, it was
+	// a write that landed and then killed the turn, leaving bytes nothing recorded.
+	check(!/z/.test(out.afterEditRefusal || ''),
+		'and the refused bytes never reached the file, so no unsnapshotted crystal is left behind');
+	check(out.editShrink.ok, 'an edit may still make an oversized crystal SMALLER',
+		out.editShrink.msg);
 
 	check(out.seeded.ok, 'a Diamond can be seeded past the ceiling with the ceiling lifted');
 	check(out.shrinkToward.ok, 'an oversized crystal can be edited SMALLER while still over',

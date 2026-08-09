@@ -28,7 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, connectMock, signInAs, scratch, shot, mockLog, clearMockLog, storedChats } from './harness.mjs';
+import { open, connectMock, signInAs, scratch, shot, mockLog, clearMockLog, storedChats, contentText } from './harness.mjs';
 
 const OUT = path.join(os.homedir(), '.cache/daimond/daimonchat-shots');
 fs.mkdirSync(OUT, { recursive: true });
@@ -71,7 +71,7 @@ function lastRequestUserTexts() {
 	const rows = mockLog();
 	if (!rows.length) return null;
 	const msgs = rows[rows.length - 1].messages || [];
-	return msgs.filter(m => m.role === 'user').map(m => String(m.content || ''));
+	return msgs.filter(m => m.role === 'user').map(m => contentText(m.content));
 }
 
 const s = await open({ name: 'daimonchat', profile: scratch('pw', 'daimonchat-' + process.pid) });

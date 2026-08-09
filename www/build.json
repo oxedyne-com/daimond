@@ -1,1 +1,1 @@
-{"build":"457787fa7e07","note":"Fixes: a tile could render without its traffic light; Simple was hiding buttons"}
+{"build":"fd8aab60b5b4","note":"Fixes: closing a dialog no longer strands the keyboard, and the diagnostics trail can be put away again"}

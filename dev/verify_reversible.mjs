@@ -91,6 +91,14 @@ const SURFACES = [
 			'Import a backup…',
 			'＋ Add another account',
 			'Daimond Dashboard ↗',
+			// The sync switch RELOADS THE APP, which is a hand-off in the same
+			// family as logging out. It is not a door that closes behind you: after
+			// the reload the same control in the same place reads the other way
+			// round, so the state is reversible even though the screen it was
+			// reversed from has gone. Both labels, because which one is shown
+			// depends on the state it is in.
+			'Start without syncing',
+			'Turn syncing back on',
 		],
 		leavesRe: [/— switch$/],
 	},
@@ -100,7 +108,9 @@ const SURFACES = [
 		reach:  async (page) => { await click(page, '#astat-model'); },
 		ready:  '#admin-models',
 		root:   '#admin-models',
-		leaves: ['byok-save'],
+		// `cfg-sync-btn` is the settings twin of the account panel's sync switch,
+		// and it leaves for the same reason: it reloads the app.
+		leaves: ['byok-save', 'cfg-sync-btn'],
 	},
 	{
 		name:   'Credits',
