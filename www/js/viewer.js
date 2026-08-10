@@ -13,7 +13,7 @@
 //   1. THE BROWSER DECODES IT. Pictures, sound, moving pictures, PDF and HTML
 //      go to the decoder that exists for them, on a `Blob` carrying the probe's
 //      own media type -- a `Blob` with the wrong type is how a correct picture
-//      fails to appear.
+//      fails to appear, and for a PDF the type is what makes it safe as well.
 //   2. TEXT-SHAPED STRUCTURE. JSON as a tree, CSV and TSV as a table, Markdown
 //      through the renderer the chat already uses.
 //   3. THE HONEST FLOOR. Everything else gets a hex and ASCII dump, paged, with
@@ -26,7 +26,7 @@
 //
 // TWO RULES ARE LOAD-BEARING AND NEITHER IS A PREFERENCE.
 //
-// A frame gets `sandbox="allow-scripts"` and nothing else, ever. A `blob:` URL
+// A FRAME gets `sandbox="allow-scripts"` and nothing else, ever. A `blob:` URL
 // INHERITS OUR ORIGIN, so a frame with `allow-same-origin` runs as the app: it
 // reads `localStorage`, where the user's API key lives, and it reaches OPFS.
 // The file being framed may be one an agent wrote a moment ago, after reading a
@@ -34,6 +34,15 @@
 // where the Web panel does the same thing. SVG is therefore shown through
 // `<img>` and never a frame: script inside an SVG executes in a frame and does
 // not in an `<img>`, which is the whole reason it sits in the image list.
+//
+// A PDF IS NOT FRAMED, AND THAT IS THE SAME RULE RATHER THAN AN EXCEPTION TO IT.
+// A `sandbox` attribute of any value stops Chrome instantiating its PDF viewer,
+// so a framed PDF drew a broken-page glyph and nothing else -- for months, under
+// a header naming the format and its size, which is how it went unnoticed. PDFs
+// go to an `<embed>` typed from the probe, and what keeps THAT from running as
+// the app is the blob's type: `application/pdf` is handed to the PDF viewer and
+// its bytes are never parsed as a document. Both halves are measured, not
+// assumed; the note on `doc` below records what was measured and how.
 //
 // And nothing large is ever materialised. `createObjectURL` on a real `File`
 // handle is cheap because the browser streams it off disk; on a `Blob` built in
@@ -44,7 +53,7 @@
 // file is. This machine has been driven out of memory three times; a viewer
 // that reads a 900 MB video into wasm memory would be the fourth.
 //
-//     window.DaimondViewer = { probe, show, close, KIND_HANDLERS }
+//     window.DaimondViewer = { probe, show, close, editable, KIND_HANDLERS }
 //
 // `opts` carries `{ store, t, onError, wasm }`. Every user-visible string in
 // this file goes through `opts.t`, so the file holds no English of its own that
@@ -108,7 +117,7 @@
 		M4a: 'audio',
 		Mp4: 'video',	Webm: 'video',	Matroska: 'video',	Avi: 'video',
 		QuickTime: 'video',
-		Pdf: 'frame',	Html: 'frame',
+		Pdf: 'doc',	Html: 'frame',
 		// 2 — text-shaped structure.
 		Json: 'json',	Csv: 'table',	Tsv: 'table',	Markdown: 'markdown',
 		Text: 'text',
@@ -133,6 +142,53 @@
 		if (!h) h = info && info.text ? 'text' : KIND_HANDLERS['*'];
 		if (TEXTY[h] && !(info && info.text)) h = KIND_HANDLERS['*'];
 		return h;
+	}
+
+	/// Whether a panel should hand these bytes to an EDITOR rather than draw them.
+	///
+	/// `text`, NOT `chars`, AND THE DIFFERENCE IS A SHIPPED BUG. `chars` is a fact
+	/// about 512 bytes -- "these decode as characters" -- while `text` is that AND
+	/// "the format is a text one". The Doc panel asked `chars`, so a PDF that
+	/// carries no binary comment after `%PDF-` and no compressed stream in its
+	/// first half-kilobyte answered yes: 19 of the 1044 PDFs on the author's own
+	/// disk do, and clicking one filled the panel with `%PDF-1.4`, then
+	/// `1 0 obj<</Type/Catalog…`, numbered, in a <pre>. That is precisely the
+	/// salad this file exists to prevent, arriving through the door beside the one
+	/// that was closed.
+	///
+	/// The reason given for the wider question was that `Makefile` has no
+	/// extension, so its format would be Unknown and `text` false. It is not:
+	/// `Media::sniff` falls back to `Media::Text` for any run of characters it
+	/// recognises nothing else in, so `Makefile`, `LICENSE` and `README` all come
+	/// back `Media::Text` with `text` true (measured, not assumed). `chars` was
+	/// guarding a case that does not exist, and the guard is what let the PDF
+	/// through. If that fallback ever changes, the no-extension check in
+	/// `dev/verify_fileview.mjs` goes red, which is where the guard belongs.
+	///
+	/// # Arguments
+	/// * `info` - What `probe` returned, or null when the probe could not answer.
+	function editable(info) {
+		if (!info || !info.text) return false;
+		// A DRAWING IS NOT SOURCE, even though it is written in characters.
+		//
+		// `Media::Svg.is_text()` is true -- it is XML -- so an SVG satisfies
+		// `text` and would go to the editor, where it appears as a screenful of
+		// angle brackets. Its `kind()` is `Image` and `KIND_HANDLERS` has said
+		// `Svg: 'image'` all along, so the viewer has always known how to draw
+		// one; the panel simply could not reach it.
+		//
+		// This is the same over-reach as the bug above, pointed the other way.
+		// Routing on `chars` sent PDFs to the editor because their first bytes
+		// looked like characters; routing on `text` alone sends drawings there
+		// because their whole FORMAT is characters. The question worth asking is
+		// what the thing IS, and a picture is a picture.
+		//
+		// Deliberately narrow: only `Image`. HTML is text whose kind is a
+		// document and a person may genuinely want either the source or the
+		// page, so it stays in the editor until there is a control to choose --
+		// guessing wrong there takes away the only way to fix a broken page.
+		if (info.kind === 'Image') return false;
+		return true;
 	}
 
 	// ── Small helpers ────────────────────────────────────────────────
@@ -367,7 +423,7 @@
 		// decoder produces exactly the "this app is broken" impression this whole
 		// file exists to remove.
 		var whole = (handler === 'image' || handler === 'audio' || handler === 'video'
-			|| handler === 'frame');
+			|| handler === 'frame' || handler === 'doc');
 		if (whole && size > CAP_WHOLE) {
 			body.appendChild(el('p', 'fv-note', t('fileview.too_large',
 				'This is a {fmt} of {size}, too large to hold in memory here. Its bytes follow; '
@@ -382,6 +438,7 @@
 			case 'audio':	return await media(body, 'audio', path, info, opts, t, mine);
 			case 'video':	return await media(body, 'video', path, info, opts, t, mine);
 			case 'frame':	return await frame(body, path, info, opts, t, mine);
+			case 'doc':	return await doc(body, path, info, opts, t, mine);
 			case 'json':	return await json(body, path, info, opts, t, mine);
 			case 'table':	return await table(body, path, info, opts, t, mine);
 			case 'markdown':	return await markdown(body, path, info, opts, t, mine);
@@ -415,12 +472,51 @@
 		body.appendChild(n);
 	}
 
-	/// A PDF or an HTML page, in a frame that runs in an opaque origin.
+	/// A PDF, handed to the browser's own document viewer.
+	///
+	/// WHY THIS IS NOT THE SANDBOXED FRAME BELOW, WHICH IS WHERE IT USED TO GO.
+	/// A `sandbox` attribute of ANY value stops Chrome instantiating its PDF
+	/// viewer -- the viewer is an internal resource and a sandboxed frame may not
+	/// reach it -- so every PDF ever opened here drew a grey box with a
+	/// broken-page glyph in it. `allow-scripts allow-same-origin` does not help
+	/// either; it is the attribute's presence, not its value. Measured in
+	/// Chromium 150: sandboxed frame, broken glyph; `<embed>`, `<object>` and a
+	/// plain frame, the document. The panel said "PDF document, 966.3 KB" over
+	/// the top of it, which is how the state passed for working.
+	///
+	/// AND THE SECURITY ARGUMENT THE SANDBOX WAS MAKING STILL HOLDS -- it is just
+	/// not this element that has to make it. A `blob:` URL inherits our origin,
+	/// so an unsandboxed frame over a file an agent wrote runs as the app and
+	/// reaches `localStorage`, where the API key is. What closes that here is the
+	/// BLOB'S TYPE: `application/pdf` sends Chrome to the PDF viewer and it never
+	/// parses the bytes as a document. Measured, with a file of HTML carrying a
+	/// script that writes to `parent`: typed `application/pdf` it did not run, in
+	/// `<embed>`, in `<object>` and in a bare frame alike; typed `text/html` it
+	/// ran in every one of them. The type is not ours to be wrong about, either
+	/// -- it comes from `identify`, which reads the leading bytes, so a `.pdf`
+	/// full of HTML is `Media::Html` and goes to the sandboxed frame below.
+	///
+	/// `<embed>` rather than a bare frame because it takes the type EXPLICITLY,
+	/// which is what keeps the browser off its own sniffing, and because it has
+	/// no navigable document for anything to reach through.
+	async function doc(body, path, info, opts, t, mine) {
+		var blob = await wholeBlob(path, info.size, info.mime, opts);
+		if (mine !== epoch) return;
+		var e = el('embed', 'fv-doc');
+		e.setAttribute('type', info.mime || 'application/pdf');
+		e.setAttribute('title', t('fileview.frame_title', 'The contents of {name}',
+			{ name: path.split('/').pop() || path }));
+		e.src = mint(blob);
+		body.appendChild(e);
+	}
+
+	/// An HTML page, in a frame that runs in an opaque origin.
 	///
 	/// `allow-scripts` AND NOTHING ELSE. Not `allow-same-origin`, which would
 	/// hand the framed file our origin and with it `localStorage` and OPFS; not
 	/// `allow-forms`, `allow-popups`, `allow-modals` or `allow-top-navigation`.
-	/// The one flag is there because the browser's own PDF viewer is a script.
+	/// The one flag is there so a page's own scripting works while it stays in an
+	/// origin of its own.
 	async function frame(body, path, info, opts, t, mine) {
 		var blob = await wholeBlob(path, info.size, info.mime, opts);
 		if (mine !== epoch) return;
@@ -688,6 +784,10 @@
 		probe:         probe,
 		show:          show,
 		close:         close,
+		// The routing question a panel with an editor in it has to answer, kept
+		// here beside the table it is answered from rather than restated by every
+		// caller -- one caller restating it is what put a PDF in a <pre>.
+		editable:      editable,
 		KIND_HANDLERS: Object.freeze(KIND_HANDLERS),
 	};
 })();

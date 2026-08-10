@@ -88,6 +88,16 @@
 	background: #000;		/* a letterbox is black in every palette */
 }
 
+/* A PDF, in the browser's own viewer. It is an <embed> and not a frame because
+   a sandbox attribute of any value stops Chrome instantiating that viewer; what
+   keeps the file from running as us is the blob's type, set in the JS. */
+.fv-doc {
+	flex: 1; min-height: 0;
+	width: 100%;
+	border: 0;
+	background: var(--bg-tertiary);
+}
+
 /* A framed file runs in an opaque origin (sandbox="allow-scripts", set in the
    JS and nowhere else). Nothing here may add a permission to it. */
 .fv-frame {

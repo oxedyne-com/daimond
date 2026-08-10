@@ -14575,21 +14575,39 @@ import init, {
 			// bytes AND the name, saying so when the two disagree.
 			var info = null;
 			try { info = await DaimondViewer.probe(path, { store: storeFile }); }
-			catch (e) { info = null; }     // a missing file falls through to the text path's own error
-			// THE PANEL ROUTES ON `chars`, NOT ON THE VIEWER'S HANDLER. Routing on the
-			// handler sent every `.md` to the viewer's markdown tier, which took the
-			// EDITOR away from `DAIMOND.md` and `prompts/*.md` -- and this panel is
-			// where those are edited. Rendering markdown prettily is a poor trade for
-			// being unable to change it.
+			catch (e) {
+				// A missing file falls through to the text path, which reports it
+				// properly -- but the failure is SAID before it does. This catch used
+				// to be empty, and an empty one turns every way the probe can fail
+				// (a withdrawn folder grant, a path the jail refuses) into the same
+				// screen of characters as a correct answer, with nothing anywhere to
+				// tell the two apart. Two bugs in this project stayed hidden inside
+				// catches shaped like this one.
+				info = null;
+				try { console.warn('Daimond: could not tell what "' + path + '" is; '
+					+ 'showing it as characters. ' + ((e && e.message) ? e.message : e)); }
+				catch (e2) { /* no console */ }
+			}
+			// THE PANEL ROUTES ON WHETHER THE FILE IS EDITABLE, NOT ON THE VIEWER'S
+			// HANDLER. Routing on the handler sent every `.md` to the viewer's
+			// markdown tier, which took the EDITOR away from `DAIMOND.md` and
+			// `prompts/*.md` -- and this panel is where those are edited. Rendering
+			// markdown prettily is a poor trade for being unable to change it.
 			//
-			// `chars` is the bytes alone, not `text`, which also asks whether the
-			// FORMAT is a text one. A `Makefile` has no extension to recognise, so its
-			// format is Unknown and `text` is false; it is plainly a file somebody
-			// wants to edit, and the narrower question would have put it in a hex dump.
+			// It asked `info.chars` instead, and that was too generous by exactly one
+			// case. `chars` is a fact about 512 bytes -- "these decode as characters"
+			// -- and a PDF with no binary comment and no compressed stream near its
+			// front satisfies it, so clicking one put `%PDF-1.4` and the object table
+			// on screen, numbered, in the editor. `DaimondViewer.editable` asks the
+			// question the panel means, and the reasoning is set out there: a
+			// `Makefile` still opens in the editor, and a PDF no longer does however
+			// readable its header happens to be.
 			//
-			// The salad this whole change exists to fix was only ever non-text files,
-			// so nothing is lost by giving the editor everything that is characters.
-			if (info && !info.chars) {
+			// `info &&` first, and not merely against a null dereference: with no
+			// answer at all the honest move is the text path, whose own read reports
+			// why the file could not be opened. The viewer would draw a header naming
+			// no format over a dump of nothing.
+			if (info && !DaimondViewer.editable(info)) {
 				await showViewedFile(path, info);
 				return;
 			}

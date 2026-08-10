@@ -281,6 +281,18 @@
 }
 .files-view-msg.err { color: var(--danger, #e5484d); }
 
+/* The box the file VIEWER draws into, and it had no rule at all.
+   Everything inside it is written to stretch -- `.fileview`, `.fv-body` and each
+   tier are all `flex: 1` -- but a flex item with no rule of its own is
+   `flex: 0 1 auto`, so the whole chain collapsed to the content's own height.
+   For a PDF that is an <embed>'s default 150px, which is why a document opened
+   in a full-height panel sat in a letterbox with empty panel under it. */
+.files-view-viewer {
+	flex: 1; min-height: 0;
+	display: flex; flex-direction: column;
+	overflow: hidden;
+}
+
 .files-view-body {
 	flex: 1; margin: 0; padding: 12px 14px; overflow: auto;
 	white-space: pre-wrap; word-break: break-word;

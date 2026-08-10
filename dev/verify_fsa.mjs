@@ -195,6 +195,58 @@ check('the folder is reconnected on the next visit, with no prompt',
 check('and the panel says which folder the agent is touching',
 	reconnected.chips.active.includes(FOLDER), reconnected.chips.all);
 
+// ── D2. Opening a file in the folder shows it as what it is ─────────────
+//
+// Reported as "clicking a PDF in the Machine workspace displays it as raw text".
+// It was not the folder's doing -- the Doc panel routed on whether the leading
+// bytes decode as characters, which the front of a PDF with no binary comment
+// does, and it did that whichever root was open. But the folder is where a
+// person's real PDFs are, so it is where the bug was met, and this is the check
+// that says the root is not what decides. `dev/verify_fileview.mjs` owns the
+// routing itself and owns proving the page actually renders; this one owns
+// "and the same is true through a real folder".
+//
+// ASCII from end to end, and no binary comment: that is the failing class.
+const ASCII_PDF = '%PDF-1.4\n'
+	+ '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+	+ '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+	+ '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 99 99]>>endobj\n'
+	+ 'trailer<</Root 1 0 R>>\n%%EOF\n';
+
+const pdfInFolder = await p.evaluate(async ({ folder, text }) => {
+	// Written through the FOLDER HANDLE, not through a file tool: the file is
+	// one the user already had, not one Daimond put there.
+	const root = await navigator.storage.getDirectory();
+	const dir  = await root.getDirectoryHandle(folder, { create: true });
+	const fh   = await dir.getFileHandle('paper.pdf', { create: true });
+	const w    = await fh.createWritable();
+	await w.write(new TextEncoder().encode(text));
+	await w.close();
+	// The tree was drawn before that write, so it is relisted through the
+	// panel's own Refresh.
+	const r = document.querySelector('.files-actions [data-act="refresh"]');
+	if (r) r.click();
+	await new Promise((res) => setTimeout(res, 1200));
+	const row = document.querySelector('.files-tree .files-row[data-path="paper.pdf"]');
+	if (!row) return { listed: false };
+	row.click();
+	await new Promise((res) => setTimeout(res, 1800));
+	const fv  = document.querySelector('#doc-view .fileview');
+	const pre = document.querySelector('#doc-view .files-view-body');
+	return {
+		listed: true,
+		viewer: fv ? fv.getAttribute('data-viewer') : null,
+		embed:  !!document.querySelector('#doc-view .fileview embed'),
+		pre:    pre ? pre.textContent.slice(0, 60) : null,
+	};
+}, { folder: FOLDER, text: ASCII_PDF });
+
+check('a PDF in the open folder is listed where the user can click it',
+	pdfInFolder.listed === true, JSON.stringify(pdfInFolder));
+check('and clicking it shows the PDF, not its bytes as characters',
+	pdfInFolder.viewer === 'doc' && pdfInFolder.embed === true && pdfInFolder.pre === null,
+	JSON.stringify(pdfInFolder));
+
 // ── E. A grant that is taken away ───────────────────────────────────────
 //
 // The browser can withdraw a folder at any time, and every tool call that touches it then fails
