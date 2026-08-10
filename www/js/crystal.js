@@ -1202,11 +1202,22 @@
 		'o2+="<div class=\\"field\\"><div class=\\"k\\">"+esc(k)+"</div>"+val(v[k],d+1)+"</div>";}',
 		'return o2;}',
 		'return "<pre>"+esc(String(v))+"</pre>";}',
+		// The palette arrives as DEFAULTS THE PAGE MAY OVERRIDE, written into a style
+		// element at the top of the cascade -- not as inline properties on :root.
+		// setProperty on documentElement is an inline style, and an inline style beats
+		// the page's own `:root{--bg:#fff}` rule every time. A user asked for a white
+		// background, the daimon set --bg and the app overwrote it on the next data
+		// message, so the widget it added in the same turn worked and the colour did
+		// not. A theme is what the page starts from, not what it is held to.
 		'function theme(t){if(!t)return;var m={bg:"--bg",surface:"--sf",text:"--tx",',
 		'muted:"--mu",border:"--bd",accent:"--ac",accentText:"--at",font:"--fo",',
 		'mono:"--mo",size:"--fs",radius:"--rd"};',
-		'for(var k in m)if(m.hasOwnProperty(k)&&t[k])',
-		'document.documentElement.style.setProperty(m[k],t[k]);}',
+		'var css="";for(var k in m)if(m.hasOwnProperty(k)&&t[k])',
+		'css+=m[k]+":"+t[k]+";";',
+		'var el=document.getElementById("dc-theme");',
+		'if(!el){el=document.createElement("style");el.id="dc-theme";',
+		'document.head.insertBefore(el,document.head.firstChild);}',
+		'el.textContent=":root{"+css+"}";}',
 		'function render(){var h="",keys=[],i;',
 		'if(has(D.title)){keys.push("title");h+="<h1>"+esc(D.title)+"</h1>";}',
 		'if(has(D.summary)){keys.push("summary");h+=md(D.summary);}',
