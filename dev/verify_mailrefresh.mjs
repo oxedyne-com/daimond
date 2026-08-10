@@ -24,6 +24,14 @@
 // And the one the user asked for by name: the manual refresh still refreshes
 // EVERYTHING — every folder of every mailbox, not the selected one.
 //
+//   4. THE FOLDER ON SCREEN IS THE ONE ON SCREEN. Refreshing everything is
+//      right; showing everything in turn is not. Each folder's sync ended by
+//      adopting its own digest as the panel's list, so a walk past Sent,
+//      Archive and a second mailbox left the reader's INBOX replaced — the
+//      messages appearing, emptying and reappearing as it went. Asserted by
+//      SUBJECT, because a list of the right length can still be the wrong
+//      folder's.
+//
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
 // deliberately damaged copy of a source file to the real page (through
 // `page.route`, so the browser loads it as it loads any other script) and the
@@ -36,6 +44,9 @@
 //   node dev/verify_mailrefresh.mjs --break schedule  # 2 fails
 //   node dev/verify_mailrefresh.mjs --break counts    # 3 fails
 //   node dev/verify_mailrefresh.mjs --break globalone # the manual refresh fails
+//   node dev/verify_mailrefresh.mjs --break digest    # 4 fails: the refresh walk
+//                                                     # leaves another folder's
+//                                                     # digest on screen
 //   node dev/verify_mailrefresh.mjs                   # and then, clean
 //
 //   eval "$(bash dev/world.sh 8 --up)"
@@ -98,6 +109,16 @@ const BREAKS = {
 		file: 'js/mail.js',
 		find: '\t\tvar f    = a && a.folders && a.folders[name];\n\t\tvar last = (f && ms(f.lastSync)) || 0;\n\t\tif (!last) {',
 		with: '\t\tvar f    = a && a.folders && a.folders[name];\n\t\tvar last = (f && ms(f.lastSync)) || 0;\n\t\tif (true) { return { text: String((f && f.count) | 0), when: \'\', stale: false, title: \'messages\' }; }\n\t\tif (!last) {',
+	}],
+	// The digest of whichever folder synced last becomes what the panel shows,
+	// selected or not. This is the flicker: a refresh walks INBOX, Sent and
+	// Archive in turn, each one replaces the list, and the user watches their
+	// inbox appear, empty and reappear as the walk goes past.
+	digest: [{
+		file: 'js/mail.js',
+		find: '\t\tif (address === state.sel && a && name === (a.folder || \'INBOX\')) {\n'
+			+ '\t\t\tstate.msgs = msgs;\n\t\t}',
+		with: '\t\tstate.msgs = msgs;',
 	}],
 	// The old behaviour: the selected mailbox, and nothing else.
 	globalone: [{
@@ -411,6 +432,31 @@ try {
 		[...new Set(lists)].length === 2, JSON.stringify([...new Set(lists)]));
 	check('and it refreshes every folder each of them tracks',
 		pairs.length >= 4, pairs.join(' | '));
+
+	// ── 6. The list still shows the folder that is OPEN ──────────────
+	// Reported from the live app: "I manually refresh, they showed up for a
+	// moment, but then they disappear, then reappear and so on." A refresh walks
+	// every folder of every mailbox — which is check 5, and correct — and each
+	// sync ended by adopting ITS digest as the panel's list, so the open INBOX
+	// was replaced by Sent, then by an empty Archive, then by the other
+	// mailbox's folders. Whatever synced last was left on screen.
+	//
+	// Asserted by SUBJECT, not by count: the fixture names every message after
+	// the folder it came from, so a list showing three of anything is not
+	// enough — they must be the INBOX's three. `SERVER` is the oracle.
+	const subjects = await page.$$eval('.mail-msg .mail-subj', els => els.map(e => e.textContent.trim()));
+	const openFolder = await page.evaluate(() => window.DaimondMail.folder()).catch(() => '');
+	check('THE OPEN FOLDER IS STILL THE ONE ON SCREEN AFTER A REFRESH WALKS THE OTHERS',
+		subjects.length === SERVER[BOX_A].INBOX
+			&& subjects.every(x => /^INBOX message /.test(x)),
+		`${openFolder || '?'} → ${JSON.stringify(subjects)}`);
+	// The counts are the other half of the same rule: a folder nobody is looking
+	// at still has to report what it holds, or fixing the flicker would cost the
+	// rows their numbers.
+	const countsAfter = await page.evaluate(a => window.DaimondMail.counts(a), BOX_A);
+	check('and an unselected folder still reports its own count',
+		(countsAfter.Sent || {}).count === SERVER[BOX_A].Sent,
+		JSON.stringify(countsAfter));
 
 	// And a held folder is skipped rather than being quietly dropped.
 	await pauseLeaf(page, SENT_A);

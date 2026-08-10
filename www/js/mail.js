@@ -1494,17 +1494,35 @@
 		return out;
 	}
 
+	/// Read one folder's digest, and adopt it as what the panel SHOWS only when
+	/// that folder is the one on screen.
+	///
+	/// `state.msgs` is a property of the SELECTION; a count is a property of the
+	/// folder. Conflating them made the list flicker on every manual refresh:
+	/// `refreshAll` walks every folder of every mailbox in turn, each sync ends
+	/// here, and an unconditional assignment let Sent, then Spam, then Trash each
+	/// replace the INBOX the user was reading — appearing, emptying and
+	/// reappearing as the walk went by, and leaving whichever folder happened to
+	/// sync last on screen. A Gmail account, with its labels, does this a dozen
+	/// times per refresh.
 	async function loadDigest(address, folder) {
-		state.msgs = await readMailbox(address, folder);
+		var a = acct(address);
+		// The same defaulting as `mailboxDir`, so the folder read is the folder
+		// counted and the folder compared.
+		var name = folder || (a && a.folder) || 'INBOX';
+		var msgs = await readMailbox(address, name);
+		if (address === state.sel && a && name === (a.folder || 'INBOX')) {
+			state.msgs = msgs;
+		}
 		// What the folder holds, recorded where a row can read it without listing
 		// the directory again — the panel draws a dozen rows and reads none of
 		// them off disk. These are the messages the server handed over, so the
 		// number's as-at is the folder's last sync and nothing fresher: nothing
-		// new lands in a Maildir without a sync putting it there.
-		var a = acct(address);
+		// new lands in a Maildir without a sync putting it there. Recorded for
+		// every folder, selected or not, because that is what a row shows.
 		if (!a) return;
-		var f = fld(a, folder || a.folder || 'INBOX');
-		if (f) f.count = state.msgs.length;
+		var f = fld(a, name);
+		if (f) f.count = msgs.length;
 	}
 
 	// ── The gateway ─────────────────────────────────────────────────
