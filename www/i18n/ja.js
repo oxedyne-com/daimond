@@ -1290,6 +1290,9 @@
 	'diff.nothing_to_apply':  '適用するものがありません — 案は今の結晶と同じです。',
 
 	// ── 結晶 ───────────────────────────────────────────────────
+	'crystal.page':           'ページ',
+	'crystal.page_help':      'この結晶の見た目を変えるよう daimon に頼みます。内容ではありません。',
+	'crystal.page_note':      'この Diamond のページ（crystal.html）を変えてください。記憶（crystal.json）ではありません。まず crystal.html を読み、それから編集し、crystal.json には触れないでください。自己完結を保つこと：CSS と JavaScript はすべてインライン、画像は data: URI のみ、fetch なし、外部ファイルなし、eval なし。ready、rendered、height のメッセージを保ち、rendered には内容のあるデータのトップレベルのキーをすべて挙げさせてください。ほしいものは：',
 	'crystal.history':        '履歴',
 	'crystal.tags':           'タグ',
 	'crystal.tags_help':      'この Diamond をレールで整理します',

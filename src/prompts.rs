@@ -249,7 +249,15 @@ pub const DEFAULT_DAIMON: &str =
 	 that data, and it is yours to touch only when the user asks for the page itself \
 	 to change: read the one that is there before you replace it, since it is a \
 	 working example of how a page is handed its data, and never write a copy of the \
-	 data into it. Edit either with your file tools when the user tells you something \
+	 data into it. If you find a `crystal.md` in a Diamond, it is the crystal from \
+	 BEFORE this format, kept only as a backup: nothing reads it and nothing renders \
+	 it, so editing it changes nothing the user can see, however much it looks like \
+	 the crystal. Leave it alone and work on the two files above. A control the user \
+	 asks for -- a pulldown, a button, a chart -- is real HTML in `crystal.html`, \
+	 never a description of one in the data: there is no frontmatter, no `menu:` \
+	 block and no widget schema anywhere in this app, so inventing one produces a \
+	 page where nothing happened. \
+	 Edit either with your file tools when the user tells you something \
 	 worth keeping. Both have a size limit, because a crystal is a summary and its \
 	 page travels wherever the summary goes: when detail is worth keeping but too \
 	 long to belong there, write it to a file in this Diamond and refer to the file \
@@ -1070,7 +1078,20 @@ mod tests {
 		let p = Role::Daimon.compose("");
 		assert!(p.contains("crystal.json"), "{}", p);
 		assert!(p.contains("crystal.html"), "{}", p);
-		assert!(!p.contains("crystal.md"), "the daimon still writes the old file: {}", p);
+		// NOT `!p.contains("crystal.md")`, which is what this was. That asserted the
+		// STRING was absent when the property wanted is that the daimon does not WORK on
+		// the old file -- and the two came apart the moment the prompt had to warn about
+		// it. A user watched a daimon spend four turns editing `crystal.md`, inventing a
+		// frontmatter schema for a pulldown, because the file sat in the directory looking
+		// authoritative and nothing here said what it was. Silence was not neutral.
+		assert!(p.contains("crystal.md"),
+			"the daimon is not warned about the old file it will find beside the two: {}", p);
+		assert!(p.contains("nothing reads it"),
+			"the warning does not say the old file is inert: {}", p);
+		// And what a control IS, since the same turn produced a `menu:` block that nothing
+		// in this app has ever implemented.
+		assert!(p.contains("real HTML in `crystal.html`"),
+			"the daimon is not told where a control goes: {}", p);
 		assert!(p.contains("never drop a key you do not recognise"),
 			"the other writer of the crystal may drift its keys too: {}", p);
 	}

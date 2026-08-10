@@ -1286,6 +1286,9 @@
 	'diff.nothing_to_apply':  '没有可应用的改动 — 方案和当前的晶体一致。',
 
 	// ── 晶体 ───────────────────────────────────────────────────
+	'crystal.page':           '页面',
+	'crystal.page_help':      '让 daimon 改变这个晶体的外观，而不是它说的内容',
+	'crystal.page_note':      '改变这个 Diamond 的页面（crystal.html），而不是它的记忆（crystal.json）。先读 crystal.html，再编辑它，不要动 crystal.json。保持自包含：所有 CSS 和 JavaScript 内联，图片只用 data: URI，不要 fetch，不要外部文件，不要 eval。保留它的 ready、rendered 和 height 消息，并让 rendered 列出数据中每一个有内容的顶层键。我想要的是：',
 	'crystal.history':        '历史',
 	'crystal.tags':           '标签',
 	'crystal.tags_help':      '在侧栏里给这个 Diamond 归档',

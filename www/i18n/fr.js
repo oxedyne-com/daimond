@@ -1261,6 +1261,9 @@
 	'diff.nothing_to_apply': 'Rien à appliquer — la proposition correspond au cristal actuel.',
 
 	// ── The crystal ────────────────────────────────────────────
+	'crystal.page':           'Page',
+	'crystal.page_help':      'Demander au daimon de changer l’apparence de ce cristal, pas ce qu’il dit',
+	'crystal.page_note':      'Change la PAGE de ce Diamant (crystal.html), pas sa mémoire (crystal.json). Lis d’abord crystal.html, puis modifie-le, et laisse crystal.json tranquille. Garde-la autonome : tout le CSS et le JavaScript en ligne, les images uniquement en data: URIs, pas de fetch, pas de fichiers externes, pas d’eval. Conserve ses messages ready, rendered et height, et que rendered nomme chaque clé de premier niveau des données qui a du contenu. Ce que je veux : ',
 	'crystal.history': 'Historique',
 	'crystal.tags': 'Étiquettes',
 	'crystal.tags_help': 'Classer ce Diamond dans la barre latérale',
