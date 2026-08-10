@@ -1846,11 +1846,6 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    anything -- a parent cannot verify user activation across the boundary, so a
    timer there is indistinguishable from a click -- so the box that talks to the
    daimon about the page lives out here, where a click is provably a person's. */
-.crystal-ask { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
-.crystal-ask-input { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 7px 10px; font-size: var(--fs-sm); }
-.crystal-ask-input::placeholder { color: var(--text-muted); }
-.crystal-ask-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
-.crystal-ask .crystal-act { flex: none; }
 
 /* The memory as it sits on disk, shown when crystal.js did not load at all. A
    broken build must not look like an empty Diamond. */

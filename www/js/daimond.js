@@ -18123,12 +18123,35 @@ import init, {
 		hist.className = 'crystal-act';
 		hist.textContent = '↺ ' + t('crystal.history');
 		hist.addEventListener('click', showCrystalHistory);
+		// ✎ Page, beside ✎ Edit, because they are the two halves of the same
+		// question and belong in the same place: Edit changes what the crystal
+		// SAYS, Page changes how it LOOKS.
+		//
+		// It replaces a second text box that sat under the frame saying "Ask the
+		// daimon to change this page". That box called `doSteer` with the typed
+		// words alone -- byte for byte what the composer at the foot of the panel
+		// already does -- so it was a second input that did nothing different,
+		// and the daimon had to guess from the words alone which of the two files
+		// was meant. It guessed content, and a request for a pulldown came back
+		// as prose.
+		//
+		// A button rather than a box: the choice between the data and the page is
+		// a thing a person KNOWS, so it should be pressed rather than inferred
+		// from a sentence. And it fills the ONE composer with a note the user can
+		// read and edit before sending, instead of prepending something invisible.
+		var pageBtn = document.createElement('button');
+		pageBtn.className = 'crystal-act';
+		pageBtn.textContent = '✎ ' + tOr('crystal.page', 'Page');
+		pageBtn.title = tOr('crystal.page_help',
+			'Ask the daimon to change how this crystal looks, not what it says');
+		pageBtn.addEventListener('click', askAboutPage);
 		var tagsBtn = document.createElement('button');
 		tagsBtn.className = 'crystal-act';
 		tagsBtn.textContent = '# ' + t('crystal.tags');
 		tagsBtn.title = t('crystal.tags_help');
 		tagsBtn.addEventListener('click', showTagEditor);
-		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
+		bar.appendChild(edit); bar.appendChild(pageBtn);
+		bar.appendChild(hist); bar.appendChild(tagsBtn);
 		return bar;
 	}
 
@@ -18199,9 +18222,11 @@ import init, {
 		// so the bar and this row survive a swap. What they do NOT promise is where they put
 		// what they add, so the row is re-parked at the end after each -- appending a child
 		// that is already there moves it, which is all "below the frame" needs to mean.
-		var askRow = crystalAskRow();
-		crystalBody.appendChild(askRow);
-		var park = function () { crystalBody.appendChild(askRow); };
+		// No second input here any more: the composer at the foot of the panel is the one
+		// box, and `✎ Page` in the bar above fills it. `park` is kept as a no-op so the
+		// mount/fallback callers below need no special case -- they simply have nothing
+		// left to re-park.
+		var park = function () {};
 
 		var want = crystalContentKeys(data);
 		C.mount(crystalBody, {
@@ -18271,56 +18296,30 @@ import init, {
 	/// discussed is on screen. What it must never become is a proxy for a request from inside
 	/// the frame: a page that could push text through here would have the `ask()` verb back,
 	/// and with it the one injection in this app that survives a turn and syncs to every device.
-	function crystalAskRow() {
-		var row = document.createElement('div');
-		row.className = 'crystal-ask';
-		var input = document.createElement('input');
-		input.type = 'text';
-		input.className = 'crystal-ask-input';
-		input.placeholder = tOr('crystal.ask', 'Ask the daimon to change this page');
-		input.setAttribute('aria-label', tOr('crystal.ask', 'Ask the daimon to change this page'));
-		var send = document.createElement('button');
-		send.className = 'crystal-act primary';
-		send.type = 'button';
-		send.textContent = '↑';
-		send.title = tOr('crystal.ask', 'Ask the daimon to change this page');
-		// THE BOX SAYS "change this page", SO THE MESSAGE HAS TO SAY IT TOO.
-		//
-		// This sent the typed words alone, exactly as the ordinary composer does,
-		// and the daimon is told in its role prompt that `crystal.html` is "yours
-		// to touch only when the user asks for the page itself to change". So it
-		// had to infer, from words like "put a pulldown menu on the crystal",
-		// which of two files was meant -- and it reasonably read that as content
-		// and wrote a section into `crystal.json`, which comes back as markdown.
-		// The user asked for a control and got prose, twice.
-		//
-		// The note is PREPENDED IN PLAIN SIGHT rather than hidden in the system
-		// prompt: it goes into the transcript with the request, so what was asked
-		// on the user's behalf is on the record and can be argued with. It also
-		// carries the two things the mechanism needs and a model most often
-		// drops -- self-containment, and the three messages the page must post or
-		// the app replaces it with the built-in view.
-		var PAGE_NOTE =
-			'This is about this Diamond\'s PAGE (crystal.html), not its memory '
-			+ '(crystal.json). Read crystal.html first, then edit it, and leave '
-			+ 'crystal.json alone. Keep it self-contained: all CSS and JavaScript '
-			+ 'inline, images only as data: URIs, no fetch, no external files, no '
-			+ 'eval. Keep its ready, rendered and height messages, and let '
-			+ 'rendered name every top-level key of the data that has content, or '
-			+ 'the app will replace the page with its own view. The request is: ';
-		var go = function () {
-			var text = input.value.trim();
-			if (!text) return;
-			input.value = '';
-			doSteer(PAGE_NOTE + text);
-		};
-		send.addEventListener('click', go);
-		input.addEventListener('keydown', function (e) {
-			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); }
-		});
-		row.appendChild(input);
-		row.appendChild(send);
-		return row;
+	/// Put a page-scoped request into the ONE composer, ready for the user to finish.
+	///
+	/// The note goes in as ordinary editable text, in front of the caret, so what is being
+	/// asked on the user's behalf is on screen before it is sent and can be cut or reworded.
+	/// A prompt the app writes and hides is a prompt nobody can argue with.
+	///
+	/// It carries the two things a model most often drops: keep the page self-contained, and
+	/// keep the three messages it must post or the app replaces it with the built-in view.
+	function askAboutPage() {
+		var input = document.getElementById('chat-input');
+		if (!input) return;
+		var note = tOr('crystal.page_note',
+			'Change this Diamond\'s PAGE (crystal.html), not its memory (crystal.json). '
+			+ 'Read crystal.html first, then edit it, and leave crystal.json alone. Keep it '
+			+ 'self-contained: all CSS and JavaScript inline, images only as data: URIs, no '
+			+ 'fetch, no external files, no eval. Keep its ready, rendered and height '
+			+ 'messages, and let rendered name every top-level key of the data that has '
+			+ 'content. What I want: ');
+		var had = input.value.trim();
+		input.value = note + (had ? had : '');
+		input.focus();
+		try { input.setSelectionRange(input.value.length, input.value.length); }
+		catch (e) { /* a textarea that does not take a range still has the caret at the end */ }
+		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
 	}
 
 	/// A link the page asked the app to follow.

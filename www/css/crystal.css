@@ -50,37 +50,10 @@
 	color-scheme: normal;
 }
 
-/* ── The ask row ─────────────────────────────────────────────────
-   App chrome, and BELOW the frame on purpose: the page cannot ask the user
-   anything, because a parent cannot tell a click from a timer across the
-   sandbox boundary. Down here a click is provably a person. */
-
-.crystal-ask {
-	display: flex;
-	gap: 6px;
-	align-items: center;
-	margin: 6px 0 2px;
-}
-
-.crystal-ask input[type="text"],
-.crystal-ask textarea {
-	flex: 1 1 auto;
-	min-width: 0;
-	background: var(--bg-tertiary);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-family: inherit;
-	font-size: var(--fs-sm);
-	padding: 6px 9px;
-}
-
-.crystal-ask input[type="text"]:focus,
-.crystal-ask textarea:focus {
-	outline: 2px solid var(--accent);
-	outline-offset: 1px;
-	border-color: var(--accent);
-}
+/* The ask row that used to live here is gone. It was a second text box under
+   the frame doing exactly what the composer at the foot of the panel already
+   does, so the daimon had to guess which of the crystal's two files a request
+   was about. `✎ Page` in the bar above fills the one composer instead. */
 
 /* ── Falling back, visibly ───────────────────────────────────────
    A note that says WHICH failure happened and a button that puts the standard
