@@ -1097,6 +1097,50 @@
 	// being self-contained, and it is the right price: a page a model rewrites next
 	// week cannot import a constant from us either.
 
+
+	/// The theme function as every page written before 2026-08-11 carries it.
+	///
+	/// Verbatim from the `DEFAULT_PAGE` of the day, joined the way that array is joined. It is
+	/// matched EXACTLY and nothing else is: a page this does not recognise is left completely
+	/// alone, so a page a model rewrote in its own style is never guessed at.
+	var THEME_WAS = [
+		'function theme(t){if(!t)return;var m={bg:"--bg",surface:"--sf",text:"--tx",',
+		'muted:"--mu",border:"--bd",accent:"--ac",accentText:"--at",font:"--fo",',
+		'mono:"--mo",size:"--fs",radius:"--rd"};',
+		'for(var k in m)if(m.hasOwnProperty(k)&&t[k])',
+		'document.documentElement.style.setProperty(m[k],t[k]);}',
+	].join('\n');
+
+	/// The same function, applying the palette as a DEFAULT the page can override.
+	var THEME_NOW = [
+		'function theme(t){if(!t)return;var m={bg:"--bg",surface:"--sf",text:"--tx",',
+		'muted:"--mu",border:"--bd",accent:"--ac",accentText:"--at",font:"--fo",',
+		'mono:"--mo",size:"--fs",radius:"--rd"};',
+		'var css="";for(var k in m)if(m.hasOwnProperty(k)&&t[k])',
+		'css+=m[k]+":"+t[k]+";";',
+		'var el=document.getElementById("dc-theme");',
+		'if(!el){el=document.createElement("style");el.id="dc-theme";',
+		'document.head.insertBefore(el,document.head.firstChild);}',
+		'el.textContent=":root{"+css+"}";}',
+	].join('\n');
+
+	/// A page brought up to date, or `null` when there is nothing to do.
+	///
+	/// `setProperty` on `documentElement` is an INLINE style, and an inline style beats the
+	/// page's own `:root{--bg:#fff}` rule every time -- so a page that asked for its own
+	/// colours was overwritten by the app's palette one message later. Every page written
+	/// before the fix carries that function, because a page is copied from the default when
+	/// the Diamond first renders and is the user's own thereafter.
+	///
+	/// A one-line substitution rather than a rewrite: whatever the page has become, only this
+	/// block changes, and a page that does not contain it byte for byte is returned as `null`
+	/// and never written.
+	function upgrade(html) {
+		var s = String(html == null ? '' : html);
+		if (s.indexOf(THEME_WAS) === -1) return null;
+		return s.split(THEME_WAS).join(THEME_NOW);
+	}
+
 	var DEFAULT_PAGE = [
 		'<!doctype html>',
 		'<html><head>',
@@ -1274,6 +1318,7 @@
 	window.DaimondCrystal = {
 		CORE_KEYS:    CORE_KEYS,
 		DEFAULT_PAGE: DEFAULT_PAGE,
+		upgrade:      upgrade,
 		FALLBACK_MS:  FALLBACK_MS,
 		PROTOCOL:     PROTOCOL,
 		parse:        parse,

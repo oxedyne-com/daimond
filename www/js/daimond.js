@@ -18177,6 +18177,22 @@ import init, {
 			// tries again. Drawing it meanwhile costs nothing and loses nothing.
 			try { await diamondApp().write_crystal_page(id, page); }
 			catch (e) { /* shown, not stored */ }
+		} else if (C && C.upgrade) {
+			// EVERY page written before 2026-08-11 applies the app's palette as an inline
+			// style on :root, which beats the page's own rules -- so a page that asked for
+			// its own colours was overwritten a message later. A page is copied from the
+			// default when a Diamond first renders and is the user's own after that, so
+			// fixing the default reaches no existing Diamond; this does.
+			//
+			// It substitutes ONE block, matched byte for byte, and returns null for a page
+			// it does not recognise -- which is then left completely alone. A page a model
+			// rewrote in its own style keeps every widget in it.
+			var up = C.upgrade(page);
+			if (up) {
+				page = up;
+				try { await diamondApp().write_crystal_page(id, page); }
+				catch (e) { /* drawn from the upgraded copy either way; retried next render */ }
+			}
 		}
 		// Several awaits have gone by. The user may have clicked another Diamond in that time,
 		// and painting this one's memory under that one's name is the kind of mistake nobody
