@@ -4129,6 +4129,42 @@ pub enum Tool {
     LinkRemove,
 }
 
+
+/// `old_string` with this tool's own line-number prefix taken off every line, when that is
+/// what it is carrying.
+///
+/// `file_read` prefixes each line with its number and a TAB, and says so in its own preamble.
+/// A model that copies a block out of a read and hands it back to `file_edit` therefore hands
+/// back something that is not in the file -- and the answer it got was "old_string not found",
+/// which names the symptom and not the cause. A daimon met that three times in a row on a
+/// crystal page, concluded "a tab-vs-spaces mismatch I can't see", and rewrote all ten
+/// kilobytes of the file rather than edit it.
+///
+/// So the refusal now checks whether THAT is what happened before reporting a bare absence.
+/// It is deliberately strict: every non-empty line must carry the prefix, and a `1` alone is
+/// not enough -- a file of numbered data would otherwise be edited by a rule meant for a
+/// display artefact.
+fn without_read_prefix(old: &str) -> Option<String> {
+	let mut out = String::with_capacity(old.len());
+	let mut stripped = 0usize;
+	for (i, line) in old.split('\n').enumerate() {
+		if i > 0 {
+			out.push('\n');
+		}
+		if line.is_empty() {
+			continue;
+		}
+		match line.find('\t') {
+			Some(t) if t > 0 && line[..t].chars().all(|c| c.is_ascii_digit()) => {
+				out.push_str(&line[t + 1..]);
+				stripped += 1;
+			},
+			_ => return None,		// one bare line and this is not a numbered block
+		}
+	}
+	if stripped == 0 { None } else { Some(out) }
+}
+
 impl Tool {
 
     /// The default tool set offered to the agent.
@@ -4833,7 +4869,25 @@ impl Tool {
                 let new = res!(Self::arg(args_json, "new_string"));
                 let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &path).await);
                 let data = String::from_utf8_lossy(&bytes).to_string();
-                let count = data.matches(&old).count();
+                let mut old = old;
+                let mut count = data.matches(&old).count();
+                if count == 0 {
+                    // Before reporting an absence, ask whether the model handed back a block
+                    // it copied out of `file_read` with the line numbers still on it. That is
+                    // the commonest way this fails and the bare message never said so.
+                    if let Some(clean) = without_read_prefix(&old) {
+                        if data.matches(&clean).count() == 1 {
+                            return Err(err!(
+                                "file_edit: old_string was not found, but it IS in '{}' once \
+                                the line numbers are removed. The numbers and the TAB after \
+                                them are `file_read`'s, not the file's. Send the line without \
+                                them.", path;
+                                Invalid, Input, NotFound));
+                        }
+                        count = data.matches(&clean).count();
+                        old = clean;
+                    }
+                }
                 if count == 0 {
                     return Err(err!(
                         "file_edit: old_string not found in '{}'.", path;
@@ -5563,7 +5617,21 @@ impl Tool {
         let abs = res!(ctx.workspace.resolve(&path));
         let data = res!(std::fs::read_to_string(&abs)
             .map_err(|e| err!(e, "file_edit: cannot read '{}'.", path; IO, File, Read)));
-        let count = data.matches(&old).count();
+        let mut old = old;
+        let mut count = data.matches(&old).count();
+        if count == 0 {
+            if let Some(clean) = without_read_prefix(&old) {
+                if data.matches(&clean).count() == 1 {
+                    return Err(err!(
+                        "file_edit: old_string was not found, but it IS in '{}' once the line \
+                        numbers are removed. The numbers and the TAB after them are \
+                        `file_read`'s, not the file's. Send the line without them.", path;
+                        Invalid, Input, NotFound));
+                }
+                count = data.matches(&clean).count();
+                old = clean;
+            }
+        }
         if count == 0 {
             return Err(err!("file_edit: old_string not found in '{}'.", path; Invalid, Input, NotFound));
         }
@@ -11075,4 +11143,40 @@ mod no_wasm_memory_views {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod read_prefix_tests {
+	use super::without_read_prefix;
+
+	/// The exact shape a model copies out of `file_read`, and the exact failure it caused.
+	#[test]
+	fn a_numbered_block_is_recognised_and_stripped() {
+		let copied = "109\tfunction theme(t){if(!t)return;\n110\tmuted:\"--mu\",";
+		let want   = "function theme(t){if(!t)return;\nmuted:\"--mu\",";
+		assert_eq!(without_read_prefix(copied), Some(want.to_string()));
+	}
+
+	/// A block the model wrote itself is left alone, so an ordinary failed edit still reports
+	/// an ordinary absence rather than a confusing lecture about line numbers.
+	#[test]
+	fn ordinary_text_is_not_touched() {
+		assert_eq!(without_read_prefix("function theme(t){}"), None);
+		assert_eq!(without_read_prefix("a\nb\nc"), None);
+	}
+
+	/// One un-numbered line among numbered ones means this is not a copied block -- it is
+	/// content that happens to start with digits, and stripping it would edit the wrong thing.
+	#[test]
+	fn a_single_bare_line_disqualifies_the_whole_block() {
+		assert_eq!(without_read_prefix("1\tone\ntwo\n3\tthree"), None);
+	}
+
+	/// Real content that genuinely begins with a number and a tab -- a data file -- is not a
+	/// display artefact, but this cannot tell the difference, so the strip is only ever tried
+	/// AFTER an exact match has already failed.
+	#[test]
+	fn numbers_and_tabs_in_real_content_still_strip_and_that_is_why_it_is_a_last_resort() {
+		assert_eq!(without_read_prefix("1\talpha\n2\tbeta"), Some("alpha\nbeta".to_string()));
+	}
 }
