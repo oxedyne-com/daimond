@@ -16,12 +16,17 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireFreshGateway, procLog } from './gwbin.mjs';
 import { open, chat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
 const GW_URL = 'http://127.0.0.1:9002';
+/// What the gateway says while this runs. A chunk request answering 500 says
+/// only that something went wrong; the reason is logged beside it, here.
+/// Silent when this run reuses a gateway it did not start.
+const GW_LOG = procLog('verify_chunks');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -42,10 +47,12 @@ async function startGateway() {
 	gw = spawn(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
 		cwd: GWDIR,
 		env: { ...process.env, APP_MODE: 'sandbox' },
-		stdio: 'ignore',
+		stdio: GW_LOG.stdio,
 	});
 	return await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok);
 }
+
+requireFreshGateway();
 
 // Use a gateway already up (started outside for environments where spawning a
 // child here is unreliable), otherwise start our own.
@@ -188,5 +195,6 @@ try {
 	if (gw) { try { gw.kill('SIGTERM'); } catch (e) { /* ignore */ } }
 }
 
+if (bad.length) GW_LOG.report();
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -16,6 +16,7 @@
 //   node dev/verify_passkey_blob.mjs        (needs the gateway on :9002)
 
 import crypto from 'node:crypto';
+import { requireFreshGateway, SUITE_GW_LOG } from './gwbin.mjs';
 
 const GW = 'http://127.0.0.1:9002';
 let failures = 0;
@@ -67,6 +68,7 @@ const del = (cookie, handle) => fetch(`${GW}/api/passkey-blob?h=${encodeURICompo
 const handleOf = seed => b64url(crypto.createHash('sha256').update(seed).digest());
 
 (async () => {
+	requireFreshGateway();
 	const health = await fetch(`${GW}/api/health`).then(r => r.ok).catch(() => false);
 	check(health, 'the gateway is up');
 	if (!health) { console.log('\nstart it: cd gateway && APP_MODE=sandbox ./target/release/daimond_gateway'); process.exit(1); }
@@ -117,6 +119,15 @@ const handleOf = seed => b64url(crypto.createHash('sha256').update(seed).digest(
 	check((await del(a.cookie, hA)).status === 200, 'the owner may delete it');
 	check((await get(hA)).status === 404, 'and it is gone');
 
+	// This file starts no gateway of its own -- it is run against the one the
+	// suite brings up for phase 2 -- so it has no log to quote. It can still say
+	// WHERE the answer is: a 401 that should have been a 200 was explained by
+	// the gateway, in that file, and nowhere in this output.
+	if (failures) console.log('  ── what the gateway said is in ' + SUITE_GW_LOG + ' ──');
 	console.log(`\n${failures ? failures + ' FAILED' : 'all passed'}`);
 	process.exit(failures ? 1 : 0);
-})().catch(e => { console.error(e); process.exit(1); });
+})().catch(e => {
+	console.error(e);
+	console.log('  ── what the gateway said is in ' + SUITE_GW_LOG + ' ──');
+	process.exit(1);
+});

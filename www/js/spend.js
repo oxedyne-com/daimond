@@ -71,11 +71,42 @@
 
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
-	// A friendly label for a credit category / kind. An unknown category is
-	// shown as the gateway named it, which is better than hiding it.
-	var CATS = ['web', 'mail', 'sync', 'other', 'topup', 'refund', 'grant', 'adjust'];
+	// Every category a movement can carry. The gateway is the authority on this
+	// list: the first seven are `SPEND_CATEGORIES` in gateway/src/schema.rs, the
+	// rest are the credit-side kinds `LedgerEntry::category` names from the kind
+	// alone.
+	//
+	// This is a copy, and a copy is what went wrong: `infer` became a category on
+	// 2026-07-17 and `storage` on 2026-07-21, this list was told about neither,
+	// and for three weeks a user's own breakdown read "infer" and "storage" at
+	// them in eight languages. dev/verify_spendcats.mjs reads the Rust and fails
+	// when this list cannot name something the gateway can produce, so the next
+	// category is a red check rather than three more weeks.
+	var CATS = [
+		'web', 'search', 'mail', 'sync', 'storage', 'infer', 'other',	// metered spends
+		'topup', 'refund', 'grant', 'adjust',							// credit-side movements
+	];
+
+	// Categories already reported, so the console carries one line per unknown
+	// name rather than one per row per redraw.
+	var unnamed = {};
+
+	// A friendly label for a credit category / kind.
+	//
+	// A category this build cannot name is money that left the balance with
+	// nothing to say for it, and the row says exactly that. Printing the
+	// gateway's own token instead is what let the last drift ship: "infer" looks
+	// like a label to nobody and like a bug to no one either, so nothing was
+	// reported and nothing was fixed. The token goes to the console, once, which
+	// is where a diagnostic belongs -- not beside somebody's money.
 	function catLabel(c) {
-		return CATS.indexOf(c) !== -1 ? t('spend.cat_' + c) : (c || t('spend.cat_fallback'));
+		if (CATS.indexOf(c) !== -1) return t('spend.cat_' + c);
+		if (!c) return t('spend.cat_fallback');		// an entry that named nothing
+		if (!unnamed[c]) {
+			unnamed[c] = 1;
+			console.warn('spend: the gateway named a category this build cannot label: "' + c + '"');
+		}
+		return t('spend.cat_unlisted');
 	}
 
 	// ── The SVG bar chart ──────────────────────────────────────
@@ -150,7 +181,12 @@
 			var v = Math.abs(rows[i].value || 0);
 			if (v <= 0) continue;
 			var row = el('div', 'spend-bd-row');
-			row.appendChild(el('span', 'spend-bd-label', rows[i].label));
+			// The label column is one line and ellipses anything longer, and the
+			// dock is narrow: "Inference on credits" arrives as "Inference on…".
+			// The full text rides along as a tooltip so the row can still be read.
+			var lbl = el('span', 'spend-bd-label', rows[i].label);
+			lbl.title = rows[i].label;
+			row.appendChild(lbl);
 			var barWrap = el('span', 'spend-bd-bar');
 			var fill = el('span', 'spend-bd-fill');
 			fill.style.width = Math.max(2, (v / total) * 100).toFixed(1) + '%';

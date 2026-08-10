@@ -134,13 +134,78 @@
 		return String(path).split('/').filter(function (x) { return x && x !== '.' && x !== '..'; });
 	}
 
+	// ── One name, two spellings ────────────────────────────────
+	// A workspace name is not always a filesystem name. A Maildir message is called
+	// `<uid>.<uidvalidity>.daimond:2,<flags>`, and a colon is refused by every File System Access
+	// root except a modern browser's own sandbox — including the real folder the user may have
+	// open. `src/fsname.rs` is the codec; this is the same codec in JavaScript, because these
+	// walkers reach the handles directly rather than through the wasm, and a name the wasm writes
+	// one way and this reads another is a file that has gone missing.
+	//
+	// The two implementations are held to each other by dev/verify_mailnames.mjs, which drives
+	// both over one corpus and compares character for character. Change one, change the other.
+
+	// `/` is deliberately absent: a path component cannot hold one, so escaping it would be
+	// dead code — while recognising `%2F` on the way back would turn a saved-URL name like
+	// `https%3A%2F%2Fexample.com.html` into three path components. See src/fsname.rs.
+	var FS_RESERVED = /["*:<>?\\|\x00-\x1F\x7F]/;
+
+	/// The byte an escape at `i` stands for, or -1 when it is not one this codec emits.
+	function fsEscaped(s, i) {
+		if (i + 2 >= s.length || s.charAt(i) !== '%') return -1;
+		var h = s.substr(i + 1, 2);
+		if (!/^[0-9A-F]{2}$/.test(h)) return -1;      // upper case only: the encoder emits no other
+		var v = parseInt(h, 16);
+		if (v === 0x25 || FS_RESERVED.test(String.fromCharCode(v))) return v;
+		return -1;
+	}
+
+	/// Spell one path component so a filesystem will take it. The identity on every ordinary name.
+	function diskName(name) {
+		var s = String(name), out = '';
+		for (var i = 0; i < s.length; i++) {
+			var c = s.charAt(i);
+			var esc = FS_RESERVED.test(c) ? c.charCodeAt(0)
+				: (c === '%' && fsEscaped(s, i) >= 0) ? 0x25
+				: -1;
+			if (esc < 0) { out += c; continue; }
+			out += '%' + (esc < 16 ? '0' : '') + esc.toString(16).toUpperCase();
+		}
+		return out;
+	}
+
+	/// Read a stored name back as the workspace spells it. The exact inverse of `diskName`.
+	function logicalName(name) {
+		var s = String(name), out = '';
+		for (var i = 0; i < s.length; ) {
+			var v = fsEscaped(s, i);
+			if (v < 0) { out += s.charAt(i); i += 1; continue; }
+			out += String.fromCharCode(v);
+			i += 3;
+		}
+		return out;
+	}
+
+	/// The name a component is actually stored under inside `dir`.
+	///
+	/// Mirrors `disk_name` in src/wasm/opfs.rs, legacy tolerance included: a name the codec does
+	/// not touch is used as it is, and one it does is looked for UNESCAPED first, because a store
+	/// written before the codec existed holds it that way.
+	async function diskNameIn(dir, name) {
+		var enc = diskName(name);
+		if (enc === name) return enc;
+		try { await dir.getFileHandle(name); return name; } catch (e) { /* not there */ }
+		try { await dir.getDirectoryHandle(name); return name; } catch (e) { /* nor there */ }
+		return enc;
+	}
+
 	/// The directory handle holding `path`, or null when a component is absent.
 	async function dirFor(path, create) {
 		var p = parts(path);
 		if (!p.length) return null;
 		var dir = await opfsRoot();
 		for (var i = 0; i < p.length - 1; i++) {
-			try { dir = await dir.getDirectoryHandle(p[i], { create: !!create }); }
+			try { dir = await dir.getDirectoryHandle(await diskNameIn(dir, p[i]), { create: !!create }); }
 			catch (e) { return null; }
 		}
 		return dir;
@@ -152,7 +217,7 @@
 		if (!p.length) return false;
 		var dir = await dirFor(path, false);
 		if (!dir) return false;
-		try { await dir.getFileHandle(p[p.length - 1]); return true; }
+		try { await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1])); return true; }
 		catch (e) { return false; }
 	}
 
@@ -160,7 +225,7 @@
 		var p = parts(path);
 		var dir = await dirFor(path, false);
 		if (!dir) throw new Error('No such directory: ' + path);
-		var fh = await dir.getFileHandle(p[p.length - 1]);
+		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]));
 		return await (await fh.getFile()).text();
 	}
 
@@ -168,7 +233,7 @@
 		var p = parts(path);
 		var dir = await dirFor(path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var fh = await dir.getFileHandle(p[p.length - 1], { create: true });
+		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
 		var w = await fh.createWritable();
 		await w.write(new TextEncoder().encode(content));
 		await w.close();
@@ -180,7 +245,7 @@
 		var p = parts(path);
 		var dir = await dirFor(path, false);
 		if (!dir) return null;
-		try { return await (await dir.getFileHandle(p[p.length - 1])).getFile(); }
+		try { return await (await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]))).getFile(); }
 		catch (e) { return null; }
 	}
 
@@ -190,7 +255,7 @@
 		var p = parts(path);
 		var dir = await dirFor(path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var fh = await dir.getFileHandle(p[p.length - 1], { create: true });
+		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
 		return await fh.createWritable();
 	}
 
@@ -656,5 +721,11 @@
 		// And the root those resolve against, for the backup path, which walks
 		// the whole tree rather than one named file.
 		opfsRoot:     opfsRoot,
+		// The filesystem-name codec, published for the same reason `opfsRoot` is: the workspace
+		// walkers in daimond.js reach the same handles, and a second implementation of the
+		// spelling rule is a second chance to look in the wrong place.
+		diskName:     diskName,
+		logicalName:  logicalName,
+		diskNameIn:   diskNameIn,
 	};
 })();

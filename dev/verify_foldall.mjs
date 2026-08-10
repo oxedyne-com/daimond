@@ -67,6 +67,38 @@ const diffState = () => p.evaluate(() => {
 		foldSelDisabled: !!(document.getElementById('sel-fold') || {}).disabled,
 	};
 });
+/// How much of the user's own text a Diamond's crystal holds, read from
+/// `crystal.json` through the store.
+///
+/// IT USED TO MEASURE THE PANEL, and the panel no longer holds it: a crystal with
+/// anything in it is drawn by that Diamond's own page inside a sandboxed frame,
+/// so `.crystal-body` has no text of its own for `textContent` to count. That
+/// probe would not have failed -- it would have returned 0 for every Diamond and
+/// turned two preconditions into checks that can never bite, which is the quieter
+/// and worse outcome. Both uses below are preconditions of the form "there is
+/// something here worth deleting", so what they want is the words, not the
+/// markup: the JSON's own braces and key names are not the user's, and are not
+/// counted.
+///
+/// Returns -1 for a Diamond that is not there and -2 for one whose crystal is not
+/// JSON, so a broken store reads differently from an empty one.
+const crystalWords = (name) => p.evaluate(async (name) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const row = JSON.parse(await app.list_diamonds()).find(r => r.name === name);
+	if (!row) return -1;
+	const text = await app.read_crystal_data(row.id);
+	if (!String(text).trim()) return 0;
+	let data;
+	try { data = JSON.parse(text); } catch (e) { return -2; }
+	let n = 0;
+	(function walk(v) {
+		if (typeof v === 'string') n += v.length;
+		else if (Array.isArray(v)) v.forEach(walk);
+		else if (v && typeof v === 'object') Object.keys(v).forEach(k => walk(v[k]));
+	})(data);
+	return n;
+}, name);
 const dialogText = () => p.evaluate(() => {
 	const c = document.querySelector('.dlg-card');
 	return c ? c.textContent : '';
@@ -136,7 +168,7 @@ await shot(s, 'foldall-diff');
 
 // Accept it, so the crystal has content for the empty-reply check below to risk.
 if (d1.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sleep(3500); }
-const crystalLen = await p.evaluate(() => (document.querySelector('.crystal-body .chat-msg-content') || {}).textContent?.length || 0);
+const crystalLen = await crystalWords(DIAMOND);
 check('the accepted fold left a crystal with something in it (so the next check can bite)',
 	crystalLen > 20, `${crystalLen} chars`);
 
@@ -218,7 +250,7 @@ if (dA.acceptEnabled) { await p.click('.diff-accept', { force: true }); await sl
 // The precondition, asserted rather than assumed: an empty reply against an EMPTY
 // crystal diffs to "no change" and Accept is disabled anyway, so the check below
 // would pass without proving anything.
-const emptyBase = await p.evaluate(() => (document.querySelector('.crystal-body .chat-msg-content') || {}).textContent?.length || 0);
+const emptyBase = await crystalWords('Empty Reply');
 check('the second Diamond has a crystal worth deleting (the precondition of the next check)',
 	emptyBase > 20, `${emptyBase} chars`);
 

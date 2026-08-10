@@ -8,9 +8,11 @@
 // store move has none, so a bug that hides behind the older seed's two-stage
 // walk would show up here instead.
 //
-// What must survive: the Diamond itself, its crystal, its version number (held
-// in a field that has been renamed under it), its history, and any links it had
-// asserted, whose stored ends name a kind that no longer exists.
+// What must survive: the Diamond itself, its crystal (which is converted from
+// markdown to data in the same pass, so it arrives under a third name again),
+// its version number (held in a field that has been renamed under it), its
+// history, and any links it had asserted, whose stored ends name a kind that no
+// longer exists.
 //
 // Run with dev/serve.mjs up. No gateway needed.
 import { open, signInAs } from './harness.mjs';
@@ -77,8 +79,9 @@ const disk = await p.evaluate(async ({ a }) => {
 		try { return await mod.read_file(path); } catch (e) { return null; }
 	};
 	return {
-		crystal:  await read(`diamonds/${a}/crystal.md`),
+		crystal:  await read(`diamonds/${a}/crystal.json`),
 		oldFile:  await read(`diamonds/${a}/brief.md`),
+		oldMd:    await read(`diamonds/${a}/crystal.md`),
 		meta:     await read(`diamonds/${a}/.daimond/meta.json`),
 		log:      await read(`diamonds/${a}/.daimond/log`),
 		delta:    await read(`diamonds/${a}/.daimond/deltas/0001.md`),
@@ -87,9 +90,15 @@ const disk = await p.evaluate(async ({ a }) => {
 	};
 }, { a: A });
 
-check('brief.md became crystal.md', /Ship the launch/.test(disk.crystal || ''));
-check('and did not linger under its old name', disk.oldFile === null);
-check('the snapshots came across', /Ship the launch/.test(disk.version || ''));
+check('brief.md became crystal.json', /Ship the launch/.test(disk.crystal || ''));
+// Two different kinds of hop. `brief.md` -> `crystal.md` is a RENAME and deletes;
+// `crystal.md` -> `crystal.json` is a CONVERSION and keeps its source, because
+// its self-check proves the bytes round-trip and cannot prove the structure is
+// right.
+check('and brief.md itself is gone', disk.oldFile === null, 'brief.md=' + disk.oldFile);
+check('while crystal.md is kept beside the data it became',
+	disk.oldMd !== null, 'crystal.md=' + disk.oldMd);
+check('the markdown snapshots came across', /Ship the launch/.test(disk.version || ''));
 check('the retained delta came across', /DELTA-recent1/.test(disk.delta || ''));
 check('nothing was left behind under facets/', disk.oldRoot === null);
 check('the delta_ref was rewritten to the new root',

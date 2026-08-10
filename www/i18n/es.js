@@ -121,6 +121,28 @@
 	'models.save_start': 'Guardar y empezar',
 	'models.privacy': '<strong>Todo se queda en este dispositivo</strong>: tus claves, chats y archivos viven solo en este navegador; a nosotros no nos llega nada.',
 
+	// ── Search ─────────────────────────────────────────────────
+	// «Buscador» es el servicio, no la acción de buscar. Los nombres de los
+	// buscadores (Brave, Exa, Tavily, Serper) son nombres propios y no se
+	// traducen.
+	'search.head': 'Búsqueda',
+	'search.engine': 'Buscador',
+	// Una cuota gratuita, no una clave gratis: lo que pase de ahí lo cobra el
+	// proveedor al usuario. A propósito sin cifra y sin nombrar ningún buscador.
+	'search.engine_note': 'Con qué servicio busca Daimond. La mayoría te dan cada mes una cuota gratuita si traes tu propia clave.',
+	'search.credits': 'Créditos de Daimond',
+	'search.key': 'Clave de API',
+	'search.key_note': 'Se queda en este dispositivo, sellada con tu frase de paso, y solo se envía con la búsqueda que paga.',
+	// {engine} es un nombre propio, por ejemplo Brave, y no se traduce.
+	'search.no_key': 'Añade una clave para {engine}, o cambia a créditos de Daimond.',
+	'search.kind_web': 'Web',
+	'search.kind_news': 'Noticias',
+	'search.kind_academic': 'Académico',
+	'search.refused_serper': '{engine} solo se puede usar con tu propia clave.',
+	// {n} llega ya con sus separadores; no añadas ninguno. La coletilla del
+	// final se queda: es el precio de un tercero y caducará.
+	'search.free_month': '{engine}: unas {n} búsquedas al mes gratis, la última vez que lo miramos.',
+
 	// ── Credits, packs and Pro ─────────────────────────────────
 	'credits.lead': '¿No quieres gestionar la clave de un proveedor? Compra créditos y Daimond ejecuta el modelo por ti. Sin suscripción: lo que compras es tuyo, y no se te vuelve a cobrar nada salvo que actives la recarga automática más abajo.',
 	'credits.balance': 'Saldo: {amount}',
@@ -181,6 +203,10 @@
 	'chat.collapse_help': 'Plegar todas las respuestas y dejar lo que preguntaste, y elegir qué turnos plegar',
 	'chat.input_ph': 'Escribe un mensaje…',
 	'chat.send': 'Enviar',
+	'chat.busy': 'Pensando…',
+	'chat.busy_tool': 'Ejecutando {tool}, paso {n}…',
+	'chat.busy_next': 'Paso {n} terminado, pensando…',
+	'chat.busy_writing': 'Escribiendo la respuesta…',
 	'chat.answered': 'Daimond respondió, {n} palabras',
 	'chat.answer_failed': 'Daimond no pudo responder',
 	'chat.collapse': 'Plegar todas las respuestas',
@@ -217,6 +243,10 @@
 	'web.back': 'Atrás',
 	'web.reload': 'Recargar',
 	'web.pop_out': 'Abrir en una pestaña real',
+	// El nombre del control de pausa en la cabecera del panel, para que
+	// `pause.act_pause` diga «Pausar Acceso web». Gobierna `root/web`, que
+	// alcanza más que este panel, así que no se llama «Este panel».
+	'web.pause': 'Acceso web',
 	'web.blind_title': 'Conduces tú. Yo no miro.',
 	'web.blind_note': 'Daimond ha dejado de leer esta página: ni texto, ni imagen, ni pulsaciones de teclado. Inicia sesión y luego pulsa <b>Reanudar Daimond</b> en la pestaña del navegador para devolverle el volante. Ese botón está en la pestaña, no aquí, para que esta página nunca pueda quitarte el volante.',
 	'web.resumed': 'He reanudado: comprueba',
@@ -607,14 +637,18 @@
 	'spend.col_amount': 'Importe',
 	'spend.col_balance': 'Saldo',
 	'spend.cat_web': 'Páginas web',
+	'spend.cat_search': 'Búsquedas web',
 	'spend.cat_mail': 'Correo',
 	'spend.cat_sync': 'Sincronización',
+	'spend.cat_storage': 'Archivos guardados',
+	'spend.cat_infer': 'Inferencia con créditos',
 	'spend.cat_other': 'Otros servicios',
 	'spend.cat_topup': 'Créditos comprados',
 	'spend.cat_refund': 'Reembolsos',
 	'spend.cat_grant': 'Regalos y donaciones',
 	'spend.cat_adjust': 'Ajustes',
 	'spend.cat_fallback': 'Otros',
+	'spend.cat_unlisted': 'Sin clasificar',
 
 	// ── Tools ──────────────────────────────────────────────────
 	'tools.head': '<b>{have} de {all}</b> herramientas. Casi todo lo que Daimond sabe hacer lo hace gratis: las herramientas de abajo son sencillamente lo que es. Unas pocas llegan al mundo fuera del navegador, y esas cuestan lo que cuesta hacerlas funcionar.',
@@ -642,9 +676,12 @@
 	'settings.max_tokens_auto': 'Automático',
 	'settings.tokens': 'tokens',
 	'settings.max_rounds': 'Pasos por turno',
+	'settings.crystal_limits': 'Tamaño del cristal',
 	'settings.crystal_cap':      'Límite de tamaño del cristal',
-	'settings.crystal_cap_note': 'Un cristal es el resumen de un Diamante, así que tiene un tope. Superado ese tope, se indica al daimon que ponga el detalle en un archivo del ámbito del Diamante.',
+	'settings.crystal_cap_note': 'Un cristal es el resumen de un Diamond, así que tiene un tope. Superado ese tope, se indica al daimon que ponga el detalle en un archivo del ámbito del Diamond.',
 	'settings.crystal_cap_auto': 'Predeterminado',
+	'settings.crystal_page_cap': 'Límite de tamaño de la página',
+	'settings.crystal_page_cap_note': 'La página que muestra los datos de un Diamond. Viaja en cada sincronización y comparte el presupuesto con los datos.',
 	'settings.max_rounds_auto': 'Predeterminado',
 	'settings.steps': 'pasos',
 	'settings.max_rounds_note': 'Cuántas veces puede un agente usar una herramienta antes de que un turno se detenga. Lo dice al detenerse, y puedes indicarle que siga.',
@@ -1007,6 +1044,11 @@
 	'egress.reach_title': '¿Llegar a {host}?',
 	'egress.reach_body': 'Este turno ha leído contenido de fuera de tu espacio de trabajo: una página web, o un mensaje. Puede que algo en él intente dirigir a Daimond.\n\nAhora quiere llegar a {host}, donde no ha estado antes. Todo lo que sabe podría ir dentro de esa dirección.\n\nPermítelo solo si esperabas esto.',
 	'egress.reach_ok': 'Permitir {host}',
+	// En una búsqueda lo que sale es la CONSULTA, no una dirección. {query} va
+	// sola en su propio párrafo y nunca entre comillas -- puede traer las suyas.
+	'egress.search_title': '¿Buscar en la web?',
+	'egress.search_body': 'Este turno ha leído contenido de fuera de tu espacio de trabajo, y ahora Daimond quiere buscar en la web.\n\nEsto es lo que quiere buscar:\n\n{query}\n\nBuscará con {engine}, que es tu ajuste y no una decisión del modelo. Lo que sale de este dispositivo es la consulta.\n\nSi no lo esperabas, recházalo: no se pierde nada más que esta búsqueda.',
+	'egress.search_ok': 'Hacer esta búsqueda',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message': 'Copiar el mensaje',
@@ -1234,6 +1276,25 @@
 	'crystal.read_delta_failed': 'No se pudo leer el delta',
 	'crystal.steering': 'Dirigiendo…',
 	'crystal.no_key_steer': 'El proveedor de este Diamond no tiene una clave legible: desbloquea, o añade una, para dirigirlo.',
+	'crystal.page_failed': 'La página de este Diamond no se cargó, así que en su lugar se muestran sus datos.',
+	'crystal.page_partial': 'La página de este Diamond no mostró todo lo que él guarda, así que en su lugar se muestran sus datos.',
+	'crystal.page_reset': 'Restablecer la página',
+	'crystal.page_reset_confirm': '¿Sustituir la página de este Diamond por la página estándar? Sus datos no se tocan.',
+	'crystal.ask': 'Pedir al daimon que cambie esta página',
+	'crystal.edit_json': 'Editar como JSON',
+	'crystal.json_invalid': 'Eso no es JSON válido, así que no se guardó nada.',
+	'crystal.field_title': 'Título',
+	'crystal.field_summary': 'Resumen',
+	'crystal.field_sections': 'Secciones',
+	'crystal.field_facts': 'Hechos',
+	'crystal.field_open': 'Cuestiones abiertas',
+	'crystal.field_links': 'Enlaces',
+	'crystal.field_heading': 'Encabezado',
+	'crystal.field_body': 'Cuerpo',
+	'crystal.add_section': 'Añadir una sección',
+	'crystal.remove': 'Quitar',
+	'crystal.other_fields': 'Otros campos',
+	'crystal.other_fields_note': 'Se mantienen tal cual, y se muestran aquí para que nada desaparezca.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefacto',

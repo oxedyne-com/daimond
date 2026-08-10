@@ -136,9 +136,41 @@ const splitCall = (s) => {
 
 // Decide the turn: text, or calls, or a failure — from the directive and how
 // many tool rounds have already come back.
+/// Whether this request is the crystal reducer's.
+///
+/// The reducer is a role of its own, with its own system prompt, and since the
+/// crystal became `crystal.json` it must emit ONE WHOLE JSON OBJECT and nothing
+/// else -- `crystal_proposal` refuses anything else before the user can accept it,
+/// because accepting an unparseable proposal replaces the Diamond's memory with
+/// something no reader downstream can open.
+///
+/// So a mock that answers every request with prose cannot drive a fold at all. It
+/// is recognised here rather than in each verifier because a real reducer is
+/// recognisable the same way -- by the role it was given -- and because every test
+/// that folds needs the same answer.
+const isReducer = (messages) => (messages || []).some((m) =>
+	m && m.role === 'system' && /crystal/i.test(String(m.content || '')));
+
+/// A crystal carrying `words`, as the core schema wants it.
+///
+/// The delta's own text goes in, because what the fold verifiers assert is that
+/// the words a user typed reached the crystal -- a fixed reply would pass the
+/// parse gate and prove nothing.
+const crystalReply = (words) => JSON.stringify({
+	title:   'Mock crystal',
+	summary: String(words || '').slice(0, 400),
+}, null, 2);
+
 const plan = (messages) => {
 	const d      = parseDirective(lastUser(messages));
 	const rounds = toolRounds(messages);
+
+	// Before the directives: a reducer answered with prose is a fold that cannot
+	// land. `@text` and the rest still win, so a test that wants to exercise a
+	// MALFORMED proposal -- and one does -- can still ask for one.
+	if (isReducer(messages) && d.kind === 'plain') {
+		return { text: crystalReply(d.text || d.rest || '') };
+	}
 
 	switch (d.kind) {
 		case 'text':

@@ -51,6 +51,20 @@ const state = () => page.evaluate(() => (document.getElementById('update-chip') 
 const hidden = () => page.evaluate(() => !!(document.getElementById('update-chip') || {}).hidden);
 const title  = () => page.evaluate(() => (document.getElementById('update-chip') || {}).title || '');
 
+/// Pretend a turn is running, or is not.
+///
+/// It waits for `DaimondCore` first, and that wait is the whole reason this is a
+/// function. Every one of these assignments races the module's own init, and the
+/// race is decided by how long the wasm takes to instantiate — so it was invisible
+/// for as long as the bundle stayed the size it was, and then a release that added
+/// two modules to it turned "sometimes" into "every time". The failure reads
+/// `Cannot set properties of undefined`, which points at this file rather than at
+/// the timing, and the note at the top of `reboot` above had already predicted it.
+const setBusy = async (v) => {
+	await page.waitForFunction(() => !!window.DaimondCore, null, { timeout: 8000 });
+	await page.evaluate((b) => { window.DaimondCore.busy = () => b; }, v);
+};
+
 try {
 	// ── A. Boot reads the stamp; the chip is present and quiet. ──────────────
 	await reboot({ build: 'AAA', note: 'first' });
@@ -68,13 +82,13 @@ try {
 	check('chip carries the "what changed" note', (await title()).includes('second'));
 
 	// ── C. A running turn suppresses even a forced click. ───────────────────
-	await page.evaluate(() => { window.DaimondCore.busy = () => true; });
+	await setBusy(true);
 	await page.evaluate(() => (window.__m = 1));
 	await page.evaluate(() => document.getElementById('update-chip').click());
 	await new Promise(r => setTimeout(r, 300));
 	check('a click does not reload while busy', (await page.evaluate(() => window.__m)) === 1);
 	check('chip shows "busy" while a turn runs', (await state()) === 'busy' || (await state()) === 'ready');
-	await page.evaluate(() => { window.DaimondCore.busy = () => false; });
+	await setBusy(false);
 
 	// ── D. Idle + click → it applies, reloads, and says it updated. ─────────
 	await page.evaluate(() => { window.__m = 1; window.DaimondUpdater.check(); });
@@ -92,25 +106,26 @@ try {
 
 	// ── G. The gateway refuses this tab (stale) → forced reload, foreground and all. ──
 	await reboot({ build: 'GGG', note: 'g' });
-	await page.evaluate(() => { window.DaimondCore.busy = () => false; window.__m = 1; });
+	await setBusy(false); await page.evaluate(() => { window.__m = 1; });
 	await page.evaluate(() => window.dispatchEvent(new Event('daimond:stale')));
 	const staleReloaded = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 8000);
 	check('a stale tab force-reloads even in the foreground', staleReloaded);
 
 	// ── H. Stale still never reloads over a running turn; it waits for idle. ──
 	await reboot({ build: 'HHH', note: 'h' });
-	await page.evaluate(() => { window.DaimondCore.busy = () => true; window.__m = 1; });
+	await setBusy(true); await page.evaluate(() => { window.__m = 1; });
 	await page.evaluate(() => window.dispatchEvent(new Event('daimond:stale')));
 	await new Promise(r => setTimeout(r, 500));
 	check('stale does not reload over a running turn', (await page.evaluate(() => window.__m)) === 1);
 	check('the chip goes red (stale) while busy', (await state()) === 'stale');
-	await page.evaluate(() => { window.DaimondCore.busy = () => false; window.dispatchEvent(new Event('daimond:idle')); });
+	await setBusy(false);
+	await page.evaluate(() => window.dispatchEvent(new Event('daimond:idle')));
 	const staleAfterIdle = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 8000);
 	check('stale applies the moment the turn ends', staleAfterIdle);
 
 	// ── I. Loop guard: still stale after a forced reload from the same build → no re-loop. ──
 	// (No reboot: we are on HHH with daimond-forced-from=HHH from H's reload.)
-	await page.evaluate(() => { window.DaimondCore.busy = () => false; window.__m = 1; });
+	await setBusy(false); await page.evaluate(() => { window.__m = 1; });
 	await page.evaluate(() => window.dispatchEvent(new Event('daimond:stale')));
 	await new Promise(r => setTimeout(r, 600));
 	check('loop guard: does not re-reload from the same build', (await page.evaluate(() => window.__m)) === 1);

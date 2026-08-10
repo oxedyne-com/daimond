@@ -123,6 +123,27 @@
 	'models.save_start': 'Speichern und starten',
 	'models.privacy': '<strong>Alles bleibt auf diesem Gerät</strong> — deine Schlüssel, Chats und Dateien liegen nur in diesem Browser; nichts geht an uns.',
 
+	// ── Search ─────────────────────────────────────────────────
+	// Suchmaschine = der Dienst, nicht das Suchen. Die Namen der Maschinen
+	// (Brave, Exa, Tavily, Serper) sind Eigennamen und bleiben stehen.
+	'search.head': 'Suche',
+	'search.engine': 'Suchmaschine',
+	// Ein Freikontingent, kein kostenloser Schlüssel: was darüber hinausgeht,
+	// rechnet der Anbieter mit dem Nutzer ab. Bewusst ohne Zahl und ohne Namen.
+	'search.engine_note': 'Mit welchem Dienst Daimond sucht. Bei den meisten gibt es mit einem eigenen Schlüssel jeden Monat ein Freikontingent.',
+	'search.credits': 'Daimond-Guthaben',
+	'search.key': 'API-Schlüssel',
+	'search.key_note': 'Bleibt auf diesem Gerät, versiegelt mit deiner Passphrase, und geht nur mit der Suche mit, die er bezahlt.',
+	// {engine} ist ein Eigenname, z. B. Brave, und wird nicht übersetzt.
+	'search.no_key': 'Füge einen Schlüssel für {engine} hinzu, oder wechsle zu Daimond-Guthaben.',
+	'search.kind_web': 'Web',
+	'search.kind_news': 'Nachrichten',
+	'search.kind_academic': 'Wissenschaft',
+	'search.refused_serper': '{engine} lässt sich nur mit deinem eigenen Schlüssel nutzen.',
+	// {n} kommt fertig gruppiert an; kein eigenes Trennzeichen. Der Vorbehalt
+	// am Ende bleibt: fremde Preise veralten.
+	'search.free_month': '{engine}: rund {n} Suchen im Monat kostenlos, Stand unserer letzten Prüfung.',
+
 	// ── Credits, packs and Pro ─────────────────────────────────
 	'credits.lead': 'Du willst keinen Anbieter-Schlüssel verwalten? Kauf Guthaben, und Daimond betreibt das Modell für dich. Kein Abo: Was du kaufst, bleibt dir, und es wird nichts erneut abgebucht, außer du schaltest unten die automatische Aufladung ein.',
 	'credits.balance': 'Saldo: {amount}',
@@ -183,6 +204,10 @@
 	'chat.collapse_help': 'Alle Antworten einklappen und deine Fragen stehen lassen — und Züge zum Einklappen wählen',
 	'chat.input_ph': 'Nachricht schreiben…',
 	'chat.send': 'Senden',
+	'chat.busy': 'Denkt nach…',
+	'chat.busy_tool': 'Führt {tool} aus, Schritt {n}…',
+	'chat.busy_next': 'Schritt {n} fertig, denkt nach…',
+	'chat.busy_writing': 'Schreibt die Antwort…',
 	'chat.answered': 'Daimond hat geantwortet, {n} Wörter',
 	'chat.answer_failed': 'Daimond konnte nicht antworten',
 	'chat.collapse': 'Alle Antworten einklappen',
@@ -219,6 +244,10 @@
 	'web.back': 'Zurück',
 	'web.reload': 'Neu laden',
 	'web.pop_out': 'In echtem Tab öffnen',
+	// Der Name der Pause-Schaltfläche im Panel-Kopf, damit `pause.act_pause`
+	// "Webzugriff anhalten" ergibt. Sie steuert `root/web` und damit mehr als
+	// dieses Panel, heißt also nicht "Dieses Panel".
+	'web.pause': 'Webzugriff',
 	'web.blind_title': 'Du steuerst. Ich schaue nicht zu.',
 	'web.blind_note': 'Daimond liest diese Seite nicht mehr — kein Text, kein Bild, keine Tastenanschläge. Melde dich an und klicke dann im Browser-Tab auf <b>Daimond fortsetzen</b>, um das Steuer zurückzugeben. Dieser Knopf sitzt im Tab, nicht hier, damit diese Seite dir niemals das Steuer nehmen kann.',
 	'web.resumed': 'Ich mache weiter — sieh nach',
@@ -609,14 +638,18 @@
 	'spend.col_amount': 'Betrag',
 	'spend.col_balance': 'Saldo',
 	'spend.cat_web': 'Webseiten',
+	'spend.cat_search': 'Websuchen',
 	'spend.cat_mail': 'Mail',
 	'spend.cat_sync': 'Geräte-Sync',
+	'spend.cat_storage': 'Gespeicherte Dateien',
+	'spend.cat_infer': 'Inferenz mit Guthaben',
 	'spend.cat_other': 'Andere Dienste',
 	'spend.cat_topup': 'Guthaben gekauft',
 	'spend.cat_refund': 'Rückerstattungen',
 	'spend.cat_grant': 'Geschenke & Zuwendungen',
 	'spend.cat_adjust': 'Korrekturen',
 	'spend.cat_fallback': 'Sonstiges',
+	'spend.cat_unlisted': 'Nicht zugeordnet',
 
 	// ── Tools ──────────────────────────────────────────────────
 	'tools.head': '<b>{have} von {all}</b> Werkzeugen. Fast alles, was Daimond kann, kann es umsonst — die Werkzeuge unten sind schlicht das, was es ist. Ein paar greifen in die Welt außerhalb des Browsers, und die kosten, was ihr Betrieb kostet.',
@@ -644,9 +677,12 @@
 	'settings.max_tokens_auto': 'Automatisch',
 	'settings.tokens': 'Tokens',
 	'settings.max_rounds': 'Schritte pro Zug',
+	'settings.crystal_limits': 'Größe des Kristalls',
 	'settings.crystal_cap':      'Größenlimit des Kristalls',
-	'settings.crystal_cap_note': 'Ein Kristall ist die Zusammenfassung eines Diamanten und hat daher eine Obergrenze. Darüber hinaus wird ein Daimon angewiesen, die Einzelheiten stattdessen in eine Datei im Bereich des Diamanten zu schreiben.',
+	'settings.crystal_cap_note': 'Ein Kristall ist die Zusammenfassung eines Diamonds und hat daher eine Obergrenze. Darüber hinaus wird ein Daimon angewiesen, die Einzelheiten stattdessen in eine Datei im Bereich des Diamonds zu schreiben.',
 	'settings.crystal_cap_auto': 'Standard',
+	'settings.crystal_page_cap': 'Größenlimit der Seite',
+	'settings.crystal_page_cap_note': 'Die Seite, die die Daten eines Diamonds zeigt. Sie reist bei jedem Sync mit und teilt sich das Budget mit den Daten.',
 	'settings.max_rounds_auto': 'Standard',
 	'settings.steps': 'Schritte',
 	'settings.max_rounds_note': 'Wie oft ein Agent ein Werkzeug benutzen darf, bevor ein Zug endet. Er sagt es, wenn er endet, und du kannst ihn weitermachen lassen.',
@@ -1009,6 +1045,12 @@
 	'egress.reach_title': '{host} erreichen?',
 	'egress.reach_body': 'Dieser Zug hat Inhalte von außerhalb deines Arbeitsbereichs gelesen — eine Webseite oder eine Nachricht. Etwas darin könnte versuchen, Daimond zu lenken.\n\nEs will nun {host} erreichen, wo es noch nie war. Alles, was es weiß, könnte in dieser Adresse mitgehen.\n\nErlaube es nur, wenn du das erwartet hast.',
 	'egress.reach_ok': '{host} erlauben',
+	// Bei einer Suche verlässt die ANFRAGE das Gerät, nicht eine Adresse.
+	// {query} steht allein in einem eigenen Absatz und kommt nie in
+	// Anführungszeichen -- die Anfrage kann selbst welche enthalten.
+	'egress.search_title': 'Im Web suchen?',
+	'egress.search_body': 'Dieser Zug hat Inhalte von außerhalb deines Arbeitsbereichs gelesen, und Daimond will nun im Web suchen.\n\nGesucht werden soll:\n\n{query}\n\nGesucht wird mit {engine} — das ist deine Einstellung und nicht die Wahl des Modells. Was dieses Gerät verlässt, ist die Suchanfrage.\n\nWenn du das nicht erwartet hast, lehne ab — verloren geht nichts außer dieser einen Suche.',
+	'egress.search_ok': 'Suche ausführen',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message': 'Nachricht kopieren',
@@ -1236,6 +1278,25 @@
 	'crystal.read_delta_failed': 'Das Delta ließ sich nicht lesen',
 	'crystal.steering': 'Wird gelenkt…',
 	'crystal.no_key_steer': 'Der Anbieter dieses Diamonds hat keinen lesbaren Schlüssel — entsperre, oder füge einen hinzu, um es zu lenken.',
+	'crystal.page_failed': 'Die Seite dieses Diamonds ließ sich nicht laden, deshalb stehen hier stattdessen seine Daten.',
+	'crystal.page_partial': 'Die Seite dieses Diamonds hat nicht alles gezeigt, was er enthält, deshalb stehen hier stattdessen seine Daten.',
+	'crystal.page_reset': 'Seite zurücksetzen',
+	'crystal.page_reset_confirm': 'Die Seite dieses Diamonds durch die Standardseite ersetzen? Seine Daten bleiben unberührt.',
+	'crystal.ask': 'Den Daimon bitten, diese Seite zu ändern',
+	'crystal.edit_json': 'Als JSON bearbeiten',
+	'crystal.json_invalid': 'Das ist kein gültiges JSON, deshalb wurde nichts gespeichert.',
+	'crystal.field_title': 'Titel',
+	'crystal.field_summary': 'Zusammenfassung',
+	'crystal.field_sections': 'Abschnitte',
+	'crystal.field_facts': 'Fakten',
+	'crystal.field_open': 'Offene Punkte',
+	'crystal.field_links': 'Links',
+	'crystal.field_heading': 'Überschrift',
+	'crystal.field_body': 'Text',
+	'crystal.add_section': 'Abschnitt hinzufügen',
+	'crystal.remove': 'Entfernen',
+	'crystal.other_fields': 'Weitere Felder',
+	'crystal.other_fields_note': 'Bleiben, wie sie sind, und stehen hier, damit nichts verschwindet.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} Artefakt',

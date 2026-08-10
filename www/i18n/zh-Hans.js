@@ -190,6 +190,27 @@
 	'models.credit_base_update':   '更新我填的数',
 	'models.credit_base_bad':      '这不是一个金额。请输入美元数字。',
 
+	// ── 搜索 ───────────────────────────────────────────────────
+	// “搜索引擎”指的是所用的那家服务，不是搜索这个动作。
+	// 引擎名字（Brave、Exa、Tavily、Serper）是专有名词，不翻译。
+	// {engine} 里装的就是那个名字，所以按本文件的惯例，拉丁字母两侧留一个空格。
+	'search.head':            '搜索',
+	'search.engine':          '搜索引擎',
+	// 免费的是每月的一份用量，不是密钥本身；超出的部分由服务方向用户收费。
+	// 这里刻意不写数字，也不点名任何一家引擎。
+	'search.engine_note':     'Daimond 用哪家服务来搜索。多数服务只要你自带密钥，每月都有一定的免费用量。',
+	'search.credits':         'Daimond 额度',
+	'search.key':             'API 密钥',
+	'search.key_note':        '留在这台设备上，用你的密码短语封存，只随它付账的那次搜索一起发出。',
+	'search.no_key':          '为“{engine}”添加一个密钥，或者改用 Daimond 额度。',
+	'search.kind_web':        '网页',
+	'search.kind_news':       '新闻',
+	'search.kind_academic':   '学术',
+	'search.refused_serper':  '“{engine}”只能用你自己的密钥。',
+	// {n} 到手时已经按当地习惯分好位，不要再自己加分隔符。末尾那句保留：
+	// 这是别家的价格，早晚会过时。
+	'search.free_month':      '{engine}：每月大约 {n} 次免费，以我们上次查看时为准。',
+
 	// ── 额度、加油包与 Pro ─────────────────────────────────────
 	// 凡是会扣用户钱的地方，都要把美元说清楚。见 `billing.*`。
 	'credits.lead':      '不想自己管一把提供商密钥？买点额度，Daimond 替你跑模型。没有订阅：买到的额度一直是你的，除非你打开下面的自动充值，否则不会再产生任何扣费。',
@@ -252,6 +273,10 @@
 	'chat.collapse_help':  '折叠每一条回答，只留下你问的话 — 再挑出要折叠的轮次',
 	'chat.input_ph':       '输入消息…',
 	'chat.send':           '发送',
+	'chat.busy':           '思考中…',
+	'chat.busy_tool':      '正在运行 {tool}，第 {n} 步…',
+	'chat.busy_next':      '第 {n} 步完成，思考中…',
+	'chat.busy_writing':   '正在写回答…',
 	'chat.answered': 'Daimond 已回答，{n} 个词',
 	'chat.answer_failed': 'Daimond 无法回答',
 	'chat.collapse': '折叠所有回答',
@@ -288,6 +313,10 @@
 	'web.back':       '返回',
 	'web.reload':     '重新加载',
 	'web.pop_out':    '在真正的标签页里打开',
+	// 面板标题栏里那个暂停控件的名字，填进 `pause.act_pause` 就是
+	// “暂停 网页访问”。它管的是 `root/web`，管得比这个面板宽，
+	// 所以不叫“这个面板”。
+	'web.pause':      '网页访问',
 	'web.blind_title': '现在你来操作。我没在看。',
 	'web.blind_note':  'Daimond 已经停止读取这个页面 — 不看文字，不看图像，不看按键。登录之后，点浏览器标签页里的 <b>恢复 Daimond</b>，把控制权交回来。那个按钮在标签页里而不在这里，所以这个页面永远抢不走你的控制权。',
 	'web.resumed':     '我已经恢复了 — 请检查',
@@ -754,15 +783,19 @@
 	'spend.col_amount':  '金额',
 	'spend.col_balance': '余额',
 	// 网关给额度打的分类标签。
-	'spend.cat_web':    '网页',
-	'spend.cat_mail':   '邮件',
-	'spend.cat_sync':   '跨设备同步',
-	'spend.cat_other':  '其他服务',
-	'spend.cat_topup':  '购买额度',
-	'spend.cat_refund': '退款',
-	'spend.cat_grant':  '赠送与补助',
-	'spend.cat_adjust': '调整',
+	'spend.cat_web':     '网页',
+	'spend.cat_search':  '网页搜索',
+	'spend.cat_mail':    '邮件',
+	'spend.cat_sync':    '跨设备同步',
+	'spend.cat_storage': '已存储的文件',
+	'spend.cat_infer':   '推理（额度）',
+	'spend.cat_other':   '其他服务',
+	'spend.cat_topup':   '购买额度',
+	'spend.cat_refund':  '退款',
+	'spend.cat_grant':   '赠送与补助',
+	'spend.cat_adjust':  '调整',
 	'spend.cat_fallback': '其他',
+	'spend.cat_unlisted': '未归类',
 
 	// ── 工具 ───────────────────────────────────────────────────
 	'tools.head':         '<b>{all} 个工具里有 {have} 个</b>。Daimond 能做的事大多不花钱 — 下面这些工具就是它本身。少数几个要伸到浏览器之外，那些就按运行时该花的收费。',
@@ -790,9 +823,12 @@
 	'settings.max_tokens_auto':    '自动',
 	'settings.tokens':             'token',
 	'settings.max_rounds':         '每轮的步数',
+	'settings.crystal_limits':   '晶体容量',
 	'settings.crystal_cap':      '晶体大小上限',
-	'settings.crystal_cap_note': '晶体是钻石的摘要，因此有上限。超过之后，将告知 daimon 把细节写入钻石范围内的文件。',
+	'settings.crystal_cap_note': '晶体是 Diamond 的摘要，因此有上限。超过之后，将告知 daimon 把细节写入 Diamond 范围内的文件。',
 	'settings.crystal_cap_auto': '默认',
+	'settings.crystal_page_cap': '页面大小上限',
+	'settings.crystal_page_cap_note': '显示 Diamond 数据的页面。它随每次同步一起走，所以和数据共用同一份空间。',
 	'settings.max_rounds_auto':    '默认',
 	'settings.steps':              '步',
 	'settings.max_rounds_note':    '一轮停下来之前，代理可以使用工具的次数。停下来时它会说明，你可以让它继续。',
@@ -1048,6 +1084,11 @@
 	'egress.reach_title': '要访问 {host} 吗？',
 	'egress.reach_body':  '这一轮读过你工作区以外的内容 — 一个网页，或者一封信。里面可能有东西想操纵 Daimond。\n\n它现在想访问 {host}，这是它此前没去过的地方。它知道的任何事，都可能夹在那个地址里带出去。\n\n只有在你预料到这件事时，才允许它。',
 	'egress.reach_ok':    '允许 {host}',
+	// 搜索里出去的是搜索词，不是地址。{query} 单独占一段，不加引号 ——
+	// 搜索词自己就可能带着引号。
+	'egress.search_title': '要上网搜索吗？',
+	'egress.search_body':  '这一轮读过你工作区以外的内容，而 Daimond 现在想上网搜索。\n\n它想搜索的是：\n\n{query}\n\n用的是 {engine}，这是你的设置，不是模型选的。离开这台设备的，就是这条搜索词。\n\n如果这不是你预料中的事，就拒绝 — 除了这一次搜索，什么都不会丢。',
+	'egress.search_ok':    '执行这次搜索',
 
 	// ── 侧栏里的一张聊天卡片 ───────────────────────────────────
 	'chat.copy_message':   '复制消息',
@@ -1267,6 +1308,25 @@
 	'crystal.read_delta_failed': '读不出这份增量',
 	'crystal.steering':       '引导中…',
 	'crystal.no_key_steer':   '这个 Diamond 的提供商没有可读的密钥 — 请解锁，或添加一个，才能引导它。',
+	'crystal.page_failed':    '这个 Diamond 的页面没有加载出来，所以改为显示它的数据。',
+	'crystal.page_partial':   '这个 Diamond 的内容没有在页面上全部呈现，所以改为显示它的数据。',
+	'crystal.page_reset':     '恢复默认页面',
+	'crystal.page_reset_confirm': '把这个 Diamond 的页面换成默认页面？它的数据不会有任何改动。',
+	'crystal.ask':            '请代蒙修改这个页面',
+	'crystal.edit_json':      '以 JSON 编辑',
+	'crystal.json_invalid':   '这不是有效的 JSON，所以什么都没有保存。',
+	'crystal.field_title':    '标题',
+	'crystal.field_summary':  '摘要',
+	'crystal.field_sections': '章节',
+	'crystal.field_facts':    '事实',
+	'crystal.field_open':     '未决的问题',
+	'crystal.field_links':    '链接',
+	'crystal.field_heading':  '小标题',
+	'crystal.field_body':     '正文',
+	'crystal.add_section':    '添加一节',
+	'crystal.remove':         '移除',
+	'crystal.other_fields':   '其他字段',
+	'crystal.other_fields_note': '按原样保留，并显示在这里，这样不会有东西丢失。',
 
 	// ── 产物 ───────────────────────────────────────────────────
 	'arte.count.one':      '{n} 件产物',

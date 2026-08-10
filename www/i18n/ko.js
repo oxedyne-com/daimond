@@ -192,6 +192,28 @@
 	'models.credit_base_update':   '내가 적은 금액 고치기',
 	'models.credit_base_bad':      '금액이 아니에요. 미국 달러 숫자를 넣어 주세요.',
 
+	// ── 검색 ───────────────────────────────────────────────────
+	// '검색 엔진'은 검색이라는 행위가 아니라 쓰는 서비스를 가리켜요.
+	// 엔진 이름(Brave, Exa, Tavily, Serper)은 고유명사라 옮기지 않아요.
+	// {engine}에는 그 고유명사가 들어가니, 로마자와 한글 사이는 'API 키'처럼
+	// 한 칸 띄우고, 조사는 이 파일의 다른 곳처럼 붙여 써요.
+	'search.head':            '검색',
+	'search.engine':          '검색 엔진',
+	// 공짜인 것은 달마다 주어지는 일정량이지, 키 자체가 아니에요. 그걸 넘긴 만큼은
+	// 제공사가 사용자에게 청구해요. 숫자도 엔진 이름도 일부러 적지 않아요.
+	'search.engine_note':     'Daimond이 어떤 서비스로 검색할지 골라요. 자기 키를 가져오면 대부분 다달이 일정량까지 공짜예요.',
+	'search.credits':         'Daimond 크레딧',
+	'search.key':             'API 키',
+	'search.key_note':        '이 기기에만 두고, 암호문구로 봉인해서, 그 키로 값을 치르는 검색에만 함께 보내요.',
+	'search.no_key':          '{engine} 키를 넣거나, Daimond 크레딧으로 바꾸세요.',
+	'search.kind_web':        '웹',
+	'search.kind_news':       '뉴스',
+	'search.kind_academic':   '학술',
+	'search.refused_serper':  '{engine}은(는) 자기 키로만 쓸 수 있어요.',
+	// {n}은 이미 자릿수가 끊긴 채로 와요. 따로 붙이지 마세요. 끝의 단서는 남겨요.
+	// 남의 회사 가격이라 언젠가 옛날 이야기가 되니까요.
+	'search.free_month':      '{engine}: 한 달에 {n}번쯤 공짜예요. 저희가 마지막으로 확인했을 때 기준이에요.',
+
 	// ── 크레딧, 팩, Pro ────────────────────────────────────────
 	// 실제로 결제되는 자리에서는 미국 달러라고 분명히 밝혀요. `billing.*` 참고.
 	'credits.lead':      '제공자 키를 직접 관리하고 싶지 않으세요? 크레딧을 사면 Daimond이 대신 모델을 돌려요. 구독은 없어요. 산 만큼은 그대로 남고, 아래에서 자동 충전을 켜지 않는 한 다시 결제되지 않아요.',
@@ -254,6 +276,10 @@
 	'chat.collapse_help':  '답변을 모두 접어 물어본 것만 남기고, 접을 턴을 골라요',
 	'chat.input_ph':       '메시지를 입력하세요…',
 	'chat.send':           '보내기',
+	'chat.busy':           '생각하는 중…',
+	'chat.busy_tool':      '{tool} 실행 중, {n}단계…',
+	'chat.busy_next':      '{n}단계 완료, 생각하는 중…',
+	'chat.busy_writing':   '답변을 쓰는 중…',
 	'chat.answered': 'Daimond이 답했어요, {n}단어',
 	'chat.answer_failed': 'Daimond이 답하지 못했어요',
 	'chat.collapse': '모든 답변 접기',
@@ -290,6 +316,10 @@
 	'web.back':       '뒤로',
 	'web.reload':     '새로고침',
 	'web.pop_out':    '진짜 탭에서 열기',
+	// 패널 머리글에 있는 일시정지 버튼의 이름이에요. `pause.act_pause`에 들어가
+	// '웹 접근 일시정지'가 돼요. `root/web`을 다스리고 이 패널보다 멀리 미치니
+	// '이 패널'이라고 부르지 않아요.
+	'web.pause':      '웹 접근',
 	'web.blind_title': '지금은 직접 하고 계세요. 저는 보고 있지 않아요.',
 	'web.blind_note':  'Daimond은 이 페이지 읽기를 멈췄어요 — 글자도, 그림도, 키 입력도 보지 않아요. 로그인한 다음 브라우저 탭에 있는 <b>Daimond 재개</b>를 눌러 조작을 넘겨 주세요. 그 버튼은 여기가 아니라 탭에 있어서, 이 페이지가 조작을 빼앗아 갈 수는 없어요.',
 	'web.resumed':     '다시 시작했어요 — 확인해 주세요',
@@ -757,15 +787,19 @@
 	'spend.col_amount':  '금액',
 	'spend.col_balance': '잔액',
 	// 게이트웨이가 붙이는 크레딧 분류.
-	'spend.cat_web':    '웹 페이지',
-	'spend.cat_mail':   '메일',
-	'spend.cat_sync':   '기기 간 동기화',
-	'spend.cat_other':  '기타 서비스',
-	'spend.cat_topup':  '크레딧 구매',
-	'spend.cat_refund': '환불',
-	'spend.cat_grant':  '선물·지원',
-	'spend.cat_adjust': '조정',
+	'spend.cat_web':     '웹 페이지',
+	'spend.cat_search':  '웹 검색',
+	'spend.cat_mail':    '메일',
+	'spend.cat_sync':    '기기 간 동기화',
+	'spend.cat_storage': '저장된 파일',
+	'spend.cat_infer':   '추론(크레딧)',
+	'spend.cat_other':   '기타 서비스',
+	'spend.cat_topup':   '크레딧 구매',
+	'spend.cat_refund':  '환불',
+	'spend.cat_grant':   '선물·지원',
+	'spend.cat_adjust':  '조정',
 	'spend.cat_fallback': '기타',
+	'spend.cat_unlisted': '분류되지 않음',
 
 	// ── 도구 ───────────────────────────────────────────────────
 	'tools.head':         '<b>{all}개 중 {have}개</b>의 도구. Daimond이 할 수 있는 일은 대부분 공짜예요 — 아래 도구들은 그저 Daimond 자체예요. 몇 개는 브라우저 밖 세상에 손을 뻗는 것이라, 돌리는 데 드는 만큼 값이 나가요.',
@@ -793,9 +827,12 @@
 	'settings.max_tokens_auto':    '자동',
 	'settings.tokens':             '토큰',
 	'settings.max_rounds':         '한 턴의 단계 수',
+	'settings.crystal_limits':   '크리스털 용량',
 	'settings.crystal_cap':      '크리스털 크기 제한',
-	'settings.crystal_cap_note': '크리스털은 다이아몬드의 요약이므로 상한이 있습니다. 이를 넘으면 daimon은 세부 내용을 다이아몬드 범위의 파일에 쓰도록 안내받습니다.',
+	'settings.crystal_cap_note': '크리스털은 Diamond의 요약이므로 상한이 있습니다. 이를 넘으면 daimon은 세부 내용을 Diamond 범위의 파일에 쓰도록 안내받습니다.',
 	'settings.crystal_cap_auto': '기본값',
+	'settings.crystal_page_cap': '페이지 크기 제한',
+	'settings.crystal_page_cap_note': 'Diamond의 데이터를 보여 주는 페이지입니다. 동기화할 때마다 함께 오가므로 데이터와 용량을 나눠 씁니다.',
 	'settings.max_rounds_auto':    '기본값',
 	'settings.steps':              '단계',
 	'settings.max_rounds_note':    '한 턴이 멈추기 전까지 에이전트가 도구를 쓸 수 있는 횟수. 멈출 때 그렇게 알려 주며, 계속하라고 지시할 수 있습니다.',
@@ -1050,6 +1087,11 @@
 	'egress.reach_title': '{host}에 닿을까요?',
 	'egress.reach_body':  '이번 턴은 작업 공간 밖의 내용 — 웹 페이지나 메시지 — 을 읽었어요. 그 안에 Daimond을 조종하려는 것이 있을 수도 있어요.\n\n이제 전에 가 본 적 없는 {host}에 닿으려고 해요. 알고 있는 무엇이든 그 주소에 실려 나갈 수 있어요.\n\n예상한 일일 때만 허용하세요.',
 	'egress.reach_ok':    '{host} 허용',
+	// 검색에서 나가는 것은 주소가 아니라 검색어예요. {query}는 제 문단에 혼자 두고,
+	// 따옴표로 감싸지 않아요 -- 검색어 자체가 따옴표를 품고 있을 수 있으니까요.
+	'egress.search_title': '웹에서 검색할까요?',
+	'egress.search_body':  '이번 턴은 작업 공간 밖의 내용을 읽었고, Daimond이 이제 웹에서 검색하려고 해요.\n\n찾으려는 것은 이거예요:\n\n{query}\n\n검색은 {engine}에서 해요. 이건 직접 정한 설정이지, 모델이 고른 게 아니에요. 이 기기에서 나가는 것은 검색어예요.\n\n예상하지 못한 일이라면 거절하세요 — 잃는 것은 이 검색 하나뿐이에요.',
+	'egress.search_ok':    '이 검색 실행하기',
 
 	// ── 레일의 채팅 타일 ───────────────────────────────────────
 	'chat.copy_message':   '메시지 복사',
@@ -1271,6 +1313,25 @@
 	'crystal.read_delta_failed': '델타를 읽지 못했어요',
 	'crystal.steering':       '이끄는 중…',
 	'crystal.no_key_steer':   '이 Diamond의 제공자에는 읽을 수 있는 키가 없어요 — 잠금을 풀거나 키를 추가하면 이끌 수 있어요.',
+	'crystal.page_failed':    '이 Diamond의 페이지가 뜨지 않아서 대신 데이터를 보여 드려요.',
+	'crystal.page_partial':   '이 Diamond에 담긴 내용이 페이지에 다 나오지 않아서 대신 데이터를 보여 드려요.',
+	'crystal.page_reset':     '페이지를 기본으로 되돌리기',
+	'crystal.page_reset_confirm': '이 Diamond의 페이지를 기본 페이지로 바꿀까요? 데이터는 건드리지 않아요.',
+	'crystal.ask':            '다이몬에게 이 페이지를 바꿔 달라고 하기',
+	'crystal.edit_json':      'JSON으로 편집',
+	'crystal.json_invalid':   '올바른 JSON이 아니라서 아무것도 저장하지 않았어요.',
+	'crystal.field_title':    '제목',
+	'crystal.field_summary':  '요약',
+	'crystal.field_sections': '섹션',
+	'crystal.field_facts':    '사실',
+	'crystal.field_open':     '남은 물음',
+	'crystal.field_links':    '링크',
+	'crystal.field_heading':  '소제목',
+	'crystal.field_body':     '본문',
+	'crystal.add_section':    '섹션 추가',
+	'crystal.remove':         '제거',
+	'crystal.other_fields':   '다른 항목',
+	'crystal.other_fields_note': '그대로 두고, 아무것도 사라지지 않도록 여기에 보여 드려요.',
 
 	// ── 산출물 ─────────────────────────────────────────────────
 	'arte.count.one':      '산출물 {n}개',

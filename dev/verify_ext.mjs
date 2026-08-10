@@ -20,11 +20,70 @@ const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
-const EXT = `${ROOT}/verify/ext`;
+const EXT_SRC = `${ROOT}/verify/ext`;
 // Not /tmp -- see the SCRATCH note in harness.mjs.  Kept inline rather than
 // imported, so this stays standalone and does not load the harness.
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const PROFILE = path.join(SCRATCH, 'verify-ext');
+
+/// A copy of the verify extension that may reach the port this run is using.
+///
+/// THE FAILURE THIS FIXES, which was called something else for two sessions.
+/// `verify/ext/manifest.json` grants `localhost:8777` — the default dev port —
+/// and nothing else. Whenever the suite runs in a numbered world (`dev/world.sh`,
+/// 8781 and up, which is any run with more than one agent about) the extension
+/// has no permission for the origin under test, so the checker's `fetch` of
+/// `manifest.json` is refused and it reports **"this site served no
+/// manifest.json"**. That reads as a broken server, and the server is fine.
+///
+/// It was recorded as "environmental: needs a headed browser, Missing X server".
+/// It does need a display — `xvfb-run` supplies one and the service worker starts
+/// — but the display was never the whole story, and the manifest message sent two
+/// sessions looking at the seal instead of at the permissions.
+///
+/// The shipped file is not touched: a released extension holding permissions on a
+/// developer's machine is exactly what `dev/extdev.mjs` exists to prevent, and the
+/// same rule applies here. The copy is rebuilt every run so it cannot go stale.
+///
+/// # Arguments
+/// * `port` - The port `dev/serve.mjs` is bound to for this run.
+async function extForPort(port) {
+	const out = path.join(SCRATCH, `verify-ext-build-${port}`);
+	fs.rmSync(out, { recursive: true, force: true });
+	fs.mkdirSync(out, { recursive: true });
+	for (const name of fs.readdirSync(EXT_SRC)) {
+		if (name === 'manifest.json') continue;
+		fs.cpSync(path.join(EXT_SRC, name), path.join(out, name), { recursive: true });
+	}
+	// The port is in the SOURCE as well as the manifest: `background.js` decides
+	// which navigations to check with its own `MATCH` list, which names 8777. The
+	// manifest grants permission to fetch; this decides whether anything is
+	// fetched at all, so without it the extension has the run of the origin and
+	// simply never looks at it -- and the badge check reads "no verdict recorded".
+	//
+	// Rewritten here rather than made configurable in the shipped file: which
+	// origins an integrity checker will vouch for is precisely the thing that must
+	// not be settable from outside it.
+	if (port !== 8777) {
+		const bg = path.join(out, 'background.js');
+		const before = fs.readFileSync(bg, 'utf8');
+		const after = before.replace(/:8777/g, ':' + port);
+		if (after === before) {
+			throw new Error('verify/ext/background.js no longer names :8777, so the dev copy '
+				+ 'cannot be pointed at port ' + port + '. Find what replaced MATCH and patch that.');
+		}
+		fs.writeFileSync(bg, after);
+	}
+	const m = JSON.parse(fs.readFileSync(path.join(EXT_SRC, 'manifest.json'), 'utf8'));
+	// Added, not substituted: the shipped origins stay, so the copy is the shipped
+	// extension plus this port rather than a different extension that happens to
+	// pass. Both spellings of loopback, because Chrome matches the origin string.
+	m.host_permissions = (m.host_permissions || [])
+		.concat([`http://127.0.0.1:${port}/*`, `http://localhost:${port}/*`]);
+	fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify(m, null, '\t') + '\n');
+	return out;
+}
+const EXT = await extForPort(Number(process.env.DAIMOND_PORT || 8777));
 fs.mkdirSync(PROFILE, { recursive: true });
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
 // so this stays standalone and does not load the harness.

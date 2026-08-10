@@ -1,0 +1,474 @@
+/* crystal.css — the crystal face: the page's frame, the built-in view that
+ * stands in when the page fails, the ask row beneath it, and the form the `✎`
+ * button opens.
+ *
+ * Every colour comes from the palette variables, never from a literal, so all
+ * eleven themes and both skins are covered without a rule per theme. There is
+ * one deliberate exception: the frame's own ground, which must match the panel
+ * behind it while the page is still loading, and does so by naming the same
+ * variable the panel does rather than a colour of its own.
+ *
+ * THE FRAME IS NOT STYLED FROM HERE. The page inside it is in an opaque origin
+ * and cannot see this file, or any file; it is handed resolved colours over the
+ * channel instead (`_theme` in crystal.js). So the rules below only give the
+ * `iframe` its box — no border, no ground of its own past the first paint, and a
+ * height that JavaScript drives from what the page says it needs. A page that
+ * never reports one keeps the height set here and scrolls inside itself.
+ *
+ * The built-in view is a different matter: it renders in the app's own document
+ * and is styled like any other panel content.
+ *
+ * At 380px everything here is one column. The facts list drops its second
+ * column, the fallback note stacks its button under its sentence, and nothing
+ * has a fixed width to overflow with.
+ */
+
+/* ── The frame ───────────────────────────────────────────────── */
+
+#crystal-frame-wrap {
+	/* A grid rather than a block, so the frame cannot pick up the inline-element
+	   descender gap that leaves a stripe of panel under it. */
+	display: grid;
+	width: 100%;
+	min-width: 0;
+	margin: 0 0 4px;
+}
+
+.crystal-frame {
+	display: block;
+	width: 100%;
+	/* What the page gets before it has said how tall it is. crystal.js replaces
+	   this with an inline height on the first `height` message, so there is no
+	   `min-height` here to fight it -- a tall rule and a short crystal would
+	   leave a band of empty panel nothing could close. */
+	height: 320px;
+	border: 0;
+	/* The page paints itself transparent until its theme arrives, so this is the
+	   colour of the first frame or two. Naming the panel's own variable is what
+	   stops that showing as a white flash on a dark palette. */
+	background: var(--bg-secondary);
+	color-scheme: normal;
+}
+
+/* ── The ask row ─────────────────────────────────────────────────
+   App chrome, and BELOW the frame on purpose: the page cannot ask the user
+   anything, because a parent cannot tell a click from a timer across the
+   sandbox boundary. Down here a click is provably a person. */
+
+.crystal-ask {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin: 6px 0 2px;
+}
+
+.crystal-ask input[type="text"],
+.crystal-ask textarea {
+	flex: 1 1 auto;
+	min-width: 0;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--fs-sm);
+	padding: 6px 9px;
+}
+
+.crystal-ask input[type="text"]:focus,
+.crystal-ask textarea:focus {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+	border-color: var(--accent);
+}
+
+/* ── Falling back, visibly ───────────────────────────────────────
+   A note that says WHICH failure happened and a button that puts the standard
+   page back. Silent degradation is how a broken page stays broken for a month,
+   so this is deliberately not quiet: it takes the warning ground, not the
+   muted one. */
+
+.crystal-fallback {
+	display: block;
+	width: 100%;
+	min-width: 0;
+}
+
+.crystal-fallback-note {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 12px;
+	padding: 8px 10px;
+	background: var(--warn-bg);
+	border: 1px solid var(--warn);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+}
+
+.crystal-fallback-why {
+	flex: 1 1 220px;
+	min-width: 0;
+}
+
+.crystal-reset {
+	flex: 0 0 auto;
+	font-size: var(--fs-xs);
+	padding: 4px 10px;
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.crystal-reset:hover {
+	background: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+.crystal-reset:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
+/* ── The built-in view ───────────────────────────────────────────
+   The core schema rendered properly, and every key nobody recognised rendered
+   generically below it. A key that vanishes because nothing knew its name is
+   the defect this whole design is shaped around, so the second half is not a
+   debug affordance -- it is the point. */
+
+.crystal-fb-body {
+	min-width: 0;
+}
+
+.crystal-fb-title {
+	margin: 0 0 10px;
+	font-size: var(--fs-3xl);
+	line-height: 1.25;
+	font-weight: 650;
+	color: var(--text-primary);
+}
+
+.crystal-fb-summary {
+	color: var(--text-primary);
+}
+
+.crystal-fb-sec {
+	margin: 18px 0 0;
+}
+
+.crystal-fb-sec > h3 {
+	margin: 0 0 6px;
+	font-size: var(--fs-lg);
+	line-height: 1.35;
+	font-weight: 650;
+	color: var(--text-primary);
+}
+
+.crystal-fb-field-head {
+	margin: 20px 0 6px;
+	font-size: var(--fs-lg);
+	line-height: 1.35;
+	font-weight: 650;
+	color: var(--text-primary);
+}
+
+.crystal-fb-md > :first-child { margin-top: 0; }
+.crystal-fb-md > :last-child  { margin-bottom: 0; }
+
+/* Facts: a two-column reading list, not a table. The key column sizes to its
+   longest word and the value column takes the rest, which is what keeps a
+   forty-character value from squeezing the keys into one letter per line. */
+.crystal-fb-facts {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 4px 16px;
+	margin: 0;
+}
+
+.crystal-fb-facts > dt {
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	min-width: 0;
+}
+
+.crystal-fb-facts > dd {
+	margin: 0;
+	min-width: 0;
+	color: var(--text-primary);
+}
+
+.crystal-fb-open,
+.crystal-fb-links {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.crystal-fb-open > li,
+.crystal-fb-links > li {
+	margin: 2px 0;
+}
+
+.crystal-fb-link {
+	color: var(--accent-text);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+	word-break: break-word;
+}
+
+.crystal-fb-link:hover {
+	color: var(--accent);
+}
+
+/* Everything nobody recognised. Boxed rather than run in with the rest, because
+   a reader has to be able to tell what the schema knows about from what it is
+   merely carrying. */
+.crystal-fb-extra-note {
+	margin: 0 0 10px;
+	color: var(--text-muted);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+}
+
+.crystal-fb-field {
+	margin: 0 0 8px;
+	padding: 9px 11px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	min-width: 0;
+}
+
+.crystal-fb-key {
+	margin: 0 0 5px;
+	color: var(--text-muted);
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	word-break: break-word;
+}
+
+.crystal-fb-field > :last-child { margin-bottom: 0; }
+
+.crystal-fb-scalar {
+	color: var(--text-primary);
+}
+
+.crystal-fb-list {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.crystal-fb-map {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 3px 12px;
+	margin: 0;
+}
+
+.crystal-fb-map > dt {
+	color: var(--text-muted);
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	min-width: 0;
+	word-break: break-word;
+}
+
+.crystal-fb-map > dd {
+	margin: 0;
+	min-width: 0;
+}
+
+/* A value too deep to draw goes out as JSON rather than being flattened:
+   unreadable is recoverable, absent is not. */
+.crystal-fb-json {
+	margin: 0;
+	padding: 8px 10px;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+	color: var(--text-secondary);
+	overflow-x: auto;
+	white-space: pre;
+}
+
+/* ── The `✎` form ────────────────────────────────────────────────
+   Built from the core keys, with the raw JSON behind a second click. The form
+   must round-trip unknown keys untouched, so they are shown read-only under
+   `.crystal-form-extra` and written back exactly as they came in -- a form that
+   drops what it cannot render is the same defect in a different costume. */
+
+.crystal-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+.crystal-form-row {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.crystal-form-row > label {
+	color: var(--text-secondary);
+	font-size: var(--fs-xs);
+}
+
+.crystal-form-row input[type="text"],
+.crystal-form-row textarea {
+	width: 100%;
+	min-width: 0;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-family: inherit;
+	font-size: var(--fs-sm);
+	line-height: 1.55;
+	padding: 7px 9px;
+	resize: vertical;
+}
+
+.crystal-form-row textarea {
+	min-height: 90px;
+}
+
+.crystal-form-row input[type="text"]:focus,
+.crystal-form-row textarea:focus {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+	border-color: var(--accent);
+}
+
+/* A section of the form: heading and body together, with its own remove button.
+   Bordered so two of them do not read as one long field. */
+.crystal-form-row.crystal-form-group {
+	padding: 9px 11px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+}
+
+.crystal-form-extra {
+	padding: 9px 11px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
+	font-size: var(--fs-sm);
+	min-width: 0;
+}
+
+.crystal-form-extra > h4 {
+	margin: 0 0 4px;
+	font-size: var(--fs-sm);
+	font-weight: 650;
+	color: var(--text-primary);
+}
+
+.crystal-form-extra > p {
+	margin: 0 0 8px;
+	color: var(--text-muted);
+	font-size: var(--fs-xs);
+	line-height: 1.45;
+}
+
+.crystal-form-extra pre {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	line-height: 1.5;
+	color: var(--text-secondary);
+	overflow-x: auto;
+	white-space: pre;
+}
+
+/* The raw JSON, behind a second click. It refuses to save unparseable text --
+   a textarea written straight through is harmless for markdown, which has no
+   parse failure, and a data-loss path for JSON. */
+.crystal-json {
+	width: 100%;
+	min-height: 320px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	font-size: var(--fs-sm);
+	line-height: 1.6;
+	padding: 12px;
+	resize: vertical;
+}
+
+.crystal-json:focus {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+	border-color: var(--accent);
+}
+
+.crystal-json.invalid {
+	border-color: var(--danger);
+}
+
+/* ── Narrow ──────────────────────────────────────────────────────
+   The AI panel is the whole width on a phone, so the crystal is the narrowest
+   thing here at 380px. Both two-column grids give up their second column
+   rather than wrapping a key one letter at a time. */
+
+@media (max-width: 420px) {
+	.crystal-fb-facts,
+	.crystal-fb-map {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
+	}
+
+	.crystal-fb-facts > dt,
+	.crystal-fb-map > dt {
+		margin-top: 8px;
+	}
+
+	.crystal-fb-facts > dt:first-child,
+	.crystal-fb-map > dt:first-child {
+		margin-top: 0;
+	}
+
+	.crystal-fb-title {
+		font-size: var(--fs-2xl);
+	}
+
+	.crystal-fallback-note {
+		align-items: stretch;
+	}
+
+	.crystal-reset {
+		width: 100%;
+	}
+}
+
+/* ── The warm skin ───────────────────────────────────────────────
+   The shape tokens come from variables.css and are already spent above. What
+   the skin also asks for is less hard ruling: cards are lifted rather than
+   outlined, and the dense monospace furniture speaks in the friendly face. */
+
+:root[data-skin="warm"] .crystal-fb-key,
+:root[data-skin="warm"] .crystal-fb-map > dt {
+	font-family: var(--font);
+	letter-spacing: 0;
+}
+
+:root[data-skin="warm"] .crystal-fb-field,
+:root[data-skin="warm"] .crystal-form-extra,
+:root[data-skin="warm"] .crystal-form-row.crystal-form-group {
+	border-color: transparent;
+	box-shadow: var(--shadow-1);
+}

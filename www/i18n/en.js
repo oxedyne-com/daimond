@@ -274,6 +274,20 @@
 	'egress.reach_title': 'Reach {host}?',
 	'egress.reach_body':  'This turn has read content from outside your workspace — a web page, or a message. Something in it may be trying to steer Daimond.\n\nIt now wants to reach {host}, which it has not visited before. Anything it knows could be carried in that address.\n\nAllow it, only if you expected this.',
 	'egress.reach_ok':    'Allow {host}',
+	// A search, where the thing leaving is the QUERY rather than an address.
+	// {query} is the user's own search text, already truncated, and it stands
+	// alone in its own paragraph -- never wrapped in quotation marks, because
+	// the query may contain quotes of its own and a mismatched pair reads as
+	// corruption. {engine} is a display name and is sometimes a proper noun
+	// (Brave Search, Serper) and sometimes a translated phrase (Daimond
+	// credits). Every \n\n is load-bearing: five paragraphs, four breaks, and
+	// a consent dialog run together into a wall is a dialog nobody reads. The
+	// clause about the setting answers the question a real user asked -- why
+	// that engine -- and the last sentence tells a frightened reader that
+	// declining is cheap. Neither may be compressed away.
+	'egress.search_title': 'Search the web?',
+	'egress.search_body':  'This turn has read content from outside your workspace, and Daimond now wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching with {engine}, which is your setting and not the model’s choice. The query is the thing that leaves this device.\n\nIf you did not expect that, decline — nothing is lost but this one search.',
+	'egress.search_ok':    'Run this search',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message':   'Copy message',
@@ -440,6 +454,47 @@
 	'models.credit_base_update':   'Update my figure',
 	'models.credit_base_bad':      'That is not an amount. Enter a number of US dollars.',
 
+	// ── Search ─────────────────────────────────────────────────
+	// The engine is the USER's setting, not the model's choice, so every string
+	// here belongs to the settings row rather than to a tool result. Engine
+	// names (Brave, Exa, Tavily, Serper) are proper nouns and are not here, for
+	// the same reason a provider's name is not: see the note above
+	// `models.credits_row`.
+	'search.head':            'Search',
+	'search.engine':          'Search engine',
+	// An allowance, not a free key: the key costs nothing and the queries past
+	// the allowance are billed by the vendor, to the user. Deliberately no
+	// figure and no engine named -- a number here goes stale silently when a
+	// vendor changes its tier, and nobody re-reads eight locales to catch it.
+	// The per-engine line under the field (`.search-engine-note`) is the one
+	// that can be accurate.
+	'search.engine_note':     'Which service Daimond searches with. Most give you a free allowance each month if you bring your own key.',
+	'search.credits':         'Daimond credits',
+	'search.key':             'API key',
+	'search.key_note':        'Kept on this device, sealed with your passphrase, and sent only with the search it pays for.',
+	// {engine} is an engine's name, e.g. Brave. It is never translated.
+	'search.no_key':          'Add a key for {engine}, or switch to Daimond credits.',
+	// What is being searched: the open web, the news, or scholarly work. Three
+	// peers in one pulldown, so none of them takes an article, and the third
+	// is "Academic" rather than "Research" -- French would otherwise have one
+	// word, Recherche, doing three jobs in one panel: the heading, the engine
+	// and the corpus.
+	'search.kind_web':        'Web',
+	'search.kind_news':       'News',
+	'search.kind_academic':   'Academic',
+	// Named, not "that engine": two of the three places this is reached from
+	// -- the gateway's refusal and the operator console -- have no pulldown
+	// above them for a "that" to point at.
+	'search.refused_serper':  '{engine} can only be used with your own key.',
+	// The per-engine allowance under the key field -- the line that CAN be
+	// accurate, where `search.engine_note` deliberately is not. {n} arrives
+	// already grouped by toLocaleString(), so no separator of our own goes in;
+	// the reader gets 1,000 or 1 000 or 1.000 as their locale wants it. "Last
+	// time we looked" is not padding: it is a third party's pricing, it will
+	// go stale, and the hedge is what keeps this a report rather than a
+	// promise. Keep it in every language.
+	'search.free_month':      '{engine}: about {n} searches a month free, last time we looked.',
+
 	// ── Credits, packs and Pro ─────────────────────────────────
 	// Anything the user is CHARGED says US dollars out loud. See `billing.*`.
 	'credits.lead':      "Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.",
@@ -502,6 +557,17 @@
 	'chat.collapse_help':  'Collapse every answer, leaving what you asked — and pick turns to fold',
 	'chat.input_ph':       'Type a message…',
 	'chat.send':           'Send',
+	// The turn indicator: what the three dots at the foot of the thread say while
+	// a turn runs. It is up from the moment the turn starts until it ends, so
+	// these have to carry a long silence — a run of tool calls with the steps
+	// hidden changes nothing else on screen for minutes at a time. {tool} is a
+	// tool's own name, which the thread shows untranslated; {n} counts the
+	// tool-call rounds, and is there so something on the line MOVES.
+	// Nothing here says anything about how long any of it has taken.
+	'chat.busy':           'Thinking…',
+	'chat.busy_tool':      'Running {tool}, step {n}…',
+	'chat.busy_next':      'Step {n} done, thinking…',
+	'chat.busy_writing':   'Writing the answer…',
 	'chat.answered': 'Daimond answered, {n} words',
 	'chat.answer_failed': 'Daimond could not answer',
 	'chat.collapse': 'Collapse every answer',
@@ -549,6 +615,11 @@
 	'web.back':       'Back',
 	'web.reload':     'Reload',
 	'web.pop_out':    'Open in a real tab',
+	// The name of the pause control in the panel header, so `pause.act_pause`
+	// reads "Pause Web access". It governs `root/web`, which reaches further
+	// than this panel — a page fetched for a chat is stopped by it too — so it
+	// is not called "This panel".
+	'web.pause':      'Web access',
 	'web.blind_title': "You're driving. I'm not watching.",
 	'web.blind_note':  'Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.',
 	'web.resumed':     "I've resumed — check",
@@ -1061,16 +1132,34 @@
 	'spend.col_what':    'What',
 	'spend.col_amount':  'Amount',
 	'spend.col_balance': 'Balance',
-	// Credit categories, as the gateway tags them.
-	'spend.cat_web':    'Web pages',
-	'spend.cat_mail':   'Mail',
-	'spend.cat_sync':   'Cross-device sync',
-	'spend.cat_other':  'Other services',
-	'spend.cat_topup':  'Credits bought',
-	'spend.cat_refund': 'Refunds',
-	'spend.cat_grant':  'Gifts & grants',
-	'spend.cat_adjust': 'Adjustments',
+	// Credit categories, as the gateway tags them. The first seven are metered
+	// spends and are `SPEND_CATEGORIES` in gateway/src/schema.rs; the rest are
+	// credit-side movements, named by their kind alone.
+	//
+	// `cat_infer` is model spend on the key Daimond mints and reconciles against
+	// credits, which is a different pot from the Inference section above it —
+	// that one is billed to the user's own provider key and never touches
+	// credits. Hence "on credits" rather than "Inference" alone: the two sit on
+	// one screen and the qualifier is the whole difference between them. It also
+	// leads with the word that matters, because the dock is narrow enough to
+	// truncate a label to its first two words.
+	'spend.cat_web':     'Web pages',
+	'spend.cat_search':  'Web searches',
+	'spend.cat_mail':    'Mail',
+	'spend.cat_sync':    'Cross-device sync',
+	'spend.cat_storage': 'Stored files',
+	'spend.cat_infer':   'Inference on credits',
+	'spend.cat_other':   'Other services',
+	'spend.cat_topup':   'Credits bought',
+	'spend.cat_refund':  'Refunds',
+	'spend.cat_grant':   'Gifts & grants',
+	'spend.cat_adjust':  'Adjustments',
 	'spend.cat_fallback': 'Other',   // a category the gateway did not name
+	// A category the gateway DID name and this build cannot. Money left the
+	// balance with nothing to say for it, and that is what the row says: showing
+	// the gateway's own token instead is how three weeks of untranslated
+	// "infer" reached eight languages unnoticed.
+	'spend.cat_unlisted': 'Not accounted for',
 
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML
@@ -1120,6 +1209,18 @@
 	// running" — and a capital mid-sentence would read as a second label.
 	'pause.everything':      'Everything',
 	'pause.everything_help': 'Pause or resume everything that can spend: every Diamond, every chat, the workers, the mailboxes and any page fetched for you.',
+	// {name} holds two different kinds of thing and no spacing suits both, so
+	// this has a known rough edge in ja, zh-Hans and fr, and it is left alone
+	// deliberately. It takes either a user-named Diamond or chat -- usually
+	// Latin script -- or a translated node name. The ja template spaces the
+	// particle off the name ('{name} を一時停止') because that is right for
+	// "Alpha を一時停止" and wrong for "ウェブアクセス を一時停止"; zh-Hans
+	// spaces it ('暂停 {name}') for the same reason and with the same cost
+	// between two Chinese words; fr's 'Mettre {name} en pause' wants "l'accès"
+	// once {name} is a common noun rather than a name. Every existing node
+	// already reads this way. Gluing would fix the translated case and break
+	// the commoner one, so nothing in this table fixes both -- only a call
+	// site that knows which kind of name it is holding could.
 	'pause.act_pause':       'Pause {name}',
 	'pause.act_play':        'Resume {name}',
 	'pause.state_play':      'running',
@@ -1134,7 +1235,11 @@
 	// HUMAN name -- DaimondPause.label(), not the node id -- because
 	// "root/diamonds/a1b2/self" names the node exactly and tells the reader
 	// nothing. Each says what did NOT happen, that no money moved, and
-	// where the control is.
+	// where the control is -- except the web one, which says only the first
+	// two. `root/web` had no control anywhere in the app, so "press play on it"
+	// sent a reader hunting for a button that was not there; it stays silent
+	// about the control so that it is true both before the Web panel gets one
+	// and after.
 	'pause.web':              'Web',
 	'pause.refused_title':    'Paused',
 	'pause.refused.turn':     'Paused: {node} — no turn was started and nothing was spent. Press play on it to resume.',
@@ -1271,6 +1376,25 @@
 	'crystal.dispatch_after_error': 'The turn ended badly, so the agents it asked for were not started.',
 	'crystal.steering':       'Steering…',
 	'crystal.no_key_steer':   'This Diamond\u2019s provider has no readable key — unlock, or add one, to steer it.',
+	'crystal.page_failed':    'This Diamond’s page did not load, so its data is shown instead.',
+	'crystal.page_partial':   'This Diamond’s page did not show everything it holds, so its data is shown instead.',
+	'crystal.page_reset':     'Reset the page',
+	'crystal.page_reset_confirm': 'Replace this Diamond’s page with the standard one? Its data is not touched.',
+	'crystal.ask':            'Ask the daimon to change this page',
+	'crystal.edit_json':      'Edit as JSON',
+	'crystal.json_invalid':   'That is not valid JSON, so nothing was saved.',
+	'crystal.field_title':    'Title',
+	'crystal.field_summary':  'Summary',
+	'crystal.field_sections': 'Sections',
+	'crystal.field_facts':    'Facts',
+	'crystal.field_open':     'Open threads',
+	'crystal.field_links':    'Links',
+	'crystal.field_heading':  'Heading',
+	'crystal.field_body':     'Body',
+	'crystal.add_section':    'Add a section',
+	'crystal.remove':         'Remove',
+	'crystal.other_fields':   'Other fields',
+	'crystal.other_fields_note': 'Kept as they are, and shown here so nothing vanishes.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one':      '{n} artefact',
@@ -1692,9 +1816,12 @@
 
 	// ── How far one turn may go ─────────────────────
 	'settings.max_rounds':         'Steps per turn',
+	'settings.crystal_limits':   'Size limits',
 	'settings.crystal_cap':      'Crystal size limit',
 	'settings.crystal_cap_note': 'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is told to put the detail in a file in the Diamond’s scope instead.',
 	'settings.crystal_cap_auto': 'Default',
+	'settings.crystal_page_cap': 'Page size limit',
+	'settings.crystal_page_cap_note': 'The page that renders a Diamond’s data. It travels in every sync, so it shares the budget with the data itself.',
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many times an agent may use a tool before one turn stops. It says so when it stops, and you can tell it to carry on.',

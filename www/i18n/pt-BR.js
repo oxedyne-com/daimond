@@ -121,6 +121,27 @@
 	'models.save_start': 'Salvar e começar',
 	'models.privacy': '<strong>Tudo fica neste dispositivo</strong> — suas chaves, chats e arquivos vivem só neste navegador; nada é enviado para nós.',
 
+	// ── Search ─────────────────────────────────────────────────
+	// "Buscador" é o serviço, não o ato de buscar. Os nomes dos buscadores
+	// (Brave, Exa, Tavily, Serper) são nomes próprios e não se traduzem.
+	'search.head': 'Busca',
+	'search.engine': 'Buscador',
+	// Uma cota gratuita, não uma chave de graça: o que passar disso o provedor
+	// cobra do usuário. De propósito sem número e sem nomear nenhum buscador.
+	'search.engine_note': 'Com qual serviço o Daimond busca. A maioria dá uma cota gratuita por mês se você trouxer sua própria chave.',
+	'search.credits': 'Créditos do Daimond',
+	'search.key': 'Chave de API',
+	'search.key_note': 'Fica neste dispositivo, lacrada com sua frase-senha, e só é enviada junto com a busca que ela paga.',
+	// {engine} é um nome próprio, por exemplo Brave, e não se traduz.
+	'search.no_key': 'Adicione uma chave para {engine}, ou mude para os créditos do Daimond.',
+	'search.kind_web': 'Web',
+	'search.kind_news': 'Notícias',
+	'search.kind_academic': 'Acadêmico',
+	'search.refused_serper': '{engine} só pode ser usado com sua própria chave.',
+	// {n} já vem com os separadores da região; não acrescente nenhum. A ressalva
+	// do fim fica: é preço de terceiro e vai envelhecer.
+	'search.free_month': '{engine}: cerca de {n} buscas por mês de graça, da última vez que olhamos.',
+
 	// ── Credits, packs and Pro ─────────────────────────────────
 	'credits.lead': 'Não quer gerenciar a chave de um provedor? Compre créditos e o Daimond roda o modelo para você. Sem assinatura: o que você compra é seu, e nada é cobrado de novo a menos que você ligue a recarga automática abaixo.',
 	'credits.balance': 'Saldo: {amount}',
@@ -181,6 +202,10 @@
 	'chat.collapse_help': 'Recolher todas as respostas, deixando o que você perguntou — e escolher turnos para dobrar',
 	'chat.input_ph': 'Digite uma mensagem…',
 	'chat.send': 'Enviar',
+	'chat.busy': 'Pensando…',
+	'chat.busy_tool': 'Executando {tool}, passo {n}…',
+	'chat.busy_next': 'Passo {n} concluído, pensando…',
+	'chat.busy_writing': 'Escrevendo a resposta…',
 	'chat.answered': 'Daimond respondeu, {n} palavras',
 	'chat.answer_failed': 'Daimond não conseguiu responder',
 	'chat.collapse': 'Recolher todas as respostas',
@@ -217,6 +242,10 @@
 	'web.back': 'Voltar',
 	'web.reload': 'Recarregar',
 	'web.pop_out': 'Abrir em uma aba real',
+	// O nome do controle de pausa no cabeçalho do painel, para que
+	// `pause.act_pause` diga "Pausar Acesso à web". Ele governa `root/web`, que
+	// alcança mais do que este painel, então não se chama "Este painel".
+	'web.pause': 'Acesso à web',
 	'web.blind_title': 'Você está dirigindo. Eu não estou olhando.',
 	'web.blind_note': 'O Daimond parou de ler esta página — nada de texto, imagem ou teclas digitadas. Entre na sua conta e depois clique em <b>Retomar Daimond</b> na aba do navegador para devolver o volante. Esse botão está na aba, não aqui, para que esta página nunca possa tomar o volante de você.',
 	'web.resumed': 'Retomei — confira',
@@ -607,14 +636,18 @@
 	'spend.col_amount': 'Valor',
 	'spend.col_balance': 'Saldo',
 	'spend.cat_web': 'Páginas web',
+	'spend.cat_search': 'Buscas na web',
 	'spend.cat_mail': 'E-mail',
 	'spend.cat_sync': 'Sync entre dispositivos',
+	'spend.cat_storage': 'Arquivos armazenados',
+	'spend.cat_infer': 'Inferência com créditos',
 	'spend.cat_other': 'Outros serviços',
 	'spend.cat_topup': 'Créditos comprados',
 	'spend.cat_refund': 'Reembolsos',
 	'spend.cat_grant': 'Presentes e doações',
 	'spend.cat_adjust': 'Ajustes',
 	'spend.cat_fallback': 'Outros',
+	'spend.cat_unlisted': 'Não classificado',
 
 	// ── Tools ──────────────────────────────────────────────────
 	'tools.head': '<b>{have} de {all}</b> ferramentas. Quase tudo o que o Daimond faz, ele faz de graça — as ferramentas abaixo são simplesmente o que ele é. Algumas alcançam o mundo fora do navegador, e essas custam o que custa mantê-las funcionando.',
@@ -642,9 +675,12 @@
 	'settings.max_tokens_auto': 'Automático',
 	'settings.tokens': 'tokens',
 	'settings.max_rounds': 'Passos por turno',
+	'settings.crystal_limits': 'Tamanho do cristal',
 	'settings.crystal_cap':      'Limite de tamanho do cristal',
-	'settings.crystal_cap_note': 'Um cristal é o resumo de um Diamante, portanto tem um teto. Acima dele, o daimon é instruído a colocar o detalhe num ficheiro do escopo do Diamante.',
+	'settings.crystal_cap_note': 'Um cristal é o resumo de um Diamond, portanto tem um teto. Acima dele, o daimon é instruído a colocar o detalhe num ficheiro do escopo do Diamond.',
 	'settings.crystal_cap_auto': 'Padrão',
+	'settings.crystal_page_cap': 'Limite de tamanho da página',
+	'settings.crystal_page_cap_note': 'A página que mostra os dados de um Diamond. Ela viaja em cada sincronização, então divide o orçamento com os dados.',
 	'settings.max_rounds_auto': 'Padrão',
 	'settings.steps': 'passos',
 	'settings.max_rounds_note': 'Quantas vezes um agente pode usar uma ferramenta antes de um turno parar. Ele avisa ao parar, e você pode mandar continuar.',
@@ -686,7 +722,7 @@
 	'render.copy_failed': 'Falhou',
 
 	// ── The model list ─────────────────────────────────────────
-	'models.credits_row': 'Créditos Daimond',
+	'models.credits_row': 'Créditos do Daimond',
 	'models.custom_provider_name': 'Provedor personalizado',
 	'models.the_provider': 'seu provedor',
 	'models.empty': 'Ainda não há provedor. Adicione um para dar ao Daimond um modelo com que pensar.',
@@ -1007,6 +1043,11 @@
 	'egress.reach_title': 'Alcançar {host}?',
 	'egress.reach_body': 'Este turno leu conteúdo de fora do seu espaço de trabalho — uma página web, ou uma mensagem. Algo nele pode estar tentando guiar o Daimond.\n\nAgora ele quer alcançar {host}, onde nunca esteve. Tudo o que ele sabe pode ir dentro desse endereço.\n\nSó permita se você esperava isso.',
 	'egress.reach_ok': 'Permitir {host}',
+	// Numa busca o que sai é a CONSULTA, não um endereço. {query} fica sozinha
+	// no próprio parágrafo e nunca entre aspas -- ela pode trazer as suas.
+	'egress.search_title': 'Buscar na web?',
+	'egress.search_body': 'Este turno leu conteúdo de fora do seu espaço de trabalho, e agora o Daimond quer buscar na web.\n\nO que ele quer buscar:\n\n{query}\n\nA busca usa {engine} — é a sua configuração, não uma escolha do modelo. O que sai deste dispositivo é a consulta.\n\nSe você não esperava isso, recuse — nada se perde além desta busca.',
+	'egress.search_ok': 'Fazer esta busca',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message': 'Copiar a mensagem',
@@ -1234,6 +1275,25 @@
 	'crystal.read_delta_failed': 'Não foi possível ler o delta',
 	'crystal.steering': 'Guiando…',
 	'crystal.no_key_steer': 'O provedor deste Diamond não tem uma chave legível — desbloqueie, ou adicione uma, para guiá-lo.',
+	'crystal.page_failed': 'A página deste Diamond não carregou, então os dados dele aparecem em seu lugar.',
+	'crystal.page_partial': 'A página deste Diamond não mostrou tudo o que ele guarda, então os dados dele aparecem em seu lugar.',
+	'crystal.page_reset': 'Redefinir a página',
+	'crystal.page_reset_confirm': 'Substituir a página deste Diamond pela página padrão? Os dados dele não são tocados.',
+	'crystal.ask': 'Pedir ao daimon que mude esta página',
+	'crystal.edit_json': 'Editar como JSON',
+	'crystal.json_invalid': 'Isso não é JSON válido, então nada foi salvo.',
+	'crystal.field_title': 'Título',
+	'crystal.field_summary': 'Resumo',
+	'crystal.field_sections': 'Seções',
+	'crystal.field_facts': 'Fatos',
+	'crystal.field_open': 'Questões em aberto',
+	'crystal.field_links': 'Links',
+	'crystal.field_heading': 'Cabeçalho',
+	'crystal.field_body': 'Texto',
+	'crystal.add_section': 'Adicionar uma seção',
+	'crystal.remove': 'Remover',
+	'crystal.other_fields': 'Outros campos',
+	'crystal.other_fields_note': 'Ficam como estão, e aparecem aqui para que nada suma.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefato',

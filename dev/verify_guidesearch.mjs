@@ -26,12 +26,20 @@
 //  I. It works inside a SANDBOXED frame with no allow-same-origin, which is how
 //     the guide is really served. This is the one that decides the design: an
 //     opaque origin cannot fetch its own index, so it must arrive as a script.
+//  J. Every local URL any guide page names is a file that is on the disk, in
+//     every locale. A 404 in the guide is silent: the page still renders, and a
+//     missing `search.js` simply means no search box. It is the CLASS that
+//     matters, not search alone — the translated pages sit a folder deeper than
+//     the English source they are generated from, so any URL the generator
+//     forgets to reroot points at nothing, and the last two that did were the
+//     screenshots and `search.js`.
 //
 // PROVED RED: `--break <what>` neuters one property in the page before it runs
 // and requires the matching check to notice. `all` runs each in turn.
 //
 //   node dev/verify_guidesearch.mjs
 //   node dev/verify_guidesearch.mjs --break all
+//   node dev/verify_guidesearch.mjs --static   # A, B and J only; no browser
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model.
 
@@ -47,6 +55,10 @@ const GUIDE = path.join(ROOT, 'www', 'guide');
 
 const BREAK = (process.argv.find((a) => a.startsWith('--break')) || '').split('=')[1]
 	|| (process.argv.includes('--break') ? process.argv[process.argv.indexOf('--break') + 1] : null);
+// The checks that only read the built files need no browser and no server, so
+// they can be run on their own -- straight after a guide build, which is where
+// the mistakes they catch are made.
+const STATIC = process.argv.includes('--static');
 
 const out = [];
 let bad = 0;
@@ -99,6 +111,59 @@ const check = (ok, what, detail) => {
 	check(sections > 500, `the index covers every locale (${sections} sections across ${locales.length})`);
 	check(missing.length === 0, 'every section it names can be jumped to',
 		missing.length ? `${missing.length} cannot, e.g. ${missing.slice(0, 3).join(', ')}` : null);
+}
+
+// ── J. Every local URL a page names is a file that is there ─────────
+//
+// Cheap, whole-corpus, and no browser: for every generated page in every
+// locale, resolve each of its own relative URLs against the folder that page
+// actually sits in, and require the file to exist.
+//
+// This is the check the guide had been missing. The translated pages are
+// generated from the English ones and land a folder deeper, so a URL written
+// as `shots/x.png` or `search.js` -- correct at the root, and looking correct
+// everywhere -- resolves inside the locale folder, where nothing is. Both of
+// those shipped. Neither showed: a missing screenshot is a gap in a page
+// nobody reads in Korean, and a missing `search.js` is just no search box.
+{
+	/// Every .html under the guide, root and locale folders alike.
+	const files = [];
+	const collect = (dir) => {
+		for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+			if (e.isDirectory()) collect(path.join(dir, e.name));
+			else if (e.name.endsWith('.html')) files.push(path.join(dir, e.name));
+		}
+	};
+	collect(GUIDE);
+
+	const dead = [];
+	let urls = 0;
+	for (const f of files) {
+		const html = fs.readFileSync(f, 'utf8');
+		for (const m of html.matchAll(/(?:href|src)="([^"]*)"/g)) {
+			const raw = m[1];
+			// An anchor, a root-relative path the dev server owns, or anything
+			// with a scheme is somebody else's business.
+			if (!raw || /^(#|\/|[a-z][a-z0-9+.-]*:)/i.test(raw)) continue;
+			const rel = decodeURIComponent(raw.split('#')[0].split('?')[0]);
+			if (!rel) continue;
+			urls++;
+			const target = path.resolve(path.dirname(f), rel);
+			if (!fs.existsSync(target)) {
+				dead.push(`${path.relative(GUIDE, f)} -> ${raw}`);
+			}
+		}
+	}
+	check(dead.length === 0,
+		`every local URL in the guide resolves to a file that is there (${urls} across ${files.length} pages)`,
+		dead.length ? `${dead.length} do not: ${[...new Set(dead)].slice(0, 6).join(', ')}` : null);
+}
+
+if (STATIC) {
+	console.log(out.join('\n'));
+	const n = out.filter((l) => /^(PASS|FAIL)/.test(l)).length;
+	console.log(bad === 0 ? `\nALL ${n} STATIC CHECKS PASSED` : `\n${bad} of ${n} FAILED`);
+	process.exit(bad === 0 ? 0 : 1);
 }
 
 // ── The browser ─────────────────────────────────────────────────────

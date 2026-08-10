@@ -16,6 +16,24 @@
  * flat object of dot-namespaced keys. `en` is the baseline and the fallback: a
  * key missing from a translation falls back to English rather than to a blank,
  * and says so once in the console.
+ *
+ * THREE WAYS A STRING GETS INTO THE NEW LANGUAGE, and a surface needs whichever
+ * fits how it was built:
+ *
+ *   `data-i18n` in the markup   — `apply()` repaints it on every change. Free.
+ *   `bind(node, attr, key)`     — sets the string AND stamps the key, for a
+ *                                 widget built in script that knows the key.
+ *   `mark(node, attr, text)`    — for a string a widget was HANDED rather than
+ *                                 looked up: it recovers the key from the string
+ *                                 and stamps it, after which the first case
+ *                                 applies. Use `bind` where the key is to hand.
+ *   `surface(host, draw)`       — for a surface that builds itself and is only
+ *                                 sometimes on screen. Redrawn where it stands.
+ *
+ * `onChange` remains for what is on screen the whole time. Anything that opens
+ * and closes should use `surface`: the bug it exists to stop is a panel left in
+ * the language it was opened in, and that came back once already because each
+ * hook decided for itself whether it was open.
  */
 (function () {
 	'use strict';
@@ -63,8 +81,11 @@
 	var loading = {};       // locale code -> Promise, so a file loads once
 	var present = {};       // locale code -> true|false once probed
 	var hooks   = [];       // functions to run after a locale change
+	var live    = [];       // { host, draw } for surfaces that build their own strings
 	var booted  = false;
 	var landed  = false;	// the active non-English table has arrived
+	var revMap  = null;     // the table in force, value -> every key that produces it
+	var revFor  = null;     // which locale revMap was built from
 
 	var curLocale = null;   // the chosen locale, or null while nothing is chosen
 	var curCcy    = null;   // the chosen currency, or null for US dollars
@@ -361,12 +382,18 @@
 			var ns = q.querySelectorAll(s);
 			for (var i = 0; i < ns.length; i++) fn(ns[i]);
 		};
-		sel('[data-i18n]',             function (n) { n.textContent = t(n.getAttribute('data-i18n')); });
-		sel('[data-i18n-html]',        function (n) { n.innerHTML   = t(n.getAttribute('data-i18n-html')); });
-		sel('[data-i18n-title]',       function (n) { n.title       = t(n.getAttribute('data-i18n-title')); });
-		sel('[data-i18n-placeholder]', function (n) { n.placeholder = t(n.getAttribute('data-i18n-placeholder')); });
-		sel('[data-i18n-aria-label]',  function (n) { n.setAttribute('aria-label', t(n.getAttribute('data-i18n-aria-label'))); });
-		sel('[data-i18n-alt]',         function (n) { n.setAttribute('alt', t(n.getAttribute('data-i18n-alt'))); });
+		// `pick`, not `t`: a mark stamped by `mark` may name several keys, and it
+		// answers null when they have parted and the node must be left alone.
+		var put = function (n, attr, fn) {
+			var v = pick(n.getAttribute(attr));
+			if (v != null) fn(v);
+		};
+		sel('[data-i18n]',             function (n) { put(n, 'data-i18n',             function (v) { n.textContent = v; }); });
+		sel('[data-i18n-html]',        function (n) { put(n, 'data-i18n-html',        function (v) { n.innerHTML   = v; }); });
+		sel('[data-i18n-title]',       function (n) { put(n, 'data-i18n-title',       function (v) { n.title       = v; }); });
+		sel('[data-i18n-placeholder]', function (n) { put(n, 'data-i18n-placeholder', function (v) { n.placeholder = v; }); });
+		sel('[data-i18n-aria-label]',  function (n) { put(n, 'data-i18n-aria-label',  function (v) { n.setAttribute('aria-label', v); }); });
+		sel('[data-i18n-alt]',         function (n) { put(n, 'data-i18n-alt',         function (v) { n.setAttribute('alt', v); }); });
 		// A panel's name is markup (`data-label`), because the layout engine reads
 		// the DOM as its registry. Writing the translation back into that attribute
 		// keeps the one registry there is.
@@ -385,12 +412,110 @@
 		});
 	}
 
+	// ── Marking a string that has already been resolved ────────
+	//
+	// `data-i18n` in the markup covers everything the page ships with. It cannot
+	// cover a widget that is HANDED a string -- a dialog is given a title, not a
+	// key -- and those are exactly the surfaces that got stuck in the language
+	// they were opened in. Recovering the key from the string closes that gap
+	// without every caller having to pass one.
+
+	/// The table in force as value -> every key that produces it, joined by `|`.
+	///
+	/// Several keys per string is the normal case, not the exception: `Save` is
+	/// `Save` under half a dozen of them. See `pick` for what is done about it.
+	function reverse() {
+		var code = locale();
+		if (revFor === code && revMap) return revMap;
+		var tbl = TABLES[code] || TABLES.en || {};
+		revMap = {};
+		for (var k in tbl) {
+			if (!Object.prototype.hasOwnProperty.call(tbl, k)) continue;
+			var v = tbl[k];
+			if (typeof v !== 'string' || !v) continue;
+			revMap[v] = revMap[v] ? revMap[v] + '|' + k : k;
+		}
+		revFor = code;
+		return revMap;
+	}
+
+	/// The string for a mark, which names one key or several that produced the
+	/// same words.
+	///
+	/// Several is only a problem if they have PARTED in the language now in
+	/// force: while `common.cancel` and `graph.cancel` are the same word there
+	/// is nothing to choose between them, and either repaints the node
+	/// correctly. When they differ, nothing on the node says which was meant, so
+	/// it is left as it stands -- a word in the language just left is wrong, but
+	/// the wrong word in the right language is worse.
+	function pick(spec) {
+		if (spec.indexOf('|') === -1) return t(spec);
+		var ks = spec.split('|');
+		var v  = t(ks[0]);
+		for (var i = 1; i < ks.length; i++) if (t(ks[i]) !== v) return null;
+		return v;
+	}
+
+	// Which attribute mark carries a given property.
+	var MARKS = {
+		'':            'data-i18n',
+		'title':       'data-i18n-title',
+		'aria-label':  'data-i18n-aria-label',
+		'placeholder': 'data-i18n-placeholder',
+		'alt':         'data-i18n-alt',
+	};
+
+	/// Put an already-resolved string on a node AND record where it came from,
+	/// so the next language change repaints it through `apply` like anything
+	/// marked up in the page.
+	///
+	/// `attr` is '' for the node's text, or one of `title`, `aria-label`,
+	/// `placeholder`, `alt`. A string the table did not produce -- a name, a
+	/// figure, a sentence with a number interpolated into it -- is set and left
+	/// unmarked, which is exactly what it was before.
+	function mark(node, attr, text) {
+		if (!node) return text;
+		attr = attr || '';
+		text = (text == null) ? '' : String(text);
+		if (attr === '') node.textContent = text;
+		else if (attr === 'title') node.title = text;
+		else if (attr === 'placeholder') node.placeholder = text;
+		else node.setAttribute(attr, text);
+		var slot = MARKS[attr];
+		if (!slot) return text;
+		var key = reverse()[text];
+		if (key) node.setAttribute(slot, key);
+		else node.removeAttribute(slot);   // a stale mark would repaint over the new text
+		return text;
+	}
+
+	/// The same, for a caller that KNOWS the key. Better than `mark` wherever it
+	/// is available, because it is never left guessing between keys that happen
+	/// to share a word.
+	///
+	/// A mark read back off a node is accepted too, group and all, so a widget
+	/// that is moved from one host to another can carry its own mark across.
+	function bind(node, attr, key) {
+		if (!node || !key) return '';
+		attr = attr || '';
+		var slot = MARKS[attr];
+		if (slot) node.setAttribute(slot, key);
+		var v = pick(key);
+		if (v == null) return '';
+		if (attr === '') node.textContent = v;
+		else if (attr === 'title') node.title = v;
+		else if (attr === 'placeholder') node.placeholder = v;
+		else node.setAttribute(attr, v);
+		return v;
+	}
+
 	/// Take a table from `i18n/<code>.js`. The first table to arrive for the
 	/// locale in force paints the document; the page is fully parsed by then,
 	/// because these scripts sit at the foot of the body.
 	function register(code, table) {
 		TABLES[code] = table;
 		present[code] = true;
+		revFor = null;          // a new table means a new set of strings to trace back
 		if (!booted && (code === locale() || code === 'en')) {
 			booted = true;
 			apply();
@@ -434,8 +559,47 @@
 		});
 	}
 
+	/// The element a registered surface is showing itself in, or null when it is
+	/// not on screen. `host` may be the element or a function returning one, so a
+	/// surface that is built on demand can register before it has a node.
+	function shown(host) {
+		var el = null;
+		try { el = (typeof host === 'function') ? host() : host; } catch (e) { return null; }
+		if (!el || !el.getClientRects) return null;
+		return el.getClientRects().length ? el : null;
+	}
+
+	/// Register a surface that builds its own strings, so a language change
+	/// reaches it WHERE IT STANDS.
+	///
+	/// `draw` rebuilds the surface; `host` is the node showing it, or a function
+	/// returning that node (or nothing when the surface is not up). On a change
+	/// every registered surface that is on screen is redrawn, and one that is not
+	/// is left alone -- it is built in the new language when it is next opened,
+	/// which is the whole reason a closed surface needs no work.
+	///
+	/// The visibility test lives HERE rather than in each caller, and that is the
+	/// point of the call. Every surface that shipped stuck in the language it was
+	/// opened in had either no hook at all or a hook that decided for itself
+	/// whether it was on screen; a surface that registers cannot get that half
+	/// wrong, and a surface added later is covered by registering beside the
+	/// others rather than by a new line in a change handler somewhere else.
+	function surface(host, draw) {
+		if (typeof draw !== 'function') return;
+		live.push({ host: host, draw: draw });
+		// Same reason as `onChange`: a table that landed before this registration
+		// has already had its repaint, and this surface missed it.
+		if (landed && shown(host)) {
+			try { draw(); } catch (e) { console.warn('i18n surface failed', e); }
+		}
+	}
+
 	function fire() {
 		hooks.forEach(function (fn) { try { fn(); } catch (e) { console.warn('i18n hook failed', e); } });
+		live.forEach(function (s) {
+			if (!shown(s.host)) return;
+			try { s.draw(); } catch (e) { console.warn('i18n surface failed', e); }
+		});
 	}
 
 	/// Choose a language. Loads its table if need be, repaints the marked
@@ -462,9 +626,10 @@
 		fire();
 	}
 
-	/// Run `fn` after any language or currency change. Surfaces that draw
-	/// themselves from strings register here; ones that only build on open do
-	/// not need to.
+	/// Run `fn` after any language or currency change. For what is on screen for
+	/// as long as the app is -- a status line, a list in the rail. A surface that
+	/// COMES AND GOES belongs in `surface` instead, which does the "am I open"
+	/// test on the caller's behalf.
 	function onChange(fn) {
 		if (typeof fn !== 'function') return;
 		hooks.push(fn);
@@ -484,6 +649,9 @@
 		tn:           tn,
 		has:          has,
 		apply:        apply,
+		mark:         mark,
+		bind:         bind,
+		surface:      surface,
 		register:     register,
 		load:         load,
 		available:    available,

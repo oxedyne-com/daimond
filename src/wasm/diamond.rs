@@ -2,8 +2,9 @@
 //! browser.
 //!
 //! A **Diamond** is a durable container for a pursuit.  Its reduced state is
-//! the **crystal** (`crystal.md`); a **fold** re-reduces a delta into the
-//! crystal; the **log** is per-Diamond and append-only.  This module owns the
+//! the **crystal**, which is two files -- `crystal.json`, the memory, and
+//! `crystal.html`, the page that renders it; a **fold** re-reduces a delta into
+//! the memory; the **log** is per-Diamond and append-only.  This module owns the
 //! OPFS layout and the pure store operations; the `#[wasm_bindgen]`
 //! surface that drives the crystal and reducer agents lives on
 //! [`DaimondApp`](crate::wasm::app::DaimondApp) in [`crate::wasm::app`].
@@ -11,12 +12,19 @@
 //! OPFS layout, per Diamond id:
 //!
 //! ```text
-//! diamonds/<id>/crystal.md                  the reduced state (agent writes, user may edit)
-//! diamonds/<id>/versions/NNNN.md          a snapshot per crystal version (0-padded)
+//! diamonds/<id>/crystal.json              the memory (agent writes, user may edit)
+//! diamonds/<id>/crystal.html              the page that renders it
+//! diamonds/<id>/versions/NNNN.json        a data snapshot per version (0-padded), EVERY version
+//! diamonds/<id>/versions/NNNN.html        a page snapshot, ONLY where the page changed
+//! diamonds/<id>/versions/NNNN.md          pre-migration history: read-only, never written again
 //! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, touched, tags }
 //! diamonds/<id>/.daimond/log              append-only, one JSON record per line
 //! diamonds/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
 //! ```
+//!
+//! One version counter, shared by both files.  A `versions/NNNN.html` exists only at the versions
+//! where the page actually changed, so the page as at version N is the highest `M <= N` that has
+//! one -- see [`read_version_page`].
 //!
 //! Each log record is a single-line JSON object:
 //! `{ id, ts, kind, agent, task, parent_crystal_version, crystal_version,
@@ -83,9 +91,22 @@ pub fn diamond_dir(id: &str) -> String {
     fmt!("diamonds/{}", id)
 }
 
-/// The crystal content file, `diamonds/<id>/crystal.md`.
-fn crystal_path(id: &str) -> String {
-    fmt!("diamonds/{}/crystal.md", id)
+/// The crystal's memory, `diamonds/<id>/crystal.json`.
+fn crystal_data_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_DATA_FILE)
+}
+
+/// The crystal's page, `diamonds/<id>/crystal.html`.
+fn crystal_page_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_PAGE_FILE)
+}
+
+/// The crystal as it was before the migration, `diamonds/<id>/crystal.md`.
+///
+/// Read only, and only as the last thing tried: it is what a Diamond holds until [`list`] has
+/// converted it, and what one holds for ever if the conversion could not be written.
+fn crystal_legacy_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_FILE_LEGACY)
 }
 
 /// The append-only log, `diamonds/<id>/.daimond/log`.
@@ -98,9 +119,32 @@ fn meta_path(id: &str) -> String {
     fmt!("diamonds/{}/{}/meta.json", id, STORE_DIR)
 }
 
-/// A crystal-version snapshot, `diamonds/<id>/versions/NNNN.md`.
-fn version_path(id: &str, version: u64) -> String {
-    fmt!("diamonds/{}/versions/{:04}.md", id, version)
+/// The directory a Diamond's snapshots live in, `diamonds/<id>/versions`.
+fn versions_dir(id: &str) -> String {
+    fmt!("diamonds/{}/versions", id)
+}
+
+/// A data snapshot, `diamonds/<id>/versions/NNNN.json`.  Written at every version.
+fn version_data_path(id: &str, version: u64) -> String {
+    fmt!("{}/{:04}.json", versions_dir(id), version)
+}
+
+/// A page snapshot, `diamonds/<id>/versions/NNNN.html`.
+///
+/// Written only at the versions where the page actually changed, because a page is presentation
+/// and does not move on most edits: copying it into every snapshot would multiply the one file in
+/// a Diamond that nothing folds and nothing reduces.
+fn version_page_path(id: &str, version: u64) -> String {
+    fmt!("{}/{:04}.html", versions_dir(id), version)
+}
+
+/// A snapshot from before the crystal became data, `diamonds/<id>/versions/NNNN.md`.
+///
+/// READ-ONLY, for ever.  Nothing writes one again; the history view renders what is there as the
+/// markdown it is, and a version from before the migration has one of these and neither of the
+/// other two.
+fn version_legacy_path(id: &str, version: u64) -> String {
+    fmt!("{}/{:04}.md", versions_dir(id), version)
 }
 
 /// A stored raw delta, `diamonds/<id>/.daimond/deltas/NNNN.md`, keyed by the
@@ -273,7 +317,7 @@ async fn rewrite_delta_refs(legacy: &str, ids: &[String]) -> Outcome<()> {
 /// `brief.md`, and one holding both files is left alone rather than merged.
 async fn migrate_crystal_file(id: &str) -> Outcome<bool> {
     let old = fmt!("{}/{}/{}", ROOT_DIR, id, LEGACY_CRYSTAL_FILE);
-    let new = crystal_path(id);
+    let new = crystal_legacy_path(id);
     if !res!(opfs::exists(FileRoot::Opfs, &old).await) {
         return Ok(false);
     }
@@ -285,14 +329,92 @@ async fn migrate_crystal_file(id: &str) -> Outcome<bool> {
 }
 
 
+/// Convert a Diamond's crystal from markdown to data: `crystal.md` -> `crystal.json`.
+///
+/// Runs where [`migrate_crystal_file`] runs, on the same trigger, and carries the same two
+/// properties for the same reason.  **Idempotent**: a Diamond already converted has a
+/// `crystal.json`, and the second check below is what sees it -- the markdown is kept, so the
+/// absence of the OLD file is not what makes this safe to re-run.  **It never clobbers**: a
+/// Diamond holding both files is left exactly as it is rather than merged, because which of the
+/// two is the user's current work is not answerable from here, and overwriting the one they can
+/// see is the loss this whole function exists to avoid.
+///
+/// The conversion is [`crate::tools::crystal_from_markdown`], which enforces losslessness rather
+/// than promising it: a shape it cannot render back byte for byte goes into one section verbatim.
+/// It is still the most destructive thing in the migration to get wrong -- a Diamond whose crystal
+/// is not found reads as an empty one, and an agent handed an empty crystal will write a new one
+/// over the top of work it never saw.
+///
+/// **THE MARKDOWN IS KEPT.**  An earlier draft of this deleted `crystal.md` once the data was
+/// written and read back, to save a migrated Diamond carrying two live crystals in every sync
+/// parcel.  That trade is the wrong way round, and the asymmetry is the reason:
+///
+/// * The cost of keeping it is small and measured.  A real workspace was thirteen Diamonds in
+///   15,786 bytes; doubling a crystal doubles a very small number.
+/// * The cost of deleting it is unbounded.  The self-check proves the BYTES round-trip and cannot
+///   prove the STRUCTURE is right -- a `##` inside a fenced code block rejoins to the same bytes
+///   whether or not the fence was honoured -- so a conversion can be wrong in a way nothing here
+///   detects.  Deleting on that would destroy the only correct copy, on every device, at the
+///   moment of the release that introduced the bug.
+/// * And it would not stay local.  [`import_diamond`] deletes a Diamond's directory before
+///   rewriting it, so a bad conversion propagates back over a good copy on the next sync.  That is
+///   the shape this project has already lost a user's tags to.
+///
+/// A later release removes the markdown, once the conversion has run against real workspaces
+/// without complaint.  Nothing reads it while `crystal.json` is there; it is ballast, and ballast
+/// is cheap.
+///
+/// The data snapshot is written here too, at the version the Diamond already stands at, so
+/// `versions/NNNN.json` exists from the migration instant rather than from the next edit.  It is
+/// written only where there is not one already, on the same never-clobber rule as everything else
+/// in this function, and a Diamond whose metadata will not parse simply does not get one -- a
+/// backfill is a convenience and must not be able to fail a migration.
+///
+/// # Arguments
+/// * `id` - The Diamond whose crystal is to be converted.
+async fn migrate_crystal_data(id: &str) -> Outcome<bool> {
+    let old = crystal_legacy_path(id);
+    let new = crystal_data_path(id);
+    if !res!(opfs::exists(FileRoot::Opfs, &old).await) {
+        return Ok(false);       // converted already, or a Diamond newer than markdown
+    }
+    if res!(opfs::exists(FileRoot::Opfs, &new).await) {
+        return Ok(false);       // both present: not ours to reconcile, and not ours to destroy
+    }
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &old).await);
+    let md    = String::from_utf8_lossy(&bytes).to_string();
+    let json  = crate::tools::crystal_from_markdown(&md).to_json();
+    res!(opfs::write_file(FileRoot::Opfs, &new, json.as_bytes()).await);
+
+    // The backfill. Best-effort throughout: the conversion has already succeeded by this point,
+    // and a Diamond that is converted but unsnapshotted is in a state `read_crystal_data` handles
+    // -- it falls through to the markdown history -- while a migration that reported failure
+    // would be re-run for ever over a file that is already there.
+    if let Ok(meta) = read_meta(id).await {
+        let at = version_data_path(id, meta.version);
+        match opfs::exists(FileRoot::Opfs, &at).await {
+            Ok(false) => {
+                if let Err(e) = opfs::write_file(FileRoot::Opfs, &at, json.as_bytes()).await {
+                    console_log(&fmt!(
+                        "Diamond '{}' was converted, but version {} could not be snapshotted as \
+                         data: {}. Its markdown snapshot still stands.", id, meta.version, e));
+                }
+            }
+            _ => {},        // already there, or unreadable: either way, not ours to overwrite
+        }
+    }
+    Ok(true)
+}
+
+
 /// Move a Diamond's store from `.red/` to `.daimond/`, so a workspace made before the
 /// rename opens with its history intact.
 ///
 /// Without this a renamed Daimond simply would not find the old directory: [`read_meta`]
 /// would fail, [`list`] would skip the Diamond, and a real pursuit -- its crystal versions, its
 /// whole fold history -- would read as though it had never existed.  The crystal itself
-/// (`crystal.md`) and its snapshots sit *outside* the store directory and are untouched
-/// either way; what moves here is the metadata, the log and the retained deltas.
+/// (`crystal.json` and `crystal.html`) and its snapshots sit *outside* the store directory and are
+/// untouched either way; what moves here is the metadata, the log and the retained deltas.
 ///
 /// The log's `delta_ref` field holds a *path*, written when the fold was applied, so the
 /// records are rewritten as the directory moves -- otherwise every historical delta would
@@ -333,16 +455,81 @@ async fn migrate(id: &str) -> Outcome<bool> {
 }
 
 
-/// Read the crystal as it stood at `version`.
+/// Read the crystal's memory as it stood at `version`.
 ///
 /// Every fold and every hand-edit snapshots the crystal, but nothing has ever
 /// read one back, so an accepted fold that mangled the crystal could not be
 /// undone.  This is what makes the history recoverable rather than merely
 /// recorded.
+///
+/// A version from before the migration has a `.md` and no `.json`, and it is returned as the
+/// markdown it is: the caller renders what it is given rather than being told which it got, which
+/// is what "the history view renders that as it always did" costs.
 pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
-    let path = version_path(id, version);
-    let bytes = res!(crate::wasm::opfs::read_file(crate::tools::FileRoot::Opfs, &path).await);
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &version_data_path(id, version)).await {
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_legacy_path(id, version)).await);
     Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// Read the PAGE as it stood at `version`, by walking back to the last one that changed it.
+///
+/// **This walk is the whole cost of not copying the page into every snapshot.**  A
+/// `versions/NNNN.html` is written only where the page actually moved, so most versions have
+/// none, and asking for the page at one of those is not asking for nothing -- it is asking for
+/// whatever page was on screen at the time, which is the last one written at or before it.  Read
+/// naively, every version between two page edits would report a Diamond with no page at all, and
+/// the history view would show the built-in fallback for stretches where the user was looking at
+/// their own page the whole time.
+///
+/// An empty string means no page was ever stored at or before that version, which is what every
+/// pre-migration version says.  Nothing here invents a default: the shipped page is a JS const,
+/// and this stores bytes.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `version` - The version to read the page as at.
+pub async fn read_version_page(id: &str, version: u64) -> Outcome<String> {
+    // One directory walk rather than a read per version stepping backwards.  A Diamond at version
+    // 300 whose page never changed would otherwise cost 300 failed OPFS reads to answer "none",
+    // on the device least able to afford them.
+    let at = snapshot_versions(id, ".html").await
+        .into_iter()
+        .filter(|n| *n <= version)
+        .max();
+    let n = match at {
+        Some(n) => n,
+        None    => return Ok(String::new()),
+    };
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_page_path(id, n)).await);
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// Every version a Diamond holds a snapshot for with the given extension, unordered.
+///
+/// A name that does not parse is somebody else's file and is passed over rather than guessed at.
+/// A missing `versions/` directory is no snapshots, not a failure: a Diamond older than they are,
+/// or one that has been emptied.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `ext` - The extension including its dot: `.json`, `.html` or `.md`.
+async fn snapshot_versions(id: &str, ext: &str) -> Vec<u64> {
+    let entries = match opfs::list_dir(FileRoot::Opfs, &versions_dir(id)).await {
+        Ok(e)  => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<u64> = Vec::new();
+    for (name, is_dir, _size) in entries {
+        if is_dir {
+            continue;
+        }
+        if let Some(n) = name.strip_suffix(ext).and_then(|s| s.parse::<u64>().ok()) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 
@@ -358,20 +545,30 @@ pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
 /// generous one; sixty-four is beyond argument. Anything past this is damage.
 const META_MAX: u32 = 65_536;
 
-/// A Diamond's name, read back off its crystal's opening heading.
+/// A Diamond's name, read back off its own crystal.
 ///
-/// The last resort for a Diamond whose `meta.json` lost its name. A crystal
-/// opens `# <name>` by construction — the default Diamonds are written that way
-/// and every fold preserves the heading — so it is the one place the name
-/// survives outside the metadata. `read_crystal` already falls back to the
-/// newest version snapshot when `crystal.md` is missing, so this reaches even a
-/// Diamond whose crystal has gone.
+/// The last resort for a Diamond whose `meta.json` lost its name. A crystal carries a `title` by
+/// construction — the default Diamonds are written that way, the migration lifts it out of the
+/// opening `# ` heading, and every fold is asked to keep it — so it is the one place the name
+/// survives outside the metadata. [`read_crystal_data`] already falls back through the version
+/// snapshots and through a legacy markdown crystal, so this reaches even a Diamond whose crystal
+/// file has gone.
 ///
-/// Returns `None` rather than a guess when there is no heading to read: an
+/// The `# ` scan stays as the second try, for a Diamond holding markdown that no conversion has
+/// reached — this runs inside [`list`], which is also where the conversion runs, and the order of
+/// two repairs over one file is not a thing to depend on.
+///
+/// Returns `None` rather than a guess when there is neither to read: an
 /// invented name would be worse than an empty one, because the user could not
 /// tell it from the name they chose.
 async fn name_from_crystal(id: &str) -> Option<String> {
-    let text = read_crystal(id).await.ok()?;
+    let text = read_crystal_data(id).await.ok()?;
+    if let Some(title) = extract_json_string(&text, "title") {
+        let name: String = title.trim().chars().take(80).collect();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
     for line in text.lines().take(20) {
         let t = line.trim();
         if let Some(rest) = t.strip_prefix("# ") {
@@ -560,15 +757,19 @@ async fn append_log(id: &str, rec: &LogRecord) -> Outcome<()> {
 // │ Diamond operations                                               │
 // └───────────────────────────────────────────────────────────────┘
 
-/// Create a Diamond: its directory, an empty `crystal.md`, version `0000`, a
+/// Create a Diamond: its directory, an empty `crystal.json`, version `0000`, a
 /// `meta.json`, and a `create` log record.  Returns the new Diamond id.
+///
+/// No page.  A new Diamond renders on the shipped default until something writes one, and the
+/// default is a JS const that this side never sees; writing an empty `crystal.html` here would
+/// only put a file on disk that means the same as no file.
 pub async fn create(name: &str) -> Outcome<String> {
     let id = generate_session_id();
     let now = now_ms() as u64;
 
     // Empty crystal plus its version-0 snapshot.
-    res!(opfs::write_file(FileRoot::Opfs, &crystal_path(&id), b"").await);
-    res!(opfs::write_file(FileRoot::Opfs, &version_path(&id, 0), b"").await);
+    res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(&id), b"").await);
+    res!(opfs::write_file(FileRoot::Opfs, &version_data_path(&id, 0), b"").await);
 
     let meta = Meta {
         name:    name.to_string(),
@@ -731,6 +932,11 @@ pub async fn list() -> Outcome<String> {
             console_log(&fmt!("Diamond '{}' could not have its crystal renamed: {}", name, e));
         }
         grew("migrate_crystal", &mut was);
+        // And then, on the same trigger and for the same reason, because it was markdown.
+        if let Err(e) = migrate_crystal_data(&name).await {
+            console_log(&fmt!("Diamond '{}' could not have its crystal converted: {}", name, e));
+        }
+        grew("migrate_crystal_data", &mut was);
         let mut meta = match read_meta(&name).await {
             Ok(m)  => m,
             Err(_) => continue, // not a Diamond dir / no metadata
@@ -772,89 +978,158 @@ pub async fn list() -> Outcome<String> {
     Ok(fmt!("[{}]", items.join(",")))
 }
 
-/// Read a Diamond's current crystal markdown.
+/// Read a Diamond's current crystal data, as the JSON text it is stored as.
 ///
 /// A Diamond that LISTS must OPEN.  [`list`] admits one on its metadata alone -- deliberately, so
 /// that a broken Diamond is a bug the user can report rather than one they can only mourn -- and
-/// this used to be a bare read, so a Diamond whose `crystal.md` was missing threw `NotFoundError`
+/// this used to be a bare read, so a Diamond whose crystal was missing threw `NotFoundError`
 /// at the panel and could not be opened at all.  Four live paths arrive at that state, an
 /// interrupted import among them.
 ///
 /// So the version snapshots are used for what they have always been: the store's own redundancy.
-/// The newest `versions/NNNN.md` is read when the crystal is not there, and a Diamond with neither
-/// opens empty and says so in the console rather than refusing to open.  Nothing else reads the
-/// snapshots back except [`read_version`], so this costs nothing and turns a dead Diamond into a
-/// recoverable one.
-pub async fn read_crystal(id: &str) -> Outcome<String> {
-    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await {
+/// Four things are tried, in this order, and the order is the whole point:
+///
+/// 1. `crystal.json`, which is where it should be.
+/// 2. The newest `versions/NNNN.json`, the store's own copy of the same bytes.
+/// 3. A legacy markdown crystal -- `crystal.md`, then the newest `versions/NNNN.md` -- converted
+///    on the way out.  This reaches a Diamond that has never been through [`list`], one whose
+///    conversion could not be written, and -- because [`migrate_crystal_data`] deliberately keeps
+///    the markdown rather than deleting it -- any migrated Diamond that later loses its data file.
+/// 4. Empty, with a console line saying so.
+///
+/// **The last of those is the most destructive failure in this whole change**, which is why there
+/// are three things before it: a Diamond whose crystal is not found reads as an empty one, and an
+/// agent handed an empty crystal will happily write a new one over the top of work it never saw.
+pub async fn read_crystal_data(id: &str) -> Outcome<String> {
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
         return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
-    match res!(newest_version(id).await) {
-        Some((n, md)) => {
-            console_log(&fmt!(
-                "Diamond '{}' has no crystal.md; read version {} instead.", id, n));
-            Ok(md)
-        }
-        None => {
-            console_log(&fmt!(
-                "Diamond '{}' has no crystal.md and no version to fall back on; it opens empty.",
-                id));
-            Ok(String::new())
-        }
+    if let Some((n, json)) = res!(newest_version(id, ".json").await) {
+        console_log(&fmt!(
+            "Diamond '{}' has no crystal.json; read version {} instead.", id, n));
+        return Ok(json);
+    }
+    // The markdown a migration has not reached, or could not finish.  Converted rather than
+    // returned as it stands, because every caller above this now reads data.
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_legacy_path(id)).await {
+        console_log(&fmt!(
+            "Diamond '{}' still has a markdown crystal; it is read as data without being \
+             converted on disk.", id));
+        let md = String::from_utf8_lossy(&bytes).to_string();
+        return Ok(crate::tools::crystal_from_markdown(&md).to_json());
+    }
+    if let Some((n, md)) = res!(newest_version(id, ".md").await) {
+        console_log(&fmt!(
+            "Diamond '{}' has no crystal at all; markdown version {} is read as data instead.",
+            id, n));
+        return Ok(crate::tools::crystal_from_markdown(&md).to_json());
+    }
+    console_log(&fmt!(
+        "Diamond '{}' has no crystal and no version to fall back on; it opens empty.", id));
+    Ok(String::new())
+}
+
+/// Read a Diamond's current page, or empty when it has none.
+///
+/// Empty is an ordinary answer and not a failure: a Diamond created before pages existed has no
+/// `crystal.html`, and one whose page was reset has whatever the caller supplies instead.  **Rust
+/// never sees the default page** -- it is a JS const, so the protocol and the page that speaks it
+/// live in one file -- so this reports the absence and the caller fills it.
+///
+/// The snapshots back it up exactly as they back the data up, through the walk in
+/// [`read_version_page`], so a page lost from its own file is recovered from the last version
+/// that changed it.
+pub async fn read_crystal_page(id: &str) -> Outcome<String> {
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_page_path(id)).await {
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    // Unreadable metadata means no page, not a throw. A Diamond that LISTS must OPEN, and the
+    // panel opening on the built-in view beats it not opening at all.
+    let at = match read_meta(id).await {
+        Ok(m)  => m.version,
+        Err(_) => return Ok(String::new()),
+    };
+    read_version_page(id, at).await
+}
+
+/// The page a Diamond has on disk right now, with no fallback of any kind.
+///
+/// [`read_crystal_page`] reaches for a snapshot when the file is not there, which is right for a
+/// reader and wrong for [`snapshot`]: a recovered page is not a page the user changed, and
+/// treating it as one would write a fresh page snapshot at a version where nothing moved.
+async fn page_on_disk(id: &str) -> String {
+    match opfs::read_file(FileRoot::Opfs, &crystal_page_path(id)).await {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+        Err(_)    => String::new(),
     }
 }
 
-/// The highest-numbered version snapshot a Diamond holds, with its text.
+/// The highest-numbered snapshot a Diamond holds with the given extension, with its text.
 ///
-/// The numbering is `versions/NNNN.md`, zero-padded and monotonic, so the highest that PARSES is
-/// the newest; a file that does not parse is somebody else's and is passed over rather than
-/// guessed at.
-async fn newest_version(id: &str) -> Outcome<Option<(u64, String)>> {
-    let dir = fmt!("diamonds/{}/versions", id);
-    let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
-        Ok(e)  => e,
-        Err(_) => return Ok(None),      // no snapshots: a Diamond older than they are, or emptied
-    };
-    let mut best: Option<u64> = None;
-    for (name, is_dir, _size) in entries {
-        if is_dir {
-            continue;
-        }
-        let n = match name.strip_suffix(".md").and_then(|s| s.parse::<u64>().ok()) {
-            Some(n) => n,
-            None    => continue,
-        };
-        if best.map(|b| n > b).unwrap_or(true) {
-            best = Some(n);
-        }
-    }
-    let n = match best {
+/// The numbering is zero-padded and monotonic, so the highest that PARSES is the newest.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `ext` - The extension including its dot: `.json` for data, `.md` for pre-migration history.
+async fn newest_version(id: &str, ext: &str) -> Outcome<Option<(u64, String)>> {
+    let n = match snapshot_versions(id, ext).await.into_iter().max() {
         Some(n) => n,
         None    => return Ok(None),
     };
-    let bytes = res!(opfs::read_file(FileRoot::Opfs, &version_path(id, n)).await);
+    let path = fmt!("{}/{:04}{}", versions_dir(id), n, ext);
+    let bytes = res!(opfs::read_file(FileRoot::Opfs, &path).await);
     Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())))
 }
 
 /// Snapshot a new crystal version and return its number.
 ///
-/// Writes `crystal.md`, bumps the version, writes the `versions/NNNN.md`
-/// snapshot and updates `meta.json`.  The caller appends the matching log
-/// record.
-async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
-    // The other door on the ceiling. `Tool::FileWrite` catches a daimon growing the crystal past
-    // it; this catches a hand edit and a fold, which reach the file through the store instead and
-    // would otherwise walk straight past the rule.
-    let old = opfs::read_file(FileRoot::Opfs, &crystal_path(id)).await
+/// **The two files are snapshotted on different rules, and that asymmetry is the design.**  The
+/// data is written at every version, so `versions/NNNN.json` exists for every N from the migration
+/// onward and the history is complete without a walk.  The page is written only where its bytes
+/// differ from the page as at the PARENT version -- not from the file on disk, which the daimon
+/// may already have overwritten during the turn being recorded.  Most edits do not touch the page,
+/// and copying it into every snapshot would multiply the one file in a Diamond that nothing folds
+/// and nothing reduces.
+///
+/// The other door on the two ceilings.  `Tool::FileWrite` and `Tool::FileEdit` catch a daimon
+/// growing either file past its cap; this catches a hand edit and a fold, which reach the files
+/// through the store instead and would otherwise walk straight past the rule.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `data` - The crystal data this version holds.
+/// * `page` - The page this version holds, or `None` for whatever is on disk -- which is what a
+///   turn that edited the page through the file tools leaves behind.
+/// * `now` - The stamp both `updated` and `touched` take.
+async fn snapshot(id: &str, data: &str, page: Option<&str>, now: u64) -> Outcome<u64> {
+    let old = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await
         .map(|b| b.len())
         .unwrap_or(0);
-    if crate::tools::crystal_write_refused(md.len(), old) {
-        return Err(err!("{}", crate::tools::crystal_cap_message(md.len()); Invalid, Input, Size));
+    if crate::tools::crystal_write_refused(data.len(), old) {
+        return Err(err!("{}", crate::tools::crystal_cap_message(data.len()); Invalid, Input, Size));
     }
+    let disk = page_on_disk(id).await;
+    let want: &str = page.unwrap_or(disk.as_str());
+    if crate::tools::crystal_page_write_refused(want.len(), disk.len()) {
+        return Err(err!("{}", crate::tools::crystal_page_cap_message(want.len());
+            Invalid, Input, Size));
+    }
+
     let mut meta = res!(read_meta(id).await);
     let next = meta.version + 1;
-    res!(opfs::write_file(FileRoot::Opfs, &crystal_path(id), md.as_bytes()).await);
-    res!(opfs::write_file(FileRoot::Opfs, &version_path(id, next), md.as_bytes()).await);
+    // Against the parent version rather than against the file, so a page the daimon wrote itself
+    // during the turn is still recognised as a change and still gets its snapshot.
+    let changed = want != res!(read_version_page(id, meta.version).await);
+
+    res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(id), data.as_bytes()).await);
+    res!(opfs::write_file(FileRoot::Opfs, &version_data_path(id, next), data.as_bytes()).await);
+    if want != disk {
+        res!(opfs::write_file(FileRoot::Opfs, &crystal_page_path(id), want.as_bytes()).await);
+    }
+    if changed {
+        res!(opfs::write_file(FileRoot::Opfs, &version_page_path(id, next), want.as_bytes()).await);
+    }
+
     meta.version = next;
     meta.updated = now;
     meta.touched = now;        // a new crystal is both work and a change
@@ -862,18 +1137,91 @@ async fn snapshot(id: &str, md: &str, now: u64) -> Outcome<u64> {
     Ok(next)
 }
 
-/// Apply a user hand-edit to the crystal: snapshot a new version and log an
+/// Apply a user hand-edit to the crystal's data: snapshot a new version and log an
 /// `edit` record.
-pub async fn write_crystal(id: &str, md: &str) -> Outcome<()> {
+///
+/// The page is left exactly as it is, so an edit to the memory does not cost a page snapshot.
+pub async fn write_crystal_data(id: &str, json: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
-    let version = res!(snapshot(id, md, now).await);
+    let version = res!(snapshot(id, json, None, now).await);
     let rec = LogRecord {
         id:        generate_session_id(),
         ts:        now,
         kind:      "edit",
         agent:     "user".to_string(),
         task:      "edit crystal".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Replace a Diamond's page: snapshot a new version and log an `edit` record.
+///
+/// A version of its own, sharing the one counter with the data, because a page IS the Diamond as
+/// the user meets it: a page edit that could not be undone would be the one change in a Diamond
+/// with no way back.  The data is carried through unchanged and still snapshotted, which is what
+/// keeps `versions/NNNN.json` complete for every N.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `html` - The page, self-contained; empty resets it to nothing and lets the caller's default
+///   stand.
+pub async fn write_crystal_page(id: &str, html: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let data = res!(read_crystal_data(id).await);
+    let version = res!(snapshot(id, &data, Some(html), now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "user".to_string(),
+        task:      "edit crystal page".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Write both halves of a crystal as ONE version: one version number, one snapshot pair, one log
+/// record.
+///
+/// For a restore and for a backup import, which set the data and the page together and are one
+/// action as far as the person doing them is concerned.  Doing it as
+/// [`write_crystal_data`] followed by [`write_crystal_page`] works and writes two versions, so the
+/// history shows two rows for one click -- and neither row is wrong, which is what makes it worth
+/// fixing rather than tolerating.  The log is the record of a Diamond's discontinuities, and a
+/// reader counting them would count one restore as two.
+///
+/// The page still obeys the rule the other paths obey, because [`snapshot`] owns it: a page whose
+/// bytes match the parent version's writes no `.html` at all, so restoring a version whose page
+/// never differed costs nothing extra.
+///
+/// **`html` is taken literally, empty included.**  Restoring a version from before pages existed
+/// means passing an empty page, and that is what the Diamond looked like -- so the page goes back
+/// to none and the caller's default renders.  A caller that would rather keep the page it has
+/// should pass the page it has; this does not guess which was meant.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `json` - The crystal data to put at the head.
+/// * `html` - The page to put at the head; empty leaves the Diamond with no page of its own.
+pub async fn write_crystal_both(id: &str, json: &str, html: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let version = res!(snapshot(id, json, Some(html), now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "user".to_string(),
+        task:      "edit crystal and page".to_string(),
         parent:    parent as i64,
         version:   version,
         delta_ref: String::new(),
@@ -901,8 +1249,8 @@ pub async fn record_model_change(id: &str, note: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let meta = res!(read_meta(id).await);
     let parent = meta.version;
-    let crystal = res!(read_crystal(id).await);
-    let version = res!(snapshot(id, &crystal, now).await);
+    let crystal = res!(read_crystal_data(id).await);
+    let version = res!(snapshot(id, &crystal, None, now).await);
     let rec = LogRecord {
         id:        generate_session_id(),
         ts:        now,
@@ -918,13 +1266,17 @@ pub async fn record_model_change(id: &str, note: &str) -> Outcome<()> {
 }
 
 /// Record a crystal change made by the crystal agent (a steer that edited
-/// `crystal.md`): snapshot a version and log an `edit` record whose task is
-/// the instruction.  Called by [`crate::wasm::app`] after the agent turn,
-/// only when the crystal content actually changed.
-pub async fn record_steer(id: &str, md: &str, instruction: &str) -> Outcome<()> {
+/// `crystal.json`, or `crystal.html`, or both): snapshot a version and log an `edit` record whose
+/// task is the instruction.  Called by [`crate::wasm::app`] after the agent turn,
+/// only when the crystal actually changed.
+///
+/// The page is not an argument, because the turn has already written it: [`snapshot`] takes
+/// whatever is on disk and compares it with the parent version, which is how a turn that changed
+/// only the page still earns a page snapshot.
+pub async fn record_steer(id: &str, json: &str, instruction: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
-    let version = res!(snapshot(id, md, now).await);
+    let version = res!(snapshot(id, json, None, now).await);
     let rec = LogRecord {
         id:        generate_session_id(),
         ts:        now,
@@ -947,7 +1299,7 @@ pub async fn record_steer(id: &str, md: &str, instruction: &str) -> Outcome<()> 
 pub async fn fold_apply(id: &str, new_crystal: &str, delta: &str, note: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let parent = res!(read_meta(id).await).version;
-    let version = res!(snapshot(id, new_crystal, now).await);
+    let version = res!(snapshot(id, new_crystal, None, now).await);
 
     // Retain the raw delta, referenced by the log record.
     let dref = delta_path(id, version);
@@ -987,9 +1339,9 @@ pub async fn log_read(id: &str) -> Outcome<String> {
 
 /// A Diamond's link sidecar, `diamonds/<id>/.daimond/links.jsonl`.
 ///
-/// It sits beside the log rather than inside `crystal.md` for two reasons.  A
+/// It sits beside the log rather than inside `crystal.json` for two reasons.  A
 /// fold rewrites the crystal wholesale -- the reducer is asked for the new crystal
-/// and returns the whole of it -- so anything structural kept in that prose is
+/// and returns the whole of it -- so anything structural kept in there is
 /// at a model's mercy on every fold.  And the crystal is handed to the conductor
 /// and to every worker it dispatches, so a growing list of links would be paid
 /// for in tokens on every turn, by agents that have the file tools anyway.
@@ -1514,7 +1866,7 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
     // Diamond that lists, opens, and throws on a crystal that never arrived.  Written last, the
     // same failure leaves it invisible, and the next pull brings the whole of it back.  The order
     // used to be the export's own, which sorts paths -- and `.daimond/meta.json` sorts BEFORE
-    // `crystal.md`, so the bad case was the ordinary one.
+    // `crystal.json`, so the bad case was the ordinary one.
     let meta_rel = fmt!("{}/meta.json", STORE_DIR);
     writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
 
@@ -1679,14 +2031,20 @@ async fn take_file(rel: &str, size: u64, used: &mut u64) -> Outcome<Took> {
     Ok(Took::Kept(beside))
 }
 
-/// Every file the folder holds under one Diamond, workspace-relative, with the size the folder
-/// reports for it.  Sorted, so a run's order does not depend on how the browser iterates.
+/// Every file the folder holds under `root`, workspace-relative, with the size the folder reports
+/// for it.  Sorted, so a run's order does not depend on how the browser iterates.
+///
+/// A directory the folder does not have holds nothing, which is the ordinary case and not a
+/// failure: most folders have neither a `diamonds/` nor a `mail/` in them.
 ///
 /// Recursion is spelled out with an explicit stack, as [`export_diamond`] does and for the same
 /// reason: an `async fn` cannot recurse without boxing its future.
-async fn folder_files(id: &str) -> Outcome<Vec<(String, u64)>> {
+///
+/// # Arguments
+/// * `root` - The workspace-relative directory to walk, on the machine folder.
+async fn folder_files(root: &str) -> Outcome<Vec<(String, u64)>> {
     let mut out: Vec<(String, u64)> = Vec::new();
-    let mut todo: Vec<String> = vec![diamond_dir(id)];
+    let mut todo: Vec<String> = vec![root.to_string()];
     while let Some(dir) = todo.pop() {
         let entries = match opfs::list_dir(FileRoot::Machine, &dir).await {
             Ok(e)  => e,
@@ -1707,8 +2065,8 @@ async fn folder_files(id: &str) -> Outcome<Vec<(String, u64)>> {
 
 /// Bring one Diamond's files home.  True when anything was actually taken.
 ///
-/// **The order is the correctness.**  `crystal.md` is copied FIRST and `.daimond/meta.json` LAST,
-/// because [`list`] admits a Diamond on its metadata alone and [`read_crystal`] looks for the
+/// **The order is the correctness.**  The crystal is copied FIRST and `.daimond/meta.json` LAST,
+/// because [`list`] admits a Diamond on its metadata alone and [`read_crystal_data`] looks for the
 /// crystal where it should be.  Metadata written first, and a run interrupted between the two,
 /// leaves a Diamond that lists, opens, and throws -- visible and broken.  Metadata written last
 /// leaves a half-adopted Diamond *invisible*, and the next activation completes it.  Nothing is
@@ -1717,6 +2075,11 @@ async fn folder_files(id: &str) -> Outcome<Vec<(String, u64)>> {
 /// For the same reason the metadata is not written when the crystal is not in the store
 /// afterwards: a Diamond whose crystal was too large for the budget, or unreadable, stays out of
 /// the rail rather than joining it broken.
+///
+/// "The crystal" is either name.  A folder left by a build older than the conversion holds
+/// `crystal.md` and no `crystal.json`, and refusing to adopt it because the data file is absent
+/// would leave the user's Diamond in a directory nothing reads -- [`list`] converts it once it is
+/// home.
 ///
 /// # Arguments
 /// * `id` - The Diamond.
@@ -1731,15 +2094,19 @@ async fn adopt_one(
 )
     -> Outcome<bool>
 {
-    let files   = res!(folder_files(id).await);
-    let crystal = crystal_path(id);
+    let files   = res!(folder_files(&diamond_dir(id)).await);
     let meta    = meta_path(id);
+    // Both live names and the one they replaced, in the order they matter: the memory, then the
+    // page, then whatever markdown a Diamond has not been converted from yet.
+    let crystals = [crystal_data_path(id), crystal_page_path(id), crystal_legacy_path(id)];
     let mut ordered: Vec<(String, u64)> = Vec::new();
-    if let Some(f) = files.iter().find(|(p, _)| *p == crystal) {
-        ordered.push(f.clone());
+    for c in crystals.iter() {
+        if let Some(f) = files.iter().find(|(p, _)| p == c) {
+            ordered.push(f.clone());
+        }
     }
     for f in &files {
-        if f.0 == crystal || f.0 == meta {
+        if crystals.contains(&f.0) || f.0 == meta {
             continue;
         }
         ordered.push(f.clone());
@@ -1758,9 +2125,12 @@ async fn adopt_one(
             }
         }
     }
-    // Last, and only over a crystal that is there to be read.
+    // Last, and only over a crystal that is there to be read -- in either of the two forms a
+    // Diamond's memory can arrive in.
     if let Some((rel, size)) = files.iter().find(|(p, _)| *p == meta) {
-        if !res!(opfs::exists(FileRoot::Opfs, &crystal).await) {
+        let data   = res!(opfs::exists(FileRoot::Opfs, &crystal_data_path(id)).await);
+        let legacy = res!(opfs::exists(FileRoot::Opfs, &crystal_legacy_path(id)).await);
+        if !data && !legacy {
             skipped.push(rel.clone());
             return Ok(took_any);
         }
@@ -1776,6 +2146,133 @@ async fn adopt_one(
         }
     }
     Ok(took_any)
+}
+
+/// What became of one mail file the folder was holding.
+enum Brought {
+    /// It was not in the store, and now it is.
+    Copied,
+    /// The store already has a file at that path, so nothing was read, written or compared.
+    Held,
+    /// Too large for what is left of the budget, and so left exactly where it is for a later run.
+    Skipped,
+}
+
+/// Take one mail file out of the folder and into the store.
+///
+/// **A CLASH IS NOT RECONCILED AND NOT COPIED BESIDE**, which is where this parts company with
+/// [`take_file`].  A Maildir name is derived from the message's UID and the mailbox generation
+/// (`maildirName` in `www/js/mail.js`), so a file already at that path IS that message: a second
+/// copy under `.from-machine` would show up as a duplicate message in the panel, hand the agent
+/// the same stranger's words twice, and ride in the sync parcel for ever.  A draft is the same
+/// argument the other way round -- the store's copy is the one the user has been editing, and the
+/// folder's is whatever an older build last wrote.
+///
+/// The store's presence is therefore checked FIRST, before the folder's bytes are read at all, so
+/// the second run over a mailbox of ten thousand messages costs ten thousand lookups and not one
+/// byte of transfer.
+///
+/// Bytes throughout, never text: a message with a JPEG attached is not a string, and a lossy
+/// decode on the way through would corrupt it silently.
+///
+/// # Arguments
+/// * `rel` - The workspace-relative path, the same on both sides.
+/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
+/// * `used` - How much this run has copied so far, added to here.
+async fn take_message(rel: &str, size: u64, used: &mut u64) -> Outcome<Brought> {
+    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
+        return Ok(Brought::Skipped);
+    }
+    if res!(opfs::exists(FileRoot::Opfs, rel).await) {
+        return Ok(Brought::Held);
+    }
+    let bytes = res!(opfs::read_file(FileRoot::Machine, rel).await);
+    res!(opfs::write_file(FileRoot::Opfs, rel, &bytes).await);
+    *used += size;
+    Ok(Brought::Copied)
+}
+
+/// Bring home every message and draft an earlier build left in the open folder.
+///
+/// Until `mail/` became store state (see [`crate::tools::MAIL_ROOT`]) a mailbox followed the
+/// workspace root, so a sync made with a folder open wrote the messages into the user's project.
+/// This copies them into the store, where a mailbox belongs to the account rather than to whatever
+/// folder happened to be open.
+///
+/// **IT COPIES AND IT NEVER DELETES.**  A move would be tidier and it is not available here: a
+/// draft exists on no server and in no gateway, so an interruption or a mistake between the read
+/// and the delete would destroy the only copy of a message an agent prepared for its user to send.
+/// The worst this can leave behind is a second copy of a mailbox in a folder the user can see and
+/// remove themselves.
+///
+/// Three properties, each of which the shape above is what buys:
+///
+/// * **Idempotent.**  A second run finds every file already in the store and writes nothing.  It
+///   is not idempotent by a flag or a stamp -- there is no moment at which every folder could be
+///   proved to have been seen -- but by asking the store, per file, every time.
+/// * **It never clobbers.**  A path the store already holds is left alone on both sides.
+/// * **A partial run costs nothing.**  Nothing is deleted and no file depends on another, so an
+///   interruption leaves both trees readable and the next activation finishes the job -- including
+///   over the budget, which resets each run while the files already home are skipped for free.
+///
+/// Only the mailboxes are taken, never the whole directory, for the reason [`is_mailbox`] gives.
+///
+/// Returns how many files were copied, and the paths this run did not take.
+///
+/// # Arguments
+/// * `used` - The run's byte accumulator, shared with the Diamond adoption above so one activation
+///   has one budget.
+async fn bring_mail_home(used: &mut u64) -> Outcome<(usize, Vec<String>)> {
+    let mut copied = 0usize;
+    let mut left: Vec<String> = Vec::new();
+    // A folder with no `mail/` in it is the ordinary case, and it is not a failure.
+    let entries = match opfs::list_dir(FileRoot::Machine, crate::tools::MAIL_ROOT).await {
+        Ok(e)  => e,
+        Err(_) => return Ok((0, left)),
+    };
+    for (name, is_dir, _size) in entries {
+        if !is_dir || !res!(is_mailbox(&name).await) {
+            continue;
+        }
+        let files = res!(folder_files(&fmt!("{}/{}", crate::tools::MAIL_ROOT, name)).await);
+        for (rel, size) in &files {
+            // One unreadable message must not lose the rest of the mailbox, nor the rest of the
+            // run.
+            match take_message(rel, *size, used).await {
+                Ok(Brought::Copied)  => copied += 1,
+                Ok(Brought::Held)    => {},
+                Ok(Brought::Skipped) => left.push(rel.clone()),
+                Err(e) => {
+                    console_log(&fmt!(
+                        "'{}' could not be brought home from the folder: {}", rel, e));
+                    left.push(rel.clone());
+                }
+            }
+        }
+    }
+    Ok((copied, left))
+}
+
+/// Whether a directory under the folder's `mail/` is one of Daimond's mailboxes.
+///
+/// The mirror of [`is_diamond`], and it earns its place the same way: `mail/` is now one of
+/// Daimond's own roots, but a user may have had a directory of that name in their project for
+/// years -- an archive, a mail module, a year's correspondence -- and copying it wholesale into the
+/// browser's storage would be an app helping itself to somebody's files.
+///
+/// Two ways to be a mailbox, and neither guesses.  The store already holds one under that name, or
+/// the name carries an `@`: a mailbox directory is the account's ADDRESS with the characters a
+/// filesystem refuses replaced (`mailDir` in `www/js/mail.js`), and an address without an `@` is
+/// not an address.
+///
+/// # Arguments
+/// * `name` - The directory name under `mail/` in the folder.
+async fn is_mailbox(name: &str) -> Outcome<bool> {
+    let here = fmt!("{}/{}", crate::tools::MAIL_ROOT, name);
+    if res!(opfs::exists(FileRoot::Opfs, &here).await) {
+        return Ok(true);
+    }
+    Ok(name.contains('@'))
 }
 
 /// Bring home every Diamond an earlier build left in the open folder, and report what was done.
@@ -1795,21 +2292,33 @@ async fn adopt_one(
 ///   moment at which every folder can be proved to have been seen.  So it is silent when it finds
 ///   nothing: the caller shows the user nothing at all when `adopted` is empty.
 ///
-/// Returns `{"folder":bool,"adopted":[{"id","name","kept":[..]}],"left":[..],"skipped":[..]}`.
-/// `folder` is false when none is open, which is not an error and must not be reported as one.
+/// **THE MAILBOX COMES HOME HERE TOO**, on the same trigger and by the same three rules (see
+/// [`bring_mail_home`]).  It is here rather than in [`list`], where the other migrations run,
+/// because this is the only place that is guaranteed a folder is open: everything under `mail/`
+/// has to be read through [`FileRoot::Machine`], which resolves to the folder or to nothing at
+/// all.  A user who has never opened one has no mail in a folder, and this returns before looking.
+///
+/// Returns `{"folder":bool,"adopted":[{"id","name","kept":[..]}],"left":[..],"skipped":[..],
+/// "mail":{"copied":n,"left":[..]}}`.  `folder` is false when none is open, which is not an error
+/// and must not be reported as one.  Mail is reported under its own key rather than folded into
+/// `skipped`, which drives a dialog about Diamonds.
 pub async fn adopt_from_folder() -> Outcome<String> {
     if !opfs::folder_open() {
-        return Ok(fmt!("{{\"folder\":false,\"adopted\":[],\"left\":[],\"skipped\":[]}}"));
+        return Ok(fmt!(
+            "{{\"folder\":false,\"adopted\":[],\"left\":[],\"skipped\":[],\
+             \"mail\":{{\"copied\":0,\"left\":[]}}}}"));
     }
     let mut adopted: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut left:    Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
-    // A folder with no `diamonds/` in it is the ordinary case, and it is not a failure.
+    let mut used = 0u64;
+    // A folder with no `diamonds/` in it is the ordinary case, and it is not a failure -- and it
+    // says nothing about whether the folder is holding a mailbox, which is why this is an empty
+    // list to walk rather than an early return.
     let entries = match opfs::list_dir(FileRoot::Machine, ROOT_DIR).await {
         Ok(e)  => e,
-        Err(_) => return Ok(fmt!("{{\"folder\":true,\"adopted\":[],\"left\":[],\"skipped\":[]}}")),
+        Err(_) => Vec::new(),
     };
-    let mut used = 0u64;
     for (name, is_dir, _size) in entries {
         let here = fmt!("{}/{}", ROOT_DIR, name);
         if !is_dir {
@@ -1840,6 +2349,15 @@ pub async fn adopt_from_folder() -> Outcome<String> {
         let label = read_meta(&name).await.map(|m| m.name).unwrap_or_else(|_| name.clone());
         adopted.push((name, label, kept));
     }
+    // The mailbox, on the remaining budget. A failure here is reported and does not fail the run:
+    // the Diamonds are already home by this point, and nothing has been deleted from the folder.
+    let (mail_copied, mail_left) = match bring_mail_home(&mut used).await {
+        Ok(v) => v,
+        Err(e) => {
+            console_log(&fmt!("The mailbox in the folder could not be brought home: {}", e));
+            (0usize, Vec::new())
+        }
+    };
     let rows: Vec<String> = adopted.iter().map(|(id, name, kept)| {
         let ks: Vec<String> = kept.iter().map(|k| fmt!("\"{}\"", json_escape(k))).collect();
         fmt!(
@@ -1852,8 +2370,9 @@ pub async fn adopt_from_folder() -> Outcome<String> {
         items.join(",")
     };
     Ok(fmt!(
-        "{{\"folder\":true,\"adopted\":[{}],\"left\":[{}],\"skipped\":[{}]}}",
-        rows.join(","), quote(&left), quote(&skipped),
+        "{{\"folder\":true,\"adopted\":[{}],\"left\":[{}],\"skipped\":[{}],\
+         \"mail\":{{\"copied\":{},\"left\":[{}]}}}}",
+        rows.join(","), quote(&left), quote(&skipped), mail_copied, quote(&mail_left),
     ))
 }
 

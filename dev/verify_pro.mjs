@@ -17,11 +17,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { requireFreshGateway, procLog } from './gwbin.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
 const GW    = 'http://127.0.0.1:9002';
+/// What the gateway says while this runs. A webhook that mints no licence
+/// answers 200 either way; the reason it rejected the event is only here.
+const GW_LOG = procLog('verify_pro');
 const WHSEC = fs.readFileSync(path.join(GWDIR, 'keys/stripe/sandbox/whsec'), 'utf8').trim();
 
 const ok = [], bad = [];
@@ -33,6 +37,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const procs = [];
 function cleanup() { for (const p of procs) { try { p.kill('SIGKILL'); } catch (e) {} } }
+/// What the gateway this run started was saying while it failed.
+function saidWhat() { GW_LOG.report(); }
 async function waitFor(fn, ms = 20000, gap = 300) {
 	const t0 = Date.now();
 	for (;;) {
@@ -121,8 +127,9 @@ async function refundPro(accountId) {
 }
 
 (async () => {
+	requireFreshGateway();
 	const gw = spawn(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: ['ignore', 'ignore', 'ignore'],
+		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
 	});
 	procs.push(gw);
 	check('gateway comes up', await waitFor(async () => (await fetch(`${GW}/api/health`)).ok));
@@ -192,7 +199,8 @@ async function refundPro(accountId) {
 	});
 	check('sync refuses again after the refund (402)', syncGone.status === 402, 'status ' + syncGone.status);
 
+	if (bad.length) saidWhat();		// before the kill in cleanup.
 	cleanup();
 	console.log(`\n${ok.length} ok, ${bad.length} failed`);
 	process.exit(bad.length ? 1 : 0);
-})().catch(e => { console.error(e); cleanup(); process.exit(1); });
+})().catch(e => { console.error(e); saidWhat(); cleanup(); process.exit(1); });

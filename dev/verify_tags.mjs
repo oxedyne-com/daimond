@@ -81,7 +81,11 @@ check(!(await page.isVisible('#diamond-tag-hint')), 'no tag hint on an account w
 
 // ── Create three Diamonds ────────────────────────────────────────────
 async function newDiamond(name) {
-	await page.click('#new-diamond-btn', { force: true });
+	// NOT `{ force: true }`. A force-click reaches a button a person could not,
+	// and this suite's subject is what the rail does to a Diamond you create --
+	// so "the button was reachable" is part of what it is asserting. The force
+	// hid the Admin drawer sitting over it for the last two sessions.
+	await page.click('#new-diamond-btn', { timeout: 8000 });
 	await page.waitForSelector('.dlg-input', { timeout: 10000 });
 	await page.fill('.dlg-input', name);
 	await page.click('.dlg-ok', { force: true });
@@ -747,7 +751,7 @@ check(!sent.includes('zqxwmarker'), 'no tag reached the model: not in the prompt
 const allCrystals = await wasm(async (app) => {
 	const rows = JSON.parse(await app.list_diamonds());
 	let all = '';
-	for (const r of rows) { try { all += await app.read_crystal(r.id); } catch (e) { /* none yet */ } }
+	for (const r of rows) { try { all += await app.read_crystal_data(r.id); } catch (e) { /* none yet */ } }
 	return all;
 });
 check(!allCrystals.includes('zqxwmarker'), 'no tag leaked into any crystal');
@@ -768,6 +772,12 @@ check(bmum && Array.isArray(bmum.tags) && bmum.tags.includes('family'),
 const brust = (backup.diamonds || []).find(f => f.name === 'Rust compiler notes');
 check(brust && Array.isArray(brust.tags) && brust.tags.length === 0,
 	`an untagged Diamond exports tags:[] not undefined: ${JSON.stringify(brust && brust.tags)}`);
+
+// Admin is still open from the export above, and its drawer sits over the rail --
+// including the New Diamond button the next section presses. A person would shut
+// it; the test has to as well, or it is asserting about a button nobody can reach.
+await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
+await page.waitForTimeout(400);
 
 // ── A create must never land behind a filter ─────────────────────
 // Proved through the search box in verify_diamonds until the box was removed.

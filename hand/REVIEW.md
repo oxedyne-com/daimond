@@ -1276,9 +1276,11 @@ path the model wrote.** FOUND while closing 1.12, and closed with it.
 `fmt!("{}/{}", prefix, rel.trim_start_matches("./"))` -- and never normalised the
 result. `wasm::opfs::split_components` then resolved `..` lexically and refused
 only a climb above the OPFS ROOT. A Diamond is not the root. So a daimon
-steering its crystal and asking for `../beta/crystal.md` was handed
-`diamonds/alpha/../beta/crystal.md`, which landed at `diamonds/beta/crystal.md`
+steering its crystal and asking for `../beta/crystal.json` was handed
+`diamonds/alpha/../beta/crystal.json`, which landed at `diamonds/beta/crystal.json`
 -- another Diamond's private notes, inside OPFS, permitted, read and writable.
+(The file was `crystal.md` when this was found; the leaf is incidental to the
+escape, and the name is kept current so the shape can still be reproduced.)
 `guard` could not catch it: it tests the path as the model wrote it against the
 turn's bounds, and this turn's bounds are empty, which permits everything.
 
@@ -1306,7 +1308,7 @@ workspace agent -- is untouched, and bounded by the OPFS root as it always was.
 
 The doc comment records why this cannot be done with `may_read` instead, because
 that is the repair the next person will reach for: that door tests the path as
-the MODEL wrote it, so a crystal agent asking for `crystal.md` would be measured
+the MODEL wrote it, so a crystal agent asking for `crystal.json` would be measured
 against an allow-list of `diamonds/<id>` and refused for its ordinary work. It
 is 1.18's collision from the other side -- a prefix and an allow-list are two
 ways of saying where a turn lives, and a path can be checked against one, not

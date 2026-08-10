@@ -191,6 +191,28 @@
 	'models.credit_base_update':   '自分の申告を更新',
 	'models.credit_base_bad':      '金額ではありません。米ドルの数値を入力してください。',
 
+	// ── 検索 ───────────────────────────────────────────────────
+	// 「検索エンジン」は検索するという動作ではなく、使うサービスのことです。
+	// エンジン名（Brave、Exa、Tavily、Serper）は固有名詞なので訳しません。
+	// {engine} にはその固有名詞が入るため、前後に半角スペースを置きます。
+	// `models.api_key` と同じく、キーは「鍵」ではなく「キー」と呼びます。
+	'search.head':            '検索',
+	'search.engine':          '検索エンジン',
+	// 無料なのは毎月の一定量であって、キーそのものではありません。それを超えた分は
+	// 提供元がユーザーに請求します。数字もエンジン名も、あえて書きません。
+	'search.engine_note':     'Daimond がどのサービスで検索するか。自分のキーを持ち込めば、ほとんどは毎月一定量まで無料です。',
+	'search.credits':         'Daimond クレジット',
+	'search.key':             'API キー',
+	'search.key_note':        'この端末に留まり、パスフレーズで封印され、それが支払う検索のときだけ送られます。',
+	'search.no_key':          '「{engine}」のキーを追加するか、Daimond クレジットに切り替えてください。',
+	'search.kind_web':        'ウェブ',
+	'search.kind_news':       'ニュース',
+	'search.kind_academic':   '学術',
+	'search.refused_serper':  '「{engine}」は、自分のキーでしか使えません。',
+	// {n} は書式済みで届くので、桁区切りは足しません。末尾の但し書きは残します。
+	// 他社の料金なので、いずれ古くなります。
+	'search.free_month':      '「{engine}」なら月におよそ {n} 回まで無料です。前回確認した時点の話です。',
+
 	// ── クレジット、パック、Pro ────────────────────────────────
 	// 請求が発生するものは、米ドルであることをはっきり書きます。`billing.*` を参照。
 	'credits.lead':      'プロバイダーの鍵を管理したくないですか。クレジットを買えば Daimond がモデルを動かします。サブスクリプションはありません。買った分はそのまま残り、下の自動チャージをオンにしない限り、あらためて請求されることはありません。',
@@ -253,6 +275,10 @@
 	'chat.collapse_help':  'すべての回答をたたんで質問だけを残し、たたむやり取りを選びます',
 	'chat.input_ph':       'メッセージを入力…',
 	'chat.send':           '送信',
+	'chat.busy':           '考えています…',
+	'chat.busy_tool':      '{tool} を実行中、ステップ {n}…',
+	'chat.busy_next':      'ステップ {n} が完了、考えています…',
+	'chat.busy_writing':   '回答を書いています…',
 	'chat.answered': 'Daimond が回答しました（{n} 語）',
 	'chat.answer_failed': 'Daimond は回答できませんでした',
 	'chat.collapse': 'すべての回答をたたむ',
@@ -289,6 +315,10 @@
 	'web.back':       '戻る',
 	'web.reload':     '再読み込み',
 	'web.pop_out':    '実際のタブで開く',
+	// パネルの見出しにある一時停止のボタンの名前。`pause.act_pause` に入って
+	// 「ウェブアクセス を一時停止」になります。`root/web` を制御し、このパネル
+	// より広く効くので「このパネル」とは呼びません。
+	'web.pause':      'ウェブアクセス',
 	'web.blind_title': 'あなたの操作です。私は見ていません。',
 	'web.blind_note':  'Daimond はこのページの読み取りをやめました — 文字も画像もキー入力も見ていません。サインインしたら、ブラウザのタブにある <b>Daimond を再開</b> をクリックして操作を戻してください。そのボタンはここではなくタブにあるので、このページが操作を奪うことはできません。',
 	'web.resumed':     '再開しました — ご確認ください',
@@ -756,15 +786,19 @@
 	'spend.col_amount':  '金額',
 	'spend.col_balance': '残高',
 	// ゲートウェイが付けるクレジットの区分。
-	'spend.cat_web':    'ウェブページ',
-	'spend.cat_mail':   'メール',
-	'spend.cat_sync':   '端末間の同期',
-	'spend.cat_other':  'その他のサービス',
-	'spend.cat_topup':  'クレジットの購入',
-	'spend.cat_refund': '返金',
-	'spend.cat_grant':  '贈与・助成',
-	'spend.cat_adjust': '調整',
+	'spend.cat_web':     'ウェブページ',
+	'spend.cat_search':  'ウェブ検索',
+	'spend.cat_mail':    'メール',
+	'spend.cat_sync':    '端末間の同期',
+	'spend.cat_storage': '保存したファイル',
+	'spend.cat_infer':   '推論（クレジット）',
+	'spend.cat_other':   'その他のサービス',
+	'spend.cat_topup':   'クレジットの購入',
+	'spend.cat_refund':  '返金',
+	'spend.cat_grant':   '贈与・助成',
+	'spend.cat_adjust':  '調整',
 	'spend.cat_fallback': 'その他',
+	'spend.cat_unlisted': '内訳不明',
 
 	// ── ツール ─────────────────────────────────────────────────
 	'tools.head':         '<b>{all} 個中 {have} 個</b>のツール。Daimond にできることの大半は無料でできます — 下のツールは、Daimond そのものです。いくつかはブラウザの外の世界に手を伸ばすもので、それらは動かすのにかかる分だけ費用がかかります。',
@@ -792,9 +826,12 @@
 	'settings.max_tokens_auto':    '自動',
 	'settings.tokens':             'トークン',
 	'settings.max_rounds':         '1 ターンあたりのステップ数',
+	'settings.crystal_limits':   'クリスタルの容量',
 	'settings.crystal_cap':      'クリスタルのサイズ上限',
-	'settings.crystal_cap_note': 'クリスタルはダイヤモンドの要約なので上限があります。超えると、daimon は詳細をダイヤモンドのスコープ内のファイルに書くよう指示されます。',
+	'settings.crystal_cap_note': 'クリスタルは Diamond の要約なので上限があります。超えると、daimon は詳細を Diamond のスコープ内のファイルに書くよう指示されます。',
 	'settings.crystal_cap_auto': 'デフォルト',
+	'settings.crystal_page_cap': 'ページのサイズ上限',
+	'settings.crystal_page_cap_note': 'Diamond のデータを表示するページです。同期のたびに一緒に運ばれるので、容量をデータと分け合います。',
 	'settings.max_rounds_auto':    '既定',
 	'settings.steps':              'ステップ',
 	'settings.max_rounds_note':    '1 つのターンが止まるまでに、エージェントがツールを使える回数。止まるときにはそう伝えるので、続けるように指示できます。',
@@ -1049,6 +1086,11 @@
 	'egress.reach_title': '{host} に接続しますか？',
 	'egress.reach_body':  'このやり取りは作業領域の外の内容 — ウェブページやメッセージ — を読んでいます。その中に Daimond を誘導しようとするものがあるかもしれません。\n\n今、これまで訪れたことのない {host} に接続しようとしています。知っていることは何でも、そのアドレスに紛れて運ばれ得ます。\n\n心当たりがあるときだけ許可してください。',
 	'egress.reach_ok':    '{host} を許可',
+	// 検索では、出ていくのはアドレスではなく検索語です。{query} は独立した段落に
+	// 単独で置き、引用符では囲みません。検索語自体が引用符を含み得るからです。
+	'egress.search_title': 'ウェブで検索しますか？',
+	'egress.search_body':  'このやり取りは作業領域の外の内容を読んでおり、Daimond は今ウェブで検索しようとしています。\n\n検索しようとしているのは次のとおりです。\n\n{query}\n\n検索には「{engine}」を使います。これはあなたの設定であって、モデルが選んだものではありません。この端末から出ていくのは、この検索語です。\n\n心当たりがなければ断ってください。失われるのはこの 1 回の検索だけです。',
+	'egress.search_ok':    'この検索を実行',
 
 	// ── レールのチャットのタイル ───────────────────────────────
 	'chat.copy_message':   'メッセージをコピー',
@@ -1270,6 +1312,25 @@
 	'crystal.read_delta_failed': '差分を読み取れませんでした',
 	'crystal.steering':       '導いています…',
 	'crystal.no_key_steer':   'この Diamond のプロバイダーには読める鍵がありません — ロックを解除するか鍵を追加すると、導けます。',
+	'crystal.page_failed':    'この Diamond のページが読み込めなかったので、代わりにデータを表示しています。',
+	'crystal.page_partial':   'この Diamond の中身がページにすべて出ていなかったので、代わりにデータを表示しています。',
+	'crystal.page_reset':     'ページを標準に戻す',
+	'crystal.page_reset_confirm': 'この Diamond のページを標準のページに置き換えますか。データはそのままです。',
+	'crystal.ask':            'ダイモンにこのページを変えてもらう',
+	'crystal.edit_json':      'JSON として編集',
+	'crystal.json_invalid':   'JSON として正しくないので、何も保存しませんでした。',
+	'crystal.field_title':    'タイトル',
+	'crystal.field_summary':  '要約',
+	'crystal.field_sections': 'セクション',
+	'crystal.field_facts':    '事実',
+	'crystal.field_open':     '未解決のこと',
+	'crystal.field_links':    'リンク',
+	'crystal.field_heading':  '見出し',
+	'crystal.field_body':     '本文',
+	'crystal.add_section':    'セクションを追加',
+	'crystal.remove':         '削除',
+	'crystal.other_fields':   'その他の項目',
+	'crystal.other_fields_note': 'そのまま保たれています。何も消えないよう、ここに出しています。',
 
 	// ── 成果物 ─────────────────────────────────────────────────
 	'arte.count.one':      '成果物 {n} 件',

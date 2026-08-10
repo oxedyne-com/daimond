@@ -513,8 +513,17 @@
 				+ '<path d="M15 4.2a6 6 0 015 5M15 8a2.4 2.4 0 012 2"/></svg>';
 			l.id = 'pair-link-btn';
 			l.type = 'button';
-			l.title = t('pair.link_another');
-			l.setAttribute('aria-label', l.title);
+			// Bound rather than set: a name written once at mount is fixed in
+			// whichever language the button happened to be built in, and stays
+			// there through every later `setLocale`. It is spoken text, so it is
+			// the kind nobody sees go wrong.
+			if (window.DaimondI18n && DaimondI18n.bind) {
+				DaimondI18n.bind(l, 'title', 'pair.link_another');
+				DaimondI18n.bind(l, 'aria-label', 'pair.link_another');
+			} else {
+				l.title = t('pair.link_another');
+				l.setAttribute('aria-label', l.title);
+			}
 			l.style.display = 'none';
 			l.addEventListener('click', function () {
 				if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;

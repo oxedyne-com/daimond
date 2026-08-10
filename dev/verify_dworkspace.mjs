@@ -131,7 +131,7 @@ const id = await page.evaluate(async () => {
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	return JSON.parse(await app.list_diamonds())[0].id;
 });
-check(paths.includes(`diamonds/${id}/crystal.md`),
+check(paths.includes(`diamonds/${id}/crystal.json`),
 	`the Diamond’s own directory is there, as real contents (${paths.join(', ')})`);
 check(!paths.some(p => /^(docs|loose|a|b)$/.test(p)),
 	'and nothing else in the workspace is');
@@ -204,8 +204,12 @@ await page.waitForTimeout(900);
 await setScope('diamond');
 r = await rows();
 paths = r.map(x => x.path).sort();
+// A Diamond's own directory is now three things: the memory, the page that draws
+// it, and the snapshots. The page is there from the first time the Diamond is
+// opened -- one whose page is missing is given the shipped default AND it is
+// written, so a default can be diffed against the edit that broke it.
 const want = [
-	`diamonds/${id}/crystal.md`, `diamonds/${id}/versions`,
+	`diamonds/${id}/crystal.json`, `diamonds/${id}/crystal.html`, `diamonds/${id}/versions`,
 	'a/notes', 'b/notes', 'docs', 'loose/other.md', 'loose/ref.md',
 ].sort();
 check(JSON.stringify(paths) === JSON.stringify(want),
@@ -352,7 +356,7 @@ sc = await scopeRow();
 check(sc.shown && sc.chips[1] && sc.chips[1].active,
 	`the tree the user chose is the tree they get back (${JSON.stringify(sc.chips)})`);
 paths = (await rows()).map(x => x.path);
-check(paths.includes(`diamonds/${id}/crystal.md`) && !paths.includes('docs'),
+check(paths.includes(`diamonds/${id}/crystal.json`) && !paths.includes('docs'),
 	`and it is that Diamond’s workspace (${paths.join(', ')})`);
 
 // ── Eight languages, and the row is on screen in all of them ───────────

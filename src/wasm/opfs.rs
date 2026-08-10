@@ -8,7 +8,25 @@
 //! Paths are workspace-relative and jailed with the same lexical
 //! discipline as [`crate::workspace::Workspace::resolve`]: absolute
 //! paths and `..` traversal that escapes the root are rejected, so a
-//! path can only ever address a descendant of the root handle.
+//! path can only ever address a descendant of the root handle.  The jail
+//! is also what makes `.` and `..` unreachable as component NAMES — the
+//! two strings the File System Standard refuses outright — because they
+//! are consumed as navigation before any name is formed.
+//!
+//! ## Names the filesystem will take
+//!
+//! A workspace name is not always a filesystem name.  A Maildir message is called
+//! `<uid>.<uidvalidity>.daimond:2,<flags>`, and a colon is refused by every root except a modern
+//! browser's own sandbox — including the real local folder the user may have open, which is where
+//! `mail/…` USED to land, and where a build before this one left it.  [`crate::fsname`] is the
+//! codec that closes the gap, and [`disk_name`] is the single place in this module where it is
+//! applied; [`read_entries`] is the single place the inverse is.  Nothing else may spell a name
+//! for the browser.
+//!
+//! Because both ends go through that one pair, a file copied from the folder to the sandbox keeps
+//! its WORKSPACE name across the crossing — decoded out of the folder's listing, encoded again for
+//! whichever root it is written to — and so cannot arrive under a second spelling of itself.
+//! Migrating `mail/` (see [`crate::wasm::diamond::adopt_from_folder`]) rests on exactly that.
 //!
 //! ## Two roots, one interface (FSA real-folder mode)
 //!
@@ -41,6 +59,7 @@
 // backend for the append-only session log, where synchronous positioned
 // writes matter.
 
+use crate::fsname;
 use crate::tools::FileRoot;
 use crate::wasm::js_str;
 
@@ -204,6 +223,44 @@ fn jail_components(rel: &str) -> Outcome<Vec<String>> {
     Ok(out)
 }
 
+/// The name a component is actually stored under inside `dir`.
+///
+/// THE ONE PLACE A WORKSPACE NAME BECOMES A FILESYSTEM NAME.  Every call below that reaches
+/// `getFileHandle`, `getDirectoryHandle` or `removeEntry` takes its name from here or from
+/// [`descend`] / [`descend_dir`] / [`open_parent`], which take theirs from here — because a file
+/// written under one spelling and looked for under another is worse than the loud failure this
+/// fixes.  [`read_entries`] closes the loop in the other direction, decoding what it lists.
+///
+/// A name [`fsname::encode`] leaves alone is used exactly as it is, which is every ordinary name
+/// and therefore the whole of an existing store: no walk, no rename, nothing moves.
+///
+/// A name it must escape is looked for UNESCAPED first.  A store written before this codec existed
+/// holds it that way — a Maildir file on a browser whose sandbox accepted `:` is precisely that,
+/// and those users' mail synced perfectly well — and reaching straight for the escaped name would
+/// leave their messages on disk under a name nothing asks for any more, with a second copy growing
+/// beside them.  Only when no such entry is there is the escaped name used, so a name that has
+/// never been stored gets the legal spelling and one that has keeps the one it has.
+///
+/// # Arguments
+/// * `dir` - The directory the component sits in.
+/// * `name` - The component as the workspace spells it.
+async fn disk_name(dir: &FileSystemDirectoryHandle, name: &str) -> String {
+    let enc = fsname::encode(name);
+    if enc == name {
+        return enc;
+    }
+    // A browser that refuses the unescaped name REJECTS the promise (the File System Standard
+    // says so, and the TypeError this whole module exists for arrived that way), so a lookup
+    // costs nothing but an answer of "no".
+    if JsFuture::from(dir.get_file_handle(name)).await.is_ok() {
+        return name.to_string();
+    }
+    if JsFuture::from(dir.get_directory_handle(name)).await.is_ok() {
+        return name.to_string();
+    }
+    enc
+}
+
 /// Acquire the OPFS root directory handle for this origin.
 ///
 /// Runs on the main thread via `window.navigator.storage`; a secure
@@ -236,6 +293,11 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
     if ns.is_empty() {
         return Ok(dir);
     }
+    // NOT through `disk_name`, and deliberately.  The namespace is `d~` and sixteen hex
+    // characters, so the codec is the identity on it either way -- but `cloud.js`'s `opfsRoot`
+    // and the account wipe in `daimond.js` reach this same directory by its literal name, and a
+    // spelling rule applied here and not there is how one account's files end up somewhere the
+    // other three doors cannot see.
     let opts = FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
     let sub_val = res!(JsFuture::from(dir.get_directory_handle_with_options(&ns, &opts)).await
@@ -260,10 +322,16 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
 /// applied here, once: a path naming the store resolves against OPFS whatever root is active (see
 /// [`crate::tools::is_store_path`]).
 ///
+/// A mailbox at `mail/<address>` is the same rule for a different reason, and it was missing:
+/// mail belongs to an ACCOUNT, so following the folder put the messages inside whichever one
+/// happened to be open, hid them when none was, and wrote them somewhere else again after a
+/// switch.  A real folder would not even take the names -- a Maildir colon is refused outside the
+/// sandbox.  See [`crate::tools::MAIL_ROOT`].
+///
 /// [`FileRoot::Opfs`] is NOT made redundant by that and must not be deleted as though it were.  It
-/// is the belt to this test's braces: `crystal.md` is written through two doors and read through a
-/// third, and the day one of them stops agreeing with the others is the day an agent reads an empty
-/// crystal and writes over work it never saw.
+/// is the belt to this test's braces: `crystal.json` is written through two doors and read through
+/// a third, and the day one of them stops agreeing with the others is the day an agent reads an
+/// empty crystal and writes over work it never saw.
 ///
 /// # Arguments
 /// * `root` - Which root the caller asked for.
@@ -294,6 +362,9 @@ async fn resolve_root(root: FileRoot, path: &str) -> Outcome<FileSystemDirectory
 /// Descend into (creating as needed) the directory components of a
 /// jailed path, returning the handle to the directory that will hold the
 /// leaf file plus the leaf name.
+///
+/// The leaf comes back as its ON-DISK name (see [`disk_name`]), so a caller can hand it straight
+/// to the browser without knowing that a spelling question exists.
 async fn descend(
     root:       &FileSystemDirectoryHandle,
     components: Vec<String>,
@@ -303,7 +374,8 @@ async fn descend(
     let mut dir = root.clone();
     let last = components.len() - 1;
     let mut leaf = String::new();
-    for (i, name) in components.into_iter().enumerate() {
+    for (i, want) in components.into_iter().enumerate() {
+        let name = disk_name(&dir, &want).await;
         if i == last {
             leaf = name;
             break;
@@ -331,7 +403,8 @@ async fn descend_dir(
 {
     let components = res!(split_components(path));
     let mut dir = root.clone();
-    for name in components {
+    for want in components {
+        let name = disk_name(&dir, &want).await;
         let next_val = res!(JsFuture::from(dir.get_directory_handle(&name)).await
             .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_str(&e); IO, File, Read)));
         dir = res!(next_val.dyn_into()
@@ -343,6 +416,8 @@ async fn descend_dir(
 /// Descend into the *existing* parent directory of a jailed path (no
 /// creation) beneath `root`, returning the parent handle plus the leaf
 /// name.
+///
+/// The leaf comes back as its ON-DISK name (see [`disk_name`]).
 async fn open_parent(
     root:       &FileSystemDirectoryHandle,
     components: Vec<String>,
@@ -352,7 +427,8 @@ async fn open_parent(
     let mut dir = root.clone();
     let last = components.len() - 1;
     let mut leaf = String::new();
-    for (i, name) in components.into_iter().enumerate() {
+    for (i, want) in components.into_iter().enumerate() {
+        let name = disk_name(&dir, &want).await;
         if i == last {
             leaf = name;
             break;
@@ -426,7 +502,8 @@ pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let mut dir = handle;
-    for name in components {
+    for want in components {
+        let name = disk_name(&dir, &want).await;
         let opts = FileSystemGetDirectoryOptions::new();
         opts.set_create(true);
         let next = res!(JsFuture::from(dir.get_directory_handle_with_options(&name, &opts)).await
@@ -516,6 +593,60 @@ pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Read `len` bytes of a file from `offset`, and say how big the whole thing is.
+///
+/// [`read_file_capped`] below reads a prefix, which is what a caller wanting to know what a file
+/// IS needs.  A caller wanting to SHOW a file needs to move through it -- the next page of a hex
+/// dump, a later frame -- and reading from the start each time turns a walk through a large file
+/// into a quadratic one.
+///
+/// The bytes never all exist at once: `slice` hands back another `Blob` and copies nothing until
+/// it is read, and the size comes off the handle, which a `Blob` knows without anyone reading it.
+/// An `offset` past the end is not an error; it answers with nothing and the true size, which is
+/// what lets a caller walk to the end without knowing in advance where the end is.
+///
+/// # Arguments
+/// * `root` - Which root to resolve `path` against.
+/// * `path` - The workspace-relative path.
+/// * `offset` - Where to start, in bytes.
+/// * `len` - How many bytes to take.
+pub async fn read_file_range(
+    root:   FileRoot,
+    path:   &str,
+    offset: f64,
+    len:    u32,
+)
+    -> Outcome<(Vec<u8>, f64)>
+{
+    let handle = res!(resolve_root(root, path).await);
+    let components = res!(jail_components(path));
+    let (dir, leaf) = res!(open_parent(&handle, components).await);
+
+    let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
+        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
+        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
+    let blob_val = res!(JsFuture::from(file_handle.get_file()).await
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    let file: File = res!(blob_val.dyn_into()
+        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+
+    let total = file.size();
+    let from = if offset < 0.0 { 0.0 } else { offset };
+    if from >= total {
+        return Ok((Vec::new(), total));
+    }
+    let to = (from + len as f64).min(total);
+    let want: &Blob = file.as_ref();
+    // `slice_with_f64_and_f64` rather than the i32 pair: a file over 2 GiB is exactly the case
+    // this function exists for, and an i32 offset would wrap silently in the middle of one.
+    let part = res!(want.slice_with_f64_and_f64(from, to)
+        .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    let buf_val = res!(JsFuture::from(part.array_buffer()).await
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
+    Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
+}
+
 /// Read at most `max` bytes of a file, and say how big the whole thing is.
 ///
 /// WHY THIS EXISTS. `read_file` above reads whatever is on disk into memory, and
@@ -564,6 +695,12 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
 }
 
 /// Read the entries of `dir`, returning `(name, is_dir, size)` per entry.
+///
+/// The names come back AS THE WORKSPACE SPELLS THEM, not as the browser stores them: a listing
+/// that returned `70074.3.daimond%3A2,S` would hand every caller a name that does not open, and
+/// mail matches on the Maildir flags after the `:2,`, so it would read every message as unflagged.
+/// [`fsname::decode`] is the inverse of the [`disk_name`] every lookup goes through, and it leaves
+/// a name written before that codec existed exactly as it found it.
 ///
 /// OPFS directory iteration is exposed as an async iterator via
 /// `FileSystemDirectoryHandle.entries()` (web-sys returns a
@@ -619,7 +756,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle) -> Outcome<Vec<(String, b
                 Err(_) => 0u64,
             }
         };
-        out.push((name, is_dir, size));
+        out.push((fsname::decode(&name), is_dir, size));
     }
     Ok(out)
 }

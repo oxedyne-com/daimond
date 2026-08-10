@@ -27,6 +27,12 @@ pub mod handler;
 /// while the OPFS edge over it stays in [`wasm::diamond`].
 pub mod diamond_link;
 pub mod diamond_meta;
+/// How one path component is spelled on a filesystem that will not take it as it stands.
+///
+/// Target-agnostic on purpose: the rules are a browser's, but the codec is a pure string
+/// transform whose reversibility is the whole of its correctness, and that is provable
+/// natively rather than only in a page.  The edge that applies it is [`wasm::opfs`].
+pub mod fsname;
 pub mod llm;
 /// The system prompt each kind of agent runs under, and the part of it a user
 /// may replace from their workspace.

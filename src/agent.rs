@@ -401,7 +401,21 @@ impl Agent {
             match result {
                 Ok(resp) => {
                     let content = if resp.content.is_empty() { full } else { resp.content };
+                    // A TURN MUST NEVER END IN SILENCE. Both empty means the provider
+                    // returned a final message with nothing in it -- which happens on a
+                    // reasoning model whose answer went entirely to a channel this app
+                    // does not print, and happened to a user after the model had read
+                    // five files and then appeared to do nothing at all. The spinner
+                    // clears, the screen does not change, and there is no way to tell a
+                    // finished turn from a hung one. Whatever the cause, saying so is
+                    // strictly better than saying nothing.
+                    let silent = content.trim().is_empty();
                     session.messages.push(ChatMessage::assistant(content));
+                    if silent {
+                        on_event(AgentEvent::Error(
+                            "The model ended its turn without saying anything.".to_string()));
+                        session.messages.push(compact::empty_turn_note());
+                    }
                     session.prompt_tokens += resp.prompt_tokens;
                     session.completion_tokens += resp.completion_tokens;
                     session.cached_tokens += resp.cached_tokens;

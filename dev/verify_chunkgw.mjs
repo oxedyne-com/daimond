@@ -34,9 +34,9 @@
 // starts its own if none is up, and stops what it started.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireFreshGateway, GWBIN, procLog } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 
@@ -44,6 +44,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
 const GW_URL = 'http://127.0.0.1:9002';
 const SRC    = path.resolve(__dirname, '..', 'www', 'js', 'chunks.js');
+/// What the gateway says while this runs. Half of what is measured below is a
+/// sweep the gateway declines, and the reason it declined is logged there and
+/// nowhere else. Silent when this run reuses a gateway it did not start.
+const GW_LOG = procLog('verify_chunkgw');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -61,28 +65,31 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 	return false;
 }
 
-// The binary built into the isolated target dir is the current one; the copy
-// under gateway/target may be older, and a stale gateway here would answer
-// without a sweep floor at all and every check in (B) would pass for the wrong
-// reason. Newest wins, and the version is asserted below in any case.
-const BINS = [
-	path.join(os.homedir(), '.cache/cargo-targets/gateway_target/release/daimond_gateway'),
-	path.join(GWDIR, 'target/release/daimond_gateway'),
-].filter(p => fs.existsSync(p));
-BINS.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+requireFreshGateway();
 
+// The tree's binary, and only that one.
+//
+// This file used to pick whichever of `gateway/target/release/` and a slot's
+// `~/.cache/cargo-targets/gateway_target/release/` was newer, on the grounds
+// that the tree copy might be stale -- which it might, since agents build with
+// CARGO_TARGET_DIR pointed elsewhere. That was a workaround written before
+// anything checked, and it is now the wrong half of a contradiction: every
+// other verifier measures the tree copy, `requireFreshGateway` refuses when it
+// is older than its sources, and `run_all.sh` builds it once before the run.
+// Preferring a different binary here would mean one verifier in a gate
+// measuring a build none of the others saw -- exactly the failure the guard was
+// written to prevent, and harder to spot because it only shows up as a
+// disagreement between two green runs.
+//
+// So the preference is gone. The refusal above is what handles a stale tree
+// copy now, and it says how to fix it.
 let gw = null;
 const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 800, 200);
 if (alreadyUp) {
 	console.log('  ok   using the gateway already on :9002');
 } else {
-	if (!BINS.length) {
-		console.log('SKIP verify_chunkgw — no daimond_gateway binary built');
-		process.exit(0);
-	}
-	gw = spawn(BINS[0], [], { cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: 'ignore' });
-	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok),
-		BINS[0]);
+	gw = spawn(GWBIN, [], { cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
+	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok), GWBIN);
 }
 
 const s = await open({ name: 'chunkgw', signIn: true, connect: false });
@@ -548,4 +555,8 @@ try {
 }
 
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
-if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }
+if (bad.length) {
+	bad.forEach(b => console.log('  FAILED: ' + b));
+	GW_LOG.report();
+	process.exit(1);
+}

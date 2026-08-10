@@ -36,13 +36,26 @@
 //! given ([`orphan_count`]).  A refused fold is not a dead end: [`elide_bulk`] shrinks the
 //! same conversation without adding or removing a single message, so pairing cannot be
 //! touched at all.
+//!
+//! ## The other fold
+//!
+//! [`crystal_proposal`] belongs to the reducer rather than to any of the above: it is the
+//! check a proposed crystal must pass before a user is offered it to accept.  It is here
+//! because it is the same rule -- a fold is refused before it is offered, never after --
+//! and because the two would otherwise drift apart, which is how one of them ends up with
+//! the reasoning and the other with the bug.
 
 use crate::llm::{extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_jdat::Dat;
+use oxedyne_fe2o3_jdat::bdat::DecodeLimits;
+use oxedyne_fe2o3_jdat::string::dec::DecoderConfig;
+use oxedyne_fe2o3_jdat::usr::{UsrKind, UsrKindCode, UsrKindId};
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -118,6 +131,14 @@ const MAX_TOKENS_PER_BYTE: f64 = 0.60;
 /// it is fixing failed: the part being folded is by definition near the window, so a
 /// summarising call carrying it whole would be refused for the same reason.  It is also
 /// what makes the cost of a fold a fixed number rather than a fraction of the session.
+///
+/// It has been cited as the reason a crystal carrying a page would be dear to fold.  That
+/// reasoning was for a design where the crystal was one markdown file with the markup
+/// inside it, and it does not survive the split: presentation lives in `crystal.html`,
+/// which the reducer is never shown and which never enters a system prompt, so no page
+/// reaches this budget by any route.  The crystal's data half does, since it rides in the
+/// standing context of every request -- which is what its own cap is for, and why that cap
+/// bounds only the half a model reads.
 pub const FOLD_INPUT_CAP: u64 = 48_000;
 
 /// Bytes of a tool result kept when it is elided in place.
@@ -154,6 +175,12 @@ pub const IMAGE_TOKEN_CAP: u64 = 4_784;
 const FALLBACK_IMAGE_TOKENS_PER_BYTE: f64 = 0.05;
 
 /// Tokens the summarising call may generate.
+///
+/// The CONTEXT fold's, and only that one -- it is set on the client where the summarising
+/// call is made in `agent.rs` and nowhere else.  Nothing caps what the crystal reducer
+/// emits, which is a different fold under a different prompt, so a figure derived from this
+/// one is not a statement about how large a crystal a fold can produce.  The crystal's own
+/// ceiling is [`crate::tools::crystal_cap`], enforced at the write.
 pub const FOLD_MAX_TOKENS: u32 = 1_400;
 
 
@@ -759,6 +786,24 @@ pub fn notice(folded: usize, summary: &str, ledger: &Ledger, why: Option<&str>) 
 ///
 /// # Arguments
 /// * `max_rounds` - The limit that was reached.
+/// Said to the model when the turn before it produced no words at all.
+///
+/// A turn can finish having said nothing: the provider returns an empty final
+/// message, and on a reasoning model the whole answer sometimes goes to a channel
+/// the app does not print.  Nothing then appears on screen, the spinner clears,
+/// and the user cannot tell a finished turn from a hung one -- which is what was
+/// reported against a DeepSeek model after it had read five files and stopped.
+///
+/// It is said in the app's voice, for the reason [`round_limit_note`] gives: a
+/// silence the app noticed must not read, on the next turn, as something the
+/// assistant chose to say.
+pub fn empty_turn_note() -> ChatMessage {
+	ChatMessage::system(
+		"[The previous turn ended without producing any text. Daimond noticed and \
+		 said so; the assistant did not choose to stop. Say what was found and \
+		 carry on from there.]".to_string())
+}
+
 pub fn round_limit_note(max_rounds: usize) -> ChatMessage {
 	ChatMessage::system(fmt!(
 		"[Daimond stopped the previous turn after {} tool-call rounds, which is its \
@@ -881,6 +926,312 @@ pub fn elide_bulk(
 		n += 1;
 	}
 	n
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The crystal fold's gate                                        │
+// └───────────────────────────────────────────────────────────────┘
+//
+// A different fold from the rest of this module -- the reducer's, which folds one delta
+// into a Diamond's memory rather than a conversation into a notice -- and it sits here
+// because it is the same refusal.  [`fold`] will not hand back a conversation a provider
+// would reject; this will not hand back a crystal nothing can read.  A fold is checked
+// BEFORE it is offered, or the checking is left to a user who has already pressed accept.
+//
+// The check earns its place at the moment the crystal stopped being markdown.  Markdown
+// has no parse failure, so anything the reducer said was a crystal and the only sensible
+// gate was "is it empty".  JSON does have one, and the failure it admits is total: an
+// accepted proposal REPLACES the file, so one stray sentence of preamble costs the user
+// everything the Diamond remembered.  The prompt asks for bare JSON
+// ([`crate::prompts::CRYSTAL_SCHEMA_NOTE`]); this is what happens when the model does not
+// listen.
+
+/// Greatest nesting the crystal check will descend to.
+///
+/// A crystal is an object of lists of small objects, so honest text reaches five or six
+/// levels and never more.  The decoder's own default for text is 512, which is chosen so
+/// that a 2 MiB native thread stack survives the worst case -- and this runs in a browser,
+/// where the stack is a quarter of that.  Thirty-two levels is generous for the shape and
+/// costs well under a tenth of what is there, so a crystal nested to provoke a crash is
+/// refused with a sentence rather than taking the wasm module down.
+const CRYSTAL_MAX_DEPTH: usize = 32;
+
+/// Greatest proposal the crystal check will parse at all.
+///
+/// Far above [`crate::tools::CRYSTAL_CAP_DEFAULT`] on purpose: the cap is a judgement
+/// about what a summary should weigh and belongs at the write, whereas this is only a
+/// bound on how much text is worth handing a parser before refusing outright.  A proposal
+/// this large has gone wrong in some way the cap will also catch.
+const CRYSTAL_MAX_BYTES: usize = 1024 * 1024;
+
+/// The reducer's raw output as a crystal, or the reason it is not one.
+///
+/// Three refusals, in the order they cost the user.  An EMPTY proposal is nothing to fold
+/// in.  One that is not a single whole object -- truncated, or trailing prose, or a bare
+/// list -- carries no crystal keys the app, the page or the next reducer could name; and
+/// the next reducer matters most, because it is handed the crystal as its input and would
+/// fold the following delta into wreckage.  One that is shaped right and still will not
+/// parse is the same loss arriving a step later.
+///
+/// **Two checks and not one, and the structural one is not the belt.**  The daticle
+/// decoder is what says whether the text is JSON, but its text form is forgiving where a
+/// browser is not: a map whose input simply stops is returned as a map of what arrived, so
+/// `{"title": "half` decodes happily here and is refused by `JSON.parse` -- and a reply cut
+/// at the model's output limit is the commonest way a fold goes wrong.  It also stops
+/// reading at the close, so a second object after the first is neither read nor complained
+/// about.  [`one_whole_object`] answers exactly the question the decoder does not: one
+/// object, opened at the first byte and closed at the last.
+///
+/// What comes back is the model's OWN text, unfenced and trimmed, never a re-encoding of
+/// what was parsed.  Re-encoding would sort the keys and normalise the numbers, and the
+/// contract turns on carrying a key through exactly as it arrived -- including one this
+/// build has never heard of.  The parse is a question asked of the text, not a stage the
+/// text passes through.
+///
+/// # Arguments
+/// * `raw` - Everything the reducer emitted, exactly as it emitted it.
+pub fn crystal_proposal(raw: &str) -> Outcome<String> {
+	let text = unfence(raw);
+	if text.is_empty() {
+		return Err(err!(
+			"The reducer returned an empty proposal, so there is nothing to fold in. A fold \
+			 never empties a crystal; try again, or steer the Diamond instead.";
+			Invalid, Data));
+	}
+	if !one_whole_object(text) {
+		return Err(err!(
+			"The reducer's proposal is not one whole JSON object, so accepting it would \
+			 replace this Diamond's crystal with something nothing can read. A crystal opens \
+			 with a brace and closes with the matching one, and carries nothing on either \
+			 side of it.";
+			Invalid, Data));
+	}
+	let cfg = json_cfg();
+	let dat = match Dat::decode_string_with_config(text, &cfg) {
+		Ok(d)  => d,
+		Err(e) => return Err(err!(e,
+			"The reducer's proposal is not JSON, so accepting it would replace this \
+			 Diamond's crystal with text nothing can read.";
+			Invalid, Data)),
+	};
+	match dat {
+		Dat::Map(_) | Dat::OrdMap(_) => Ok(text.to_string()),
+		// Unreachable through the check above, and kept because it is the assertion that
+		// makes the check above load-bearing rather than decorative.
+		_ => Err(err!(
+			"The reducer's proposal is JSON but not an object, so it carries no crystal keys \
+			 at all. A crystal is one object: title, summary, sections, facts, open, links.";
+			Invalid, Data)),
+	}
+}
+
+/// How a crystal is read, wherever it is read: strictly, as JSON, and bounded.
+///
+/// One function so that the two questions asked of a crystal in this module cannot come to
+/// disagree about what a crystal is.  The decoder's JSON configuration rather than its own
+/// -- no comments and no trailing comma -- because being laxer here than the browser is the
+/// one thing this must not be: a proposal Rust waves through and `JSON.parse` then rejects
+/// is a crystal the user accepted and cannot open, which is worse than a refusal, since a
+/// refusal at least leaves the old crystal standing.
+///
+/// `use_ordmaps` stays off, as it is by default, so a decoded object is always a
+/// [`Dat::Map`] and never a [`Dat::OrdMap`].
+fn json_cfg() -> DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>> {
+	DecoderConfig::json(None)
+		.with_limits(DecodeLimits::new(CRYSTAL_MAX_DEPTH, CRYSTAL_MAX_BYTES))
+}
+
+/// Top-level keys that carried something in `old` and are simply not in `new`.
+///
+/// The rule the whole crystal design turns on is that nothing may ever drop a key it does
+/// not recognise, and the fold is the one place that rule can be broken wholesale: an
+/// accepted proposal REPLACES the file, on a single click, by a user who is being invited
+/// to click.  No parse check can catch it, because a crystal that has lost half its keys is
+/// as valid a document as one that has not -- `{}` itself is legal, since every core key is
+/// optional.  Only the crystal it replaces knows what went.
+///
+/// So this is not a refusal and must not become one.  A key may leave for good reasons: the
+/// user asked for it to go, or the delta superseded the only thing it held.  What it must
+/// not do is leave WITHOUT ANYONE SEEING, which is the Home Assistant failure the schema
+/// exists to prevent, and a form editor at least knows which fields it understands.  The
+/// answer is handed back as the keys themselves rather than as a sentence, so the app can
+/// put them in front of the user in the user's own language and let them decide.
+///
+/// **Absence only.**  A key emptied in place -- `open` going from three threads to none --
+/// is not reported, because closing the last open thread is exactly what a good fold does
+/// and flagging it would train the user to wave the warning through. That is the known
+/// limitation: an unknown key emptied rather than removed passes unremarked.
+///
+/// Silent, deliberately, where it cannot be sure: either text failing to parse, or either
+/// one not being an object, yields nothing rather than a claim.  A crystal still in its
+/// legacy markdown is the ordinary case of that, and the migration owns it -- reporting
+/// every key in the world as lost there would be noise at exactly the moment the user is
+/// least able to judge it.
+///
+/// The keys come back in the decoder's own order, which is alphabetical rather than the
+/// order they sit in the file.  Nothing is re-encoded and no crystal text is produced here:
+/// this reads two documents and names a difference between them.
+///
+/// # Arguments
+/// * `old` - The crystal as it stands, from disk.
+/// * `new` - The proposal, as [`crystal_proposal`] returned it.
+pub fn crystal_keys_lost(old: &str, new: &str) -> Vec<String> {
+	let cfg = json_cfg();
+	let (before, after) = match (
+		Dat::decode_string_with_config(unfence(old), &cfg),
+		Dat::decode_string_with_config(unfence(new), &cfg),
+	) {
+		(Ok(b), Ok(a)) => (b, a),
+		_              => return Vec::new(),
+	};
+	let (before, after) = match (before, after) {
+		(Dat::Map(b), Dat::Map(a)) => (b, a),
+		_                          => return Vec::new(),
+	};
+	let mut lost = Vec::new();
+	for (key, val) in &before {
+		let name = match key {
+			Dat::Str(s) => s,
+			// A crystal's keys are strings. Anything else is not a key a page or a form
+			// could name, so there is nothing to tell the user about it.
+			_ => continue,
+		};
+		if !carries_content(val) {
+			continue;
+		}
+		if !after.contains_key(key) {
+			lost.push(name.clone());
+		}
+	}
+	lost
+}
+
+/// Whether a value holds anything a user would miss.
+///
+/// The point is not tidiness, it is noise: a crystal often carries a key standing empty --
+/// `open` with no threads left, a `summary` not yet written -- and reporting one of those as
+/// lost when the reducer drops it would be a warning about nothing, which is how a warning
+/// stops being read.  Anything this build does not recognise counts as content, because the
+/// keys most worth protecting are exactly the ones it has never heard of.
+///
+/// # Arguments
+/// * `d` - A top-level value from a crystal.
+fn carries_content(d: &Dat) -> bool {
+	match d {
+		Dat::Empty   => false,
+		Dat::Str(s)  => !s.trim().is_empty(),
+		Dat::List(v) => !v.is_empty(),
+		Dat::Map(m)  => !m.is_empty(),
+		// JSON `null`, which the decoder reads as an absent option.
+		Dat::Opt(o)  => matches!(**o, Some(_)),
+		_            => true,
+	}
+}
+
+/// Whether `s` is one JSON object and nothing else: it opens with `{`, every brace, bracket
+/// and quote closes, and the closing brace is the last byte.
+///
+/// A near relation of [`crate::agent::json_object_is_whole`] and deliberately not a call to
+/// it, because the two answer different questions.  That one asks whether a tool call's
+/// arguments arrived whole and is right to ignore whatever follows the close -- a provider
+/// may append anything and the call is still dispatchable.  A crystal is a FILE: text after
+/// the close is written into it and makes it unreadable, so "and nothing else" is half of
+/// what is being asked here.
+///
+/// String contents are skipped, so a brace inside a body of markdown is not counted as
+/// structure, and a string the reply stopped inside runs to the end of the input and is
+/// reported as the truncation it is.
+///
+/// # Arguments
+/// * `s` - The proposal, already unfenced and trimmed.
+fn one_whole_object(s: &str) -> bool {
+	let b = s.as_bytes();
+	if b.first() != Some(&b'{') {
+		return false;
+	}
+	let mut depth = 0i32;
+	let mut i     = 0usize;
+	// The last byte that mattered, outside any string.  It is here for one job: a comma
+	// immediately before a closer.  `DecoderConfig::json` tolerates a trailing comma and
+	// `JSON.parse` refuses one, and being laxer than the browser that reads the file is the
+	// one thing this gate must never be -- a crystal accepted here and refused there is
+	// written to disk and then unreadable, which is worse than a fold that was never offered.
+	let mut last  = 0u8;
+	while i < b.len() {
+		match b[i] {
+			b'{' | b'[' => depth += 1,
+			b'}' | b']' => {
+				if last == b',' {
+					return false;
+				}
+				depth -= 1;
+				if depth == 0 {
+					return i + 1 == b.len();
+				}
+				if depth < 0 {
+					return false;
+				}
+			},
+			b'"' => {
+				i += 1;
+				while i < b.len() {
+					if b[i] == b'\\' {
+						i += 2;
+						continue;
+					}
+					if b[i] == b'"' {
+						break;
+					}
+					i += 1;
+				}
+				if i >= b.len() {
+					// The reply stopped inside a string.
+					return false;
+				}
+			},
+			_ => {},
+		}
+		// Whitespace between a comma and its closer must not hide the comma, so it is the
+		// last SIGNIFICANT byte that is remembered.  After a string the cursor sits on the
+		// closing quote, which is significant and is what lands here.
+		if !b[i].is_ascii_whitespace() {
+			last = b[i];
+		}
+		i += 1;
+	}
+	false
+}
+
+/// `raw` trimmed, with one markdown code fence taken off it if it is wearing one.
+///
+/// Told and stripped both, deliberately.  A prompt is a request, and this is the request a
+/// model ignores most reliably; the cost of losing it here is the whole crystal, so the
+/// cheap defence is taken as well as asked for.
+///
+/// It strips a fence the text OPENS with, and nothing else.  Prose wrapped around the
+/// object is a reducer that has ignored a plain instruction, and digging the JSON out of it
+/// would make that invisible -- the fold would quietly work, the prompt would stay
+/// unheeded, and nobody would learn.  A fence is different: it is punctuation the model
+/// adds without meaning anything by it.
+///
+/// # Arguments
+/// * `raw` - Everything the reducer emitted.
+fn unfence(raw: &str) -> &str {
+	let t = raw.trim();
+	if !t.starts_with("```") {
+		return t;
+	}
+	// The opening line carries the fence and whatever language tag rides on it, and a fence
+	// with no newline after it is a fence and nothing else.
+	let body = match t.find('\n') {
+		Some(i) => t[i + 1..].trim_end(),
+		None    => return "",
+	};
+	match body.strip_suffix("```") {
+		Some(b) => b.trim(),
+		None    => body.trim(),
+	}
 }
 
 
@@ -1766,5 +2117,265 @@ mod tests {
 			assert!(conversation_bytes(&twice) < conversation_bytes(&once));
 			assert!(pairing_is_whole(&twice));
 		}
+	}
+
+	// ── The crystal fold's gate ──────────────────────────────────────────────
+	//
+	// Each is written as the crystal being lost: a proposal accepted that nothing can read,
+	// one accepted that holds no keys, one refused for wearing a fence the model added
+	// without meaning anything by it, and one whose unknown key was tidied away by the check
+	// itself.
+
+	/// A crystal with a key this build has never heard of, which is the case the whole
+	/// contract turns on.
+	fn crystal() -> &'static str {
+		"{\"title\":\"Ship the parser\",\"summary\":\"Half done.\",\
+		 \"sections\":[{\"heading\":\"State\",\"body\":\"Lexer lands.\"}],\
+		 \"facts\":[{\"k\":\"crate\",\"v\":\"csv\"}],\"open\":[\"quoting\"],\
+		 \"links\":[{\"label\":\"RFC\",\"href\":\"https://example.invalid/rfc\"}],\
+		 \"mood\":{\"colour\":\"amber\"}}"
+	}
+
+	#[test]
+	fn test_a_proposal_that_is_not_json_never_reaches_the_user() {
+		// The gate that did not exist. Accepting a proposal REPLACES the crystal, so prose
+		// offered as a fold is the whole memory of a Diamond traded for an apology.
+		for bad in [
+			"I have folded the delta in. Here is the new crystal: {\"title\":\"x\"}",
+			"{\"title\": \"unterminated",
+			"{\"title\": \"x\",}",
+			"# The old pursuit\n\nA crystal from before the migration.\n",
+		] {
+			assert!(crystal_proposal(bad).is_err(),
+				"a proposal nothing can parse was offered as a fold: {:?}", bad);
+		}
+	}
+
+	#[test]
+	fn test_a_proposal_that_is_json_but_not_an_object_is_refused_too() {
+		// Valid JSON is not the question; a crystal is. A list or a string carries no key
+		// the app, the page or the next reducer can name, which is the same total loss.
+		for bad in ["[]", "[{\"title\":\"x\"}]", "\"the crystal\"", "42", "null", "true"] {
+			assert!(crystal_proposal(bad).is_err(),
+				"{:?} was offered as a crystal", bad);
+		}
+	}
+
+	#[test]
+	fn test_an_empty_proposal_is_still_refused() {
+		// The one check there used to be, kept: a fold never empties a crystal.
+		for bad in ["", "   \n\t ", "```json\n```", "```"] {
+			assert!(crystal_proposal(bad).is_err(), "{:?} emptied a crystal", bad);
+		}
+	}
+
+	#[test]
+	fn test_a_fenced_proposal_is_taken_rather_than_refused() {
+		// The prompt forbids a fence and models add one anyway. Refusing here would spend a
+		// paid round trip and the user's patience on punctuation.
+		let inner = crystal();
+		for wrapped in [
+			fmt!("```json\n{}\n```", inner),
+			fmt!("```\n{}\n```", inner),
+			fmt!("```JSON\n{}\n```\n\n", inner),
+			// A reply cut at the output limit loses its closing fence, and what it has is
+			// still a whole object.
+			fmt!("```json\n{}", inner),
+		] {
+			let out = match crystal_proposal(&wrapped) {
+				Ok(o)  => o,
+				Err(e) => panic!("a fenced crystal was refused: {}\n{}", e, wrapped),
+			};
+			assert!(out.starts_with('{'), "the fence survived: {}", out);
+			assert!(!out.contains("```"), "the fence survived: {}", out);
+		}
+	}
+
+	#[test]
+	fn test_the_check_hands_back_the_model_s_own_text_unaltered() {
+		// It asks a question of the text; it is not a stage the text passes through. A
+		// re-encoding would sort the keys and could not carry `mood` through, and carrying an
+		// unrecognised key through EXACTLY is what the crystal's open schema is.
+		let out = match crystal_proposal(crystal()) {
+			Ok(o)  => o,
+			Err(e) => panic!("{}", e),
+		};
+		assert_eq!(out, crystal());
+		assert!(out.contains("\"mood\""), "the check dropped a key it did not know: {}", out);
+		// And the key order the model chose survives, which a decode-and-re-encode would
+		// have sorted into alphabetical nonsense.
+		let title = match out.find("\"title\"") { Some(i) => i, None => panic!("{}", out) };
+		let open  = match out.find("\"open\"")  { Some(i) => i, None => panic!("{}", out) };
+		assert!(title < open, "the keys were reordered: {}", out);
+	}
+
+	#[test]
+	fn test_the_check_is_not_laxer_than_the_browser_that_reads_the_file() {
+		// The one thing it must never be. A proposal Rust waves through and `JSON.parse`
+		// then rejects is a crystal the user accepted and cannot open -- worse than a
+		// refusal, because the refusal at least leaves the old crystal standing.
+		//
+		// A trailing comma is legal JDAT and is not JSON, which is why the decoder is asked
+		// under its JSON configuration rather than its own.
+		assert!(crystal_proposal("{\"title\":\"x\",}").is_err(),
+			"a trailing comma was accepted");
+	}
+
+	#[test]
+	fn test_a_reply_cut_at_the_output_limit_is_refused_rather_than_written() {
+		// The commonest way a fold goes wrong, and the one the decoder alone gets wrong: its
+		// text form returns a map of whatever arrived when the input simply stops, so every
+		// one of these decodes happily and `JSON.parse` rejects every one of them.
+		for cut in [
+			"{\"title\": \"half",
+			"{\"title\": \"Ship it\", \"sections\": [{\"heading\": \"State\"",
+			"{\"title\": \"Ship it\",",
+			"{\"title\": \"Ship it\"",
+		] {
+			assert!(crystal_proposal(cut).is_err(),
+				"a truncated proposal was offered as a whole crystal: {:?}", cut);
+		}
+	}
+
+	#[test]
+	fn test_anything_after_the_closing_brace_is_refused() {
+		// The decoder stops reading at the close and says nothing about what follows, so a
+		// reducer that emits the old crystal and then the new one would have had BOTH
+		// written to the file. Nothing then reads it.
+		for trailing in [
+			"{\"title\":\"old\"}\n{\"title\":\"new\"}",
+			"{\"title\":\"x\"} — I kept the mood key.",
+			"{\"title\":\"x\"}}",
+		] {
+			assert!(crystal_proposal(trailing).is_err(),
+				"a proposal with a second thing after the object was accepted: {:?}",
+				trailing);
+		}
+	}
+
+	#[test]
+	fn test_a_brace_inside_the_prose_of_a_crystal_is_not_read_as_structure() {
+		// A crystal's bodies are markdown and a Diamond's work is often code, so braces
+		// inside strings are ordinary. Counting them would refuse the most useful crystals
+		// there are -- and an escaped quote must not end the string either.
+		let code = "{\"title\":\"Parser\",\"sections\":[{\"heading\":\"Snippet\",\
+			\"body\":\"```rust\\nfn main() { let s = \\\"}\\\"; }\\n```\"}]}";
+		match crystal_proposal(code) {
+			Ok(o)  => assert_eq!(o, code),
+			Err(e) => panic!("a crystal carrying code was refused: {}\n{}", e, code),
+		}
+	}
+
+	// ── What a fold took away ────────────────────────────────────────────────
+	//
+	// The gate above cannot see any of this: a crystal that has lost half its keys parses
+	// exactly as well as one that has not, and `{}` is a legal crystal because every core
+	// key is optional. Each of these is written as the key going without anyone seeing.
+
+	#[test]
+	fn test_a_key_this_build_has_never_heard_of_is_named_when_it_goes() {
+		// The whole rule, and the one key no schema, no form and no fallback view can miss
+		// on the user's behalf, because nothing here knows what `mood` is for.
+		let after = "{\"title\":\"Ship the parser\",\"summary\":\"Half done.\"}";
+		let lost  = crystal_keys_lost(crystal(), after);
+		assert!(lost.iter().any(|k| k == "mood"),
+			"the unknown key went unremarked: {:?}", lost);
+	}
+
+	#[test]
+	fn test_every_key_that_carried_something_and_went_is_named() {
+		// Not just the unknown one. A fold that keeps the title and drops the rest is a
+		// Diamond's memory gone on one click.
+		let lost = crystal_keys_lost(crystal(), "{\"title\":\"Ship the parser\"}");
+		for k in ["summary", "sections", "facts", "open", "links", "mood"] {
+			assert!(lost.iter().any(|l| l == k), "{} went unremarked: {:?}", k, lost);
+		}
+		assert!(!lost.iter().any(|l| l == "title"), "a key that stayed was named: {:?}", lost);
+	}
+
+	#[test]
+	fn test_a_fold_that_took_nothing_away_says_nothing() {
+		// It must be quiet in the ordinary case or it will be waved through in the one that
+		// matters. Reordered, reworded, and with a key ADDED, is still nothing lost.
+		let after = "{\"mood\":{\"colour\":\"amber\"},\"open\":[\"quoting\",\"CRLF\"],\
+			\"title\":\"Ship the parser\",\"summary\":\"Nearly there.\",\
+			\"sections\":[{\"heading\":\"State\",\"body\":\"Lexer lands.\"}],\
+			\"facts\":[{\"k\":\"crate\",\"v\":\"csv\"}],\
+			\"links\":[{\"label\":\"RFC\",\"href\":\"https://example.invalid/rfc\"}],\
+			\"owner\":\"jason\"}";
+		assert_eq!(Vec::<String>::new(), crystal_keys_lost(crystal(), after));
+	}
+
+	#[test]
+	fn test_a_key_emptied_rather_than_removed_is_not_reported_as_lost() {
+		// Closing the last open thread is what a good fold DOES. Flagging it would teach the
+		// user that the warning means nothing, which costs more than the case it catches.
+		let after = "{\"title\":\"Ship the parser\",\"summary\":\"Half done.\",\
+			\"sections\":[{\"heading\":\"State\",\"body\":\"Lexer lands.\"}],\
+			\"facts\":[{\"k\":\"crate\",\"v\":\"csv\"}],\"open\":[],\
+			\"links\":[{\"label\":\"RFC\",\"href\":\"https://example.invalid/rfc\"}],\
+			\"mood\":{\"colour\":\"amber\"}}";
+		assert_eq!(Vec::<String>::new(), crystal_keys_lost(crystal(), after));
+	}
+
+	#[test]
+	fn test_a_key_that_was_already_empty_is_not_mourned() {
+		// Same reasoning from the other end: a key standing empty in the old crystal held
+		// nothing to lose, so its removal is tidying rather than damage.
+		let before = "{\"title\":\"x\",\"summary\":\"\",\"open\":[],\"aside\":null,\
+			\"extra\":{},\"keeps\":\"something\"}";
+		// Four keys gone and not one of them held anything, so there is nothing to say.
+		assert_eq!(Vec::<String>::new(),
+			crystal_keys_lost(before, "{\"title\":\"x\",\"keeps\":\"something\"}"));
+		// And the one that did hold something is named, alone.
+		assert_eq!(vec![fmt!("keeps")], crystal_keys_lost(before, "{\"title\":\"x\"}"));
+	}
+
+	#[test]
+	fn test_a_crystal_that_cannot_be_read_produces_a_claim_about_nothing() {
+		// A Diamond still holding legacy markdown is the ordinary case, and the migration
+		// owns it. Announcing that every key in the world has been lost, at the moment the
+		// user is least able to judge it, would be noise standing where a real warning goes.
+		assert_eq!(Vec::<String>::new(),
+			crystal_keys_lost("# The old pursuit\n\nWritten before the migration.\n",
+				crystal()));
+		assert_eq!(Vec::<String>::new(), crystal_keys_lost(crystal(), "not json either"));
+		assert_eq!(Vec::<String>::new(), crystal_keys_lost("[1,2,3]", crystal()));
+	}
+
+	#[test]
+	fn test_the_comparison_reads_a_fenced_proposal_as_the_crystal_it_is() {
+		// It is meant to be handed what `crystal_proposal` returned, which is already
+		// unfenced -- but a caller reaching for the raw text must not be told that every key
+		// survived because neither side parsed.
+		let after = fmt!("```json\n{{\"title\":\"Ship the parser\"}}\n```");
+		assert!(crystal_keys_lost(crystal(), &after).iter().any(|k| k == "mood"),
+			"a fenced proposal read as no loss at all: {:?}",
+			crystal_keys_lost(crystal(), &after));
+	}
+
+	#[test]
+	fn test_the_emptiest_legal_crystal_is_the_case_no_parse_check_can_catch() {
+		// `{}` is a valid crystal -- every core key is optional -- so the gate accepts it and
+		// must. This is the only thing standing between that and a Diamond's whole memory.
+		match crystal_proposal("{}") {
+			Ok(o)  => assert_eq!(o, "{}"),
+			Err(e) => panic!("an empty object is a legal crystal: {}", e),
+		}
+		let lost = crystal_keys_lost(crystal(), "{}");
+		for k in ["title", "summary", "sections", "facts", "open", "links", "mood"] {
+			assert!(lost.iter().any(|l| l == k),
+				"{} vanished into an empty crystal unremarked: {:?}", k, lost);
+		}
+	}
+
+	#[test]
+	fn test_a_crystal_nested_to_provoke_a_crash_is_refused_with_a_sentence() {
+		// The decoder recurses, and this one runs in a browser where the stack is a quarter
+		// of what a native thread gets. A depth bound is the difference between a refusal
+		// the user can read and the wasm module going down mid-fold.
+		let deep = fmt!("{}{}{}", "{\"a\":", "[".repeat(400), "]".repeat(400));
+		assert!(crystal_proposal(&fmt!("{}}}", deep)).is_err(),
+			"a proposal nested past the bound was parsed rather than refused");
 	}
 }

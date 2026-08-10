@@ -72,10 +72,11 @@ const disk = await p.evaluate(async ({ id }) => {
 		meta:     await read(`diamonds/${id}/.daimond/meta.json`),
 		log:      await read(`diamonds/${id}/.daimond/log`),
 		delta:    await read(`diamonds/${id}/.daimond/deltas/0001.md`),
-		crystal:    await read(`diamonds/${id}/crystal.md`),
+		crystal:    await read(`diamonds/${id}/crystal.json`),
 		version:  await read(`diamonds/${id}/versions/0001.md`),
 		oldCrystal: await read(`foci/${id}/brief.md`),
 		staleCrystal: await read(`diamonds/${id}/brief.md`),
+		staleMd:  await read(`diamonds/${id}/crystal.md`),
 		oldMeta:  await read(`foci/${id}/.red/meta.json`),
 		oldDelta: await read(`foci/${id}/.red/deltas/0001.md`),
 	};
@@ -83,12 +84,21 @@ const disk = await p.evaluate(async ({ id }) => {
 
 check('the store landed at diamonds/<id>/.daimond/',
 	!!disk.meta && /Ancient pursuit/.test(disk.meta));
-check('brief.md became crystal.md, and did not linger under the old name',
+// Two hops now, and they are different kinds of hop. `brief.md` -> `crystal.md`
+// is a RENAME and deletes what it moved. `crystal.md` -> `crystal.json` is a
+// CONVERSION and keeps its source: the round-trip self-check proves the bytes and
+// structurally cannot prove the structure, so the markdown stays until the
+// conversion has run against real workspaces. `brief.md` must still be gone --
+// nothing converts from it any more, so a leftover would be a second and older
+// answer nobody reads.
+check('brief.md became crystal.json, and brief.md itself is gone',
 	/An ancient pursuit/.test(disk.crystal || '') && disk.staleCrystal === null,
-	disk.staleCrystal === null ? 'renamed' : 'BOTH present');
+	'brief.md=' + disk.staleCrystal);
+check('and the intermediate crystal.md is kept, because the conversion is not proven',
+	disk.staleMd !== null, 'crystal.md=' + disk.staleMd);
 check('a meta.json still saying brief_version reports the right version, not 0',
 	/"crystal_version":1|"brief_version":1/.test(disk.meta || ''), (disk.meta || '').slice(0, 70));
-check('the crystal and its snapshots came across',
+check('the crystal and its markdown snapshots came across',
 	/An ancient pursuit/.test(disk.crystal || '') && /An ancient pursuit/.test(disk.version || ''));
 check('the retained delta came across',
 	disk.delta === 'ANCIENT-DELTA: what that fold consumed.');
@@ -149,7 +159,7 @@ const merged = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	// An old root alongside the new one, holding a DIFFERENT Diamond, the way a
 	// restored backup arrives.
-	await mod.write_file('foci/latecomer/crystal.md', 'a pursuit that arrived afterwards');
+	await mod.write_file('foci/latecomer/crystal.md', '# a pursuit that arrived afterwards\n');
 	await mod.write_file('foci/latecomer/.daimond/meta.json',
 		'{"name":"Latecomer","brief_version":0,"updated":1}');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -157,14 +167,16 @@ const merged = await p.evaluate(async () => {
 	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
 	return {
 		listed,
-		moved:   await read('diamonds/latecomer/crystal.md'),
+		// The root move lands it under `diamonds/`, and the same `list()` pass then
+		// converts it, so this is where it comes to rest -- not `crystal.md`.
+		moved:   await read('diamonds/latecomer/crystal.json'),
 		leftOld: await read('foci/latecomer/crystal.md'),
 		// The original Diamond of this file, which must not have moved or changed.
-		ancient: await read('diamonds/ancient1/crystal.md'),
+		ancient: await read('diamonds/ancient1/crystal.json'),
 	};
 });
 check('a Diamond that arrives in an old root AFTERWARDS is taken into diamonds/',
-	merged.moved === 'a pursuit that arrived afterwards', String(merged.moved).slice(0, 50));
+	/a pursuit that arrived afterwards/.test(merged.moved || ''), String(merged.moved).slice(0, 60));
 check('and it is in the list, so the user can actually see it',
 	/Latecomer/.test(merged.listed), merged.listed.slice(0, 120));
 check('the emptied old root is gone, not left as a second place to look',
@@ -192,12 +204,12 @@ const logsBefore = s.logs.length;
 const collide = await p.evaluate(async () => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	// The SAME id as the Diamond already in diamonds/, with different content...
-	await mod.write_file('foci/ancient1/crystal.md', 'a DIFFERENT pursuit under the same id');
+	await mod.write_file('foci/ancient1/crystal.md', '# a DIFFERENT pursuit under the same id\n');
 	await mod.write_file('foci/ancient1/.daimond/meta.json',
 		'{"name":"Impostor","brief_version":0,"updated":1}');
 	// ...and a clean one that sorts AFTER it, so a walk that stops on the
 	// collision never reaches it.
-	await mod.write_file('foci/zzlater/crystal.md', 'behind the collision in the walk');
+	await mod.write_file('foci/zzlater/crystal.md', '# behind the collision in the walk\n');
 	await mod.write_file('foci/zzlater/.daimond/meta.json',
 		'{"name":"Behind it","brief_version":0,"updated":1}');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -205,18 +217,19 @@ const collide = await p.evaluate(async () => {
 	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
 	return {
 		listed,
-		current: await read('diamonds/ancient1/crystal.md'),
+		current: await read('diamonds/ancient1/crystal.json'),
+		// Untouched in the old root, so still the markdown it was written as.
 		old:     await read('foci/ancient1/crystal.md'),
-		behind:  await read('diamonds/zzlater/crystal.md'),
+		behind:  await read('diamonds/zzlater/crystal.json'),
 		waiting: await app.legacy_diamond_root_waiting(),
 	};
 });
 check('a colliding id does NOT overwrite the copy the user can see',
 	/An ancient pursuit/.test(collide.current || ''), String(collide.current).slice(0, 40));
 check('and the old copy is still there, not deleted out from under them',
-	collide.old === 'a DIFFERENT pursuit under the same id', String(collide.old).slice(0, 50));
+	collide.old === '# a DIFFERENT pursuit under the same id\n', String(collide.old).slice(0, 50));
 check('the clean entry beside it still came across',
-	collide.behind === 'behind the collision in the walk', String(collide.behind));
+	/behind the collision in the walk/.test(collide.behind || ''), String(collide.behind));
 {
 	// A COLLISION IS AN OUTCOME, NOT A FAILURE. If the walk throws on it instead
 	// of stepping over it, everything it had not yet reached is stranded — and

@@ -19,12 +19,19 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { signInFresh } from './session.mjs';
+import { requireFreshGateway, procLog } from './gwbin.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
 const SHOTS = path.join(HERE, 'shots');
 const GW_URL = 'http://127.0.0.1:9002';
+/// What the gateway says while this runs. An admin view answering 500 says only
+/// that something went wrong; `app_main` logs the reason beside it, and this is
+/// where that reason is kept.
+const GW_LOG = procLog('verify_admin');
+/// And the dev server, which fails the same silent way when its port is taken.
+const SERVE_LOG = procLog('verify_admin', 'serve');
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
 // so this stays standalone and does not load the harness.
 const APP    = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
@@ -35,6 +42,8 @@ const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
 const ok = [], bad = [];
+/// Every `/api/admin` response the console received, as `{view, status}`.
+const adminResp = [];
 const check = (name, pass, detail) => {
 	(pass ? ok : bad).push(name);
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
@@ -60,6 +69,8 @@ async function waitFor(fn, ms = 20000, gap = 300) {
 function cleanup() {
 	for (const p of procs) { try { p.kill('SIGKILL'); } catch (e) {} }
 }
+/// What the processes this run started were saying while it failed.
+function saidWhat() { GW_LOG.report(); SERVE_LOG.report(); }
 
 // ── Seeding via the real API ────────────────────────────────
 // Register an account by proving possession of a fresh Ed25519 device key,
@@ -136,19 +147,21 @@ async function adminRaw() {
 
 // ── Main ────────────────────────────────────────────────────
 (async () => {
+	// Before anything is spawned: a gateway older than the code under test
+	// measures a build nobody is shipping, and its absences read as defects.
+	requireFreshGateway();
+
 	// 1. Gateway.
 	// Pinned as an owner by account id, which is not known until an account
 	// exists -- so this suite starts the gateway twice, as verify_releases does.
 	let gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
 		cwd: GWDIR,
 		env: { ...process.env, APP_MODE: 'sandbox' },
-		stdio: ['ignore', 'pipe', 'pipe'],
+		stdio: GW_LOG.stdio,
 	});
-	gw.stdout.on('data', () => {});
-	gw.stderr.on('data', () => {});
 	const gwUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok);
 	check('gateway starts and answers /api/health', gwUp);
-	if (!gwUp) { cleanup(); console.log(`\n${ok.length} passed, ${bad.length} failed`); process.exit(1); }
+	if (!gwUp) { saidWhat(); cleanup(); console.log(`\n${ok.length} passed, ${bad.length} failed`); process.exit(1); }
 
 	// 2. Auth contract: no session, no console. There is no token to try.
 	const anon = await adminRaw();
@@ -160,7 +173,12 @@ async function adminRaw() {
 		seeded.made > 0 && seeded.credited > 0, JSON.stringify(seeded));
 	// 4. Dev server + browser. The aggregates are checked from inside the page,
 	//    because the session that may read them lives in the browser.
-	launch('node', ['dev/serve.mjs'], { cwd: ROOT, stdio: ['ignore', 'ignore', 'ignore'] });
+	// Reuse one already up, as the other console verifiers do. This spawned a
+	// second unconditionally, which died on EADDRINUSE the moment a world server
+	// held the port -- invisibly, until its output stopped being discarded.
+	let already = false;
+	try { already = (await fetch(`${APP}/console/`)).ok; } catch (e) {}
+	if (!already) launch('node', ['dev/serve.mjs'], { cwd: ROOT, stdio: SERVE_LOG.stdio });
 	const serveUp = await waitFor(async () => (await fetch(`${APP}/console/`)).ok, 10000);
 	check('dev server serves /console/', serveUp);
 
@@ -172,6 +190,15 @@ async function adminRaw() {
 			const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 			page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
 			page.on('pageerror', e => errs.push('pageerror: ' + e.message));
+			// Every /api/admin round trip the CONSOLE makes, kept so a blank
+			// panel can be attributed to the endpoint that refused rather than
+			// to the renderer that had nothing to draw.
+			page.on('response', r => {
+				const u = r.url();
+				if (u.indexOf('/api/admin') < 0) return;
+				const m = /[?&]view=([a-z_]+)/.exec(u);
+				adminResp.push({ view: m ? m[1] : u, status: r.status(), at: Date.now() });
+			});
 
 			// Sign in as the app does, then pin that account as an owner and
 			// restart, since an owner is named in configuration by account id.
@@ -192,7 +219,7 @@ async function adminRaw() {
 			gw = launch(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
 				cwd: GWDIR,
 				env: { ...process.env, APP_MODE: 'sandbox', DAIMOND_OWNER_ACCOUNTS: owner },
-				stdio: ['ignore', 'ignore', 'ignore'],
+				stdio: GW_LOG.stdio,
 			});
 			check('gateway restarts with that account as owner',
 				await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok));
@@ -227,14 +254,59 @@ async function adminRaw() {
 
 			await page.goto(`${APP}/console/`, { waitUntil: 'domcontentloaded' });
 			await page.waitForSelector('#admin-app:not([hidden])', { timeout: 10000 });
-			// Let the four parallel view fetches land and draw.
+			// Let the four parallel view fetches land and draw. Timed, because
+			// how LONG the first tile takes is the measurement that separates
+			// "the dashboard is broken" from "the dashboard is waiting", and
+			// those two have entirely different fixes.
+			const t0 = Date.now();
 			await page.waitForFunction(() =>
-				document.querySelectorAll('#admin-kpis .admin-kpi').length >= 4, null, { timeout: 8000 })
+				document.querySelectorAll('#admin-kpis .admin-kpi').length >= 4, null, { timeout: 30000 })
 				.catch(() => {});
+			const kpiAt = Date.now();
+			// Wait for all four to have answered, so "the slowest" below is the
+			// real slowest and not merely the slowest so far.
+			const VIEWS = ['summary', 'revenue', 'consumption', 'geo'];
+			await waitFor(async () =>
+				VIEWS.every(v => adminResp.some(r => r.at >= t0 && r.view === v)), 30000, 200);
 			await sleep(800);
 
+			// A tile count on its own says the dashboard is empty and not one
+			// word about why, and `renderKpis` appends its six unconditionally
+			// -- so zero means it was never reached, which is a statement about
+			// the FETCHES and not about the tiles. The console already writes
+			// that reason into its own status strip for the operator; read it,
+			// and read the admin responses that did not come back 200, so the
+			// failure names the endpoint instead of the symptom.
+			const why = await page.evaluate(() =>
+				(document.getElementById('admin-status') || {}).textContent || '');
+			const seen = adminResp.map(r => r.view + ':' + r.status).join(' ') || 'NO /api/admin CALLS';
+			const detail = s => s + (why ? ' | console says: ' + why : '') + ' | admin calls: ' + seen;
+
 			const kpis = await page.evaluate(() => document.querySelectorAll('#admin-kpis .admin-kpi').length);
-			check('dashboard renders KPI tiles', kpis >= 6, kpis + ' tiles');
+			check('dashboard renders KPI tiles', kpis >= 6, detail(kpis + ' tiles'));
+
+			// EACH PANEL DRAWS WHEN ITS OWN DATA LANDS, asserted as a property
+			// rather than waited out. The tiles are made from `summary` alone,
+			// so the moment to measure them against is when SUMMARY answered --
+			// not when the slowest of the four did. `refreshAll` used to await
+			// all four before drawing any, and `summary` is the small prompt one
+			// while `geo` and `consumption` scan every account's ledger over
+			// thirty days: on this seeded database that gap is several seconds,
+			// and it is the whole difference between the two designs.
+			//
+			// Comparing against the SLOWEST instead would be worthless. Under
+			// the barrier the tiles appear the instant the slowest lands, so
+			// "no later than the slowest" is true of the broken code too. This
+			// comparison is the one that goes red on it, and it cannot flake:
+			// where all four happen to land together, summary IS the slowest and
+			// the tolerance covers the render.
+			const answered = adminResp.filter(r => r.at >= t0 && VIEWS.indexOf(r.view) >= 0);
+			const at = v => (answered.find(r => r.view === v) || {}).at || 0;
+			const slowest = answered.length ? Math.max.apply(null, answered.map(r => r.at)) : 0;
+			check('the tiles are drawn when summary lands, not when the slowest view does',
+				answered.length >= VIEWS.length && at('summary') > 0 && kpiAt <= at('summary') + 1500,
+				'tiles at +' + (kpiAt - t0) + 'ms, summary at +' + (at('summary') - t0)
+					+ 'ms, slowest view at +' + (slowest - t0) + 'ms');
 
 			const land = await page.evaluate(() =>
 				!!document.querySelector('#admin-map .admin-worldmap path.admin-land'));
@@ -382,13 +454,21 @@ async function adminRaw() {
 
 			check('no console errors on the dashboard', errs.length === 0, errs.slice(0, 3).join(' | '));
 		} catch (e) {
-			check('browser run completed without throwing', false, e.message);
+			// What the PAGE said, not only what the wait gave up on: the
+			// exception that stopped the console filling itself is in `errs`,
+			// and without this line it goes out with the browser.
+			check('browser run completed without throwing', false,
+				e.message + (errs.length ? ' | page: ' + errs.slice(0, 5).join(' | ') : ' | page reported nothing'));
 		} finally {
 			await browser.close();
 		}
 	}
 
+	// The reason lives in the gateway's log and nowhere else, so a failing run
+	// prints it rather than leaving it on disk for somebody to go and find --
+	// and before `cleanup`, which SIGKILLs the process being asked.
+	if (bad.length) saidWhat();
 	cleanup();
 	console.log(`\n${ok.length} passed, ${bad.length} failed`);
 	process.exit(bad.length ? 1 : 0);
-})().catch(e => { console.error(e); cleanup(); process.exit(1); });
+})().catch(e => { console.error(e); saidWhat(); cleanup(); process.exit(1); });

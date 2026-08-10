@@ -121,6 +121,30 @@
 	'models.save_start': 'Enregistrer et démarrer',
 	'models.privacy': '<strong>Tout reste sur cet appareil</strong> — vos clés, vos chats et vos fichiers ne vivent que dans ce navigateur ; rien ne nous est envoyé.',
 
+	// ── Search ─────────────────────────────────────────────────
+	// « Moteur de recherche » désigne le service, pas l'action de chercher.
+	// Les noms des moteurs (Brave, Exa, Tavily, Serper) sont des noms propres
+	// et ne se traduisent pas. `search.kind_academic` ne dit pas « Recherche »,
+	// qui serait le titre du panneau : le sens visé est celui des travaux
+	// universitaires.
+	'search.head': 'Recherche',
+	'search.engine': 'Moteur de recherche',
+	// Un quota gratuit, pas une clé gratuite : au-delà, c'est le fournisseur qui
+	// facture l'utilisateur. Volontairement sans chiffre et sans nommer de moteur.
+	'search.engine_note': 'Le service avec lequel Daimond cherche. La plupart accordent chaque mois un quota gratuit si vous apportez votre propre clé.',
+	'search.credits': 'Crédits Daimond',
+	'search.key': 'Clé d’API',
+	'search.key_note': 'Gardée sur cet appareil, scellée par votre phrase secrète, et envoyée seulement avec la recherche qu’elle paie.',
+	// {engine} est un nom propre, par exemple Brave, et ne se traduit pas.
+	'search.no_key': 'Ajoutez une clé pour {engine}, ou passez aux crédits Daimond.',
+	'search.kind_web': 'Web',
+	'search.kind_news': 'Actualités',
+	'search.kind_academic': 'Universitaire',
+	'search.refused_serper': '{engine} ne peut être utilisé qu’avec votre propre clé.',
+	// {n} arrive déjà formaté ; n'ajoutez aucun séparateur. La réserve de la fin
+	// reste : c'est le tarif d'un tiers et il vieillira.
+	'search.free_month': '{engine} : environ {n} recherches gratuites par mois, la dernière fois que nous avons vérifié.',
+
 	// ── Credits, packs and Pro ─────────────────────────────────
 	'credits.lead': 'Vous ne voulez pas gérer une clé de fournisseur ? Achetez des crédits et Daimond fait tourner le modèle pour vous. Sans abonnement : ce que vous achetez vous reste, et rien n’est prélevé à nouveau, sauf si vous activez la recharge automatique ci-dessous.',
 	'credits.balance': 'Solde : {amount}',
@@ -181,6 +205,10 @@
 	'chat.collapse_help': 'Replier toutes les réponses en laissant vos questions — et choisir les tours à replier',
 	'chat.input_ph': 'Écrivez un message…',
 	'chat.send': 'Envoyer',
+	'chat.busy': 'Réflexion…',
+	'chat.busy_tool': 'Exécution de {tool}, étape {n}…',
+	'chat.busy_next': 'Étape {n} terminée, réflexion…',
+	'chat.busy_writing': 'Rédaction de la réponse…',
 	'chat.answered': 'Daimond a répondu, {n} mots',
 	'chat.answer_failed': 'Daimond n’a pas pu répondre',
 	'chat.collapse': 'Replier toutes les réponses',
@@ -217,6 +245,11 @@
 	'web.back': 'Retour',
 	'web.reload': 'Recharger',
 	'web.pop_out': 'Ouvrir dans un vrai onglet',
+	// Le nom du bouton de pause dans l'en-tête du panneau, pour que
+	// `pause.act_pause` donne « Mettre Accès au web en pause ». Il gouverne
+	// `root/web`, qui va plus loin que ce panneau : il ne s'appelle donc pas
+	// « Ce panneau ».
+	'web.pause': 'Accès au web',
 	'web.blind_title': 'C’est vous qui conduisez. Je ne regarde pas.',
 	'web.blind_note': 'Daimond a cessé de lire cette page — ni texte, ni image, ni frappe au clavier. Connectez-vous, puis cliquez sur <b>Reprendre Daimond</b> dans l’onglet du navigateur pour lui rendre le volant. Ce bouton est dans l’onglet, pas ici, afin que cette page ne puisse jamais vous prendre le volant.',
 	'web.resumed': 'J’ai repris — vérifiez',
@@ -607,14 +640,18 @@
 	'spend.col_amount': 'Montant',
 	'spend.col_balance': 'Solde',
 	'spend.cat_web': 'Pages web',
+	'spend.cat_search': 'Recherches web',
 	'spend.cat_mail': 'Courrier',
 	'spend.cat_sync': 'Sync entre appareils',
+	'spend.cat_storage': 'Fichiers stockés',
+	'spend.cat_infer': 'Inférence sur crédits',
 	'spend.cat_other': 'Autres services',
 	'spend.cat_topup': 'Crédits achetés',
 	'spend.cat_refund': 'Remboursements',
 	'spend.cat_grant': 'Cadeaux et dotations',
 	'spend.cat_adjust': 'Ajustements',
 	'spend.cat_fallback': 'Autre',
+	'spend.cat_unlisted': 'Non attribué',
 
 	// ── Tools ──────────────────────────────────────────────────
 	'tools.head': '<b>{have} sur {all}</b> outils. La plupart de ce que Daimond sait faire, il le fait gratuitement — les outils ci-dessous sont simplement ce qu’il est. Quelques-uns atteignent le monde hors du navigateur, et ceux-là coûtent ce qu’ils coûtent à faire tourner.',
@@ -642,9 +679,12 @@
 	'settings.max_tokens_auto': 'Automatique',
 	'settings.tokens': 'jetons',
 	'settings.max_rounds': 'Étapes par tour',
+	'settings.crystal_limits': 'Taille du cristal',
 	'settings.crystal_cap':      'Limite de taille du cristal',
-	'settings.crystal_cap_note': 'Un cristal est le résumé d’un Diamant, il a donc un plafond. Au-delà, il est demandé au daimon de placer le détail dans un fichier de la portée du Diamant.',
+	'settings.crystal_cap_note': 'Un cristal est le résumé d’un Diamond, il a donc un plafond. Au-delà, il est demandé au daimon de placer le détail dans un fichier de la portée du Diamond.',
 	'settings.crystal_cap_auto': 'Par défaut',
+	'settings.crystal_page_cap': 'Limite de taille de la page',
+	'settings.crystal_page_cap_note': 'La page qui affiche les données d’un Diamond. Elle voyage à chaque synchronisation et partage le budget avec les données.',
 	'settings.max_rounds_auto': 'Par défaut',
 	'settings.steps': 'étapes',
 	'settings.max_rounds_note': 'Combien de fois un agent peut utiliser un outil avant qu’un tour s’arrête. Il le dit en s’arrêtant, et vous pouvez lui demander de continuer.',
@@ -1010,6 +1050,12 @@
 	'egress.reach_title': 'Joindre {host} ?',
 	'egress.reach_body': 'Ce tour a lu du contenu venu de l’extérieur de votre espace de travail — une page web, ou un message. Quelque chose là-dedans cherche peut-être à orienter Daimond.\n\nIl veut maintenant joindre {host}, où il n’est jamais allé. Tout ce qu’il sait pourrait partir dans cette adresse.\n\nNe l’autorisez que si vous vous y attendiez.',
 	'egress.reach_ok': 'Autoriser {host}',
+	// Dans une recherche, ce qui part est la REQUÊTE, pas une adresse. {query}
+	// tient seule dans son paragraphe et jamais entre guillemets -- elle peut
+	// en contenir elle-même.
+	'egress.search_title': 'Chercher sur le web ?',
+	'egress.search_body': 'Ce tour a lu du contenu venu de l’extérieur de votre espace de travail, et Daimond veut maintenant chercher sur le web.\n\nVoici ce qu’il veut chercher :\n\n{query}\n\nLa recherche passera par {engine} : c’est votre réglage, pas un choix du modèle. Ce qui quitte cet appareil, c’est la requête.\n\nSi vous ne vous y attendiez pas, refusez — rien n’est perdu, sinon cette seule recherche.',
+	'egress.search_ok': 'Lancer cette recherche',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message': 'Copier le message',
@@ -1237,6 +1283,25 @@
 	'crystal.read_delta_failed': 'Impossible de lire le delta',
 	'crystal.steering': 'Orientation…',
 	'crystal.no_key_steer': 'Le fournisseur de ce Diamond n’a pas de clé lisible — déverrouillez, ou ajoutez-en une, pour l’orienter.',
+	'crystal.page_failed': 'La page de ce Diamond ne s’est pas chargée, ses données sont donc affichées à la place.',
+	'crystal.page_partial': 'La page de ce Diamond n’a pas montré tout ce qu’il contient, ses données sont donc affichées à la place.',
+	'crystal.page_reset': 'Réinitialiser la page',
+	'crystal.page_reset_confirm': 'Remplacer la page de ce Diamond par la page standard ? On ne touche pas à ses données.',
+	'crystal.ask': 'Demander au daimon de changer cette page',
+	'crystal.edit_json': 'Modifier en JSON',
+	'crystal.json_invalid': 'Ce n’est pas du JSON valide, rien n’a donc été enregistré.',
+	'crystal.field_title': 'Titre',
+	'crystal.field_summary': 'Résumé',
+	'crystal.field_sections': 'Sections',
+	'crystal.field_facts': 'Faits',
+	'crystal.field_open': 'Questions ouvertes',
+	'crystal.field_links': 'Liens',
+	'crystal.field_heading': 'Intitulé',
+	'crystal.field_body': 'Texte',
+	'crystal.add_section': 'Ajouter une section',
+	'crystal.remove': 'Supprimer',
+	'crystal.other_fields': 'Autres champs',
+	'crystal.other_fields_note': 'Conservés tels quels, et affichés ici pour que rien ne disparaisse.',
 
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one': '{n} artefact',

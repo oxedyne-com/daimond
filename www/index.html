@@ -40,6 +40,15 @@
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/render.css">
+<!-- crystal.css AFTER app.css, deliberately. Both sheets name classes beginning
+     `crystal-`: app.css dresses the chrome around the frame (the ask row, the ✎
+     form), crystal.css dresses the frame, the built-in view and the note that
+     says a page failed. Where the two ever named the same class, the later sheet
+     is the frame's, which is the half that owns the appearance. -->
+<link rel="stylesheet" href="css/crystal.css">
+<!-- viewer.css before files.css: the file viewer draws inside the Doc panel that
+     sheet dresses, so the panel's own rules are the ones that win. -->
+<link rel="stylesheet" href="css/viewer.css">
 <link rel="stylesheet" href="css/files.css">
 <link rel="stylesheet" href="css/mail.css">
 <link rel="stylesheet" href="css/graph.css">
@@ -333,6 +342,42 @@
 							<div id="byok-note" class="login-error"></div>
 							<p class="cfg-hint" data-i18n-html="models.privacy"><strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.</p>
 						</div>
+
+						<!-- Search: which outside service the agent searches with.
+						     Directly under the model picker because it is the same kind of
+						     decision — which outside service does my agent use — and it is
+						     a SETTING rather than a line in a prompt file, because a prompt
+						     line is advice a model may ignore and this has to be enforced.
+
+						     EVERY string here is painted by `SearchRow.render` in
+						     js/daimond.js and NOT by `data-i18n`, which is deliberate and
+						     is about shipping order. `data-i18n` writes `t(key)` into the
+						     element, and `t` answers with the KEY when the table has no
+						     entry — so a panel reading "search.head" until the i18n lane's
+						     eight locales land. `tOr` answers with the English written at
+						     the call site instead, so the two halves of this release are
+						     safe to arrive in either order. The English below is what
+						     shows before the first paint, and only then. -->
+						<div class="settings-section" id="search-section">
+							<h3 id="search-head">Search</h3>
+							<div class="search-engine-row">
+								<label class="cfg-fieldlabel" for="set-search-engine">Search engine</label>
+								<select id="set-search-engine" class="settings-select"></select>
+								<p class="search-engine-note" id="search-engine-note">Which service Daimond searches with. Most give you a free allowance each month if you bring your own key.</p>
+							</div>
+							<!-- Hidden for `credits`: the gateway holds that key and there is
+							     nothing here for anyone to paste. -->
+							<div class="search-engine-row" id="search-key-row" style="display:none">
+								<label class="cfg-fieldlabel" for="set-search-key">API key</label>
+								<!-- Masked by installSecretMask, exactly as the provider key
+								     and the push token are, and for the same reason: a real
+								     password field is what invites a browser or a manager to
+								     file somebody else's bearer credential away. -->
+								<input type="text" id="set-search-key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+								<p class="search-engine-note" id="search-key-note">Kept on this device, sealed with your passphrase, and sent only with the search it pays for.</p>
+								<p class="search-engine-note" id="search-key-warn" data-warn="1" style="display:none"></p>
+							</div>
+						</div>
 					</div>
 
 					<!-- Credits: reached from the "Credits" status row. -->
@@ -497,6 +542,14 @@
 					<span class="web-mode" id="web-mode" title="Who is driving" data-i18n-title="web.who_drives"></span>
 					<span class="ctitle web-url" id="web-url" role="heading" aria-level="2">The Web panel</span>
 					<div class="chead-right">
+						<!-- `root/web`'s control. A slot, not a drawing: the widget is built
+						     by `mountPause` in js/daimond.js, exactly as the rail's global
+						     control is, so the app cannot grow a second picture of one
+						     state. FIRST in the row, ahead of the page buttons, because it
+						     is a statement about what this panel may SPEND rather than
+						     another thing to do to the page — and because the refusal
+						     sends you here to find it. -->
+						<span class="pptw-slot" id="web-pause"></span>
 						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back" aria-label="Back" data-i18n-aria-label="web.back">‹</button>
 						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload" aria-label="Reload" data-i18n-aria-label="web.reload">⟳</button>
 						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out" aria-label="Open in a real tab" data-i18n-aria-label="web.pop_out">↗</button>
@@ -959,6 +1012,17 @@
 <script src="js/journal.js"></script>
 <script src="js/marked.min.js"></script>
 <script src="js/render.js"></script>
+<!-- crystal.js beside render.js: it is the other renderer. It owns the sandboxed
+     frame a Diamond's page runs in, the `dc` channel that page speaks, the
+     shipped default page and the built-in view that replaces a page which fails.
+     Classic, before the module, so window.DaimondCrystal exists when the app
+     mounts one. -->
+<script src="js/crystal.js"></script>
+<!-- viewer.js: the Doc panel's file viewer, so that opening a PDF or a PNG shows
+     the document rather than a screenful of replacement characters. Classic,
+     before the module, so window.DaimondViewer exists when the app reaches for
+     it -- the same rule every other panel module here loads under. -->
+<script src="js/viewer.js"></script>
 <script src="js/pricing.js"></script>
 <script src="js/ledger.js"></script>
 <!-- money.js: which pot of money a figure belongs to, and what may honestly be
@@ -987,6 +1051,9 @@
 <script src="js/mail.js"></script>
 <script src="js/tools.js"></script>
 <script src="js/models.js"></script>
+<!-- After models.js, which it is a miniature of: same registry shape, same
+     sealing, same credits-or-your-own-key question asked about search. -->
+<script src="js/search.js"></script>
 <script src="js/autoreload.js"></script>
 <script src="js/web.js"></script>
 <script src="js/hand.js"></script>

@@ -687,6 +687,21 @@ impl DaimondApp {
         crate::tools::set_crystal_cap(bytes);
     }
 
+    /// What a Diamond's PAGE may weigh before a write that grows it is refused, in bytes.
+    ///
+    /// A second ceiling rather than a share of the first, because the two files are different
+    /// kinds of thing: the memory is what the Diamond knows and rides in the standing context of
+    /// every turn, while the page is markup that nothing folds and nothing reduces.  The page is
+    /// capped all the same -- it travels in every version snapshot where it changed and shares the
+    /// sync budget with the memory, so exempting presentation would void the other ceiling's
+    /// purpose.
+    ///
+    /// # Arguments
+    /// * `bytes` - The ceiling; zero restores the default.
+    pub fn set_crystal_page_cap(&self, bytes: usize) {
+        crate::tools::set_crystal_page_cap(bytes);
+    }
+
     /// Fold this agent's conversations with a different model from the one it chats
     /// with; empty means the chat's own.
     ///
@@ -834,8 +849,9 @@ impl DaimondApp {
     // ── Diamond / crystal / fold surface ─────────────────────────────────
 
     /// Create a Diamond named `name`, returning its id.  Creates the Diamond
-    /// directory, an empty `crystal.md`, version `0`, a `meta.json`, and a
-    /// `create` log record.
+    /// directory, an empty `crystal.json`, version `0`, a `meta.json`, and a
+    /// `create` log record.  No page: a new Diamond renders on the shipped default until
+    /// something writes one.
     pub async fn create_diamond(&self, name: String) -> Result<String, JsValue> {
         diamond::create(&name).await.map_err(to_js_err)
     }
@@ -985,15 +1001,57 @@ impl DaimondApp {
         diamond::delete(&id).await.map_err(to_js_err)
     }
 
-    /// Read a Diamond's current crystal markdown.
-    pub async fn read_crystal(&self, id: String) -> Result<String, JsValue> {
-        diamond::read_crystal(&id).await.map_err(to_js_err)
+    /// Read a Diamond's current crystal data, as the JSON text it is stored as.
+    ///
+    /// Parsing is the caller's, and so is coping with text that will not parse: this is a store,
+    /// and a crystal a model has damaged must still reach the surface that can show the user what
+    /// is in it.
+    pub async fn read_crystal_data(&self, id: String) -> Result<String, JsValue> {
+        diamond::read_crystal_data(&id).await.map_err(to_js_err)
     }
 
-    /// Apply a user hand-edit to a Diamond's crystal: snapshots a new version
+    /// Apply a user hand-edit to a Diamond's crystal data: snapshots a new version
     /// and logs an `edit` record.
-    pub async fn write_crystal(&self, id: String, md: String) -> Result<(), JsValue> {
-        diamond::write_crystal(&id, &md).await.map_err(to_js_err)
+    pub async fn write_crystal_data(&self, id: String, json: String) -> Result<(), JsValue> {
+        diamond::write_crystal_data(&id, &json).await.map_err(to_js_err)
+    }
+
+    /// Read a Diamond's page, or empty when it has none.
+    ///
+    /// Empty is an ordinary answer: the shipped default page is a JS const, so the caller is the
+    /// one that knows what a Diamond with no page of its own should render.
+    pub async fn read_crystal_page(&self, id: String) -> Result<String, JsValue> {
+        diamond::read_crystal_page(&id).await.map_err(to_js_err)
+    }
+
+    /// Replace a Diamond's page: snapshots a new version and logs an `edit` record.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond.
+    /// * `html` - The page, self-contained; empty resets it and lets the default stand.
+    pub async fn write_crystal_page(&self, id: String, html: String) -> Result<(), JsValue> {
+        diamond::write_crystal_page(&id, &html).await.map_err(to_js_err)
+    }
+
+    /// Write both halves of a crystal as ONE version: one version number, one log record.
+    ///
+    /// For a restore and for a backup import.  Setting the two halves with the two calls above
+    /// works and writes two versions, so the Diamond's history shows two rows for one click of one
+    /// button -- and neither row is wrong, which is why it wants fixing rather than tolerating.
+    ///
+    /// The page half still writes a snapshot only where the page actually changed, so restoring a
+    /// version whose page never differed costs nothing extra.  `html` is taken literally: restoring
+    /// a version from before pages existed means passing an empty page, and the Diamond goes back
+    /// to having none.  A caller that would rather keep the page it has should pass that instead.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond.
+    /// * `json` - The crystal data to put at the head.
+    /// * `html` - The page to put at the head; empty leaves the Diamond with no page of its own.
+    pub async fn write_crystal_both(&self, id: String, json: String, html: String)
+        -> Result<(), JsValue>
+    {
+        diamond::write_crystal_both(&id, &json, &html).await.map_err(to_js_err)
     }
 
     /// Is an earlier Diamond root still waiting to be moved to `diamonds/`?
@@ -1020,11 +1078,27 @@ impl DaimondApp {
         diamond::log_read(&id).await.map_err(to_js_err)
     }
 
-    /// Read the crystal as it stood at `version`, so a past state can be shown
+    /// Read the crystal's data as it stood at `version`, so a past state can be shown
     /// and, if the user wants it back, written to the head with
-    /// [`DaimondApp::write_crystal`].
+    /// [`DaimondApp::write_crystal_data`].
+    ///
+    /// A version from before the migration answers with the markdown it holds, because that is
+    /// what is on disk and rewriting history to look like data would be inventing a past.  The
+    /// caller renders what it is given.
     pub async fn read_version(&self, id: String, version: f64) -> Result<String, JsValue> {
         diamond::read_version(&id, version as u64).await.map_err(to_js_err)
+    }
+
+    /// Read the PAGE as it stood at `version`.
+    ///
+    /// Not the page written AT that version -- most versions did not change it -- but the page
+    /// that was on screen then, which is the last one written at or before it.  See
+    /// [`diamond::read_version_page`] for why the two are different questions.
+    ///
+    /// Empty means no page had been stored by then, which is every version from before the
+    /// migration; the caller renders its default.
+    pub async fn read_version_page(&self, id: String, version: f64) -> Result<String, JsValue> {
+        diamond::read_version_page(&id, version as u64).await.map_err(to_js_err)
     }
 
     /// Steer a Diamond's crystal: run one daimon turn for `instruction`, streaming
@@ -1032,8 +1106,8 @@ impl DaimondApp {
     /// stands afterwards.
     ///
     /// The agent's file tools are scoped to `diamonds/<id>/`, so `file_read` /
-    /// `file_write` on `crystal.md` address the Diamond's crystal.  When the turn
-    /// leaves `crystal.md` changed, a new version is snapshotted and an `edit`
+    /// `file_write` on `crystal.json` address the Diamond's memory and `crystal.html` its page.
+    /// When the turn leaves either of them changed, a new version is snapshotted and an `edit`
     /// record logged.
     ///
     /// **The daimon is persistent, and `prior` is how.** It used to be stateless per
@@ -1074,12 +1148,41 @@ impl DaimondApp {
         self.steer_inner(&id, instruction, prior, on_event).await.map_err(to_js_err)
     }
 
-    /// Propose a fold: run a fresh reducer over the current crystal plus one
-    /// `delta`, returning the PROPOSED new crystal markdown.  Writes
+    /// Propose a fold: run a fresh reducer over the current crystal data plus one
+    /// `delta`, returning the PROPOSED new crystal data.  Writes
     /// nothing — the advisory half of the fold (H2); the delta is applied
     /// only on explicit confirm via [`DaimondApp::fold_apply`].
+    ///
+    /// The page is not folded and is not shown to the reducer.  It is presentation, and a reducer
+    /// asked to summarise a Diamond has no business rewriting how it looks.
     pub async fn fold_propose(&self, id: String, delta: String) -> Result<String, JsValue> {
         self.fold_propose_inner(&id, &delta).await.map_err(to_js_err)
+    }
+
+    /// Which top-level keys accepting `proposal` would drop from this Diamond's crystal, as a
+    /// JSON array of names.  Empty means none.
+    ///
+    /// **The fold is the one path where a key can vanish on a single click**, and the schema's
+    /// governing rule is that nothing may ever drop a key it does not recognise.  The reducer is a
+    /// fresh, tool-less model under a user-editable prompt, rewriting the whole file from one
+    /// sentence; key drift is its expected behaviour rather than a risk, and `{}` is a valid
+    /// crystal, so no parse check can catch it.  Comparing the two key sets is what can.
+    ///
+    /// Names and not a sentence, deliberately: the warning is shown beside the Accept button and
+    /// belongs in the user's own language, which this side does not speak.
+    ///
+    /// Asked separately from [`DaimondApp::fold_propose`] rather than folded into its result, so
+    /// the existing single-string contract is untouched -- and because the honest moment to ask is
+    /// when the user is about to accept, not when the proposal was made.  The crystal can move
+    /// between the two, and this reads it as it stands now.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond.
+    /// * `proposal` - The proposed crystal, as [`DaimondApp::fold_propose`] returned it.
+    pub async fn fold_keys_lost(&self, id: String, proposal: String)
+        -> Result<String, JsValue>
+    {
+        self.fold_keys_lost_inner(&id, &proposal).await.map_err(to_js_err)
     }
 
     /// Apply a confirmed fold: write the accepted `new_crystal`, snapshot a
@@ -1273,9 +1376,17 @@ impl DaimondApp {
             Opened::Refuse(msg) => return Err(refuse(&msg)),
         };
         // Stateless per instruction: reconstruct context from the crystal.
-        let before = diamond::read_crystal(id).await.unwrap_or_default();
+        //
+        // The heading names the FILE, not the format, and that is what makes the standing context
+        // and the file tools agree: a daimon told "here is the crystal" and left to find out where
+        // it lives has to guess a name, and the name changed under it.
+        let before = diamond::read_crystal_data(id).await.unwrap_or_default();
+        // Read before the turn, compared after it. The page is not put in the prompt -- it is
+        // markup the daimon can open with `file_read` when it has been asked to change it, and it
+        // would otherwise be paid for on every request of every steering turn.
+        let page_before = diamond::read_crystal_page(id).await.unwrap_or_default();
         let mut system = Role::Daimon.compose(&self.daimon_prompt.borrow());
-        system.push_str("\n\nCurrent crystal.md:\n");
+        system.push_str("\n\nCurrent crystal.json:\n");
         system.push_str(&before);
 
         // File tools scoped to this Diamond's directory.
@@ -1359,8 +1470,13 @@ impl DaimondApp {
         // the turn ended badly: a turn that wrote the crystal and then died has still
         // changed it, and leaving that version unrecorded is the one outcome with no
         // way back.
-        let after = diamond::read_crystal(id).await.unwrap_or_default();
-        if after != before {
+        let after = diamond::read_crystal_data(id).await.unwrap_or_default();
+        // THE PAGE COUNTS AS A CHANGE TOO. A turn asked to redesign how a Diamond looks writes
+        // `crystal.html` and touches no data at all, and judging by the data alone would leave
+        // that turn's work on disk with no version, no snapshot and no line in the log saying who
+        // asked for it -- the one change in a Diamond with no way back.
+        let page_after = diamond::read_crystal_page(id).await.unwrap_or_default();
+        if after != before || page_after != page_before {
             res!(diamond::record_steer(id, &after, &typed).await);
         }
         // The conversation goes back whichever way the turn went, and a failed turn is
@@ -1388,12 +1504,22 @@ impl DaimondApp {
         Ok(out)
     }
 
+    /// Which keys a proposal would drop, as a JSON array (see [`DaimondApp::fold_keys_lost`]).
+    async fn fold_keys_lost_inner(&self, id: &str, proposal: &str) -> Outcome<String> {
+        let crystal = res!(diamond::read_crystal_data(id).await);
+        let lost = crate::agent::compact::crystal_keys_lost(&crystal, proposal);
+        let items: Vec<String> = lost.iter()
+            .map(|k| fmt!("\"{}\"", crate::llm::json_escape(k)))
+            .collect();
+        Ok(fmt!("[{}]", items.join(",")))
+    }
+
     /// Drive the reducer for one delta, returning the proposed crystal (see
     /// [`DaimondApp::fold_propose`]).
     async fn fold_propose_inner(&self, id: &str, delta: &str) -> Outcome<String> {
-        let crystal = res!(diamond::read_crystal(id).await);
+        let crystal = res!(diamond::read_crystal_data(id).await);
         let user_msg = fmt!(
-            "Current crystal:\n{}\n\n---\nDelta to fold in:\n{}",
+            "Current crystal.json:\n{}\n\n---\nDelta to fold in:\n{}",
             crystal, delta,
         );
         // The reducer only emits text — no tools, so it cannot write.
@@ -1444,13 +1570,39 @@ impl DaimondApp {
             return Err(err!(
                 "The reducer could not propose a fold: {}", failure; Network, Invalid));
         }
-        if out.trim().is_empty() {
-            return Err(err!(
-                "The reducer returned an empty proposal, so there is nothing to fold in. \
-                A fold never empties a crystal; try again, or steer the Diamond instead.";
-                Invalid, Data));
+        // THE PROPOSAL IS PARSED BEFORE IT IS OFFERED. This subsumes the bare "not empty" check
+        // that used to stand here, which was the only gate a proposal passed through.
+        //
+        // Emptiness was never the dangerous case. A reply cut off at the output limit is the
+        // commonest fold failure there is, and jdat's text decoder returns `Ok` for a map whose
+        // input simply stops -- `{"title": "half` decodes happily where `JSON.parse` refuses it.
+        // So a truncated crystal reached the user as a proposal they could accept, and accepting
+        // it wiped everything after the cut.
+        //
+        // The RETURNED string is what goes onward, never `out`: it comes back unfenced and
+        // trimmed, and handing the raw model output on instead would write a markdown fence into
+        // the crystal.
+        let proposal = res!(crate::agent::compact::crystal_proposal(&out));
+
+        // A KEY THAT WOULD VANISH IS RECORDED HERE AND REFUSED NOWHERE.
+        //
+        // `{}` is a valid crystal under the schema, so no parse check can tell a legitimately
+        // empty one from a fold that dropped everything. What answers it is comparing the two key
+        // sets, and the user is the one who decides -- so this does not refuse. What it must not
+        // do is bake the key names into an English sentence: the warning belongs beside the
+        // Accept button in the user's own language, which is [`DaimondApp::fold_keys_lost`]'s job.
+        //
+        // The line below is the backstop, not the mechanism. It costs nothing, it cannot mislead,
+        // and it means a dropped key is in the console and the durable trail even on a build where
+        // the warning has not been wired up yet.
+        let lost = crate::agent::compact::crystal_keys_lost(&crystal, &proposal);
+        if !lost.is_empty() {
+            crate::wasm::entry::trail("FOLD DROPS KEYS", &fmt!("{} — {}", id, lost.join(", ")));
+            web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                "The fold proposed for Diamond {} drops {} from its crystal.",
+                id, lost.join(", "))));
         }
-        Ok(out)
+        Ok(proposal)
     }
 }
 

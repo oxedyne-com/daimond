@@ -13,7 +13,7 @@ await s.page.fill('.dlg-input', 'Ship a CSV parser');
 await s.page.click('.dlg-ok', { force: true });
 await s.page.waitForTimeout(1200);
 
-// Steer: ask the crystal agent to record the goal and open threads into crystal.md.
+// Steer: ask the crystal agent to record the goal and open threads into crystal.json.
 async function steer(text, wait = 60000) {
   await s.page.fill('#steer-input', text);
   await s.page.keyboard.press('Enter');
@@ -25,8 +25,18 @@ async function steer(text, wait = 60000) {
   }
   await s.page.waitForTimeout(400);
 }
-await steer('Set the crystal for this Diamond: goal is a small Rust CSV parser. Record the goal, and list three open threads: parse a line, handle quoted fields, and write tests. Edit crystal.md to contain this.');
-const crystalV1 = await s.page.evaluate(() => (document.querySelector('.chat-msg-content')||document.getElementById('crystal-body')||{}).innerText || '');
+await steer('Set the crystal for this Diamond: goal is a small Rust CSV parser. Record the goal, and list three open threads: parse a line, handle quoted fields, and write tests. Edit crystal.json to contain this.');
+
+/// The crystal as it stands, read from the store rather than off the panel: the
+/// data is drawn by the Diamond's own page inside a sandboxed frame, so there is
+/// no text in `.crystal-body` for `innerText` to return.
+const crystalNow = () => s.page.evaluate(async () => {
+  const m = await import('/pkg/oxedyne_daimond.js');
+  const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+  const row = JSON.parse(await app.list_diamonds()).find(r => r.name === 'Ship a CSV parser');
+  return row ? await app.read_crystal_data(row.id) : '';
+});
+const crystalV1 = await crystalNow();
 
 // Fold a delta in (a finished piece of work) and accept it.
 await s.page.fill('#fold-delta', 'Decision: use a hand-written state machine, not a regex. The quoted-field thread is now the priority.');
@@ -37,7 +47,7 @@ for (let i=0;i<40;i++){ if (await s.page.$('.diff-accept')) break; await s.page.
 const accept = await s.page.$('.diff-accept');
 let folded = false;
 if (accept && !(await accept.isDisabled())) { await accept.click({ force: true }); await s.page.waitForTimeout(2500); folded = true; }
-const crystalV2 = await s.page.evaluate(() => (document.querySelector('.chat-msg-content')||{}).innerText || '');
+const crystalV2 = await crystalNow();
 
 const result = {
   workflow: 'diamonds', model, elapsedS: ((Date.now()-t0)/1000).toFixed(1),

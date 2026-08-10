@@ -1054,6 +1054,17 @@ button.tag-pool { cursor: pointer; }
 
 /* Fold diff — added / removed lines, all text escaped. */
 .diff-head { font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 10px; }
+/* A key the proposal would drop. Warning colour, not error: this is a thing the user may
+   well want, and the point is that they see it rather than that they are stopped. */
+.diff-lost {
+	font-size: var(--fs-xs);
+	color: var(--warn);
+	border-left: 3px solid var(--warn);
+	padding: 6px 10px;
+	margin-bottom: 10px;
+	background: var(--warn-bg);
+	border-radius: var(--radius-sm);
+}
 .diff-lines { font-family: var(--font-mono); font-size: var(--fs-xs-sm); line-height: 1.55; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .diff-line { display: block; white-space: pre-wrap; word-break: break-word; padding: 1px 8px; }
 .diff-line .sign { display: inline-block; width: 1.3em; color: var(--text-muted); user-select: none; }
@@ -1078,9 +1089,16 @@ button.tag-pool { cursor: pointer; }
 .empty-state.bare .empty-new-session { margin-top: 0; }
 .empty-new-session:hover { background: var(--accent-hover); }
 
-/* Spinner */
-.chat-spinner { display: flex; gap: 4px; padding: 8px 14px; }
-.chat-spinner-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); animation: spinner-bounce 1.4s infinite ease-in-out both; }
+/* The turn indicator: three dots and a line saying what the turn is doing.
+   It is up for the whole turn, so it sits at the foot of the thread and the
+   caption is what stops it being four minutes of unchanging nothing. */
+.chat-spinner { display: flex; align-items: center; gap: 4px; padding: 8px 14px; }
+/* The caption. Muted and small: it is a status line beside the answer, not part
+   of it, and it must not read as something the model said. The left margin is
+   the gap between the dots and the words -- `gap` alone would set it to the
+   spacing BETWEEN the dots, which is far too tight for a sentence. */
+.chat-spinner-say { margin-left: 6px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.chat-spinner-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); animation: spinner-bounce 1.4s infinite ease-in-out both; }
 .chat-spinner-dot:nth-child(1) { animation-delay: -0.32s; }
 .chat-spinner-dot:nth-child(2) { animation-delay: -0.16s; }
 @keyframes spinner-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
@@ -1218,8 +1236,42 @@ button.tag-pool { cursor: pointer; }
    to the field above it, and the 12px before the next label keeps it there. */
 .cfg-fieldnote { font-size: var(--fs-xs); color: var(--text-muted); margin: 6px 0 0; line-height: 1.5; }
 .byok-form .cfg-fieldnote { margin: -4px 0 0; }
+/* A heading over a PAIR of rows that are one setting to a person -- the crystal's
+   data limit and its page limit. Presented apart they read as two unrelated
+   numbers. Heavier than a field label and lighter than the section title, with
+   a rule under it so the two rows beneath read as belonging to it. */
+.cfg-fieldhead { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); margin: 18px 0 0; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.cfg-fieldhead + .cfg-fieldlabel { margin-top: 8px; }
 .cfg-advanced summary { font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer; user-select: none; padding: 2px 0; }
 .cfg-advanced[open] { display: flex; flex-direction: column; gap: 10px; }
+
+/* ── Search: which service the agent searches with ──────────────
+   A row is a label, its field and the notes that explain it, kept together so
+   the notes cannot drift onto the field below on a narrow rail. Same weights
+   as the model picker directly above it, because it is the same kind of
+   decision and a second visual language for it would say otherwise. */
+.search-engine-row { display: flex; flex-direction: column; margin-top: 12px; }
+.search-engine-row:first-of-type { margin-top: 0; }
+.search-engine-row input[type="text"] {
+	width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm); color: var(--text-primary);
+	padding: 9px 12px; font-size: var(--fs-base);
+}
+.search-engine-row input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.search-engine-row input::placeholder { color: var(--text-muted); }
+.search-engine-note { font-size: var(--fs-xs); color: var(--text-muted); margin: 6px 0 0; line-height: 1.5; }
+.search-engine-note a { color: var(--accent-text); }
+/* AMBER, not red. "You have not added a key yet" is a state of the setting and
+   a thing to do about it; drawing it as an error would report a fault at
+   somebody who has done nothing wrong -- the same rule the credits row follows
+   when the balance runs out. */
+.search-engine-note[data-warn] { color: var(--warn); }
+
+/* `root/web`'s control, in the Web panel header. Ruled off from the page
+   buttons beside it because it is a different KIND of control: back, reload
+   and pop act on the page, and this decides whether the panel may spend at
+   all. Without the rule it reads as a fourth page button with a lamp on it. */
+.web .chead-right .pptw { padding-right: 8px; border-right: 1px solid var(--border); }
 
 /* ── Chat tiles: pending (pick model → Start) + active (meter + Fold) ─── */
 .tile-label { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 500; padding: 2px 5px; }
@@ -1782,6 +1834,52 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .crystal-act.primary { background: var(--accent); color: var(--on-fill, #fff); border-color: var(--accent); }
 .crystal-edit { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-edit:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* ── The crystal as a page: the chrome around the frame ────────────
+   The frame, the built-in view that replaces a page which fails, and the note
+   that says it failed are all drawn by css/crystal.css. What is here is what
+   the APP puts around them -- the ask row, the ✎ form -- and not one class the
+   frame lane also names. crystal.css is linked after this file anyway, so it
+   would win on anything the two ever repeated. */
+
+/* App chrome, BELOW the frame, never inside it. A page cannot ask the user
+   anything -- a parent cannot verify user activation across the boundary, so a
+   timer there is indistinguishable from a click -- so the box that talks to the
+   daimon about the page lives out here, where a click is provably a person's. */
+.crystal-ask { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+.crystal-ask-input { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 7px 10px; font-size: var(--fs-sm); }
+.crystal-ask-input::placeholder { color: var(--text-muted); }
+.crystal-ask-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.crystal-ask .crystal-act { flex: none; }
+
+/* The memory as it sits on disk, shown when crystal.js did not load at all. A
+   broken build must not look like an empty Diamond. */
+.crystal-raw { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); margin: 0; }
+
+/* The ✎ form. A textarea written straight through was harmless for markdown,
+   which has no parse failure, and a data-loss path for JSON. */
+.crystal-form { display: flex; flex-direction: column; gap: 4px; }
+.crystal-form-row { display: flex; flex-direction: column; }
+.crystal-form-list { display: flex; flex-direction: column; gap: 6px; }
+.crystal-form-list > .crystal-act { align-self: flex-start; }
+.crystal-form-item { display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.crystal-form-line { display: flex; gap: 6px; align-items: center; }
+.crystal-form-input { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 7px 10px; font-size: var(--fs-sm); }
+.crystal-form-item .crystal-form-input { background: var(--bg-primary); }
+.crystal-form-area { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 8px 10px; font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
+.crystal-form-item .crystal-form-area { background: var(--bg-primary); }
+.crystal-form-input:focus, .crystal-form-area:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.crystal-form-input::placeholder, .crystal-form-area::placeholder { color: var(--text-muted); }
+.crystal-form-x { flex: none; padding: 2px 8px; line-height: 1.4; }
+
+/* Read-only, and written back exactly as it came in. A form that drops what it
+   cannot render is the defect this design is shaped around. */
+.crystal-form-extra { margin-top: 12px; padding: 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.crystal-form-extra pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+/* The raw JSON, behind a second click, and it refuses to save unparseable text. */
+.crystal-json { width: 100%; min-height: 320px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
+.crystal-json:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .hist-list { display: flex; flex-direction: column; gap: 6px; }
 /* Wraps, so a note can take a line of its own beneath the version and its
    buttons rather than squeezing between them. A row with no note is unchanged:

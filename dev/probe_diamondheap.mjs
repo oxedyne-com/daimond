@@ -116,8 +116,13 @@ for (let i = 1; i <= N; i++) {
 		// megabytes. Fifty each here is ~11 MB across the store: if the walk
 		// allocates in proportion to what is on disk, that is enough to show a
 		// slope, and if the curve stays flat the history is exonerated too.
-		const body = '# Probe\n\n' + 'lorem ipsum dolor sit amet '.repeat(560);   // ~15 KB
-		for (let v = 0; v < 50; v++) await app.write_crystal(id, body + '\n\n<!-- ' + v + ' -->');
+		const body = 'lorem ipsum dolor sit amet '.repeat(555);                  // ~15 KB
+		// A fact per pass, so no two versions are the same bytes and the store cannot
+		// quietly collapse fifty writes into one.
+		for (let v = 0; v < 50; v++) {
+			await app.write_crystal_data(id, JSON.stringify(
+				{ title: 'Probe', summary: body, facts: [{ k: 'pass', v: String(v) }] }));
+		}
 	}, FAT);
 
 	// Every third, so the output is a curve rather than a wall.

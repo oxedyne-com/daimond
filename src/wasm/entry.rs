@@ -24,6 +24,7 @@ use oxedyne_fe2o3_graphics::qr::{
     encode,
     QrEcc,
 };
+use oxedyne_fe2o3_stds::media;
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::rand::Rand;
@@ -141,6 +142,25 @@ pub fn heap_mb() -> u32 {
     (heap_bytes() / 1_048_576.0) as u32
 }
 
+/// Spell one path component the way the filesystem edge will store it.
+///
+/// Exported so the JavaScript copy of the codec in `cloud.js` can be held to this one rather than
+/// to a reading of it.  There are two implementations because the workspace walkers in
+/// `daimond.js` reach the browser's handles directly, and two implementations that are never
+/// compared are two implementations that will drift; `dev/verify_mailnames.mjs` drives both over
+/// one corpus.  Nothing in the app calls this — the edge applies the codec itself.
+#[wasm_bindgen]
+pub fn fs_disk_name(name: &str) -> String {
+    crate::fsname::encode(name)
+}
+
+/// Read a stored component back the way the workspace spells it.  The inverse of [`fs_disk_name`],
+/// and exported for the same reason.
+#[wasm_bindgen]
+pub fn fs_logical_name(name: &str) -> String {
+    crate::fsname::decode(name)
+}
+
 /// Panic on purpose, so the hook itself can be proved rather than assumed.
 ///
 /// A diagnostic that has never been seen working is a diagnostic nobody should
@@ -241,6 +261,124 @@ pub async fn read_file(path: String) -> Result<String, JsValue> {
         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
         Err(e)    => Err(to_js_err(e)),
     }
+}
+
+// ── Bytes, and what they are ─────────────────────────────────────────────
+//
+// [`read_file`] above ends in `from_utf8_lossy`, which is right for the callers it was written
+// for and catastrophic for the one that opens whatever the user clicked.  Every byte that is not
+// valid UTF-8 becomes U+FFFD, so opening a PDF filled the document panel with replacement
+// characters and no indication that anything had gone wrong -- the app looked broken rather than
+// the format looking unsupported.
+//
+// There was a binary guard, and it never fired for a file in the user's own folder: it asked
+// `DaimondCloud.fileAt`, which resolves through the cloud offload cache and not the workspace at
+// all.  So the guard covered the files least likely to need it.
+//
+// These two functions are the fix, and they are deliberately separate.  [`file_probe`] says what a
+// file IS without reading much of it; [`read_bytes`] hands over a range of it byte-exactly.  A
+// caller asks the first, decides, and only then asks the second -- which is what keeps a 900 MB
+// video from being materialised in wasm linear memory to find out that it is a video.
+
+/// What a file is, without reading much of it: `{size, media, kind, mime, label, text, disagree}`.
+///
+/// The format comes from [`oxedyne_fe2o3_stds::media::identify`], which reads both the leading
+/// bytes and the name and reports when they disagree.  `disagree` is not a warning about a
+/// malformed file -- it is the interesting case, and a viewer that hides it hides how a person
+/// finds a broken export.
+///
+/// Only the first 512 bytes are read, which recognises every format in the table except a tar
+/// archive, whose signature sits at offset 257 and so needs 264 of them.
+///
+/// `media` and `kind` are the enum variant names (`"Png"`, `"Image"`), which are stable because
+/// they are the API; `mime` is what to put on a `Blob`, and `label` is an English fallback for a
+/// caller with nowhere to translate.
+///
+/// # Arguments
+/// * `path` - The path, resolved against the active Workspace root.
+#[wasm_bindgen]
+pub async fn file_probe(path: String) -> Result<String, JsValue> {
+    probe_at(FileRoot::Workspace, &path).await.map_err(to_js_err)
+}
+
+/// [`file_probe`], against Daimond's own store rather than the workspace.
+#[wasm_bindgen]
+pub async fn store_file_probe(path: String) -> Result<String, JsValue> {
+    probe_at(FileRoot::Opfs, &path).await.map_err(to_js_err)
+}
+
+/// Read `len` bytes of a file from `offset`, byte-exactly.
+///
+/// No decoding of any kind happens here, which is the whole point.  A caller that wants
+/// characters asks [`file_probe`] first and decodes only what it was told is text.
+///
+/// An `offset` past the end answers with an empty array rather than an error, so a caller can walk
+/// to the end of a file without knowing in advance where the end is.
+///
+/// # Arguments
+/// * `path` - The path, resolved against the active Workspace root.
+/// * `offset` - Where to start, in bytes.
+/// * `len` - How many bytes to take.
+#[wasm_bindgen]
+pub async fn read_bytes(path: String, offset: f64, len: u32) -> Result<js_sys::Uint8Array, JsValue> {
+    match opfs::read_file_range(FileRoot::Workspace, &path, offset, len).await {
+        Ok((bytes, _)) => Ok(js_sys::Uint8Array::from(&bytes[..])),
+        Err(e)         => Err(to_js_err(e)),
+    }
+}
+
+/// [`read_bytes`], against Daimond's own store rather than the workspace.
+#[wasm_bindgen]
+pub async fn store_read_bytes(
+    path:   String,
+    offset: f64,
+    len:    u32,
+)
+    -> Result<js_sys::Uint8Array, JsValue>
+{
+    match opfs::read_file_range(FileRoot::Opfs, &path, offset, len).await {
+        Ok((bytes, _)) => Ok(js_sys::Uint8Array::from(&bytes[..])),
+        Err(e)         => Err(to_js_err(e)),
+    }
+}
+
+/// The body of [`file_probe`], over either root.
+///
+/// # Arguments
+/// * `root` - Which root to resolve `path` against.
+/// * `path` - The path.
+async fn probe_at(root: FileRoot, path: &str) -> Outcome<String> {
+    // 512 rather than 264: the extra costs nothing (a `Blob` slice copies only what is read) and
+    // it leaves room for the text-shaped formats, which are recognised from their opening tag.
+    let (head, size) = res!(opfs::read_file_range(root, path, 0.0, 512).await);
+    let id = media::identify(path, &head);
+    // Both halves of a disagreement carry their LABEL as well as their variant name. The
+    // variant name is an identifier -- `Pdf`, `Text` -- and a sentence built from it reads
+    // "The bytes say Pdf", which is the code's word for the format leaking onto the screen.
+    Ok(fmt!(
+        "{{\"size\":{},\"media\":\"{:?}\",\"kind\":\"{:?}\",\"mime\":\"{}\",\"label\":\"{}\",\
+        \"text\":{},\"chars\":{},\"byMagic\":\"{:?}\",\"byMagicLabel\":\"{}\",\
+        \"byName\":\"{:?}\",\"byNameLabel\":\"{}\",\"disagree\":{}}}",
+        size,
+        id.media,
+        id.media.kind(),
+        id.media.mime(),
+        id.media.label(),
+        // `text`: both halves hold -- a format that IS text, and bytes that ARE characters.  A
+        // `.json` full of NULs is not something to put on screen as characters however it is
+        // named.  This is what a VIEWER wants, because it decides which structured view to draw.
+        id.media.is_text() && media::looks_like_text(&head),
+        // `chars`: the bytes alone.  This is what an EDITOR wants, and the two are not the same
+        // question.  A `Makefile` or a `README` has no extension to recognise, so its format is
+        // Unknown and `text` is false -- and it is plainly a file somebody wants to edit.  Asking
+        // the narrower question would have sent it to a hex dump.
+        media::looks_like_text(&head),
+        id.by_magic,
+        id.by_magic.label(),
+        id.by_name,
+        id.by_name.label(),
+        id.disagree,
+    ))
 }
 
 // ── Daimond's own store, pinned to OPFS ──────────────────────────────────

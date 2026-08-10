@@ -158,7 +158,8 @@ import init, {
 		//
 		// `pushToken` is deliberately NOT in the stored shape and never read back: the
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
-		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0, crystalKb: 0, tools: true,
+		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
+			crystalKb: 0, crystalPageKb: 0, tools: true,
 			foldModel: '', foldProvider: '',
 			pushHost: '', pushUser: '', pushToken: '', pushTokenEnc: '' };
 		if (raw) {
@@ -178,7 +179,10 @@ import init, {
 				// Zero means the engine's own default, which is also what an absent field means.
 				if (typeof j.maxRounds === 'number') cfg.maxRounds = j.maxRounds;
 				// Kilobytes; zero is the engine's default ceiling, as an absent field is.
+				// A crystal is now two files and each has its own ceiling: the data the
+				// daimon reads, and the page that draws it.
 				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
+				if (typeof j.crystalPageKb === 'number') cfg.crystalPageKb = j.crystalPageKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
 				// What folds a conversation when it outgrows its window. Empty -- and an
 				// absent field -- means the conversation's own model, which is what the
@@ -221,7 +225,8 @@ import init, {
 			model:     c.model || '',
 			maxOut:    c.maxOut || 0,
 		maxRounds: c.maxRounds || 0,
-			crystalKb: c.crystalKb || 0,
+			crystalKb:     c.crystalKb || 0,
+			crystalPageKb: c.crystalPageKb || 0,
 			tools:     c.tools !== false,
 			foldModel:    c.foldModel || '',
 			foldProvider: c.foldProvider || '',
@@ -358,15 +363,15 @@ import init, {
 			hostEl.value = '';
 			setSecret(tokEl, '');
 			renderPushState();
-			note.textContent = t('push.cleared');
+			mark(note, '', t('push.cleared'));
 			return;
 		}
-		if (!host) { note.textContent = t('push.err_host'); hostEl.focus(); return; }
+		if (!host) { mark(note, '', t('push.err_host')); hostEl.focus(); return; }
 		var user = pushUserFor(host);
 		var held;
 		try { held = tools().set_push_cred(host, user, token); }
 		catch (e) { note.textContent = friendlyError(e); hostEl.focus(); return; }
-		if (!held) { note.textContent = t('push.err_not_held'); return; }
+		if (!held) { mark(note, '', t('push.err_not_held')); return; }
 		// The engine folds the host -- 'GitHub.com/' becomes 'github.com' -- so what
 		// is stored is what a push will actually reach, and the box agrees with it.
 		cfg.pushHost  = pushHostHeld() || host;
@@ -385,7 +390,7 @@ import init, {
 		hostEl.value = cfg.pushHost;
 		setSecret(tokEl, '');
 		renderPushState();
-		note.textContent = kept ? t('push.saved') : t('push.session_only');
+		mark(note, '', kept ? t('push.saved') : t('push.session_only'));
 	}
 
 	// ── How long a reply may be ────────────────────────────────
@@ -2375,11 +2380,20 @@ import init, {
 		} catch (e) { return; }
 		trail('sync apply listed', Object.keys(local).length + ' here, ' + heapNote());
 		var changed = false;
+		trail('sync tombs', deletions.length + ' tombstone(s), ' + Object.keys(local).length + ' here');
 		for (var j = 0; j < deletions.length; j++) {
 			var dead = deletions[j];
 			if (!local[dead]) continue;
+			// LOUD. This used to swallow with "it goes on the next pull", and when it
+			// did not go on the next pull either there was nothing anywhere to say
+			// so: a Diamond deleted on one device stayed on the other for ever, in
+			// silence. A deletion that fails twice is not a hiccup.
 			try { await app.delete_diamond(dead); delete local[dead]; changed = true; }
-			catch (e) { /* it goes on the next pull */ }
+			catch (e) {
+				trail('sync delete failed', dead + ': ' + ((e && (e.message || e)) || '?'));
+				try { console.warn('[sync] could not delete tombstoned Diamond ' + dead, e); }
+				catch (e2) {}
+			}
 		}
 		for (var i = 0; i < incoming.length; i++) {
 			var r = incoming[i];
@@ -2801,6 +2815,15 @@ import init, {
 	// two names the rest of this file uses.
 	function t(k, vars)     { return DaimondI18n.t(k, vars); }
 	function tn(k, n, vars) { return DaimondI18n.tn(k, n, vars); }
+	/// Set a string a widget was HANDED, and leave a trail back to its key.
+	///
+	/// The generic machinery -- a dialog, a form, the drawer's heading -- takes
+	/// finished strings from its callers, so it has no key to put in the markup
+	/// and nothing repaints it. `mark` looks the key up from the string and
+	/// stamps it, after which the ordinary `data-i18n` repaint covers it. A
+	/// string the table never produced (a Diamond's name, a figure) is set and
+	/// left alone.
+	function mark(node, attr, text) { return DaimondI18n.mark(node, attr, text); }
 	/// Whether figures are being shown in the currency they are billed in.
 	/// When they are not, a purchase point owes the user a sentence.
 	function usdDisplay()   { return DaimondI18n.currency() === 'USD'; }
@@ -3102,18 +3125,20 @@ import init, {
 	};
 
 	// ── Repainting after a language or currency change ─────────
-	// The surfaces that are ALWAYS on screen are redrawn at once: the admin
-	// status header, the spend readout at the foot of the rail, and the Credits
-	// drawer if it is the one open. Everything built on open (a dialog, a form,
-	// the tools panel) is next-open, which is when it is next built anyway.
+	// This hook is for what is on screen for as long as the app is: the admin
+	// status header, the spend readout at the foot of the rail, the two lists in
+	// it. Nothing here asks whether it is open, because none of it closes.
+	//
+	// A surface that COMES AND GOES does not belong here, and the drawer proved
+	// why: it was covered by one line that redrew the Credits view if that view
+	// happened to be showing, so every other view of the drawer -- and the
+	// heading over all of them -- stayed in the language it was opened in.
+	// Those register through `DaimondI18n.surface`, which does the "am I on
+	// screen" test itself, so the next surface cannot get that half wrong.
 	if (window.DaimondI18n) {
 		DaimondI18n.onChange(function () {
 			try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
 			try { updateSpend(); } catch (e) { /* no ledger yet */ }
-			try {
-				var cv = document.getElementById('admin-credits');
-				if (cv && cv.style.display !== 'none') renderCredits();
-			} catch (e) { /* the drawer is not open */ }
 			try { updateUserRow(); } catch (e) { /* not signed in */ }
 			// The chat header when nothing is open. It is not a dialog waiting to be
 			// built again -- it is on screen the whole time an empty app is, so a
@@ -3140,7 +3165,30 @@ import init, {
 			// And the Terminal's two buttons, whose names change with the session
 			// rather than with the markup, so nothing else would ever repaint them.
 			try { if (window.DaimondTerm) DaimondTerm.relabel(); } catch (e) { /* not built yet */ }
+			// The two standing pause controls carry their node's NAME in their
+			// spoken labels, and a name is fixed at mount, so nothing else would
+			// ever put them into the new language. Cheap: two widgets, rebuilt.
+			try { initPauseUi(); } catch (e) { /* the rail is not up yet */ }
+			// The search row's five option labels: one of them is a phrase this app
+			// made up, and the kinds beside all of them are ours too.
+			try { SearchRow.render(); } catch (e) { /* the section is not up yet */ }
 		});
+
+		// And the surfaces that come and go. Each hands over the node that shows
+		// it, so the engine decides whether it is on screen -- the half every one
+		// of the lines above has to get right for itself.
+		//
+		// What these three have in common is that they are the ONLY thing their
+		// panel says to an account that has not used it yet, so a language change
+		// that misses them misses everything the newcomer can read there.
+		DaimondI18n.surface(
+			function () { return document.querySelector('#chat-output .empty-state.bare'); },
+			renderEmptyState);
+		DaimondI18n.surface(
+			function () { return document.querySelector('#chat-output .empty-state.pending-centre'); },
+			function () { if (pendingCentreChat) renderPendingCentre(pendingCentreChat); });
+		DaimondI18n.surface(agentsList,                                function () { Workers.render(); });
+		DaimondI18n.surface(document.getElementById('pending-list'),   function () { Pending.render(); });
 	}
 
 	// ── Durability: lifecycle hooks ────────────────────────────
@@ -4323,7 +4371,10 @@ import init, {
 			var hs = document.createElement('div');
 			hs.className = 'phandle';
 			hs.id = 'handle-stage';
-			hs.title = t('layout.handle');
+			// Marked, not set: this divider is built once and never rebuilt, so its
+			// spoken name would otherwise stay in the language it was built in --
+			// which the stacked dividers already knew, three hundred lines below.
+			DaimondI18n.bind(hs, 'title', 'layout.handle');
 			stageEl.appendChild(hs);
 
 			scan();
@@ -4823,6 +4874,16 @@ import init, {
 		var q = document.getElementById('chat-queued');
 		if (q) chatOutput.insertBefore(node, q);
 		else chatOutput.appendChild(node);
+		// And under everything, the turn indicator, which is up for as long as the
+		// turn is. Sinking it above each new tool block would leave the thread
+		// saying "running file_read" halfway up itself while the real work went on
+		// below. This is the one place every render path already goes through, so
+		// a path added later cannot forget -- which is the same reason the
+		// placeholder is removed here rather than at each call site.
+		if (spinnerEl && node !== spinnerEl && spinnerEl.parentNode === chatOutput) {
+			if (q) chatOutput.insertBefore(spinnerEl, q);
+			else chatOutput.appendChild(spinnerEl);
+		}
 	}
 
 	// True when the thread is scrolled to (near) the bottom, so streaming
@@ -4969,10 +5030,11 @@ import init, {
 		(opts.fields || []).forEach(function (f) {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
-			lab.textContent = f.label || f.name;
+			// Marked, so the row follows a language change while the form stands open.
+			mark(lab, '', f.label || f.name);
 			// A field whose label cannot say what happens if it is left alone carries the
 			// sentence on hover instead, on both halves of the row.
-			if (f.title) lab.title = f.title;
+			if (f.title) mark(lab, 'title', f.title);
 			host.appendChild(lab);
 
 			// A `models` field is a pulldown of every model, grouped by provider, drawn by the
@@ -4981,7 +5043,7 @@ import init, {
 			if (f.kind === 'models') {
 				var sel = document.createElement('select');
 				sel.className = 'dlg-input dlg-select';
-				if (f.title) { sel.title = f.title; sel.setAttribute('aria-label', f.title); }
+				if (f.title) { mark(sel, 'title', f.title); mark(sel, 'aria-label', f.title); }
 				if (window.DaimondModels) DaimondModels.fillSelect(sel, f.provider || '', f.value || '');
 				host.appendChild(sel);
 				inputs[f.name] = sel;
@@ -4992,7 +5054,7 @@ import init, {
 			var el = document.createElement('input');
 			el.className = 'dlg-input';
 			el.type = 'text';
-			el.placeholder = f.placeholder || '';
+			mark(el, 'placeholder', f.placeholder || '');
 			el.autocomplete = 'off';
 			el.spellcheck = false;
 			el.setAttribute('data-1p-ignore', '');
@@ -5121,14 +5183,25 @@ import init, {
 			var card = document.createElement('div');
 			card.className = 'modal-card dlg-card';
 
+			// Marked, not merely set: a dialog is handed finished strings, so
+			// nothing else in the app knows what keys to repaint it from. See
+			// `mark`. A dialog left open while the language changes was showing the
+			// old one until this line.
+			//
+			// Except a `pre` dialog, which is the app QUOTING something -- a run's
+			// name, its output, a list of paths. That is content, and content that
+			// happened to read exactly like a button somewhere would otherwise be
+			// translated out from under the user.
+			var say = opts.pre ? function (n, v) { n.textContent = v; } : function (n, v) { mark(n, '', v); };
+
 			var h = document.createElement('h2');
-			h.textContent = opts.title || '';
+			say(h, opts.title || '');
 			card.appendChild(h);
 
 			if (opts.message) {
 				var p = document.createElement(opts.pre ? 'pre' : 'p');
 				p.className = opts.pre ? 'dlg-pre' : 'dlg-msg';
-				p.textContent = opts.message;            // escaped
+				say(p, opts.message);                    // escaped
 				card.appendChild(p);
 			}
 
@@ -5138,7 +5211,7 @@ import init, {
 				input = document.createElement('input');
 				input.className = 'dlg-input';
 				input.type = 'text';
-				input.placeholder = opts.placeholder || '';
+				mark(input, 'placeholder', opts.placeholder || '');
 				// A passphrase must not sit on screen in the clear. Daimond masks
 				// secrets itself (a text field with bullets) rather than using
 				// type=password, so no password manager offers to save it.
@@ -5162,13 +5235,13 @@ import init, {
 				cancel = document.createElement('button');
 				cancel.type = 'button';          // never submit an enclosing form
 				cancel.className = 'modal-close dlg-cancel';
-				cancel.textContent = opts.cancelLabel || 'Cancel';
+				mark(cancel, '', opts.cancelLabel || t('common.cancel'));
 				row.appendChild(cancel);
 			}
 			var ok = document.createElement('button');
 			ok.type = 'button';
 			ok.className = 'dlg-ok' + (opts.danger ? ' danger' : '');
-			ok.textContent = opts.okLabel || 'OK';
+			mark(ok, '', opts.okLabel || t('dlg.ok'));
 			row.appendChild(ok);
 			card.appendChild(row);
 
@@ -5397,7 +5470,23 @@ import init, {
 		return got;
 	}
 
-	async function egressAllowed(payloadJson) {
+	/// Whether this act may happen, now that something from outside has been read.
+	///
+	/// # Arguments
+	/// * `payloadJson` - What the caller wants to do: `{ tool, url, detail }`.
+	/// * `opts` - `{ strict: true }` to ask EVERY time and to ask about our own host too.
+	///
+	/// Strict mode exists for one caller: a link a crystal page asked the app to follow. The
+	/// two shortcuts below are right for an agent browsing and wrong for a page that renders
+	/// a Diamond's memory. `_egressOk` remembers a host, so one reasonable yes about a
+	/// documentation site would license every later `docs.example/?crystal=…`; and
+	/// `host === location.host` is waved through outright, so the page could walk the memory
+	/// out one path fragment at a time, under `EGRESS_PAYLOAD_MAX`, to an address that looks
+	/// like ours because it IS ours. The page is written by a model, is exempt from the cap,
+	/// is absent from the standing context and unseen by the fold diff, so it is the one
+	/// thing here that survives a turn — and it syncs to every device.
+	async function egressAllowed(payloadJson, opts) {
+		var strict = !!(opts && opts.strict);
 		var req = {};
 		try { req = JSON.parse(String(payloadJson || '{}')) || {}; } catch (e) { req = {}; }
 		// A command is not a destination. It arrives through this door because it
@@ -5422,6 +5511,51 @@ import init, {
 				{ title: t('permmode.run_title'), danger: false });
 			return okRun ? 'allow' : 'deny';    // never remembered: every time means every time.
 		}
+		// A search is a destination this door cannot see. The wasm posts
+		// `/api/web/search`, which is OUR path and resolves same-origin — and the
+		// same-origin shortcut below waves our own pages through, so the search
+		// tool went out with the user asked nothing at all. §7's whole egress
+		// guarantee was a no-op.
+		//
+		// It is answered HERE, above that shortcut, beside `run`, and for the same
+		// reason `run` is: the URL is not the question. The wasm genuinely cannot
+		// know which engine will answer — that is the user's setting, resolved two
+		// layers down — so the address it can name is a proxy for the real one.
+		// THE QUERY IS THE THING LEAVING, so the query is what the dialog shows.
+		// Showing the URL instead is precisely what made this morning's prompt
+		// unreadable: a wall of percent-encoding where a question should have been.
+		//
+		// Never remembered. `web_type` is not remembered because the text is the
+		// payload and each one is a different thing to send; a query is the same
+		// kind of thing, and "you allowed a search once" is not consent to the next
+		// one.
+		if (req.tool === 'web_search') {
+			var q = String(req.detail || '').trim();
+			if (!q) return 'deny';				// nothing to authorise, and nothing to show.
+			// Cut to the same 300 characters every other body here is cut to, with
+			// an ellipsis rather than a silent trim: a reader has to be able to see
+			// that there is more, and "the rest is not on screen" is itself a reason
+			// to say no.
+			var shownQ = q.length > 300 ? (q.slice(0, 300) + '…') : q;
+			// Who will actually receive it. Read from the setting rather than from
+			// the payload, because the payload cannot know and because a dialog that
+			// named the model's guess would be the Bing problem wearing a prompt.
+			var eng = 'the search engine set in Settings';
+			try {
+				if (window.DaimondSearch) eng = DaimondSearch.engineName(DaimondSearch.engine());
+			} catch (e) { /* the module is not up; the phrase above still reads */ }
+			var okSearch = await confirmDialog(
+				tOr('egress.search_body',
+					'This turn has read content from outside your workspace, and Daimond now '
+					+ 'wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\n'
+					+ 'Searching with {engine}, which is your setting and not the model\'s '
+					+ 'choice. The query is the thing that leaves this device.\n\nIf you did '
+					+ 'not expect that, decline — nothing is lost but this one search.',
+					{ query: shownQ, engine: eng }),
+				tOr('egress.search_ok', 'Run this search'),
+				{ title: tOr('egress.search_title', 'Search the web?'), danger: true });
+			return okSearch ? 'allow' : 'deny';		// never remembered.
+		}
 		var url  = String(req.url || '');
 		// An empty address must not be read as "here". `new URL('', href)` resolves
 		// to the current page, whose host matches ours, so a missing url would have
@@ -5429,7 +5563,7 @@ import init, {
 		if (!url.trim()) return 'deny';
 		var host = egressHost(url);
 		if (!host) return 'deny';						// unparseable: nothing to show the user.
-		if (host === location.host) return 'allow';		// Daimond's own pages.
+		if (!strict && host === location.host) return 'allow';	// Daimond's own pages.
 
 		// Typing into a page is not reading it. The text is the thing being sent, so
 		// it is shown, and consent is for this one act — a form post is exactly the
@@ -5458,7 +5592,7 @@ import init, {
 		}
 
 		var load = egressPayload(url);
-		if (_egressOk[host] && !load.heavy) return 'allow';	// approved, and nothing riding along.
+		if (!strict && _egressOk[host] && !load.heavy) return 'allow';	// approved, and nothing riding along.
 
 		var ok;
 		if (load.heavy) {
@@ -5477,13 +5611,26 @@ import init, {
 			t('egress.reach_ok', { host: host }),
 			{ title: t('egress.reach_title', { host: host }), danger: true });
 		if (!ok) return 'deny';
-		_egressOk[host] = 1;
+		if (!strict) _egressOk[host] = 1;
 		return 'allow';
 	}
 
 	// The wasm tools call this by name, exactly as the cloud bridge is called: an
 	// agent's own tool calls are dispatched inside Rust, not through JS.
 	window.__daimondEgressAllowed = function (payloadJson) { return egressAllowed(payloadJson); };
+
+	/// A link a crystal page asked the app to follow, put to the user.
+	///
+	/// The request is BUILT here from the href and nothing else. The page hands over a
+	/// string; if it were allowed to hand over the whole payload it could set `tool` and
+	/// pick which of the gate's doors it went through.
+	///
+	/// # Arguments
+	/// * `href` - What the page asked for, resolved against nothing and trusted for nothing.
+	async function pageEgressAllowed(href) {
+		var verdict = await egressAllowed(JSON.stringify({ url: String(href || '') }), { strict: true });
+		return verdict === 'allow';
+	}
 
 	// ── The Admin panel ────────────────────────────────────────
 	// The lower pane of the rail: who you are, how Daimond is set up, and what it is
@@ -5549,7 +5696,7 @@ import init, {
 		/// a FORM it would abandon a promise the caller is still waiting on, so the
 		/// form's own cancel is used instead and the answer is delivered.
 		var headClose = null;
-		function modalHead(title, onClose) {
+		function modalHead(title, onClose, key) {
 			if (!modalHeadEl) {
 				modalHeadEl = document.createElement('div');
 				modalHeadEl.className = 'admin-view-head';
@@ -5558,15 +5705,16 @@ import init, {
 				var x = document.createElement('button');
 				x.type = 'button';
 				x.className = 'admin-back';
-				x.title = t('common.close');
-				x.setAttribute('aria-label', t('common.close'));
+				mark(x, 'title', t('common.close'));
+				mark(x, 'aria-label', t('common.close'));
 				x.textContent = '×';
 				x.addEventListener('click', function () { (headClose || closeAdmin)(); });
 				modalHeadEl.appendChild(modalHeadTitle);
 				modalHeadEl.appendChild(x);
 			}
 			headClose = onClose || null;
-			modalHeadTitle.textContent = title || 'Admin';
+			if (key) DaimondI18n.bind(modalHeadTitle, '', key);
+			else mark(modalHeadTitle, '', title || t('drawer.admin'));
 			// Always first: the view is appended after it, and a re-open must not
 			// leave the head stranded below the view it names.
 			if (slot.firstChild !== modalHeadEl) slot.insertBefore(modalHeadEl, slot.firstChild);
@@ -5578,9 +5726,9 @@ import init, {
 		/// hidden by the desktop stylesheet, so in the modal the form would be
 		/// nameless. The modal's head carries the name instead, with its × pointed
 		/// at the form's cancel so backing out still answers the caller.
-		function toModal(title, formMode) {
+		function toModal(title, formMode, key) {
 			var v = formMode ? formView : (curView || settingsView);
-			modalHead(title, formMode ? cancelForm : null);
+			modalHead(title, formMode ? cancelForm : null, key);
 			slot.appendChild(v);
 			v.style.display = '';
 			modal.style.display = 'flex';
@@ -5602,12 +5750,20 @@ import init, {
 		/// Bring the Admin drawer into view on `title`. In form mode the drawer's
 		/// own header is hidden, because the form supplies its own. Opening arms the
 		/// click-away close.
-		function showDrawer(title, formMode) {
+		function showDrawer(title, formMode, key) {
 			if (adminWrap) {
 				adminWrap.classList.add('admin-open');
 				adminWrap.classList.toggle('admin-form-mode', !!formMode);
 			}
-			if (titleEl) titleEl.textContent = title || 'Admin';
+			// The heading has to carry its key, because it was the one thing on the
+			// drawer that stayed in the language it was opened in even after the
+			// view below it had been redrawn. An opener knows its key and hands it
+			// over; a caller of `form` does not, and its title is traced back from
+			// the words instead.
+			if (titleEl) {
+				if (key) DaimondI18n.bind(titleEl, '', key);
+				else mark(titleEl, '', title || t('drawer.admin'));
+			}
 			if (!drawerOpen) {
 				drawerOpen = true;
 				// Defer, so the very click that opened the drawer does not close it.
@@ -5655,7 +5811,7 @@ import init, {
 		/// the way to connect a model. Reached by the cog, the identity row, or Back.
 		function home() {
 			homeContent();
-			showDrawer(t('drawer.admin'), false);
+			showDrawer(t('drawer.admin'), false, 'drawer.admin');
 		}
 
 		/// Put the home view in order WITHOUT summoning the drawer.
@@ -5691,8 +5847,8 @@ import init, {
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
 			if (window.DaimondModels) DaimondModels.render();
-			if (available()) { toPanel(); showDrawer(t('drawer.models')); }
-			else toModal(t('drawer.models'));
+			if (available()) { toPanel(); showDrawer(t('drawer.models'), false, 'drawer.models'); }
+			else toModal(t('drawer.models'), false, 'drawer.models');
 		}
 
 		/// Show what you are running, and what came before it. Reached from the
@@ -5706,20 +5862,26 @@ import init, {
 			if (pushView) pushView.style.display = 'none';
 			curView = releaseView;
 			releaseView.style.display = '';
-			if (window.DaimondRelease) {
-				var relList = document.getElementById('rel-list');
-				var drawn = DaimondRelease.render(relList);
-				// The build ids in the history are the strings a bug report quotes,
-				// so each gets the same button the rest of the app uses. Applied
-				// after the render rather than inside it: the rows come from the
-				// transparency log, and decorating them here keeps ONE copy helper
-				// for the whole app instead of a second one alongside it.
-				if (drawn && drawn.then) {
-					drawn.then(function () { addBuildCopies(relList); }, function () { /* no log */ });
-				} else { addBuildCopies(relList); }
-			}
-			if (available()) { toPanel(); showDrawer(t('drawer.version')); }
-			else toModal(t('drawer.version'));
+			drawRelease();
+			if (available()) { toPanel(); showDrawer(t('drawer.version'), false, 'drawer.version'); }
+			else toModal(t('drawer.version'), false, 'drawer.version');
+		}
+
+		/// Draw the release history into its view. Its own function because the
+		/// language can change while it is on screen, and a repaint has to be the
+		/// same drawing rather than a second one that drifts from it.
+		function drawRelease() {
+			if (!window.DaimondRelease) return;
+			var relList = document.getElementById('rel-list');
+			var drawn = DaimondRelease.render(relList);
+			// The build ids in the history are the strings a bug report quotes,
+			// so each gets the same button the rest of the app uses. Applied
+			// after the render rather than inside it: the rows come from the
+			// transparency log, and decorating them here keeps ONE copy helper
+			// for the whole app instead of a second one alongside it.
+			if (drawn && drawn.then) {
+				drawn.then(function () { addBuildCopies(relList); }, function () { /* no log */ });
+			} else { addBuildCopies(relList); }
 		}
 
 		/// Put a copy button beside every build id in the version history.
@@ -5749,20 +5911,27 @@ import init, {
 			if (pushView) pushView.style.display = 'none';
 			curView = creditsView;
 			creditsView.style.display = '';
+			drawCredits(note);
+			if (available()) { toPanel(); showDrawer(t('drawer.credits'), false, 'drawer.credits'); }
+			else toModal(t('drawer.credits'), false, 'drawer.credits');
+		}
+
+		/// Draw the credits view. Its own function because a language change has
+		/// to produce the same drawing as an open does, not a second one that
+		/// drifts from it.
+		function drawCredits(note) {
 			var n = document.getElementById('credits-note');
-			if (n) n.textContent = note || '';
+			if (n) mark(n, '', note || '');
 			renderCredits();
 			if (window.DaimondCredits) DaimondCredits.render();
 			// Again, AFTER renderCredits -- which blanks this line for an authed account, and
 			// so wiped the caller's reason for sending the user here on the way in. Whoever
 			// opened Credits said why; the drawer should still be saying it when it arrives.
-			if (n && note) n.textContent = note;
+			if (n && note) mark(n, '', note);
 			// The standing instruction to buy more credits belongs with the credits, not in a
 			// settings page of its own: the question "what happens when these run out" is asked
 			// while looking at how many are left.
 			if (window.DaimondAutoReload) DaimondAutoReload.render();
-			if (available()) { toPanel(); showDrawer(t('drawer.credits')); }
-			else toModal(t('drawer.credits'));
 		}
 
 		/// Show the push credential: which host a push reaches, and the box to set it.
@@ -5780,8 +5949,31 @@ import init, {
 			curView = pushView;
 			pushView.style.display = '';
 			fillPushSettings();
-			if (available()) { toPanel(); showDrawer(t('drawer.push')); }
-			else toModal(t('drawer.push'));
+			if (available()) { toPanel(); showDrawer(t('drawer.push'), false, 'drawer.push'); }
+			else toModal(t('drawer.push'), false, 'drawer.push');
+		}
+
+		// ── Following a language change ───────────────────────
+		//
+		// The drawer is the app's largest translated surface and the one most
+		// often standing open, so it was also the one most visibly stuck in the
+		// language it was opened in: switching to Japanese with Admin up left the
+		// whole drawer in Spanish until it was closed and opened again.
+		//
+		// Each view says ONCE how to draw itself, beside where it is defined, and
+		// `repaint` redraws whichever is up without knowing what they are. A view
+		// added later is covered by joining this list rather than by remembering
+		// to add a line to a change handler in another part of the file -- which
+		// is the shape that let this come back after it was fixed the first time.
+		var painters = [];
+		function painter(el, draw) { if (el && typeof draw === 'function') painters.push({ el: el, draw: draw }); }
+
+		/// Redraw whatever the drawer is showing, in the language now in force.
+		function repaint() {
+			painters.forEach(function (p) {
+				if (p.el.style.display === 'none' || !p.el.getClientRects().length) return;
+				try { p.draw(); } catch (e) { console.warn('admin repaint failed', e); }
+			});
 		}
 
 		/// The cog: open the Admin drawer on its menu, or close it if it is open.
@@ -5808,10 +6000,10 @@ import init, {
 				head.className = 'admin-view-head';
 				var title = document.createElement('div');
 				title.className = 'admin-title';
-				title.textContent = opts.title || '';
+				mark(title, '', opts.title || '');
 				var back = document.createElement('button');
 				back.className = 'admin-back';
-				back.title = t('common.cancel');
+				mark(back, 'title', t('common.cancel'));
 				back.textContent = '×';
 				head.appendChild(title);
 				head.appendChild(back);
@@ -5820,7 +6012,7 @@ import init, {
 				if (opts.message) {
 					var p = document.createElement('p');
 					p.className = 'dlg-msg';
-					p.textContent = opts.message;              // escaped
+					mark(p, '', opts.message);                 // escaped
 					formView.appendChild(p);
 				}
 
@@ -5835,11 +6027,11 @@ import init, {
 				var cancel = document.createElement('button');
 				cancel.type = 'button';
 				cancel.className = 'modal-close dlg-cancel';
-				cancel.textContent = opts.cancelLabel || 'Cancel';
+				mark(cancel, '', opts.cancelLabel || t('common.cancel'));
 				var ok = document.createElement('button');
 				ok.type = 'button';
 				ok.className = 'dlg-ok';
-				ok.textContent = opts.okLabel || 'OK';
+				mark(ok, '', opts.okLabel || t('dlg.ok'));
 				row.appendChild(cancel);
 				row.appendChild(ok);
 				formView.appendChild(row);
@@ -6776,6 +6968,33 @@ import init, {
 			slot         = document.getElementById('settings-slot');
 			closeBtn     = document.getElementById('settings-close');
 			closeBtn.addEventListener('click', closeModal);
+			// How each view draws itself. See `repaint`. The form view is absent on
+			// purpose: it is a question a caller is waiting on an answer to, and its
+			// strings are marked as they are built instead.
+			painter(homeView,     renderHome);
+			painter(settingsView, function () { if (window.DaimondModels) DaimondModels.render(); });
+			painter(creditsView,  function () {
+				// Only a note the CALLER put there survives, and it survives because
+				// `apply` has just put it into the new language -- which is what the
+				// mark on it means. A line `renderCredits` wrote carries no mark and
+				// is that function's to write again, so passing it back here would
+				// paste the old language over the new one.
+				var n = document.getElementById('credits-note');
+				drawCredits(n && n.hasAttribute('data-i18n') ? n.textContent : '');
+			});
+			painter(releaseView,  drawRelease);
+			// `renderPushState`, not `fillPushSettings`: the latter empties the token
+			// box, and a language change must not take a half-typed credential with
+			// it. Only the one line that reads as a sentence needs redrawing.
+			painter(pushView,     renderPushState);
+			// One registration for the whole drawer, wherever it is standing: in the
+			// rail, or in the modal a window too narrow for a rail puts it in.
+			if (window.DaimondI18n) {
+				DaimondI18n.surface(function () {
+					if (modal.style.display !== 'none') return slot;
+					return drawerOpen ? body : null;
+				}, repaint);
+			}
 			adminWrap = document.getElementById('admin');
 			titleEl   = document.getElementById('admin-drawer-title');
 			var acl = document.getElementById('admin-close');
@@ -6812,11 +7031,14 @@ import init, {
 				var inModal  = modal.style.display !== 'none';
 				if (!drawerOpen && !inModal) return;
 				var formOpen = !!(formView && formView.style.display !== 'none');
-				var title    = (titleEl && titleEl.textContent) || 'Admin';
+				var title    = (titleEl && titleEl.textContent) || t('drawer.admin');
+				// Carry the heading's key across the move, or a drawer that has been
+				// dragged narrow and back stops following a language change.
+				var key      = titleEl ? titleEl.getAttribute('data-i18n') : null;
 				if (available()) {
-					if (inModal) { toPanel(); showDrawer(title, formOpen); }
+					if (inModal) { toPanel(); showDrawer(title, formOpen, key); }
 				} else if (!inModal) {
-					toModal(title, formOpen);
+					toModal(title, formOpen, key);
 				}
 			});
 			// The dots are only true while they are true.
@@ -7070,18 +7292,71 @@ import init, {
 	}
 	function nowTs() { try { return Date.now(); } catch (e) { return 0; } }
 
-	// ── Spinner ────────────────────────────────────────────────
-	var spinnerEl = null;
-	function showSpinner() {
-		if (spinnerEl) return;
-		spinnerEl = document.createElement('div');
-		spinnerEl.className = 'chat-spinner';
-		spinnerEl.innerHTML = '<span class="chat-spinner-dot"></span>'
-			+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+	// ── The turn indicator ─────────────────────────────────────
+	//
+	// Three dots at the foot of the thread, with a line beside them saying what
+	// the turn is doing. It goes up when a turn starts and comes down when the
+	// turn ends -- not when the first thing comes back, which is what it used to
+	// do and what made a working session look like a dead one.
+	//
+	// A turn is one request per tool-call round, so a run of twenty file reads is
+	// minutes of work; with the steps hidden nothing on screen changes for any of
+	// it. Taking the dots down at the first tool call meant the user watched the
+	// indicator vanish and then sat in front of a still page with no way to tell
+	// work from a hang. It is the long gap, not the short one before the first
+	// token, that reads as death.
+	//
+	// The caption is what makes keeping it up worth anything: three dots that
+	// have said the same nothing for four minutes are barely better than none, so
+	// it names the tool that is running and counts the rounds. It never says
+	// anything about how long the user has been there -- the app may notice that
+	// and must not remark on it.
+	var spinnerEl  = null;      // the indicator node, or null when nothing is up
+	var spinnerSay = null;      // its caption, so the phase can be reworded in place
+
+	/// Raise the indicator saying `words`, or reword the one already up.
+	///
+	/// It is moved to the foot of the thread on every call, and `postToChat` moves
+	/// it again whenever anything else is drawn: it is up for the whole turn now,
+	/// so everything the turn produces has to land above it.
+	///
+	/// Deliberately NOT a live region. The reasoning is `sayAnswered`'s: a caption
+	/// that changes once per tool call would be read at a screen-reader user
+	/// dozens of times a turn, and a live region people switch off is worse than
+	/// none. The one sentence they need is the one `sayAnswered` says at the end.
+	function showSpinner(words) {
+		if (!chatOutput) return;    // no thread to put it in; nothing to say it in
+		if (!spinnerEl) {
+			spinnerEl = document.createElement('div');
+			spinnerEl.className = 'chat-spinner';
+			spinnerEl.innerHTML = '<span class="chat-spinner-dot"></span>'
+				+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+			spinnerSay = document.createElement('span');
+			spinnerSay.className = 'chat-spinner-say';
+			spinnerEl.appendChild(spinnerSay);
+		}
+		spinnerSay.textContent = words || tOr('chat.busy', 'Thinking…');   // escaped via textContent
+		var pinned = nearBottom();
 		postToChat(spinnerEl);
-		chatOutput.scrollTop = chatOutput.scrollHeight;
+		if (pinned) chatOutput.scrollTop = chatOutput.scrollHeight;
 	}
-	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; } }
+	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; spinnerSay = null; } }
+
+	/// Say what the running turn is doing, and remember it on the chat.
+	///
+	/// The phase is kept on the CHAT rather than in one global because a turn runs
+	/// whether or not its chat is the one on screen. Coming back to a chat that is
+	/// still working has to find the indicator saying what THAT turn is doing, and
+	/// a global would have it saying whatever the last visible turn said.
+	///
+	/// The words are resolved here rather than stored as a key: nobody changes
+	/// language in the middle of a turn, and storing the sentence keeps the
+	/// fallback beside the call that needs it.
+	function busySay(chat, words) {
+		if (!chat) return;
+		chat._busy = words;
+		if (current === chat) showSpinner(words);
+	}
 
 	/// Tell a screen reader that the turn is over, once.
 	///
@@ -7459,7 +7734,7 @@ import init, {
 		// whatever happens to be starred now.
 		var fa = diamondApp(diamondId);
 		try {
-			cur = await fa.read_crystal(diamondId);
+			cur = await fa.read_crystal_data(diamondId);
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
 			meterDiamondTurn(fa);
@@ -7537,9 +7812,14 @@ import init, {
 		setTimeout(function () { resumeQueue(chat); }, 0);
 	}
 
+	// Which chat the centre placeholder is standing for, so a language change can
+	// draw the same one again.
+	var pendingCentreChat = null;
+
 	// Centre placeholder for a not-yet-started chat: point the user at the
 	// tile's model pulldown and Start button (controls live in one place).
 	function renderPendingCentre(chat) {
+		pendingCentreChat = chat;
 		clearChat();
 		var wrap = document.createElement('div');
 		wrap.className = 'empty-state pending-centre';
@@ -7571,12 +7851,23 @@ import init, {
 	// click will do.
 
 	var PAUSE_WORKERS = 'root/workers';
-	// Fetching a page through the gateway. Not one of notes2's six placements
-	// and it has no control of its own yet — the Web panel is phase C's surface,
-	// and a light on it before that would be the only traffic light in the app
-	// with nowhere to sit. It is in the TREE from today regardless: a spend with
-	// no node is a spend with no pause, and enforcement was otherwise falling
-	// back to the root, which on a new account has no leaves and reads green.
+	// Fetching a page through the gateway, and now searching the web as well.
+	// Not one of notes2's six placements: it went into the TREE first, on its
+	// own, because a spend with no node is a spend with no pause and enforcement
+	// was otherwise falling back to the root, which on a new account has no
+	// leaves and reads green. The control was left for later on the grounds that
+	// the Web panel was a phase away and a light with nowhere to sit was worse
+	// than none.
+	//
+	// THAT WAS WRONG, and a user found out how this morning. They paused
+	// "Everything", web access stopped, and the refusal told them to press play
+	// on it — in a panel with no play button. The only way back was to resume
+	// everything, which also resumes the Daimond Optimiser, and that ships
+	// paused on purpose. A leaf nobody can reach is not governed, it is stranded,
+	// and the wait cost more than the clutter would have.
+	//
+	// So the control is in the Web panel header, mounted into `#web-pause` by
+	// `initPauseUi` below. Nothing else about the leaf changed.
 	var PAUSE_WEB = 'root/web';
 
 	// ── Play, pause, traffic light — in that order ─────────────
@@ -7949,16 +8240,28 @@ import init, {
 		});
 	}
 
-	/// Put the global control in the slot the rail leaves for it.
+	/// Put the standing controls in the slots the markup leaves for them: the
+	/// global one at the head of the rail, and `root/web`'s in the Web panel.
 	///
 	/// Built here rather than written into index.html so there is ONE drawing of
 	/// the widget: a second copy in markup is a second thing to keep in step with
 	/// the state names, and it would drift the first time one of them changed.
 	function initPauseUi() {
+		if (!window.DaimondPause) return;
 		var slot = document.getElementById('pptw-global');
-		if (!slot || !window.DaimondPause) return;
-		slot.innerHTML = '';
-		mountPause(slot, DaimondPause.ROOT, t('pause.everything'));
+		if (slot) {
+			slot.innerHTML = '';
+			mountPause(slot, DaimondPause.ROOT, t('pause.everything'));
+		}
+		// The Web panel's own leaf. Named "Web access" rather than "Web": the
+		// widget's spoken name is "Pause <name>", and what is being paused is the
+		// app's reach out of the browser, not the panel — a control announced as
+		// "Pause Web" beside a panel called Web sounds like it closes it.
+		var web = document.getElementById('web-pause');
+		if (web) {
+			web.innerHTML = '';
+			mountPause(web, PAUSE_WEB, tOr('web.pause', 'Web access'));
+		}
 	}
 
 	// ── The tile's own dialog, and what the cog replaced ───────
@@ -9719,8 +10022,20 @@ import init, {
 	/// to redirect. Stop is still on the button whenever the box is empty, which is
 	/// the state anything asking "is a turn running?" looks at.
 	function syncComposer() {
-		if (!chatInput) return;
 		var g = curGen();
+		// Decided BEFORE the guard below. A page missing its composer is still a
+		// page that must not be left with dots on it, and a stuck indicator is a
+		// worse bug than one that clears too early.
+		//
+		// This is the one place that decides it: the indicator is up exactly when
+		// the chat ON SCREEN is working. Saying so here rather than at each end of
+		// a turn is what makes switching back to a chat that is still running find
+		// its dots again -- the thread was thrown away and rebuilt by
+		// `renderHistory`, and the old code left the node detached, so the chat
+		// looked finished and the NEXT turn could not raise a spinner at all.
+		if (g) showSpinner((current && current._busy) || tOr('chat.busy', 'Thinking…'));
+		else hideSpinner();
+		if (!chatInput) return;
 		chatInput.disabled = false;
 		syncSendMode();
 		// Where a user finds out they may keep typing: the placeholder is on screen
@@ -9734,7 +10049,6 @@ import init, {
 			: (current && current.diamondId && diamondHeld(current.diamondId))
 				? t('crystal.steer_paused')
 				: t('chat.input_ph');
-		if (!g) hideSpinner();
 		syncConciseChip();           // the chip belongs to THIS chat, not the last one
 		syncFoldBtn();               // and so does Fold
 		renderQueue();               // this chat's own queue, not the last one's
@@ -9913,7 +10227,13 @@ import init, {
 		var on = !!(current && tileConcise(current.id));
 		chip.style.display = current ? '' : 'none';
 		chip.setAttribute('aria-pressed', on ? 'true' : 'false');
-		chip.classList.toggle('accent', on);
+		// `on`, the filled state every other toggle in the app uses, NOT `accent`.
+		// `accent` only tints the border and the text, which on a chip at --fs-xs is
+		// easy to miss outright -- and `.chip-btn:hover` tints it much the same way,
+		// so merely pointing at an inactive chip looked like an active one. A toggle
+		// whose state you have to squint at is a toggle you cannot trust, and the
+		// user reported exactly that: pressing it appeared to do nothing.
+		chip.classList.toggle('on', on);
 	}
 
 	/// Show Fold in the header when there is a persistent conversation to fold.
@@ -10352,11 +10672,17 @@ import init, {
 		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider });
 
 		chat._generating = true;
-		showSpinner();
+		busySay(chat, tOr('chat.busy', 'Thinking…'));
 		syncComposer();               // Stop on the button, and the queue hint in the box
 		chat.app = app;
 
-		var sawText = false, sawError = false, threw = false;
+		// Which round of the turn this is: one per tool-call round, counted so the
+		// indicator has something that MOVES on it. A caption that never changes
+		// cannot tell a turn on its ninth file read from one that died on its
+		// first, and that is the whole of the complaint being answered here.
+		var step = 0;
+		var writing = false;   // prose is arriving, so the caption has said so once
+		var sawError = false, threw = false;
 		var turnText = '';
 		// A minted credits key is capped at the balance behind it, so it can be refused
 		// part-way through a session for a reason the user did not cause and cannot check.
@@ -10378,8 +10704,11 @@ import init, {
 			if (ev.type === 'text') {
 				turnText += (ev.content || '');
 				if (J) J.delta(umid, chat.id, ev.content || '');
+				// Said once per run of prose, not once per token: the words are
+				// arriving where the user can see them, and the caption is only
+				// there to say the turn is not over yet.
+				if (!writing) { writing = true; busySay(chat, tOr('chat.busy_writing', 'Writing the answer…')); }
 				if (!owns()) return;
-				if (!sawText) { hideSpinner(); sawText = true; }
 				appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
 				pendingCallId = 't' + (++toolSeq);
@@ -10397,8 +10726,16 @@ import init, {
 				// Write-ahead: the intent to run this tool is on disk before the tool returns, so
 				// recovery can tell a tool that finished from one caught in the act.
 				if (J) J.toolOpen(umid, chat.id, pendingCallId, ev.name || '', ev.args || '');
+				// The gap this whole indicator exists for. The tool is running, the
+				// thread will not change again until it returns, and with the steps
+				// hidden it will not change even then -- so the dots stay up and say
+				// which tool and which round. Counted before the ownership guard so a
+				// chat left running in the background is found on the right step.
+				step += 1;
+				writing = false;
+				busySay(chat, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
+					{ tool: ev.name || '?', n: step }));
 				if (!owns()) return;
-				hideSpinner();
 				renderToolCall(ev.name || '', ev.args || '');
 			} else if (ev.type === 'tool_result') {
 				if (pendingTool) { pendingTool.content = ev.content || ''; pendingTool = null; }
@@ -10417,6 +10754,10 @@ import init, {
 					}
 				} catch (e) { /* best-effort */ }
 				pendingCallId = null;
+				// The tool is back and the model has it; the wait now is on the model.
+				// Saying so is what distinguishes a turn that is still going from one
+				// that stopped on the tool it last named.
+				busySay(chat, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (!owns()) return;
 				renderToolResult(ev.name || '', ev.content || '');
 			} else if (ev.type === 'interjected') {
@@ -10464,7 +10805,12 @@ import init, {
 				chat.messages.push({ role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
 				if (J) J.turnError(umid, chat.id, friendlyError(ev.content || 'Error'));
 				if (!owns()) return;
-				hideSpinner();
+				// The dots are NOT taken down here. An error event is not the end of
+				// the turn: a refused key is reminted and the same turn run again, and
+				// the guard that raises "the model ended its turn without saying
+				// anything" leaves the turn to finish normally underneath it. The one
+				// place a turn ends is the `finally` below, and that is the only place
+				// the indicator comes down.
 				appendError(ev.content || 'Error');
 				sawError = true;
 			}
@@ -10583,16 +10929,25 @@ import init, {
 			} finally {
 				chat._generating = false;
 				chat._capTry = 0;            // the backoff belonged to this turn only
+				// EVERY WAY OUT OF A TURN COMES THROUGH HERE -- the answer, an error,
+				// the Stop button, a provider refusal, a turn that said nothing, a
+				// chat deleted mid-flight -- which is why the indicator is taken down
+				// here and nowhere else. An indicator stuck on is a worse bug than one
+				// that clears early, and the only way to be sure of every exit is to
+				// have exactly one.
+				chat._busy = '';
 				// Anything said into this turn that never found a seam comes back now
 				// and joins the queue, whose own rules then decide: sent as its own
 				// turn if the turn ended cleanly, handed back to the composer if it
 				// errored or was stopped. Before `syncComposer` below, so the box and
 				// the bubbles are redrawn once, in their final state.
 				reclaimInterjections(chat);
+				// Unconditional, unlike the rest: `owns()` is false when the user has
+				// moved to another chat, and the indicator belongs to whatever is on
+				// screen now. `syncComposer` puts it back up if THAT chat is working.
+				syncComposer();
 				if (owns()) {
 					sayAnswered(chat, sawError || threw);
-					hideSpinner();
-					syncComposer();       // back to Send, and the ordinary placeholder
 					// Not while there is something in the box: the caret would jump
 					// out of a half-typed sentence at whatever moment the answer
 					// happened to finish.
@@ -11055,8 +11410,12 @@ import init, {
 			// The worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
 			// crystal of the Diamond it is working for.
+			//
+			// The data as it is on disk, not a rendering of it. A rendering drops any key
+			// the renderer does not know, and the keys a reducer has invented are exactly
+			// the ones a worker has not been told about anywhere else.
 			var crystal = '';
-			try { crystal = await diamondApp().read_crystal(run.diamondId); } catch (e) { crystal = ''; }
+			try { crystal = await diamondApp().read_crystal_data(run.diamondId); } catch (e) { crystal = ''; }
 
 			// A worker's key, like a chat's, is frozen when its agent is built. A worker spends
 			// the same minted key a chat does, and must survive it being spent the same way --
@@ -11713,14 +12072,23 @@ import init, {
 
 		/// The role prompt, plus the house rules, plus (for a worker) the crystal of
 		/// the Diamond that dispatched it.
+		///
+		/// The crystal is `crystal.json` verbatim, so the heading SAYS `crystal.json` and the
+		/// text is fenced as JSON. A worker handed a brace-and-quote blob under a heading
+		/// promising prose reads it as a quoting accident and starts guessing at the format,
+		/// which is the one thing a fresh model with no conversation behind it cannot recover
+		/// from. It is handed over unrendered on purpose: a rendering drops any key the
+		/// renderer does not know, and the keys a reducer has invented are exactly the ones a
+		/// worker has been told about nowhere else.
 		compose: function (role, crystal) {
 			var out = role;
 			if (this.md.trim()) {
 				out += '\n\n## Standing instructions from the user\n\n' + this.md.trim();
 			}
 			if (crystal && crystal.trim()) {
-				out += '\n\n## The crystal of the Diamond that dispatched you\n\n'
-					+ 'This is what the work is for. Act consistently with it.\n\n' + crystal.trim();
+				out += '\n\n## The crystal of the Diamond that dispatched you (crystal.json)\n\n'
+					+ 'This is what the work is for. Act consistently with it.\n\n'
+					+ '```json\n' + crystal.trim() + '\n```';
 			}
 			return out;
 		},
@@ -12412,7 +12780,7 @@ import init, {
 		var cur, proposed;
 		var fa = diamondApp(diamondId);            // the Diamond's own model, not the starred one
 		try {
-			cur = await fa.read_crystal(diamondId);
+			cur = await fa.read_crystal_data(diamondId);
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
 			meterDiamondTurn(fa);
@@ -12431,6 +12799,7 @@ import init, {
 	var Files = (function () {
 		var pathEl, treeEl, viewEl, modeEl;
 		var cloudChipEl = null;		// the Cloud chip, repainted as residency moves.
+		var modeReconnect = null;	// the handle the mode row is offering to reconnect
 		var curDir = '';
 		var curFile = null, curContent = '';
 		var editing = false;   // a file is open in the editor with unsaved changes possible
@@ -12548,7 +12917,7 @@ import init, {
 				var ic = document.createElement('span'); ic.className = 'files-ic'; ic.textContent = '📄';
 				var nm = document.createElement('span'); nm.className = 'files-name'; nm.textContent = e.name;
 				row.appendChild(ic); row.appendChild(nm);
-				row.addEventListener('click', function () { openFile(e.name); });
+				sysRowAsButton(row, e.name, function () { openFile(e.name); });
 				treeEl.appendChild(row);
 			});
 		}
@@ -12951,7 +13320,7 @@ import init, {
 				row.appendChild(size);
 			}
 			addFileControls(row, e, full, mayManage(full));
-			row.addEventListener('click', function () {
+			sysRowAsButton(row, e.name, function () {
 				if (e.dir) list(full);
 				else if (e.cloud) fetchEntry(full, e.size || 0, true);
 				else openFile(full);
@@ -13009,7 +13378,7 @@ import init, {
 			});
 			row.appendChild(off);
 
-			row.addEventListener('click', function () {
+			sysRowAsButton(row, a.label, function () {
 				if (a.dir) list(a.path); else openFile(a.path);
 			});
 			return row;
@@ -13144,14 +13513,27 @@ import init, {
 			return String(path).split('/').filter(function (x) { return x && x !== '.' && x !== '..'; });
 		}
 
+		/// The name a component is stored under, which is not always the name the workspace
+		/// gives it: a Maildir message is `…daimond:2,<flags>`, and a colon is refused by every
+		/// File System Access root but a modern browser's own sandbox. `DaimondCloud.diskNameIn` is
+		/// the codec the wasm edge applies in `src/wasm/opfs.rs`; these walkers reach the handles
+		/// directly rather than through it, so they have to apply it too or they look for a file
+		/// under a name nothing wrote.
+		function wsDiskName(dir, name) {
+			return DaimondCloud.diskNameIn(dir, name);
+		}
+
 		/// The `File` at a workspace-relative path, or null when it is not there.
 		async function wsFileAt(path) {
 			var p = pathParts(path);
 			if (!p.length) return null;
 			var dir = await wsRoot();
 			try {
-				for (var i = 0; i < p.length - 1; i++) dir = await dir.getDirectoryHandle(p[i]);
-				return await (await dir.getFileHandle(p[p.length - 1])).getFile();
+				for (var i = 0; i < p.length - 1; i++) {
+					dir = await dir.getDirectoryHandle(await wsDiskName(dir, p[i]));
+				}
+				return await (await dir.getFileHandle(
+					await wsDiskName(dir, p[p.length - 1]))).getFile();
 			} catch (e) { return null; }
 		}
 
@@ -13161,9 +13543,9 @@ import init, {
 			if (!p.length) throw new Error('Empty path.');
 			var dir = await wsRoot();
 			for (var i = 0; i < p.length - 1; i++) {
-				dir = await dir.getDirectoryHandle(p[i], { create: true });
+				dir = await dir.getDirectoryHandle(await wsDiskName(dir, p[i]), { create: true });
 			}
-			var fh = await dir.getFileHandle(p[p.length - 1], { create: true });
+			var fh = await dir.getFileHandle(await wsDiskName(dir, p[p.length - 1]), { create: true });
 			var w = await fh.createWritable();
 			await w.write(blob);
 			await w.close();
@@ -13229,7 +13611,7 @@ import init, {
 					if (!rel && e.name === 'diamonds' && e.dir) continue;
 					var full = rel ? rel + '/' + e.name : e.name;
 					if (e.dir) {
-						var sub = await dir.getDirectoryHandle(e.name, { create: true });
+						var sub = await dir.getDirectoryHandle(DaimondCloud.diskName(e.name), { create: true });
 						await out(sub, full);
 						continue;
 					}
@@ -13247,7 +13629,11 @@ import init, {
 					if (!src) continue;
 					showModeMsg('Saving ' + full + '…');
 					try {
-						var fh = await dir.getFileHandle(e.name, { create: true });
+						// The DESTINATION is the user's machine, where the strict naming rule
+						// applies: `e.name` is how the workspace spells it, and a Maildir
+						// message spells it with a colon. Copied out under a name the folder
+						// will actually take.
+						var fh = await dir.getFileHandle(DaimondCloud.diskName(e.name), { create: true });
 						var w = await fh.createWritable();
 						await w.write(src);			// the Blob itself: bytes, streamed.
 						await w.close();
@@ -13273,6 +13659,9 @@ import init, {
 		// button and never prompted for on load.
 		function renderMode(reconnect) {
 			if (!modeEl) return;
+			// Held, so a language change can draw the SAME row again rather than one
+			// with the reconnect offer dropped out of it.
+			modeReconnect = reconnect || null;
 			modeEl.innerHTML = '';
 			var onMachine = !!folderHandle;
 			var canPick   = (typeof window.showDirectoryPicker === 'function');
@@ -13905,7 +14294,7 @@ import init, {
 					row.appendChild(size);
 				}
 				addFileControls(row, e, full, mayManage(full));
-				row.addEventListener('click', function () {
+				sysRowAsButton(row, e.name, function () {
 					var p = joinPath(curDir, e.name);
 					if (e.dir) list(p);
 					else if (e.cloud) fetchEntry(p, e.size || 0, true);
@@ -14040,7 +14429,69 @@ import init, {
 		/// Show a binary file as what it is: something to save, not something to
 		/// read. The workspace carries these now, so the panel has to meet one
 		/// without spilling a screen of replacement characters.
-		async function openBinaryFile(path, file) {
+		/// Wire the ◈ button that attaches the open file to the open Diamond.
+		///
+		/// Artefacts are otherwise harvested at a fold, from what a turn WROTE. That is
+		/// right for everything an agent produces and no use at all for the work a
+		/// person brought with them, which is most of what a Diamond is for. This
+		/// writes the link there and then: a fold is the moment the user blesses what
+		/// an AGENT did, and there is nothing to bless when the user is the one doing
+		/// it.
+		///
+		/// It says `holds`, not `produced`. The Diamond did not make this file.
+		///
+		/// Shared by the text view and the viewer, because a PDF somebody dropped in is
+		/// exactly the kind of thing a Diamond ought to be able to hold, and a button
+		/// that appeared over a `.md` and vanished over a `.pdf` would read as a bug.
+		///
+		/// # Arguments
+		/// * `path` - The file on screen.
+		/// * `holdBtn` - The button, or null where the view has none.
+		async function wireHold(path, holdBtn) {
+			if (!holdBtn) return;
+			async function paint() {
+				if (!currentDiamond) {
+					holdBtn.style.display = 'none';
+					return;
+				}
+				holdBtn.style.display = '';
+				var on = await fileIsHeld(currentDiamond.id, path);
+				holdBtn.classList.toggle('on', on);
+				holdBtn.title = on
+					? t('files.hold_drop', { name: currentDiamond.name })
+					: t('files.hold_add',  { name: currentDiamond.name });
+				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+				holdBtn.setAttribute('aria-label', holdBtn.title);
+			}
+			holdBtn.addEventListener('click', async function () {
+				if (!currentDiamond) return;
+				var id = currentDiamond.id, self = 'diamond:' + id, ref = 'file:' + path;
+				var link = await heldLink(id, path);
+				try {
+					if (link) await diamondApp().remove_link(link.owner, link.id);
+					else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
+				} catch (e) { /* already gone, or already there: repaint tells the truth */ }
+				signalLinksChanged();
+				renderArtefacts();
+				paint();
+			});
+			await paint();
+			// The Diamond can change under an open file, and the button names it.
+			document.addEventListener('daimond-links-changed', paint);
+		}
+
+		/// Show a file that is not characters: a picture, a sound, a video, a PDF, a
+		/// table, a tree, or -- for anything with no viewer -- its bytes.
+		///
+		/// This replaces a panel that said "binary file, 2.1 MB" and offered a
+		/// download. That was honest and it was also the whole of what the app could
+		/// do with most of what a person owns. The floor is now a hex dump naming the
+		/// format, which is the difference between "unsupported" and "inspectable".
+		///
+		/// `curContent` stays null, which is what makes `syncLineNo` hide the
+		/// line-number toggle over a file that has no lines.
+		async function showViewedFile(path, info) {
+			DaimondViewer.close();          // whatever was open lets go of its blob URLs
 			curFile = path; curContent = null; editing = false;
 			docEmbed(false);
 			viewEl.style.display = '';
@@ -14050,25 +14501,51 @@ import init, {
 				'  <span>' +
 				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download_help')) + '">⤓ '
 					+ esc(t('files.download')) + '</button>' +
+				'    <button class="files-btn" data-act="hold" title="">◈</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
-				'<div class="files-view-body"><p class="cloud-intro"></p></div>';
+				'<div class="files-view-msg" style="display:none"></div>' +
+				'<div class="files-view-viewer"></div>';
 			viewEl.querySelector('.files-view-name').textContent = path;
-			viewEl.querySelector('.cloud-intro').textContent =
-				t('files.binary_note', { size: fmtBytes(file.size) });
 			var nameEl = document.getElementById('doc-name');
 			if (nameEl) nameEl.textContent = path;
 			DaimondPanels.markUsed('doc');
 			DaimondPanels.show('doc');
 			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
+			// The download is built from the bytes, with the format's own media type on
+			// it. The text path's handler makes a `text/plain` Blob out of `curContent`,
+			// which is null here -- it would have saved the word "null".
 			viewEl.querySelector('[data-act="download"]').addEventListener('click', async function () {
-				var a = document.createElement('a');
-				a.href = URL.createObjectURL(file);
-				a.download = path.split('/').pop() || 'file';
-				a.click(); URL.revokeObjectURL(a.href);
+				try {
+					var parts = [], at = 0, CH = 4 * 1024 * 1024;
+					while (at < info.size) {
+						var b = storeFile
+							? await Wasm.store_read_bytes(path, at, CH)
+							: await Wasm.read_bytes(path, at, CH);
+						if (!b || !b.length) break;
+						// Each chunk becomes its own Blob at once, so the JS heap holds one
+						// chunk rather than the file: the browser may spill a Blob to disk
+						// and an array of Uint8Arrays cannot be.
+						parts.push(new Blob([b]));
+						at += b.length;
+					}
+					var a = document.createElement('a');
+					a.href = URL.createObjectURL(new Blob(parts, { type: info.mime }));
+					a.download = path.split('/').pop() || 'file';
+					a.click(); URL.revokeObjectURL(a.href);
+				} catch (e) { fileMsg(friendlyError(e), true); }
 			});
+			await wireHold(path, viewEl.querySelector('[data-act="hold"]'));
+			await DaimondViewer.show(
+				viewEl.querySelector('.files-view-viewer'), path, info,
+				{
+					store:   storeFile,
+					t:       t,
+					wasm:    Wasm,
+					onError: function (e) { fileMsg(friendlyError(e), true); },
+				});
 		}
 
 		/// Open `path` in the Doc panel.
@@ -14081,20 +14558,40 @@ import init, {
 		/// into the project.
 		async function openFile(path, opts) {
 			storeFile = !!(opts && opts.store);
-			// Ask the file itself before asking the tool: file_read is for text and
-			// refuses anything else, which is right for the agent and useless as a
-			// way to find out.
-			var f = null;
-			try { f = await DaimondCloud.fileAt(path); } catch (e) { f = null; }
-			if (f) {
-				var head = new Uint8Array(await f.slice(0, Math.min(f.size, 4096)).arrayBuffer());
-				var binary = false;
-				for (var bi = 0; bi < head.length; bi++) { if (head[bi] === 0) { binary = true; break; } }
-				if (!binary) {
-					try { new TextDecoder('utf-8', { fatal: true }).decode(head); }
-					catch (e) { binary = (f.size <= 4096); }	// a cut multi-byte char is not proof.
-				}
-				if (binary) { await openBinaryFile(path, f); return; }
+			// ASK WHAT THE FILE IS BEFORE DECODING IT AS CHARACTERS.
+			//
+			// What was here asked `DaimondCloud.fileAt`, which resolves through the
+			// cloud offload cache and not the workspace -- so for a file in the user's
+			// own folder it answered null, the check below it never ran, and
+			// `readRaw` handed the bytes to `String::from_utf8_lossy`. Every byte that
+			// was not valid UTF-8 became U+FFFD and went into a <pre>. Opening a PDF
+			// filled the panel with replacement characters, which made the app look
+			// broken rather than the format look unsupported.
+			//
+			// It could not have worked even where it did run: it looked for a NUL in
+			// the first 4 KB, and a PDF's header carries none.
+			//
+			// `file_probe` reads 512 bytes and answers with the format, from the magic
+			// bytes AND the name, saying so when the two disagree.
+			var info = null;
+			try { info = await DaimondViewer.probe(path, { store: storeFile }); }
+			catch (e) { info = null; }     // a missing file falls through to the text path's own error
+			// THE PANEL ROUTES ON `chars`, NOT ON THE VIEWER'S HANDLER. Routing on the
+			// handler sent every `.md` to the viewer's markdown tier, which took the
+			// EDITOR away from `DAIMOND.md` and `prompts/*.md` -- and this panel is
+			// where those are edited. Rendering markdown prettily is a poor trade for
+			// being unable to change it.
+			//
+			// `chars` is the bytes alone, not `text`, which also asks whether the
+			// FORMAT is a text one. A `Makefile` has no extension to recognise, so its
+			// format is Unknown and `text` is false; it is plainly a file somebody
+			// wants to edit, and the narrower question would have put it in a hex dump.
+			//
+			// The salad this whole change exists to fix was only ever non-text files,
+			// so nothing is lost by giving the editor everything that is characters.
+			if (info && !info.chars) {
+				await showViewedFile(path, info);
+				return;
 			}
 			var content = await readRaw(path);
 			curFile = path; curContent = content; editing = false;
@@ -14142,37 +14639,7 @@ import init, {
 			// the user is the one doing it.
 			//
 			// It says `holds`, not `produced`. The Diamond did not make this file.
-			var holdBtn = viewEl.querySelector('[data-act="hold"]');
-			async function paintHold() {
-				if (!holdBtn) return;
-				if (!currentDiamond) {
-					holdBtn.style.display = 'none';
-					return;
-				}
-				holdBtn.style.display = '';
-				var on = await fileIsHeld(currentDiamond.id, path);
-				holdBtn.classList.toggle('on', on);
-				holdBtn.title = on
-					? t('files.hold_drop', { name: currentDiamond.name })
-					: t('files.hold_add',  { name: currentDiamond.name });
-				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-				holdBtn.setAttribute('aria-label', holdBtn.title);
-			}
-			if (holdBtn) holdBtn.addEventListener('click', async function () {
-				if (!currentDiamond) return;
-				var id = currentDiamond.id, self = 'diamond:' + id, ref = 'file:' + path;
-				var link = await heldLink(id, path);
-				try {
-					if (link) await diamondApp().remove_link(link.owner, link.id);
-					else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
-				} catch (e) { /* already gone, or already there: repaint tells the truth */ }
-				signalLinksChanged();
-				renderArtefacts();
-				paintHold();
-			});
-			paintHold();
-			// The Diamond can change under an open file, and the button names it.
-			document.addEventListener('daimond-links-changed', paintHold);
+			await wireHold(path, viewEl.querySelector('[data-act="hold"]'));
 
 			viewEl.querySelector('[data-act="download"]').addEventListener('click', function () {
 				var blob = new Blob([curContent], { type: 'text/plain' });
@@ -14556,6 +15023,10 @@ import init, {
 				if (!go) return;
 			}
 			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
+			// The viewer mints a blob URL per picture, sound or page it shows, and a
+			// blob URL holds its bytes until it is revoked. A session that opened forty
+			// files would otherwise still be holding all forty.
+			DaimondViewer.close();
 			viewEl.style.display = 'none'; docEmbed(false);
 			curFile = null; editing = false;
 			syncLineNo();                        // after the file is let go, not before
@@ -14633,13 +15104,17 @@ import init, {
 			});
 		}
 
-		/// Make a store row behave as the button it already is.
+		/// Make a row behave as the button it already is.
 		///
 		/// A `<div>` with a click handler is reachable by pointer and by nothing else.
 		/// `verify_a11y_keyboard` keeps a census of the ones this app already has and
-		/// fails on a NEW one, which is how these two were caught the hour they were
-		/// written — the tree above them has the same fault and is grandfathered, and
-		/// a new section had no business joining it.
+		/// fails on a NEW one, which is how the store rows were caught the hour they
+		/// were written. The workspace tree was the grandfathered one this comment
+		/// used to point at; it is grandfathered no longer, and uses this too.
+		///
+		/// Focusing the ROW also settles the name beside it: the detector skips
+		/// anything inside a focusable ancestor, so `.files-name` stops being a
+		/// keyboard-invisible clickable of its own without needing a rule about spans.
 		function sysRowAsButton(row, name, onGo) {
 			row.setAttribute('role', 'button');
 			row.setAttribute('tabindex', '0');
@@ -14647,6 +15122,12 @@ import init, {
 			row.addEventListener('click', onGo);
 			row.addEventListener('keydown', function (ev) {
 				if (ev.key !== 'Enter' && ev.key !== ' ') return;
+				// Not when the press belongs to something INSIDE the row. A store
+				// row has no inner controls, so this never mattered there; a
+				// workspace row carries delete, rename and the residency buttons,
+				// and without this Space on the delete cross would also open the
+				// file it had just been asked to remove.
+				if (ev.target !== row) return;
 				ev.preventDefault();
 				onGo();
 			});
@@ -14735,6 +15216,10 @@ import init, {
 			// is, so they cannot wait for the next time something rebuilds them.
 			relabel:       function () {
 				renderScope();
+				// The mode row too: Browser / Machine / Cloud and the two transfer
+				// buttons beside them are built from strings once, and they are on
+				// screen for as long as the panel is.
+				renderMode(modeReconnect);
 				if (listed && !curFile) list(curDir);
 			},
 			// Which tree the panel is showing: 'all' or 'diamond'.
@@ -15544,7 +16029,22 @@ import init, {
 		/// One turn per Diamond at most, however many of its actions matched: two
 		/// instructions arriving as two turns is two bills and a daimon answering
 		/// itself, and the second is what a conductor does when it is confused.
+		/// The one that waits keeps what it accrued and goes first on the next
+		/// tick, since only the one that fired has its clock restarted -- so two
+		/// due timers on one Diamond alternate rather than the earlier in the file
+		/// winning for ever.
+		///
+		/// Returns what ACTUALLY DISPATCHED, as `{ id, actionId }`. Three refusals
+		/// here are silent by design -- the Diamond's model cannot run, a turn is
+		/// already in flight, the Diamond is not the one on screen -- and a caller
+		/// has no other way to tell a refusal from a firing. It needs to: a timer
+		/// that was refused must keep the time it accrued and try again, where one
+		/// that fired starts from zero. Working it out by asking `due` a second
+		/// time cannot do it, because `due` is pure and can see neither a busy
+		/// crystal nor which Diamond is on screen -- it would report the refused TA
+		/// as owed and the clock would be zeroed anyway.
 		fire: async function (occasion) {
+			var fired = [];
 			var ids = Object.keys(_triggers);
 			for (var i = 0; i < ids.length; i++) {
 				var id = ids[i];
@@ -15560,6 +16060,7 @@ import init, {
 				var msg = DaimondTriggers.compose(t, occasion.said);
 				var went = await steerFromTrigger(f, msg.text);
 				if (!went) continue;
+				fired.push({ id: id, actionId: t.id });
 				// Only now. A refused or failed dispatch must not consume the one
 				// chance the context had to be delivered.
 				if (msg.sentContext !== t.contextSent) {
@@ -15567,6 +16068,7 @@ import init, {
 					await Triggers.save(id);
 				}
 			}
+			return fired;
 		},
 	};
 
@@ -15816,7 +16318,11 @@ import init, {
 			var id;
 			try { id = await diamondApp().create_diamond(d.name); }
 			catch (e) { continue; }                 // no store yet; the flag stops a retry loop
-			try { await diamondApp().write_crystal(id, d.crystal); } catch (e) { /* empty is fine */ }
+			// The seeds are written as markdown above, because that is the readable way to
+			// write a paragraph in a source file, and converted here. `crystalJson` is the
+			// same migration a legacy crystal takes, so the two cannot drift apart.
+			try { await diamondApp().write_crystal_data(id, crystalJson(d.crystal)); }
+			catch (e) { /* empty is fine */ }
 			// Held before it can ever run -- but ONLY where there is something to
 			// run unbidden. A Diamond with no triggered actions draws no widget on
 			// its tile, so arriving red would mean a new user's Diamond refusing to
@@ -15912,21 +16418,33 @@ import init, {
 		['keydown', 'pointerdown', 'wheel'].forEach(function (ev) {
 			window.addEventListener(ev, DaimondTriggers.noteActivity, { passive: true });
 		});
-		setInterval(async function () {
+		/// One minute of the activity clock.
+		///
+		/// Named rather than written into the interval so `verify_triggers` can
+		/// drive it a minute at a time, instead of holding a browser open for half
+		/// an hour of wall clock to reach the case it is checking.
+		async function triggerTick() {
 			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
-			var mins = DaimondTriggers.activityMinutes();
-			if (mins < 1) return;                    // nothing to be due yet
-			var before = mins;
-			await Triggers.fire({ kind: 'activity', minutes: mins });
-			// Reset only when something was owed at this size, or the clock would
-			// carry the same hour into every tick for the rest of the session and
-			// fire the moment anything is added.
-			var owed = Object.keys(_triggers).some(function (id) {
-				return DaimondTriggers.due(id, Triggers.of(id),
-					{ kind: 'activity', minutes: before }).length > 0;
+			// Every TA is measured against ITS OWN stopwatch, so the reading goes in
+			// as a lookup: `due` stays pure and asks the occasion, and the occasion
+			// asks the clock. There is no early return on "less than a minute" any
+			// more -- there is no longer a single reading to test, and no TA can be
+			// due inside its first minute anyway.
+			var fired = await Triggers.fire({
+				kind: 'activity',
+				minutesFor: function (id, ta) { return DaimondTriggers.activityMinutes(id, ta.id); },
 			});
-			if (owed) DaimondTriggers.resetActivity();
-		}, TRIGGER_TICK_MS);
+			// Only what actually went. A dispatch refused because a turn was already
+			// running, or because that Diamond is not the one on screen, keeps the
+			// time it accrued and tries again on the next tick.
+			fired.forEach(function (x) { DaimondTriggers.resetActivity(x.id, x.actionId); });
+		}
+		/// Published for `verify_triggers`, which has to advance the clock by hand:
+		/// a check on what a timer does after thirty minutes cannot wait thirty
+		/// minutes, and a check that a REFUSED firing keeps its accrued time has to
+		/// see two ticks either side of the refusal.
+		window.DaimondTriggerTick = triggerTick;
+		setInterval(triggerTick, TRIGGER_TICK_MS);
 	}
 
 	/// Run one daimon turn on behalf of a trigger, wherever the user happens to be.
@@ -16846,6 +17364,10 @@ import init, {
 		centreMode = mode;
 		var crystalOn = (mode === 'focus');
 		var onDiamond = crystalOn || mode === 'daimon';
+		// A hidden frame is still a live frame: it holds a blob URL and a `message`
+		// listener, and left alone it would answer the next Diamond's page from the last
+		// one's data. Leaving the crystal face takes it down; coming back re-mounts.
+		if (!crystalOn) clearCrystalBody();
 		crystalView.style.display  = crystalOn ? 'flex' : 'none';
 		chatOutputEl.style.display = crystalOn ? 'none' : '';
 		// THE COMPOSER STAYS ON BOTH FACES OF A DIAMOND.
@@ -17462,27 +17984,123 @@ import init, {
 		else await renderCrystal();
 	}
 
-	/// Read the current crystal and render it (markdown) plus the steer and
-	/// fold controls.  H5: crystal markdown passes through DaimondRender.md's
-	/// sanitiser; no untrusted string reaches innerHTML unescaped.
-	async function renderCrystal() {
-		if (!currentDiamond) return;
-		var md = '';
-		try { md = await diamondApp().read_crystal(currentDiamond.id); }
-		catch (e) { md = ''; }
-		crystalBody.innerHTML = '';
+	// ── The crystal, and the page that draws it ──────────────────────
+	//
+	// A crystal is two files. `crystal.json` is the memory -- capped, folded, and put in the
+	// daimon's standing context. `crystal.html` is a self-contained page that renders it,
+	// running in a sandboxed frame with no `allow-same-origin`, so its script sits in an opaque
+	// origin with no reach into storage, OPFS, the keys or the wasm bridge, and speaks to the
+	// app only over the `dc` channel. `DaimondCrystal` owns the frame, the channel and the
+	// fallback; this file reads the two files, hands them over, and answers the four questions
+	// the page is allowed to ask.
+	//
+	// Nothing here listens for an event from the page. The app RE-MOUNTS after a write, which
+	// is one line and cannot go stale -- unlike the two lanes that last session each invented
+	// their own name for a repaint signal and left the reader listening for a word nobody said.
 
-		// The crystal is the user's own document, so it carries the two things a
-		// document needs: a way to edit it by hand, and a way back. An accepted
-		// fold overwrites the crystal wholesale, and until now that was final —
-		// no undo, no history, no hand-edit, though every version was being
-		// snapshotted to disk all along.
+	/// The crystal library, or nothing when `www/js/crystal.js` did not load.
+	function crystalLib() { return window.DaimondCrystal || null; }
+
+	/// A Diamond's data, from whatever text the store handed back.
+	///
+	/// JSON is the format. Markdown is what a Diamond written before the migration holds, and
+	/// what a restored backup or an old version snapshot still carries. `parse` never throws and
+	/// reports failure in its answer, so a text that will not parse is read as the OLD FORMAT
+	/// rather than as an error: `fromMarkdown` is the migration, and a verifier asserts that its
+	/// round trip reproduces the file byte for byte, so nothing is lost by taking that reading.
+	///
+	/// The alternative -- treating it as an error and opening empty -- is the most destructive
+	/// failure in this whole change, because an agent handed an empty crystal writes a new one
+	/// over work it never saw.
+	function crystalData(text) {
+		var C = crystalLib();
+		var s = String(text || '');
+		if (!C) return null;
+		if (!s.trim()) return {};
+		var r = C.parse(s);
+		if (r && r.ok) return r.data || {};
+		return C.fromMarkdown(s);
+	}
+
+	/// The same, as the JSON text the store wants.
+	///
+	/// For every path that still carries a crystal as one string: a restored backup, a seeded
+	/// default Diamond, a version being put back. Written pretty, because the fold diff and the
+	/// history view both read it as lines.
+	function crystalJson(text) {
+		var d = crystalData(text);
+		if (d === null) return String(text || '');   // no library: write back exactly what came in
+		return JSON.stringify(d, null, 2);
+	}
+
+	/// A version snapshot, as something worth reading.
+	///
+	/// Post-migration snapshots are JSON, and a reducer writes them on one line as often as
+	/// not; shown raw, "what did this Diamond hold at v12" answers with a wall. Pre-migration
+	/// snapshots are markdown and are shown exactly as they always were.
+	function crystalVersionText(text) {
+		var s = String(text || '');
+		if (!s.trim()) return '';
+		try {
+			var d = JSON.parse(s);
+			if (d && typeof d === 'object') return JSON.stringify(d, null, 2);
+		} catch (e) { /* markdown, from before the migration */ }
+		return s;
+	}
+
+	/// Does this data say anything?
+	///
+	/// A Diamond that has never been steered has a crystal with nothing in it, and mounting a
+	/// frame to draw nothing is a blank rectangle where a sentence explaining the emptiness
+	/// used to be.
+	function crystalHasContent(data) {
+		if (!data || typeof data !== 'object') return false;
+		return Object.keys(data).some(function (k) {
+			var v = data[k];
+			if (v == null) return false;
+			if (typeof v === 'string') return !!v.trim();
+			if (Array.isArray(v)) return v.length > 0;
+			if (typeof v === 'object') return Object.keys(v).length > 0;
+			return true;
+		});
+	}
+
+	/// Which top-level keys carry something. What a page is expected to have drawn.
+	function crystalContentKeys(data) {
+		if (!data || typeof data !== 'object') return [];
+		return Object.keys(data).filter(function (k) {
+			var o = {}; o[k] = data[k];
+			return crystalHasContent(o);
+		});
+	}
+
+	/// Empty the crystal body, taking any mounted frame down with it.
+	///
+	/// `unmount` is not optional politeness: the frame holds a blob URL and a `message`
+	/// listener on `window`, and a listener left behind after the element is gone would answer
+	/// the NEXT Diamond's page from the last one's data.
+	function clearCrystalBody() {
+		var C = crystalLib();
+		if (C && typeof C.unmount === 'function') {
+			try { C.unmount(); } catch (e) { /* a library mid-teardown is not worth a broken view */ }
+		}
+		crystalBody.innerHTML = '';
+	}
+
+	/// The bar above the crystal: edit it, see where it has been, file it.
+	///
+	/// It sits above every view the crystal face can show -- the page, the form, the history,
+	/// the tags -- which is why it is built once here rather than inline in each.
+	///
+	/// # Arguments
+	/// * `data` - The parsed crystal, handed to the editor when `✎` is pressed.
+	function crystalBar(data) {
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
 		var edit = document.createElement('button');
 		edit.className = 'crystal-act';
 		edit.textContent = '✎ ' + t('files.edit');
-		edit.addEventListener('click', function () { editCrystal(md); });
+		edit.addEventListener('click', function () { editCrystal(data); });
 		var hist = document.createElement('button');
 		hist.className = 'crystal-act';
 		hist.textContent = '↺ ' + t('crystal.history');
@@ -17493,43 +18111,312 @@ import init, {
 		tagsBtn.title = t('crystal.tags_help');
 		tagsBtn.addEventListener('click', showTagEditor);
 		bar.appendChild(edit); bar.appendChild(hist); bar.appendChild(tagsBtn);
-		crystalBody.appendChild(bar);
+		return bar;
+	}
 
-		var content = document.createElement('div');
-		content.className = 'chat-msg-content';
-		if (md && md.trim()) {
-			content.innerHTML = DaimondRender.md(md);  // sanitised (H5)
-		} else {
+	/// Read the current crystal and draw it: the data, through this Diamond's own page.
+	///
+	/// Every Diamond starts on the shipped page, so one whose page is missing is given
+	/// `DEFAULT_PAGE` and it is WRITTEN. A default held only in memory would be re-derived on
+	/// every render, would never appear in a version snapshot, and could not be diffed against
+	/// the edit that broke it.
+	///
+	/// H5: nothing here reaches innerHTML. The data goes to the frame as a structured message
+	/// and the frame cannot reach back.
+	async function renderCrystal() {
+		if (!currentDiamond) return;
+		var id = currentDiamond.id;
+		var C = crystalLib();
+		var text = '', page = '';
+		try { text = await diamondApp().read_crystal_data(id); } catch (e) { text = ''; }
+		try { page = await diamondApp().read_crystal_page(id); } catch (e) { page = ''; }
+		if (C && !String(page || '').trim()) {
+			page = C.DEFAULT_PAGE;
+			// A store that refuses the write still gets the page on screen; the next render
+			// tries again. Drawing it meanwhile costs nothing and loses nothing.
+			try { await diamondApp().write_crystal_page(id, page); }
+			catch (e) { /* shown, not stored */ }
+		}
+		// Several awaits have gone by. The user may have clicked another Diamond in that time,
+		// and painting this one's memory under that one's name is the kind of mistake nobody
+		// reports because nobody believes it happened.
+		if (!currentDiamond || currentDiamond.id !== id) return;
+
+		var data = crystalData(text);
+		clearCrystalBody();
+		crystalBody.appendChild(crystalBar(data || {}));
+
+		if (!C) {
+			// `crystal.js` did not load. This is a broken build, and a broken build must not
+			// look like an empty Diamond -- so the memory is shown as it is on disk.
+			var raw = document.createElement('pre');
+			raw.className = 'crystal-raw';
+			raw.textContent = text || '';
+			crystalBody.appendChild(raw);
+			renderCrystalControls();
+			renderArtefacts();
+			return;
+		}
+
+		if (!crystalHasContent(data)) {
+			var content = document.createElement('div');
+			content.className = 'chat-msg-content';
 			var empty = document.createElement('div');
 			empty.className = 'crystal-empty';
 			empty.textContent = t('crystal.empty');
 			content.appendChild(empty);
+			crystalBody.appendChild(content);
+			renderCrystalControls();
+			renderArtefacts();
+			return;
 		}
-		crystalBody.appendChild(content);
+
+		// APP CHROME, BELOW THE FRAME. Never inside it. The page has no `ask()` verb because a
+		// parent cannot verify user activation across the boundary -- a timer is
+		// indistinguishable from a click -- so the box that talks to the daimon lives out here,
+		// where a click is provably a person's.
+		//
+		// `mount` and `fallback` are handed `#crystal-body` itself: they take out only their
+		// own `#crystal-frame-wrap` and `.crystal-fallback` and leave everything else alone,
+		// so the bar and this row survive a swap. What they do NOT promise is where they put
+		// what they add, so the row is re-parked at the end after each -- appending a child
+		// that is already there moves it, which is all "below the frame" needs to mean.
+		var askRow = crystalAskRow();
+		crystalBody.appendChild(askRow);
+		var park = function () { crystalBody.appendChild(askRow); };
+
+		var want = crystalContentKeys(data);
+		C.mount(crystalBody, {
+			id:   id,
+			data: data,
+			page: page,
+			onOpen: function (href) { openCrystalLink(href); },
+			onKeys: function (keys) {
+				// Not a user-facing report: `mount` decides for itself whether the cover is
+				// partial and falls back saying so. This goes in the trail, because a page
+				// that quietly stops drawing one key is otherwise diagnosable only by
+				// reading the page.
+				var got = Array.isArray(keys) ? keys : [];
+				var missed = want.filter(function (k) { return got.indexOf(k) < 0; });
+				try {
+					window.DaimondTrail.note('crystal page',
+						missed.length ? ('did not draw ' + missed.join(', ')) : 'drew every key');
+				} catch (e) { /* no trail is not an error */ }
+			},
+			onFallback: function (reason) {
+				try { window.DaimondTrail.note('crystal page', 'fell back: ' + reason); }
+				catch (e) { /* no trail is not an error */ }
+				park();
+			},
+			// The `asset` verb's answer. It is answered HERE and nowhere else: `crystal.js`
+			// is a classic script with no wasm to read a file with, which is the whole reason
+			// the verb goes through the app at all.
+			onAsset: function (fullPath, rel) { return readCrystalAsset(id, fullPath, rel); },
+			// Without this the fallback note draws no reset button, so the way back from a
+			// broken page would silently not exist.
+			onReset: function () { return resetCrystalPage(id); },
+			t: t,
+		});
+		park();
 		renderCrystalControls();
 		renderArtefacts();          // fills the strip, or leaves it hidden at zero
 	}
 
-	/// Hand-edit the crystal. `write_crystal` snapshots a version and logs the edit,
-	/// so a hand-edit is as recoverable as a fold.
-	function editCrystal(md) {
-		crystalBody.innerHTML = '';
-		var ta = document.createElement('textarea');
-		ta.className = 'crystal-edit';
-		ta.value = md || '';
-		ta.spellcheck = false;
+	/// Put this Diamond's page back to the shipped one, after asking.
+	///
+	/// Reached from the reset button in the fallback note, which `crystal.js` draws. The data
+	/// is not touched and the dialog says so: a page that will not load is frightening enough
+	/// without the reader having to work out whether the memory goes with it.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond whose page is being replaced.
+	async function resetCrystalPage(id) {
+		var C = crystalLib();
+		if (!C) return;
+		var ok = await confirmDialog(
+			tOr('crystal.page_reset_confirm',
+				'Replace this Diamond’s page with the standard one? Its data is not touched.'),
+			null, { danger: false });
+		if (!ok) return;
+		try { await diamondApp().write_crystal_page(id, C.DEFAULT_PAGE); }
+		catch (e) { noticeDialog(t('crystal.save_failed'), friendlyError(e)); return; }
+		// The app re-mounts after a write. There is no event for this and there must not be:
+		// there is exactly one caller, and two lanes each inventing a name for a repaint
+		// signal is how last session shipped a graph that never repainted.
+		await renderCrystal();
+	}
+
+	/// The ask-the-daimon row: app chrome, below the frame.
+	///
+	/// It sends to the daimon exactly as the composer does -- `doSteer`, the one path a
+	/// Diamond's turn takes -- because it IS the composer, moved to where the thing being
+	/// discussed is on screen. What it must never become is a proxy for a request from inside
+	/// the frame: a page that could push text through here would have the `ask()` verb back,
+	/// and with it the one injection in this app that survives a turn and syncs to every device.
+	function crystalAskRow() {
+		var row = document.createElement('div');
+		row.className = 'crystal-ask';
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'crystal-ask-input';
+		input.placeholder = tOr('crystal.ask', 'Ask the daimon to change this page');
+		input.setAttribute('aria-label', tOr('crystal.ask', 'Ask the daimon to change this page'));
+		var send = document.createElement('button');
+		send.className = 'crystal-act primary';
+		send.type = 'button';
+		send.textContent = '↑';
+		send.title = tOr('crystal.ask', 'Ask the daimon to change this page');
+		var go = function () {
+			var text = input.value.trim();
+			if (!text) return;
+			input.value = '';
+			doSteer(text);
+		};
+		send.addEventListener('click', go);
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); }
+		});
+		row.appendChild(input);
+		row.appendChild(send);
+		return row;
+	}
+
+	/// A link the page asked the app to follow.
+	///
+	/// Through the egress gate in STRICT mode -- see `pageEgressAllowed` -- and then into
+	/// whichever surface already owns a URL, exactly as an artefact link goes.
+	async function openCrystalLink(href) {
+		var url = String(href || '');
+		if (!url.trim()) return;
+		if (!await pageEgressAllowed(url)) return;
+		if (window.DaimondWeb && DaimondWeb.open) DaimondWeb.open(url);
+		else window.open(url, '_blank', 'noopener,noreferrer');
+	}
+
+	/// Answer the page's `asset` verb: one text file from THIS Diamond's directory.
+	///
+	/// `crystal.js` has already resolved `rel` against `diamonds/<id>/` and already refused
+	/// anything escaping it, so `fullPath` arrives built and in scope. What is checked here is
+	/// that the promise HELD -- the same discipline as `scopeAgentTo`, which sets a security
+	/// boundary from JavaScript and then asks the engine what it holds rather than assuming.
+	/// It is two comparisons, it cannot fail on a correct caller, and everything it would
+	/// catch fails in the direction of more reach.
+	///
+	/// Read through `Wasm.store_read`, NOT `Wasm.read_file`. A Diamond lives in OPFS, and
+	/// `read_file` resolves against the workspace -- which is a real local folder whenever the
+	/// user has one open, so a Diamond's asset would come back out of somebody's project.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond whose page is asking.
+	/// * `fullPath` - `diamonds/<id>/<rel>`, built by the frame lane.
+	/// * `rel` - What the page actually asked for, for the check below.
+	async function readCrystalAsset(id, fullPath, rel) {
+		var path = String(fullPath == null ? '' : fullPath);
+		var home = 'diamonds/' + id + '/';
+		if (path.indexOf(home) !== 0 || path.indexOf('..') >= 0) {
+			throw new Error('Not a path in this Diamond: ' + String(rel == null ? path : rel));
+		}
+		return await Wasm.store_read(path);
+	}
+
+	/// Hand-edit the crystal: a FORM over the core keys, with the raw JSON behind a second
+	/// click.
+	///
+	/// It used to be a textarea written straight through with no validation. That was harmless
+	/// for markdown, which has no parse failure, and is a data-loss path for JSON.
+	///
+	/// **Unknown top-level keys round-trip untouched.** The draft IS the whole object; the form
+	/// writes only the core keys into it, and everything else is shown read-only under
+	/// `.crystal-form-extra` and written back exactly as it came in. A form that drops what it
+	/// cannot render is the defect this whole design is shaped around -- Lovelace's structured
+	/// editor silently deletes the config it cannot express, and an LLM is not more careful
+	/// than a form editor.
+	///
+	/// `write_crystal_data` snapshots a version and logs the edit, so a hand edit is as
+	/// recoverable as a fold.
+	///
+	/// # Arguments
+	/// * `data` - The parsed crystal to edit.
+	function editCrystal(data) {
+		var C = crystalLib();
+		var id = currentDiamond ? currentDiamond.id : '';
+		// The draft is a deep copy, so Cancel really is a cancel: the object handed in is the
+		// one the mounted page was given, and editing it in place would leave a rejected edit
+		// on screen behind the frame.
+		var draft;
+		try { draft = JSON.parse(JSON.stringify(data || {})); } catch (e) { draft = {}; }
+		if (!draft || typeof draft !== 'object' || Array.isArray(draft)) draft = {};
+		var jsonMode = false;
+
+		clearCrystalBody();
 
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
 		var save = document.createElement('button');
 		save.className = 'crystal-act primary';
 		save.textContent = '✔ ' + t('common.save');
+		var toJson = document.createElement('button');
+		toJson.className = 'crystal-act';
+		toJson.textContent = tOr('crystal.edit_json', 'Edit as JSON');
 		var cancel = document.createElement('button');
 		cancel.className = 'crystal-act';
 		cancel.textContent = t('common.cancel');
+		bar.appendChild(save); bar.appendChild(toJson); bar.appendChild(cancel);
+		crystalBody.appendChild(bar);
+
+		var host = document.createElement('div');
+		crystalBody.appendChild(host);
+
+		/// Pull the JSON pane's text back into the draft. Returns false and says so when it
+		/// will not parse -- which is the whole point of the second click having a gate on it.
+		function absorbJson() {
+			var ta = host.querySelector('.crystal-json');
+			if (!ta) return true;
+			var next = null;
+			if (C && typeof C.parse === 'function') {
+				var r = C.parse(ta.value);
+				if (r && r.ok) next = r.data;
+			} else {
+				try { next = JSON.parse(ta.value); } catch (e) { next = null; }
+			}
+			// An array or a bare number is valid JSON and is not a crystal. Refusing it here
+			// is the same refusal for the same reason: what would be written back is not the
+			// shape everything downstream reads.
+			if (!next || typeof next !== 'object' || Array.isArray(next)) {
+				noticeDialog(t('crystal.save_failed'),
+					tOr('crystal.json_invalid', 'That is not valid JSON, so nothing was saved.'));
+				return false;
+			}
+			draft = next;
+			return true;
+		}
+
+		function paint() {
+			host.innerHTML = '';
+			if (jsonMode) {
+				var ta = document.createElement('textarea');
+				ta.className = 'crystal-json';
+				ta.spellcheck = false;
+				ta.value = JSON.stringify(draft, null, 2);
+				host.appendChild(ta);
+				ta.focus();
+				return;
+			}
+			host.appendChild(crystalForm(draft));
+		}
+
+		toJson.addEventListener('click', function () {
+			if (jsonMode) { if (!absorbJson()) return; }
+			jsonMode = !jsonMode;
+			toJson.textContent = jsonMode
+				? t('crystal.back')
+				: tOr('crystal.edit_json', 'Edit as JSON');
+			paint();
+		});
 		save.addEventListener('click', async function () {
+			if (jsonMode && !absorbJson()) return;
 			save.disabled = true; save.textContent = t('files.saving');
-			try { await diamondApp().write_crystal(currentDiamond.id, ta.value); }
+			try { await diamondApp().write_crystal_data(id, JSON.stringify(draft, null, 2)); }
 			catch (e) {
 				noticeDialog(t('crystal.save_failed'), friendlyError(e));
 				save.disabled = false; save.textContent = '✔ ' + t('common.save');
@@ -17538,21 +18425,291 @@ import init, {
 			await refreshDiamondAfterChange();
 		});
 		cancel.addEventListener('click', function () { renderCrystal(); });
-		bar.appendChild(save); bar.appendChild(cancel);
 
-		crystalBody.appendChild(bar);
-		crystalBody.appendChild(ta);
-		ta.focus();
+		paint();
+	}
+
+	/// Build the form over the core keys, writing straight into `draft`.
+	///
+	/// Every core key is optional, so a key the draft does not have is not created by an empty
+	/// box: `setStr` deletes rather than storing an empty string, and each list drops its blank
+	/// rows on the way out. What comes back is the crystal the user meant, not the shape of
+	/// the form that collected it.
+	///
+	/// The extras are never written to. The draft IS the whole object, and everything outside
+	/// `CORE_KEYS` is read once, shown, and left alone.
+	function crystalForm(draft) {
+		var C = crystalLib();
+		var core = (C && C.CORE_KEYS) || ['title', 'summary', 'sections', 'facts', 'open', 'links'];
+		var form = document.createElement('div');
+		form.className = 'crystal-form';
+		// Core keys the form declined, because what is under them is not the shape it draws.
+		// They join the unknown keys below rather than being edited through a control that
+		// would flatten them -- which is the same rule as for an unknown key, one level down,
+		// and it exists because it is the rule that gets forgotten. A `facts` holding bare
+		// strings, drawn as key/value pairs, reads as six empty rows and saves as none.
+		var declined = [];
+
+		/// One labelled row.
+		function row(labelText, control) {
+			var r = document.createElement('div');
+			r.className = 'crystal-form-row';
+			var l = document.createElement('label');
+			l.className = 'cfg-fieldlabel';
+			l.textContent = labelText;
+			r.appendChild(l);
+			r.appendChild(control);
+			if (control.id) l.setAttribute('for', control.id);
+			return r;
+		}
+
+		/// Is this key the shape the form draws? An absent key always is: every core key is
+		/// optional, and a form is how an absent one gets filled in.
+		///
+		/// # Arguments
+		/// * `key` - The core key.
+		/// * `kind` - `'string'`, `'strings'` or `'objects'`.
+		function drawable(key, kind) {
+			var v = draft[key];
+			if (v == null) return true;
+			if (kind === 'string') return typeof v === 'string';
+			if (!Array.isArray(v)) return false;
+			return v.every(function (it) {
+				return kind === 'strings'
+					? typeof it === 'string'
+					: (!!it && typeof it === 'object' && !Array.isArray(it));
+			});
+		}
+
+		/// Whether to draw this key: it is in the core, and it is the shape we draw.
+		function offer(key, kind) {
+			if (core.indexOf(key) < 0) return false;
+			if (drawable(key, kind)) return true;
+			declined.push(key);
+			return false;
+		}
+
+		/// Store a string under `key`, or take the key away when it is blank.
+		function setStr(obj, key, value) {
+			if (String(value || '').trim()) obj[key] = value;
+			else delete obj[key];
+		}
+
+		/// A `×` for a row of a list.
+		function remover(onGone) {
+			var x = document.createElement('button');
+			x.className = 'crystal-act crystal-form-x';
+			x.type = 'button';
+			x.textContent = '×';
+			x.title = tOr('crystal.remove', 'Remove');
+			x.setAttribute('aria-label', tOr('crystal.remove', 'Remove'));
+			x.addEventListener('click', onGone);
+			return x;
+		}
+
+		// title
+		if (offer('title', 'string')) {
+			var title = document.createElement('input');
+			title.type = 'text';
+			title.className = 'crystal-form-input';
+			title.id = 'crystal-f-title';
+			title.value = typeof draft.title === 'string' ? draft.title : '';
+			title.addEventListener('input', function () { setStr(draft, 'title', title.value); });
+			form.appendChild(row(tOr('crystal.field_title', 'Title'), title));
+		}
+
+		// summary
+		if (offer('summary', 'string')) {
+			var summary = document.createElement('textarea');
+			summary.className = 'crystal-form-area';
+			summary.id = 'crystal-f-summary';
+			summary.rows = 4;
+			summary.value = typeof draft.summary === 'string' ? draft.summary : '';
+			summary.addEventListener('input', function () { setStr(draft, 'summary', summary.value); });
+			form.appendChild(row(tOr('crystal.field_summary', 'Summary'), summary));
+		}
+
+		// sections: heading and body, added by a button because a permanently blank one is
+		// two empty boxes of visual noise.
+		if (offer('sections', 'objects')) {
+			var secs = Array.isArray(draft.sections) ? draft.sections.slice() : [];
+			var secBox = document.createElement('div');
+			secBox.className = 'crystal-form-list';
+			var writeSecs = function () {
+				var keep = secs.filter(function (s) {
+					return String(s.heading || '').trim() || String(s.body || '').trim();
+				});
+				if (keep.length) draft.sections = keep; else delete draft.sections;
+			};
+			var paintSecs = function () {
+				secBox.innerHTML = '';
+				secs.forEach(function (sec, i) {
+					var item = document.createElement('div');
+					item.className = 'crystal-form-item';
+					var head = document.createElement('input');
+					head.type = 'text';
+					head.className = 'crystal-form-input';
+					head.placeholder = tOr('crystal.field_heading', 'Heading');
+					head.setAttribute('aria-label', tOr('crystal.field_heading', 'Heading'));
+					head.value = String(sec.heading || '');
+					head.addEventListener('input', function () { sec.heading = head.value; writeSecs(); });
+					var body = document.createElement('textarea');
+					body.className = 'crystal-form-area';
+					body.rows = 3;
+					body.placeholder = tOr('crystal.field_body', 'Body');
+					body.setAttribute('aria-label', tOr('crystal.field_body', 'Body'));
+					body.value = String(sec.body || '');
+					body.addEventListener('input', function () { sec.body = body.value; writeSecs(); });
+					var top = document.createElement('div');
+					top.className = 'crystal-form-line';
+					top.appendChild(head);
+					top.appendChild(remover(function () { secs.splice(i, 1); writeSecs(); paintSecs(); }));
+					item.appendChild(top);
+					item.appendChild(body);
+					secBox.appendChild(item);
+				});
+				var add = document.createElement('button');
+				add.className = 'crystal-act';
+				add.type = 'button';
+				add.textContent = '+ ' + tOr('crystal.add_section', 'Add a section');
+				add.addEventListener('click', function () {
+					secs.push({ heading: '', body: '' });
+					paintSecs();
+				});
+				secBox.appendChild(add);
+			};
+			paintSecs();
+			form.appendChild(row(tOr('crystal.field_sections', 'Sections'), secBox));
+		}
+
+		/// A list of rows, each built from `fields`, growing by a blank row at the end.
+		///
+		/// No add button: the contract names one, for sections, and a row of two short boxes
+		/// costs less on screen than a button that makes one. Typing in the trailing blank
+		/// grows the list; emptying a row and saving drops it.
+		///
+		/// # Arguments
+		/// * `key` - The top-level key being edited.
+		/// * `fields` - `[{ prop, label }]`, or `null` for a list of bare strings.
+		function listRow(key, fields) {
+			var items = Array.isArray(draft[key]) ? draft[key].slice() : [];
+			var box = document.createElement('div');
+			box.className = 'crystal-form-list';
+			var filled = function (it) {
+				if (!fields) return String(it || '').trim() !== '';
+				return fields.some(function (f) { return String(it[f.prop] || '').trim() !== ''; });
+			};
+			var write = function () {
+				var keep = items.filter(filled);
+				if (keep.length) draft[key] = keep; else delete draft[key];
+			};
+			var paintList = function () {
+				box.innerHTML = '';
+				// Always one blank at the end, and never two.
+				while (items.length && !filled(items[items.length - 1])) items.pop();
+				items.push(fields ? (function () {
+					var blank = {};
+					fields.forEach(function (f) { blank[f.prop] = ''; });
+					return blank;
+				})() : '');
+				items.forEach(function (it, i) {
+					var line = document.createElement('div');
+					line.className = 'crystal-form-line';
+					var mkInput = function (label, get, set) {
+						var inp = document.createElement('input');
+						inp.type = 'text';
+						inp.className = 'crystal-form-input';
+						inp.placeholder = label;
+						inp.setAttribute('aria-label', label);
+						inp.value = get();
+						inp.addEventListener('input', function () { set(inp.value); write(); });
+						// Typing in the trailing blank is what grows the list, so the row
+						// below it appears the moment there is something to put above it.
+						inp.addEventListener('change', function () {
+							if (i === items.length - 1 && filled(items[i])) paintList();
+						});
+						return inp;
+					};
+					if (!fields) {
+						line.appendChild(mkInput(tOr('crystal.field_open', 'Open threads'),
+							function () { return String(it || ''); },
+							function (v) { items[i] = v; }));
+					} else {
+						fields.forEach(function (f) {
+							line.appendChild(mkInput(f.label,
+								function () { return String(items[i][f.prop] || ''); },
+								function (v) { items[i][f.prop] = v; }));
+						});
+					}
+					if (filled(it)) {
+						line.appendChild(remover(function () { items.splice(i, 1); write(); paintList(); }));
+					}
+					box.appendChild(line);
+				});
+			};
+			paintList();
+			return box;
+		}
+
+		if (offer('facts', 'objects')) {
+			form.appendChild(row(tOr('crystal.field_facts', 'Facts'),
+				listRow('facts', [
+					{ prop: 'k', label: tOr('crystal.field_facts', 'Facts') },
+					{ prop: 'v', label: tOr('crystal.field_body', 'Body') },
+				])));
+		}
+		if (offer('open', 'strings')) {
+			form.appendChild(row(tOr('crystal.field_open', 'Open threads'), listRow('open', null)));
+		}
+		if (offer('links', 'objects')) {
+			form.appendChild(row(tOr('crystal.field_links', 'Links'),
+				listRow('links', [
+					{ prop: 'label', label: tOr('crystal.field_title', 'Title') },
+					{ prop: 'href',  label: tOr('crystal.field_links', 'Links') },
+				])));
+		}
+
+		// Everything the form cannot draw, shown so that nothing vanishes. Read-only, and
+		// carried in `draft` untouched: the form only ever writes the keys it drew.
+		var extraKeys = Object.keys(draft).filter(function (k) {
+			return core.indexOf(k) < 0 || declined.indexOf(k) >= 0;
+		});
+		if (extraKeys.length) {
+			var extra = document.createElement('div');
+			extra.className = 'crystal-form-extra';
+			var eh = document.createElement('div');
+			eh.className = 'cfg-fieldlabel';
+			eh.textContent = tOr('crystal.other_fields', 'Other fields');
+			var en = document.createElement('p');
+			en.className = 'cfg-fieldnote';
+			en.textContent = tOr('crystal.other_fields_note',
+				'Kept as they are, and shown here so nothing vanishes.');
+			var ep = document.createElement('pre');
+			var shown = {};
+			extraKeys.forEach(function (k) { shown[k] = draft[k]; });
+			ep.textContent = JSON.stringify(shown, null, 2);   // escaped via textContent (H5)
+			extra.appendChild(eh); extra.appendChild(en); extra.appendChild(ep);
+			form.appendChild(extra);
+		}
+
+		return form;
 	}
 
 	/// The Diamond's history: every version, with what produced it, and a way back.
+	///
+	/// A version is DATA. Pre-migration snapshots are `versions/NNNN.md` and post-migration
+	/// ones are `versions/NNNN.json`; both arrive here as one string and are shown as they
+	/// are, pretty-printed where they are JSON so a version reads as lines rather than as one
+	/// unbroken paragraph. The page snapshot beside it is deliberately not offered: "what did
+	/// this Diamond hold at v12" is a question about the memory, and answering it with a
+	/// rendering would put the page's own bugs between the reader and the answer.
 	async function showCrystalHistory() {
 		if (!currentDiamond) return;
 		var recs = [];
 		try { recs = JSON.parse(await diamondApp().log_read(currentDiamond.id) || '[]'); }
 		catch (e) { recs = []; }
 
-		crystalBody.innerHTML = '';
+		clearCrystalBody();
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
@@ -17611,24 +18768,52 @@ import init, {
 			view.className = 'crystal-act';
 			view.textContent = t('crystal.view');
 			view.addEventListener('click', async function () {
-				var md = '';
-				try { md = await diamondApp().read_version(currentDiamond.id, v); }
+				var was = '';
+				try { was = await diamondApp().read_version(currentDiamond.id, v); }
 				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
-				noticeDialog(t('crystal.at_version', { v: v }), md || t('crystal.empty_paren'), { pre: true });
+				noticeDialog(t('crystal.at_version', { v: v }),
+					crystalVersionText(was) || t('crystal.empty_paren'), { pre: true });
 			});
 			var revert = document.createElement('button');
 			revert.className = 'crystal-act';
 			revert.textContent = t('crystal.restore');
 			revert.addEventListener('click', async function () {
-				var md = '';
-				try { md = await diamondApp().read_version(currentDiamond.id, v); }
+				var was = '';
+				try { was = await diamondApp().read_version(currentDiamond.id, v); }
 				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
 				var ok = await confirmDialog(
 					t('crystal.restore_body', { v: v }),
 					t('crystal.restore_v', { v: v }),
 					{ title: t('crystal.restore_title'), danger: false });
 				if (!ok) return;
-				try { await diamondApp().write_crystal(currentDiamond.id, md); }
+				// A pre-migration version is markdown, and writing markdown into `crystal.json`
+				// would leave the Diamond holding a file nothing downstream can read. It goes
+				// through the same migration a legacy crystal does on the way in.
+				// The page as it was then, restored with it. "Restore v12" means the Diamond
+				// as it stood at v12, and a Diamond is its memory AND the page that draws it;
+				// leaving today's page over v12's data is a state that never existed.
+				//
+				// A page is only snapshotted at the versions where it changed, so
+				// `read_version_page` walks back to the highest at or below this one that has
+				// one. A version from before there were pages has none at all, and that is
+				// answered by leaving the current page alone -- the data is the half worth
+				// restoring.
+				var wasPage = '';
+				try { wasPage = await diamondApp().read_version_page(currentDiamond.id, v); }
+				catch (e) { wasPage = ''; }
+				// BOTH HALVES IN ONE VERSION. Written separately they take a version each, so
+				// one press of Restore left two rows in the history -- and the history is the
+				// record of a Diamond's discontinuities, so a reader counting them counts one
+				// restore as two.
+				try {
+					if (wasPage && wasPage.trim()) {
+						await diamondApp().write_crystal_both(
+							currentDiamond.id, crystalJson(was), wasPage);
+					} else {
+						await diamondApp().write_crystal_data(
+							currentDiamond.id, crystalJson(was));
+					}
+				}
 				catch (e) { noticeDialog(t('crystal.restore_failed'), friendlyError(e)); return; }
 				await refreshDiamondAfterChange();
 			});
@@ -17667,7 +18852,7 @@ import init, {
 		var f = diamonds.find(function (x) { return x.id === currentDiamond.id; }) || currentDiamond;
 		var tags = tagsOf(f).slice();
 
-		crystalBody.innerHTML = '';
+		clearCrystalBody();
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
 		var back = document.createElement('button');
@@ -18703,8 +19888,17 @@ import init, {
 		// view is the thing the user is looking at: a steer can run from a gather round
 		// with the Diamond nowhere on screen, and drawing into the thread then would
 		// paint one Diamond's turn into another's.
+		//
+		// ASKED AGAIN AT EVERY USE. It used to be answered once, before the turn
+		// started, and a user who walked off the Diamond mid-turn took the answer
+		// with them: every arm below went on drawing, so the daimon's reply
+		// streamed into whatever thread was on screen -- one conversation's words
+		// in another's transcript, still arriving minutes later. `runTurn` asks
+		// the same question the same way, through `owns()`.
 		var rec = daimonChat(currentDiamond);
-		var onScreen = !!(current && rec && current.id === rec.id && centreMode === 'daimon');
+		var onScreen = function () {
+			return !!(current && rec && current.id === rec.id && centreMode === 'daimon');
+		};
 		// The OTHER face of the same Diamond. Both faces share one composer, so a
 		// steer is just as likely to be typed at the crystal -- which is the face
 		// a Diamond opens on -- and until now the crystal answered with twelve
@@ -18713,7 +19907,7 @@ import init, {
 		// identically to normal chats."*
 		var onCrystal = !!(currentDiamond && centreMode === 'focus');
 		rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: Date.now() });
-		if (onScreen) appendUserMessage(instruction);
+		if (onScreen()) appendUserMessage(instruction);
 		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
 		// which is what stops a reload, a sign-out or an update landing on top of work
 		// in flight -- counts it. Both read `_generating`, so a daimon turn that did not
@@ -18725,28 +19919,25 @@ import init, {
 		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
 		// next use, so a stopped daimon does not leave a poisoned client behind.
 		rec.app = diamondApp(currentDiamond.id);
-		if (onScreen) { syncComposer(); showSpinner(); }
+		// `syncComposer` raises the dots as well as putting Stop on the button, so
+		// what this turn is doing has to be on the record before it is called.
+		rec._busy = tOr('chat.busy', 'Thinking…');
+		if (onScreen()) syncComposer();
 		if (onCrystal) showCrystalSpinner();
 
-		// In the THREAD the dots stand for "nothing has come back yet", so the
-		// first thing that comes back takes them down -- exactly as `runTurn` does
-		// it, which is what "identically to normal chats" means.
+		// Both faces now keep their dots up for the whole turn, which is what
+		// "daimon chats should behave identically to normal chats" has come to
+		// mean: a thread that goes quiet for a dozen tool calls is the crystal
+		// face's problem too, and it was always solved there by leaving the dots
+		// alone. The thread says which tool and which round as it goes; see the
+		// turn indicator above for why a caption and not just dots.
 		//
-		// On the CRYSTAL face they stay up for the whole turn, and deliberately:
-		// there is no thread there, so a tool call puts nothing on screen and
-		// taking the dots down at the first one would leave the face looking idle
-		// while the daimon worked. They come down where the turn ends.
-		//
-		// Guarded by `onScreen`, which is also what put them up. A gather round
-		// can run this turn while the user watches an ordinary chat mid-answer,
-		// and an unguarded `hideSpinner` would take THAT chat's dots down.
-		var sawReply = false;
-		function replyStarted() {
-			if (sawReply || !onScreen) return;
-			sawReply = true;
-			hideSpinner();
-		}
-
+		// `busySay` writes to the record whether or not it is on screen, so a
+		// gather round running behind an ordinary chat leaves the right words for
+		// the moment the user comes back to this Diamond -- and touches no other
+		// chat's dots, since it only draws when the record IS the current one.
+		var step = 0;        // tool-call rounds so far, for the caption
+		var writing = false; // prose is arriving, so the caption has said so once
 		var sawError = false;
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
@@ -18754,10 +19945,13 @@ import init, {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
 				replyText += (ev.content || '');
-				replyStarted();
-				if (onScreen) appendAssistantText(ev.content || '');
+				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
+				if (onScreen()) appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
-				replyStarted();
+				step += 1;
+				writing = false;
+				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
+					{ tool: ev.name || '?', n: step }));
 				if ((ev.name || '') === 'spawn_agent') {
 					var spec = null;
 					try { spec = JSON.parse(ev.args || '{}'); } catch (e) { spec = null; }
@@ -18773,24 +19967,26 @@ import init, {
 				// thing it does.
 				rec.messages.push({ role: 'tool_log', name: ev.name || '', args: ev.args || '',
 					content: '', mid: newMid(), ts: Date.now() });
-				if (onScreen) renderToolCall(ev.name || '', ev.args || '');
+				if (onScreen()) renderToolCall(ev.name || '', ev.args || '');
 			} else if (ev.type === 'tool_result') {
 				var last = rec.messages[rec.messages.length - 1];
 				if (last && last.role === 'tool_log' && !last.content) last.content = ev.content || '';
-				if (onScreen) renderToolResult(ev.name || '', ev.content || '');
+				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
+				if (onScreen()) renderToolResult(ev.name || '', ev.content || '');
 			} else if (ev.type === 'compacted') {
 				// The fold notes2 asks for by name: *"automatically and visibly folded at
 				// the context threshold"*. Visibly is this line.
 				rec.messages.push({ role: 'fold_log', content: ev.content || '',
 					folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: Date.now() });
-				if (onScreen) appendCompacted(ev.content || '');
+				if (onScreen()) appendCompacted(ev.content || '');
 			} else if (ev.type === 'error') {
+				// Not the end of the turn, so the dots stay: see the same arm in
+				// `runTurn`. The one place a steer ends is its `finally`.
 				sawError = true;
-				replyStarted();
 				setCrystalStatus('Error: ' + (ev.content || ''));
 				rec.messages.push({ role: 'error_log', content: ev.content || '',
 					mid: newMid(), ts: Date.now() });
-				if (onScreen) appendError(ev.content || '');
+				if (onScreen()) appendError(ev.content || '');
 			}
 		};
 		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
@@ -18801,7 +19997,7 @@ import init, {
 			// not be asked a follow-up question.
 			var after = await fa.steer_crystal(diamondId, instruction,
 				(rec.session && rec.session.msgs) || [], onEvent);
-			if (onScreen) finalizeAssistant();
+			if (onScreen()) finalizeAssistant();
 			if (replyText) {
 				rec.messages.push({ role: 'assistant', content: replyText,
 					mid: newMid(), ts: Date.now() });
@@ -18827,25 +20023,33 @@ import init, {
 			// A failure DURING one no longer arrives here: `steer_crystal` returns the
 			// conversation whatever happened, and reports the failure through the event
 			// sink, so the daimon does not forget a turn it was already billed for.
-			replyStarted();
 			hideCrystalSpinner();
-			if (onScreen) { finalizeAssistant(); appendError(friendlyError(e)); }
+			if (onScreen()) { finalizeAssistant(); appendError(friendlyError(e)); }
 			rec.messages.push({ role: 'error_log', content: friendlyError(e),
 				mid: newMid(), ts: Date.now() });
 			persistChats();
 			setCrystalStatus(friendlyError(e));
 			rec._generating = false;
-			if (onScreen) syncComposer();
+			rec._busy = '';
+			// `syncComposer` is what takes the dots down, because it is what decides
+			// whether the chat on screen is working -- from `current`, so it is
+			// right for whatever is on screen and needs no guard of its own. It is
+			// guarding it with a SECOND predicate that goes wrong: a user who moved
+			// to the crystal face mid-turn left `onScreen` false, and the chat face
+			// kept its dots for ever because nothing ever re-decided them.
+			syncComposer();
 			setCrystalBusy(false);
 			return;
 		}
 		rec._generating = false;
+		rec._busy = '';
 		// The turn is over however it went, so the dots come down whether or not
 		// anything ever came back through the sink. `hideCrystalSpinner` is by id
-		// and harmless when the crystal has already been redrawn without one.
-		replyStarted();
+		// and harmless when the crystal has already been redrawn without one, and
+		// `syncComposer` is what takes the thread's own dots down -- unguarded, for
+		// the reason given at the failure exit above.
 		hideCrystalSpinner();
-		if (onScreen) syncComposer();
+		syncComposer();
 		setCrystalBusy(false);
 		// A turn that died part-way may still have asked for agents before it died.
 		// Starting them would be spending on the strength of a turn that failed, which
@@ -18881,7 +20085,7 @@ import init, {
 			setCrystalStatus(rejected === 1
 				? 'An agent was requested with no task, so nothing was started.'
 				: rejected + ' agents were requested with no task, so nothing was started.');
-		} else if (replyText.trim() && !onScreen) {
+		} else if (replyText.trim() && !onScreen()) {
 			// The turn neither dispatched nor edited its way to a visible change; it
 			// answered in words. On the CRYSTAL face there is nowhere else for those
 			// words to go, so they go in the reply box. In the chat view they are
@@ -18902,8 +20106,13 @@ import init, {
 		var st = pendingFolds[diamondId];
 		if (!st) { renderCrystal(); return; }
 		var f = diamonds.find(function (x) { return x.id === diamondId; });
-		crystalBody.innerHTML = '';
-		var diff = lineDiff(st.base || '', st.proposed || '');
+		clearCrystalBody();
+		// Both sides pretty-printed when both are JSON, so the diff reads as lines. A reducer
+		// writes its answer on one line as often as not, and a one-line diff of a whole
+		// crystal is a single red row against a single green one -- true, and no use to
+		// somebody deciding whether to accept it. Neither side is REWRITTEN by this: what is
+		// applied is still `st.proposed` exactly as it came back.
+		var diff = lineDiff(crystalVersionText(st.base || ''), crystalVersionText(st.proposed || ''));
 		var changed = diff.some(function (d) { return d.kind === 'add' || d.kind === 'del'; });
 
 		var head = document.createElement('div');
@@ -18921,6 +20130,31 @@ import init, {
 					: t('diff.folding_chat', { chat: st.chatName }))
 				: (into ? t('diff.proposed_into', { diamond: into }) : t('diff.proposed'));
 		crystalBody.appendChild(head);
+
+		// WHAT THE DIFF CANNOT SAY. A fold REPLACES the crystal wholesale, on one click, by a
+		// user who is being invited to click -- and a crystal that has lost half its keys is
+		// as valid a document as one that has not, since `{}` itself is legal. The diff shows
+		// the removal as red rows, which is honest and is also forty lines of red among a
+		// hundred, so a key silently gone is exactly what a reader skims past. This says it in
+		// words. Absence only: a key emptied in place is what a good fold does, and warning
+		// about that would train the eye to wave the warning through.
+		var lost = document.createElement('div');
+		lost.className = 'diff-lost';
+		lost.style.display = 'none';
+		crystalBody.appendChild(lost);
+		(async function () {
+			var names = [];
+			try {
+				names = JSON.parse(await diamondApp(diamondId)
+					.fold_keys_lost(diamondId, st.proposed) || '[]');
+			} catch (e) { names = []; }
+			// The proposal may have been accepted, dropped, or replaced by another while
+			// this was in flight, and the crystal itself may have moved underneath it.
+			if (!names.length || pendingFolds[diamondId] !== st) return;
+			lost.textContent = tOr('fold.keys_lost',
+				'Accepting this removes: {keys}', { keys: names.join(', ') });
+			lost.style.display = '';
+		})();
 
 		var lines = document.createElement('div');
 		lines.className = 'diff-lines';
@@ -19263,6 +20497,9 @@ import init, {
 				try { if (c.app) c.app.abort(); } catch (e) { /* already gone */ }
 				c._generating = false;
 			}
+			// And with the turn goes what the indicator was saying about it, or
+			// unlocking would come back to a chat still claiming to run a tool.
+			c._busy = '';
 			// Locking takes the user's content off the screen, so a queue is content
 			// too — and it must not fire a turn into a locked app. What was said into
 			// a running turn is the same content and goes the same way; the drain in
@@ -19298,6 +20535,9 @@ import init, {
 		cfg.pushToken = '';
 		applyPushCred();
 		if (window.DaimondModels) DaimondModels.lock();
+		// And the search keys, which are the same kind of thing: somebody else's
+		// bearer credential, held in memory, and a locked Daimond holds none.
+		if (window.DaimondSearch) DaimondSearch.lock();
 		chats.forEach(function (c) { c.app = null; });
 		resetDiamondApps();
 
@@ -19310,7 +20550,7 @@ import init, {
 		sessionList.innerHTML = '';
 		diamondList.innerHTML   = '';
 		chatOutput.innerHTML  = '';
-		crystalBody.innerHTML   = '';
+		clearCrystalBody();          // and the frame, and its listener, with it
 		agentsList.innerHTML  = '';
 		crystalControls.innerHTML = '';       // the steer line and the fold control
 		aiMeter.textContent = '';
@@ -19782,6 +21022,10 @@ import init, {
 			await DaimondModels.unseal();
 			syncCfgFromModels();
 		}
+		// The search key is sealed under the same passphrase and is unreadable
+		// until the same moment. Separate from the models unseal above only
+		// because they are separate stores; nothing orders them.
+		if (window.DaimondSearch) await DaimondSearch.unseal();
 		try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best-effort */ }
 		// The settings are on screen now, not behind a button, so they must show
 		// the user's own provider and key rather than an empty form.
@@ -20616,6 +21860,10 @@ import init, {
 	/// path any account uses. The primary account IS the origin root, so its walk
 	/// steps over the `d~…` subdirectories its neighbours live in.
 	async function collectOpfsFiles() {
+		// The names are taken AS STORED and are not put through `DaimondCloud.logicalName`, and
+		// `writeOpfsBytes` restores them the same way. A backup is a byte image of the sandbox,
+		// paths included; decoding here and not there — or there and not here — would make a
+		// restore land somewhere the export never was. See src/fsname.rs.
 		var out = [];
 		// True when the walk starts at the origin root, i.e. this is the primary
 		// account and its neighbours' namespaces are directories inside it.
@@ -20736,11 +21984,18 @@ import init, {
 			var list = await diamondApp().list_diamonds();
 			var arr = JSON.parse(list || '[]');
 			for (var i = 0; i < arr.length; i++) {
-				var crystal = '';
-				try { crystal = await diamondApp().read_crystal(arr[i].id); } catch (e) { crystal = ''; }
+				var crystal = '', crystalPage = '';
+				try { crystal = await diamondApp().read_crystal_data(arr[i].id); } catch (e) { crystal = ''; }
+				// The page travels beside the data, for the same reason the tags do: this
+				// summary is the fallback for a Diamond whose raw store is missing from
+				// `workspace`, and a fallback that restores the memory without the page it
+				// was written for restores half a Diamond.
+				try { crystalPage = await diamondApp().read_crystal_page(arr[i].id); }
+				catch (e) { crystalPage = ''; }
 				// Tags travel with the Diamond. Without them a restore silently
 				// drops the user's whole filing system while looking like it worked.
-				out.diamonds.push({ id: arr[i].id, name: arr[i].name, crystal: crystal, tags: tagsOf(arr[i]) });
+				out.diamonds.push({ id: arr[i].id, name: arr[i].name, crystal: crystal,
+					crystalPage: crystalPage, tags: tagsOf(arr[i]) });
 			}
 		} catch (e) { /* export what we have */ }
 		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
@@ -20895,7 +22150,21 @@ import init, {
 				if (f.id && restoredIds[f.id]) continue;    // already restored, history and all.
 				try {
 					var id = await diamondApp().create_diamond(f.name || 'Restored Diamond');
-					if (f.crystal) await diamondApp().write_crystal(id, f.crystal);
+					// A backup written before the crystal became two files carries markdown
+					// here. `crystalJson` migrates it on the way in, so a restore of an old
+					// backup lands in the format everything downstream reads.
+					// A backup written before the page existed has none, and the Diamond then
+					// opens on the shipped default like any other. Where both are present
+					// they go in as ONE version, so an import reads as the single event it
+					// was rather than as two edits nobody made.
+					if (f.crystal && f.crystalPage) {
+						await diamondApp().write_crystal_both(
+							id, crystalJson(f.crystal), f.crystalPage);
+					} else if (f.crystal) {
+						await diamondApp().write_crystal_data(id, crystalJson(f.crystal));
+					} else if (f.crystalPage) {
+						await diamondApp().write_crystal_page(id, f.crystalPage);
+					}
 					// A backup written before tags existed simply has none.
 					if (f.tags && f.tags.length) await diamondApp().set_tags(id, JSON.stringify(f.tags));
 				} catch (e) { /* skip one diamond */ }
@@ -21118,6 +22387,11 @@ import init, {
 		RoundLimit.render();
 		FoldModel.render();
 		CrystalCap.render();
+		CrystalPageCap.render();
+		// Which service the agent searches with, and the key for it. Redrawn with
+		// the rest because unlocking is what makes a sealed key readable, and the
+		// row says something different either side of that.
+		SearchRow.render();
 		// The sync switch and the diagnostics trail. Built here rather than in the
 		// markup because every other settings row is, and because both are
 		// useless on a page where `DaimondSafe`/`DaimondTrail` did not load.
@@ -21241,9 +22515,11 @@ import init, {
 		try { app.set_max_rounds(cfg.maxRounds); } catch (e) { /* an older wasm build has no setter */ }
 	}
 
-	/// What the engine falls back to when nobody has chosen: `tools::CRYSTAL_CAP_DEFAULT`.
-	/// Named here only so the "Default" row can show the figure; nothing is set from it.
+	/// What the engine falls back to when nobody has chosen: `tools::CRYSTAL_CAP_DEFAULT` and
+	/// `tools::CRYSTAL_PAGE_CAP_DEFAULT`. Named here only so each "Default" row can show its
+	/// figure; nothing is set from either.
 	var DEFAULT_CRYSTAL_KB = 16;
+	var DEFAULT_CRYSTAL_PAGE_KB = 64;
 
 	/// The crystal ceiling: how large a Diamond's summary may grow before a write that grows it
 	/// further is refused.
@@ -21252,6 +22528,10 @@ import init, {
 	/// right figure depends on how the person works. A Diamond holding one project's state wants
 	/// far less than one standing in for a whole field of them, and only the user knows which
 	/// they are building.
+	///
+	/// A crystal is two files now, and so is this: the data, and the page that draws it. Both
+	/// rows sit under ONE heading, which is the user's own call — "presented apart they read as
+	/// two unrelated numbers". This object mounts the heading; `CrystalPageCap` mounts beneath it.
 	/// A way to read the app's own trail WHEN THE APP IS WORKING.
 	///
 	/// The trail has only ever appeared on the lock screen, and only once the app
@@ -21262,6 +22542,209 @@ import init, {
 	/// `META HUGE`, `META SHAPE`, `META HEALED` — are written on a boot that then
 	/// works perfectly, and the user had no way on earth to reach them.
 	///
+	// ── Search: which service the agent searches with ──────────
+	//
+	// THE ENGINE IS A SETTING, never a line in the prompt file. A prompt line is
+	// advice a model may ignore, and the whole reason this row exists is that a
+	// model handed eight web tools and no search tool wrote its own search URL
+	// and silently chose Bing. `DaimondSearch` holds the choice and the key; this
+	// draws them, directly under the model picker because it is the same kind of
+	// decision — which outside service does my agent use.
+	//
+	// `serper` is offered like the rest, WITH YOUR OWN KEY, and is the one engine
+	// Daimond credits may never buy: it resells Google, and that arbitrage is not
+	// Oxedyne's to underwrite. Choosing it with no key says exactly that rather
+	// than falling back to the balance — which is the whole shape of this row,
+	// because the alternative is a user paying us for a resale that can stop
+	// working on somebody else's decision.
+	var SearchRow = {
+		/// Wire the two controls, once. Returns whether there was anything to wire:
+		/// a page without the section (the harness's stripped shells) is not a
+		/// fault, it simply has no search settings on it.
+		mount: function () {
+			var sel = document.getElementById('set-search-engine');
+			var box = document.getElementById('set-search-key');
+			if (!sel || !box || !window.DaimondSearch) return false;
+			if (sel._searchWired) return true;
+			sel._searchWired = true;
+			// Masked as the provider key and the push token are, and for the same
+			// reason: a real password field is what invites a browser or a manager
+			// to file somebody else's bearer credential away.
+			installSecretMask(box, '');
+			sel.addEventListener('change', function () {
+				DaimondSearch.setEngine(sel.value);
+				SearchRow.render();
+				// An engine that wants a key wants it now, and the box is the only
+				// thing on the row that has just become useful.
+				if (sel.value !== DaimondSearch.CREDITS && !DaimondSearch.hasKey(sel.value)) {
+					try { box.focus(); } catch (e) { /* not on screen */ }
+				}
+			});
+			// On blur and on Enter, not on every keystroke: sealing is a key
+			// derivation, and wrapping a half-typed key on every character is work
+			// nobody asked for and a store full of prefixes.
+			box.addEventListener('blur', function () { SearchRow.save(); });
+			box.addEventListener('keydown', function (ev) {
+				if (ev.key === 'Enter') { ev.preventDefault(); SearchRow.save(); }
+			});
+			return true;
+		},
+
+		/// Store what is in the box, sealed, and say so if it could not be.
+		save: async function () {
+			var box = document.getElementById('set-search-key');
+			if (!box || !window.DaimondSearch) return;
+			var id = DaimondSearch.engine();
+			if (id === DaimondSearch.CREDITS) return;
+			var v = getSecret(box).trim();
+			// A box left alone shows bullets for the key already held. Re-sealing the
+			// same string on every blur would churn the store, and — worse — a
+			// SEALED key the app cannot read shows an empty box, so a blur that took
+			// that at face value would delete it.
+			if (v === DaimondSearch.key(id)) return;
+			var kept = await DaimondSearch.setKey(id, v);
+			SearchRow.render();
+			if (!kept) { try { box.focus(); } catch (e) { /* not on screen */ } }
+		},
+
+		/// Draw the row to the store.
+		///
+		/// The options are rebuilt each time rather than written in the markup: one
+		/// of the five names is a phrase this app made up and is translated, the
+		/// other four are proper nouns and are not, and a language change has to
+		/// reach the first without touching the rest.
+		render: function () {
+			// Before anything reads the box: `setSecret` on an UNMASKED input writes
+			// the value straight into it, so a render that beat the mask would put a
+			// plaintext key on screen. `mount` is idempotent, so asking here costs a
+			// property lookup and closes that order dependency for good.
+			if (!SearchRow.mount()) return;
+			var sel = document.getElementById('set-search-engine');
+			var box = document.getElementById('set-search-key');
+			if (!sel || !box || !window.DaimondSearch) return;
+			var S    = window.DaimondSearch;
+			var cur  = S.engine();
+			var kind = { web: 'search.kind_web', news: 'search.kind_news', academic: 'search.kind_academic' };
+			// "Academic", not "Research": in French the latter collided with both
+			// "Recherche" for a search and "Moteur de recherche" for the engine, so
+			// one panel carried three meanings of one word. And "Web", not "The web":
+			// it was the only item in its own pulldown wearing an article.
+			var eng  = { web: 'Web', news: 'News', academic: 'Academic' };
+
+			// The heading and the two labels, painted rather than left to
+			// `data-i18n`. That attribute writes `t(key)` into the element, and `t`
+			// answers with the KEY when the table has not got there yet — a panel
+			// headed "search.head". `tOr` falls back to English instead, so this
+			// half of the release and the i18n lane's half are safe in either order.
+			var head = document.getElementById('search-head');
+			if (head) head.textContent = tOr('search.head', 'Search');
+			var engLab = document.querySelector('label[for="set-search-engine"]');
+			if (engLab) engLab.textContent = tOr('search.engine', 'Search engine');
+			var keyLab = document.querySelector('label[for="set-search-key"]');
+			if (keyLab) keyLab.textContent = tOr('search.key', 'API key');
+
+			sel.innerHTML = '';
+			Object.keys(S.KNOWN).forEach(function (id) {
+				var o = document.createElement('option');
+				o.value = id;
+				// What each engine will answer, beside its name. It is the one thing
+				// that distinguishes them at the moment of choosing — only some do
+				// research papers, only some do news — and it is gone the instant the
+				// pulldown closes, so it belongs on the option and not under it.
+				// Not on `credits`: the engine behind that is the operator's choice,
+				// so a list here would be a claim this page cannot stand behind.
+				var kinds = (id === S.CREDITS) ? []
+					: (S.KNOWN[id].kinds || []).map(function (k) { return tOr(kind[k], eng[k]); });
+				o.textContent = S.engineName(id) + (kinds.length ? ' · ' + kinds.join(', ') : '');
+				// The rule stated where the choice is made, not only where it is
+				// refused: credits may never buy this one.
+				if (S.byokOnly(id)) {
+					o.title = tOr('search.refused_serper', '{engine} can only be used with your own key.',
+						{ engine: S.engineName(id) });
+				}
+				if (id === cur) o.selected = true;
+				sel.appendChild(o);
+			});
+
+			// The note under the pulldown. The general sentence promises nothing
+			// about anybody's free tier — it says most vendors HAVE one — and the
+			// per-engine line beneath is the only place a figure is stated.
+			//
+			// A FIGURE THAT CAN GO STALE, and shaped so that it does not go stale
+			// silently. The number lives in `KNOWN` in search.js, where one value is
+			// one edit; the sentence around it is a translated string with a
+			// placeholder, so eight locale files never have to be re-read when a
+			// vendor changes its plan. An engine with no figure we can cite says
+			// nothing at all: "free" on its own is a claim about somebody else's
+			// pricing in Daimond's voice, and the last time this app made one of
+			// those it overstated a cost by six times.
+			var note = document.getElementById('search-engine-note');
+			if (note) {
+				note.textContent = tOr('search.engine_note',
+					'Which service Daimond searches with. Most give you a free allowance '
+					+ 'each month if you bring your own key.');
+				// Where a key comes from, for the engine now chosen. A vendor's own
+				// signup page in a real tab: it is somebody else's site and somebody
+				// else's session, so it is not one Daimond can draw.
+				var url = (S.KNOWN[cur] && S.KNOWN[cur].url) || '';
+				if (url) {
+					note.appendChild(document.createTextNode(' '));
+					var a = document.createElement('a');
+					a.href = url;
+					a.target = '_blank';
+					a.rel = 'noreferrer noopener';
+					a.textContent = S.engineName(cur);
+					note.appendChild(a);
+				}
+				var free = (S.KNOWN[cur] && S.KNOWN[cur].free) || 0;
+				if (free > 0) {
+					var n = free;
+					try { n = free.toLocaleString(); } catch (e) { n = String(free); }
+					note.appendChild(document.createTextNode(' ' + tOr('search.free_month',
+						'{engine}: about {n} searches a month free, last time we looked.',
+						{ engine: S.engineName(cur), n: n })));
+				}
+			}
+
+			// The key field, hidden for credits: the gateway holds that key and there
+			// is nothing here for anybody to paste.
+			var row = document.getElementById('search-key-row');
+			if (row) row.style.display = (cur === S.CREDITS) ? 'none' : '';
+			if (cur === S.CREDITS) return;
+
+			var open = !!(window.DaimondIdentity && DaimondIdentity.isUnlocked());
+			box.placeholder = (S.KNOWN[cur] && S.KNOWN[cur].keyHint) || '';
+			box.disabled = !open;
+			setSecret(box, S.key(cur));
+
+			var kn = document.getElementById('search-key-note');
+			if (kn) {
+				kn.textContent = tOr('search.key_note',
+					'Kept on this device, sealed with your passphrase, and sent only with the '
+					+ 'search it pays for.');
+			}
+			// One line, and which line it is says what to do next. The two refusals
+			// are different because the ways out are different: an ordinary engine
+			// can be swapped for credits, and this one cannot.
+			var warn = document.getElementById('search-key-warn');
+			if (!warn) return;
+			var say = '';
+			if (!open) {
+				say = S.isSealed(cur)
+					? tOr('models.sealed_unlock', 'sealed — unlock to use')
+					: tOr('models.unlock_to_use', 'unlock to use');
+			} else if (!S.hasKey(cur)) {
+				say = S.byokOnly(cur)
+					? tOr('search.refused_serper', '{engine} can only be used with your own key.',
+						{ engine: S.engineName(cur) })
+					: tOr('search.no_key', 'Add a key for {engine}, or switch to Daimond credits.',
+						{ engine: S.engineName(cur) });
+			}
+			warn.textContent = say;
+			warn.style.display = say ? '' : 'none';
+		},
+	};
+
 	/// So it lives in Settings too, behind a button, saying nothing until pressed.
 	var TrailRow = {
 		mount: function () {
@@ -21358,12 +22841,16 @@ import init, {
 		/// ladder, so opening the panel never silently changes their setting.
 		STEPS: [4, 8, 16, 32, 64, 128],
 
-		/// Build the row once, beneath the round limit it sits beside.
+		/// Build the heading and the row once, beneath the round limit they sit beside.
 		mount: function () {
 			if (document.getElementById('cfg-crystal-cap')) return true;
 			var form = document.getElementById('byok-form');
 			var section = form && form.parentNode;
 			if (!section) return false;
+			var head = document.createElement('h4');
+			head.className = 'cfg-fieldhead';
+			head.id = 'cfg-crystal-limits';
+			head.textContent = tOr('settings.crystal_limits', 'Crystal size limits');
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-crystal-cap');
@@ -21377,6 +22864,7 @@ import init, {
 			note.textContent = tOr('settings.crystal_cap_note',
 				'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is '
 				+ 'told to put the detail in a file in the Diamond’s scope instead.');
+			section.insertBefore(head, form);
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
 			section.insertBefore(note, form);
@@ -21418,19 +22906,103 @@ import init, {
 		},
 	};
 
-	/// Put the user's crystal ceiling on the engine.
+	/// The page ceiling: how large `crystal.html` may grow.
 	///
-	/// The ceiling lives in the wasm instance, not on an agent, so ANY app sets it for all of
-	/// them — it is applied wherever an agent is built only so that a page which has not opened
-	/// the settings panel still has it in force. Zero means the engine's own default, which
-	/// `set_crystal_cap` already understands, so it is passed through rather than special-cased.
+	/// The page is presentation and is capped anyway, because it rides in every `versions/`
+	/// snapshot where it changed and shares the 6 MB sync parcel with the memory it draws.
+	/// Exempting it would void the data cap's stated purpose. Thirteen Diamonds at 16 + 64 KiB
+	/// is about a megabyte, which leaves the parcel room for history.
+	///
+	/// A twin of `CrystalCap` in every respect, including that zero means the engine's default.
+	/// It mounts UNDER that row, sharing its heading.
+	var CrystalPageCap = {
+		/// The ladder offered, in kilobytes. Four times the data ladder: a page is markup, and
+		/// the built-in one is already several kilobytes of it.
+		STEPS: [16, 32, 64, 128, 256, 512],
+
+		mount: function () {
+			if (document.getElementById('cfg-crystal-page-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			// The data row carries the heading the two share, so this one cannot exist
+			// without it and does not try.
+			if (!CrystalCap.mount()) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-crystal-page-cap');
+			lab.textContent = tOr('settings.crystal_page_cap', 'Page size limit');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-crystal-page-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-crystal-page-cap-note';
+			note.textContent = tOr('settings.crystal_page_cap_note',
+				'The page that renders a Diamond’s data. It travels in every sync, so it '
+				+ 'shares the budget with the data itself.');
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { CrystalPageCap.save(sel.value); });
+			return true;
+		},
+
+		render: function () {
+			if (!this.mount()) return;
+			var sel = document.getElementById('cfg-crystal-page-cap');
+			sel.innerHTML = '';
+			var mine = cfg.crystalPageKb || 0;
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — ' + DEFAULT_CRYSTAL_PAGE_KB + ' KB');
+			steps.forEach(function (n) { mk(n, String(n) + ' KB'); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.crystalPageKb = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.crystalPageKb = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			applyCrystalCap(anyApp());
+			this.render();
+		},
+	};
+
+	/// Put the user's crystal ceilings on the engine — both of them.
+	///
+	/// One function for two settings, because they are one setting to a person: a crystal's
+	/// size is its data plus its page, and the panel says so under one heading. Splitting the
+	/// call in two would give the three places that build an agent two things to remember and
+	/// one of them would eventually be forgotten.
+	///
+	/// The ceilings live in the wasm instance, not on an agent, so ANY app sets them for all of
+	/// them — they are applied wherever an agent is built only so that a page which has not
+	/// opened the settings panel still has them in force. Zero means the engine's own default,
+	/// which both setters already understand, so it is passed through rather than special-cased.
 	///
 	/// # Arguments
 	/// * `app` - Any DaimondApp; the setting is not that app's.
 	function applyCrystalCap(app) {
-		if (!app || typeof app.set_crystal_cap !== 'function') return;
-		try { app.set_crystal_cap((cfg.crystalKb || 0) * 1024); }
-		catch (e) { /* an older wasm build has no setter */ }
+		if (!app) return;
+		if (typeof app.set_crystal_cap === 'function') {
+			try { app.set_crystal_cap((cfg.crystalKb || 0) * 1024); }
+			catch (e) { /* an older wasm build has no setter */ }
+		}
+		if (typeof app.set_crystal_page_cap === 'function') {
+			try { app.set_crystal_page_cap((cfg.crystalPageKb || 0) * 1024); }
+			catch (e) { /* an older wasm build has no setter */ }
+		}
 	}
 
 	/// Which model folds a conversation, and what it is told.
@@ -21755,6 +23327,7 @@ import init, {
 		RoundLimit.render();
 		FoldModel.render();
 		CrystalCap.render();
+		CrystalPageCap.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();
@@ -22057,6 +23630,15 @@ import init, {
 				onTopUp: function () { openCredits('Top up to keep using these models.'); },
 			});
 			syncCfgFromModels();
+		}
+		if (window.DaimondSearch) {
+			// The same shape as the models store beside it, for the same reason: the
+			// row is a view of the store, so it follows the store rather than waiting
+			// for whoever changed it to remember to ask.
+			DaimondSearch.init({
+				onChange: function () { SearchRow.render(); },
+			});
+			SearchRow.render();
 		}
 		if (window.DaimondTools) {
 			DaimondTools.init({

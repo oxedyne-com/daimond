@@ -34,6 +34,9 @@ const seeded = await p.evaluate(async ({ id, rule }) => {
 	const w = (path, content) => mod.write_file(path, content);
 
 	// The crystal and its snapshots sit OUTSIDE the store directory and never moved.
+	// It is markdown, because that is what a workspace of this vintage holds: the
+	// boot below therefore runs the crystal's own conversion as well as the store
+	// move, which is exactly what a real one of these does.
 	await w(`diamonds/${id}/crystal.md`, '# The old pursuit\n\nA crystal written before the rename.\n');
 	await w(`diamonds/${id}/versions/0000.md`, '');
 	await w(`diamonds/${id}/versions/0001.md`, '# The old pursuit\n\nA crystal written before the rename.\n');
@@ -86,7 +89,8 @@ const disk = await p.evaluate(async ({ id }) => {
 		oldMeta:  await read(`diamonds/${id}/.red/meta.json`),
 		oldLog:   await read(`diamonds/${id}/.red/log`),
 		oldDelta: await read(`diamonds/${id}/.red/deltas/0001.md`),
-		crystal:    await read(`diamonds/${id}/crystal.md`),
+		crystal:    await read(`diamonds/${id}/crystal.json`),
+		oldCrystal: await read(`diamonds/${id}/crystal.md`),
 		version:  await read(`diamonds/${id}/versions/0001.md`),
 		newRules: await read('DAIMOND.md'),
 		oldRules: await read('RED.md'),
@@ -99,9 +103,25 @@ check('the retained delta came with it',
 	disk.newDelta === 'THE-OLD-DELTA: what the fold consumed.');
 check('nothing was left behind in .red/',
 	disk.oldMeta === null && disk.oldLog === null && disk.oldDelta === null);
-check('the crystal and its snapshots were untouched',
+// The store move leaves the crystal alone; the crystal's own conversion, which
+// runs in the same pass, turns it into data. Both migrations are asserted by
+// what SURVIVES rather than by what moved: the user's words are in `crystal.json`
+// and the markdown history is exactly where it was.
+check('the crystal came through as data, carrying the same words',
 	/A crystal written before the rename/.test(disk.crystal || '')
-	&& /A crystal written before the rename/.test(disk.version || ''));
+	&& (disk.crystal || '').trim().startsWith('{'),
+	(disk.crystal || '(absent)').slice(0, 80));
+// The markdown is KEPT beside it, deliberately. The conversion self-checks by
+// rendering back and comparing bytes, which structurally cannot prove the
+// STRUCTURE is right -- a `##` inside a fence rejoins to identical bytes whether
+// or not the fence was honoured -- so the one failure that would justify still
+// having the markdown is exactly the one the check cannot see. And
+// `import_diamond` deletes a Diamond's directory before rewriting it, so a bad
+// conversion propagates back over a good copy on the next sync.
+check('and the markdown is kept beside it, because lossless is not the same as proven',
+	disk.oldCrystal !== null, disk.oldCrystal === null ? 'DELETED' : 'kept');
+check('the markdown snapshots were untouched, so the conversion is reversible',
+	/A crystal written before the rename/.test(disk.version || ''));
 
 // The one that a directory move alone would fail: the log points at the delta BY PATH.
 check('the log’s delta_ref was rewritten to the new path',

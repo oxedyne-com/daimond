@@ -223,12 +223,22 @@
 	/// What the app says. The table lives in i18n/en.js.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
-	/// The words for a refusal: what was not done, and where the control is.
-	/// English until the key exists, so nothing shows a bare key.
+	/// The words for a refusal: the table's sentence, or the whole English one the
+	/// caller wrote, so nothing ever shows a bare key.
+	///
+	/// IT APPENDS NOTHING. It used to add "Press play on it to resume." to every
+	/// fallback, and that is how the app came to give advice it could not honour:
+	/// `root/web` had no control anywhere, so a user who paused Everything was
+	/// told to press a play button that did not exist, and their only way back was
+	/// to resume everything — which also resumed a Diamond that ships paused on
+	/// purpose. The control exists now and the sentence would be true again, which
+	/// is exactly why the assembly is still wrong: a clause bolted on here is a
+	/// claim about a node this function knows nothing about, and it will be wrong
+	/// again the next time a leaf arrives before its control does. Each caller
+	/// writes its own complete sentence, and owns whether it can promise a button.
 	function pauseWords(key, node, english) {
 		var s = t(key, { node: node });
-		return (s === key) ? ('Paused: ' + node + ' — ' + english
-			+ ' Press play on it to resume.') : s;
+		return (s === key) ? ('Paused: ' + node + ' — ' + english) : s;
 	}
 
 	/// Is this node paused? A leaf's own flag, and cheap enough to sit in front
@@ -281,25 +291,42 @@
 					: own;
 				var stop = held(leaf) ? leaf : (held(own) ? own : '');
 				if (stop) {
+					// The whole sentence, clause included: every mail leaf has had a
+					// control on it since phase G, so this one can promise a button.
 					return { node: stop, message: pauseWords('pause.refused.mail', stop,
-						'the mailbox was not contacted and nothing was spent.') };
+						'the mailbox was not contacted and nothing was spent. '
+						+ 'Press play on it to resume.') };
 				}
 				return null;
 			}
-			if (p === '/api/web/fetch' || p === '/api/web/head') {
-				// A page fetch is charged to whoever asked for it, when the caller
-				// says so — and otherwise to the Web panel's own leaf, with the
-				// global control behind that. `root/web` is not in §1.1's list of
-				// node ids because notes2 never asked for a control on the Web
-				// panel; it is read here so that the day the rail grows one, this
-				// obeys it without another change. Until then a page fetch is held
-				// only by the global pause, which is a gap and is reported as one.
+			// Reaching out of the browser, however it is done: a page fetch, the
+			// HEAD that asks whether a site will frame, and a SEARCH. One leaf
+			// governs all three, because they are one question — may this app
+			// contact the outside world on the user's behalf right now.
+			//
+			// The search route was missing here, and its absence was total: it
+			// matched no arm, so it fell out of the bottom of this function and
+			// was governed by NOTHING — not the Web leaf, not a Diamond's, and not
+			// the global control. A user who paused Everything this morning to stop
+			// outbound requests would have gone on searching, and paying for it.
+			if (p === '/api/web/fetch' || p === '/api/web/head' || p === '/api/web/search') {
+				// Charged to whoever asked for it, when the caller says so — and
+				// otherwise to the Web panel's own leaf, with the global control
+				// behind that. That leaf now has a control of its own, in the Web
+				// panel header, so a refusal here points at something a user can
+				// press rather than at the whole tree.
 				var who = (typeof b.node === 'string' && b.node) ? b.node
 					: pid(DaimondPause.ROOT, 'web');
 				var hold = held(who) ? who : (allHeld() ? DaimondPause.ROOT : '');
 				if (hold) {
+					// One key for one leaf, and the sentence names the leaf rather
+					// than the route: `pause.refused.web` is translated into eight
+					// languages already, and a second key saying almost the same
+					// thing would be a second thing to keep in step for the sake of
+					// one noun. What was held is the web, whichever door was tried.
 					return { node: hold, message: pauseWords('pause.refused.web', hold,
-						'the page was not fetched and nothing was spent.') };
+						'the page was not fetched and nothing was spent. '
+						+ 'Press play on it to resume.') };
 				}
 			}
 		}

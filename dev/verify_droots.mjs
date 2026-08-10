@@ -51,6 +51,11 @@ const check = (name, pass, detail) => {
 
 const FOLDER = 'standin-folder';        // an OPFS subdirectory standing in for a picked folder
 
+/// A crystal as `crystal.json` now holds one. Nothing here is about the crystal's
+/// shape -- these fixtures need a Diamond to be carrying something they can tell
+/// apart -- but it has to be the real format, because the store parses it.
+const crystalOf = (title) => JSON.stringify({ title: title });
+
 const s = await open({ name: 'droots', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
@@ -102,24 +107,24 @@ const toBrowser = () => p.evaluate(() => __d.mod.use_opfs_workspace());
 
 // ── A Diamond made in the sandbox ───────────────────────────────────────
 
-const A = await p.evaluate(async () => {
+const A = await p.evaluate(async (crystal) => {
 	const id = await __d.app.create_diamond('Made in the browser');
-	await __d.app.write_crystal(id, 'crystal of A');
+	await __d.app.write_crystal_data(id, crystal);
 	await __tool('file_write', { path: 'diamonds/' + id + '/note.md', content: 'note of A' });
 	return id;
-});
+}, crystalOf('crystal of A'));
 check('a Diamond can be made in the browser sandbox', !!A, A);
 
 const readsIn = async (id, what) => ({
 	list:    await tool('file_list', { path: 'diamonds/' + id }),
-	crystal: await tool('file_read', { path: 'diamonds/' + id + '/crystal.md' }),
+	crystal: await tool('file_read', { path: 'diamonds/' + id + '/crystal.json' }),
 	note:    await tool('file_read', { path: 'diamonds/' + id + '/note.md' }),
 	what,
 });
 
 const browserA = await readsIn(A, 'browser');
 check('its directory lists in the browser sandbox',
-	/crystal\.md/.test(browserA.list) && /note\.md/.test(browserA.list), browserA.list);
+	/crystal\.json/.test(browserA.list) && /note\.md/.test(browserA.list), browserA.list);
 check('and its crystal reads there', /crystal of A/.test(browserA.crystal), browserA.crystal);
 
 // ── The switch to the machine folder ────────────────────────────────────
@@ -127,7 +132,7 @@ check('and its crystal reads there', /crystal of A/.test(browserA.crystal), brow
 await toFolder();
 const machineA = await readsIn(A, 'machine');
 check('the SAME directory still lists once a folder is open',
-	/crystal\.md/.test(machineA.list) && /note\.md/.test(machineA.list), machineA.list);
+	/crystal\.json/.test(machineA.list) && /note\.md/.test(machineA.list), machineA.list);
 check('and the crystal reads back byte for byte',
 	/crystal of A/.test(machineA.crystal), machineA.crystal);
 check('and so does a file written into it before the switch',
@@ -170,20 +175,20 @@ check('a path that only resembles the store is still the user\'s work',
 
 // ── A Diamond made while the folder is open ─────────────────────────────
 
-const B = await p.evaluate(async () => {
+const B = await p.evaluate(async (crystal) => {
 	const id = await __d.app.create_diamond('Made on the machine');
-	await __d.app.write_crystal(id, 'crystal of B');
+	await __d.app.write_crystal_data(id, crystal);
 	await __tool('file_write', { path: 'diamonds/' + id + '/note.md', content: 'note of B' });
 	return id;
-});
+}, crystalOf('crystal of B'));
 check('a Diamond can be made while a folder is open', !!B, B);
 check('and none of it lands in the folder',
-	(await at('folder', 'diamonds/' + B + '/crystal.md')) === null, 'folder holds nothing for B');
+	(await at('folder', 'diamonds/' + B + '/crystal.json')) === null, 'folder holds nothing for B');
 
 await toBrowser();
 const browserB = await readsIn(B, 'browser');
 check('switching back to the browser, it is still there',
-	/crystal\.md/.test(browserB.list) && /note\.md/.test(browserB.list), browserB.list);
+	/crystal\.json/.test(browserB.list) && /note\.md/.test(browserB.list), browserB.list);
 check('with its crystal and its files intact',
 	/crystal of B/.test(browserB.crystal) && /note of B/.test(browserB.note),
 	browserB.crystal + ' | ' + browserB.note);
@@ -224,13 +229,13 @@ await install();
 const afterReload = await p.evaluate(async ({ a, b }) => {
 	const listed = JSON.parse(await __d.app.list_diamonds());
 	const browser = {
-		a: await __tool('file_read', { path: 'diamonds/' + a + '/crystal.md' }),
-		b: await __tool('file_read', { path: 'diamonds/' + b + '/crystal.md' }),
+		a: await __tool('file_read', { path: 'diamonds/' + a + '/crystal.json' }),
+		b: await __tool('file_read', { path: 'diamonds/' + b + '/crystal.json' }),
 	};
 	__d.mod.set_workspace_dir(__d.folder);
 	const machine = {
-		a: await __tool('file_read', { path: 'diamonds/' + a + '/crystal.md' }),
-		b: await __tool('file_read', { path: 'diamonds/' + b + '/crystal.md' }),
+		a: await __tool('file_read', { path: 'diamonds/' + a + '/crystal.json' }),
+		b: await __tool('file_read', { path: 'diamonds/' + b + '/crystal.json' }),
 	};
 	__d.mod.use_opfs_workspace();
 	return { ids: listed.map((d) => d.id), browser, machine };
@@ -251,18 +256,18 @@ check('and both read again with the folder open',
 // in their project, invisible to the app and outside the parcel.
 
 const C = 'c0ffee5eaded';       // a whole Diamond, in the folder and nowhere else
-await p.evaluate(async ({ a, c }) => {
+await p.evaluate(async ({ a, c, crystalC }) => {
 	// (1) A worker's file for a Diamond the store already holds.
 	await __put('folder', 'diamonds/' + a + '/stranded.md', 'left in the folder');
 	// (2) A file that CLASHES with one the store holds, with different bytes.
 	await __put('folder', 'diamonds/' + a + '/note.md', 'the folder version of the note');
 	// (3) A whole Diamond that only exists in the folder.
-	await __put('folder', 'diamonds/' + c + '/crystal.md', 'crystal of C');
+	await __put('folder', 'diamonds/' + c + '/crystal.json', crystalC);
 	await __put('folder', 'diamonds/' + c + '/.daimond/meta.json',
 		JSON.stringify({ name: 'Found in the folder', crystal_version: 0, updated: 1, touched: 1 }));
 	// (4) A directory of the user's that happens to live under diamonds/.
 	await __put('folder', 'diamonds/notes/todo.md', 'not a Diamond at all');
-}, { a: A, c: C });
+}, { a: A, c: C, crystalC: crystalOf('crystal of C') });
 
 // Adoption runs where the app runs it: on folder activation.
 const report = await p.evaluate(async () => {
@@ -293,11 +298,12 @@ check('and says so, naming the file it kept',
 const adoptedC = await p.evaluate(async (c) => {
 	const listed = JSON.parse(await __d.app.list_diamonds());
 	const row = listed.find((d) => d.id === c) || null;
-	return { row, crystal: await __d.app.read_crystal(c).catch(() => null) };
+	return { row, crystal: await __d.app.read_crystal_data(c).catch(() => null) };
 }, C);
 check('a whole Diamond found only in the folder joins the rail',
 	!!adoptedC.row && adoptedC.row.name === 'Found in the folder', JSON.stringify(adoptedC.row));
-check('with its crystal', adoptedC.crystal === 'crystal of C', JSON.stringify(adoptedC.crystal));
+check('with its crystal', adoptedC.crystal === crystalOf('crystal of C'),
+	JSON.stringify(adoptedC.crystal));
 
 check('a folder of the user\'s under diamonds/ is left alone',
 	report.left.includes('diamonds/notes')
@@ -305,7 +311,7 @@ check('a folder of the user\'s under diamonds/ is left alone',
 	JSON.stringify(report.left));
 check('and nothing at all was deleted from the folder',
 	(await at('folder', 'diamonds/' + A + '/stranded.md')) === 'left in the folder'
-		&& (await at('folder', 'diamonds/' + C + '/crystal.md')) === 'crystal of C'
+		&& (await at('folder', 'diamonds/' + C + '/crystal.json')) === crystalOf('crystal of C')
 		&& (await at('folder', 'diamonds/notes/todo.md')) === 'not a Diamond at all');
 
 const second = await p.evaluate(() => __d.mod.adopt_folder_diamonds().then(JSON.parse));
@@ -334,9 +340,9 @@ check('with no folder open, adoption looks at nothing and says so',
 // `activateFolder` → adoption — and the user has to be TOLD, because files moved.
 
 const D = 'dead1eaf0000';
-await p.evaluate(async ({ folder, d }) => {
+await p.evaluate(async ({ folder, d, crystalD }) => {
 	// A whole Diamond, in the folder and nowhere else.
-	await __put('folder', 'diamonds/' + d + '/crystal.md', 'crystal of D');
+	await __put('folder', 'diamonds/' + d + '/crystal.json', crystalD);
 	await __put('folder', 'diamonds/' + d + '/.daimond/meta.json',
 		JSON.stringify({ name: 'Stranded in the project', crystal_version: 0, updated: 2, touched: 2 }));
 	// Where the panel looks for a folder it may reconnect without a picker.
@@ -353,7 +359,7 @@ await p.evaluate(async ({ folder, d }) => {
 		tx.onerror = () => rej(tx.error);
 	});
 	void folder;
-}, { folder: FOLDER, d: D });
+}, { folder: FOLDER, d: D, crystalD: crystalOf('crystal of D') });
 
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'droots');
@@ -367,7 +373,7 @@ const booted = await p.evaluate(async (d) => {
 	return {
 		mode:    mod.workspace_mode(),
 		ids:     JSON.parse(await app.list_diamonds()).map((x) => x.id),
-		crystal: await app.read_crystal(d).catch(() => null),
+		crystal: await app.read_crystal_data(d).catch(() => null),
 		title:   card ? (card.querySelector('h2') || {}).textContent : null,
 		body:    card ? (card.querySelector('.dlg-msg, .dlg-pre') || {}).textContent : null,
 	};
@@ -375,7 +381,7 @@ const booted = await p.evaluate(async (d) => {
 
 check('the app reconnected the folder on its own at boot', booted.mode === 'folder', booted.mode);
 check('and brought the stranded Diamond into the store on the way',
-	booted.ids.includes(D) && booted.crystal === 'crystal of D',
+	booted.ids.includes(D) && booted.crystal === crystalOf('crystal of D'),
 	booted.ids.join(' ') + ' | ' + JSON.stringify(booted.crystal));
 check('and told the user, naming the Diamond it moved',
 	!!booted.title && /brought back/i.test(booted.title)
@@ -383,7 +389,7 @@ check('and told the user, naming the Diamond it moved',
 	JSON.stringify(booted.title) + ' | ' + JSON.stringify(booted.body));
 check('and said the copies in their folder were left where they are',
 	!!booted.body && /left exactly where they are/i.test(booted.body)
-		&& (await at('folder', 'diamonds/' + D + '/crystal.md')) === 'crystal of D',
+		&& (await at('folder', 'diamonds/' + D + '/crystal.json')) === crystalOf('crystal of D'),
 	JSON.stringify(booted.body));
 
 // A resource the browser could not load is the dev stack, not the page: no

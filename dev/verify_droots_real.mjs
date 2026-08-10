@@ -192,24 +192,53 @@ check('every Diamond in the backup is on the rail',
 const crystals = await p.evaluate(async (want) => {
 	const out = {};
 	for (const id of want) {
-		out[id] = await __d.app.read_crystal(id).then((t) => t.length).catch(() => null);
+		out[id] = await __d.app.read_crystal_data(id).then((t) => t).catch(() => null);
 	}
 	return out;
 }, ids);
 const unopenable = Object.keys(crystals).filter((id) => crystals[id] === null);
 check('and every one of them OPENS', unopenable.length === 0, unopenable.join(' '));
 
+/// The user's own characters in a crystal, whichever of its two forms it is in.
+///
+/// THE BYTE LENGTH CANNOT BE THE MEASURE ANY MORE. A backup exported before the
+/// crystal became data carries `crystal.md`, and the store converts it on the way
+/// in -- `# ` markers become JSON keys, quotes and newlines gain a backslash --
+/// so the file that arrives is a different length from the file that was sent
+/// even when not one word has been lost. What must survive the conversion is the
+/// user's text, so that is what is compared: structure, markers and whitespace
+/// stripped out of both sides, and every remaining character held to account.
+const bare = (text) => {
+	let words = String(text || '');
+	try {
+		const data = JSON.parse(words);
+		const seen = [];
+		(function walk(v) {
+			if (typeof v === 'string') seen.push(v);
+			else if (Array.isArray(v)) v.forEach(walk);
+			else if (v && typeof v === 'object') Object.keys(v).forEach((k) => walk(v[k]));
+		})(data);
+		words = seen.join('');
+	} catch (e) { /* markdown, which is its own text */ }
+	return words.replace(/^\s*#{1,6}\s+/gm, '').replace(/\s+/g, '');
+};
+
+// Whichever form the backup was written in. A Diamond mid-conversion holds both,
+// and the data is the one the store reads, so it is the one to compare against.
 const expectCrystal = {};
 for (const f of store) {
 	const parts = String(f.path).split('/');
-	if (parts.length === 3 && parts[2] === 'crystal.md') {
-		expectCrystal[parts[1]] = Buffer.from(String(f.b64 || ''), 'base64').toString('utf8').length;
-	}
+	if (parts.length !== 3) continue;
+	if (parts[2] !== 'crystal.json' && parts[2] !== 'crystal.md') continue;
+	if (parts[2] === 'crystal.md' && expectCrystal[parts[1]] !== undefined) continue;
+	expectCrystal[parts[1]] = Buffer.from(String(f.b64 || ''), 'base64').toString('utf8');
 }
-const shortened = Object.keys(expectCrystal).filter((id) => crystals[id] !== expectCrystal[id]);
-check('at the length the user left it',
+const shortened = Object.keys(expectCrystal)
+	.filter((id) => bare(crystals[id]) !== bare(expectCrystal[id]));
+check('carrying every character the user left in it',
 	shortened.length === 0,
-	shortened.map((id) => id + ': ' + crystals[id] + ' vs ' + expectCrystal[id]).slice(0, 4).join(', '));
+	shortened.map((id) => id + ': ' + bare(crystals[id]).length
+		+ ' chars vs ' + bare(expectCrystal[id]).length).slice(0, 4).join(', '));
 
 // ── And it settles ───────────────────────────────────────────────────────
 

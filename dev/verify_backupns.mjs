@@ -201,6 +201,10 @@ fs.writeFileSync(legacy, JSON.stringify({
 		{ path: 'legacy-plain.md', b64: Buffer.from('LEGACY-PLAIN').toString('base64') },
 		{ path: nsB + '/legacy-mine.md', b64: Buffer.from('LEGACY-MINE').toString('base64') },
 		{ path: 'd~deadbeefdeadbeef/legacy-foreign.md', b64: Buffer.from('LEGACY-FOREIGN').toString('base64') },
+		// `crystal.md`, and it stays that way: this is a `version: 1` backup, and a
+		// backup of that vintage is exactly where the markdown crystal is still
+		// found. Nothing here writes it -- it is the foreign subtree the restore
+		// must decline -- so the format it is in is the fixture's whole point.
 		{ path: 'd~deadbeefdeadbeef/diamonds/did-foreign-1/crystal.md',
 			b64: Buffer.from('# Fallback Diamond').toString('base64') },
 	],

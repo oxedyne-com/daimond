@@ -112,6 +112,12 @@
 	/// terminal draws the bytes it is given and translates none of them.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 	function tn(k, n, v) { return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k; }
+	/// Bind an attribute to a key where i18n is present, and set it plainly where
+	/// it is not -- this file runs in contexts that never load i18n.js.
+	function bindOr(node, attr, key) {
+		if (window.DaimondI18n && DaimondI18n.bind) DaimondI18n.bind(node, attr, key);
+		else node.setAttribute(attr, key);
+	}
 
 	// ── Cell encoding ───────────────────────────────────────────────
 
@@ -1103,7 +1109,14 @@
 		input.setAttribute('autocapitalize', 'off');
 		input.setAttribute('autocorrect', 'off');
 		input.setAttribute('autocomplete', 'off');
-		input.setAttribute('aria-label', opts.label || t('term.label'));
+		// Bound where it is ours to name. A caller-supplied label is a finished
+		// string with no key behind it, so it stays as given.
+		// Bound through the same guard every other lookup in this file uses:
+		// terminal.js is loaded standalone by three verifiers and by the pty
+		// harness, where i18n.js is not there at all. A caller-supplied label is
+		// a finished string with no key behind it, so it stays as given.
+		if (opts.label) input.setAttribute('aria-label', opts.label);
+		else bindOr(input, 'aria-label', 'term.label');
 		input.setAttribute('aria-describedby', id + '-hint');
 		input.setAttribute('aria-multiline', 'true');
 		input.rows = 1;
@@ -1126,7 +1139,7 @@
 		var mirror = document.createElement('div');
 		mirror.className = 'term-sr term-mirror';
 		mirror.setAttribute('role', 'region');
-		mirror.setAttribute('aria-label', t('term.screen_label'));
+		bindOr(mirror, 'aria-label', 'term.screen_label');
 
 		var chip = document.createElement('div');	// the size, while it is changing
 		chip.className = 'term-size';

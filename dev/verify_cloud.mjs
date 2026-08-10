@@ -15,12 +15,17 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireFreshGateway, procLog } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
 const GW_URL = 'http://127.0.0.1:9002';
+/// What the gateway says while this runs -- a sweep it declined, a commit it
+/// called stale -- so a residency failure can be read from both ends. Silent
+/// when this run reuses a gateway it did not start.
+const GW_LOG = procLog('verify_cloud');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -37,12 +42,15 @@ async function waitFor(fn, ms = 20000, gap = 300) {
 	}
 	return false;
 }
+
+requireFreshGateway();
+
 const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 800, 200);
 if (alreadyUp) {
 	console.log('  ok   using the gateway already on :9002');
 } else {
 	gw = spawn(path.join(GWDIR, 'target/release/daimond_gateway'), [], {
-		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: 'ignore',
+		cwd: GWDIR, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio,
 	});
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok));
 }
@@ -379,5 +387,6 @@ try {
 	if (gw) { try { gw.kill('SIGTERM'); } catch (e) { /* ignore */ } }
 }
 
+if (bad.length) GW_LOG.report();
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

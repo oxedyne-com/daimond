@@ -814,6 +814,20 @@
 		if (has('\\deleted'))  f += 'T';
 		return uid + '.' + uidValidity + '.daimond:2,' + f;
 	}
+	/// Where one account's mail sits: `mail/<address>`, with anything a directory name
+	/// cannot carry flattened out of the address.
+	///
+	/// A MAILBOX DOES NOT FOLLOW THE WORKSPACE FOLDER, and the engine is what makes that
+	/// true rather than anything here: `mail/` is one of Daimond's own roots
+	/// (`is_store_path`, src/tools.rs), so every path this module hands to a file tool
+	/// resolves in the browser's own storage whichever folder the user has open. It used
+	/// not to, and mail is per ACCOUNT rather than per piece of work, so the same mailbox
+	/// landed inside whichever folder was open, disappeared when none was, and was written
+	/// somewhere else again after a switch. A real folder would not take the names either —
+	/// a Maildir file carries a colon, which nothing outside the sandbox accepts.
+	///
+	/// Messages an older build left in a folder are copied home on the next activation, and
+	/// the folder's copies are left where they are (`bring_mail_home`, src/wasm/diamond.rs).
 	function mailDir(address) {
 		return 'mail/' + String(address || '').replace(/[^A-Za-z0-9@._-]/g, '_');
 	}
@@ -1063,6 +1077,10 @@
 	// has — which is the whole of the agent's access to sending. It may WRITE a draft
 	// here for the user to read, correct and send; it has no tool that puts a message on
 	// the wire, and it is not going to be given one. Only a person pressing Send sends.
+	//
+	// A draft is also the one thing here that exists NOWHERE ELSE. A synced message can be
+	// fetched again from the server; a draft is on no server and in no gateway, which is why
+	// the mail migration copies rather than moves and never deletes anything.
 
 	function draftsDir(address) { return mailDir(address) + '/drafts'; }
 	function sentDir(address)   { return mailDir(address) + '/sent'; }

@@ -212,6 +212,27 @@
 }
 .files-row:hover .files-del { visibility: visible; }
 .files-del:hover { color: var(--danger); }
+/* A control that waits for a hover is a control the keyboard cannot see: tabbing
+   to the cross moved the focus to something not on the screen, so the row's
+   controls come out when anything inside the row takes focus, exactly as the
+   touch rule above brings the ◈ out where there is no pointer at all.
+   Appearing is not enough on its own -- `verify_a11y_keyboard` compares the
+   focused element's own ink, and rightly, since a control that merely appears
+   has not said WHICH of the three now holds the focus. So each draws the ring.
+   `:focus`, not `:focus-visible`: these are reached by Tab, but the check
+   focuses them from script, and a ring that depends on the browser's guess at
+   the user's modality is a ring that is sometimes not there. */
+.files-row:focus-within .files-del,
+.files-row:focus-within .files-res,
+.files-row:focus-within .files-pin { visibility: visible; }
+.files-del:focus,
+.files-res:focus,
+.files-pin:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The row itself is now a control (`sysRowAsButton`), so it says so as well.
+   Inset, because a row is flush with the panel and an outset ring would be
+   clipped by the tree's own scroller -- which the desktop sweep already reports
+   for the Diamond rail. */
+.files-row:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The rename pencil borrows `.files-del` for its shape and needs a size of its
    own: '✎' is drawn well inside its em box where '×' fills it, so at the same
    nominal 15px the pencil carried about half the ink of the cross beside it and

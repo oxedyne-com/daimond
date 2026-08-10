@@ -25,7 +25,9 @@
 //! user's text for every role that holds tools. Two of its rules are the only
 //! thing standing between an agent with web access and a page that tells it what
 //! to do, and a user rewriting a prompt to change the tone should not be able to
-//! disarm them by accident.
+//! disarm them by accident. [`CRYSTAL_SCHEMA_NOTE`] is the same arrangement for the
+//! reducer: the JOB is the user's to rewrite, and the shape of the file the app then
+//! parses is not.
 
 use crate::tools::{
 	fence_spec,
@@ -112,7 +114,10 @@ impl Role {
 	/// are about what a tool can do. The reducer and the compactor are each handed
 	/// an empty registry, so there is nothing for them to govern and adding them
 	/// would only spend context -- and the compactor's call is the one place in the
-	/// app where context is scarcest by construction.
+	/// app where context is scarcest by construction. It does NOT decide whether
+	/// anything at all is appended: the reducer holds no tools and still carries
+	/// [`CRYSTAL_SCHEMA_NOTE`], which is about the file it writes rather than about
+	/// what it may do.
 	pub fn has_tools(&self) -> bool {
 		!matches!(self, Self::Reducer | Self::Compactor)
 	}
@@ -129,13 +134,23 @@ impl Role {
 	}
 
 	/// The whole system prompt for this role: `text` if the user has written
-	/// any, the default otherwise, then the safety clause where it applies.
+	/// any, the default otherwise, then whatever an edit may not remove.
+	///
+	/// Three outcomes, and the middle one is the reducer's. A role with tools gets
+	/// the vision note, the search note and the safety clause; the reducer gets
+	/// [`CRYSTAL_SCHEMA_NOTE`], because it writes a file the app parses and a user
+	/// rewriting the job must not be able to change the format by accident; the
+	/// compactor gets nothing appended at all, since its output is prose nobody
+	/// parses.
 	pub fn compose(&self, text: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
+		if matches!(self, Self::Reducer) {
+			return fmt!("{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE);
+		}
 		if !self.has_tools() {
 			return body.to_string();
 		}
-		fmt!("{}\n\n{}\n\n{}", body, VISION_NOTE, SAFETY_CLAUSE)
+		fmt!("{}\n\n{}\n\n{}\n\n{}", body, VISION_NOTE, SEARCH_NOTE, SAFETY_CLAUSE)
 	}
 }
 
@@ -149,6 +164,27 @@ pub const VISION_NOTE: &str =
 	 A PNG, JPEG, GIF or WebP read with file_read comes back as the picture itself, not as a \
 	 refusal — so when the answer is on the screen rather than in the source, take or find a \
 	 screenshot and read it, and say what you can see.";
+
+/// That the web can be searched, and whose choice the engine is, appended to every role that
+/// holds tools.
+///
+/// Composed in rather than written into each default prompt, for the same reason [`VISION_NOTE`]
+/// is: a user who edits their prompt would otherwise silently lose it, and an agent that does not
+/// know it can search writes a search URL by hand and fetches it -- which is how one engine came
+/// to be chosen for everybody without anybody choosing it.
+///
+/// ONE SENTENCE, deliberately. It rides on every request of every turn, and the argument for it
+/// is already in the tool's own description, which the model reads before it calls anything. All
+/// this has to do is stop the model concluding that searching is not on offer.
+///
+/// Composed for every role that holds tools rather than for the ones that hold the WEB tools,
+/// because `compose` is handed a role and not a registry -- as [`SAFETY_CLAUSE`], which is also
+/// about pages, already is. The browser build is the product and always has them; the native
+/// build is a developer harness whose web tools refuse in plain English.
+pub const SEARCH_NOTE: &str =
+	"## Searching the web\n\n\
+	 Use web_search to find a page whose address you do not already know — which search engine \
+	 answers is the user's own setting, so never write a search URL by hand and fetch it.";
 
 /// The rules an edit cannot remove, appended to every role that holds tools.
 ///
@@ -205,11 +241,19 @@ pub const DEFAULT_CHAT: &str =
 pub const DEFAULT_DAIMON: &str =
 	"You are the daimon of this Diamond. You take instructions from the user \
 	 and act; you do not converse. Three things are yours to do.\n\n\
-	 First, the crystal. `crystal.md` is the reduced state of this Diamond. Edit it \
-	 with your file tools when the user tells you something worth keeping. It has a \
-	 size limit, because it is a summary: when detail is worth keeping but too long \
-	 to belong there, write it to a file in this Diamond and refer to the file from \
-	 the crystal.\n\n\
+	 First, the crystal. It is two files. `crystal.json` is the reduced state of this \
+	 Diamond, a single JSON object whose core keys are `title`, `summary`, `sections`, \
+	 `facts`, `open` and `links`; keep the ones that are there, add others where they \
+	 earn their place, and never drop a key you do not recognise, because it is the \
+	 user's and something may be drawing it. `crystal.html` is the page that renders \
+	 that data, and it is yours to touch only when the user asks for the page itself \
+	 to change: read the one that is there before you replace it, since it is a \
+	 working example of how a page is handed its data, and never write a copy of the \
+	 data into it. Edit either with your file tools when the user tells you something \
+	 worth keeping. Both have a size limit, because a crystal is a summary and its \
+	 page travels wherever the summary goes: when detail is worth keeping but too \
+	 long to belong there, write it to a file in this Diamond and refer to the file \
+	 from the crystal.\n\n\
 	 Second, agents. When a task needs work done rather than merely recorded, \
 	 dispatch a worker with `spawn_agent`. Each worker runs in its OWN context \
 	 with the full workspace file tools; it cannot see this conversation, so \
@@ -446,13 +490,54 @@ pub async fn machine_briefing(bounds: &[Bound], tainted: bool) -> String {
 	}
 }
 
-/// The reducer's role: fold exactly one delta into the current crystal and
-/// emit only the new crystal markdown.  A fresh reducer holds no history,
-/// so it cannot itself rot.
+/// The reducer's role: fold exactly one delta into the current crystal and emit the
+/// whole new crystal.  A fresh reducer holds no history, so it cannot itself rot.
+///
+/// The job only.  What the file has to LOOK like is [`CRYSTAL_SCHEMA_NOTE`], appended
+/// after this and after anything the user writes in its place, for the reason set out
+/// there.
 pub const DEFAULT_REDUCER: &str =
-	"Given the current crystal and one delta, output the new crystal. Keep the \
-	 goal, decisions and open threads; drop what the delta supersedes; \
-	 output only the new crystal markdown.";
+	"Given the current crystal and one delta, output the new crystal: the whole thing, \
+	 not a patch and not a description of a change. Keep the goal, the decisions and \
+	 the open threads; fold the delta in where it belongs; drop what the delta \
+	 supersedes.";
+
+/// The shape of the file the reducer writes, appended after whatever the user has told it.
+///
+/// Composed in rather than written into [`DEFAULT_REDUCER`], and this is the one role
+/// where that is not merely tidy.  The reducer is a fresh, tool-less model under a
+/// **user-editable** prompt (`prompts/reducer.md`), rewriting a Diamond's whole memory
+/// from one sentence of delta -- so the prompt that carries the schema is itself the
+/// thing most likely to be replaced by a user who wanted a different tone.  Key drift is
+/// not a risk here, it is the expected behaviour, and the crystal is open by design:
+/// extra top-level keys are permitted, which without the never-drop rule means "keys that
+/// silently vanish on the next fold".
+///
+/// Home Assistant is the empirical precedent.  Lovelace's structured editor deletes
+/// `card_mod` configuration it cannot express, silently, and it is a form -- a thing that
+/// at least knows exactly which fields it understands.  A model rewriting the file from
+/// scratch is not more careful than a form editor.
+///
+/// The last paragraph is the one models most often ignore, so it is said twice over: the
+/// prompt forbids a fence AND [`crate::agent::compact::crystal_proposal`] strips one
+/// anyway.  A prompt is a request, and the fold is the one place where losing on the
+/// request costs the user their crystal.
+pub const CRYSTAL_SCHEMA_NOTE: &str =
+	"## What a crystal is\n\n\
+	 One JSON object. These are its core keys, in this order, and every one of them is \
+	 optional:\n\n\
+	 - `title` — a string.\n\
+	 - `summary` — a string, markdown, one paragraph.\n\
+	 - `sections` — a list of `{\"heading\": string, \"body\": string}`; the body is \
+	 markdown.\n\
+	 - `facts` — a list of `{\"k\": string, \"v\": string}`.\n\
+	 - `open` — a list of strings, the threads still open.\n\
+	 - `links` — a list of `{\"label\": string, \"href\": string}`.\n\n\
+	 Keep these, you may add others, never drop one you do not understand. A key you do \
+	 not recognise belongs to the user or to the page that draws this Diamond: carry it \
+	 through unchanged rather than tidying it away.\n\n\
+	 Output the JSON object and nothing else — no sentence before it, no sentence after \
+	 it, and no markdown code fence around it.";
 
 /// The compactor's role: fold the earlier part of a working conversation into the
 /// notes the same assistant would need to carry on.
@@ -518,6 +603,38 @@ mod tests {
 					"{} holds no tools and should not be told about them", r.name());
 			}
 		}
+	}
+
+	/// Every role that holds tools is told the web can be searched, and by whose choice -- and is
+	/// still told it after the user has replaced the prompt with their own.
+	///
+	/// The absence of that sentence is what had a model writing a search URL by hand and fetching
+	/// it, which chose one engine for everybody without anybody choosing it.
+	#[test]
+	fn test_every_tool_holding_role_is_told_it_can_search() {
+		for r in Role::all() {
+			let default = r.compose("");
+			let edited  = r.compose("Just do what I say.");
+			if r.has_tools() {
+				assert!(default.contains("web_search"),
+					"{} is not told it can search", r.name());
+				assert!(edited.contains("web_search"),
+					"{} loses the note when the user edits the prompt", r.name());
+				assert!(edited.contains("user's own setting"),
+					"{} is not told whose choice the engine is", r.name());
+			} else {
+				assert!(!default.contains("web_search"),
+					"{} holds no tools and should not be told about them", r.name());
+			}
+		}
+		// One sentence, because it rides on every request of every turn. Counted as full stops,
+		// which is the only thing about its length worth holding still.
+		let body = match SEARCH_NOTE.split_once("\n\n") {
+			Some((_, b)) => b,
+			None         => panic!("the note should be a heading and then the sentence"),
+		};
+		assert_eq!(1, body.matches('.').count(),
+			"the search note has grown into a paragraph: {}", body);
 	}
 
 	#[test]
@@ -861,8 +978,101 @@ mod tests {
 	fn test_the_tool_less_reducer_is_not_given_rules_about_tools() {
 		// It is handed an empty registry, so the clause would be words it can
 		// never act on -- and the fold is the one place context is scarcest.
+		// What it DOES carry is about the file it writes, not about what it may
+		// do, so the two are asserted apart rather than by comparing the whole
+		// prompt to one constant.
 		assert!(!Role::Reducer.has_tools());
-		assert_eq!(Role::Reducer.compose(""), DEFAULT_REDUCER);
+		let p = Role::Reducer.compose("");
+		assert!(p.starts_with(DEFAULT_REDUCER), "{}", p);
+		assert!(!p.contains("untrusted data"), "{}", p);
+		assert!(!p.contains("file_read comes back as the picture"), "{}", p);
+	}
+
+	// ── What the reducer is told about the file it writes ────────────────────
+	//
+	// Each is written as the data loss it prevents: a fold that renames a key the app knows,
+	// one that drops a key the app does NOT know, one that comes back wrapped in a fence, and
+	// one that comes back wrapped in a user's rewritten prompt.
+
+	#[test]
+	fn test_the_reducer_is_told_the_core_keys_in_the_contract_s_order() {
+		// The reducer rewrites the whole file from one sentence. Told nothing about the
+		// shape, it invents one, and a renamed key is a section the page stops drawing --
+		// which nothing sees, because an open schema has no wrong answer to detect.
+		let p = Role::Reducer.compose("");
+		let mut at = 0;
+		for k in ["title", "summary", "sections", "facts", "open", "links"] {
+			let i = match p[at..].find(&fmt!("`{}`", k)) {
+				Some(i) => at + i,
+				None    => panic!("the reducer is not told about `{}`, or not in order:\n{}",
+					k, p),
+			};
+			at = i;
+		}
+		// The shapes too: `sections` of `{heading, body}` is not guessable from the name,
+		// and a list of bare strings there renders as nothing.
+		for shape in ["heading", "body", "\"k\"", "\"v\"", "label", "href"] {
+			assert!(p.contains(shape), "the reducer must be told the shape {}:\n{}", shape, p);
+		}
+	}
+
+	#[test]
+	fn test_the_reducer_is_told_to_keep_a_key_it_does_not_understand() {
+		// The whole reason there is a schema. Home Assistant's Lovelace editor deletes
+		// `card_mod` config it cannot express, silently, and it is a FORM -- a thing that
+		// knows exactly which fields it understands. Without this sentence "extra keys are
+		// permitted" means "extra keys vanish on the next fold".
+		let p = Role::Reducer.compose("");
+		assert!(p.contains("never drop one you do not understand"), "{}", p);
+	}
+
+	#[test]
+	fn test_the_reducer_is_told_to_emit_json_and_no_fence() {
+		// It used to emit markdown, which has no parse failure, so anything it said was a
+		// crystal. JSON wrapped in prose or a ``` fence is not one, and the app would offer
+		// the wreckage as a proposal the user can accept.
+		let p = Role::Reducer.compose("");
+		assert!(p.contains("JSON object and nothing else"), "{}", p);
+		assert!(p.contains("no markdown code fence"), "{}", p);
+	}
+
+	#[test]
+	fn test_rewriting_the_reducer_cannot_change_the_shape_of_the_file_it_writes() {
+		// The same arrangement as the safety clause, for the same reason: the job is the
+		// user's to rewrite and the format is the app's, because the app parses it. A user
+		// who asks for terser summaries must not thereby be asking for markdown back.
+		let p = Role::Reducer.compose("Be ruthless. One line per section, no adjectives.");
+		assert!(p.contains("One line per section"), "{}", p);
+		assert!(p.contains("never drop one you do not understand"),
+			"a rewritten prompt lost the schema, which is the failure it exists to prevent:\n{}",
+			p);
+		assert!(p.contains("JSON object and nothing else"), "{}", p);
+		// And it is the LAST word, so a rewrite that contradicts it is contradicted back.
+		assert!(p.ends_with(CRYSTAL_SCHEMA_NOTE), "{}", p);
+	}
+
+	#[test]
+	fn test_only_the_reducer_is_charged_for_the_schema() {
+		// Four other roles never write a crystal.json, and the daimon that does is told
+		// about it in its own prompt where it costs one paragraph rather than a page.
+		for r in Role::all() {
+			assert_eq!(r == Role::Reducer, r.compose("").contains("never drop one you do not \
+				understand"), "role {} and the schema note disagree", r.name());
+		}
+	}
+
+	#[test]
+	fn test_the_daimon_is_told_the_crystal_is_two_files_and_which_is_which() {
+		// It holds the file tools, so it is the other writer of both, and the reducer's
+		// schema note never reaches it. Told only about the data, a daimon asked to change
+		// the page writes markup into the memory; told only about the page, it has nowhere
+		// to record what it learns.
+		let p = Role::Daimon.compose("");
+		assert!(p.contains("crystal.json"), "{}", p);
+		assert!(p.contains("crystal.html"), "{}", p);
+		assert!(!p.contains("crystal.md"), "the daimon still writes the old file: {}", p);
+		assert!(p.contains("never drop a key you do not recognise"),
+			"the other writer of the crystal may drift its keys too: {}", p);
 	}
 
 	// ── The context fold ─────────────────────────────────────────────────────

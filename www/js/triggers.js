@@ -235,24 +235,74 @@
 	// a minute only if something happened in it. Held in memory rather than on
 	// disk: a reload is not activity, and carrying a part-finished interval
 	// across one would make a closed tab count towards the next fire.
+	//
+	// ONE STOPWATCH PER TRIGGERED ACTION, not one for the account. A single
+	// counter was the first shape and it starved the longer TAs: firing anything
+	// zeroed the one clock, so a 5-minute TA on one Diamond reset the count a
+	// 30-minute TA on another was waiting on, every five minutes, for ever. The
+	// longer one could not fire -- not late, impossible -- while its light said
+	// it was armed. The shortest TA anywhere governed every other one.
+	//
+	// The per-TA clocks are MARKS against one monotonic total rather than a
+	// counter each advanced in step. `activeMs` only ever goes up; a TA remembers
+	// the reading it started from, and its age is the difference. A tick then
+	// costs the same whatever anybody has armed, and a TA nobody has asked about
+	// cannot be advanced by accident.
+	//
+	// Keyed by the pause-tree leaf, which is the identity a TA already has here --
+	// the same string its hold is written against -- so there is no second naming
+	// scheme to keep in step with the first.
+	//
+	// A HELD TA has no clock: `due` drops it before asking its age, so nothing
+	// starts counting until it is released. That is what a Diamond seeded paused
+	// wants -- the Optimiser's 30-minute timer counts thirty minutes from the day
+	// its owner lets it go, not from the day it was made. A TA that WAS running
+	// and is then held keeps the mark it already had, so a short hold does not
+	// throw away the work that went past before it; whether that should also be
+	// put back to the moment of release is a question nobody has answered yet.
 
-	var activeMs = 0;
-	var lastTick = 0;
-	var sawInput = false;
+	var activeMs  = 0;    // Total activity this page has seen. Monotonic.
+	var tickStart = 0;    // The reading at the start of the minute being counted.
+	var marks     = {};   // TA leaf -> the reading that TA's own clock started at.
+	var sawInput  = false;
 
 	/// Called by the page on any sign of life.
 	function noteActivity() { sawInput = true; }
 
-	/// Advance the clock by `ms` if the user did anything in that window, and
-	/// return the total activity accumulated. `reset` zeroes it, which the caller
-	/// does when a TA fires on it.
+	/// Advance the clock by `ms` if the user did anything in that window.
+	///
+	/// Returns the running total, which is NOT what any TA is measured against --
+	/// `activityMinutes` is, because each one counts from its own mark.
 	function tickActivity(ms) {
+		tickStart = activeMs;
 		if (sawInput) activeMs += Math.max(0, ms | 0);
 		sawInput = false;
 		return activeMs;
 	}
-	function activityMinutes() { return activeMs / 60000; }
-	function resetActivity() { activeMs = 0; }
+
+	/// How long this one TA has been counting, in minutes.
+	///
+	/// Asking starts its clock, so a TA first seen now needs its full N minutes
+	/// from now and cannot inherit an hour that accrued before it existed. It
+	/// starts at the BEGINNING of the minute it is first asked about, because the
+	/// tick counts the minute and then asks what is owed: mark it at the reading
+	/// in hand and every timer is a minute late, for its whole first period.
+	function activityMinutes(diamondId, actionId) {
+		var k = node(diamondId, actionId);
+		if (marks[k] === undefined) marks[k] = tickStart;
+		return (activeMs - marks[k]) / 60000;
+	}
+
+	/// Start this TA's clock again, which the caller does when it FIRED, and only
+	/// then.
+	///
+	/// A dispatch that was refused leaves the mark where it is, so the time it had
+	/// accrued is still there on the next tick rather than thrown away. The caller
+	/// is the only one who knows the difference: `due` is pure, and cannot see
+	/// that a turn was already running or that the Diamond was not on screen.
+	function resetActivity(diamondId, actionId) {
+		marks[node(diamondId, actionId)] = activeMs;
+	}
 
 	// ── What is owed ───────────────────────────────────────────
 
@@ -266,8 +316,15 @@
 	/// # Arguments
 	/// * `diamondId` - Whose TAs these are.
 	/// * `actions` - The Diamond's normalised list.
-	/// * `occasion` - `{ kind, minutes, mailbox, folder }`. `kind` is what
+	/// * `occasion` - `{ kind, minutesFor, mailbox, folder }`. `kind` is what
 	///   happened; the rest narrows it for the kinds that need narrowing.
+	///   `minutesFor(diamondId, t)` is how long that ONE TA has been counting,
+	///   supplied by the caller because every TA now has its own stopwatch and
+	///   this function may not read one -- a lookup handed in keeps the decision
+	///   pure, where a module variable read from under it would not be. An
+	///   occasion with no lookup is an occasion where nothing has accrued: fail
+	///   closed, so a caller that forgets it spends nothing rather than spending
+	///   everything.
 	function due(diamondId, actions, occasion) {
 		var kind = occasion && occasion.kind;
 		if (!kind || !KINDS[kind]) return [];
@@ -275,7 +332,10 @@
 			if (t.kind !== kind) return false;
 			if (!allowed(diamondId, t)) return false;
 			if (kind === 'activity') {
-				return (occasion.minutes || 0) >= (t.minutes || 30);
+				var mins = (typeof occasion.minutesFor === 'function')
+					? Number(occasion.minutesFor(diamondId, t)) || 0
+					: 0;
+				return mins >= (t.minutes || 30);
 			}
 			if (kind === 'mail') {
 				// A folder is watched by name; a mailbox by address. Both must match,

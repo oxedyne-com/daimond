@@ -204,14 +204,39 @@ try {
 	await chat(s, 'Remember the codeword ' + MARK + ' for later.');
 
 	// Push and read the mailbox straight back.
+	//
+	// The push is RETRIED until the mailbox actually moves, because `push()`
+	// stands aside over a live turn -- "never over a live turn", sync.js -- and
+	// answers a caller no differently than when it sent. `chat()` returns when
+	// the send button stops looking busy, which is not the same instant as
+	// `DaimondCore.busy()` going false, so a single push here could return
+	// having only scheduled one. The mailbox then still held the round BEFORE
+	// the conversation: version 1, one chat, no messages in it, and the second
+	// device below duly got an empty transcript back. That read as a sync defect
+	// for weeks; it was this race.
+	//
+	// Waiting on the version rather than on a timer, and reporting how many
+	// rounds it took, so a push that stops landing altogether still fails here
+	// instead of being papered over by a longer wait.
+	const mailboxWas = await page.evaluate(async () => {
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		return ((await r.json()).version) | 0;
+	});
+	await pushLanded(page);
 	const pushed = await page.evaluate(async () => {
-		await window.DaimondSync.push();
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
 		let name = '';
 		try { name = String(window.DaimondIdentity.displayName() || ''); } catch (e) { name = ''; }
 		return { version: j.version, present: j.present, blob: j.blob || '', device: j.device || '', account: name };
 	});
+	// Asserted against the MAILBOX, not against `DaimondSync.state().version`
+	// which `pushLanded` waits on: the client's own counter is this device's
+	// belief about the round, and the question here is whether the gateway
+	// really holds the conversation. `pushLanded` notes a push that never went
+	// and carries on; this is where that becomes a failure.
+	check('the push carrying the conversation actually landed',
+		(pushed.version | 0) > mailboxWas, 'v' + mailboxWas + '→' + pushed.version);
 	check('after a push the mailbox holds a version >= 1', pushed.present && pushed.version >= 1,
 		'version=' + pushed.version);
 
@@ -236,6 +261,10 @@ try {
 	// The chats are wiped through the store that holds them. They are in
 	// IndexedDB, so removing the old localStorage key emptied nothing and this
 	// measured a device that had never lost anything.
+	// The shape of what came back is carried out with the count, because this
+	// check asserts TWO things -- a chat arrived, and the words in it did -- and
+	// reporting only the count says "chats=1" for both a pass and the failure
+	// where the transcript is empty. That reads as a passing check that failed.
 	const restored = await page.evaluate(async () => {
 		const store = window.DaimondCore.chatStore();
 		await store.wipe();
@@ -244,13 +273,25 @@ try {
 		const v = await window.DaimondSync.pull();
 		const arr = store.stored();
 		const text = JSON.stringify(arr);
-		return { version: v, emptied, chatCount: arr.length, text };
+		return {
+			version: v, emptied, chatCount: arr.length, text,
+			// Per chat: its id, how many messages it holds, and which roles they
+			// are. A chat that arrives with an empty transcript and one that never
+			// arrived are different defects and this is what tells them apart.
+			shape: arr.map(c => ({
+				id:    c && c.id,
+				msgs:  (c && Array.isArray(c.messages)) ? c.messages.length : -1,
+				roles: (c && Array.isArray(c.messages)) ? c.messages.map(m => m && m.role).join(',') : '',
+			})),
+		};
 	});
 	check('the second device really started with no transcripts',
 		restored.emptied === 0, 'held=' + restored.emptied);
 	check('a fresh device pulls and decrypts the chat transcript back',
 		restored.chatCount >= 1 && restored.text.includes(MARK),
-		'chats=' + restored.chatCount);
+		'chats=' + restored.chatCount
+			+ ' codeword=' + (restored.text.includes(MARK) ? 'present' : 'ABSENT')
+			+ ' ' + JSON.stringify(restored.shape));
 
 	// (3) Conflict: another device bumps the mailbox out of band (a garbage blob is
 	// fine — the gateway is opaque and checks only the version), so THIS device's
@@ -407,6 +448,16 @@ try {
 		return 'ok';
 	};
 
+	/// A crystal as the store now holds one: `crystal.json`, conforming to the core
+	/// schema. These fixtures only ever needed a crystal they could tell apart, and
+	/// the schema's `title` is where a short distinguishing string goes.
+	///
+	/// It has to be REAL JSON, not merely a different string. The parcel carries the
+	/// Diamond's directory file for file, so whatever this writes is what the app
+	/// parses on the other side — a markdown fixture would leave the merge under test
+	/// carrying something no reader downstream can open.
+	const crystalOf = (title) => JSON.stringify({ title: title });
+
 	/// What another device would have pushed: this device's own state with one
 	/// Diamond's entry rewritten to a different crystal at a different stamp,
 	/// sealed under the shared key, written over the current version and pulled
@@ -422,7 +473,7 @@ try {
 		const e = (state.diamonds || []).find(d => d.id === arg.id);
 		if (!e) return 'no entry for that Diamond';
 		const pack = JSON.parse(e.data);
-		pack.files['crystal.md'] = arg.crystal;
+		pack.files['crystal.json'] = arg.crystal;
 		const meta = JSON.parse(pack.files['.daimond/meta.json']);
 		meta.updated = (e.updated || 0) + arg.delta;
 		meta.touched = (e.touched || e.updated || 0) + arg.delta;
@@ -449,7 +500,7 @@ try {
 			tags:    list.tags || [],
 			version: list.crystal_version,
 			updated: list.updated,
-			crystal: await app.read_crystal(id),
+			crystal: await app.read_crystal_data(id),
 			log:     JSON.parse(await app.log_read(id)).length,
 			links:   JSON.parse(await app.links_touching('diamond:' + id)),
 		};
@@ -459,16 +510,16 @@ try {
 	// edit record beside the create) and linked to the other.
 	await newDiamond('Sync-Alpha');
 	await newDiamond('Sync-Bravo');
-	const ids = await wasm(async (app, mark) => {
+	const ids = await wasm(async (app, crystal) => {
 		const list = JSON.parse(await app.list_diamonds());
 		const find = (n) => (list.find(d => d.name === n) || {}).id || '';
 		const A = find('Sync-Alpha'), B = find('Sync-Bravo');
 		if (!A || !B) return { A, B };
 		await app.set_tags(A, JSON.stringify(['travel', 'sync']));
-		await app.write_crystal(A, '# Alpha\n\ncrystal ' + mark + '\n');
+		await app.write_crystal_data(A, crystal);
 		await app.add_link(A, 'diamond:' + A, 'diamond:' + B, 'part-of', 'bravo sits under alpha', 'user');
 		return { A, B };
-	}, DMARK);
+	}, crystalOf('Alpha ' + DMARK));
 	check('the fixture Diamonds were made through the rail', !!(ids.A && ids.B),
 		'alpha=' + (ids.A || '-') + ' bravo=' + (ids.B || '-'));
 
@@ -563,11 +614,28 @@ try {
 		state.diamondTombs = state.diamondTombs || {};
 		state.diamondTombs[id] = Date.now();
 		await post(state);
-		const afterPull = await here();
+		// SETTLE, DO NOT SNAPSHOT. `pull()` resolving is not the same instant as the
+		// store having finished with the directory it just removed: two
+		// `list_diamonds()` calls a few microseconds apart were observed
+		// disagreeing, the first still carrying the Diamond and the second empty.
+		// Reading once, in the same tick, therefore reported a deletion that HAD
+		// happened as one that had not -- and it read as sync losing a tombstone,
+		// which is about as alarming as this suite gets.
+		//
+		// Bounded, so a deletion that genuinely never lands still fails rather than
+		// hanging: half a second is already hundreds of times what the settle costs.
+		const gone = async () => {
+			for (let i = 0; i < 25; i++) {
+				if (!(await here())) return false;
+				await new Promise(r => setTimeout(r, 20));
+			}
+			return true;
+		};
+		const afterPull = await gone();
 		// A full cycle later — this device pushes its own view, then pulls again.
 		await window.DaimondSync.push();
 		await window.DaimondSync.pull();
-		const afterCycle = await here();
+		const afterCycle = await gone();   // same reason: settle, do not snapshot
 		return { held, afterPull, afterCycle };
 	}, ids.A);
 	check('a Diamond deleted on another device is deleted here',
@@ -579,29 +647,37 @@ try {
 	// (4d) Freshest wins, wholesale, and the comparison is STRICT: an equal stamp
 	// keeps what is here, so an unchanged Diamond is not rewritten on every pull.
 	await newDiamond('Sync-Charlie');
-	const cid = await wasm(async (app, mark) => {
+	const cid = await wasm(async (app, crystal) => {
 		const list = JSON.parse(await app.list_diamonds());
 		const id = (list.find(d => d.name === 'Sync-Charlie') || {}).id || '';
-		if (id) await app.write_crystal(id, 'HERE-' + mark);
+		if (id) await app.write_crystal_data(id, crystal);
 		return id;
-	}, DMARK);
+	}, crystalOf('HERE-' + DMARK));
 	await pushLanded(page);
 
-	const crystalNow = () => wasm((app, id) => app.read_crystal(id), cid);
+	/// Which of the four copies below is on this device, named by the one field they
+	/// differ by. PARSED rather than compared as text: a copy that arrives as
+	/// anything but the JSON a crystal now is fails here, where it reads as a merge
+	/// that carried the wrong thing, rather than passing as bytes that merely match.
+	const crystalNow = async () => {
+		const text = await wasm((app, id) => app.read_crystal_data(id), cid);
+		try { return JSON.parse(text).title; }
+		catch (e) { return 'not JSON: ' + String(text).slice(0, 30); }
+	};
 
-	const shifted = await otherDeviceShifts(cid, 'OLDER-COPY', -60000);
+	const shifted = await otherDeviceShifts(cid, crystalOf('OLDER-COPY'), -60000);
 	const keptOlder = await crystalNow();
-	await otherDeviceShifts(cid, 'EQUAL-COPY', 0);
+	await otherDeviceShifts(cid, crystalOf('EQUAL-COPY'), 0);
 	const keptEqual = await crystalNow();
-	await otherDeviceShifts(cid, 'NEWER-COPY', 60000);
+	await otherDeviceShifts(cid, crystalOf('NEWER-COPY'), 60000);
 	const tookNewer = await crystalNow();
 	check('the freshest-wins fixture reached the other device', shifted === 'ok', shifted);
 	check('an older copy from another device does not overwrite this one',
-		keptOlder === 'HERE-' + DMARK, keptOlder.slice(0, 30));
+		keptOlder === 'HERE-' + DMARK, keptOlder);
 	check('an equally-stamped copy keeps what is here (the comparison is strict)',
-		keptEqual === 'HERE-' + DMARK, keptEqual.slice(0, 30));
+		keptEqual === 'HERE-' + DMARK, keptEqual);
 	check('a fresher copy from another device replaces this one',
-		tookNewer === 'NEWER-COPY', tookNewer.slice(0, 30));
+		tookNewer === 'NEWER-COPY', tookNewer);
 
 	// (4e) A device that predates all of this sends a v1 parcel: no `diamonds`,
 	// no `diamondTombs`. It must apply as it always did, and touch nothing.
@@ -670,13 +746,13 @@ try {
 
 	// A clean two-device world: one Diamond to tag, one beside it so the rail has
 	// an order to disturb.
-	const two = await wasm(async (app) => {
+	const two = await wasm(async (app, crystal) => {
 		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
 		const a = await app.create_diamond('Tag-Travel');
 		const b = await app.create_diamond('Tag-Neighbour');
-		await app.write_crystal(a, '# shared ground\n');
+		await app.write_crystal_data(a, crystal);
 		return { a, b };
-	});
+	}, crystalOf('shared ground'));
 	const disk0 = await diskNow();				// what BOTH devices last agreed on
 	check('the tag fixture starts from one agreed copy on both devices',
 		!!(two.a && two.b) && disk0.length === 2, 'packs=' + disk0.length);
@@ -803,14 +879,14 @@ try {
 		return JSON.stringify(pack);
 	}), { disk: disk, id: id, text: text });
 
-	const three = await wasm(async (app) => {
+	const three = await wasm(async (app, crystal) => {
 		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
 		const a = await app.create_diamond('Link-Travel');
 		const b = await app.create_diamond('Link-East');
 		const c = await app.create_diamond('Link-West');
-		await app.write_crystal(a, '# shared ground\n');
+		await app.write_crystal_data(a, crystal);
 		return { a: a, b: b, c: c };
-	});
+	}, crystalOf('shared ground'));
 	const diskL = await diskNow();				// what BOTH devices last agreed on
 	const BOTH  = [EAST + '/east', WEST + '/west'].sort().join(',');
 	const dev1  = await withSidecar(diskL, three.a,

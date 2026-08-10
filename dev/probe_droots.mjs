@@ -16,14 +16,14 @@ const out = await p.evaluate(async () => {
 	const app  = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 
 	const id = await app.create_diamond('Probe');
-	await app.write_crystal(id, 'the crystal');
+	await app.write_crystal_data(id, JSON.stringify({ title: 'the crystal' }));
 
 	const listBrowser = await app.run_tool('file_list', JSON.stringify({ path: 'diamonds/' + id }));
-	const readBrowser = await app.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + id + '/crystal.md' }));
+	const readBrowser = await app.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + id + '/crystal.json' }));
 
 	mod.set_workspace_dir(dir);
 	const listMachine = await app.run_tool('file_list', JSON.stringify({ path: 'diamonds/' + id }));
-	const readMachine = await app.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + id + '/crystal.md' }));
+	const readMachine = await app.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + id + '/crystal.json' }));
 	const wroteMachine = await app.run_tool('file_write',
 		JSON.stringify({ path: 'diamonds/' + id + '/worker.md', content: 'a worker wrote this' }));
 

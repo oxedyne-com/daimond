@@ -1,8 +1,17 @@
 // verify_triggers.mjs — phase H: automation you can see, pause and read.
 //
 // Notes2 §Diamonds asks for triggered actions, a Pending panel and two default
-// Diamonds. Seven properties, chosen because each one is a thing that would be
-// invisible if it were wrong:
+// Diamonds. The properties below are chosen because each one is a thing that
+// would be invisible if it were wrong:
+//
+//   0. THE CLOCK. Every timer keeps its own stopwatch, counts only the minutes
+//      somebody actually worked in, starts at the release of a hold, and keeps
+//      what a refused firing accrued instead of throwing it away. It runs in
+//      node against `www/js/triggers.js` with no browser at all, which is what
+//      lets it advance half an hour in a millisecond -- and it was written after
+//      two faults the seven checks below had no way of seeing: one stopwatch
+//      shared by the whole account, so the shortest timer starved every longer
+//      one, and a reset that happened whether or not the turn did.
 //
 //   1. The two default Diamonds are there. The Optimiser STARTS PAUSED, because
 //      it carries a timer that would otherwise spend on a schedule nobody set.
@@ -21,19 +30,49 @@
 //   6. Context is sent ONCE, and changing it makes it new again. Measured on the
 //      composer, which is the thing that decides.
 //   7. A paused Diamond's input says where its play control is.
+//   8. A timer that is REFUSED keeps what it accrued. The three refusals are
+//      silent -- no model, a turn already running, a Diamond that is not the one
+//      on screen -- so this drives the real tick with the Diamond off screen and
+//      then puts it on screen, and watches the same accrued time arrive at a
+//      turn rather than being spent on nothing.
 //
 // Plus the Pending panel: three answers, all three taking the tile away, and the
 // sort the user chose.
 //
 //   node dev/verify_triggers.mjs
-//   node dev/verify_triggers.mjs --break unpaused   # defaults arrive running
-//   node dev/verify_triggers.mjs --break ctxtwice   # context is sent every time
+//   node dev/verify_triggers.mjs --clock              # section 0 alone, no browser
+//   node dev/verify_triggers.mjs --break unpaused     # defaults arrive running
+//   node dev/verify_triggers.mjs --break ctxtwice     # context is sent every time
+//   node dev/verify_triggers.mjs --break eagerreset   # the tick zeroes a refused timer
 //
-// Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
+// and the clock's own, each of which is how some piece of it used to behave or
+// could plausibly be written:
+//
+//   --clock --break sharedclock  one stopwatch for the whole account
+//   --clock --break deaf         signs of life never reach the clock
+//   --clock --break neverreset   a clock that is never restarted
+//   --clock --break unheld       the tree answering that nothing is ever held
+//   --clock --break wallclock    the input gate off, so an untouched tab counts
+//   --clock --break readsclock   `due` consults the clock instead of the occasion
+//   --clock --break openhanded   no reading read as "everything", not "nothing"
+//
+// Every break replaces a piece of the CODE UNDER TEST with the way it behaved
+// before the fix, never a piece of this file, and every check in section 0 is
+// red under at least one of them. A check nobody can turn red is not a check.
+//
+// Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both) --
+// except with `--clock`, which needs neither.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, connectMock, signInAs, scratch, shot } from './harness.mjs';
+import { createRequire } from 'node:module';
+
+// `--clock` runs section 0 by itself, and section 0 is plain node. So the
+// harness is imported only when the browser half is going to run: a check on
+// the clock must not need a browser installed to say what the clock does.
+const CLOCK_ONLY = process.argv.includes('--clock');
+const { open, connectMock, signInAs, scratch, shot, mockLog } =
+	CLOCK_ONLY ? {} : await import('./harness.mjs');
 
 const OUT = path.join(os.homedir(), '.cache/daimond/triggers-shots');
 fs.mkdirSync(OUT, { recursive: true });
@@ -49,6 +88,267 @@ const check = (cond, msg, detail) => {
 };
 
 const MODEL = 'accounts/fireworks/models/glm-5p2';
+
+// ══ 0. The activity clock ═════════════════════════════════════════════
+//
+// `www/js/triggers.js` exports for node, so the clock and the decision can be
+// driven at whatever speed the check needs. That matters more than tidiness
+// here: the fault this section was written for was a 30-minute timer that could
+// not fire, and no browser check is going to sit through thirty minutes of work
+// to see it.
+//
+// The loop below is the tick's RULE and nothing else about it -- fire what is
+// due, restart only the clocks that fired -- so what is being measured is the
+// module, not a second copy of the app.
+const require = createRequire(import.meta.url);
+// `allowed` asks the pause tree at the moment of firing, and the tree lives on
+// `window`. Node has none, so it gets one holding whatever `held` says -- which
+// is how a check below can pause a timer and watch what its clock does.
+const held = {};
+globalThis.window = { DaimondPause: { isPaused: (nodeId) => !!held[nodeId] } };
+const T = require('../www/js/triggers.js');
+
+if (BREAK === 'sharedclock') {
+	// The clock as it was: ONE stopwatch for the whole account, reset by whatever
+	// fires. This is the defect -- a 5-minute timer zeroes the count a 30-minute
+	// one is waiting on, every five minutes, so the longer one never arrives.
+	let shared = 0, saw = false;
+	T.noteActivity    = () => { saw = true; };
+	T.tickActivity    = (ms) => { if (saw) shared += ms; saw = false; return shared; };
+	T.activityMinutes = () => shared / 60000;
+	T.resetActivity   = () => { shared = 0; };
+}
+if (BREAK === 'wallclock') {
+	// The input gate taken off, so every minute counts whether anybody was there
+	// or not. A tab left open overnight then greets its owner with eight turns
+	// nobody asked for, which is the failure this whole section is written
+	// against.
+	const tick = T.tickActivity;
+	T.tickActivity = (ms) => { T.noteActivity(); return tick(ms); };
+}
+if (BREAK === 'deaf') {
+	// The page's signs of life never reaching the clock -- one unwired listener,
+	// and nothing ever accrues or fires again.
+	T.noteActivity = () => {};
+}
+if (BREAK === 'neverreset') {
+	// A clock that is never restarted: the opposite mistake to zeroing it on a
+	// refusal, and it shows as a timer that fires every minute once it first
+	// comes due, instead of once a period.
+	T.resetActivity = () => {};
+}
+if (BREAK === 'openhanded') {
+	// An occasion with no reading read as "everything has accrued" rather than
+	// "nothing has". Failing open here means a caller that forgets to pass the
+	// clock fires every armed TA it can reach.
+	const real = T.due;
+	T.due = (id, actions, occ) => real(id, actions,
+		Object.assign({ minutesFor: () => Infinity }, occ));
+}
+if (BREAK === 'unheld') {
+	// The tree answering that nothing is ever held. A hold is enforcement, not
+	// decoration: a Diamond seeded paused, or a pause that arrived from another
+	// device between the schedule and the fire, then spends anyway.
+	globalThis.window.DaimondPause.isPaused = () => false;
+}
+if (BREAK === 'readsclock') {
+	// `due` consulting the clock itself instead of the occasion it was handed.
+	// It is then no longer pure, and cannot be asked a question about a reading
+	// the caller has -- which is how the per-TA clock reaches it.
+	const real = T.due;
+	T.due = (id, actions, occ) => real(id, actions, Object.assign({}, occ, {
+		minutesFor: (d, ta) => T.activityMinutes(d, ta.id),
+	}));
+}
+
+/// One armed timer of `n` minutes, whose action id is `name` -- the name is
+/// what a firing is reported under, so a check can say which one went.
+const timer = (n, name) => {
+	const ta = T.blank('activity');
+	ta.id = name;
+	ta.minutes = n;
+	ta.instruction = 'do the ' + name + ' thing';
+	return ta;
+};
+
+/// Run `n` minutes of the clock and report every firing, as `{ minute, id,
+/// actionId }`.
+///
+/// `arm` is `{ diamondId: [actions] }`. `idle` is a tab nobody touches. `refuse`
+/// is the dispatcher declining -- a turn already running, or a Diamond that is
+/// not the one on screen -- which is silent to `due` and is exactly the case
+/// where the accrued time must survive. One firing per Diamond per minute, as
+/// `Triggers.fire` allows.
+const run = (n, arm, { idle = false, refuse = null, from = 0 } = {}) => {
+	const log = [];
+	for (let m = from; m < from + n; m++) {
+		if (!idle) T.noteActivity();
+		T.tickActivity(60000);
+		for (const id of Object.keys(arm)) {
+			const owed = T.due(id, arm[id], {
+				kind: 'activity',
+				minutesFor: (d, ta) => T.activityMinutes(d, ta.id),
+			});
+			const t = owed[0];
+			if (!t) continue;
+			if (refuse && refuse(id, t, m + 1)) continue;
+			log.push({ minute: m + 1, id: id, actionId: t.id });
+			T.resetActivity(id, t.id);
+		}
+	}
+	return log;
+};
+
+{
+	// ── Two timers of different lengths, armed together ──
+	const SHORT = 5, LONG = 30;
+	const arm = {
+		quick: [timer(SHORT, 'five')],
+		slow:  [timer(LONG, 'thirty')],
+	};
+	const log = run(LONG + 2, arm);
+	const at = (name) => log.filter(x => x.actionId === name).map(x => x.minute);
+	const said = 'five at ' + (at('five').join(',') || 'never')
+		+ '; thirty at ' + (at('thirty').join(',') || 'never');
+	// THE ONE THIS SECTION EXISTS FOR. With one stopwatch for the account the
+	// 30-minute timer is not late, it is impossible: the 5-minute one zeroes the
+	// count every five minutes for ever, while the light says armed.
+	check(at('thirty').length > 0,
+		'a 30-minute timer fires even with a 5-minute one running beside it', said);
+	check(at('five').length > 0,
+		'and the 5-minute one is not starved in its turn', said);
+	// Each waits its OWN period rather than the other's: no firing before the
+	// minute it is set for, and no two firings closer together than that.
+	const spaced = (mins, period) =>
+		mins.every((v, i) => v - (i ? mins[i - 1] : 0) >= period);
+	check(spaced(at('thirty'), LONG),
+		'the 30-minute one waits thirty minutes of work, not somebody else’s five', said);
+	check(spaced(at('five'), SHORT),
+		'and the 5-minute one keeps its own period instead of firing every tick', said);
+}
+
+{
+	// ── Two timers on ONE Diamond take turns ──
+	//
+	// `Triggers.fire` sends at most one turn per Diamond however many matched:
+	// two instructions arriving as two turns is two bills and a daimon answering
+	// itself. The one that waits is not reset, so it comes to the next minute
+	// further ahead than the one that went -- the earlier line in the file wins
+	// the tick, not the session.
+	const arm = { both: [timer(5, 'first-line'), timer(5, 'second-line')] };
+	const log = run(30, arm);
+	const at = (name) => log.filter(x => x.actionId === name).map(x => x.minute);
+	check(at('second-line').length > 0,
+		'a second timer on the same Diamond is deferred a tick, not starved for ever',
+		'first at ' + (at('first-line').join(',') || 'never')
+		+ '; second at ' + (at('second-line').join(',') || 'never'));
+}
+
+{
+	// ── A refused firing keeps what it accrued ──
+	//
+	// One Diamond dispatches all the way through; the other is refused until the
+	// minute it is not. The refused one must go at once on the first minute it is
+	// allowed to, because the time it accrued while being refused is still there.
+	const LIFT = 12, PERIOD = 5;
+	const arm = {
+		onscreen:  [timer(PERIOD, 'on')],
+		offscreen: [timer(PERIOD, 'off')],
+	};
+	const log = run(LIFT + 4, arm, {
+		refuse: (id, t, minute) => id === 'offscreen' && minute <= LIFT,
+	});
+	const off = log.filter(x => x.actionId === 'off').map(x => x.minute);
+	const said = 'refused through minute ' + LIFT + '; fired at ' + (off.join(',') || 'never');
+	check(off.length > 0, 'a timer that was refused still fires once it can', said);
+	check(off.length > 0 && Math.min(...off) === LIFT + 1,
+		'and it goes on the FIRST minute it is allowed to — the refusal deferred its '
+		+ 'time, it did not spend it', said);
+}
+
+{
+	// ── A tab nobody touches ──
+	//
+	// The deliberate semantic, and the reason none of this runs on a wall clock:
+	// "N minutes of USER ACTIVITY". An overnight tab must arrive at nothing.
+	const arm = { idle: [timer(5, 'sleeper')] };
+	const log = run(90, arm, { idle: true });
+	check(log.length === 0,
+		'a tab nobody touches accrues nothing, however long it is left open',
+		log.map(x => x.minute).join(',') || 'no firings');
+	// And it is still armed: the same TA fires once somebody works at it.
+	const after = run(6, arm, { from: 90 });
+	check(after.length > 0,
+		'and the same timer fires as soon as somebody actually works',
+		after.map(x => x.minute).join(',') || 'never');
+}
+
+{
+	// ── A timer added later starts from now ──
+	//
+	// Asking a TA its age is what starts its clock, so one made after a long
+	// session does not inherit that session and fire on the tick it was made.
+	const arm = { later: [timer(5, 'early')] };
+	run(40, arm);
+	const fresh = timer(10, 'added-late');
+	arm.later.push(fresh);
+	const mins = run(12, arm, { from: 40 }).filter(x => x.actionId === 'added-late')
+		.map(x => x.minute);
+	check(mins.length > 0, 'a timer added later does eventually fire',
+		mins.join(',') || 'never');
+	check(mins.length > 0 && Math.min(...mins) >= 40 + fresh.minutes,
+		'and it counts from when it was made, not from the work that went before it',
+		'added at 40, set for ' + fresh.minutes + ', fired at ' + (mins.join(',') || 'never'));
+}
+
+{
+	// ── A held timer has no clock until it is released ──
+	//
+	// The tree is the authority and it is asked at the moment of firing, so a
+	// held TA is dropped before anything asks its age -- and nothing starts
+	// counting. That is what a Diamond seeded paused wants: the Optimiser's
+	// thirty minutes are thirty minutes of work after its owner lets it go, not
+	// thirty minutes that quietly went by while it was held.
+	const ta = timer(5, 'onhold');
+	const arm = { held: [ta] };
+	const leaf = T.node('held', 'onhold');
+	held[leaf] = true;
+	const during = run(20, arm);
+	check(during.length === 0, 'a held timer does not fire, however long the work goes on',
+		during.map(x => x.minute).join(',') || 'no firings');
+	delete held[leaf];
+	const after = run(20, arm, { from: 20 }).map(x => x.minute);
+	check(after.length > 0 && Math.min(...after) >= 20 + ta.minutes,
+		'and once released it counts from the release, rather than firing on the '
+		+ 'minutes it was held through',
+		'released at 20, set for ' + ta.minutes + ', fired at ' + (after.join(',') || 'never'));
+}
+
+{
+	// ── `due` is pure ──
+	//
+	// It answers about the reading it was HANDED. That is what lets one clock per
+	// TA reach it without this module holding any of them, and what makes every
+	// check above possible at all.
+	const ta = timer(30, 'p');
+	const asIf = (mins) => T.due('pure', [ta], {
+		kind: 'activity', minutesFor: () => mins,
+	}).length > 0;
+	check(asIf(31) && !asIf(29),
+		'`due` answers about the reading it is handed, not one it goes and finds',
+		'31 → ' + asIf(31) + ', 29 → ' + asIf(29));
+	check(!T.due('pure', [ta], { kind: 'activity' }).length,
+		'and an occasion carrying no reading is due nothing — a caller that forgets '
+		+ 'the clock spends nothing, rather than everything');
+}
+
+if (CLOCK_ONLY) {
+	// The clock alone, for the breaks above and for anywhere without a browser.
+	console.log(failures === 0
+		? `\nverify_triggers (clock): all checks pass.`
+		: `\nverify_triggers (clock): ${failures} failed.`);
+	process.exit(failures === 0 ? 0 : 1);
+}
 
 // Opened WITHOUT signing in, so a break can be installed before the app boots.
 // The defaults are seeded on the first render after sign-in, which is the thing
@@ -245,6 +545,106 @@ try {
 	check(/DIFFERENT BACKGROUND/.test(ctx.third),
 		'and changing the context makes it new again',
 		ctx.third.replace(/\n+/g, ' / '));
+
+	// ══ 8. A refused firing keeps the time it accrued ═════════════════
+	//
+	// The three refusals are silent: no model, a turn already running, and a
+	// Diamond that is not the one on screen. The last is the one a test can stage
+	// honestly, so a timer is armed on Help while the Optimiser is on screen. It
+	// comes due, it is refused -- deliberately, because moving the centre out from
+	// under somebody mid-sentence is worse than a turn that waits -- and the
+	// question is what happens to the six minutes it spent getting there.
+	//
+	// Driven through the real tick, because the fault was in the tick: it worked
+	// out what to zero by asking `due` a second time, and `due` is pure and can
+	// see neither a busy crystal nor which Diamond is on screen. It reported the
+	// refused timer as owed, the clock was zeroed anyway, and the accrued time
+	// went nowhere.
+	if (help && opt) {
+		if (BREAK === 'eagerreset') {
+			// The tick as it was: whatever the clock says is owed gets zeroed,
+			// whether or not a turn went anywhere.
+			await p.evaluate(() => {
+				const T = window.DaimondTriggers, tick = window.DaimondTriggerTick;
+				window.DaimondTriggerTick = async function () {
+					await tick();
+					document.querySelectorAll('#diamond-list .diamond-box').forEach((b) => {
+						(window.DaimondTriggersOf(b.dataset.id) || []).forEach((ta) => {
+							if (ta.kind !== 'activity') return;
+							if (T.activityMinutes(b.dataset.id, ta.id) >= (ta.minutes || 30)) {
+								T.resetActivity(b.dataset.id, ta.id);
+							}
+						});
+					});
+				};
+			});
+		}
+		const SAYS = 'TRIGGER DEFERRAL CHECK';
+		const PERIOD = 3;
+		// Where the mock's log has got to, so "was this sent?" is asked of THIS
+		// run. The log is a world's, not a run's, and a second run against the same
+		// world would otherwise find the first run's turn and call the refusal a
+		// dispatch.
+		const seen = mockLog().length;
+		const armed = await p.evaluate(async (a) => {
+			const T = window.DaimondTriggers;
+			const ta = T.blank('activity');
+			ta.id = 'defer-' + Date.now().toString(36);
+			ta.minutes = a.period;
+			ta.instruction = a.says;
+			await DaimondCore.triggerSet(a.id, ta);
+			// Running, said out loud rather than assumed: an unheld leaf reads as
+			// playing, and this check is about the refusal, not about what the tree
+			// happened to be seeded with.
+			DaimondPause.set(T.node(a.id, ta.id), true);
+			return ta.id;
+		}, { id: help.id, says: SAYS, period: PERIOD });
+
+		// The OPTIMISER on screen, so Help is not the Diamond a trigger may steer.
+		await p.evaluate((id) => {
+			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`).click();
+		}, opt.id);
+		await p.waitForTimeout(700);
+		const held = await p.evaluate(async (a) => {
+			const T = window.DaimondTriggers;
+			for (let m = 0; m < a.mins; m++) {
+				T.noteActivity();
+				await window.DaimondTriggerTick();
+			}
+			// Asking does not consume it; only a firing does.
+			return T.activityMinutes(a.id, a.ta);
+		}, { id: help.id, ta: armed, mins: PERIOD * 2 });
+		// JSON rather than `content`: a message's content is a string in the simple
+		// case and an array of parts in every other, and the question here is only
+		// whether the instruction reached the wire at all.
+		const spoke = () => mockLog().slice(seen).some(r => JSON.stringify(r).includes(SAYS));
+		check(!spoke(),
+			'a trigger does not steer a Diamond the user is not looking at',
+			'the model was ' + (spoke() ? 'sent it anyway' : 'not sent the instruction'));
+		check(held >= PERIOD,
+			'and the minutes it accrued while being refused are still there, not spent on nothing',
+			held.toFixed(1) + ' minutes held, set for ' + PERIOD);
+
+		// And on screen, the same accrued time arrives at a turn on the very next
+		// tick — it did not go back to zero and start the wait again.
+		await p.evaluate((id) => {
+			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`).click();
+		}, help.id);
+		await p.waitForTimeout(700);
+		await p.evaluate(() => {
+			window.DaimondTriggers.noteActivity();
+			window.DaimondTriggerTick();
+		});
+		const restarted = await p.waitForFunction(
+			(a) => window.DaimondTriggers.activityMinutes(a.id, a.ta) < 1,
+			{ id: help.id, ta: armed }, { timeout: 40000 }).then(() => true).catch(() => false);
+		await p.waitForTimeout(600);
+		check(spoke(), 'once the Diamond is on screen the held time reaches the daimon',
+			'the model was ' + (spoke() ? 'sent the instruction' : 'never sent it'));
+		check(restarted,
+			'and only then does that timer start counting again — a firing consumes it, '
+			+ 'a refusal never did');
+	}
 
 	// ══ The Pending panel ═════════════════════════════════════════════
 	await p.evaluate(() => DaimondPanels.show('pending'));

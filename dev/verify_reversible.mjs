@@ -208,11 +208,18 @@ const SURFACES = [
 		},
 		ready:  '.tile-dlg-card',
 		root:   '.tile-dlg-card',
-		// Delete leaves by destroying the thing the dialog is about, and Done
+		// Delete leaves by destroying the thing the dialog is about, and the closer
 		// leaves by shutting it. Neither is a door that closes behind you inside
 		// the room. The pause light is NOT here: it is a toggle, and it must be
 		// searched.
-		leaves: ['Delete', 'Done'],
+		//
+		// `Done` is gone: seq 98 replaced the foot's Done button with a cross in
+		// the top right, so the way out is now `✕` and the accessible name `Close`.
+		// This list still said Done, so the closer was searched as though it were
+		// an ordinary control and reported as a one-way door -- which every closer
+		// is, and which is exactly what `leaves` exists to say. Both spellings are
+		// named because the control carries the glyph and the word.
+		leaves: ['Delete', 'Done', 'Close', '✕'],
 	},
 ];
 

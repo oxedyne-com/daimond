@@ -738,7 +738,11 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		return {
 			name:    ((document.getElementById('current-session-name') || {}).textContent || '').trim(),
 			crystal: !!(cv && cv.getClientRects().length),
-			body:    !!(cb && cb.innerHTML.length > 0),
+			// Named for what it means rather than for `innerHTML` being non-empty: a
+			// crystal is drawn by a frame now, and a wrapper element would keep that
+			// measure true while showing nothing at all.
+			body:    !!(cb && (cb.textContent.trim().length > 0
+				|| cb.querySelector('.crystal-frame, .crystal-fallback, .crystal-empty'))),
 			paused:  DaimondPause.pausedIds().length,
 		};
 	});

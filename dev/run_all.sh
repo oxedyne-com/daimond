@@ -127,12 +127,25 @@ slow_for() {
 		verify_sweep_desktop)             echo 900 ;;
 		verify_handreal)                  echo 900 ;;
 		verify_ptyedge)                   echo 2400 ;;
+		# Two devices, a gateway and a full parcel round trip each way. It has
+		# been over the default for a while and nobody noticed, because a killed
+		# verifier does not say it was killed: `timeout` cuts the browser out
+		# from under it and Playwright reports "Target page, context or browser
+		# has been closed" as six ordinary-looking sync failures. The 2026-08-10
+		# gate spent its whole red budget on those six, all of which were this.
+		verify_sync)                      echo 1200 ;;
 		*)                                echo 180 ;;
 	esac
 }
 
 pass=0; fail=0; skip=0; failed=""; skipped=""
 : > "$LOG"
+# Truncated ONCE here, appended to thereafter: phase 2 stops and restarts the
+# gateway to take the store lock for a grant, and what the first process said on
+# its way out is exactly the part a `>` on each start would erase.  Named
+# SUITE_GW_LOG in dev/gwbin.mjs, which is where the verifier that starts no
+# gateway of its own goes looking for it.
+: > "$SCRATCH/suite-gw.log"
 say() { echo "$1" | tee -a "$LOG"; }
 
 run_one() {
@@ -171,9 +184,11 @@ run_one() {
 	tail=$(echo "$out" | grep -vE "Skipping host" | tail -1)
 	# Two spellings, because both are in the tree: `SKIPPED: <why>` and
 	# `SKIP <name> — <why>`. Only the first was recognised, so verify_gwretry,
-	# verify_sessionrenew and verify_chunkgw -- each of which prints the second
-	# and then exits 0 -- were counted as PASSES for runs in which they had
-	# refused to do anything at all.
+	# verify_sessionrenew and verify_chunkgw -- each of which printed the second
+	# and then exited 0 -- were counted as PASSES for runs in which they had
+	# refused to do anything at all. verify_chunkgw can no longer skip: its
+	# "no binary built" branch was unreachable once gwbin.mjs began refusing
+	# that case outright, and it has gone.
 	if echo "$out" | grep -qE '^SKIPPED:|^SKIP '; then
 		skip=$((skip+1)); skipped="$skipped $name"
 		say "SKIP  $name  — $(echo "$out" | grep -E '^SKIPPED:|^SKIP ' | head -1)"
@@ -206,7 +221,7 @@ wait_gateway() {                # tries
 GW_CWD=gateway
 start_gateway() {
 	[ -x "$GW_BIN" ] || return 1
-	( cd "$GW_CWD" && APP_MODE=sandbox nohup "$ROOT/$GW_BIN" >"$SCRATCH/suite-gw.log" 2>&1 & )
+	( cd "$GW_CWD" && APP_MODE=sandbox nohup "$ROOT/$GW_BIN" >>"$SCRATCH/suite-gw.log" 2>&1 & )
 	wait_gateway 25
 }
 stop_gateway() {
@@ -226,6 +241,49 @@ for name in $ALL; do
 	esac
 done
 
+# ── The gateway binary, built once for the whole run ────────────────────
+#
+# `dev/gwbin.mjs` refuses to measure a gateway older than the code under test,
+# and it is right to: on 2026-08-10 a three-day-old binary answered "Unknown
+# admin view 'secrets'" and that read as a console defect rather than a stale
+# build.  But an mtime is a coarse authority.  Another agent touching any of the
+# twelve crates the gateway path-depends on under rust/fe2o3 voids the run, and
+# that happened mid-gate the same day.  Cargo knows precisely whether a rebuild
+# is needed -- including whether a new module is even referenced -- so ask it,
+# once, and leave the mtime guard as what it should be: a cheap net for someone
+# running a single verifier by hand.
+#
+# Before PHASE 1, not merely before phase 2.  Nine of the ten verifiers that
+# spawn a gateway are in phase 1; only verify_passkey_blob is in phase 2, and
+# start_gateway needs $GW_BIN there in any case.  ONCE, so that every verifier
+# in the run measures the same artefact.
+#
+# CARGO_TARGET_DIR is unset on purpose.  Agents point it at their own slot
+# directory, which is what leaves gateway/target/release/ behind in the first
+# place, and that path is the one the verifiers spawn.
+wants_gateway() {              # does anything in this run touch the binary?
+	[ -n "$PHASE2" ] && return 0
+	# Asked of the verifiers themselves rather than of a list kept here: a list
+	# of names is the thing that goes stale, as HEADED and NEEDS_GATEWAY both
+	# have, and each time it did the suite drew a wrong conclusion quietly.
+	local n
+	for n in $ALL; do
+		grep -q 'gwbin\.mjs\|daimond_gateway' "dev/$n.mjs" 2>/dev/null && return 0
+	done
+	return 1
+}
+if wants_gateway; then
+	say "── Building the gateway, so every verifier measures one artefact ──"
+	if ( cd gateway && env -u CARGO_TARGET_DIR cargo build --release ) >>"$LOG" 2>&1; then
+		[ -f "$GW_BIN" ] && say "   $GW_BIN  ($(date -r "$GW_BIN" '+%Y-%m-%d %H:%M:%S'))"
+	else
+		say "FATAL the gateway did not build, so nothing below could be measured against"
+		say "      the current source: every verifier that spawns one would either run a"
+		say "      stale binary or refuse outright.  The cargo output is at the end of $LOG"
+		exit 2
+	fi
+fi
+
 # ── Phase 1: :9002 clear ────────────────────────────────────────────────
 if [ -n "$PHASE1" ]; then
 	if gateway_up; then
@@ -243,11 +301,20 @@ if [ -n "$PHASE2" ]; then
 	# Run the gateway from the generated dev CWD for the whole of phase 2: it is
 	# the same binary over the same store, one flag different.
 	case " $PHASE2 " in *" verify_compose "*|*" verify_mailfolders "*)
-		if bash dev/devgw.sh >/dev/null 2>&1; then GW_CWD=dev/devgw; fi ;;
+		# Said rather than swallowed: without the generated CWD the mail routes
+		# refuse loopback, and compose then fails for a reason this script chose.
+		if bash dev/devgw.sh >>"$SCRATCH/suite-devgw.log" 2>&1; then
+			GW_CWD=dev/devgw
+		else
+			say "   dev/devgw.sh failed — running from $GW_CWD, whose config refuses the"
+			say "   loopback mail fixtures: $SCRATCH/suite-devgw.log"
+		fi ;;
 	esac
 	if ! start_gateway; then
 		for name in $PHASE2; do
-			skip_one "$name" "no gateway on :9002 (build it: cd gateway && cargo build --release)"
+			# Not "build it" any more: the build happened above, so a gateway that
+			# will not start has a reason, and the reason is in its own log.
+			skip_one "$name" "the gateway would not start on :9002 — $SCRATCH/suite-gw.log"
 		done
 	else
 		say "── Phase 2 (gateway up on :9002):$PHASE2"
@@ -258,26 +325,41 @@ if [ -n "$PHASE2" ]; then
 			case " $NEEDS_GRANT " in *" $name "*) WANT_GRANT=yes ;; esac
 		done
 		if [ "$WANT_GRANT" = yes ] && [ -x "$CTL_BIN" ]; then
-			ACCT=$(node dev/provision.mjs "$COMPOSE_PROFILE" compose 2>/dev/null | tail -1)
+			# All of this used to go to /dev/null, exit codes included.  A grant
+			# that failed silently is worse than no grant at all: GRANTED stayed
+			# yes, the three entitled verifiers ran without the entitlement, and
+			# went red for a reason this script already knew and had discarded.
+			PROV_LOG=$SCRATCH/suite-provision.log
+			: > "$PROV_LOG"
+			ACCT=$(node dev/provision.mjs "$COMPOSE_PROFILE" compose 2>>"$PROV_LOG" | tail -1)
 			if [ -n "$ACCT" ]; then
 				# daimond_ctl takes the store's exclusive lock, so the gateway
 				# stands down for the grant and comes back after it.
 				stop_gateway
-				( cd "$GW_CWD" && "$ROOT/$CTL_BIN" grant "$ACCT" email  >/dev/null 2>&1 )
-				( cd "$GW_CWD" && "$ROOT/$CTL_BIN" topup "$ACCT" 5000   >/dev/null 2>&1 )
-				if start_gateway; then
+				GRANT_OK=yes
+				( cd "$GW_CWD" && "$ROOT/$CTL_BIN" grant "$ACCT" email ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no
+				( cd "$GW_CWD" && "$ROOT/$CTL_BIN" topup "$ACCT" 5000  ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no
+				# The gateway comes back either way -- the rest of phase 2 needs
+				# it whether or not the grant landed.
+				if start_gateway && [ "$GRANT_OK" = yes ]; then
 					# Pro as well: Email, sync and cloud storage are all behind it
 					# since 2026-07-24, so without it the app raises the "Sync is
 					# part of Pro" dialog OVER the page mid-run and the clicks that
 					# follow land on the dialog. It is bought the way a user buys
 					# it -- a signed checkout event the gateway verifies.
-					PROST=$(node dev/pro.mjs "$ACCT" "$ROOT/gateway" 2>/dev/null | tail -1)
+					PROST=$(node dev/pro.mjs "$ACCT" "$ROOT/gateway" 2>>"$PROV_LOG" | tail -1)
 					GRANTED=yes
 				fi
 				say "   provisioned $ACCT (email unlock + 5000 credits + Pro webhook ${PROST:-?}): $GRANTED"
+				[ "$GRANTED" = yes ] || say "      what went wrong: $PROV_LOG"
 			else
 				say "   could not read the compose profile's account id — the entitled tests will skip"
+				say "      what went wrong: $PROV_LOG"
 			fi
+		elif [ "$WANT_GRANT" = yes ]; then
+			# Said, because the skip below reads "no entitled account (see above)"
+			# and nothing above said anything at all when this was the reason.
+			say "   $CTL_BIN is not there or not executable, so no grant can be made"
 		fi
 
 		# compose and mailfolders need the mail fixtures: an IMAP server to read,

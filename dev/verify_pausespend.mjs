@@ -354,7 +354,13 @@ try {
 		const body = document.getElementById('crystal-body');
 		const view = document.getElementById('crystal-view');
 		return {
-			crystal: !!(body && body.textContent.trim().length > 0),
+			// A CRYSTAL WITH ANYTHING IN IT IS NOW A FRAME, and a frame contributes
+			// no text to its container -- so counting characters here would have
+			// answered zero for every Diamond and failed pointing at pause, which is
+			// not where the fault would have been. What this ever meant is "the
+			// crystal face drew something", and the frame reports that itself.
+			crystal: !!(body && (body.textContent.trim().length > 0
+				|| body.querySelector('.crystal-frame, .crystal-fallback, .crystal-empty'))),
 			shown:   !!(view && view.style.display !== 'none'),
 			files:   document.querySelectorAll('#panel-work .files-tree *').length,
 			steer:   !!document.getElementById('chat-input'),
