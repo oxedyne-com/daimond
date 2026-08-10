@@ -18284,11 +18284,35 @@ import init, {
 		send.type = 'button';
 		send.textContent = '↑';
 		send.title = tOr('crystal.ask', 'Ask the daimon to change this page');
+		// THE BOX SAYS "change this page", SO THE MESSAGE HAS TO SAY IT TOO.
+		//
+		// This sent the typed words alone, exactly as the ordinary composer does,
+		// and the daimon is told in its role prompt that `crystal.html` is "yours
+		// to touch only when the user asks for the page itself to change". So it
+		// had to infer, from words like "put a pulldown menu on the crystal",
+		// which of two files was meant -- and it reasonably read that as content
+		// and wrote a section into `crystal.json`, which comes back as markdown.
+		// The user asked for a control and got prose, twice.
+		//
+		// The note is PREPENDED IN PLAIN SIGHT rather than hidden in the system
+		// prompt: it goes into the transcript with the request, so what was asked
+		// on the user's behalf is on the record and can be argued with. It also
+		// carries the two things the mechanism needs and a model most often
+		// drops -- self-containment, and the three messages the page must post or
+		// the app replaces it with the built-in view.
+		var PAGE_NOTE =
+			'This is about this Diamond\'s PAGE (crystal.html), not its memory '
+			+ '(crystal.json). Read crystal.html first, then edit it, and leave '
+			+ 'crystal.json alone. Keep it self-contained: all CSS and JavaScript '
+			+ 'inline, images only as data: URIs, no fetch, no external files, no '
+			+ 'eval. Keep its ready, rendered and height messages, and let '
+			+ 'rendered name every top-level key of the data that has content, or '
+			+ 'the app will replace the page with its own view. The request is: ';
 		var go = function () {
 			var text = input.value.trim();
 			if (!text) return;
 			input.value = '';
-			doSteer(text);
+			doSteer(PAGE_NOTE + text);
 		};
 		send.addEventListener('click', go);
 		input.addEventListener('keydown', function (e) {
