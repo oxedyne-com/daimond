@@ -49,9 +49,15 @@ await p.waitForTimeout(900);
 const tiles = await p.evaluate(() => document.querySelectorAll('.tile-label').length);
 check('two chats are on the page to switch between', tiles >= 2, `${tiles} tiles`);
 
-/// The name of the chat currently open.
+/// WHICH chat is currently open, by id.
+///
+/// It read the centre header's TEXT, which worked only while every chat carried
+/// a distinct auto-generated name. Chats have no names now — the rail derives a
+/// relative time — so two chats made a second apart both read "the chat from
+/// just now" and "the open chat changed" had no answer. The id is what the
+/// question was always about, and the rail marks it with `.active`.
 const current = () => p.evaluate(() =>
-	((document.querySelector('#current-session-name') || {}).textContent || '').trim());
+	((document.querySelector('.session-box.chat-box.active') || {}).dataset || {}).id || '');
 
 const before = await current();
 // Focus the tile of the chat that is NOT open, and press Enter on it.
@@ -173,22 +179,51 @@ const r2 = await p.evaluate(() => {
 });
 red(r2 === false, 'a Diamond row that kept its ARIA but lost its keydown answers nothing');
 
-// And the chat tile: with the label made editable, Enter is a rename commit and
-// must NOT open a chat -- the branch the fix turns on.
+// And the chat tile: THE LABEL IS A CONTROL, NOT A FIELD.
+//
+// This check replaces one that no longer means anything. The label used to be a
+// readonly `<input>` that a double-click made editable, so Enter had two jobs —
+// open the chat, or commit a rename — and the old self-test proved the second
+// branch existed. The rename gesture has left the tile entirely (renaming a chat
+// is now "Keep as a Diamond", with a plain rename two clicks in behind the cog),
+// so the branch is gone and the old test could only ever pass: `readOnly` on a
+// `<button>` sets a property nothing reads.
+//
+// What CAN regress is somebody putting the field back, at which point Tab
+// through the rail lands in a text box again and the a11y §2 finding returns. So
+// that is what is asserted: no tile carries an editable field, and the label is
+// a real button.
 const r3 = await p.evaluate(() => {
-	const box = [...document.querySelectorAll('.session-box.chat-box')]
-		.find((e) => !e.classList.contains('active'));
-	const lab = box && box.querySelector('.tile-label');
-	if (!lab) return null;
-	const before = ((document.querySelector('#current-session-name') || {}).textContent || '').trim();
-	lab.readOnly = false;                     // as a double-click would leave it
-	lab.focus();
-	lab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-	const after = ((document.querySelector('#current-session-name') || {}).textContent || '').trim();
-	lab.readOnly = true;
-	return before === after;
+	const box = [...document.querySelectorAll('.session-box.chat-box')].find(Boolean);
+	if (!box) return null;
+	const lab = box.querySelector('.tile-label');
+	return {
+		isButton: !!lab && lab.tagName === 'BUTTON',
+		fields:   box.querySelectorAll('input[type=text], input:not([type]), textarea').length,
+	};
 });
-red(r3 === true, 'Enter on a tile being RENAMED does not open the chat');
+check('a chat tile\'s label is a button, not a field to type in',
+	!!r3 && r3.isButton === true, JSON.stringify(r3));
+check('and the tile carries no editable field for Tab to land in',
+	!!r3 && r3.fields === 0, JSON.stringify(r3));
+// The same check, run against a tile that HAS the old field put back, so it is
+// proved to notice rather than merely to pass.
+const r3red = await p.evaluate(() => {
+	const box = [...document.querySelectorAll('.session-box.chat-box')].find(Boolean);
+	if (!box) return null;
+	const twin = box.cloneNode(true);
+	const lab = twin.querySelector('.tile-label');
+	const inp = document.createElement('input');
+	inp.className = 'tile-label';
+	inp.readOnly = true;
+	if (lab) lab.replaceWith(inp);
+	return {
+		isButton: inp.tagName === 'BUTTON',
+		fields:   twin.querySelectorAll('input[type=text], input:not([type]), textarea').length,
+	};
+});
+red(!!r3red && (r3red.isButton === false || r3red.fields > 0),
+	'a tile with the old rename field put back fails both label checks');
 
 console.log('');
 console.log(bad.length

@@ -173,6 +173,29 @@ export async function open(opts = {}) {
 	page.on('pageerror', e => errs.push(`pageerror: ${e.message}`));
 	page.on('crash', () => errs.push('PAGE CRASHED'));
 
+	// CHATS EXPIRE ON THEIR OWN NOW, and almost every fixture in this suite
+	// seeds `updatedAt` at a date in the past — because it is testing an
+	// ordering, or a transcript, or a merge, and the stamp was only ever there
+	// to make the ordering deterministic. With the shipped three-day window
+	// those chats are all overdue, so twenty seconds into any run the app would
+	// correctly move the entire fixture to the trash and the verifier would fail
+	// on something it is not about.
+	//
+	// So the harness pins a long window for every run, into the same cached key
+	// the app reads (`daimond-policy`), before any script on the page has run. A
+	// verifier that IS about expiry sets its own figures at the moment it needs
+	// them — `DaimondPolicy.set` writes this key — so this is a default and not
+	// a gag.
+	//
+	// The retention is left at thirty days: nothing here depends on it, and a
+	// figure invented for the tests is a figure the tests would then be proving
+	// things about.
+	await page.addInitScript(() => {
+		try { localStorage.setItem('daimond-policy',
+			JSON.stringify({ v: 1, expire: 3650, retain: 30, high: 30 })); }
+		catch (e) { /* private mode: the shipped window stands */ }
+	});
+
 	if (route) await route(page);
 	await page.goto(APP, { waitUntil: 'domcontentloaded' });
 

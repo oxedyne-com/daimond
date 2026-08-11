@@ -377,9 +377,35 @@ try {
 		view.rows.map(r => r.name).join(' | '));
 	check('a device with no name of its own still shows what it says about itself',
 		view.rows.some(r => r.name === 'Safari on iOS'), view.rows.map(r => r.name).join(' | '));
-	check('and the copy says these are devices that SYNC, not devices that are paired',
-		view.notes.some(n => /sync/i.test(n) && /appears/i.test(n)),
-		view.notes.filter(n => /sync/i.test(n)).join(' | ').slice(0, 160));
+	// THE PROPERTY. This list is what has SYNCED, and the note has to say so in
+	// three parts, because every row above it carries a ✕: syncing is what puts
+	// a device here, a device that holds the account without syncing is
+	// therefore MISSING from it (so absence is not proof of no access), and
+	// taking a line off the list does not sign that device out.
+	//
+	// This was `/sync/ && /appears/` and went red when the copy said "is not
+	// listed" instead of "never appears here" -- the same claim in other words.
+	// `/sync/` alone would pass for a note that called these paired devices and
+	// left a user believing the ✕ revoked one.
+	const noteIsHonest = (n) => {
+		const bits = n.split(/(?<=[.!?:;])\s+/);
+		const neg  = /\b(not|no|never|nothing|none|cannot)\b|n[’']t\b/i;
+		const list = /\b(list|listed|listing|appears?|shown?|show|here|below|missing)\b/i;
+		return {
+			// Syncing is what puts a device on this list.
+			scope:   /sync/i.test(n),
+			// One that holds the account and has not synced is absent from it.
+			absent:  bits.some(b => /sync/i.test(b) && neg.test(b) && list.test(b)),
+			// And nothing on this list ends a device's access.
+			signout: bits.some(b => neg.test(b)
+				&& /\bsigns?[- ]?(a |the )?(device |it )?out\b|\brevokes?\b|\bcuts? off\b|\bdeauthor/i.test(b)),
+		};
+	};
+	const honest = view.notes.map(noteIsHonest)
+		.find(h => h.scope && h.absent && h.signout);
+	check('and the copy says these are devices that SYNC, that one which has not is missing, and that nothing here signs a device out',
+		!!honest,
+		view.notes.filter(n => /sync|device/i.test(n)).join(' | ').slice(0, 200));
 	// Two of a user's devices can easily describe themselves identically
 	// ("Chrome on macOS" twice), so each line carries the tail of its own id.
 	const wantSuffix = [view.self, A, B].map(x => x.slice(-4)).sort();

@@ -109,8 +109,32 @@ const said = await p.evaluate(() => ({
 }));
 check('the Forget flow no longer promises a backup alone brings the money back',
 	!/no way to get it back without a backup/i.test(said.credits), said.credits.slice(0, 90) + '…');
-check('it names the passphrase as what a backup still needs',
-	/passphrase/i.test(said.credits) && /lost/i.test(said.credits));
+// THE PROPERTY. A user standing in front of this dialog must not walk away
+// believing the file alone reaches their money: the copy has to name the
+// passphrase, say the backup does not carry it, and say that losing it costs
+// the balance for good.
+//
+// This was `/passphrase/ && /lost/`, and it went red when the copy inflected
+// "Lose" instead of "lost". An inflection is not a property. Three clauses are
+// asked for because one is not enough -- a sentence can name the passphrase and
+// still promise the backup is sufficient, which is the exact harm.
+const backupNeedsPassphrase = (s) => {
+	const bits = s.split(/(?<=[.!?])\s+/);
+	const neg  = /\b(not|no|never|nothing|only|without|alone|cannot)\b|n[’']t\b/i;
+	return {
+		names:  /passphrase/i.test(s),
+		// Somewhere it says the backup by itself does not open the account.
+		short:  bits.some(b => /backup|file|export/i.test(b) && /passphrase/i.test(b) && neg.test(b)),
+		// Somewhere it says that losing the passphrase is final, for the money.
+		final:  bits.some(b => /\b(lose|loses|losing|lost|forget|forgets|forgotten|without|gone)\b/i.test(b)
+			&& /\b(nothing|never|no way|cannot|unrecoverable|irrecoverable|for good|gone)\b/i.test(b)
+			&& /\b(balance|credits?|money|funds?|it)\b/i.test(b)),
+	};
+};
+const cred = backupNeedsPassphrase(said.credits);
+check('it names the passphrase, says the backup does not carry it, and says losing it is final',
+	cred.names && cred.short && cred.final,
+	Object.entries(cred).filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', '));
 check('and the import says plainly when it left an identity alone',
 	/left alone/i.test(said.kept) && /\{name\}/.test(said.kept) === false, said.kept.slice(0, 70) + '…');
 

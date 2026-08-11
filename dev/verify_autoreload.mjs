@@ -45,6 +45,10 @@ const panel = await p.evaluate(() => {
 	return {
 		there:   !!h && h.textContent.trim().length > 0,
 		text:    h ? h.textContent : '',
+		// The LEAD, on its own. The panel's own furniture says "card" and "budget"
+		// in its labels, so a claim tested against the whole panel is answered by
+		// the widgets and passes whether or not a sentence explains anything.
+		lead:    (h && h.querySelector('.cfg-lead') || {}).textContent || '',
 		hasCard: !!document.querySelector('.ar-card-has'),
 		noCard:  !!document.querySelector('.ar-card-none'),
 		switchDisabled: !!(document.getElementById('ar-on') || {}).disabled,
@@ -56,8 +60,46 @@ check('a fresh account is told it has no card', panel.noCard === true);
 check('and the switch cannot be turned on without one',
 	panel.switchDisabled === true,
 	panel.switchDisabled ? 'disabled, and says why' : 'ENABLED WITH NO CARD');
+// ── The panel explains itself ──────────────────────────────────────────
+//
+// A standing instruction to spend the user's money must SAY, before it is armed, the three
+// things a person would otherwise find out from a statement: that the money comes off the
+// CARD, that it happens WITHOUT THEM BEING ASKED, and that their own LIMIT bounds it.
+//
+// Those three facts are the property. The sentence carrying them is not: this check used to
+// match `charges the card below, without asking` verbatim and went red on 2026-08-11 when a
+// concision pass over 222 catalogue strings dropped two commas — the panel explained itself
+// exactly as well before and after. A check that cannot survive a comma is measuring the
+// author, not the product.
+const SAYS = {
+	'what is charged':   /\bcards?\b/i,
+	'that it is unasked': /without (being )?ask|without asking|automatic|on its own|by itself|unprompted/i,
+	'the user’s ceiling': /\b(limit|cap|ceiling|budget|no more than|up to)\b/i,
+	'that it spends':     /\bcharg|\bbuy|\bbuys\b|\bbought\b|top[- ]?up|purchas/i,
+};
+const explains = (s) => Object.entries(SAYS).filter(([, re]) => !re.test(String(s || ''))).map(([k]) => k);
+const missing = explains(panel.lead);
 check('the panel says what it will do, in words',
-	/charges the card below, without asking/i.test(panel.text));
+	panel.lead.trim().length > 0 && missing.length === 0,
+	missing.length ? 'the lead never says: ' + missing.join(', ') + ' — “' + panel.lead + '”'
+		: '“' + panel.lead.trim() + '”');
+
+// And the same check, over copy that genuinely explains nothing — read back out of the DOM
+// by the same path, so what is proved red is the whole check and not just its regexes.
+const blinded = await p.evaluate(() => {
+	const el = document.querySelector('#autoreload .cfg-lead');
+	if (!el) return null;
+	const was = el.textContent;
+	el.textContent = 'Auto-reload settings.';
+	const seen = (document.querySelector('#autoreload .cfg-lead') || {}).textContent || '';
+	el.textContent = was;
+	return { seen, restored: (document.querySelector('#autoreload .cfg-lead') || {}).textContent };
+});
+check('and it is a check that can fail — a lead that explains nothing is caught',
+	!!blinded && explains(blinded.seen).length === Object.keys(SAYS).length
+		&& blinded.restored === panel.lead,
+	blinded ? 'a bare “' + blinded.seen + '” is missing all ' + Object.keys(SAYS).length
+		: 'there was no lead paragraph to blind');
 
 await shot(s, 'autoreload');
 

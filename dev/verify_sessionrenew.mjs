@@ -272,9 +272,21 @@ try {
 		const modals = [...document.querySelectorAll('.modal')]
 			.filter(m => getComputedStyle(m).display !== 'none')
 			.map(m => (m.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60));
+		// A bland title, read back out of the same attribute by the same path, so the
+		// hover check below can be shown going red. Set and restored with no await
+		// between, so no repaint of the chip can land in the gap and nothing else in
+		// this run can see it.
+		let blinded = null;
+		if (c) {
+			const was = c.title;
+			c.title = 'Sync paused.';
+			blinded = document.getElementById('sync-chip').title;
+			c.title = was;
+		}
 		return {
 			chip:   c ? { state: c.dataset.state || '', text: (c.querySelector('.stext') || {}).textContent || '',
 				title: c.title || '', shown: c.style.display !== 'none' } : null,
+			blinded: blinded,
 			api:    window.DaimondSync.state(),
 			authed: DaimondGateway.state().authed,
 			modals: modals,
@@ -283,9 +295,34 @@ try {
 	check('a session that cannot be renewed puts a held, stalled state on the chip',
 		!!(told.chip && told.chip.shown && told.chip.state === 'stalled'),
 		JSON.stringify(told.chip));
+	// ── What the hover has to carry ────────────────────────────────────
+	//
+	// A chip that says only "Sync paused" tells a person their work has stopped and
+	// nothing else. The hover owes them two facts: WHY it stopped — this device has no
+	// session — and WHAT HAPPENS NEXT, so that they know whether to sit still or act.
+	//
+	// Those two facts are the property; the sentence is not. This matched `signed in`
+	// literally and went red on 2026-08-11 when a concision pass turned "no longer signed
+	// in to" into "signed out of" — the same two facts, better said. Each fact is now
+	// asked for in any of the ways English states it.
+	const HOVER = {
+		'that this device has no session':
+			/signed[- ]out|not signed in|no longer signed in|could not sign in|cannot sign in|signed in again/i,
+		'what happens next':
+			/resume|comes? back|carry on|carries on|will sign in|starts? again|picks? up again|as soon as/i,
+	};
+	const hoverSays = (s) => Object.entries(HOVER).filter(([, re]) => !re.test(String(s || ''))).map(([k]) => k);
+	const hoverGaps = hoverSays(told.chip && told.chip.title);
 	check('and the hover says the device is not signed in, and what happens next',
-		!!(told.chip && /signed in/i.test(told.chip.title) && /resumes/i.test(told.chip.title)),
-		(told.chip && told.chip.title || '').replace(/\n/g, ' | ').slice(0, 160));
+		!!(told.chip && told.chip.title) && hoverGaps.length === 0,
+		hoverGaps.length ? 'the hover never says: ' + hoverGaps.join('; ') + ' — '
+				+ (told.chip && told.chip.title || '').replace(/\n/g, ' | ').slice(0, 160)
+			: (told.chip && told.chip.title || '').replace(/\n/g, ' | ').slice(0, 160));
+	check('and that is a check that can fail — a hover saying only “paused” is caught',
+		told.blinded !== null && hoverSays(told.blinded).length === Object.keys(HOVER).length
+			&& told.chip.title !== told.blinded,
+		told.blinded === null ? 'there was no chip to blind'
+			: '“' + told.blinded + '” is missing both facts');
 	check('the engine reports it through its own surface, named',
 		!!(told.api && told.api.stalled === true && told.api.stalledWhy === 'signed_out'
 			&& told.api.sessionGone === true),

@@ -1424,10 +1424,35 @@ span.arte-open { cursor: default; }
 .web .chead-right .pptw { padding-right: 8px; border-right: 1px solid var(--border); }
 
 /* ── Chat tiles: pending (pick model → Start) + active (meter + Fold) ─── */
-.tile-label { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 500; padding: 2px 5px; }
-.tile-label:hover { border-color: var(--border); }
-.tile-label:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); background: var(--bg-primary); }
+/* A chat's label is DERIVED and no longer an editable field: it is a button
+   whose only act is opening the chat. It keeps the field's metrics so the rail
+   does not reflow, and loses the field's hover border, which used to be an
+   invitation to type. `text-align: left` because a button centres by default
+   and every other line on the tile is ranged left. */
+.tile-label { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 500; padding: 2px 5px; text-align: left; overflow: hidden; }
+.tile-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .session-box.active .tile-label { color: var(--accent-text); }
+/* The identity itself: a name if one was set, otherwise the relative time. */
+.tile-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The clock beside a name that WAS set. Quieter than the name and never
+   shrinking below its own content, so a long name is what gets clipped -- the
+   time is the one thing on this row that is the same width for every tile. */
+.tile-when-sub { flex: none; font-size: var(--fs-2xs); font-weight: 400; color: var(--text-muted); }
+.session-box.active .tile-when-sub { color: inherit; opacity: 0.75; }
+/* The first thing said in the chat, dimmed, on its own line. ONE line, clipped
+   with an ellipsis: two would double the height of every tile in the rail, and
+   the whole line is on the `title` for anyone who wants it. */
+.tile-preview { margin-top: 3px; font-size: var(--fs-2xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-box.active .tile-preview { color: inherit; opacity: 0.7; }
+/* The day heading above a run of tiles. Furniture, not a control: it is the
+   coarse half of a chat's identity, so it is set small and quiet and the tile
+   underneath carries the part that varies. */
+.rail-day { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 8px 2px 3px; }
+.rail-day:first-child { padding-top: 2px; }
+/* The rename field, in the cog dialog and nowhere else. */
+.tile-dlg-name { padding: 0 2px 4px; }
+.tile-dlg-name-input { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 6px 8px; }
+.tile-dlg-name-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .session-box.pending { border-style: dashed; }
 
 .tile-pending { display: flex; gap: 6px; margin-top: 7px; }
@@ -1459,7 +1484,12 @@ span.arte-open { cursor: default; }
 .tile-active { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
 .tile-active-top { display: flex; align-items: center; gap: 6px; }
 .tile-model-chip { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-.tile-active-top .tile-fold { margin-left: auto; }
+/* Fold and Keep are pushed to the far end together, so the model chip keeps the
+   near edge and the two acts sit as a pair. It was `.tile-fold` alone that
+   carried the margin; with a second button beside it the rule has to be about
+   whichever comes first, or Keep would be shoved away from Fold. */
+.tile-active-top .tile-fold, .tile-active-top .tile-keep:first-of-type { margin-left: auto; }
+.tile-active-top .tile-fold ~ .tile-keep { margin-left: 0; }
 .tile-meter { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .tile-ctx { display: flex; align-items: center; gap: 4px; }
 /* `position: relative` so the fold mark can be placed along it, and the overflow
@@ -1479,6 +1509,11 @@ span.arte-open { cursor: default; }
 .tile-cost { color: var(--text-secondary); white-space: nowrap; }
 .tile-fold { background: none; border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: var(--fs-2xs); padding: 2px 9px; white-space: nowrap; }
 .tile-fold:hover { border-color: var(--accent); color: var(--accent-text); }
+/* Keep as a Diamond. It wears the SAME shape as Fold because they sit side by
+   side and a louder one would read as the recommended act -- which it is not;
+   they answer different questions. What separates them is the word. */
+.tile-keep { background: none; border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: var(--fs-2xs); padding: 2px 9px; white-space: nowrap; }
+.tile-keep:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* Fold-into picker (a small anchored menu of Diamonds). */
 .fold-menu { position: fixed; z-index: 1200; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px; min-width: 180px; max-width: 260px; display: flex; flex-direction: column; gap: 2px; }
@@ -1697,7 +1732,14 @@ span.arte-open { cursor: default; }
    question looks like part of Daimond rather than an OS box quoting the
    origin over a dark UI. */
 .dlg-card { width: 420px; }
-.dlg-msg { font-size: var(--fs-base); color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
+/* `pre-wrap` and `anywhere` are both about the consent dialogs, which QUOTE the
+   thing being authorised inside the sentence asking about it. The quote is no
+   longer shortened, so two things have to hold however long it is: the blank
+   lines the string was written with must survive, or the quote runs into the
+   sentence and its edges cannot be seen; and an unbroken run -- a token, a card
+   number, a base64 blob -- must wrap rather than overflow a 420px card and hide
+   exactly the part worth reading. */
+.dlg-msg { font-size: var(--fs-base); color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dlg-input { width: 100%; margin-bottom: 4px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
 .dlg-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 /* A models pulldown in a dialog: the same box as the text fields beside it, so the

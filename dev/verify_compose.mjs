@@ -103,11 +103,29 @@ const draftPath = await p.$eval('#compose-note', e => e.textContent.replace('Sav
 check('a draft is a file in the workspace', /^mail\/.*\/drafts\/.*\.eml$/.test(draftPath), draftPath);
 
 // ── Send it. The confirm is the last thing between a person and an irreversible act.
+//
+// The stand-in provider APPENDS NOTHING and TRUNCATES NOTHING: it writes SENT once per
+// message it accepts, and leaves the file there afterwards. So a run that sends nothing at
+// all still finds the file — the one the run before it left — and every claim below about
+// "what went on the wire" is then made about somebody else's message. That is exactly what
+// happened on the 2026-08-11 gate: thirteen checks passed green against a file eleven hours
+// old while the send under test never left the browser. Remove it first, so the only way to
+// read one is for THIS run to have put it there.
+try { fs.unlinkSync(SENT); } catch (e) { /* nothing sent here before, which is the state wanted */ }
+
 await p.click('#compose-send');
 await p.waitForSelector('.dlg-card', { timeout: 5000 });
 const confirmText = await p.$eval('.dlg-card', e => e.textContent);
 check('sending asks first', /cannot be recalled/i.test(confirmText));
-await p.click('.dlg-card button.danger, .dlg-card .dlg-ok, .dlg-card button:not(.dlg-cancel)');
+// The DECISION, named — not "a button that is not Cancel".
+//
+// Every dialog gained a corner cross on 2026-08-11 (`DaimondCloser.head`), which is a
+// `<button>` inside `.dlg-card` and stands EARLIER in the document than the foot. A CSS
+// selector list matches in document order, not in the order it is written, so
+// `button:not(.dlg-cancel)` began resolving to the cross: the run pressed Close, sent
+// nothing, and the failure surfaced two checks later as "the draft was not cleared".
+// `.dlg-actions .dlg-ok` is the foot's affirmative and nothing else can be.
+await p.click('.dlg-card .dlg-actions .dlg-ok');
 await p.waitForTimeout(3000);
 
 // ── What actually went on the wire.
@@ -170,10 +188,17 @@ await p.evaluate(async () => {
 });
 await p.evaluate(() => window.DaimondMail.onOpen());
 await p.waitForSelector('.mail-draft', { timeout: 10000 });
-const drafted = await p.$eval('.mail-draft', e => e.textContent);
-check('a draft the agent wrote is offered to the user', /daimon wrote/.test(drafted), drafted);
+// The AGENT'S draft, found by what it says — not "the first row in the list". The rows are
+// ordered by date and an agent's draft carries no Date header, so it sorts last; taking
+// `.mail-draft` unqualified read whichever draft happened to be on top and asserted the
+// agent's words about it. All draft rows are listed, so a missing one is still a failure
+// here — it just fails saying which one is missing.
+const draftRows = await p.$$eval('.mail-draft', els => els.map(e => e.textContent));
+const drafted = draftRows.find(x => /daimon wrote/.test(x)) || '';
+check('a draft the agent wrote is offered to the user', !!drafted,
+	drafted || 'the drafts on offer were: ' + (draftRows.join(' | ') || 'none'));
 
-await p.click('.mail-draft');
+await p.click('.mail-draft:has-text("daimon wrote")');
 await p.waitForSelector('#panel-compose', { state: 'visible', timeout: 5000 });
 const reopened = await p.evaluate(() => ({
 	to:   document.getElementById('compose-to').value,

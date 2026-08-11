@@ -212,7 +212,7 @@ await shot(s, 'queue-stopped');
 const tiles = () => p.evaluate(() => [...document.querySelectorAll('#session-list .session-box')]
 	.map(b => ({
 		id:    b.dataset.id,
-		name:  (b.querySelector('.tile-label') || {}).value || '',
+		name:  ((b.querySelector('.tile-when') || {}).textContent || '').trim(),
 		badge: (b.querySelector('.queue-badge') || {}).textContent || '',
 	})));
 /// Start a second chat: the + makes a PENDING tile, and Start makes it a chat.

@@ -86,6 +86,7 @@
 	var landed  = false;	// the active non-English table has arrived
 	var revMap  = null;     // the table in force, value -> every key that produces it
 	var revFor  = null;     // which locale revMap was built from
+	var origin  = Object.create(null);   // string -> the key `t` last produced it from, this locale
 
 	var curLocale = null;   // the chosen locale, or null while nothing is chosen
 	var curCcy    = null;   // the chosen currency, or null for US dollars
@@ -156,7 +157,13 @@
 			}
 			return key;
 		}
-		return vars ? interp(s, vars) : s;
+		if (vars) return interp(s, vars);
+		// Which key these words came from, so `mark` is told rather than left to
+		// guess. Only the table's own string is recorded: one with a `{n}` filled
+		// in is not a string the table produces, and marking it would repaint the
+		// placeholder back over the number.
+		origin[s] = key;
+		return s;
 	}
 
 	/// Plural form: looks up `<key>.one` or `<key>.other`, with `{n}` bound to
@@ -483,7 +490,16 @@
 		else node.setAttribute(attr, text);
 		var slot = MARKS[attr];
 		if (!slot) return text;
-		var key = reverse()[text];
+		// What PRODUCED these words, in preference to what could have. `origin`
+		// names the one key `t` last answered with, so a caller handing over a
+		// string it has just resolved is marked exactly; `reverse` is the fallback
+		// for a string that reached here some other way, and it names every key
+		// that could have made it -- which `pick` then refuses to choose between
+		// when they have parted in the language being switched to. Ja `保存` is
+		// `common.save`, `push.save`, `graph.save` AND `files.download`, and Korean
+		// parts the last from the other three: guessed, the Save button stayed
+		// Japanese; told, it repaints.
+		var key = origin[text] || reverse()[text];
 		if (key) node.setAttribute(slot, key);
 		else node.removeAttribute(slot);   // a stale mark would repaint over the new text
 		return text;
@@ -527,6 +543,7 @@
 		// switch tells them.
 		if (code === locale() && code !== 'en') {
 			landed = true;
+			origin = Object.create(null);   // the strings recorded came from the table just replaced
 			apply();
 			fire();
 		}
@@ -608,6 +625,7 @@
 		if (!supported(code)) code = 'en';
 		return load(code).then(function (ok) {
 			curLocale = ok ? code : 'en';
+			origin = Object.create(null);   // every string recorded belongs to the language just left
 			try { localStorage.setItem(LS_LOCALE, curLocale); } catch (e) {}
 			document.documentElement.lang = curLocale;
 			apply();

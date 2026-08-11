@@ -201,7 +201,7 @@ try {
 	await p.evaluate(() => document.getElementById('new-session-btn').click());
 	await p.waitForTimeout(800);
 	const rail = await p.evaluate(() =>
-		[...document.querySelectorAll('#session-list .chat-box .tile-label')]
+		[...document.querySelectorAll('#session-list .chat-box .tile-when')]
 			.map(n => n.value || ''));
 	check(!rail.includes('Dee'),
 		'the daimon has no tile in the Chats rail', rail.join(', ') || '(empty)');

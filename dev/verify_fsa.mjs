@@ -427,9 +427,39 @@ await zero();
 await clickChip('Machine|' + FOLDER);
 await p.waitForTimeout(700);
 const blocked = { mode: await mode(), msg: await msg() };
-check('a root swap is refused while an agent is working, and says why',
-	blocked.mode === 'opfs' && /agent is working/i.test(blocked.msg),
-	`mode: ${blocked.mode} · "${blocked.msg}"`);
+// THE PROPERTY. Two halves, and the first is the one that matters: with an
+// agent mid-turn the root DID NOT MOVE (`rootSwitchBlocked`, daimond.js, is
+// what every entry to a swap goes through, including the chip's reconnect
+// path). An agent resolves every path against one root, so a swap under it
+// writes the user's work into a folder nobody told it about. The guard returns
+// before the picker is ever raised, so nothing about the root is touched.
+//
+// The second half is that the person is told WHY it refused, which means the
+// message has to blame the running agent -- name it, hold the change off on
+// account of it, and say what is being held off. `/agent/` alone would pass for
+// "an agent did something, carry on"; dropping the message clause entirely
+// would pass for a silent refusal, which is what this used to be and is how it
+// reads as a broken chip.
+//
+// This was `/agent is working/`, which the copy stopped saying in those words
+// while saying the same thing: "Wait for the agent to finish before changing
+// where it works."
+const refusalBlamesTheAgent = (m) => ({
+	// The agent is named as the reason...
+	agent: /\bagent\b/i.test(m),
+	// ...the change is held off rather than reported as done...
+	held:  /\b(wait|not|never|cannot|can[’']t|won[’']t|refus\w*|block\w*|busy|until|while|before|first|try again)\b/i.test(m),
+	// ...and what is held off is where the agent works.
+	root:  /\b(where it works|where the agent works|workspace|folder|root|mov(e|ing)|chang(e|ing)|switch(ing)?)\b/i.test(m),
+	// ...and it is not a success notice wearing a warning's clothes.
+	notDone: !/\b(is now|now in|now at|switched to|moved to|changed to|has changed|done)\b/i.test(m),
+});
+const why = refusalBlamesTheAgent(blocked.msg);
+check('a root swap is refused while an agent is working, and blames the agent for the refusal',
+	blocked.mode === 'opfs' && why.agent && why.held && why.root && why.notDone,
+	`mode: ${blocked.mode} · "${blocked.msg}"`
+		+ (Object.values(why).every(Boolean) ? '' : ' · ' + Object.entries(why)
+			.filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', ')));
 await p.evaluate(() => { DaimondCore.busy = window.__busyWas; });
 
 // And the way out. Remembering the folder across a switch removes the only thing that used to

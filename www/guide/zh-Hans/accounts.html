@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
-			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">使用指南</span>
 		</a>
 		<nav class="site-nav" aria-label="指南页面">
@@ -58,8 +58,8 @@
 		<li><span class="ui">改名…</span> —— 给这个身份改个名字。</li>
 		<li><span class="ui">更改密码短语…</span> —— 换一句新的；你加密的数据会用它重新封一遍。</li>
 		<li><span class="ui">添加通行密钥…</span> —— 一张脸、一枚指纹或一把安全密钥，用来更快地解锁。</li>
-		<li><span class="ui">导出备份</span> —— 把你的对话、Diamond 和工作区文件写成一个由你保管的文件。它恢复的是你的工作，不是你的账户：你的密钥不在里面。</li>
-		<li><span class="ui">导入备份…</span> —— 把导出的身份带进这个浏览器。</li>
+		<li><span class="ui">导出备份</span> —— 把你的对话、Diamond、工作区文件，以及你账户的密钥写成一个由你保管的文件。密钥是封着进去的，和这个浏览器里存着的样子一模一样，所以这个文件不比浏览器更弱，除了你的密码短语，什么也打不开它。</li>
+		<li><span class="ui">导入备份…</span> —— 把那个文件带回这里。如果这个浏览器还没有自己的账户，备份里的账户就会被接下来，你用那个账户的密码短语解开它；如果这里已经有一个账户，备份里的那个就不动，回来的只有工作。</li>
 		<li><span class="ui">退出登录</span> —— 锁上应用。你的数据仍留在设备上，加密着，直到再次输入密码短语。</li>
 		<li><span class="ui">忘掉这个身份…</span> —— 把这个身份和它加密的数据从这个浏览器里彻底移除。</li>
 	</ul>
@@ -70,13 +70,13 @@
 	<ul>
 		<li><strong>临时离开。</strong> 选择 <span class="ui">退出登录</span> 就能把应用锁上。你的聊天、密钥和文件仍留在设备上，没有你的密码短语就读不出来。</li>
 		<li><strong>回来时。</strong> 输入你的密码短语来解锁。每一次重新加载都会重新锁上应用，硬刷新和重开浏览器也算，因为它派生出的那把密钥只放在内存里，从不写到磁盘：你的东西一样都不会丢，而在输入之前什么也打不开。一个通行密钥，或者一个存着密码短语的密码管理器，可以替你把它交上去。</li>
-		<li><strong>换别人用。</strong> <span class="ui">＋添加另一个账户</span> 在管理面板里，它会新建第二个账户；它上面那一行用来切换。切换会先锁上当前这个账户 —— 它的密钥被忘掉 —— 然后再打开另一个。</li>
+		<li><strong>换别人用。</strong> <span class="ui">＋添加另一个账户</span> 在管理面板里，它会新建第二个账户；它上面那一行用来在两个之间切换。切换会先锁上当前这个账户 —— 它的密钥被忘掉 —— 然后再打开另一个。</li>
 		<li><strong>把浏览器彻底交出去。</strong> <span class="ui">忘掉这个身份…</span> 把你的账户从这个浏览器里清掉。</li>
 	</ul>
 
 	<h2 id="s5">把账户搬到别的设备上</h2>
-	<p>你的账户是一把留在这个浏览器里的签名密钥。密码短语并不能把它重新造出来，只能解开这里已经存着的那份副本，所以在一个全新的浏览器里输入同一句密码短语，开出来的是 <em>另外的</em> 账户，有自己的余额，也没有 Pro。能把密钥带过去的只有两样，别的都不行： <span class="ui">关联另一台设备</span>，它会显示一个配对码，在新浏览器里输入；另一样是通行密钥，一个动作就能把新设备立起来。在你撤掉一个浏览器 <strong>之前</strong> 先做其中一样：它的存储一没，密钥就跟着没了。另外也做一次 <span class="ui">导出备份</span> ，为的是那些密钥不带走的对话、Diamond 和工作区文件。</p>
-	<div class="note"><strong>备份里装着你写过的一切。</strong> 没有密钥 —— 导入它并不会让谁变成你 —— 但每一段对话、每一个 Diamond、每一个工作区文件都是明文，所以请像对待工作本身那样保管它。</div>
+	<p>你的账户是一把留在这个浏览器里的签名密钥。密码短语并不能把它重新造出来，只能解开这里已经存着的那份副本，所以在一个全新的浏览器里输入同一句密码短语，开出来的是 <em>另外的</em> 账户，有自己的余额，也没有 Pro。密钥本身必须跟着走，而能把它带过去的有三样： <span class="ui">关联另一台设备</span>，它会显示一个配对码，在新浏览器里输入；第二样是通行密钥，一个动作就能把新设备立起来；第三样是 <span class="ui">导出备份</span>，它写出的文件把密钥封着带上，等着 <span class="ui">导入备份…</span> 在一台还没有账户的浏览器里把它接下来。在你撤掉一个浏览器 <strong>之前</strong> 先做其中一样：它的存储一没，又没做过备份，密钥就跟着没了，余额和 Pro 授权也跟着没了，别的东西都开不出来。</p>
+	<div class="note"><strong>备份里装着明文的工作，还有一把封在你密码短语下的密钥。</strong> 每一段对话、每一个 Diamond、每一个工作区文件都是明文，所以请像对待工作本身那样保管它。旁边那把密钥是封着的，所以光有这个文件并不会让谁变成你 —— 但同时拿到文件和密码短语的人就拿到了这个账户，所以这两样绝不该一起上路。</div>
 
 	<h2 id="s6">哪些东西留在本地</h2>
 	<p>你的密码短语、提供商密钥、邮箱凭据、聊天、Diamonds 和文件都在这个浏览器里，不会发给我们。我们在网关上持有的是钱和密文：你的额度余额与授权，以及为了跨设备同步而存的一个我们打不开的加密包裹。我们没有钥匙，所以读不了你的东西。</p>

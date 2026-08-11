@@ -732,6 +732,9 @@
 	'permmode.run_title': 'Exécuter cette commande ?',
 	'permmode.run_body': 'Daimond veut exécuter une commande sur votre machine.\n\n{cmd}\n\ndans {cwd}\n\nLe mode « demander à chaque fois » vous soumet chaque commande d’abord.',
 	'permmode.run_ok': 'L’exécuter',
+	'permmode.act_worker_title': 'Un agent veut agir sur une page',
+	'permmode.act_worker_body': 'Un agent qui travaille de lui-même veut cliquer sur quelque chose sur {host}. Vous ne le pilotez pas et il ne peut pas vous demander lui-même : c’est donc Daimond qui demande. Un clic peut dépenser votre argent, envoyer un message ou valider un formulaire, et rien de tout cela ne peut être annulé. Dire oui autorise ce seul clic et rien après lui.',
+	'permmode.type_worker_body': 'Un agent qui travaille de lui-même veut saisir ceci dans {host} et l’envoyer :\n\n{text}\n\nVous ne le pilotez pas et il ne peut pas vous demander lui-même : c’est donc Daimond qui demande. Un texte envoyé à un site ne peut plus être retiré. Dire oui autorise ce seul acte et rien après lui.',
 	'pal.kind_permmode': 'Permissions',
 	'chat.compacted': 'Conversation repliée',
 	'chat.compacted_help': 'Daimond a remplacé la partie ancienne par un résumé, pour que la conversation tienne dans la fenêtre de contexte du modèle.',
@@ -1095,6 +1098,8 @@
 	'tile.settings': 'Réglages de cette tuile',
 	'tile.settings_named': 'Réglages de « {name} »',
 	'tile.close_named': 'Fermer « {name} »',
+	'tile.dlg_name': 'Nom',
+	'tile.dlg_name_hint': 'Sans nom : la barre latérale affiche l’heure',
 	'tile.dlg_running': 'En marche',
 	'tile.dlg_detail': 'Détail',
 	'tile.spend_help': 'Ce que ce Diamond a coûté, sur {turns} tours.',
@@ -1162,6 +1167,29 @@
 	'rail.create_failed': 'Impossible de créer le Diamond',
 	'rail.created_unreadable': 'Diamond créé, mais illisible',
 	'rail.created_unreadable_body': '« {name} » a été écrit mais n’a pas pu être relu : il n’est donc pas dans la barre latérale. Rechargez la page. S’il manque toujours, le stockage de cet appareil refuse de rendre ce qu’il a accepté.',
+
+	// ── Quand un chat a eu lieu, et le garder ──────────────────
+	'rail.day_today': 'Aujourd’hui',
+	'rail.day_yesterday': 'Hier',
+	'rail.day_earlier': 'Avant',
+	'rail.when_now': 'à l’instant',
+	'rail.when_min': 'il y a {n} min',
+	'rail.when_hr': 'il y a {n} h',
+	'rail.a_chat': 'un chat',
+	// Entre parenthèses : {when} vaut aussi bien « il y a 5 min » qu’une heure
+	// ou une date, et aucune préposition ne convient aux trois.
+	'rail.chat_from': 'le chat ({when})',
+	'rail.show_preview': 'Afficher le premier message',
+	'rail.show_preview_help': 'Affiche sous l’heure la première chose que vous avez dite dans chaque chat. Désactivé, la barre latérale n’indique plus que le moment.',
+	'tile.keep': 'Garder',
+	'tile.keep_help': 'Fait de ce chat un Diamond, avec toute la conversation comme premier artefact.',
+	'keep.title': 'Garder comme Diamond',
+	'keep.body': 'Donnez-lui un nom, et cette conversation y est conservée en entier. Les chats expirent ; les Diamonds, non.',
+	'keep.ok': 'Le garder',
+	'keep.gone': 'Ce chat n’est plus là',
+	'keep.gone_body': 'Il a été détruit sur cet appareil ou sur un autre. Rien n’a été créé.',
+	'keep.made': '{name} est gardé, avec la conversation à l’intérieur.',
+	'keep.made_bare': '{name} est créé, mais la conversation n’a pas pu y être écrite.',
 
 	// ── Le PPTW : pause, lecture, feu tricolore ────────────────
 	'pause.everything':      'Tout',
@@ -1430,6 +1458,12 @@
 	'agents.no_diamond': 'sans Diamond',
 	'agents.no_diamond_help': 'Cette exécution n’a pas de Diamond',
 	'agents.only_from': 'N’afficher que les agents de « {name} »',
+	'agents.from_chat': 'un chat',
+	'agents.from_chat_help': 'Envoyé depuis le chat « {name} ».',
+	'agents.no_diamond_fold': 'Cet agent a été envoyé depuis un chat : il n’y a donc pas de cristal où le replier. Son compte rendu est dans cette conversation, et son texte complet est sous « Lire ».',
+	'agents.report_one': 'Un agent que vous avez envoyé a terminé.',
+	'agents.report_n': '{n} agents que vous avez envoyés ont terminé.',
+	'agents.no_task': 'Un agent a été demandé sans tâche : rien n’a donc été lancé.',
 	'instructions.chip_help': 'Vos instructions permanentes, données à chaque agent. Cliquez pour les ouvrir.',
 
 	// ── What each kind of agent is told ────────────────────────
@@ -1939,9 +1973,13 @@
 	'trash.holding.other': '{n} éléments, {bytes}',
 	'trash.until': 'Jusqu’au {date}',
 	'trash.deleted_why': 'Supprimé — il n’est plus qu’ici.',
+	'trash.expired_why': 'Son temps est écoulé. Il n’est plus qu’ici.',
 	'trash.kind_chat': 'chat',
 	'trash.kind_diamond': 'diamond',
 	'trash.unnamed_chat': 'Chat sans nom',
+	'trash.keep': 'Garder',
+	'trash.keep_help': 'Fait de ce chat un Diamond, avec toute la conversation comme premier artefact.',
+	'trash.keep_named': 'Garder {name} comme Diamond',
 	'trash.restore': 'Restaurer',
 	'trash.restore_named': 'Restaurer « {name} »',
 	'trash.restore_all': 'Tout restaurer',
@@ -1956,5 +1994,7 @@
 	'trash.moved': '« {name} » est dans la corbeille.',
 	'trash.moved_n.one': '{n} élément est dans la corbeille.',
 	'trash.moved_n.other': '{n} éléments sont dans la corbeille.',
+	'trash.swept.one': 'Un élément était dans la corbeille depuis {days} jours et a été détruit.',
+	'trash.swept.other': '{n} éléments étaient dans la corbeille depuis {days} jours et ont été détruits.',
 	});
 })();

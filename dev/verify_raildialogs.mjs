@@ -15,7 +15,9 @@
 // completeness:
 //
 //   [escapes]   an element whose box leaves the card it is in
-//   [clipped]   an element whose content is wider or taller than its own box
+//   [clipped]   an element whose content is wider or taller than its own box,
+//               with nothing on screen admitting it — a sideways cut that ends
+//               in an ellipsis is the app saying so, and is not counted
 //   [wrapped]   a flex ROW whose children landed on more than one line —
 //               which is what "the refresh button dropped below the title"
 //               looks like from the outside, and what geometry alone can see
@@ -106,10 +108,25 @@ const MEASURE = function (rootSel) {
 			out.push({ kind: 'escapes', by: Math.round(over), el: name(el), rect: at(r), weight: 3 });
 		}
 		// [clipped] — its own content does not fit, and it is not a scroller.
+		//
+		// SIDEWAYS, AN ELLIPSIS IS NOT A DEFECT. A one-line box with
+		// `text-overflow: ellipsis` is the app admitting the cut, and the reader
+		// sees the "…" and knows to open the thing — the trigger gist in the
+		// Diamond tile dialog is drawn that way on purpose, and this flagged it
+		// as always-wrong at the one skin where the words happen to be too long.
+		// dev/verify_sweep_desktop.mjs has always drawn the line here ("an
+		// admitted cut"), and two sweeps disagreeing about what clipping means
+		// is how one of them gets ignored.
+		//
+		// Downwards it still counts: `text-overflow` says nothing about a box
+		// too short for its own lines, so text running out of the bottom of a
+		// card leaves no sign at all. That is the case this was written for and
+		// it is untouched. The probe at the foot of this file plants both.
 		const cs = getComputedStyle(el);
 		const scrolls = /auto|scroll/.test(cs.overflow + cs.overflowX + cs.overflowY);
 		if (!scrolls) {
-			const dx = el.scrollWidth - el.clientWidth, dy = el.scrollHeight - el.clientHeight;
+			const dx = cs.textOverflow === 'ellipsis' ? 0 : el.scrollWidth - el.clientWidth;
+			const dy = el.scrollHeight - el.clientHeight;
 			if (el.clientWidth > 0 && (dx > 2 || dy > 2)) {
 				out.push({ kind: 'clipped', by: Math.max(dx, dy), el: name(el), rect: at(r), weight: 3 });
 			}
@@ -423,6 +440,47 @@ try {
 				if (f.kind === 'escapes' || f.kind === 'clipped' || f.kind === 'overlap') hard++; else soft++;
 			}
 		}
+	}
+
+	// ── The clipped rule, shown catching and shown letting go ───────────
+	//
+	// A sweep that reports nothing is not evidence that there was nothing to
+	// report, and the exemption above is the kind of edit that quietly turns a
+	// check off. So both halves are planted in the live page and MEASURE — the
+	// same function, not a copy of its rule — is run over them: a cut with an
+	// ellipsis must be let through, a cut without one must be caught, and text
+	// running out of the bottom of a box must be caught whatever its
+	// `text-overflow` says, because that is the one nothing on screen admits to.
+	{
+		await page.evaluate(() => {
+			const box = document.createElement('div');
+			box.id = 'raildlg-probe';
+			box.style.cssText = 'position:fixed; left:20px; top:20px; width:300px; '
+				+ 'z-index:99999; background:#fff;';
+			box.innerHTML = `
+				<div id="probe-ellipsis" style="width:60px; overflow:hidden; white-space:nowrap;
+					text-overflow:ellipsis;">a line far longer than sixty pixels of room</div>
+				<div id="probe-clip" style="width:60px; overflow:hidden; white-space:nowrap;
+					text-overflow:clip;">a line far longer than sixty pixels of room</div>
+				<div id="probe-short" style="width:200px; height:16px; overflow:hidden;
+					text-overflow:ellipsis;">three lines of words in a box with room for one of
+					them, and nothing on screen to say the other two are there</div>`;
+			document.body.appendChild(box);
+		});
+		const m = await page.evaluate(MEASURE, '#raildlg-probe');
+		const flagged = (id) => m.defects.some((f) => f.kind === 'clipped' && f.el.indexOf('#' + id) !== -1);
+		const proofs = [
+			['a cut with an ellipsis is let through',           !flagged('probe-ellipsis')],
+			['a cut with no ellipsis is caught',                 flagged('probe-clip')],
+			['lines with no room and no sign of it are caught',  flagged('probe-short')],
+		];
+		for (const [what, good] of proofs) {
+			console.log(`  ${good ? 'ok  ' : 'FAIL'}  [proof] ${what}`);
+			if (!good) hard++;
+		}
+		await page.evaluate(() => {
+			const e = document.getElementById('raildlg-probe'); if (e) e.remove();
+		});
 	}
 } finally {
 	await s.close();

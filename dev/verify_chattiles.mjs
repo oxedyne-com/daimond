@@ -75,7 +75,7 @@ const BREAKS = {
 	// The × never gets onto the tile at all.
 	nocross: [{
 		file: 'js/daimond.js',
-		find: '\t\theader.appendChild(tileCloser(s.name, function () { deleteChat(s); }));',
+		find: '\t\theader.appendChild(tileCloser(chatDisplayName(s), function () { deleteChat(s); }));',
 		with: '',
 	}],
 	// The × is there and the tile goes, but the chat is DESTROYED rather than
@@ -98,7 +98,7 @@ const BREAKS = {
 	// the check that says it is gone.
 	bulkasks: [{
 		file: 'js/daimond.js',
-		find: '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(c.name); });',
+		find: '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });',
 		with: '\t\tconfirmDialog(\'Delete all \' + n + \' chats?\', \'Delete\').then(function (ok) {\n'
 			+ '\t\t\tif (!ok) return;\n'
 			+ '\t\t\tloose.forEach(function (c) { removeChat(c); });\n'
@@ -194,10 +194,19 @@ async function seedChats(page, records) {
 	}), records);
 }
 
-/// The tile names as drawn, top to bottom. The label lives in an `<input>`
-/// (double-click to rename), so it is read by VALUE, not textContent.
-const tileNames = (page) => page.$$eval('#session-list .session-box .tile-label',
-	(els) => els.map((e) => e.value));
+/// The tile names as drawn, top to bottom.
+///
+/// Read from `.tile-when`, which is the span carrying a chat's IDENTITY: the
+/// user's own name where one was set, and the derived relative time where none
+/// was. Every chat in this file's fixture is given a name, so here it is always
+/// the name — and reading the whole `.tile-label` instead would pick up the
+/// clock that now sits beside a named chat as well.
+///
+/// It was `.value` off an `<input>` until the rename gesture left the tile: the
+/// label is a button now, and a button has no value, so this read silently
+/// returned eleven empty strings and failed four checks that were all correct.
+const tileNames = (page) => page.$$eval('#session-list .session-box .tile-when',
+	(els) => els.map((e) => (e.textContent || '').trim()));
 
 /// The one visible confirm dialog's message, or null if none is open.
 const openDialogMsg = (page) => page.evaluate(() => {

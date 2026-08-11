@@ -36,11 +36,16 @@ async function withDialog(action, answer, arg) {
 			clicked.asked = true; clicked.title = seen.title; clicked.body = seen.body;
 			await page.evaluate((yes) => {
 				const d = document.querySelector('.dlg, dialog[open], .modal-dialog');
-				const btns = Array.from(d.querySelectorAll('button'));
-				// The confirming button is the one that is not Cancel.
-				const cancel = btns.find(b => /cancel|no\b/i.test(b.textContent));
-				const okBtn  = btns.find(b => b !== cancel);
-				(yes ? okBtn : (cancel || okBtn)).click();
+				// BY CLASS, not by reading the button text. Every dialog carries a `×`
+				// closer in its heading row as well as its two answers, and that closer
+				// comes FIRST in DOM order -- so "the first button that is not Cancel"
+				// picks the closer, which dismisses. That is why this file reported a
+				// refusal for an approval it had just given.
+				const okBtn   = d.querySelector('.dlg-ok');
+				const cancelB = d.querySelector('.dlg-cancel');
+				const pick = yes ? okBtn : (cancelB || okBtn);
+				if (!pick) throw new Error('the dialog has no button to answer with');
+				pick.click();
 			}, answer);
 			break;
 		}

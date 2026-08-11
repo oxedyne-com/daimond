@@ -274,6 +274,85 @@ impl DaimondApp {
         self.registry.ctx.set_tainted();
     }
 
+    /// Mark this agent as acting ALONE: a dispatched worker, with nobody reading its transcript
+    /// and no way to put a question.
+    ///
+    /// Called on every worker, from a chat and from a Diamond alike, and on nothing else.
+    ///
+    /// It is not a fence and does not pretend to be.  The fence is a list of paths; what this
+    /// governs is the two things the fence has no vocabulary for -- pressing a button on a page
+    /// the user is signed into, and reaching the network from inside a command.  Both are named in
+    /// [`crate::prompts::SAFETY_CLAUSE`], which every worker is told and no worker can obey,
+    /// because the same prompt tells it that it cannot ask questions.  So the app asks instead.
+    ///
+    /// One-way, like [`DaimondApp::set_tainted`], and for the same reason: an agent does not
+    /// acquire a supervisor part way through.
+    pub fn set_unsupervised(&self) {
+        self.registry.ctx.set_unsupervised();
+    }
+
+    /// Whether this agent is acting alone, so a caller can prove the mark went on rather than
+    /// assume it.
+    ///
+    /// The same discipline the scope is read back with: everything that can go wrong when a
+    /// security mark is set from JavaScript is silent, and every silent failure is in the
+    /// direction of less asking.
+    pub fn is_unsupervised(&self) -> bool {
+        self.registry.ctx.is_unsupervised()
+    }
+
+    /// Offer this agent the dispatch tool, so the user's own chat can send workers out.
+    ///
+    /// NOT in [`crate::tools::Tool::browser`], which is the list a worker is built from too: a
+    /// worker that could dispatch workers is a fan-out with no bottom.  So the capability is added
+    /// after construction, by the one caller that builds a chat, and a worker never calls this.
+    ///
+    /// Idempotent, and one-way.  There is no taking it away: a capability that can be removed is
+    /// one a caller can be persuaded to remove.
+    pub fn allow_dispatch(&mut self) {
+        if !self.registry.tools.contains(&Tool::SpawnAgent) {
+            self.registry.tools.push(Tool::SpawnAgent);
+        }
+    }
+
+    /// Whether this agent holds the dispatch tool.
+    pub fn can_dispatch(&self) -> bool {
+        self.registry.tools.contains(&Tool::SpawnAgent)
+    }
+
+    /// Confine a chat's dispatched worker: read anywhere, write in named places, run only on the
+    /// machine paths among them.
+    ///
+    /// The chat's answer to [`DaimondApp::set_diamond_scope`], and the asymmetry between them is
+    /// the design rather than an oversight.  A Diamond confines both verbs, because a daimon may
+    /// see only what its Diamond holds.  A chat is the user's own conversation over their whole
+    /// workspace: *"summarise these ten files"* must not require attaching ten files first, and a
+    /// worker reading what the chat could already read is equal reach, not greater -- a person
+    /// asked the question either way.  What an unattended worker must not do is ALTER something
+    /// nobody put in front of it.
+    ///
+    /// So: reading is free, writing is an allow-list, and a command -- which cannot be inspected
+    /// for whether it writes -- is treated as a write and runs only where the user attached
+    /// something on this machine.  A chat with nothing attached has a worker that can read and
+    /// think and write its own notes, and cannot run anything at all.
+    ///
+    /// `scratch` is the chat's own working folder under [`crate::tools::CHAT_ROOT`], which is
+    /// browser storage and therefore never a path on the user's disk.  `attached` is a JSON array
+    /// of what the user put in this chat's scope with the paperclip.  Malformed input yields an
+    /// empty list rather than an error, and an empty list still leaves the scratch: a scope that
+    /// failed open would be the one bug in here that matters.
+    ///
+    /// COMPOSED and never assigned, exactly as [`DaimondApp::set_diamond_scope`] is: a second
+    /// caller must not be able to widen what a first one set.
+    ///
+    /// # Arguments
+    /// * `scratch` - The chat's own working directory, workspace-relative.
+    /// * `attached` - JSON array of paths the user put in this chat's scope.
+    pub fn set_chat_scope(&mut self, scratch: String, attached: String) {
+        let bounds = crate::tools::chat_bounds(&scratch, &parse_path_array(&attached));
+        self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
+    }
+
     /// Confine this agent to a Diamond's workspace.
     ///
     /// Called on a dispatched WORKER, which is where the reach actually is: a Diamond's daimon is
@@ -316,32 +395,7 @@ impl DaimondApp {
         read_only: String,
         toolkits:  String,
     ) {
-        let paths = |src: &str| -> Vec<String> {
-            let mut out = Vec::new();
-            // A small reader rather than a JSON dependency: the input is an array of plain strings
-            // written by our own caller, and the failure mode that matters is "read nothing", not
-            // "read something wrong".
-            let mut chars = src.chars().peekable();
-            let mut cur = String::new();
-            let mut inside = false;
-            let mut escaped = false;
-            while let Some(c) = chars.next() {
-                if escaped { cur.push(c); escaped = false; continue; }
-                match c {
-                    '\\' if inside => escaped = true,
-                    '"' => {
-                        if inside {
-                            if !cur.trim().is_empty() { out.push(cur.clone()); }
-                            cur.clear();
-                        }
-                        inside = !inside;
-                    }
-                    _ if inside => cur.push(c),
-                    _ => {}
-                }
-            }
-            out
-        };
+        let paths = parse_path_array;
         let mut bounds = crate::tools::diamond_bounds(
             &own_dir, &paths(&attached), &paths(&read_only));
         // Appended, never merged in earlier: a toolkit widens what a COMMAND may touch and nothing
@@ -397,9 +451,20 @@ impl DaimondApp {
                 _ => None,
             })
             .collect();
+        // The WRITE allow-list, which a chat's worker carries and a Diamond's does not. Reported
+        // beside `allow` and never merged into it: they are different fences -- one governs both
+        // verbs, the other governs writing alone -- and a caller that could not tell them apart
+        // would read a chat's freely-reading worker as a confined one.
+        let write_allow: Vec<String> = bounds.iter()
+            .filter_map(|b| match b {
+                crate::tools::Bound::OnlyWriteUnder(p) => Some(crate::tools::normalise(p)),
+                _ => None,
+            })
+            .collect();
         fmt!(
-            "{{\"allow\":{},\"no_write\":{},\"toolkits\":{},\"nowhere\":{}}}",
+            "{{\"allow\":{},\"write_allow\":{},\"no_write\":{},\"toolkits\":{},\"nowhere\":{}}}",
             quoted(allow),
+            quoted(write_allow),
             quoted(no_write),
             crate::tools::toolkit_names_json(bounds),
             bounds.iter().any(|b| matches!(b, crate::tools::Bound::Nowhere)),
@@ -1001,6 +1066,43 @@ impl DaimondApp {
         diamond::delete(&id).await.map_err(to_js_err)
     }
 
+    /// Delete a destroyed chat's own directory: everything under `chats/<id>/`.
+    ///
+    /// A chat's scope lives on its record and dies with it, but its workers' scratch is a
+    /// directory in the store, and a destroyed chat's id names nothing afterwards.  With expiry
+    /// this is the ordinary end of every abandoned conversation rather than a deliberate act, so
+    /// what is left here is left once per chat nobody came back to.
+    ///
+    /// The id is checked rather than trusted, and the root is [`FileRoot::Opfs`] rather than the
+    /// workspace: this removes a directory RECURSIVELY, so an id carrying a separator or a `..`
+    /// would delete somewhere else entirely, and a workspace root would put that somewhere on the
+    /// user's own disk.  A bad id deletes nothing and says so.
+    ///
+    /// A missing directory is success, not failure: a chat whose workers never wrote anything has
+    /// no scratch, and the caller is deleting it either way.
+    ///
+    /// # Arguments
+    /// * `id` - The chat being destroyed.
+    pub async fn remove_dir(&self, id: String) -> Result<(), JsValue> {
+        let clean = id.trim();
+        if clean.is_empty()
+            || clean.contains('/') || clean.contains('\\')
+            || clean.contains("..")
+        {
+            return Err(to_js_err(err!(
+                "'{}' is not a chat id, so nothing was deleted.", id; Invalid, Input)));
+        }
+        let path = fmt!("{}/{}", crate::tools::CHAT_ROOT, clean);
+        if !crate::wasm::opfs::exists(crate::tools::FileRoot::Opfs, &path).await
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        crate::wasm::opfs::delete_entry(crate::tools::FileRoot::Opfs, &path, true)
+            .await
+            .map_err(to_js_err)
+    }
+
     /// Read a Diamond's current crystal data, as the JSON text it is stored as.
     ///
     /// Parsing is the caller's, and so is coping with text that will not parse: this is a store,
@@ -1311,6 +1413,38 @@ impl DaimondApp {
     }
 }
 
+/// Read a JSON array of plain strings, dropping anything blank.
+///
+/// A small reader rather than a JSON dependency: the input is written by our own caller, and the
+/// failure mode that matters is "read nothing", not "read something wrong" -- an empty list still
+/// leaves a scope bounded, where a wrong one would not.
+///
+/// # Arguments
+/// * `src` - The JSON array, as the browser wrote it.
+fn parse_path_array(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = src.chars().peekable();
+    let mut cur = String::new();
+    let mut inside = false;
+    let mut escaped = false;
+    while let Some(c) = chars.next() {
+        if escaped { cur.push(c); escaped = false; continue; }
+        match c {
+            '\\' if inside => escaped = true,
+            '"' => {
+                if inside {
+                    if !cur.trim().is_empty() { out.push(cur.clone()); }
+                    cur.clear();
+                }
+                inside = !inside;
+            }
+            _ if inside => cur.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Inner helpers for the crystal and reducer turns.  Kept in a plain
 /// `impl` (not `#[wasm_bindgen]`) so they can take Rust-only types and
 /// return [`Outcome`], using the error macros throughout; the exported
@@ -1341,8 +1475,11 @@ impl DaimondApp {
         // is a paragraph it can never act on -- and it would be paid for on every request of every
         // steering turn.
         if registry.tools.contains(&Tool::Run) {
+            // `net_risk` and not the raw taint, so the folders and the network sentence the model
+            // is shown are the fence the command will actually run under. A worker told it had the
+            // network and then refused by the fence spends the turn debugging the app.
             let machine = crate::prompts::machine_briefing(
-                &registry.ctx.no_write, registry.ctx.is_tainted()).await;
+                &registry.ctx.no_write, registry.ctx.net_risk()).await;
             if !machine.is_empty() {
                 if !s.is_empty() {
                     s.push_str("\n\n");

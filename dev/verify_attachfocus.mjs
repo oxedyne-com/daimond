@@ -8,8 +8,11 @@
 //   1. The control appears on a FILE row, a FOLDER row and in the Doc header,
 //      and is absent with nothing in focus.
 //   2. With a Diamond in focus it writes a `holds` link carrying the workspace.
-//   3. With a chat in focus it writes NOTHING to the store, and the footer
-//      clears when the turn is sent.
+//   3. With a chat in focus it writes nothing to the DIAMOND store, and what it
+//      holds SURVIVES the turn. (§4 originally made a chat's attachment good for
+//      one turn only. A chat now carries persistent scope, as a Diamond does —
+//      two lifetimes, one meaning — so this asserts the reverse of what it first
+//      did, deliberately. See the section itself.)
 //   4. Note generates the note prefix, Read generates the read prefix, and the
 //      text is in the composer where the user can edit it before sending.
 //   5. Note is what an attachment starts as.
@@ -43,7 +46,7 @@
 //
 //   node dev/verify_attachfocus.mjs --break hidden       # 1 fails: never hides
 //   node dev/verify_attachfocus.mjs --break diamondlink  # 2 fails: no link written
-//   node dev/verify_attachfocus.mjs --break chatclear    # 3 fails: footer survives send
+//   node dev/verify_attachfocus.mjs --break chatclear    # 3 fails: the scope is emptied
 //   node dev/verify_attachfocus.mjs --break prefix       # 4 fails: no prefix generated
 //   node dev/verify_attachfocus.mjs --break notedefault  # 5 fails: starts as Read
 //   node dev/verify_attachfocus.mjs --break unreachable  # 7 fails: away path in prefix
@@ -91,12 +94,14 @@ const BREAKS = {
 		find: `				else await diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');`,
 		with: `				else { /* the write silently does not happen */ }`,
 	},
-	// The chat footer's promise -- cleared when the turn is sent -- stops
-	// being kept, so what was queued is still sitting there afterwards.
+	// A chat's scope is emptied when a turn is sent -- which is what the app used
+	// to do, and is now the bug: the user attaches a folder, asks a question, and
+	// the folder is gone before they can ask a second one.
 	chatclear: {
 		file: 'js/daimond.js',
-		find: `		clearChatAttach(chat.id);`,
-		with: `		/* clearChatAttach(chat.id); */`,
+		find: `		text = conciseText(chat, text);`,
+		with: `		chat.holds = []; attachChanged(); persistChats();
+		text = conciseText(chat, text);`,
 	},
 	// No prefix is ever generated, so Note and Read stop doing anything a
 	// person can see.
@@ -746,15 +751,29 @@ await page.waitForTimeout(400);
 check('and one ordinary attachment is still queued, for the send check below',
 	await page.evaluate((id) => window.DaimondAttach.chatList(id).length, chatId) === 1);
 
-// ── 3 (second half). The footer clears when the turn is sent ───────────
+// ── 3 (second half). The scope SURVIVES the turn ───────────────────────
+//
+// THIS CHECK USED TO ASSERT THE OPPOSITE, and the reversal is a decision and not
+// a regression. ATTACH_CONTRACT.md §4 originally made a chat's attachment good
+// for one turn: the footer was emptied at the send, and `clearChatAttach` did
+// it. A chat now carries PERSISTENT SCOPE, exactly as a Diamond does — the user
+// brings files into a conversation by hand and they stay there — because the
+// paperclip cannot mean two different things on two surfaces and be understood
+// on either.
+//
+// Two lifetimes, one meaning: a Diamond's holdings persist because a Diamond
+// does, a chat's expire with the chat. So what is asserted here is that sending
+// a turn is not an event that empties anything, and the old wording is left
+// above so a reader who remembers the contract can see which way it went.
 await page.fill('#chat-input', 'go');
 await page.click('#chat-send', { force: true });
 await page.waitForTimeout(1500);
-const footerAfterSend = await page.$eval('#chat-attachments', e => e.style.display).catch(() => 'gone');
-check('THE FOOTER CLEARS WHEN THE TURN IS SENT', footerAfterSend === 'none', footerAfterSend);
 const listAfterSend = await page.evaluate((id) => window.DaimondAttach.chatList(id).length, chatId);
-check('and the queue behind it is actually empty, not just hidden', listAfterSend === 0, String(listAfterSend));
-await shot(s, 'attachfocus-4-cleared-after-send');
+check('A CHAT KEEPS WHAT IT HOLDS WHEN A TURN IS SENT', listAfterSend === 1, String(listAfterSend));
+const footerAfterSend = await page.$eval('#chat-attachments', e => e.style.display).catch(() => 'gone');
+check('and the footer still shows it, because it is still true',
+	footerAfterSend !== 'none', footerAfterSend);
+await shot(s, 'attachfocus-4-kept-after-send');
 
 // ── §5. The view is remembered PER USER, across a reload ───────────────
 // Last, because it is the only thing here that needs the page to go away and

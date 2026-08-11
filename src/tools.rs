@@ -45,6 +45,22 @@ pub struct TurnState {
     /// its result so the taint can be carried across the dispatch boundary.  Once set it stays set
     /// -- a turn does not become clean again by reading something trustworthy afterwards.
     pub tainted: bool,
+    /// Set when this agent is acting ALONE: a dispatched worker, with nobody reading its
+    /// transcript as it goes and no way to put a question.
+    ///
+    /// Distinct from [`TurnState::tainted`], and deliberately so.  Tainted means "has read a
+    /// stranger's words", which is a fact about content; this means "cannot ask", which is a fact
+    /// about the actor.  They happen to withhold the same network, but conflating them would make
+    /// [`ToolContext::is_tainted`] lie to the daimon that reads it after a steering turn.
+    ///
+    /// Two things read it, and no more: an act on a web page is put to the user whatever the rung
+    /// says (see [`act_needs_consent`]), and a command runs without the network.  Both exist for
+    /// the same sentence in [`crate::prompts::SAFETY_CLAUSE`] -- *never take an action the user
+    /// cannot undo without getting a plain yes* -- which every worker is told and no worker can
+    /// obey, because [`crate::prompts::DEFAULT_WORKER`] tells it in the same breath that it cannot
+    /// ask questions.  The fence never contained that contradiction and could not: it is a list of
+    /// paths, and the acts in that clause are buttons.
+    pub unsupervised: bool,
     /// How many commands this context has sent to the machine hand, so each gets a distinct
     /// identifier.  The hand's journal and its `Signal` both key on that identifier, so two runs
     /// sharing one is a cancel that reaches the wrong process.
@@ -211,6 +227,21 @@ pub enum FileRoot {
 /// The directory Daimond's own state lives in, under whichever root is active.
 pub const STORE_ROOT: &str = "diamonds";
 
+/// The directory a chat's own working folder lives in: `chats/<id>/`.
+///
+/// STORE STATE, exactly as [`STORE_ROOT`] and [`MAIL_ROOT`] are, and a root [`is_store_path`]
+/// answers for.  Three properties follow from that one fact and each of them is wanted here:
+///
+/// * it always resolves to the browser's own sandbox, even with a real machine folder open as the
+///   workspace, so a chat's scratch can never be a path on the user's disk;
+/// * [`ToolContext::default_cwd`] skips it, so a worker holding only its scratch has no directory
+///   to run a command in and says so;
+/// * [`fence_spec`] cannot map it onto the machine, so it can never widen what a command reaches.
+///
+/// Which together are the whole of *"no attachment, no command"*: it falls out of where the folder
+/// lives rather than out of a rule written twice.
+pub const CHAT_ROOT: &str = "chats";
+
 /// The directory the mail client keeps a mailbox in: `mail/<address>/…`.
 ///
 /// STORE STATE, NOT THE USER'S WORK, and therefore a root [`is_store_path`] answers for.  Mail
@@ -269,6 +300,7 @@ pub fn is_store_path(path: &str) -> bool {
     }
     under(&p, STORE_ROOT)
         || under(&p, MAIL_ROOT)
+        || under(&p, CHAT_ROOT)
         || STORE_ROOTS_LEGACY.iter().any(|r| under(&p, r))
 }
 
@@ -775,6 +807,29 @@ pub enum Bound {
     /// is under none of them is refused whatever else the bound says -- which is the whole of the
     /// claim that a daimon can only open the files in its Diamond's workspace.
     OnlyUnder(String),
+    /// Nothing OUTSIDE these prefixes may be WRITTEN, and reading is not restricted at all.
+    ///
+    /// The chat's rule, and the difference from [`Bound::OnlyUnder`] is the whole of it: that one
+    /// fences both verbs, this one fences a single verb and leaves the other alone.
+    ///
+    /// It exists because a chat is not a Diamond.  A Diamond is a curated thing whose daimon may
+    /// see only what the Diamond holds, and confining both verbs is the point of it.  A chat is the
+    /// user's own conversation over their whole workspace: *"summarise these ten files"* must not
+    /// require attaching ten files first, so a chat's worker reads wherever the chat can -- equal
+    /// reach, since a person asked the question, and equal reach is not a widening.  What an
+    /// unattended worker must not do is ALTER something nobody put in front of it, so writing is
+    /// an allow-list and reading is not.
+    ///
+    /// The justification is the paperclip's own semantics: its two states are Note and Read, and
+    /// both of them are reading.  Attaching has never granted write permission, so making it grant
+    /// one would have been the change -- and the one place ceremony belongs is where something
+    /// autonomous is about to alter a disk.
+    ///
+    /// The presence of a single rule of this kind makes writing an allow-list, exactly as
+    /// [`Bound::OnlyUnder`] does for both verbs.  [`fence_spec`] reads it too: a command is a write
+    /// as far as this is concerned, so a turn whose write allow-list names no place ON THE MACHINE
+    /// gets no fence and runs nothing.
+    OnlyWriteUnder(String),
     /// A toolchain the user granted this Diamond (see [`Toolkit`]).
     ///
     /// The odd one out, and deliberately so.  Every other rule here is a workspace-relative prefix
@@ -826,6 +881,52 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
         }
         out.push(Bound::MayRead(p));
     }
+    out
+}
+
+/// The bounds a chat's dispatched worker runs with: read anywhere, write in two kinds of place.
+///
+/// The chat's answer to [`diamond_bounds`], and the difference between them is the difference
+/// between the two surfaces.  A Diamond confines both verbs because a daimon may see only what its
+/// Diamond holds.  A chat is the user's own conversation over their whole workspace and is
+/// unscoped by design, so a worker it dispatches READS wherever the chat can -- equal reach, since
+/// a person asked the question -- and WRITES only where the user deliberately put something.
+///
+/// `scratch` is the chat's own working folder, always writable, so a worker always has somewhere
+/// to put what it produces without the user having to answer a question first.  `attached` are the
+/// places the user put in the chat's scope with the paperclip; they are writable because putting a
+/// folder in scope is the deliberate act that says so.
+///
+/// A scope with no places at all is [`Bound::Nowhere`], for the reason [`diamond_bounds`] gives:
+/// the empty prefix is not a folder but every folder.
+///
+/// # Arguments
+/// * `scratch` - The chat's own working directory, workspace-relative.
+/// * `attached` - What the user put in this chat's scope.
+pub fn chat_bounds(scratch: &str, attached: &[String]) -> Vec<Bound> {
+    let mut out: Vec<Bound> = Vec::new();
+    let mut places = 0usize;
+    let s = normalise(scratch);
+    if !s.is_empty() {
+        out.push(Bound::OnlyWriteUnder(s));
+        places += 1;
+    }
+    for path in attached {
+        let p = normalise(path);
+        if p.is_empty() {
+            continue;
+        }
+        out.push(Bound::OnlyWriteUnder(p));
+        places += 1;
+    }
+    if places == 0 {
+        return vec![Bound::Nowhere];
+    }
+    // Daimond's own directory is out of bounds here as everywhere. The READ fence matters more in
+    // a chat's worker than in a Diamond's, because this is the one scope that reads freely
+    // otherwise, and `.daimond` holds the rules about what agents may do.
+    out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
+    out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
     out
 }
 
@@ -1416,6 +1517,66 @@ fn allow_list(bounds: &[Bound]) -> (bool, Vec<String>) {
     (declared, out)
 }
 
+/// As [`allow_list`], for the WRITE allow-list a chat's worker carries.
+///
+/// Separate because the two fence different things and a turn may carry either, both or neither.
+/// It exists chiefly so [`compose`] cannot drop one: a composition that silently lost a write
+/// fence would be a widening, and every widening in here is silent by nature.
+///
+/// # Arguments
+/// * `bounds` - The rules to read.
+fn write_allow_list(bounds: &[Bound]) -> (bool, Vec<String>) {
+    let mut declared = false;
+    let mut out: Vec<String> = Vec::new();
+    for b in bounds {
+        if let Bound::OnlyWriteUnder(p) = b {
+            declared = true;
+            let n = normalise(p);
+            if !n.is_empty() && !out.contains(&n) {
+                out.push(n);
+            }
+        }
+    }
+    (declared, out)
+}
+
+/// Intersect two allow-lists, as [`compose`] intersects them.
+///
+/// Two prefixes that both contain some path are both prefixes of it, so one is inside the other:
+/// comparable or disjoint, and there is no third case.
+///
+/// # Arguments
+/// * `dec_a`, `a` - Whether the first side declared a list, and what it named.
+/// * `dec_b`, `b` - The same for the second.
+fn intersect_allow(dec_a: bool, a: Vec<String>, dec_b: bool, b: Vec<String>) -> Vec<String> {
+    if dec_a && dec_b {
+        let mut v: Vec<String> = Vec::new();
+        for x in &a {
+            for y in &b {
+                let keep = if under(x, y) {
+                    Some(x)
+                } else if under(y, x) {
+                    Some(y)
+                } else {
+                    None
+                };
+                if let Some(p) = keep {
+                    if !v.contains(p) {
+                        v.push(p.clone());
+                    }
+                }
+            }
+        }
+        v
+    } else if dec_a {
+        a
+    } else if dec_b {
+        b
+    } else {
+        Vec::new()
+    }
+}
+
 /// Whether `bounds` permits reading EVERYTHING beneath `prefix`, which is already normalised.
 ///
 /// Used to decide whether one list's read carve-out may survive being composed with another.  The
@@ -1507,34 +1668,17 @@ pub fn compose(a: &[Bound], b: &[Bound]) -> Vec<Bound> {
     }
     let (dec_a, allow_a) = allow_list(a);
     let (dec_b, allow_b) = allow_list(b);
-    let allow: Vec<String> = if dec_a && dec_b {
-        let mut v: Vec<String> = Vec::new();
-        for x in &allow_a {
-            for y in &allow_b {
-                // Comparable or disjoint, and there is no third case: two prefixes that both
-                // contain some path are both prefixes of it, so one is inside the other.
-                let keep = if under(x, y) {
-                    Some(x)
-                } else if under(y, x) {
-                    Some(y)
-                } else {
-                    None
-                };
-                if let Some(p) = keep {
-                    if !v.contains(p) {
-                        v.push(p.clone());
-                    }
-                }
-            }
-        }
-        v
-    } else if dec_a {
-        allow_a
-    } else if dec_b {
-        allow_b
-    } else {
-        Vec::new()
-    };
+    let allow: Vec<String> = intersect_allow(dec_a, allow_a, dec_b, allow_b);
+    // The write allow-list, intersected the same way and for the same reason. Dropping it -- which
+    // is what happened before it was named here -- would compose a chat's worker, whose writing is
+    // fenced, into a turn whose writing is not. Every mistake this function can make is silent, and
+    // that one is silent AND in the direction of more reach.
+    let (wdec_a, wallow_a) = write_allow_list(a);
+    let (wdec_b, wallow_b) = write_allow_list(b);
+    let write_allow: Vec<String> = intersect_allow(wdec_a, wallow_a, wdec_b, wallow_b);
+    if (wdec_a || wdec_b) && write_allow.is_empty() {
+        return vec![Bound::Nowhere];
+    }
     if (dec_a || dec_b) && allow.is_empty() {
         // A scope was declared and the two sides have no place in common -- or the only side that
         // declared one named nowhere usable. Emitting no rule at all would say "unscoped", which is
@@ -1544,6 +1688,9 @@ pub fn compose(a: &[Bound], b: &[Bound]) -> Vec<Bound> {
     let mut out: Vec<Bound> = Vec::new();
     for p in &allow {
         out.push(Bound::OnlyUnder(p.clone()));
+    }
+    for p in &write_allow {
+        out.push(Bound::OnlyWriteUnder(p.clone()));
     }
     // Denials from both sides, normalised so one prefix spelled two ways is one rule.
     for src in [a, b] {
@@ -1769,6 +1916,55 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
         .filter_map(|b| match b { Bound::OnlyUnder(p) => Some(normalise(p)), _ => None })
         .filter(|p| !p.is_empty())
         .collect();
+    // ── A chat's worker: reads freely, writes where it was told, runs only there ──
+    //
+    // Answered here, complete, and returned: a write allow-list is a different fence from the one
+    // below and composing the two would produce a third thing neither surface asked for.
+    //
+    // A command is a WRITE as far as this is concerned. There is no way to look at an `argv` and
+    // say whether it will alter anything -- that is the whole reason the fence exists rather than a
+    // list of safe programs -- so a command runs where writing is allowed and nowhere else.
+    //
+    // The store paths drop out. A chat's scratch lives in the browser's storage; mapping it under
+    // the granted root would invent a folder on the user's disk that they never granted, and would
+    // hand back a fence for a turn that should have none. So a chat whose user has attached
+    // nothing gets NO ROOTS, the hand refuses, and "no attachment, no command" is a consequence of
+    // where the scratch lives rather than a second rule that could drift from this one.
+    if !scoped && bounds.iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_))) {
+        let mut rw: Vec<String> = Vec::new();
+        for b in bounds {
+            if let Bound::OnlyWriteUnder(p) = b {
+                let n = normalise(p);
+                if n.is_empty() || is_store_path(&n) {
+                    continue;
+                }
+                let a = abs(&n);
+                if !rw.contains(&a) { rw.push(a); }
+            }
+        }
+        if rw.is_empty() {
+            return FenceSpec { rw: Vec::new(), ro: Vec::new(), deny: Vec::new(), net: false };
+        }
+        // Reading is free, so the granted root comes in read-only -- which is what "a worker reads
+        // anywhere the chat can" means for a command, and is strictly less than the chat's own
+        // turn, whose fence is that same root READ AND WRITE.
+        let mut ro: Vec<String> = Vec::new();
+        let root_s = root.to_string();
+        if !rw.contains(&root_s) {
+            ro.push(root_s);
+        }
+        let mut deny: Vec<String> = bounds.iter()
+            .filter_map(|b| match b { Bound::NoRead(p) => Some(abs(p)), _ => None })
+            .collect();
+        let own = abs(DAIMOND_DIR);
+        if !deny.contains(&own) {
+            deny.push(own);
+        }
+        // No toolkit. A toolchain is a grant the user made to a Diamond, and a chat has no such
+        // record -- so there is nothing to resolve, and nothing is inferred from what was asked to
+        // run.
+        return FenceSpec { rw, ro, deny, net: !tainted };
+    }
     // A NoWrite prefix takes writing away. It may sit ABOVE an allowed path or BELOW it, and both
     // directions matter: above, the whole grant becomes read-only; below, the grant stays writable
     // and the nested prefix is re-stated as a read-only root the hand carves out of it.
@@ -1806,8 +2002,11 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
             Bound::NoRead(p) => deny.push(abs(p)),
             // A toolkit names paths on the machine, not in the workspace, so `abs` would be wrong
             // for it and it is resolved below against the home the hand reported instead.
-            // `Nowhere` returned above, before any of this was computed.
-            Bound::OnlyUnder(_) | Bound::NoWrite(_) | Bound::Toolkit(_) | Bound::Nowhere => {},
+            // `Nowhere` returned above, before any of this was computed, and a write allow-list
+            // returned above too -- a turn carrying one never reaches here, and one that somehow
+            // did would be a Diamond scope, whose own allow-list already decides it.
+            Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::NoWrite(_)
+                | Bound::Toolkit(_) | Bound::Nowhere => {},
         }
     }
     // NO allow-list means the turn is bounded only by the workspace, so the fence is the granted
@@ -2487,6 +2686,90 @@ pub async fn egress_check(tool: &str, url: &str, ctx: &ToolContext) -> Option<St
         Egress::Proceed   => None,
         Egress::Refuse(m) => Some(m),
     }
+}
+
+
+// ── Acting on a page, when nobody is watching ───────────────────────
+//
+// Reading a page and OPERATING one are different questions, and the app has always asked them
+// separately.  What it did not ask was WHO is operating it.
+//
+// [`crate::prompts::SAFETY_CLAUSE`] rides on every tool-holding role: never take an action the
+// user cannot undo -- a purchase, a payment, a message sent, a form submitted -- without putting
+// it to them first and getting a plain yes.  A dispatched worker is told that, and is told two
+// paragraphs earlier that it cannot ask questions.  In a Diamond the fence was said to hold the
+// contradiction; it cannot, because a fence is a list of paths and the acts in that clause are
+// buttons on a page the user is already signed into.
+//
+// So the app asks on the worker's behalf.  Not the model -- the model is the thing being
+// contained -- and not the fence, which has no vocabulary for a button.
+
+/// Whether an ACT on the open page must be put to the user before it happens.
+///
+/// Two independent reasons, either sufficient:
+///
+/// * the ordinary egress rule, which bites on a tainted turn and on every turn in [`Mode::Ask`];
+/// * the actor is unattended, on every rung but [`Mode::Bypass`].
+///
+/// [`Mode::Bypass`] is exempt because it is chosen once, deliberately, by somebody who has read
+/// what it means -- and a bypass that keeps interrupting is not a bypass but a rung nobody would
+/// have picked.  Every other rung asks, including the default, because the default is where
+/// somebody ends up who has not chosen anything at all.
+///
+/// # Arguments
+/// * `mode` - Which rung the user is in.
+/// * `tainted` - Whether this turn has ingested content from outside the user.
+/// * `unsupervised` - Whether the actor is a dispatched worker, which cannot ask for itself.
+pub fn act_needs_consent(mode: Mode, tainted: bool, unsupervised: bool) -> bool {
+    egress_needs_consent(mode, tainted) || (unsupervised && !matches!(mode, Mode::Bypass))
+}
+
+/// The gate for an act on the open page: [`egress_check`], asked of [`act_needs_consent`].
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The page it will act on.
+/// * `ctx` - The turn, which knows both whether it is tainted and whether it is alone.
+pub async fn act_check(tool: &str, url: &str, ctx: &ToolContext) -> Option<String> {
+    act_check_detail(tool, url, "", ctx).await
+}
+
+/// As [`act_check`], with the payload the user should see -- the text about to be typed.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The page it will act on.
+/// * `detail` - What is being sent, for the user to look at.
+/// * `ctx` - The turn.
+pub async fn act_check_detail(tool: &str, url: &str, detail: &str, ctx: &ToolContext)
+    -> Option<String>
+{
+    let alone = ctx.is_unsupervised();
+    if !act_needs_consent(mode(), ctx.is_tainted(), alone) {
+        return None;
+    }
+    // `alone` travels with the question, and it does one thing at the other end: it stops the
+    // answer being REMEMBERED.  The page half keeps a per-host note of "acting here is approved",
+    // which is right for a person clicking through a site and wrong for a worker -- one yes about
+    // shop.test would license every later click on it, and the clause is about the act, not the
+    // host.
+    let answer = act_ask(tool, url, detail, alone).await;
+    match egress_decision(tool, url, mode(), true, answer) {
+        Egress::Proceed        => None,
+        Egress::Refuse(reason) => Some(reason),
+    }
+}
+
+/// Put the act to whoever can answer it.
+#[cfg(target_arch = "wasm32")]
+async fn act_ask(tool: &str, url: &str, detail: &str, alone: bool) -> Option<Verdict> {
+    crate::wasm::web::egress_allowed_act(tool, url, detail, alone).await
+}
+
+/// On native there is nobody to ask and no page to act on, so an act proceeds.
+#[cfg(not(target_arch = "wasm32"))]
+async fn act_ask(_tool: &str, _url: &str, _detail: &str, _alone: bool) -> Option<Verdict> {
+    Some(Verdict::Allow)
 }
 
 
@@ -3285,6 +3568,12 @@ impl ToolContext {
         if !self.within_allow_list(&p) {
             return false;
         }
+        // The write-only fence, which a chat's worker carries and a Diamond's does not. Tested
+        // beside the other allow-list rather than inside it: they answer different questions, and
+        // a turn can carry either, both or neither.
+        if !self.within_write_allow_list(&p) {
+            return false;
+        }
         !self.no_write.iter().any(|b| match b {
             Bound::NoWrite(prefix) => under(&p, prefix),
             _                      => false,
@@ -3309,6 +3598,13 @@ impl ToolContext {
                 files its Diamond holds -- the user puts them there, and you cannot add to it \
                 yourself. Work with what is in scope, or say what you would need and let the user \
                 attach it.", path);
+        }
+        if writing && !self.within_write_allow_list(&p) {
+            return fmt!(
+                "Refused: '{}' may be read here but not written. You are working alone, so you \
+                may read anywhere the user can, and change only what they put in scope. Write what \
+                you produce into your own working folder, or say which path you would need in \
+                scope and let the user put it there.", path);
         }
         if writing {
             return fmt!(
@@ -3348,11 +3644,17 @@ impl ToolContext {
             return prefix;
         }
         for b in &self.no_write {
-            if let Bound::OnlyUnder(p) = b {
-                let n = normalise(p);
-                if !n.is_empty() && !is_store_path(&n) {
-                    return n;
-                }
+            // Both allow-lists, because both name places a command could belong in -- a Diamond's
+            // attachments and a chat's. The store paths are skipped in either: a chat's scratch and
+            // a Diamond's own directory live in the browser's storage, which is not a place on this
+            // computer, and starting a command there would name a path the user never chose.
+            let p = match b {
+                Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => p,
+                _ => continue,
+            };
+            let n = normalise(p);
+            if !n.is_empty() && !is_store_path(&n) {
+                return n;
             }
         }
         String::new()
@@ -3379,6 +3681,39 @@ impl ToolContext {
     ///
     /// # Arguments
     /// * `p` - An already-normalised workspace-relative path.
+    /// Whether a WRITE allow-list is declared, and if so whether `path` is inside it.
+    ///
+    /// The same shape as [`ToolContext::within_allow_list`] and the same two load-bearing halves:
+    /// a prefix that normalises away is declared and matches nothing.  True when nothing of the
+    /// kind was declared, because an absent allow-list bounds nothing.
+    ///
+    /// # Arguments
+    /// * `p` - An already-normalised workspace-relative path.
+    fn within_write_allow_list(&self, p: &str) -> bool {
+        let mut declared = false;
+        for b in &self.no_write {
+            match b {
+                Bound::Nowhere => return false,
+                Bound::OnlyWriteUnder(prefix) => {
+                    declared = true;
+                    let pre = normalise(prefix);
+                    if !pre.is_empty() && under(p, &pre) {
+                        return true;
+                    }
+                },
+                _ => {},
+            }
+        }
+        !declared
+    }
+
+    /// Whether this turn declared a WRITE allow-list, i.e. whether it is a chat's scope.
+    ///
+    /// As [`ToolContext::is_scoped`], the DECLARATION decides and not what survived it.
+    pub fn is_write_scoped(&self) -> bool {
+        self.no_write.iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_)))
+    }
+
     fn within_allow_list(&self, p: &str) -> bool {
         let mut declared = false;
         for b in &self.no_write {
@@ -3454,6 +3789,27 @@ impl ToolContext {
     /// worker that does not know it is carrying them; this is how the conductor tells it.
     pub fn set_tainted(&self) {
         lock_cache(&self.read_seen).tainted = true;
+    }
+
+    /// Whether this agent is acting alone (see [`TurnState::unsupervised`]).
+    pub fn is_unsupervised(&self) -> bool {
+        lock_cache(&self.read_seen).unsupervised
+    }
+
+    /// Mark this agent as acting alone.  One-way, like the taint: an agent does not acquire a
+    /// supervisor part way through.
+    pub fn set_unsupervised(&self) {
+        lock_cache(&self.read_seen).unsupervised = true;
+    }
+
+    /// Whether this turn must reach the network through a closed door -- because it has read a
+    /// stranger's words, or because nobody is watching it.
+    ///
+    /// One function so the two reasons are asked about in one place.  Every caller of
+    /// [`Mode::withholds_net`] wants this and not the raw taint: a fence built from the taint alone
+    /// gave an unattended worker the whole network on a clean turn.
+    pub fn net_risk(&self) -> bool {
+        self.is_tainted() || self.is_unsupervised()
     }
 }
 
@@ -5225,7 +5581,9 @@ impl Tool {
             Tool::WebClick => {
                 let node_ref = res!(Self::node_ref(args_json));
                 let here = crate::wasm::web::current_url().await;
-                if let Some(refusal) = egress_check(self.name(), &here, ctx).await {
+                // `act_check`, not `egress_check`: a click is the act the safety clause names, and
+                // an unattended agent is asked about it whatever the rung says.
+                if let Some(refusal) = act_check(self.name(), &here, ctx).await {
                     return Ok(MessageContent::text(refusal));
                 }
                 crate::wasm::web::click(node_ref).await
@@ -5237,7 +5595,7 @@ impl Tool {
                 let here = crate::wasm::web::current_url().await;
                 // The text IS the thing being sent, so it is what the user is shown.
                 if let Some(refusal) =
-                    egress_check_detail(self.name(), &here, &text, ctx).await
+                    act_check_detail(self.name(), &here, &text, ctx).await
                 {
                     return Ok(MessageContent::text(refusal));
                 }
@@ -6111,6 +6469,18 @@ impl Tool {
             Some(c) => c,
             None    => {
                 let d = ctx.default_cwd();
+                // A chat's worker, with nothing in scope but its own working folder. Its own
+                // words, because the Diamond sentence below would point at a Diamond that does not
+                // exist and at a panel that is not where this is fixed.
+                if d.is_empty() && ctx.is_write_scoped() {
+                    return Ok(fmt!(
+                        "Refused: nothing on this computer is in this chat's scope, so there is \
+                        nowhere for a command to run. You may READ the user's files wherever they \
+                        are, and your own working folder is in Daimond's storage, which is not a \
+                        place on this computer. Tell the user which folder the command needs and \
+                        ask them to attach it to this chat with the paperclip; running commands is \
+                        the one thing that waits for that."));
+                }
                 if d.is_empty() && ctx.is_scoped() {
                     return Ok(fmt!(
                         "Refused: this Diamond has no folder on the machine attached to it, so \
@@ -6136,7 +6506,10 @@ impl Tool {
         // and the sentence the model reads afterwards -- is describing one decision rather than
         // three reads that a setting changed between could disagree about.
         let mode = mode();
-        let fence = fence_spec(&ctx.no_write, &machine, mode.withholds_net(ctx.is_tainted()));
+        // `net_risk`, not the raw taint: an unattended worker loses the network on a clean turn
+        // too. A worker cannot be asked about a destination, so the alternative to withholding it
+        // is a process reaching anywhere it likes with nobody in the loop.
+        let fence = fence_spec(&ctx.no_write, &machine, mode.withholds_net(ctx.net_risk()));
         // Captured HERE, beside the fence, and passed down rather than read again in
         // `run_result`. Asking the context a second time gives the same answer today only because
         // nothing between the two calls taints the turn -- an accident of ordering that the next

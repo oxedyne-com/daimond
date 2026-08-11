@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Daimond-Handbuch, Startseite">
-			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Handbuch</span>
 		</a>
 		<nav class="site-nav" aria-label="Handbuchseiten">
@@ -58,8 +58,8 @@
 		<li><span class="ui">Namen ändern…</span> — die Identität umbenennen.</li>
 		<li><span class="ui">Passphrase ändern…</span> — eine neue setzen; Ihre verschlüsselten Daten werden darunter neu verpackt.</li>
 		<li><span class="ui">Passkey hinzufügen…</span> — ein Gesicht, ein Fingerabdruck oder ein Sicherheitsschlüssel zum schnelleren Entsperren.</li>
-		<li><span class="ui">Backup exportieren</span> — schreibt Ihre Chats, Diamonds und Workspace-Dateien in eine Datei, die Sie behalten. Sie stellt Ihre Arbeit wieder her und nicht Ihr Konto: Ihr Schlüssel ist nicht darin.</li>
-		<li><span class="ui">Backup importieren…</span> — eine exportierte Identität in diesen Browser holen.</li>
+		<li><span class="ui">Backup exportieren</span> — schreibt Ihre Chats, Diamonds, Workspace-Dateien und Ihren Kontoschlüssel in eine Datei, die Sie behalten. Der Schlüssel geht verpackt hinein, genau so, wie dieser Browser ihn hält, sodass die Datei nicht schwächer ist als der Browser und sich nur mit Ihrer Passphrase öffnet.</li>
+		<li><span class="ui">Backup importieren…</span> — holt diese Datei wieder hierher. Wo dieser Browser kein eigenes Konto hat, wird das Konto des Backups übernommen, und Sie schließen es mit der Passphrase dieses Kontos auf; wo hier schon ein Konto liegt, bleibt das des Backups unberührt und nur die Arbeit kehrt zurück.</li>
 		<li><span class="ui">Abmelden</span> — die App sperren. Ihre Daten bleiben verschlüsselt auf dem Gerät, bis die Passphrase wieder eingegeben wird.</li>
 		<li><span class="ui">Diese Identität vergessen…</span> — die Identität und ihre verschlüsselten Daten endgültig aus diesem Browser entfernen.</li>
 	</ul>
@@ -70,13 +70,13 @@
 	<ul>
 		<li><strong>Kurz weg.</strong> Wählen Sie <span class="ui">Abmelden</span> zum Sperren der App. Ihre Chats, Schlüssel und Dateien bleiben auf dem Gerät und lassen sich ohne Ihre Passphrase nicht lesen.</li>
 		<li><strong>Zurück am Platz.</strong> Geben Sie Ihre Passphrase ein, um zu entsperren. Jedes Neuladen sperrt die App wieder, auch ein hartes Neuladen und ein neu gestarteter Browser, denn der daraus abgeleitete Schlüssel liegt im Arbeitsspeicher und wird nie auf die Platte geschrieben: Von Ihrem geht nichts verloren, und es öffnet sich nichts, bevor sie eingegeben ist. Ein Passkey, oder ein Passwortmanager, der die Passphrase hält, liefert sie für Sie.</li>
-		<li><strong>Jemand anders ist dran.</strong> <span class="ui">＋ Weiteres Konto hinzufügen</span> im Verwaltungsfeld legt ein zweites an, und die Zeile darüber wechselt. Beim Wechseln wird dieses Konto zuerst gesperrt — seine Schlüssel werden vergessen — und dann das andere geöffnet.</li>
+		<li><strong>Jemand anders ist dran.</strong> <span class="ui">＋ Weiteres Konto hinzufügen</span> im Verwaltungsfeld legt ein zweites an, und die Zeile darüber wechselt zwischen ihnen. Beim Wechseln wird dieses Konto zuerst gesperrt — seine Schlüssel werden vergessen — und dann das andere geöffnet.</li>
 		<li><strong>Den Browser endgültig weitergeben.</strong> <span class="ui">Diese Identität vergessen…</span> löscht Ihr Konto aus diesem Browser.</li>
 	</ul>
 
 	<h2 id="s5">Ihr Konto zwischen Geräten bewegen</h2>
-	<p>Ihr Konto ist ein Signaturschlüssel, der in diesem Browser liegt. Die Passphrase erzeugt ihn nicht neu, sie entschlüsselt nur die hier bereits gespeicherte Kopie; dieselbe Passphrase in einem frischen Browser beginnt deshalb ein <em>eigenes</em> Konto mit eigenem Guthaben und ohne Pro. Zwei Dinge tragen den Schlüssel hinüber, sonst nichts: <span class="ui">Weiteres Gerät verknüpfen</span>, das einen Kopplungscode zeigt, den Sie im neuen Browser eintippen, und ein Passkey, der ein neues Gerät in einer Geste einrichtet. Tun Sie eines davon, <strong>bevor</strong> Sie einen Browser entfernen: Ist sein Speicher erst weg, ist der Schlüssel mit ihm weg. Nutzen Sie außerdem <span class="ui">Backup exportieren</span> für die Chats, Diamonds und Workspace-Dateien, die der Schlüssel nicht trägt.</p>
-	<div class="note"><strong>Ein Backup enthält alles, was Sie geschrieben haben.</strong> Nicht den Schlüssel — wer es importiert, wird dadurch nicht zu Ihnen — aber jeder Chat, jedes Diamond und jede Workspace-Datei steht darin im Klartext, also halten Sie es so privat wie die Arbeit selbst.</div>
+	<p>Ihr Konto ist ein Signaturschlüssel, der in diesem Browser liegt. Die Passphrase erzeugt ihn nicht neu, sie entschlüsselt nur die hier bereits gespeicherte Kopie; dieselbe Passphrase in einem frischen Browser beginnt deshalb ein <em>eigenes</em> Konto mit eigenem Guthaben und ohne Pro. Der Schlüssel selbst muss mitreisen, und drei Dinge tragen ihn: <span class="ui">Weiteres Gerät verknüpfen</span>, das einen Kopplungscode zeigt, den Sie im neuen Browser eintippen; ein Passkey, der ein neues Gerät in einer Geste einrichtet; und <span class="ui">Backup exportieren</span>, dessen Datei den Schlüssel verpackt trägt, damit <span class="ui">Backup importieren…</span> ihn in einen Browser holt, der noch kein Konto hat. Tun Sie eines davon, <strong>bevor</strong> Sie einen Browser entfernen: Ist sein Speicher erst weg und wurde kein Backup genommen, ist der Schlüssel mit ihm weg — und mit ihm das Guthaben und jede Pro-Lizenz, die nichts anderes wieder aufschließt.</p>
+	<div class="note"><strong>Ein Backup enthält Ihre Arbeit im Klartext und Ihren Schlüssel unter Ihrer Passphrase.</strong> Jeder Chat, jedes Diamond und jede Workspace-Datei steht darin im Klartext, also halten Sie es so privat wie die Arbeit selbst. Der Schlüssel daneben ist verpackt, sodass allein das Importieren der Datei niemanden zu Ihnen macht — aber wer die Datei und die Passphrase hat, hat das Konto, und deshalb sollten die beiden nie zusammen reisen.</div>
 
 	<h2 id="s6">Was privat bleibt</h2>
 	<p>Ihre Passphrase, Anbieterschlüssel, Mail-Zugangsdaten, Chats, Diamonds und Dateien liegen in diesem Browser und werden nicht an uns gesendet. Was wir auf dem Gateway halten, ist Geld und Chiffrat: Ihr Guthabensaldo und Ihre Lizenzen und, für die geräteübergreifende Synchronisierung, ein verschlüsseltes Paket, das wir nicht öffnen können. Wir haben den Schlüssel nicht, also können wir Ihre Arbeit nicht lesen.</p>

@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Guía de Daimond, inicio">
-			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Guía</span>
 		</a>
 		<nav class="site-nav" aria-label="Páginas de la guía">
@@ -58,8 +58,8 @@
 		<li><span class="ui">Cambiar el nombre…</span> — renombra la identidad.</li>
 		<li><span class="ui">Cambiar la frase de paso…</span> — establece una nueva; tus datos cifrados se vuelven a envolver bajo ella.</li>
 		<li><span class="ui">Añadir una llave de acceso…</span> — una cara, una huella o una llave de seguridad para desbloquear más rápido.</li>
-		<li><span class="ui">Exportar una copia de seguridad</span> — escribe tus chats, Diamonds y archivos del espacio de trabajo en un archivo que te quedas. Restaura tu trabajo, no tu cuenta: tu clave no va dentro.</li>
-		<li><span class="ui">Importar una copia de seguridad…</span> — trae a este navegador una identidad exportada.</li>
+		<li><span class="ui">Exportar una copia de seguridad</span> — escribe tus chats, Diamonds, archivos del espacio de trabajo y la clave de tu cuenta en un archivo que te quedas. La clave entra envuelta, tal como la guarda este navegador, así que el archivo no es más débil que el navegador y no se abre con nada que no sea tu frase de paso.</li>
+		<li><span class="ui">Importar una copia de seguridad…</span> — trae ese archivo de vuelta aquí. Donde este navegador no tiene cuenta propia, se adopta la cuenta de la copia de seguridad, y la desbloqueas con la frase de paso de esa cuenta; donde ya hay una cuenta aquí, la de la copia se deja intacta y solo vuelve el trabajo.</li>
 		<li><span class="ui">Cerrar sesión</span> — bloquea la aplicación. Tus datos siguen en el dispositivo, cifrados, hasta que se vuelva a introducir la frase de paso.</li>
 		<li><span class="ui">Olvidar esta identidad…</span> — quita para siempre de este navegador la identidad y sus datos cifrados.</li>
 	</ul>
@@ -75,8 +75,8 @@
 	</ul>
 
 	<h2 id="s5">Llevar tu cuenta de un dispositivo a otro</h2>
-	<p>Tu cuenta es una clave de firma guardada en este navegador. La frase de paso no la recrea, solo descifra la copia que ya está aquí, así que la misma frase de paso en un navegador nuevo empieza una cuenta <em>aparte</em> con su propio saldo y sin Pro. Dos cosas llevan la clave al otro lado, y ninguna más: <span class="ui">Vincular otro dispositivo</span>, que muestra un código de vinculación para teclear en el navegador nuevo, y una passkey, que levanta un dispositivo nuevo en un solo gesto. Haz una de las dos <strong>antes de</strong> quitar un navegador: en cuanto se va su almacenamiento, la clave se va con él. Usa también <span class="ui">Exportar una copia de seguridad</span> para los chats, los Diamonds y los archivos del espacio de trabajo que la clave no lleva.</p>
-	<div class="note"><strong>Una copia de seguridad contiene todo lo que has escrito.</strong> La clave no — importarla no convierte a nadie en ti — pero cada chat, Diamond y archivo del espacio de trabajo está ahí en texto plano, así que guárdala tan en privado como el propio trabajo.</div>
+	<p>Tu cuenta es una clave de firma guardada en este navegador. La frase de paso no la recrea, solo descifra la copia que ya está aquí, así que la misma frase de paso en un navegador nuevo empieza una cuenta <em>aparte</em> con su propio saldo y sin Pro. La clave en sí tiene que viajar, y tres cosas la llevan: <span class="ui">Vincular otro dispositivo</span>, que muestra un código de vinculación para teclear en el navegador nuevo; una passkey, que levanta un dispositivo nuevo en un solo gesto; y <span class="ui">Exportar una copia de seguridad</span>, cuyo archivo lleva la clave envuelta para que <span class="ui">Importar una copia de seguridad…</span> la adopte en un navegador que todavía no tiene cuenta. Haz una de ellas <strong>antes de</strong> quitar un navegador: en cuanto se va su almacenamiento, si no se tomó ninguna copia de seguridad, la clave se va con él, y con ella el saldo y cualquier licencia Pro, que ninguna otra cosa desbloquea.</p>
+	<div class="note"><strong>Una copia de seguridad guarda tu trabajo en claro y tu clave bajo tu frase de paso.</strong> Cada chat, Diamond y archivo del espacio de trabajo está ahí en texto plano, así que guárdala tan en privado como el propio trabajo. La clave que va al lado está envuelta, así que importar el archivo por sí solo no convierte a nadie en ti — pero quien tiene el archivo y la frase de paso tiene la cuenta, y por eso los dos nunca deberían viajar juntos.</div>
 
 	<h2 id="s6">Lo que queda en privado</h2>
 	<p>Tu frase de paso, tus claves de proveedor, tus credenciales de correo, tus chats, tus Diamonds y tus archivos viven en este navegador y no se nos envían. Lo que tenemos en la pasarela es dinero y texto cifrado: tu saldo de créditos y tus licencias y, para la sincronización entre dispositivos, un paquete cifrado que no podemos abrir. No tenemos la clave, así que no podemos leer tu trabajo.</p>

@@ -79,9 +79,47 @@ const dlg1 = await p.evaluate(() => {
 	const d = document.querySelector('.modal.dlg .dlg-card');
 	return d ? d.innerText : '';
 });
-check('choosing bypass explains what it turns off', /stops asking/i.test(dlg1), dlg1.slice(0, 90).replace(/\n/g, ' / '));
-check('and says plainly what it does NOT change', /fence|journal|folders/i.test(dlg1));
-check('and promises not to ask again', /not be asked this again/i.test(dlg1));
+// THE PROPERTY, in two halves, and this dialog is the only place either is
+// said. WHAT IS GIVEN UP: the asking stops, and what will now happen unasked is
+// named -- commands run on the user's machine AND pages the model chose are
+// fetched -- including on a turn that has already read text somebody else
+// wrote. That last clause is the whole of the risk: it is the one sentence that
+// distinguishes "Daimond acts without nagging me" from "anything Daimond reads
+// can send my work somewhere", and a user who never sees it cannot weigh what
+// they are agreeing to.
+//
+// WHAT IS KEPT: all five guarantees. `/fence|journal|folders/` passed on ONE of
+// the five, so four could go and the check stayed green -- for a dialog whose
+// entire job is to bound the thing it is turning off.
+//
+// The first was `/stops asking/`, red as soon as the copy said "stops the
+// asking". Every guarantee below survived that rewrite; it was checked against
+// the string one commit before it (`git show 5b0eeb9^`), clause by clause.
+const explainsBypass = (d) => ({
+	// The asking stops, and commands on the machine are what stops being asked about.
+	asking:   /\b(stops? (the )?asking|without (asking|putting)|no longer asks?)\b/i.test(d)
+		&& /\bcommands?\b/i.test(d) && /\b(machine|computer)\b/i.test(d),
+	// So does fetching a page the model chose for itself.
+	fetching: /\b(fetch(es|ing)?|opens?|requests?|loads?)\b/i.test(d) && /\b(pages?|web|url)\b/i.test(d),
+	// And it holds even on a turn that has read somebody else's words.
+	injected: /\b(somebody|someone) else\b|\bwritten by (somebody|someone)\b/i.test(d)
+		&& /\b(already read|has read|a turn that)\b/i.test(d),
+});
+const kept = (d) => ({
+	fence:   /\bfence|sandbox\b/i.test(d),
+	folders: /\bown folders?\b|\bonly its own\b/i.test(d),
+	syscall: /\bsystem[- ]call filter\b|\bsyscall\b|\bseccomp\b/i.test(d),
+	marked:  /\b(marked|labell?ed|tagged)\b/i.test(d) && /\b(somebody|someone) else|outside\b/i.test(d),
+	journal: /\bjournal\b|\baudit\b/i.test(d) && /\b(check(ed)?|review(ed)?|afterwards|after the fact)\b/i.test(d),
+});
+const turnsOff = explainsBypass(dlg1), leaves = kept(dlg1);
+const missing = (o) => Object.entries(o).filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', ');
+check('choosing bypass explains what it turns off', Object.values(turnsOff).every(Boolean),
+	missing(turnsOff) || dlg1.slice(0, 90).replace(/\n/g, ' / '));
+check('and says plainly what it does NOT change — all five, not one of them',
+	Object.values(leaves).every(Boolean), missing(leaves));
+check('and promises not to ask again',
+	/\b(not|never) be asked (this )?again\b|\bonly ask(s|ed)? (this )?once\b/i.test(dlg1));
 
 await p.evaluate(() => {
 	const b = [...document.querySelectorAll('button')].find(x => /use bypass/i.test(x.textContent));

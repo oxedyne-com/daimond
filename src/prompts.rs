@@ -206,6 +206,16 @@ pub const SAFETY_CLAUSE: &str =
 	 without putting it to them first and getting a plain yes.";
 
 /// The chat's role: the agent the user actually talks to.
+///
+/// The last paragraph is here because a chat asked to run two agents reasoned from the one tool it
+/// could see and told the user the app had no way to do it -- then did the job itself and
+/// apologised for pretending. Both halves are wrong: the app dispatches workers, several in one
+/// turn and genuinely at once, and the surface for it is a Diamond. A chat that does not know a
+/// Diamond exists denies a capability the product is built around.
+///
+/// It lives in the chat's own default and not in a composed-in note, because a note is appended to
+/// every role that holds tools and this sentence is FALSE for the daimon -- the one role that can
+/// dispatch. See [`model_note`], which draws the same line for the same reason.
 pub const DEFAULT_CHAT: &str =
 	"You are Daimond, a helpful coding assistant running entirely in the user's \
 	 browser with an OPFS-backed workspace.\n\n\
@@ -234,7 +244,19 @@ pub const DEFAULT_CHAT: &str =
 	 Subject, a blank line, then the body — and one you write appears in their Email panel \
 	 under Drafts, where they open it, change what they like and press Send. When you are \
 	 asked to reply to something, write the draft and tell them it is waiting; do not \
-	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.";
+	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.\n\n\
+	 You can dispatch workers. Call spawn_agent once per agent, and call it several times in \
+	 the SAME turn to run them at once — two calls, two agents, genuinely in parallel. Each \
+	 runs in its own context and cannot see this conversation, so the task you give it must \
+	 say everything it needs; each reports back, and the reports come to you here. When the \
+	 user asks for two agents, dispatch two. Never do the work yourself and present it as \
+	 agents having done it, and never tell the user this app cannot run agents in parallel.\n\n\
+	 A worker is not you, and the difference is worth knowing before you hand one a task. It \
+	 works alone and cannot ask anybody anything, so it reads wherever you can read, writes \
+	 only in this chat's own working folder and whatever the user has attached here, and runs \
+	 commands only in an attached folder on their machine. If a task needs a command, and \
+	 nothing is attached, say which folder it needs and let the user attach it with the \
+	 paperclip — do not send a worker off to discover that for itself.";
 
 /// The daimon's role: it maintains one Diamond's crystal, resolving an
 /// instruction to a file edit or to one or more errors, never to chat.
@@ -293,6 +315,10 @@ pub const DEFAULT_WORKER: &str =
 	"You are a worker agent dispatched to carry out exactly one task. You have \
 	 the workspace file tools. You cannot ask questions — the task is all you \
 	 get, so use your judgement and finish it.\n\n\
+	 Because you cannot ask, Daimond asks for you: before you click or type on a \
+	 web page, the user is shown what you are about to do and decides. One they \
+	 decline is their answer, not a fault to work around — say what you wanted it \
+	 for and carry on with what you can do without it.\n\n\
 	 When you are done, end with a short summary of what you found or changed: \
 	 what a colleague would need to know, and nothing else. That summary is \
 	 folded into a shared crystal, so keep it dense and free of filler.";
@@ -671,6 +697,36 @@ mod tests {
 		assert!(composed.contains("Answer only in haiku."));
 		assert!(composed.contains("untrusted data"));
 		assert!(composed.contains("cannot undo"));
+	}
+
+	#[test]
+	fn test_a_chat_is_told_it_can_dispatch_and_how() {
+		// The failure this was first written against: a chat asked to run two agents said "there's
+		// no way to spawn two independent agents in parallel", which reads as the APP being
+		// incapable.  The answer then was to send the user to a Diamond.  The answer NOW is that
+		// the chat does it itself, so what has to be true has moved -- but the sentence that
+		// started it all is still ruled out, and by the same assertion.
+		let p = Role::Chat.compose("");
+		assert!(p.contains("spawn_agent"), "a chat is not told which tool it has: {}", p);
+		assert!(p.contains("SAME turn"), "a chat is not told how to run two at once: {}", p);
+		assert!(p.contains("in parallel"), "the false denial is not ruled out: {}", p);
+		// What a worker can do is not what the chat can do, and a chat that does not know the
+		// difference hands out tasks its workers will be refused half way through.  Naming the
+		// paperclip is the operative part: it is what the user has to press.
+		assert!(p.contains("paperclip"), "a chat cannot say how to put a folder in scope: {}", p);
+	}
+
+	#[test]
+	fn test_the_dispatching_role_is_not_told_it_cannot_dispatch() {
+		// The reason this paragraph is in the chat's own default rather than composed in: appended
+		// to every role with tools, it would tell the daimon -- the ONE role holding
+		// `spawn_agent` -- to go and find a Diamond to do its dispatching for it.
+		let d = Role::Daimon.compose("");
+		assert!(!d.contains("A worker is not you"), "the daimon was handed the chat's paragraph: {}", d);
+		assert!(d.contains("spawn_agent"), "the daimon lost its own dispatch instruction: {}", d);
+		// The worker holds no `spawn_agent` either, but it has no user to refer anywhere, so it is
+		// not charged for a paragraph about a surface it cannot reach.
+		assert!(!Role::Worker.compose("").contains("A worker is not you"));
 	}
 
 	#[test]

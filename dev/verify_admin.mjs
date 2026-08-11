@@ -252,13 +252,20 @@ async function adminRaw() {
 				((geoJson && geoJson.countries) || []).length + ' countries');
 			errs.length = 0;			// the pre-owner 403s were asked for
 
+			// The stopwatch starts BEFORE the page is asked for, not after the
+			// dashboard appears. The views now answer from one shared reading of
+			// the store rather than scanning it as they are asked, so all four
+			// can land inside the poll interval of the `waitForSelector` above --
+			// and a t0 taken after that interval sits AFTER every response the
+			// comparison below is made of, leaving it nothing to compare and
+			// failing a console that drew itself in twenty-seven milliseconds.
+			const t0 = Date.now();
 			await page.goto(`${APP}/console/`, { waitUntil: 'domcontentloaded' });
 			await page.waitForSelector('#admin-app:not([hidden])', { timeout: 10000 });
 			// Let the four parallel view fetches land and draw. Timed, because
 			// how LONG the first tile takes is the measurement that separates
 			// "the dashboard is broken" from "the dashboard is waiting", and
 			// those two have entirely different fixes.
-			const t0 = Date.now();
 			await page.waitForFunction(() =>
 				document.querySelectorAll('#admin-kpis .admin-kpi').length >= 4, null, { timeout: 30000 })
 				.catch(() => {});

@@ -235,16 +235,40 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 // cannot get back without knowing it was ever there.
 {
 	const dockPanels = await dockZone();
-	await p.evaluate((ids) => {
-		window.DaimondPanels.setGrid('2x3');
-		ids.forEach(id => window.DaimondPanels.show(id));
-	}, dockPanels);
+	// The BIGGEST grid, and its real capacity, both read from the app rather
+	// than written here.
+	//
+	// This asserted that a `2x3` seats every dock panel, which was true when
+	// there were five. There are six now, plus the one this file registers, and
+	// no grid in the app seats seven — `2x3` and `3x2` are both six — so the
+	// check could only fail, and it was failing for a premise that had quietly
+	// stopped being true rather than for anything the dock does wrong.
+	//
+	// What is actually worth asserting is what this section's own heading says:
+	// the grid fills to capacity, and the surplus is CLOSED rather than lost. So
+	// it fills to capacity here, and the check below it does the surplus.
+	const big = await p.evaluate(() => {
+		const g = window.DaimondPanels.grids();
+		let best = null;
+		for (const k of Object.keys(g)) {
+			if (!g[k]) continue;					// `auto` has no fixed size
+			const seats = g[k].cols * g[k].rows;
+			if (!best || seats > best.seats) best = { key: k, seats: seats };
+		}
+		return best;
+	});
+	check('the app offers a grid with a known capacity to fill', !!big, JSON.stringify(big));
+	await p.evaluate((arg) => {
+		window.DaimondPanels.setGrid(arg.key);
+		arg.ids.forEach(id => window.DaimondPanels.show(id));
+	}, { key: big.key, ids: dockPanels });
 	await p.waitForTimeout(600);
 	const openFull = await p.evaluate((ids) =>
 		ids.filter(id => window.DaimondPanels.isOpen(id)), dockPanels);
-	check('a grid with room for them seats every dock panel at once',
-		openFull.length === dockPanels.length,
-		`${openFull.length} of ${dockPanels.length} open`);
+	const want = Math.min(big.seats, dockPanels.length);
+	check(`the largest grid (${big.key}) seats every panel it has room for`,
+		openFull.length === want,
+		`${openFull.length} of ${dockPanels.length} open, ${big.seats} seats`);
 
 	await p.evaluate(() => window.DaimondPanels.setGrid('1'));
 	await p.waitForTimeout(600);

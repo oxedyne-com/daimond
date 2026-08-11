@@ -281,8 +281,14 @@ function chatRecords() {
 }
 
 /// The tile names on the rail, top to bottom.
-const railChats = (page) => page.$$eval('#session-list .session-box .tile-label',
-	(els) => els.map((e) => e.value));
+///
+/// `.tile-when` carries a chat's identity — the user's own name where one is
+/// set, and the derived relative time where none is. Every chat in this
+/// fixture is given a name, so here it is always the name. Read as TEXT: the
+/// label stopped being an `<input>` when the rename gesture left the tile, and
+/// a button has no `.value`.
+const railChats = (page) => page.$$eval('#session-list .session-box .tile-when',
+	(els) => els.map((e) => (e.textContent || '').trim()));
 /// The Diamond names on the rail, which is a filtered view of the store.
 const railDiamonds = (page) => page.evaluate(() =>
 	[...document.querySelectorAll('#diamond-list .diamond-box')]
@@ -403,7 +409,7 @@ try {
 	// ── 1. Deleting asks nothing and takes nothing ──────────────────
 	await A.evaluate(() => {
 		const box = [...document.querySelectorAll('#session-list .session-box')]
-			.find((e) => (e.querySelector('.tile-label') || {}).value === 'Ledger');
+			.find((e) => ((e.querySelector('.tile-when') || {}).textContent || '').trim() === 'Ledger');
 		const x = box && box.querySelector('.tile-x');
 		if (x) x.click();
 	});
@@ -455,7 +461,7 @@ try {
 	// a restore the user cannot see.
 	await A.evaluate(() => {
 		const box = [...document.querySelectorAll('#session-list .session-box')]
-			.find((e) => (e.querySelector('.tile-label') || {}).value === 'Ledger');
+			.find((e) => ((e.querySelector('.tile-when') || {}).textContent || '').trim() === 'Ledger');
 		if (box) box.click();
 	});
 	await A.waitForTimeout(1000);
@@ -470,7 +476,7 @@ try {
 	// ── 3. "Delete permanently" asks, and names what it destroys ────
 	await A.evaluate(() => {
 		const box = [...document.querySelectorAll('#session-list .session-box')]
-			.find((e) => (e.querySelector('.tile-label') || {}).value === 'Ledger');
+			.find((e) => ((e.querySelector('.tile-when') || {}).textContent || '').trim() === 'Ledger');
 		const x = box && box.querySelector('.tile-x');
 		if (x) x.click();
 	});
@@ -709,7 +715,7 @@ try {
 	// switched off past the retention period converge instead of resurrecting.
 	await A.evaluate(() => {
 		const box = [...document.querySelectorAll('#session-list .session-box')]
-			.find((e) => (e.querySelector('.tile-label') || {}).value === 'Recipe');
+			.find((e) => ((e.querySelector('.tile-when') || {}).textContent || '').trim() === 'Recipe');
 		const x = box && box.querySelector('.tile-x');
 		if (x) x.click();
 	});

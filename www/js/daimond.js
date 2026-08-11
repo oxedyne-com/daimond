@@ -161,6 +161,22 @@ import init, {
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
 			crystalKb: 0, crystalPageKb: 0, tools: true,
 			foldModel: '', foldProvider: '',
+			// Whether a chat tile shows the first thing you said in it.
+			//
+			// ON, and it is the one default here worth arguing. Chats have no
+			// names now, so without it a rail of four conversations from this
+			// afternoon reads "2 hr ago / 3 hr ago / 4 hr ago" and there is no
+			// way to tell them apart at all — a regression somebody meets on
+			// their first day with no remedy they would know to look for.
+			//
+			// Against that: the rail is on screen for the whole session, next to
+			// whatever else is being shown, so it puts a line of your own writing
+			// in every screenshot and every shared screen — which `Chat-0025`
+			// never did. That is a real cost and it is why this is a setting at
+			// all rather than a decision. It is one switch away, it is stated in
+			// plain words where the switch is, and the lock already blanks the
+			// rail outright.
+			chatPreview: true,
 			pushHost: '', pushUser: '', pushToken: '', pushTokenEnc: '' };
 		if (raw) {
 			try {
@@ -184,6 +200,7 @@ import init, {
 				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
 				if (typeof j.crystalPageKb === 'number') cfg.crystalPageKb = j.crystalPageKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
+			if (typeof j.chatPreview === 'boolean') cfg.chatPreview = j.chatPreview;
 				// What folds a conversation when it outgrows its window. Empty -- and an
 				// absent field -- means the conversation's own model, which is what the
 				// engine has always silently done. The provider travels with it for the
@@ -228,6 +245,7 @@ import init, {
 			crystalKb:     c.crystalKb || 0,
 			crystalPageKb: c.crystalPageKb || 0,
 			tools:     c.tools !== false,
+			chatPreview: c.chatPreview !== false,
 			foldModel:    c.foldModel || '',
 			foldProvider: c.foldProvider || '',
 			// Written on every save, not only by the push panel: this function
@@ -646,15 +664,41 @@ import init, {
 	// for chats.
 	var DIAMOND_TOMBS_KEY = 'daimond-diamond-tombs';
 	var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
-	var TOMB_TTL  = 7 * 24 * 3600 * 1000;   // a deletion outlives any live tab
+
+	/// How long a deletion is remembered.
+	///
+	/// THIS WAS SEVEN DAYS AND IT WAS TOO SHORT BY THE WIDTH OF THE RETENTION.
+	/// A tombstone is the only thing that can defeat a peer's copy of a record,
+	/// and a peer holds a trashed chat -- and packs it into every parcel, which
+	/// `storedChats` does deliberately so a trashing can travel -- until its own
+	/// retention is up. So: delete something permanently on day one, be away
+	/// from the other device for nine days, and the tombstone had aged out while
+	/// the peer still had the chat and the trash record. The next parcel handed
+	/// it back, and both devices agreed a permanently deleted chat was in the
+	/// trash again. That is what was seen and this is why.
+	///
+	/// It is therefore the retention plus a grace, worked out in one place --
+	/// `DaimondPolicy` in js/trash.js, which also has to answer it for the
+	/// restore records that face the identical hazard from the other side. It is
+	/// a HIGH-WATER of every retention this device has seen rather than the
+	/// current one, because the retention is an operator setting now and can be
+	/// lowered: a peer that has not heard is still working to the old figure.
+	///
+	/// A function and not a constant, for that reason. Every caller reads it
+	/// afresh, so an operator raising the retention lengthens the memory of a
+	/// deletion on the next read rather than on the next release.
+	function tombTtl() {
+		try { return DaimondPolicy.tombTtlMs(); }
+		catch (e) { return 37 * 24 * 3600 * 1000; }   // no policy module: 30 + 7
+	}
 
 	/// Messages removed on purpose, by id. The transcript merge is an append-only UNION, so a
 	/// message dropped from this tab's array is silently re-added from what another tab (or this
 	/// tab a moment ago) stored. A tombstone is how a removal survives the union — used when a
 	/// continued interrupted turn is replaced, so it does not resurrect on the next reload.
 	function loadMsgTombs() {
-		var t = readJson(MSG_TOMBS_KEY, {}), now = Date.now(), out = {};
-		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		var t = readJson(MSG_TOMBS_KEY, {}), now = Date.now(), out = {}, ttl = tombTtl();
+		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
 		return out;
 	}
 	function msgTombstone(mids) {
@@ -733,6 +777,11 @@ import init, {
 			cachedTokens: c.cachedTokens || 0, costUsd: c.costUsd || 0,
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
 			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
+			// What the user put in this chat's scope with the paperclip. It rides on the
+			// record so it persists, so it travels in the sync parcel with everything else
+			// here, and so it goes when the chat goes — a scope that outlived its chat
+			// would be a fence around a conversation nobody can open.
+			holds: Array.isArray(c.holds) ? c.holds : [],
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	function readJson(key, fallback) {
@@ -742,8 +791,8 @@ import init, {
 		} catch (e) { return fallback; }
 	}
 	function loadTombs() {
-		var t = readJson(TOMBS_KEY, {}), now = Date.now(), out = {};
-		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		var t = readJson(TOMBS_KEY, {}), now = Date.now(), out = {}, ttl = tombTtl();
+		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
 		return out;
 	}
 	function tombstone(id) {
@@ -841,7 +890,15 @@ import init, {
 				kind:  w.kind,
 				name:  name,
 				at:    w.at,
-				due:   DaimondTrash.dueAt(w.at),
+				// The record's own destruction date, worked out from the retention
+				// PINNED ON IT rather than from whatever the operator has the knob
+				// at today. `ids()` carries it for that reason: the term an item
+				// went in under is the term the panel has already shown its owner,
+				// and lowering the setting must not bring that date forward.
+				due:   w.due,
+				// Whether it got here by itself, so the tile can say which. A chat
+				// that ran out of time was not deleted by anybody.
+				auto:  !!w.auto,
 				bytes: bytes,
 			});
 		}
@@ -853,6 +910,27 @@ import init, {
 	async function trashRestore(id) {
 		try { if (!DaimondTrash.back(id)) return false; }
 		catch (e) { return false; }
+		// A RESTORE IS A TOUCH. Without this the chat comes back to the rail with
+		// the stamp it had when it expired, so its deadline is already in the past
+		// and the very next expiry pass would put it straight back — a Restore
+		// button that visibly does nothing. Stamping it gives the chat its full
+		// window again, which is what somebody pressing Restore is asking for.
+		//
+		// It also settles the record for good rather than leaving a fight: the
+		// next deadline is now later than the restore, so `DaimondTrash.expire`
+		// no longer refuses it, and the chat re-enters the ordinary cycle instead
+		// of becoming immortal.
+		//
+		// Deliberately not applied to a Diamond: Diamonds do not expire, and
+		// their `touched` stamp drives a merge whose rules are not these.
+		//
+		// The STORED record is what is stamped, because a trashed chat was
+		// detached from `chats` when it went in and so is not in memory to
+		// stamp. `ChatStore.stored()` hands back the mirror's own objects, and
+		// `persistChats` writes the mirror through — so this lands, and it lands
+		// before `onChatsChangedElsewhere` below rebuilds `chats` from it.
+		var rec = storedChats().find(function (c) { return c && c.id === id; });
+		if (rec) { touchChat(rec); persistChats(); }
 		// Both lists are re-read from their stores rather than patched, because
 		// the store is the truth and this is the same reconciliation a parcel
 		// arriving from the other device goes through.
@@ -871,6 +949,161 @@ import init, {
 		return await destroyDiamond(id);
 	}
 
+	// ── A chat runs out of time ────────────────────────────────
+	//
+	// A chat is throw-away. Left untouched for the operator's few days it goes
+	// to the trash on its own, and from there it is an ordinary trashed thing:
+	// restorable, promotable, destroyed on the same retention as everything
+	// else. The point is not to delete anybody's work — it is that a rail
+	// growing without limit is a rail nobody curates, and the durable thing in
+	// this app is a Diamond.
+
+	/// Does this chat still have a worker that has not finished?
+	///
+	/// A dispatched worker's scratch belongs to the RUN, not to the chat: the
+	/// chat and its scratch go together when the last worker for it reaches
+	/// `done`, `error` or `stopped`, and until then the chat stays however long
+	/// it has been untouched. This is a different kind of exemption from the
+	/// three above it — those are about a turn in flight, and a turn is over in
+	/// seconds. A fan-out outlives the turn that started it, so a chat can be
+	/// genuinely untouched for days with work still running underneath it.
+	///
+	/// ── A SEAM ──────────────────────────────────────────────────
+	/// The per-chat question — "are any of THIS chat's workers still live" — is
+	/// being added by the lane that gives a chat its own scratch scope, and the
+	/// exact call is theirs to name. When it lands it goes in the marked line
+	/// below and nothing else here changes.
+	///
+	/// Until then this answers the question it CAN answer without inventing an
+	/// API, and it is careful about which way it is wrong:
+	///
+	///   * NO WORKER IS RUNNING ANYWHERE. Then no chat has one, and every chat
+	///     is judged on its own deadline. `Workers.busy()` already answers this
+	///     and has always meant exactly it.
+	///   * SOMETHING IS RUNNING, but this device cannot yet say for which chat.
+	///     Then NOTHING is expired on this pass. The rule the two lanes agreed
+	///     is that "the chat expired" must never be why work was lost, and a
+	///     sweep that guessed would break it about once in however many
+	///     fan-outs. The cost of being conservative is one hour's delay, because
+	///     the sweep runs again on the next tick and the deadline is a pure
+	///     function of a stamp that has not moved.
+	///
+	/// So the feature does not go inert while the seam is open, and it cannot
+	/// take a chat out from under a live run either.
+	function chatHasLiveWork(chatId) {
+		try {
+			if (typeof Workers === 'undefined' || !Workers) return false;
+			// The per-chat answer. `liveFor` counts only `running` and `queued` — the
+			// two states in which work is still going to happen. `paused` waits for a
+			// person and `interrupted` waits for nothing at all, and neither should
+			// hold a conversation open indefinitely.
+			//
+			// The blunt fallback below is kept for a build where the workers module is
+			// older than this call: it is the conservative answer the two lanes agreed
+			// on, and being an hour late is the right way to be wrong.
+			if (typeof Workers.liveFor === 'function') return !!Workers.liveFor(chatId);
+			return !!Workers.busy();
+		} catch (e) {
+			// The worker machinery is not up. Nothing can be running under a
+			// module that does not exist, so this is the honest `false` and not a
+			// swallowed failure.
+			return false;
+		}
+	}
+
+	/// When this chat's time is up. `0` for a chat that has none.
+	///
+	/// FROM `updatedAt`, WHICH IS THIS APP'S `touched` STAMP FOR A CHAT. It is
+	/// moved by `touchChat` on creation, on every turn sent, on every reply
+	/// landed and on a rename, and it is what the rail already sorts on — so the
+	/// chat at the bottom of the rail is exactly the chat closest to expiring,
+	/// and a user watching the order has already been told which one is next.
+	/// Nothing here reads a second freshness field, because a chat has only the
+	/// one; the `touched`/`updated` pair that cost this tree a user's tags
+	/// belongs to Diamonds and is not touched by any of this.
+	///
+	/// The exemptions are the whole of the care in this function:
+	///
+	///   * A DAIMON'S CONVERSATION. `diamondId` means the record belongs to a
+	///     Diamond and is reached through it; it has no tile, so trashing it
+	///     would strand a Diamond beside a chat view that says nothing is there.
+	///   * A CHAT WITH A TURN IN FLIGHT, or with anything queued to send. Its
+	///     stamp is about to move, and taking it away mid-answer would abort a
+	///     turn the user is paying for.
+	///   * THE CHAT ON SCREEN. Whatever the clock says, nothing vanishes from
+	///     under somebody who is looking at it.
+	function chatDueAt(c) {
+		if (!c || !c.id) return 0;
+		if (c.diamondId) return 0;
+		if (c._generating) return 0;
+		if ((c._queue && c._queue.length) || (c._interject && c._interject.length)) return 0;
+		if (current && current.id === c.id) return 0;
+		if (chatHasLiveWork(c.id)) return 0;
+		var touched = c.updatedAt || 0;
+		if (!touched) return 0;			// never stamped: nothing to measure from
+		var win;
+		try { win = DaimondPolicy.chatExpireMs(); }
+		catch (e) { return 0; }			// no policy module: nothing expires
+		return touched + win;
+	}
+
+	/// Move every chat whose time is up into the trash, and take back any that
+	/// this device put there on stale information.
+	///
+	/// THE STAMP WRITTEN IS THE DEADLINE, NEVER `Date.now()`, and that is what
+	/// makes two devices converge instead of duplicating. Both compute the same
+	/// `chatDueAt` from the same synced `updatedAt`, so both write the identical
+	/// record and the union is a no-op — whether one noticed on the day and the
+	/// other three weeks later. See the header of js/trash.js for what stamping
+	/// the moment of noticing would have cost: an unattended machine raising a
+	/// trashing above a restore somebody made by hand.
+	///
+	/// THE WITHDRAWAL IS THE OTHER HALF. This device may have expired a chat
+	/// against an `updatedAt` it held before a parcel arrived saying the chat was
+	/// worked on elsewhere. The deadline it applied was simply wrong, and the
+	/// evidence that it was wrong is now in hand — so an AUTOMATIC trashing whose
+	/// chat has since been touched past it is lifted. A trashing somebody made by
+	/// hand is never lifted here: that was a decision, not a deduction.
+	///
+	/// Returns how many went in, for the sentence the boot sweep says out loud.
+	function expireChats() {
+		// NOT named `trashed`: that is a FUNCTION in this scope — "is this id in
+		// the trash" — and a local of the same name shadows it for the whole
+		// body. Nothing here calls it today, which is exactly how that sort of
+		// shadowing survives until the line that needs it is added.
+		var moved = 0, now = Date.now();
+		var list;
+		try { list = storedChats(); }
+		catch (e) {
+			try { console.warn('[expiry] could not read the chat store', e); }
+			catch (e2) { /* no console */ }
+			return 0;
+		}
+		list.forEach(function (c) {
+			var due = chatDueAt(c);
+			if (!due) return;
+			var live = chats.find(function (x) { return x.id === c.id; });
+			if (live && !chatDueAt(live)) return;		// exempt in memory, whatever the store says
+			try {
+				if (DaimondTrash.isAuto(c.id)) {
+					// It was expired here, and the chat has since been touched past
+					// the deadline that did it. Take it back out.
+					if (due > now) { DaimondTrash.back(c.id); }
+					return;
+				}
+				if (now >= due && DaimondTrash.expire(c.id, 'chat', due)) moved++;
+			} catch (e) {
+				// LOUD. This used to be a bare comment saying "no trash module",
+				// which is true of exactly one cause and silently swallowed every
+				// other — including the one that had this whole pass doing nothing
+				// while every check around it read green.
+				try { console.warn('[expiry] could not expire ' + c.id, e); }
+				catch (e2) { /* no console */ }
+			}
+		});
+		return moved;
+	}
+
 	/// Retention. Whatever has been in the trash for its whole term is destroyed,
 	/// here, on this device, without being told to by another one.
 	///
@@ -881,6 +1114,51 @@ import init, {
 	/// sweeps its own, lays its own tombstones, and converges with devices that
 	/// did the same thing a month earlier, rather than depending on a tombstone
 	/// that has since aged out of the parcel.
+	/// How long the boot sweep waits for the first pull before going ahead
+	/// anyway. Long enough for a session to be established and a mailbox read on
+	/// a slow connection; short enough that a device whose gateway is down still
+	/// destroys what is due rather than keeping everything for ever.
+	var SWEEP_WAIT_MS = 20000;
+
+	/// Expire, then destroy — but not before this device has heard from the
+	/// others.
+	///
+	/// THIS ORDERING IS A DATA-LOSS FIX AND NOT A TIDINESS ONE. The retention
+	/// sweep destroys for good and lays a tombstone, and a tombstone is honoured
+	/// unconditionally by every merge; nothing outranks one. So a device that
+	/// sweeps on records it holds BEFORE reading the mailbox can destroy an item
+	/// the other device restored a month ago — its own record still says trashed,
+	/// because the restore is sitting unread in a parcel it has not opened. It
+	/// then lays a tombstone, pulls, and the restore is defeated by a deletion
+	/// that was decided on stale information.
+	///
+	/// The boot used to do exactly that: `renderAll` swept synchronously while
+	/// the first pull was still waiting on `daimond:authed`.
+	///
+	/// Expiry is held behind the same gate and for the mirror reason: a stale
+	/// `updatedAt` would have this device expiring a chat the other one has been
+	/// working in all week.
+	///
+	/// It does NOT wait for ever. A device with no account, or one whose gateway
+	/// is unreachable, has no news coming — and a trash that is never emptied
+	/// because the network is down is its own kind of broken. `daimond:pulled`
+	/// fires on any completed pull, good news or bad, and the timeout covers the
+	/// case where none is ever attempted.
+	var _sweptAtBoot = false;
+	async function sweepWhenTold() {
+		if (_sweptAtBoot) return 0;
+		_sweptAtBoot = true;
+		await new Promise(function (resolve) {
+			var done = false;
+			function go() { if (done) return; done = true; resolve(); }
+			try { window.addEventListener('daimond:pulled', go, { once: true }); }
+			catch (e) { /* no window: go now */ }
+			setTimeout(go, SWEEP_WAIT_MS);
+		});
+		expireChats();
+		return await trashSweep();
+	}
+
 	var _sweeping = false;
 	async function trashSweep() {
 		// Destroying something moves the trash record, which is exactly the event
@@ -897,9 +1175,22 @@ import init, {
 
 	/// Destroy a list of expired entries, one at a time. Split out of
 	/// `trashSweep` only so the re-entrancy guard above wraps the whole walk.
+	///
+	/// IT SAYS WHAT IT DESTROYED, and this is the one thing standing between the
+	/// user and a silence. A device switched off for six weeks comes back, works
+	/// out that a chat expired on day three and that its thirty days ran out on
+	/// day thirty-three, and destroys it on that boot — having never once shown
+	/// it in the Trash panel on this machine. The account's term did elapse and
+	/// both devices agree, which is the property the whole design rests on; what
+	/// must not also be true is that it happened without a word.
+	///
+	/// Coalesced into one line, for the same reason `saidMoved` is: a sweep after
+	/// a long absence destroys a dozen things at once, and a dozen overlapping
+	/// toasts over the composer is how a notice becomes a mess.
 	async function sweepDue(due) {
+		var gone = 0;
 		for (var i = 0; i < due.length; i++) {
-			try { await trashPurge(due[i].id); }
+			try { await trashPurge(due[i].id); gone++; }
 			catch (e) {
 				// Loud. A retention sweep that half-worked leaves the user with a
 				// panel promising to destroy something on a date that has passed.
@@ -907,13 +1198,22 @@ import init, {
 				catch (e2) { /* no console */ }
 			}
 		}
+		if (gone) {
+			try {
+				var d = DaimondPolicy.days().retain;
+				toast(gone === 1
+					? tOr('trash.swept.one', 'One thing had been in the trash for {days} days and has been destroyed.', { days: d })
+					: tOr('trash.swept.other', '{n} things had been in the trash for {days} days and have been destroyed.', { n: gone, days: d }));
+			}
+			catch (e) { /* no toast surface yet at this point in the boot */ }
+		}
 		return due.length;
 	}
 
 	/// The Diamonds deleted on purpose, by id, with anything past its TTL pruned.
 	function loadDiamondTombs() {
-		var t = readJson(DIAMOND_TOMBS_KEY, {}), now = Date.now(), out = {};
-		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		var t = readJson(DIAMOND_TOMBS_KEY, {}), now = Date.now(), out = {}, ttl = tombTtl();
+		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
 		return out;
 	}
 	/// Record that a Diamond was deleted on purpose, so the other device deletes
@@ -1581,7 +1881,7 @@ import init, {
 	/// Union an incoming tombstone map into a stored one, keeping the later time
 	/// for any id in both and pruning anything past its TTL.
 	function mergeTombMap(key, incoming) {
-		var t = readJson(key, {}), now = Date.now();
+		var t = readJson(key, {}), now = Date.now(), ttl = tombTtl();
 		if (incoming && typeof incoming === 'object') {
 			Object.keys(incoming).forEach(function (id) {
 				var ts = incoming[id];
@@ -1589,7 +1889,7 @@ import init, {
 			});
 		}
 		var out = {};
-		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
 		try { localStorage.setItem(key, JSON.stringify(out)); } catch (e) { /* best effort */ }
 		return out;
 	}
@@ -1599,8 +1899,8 @@ import init, {
 	/// that keeps its own map — models.js, mail.js — does not have to keep its own
 	/// TTL with it.
 	function loadTombMap(key) {
-		var t = readJson(key, {}), now = Date.now(), out = {};
-		Object.keys(t).forEach(function (id) { if (now - t[id] < TOMB_TTL) out[id] = t[id]; });
+		var t = readJson(key, {}), now = Date.now(), out = {}, ttl = tombTtl();
+		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
 		return out;
 	}
 
@@ -2840,17 +3140,43 @@ import init, {
 		return 'c' + newMid();
 	}
 
-	// Auto-incrementing chat label (Chat-0001, Chat-0002, …), persisted so the
-	// numbering survives a reload.
-	var chatCounter = parseInt(localStorage.getItem('daimond-chat-counter') || '0', 10) || 0;
+	// ── A CHAT NO LONGER CARRIES A NAME ────────────────────────
+	//
+	// It used to be born as `Chat-0025`, from a counter on this device, and that
+	// was wrong twice over.
+	//
+	// The counter was PER DEVICE while the chats it named were shared across
+	// every device on the account, so the numbers implied a chronology they did
+	// not have: chat 25 here and chat 25 there were different conversations, and
+	// 25 was not the twenty-fifth of anything. `highestNumbered` below was
+	// written to paper over the collision and could only ever move it.
+	//
+	// The deeper fault is what kind of label it was. An accession number is what
+	// a museum gives a thing it is keeping. A chat is throw-away — get in, get
+	// out, and spend the time curating Diamonds — so numbering them was the
+	// interface quietly arguing the opposite of what the app is for.
+	//
+	// So a new chat is born with NO NAME, and the rail derives what it shows:
+	// relative time, grouped by day. That is truthful across devices, it matches
+	// the newest-touched sort the rail already had, and it carries no count. The
+	// `name` field stays in the model and is shown WHEN A USER HAS SET ONE —
+	// which is now rare, because the gesture that used to set one makes a
+	// Diamond instead. Nothing is migrated and nothing is renumbered: a chat
+	// that already carries `Chat-0025` goes on carrying it, because it is on the
+	// other device under that name too.
 
 	/// The highest number already worn by a name of the form `<Stem>-NNNN`.
 	///
+	/// A DIAMOND still has a numbered default label, and should: a Diamond is
+	/// the thing being kept, it is named on purpose at the moment it is made,
+	/// and the number is only what the dialog opens on. The collision below is
+	/// therefore still worth defending against there.
+	///
 	/// The counter is stored PER DEVICE and the things it names are shared across
-	/// every device on the account. So a chat made on the other machine arrives
+	/// every device on the account. So a Diamond made on the other machine arrives
 	/// here without ever advancing this counter, and the next one made here takes
-	/// a name that is already in use -- two Chat-0002 in the same rail. The same
-	/// gap opens on a backup import, which restores the chats and not the counter.
+	/// a name that is already in use -- two Diamond-0002 in the same rail. The same
+	/// gap opens on a backup import, which restores them and not the counter.
 	///
 	/// The counter therefore is not the answer, only a floor: whatever number is
 	/// actually in use wins over it. That is self-healing rather than another
@@ -2863,18 +3189,6 @@ import init, {
 			if (m) top = Math.max(top, parseInt(m[1], 10) || 0);
 		});
 		return top;
-	}
-
-	function nextChatLabel() {
-		var used = 0;
-		try {
-			// The store's own list, not a read: naming a chat cannot wait on a disk
-			// round trip, and the mirror is what the store last wrote or read anyway.
-			used = highestNumbered(storedChats().map(function (c) { return c.name; }), 'Chat');
-		} catch (e) { /* no store yet: the counter stands alone */ }
-		chatCounter = Math.max(chatCounter, used) + 1;
-		localStorage.setItem('daimond-chat-counter', '' + chatCounter);
-		return 'Chat-' + ('000' + chatCounter).slice(-4);
 	}
 
 	// Two localStorage keys have been renamed twice, following the noun: focus ->
@@ -2917,10 +3231,21 @@ import init, {
 		diamondCounter = nextDiamondNumber();
 		localStorage.setItem('daimond-diamond-counter', '' + diamondCounter);
 	}
-	/// The number the next Diamond would take. Diamonds sync and this counter does
-	/// not, so the same collision the chats had (see `nextChatLabel`) applies here:
-	/// a Diamond made on the other machine never advances this device's counter.
-	/// The list is already in memory, so the check is a pass over `diamonds`.
+	/// The number the next Diamond would take.
+	///
+	/// Diamonds sync and this counter does not, so a Diamond made on the other
+	/// machine never advances this device's counter and the next one made here
+	/// would take a number already in use — two Diamond-0002 in one rail. The
+	/// counter is therefore a FLOOR and not the answer: whatever number is
+	/// actually in use wins over it, which is self-healing rather than another
+	/// thing to keep in step. The list is already in memory, so it costs one
+	/// pass over `diamonds`.
+	///
+	/// Chats used to be numbered the same way and are not any more — a chat is
+	/// throw-away and an accession number is what a museum gives a thing it is
+	/// keeping. A DIAMOND is the thing being kept, is named on purpose at the
+	/// moment it is made, and this number is only what the dialog opens on. See
+	/// `dev/verify_naming.mjs`, which guards the collision here now.
 	function nextDiamondNumber() {
 		return Math.max(diamondCounter, highestNumbered(
 			(diamonds || []).map(function (d) { return d.name; }), 'Diamond')) + 1;
@@ -5742,10 +6067,91 @@ import init, {
 		return got;
 	}
 
+	/// Mark a dispatched worker as acting alone, and prove the mark went on.
+	///
+	/// **This is a security mark set from JavaScript, so it is read back**, for the same reason
+	/// `scopeAgentTo` reads its scope back: everything that can go wrong here is silent, and
+	/// every silent failure is in the direction of LESS asking. A worker that failed to be
+	/// marked is one that can press a button on a page the user is signed into with nobody
+	/// asked at all.
+	///
+	/// What it buys, and it is not a fence: before a worker clicks or types on a page, the user
+	/// is shown what is about to happen and decides. `SAFETY_CLAUSE` in src/prompts.rs tells
+	/// every agent never to do anything irreversible without a plain yes, and `DEFAULT_WORKER`
+	/// tells a worker two paragraphs earlier that it cannot ask questions. Nothing reconciled
+	/// those two sentences until this: a fence is a list of paths and the acts in that clause
+	/// are buttons.
+	///
+	/// # Arguments
+	/// * `app` - The freshly built DaimondApp for one worker.
+	function markAlone(app) {
+		if (!app || typeof app.set_unsupervised !== 'function'
+			|| typeof app.is_unsupervised !== 'function') {
+			throw new Error('This build of the engine cannot tell a worker it is working alone.');
+		}
+		app.set_unsupervised();
+		if (app.is_unsupervised() !== true) {
+			throw new Error('This worker could not be marked as working alone, so nothing would '
+				+ 'ask the user before it acted on a page.');
+		}
+	}
+
+	/// Confine a chat's dispatched worker: read anywhere, write where the user said.
+	///
+	/// The chat's `scopeAgentTo`, and the asymmetry between the two is the design. A Diamond
+	/// fences both verbs, because a daimon may see only what its Diamond holds. A chat is the
+	/// user's own conversation over their whole workspace, so its worker READS wherever the
+	/// chat can — equal reach, since a person asked the question either way — and WRITES only
+	/// in the chat's own working folder and whatever the user attached. A command cannot be
+	/// inspected for whether it writes, so it counts as a write and runs only in an attached
+	/// folder on the machine: no attachment, no command.
+	///
+	/// Set, then read back and compared, exactly as `scopeAgentTo` is. A scope that failed
+	/// silently would leave the worker writing anywhere in the workspace.
+	///
+	/// # Arguments
+	/// * `app` - The freshly built DaimondApp.
+	/// * `chatId` - The chat this worker was dispatched from.
+	async function scopeChatTo(app, chatId) {
+		if (!app || typeof app.set_chat_scope !== 'function'
+			|| typeof app.diamond_scope !== 'function') {
+			throw new Error('This build of the engine cannot confine a chat\'s worker.');
+		}
+		if (!chatId) {
+			throw new Error('A worker was dispatched without a chat to work for.');
+		}
+		var scratch = chatScratchDir(chatId);
+		var attached = await chatScopePaths(chatId);
+		app.set_chat_scope(scratch, JSON.stringify(attached));
+
+		var got = {};
+		try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
+		catch (e) { throw new Error('The engine could not say what this worker is confined to.'); }
+		if (got.nowhere) {
+			throw new Error('This chat\'s scope named no usable place, so a worker in it could '
+				+ 'not write anything at all.');
+		}
+		var wrote = Array.isArray(got.write_allow) ? got.write_allow : [];
+		if (!wrote.length) {
+			throw new Error('The scope did not take: this worker\'s writing is not confined.');
+		}
+		if (wrote.indexOf(scratch) < 0) {
+			throw new Error('The scope took, but without this chat\'s own folder: the engine holds '
+				+ wrote.join(', ') + ' and not ' + scratch + '.');
+		}
+		// A chat's worker must NOT carry a read allow-list. If one is here, something composed a
+		// Diamond's scope into this worker and it would silently stop reading the user's files.
+		if ((got.allow || []).length) {
+			throw new Error('This worker carries a Diamond\'s scope as well as a chat\'s, so it '
+				+ 'could read neither properly.');
+		}
+		return got;
+	}
+
 	/// Whether this act may happen, now that something from outside has been read.
 	///
 	/// # Arguments
-	/// * `payloadJson` - What the caller wants to do: `{ tool, url, detail }`.
+	/// * `payloadJson` - What the caller wants to do: `{ tool, url, detail, alone }`.
 	/// * `opts` - `{ strict: true }` to ask EVERY time and to ask about our own host too.
 	///
 	/// Strict mode exists for one caller: a link a crystal page asked the app to follow. The
@@ -5842,24 +6248,53 @@ import init, {
 		// exfiltration the gate exists to catch, and it must not become routine.
 		if (req.tool === 'web_type') {
 			var typed = String(req.detail || '');
-			var shownText = typed.length > 300 ? (typed.slice(0, 300) + '…') : typed;
+			// NOT cut to 300 characters, unlike every other body on this screen. This
+			// is the one string a person is being asked to authorise SENDING, and the
+			// sentence around it calls it "this": a card number sitting past the cut
+			// would be approved unseen by somebody who was told they had read it. So
+			// the whole of it is shown, however long. The card scrolls already
+			// (`.modal-card`: max-height 80vh, overflow-y auto) and `.dlg-msg` wraps
+			// an unbroken run, so a long form post costs a scrollbar, not a reader's
+			// trust.
+			var shownText = typed;
 			var okType = await confirmDialog(
-				t('egress.type_body', { host: host, text: shownText || t('egress.nothing') }),
+				req.alone
+					? tOr('permmode.type_worker_body',
+						'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
+						{ host: host, text: shownText || t('egress.nothing') })
+					: t('egress.type_body', { host: host, text: shownText || t('egress.nothing') }),
 				t('egress.type_ok'),
-				{ title: t('egress.type_title', { host: host }), danger: true });
+				{ title: req.alone
+					? tOr('permmode.act_worker_title', 'An agent wants to act on a page')
+					: t('egress.type_title', { host: host }),
+					danger: true });
 			return okType ? 'allow' : 'deny';		// never remembered.
 		}
 		// Clicking navigates, and a link's address is written by whoever wrote the
 		// page. Acting on a page is approved separately from reading it: a yes about
 		// reading a site is not a yes about operating it.
 		if (req.tool === 'web_click') {
-			if (_egressAct[host]) return 'allow';
+			// `alone` is a dispatched worker: nobody is reading its transcript and it
+			// cannot put a question itself, so the app puts this one for it. The
+			// per-host memory is skipped BOTH WAYS — not read, not written — because
+			// "you approved a click on this host" is consent about a host and the rule
+			// it is standing in for is about the ACT. One yes on shop.test must not
+			// license the next click, and a worker's yes must not license the user's
+			// own later browsing either.
+			if (!req.alone && _egressAct[host]) return 'allow';
 			var okAct = await confirmDialog(
-				t('egress.act_body', { host: host }),
+				req.alone
+					? tOr('permmode.act_worker_body',
+						'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
+						{ host: host })
+					: t('egress.act_body', { host: host }),
 				t('egress.act_ok', { host: host }),
-				{ title: t('egress.act_title', { host: host }), danger: true });
+				{ title: req.alone
+					? tOr('permmode.act_worker_title', 'An agent wants to act on a page')
+					: t('egress.act_title', { host: host }),
+					danger: true });
 			if (!okAct) return 'deny';
-			_egressAct[host] = 1;
+			if (!req.alone) _egressAct[host] = 1;
 			return 'allow';
 		}
 
@@ -7262,7 +7697,14 @@ import init, {
 			// purpose: it is a question a caller is waiting on an answer to, and its
 			// strings are marked as they are built instead.
 			painter(homeView,     renderHome);
-			painter(settingsView, function () { if (window.DaimondModels) DaimondModels.render(); });
+			// The model list AND the rows beneath it. `renderSettingsRows`, not
+			// `fillSettings`: the latter re-seeds the provider box from `cfg` and can
+			// go to the network, and a language change must not take a half-typed key
+			// with it -- the same call the push view makes for the same reason.
+			painter(settingsView, function () {
+				if (window.DaimondModels) DaimondModels.render();
+				renderSettingsRows();
+			});
 			painter(creditsView,  function () {
 				// Only a note the CALLER put there survives, and it survives because
 				// `apply` has just put it into the new language -- which is what the
@@ -7745,7 +8187,10 @@ import init, {
 		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
 		var chat = {
 			id: newChatId(),
-			name: nextChatLabel(),
+			// EMPTY, not `Chat-0025`. The rail derives what it shows from when
+			// the chat was last touched; `name` fills in only when a user sets
+			// one deliberately. See the block above `highestNumbered`.
+			name: '',
 			app: null,
 			messages: [],
 			model: d.model || cfg.model || '',
@@ -7809,15 +8254,23 @@ import init, {
 		chatInput.focus();
 	}
 
-	// Rename a chat from its tile label. The centre header mirrors the label
-	// read-only, so it is updated here too (single source of truth: the tile).
+	/// Rename a chat, from the one field that still offers it (the cog dialog).
+	///
+	/// AN EMPTY NAME IS A REAL ANSWER and clears the name rather than being
+	/// ignored: with no name the rail derives its own label, so clearing the
+	/// field is how somebody undoes a name they no longer want. It used to
+	/// return early on empty, because a chat with no name would have had no
+	/// label at all -- which is no longer true of anything.
+	///
+	/// The centre header mirrors the label read-only, so it is updated here too.
 	function renameChat(chat, name) {
 		name = (name || '').trim();
-		if (!name || name === chat.name) return;
+		if (name === (chat.name || '')) return;
 		chat.name = name;
 		touchChat(chat);
 		persistChats();
-		if (current === chat) sessionNameEl.textContent = name;
+		if (current === chat) sessionNameEl.textContent = chatDisplayName(chat);
+		renderSessionList();
 	}
 
 	/// Take a chat off the rail and out of this tab's live state, whatever is
@@ -7895,6 +8348,34 @@ import init, {
 		catch (e) { /* module not up */ }
 		// Same reasoning for how the tile drew itself: an id nobody can reach.
 		forgetTilePrefs(id);
+		// ── A CHAT'S SCOPE MUST GO WITH IT. A SEAM. ─────────────────
+		//
+		// A chat now carries persistent scope — files and folders brought into it
+		// by hand and held by the same `holds` link machinery a Diamond uses —
+		// and a run's scratch. TRASHING one is already right and needs nothing
+		// here: the record is untouched, so a restore brings the whole scope
+		// back, exactly as it does for a Diamond. What has to be asked of the
+		// scope reader is that it consults `trashed(chatId)` where it BUILDS its
+		// list, which is the rule stated at `function trashed` and the only way
+		// a half-alive chat is avoided.
+		//
+		// DESTROYING one is a different matter and does NOT fall out for free.
+		// `destroyDiamond` forgets five separate things by hand — the
+		// arrangement, the pause flags, the tile preferences, the view, the
+		// daimon's conversation — because nothing collects them on its own, and
+		// a chat's sidecar and scratch are two more of the same kind. Left
+		// behind they are bytes under an id nothing lists, and `all_links` walks
+		// DIRECTORIES rather than the rail, so an orphaned sidecar can put links
+		// into the graph from a chat that does not exist.
+		//
+		// It matters more than it did. Until now a chat was only ever destroyed
+		// by somebody choosing to; with expiry this is the ORDINARY end of every
+		// abandoned chat, so a leak here is not a rare stray directory, it is one
+		// per chat nobody came back to.
+		//
+		// Named and done: `dropChatScope`. It goes here, before the tombstone, so
+		// the bytes are gone on the device that decided.
+		dropChatScope(id);
 		tombstone(id);						// the deletion, and it travels
 		try { DaimondTrash.forget(id); }	// nothing left for the panel to show
 		catch (e) { /* module not up */ }
@@ -7916,7 +8397,7 @@ import init, {
 	/// × -- and a second copy of the rule would be a second place for it to drift.
 	function deleteChat(chat) {
 		removeChat(chat);
-		saidMoved(chat.name);
+		saidMoved(chatDisplayName(chat));
 		return true;
 	}
 
@@ -7966,7 +8447,7 @@ import init, {
 		var loose = chats.filter(function (c) { return !c.diamondId; });
 		var n = loose.length;
 		if (n === 0) return;
-		loose.forEach(function (c) { removeChat(c); saidMoved(c.name); });
+		loose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });
 	}
 
 	// ── The Chats section's own overflow ────────────────────────
@@ -7990,6 +8471,43 @@ import init, {
 		var menu = document.createElement('div');
 		menu.className = 'railhead-menu';
 		menu.setAttribute('role', 'menu');
+
+		// SHOW THE FIRST MESSAGE, or do not. It lives here rather than in the
+		// settings drawer because it is about THIS list and nothing else, and
+		// because the moment somebody wants it off is the moment they are looking
+		// at the rail with somebody behind them — at which point a switch two
+		// panels away is a switch they will not find. `aria-checked` on a
+		// `menuitemcheckbox`, because it is a state and not an act.
+		//
+		// Defaults ON: see `cfg.chatPreview`. The words say what it does rather
+		// than what it is called, because a menu row is read in half a second.
+		var prev = document.createElement('button');
+		prev.type = 'button';
+		prev.className = 'railhead-menu-item';
+		prev.setAttribute('role', 'menuitemcheckbox');
+		var on = cfg.chatPreview !== false;
+		prev.setAttribute('aria-checked', on ? 'true' : 'false');
+		prev.textContent = (on ? '✓ ' : ' ') + tOr('rail.show_preview', 'Show the first message');
+		prev.title = tOr('rail.show_preview_help',
+			'Show the first thing you said in each chat, under the time. Turn it off and the rail says only when.');
+		prev.addEventListener('click', function () {
+			closeChatsMenu();
+			cfg.chatPreview = !on;
+			// ONLY THIS FIELD is written back, never `saveCfg(cfg)`. The in-memory
+			// `cfg` is a VIEW of whichever model is starred and carries the
+			// resolved key IN THE CLEAR, so a wholesale save would write a
+			// plaintext provider key into storage that `DaimondModels` had
+			// sealed. `ReplyLength.save` states the same rule for the same reason;
+			// this is the second reader of it, which is why it is written out
+			// again rather than left as a cross-reference.
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.chatPreview = cfg.chatPreview;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota: the choice holds for this session */ }
+			renderSessionList();
+		});
+		menu.appendChild(prev);
+
 		var del = document.createElement('button');
 		del.type = 'button';
 		del.className = 'railhead-menu-item danger';
@@ -8040,6 +8558,138 @@ import init, {
 		}).map(function (m) {
 			return (m.role === 'user' ? 'User: ' : 'Assistant: ') + m.content;
 		}).join('\n\n');
+	}
+
+	// ── Keep as a Diamond ──────────────────────────────────────
+	//
+	// SOMEBODY RENAMES A CHAT WHEN THEY HAVE DECIDED IT MATTERS, and that is the
+	// moment it should stop being a chat. Renaming used to be what the tile
+	// offered, which put the app's most consequential decision — this one is
+	// worth keeping — behind a gesture whose whole effect was to change a label
+	// on a thing still on a three-day clock. So the gesture now makes the
+	// durable thing, and the name they were going to type becomes its name.
+	//
+	// IT IS ALSO THE ESCAPE HATCH. Chats expire on their own, so there has to be
+	// one act that takes a conversation out of that cycle for good, and it has
+	// to be reachable from the trash as well as from the rail — the trash is
+	// exactly where somebody meets a chat they had forgotten and realises it
+	// mattered. The Trash panel offers it beside Restore for that reason.
+	//
+	// IT IS NOT A FOLD. A fold runs the reducer on the Diamond's model: it is a
+	// paid round trip, it can fail on a missing key, and what it writes is a
+	// SUMMARY. This writes the transcript itself, whole, as the Diamond's first
+	// artefact — no model is consulted, nothing is charged, and nothing is lost
+	// to a reduction. Folding it afterwards is then an ordinary thing to do, and
+	// the raw material is still there when it happens.
+
+	/// A transcript as a file: the conversation, in order, with a head saying
+	/// where it came from.
+	///
+	/// Markdown, because the Diamond's own crystal is markdown and the file
+	/// viewer already renders it. `chatDelta` is reused for the body rather than
+	/// a second formatter — a fold and a keep must not disagree about what a
+	/// transcript looks like.
+	function transcriptDoc(chat, name) {
+		var when = new Date().toISOString().slice(0, 10);
+		return ['# ' + name,
+			'',
+			'The conversation this Diamond was made from, kept whole on ' + when + '.',
+			'',
+			'---',
+			'',
+			chatDelta(chat, null),
+			''].join('\n');
+	}
+
+	/// Where a kept transcript lands inside its Diamond.
+	///
+	/// In the Diamond's OWN directory, so it travels with the Diamond: the sync
+	/// merge carries `diamonds/<id>/` whole, which is the same reason a link
+	/// sidecar lives there. A transcript written anywhere else in the workspace
+	/// would reach the other device by the file section of the parcel, which is
+	/// budgeted and may be truncated — the one place a kept conversation must
+	/// not be is in the part that gets left behind.
+	function transcriptPath(diamondId) { return 'diamonds/' + diamondId + '/transcript.md'; }
+
+	/// Make a Diamond out of a chat, carrying its transcript in as the first
+	/// artefact. `chatId` may name a chat that is on the rail or one in the
+	/// trash; both are promotable, and the trashed one is why this takes an id
+	/// rather than a chat object.
+	///
+	/// Returns the new Diamond's id, or '' if the user cancelled at the name.
+	async function keepAsDiamond(chatId) {
+		var chat = storedChats().find(function (c) { return c && c.id === chatId; });
+		if (!chat) {
+			noticeDialog(tOr('keep.gone', 'That chat is no longer here'),
+				tOr('keep.gone_body', 'It was destroyed on this device or another one. Nothing was made.'));
+			return '';
+		}
+
+		// Prefilled with the name the chat already carries, which is empty unless
+		// somebody set one — so for almost every chat this opens on a blank field
+		// waiting for the word they had in mind. Not prefilled with the first
+		// message: a Diamond's name is a decision, and offering a sentence to
+		// accept is how a rail fills up with Diamonds called "can you help me".
+		var name = await promptDialog(tOr('keep.title', 'Keep as a Diamond'), {
+			message: tOr('keep.body',
+				'Name it, and this conversation is kept whole inside it. Chats expire; Diamonds do not.'),
+			value:   chat.name || '',
+			okLabel: tOr('keep.ok', 'Keep it'),
+		});
+		if (name === null) return '';
+		name = name.trim();
+		if (!name) return '';
+
+		var id;
+		try { id = await diamondApp().create_diamond(name); }
+		catch (e) { noticeDialog(t('rail.create_failed'), friendlyError(e)); return ''; }
+		// It inherits the chat's models, both of them. Neither is asked for: the
+		// user answered both when they started the chat this Diamond is made of,
+		// and asking again at the moment they are naming something is one
+		// question too many.
+		setDiamondModel(id, {
+			provider:       chat.provider || '',
+			model:          chat.model || '',
+			workerProvider: chat.workerProvider || '',
+			workerModel:    chat.workerModel || '',
+		});
+
+		// The transcript, then the link that makes it an artefact. The link is
+		// attempted even if the write failed, and vice versa, because a Diamond
+		// with a transcript and no link is still holding the work — half of this
+		// succeeding is worth strictly more than none of it, and the user has
+		// already been told the Diamond exists.
+		var wrote = false;
+		try {
+			await Files.writeBytes(transcriptPath(id),
+				new TextEncoder().encode(transcriptDoc(chat, name)));
+			wrote = true;
+		} catch (e) {
+			try { console.warn('[keep] could not write the transcript', e); } catch (e2) {}
+		}
+		if (wrote) {
+			try {
+				// `holds`, not `produced`: the Diamond did not make this, it claims
+				// it. Same relation an attachment carries, and the same word
+				// `ARTEFACT_TOOLS` gives `artefact_add`, so the artefact strip
+				// lists it without being taught anything new.
+				await diamondApp().add_link(id, 'diamond:' + id,
+					rootedRef('file', transcriptPath(id)), 'holds', '', 'user');
+				signalLinksChanged();
+			} catch (e) {
+				try { console.warn('[keep] could not link the transcript', e); } catch (e2) {}
+			}
+		}
+
+		bumpDiamonds();
+		clearDiamondFilters();		// nothing may hide what the user just made
+		await loadDiamonds();
+		var made = diamonds.find(function (x) { return x.id === id; });
+		if (made) selectDiamond(made);
+		toast(wrote
+			? tOr('keep.made', '{name} kept, with the conversation inside it.', { name: name })
+			: tOr('keep.made_bare', '{name} made, but the conversation could not be written into it.', { name: name }));
+		return id;
 	}
 
 	var _foldMenu = null;
@@ -8192,7 +8842,7 @@ import init, {
 		}
 		pendingFolds[diamondId] = {
 			base: cur, proposed: proposed, delta: delta,
-			chatId: chat.id, chatName: chat.name,
+			chatId: chat.id, chatName: chatDisplayName(chat),
 			// Some of a chat is not the chat. Marking the tile "Folded" on a partial fold would
 			// claim the rest went in too, and would then refuse to fold the rest as unchanged.
 			partial: !!turns,
@@ -8227,7 +8877,10 @@ import init, {
 		lastToolBlock = null;
 		if (typeof showCentre === 'function') showCentre('chat');
 		if (typeof updateActiveDiamond === 'function') updateActiveDiamond();
-		sessionNameEl.textContent = chat.name;     // read-only mirror of the tile label
+		// A read-only mirror of the tile's own label -- which is DERIVED unless
+		// the user set a name, so this asks for the same phrase rather than for a
+		// field that is now usually empty.
+		sessionNameEl.textContent = chatDisplayName(chat);
 		if ((chat.status || 'active') === 'pending') {
 			renderPendingCentre(chat);
 			chatInputBar.style.display = 'none';   // no input until the chat is started
@@ -8260,7 +8913,7 @@ import init, {
 		clearChat();
 		var wrap = document.createElement('div');
 		wrap.className = 'empty-state pending-centre';
-		var h = document.createElement('h2'); h.textContent = chat.name;
+		var h = document.createElement('h2'); h.textContent = chatDisplayName(chat);
 		var p = document.createElement('p');
 		p.textContent = t('chat.pending_hint');
 		wrap.appendChild(h); wrap.appendChild(p);
@@ -8822,7 +9475,15 @@ import init, {
 
 	/// Which elements inside a tile carry their own text colour.
 	var TILE_INK = '.session-box-name, .tile-label, .session-box-ctx, .session-box-time,'
-		+ ' .session-box-cost, .session-box-spend, .tile-model-chip, .tile-row-label';
+		+ ' .session-box-cost, .session-box-spend, .tile-model-chip, .tile-row-label,'
+		// A chat's identity and its opening line. Both set their own `color` in
+		// the stylesheet — `.tile-when-sub` and `.tile-preview` are deliberately
+		// quieter than the name beside them — so a tile given a colour would take
+		// the background and leave these two in the theme's grey, which on a dark
+		// chosen colour is the pair going invisible. Named here for the reason
+		// the comment above gives: a colour on the box alone is overridden by
+		// every rule that mentions a child.
+		+ ' .tile-when, .tile-when-sub, .tile-preview';
 
 	/// Paint one tile box from the stored pair. Both empty restores the theme's
 	/// own colours, because clearing an inline style is how a value stops
@@ -8996,6 +9657,20 @@ import init, {
 		// conversation to fold; a Diamond's daimon has one from phase E.
 		if (opts.chat) mountContextSection(card, opts.chat);
 
+		// ── A plain rename, for a chat, HERE AND NOWHERE ELSE.
+		//
+		// It used to be the tile's own double-click, which put it in front of
+		// everybody: the one gesture a chat obviously offered was the one that
+		// pretends a throw-away conversation is a kept thing. The tile now offers
+		// Keep as a Diamond instead. This survives because it costs three lines
+		// and because there are honest uses for it -- a chat somebody genuinely
+		// is coming back to tomorrow -- but it lives two clicks in, behind a cog,
+		// below the context section, which is where a rarely-right act belongs.
+		//
+		// Empty puts the derived label back rather than storing a blank name, so
+		// the field is also the way to UNDO a name.
+		if (opts.chat) mountChatName(card, opts.chat, h);
+
 		// ── Triggered actions, for a Diamond.
 		if (opts.models === 'diamond') mountTriggers(card, opts);
 
@@ -9042,6 +9717,41 @@ import init, {
 		// arriving by keyboard most likely wants, and it is the one Escape mirrors.
 		x.focus();
 		return { card: card, close: close };
+	}
+
+	/// The rename field in a chat's cog dialog. See the call site for why it is
+	/// here and not on the tile.
+	///
+	/// # Arguments
+	/// * `card` - The dialog card to append to.
+	/// * `chat` - The chat being renamed.
+	/// * `h` - The dialog's own heading, which names the chat and has to follow.
+	function mountChatName(card, chat, h) {
+		card.appendChild(secHead(tOr('tile.dlg_name', 'Name')));
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-name';
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'tile-dlg-name-input';
+		input.value = chat.name || '';
+		input.placeholder = tOr('tile.dlg_name_hint', 'Unnamed: the rail shows the time');
+		input.spellcheck = false;
+		input.setAttribute('autocomplete', 'off');
+		input.setAttribute('data-1p-ignore', '');
+		input.setAttribute('data-lpignore', 'true');
+		input.setAttribute('aria-label', tOr('tile.dlg_name', 'Name'));
+		// On `change`, so a name is committed when the field is left or Enter is
+		// pressed rather than on every keystroke -- which would put a save and a
+		// sync nudge behind each letter typed.
+		input.addEventListener('change', function () {
+			renameChat(chat, input.value);
+			if (h) h.textContent = chatDisplayName(chat);
+		});
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+		});
+		row.appendChild(input);
+		card.appendChild(row);
 	}
 
 	/// The tile's two colours, and a way back to the theme's own.
@@ -10043,6 +10753,103 @@ import init, {
 		});
 	}
 
+	// ── What a chat tile says it is ────────────────────────────
+	//
+	// A chat has no name, so the rail derives its identity from WHEN it was last
+	// touched. Two halves: a day heading, and a time on the tile.
+	//
+	// The heading is what makes this readable. Every tile carrying an absolute
+	// date would be a wall of dates; every tile carrying a relative one ("6 days
+	// ago") is precise where nobody needs it and vague where they do. Grouping by
+	// day puts the coarse fact in one place and leaves each tile saying only what
+	// distinguishes it from its neighbours — which under Today is the time of day
+	// and nothing else.
+	//
+	// IT IS THE SAME STAMP THE SORT USES AND THE SAME ONE EXPIRY USES. One
+	// number answers "where does this sit in the rail", "what does the tile say"
+	// and "when does it run out", so a user watching the order has already been
+	// shown which chat is closest to going. Three readings of one fact cannot
+	// drift; three fields would.
+
+	/// The day heading a chat belongs under: 'today', 'yesterday' or 'earlier'.
+	///
+	/// By CALENDAR day in the user's own zone, not by elapsed hours. Something at
+	/// half past eleven last night is "Yesterday" at nine this morning even
+	/// though it is nine hours old, because that is what the word means to the
+	/// person reading it.
+	function dayBucket(ms, now) {
+		var d = new Date(ms), n = new Date(now == null ? Date.now() : now);
+		var day = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+		var diff = Math.round((day(n) - day(d)) / 86400000);
+		if (diff <= 0) return 'today';
+		if (diff === 1) return 'yesterday';
+		return 'earlier';
+	}
+
+	/// What one tile says about itself.
+	///
+	/// Under Today, a relative phrase: "just now", "12 min ago". The heading has
+	/// already said which day, so the tile's job is the last few hours, and that
+	/// is the one range where relative reads better than a clock — "3 hr ago"
+	/// tells you what "11:42" makes you work out.
+	///
+	/// Under Yesterday, the clock time; the heading carries the day. Under
+	/// Earlier, the date, because the heading no longer says which day it was.
+	///
+	/// THE LOCALE IS THE APP'S, never the browser's. Left to `undefined`, a
+	/// reader who has put Daimond into German gets every other word in German
+	/// and this one in whatever their browser was installed as. js/trash.js
+	/// makes the same point about its own dates and for the same reason.
+	function tileWhen(ms, now) {
+		var loc;
+		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
+		catch (e) { loc = undefined; }
+		var bucket = dayBucket(ms, now);
+		if (bucket === 'today') {
+			var mins = Math.floor(((now == null ? Date.now() : now) - ms) / 60000);
+			if (mins < 1)  return tOr('rail.when_now', 'just now');
+			if (mins < 60) return tOr('rail.when_min', '{n} min ago', { n: mins });
+			return tOr('rail.when_hr', '{n} hr ago', { n: Math.floor(mins / 60) });
+		}
+		try {
+			if (bucket === 'yesterday') {
+				return new Date(ms).toLocaleTimeString(loc || undefined,
+					{ hour: 'numeric', minute: '2-digit' });
+			}
+			return new Date(ms).toLocaleDateString(loc || undefined,
+				{ day: 'numeric', month: 'short' });
+		} catch (e) { return ''; }
+	}
+
+	/// The first thing the user said in a chat, trimmed to one line.
+	///
+	/// The FIRST user message and never the latest: it is the closest thing a
+	/// chat has to a subject, and it does not move underneath somebody who is
+	/// using the rail to find their way back to something. An interjection is
+	/// skipped — it belongs to a turn already in flight and is usually "stop".
+	function chatOpening(s) {
+		var msgs = (s && s.messages) || [];
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m || m.role !== 'user' || m.interject) continue;
+			var line = String(m.content == null ? '' : m.content).replace(/\s+/g, ' ').trim();
+			if (line) return line;
+		}
+		return '';
+	}
+
+	/// What to call this chat in a sentence — a toast, an aria label, the centre
+	/// header — where a bare "2 hr ago" would not do.
+	///
+	/// The user's own name when they set one; otherwise the derived phrase. Never
+	/// an invented number, and never the empty string, which would leave "Moved
+	/// to the trash" naming nothing.
+	function chatDisplayName(s) {
+		if (s && s.name) return s.name;
+		if (!s) return tOr('rail.a_chat', 'a chat');
+		return tOr('rail.chat_from', 'the chat from {when}', { when: tileWhen(s.updatedAt || Date.now()) });
+	}
+
 	function renderSessionList() {
 		// A turn aborted by the lock still runs its finally block, which asked for
 		// a re-render — and repainted the chat list, names and spend, behind the
@@ -10077,12 +10884,66 @@ import init, {
 		// see reference_daimond_tag_loss_incident), so it is the one field that
 		// actually answers "which of these did I touch most recently".
 		loose.sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
-		loose.forEach(function (s) { sessionList.appendChild(sessionBox(s)); });
+		// GROUPED BY DAY, which the sort above already makes free: the list is
+		// newest first, so each bucket is a contiguous run and one pass emits a
+		// heading whenever the run changes. No second sort and no bucketing pass.
+		//
+		// Only where the group actually changes -- a rail whose chats are all
+		// from this afternoon gets one "Today" and no other furniture.
+		var now = Date.now(), seen = '';
+		loose.forEach(function (s) {
+			var b = dayBucket(s.updatedAt || now, now);
+			if (b !== seen) {
+				seen = b;
+				var h = document.createElement('div');
+				h.className = 'rail-day';
+				h.setAttribute('role', 'presentation');
+				// Three literal calls rather than one assembled key, so dev/i18nfallback.mjs
+				// can see them. A key built by concatenation, with its fallback fetched from
+				// an object, is invisible to that check -- which is the same shape as the
+				// three drifted fallbacks it was written for, where the sentence was
+				// ASSEMBLED rather than copied and so had no literal to keep in step.
+				h.textContent = b === 'today'     ? tOr('rail.day_today', 'Today')
+					: b === 'yesterday' ? tOr('rail.day_yesterday', 'Yesterday')
+					: tOr('rail.day_earlier', 'Earlier');
+				sessionList.appendChild(h);
+			}
+			sessionList.appendChild(sessionBox(s));
+		});
 		updateActiveSession();
+		// The times on those tiles go stale as the app sits open. See `startWhenClock`.
+		startWhenClock();
 		// A chat appearing or going changes what is under the root, and the root's
 		// own light is not rebuilt here. `DaimondPause` announces when the STATE
 		// moves; nothing announces when the tree does.
 		repaintPause();
+	}
+
+	/// Keep the relative times on the rail honest as the app sits open.
+	///
+	/// A tile that says "just now" is a lie a minute later, and this app is one
+	/// people leave open all day. It rewrites the TIME TEXT ONLY -- never
+	/// `renderSessionList`, which would rebuild every tile once a minute and
+	/// take the focus, the scroll position and any half-typed pulldown with it.
+	///
+	/// A day heading can go stale too, at midnight and only then, and a rebuild
+	/// is the honest fix for that one: the tiles have to move between groups.
+	/// So the tick redraws the whole rail exactly when the bucket a tile belongs
+	/// to has changed, and touches nothing else the rest of the time.
+	var _whenTimer = null;
+	function startWhenClock() {
+		if (_whenTimer) return;
+		_whenTimer = setInterval(function () {
+			if (locked || !sessionList) return;
+			var now = Date.now(), restack = false;
+			sessionList.querySelectorAll('.tile-when').forEach(function (el) {
+				var ms = parseInt(el.dataset.at || '0', 10) || 0;
+				if (!ms) return;
+				if (el.dataset.bucket !== dayBucket(ms, now)) { restack = true; return; }
+				el.textContent = tileWhen(ms, now);
+			});
+			if (restack) renderSessionList();
+		}, 60000);
 	}
 
 	// Populate a <select> with the cached model list, keeping `selected` (and
@@ -10195,48 +11056,45 @@ import init, {
 		// CSS is what acts on it.
 		box.dataset.detail = tileDetail();
 
-		// Editable label — the single place a chat is named (D-UI: one source).
+		// THE LABEL IS DERIVED AND IT IS NOT AN INPUT ANY MORE.
+		//
+		// It was an `<input>` whose only purpose was that a double-click renamed
+		// the chat. That gesture has gone, because renaming a chat is what
+		// somebody does at the moment they have decided the conversation matters
+		// — and the useful thing to do at that moment is make a Diamond of it,
+		// not relabel something still on a three-day clock. So the button below
+		// is Keep, a plain rename lives in the cog dialog where it is out of the
+		// way, and this is a `<button>`: it does one thing, opening the chat,
+		// which is what a click on it always did.
+		var stamp = s.updatedAt || Date.now();
 		var header = document.createElement('div');
 		header.className = 'session-box-header';
-		var label = document.createElement('input');
+		var label = document.createElement('button');
+		label.type = 'button';
 		label.className = 'tile-label';
-		label.value = s.name; label.spellcheck = false;
-		// Keep browsers from scavenging this label as a login "username".
-		label.setAttribute('autocomplete', 'off');
-		label.setAttribute('data-1p-ignore', '');
-		label.setAttribute('data-lpignore', 'true');
+		// A name only when a user set one. Otherwise the derived phrase, which
+		// the day heading above it completes: "Today" + "2 hr ago".
+		var when = document.createElement('span');
+		when.className = 'tile-when';
+		when.dataset.at = String(stamp);
+		when.dataset.bucket = dayBucket(stamp);
+		when.textContent = s.name || tileWhen(stamp);
+		// A named chat keeps its clock too, quietly, so the rail's one ordering
+		// fact is legible on every tile rather than on all but the named ones.
+		if (s.name) {
+			when.dataset.at = '';		// the ticker leaves a user's own words alone
+			var clock = document.createElement('span');
+			clock.className = 'tile-when-sub';
+			clock.dataset.at = String(stamp);
+			clock.dataset.bucket = dayBucket(stamp);
+			clock.textContent = tileWhen(stamp);
+			label.appendChild(when); label.appendChild(clock);
+		} else {
+			label.appendChild(when);
+		}
 		label.title = t('tile.click_to_open');
-		label.readOnly = true;                    // a click opens the chat...
-		label.addEventListener('click', function (e) {
-			if (label.readOnly) { e.stopPropagation(); selectChat(s); }
-		});
-		label.addEventListener('dblclick', function (e) {
-			// ...and a deliberate second click renames it.
-			e.stopPropagation();
-			label.readOnly = false;
-			label.focus();
-			label.select();
-		});
-		label.addEventListener('blur', function () { label.readOnly = true; });
-		label.addEventListener('keydown', function (e) {
-			// Enter OPENS the chat while the field is resting, and only commits a
-			// rename once a double-click has made it editable. Tab reached this
-			// tile before but nothing the keyboard could do would open the chat:
-			// Enter blurred it, which is the one thing that looks like it worked.
-			if (e.key === 'Enter' && label.readOnly) {
-				e.preventDefault();
-				selectChat(s);
-				return;
-			}
-			if (e.key === ' ' && label.readOnly) {
-				e.preventDefault();
-				selectChat(s);
-				return;
-			}
-			if (e.key === 'Enter') { e.preventDefault(); label.blur(); }
-			else if (e.key === 'Escape') { label.value = s.name; label.blur(); }
-		});
-		label.addEventListener('change', function () { renameChat(s, label.value); });
+		label.setAttribute('aria-label', chatDisplayName(s));
+		label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); });
 		header.appendChild(label);
 		// NO TRAFFIC LIGHT ON AN ORDINARY CHAT. The user's ruling: "ordinary chats
 		// do not need a pptw", which is the same rule that took it off an
@@ -10245,10 +11103,10 @@ import init, {
 		//
 		// notes2 never asked for one here either; it names global, mail-panel,
 		// mailbox, folder, diamond tile and TA. This one arrived in phase B.
-		header.appendChild(tileCog(s.name, function () {
+		header.appendChild(tileCog(chatDisplayName(s), function () {
 			openTileDialog({
 				id:       s.id,
-				name:     s.name,
+				name:     chatDisplayName(s),
 				node:     DaimondPause.id('root', 'chats', s.id),
 				// A chat's MODELS are fixed at creation, but its conversation is the only
 				// one in the app with a durable session — so this is where the context
@@ -10262,8 +11120,28 @@ import init, {
 		// is the same confirm-then-remove the dialog's own foot calls, so a
 		// one-click close and a settings-dialog delete ask the identical question
 		// and can never drift apart into two answers for one act.
-		header.appendChild(tileCloser(s.name, function () { deleteChat(s); }));
+		header.appendChild(tileCloser(chatDisplayName(s), function () { deleteChat(s); }));
 		box.appendChild(header);
+
+		// THE FIRST THING YOU SAID, dimmed, under the time. It is what makes a
+		// rail of nameless chats navigable at all -- see `cfg.chatPreview` for
+		// why it is a setting and why it defaults on. Absent on a pending chat,
+		// which has nothing said in it yet, and absent when the user has turned
+		// it off.
+		if (cfg.chatPreview !== false) {
+			var opening = chatOpening(s);
+			if (opening) {
+				var prev = document.createElement('div');
+				prev.className = 'tile-preview';
+				// Truncated by CSS rather than by slicing the string: the ellipsis
+				// then falls where the tile actually runs out at whatever width the
+				// rail has been dragged to, instead of at a character count guessed
+				// here. The whole line is the `title`, for a look without opening.
+				prev.textContent = opening;
+				prev.title = opening;
+				box.appendChild(prev);
+			}
+		}
 
 		if (status === 'pending') {
 			// Pending: pick a model, then Start. Nothing runs until Start.
@@ -10359,6 +11237,23 @@ import init, {
 				: t('tile.fold_all_help');
 			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
 			top.appendChild(fold);
+			// KEEP AS A DIAMOND, in the slot the rename gesture used to occupy in
+			// spirit if not in pixels. It is beside Fold deliberately, and the two
+			// are not the same act: Fold runs the reducer on a Diamond that
+			// already exists and writes a SUMMARY into its crystal, at the cost of
+			// a paid round trip; Keep makes a new Diamond and carries the
+			// transcript in whole, consults no model and costs nothing. Somebody
+			// who has just decided a conversation matters wants the second one.
+			var keep = document.createElement('button');
+			keep.className = 'tile-keep';
+			keep.textContent = tOr('tile.keep', 'Keep');
+			keep.title = tOr('tile.keep_help',
+				'Make a Diamond of this chat, with the whole conversation as its first artefact.');
+			keep.addEventListener('click', function (e) {
+				e.stopPropagation();
+				keepAsDiamond(s.id).catch(function (err) { toast(friendlyError(err), true); });
+			});
+			top.appendChild(keep);
 			// What is waiting on this chat. A queue is only drawn in the thread of
 			// the chat on screen, so one left behind while the user works elsewhere
 			// was invisible until they happened to go back — and it is money about
@@ -10398,6 +11293,16 @@ import init, {
 		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
 			chat._capTry || maxOutFor(a.model, a.provider),
 			Instructions.compose(SYSTEM_PROMPT(), ''), cfg.tools !== false);
+		// The user's own chat may send workers out; a worker may not. `Tool::browser`
+		// in src/tools.rs is the list BOTH are built from, so the dispatch tool is not
+		// in it and is added here, by the one caller that builds a chat. A worker that
+		// could dispatch workers is a fan-out with no bottom.
+		//
+		// Guarded on the call existing so an older engine simply does not offer it,
+		// rather than throwing and leaving the user with no chat at all.
+		if (cfg.tools !== false && typeof chat.app.allow_dispatch === 'function') {
+			chat.app.allow_dispatch();
+		}
 		chat.model    = a.model;
 		chat.provider = a.provider || chat.provider || '';
 		// A chat freezing its model is a use of it. Recorded here rather than in the
@@ -10598,6 +11503,12 @@ import init, {
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
 		loadDiamonds:    function () { return loadDiamonds(); },
+		/// The name the New Diamond dialog would open on, and the commit that
+		/// burns it. Published for `verify_naming`, which is about the NUMBER and
+		/// would otherwise have to drive three modals to reach it — turning a
+		/// naming test into a dialog test that fails for unrelated reasons.
+		nextDiamondLabel: function () { return peekDiamondLabel(); },
+		takeDiamondLabel: function () { return takeDiamondLabel(); },
 		/// Add or change one triggered action, and write it.
 		///
 		/// Published for `verify_pausewidget`, which needs Diamonds that HAVE
@@ -10618,6 +11529,44 @@ import init, {
 		heapBytes:       function () { try { return heap_bytes(); } catch (e) { return -1; } },
 		/// The Diamond engine, for a probe that needs to make Diamonds in bulk.
 		diamondApp:      function () { return diamondApp(); },
+		/// A workspace file, as bytes-turned-text. Published for
+		/// `verify_chatlife`, which has to prove that "Keep as a Diamond" put the
+		/// actual conversation inside the Diamond rather than merely creating one
+		/// — a check that reads the link and stops would pass against a Keep that
+		/// wrote nothing.
+		///
+		/// It goes through `readBytes`, which is `Wasm.read_file`, and NOT through
+		/// `run_tool('file_read')`: that one is the model-facing rendering, which
+		/// numbers every line and wraps the path in an envelope, so a test
+		/// asserting on a transcript's words would be asserting on the envelope.
+		/// The same trap is recorded at `readBytes` itself and again in mail.js,
+		/// which is two places it has already been fallen into.
+		readFile:        function (path) { return readBytes(path); },
+		/// How the rail decides what a chat tile says about itself: which day
+		/// heading it belongs under, and the phrase on the tile.
+		///
+		/// Published because both take `now` as an argument and are otherwise
+		/// pure, which is what lets `verify_chatlife` assert the exact wording at
+		/// a fixed instant instead of at whatever o'clock the suite happens to
+		/// run. That is not a convenience: the first version of that verifier
+		/// tested the phrasing through the DOM, and passed all day and failed
+		/// after midnight, when "two hours ago" is genuinely yesterday.
+		railWhen:        function (ms, now) { return tileWhen(ms, now); },
+		railDay:         function (ms, now) { return dayBucket(ms, now); },
+		/// The worker pool. Published for `verify_chatlife`, which has to put a
+		/// run in flight to prove that a chat with live work under it does not
+		/// expire — a rule whose whole value is that "the chat expired" is never
+		/// why somebody's work was lost, and which is therefore worth pressing on
+		/// rather than reading.
+		workers:         function () { return (typeof Workers !== 'undefined') ? Workers : null; },
+		/// When a chat's time is up, or 0 for one that is exempt. Published so a
+		/// verifier can ask WHY a chat did not expire rather than inferring it
+		/// from the fact that it did not — there are five exemptions and reading
+		/// the outcome alone cannot tell them apart.
+		chatDueAt:       function (id) {
+			var c = storedChats().find(function (x) { return x && x.id === id; });
+			return c ? chatDueAt(c) : 0;
+		},
 		/// One bare engine instance. Published for `probe_diamondheap`, which has
 		/// to price a `DaimondApp` in WASM LINEAR MEMORY — the only kind
 		/// `heapBytes` can see, and therefore the only kind that can explain a
@@ -10690,6 +11639,11 @@ import init, {
 		trashRestore:    trashRestore,
 		trashPurge:      trashPurge,
 		trashSweep:      trashSweep,
+		/// Make a Diamond of a chat. Published for the Trash panel, which offers
+		/// it beside Restore: the trash is where somebody meets a conversation
+		/// they had forgotten and decides it mattered after all, and putting it
+		/// back on the rail to expire again in three days is not what they mean.
+		keepAsDiamond:   keepAsDiamond,
 		/// The one tile component (ATTACH_CONTRACT.md §9). Published so the Trash
 		/// panel draws the same row the attachment footers draw rather than a
 		/// second one that looks like it.
@@ -10986,10 +11940,11 @@ import init, {
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
-		// The attachment queue was for THIS turn only (ATTACH_CONTRACT.md §4) --
-		// cleared here, where the turn is actually sent, whichever of the three
-		// paths below it takes.
-		clearChatAttach(chat.id);
+		// A chat's scope is PERSISTENT and is not cleared here. It used to be
+		// emptied at this line, when attaching meant "for the next turn only"; it
+		// now means what it means on a Diamond -- the user put this in scope and it
+		// stays there until they take it out. Nothing replaces the call: the
+		// footer keeps showing what the chat holds, because that is now true.
 		// The chip's state at the moment of TYPING is what travels, including into
 		// the queue: a message held behind a running turn was asked for under the
 		// chip as it stood then, not as it stands when the queue drains.
@@ -11344,6 +12299,10 @@ import init, {
 			}
 		} catch (e) { /* the index is best-effort and must never cost a turn */ }
 		chat._lastTurnTools = [];
+		// The workers this turn asks for, and the ones it asked for badly. Both are
+		// read after the turn: a dispatch that named no task starts nothing, and the
+		// user used to see no agent, no error and no explanation.
+		var dispatched = [], rejectedSpawns = 0;
 		appendUserMessage(text);
 		chat.messages.push({ role: 'user', content: text, mid: umid, ts: Date.now() });
 		// The composer stays live: what is typed while this runs is queued, not lost.
@@ -11410,6 +12369,17 @@ import init, {
 				// (the client does not surface a finish reason), so it is inferred
 				// from the evidence that is here.
 				if (truncatedArgs(ev.args)) capCut = true;
+				// Every `spawn_agent` in this turn becomes a worker when the turn ends.
+				// Collected here and started AFTER, exactly as the daimon's own fan-out
+				// is: the tool call only records the request — the agent runtime is the
+				// page's, not the model's — so several calls in one turn become several
+				// workers running at once rather than one blocking the next.
+				if ((ev.name || '') === 'spawn_agent') {
+					var wspec = null;
+					try { wspec = JSON.parse(ev.args || '{}'); } catch (e) { wspec = null; }
+					if (wspec && wspec.task) dispatched.push({ name: wspec.name, task: wspec.task });
+					else rejectedSpawns += 1;
+				}
 				pendingTool = { role: 'tool_log', name: ev.name || '', args: ev.args || '', content: '', mid: newMid(), ts: Date.now() };
 				chat.messages.push(pendingTool);
 				// Write-ahead: the intent to run this tool is on disk before the tool returns, so
@@ -11658,10 +12628,53 @@ import init, {
 				try { window.dispatchEvent(new Event('daimond:idle')); } catch (e) {}
 			}
 		});
+		// The workers this turn asked for, started now that it has finished. OUTSIDE
+		// the lock, and after the turn rather than during it, for the reason the
+		// Diamond's fan-out is: they run concurrently, and starting one from inside
+		// the turn that asked for it would serialise the very thing that makes a
+		// fan-out worth having.
+		//
+		// A turn that DIED part way may still have asked for agents before it died.
+		// Starting them would be spending on the strength of a turn that failed,
+		// which is precisely what the user cannot see from here.
+		if (dispatched.length && !(sawError || threw)) {
+			var gate = await governorClearsDispatch(dispatched.length, '', chat.id);
+			if (gate) {
+				var chatTainted = false;
+				try { chatTainted = !!(app.is_tainted && app.is_tainted()); }
+				catch (e) { chatTainted = false; }
+				// The depth a gather round left for this chat, so a chat that answers
+				// every report by dispatching again runs out of room rather than fanning
+				// out for ever. Read and cleared: it belongs to the round, not the chat.
+				var d = Workers.gatherDepth[chat.id] | 0;
+				delete Workers.gatherDepth[chat.id];
+				Workers.dispatch('', '', dispatched, chatTainted,
+					chatWorkerModel(chat), d, { chatId: chat.id, chatName: chat.name || '' });
+			}
+		} else if (rejectedSpawns) {
+			appendError(tOr('agents.no_task',
+				'An agent was asked for with no task, so nothing was started.'));
+		}
 		// Whatever was typed while that turn ran, sent now. OUTSIDE the lock: the
 		// drain starts another turn, which takes the same lock again, and asking for
 		// it from inside would deadlock the tab.
 		drainQueue(chat, sawError || threw);
+	}
+
+	/// Which model a chat's workers run on: the chat's own.
+	///
+	/// A chat has no per-Diamond worker setting to read, and inheriting the starred
+	/// default instead would put a worker on a different model from the conversation
+	/// that sent it — and on a different key, which is how a fan-out gets billed to a
+	/// balance the user was not spending from.
+	///
+	/// # Arguments
+	/// * `chat` - The chat dispatching.
+	function chatWorkerModel(chat) {
+		var r = window.DaimondModels
+			&& DaimondModels.resolve(chat.provider || '', chat.model || '');
+		if (r) return { provider: r.provider, model: r.model };
+		return { provider: chat.provider || '', model: chat.model || '' };
 	}
 
 	// Record a completed turn's cost and feed the spend governor in one
@@ -11804,13 +12817,18 @@ import init, {
 	// merely notes, and it exists for exactly the "fifty agents in a
 	// blink" case. It fails open: if the governor is somehow absent, the
 	// dispatch proceeds as it always did.
-	async function governorClearsDispatch(n, diamondId) {
+	async function governorClearsDispatch(n, diamondId, chatId) {
 		if (!window.DaimondGovernor) return true;
 		var a;
 		try {
 			// The node the fan-out would spend against, so the gate can refuse a
-			// paused daimon before it prices anything.
-			a = DaimondGovernor.assessDispatch(n, DaimondPause.id('root', 'diamonds', diamondId, 'self'));
+			// paused daimon -- or a paused chat -- before it prices anything. A chat
+			// hangs under `root/chats`, not under a Diamond that does not exist: the
+			// Diamond node built from an empty id names nothing, so a paused chat would
+			// have been priced and dispatched as though nobody had paused anything.
+			a = DaimondGovernor.assessDispatch(n, chatId
+				? DaimondPause.id('root', 'chats', chatId)
+				: DaimondPause.id('root', 'diamonds', diamondId, 'self'));
 		} catch (e) { return true; }
 		if (!a) return true;
 		// A REFUSAL comes first and is not a spend question. Shown through the
@@ -11887,6 +12905,11 @@ import init, {
 				localStorage.setItem(WORKERS_KEY, JSON.stringify(this.runs.slice(0, 12).map(function (r) {
 					return {
 						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
+						// The tile is the DURABLE home of a report — it survives a reload, and it
+						// survives the chat. Without these two a chat-dispatched run came back from
+						// a reload unable to say where it came from, and its answer read as
+						// orphaned.
+						chatId: r.chatId || '', chatName: r.chatName || '',
 						model: r.model, provider: r.provider || '', status: r.status, text: r.text, tools: r.tools,
 						// Which modality put this worker on this model. Without it a tile drawn
 						// after a reload cannot say why an image task is on the text model.
@@ -11929,7 +12952,12 @@ import init, {
 		/// model and spends the same key, and it is a parameter rather than something read here
 		/// because the model must never be the thing that decides what to spend money on: that is
 		/// why `spawn_agent`'s schema is still `{name, task}`.
-		dispatch: function (diamondId, diamondName, specs, tainted, pick, depth) {
+		/// `owner` is `{ chatId, chatName }` when an ordinary chat sent these, and
+		/// nothing when a Diamond did. The two are kept apart rather than folded into
+		/// one id, because everything downstream has to know WHICH: a chat's worker is
+		/// fenced differently, reports back to a transcript rather than to a crystal,
+		/// and has no crystal to be folded into.
+		dispatch: function (diamondId, diamondName, specs, tainted, pick, depth, owner) {
 			if (!specs || !specs.length) return;
 			revealAgents();
 			var self = this;
@@ -11944,8 +12972,11 @@ import init, {
 			// three reports in one round can say which two agree; one that reads them
 			// singly cannot compare anything.
 			var batch = 'b' + (++self.batchSeq);
+			var chatId   = (owner && owner.chatId)   ? owner.chatId   : '';
+			var chatName = (owner && owner.chatName) ? owner.chatName : '';
 			this.batches[batch] = {
 				diamondId: diamondId, diamondName: diamondName,
+				chatId: chatId, chatName: chatName,
 				depth: (depth | 0), expected: specs.length, ids: [],
 			};
 			specs.forEach(function (spec) {
@@ -11958,6 +12989,11 @@ import init, {
 					task: spec.task || '',
 					diamondId: diamondId,
 					diamondName: diamondName,
+					// Which chat sent it, when a chat did. `start` reads this to decide which
+					// fence to put on, `gather` to decide where the report goes, and the tile
+					// to say where the run came from. A Diamond's worker carries neither.
+					chatId: chatId,
+					chatName: chatName,
 					// Why this worker is on this model, so a run that fell back to the text
 					// model because no vision model is set says so instead of looking chosen.
 					sees: sees,
@@ -12058,18 +13094,8 @@ import init, {
 			if (!mine.every(function (r) { return terminal(r.status); })) return;
 			delete this.batches[batch];			// once only, whatever follows
 
-			if (workersHeld()) return;			// the pump is held: no new spending
-			if (b.depth >= this.MAX_GATHER_DEPTH) {
-				setCrystalStatus('Agents finished. Dispatch stops at '
-					+ this.MAX_GATHER_DEPTH + ' rounds, so there is no report back.');
-				return;
-			}
-			// The Diamond must still exist and still be the one on screen. A gather
-			// round steers a Diamond, and steering one the user has navigated away
-			// from would spend on a surface they are not looking at.
-			if (!currentDiamond || currentDiamond.id !== b.diamondId) return;
-			if (!diamondCanRun(b.diamondId)) return;
-
+			// The reports themselves, composed before any decision about where they
+			// go. Both surfaces get the same text, because it is the same thing.
 			var parts = mine.slice().reverse().map(function (r) {
 				var head = '### ' + (r.name || r.id)
 					+ (r.status === 'done' ? '' : ' — ' + r.status);
@@ -12082,6 +13108,33 @@ import init, {
 				+ ' write anything worth keeping into the crystal. Do not dispatch again'
 				+ ' unless something is still unresolved.\n\n' + parts.join('\n\n');
 
+			// ── A chat's batch goes back to its transcript ──────────────
+			//
+			// Answered BEFORE the held/depth/on-screen guards below, and the reason is
+			// the ownership rule: the answers must reach the user whatever happens to
+			// the surface. `deliverToChat` writes them into the transcript first and
+			// only then considers spending a turn on them, so a held pump, an exhausted
+			// depth or a chat the user has walked away from costs the reports nothing.
+			// A batch that fell through to the Diamond path below would be judged
+			// against `currentDiamond`, which a chat does not have, and would return
+			// silently — which is exactly how a chat's answers used to vanish.
+			if (b.chatId) {
+				self.deliverToChat(b, mine, instruction, parts);
+				return;
+			}
+
+			if (workersHeld()) return;			// the pump is held: no new spending
+			if (b.depth >= this.MAX_GATHER_DEPTH) {
+				setCrystalStatus('Agents finished. Dispatch stops at '
+					+ this.MAX_GATHER_DEPTH + ' rounds, so there is no report back.');
+				return;
+			}
+			// The Diamond must still exist and still be the one on screen. A gather
+			// round steers a Diamond, and steering one the user has navigated away
+			// from would spend on a surface they are not looking at.
+			if (!currentDiamond || currentDiamond.id !== b.diamondId) return;
+			if (!diamondCanRun(b.diamondId)) return;
+
 			setCrystalStatus(mine.length === 1
 				? 'Agent finished; reporting back.'
 				: mine.length + ' agents finished; reporting back.');
@@ -12089,6 +13142,106 @@ import init, {
 			// doSteer sets crystalBusy, and re-entering the pump from under it is how
 			// a turn ends up racing its own bookkeeping.
 			setTimeout(function () { doSteer(instruction, b.depth + 1); }, 0);
+		},
+
+		/// Put a chat batch's reports where the person who asked for them will see
+		/// them, and then — only if it is worth spending on — let the chat read them.
+		///
+		/// TWO STEPS, IN THIS ORDER, AND THE ORDER IS THE POINT. The answers land in
+		/// the transcript unconditionally; running a turn on them is a second,
+		/// optional thing. A gather round is a model turn and costs money, so it is
+		/// guarded — the chat must still exist, be the one on screen, be idle, have a
+		/// model that can run, and be within the depth cap. Every one of those guards
+		/// is a reason to skip the TURN and none of them is a reason to lose the
+		/// REPORTS, which is the mistake the Diamond path made when it judged a whole
+		/// batch against `currentDiamond` and returned.
+		///
+		/// So the failure mode is "the answers are here and nobody summarised them",
+		/// never "the answers are gone". They are also on their tiles regardless, which
+		/// is the durable copy: a chat that has since expired still has its workers'
+		/// text in the Agents panel.
+		///
+		/// # Arguments
+		/// * `b` - The batch record, which names the chat.
+		/// * `mine` - Its runs, all terminal.
+		/// * `instruction` - The gather prompt, reports included.
+		/// * `parts` - The reports alone, for the transcript block.
+		deliverToChat: function (b, mine, instruction, parts) {
+			var self = this;
+			// The chat's own words. The Diamond instruction tells the reader to write
+			// what matters "into the crystal", and a chat has no crystal — so a chat
+			// asked to do it either invents a file or spends the round explaining that
+			// it cannot. What a chat should do with two reports is answer the person.
+			instruction = 'The ' + (mine.length === 1 ? 'agent you sent has'
+					: mine.length + ' agents you sent have')
+				+ ' finished. Their reports follow. Read them and answer the user: say what'
+				+ ' they add up to, and where two disagree, say so. Do not send more agents'
+				+ ' unless something is still unresolved.\n\n' + parts.join('\n\n');
+			var chat = chats.find(function (x) { return x.id === b.chatId; });
+			if (!chat) return;			// the chat is gone; the tiles still hold the text
+			var heading = mine.length === 1
+				? tOr('agents.report_one', 'An agent you sent has finished.')
+				: tOr('agents.report_n', '{n} agents you sent have finished.', { n: mine.length });
+			var canRun = !workersHeld()
+				&& b.depth < this.MAX_GATHER_DEPTH
+				&& !chat._generating
+				&& current && current.id === chat.id
+				&& !!(window.DaimondModels && DaimondModels.resolve(chat.provider, chat.model));
+			if (!canRun) {
+				// No turn. The reports go in as an assistant message, which is what they
+				// are — the app relaying what the workers said — and the transcript is
+				// saved so a reload keeps them.
+				chat.messages.push({ role: 'assistant', content: heading + '\n\n' + parts.join('\n\n'),
+					mid: newMid(), ts: Date.now() });
+				touchChat(chat);
+				persistChats();
+				// Drawn only where the reader is actually looking. `appendAssistantText`
+				// writes into whatever thread is on screen, so doing it unguarded would
+				// paint one conversation's answers into another's — the bug `doSteer`
+				// records having had, and it is not worth having twice.
+				if (current && current.id === chat.id) {
+					appendAssistantText(heading + '\n\n' + parts.join('\n\n'));
+					finalizeAssistant();
+				}
+				return;
+			}
+			// Deferred for the reason the Diamond path defers: this runs inside the
+			// finishing worker's `finally`, and re-entering the turn machinery from
+			// under it races the bookkeeping.
+			setTimeout(function () {
+				var c = chats.find(function (x) { return x.id === b.chatId; });
+				if (!c || c._generating) return;
+				self.gatherDepth[c.id] = (b.depth | 0) + 1;
+				runTurn(c, instruction);
+			}, 0);
+		},
+
+		/// How deep a gather round the next turn of this chat is, by chat id.
+		///
+		/// Kept beside the runs rather than on the chat record: it is a fact about a
+		/// fan-out in flight, not about the conversation, and a reload that revived it
+		/// would re-arm a cap against a round nobody is running.
+		gatherDepth: {},
+
+		/// Does this chat have a worker that has not finished?
+		///
+		/// THE PREDICATE THE EXPIRY SWEEP CALLS. A chat with work still running must
+		/// not be swept, because its scratch goes with it and "the chat expired" must
+		/// never be the reason an unfinished run lost its workspace.
+		///
+		/// Terminal is `done`, `error` and `stopped`, exactly as `gather` counts it.
+		/// `paused` and `interrupted` are NOT live: a paused worker is waiting for a
+		/// person and an interrupted one is waiting for nothing at all, and neither
+		/// should hold a conversation open for ever.
+		///
+		/// # Arguments
+		/// * `chatId` - The chat being judged.
+		liveFor: function (chatId) {
+			if (!chatId) return false;
+			return this.runs.some(function (r) {
+				return r.chatId === chatId
+					&& (r.status === 'running' || r.status === 'queued');
+			});
 		},
 
 		start: async function (run) {
@@ -12135,7 +13288,18 @@ import init, {
 				applyRoundLimit(run.app);
 				applyFoldSettings(run.app, run.provider || '');
 				applyCrystalCap(run.app);
-				await scopeAgentTo(run.app, run.diamondId);
+				// EVERY worker, from either surface. A worker cannot ask a question and
+				// is told so in its own prompt, while the safety clause on top of that
+				// prompt forbids it to act irreversibly without a plain yes. This is what
+				// reconciles the two: the app asks on its behalf before it clicks or
+				// types on a page, and it gets no network inside a command. See
+				// `markAlone`, and `TurnState::unsupervised` in src/tools.rs.
+				markAlone(run.app);
+				// Which fence, decided by which surface sent it. A Diamond's worker is
+				// confined to the Diamond, both verbs. A chat's reads freely and writes
+				// only where the user said — see `scopeChatTo`.
+				if (run.chatId) await scopeChatTo(run.app, run.chatId);
+				else await scopeAgentTo(run.app, run.diamondId);
 			};
 			var build = function () {
 				if (onCredits) {
@@ -12162,7 +13326,12 @@ import init, {
 			// as "no credits" rather than falling back to a shared key.
 			// A worker spends against the daimon that dispatched it, so that is the
 			// node the mint is told about.
-			var runNode = DaimondPause.id('root', 'diamonds', run.diamondId, 'self');
+			// Where this worker's spending is charged and paused. A chat's worker hangs
+			// under its chat, so pausing that conversation stops its agents too; a
+			// Diamond's under the Diamond, as before.
+			var runNode = run.chatId
+				? DaimondPause.id('root', 'chats', run.chatId)
+				: DaimondPause.id('root', 'diamonds', run.diamondId, 'self');
 			if (onCredits) {
 				run.slot = self.takeSlot();
 				try {
@@ -12405,6 +13574,16 @@ import init, {
 
 		/// Fold a finished worker's summary into the Diamond that dispatched it.
 		foldIn: async function (run) {
+			// A chat has no crystal to fold into. Answered here rather than by hiding
+			// the button alone, because `foldIn` is reachable from anywhere that holds
+			// a run: unguarded it handed a blank id to `foldDeltaInto`, which found no
+			// Diamond and said "that Diamond is gone" -- a sentence about a thing that
+			// never existed, and the wrong thing to tell somebody whose agent worked.
+			if (!run.diamondId) {
+				noticeDialog(tOr('agents.no_diamond', 'no Diamond'),
+					tOr('agents.no_diamond_fold', 'This agent was sent from a chat, so there is no crystal to fold it into. Its report is in that conversation, and its full text is under Read.'));
+				return;
+			}
 			if (!run.text.trim()) {
 				noticeDialog(t('fold.nothing'), t('fold.agent_empty'));
 				return;
@@ -12584,7 +13763,7 @@ import init, {
 					// so folding it would write the error into the crystal. Offer the
 					// fold only for an agent that actually finished its work, and
 					// only once -- a folded summary is not offered again.
-					var foldable = run.status !== 'error' && !run.folded;
+					var foldable = run.status !== 'error' && !run.folded && !!run.diamondId;
 					if (foldable) {
 						var fold = document.createElement('button');
 						fold.className = 'abtn';
@@ -16363,7 +17542,10 @@ import init, {
 			var e = bind();
 			if (!e || !window.DaimondTerminal) return null;
 			term = DaimondTerminal.create(e.host, {
-				label: t('term.label'),
+				// No `label`: handed one, `terminal.js` sets it as given and it keeps
+				// the language the panel was first opened in. Left out, that file
+				// BINDS `term.label` itself, and the spoken name follows a switch with
+				// everything else marked.
 				onData: function (u8) {
 					// Bytes, exactly as typed. `DaimondPty.input` encodes them for
 					// the wire itself; handing it base64 would send the base64.
@@ -17356,6 +18538,31 @@ import init, {
 		setInterval(triggerTick, TRIGGER_TICK_MS);
 	}
 
+	/// How often a running app rechecks whether a chat has run out of time.
+	///
+	/// Hourly, against a window measured in days. A desktop left open for a
+	/// fortnight would otherwise expire nothing at all — the boot is the only
+	/// other occasion, and this app is one people leave open. Named rather than
+	/// written into the interval so a verifier can drive it by hand instead of
+	/// holding a browser open for three days.
+	var EXPIRY_TICK_MS = 3600 * 1000;
+
+	/// The expiry clock. Its own timer rather than a line inside the trigger
+	/// clock: that one does not start unless triggers are built, and a chat's
+	/// lifetime must not depend on whether this account uses timed actions.
+	function startExpiryClock() {
+		async function expiryTick() {
+			// Expire first, then destroy: expiring moves a trash record, and the
+			// retention sweep is what acts on one whose term is up. In that order
+			// a chat that has been sitting in the trash since long before this
+			// device booted is dealt with in a single tick.
+			if (expireChats()) renderSessionList();
+			await trashSweep();
+		}
+		window.DaimondExpiryTick = expiryTick;		// see `verify_chat_expiry`
+		setInterval(function () { expiryTick(); }, EXPIRY_TICK_MS);
+	}
+
 	/// Run one daimon turn on behalf of a trigger, wherever the user happens to be.
 	///
 	/// Returns whether the turn was actually started. A trigger fires into a
@@ -17649,11 +18856,19 @@ import init, {
 	function agentDiamondChip(run) {
 		var el = document.createElement('button');
 		el.className = 'tag-chip diamond-chip' + (agentDiamondFilter === run.diamondId ? ' tag-active' : '');
-		el.style.setProperty('--tag-h', tagHue(run.diamondName || ''));
-		el.textContent = '↳ ' + (run.diamondName || t('agents.no_diamond'));
+		// A chat-dispatched run says which CONVERSATION sent it. The chip existed with
+		// a Diamond-less branch before anything could reach it, and that branch says
+		// only "not from a Diamond" -- true, and no help at all when two chats have
+		// agents running at once. A name is what tells them apart.
+		el.style.setProperty('--tag-h', tagHue(run.diamondName || run.chatName || ''));
+		el.textContent = '↳ ' + (run.diamondName
+			|| (run.chatId ? (run.chatName || tOr('agents.from_chat', 'a chat')) : t('agents.no_diamond')));
 		el.title = run.diamondId
 			? t('agents.only_from', { name: run.diamondName })
-			: t('agents.no_diamond_help');
+			: run.chatId
+				? tOr('agents.from_chat_help', 'Sent from the chat “{name}”.',
+					{ name: run.chatName || tOr('agents.from_chat', 'a chat') })
+				: t('agents.no_diamond_help');
 		if (run.diamondId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentDiamondFilter(run.diamondId); });
 		return el;
 	}
@@ -17664,7 +18879,10 @@ import init, {
 		if (agentDiamondFilter && run.diamondId !== agentDiamondFilter) return false;
 		if (agentTagFilter && agentTagsOf(run).indexOf(agentTagFilter) === -1) return false;
 		if (!agentQuery) return true;
-		var hay = [run.name, run.task, run.diamondName, shortModel(run.model)]
+		// The chat's name is searchable beside the Diamond's: it is the only word on a
+		// chat-dispatched tile that says where the run came from, and a panel holding
+		// two conversations' fan-outs is exactly when somebody types a name into the box.
+		var hay = [run.name, run.task, run.diamondName, run.chatName, shortModel(run.model)]
 			.concat(agentTagsOf(run)).join(' ').toLowerCase();
 		return hay.indexOf(agentQuery) !== -1;
 	}
@@ -20344,9 +21562,26 @@ import init, {
 	// A chat's attachments live here and nowhere else — ATTACH_CONTRACT.md §4:
 	// "writes NOTHING to the store". Keyed by chat id so switching away and back
 	// keeps what is queued; cleared the moment that chat's turn is sent.
-	var chatAttach = {};			// chatId -> [{ ref, dir, path, state }]
-
-	function chatAttachList(chatId) { return chatAttach[chatId] || (chatAttach[chatId] = []); }
+	// A chat's scope lives ON THE CHAT RECORD, in `holds`, and that is the whole of
+	// its lifetime rule: it persists because the record does, it travels because the
+	// record is in the sync parcel, and it dies when the chat dies with nothing to
+	// sweep up afterwards. Two lifetimes, one meaning — a Diamond's holdings persist
+	// because a Diamond does, a chat's expire with the chat.
+	//
+	// Not the Diamond link store, and the reason is where that store puts a record
+	// rather than what the record says: `links_path` in src/wasm/diamond.rs is
+	// `diamonds/<owner>/…`, and `all_links` walks those directories rather than the
+	// rail — so a chat owning links would be a directory in the Diamond store and a
+	// node in the Diamond graph, which is the one thing a throw-away conversation
+	// must not become. What IS reused is everything the paperclip actually means:
+	// `rootedRef`, `parseRef`, `sameThing`, `refReachable` and the tile, so the
+	// control behaves identically on both surfaces.
+	function chatAttachList(chatId) {
+		var c = chats.find(function (x) { return x.id === chatId; });
+		if (!c) return [];
+		if (!Array.isArray(c.holds)) c.holds = [];
+		return c.holds;
+	}
 
 	function chatAttachFind(chatId, ref) {
 		var list = chatAttachList(chatId);
@@ -20355,33 +21590,106 @@ import init, {
 	}
 
 	/// Add or remove one, from whichever control was pressed — a row's, or the
-	/// Doc header's.
+	/// Doc header's. Persisted, because a chat's scope is now as durable as the
+	/// chat: attaching is a decision the user makes once.
 	function chatAttachToggle(chatId, ref, dir, path) {
 		var list = chatAttachList(chatId);
 		for (var i = 0; i < list.length; i++) {
-			if (sameThing(list[i].ref, ref)) { list.splice(i, 1); attachChanged(); return; }
+			if (sameThing(list[i].ref, ref)) {
+				list.splice(i, 1);
+				persistChats(); attachChanged();
+				return;
+			}
 		}
 		// Note is the default — ATTACH_CONTRACT.md §6: the cheaper of the two by
 		// a wide margin, and a default that spends the user's money unasked is
-		// the wrong default.
+		// the wrong default. It is a READING state, here as there: neither Note
+		// nor Read grants a worker permission to change anything, which is why
+		// the write fence is drawn from the LIST and not from the state.
 		list.push({ ref: ref, dir: !!dir, path: path, state: 'note' });
-		attachChanged();
+		persistChats(); attachChanged();
 	}
 
 	function chatAttachSetState(chatId, ref, state) {
 		var rec = chatAttachFind(chatId, ref);
 		if (!rec || rec.state === state) return;
 		rec.state = state;
-		attachChanged();
+		persistChats(); attachChanged();
 	}
 
-	/// Empty the queue for one chat. Called when its turn is sent — the
-	/// attachment was for that turn and no other (§4) — never on a mere switch
-	/// away, which must not lose what was queued.
-	function clearChatAttach(chatId) {
-		if (!chatAttach[chatId] || !chatAttach[chatId].length) return;
-		delete chatAttach[chatId];
-		attachChanged();
+	/// Everything this chat holds that can actually be opened from the workspace
+	/// that is open now, as workspace-relative paths.
+	///
+	/// The INPUT to a fence and not a fence: the bounds are composed in Rust, by
+	/// `chat_bounds`, and a page that built its own would be a second opinion
+	/// about what a worker may touch, free to drift from the one enforced.
+	///
+	/// Unreachable holdings are left out for the reason `Files.bounds` leaves
+	/// them out of a Diamond's: a path that is allowed and absent reads to the
+	/// model as an empty folder rather than as a folder that is somewhere else.
+	async function chatScopePaths(chatId) {
+		// A trashed chat has no scope. Asked HERE, where the list is BUILT, which is
+		// the rule stated at `function trashed`: a chat in the trash is gone from the
+		// rail and from every scope, and a worker still holding its folders would be
+		// the half-alive state the trash exists to refuse. It does not come free from
+		// the record being intact — the record is intact precisely so a restore works.
+		if (trashed(chatId)) return [];
+		return chatAttachList(chatId)
+			.filter(function (a) { return refReachable(a.ref); })
+			// A door onto a Diamond the user deleted, closed for the same reason
+			// `attachmentsOf` closes it: the path resolves, and reads as an empty
+			// folder rather than as a Diamond that is gone.
+			.filter(function (a) { return !underTrashedDiamond(a.path); })
+			.map(function (a) { return a.path; })
+			.filter(function (p) { return !!p; });
+	}
+
+	/// Drop everything a destroyed chat leaves behind: its holdings, and its
+	/// workers' scratch.
+	///
+	/// TRASHING a chat needs none of this and must not do it — the record is
+	/// untouched, so Restore brings the whole scope back, exactly as it does for a
+	/// Diamond. This is for DESTROYING, which is now the ordinary end of every
+	/// abandoned conversation rather than a deliberate act, so what leaks here
+	/// leaks once per chat nobody came back to.
+	///
+	/// The holdings go with the record, which the caller is about to tombstone, so
+	/// there is nothing to unpick there: a chat's scope lives ON the chat and dies
+	/// with it. The scratch does not — it is a directory in the store, under an id
+	/// that is about to name nothing.
+	///
+	/// Best-effort and never fatal: a scratch that cannot be removed is wasted
+	/// bytes, and refusing to finish the deletion over it would leave the chat
+	/// half-destroyed, which is worse than the bytes.
+	///
+	/// # Arguments
+	/// * `chatId` - The chat being destroyed.
+	function dropChatScope(chatId) {
+		if (!chatId) return;
+		var c = chats.find(function (x) { return x.id === chatId; });
+		if (c) c.holds = [];
+		// Under `chats/<id>/`, which is store state and therefore always in the
+		// browser's own sandbox whatever workspace is open — so this can never
+		// reach into the user's real folder, whichever one they have open.
+		try {
+			var app = diamondApp();
+			if (app && typeof app.remove_dir === 'function') {
+				// The ID alone. The engine composes the path and refuses one that is not
+				// a plain id, because this deletes a directory recursively.
+				app.remove_dir(chatId).catch(function () { /* already gone */ });
+			}
+		} catch (e) { /* the engine is not up; the record still goes */ }
+	}
+
+	/// A chat's own working folder: where a worker it dispatched may always write.
+	///
+	/// Under `chats/`, which `is_store_path` in src/tools.rs answers for, and
+	/// three things follow from that one fact: it resolves to the browser's own
+	/// storage even with a real machine folder open, `default_cwd` skips it, and
+	/// `fence_spec` cannot map it onto the machine. Which together are the whole
+	/// of "no attachment, no command".
+	function chatScratchDir(chatId) {
+		return 'chats/' + String(chatId || '') + '/work';
 	}
 
 	/// `Note <path1>, <path2>, …` / `Read <path1>, <path2>, … in full.` —
@@ -20835,7 +22143,11 @@ import init, {
 		chatList:     chatAttachList,
 		chatToggle:   chatAttachToggle,
 		chatState:    chatAttachSetState,
-		chatClear:    clearChatAttach,
+		// What a chat's worker may write in, and where it always may. Published
+		// because it is exactly what `scopeChatTo` hands the engine, so a verifier
+		// can ask what the fence was built from without dispatching anything.
+		chatScope:    chatScopePaths,
+		chatScratch:  chatScratchDir,
 		prefixText:   attachPrefixText,
 		syncPrefix:   syncComposerAttachPrefix,
 		render:       renderChatAttachments,
@@ -22090,6 +23402,7 @@ import init, {
 		});
 		step('Pending.load', function () { Pending.load(); Pending.render(); });
 		step('triggerClock', function () { startTriggerClock(); });
+		step('expiryClock', function () { startExpiryClock(); });
 		step('updateSpend', function () { updateSpend(); });
 		step('panels.reflow', function () { DaimondPanels.reflow(); });
 		if (!isMobile() && DaimondPanels.isOpen('work')) Files.onOpen();
@@ -22101,12 +23414,13 @@ import init, {
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
-		// Retention, on every boot and nowhere else. A device that has been off
-		// for six weeks comes back to a trash whose whole contents are due, and
-		// works that out from the stamps it already holds rather than from a
-		// message another device may no longer be sending. After the Diamonds are
-		// read, because destroying one goes through the store this step opened.
-		step('trashSweep', function () { return trashSweep(); });
+		// Expiry and retention, on every boot. A device that has been off for six
+		// weeks comes back to a trash whose whole contents are due, and works
+		// that out from the stamps it already holds rather than from a message
+		// another device may no longer be sending. After the Diamonds are read,
+		// because destroying one goes through the store this step opened — and
+		// AFTER THE FIRST PULL, which is the whole of `sweepWhenTold`.
+		step('trashSweep', function () { return sweepWhenTold(); });
 		// A restore, or a trashing, in ANOTHER TAB — or in this one, or in a
 		// parcel that has just arrived. None of them redraws these two lists on
 		// its own: the chats fire a nonce this file already watches, but the
@@ -22128,6 +23442,13 @@ import init, {
 					// day mark. `trashSweep` refuses to run inside itself, so the
 					// destruction it does — which moves the record — cannot start
 					// another one.
+					//
+					// Not `expireChats` as well. A parcel that carries a fresher
+					// `updatedAt` moves the trash record and lands here, and
+					// re-expiring inside the callback the expiry itself woke would
+					// be a loop looking for a reason to run. The hourly clock is
+					// where that recheck belongs, and it is soon enough for a
+					// window measured in days.
 					trashSweep();
 				}, 60);
 			});
@@ -22336,6 +23657,12 @@ import init, {
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And the cached policy, whose localStorage key is namespaced like the
+		// rest. The figures are the operator's and the same for every account,
+		// so this costs one refetch -- but a cache left pointing at another
+		// account's namespace is the kind of thing only ever noticed later as a
+		// retention that changed for no reason anybody can name.
+		try { if (window.DaimondPolicy) DaimondPolicy.reset(); } catch (e) { /* ignore */ }
 		DaimondAccounts.setCurrent(id);
 		location.reload();
 	}
@@ -23150,6 +24477,12 @@ import init, {
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And the cached policy, whose localStorage key is namespaced like the
+		// rest. The figures are the operator's and the same for every account,
+		// so this costs one refetch -- but a cache left pointing at another
+		// account's namespace is the kind of thing only ever noticed later as a
+		// retention that changed for no reason anybody can name.
+		try { if (window.DaimondPolicy) DaimondPolicy.reset(); } catch (e) { /* ignore */ }
 		// Sweep every store this account owns. removeItem is namespaced to the current account, so
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
 		// here; the explicit list is what the old, single-account reset erased.
@@ -24144,6 +25477,23 @@ import init, {
 				label: t(prov ? 'models.enter_key_first' : 'models.choose_provider_first') }]);
 		}
 		if (prov && cfg.apiKey) fetchModels();
+		renderSettingsRows();
+	}
+
+	/// Draw every row this file builds into the Models panel, to what is stored.
+	///
+	/// Separate from `fillSettings` because a language change needs THIS half and
+	/// not the other: the half above re-seeds the provider box from `cfg` and can
+	/// go to the network, and a redraw must not take a half-typed key with it.
+	/// `DaimondAdmin` paints the panel with this when the language changes, and
+	/// `fillSettings` calls it because a panel being filled needs it too.
+	///
+	/// Every row writes its own strings HERE rather than where it is built: each
+	/// builds itself once and returns early ever after, so a string set at build
+	/// time is a string in whatever language the panel was first opened in --
+	/// which is what left six labels and their notes in English behind a switch
+	/// to German, and behind every switch since they were added.
+	function renderSettingsRows() {
 		// The reply-length row reads the starred model's ceiling, so it is redrawn
 		// whenever the settings are, not only when it is first built.
 		ReplyLength.render();
@@ -24158,7 +25508,7 @@ import init, {
 		// The sync switch and the diagnostics trail. Built here rather than in the
 		// markup because every other settings row is, and because both are
 		// useless on a page where `DaimondSafe`/`DaimondTrail` did not load.
-		try { TrailRow.mount(); } catch (e) { /* the row is not worth an error */ }
+		try { TrailRow.render(); } catch (e) { /* the row is not worth an error */ }
 	}
 	/// A string from the table, or the English written here when the table has no
 	/// entry for it yet.
@@ -24213,16 +25563,12 @@ import init, {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-max-rounds');
-			lab.textContent = tOr('settings.max_rounds', 'Steps per turn');
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-max-rounds';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-max-rounds-note';
-			note.textContent = tOr('settings.max_rounds_note',
-				'How many times an agent may use a tool before one turn stops. It says so when it '
-				+ 'stops, and you can tell it to carry on.');
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
 			section.insertBefore(note, form);
@@ -24230,9 +25576,17 @@ import init, {
 			return true;
 		},
 
-		/// Fill the pulldown from what is stored.
+		/// Fill the pulldown from what is stored, and say what the row is.
 		render: function () {
 			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-max-rounds"]');
+			if (lab) lab.textContent = tOr('settings.max_rounds', 'Steps per turn');
+			var rnote = document.getElementById('cfg-max-rounds-note');
+			if (rnote) {
+				rnote.textContent = tOr('settings.max_rounds_note',
+					'How many times an agent may use a tool before one turn stops. It says so when it '
+					+ 'stops, and you can tell it to carry on.');
+			}
 			var sel = document.getElementById('cfg-max-rounds');
 			sel.innerHTML = '';
 			var mine = cfg.maxRounds || 0;
@@ -24478,7 +25832,11 @@ import init, {
 			var open = !!(window.DaimondIdentity && DaimondIdentity.isUnlocked());
 			box.placeholder = (S.KNOWN[cur] && S.KNOWN[cur].keyHint) || '';
 			box.disabled = !open;
-			setSecret(box, S.key(cur));
+			// Not over a key being typed. This row is redrawn on a language change
+			// as well as on a choice, and a redraw must not take a half-entered
+			// credential with it -- the push settings are left alone for the same
+			// reason and say so where they are painted.
+			if (document.activeElement !== box) setSecret(box, S.key(cur));
 
 			var kn = document.getElementById('search-key-note');
 			if (kn) {
@@ -24527,26 +25885,19 @@ import init, {
 			if (window.DaimondSafe) {
 				var slab = document.createElement('label');
 				slab.className = 'cfg-fieldlabel';
-				slab.textContent = tOr('settings.sync', 'Syncing');
+				slab.id = 'cfg-sync-label';
 				var sbtn = document.createElement('button');
 				sbtn.type = 'button';
 				sbtn.className = 'id-trail-btn';
 				sbtn.id = 'cfg-sync-btn';
-				var on = !DaimondSafe.on();
-				sbtn.textContent = on
-					? tOr('safe.turn_off', 'Start without syncing')
-					: tOr('safe.turn_on', 'Turn syncing back on');
 				var snote = document.createElement('p');
 				snote.className = 'cfg-fieldnote';
-				snote.textContent = on
-					? tOr('settings.sync_on_note',
-						'This device is sending its work to your other devices. Stopping is '
-							+ 'immediate and loses nothing; everything stays here.')
-					: tOr('settings.sync_off_note',
-						'This device is not syncing. Its work is safe here and is not reaching '
-						+ 'your other devices.');
+				snote.id = 'cfg-sync-note';
 				sbtn.addEventListener('click', function () {
-					DaimondSafe.set(on, 'user');    // on → we are turning it OFF
+					// `on` is read at the press, not at the build: the row is redrawn
+					// under a language change, and a switch that remembered its old
+					// answer would set the state it is already in.
+					DaimondSafe.set(!DaimondSafe.on(), 'user');    // syncing → we are turning it OFF
 					location.reload();
 				});
 				section.insertBefore(slab, form);
@@ -24555,17 +25906,14 @@ import init, {
 			}
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
-			lab.textContent = tOr('settings.trail', 'Diagnostics');
+			lab.id = 'cfg-trail-label';
 			var btn = document.createElement('button');
 			btn.type = 'button';
 			btn.className = 'id-trail-btn';
 			btn.id = 'cfg-trail-btn';
-			btn.textContent = tOr('settings.trail_copy', 'Copy the app’s own trail');
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
-			note.textContent = tOr('settings.trail_note',
-				'What Daimond last did: event names and a clock, no keys, no message text, '
-					+ 'nothing from your files. Safe to paste into a bug report.');
+			note.id = 'cfg-trail-note';
 			var out = document.createElement('pre');
 			out.className = 'id-trail-text';
 			out.id = 'cfg-trail-text';
@@ -24575,7 +25923,8 @@ import init, {
 				// the account panel for why that matters.
 				if (!out.hidden) {
 					out.hidden = true;
-					btn.textContent = tOr('settings.trail_copy', 'Copy the app’s own trail');
+					TrailRow.copied = false;
+					TrailRow.render();
 					return;
 				}
 				var text = '';
@@ -24585,7 +25934,7 @@ import init, {
 				// Shown as well as copied: the clipboard is refused often enough on
 				// a phone that a button which only copies is a button that sometimes
 				// does nothing and says it worked.
-				var done = function () { btn.textContent = tOr('trail.copied', 'Copied'); };
+				var done = function () { TrailRow.copied = true; TrailRow.render(); };
 				if (text && navigator.clipboard && navigator.clipboard.writeText) {
 					navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
 				} else if (text) { fallback(text, done); }
@@ -24595,6 +25944,62 @@ import init, {
 			section.insertBefore(note, form);
 			section.insertBefore(out, form);
 			return true;
+		},
+
+		/// Whether the trail has just been copied, so the button can say so — and
+		/// go on saying so in the language now in force. Held here rather than in
+		/// the button's own words, because those are what a redraw replaces.
+		copied: false,
+
+		/// Say what both controls are, to the state they are in.
+		///
+		/// Everything above builds ONCE and returns early ever after, so nothing
+		/// there may write a string: the row would keep the language the panel was
+		/// first opened in for as long as the tab lived.
+		render: function () {
+			if (!this.mount()) return;
+			var slab = document.getElementById('cfg-sync-label');
+			if (slab) slab.textContent = tOr('settings.sync', 'Syncing');
+			var sbtn = document.getElementById('cfg-sync-btn');
+			var on   = !!(window.DaimondSafe && !DaimondSafe.on());   // syncing, that is
+			if (sbtn) {
+				sbtn.textContent = on
+					? tOr('safe.turn_off', 'Start without syncing')
+					: tOr('safe.turn_on', 'Turn syncing back on');
+			}
+			var snote = document.getElementById('cfg-sync-note');
+			if (snote) {
+				snote.textContent = on
+					? tOr('settings.sync_on_note',
+						'This device is sending its work to your other devices. Stopping is '
+							+ 'immediate and loses nothing; everything stays here.')
+					: tOr('settings.sync_off_note',
+						'This device is not syncing. Its work is safe here and is not reaching '
+						+ 'your other devices.');
+			}
+			var lab = document.getElementById('cfg-trail-label');
+			if (lab) lab.textContent = tOr('settings.trail', 'Diagnostics');
+			var btn = document.getElementById('cfg-trail-btn');
+			if (btn) {
+				btn.textContent = this.copied
+					? tOr('trail.copied', 'Copied')
+					: tOr('settings.trail_copy', 'Copy the app’s own trail');
+			}
+			var note = document.getElementById('cfg-trail-note');
+			if (note) {
+				note.textContent = tOr('settings.trail_note',
+					'What Daimond last did: event names and a clock, no keys, no message text, '
+						+ 'nothing from your files. Safe to paste into a bug report.');
+			}
+			// An open trail with nothing in it is a sentence of ours, so it follows
+			// the language too. A trail with lines in it is not: those are event
+			// names, and they are the same in every language.
+			var out = document.getElementById('cfg-trail-text');
+			var has = false;
+			try { has = !!(window.DaimondTrail && DaimondTrail.text()); } catch (e) { has = false; }
+			if (out && !out.hidden && !has) {
+				out.textContent = tOr('settings.trail_empty', 'Nothing recorded yet.');
+			}
 		},
 	};
 
@@ -24612,20 +26017,15 @@ import init, {
 			var head = document.createElement('h4');
 			head.className = 'cfg-fieldhead';
 			head.id = 'cfg-crystal-limits';
-			head.textContent = tOr('settings.crystal_limits', 'Size limits');
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-crystal-cap');
-			lab.textContent = tOr('settings.crystal_cap', 'Crystal size limit');
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-cap';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-crystal-cap-note';
-			note.textContent = tOr('settings.crystal_cap_note',
-				'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon '
-					+ 'puts the detail in a file in the Diamond’s scope.');
 			section.insertBefore(head, form);
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
@@ -24634,9 +26034,19 @@ import init, {
 			return true;
 		},
 
-		/// Fill the pulldown from what is stored.
+		/// Fill the pulldown from what is stored, and say what the two rows are.
 		render: function () {
 			if (!this.mount()) return;
+			var head = document.getElementById('cfg-crystal-limits');
+			if (head) head.textContent = tOr('settings.crystal_limits', 'Size limits');
+			var lab = document.querySelector('label[for="cfg-crystal-cap"]');
+			if (lab) lab.textContent = tOr('settings.crystal_cap', 'Crystal size limit');
+			var cnote = document.getElementById('cfg-crystal-cap-note');
+			if (cnote) {
+				cnote.textContent = tOr('settings.crystal_cap_note',
+					'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon '
+						+ 'puts the detail in a file in the Diamond’s scope.');
+			}
 			var sel = document.getElementById('cfg-crystal-cap');
 			sel.innerHTML = '';
 			var mine = cfg.crystalKb || 0;
@@ -24693,16 +26103,12 @@ import init, {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-crystal-page-cap');
-			lab.textContent = tOr('settings.crystal_page_cap', 'Page size limit');
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-page-cap';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-crystal-page-cap-note';
-			note.textContent = tOr('settings.crystal_page_cap_note',
-				'The page that renders a Diamond’s data. It travels in every sync, so it '
-				+ 'shares the budget with the data itself.');
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
 			section.insertBefore(note, form);
@@ -24712,6 +26118,14 @@ import init, {
 
 		render: function () {
 			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-crystal-page-cap"]');
+			if (lab) lab.textContent = tOr('settings.crystal_page_cap', 'Page size limit');
+			var pnote = document.getElementById('cfg-crystal-page-cap-note');
+			if (pnote) {
+				pnote.textContent = tOr('settings.crystal_page_cap_note',
+					'The page that renders a Diamond’s data. It travels in every sync, so it '
+					+ 'shares the budget with the data itself.');
+			}
 			var sel = document.getElementById('cfg-crystal-page-cap');
 			sel.innerHTML = '';
 			var mine = cfg.crystalPageKb || 0;
@@ -24790,16 +26204,13 @@ import init, {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-fold-model');
-			lab.textContent = tOr('settings.fold_model', 'Fold with');
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-fold-model';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
-			note.textContent = tOr('settings.fold_model_note',
-				'When a conversation outgrows its window it is summarised, and the summary '
-					+ 'becomes what the model remembers. This chooses what writes it, for chats on '
-					+ 'the same provider; every other chat folds with its own model.');
+			// Named, as its siblings are, so the redraw can find it again.
+			note.id = 'cfg-fold-model-note';
 			// Under the round limit, which is the other bound on how a turn behaves.
 			var after = document.getElementById('cfg-max-rounds-note') || anchor;
 			section.insertBefore(lab, after.nextSibling);
@@ -24811,6 +26222,15 @@ import init, {
 
 		render: function () {
 			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-fold-model"]');
+			if (lab) lab.textContent = tOr('settings.fold_model', 'Fold with');
+			var fnote = document.getElementById('cfg-fold-model-note');
+			if (fnote) {
+				fnote.textContent = tOr('settings.fold_model_note',
+					'When a conversation outgrows its window it is summarised, and the summary '
+						+ 'becomes what the model remembers. This chooses what writes it, for chats on '
+						+ 'the same provider; every other chat folds with its own model.');
+			}
 			var sel = document.getElementById('cfg-fold-model');
 			sel.innerHTML = '';
 			var own = document.createElement('option');
@@ -24919,7 +26339,6 @@ import init, {
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-max-tokens');
-			lab.textContent = tOr('settings.max_tokens', 'Longest reply');
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-max-tokens';
@@ -24933,9 +26352,11 @@ import init, {
 			return true;
 		},
 
-		/// Fill the pulldown for whichever model is starred.
+		/// Fill the pulldown for whichever model is starred, and say what it is.
 		render: function () {
 			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-max-tokens"]');
+			if (lab) lab.textContent = tOr('settings.max_tokens', 'Longest reply');
 			var sel = document.getElementById('cfg-max-tokens');
 			var note = document.getElementById('cfg-max-tokens-note');
 			var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };

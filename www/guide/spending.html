@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Daimond guide, home">
-			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
@@ -50,8 +50,8 @@
 	<h2 id="s3">Protection from runaway costs</h2>
 	<p>A workspace that can run many agents at once can spend fast. The danger is not a large monthly total but a <em>rate spike</em>: a fan-out burning through credit in seconds, before you can react. Four measures catch the spike itself, and none asks you to set a limit in advance.</p>
 	<ul>
-		<li><strong>A pace check before a fan-out runs.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number and the estimate on the prompt. A few agents of ordinary cost never reach it; a sudden fifty do. Your own normal is the measure, learned from your recent spend, so there is nothing to configure.</li>
-		<li><strong>Pause and stop, always to hand.</strong> The <a href="chats-and-diamonds.html">Agents</a> panel holds every running agent at a stroke, or stops them outright, and the rail's <span class="ui">Everything</span> row holds the whole app. Pausing stops the spend at once and keeps the work, so a look costs nothing.</li>
+		<li><strong>A pace check before a fan-out runs.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number and the estimate on the prompt. A few agents of ordinary cost never trip it; a sudden fifty do. Your own normal is the measure, learned from your recent spend, so there is nothing to configure.</li>
+		<li><strong>Pause and stop, always to hand.</strong> The <a href="chats-and-diamonds.html">Agents</a> panel pauses every running agent at a stroke, or stops them outright, and the rail's <span class="ui">Everything</span> row pauses the whole app. Pausing stops the spend at once and keeps the work, so a look costs nothing.</li>
 		<li><strong>A separate key for every agent.</strong> Each agent running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two agents share a key, so parallel agents cannot race a shared allowance past its cap.</li>
 		<li><strong>Everything metered, per turn, on your device.</strong> Every model call is priced and recorded here as it happens, feeding the graphs above. The bill arrives in front of you as it is spent, never later as a surprise.</li>
 	</ul>

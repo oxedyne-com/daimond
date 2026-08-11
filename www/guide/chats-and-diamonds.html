@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Daimond guide, home">
-			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
@@ -59,11 +59,11 @@
 		</div>
 		<div class="card">
 			<h3 id="s5">Jump back</h3>
-			<p>The <strong>chevron up</strong> beside the send button jumps back to your last message. Press it again to walk back through the ones before it.</p>
+			<p><strong>The chevron up</strong> beside the send button jumps back to your last message. Press it again to walk back through the ones before it.</p>
 		</div>
 		<div class="card">
 			<h3 id="s6">Jump to the end</h3>
-			<p>The <strong>chevron down</strong> returns to the bottom of the chat and starts the walk again, so the next jump back goes to your last message instead of carrying on from where you had got to.</p>
+			<p><strong>The chevron down</strong> returns to the bottom of the chat and starts the walk again, so the next jump back goes to your last message instead of carrying on from where you had got to.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">Concise</h3>
@@ -83,8 +83,8 @@
 	<h2 id="s9">Folding a chat into a Diamond</h2>
 	<p>When a conversation has worked something out, you fold it: keep what you learnt, drop the back-and-forth that produced it. What you fold into is a <strong>Diamond</strong>, and two units make it up:</p>
 	<ul>
-		<li>A <strong>fold</strong> is one improvement, a single step forward.</li>
-		<li>A <strong>crystal</strong> is what the folds have accumulated: the shape of the work, the steps in their order, and the checks you found the hard way. A Diamond is a crystal together with the chain of folds that produced it.</li>
+		<li><strong>A fold</strong> is one improvement, a single step forward.</li>
+		<li><strong>A crystal</strong> is what the folds have accumulated: the shape of the work, the steps in their order, and the checks you found the hard way. A Diamond is a crystal together with the chain of folds that produced it.</li>
 	</ul>
 
 	<h3 id="s10">Selecting turns and folding them</h3>
@@ -108,7 +108,7 @@
 	<p>So <em>picking it up again</em> means steering it again with everything it has learnt already in hand. The crystal is prose, which is what a model reads best, and it is handed to the daimon when you work the Diamond and to every worker dispatched from it. What you worked out once reaches the work again without you retyping it, or remembering that you should.</p>
 
 	<h2 id="s13">The crystal and its history</h2>
-	<p>The crystal is two real files in the Diamond's own folder in your workspace: <strong>crystal.json</strong>, what the Diamond knows, and <strong>crystal.html</strong>, the page that draws it. Open them, read them, edit them yourself, like any other file.</p>
+	<p>The crystal is two real files in the Diamond's own folder in your workspace: <strong translate="no">crystal.json</strong>, what the Diamond knows, and <strong translate="no">crystal.html</strong>, the page that draws it. Open them, read them, edit them yourself, like any other file.</p>
 
 	<p>Every write snapshots a version, so a crystal has a history and nothing is written over. The history lists every version, newest first, each with what produced it:</p>
 	<ul>
@@ -126,9 +126,9 @@
 
 	<p>When a Diamond has any, a line above the steer box says how many. Clicking it opens the list, where each entry does three things:</p>
 	<ul>
-		<li>The <strong>name</strong> opens it — a file in the Doc panel, a page in the Web panel.</li>
-		<li>The <strong>small arrow</strong> puts a reference to it in the steer box, so you can say "redo the figures in this one" without typing out the path.</li>
-		<li>The <strong>cross</strong> removes it, if it does not belong to this Diamond after all.</li>
+		<li><strong>The name</strong> opens it — a file in the Doc panel, a page in the Web panel.</li>
+		<li><strong>The small arrow</strong> puts a reference to it in the steer box, so you can say "redo the figures in this one" without typing out the path.</li>
+		<li><strong>The cross</strong> removes it, if it does not belong to this Diamond after all.</li>
 	</ul>
 
 	<div class="note">A file you have since renamed or deleted <strong>says so</strong> when you try to open it, rather than quietly doing nothing. A list of dead links that pretends otherwise is worse than no list.</div>
@@ -148,7 +148,7 @@
 	</ul>
 	<p>Each attachment carries one of two states, toggled on its tile. <strong>Note</strong> says the path is worth knowing about, and costs a few tokens. <strong>Read</strong> says the contents are wanted now, and a file can run to thousands. Note is where an attachment starts, being much the cheaper: a default that spends your money unasked would be the wrong one.</p>
 	<p>Either way the text it generates — <em>Note …</em>, or <em>Read … in full.</em> — is written into the box in front of your message, to edit or delete before sending. A prompt the app writes and hides is a prompt nobody can argue with.</p>
-	<p>The footer carries a <strong>+</strong> for attaching several things without leaving what you are reading, and a toggle between the tile <span class="ui">Stack</span> and rows of larger <span class="ui">Icons</span>. Past six tiles — four in a short window — it scrolls instead of growing, so the composer stays put. An attachment made in a workspace that is not the open one says where it lives rather than reading as an empty folder, and is left out of the generated text: a path a model cannot open buys a turn spent apologising.</p>
+	<p>The footer carries a <strong>+</strong> for attaching several things without leaving what you are reading, and a toggle between the tile <span class="ui">Stack</span> and rows of larger <span class="ui">Icons</span>. Past six tiles — four when the window is short — it scrolls instead of growing, so the composer stays put. An attachment made in a workspace that is not the open one says where it lives rather than reading as an empty folder, and is left out of the generated text: a path a model cannot open buys a turn spent apologising.</p>
 
 	<h3 id="s17">What a daimon can open</h3>
 	<p><strong>A daimon can only open the files in its Diamond's workspace.</strong> Nothing outside it is readable or writable, by the daimon or by any worker it dispatches. This is no instruction in a prompt that a model may or may not honour: the check sits in the compiled code, at the one door every file tool passes through, and that code is in the published bundle, which is built reproducibly. So it is a claim you can check and not one to take on trust.</p>
@@ -165,9 +165,9 @@
 	<ul>
 		<li><strong>Pause</strong> <span class="ui">⏸</span> — hang up what is running and hold the queue. A running agent keeps what it had produced; a waiting one does not start. Nothing new launches until you resume. This is the brake for a fan-out spending faster than you meant.</li>
 		<li><strong>Resume</strong> <span class="ui">▶</span> — continue every paused agent from where it left off, picking up its own work instead of starting over, so a pause costs nothing but the wait.</li>
-		<li><strong>Stop</strong> <span class="ui">✕</span> — end agents outright. Each keeps what it managed to do, as a stopped tile; <span class="ui">Clear</span> removes them. The instant kill switch.</li>
+		<li><strong>Stop</strong> <span class="ui">✕</span> — end agents outright. Each keeps what it managed to do, as a stopped tile; <span class="ui">Clear finished agents</span> removes them. The instant kill switch.</li>
 	</ul>
-	<p>Each tile shows its <strong>cost as it runs</strong>, the tokens and dollars accruing live rather than only at the end, so you can see the spend while deciding whether to hold it. Under the header a line reads how many agents are <strong>running</strong>, <strong>paused</strong> and <strong>queued</strong>, which makes the size and the cost of a fan-out legible at a glance. The measures Daimond takes on its own are on the <a href="spending.html">Spending</a> page.</p>
+	<p>Each tile shows its <strong>cost as it runs</strong>, the tokens and dollars accruing live rather than only at the end, so you can see the spend while deciding whether to hold it. Under the header a line reads how many agents are <strong>running, paused and queued</strong>, which makes the size and the cost of a fan-out legible at a glance. The measures Daimond takes on its own are on the <a href="spending.html">Spending</a> page.</p>
 
 	<p>A wider brake sits on the <span class="ui">Everything</span> row at the top of the rail. It pauses and resumes all of it at once: every Diamond, every chat, the workers, the mailboxes and any page being fetched for you. A paused thing refuses a turn before it starts, so nothing is spent.</p>
 
@@ -185,7 +185,7 @@
 	<p>In the rail, <span class="ui">Filter by tag</span> opens the tags you can narrow by, with the count of them on the button. Click a tag to show only Diamonds carrying it; click it again to hide them instead. With more than one chosen, <span class="ui">All</span> and <span class="ui">Any</span> decide how they combine, and <span class="ui">Clear</span> empties the filter. There is no separate search box: a Diamond is found by what it is filed under, and two ways of narrowing one short list is one more than it needs. The list is ordered by most recently touched, so what you last worked on sits at the top.</p>
 
 	<h2 id="s21">The Trash</h2>
-	<p>Deleting a chat or a Diamond does not destroy it. It is <strong>trashed</strong>: still stored, still synced, out of the rail, out of the finders and out of every daimon's reach, listed in the <strong>Trash</strong> panel in the dock with <span class="ui">Restore</span> beside it. It is kept <strong>thirty days</strong> and then destroyed, and each row says the date.</p>
+	<p>Deleting a chat or a Diamond does not destroy it. It is <strong>trashed</strong>: still stored, still synced, out of the rail, out of the graph and the tag filter, and out of every daimon's reach, listed in the <strong>Trash</strong> panel in the dock with a Restore button beside it. It is kept <strong>thirty days</strong> and then destroyed, and each row says the date.</p>
 
 	<p>Because the act can be taken back, nothing asks before it. The two questions live where they are true instead: <span class="ui">Delete permanently</span> on one item, and <span class="ui">Empty trash</span>, which names the count. Both are irreversible and both go from every device. A dialog in front of a reversible act teaches people to click through dialogs, and then the irreversible one is clicked through too.</p>
 

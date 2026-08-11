@@ -143,9 +143,16 @@ async function breakInto(page) {
 
 // ── Reading the truth, not the screen ────────────────────────────────
 
-/// The chat tile names on the rail, top to bottom.
-const railChats = (page) => page.$$eval('#session-list .session-box .tile-label',
-	(els) => els.map((e) => e.value));
+/// The chat tile IDS on the rail, top to bottom.
+///
+/// It was the tile NAMES, which worked while every chat was born as
+/// `Chat-0025`. Chats carry no name now — the rail derives a relative time — so
+/// names could no longer tell two tiles apart, and half this file's lookups
+/// silently matched nothing. The id is the right handle here in any case: this
+/// whole file is about whether a NEW chat's id collides with one the trash or a
+/// tombstone still claims, and every claim it checks is keyed by id.
+const railChats = (page) => page.$$eval('#session-list .session-box',
+	(els) => els.map((e) => e.dataset.id || ''));
 
 /// Every chat the STORE holds, unfiltered — id and name. This is where the
 /// overwrite shows: the rail cannot report a record that was replaced under it.
@@ -221,15 +228,23 @@ const makeChat = async (page) => {
 	await page.waitForTimeout(700);
 };
 
-/// Delete the named chat the way a user does: the tile's own ✕, no dialog.
-const deleteChat = async (page, name) => {
-	await page.evaluate((n) => {
-		const box = [...document.querySelectorAll('#session-list .session-box')]
-			.find((e) => (e.querySelector('.tile-label') || {}).value === n);
+/// Delete one chat the way a user does: the tile's own ✕, no dialog.
+///
+/// BY ID, not by the name on the tile. Chats carry no name now — the rail
+/// derives a relative time — so a lookup by displayed text matched nothing, the
+/// ✕ was never clicked, and this file reported that deleting a chat failed to
+/// trash it. Which is also the right identifier for this file: it is about ids,
+/// and the trash is keyed by one.
+const deleteChat = async (page, id) => {
+	const clicked = await page.evaluate((want) => {
+		const box = document.querySelector('#session-list .session-box[data-id="' + want + '"]');
 		const x = box && box.querySelector('.tile-x');
-		if (x) x.click();
-	}, name);
+		if (!x) return false;
+		x.click();
+		return true;
+	}, id);
 	await page.waitForTimeout(900);
+	return clicked;
 };
 
 // ── The run ──────────────────────────────────────────────────────────
@@ -247,7 +262,9 @@ try {
 	const doomedId = first.length === 1 ? first[0].id : null;
 	const doomedName = first.length === 1 ? first[0].name : null;
 
-	await deleteChat(P, doomedName);
+	const pressed = await deleteChat(P, doomedId);
+	check('the doomed chat\'s ✕ was actually pressed', pressed === true,
+		'no tile with that id, so nothing below would mean anything');
 	const afterDelete = await claimedIds(P);
 	check('and deleting it put its id in the trash',
 		afterDelete.trashed.includes(doomedId),
@@ -265,23 +282,26 @@ try {
 
 	await makeChat(P);
 	const railNow = await railChats(P);
-	const madeName = railNow[0] || null;
+	const madeId = railNow[0] || null;
 	const stored2 = await storedChats(P);
-	const madeRec = stored2.find((c) => c.name === madeName);
+	const madeRec = stored2.find((c) => c.id === madeId);
 	const claimed = await claimedIds(P);
 
-	check('a new chat drew a tile at all', !!madeName, railNow.join(', ') || 'empty');
+	check('a new chat drew a tile at all', !!madeId, railNow.join(', ') || 'empty');
 	check('1. THE NEW CHAT\'S ID IS NOT ONE THE TRASH STILL CLAIMS',
 		!!madeRec && !claimed.trashed.includes(madeRec.id) && !claimed.tombed.includes(madeRec.id),
 		`${madeRec ? madeRec.id : '(no record)'} vs trashed ${JSON.stringify(claimed.trashed)}`);
-	check('2. AND THE TRASHED CHAT\'S RECORD IS STILL IN THE STORE, UNDER ITS OWN NAME',
+	// Under its own id AND with its name unchanged — which is now the empty
+	// string a chat is born with, so what is asserted is that trashing did not
+	// quietly rewrite the record, whatever the name happens to be.
+	check('2. AND THE TRASHED CHAT\'S RECORD IS STILL IN THE STORE, UNCHANGED',
 		stored2.some((c) => c.id === doomedId && c.name === doomedName),
 		JSON.stringify(stored2));
 
 	await syncRound(P);
 	const railAfterSync = await railChats(P);
 	check('3. AND THE CHAT IS STILL THERE AFTER A SYNC ROUND AND A RE-RENDER',
-		railAfterSync.includes(madeName), railAfterSync.join(', ') || 'empty');
+		railAfterSync.includes(madeId), railAfterSync.join(', ') || 'empty');
 	await shot(s, 'chatid-after-sync' + (BREAK ? '-' + BREAK : ''));
 
 	// ── 4. The same after a permanent delete ────────────────────────
@@ -298,13 +318,16 @@ try {
 	await makeChat(P);
 	await P.waitForTimeout(400);
 	const storedV = await storedChats(P);
-	const victim = storedV.find((c) => c.name !== madeName && c.name !== doomedName) || null;
-	const victimName = victim ? victim.name : null;
+	// BY ID, not by name: chats have no names now, so "the one that is not the
+	// two I already know about" has to be asked of the ids. It is the same
+	// question — the newest record — asked of the field that still answers it.
+	const knownIds = [doomedId, madeId].filter(Boolean);
+	const victim = storedV.find((c) => knownIds.indexOf(c.id) === -1) || null;
 	check('a second chat was made, and it is the newest record',
 		!!victim, JSON.stringify(storedV));
 
 	if (victim) {
-		await deleteChat(P, victimName);
+		await deleteChat(P, victim.id);
 		const purged = await P.evaluate((id) => window.DaimondCore.trashPurge(id), victim.id);
 		await P.waitForTimeout(900);
 		const afterPurge = await claimedIds(P);
@@ -316,9 +339,9 @@ try {
 	await restart(s);
 	await makeChat(P);
 	const rail3 = await railChats(P);
-	const thirdName = rail3.find((n) => n !== madeName && n !== victimName) || null;
+	const thirdId = rail3.find((i) => i !== madeId && i !== (victim && victim.id)) || null;
 	const stored3 = await storedChats(P);
-	const thirdRec = stored3.find((c) => c.name === thirdName);
+	const thirdRec = stored3.find((c) => c.id === thirdId);
 	const claimed3 = await claimedIds(P);
 	check('4. A CHAT MADE AFTER A PERMANENT DELETE IS NOT TOMBSTONED EITHER',
 		!!thirdRec && !claimed3.tombed.includes(thirdRec.id) && !claimed3.trashed.includes(thirdRec.id),
@@ -327,7 +350,7 @@ try {
 	await syncRound(P);
 	const rail4 = await railChats(P);
 	check('   and it too survives a sync round',
-		!!thirdName && rail4.includes(thirdName), rail4.join(', ') || 'empty');
+		!!thirdId && rail4.includes(thirdId), rail4.join(', ') || 'empty');
 
 	// The ids the app minted, for the record.
 	console.log('\n  ids minted: ' + JSON.stringify((await storedChats(P)).map((c) => c.id)));

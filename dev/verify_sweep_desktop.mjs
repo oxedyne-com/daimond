@@ -838,5 +838,25 @@ fs.writeFileSync(path.join(SHOTS, 'findings.json'), JSON.stringify({
 	contrast: [...contrast].map(([k, m]) => ({ sel: k, by: [...m] })),
 }, null, 1));
 
+// The VERDICT, last, because the last line is the one that gets quoted.
+//
+// run_all.sh summarises a verifier by its final line. This one ended on "self-test: every
+// check was seen red before the sweep" — true, reassuring, and silent about the two defects
+// that had just failed the run. On the 2026-08-11 gate summary it read as a verifier that
+// had failed for no stated reason, which is the worst kind of red to hand somebody: it costs
+// a second run before anyone even knows what was found.
+// Named by the FAULT, not by the entry. One cut piece of ink is recorded once per ancestor
+// that clips it, so the crystal-cap ring at the foot of the models panel comes out as two
+// findings — `[clipped by html > body]` and `[clipped by html]` — which are one thing to fix
+// and would read on a summary as two. The blocks above still print every clipper; this line
+// counts what a person would go and mend.
+const faults = [...new Set(defects.map((f) => `${f.check} on ${f.sel}`))];
+log(defects.length
+	? `\nFAIL  ${faults.join('; ')}`
+		+ `${faults.length < defects.length ? `  (${defects.length} findings, ${faults.length} fault(s))` : ''}`
+		+ `  — evidence in ${path.join(SHOTS, 'findings.json')}`
+	: `\nPASS  no defects over ${PALETTES.length * SPACINGS.length} combinations`
+		+ `${notes.length ? `, ${notes.length} note(s) to look at` : ''}.`);
+
 await s.close();
 process.exit(defects.length ? 1 : 0);

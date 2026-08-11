@@ -20,13 +20,15 @@
 //   a friendliness pass, not a simplification pass, so the security detail, the
 //   fence's limits and the "what is not protected" list are all looked for.
 //
-//   The correction. The guide used to say a backup carries your identity. It
-//   does not -- `doExport` in www/js/daimond.js writes chats, the ledger,
-//   Diamonds and workspace files, and never touches the wrapped key; only
-//   pairing and a passkey carry an identity, via DaimondIdentity.exportBundle.
-//   Acting on the old sentence is how an account gets lost, so both the English
-//   page and all seven translations are checked for the corrected wording and
-//   against the wrong one.
+//   The correction. The guide used to say that anyone who imports a backup
+//   becomes you. That is the claim to keep out, and it is wrong for one reason:
+//   `doExport` in www/js/daimond.js DOES write the identity -- it calls
+//   DaimondIdentity.exportBundle() -- but the private key in that bundle is
+//   sealed under PBKDF2(passphrase, salt), so the file opens to the passphrase
+//   and to nothing else. Both halves have to be said. Drop the first and a
+//   reader who deletes a browser after taking a backup loses the account the
+//   backup was holding; drop the second and the file reads as a bearer token.
+//   The English page and all seven translations are checked for both.
 //
 // And the callout the stop-facts sit in has to be legible in all eleven
 // palettes, not the two a colorScheme flag reaches.
@@ -72,6 +74,60 @@ const say = (ok, what, detail) => {
 //
 // Matched against the RENDERED text, not the markup, so a fact hidden by a
 // stylesheet does not count as said.
+//
+// A fact is a NAMED PROPERTY with a predicate, not a sentence. A check that
+// matches one inflection reports a defect every time the copy is tightened, and
+// reports nothing when the copy keeps the words and loses the meaning.
+
+/// Where a page first says that the passphrase does not follow you to a new
+/// browser. An index, because the ordering check needs one.
+const ACCOUNT_AT = /passphrase[^.]{0,220}\b(fresh|new|another|different)\b[^.]{0,30}browser|\b(fresh|new|another|different)\b[^.]{0,30}browser[^.]{0,220}passphrase/i;
+
+/// The account fact, in any wording: three things, all of which the code makes
+/// true. The signing key is generated at random on the device that made the
+/// account (`generatePair` in www/js/identity.js) and the passphrase only
+/// derives the AES-GCM key that unwraps the stored copy, so (a) the same
+/// passphrase in a fresh browser is a DIFFERENT account, (b) the key itself has
+/// to be carried, and (c) these are the things that carry it. Say (a) without
+/// (c) and the reader has a warning and no way out.
+const ACCOUNT_FACT = (t) =>
+	ACCOUNT_AT.test(t)
+	&& /\b(different|separate|second|its own|new)\b[^.]{0,30}account/i.test(t)
+	&& /Link another device/.test(t)
+	&& /passkey|Export a backup/i.test(t);
+
+/// Sentences, near enough. The guide's prose is ordinary, and an abbreviation
+/// inside one costs a split rather than a verdict.
+const sentences = (t) => t.split(/(?<=[.!?;])\s+|\n+/);
+
+/// What a backup is, in any wording, and sentence by sentence rather than over
+/// the whole page -- which is the difference between a check and a coincidence.
+/// `doExport` writes DaimondIdentity.exportBundle(), so the key IS in the file,
+/// and the private half of it is sealed under PBKDF2(passphrase, salt), so the
+/// file is not a bearer token. Both halves, or the page loses an account or
+/// hands one over. Page-wide matching cannot say this: "your key is not in it"
+/// sits on a page that elsewhere says "encrypted" and "passphrase", and every
+/// term would be found.
+const BACKUP_FACT = (t) => {
+	const s = sentences(t);
+	// One sentence has to put the key IN the file. A sentence that says it is
+	// not there is the defect, so a negation next to the key disqualifies it.
+	const inIt = s.some((x) => /\b(backup|file you keep|exported file)\b/i.test(x)
+		&& /\bkey\b/i.test(x)
+		&& !/\bkey\b[^.]{0,40}\bnot\b|\bnot\b[^.]{0,40}\bkey\b/i.test(x));
+	// And one has to say it travels wrapped, under the passphrase.
+	const wrapped = s.some((x) => /\bkey\b/i.test(x)
+		&& /wrapped|sealed|encrypted/i.test(x) && /passphrase/i.test(x));
+	return inIt && wrapped;
+};
+
+/// Decode the handful of entities a bank string can carry, and flatten
+/// whitespace, so a bank value can be looked for in rendered text.
+const flat = (s) => s
+	.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+	.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;| /g, ' ')
+	.replace(/&#(\d+);/g, (m, n) => String.fromCharCode(Number(n)))
+	.replace(/\s+/g, ' ').trim();
 
 /// The things a reader is stopped by. Each must also come before the steps.
 const STOPPERS = [
@@ -82,7 +138,7 @@ const STOPPERS = [
 	['Ubuntu has not shipped a deb since 20.04',	/since 20\.04/],
 	['what to install instead',			/Chrome, Brave, Vivaldi or Edge/i],
 	['the profile appears on first run',		/profile directory .{0,40}created the first time|run that browser once/i],
-	['the passphrase does not recreate the key',	/passphrase does not recreate/i],
+	['the passphrase does not stand up a new browser',	ACCOUNT_FACT],
 	['so pair before you retire the old browser',	/Link another device/],
 	['and export a backup for the work',		/Export a backup/],
 ];
@@ -147,16 +203,19 @@ async function load(url) {
 
 const mo = await load(`${BASE}/machine-operations.html`);
 
-for (const [what, re] of STOPPERS)  say(re.test(mo), `machine-operations says: ${what}`);
-for (const [what, re] of NEW_FACTS) say(re.test(mo), `machine-operations says: ${what}`);
-for (const [what, re] of KEPT)      say(re.test(mo), `still says: ${what}`);
+/// A required fact is a regular expression or a predicate over the page's text.
+const said = (t, m) => (typeof m === 'function' ? m(t) : m.test(t));
+
+for (const [what, m] of STOPPERS)  say(said(mo, m), `machine-operations says: ${what}`);
+for (const [what, m] of NEW_FACTS) say(said(mo, m), `machine-operations says: ${what}`);
+for (const [what, m] of KEPT)      say(said(mo, m), `still says: ${what}`);
 
 // ── Order ────────────────────────────────────────────────────────────
 //
 // A warning below the instructions it should have prevented is decoration.
 {
 	const stop = mo.search(/snap or flatpak browser cannot/i);
-	const acct = mo.search(/passphrase does not recreate/i);
+	const acct = mo.search(ACCOUNT_AT);
 	const inst = mo.search(/^Installing it$/m);
 	const steps = mo.search(/cargo build --release/);
 	say(stop >= 0 && inst > stop, 'the snap warning comes before the installation steps', `${stop} vs ${inst}`);
@@ -221,30 +280,63 @@ for (const [what, re] of KEPT)      say(re.test(mo), `still says: ${what}`);
 }
 
 // ── The correction ───────────────────────────────────────────────────
+//
+// The translations are the half that rots quietly: a corrected English page
+// keeps telling seven other languages the old thing, and nobody who reads
+// English ever sees it.
+//
+// Their oracle is the BANK, not a list of foreign phrases. The locale pages are
+// generated from dev/guide-i18n/<loc>.json by dev/guide_i18n.mjs, so "this
+// locale carries the corrected sentence" means exactly "the locale page renders
+// the bank's translation of the English run that carries it". Naming the
+// phrases instead fails twice over: it called Japanese wrong for writing
+// 作り直すのではなく where the list held 作り直しません, and it called an
+// untranslated page RIGHT, because a fallback page carries the English source
+// and the English source was one of the alternatives.
+const BANK = path.join(ROOT, 'dev', 'guide-i18n');
+
+/// Every locale's rendering of the English runs on `page` that match `carries`.
+/// Returns what is stale, what is missing, and why.
+async function translated(page, carries) {
+	const src  = JSON.parse(fs.readFileSync(path.join(BANK, '_source.json'), 'utf8'));
+	const runs = (src[page] || []).filter((s) => carries.test(s));
+	const stale = [], missing = [];
+	// The English page having no such sentence is itself the failure, and a
+	// louder one than any locale's: there is nothing left to translate.
+	if (!runs.length) missing.push(`the English ${page} has no run matching ${carries}`);
+	for (const loc of LOCS) {
+		const text = flat(await load(`${BASE}/${loc}/${page}`));
+		if (/Anyone who imports it becomes you/i.test(text)) stale.push(loc);
+		const raw  = JSON.parse(fs.readFileSync(path.join(BANK, `${loc}.json`), 'utf8'));
+		const bank = Object.assign({}, raw._common || {}, raw[page] || {});
+		for (const run of runs) {
+			const t = bank[run];
+			if (t === undefined) missing.push(`${loc}: no entry for "${run.slice(0, 48)}…"`);
+			else if (!text.includes(flat(t))) missing.push(`${loc}: the page does not render its entry`);
+		}
+	}
+	return { stale, missing };
+}
+
 {
 	const acc = await load(`${BASE}/accounts.html`);
-	say(!/backup contains your identity|Anyone who imports it becomes you/i.test(acc),
-		'accounts.html no longer says a backup carries your identity');
-	say(/does not recreate it/.test(acc) && /Link another device/.test(acc),
-		'and says what does carry it');
-	say(/your key is not in it/.test(acc),
-		'and says what a backup is for instead');
+	// Not "a backup contains your identity", which is TRUE -- the export writes
+	// the wrapped bundle. The claim to keep out is that holding the file is
+	// enough, which is what the passphrase stops.
+	say(!/Anyone who imports it becomes you/i.test(acc),
+		'accounts.html does not say that importing a backup makes anyone you');
+	say(ACCOUNT_FACT(acc),
+		'and says the passphrase alone starts a different account, and what carries the key');
+	say(BACKUP_FACT(acc),
+		'and says the key is in a backup, wrapped under the passphrase');
 
 	const sync = await load(`${BASE}/sync.html`);
 	say(/cannot travel on its own|nothing for it to open/.test(sync),
 		'sync.html says the passphrase cannot bring the account over by itself');
 
-	// The translations, which is where a corrected English page quietly keeps
-	// telling seven other languages the wrong thing.
-	const stale = [], fixed = [];
-	for (const loc of LOCS) {
-		const t = await load(`${BASE}/${loc}/accounts.html`);
-		if (/Anyone who imports it becomes you/i.test(t)) stale.push(loc);
-		if (/does not recreate|nicht neu|no la recrea|ne la recrée|作り直しません|다시 만들어|não a recria|重新造出来/.test(t)) fixed.push(loc);
-	}
-	say(stale.length === 0, 'no translation still carries the old claim', stale.join(', '));
-	say(fixed.length === LOCS.length, 'every translation carries the corrected one',
-		`${fixed.length}/${LOCS.length}: ${fixed.join(', ')}`);
+	const tr = await translated('accounts.html', /passphrase does not recreate/i);
+	say(tr.stale.length === 0, 'no translation still carries the old claim', tr.stale.join(', '));
+	say(tr.missing.length === 0, 'every translation carries the corrected one', tr.missing.join(' | '));
 }
 
 // ── Shots ────────────────────────────────────────────────────────────
@@ -291,11 +383,11 @@ if (PROVE) {
 	const CASES = [
 		['the stop callouts', '.note.stop', async () => {
 			const t = await load(`${BASE}/machine-operations.html`);
-			return !/snap or flatpak browser cannot/i.test(t) && !/passphrase does not recreate/i.test(t);
+			return !/snap or flatpak browser cannot/i.test(t) && !ACCOUNT_FACT(t) && t.search(ACCOUNT_AT) < 0;
 		}],
 		['the callouts that carry the kept facts', '.note', async () => {
 			const t = await load(`${BASE}/machine-operations.html`);
-			return !KEPT.every(([, re]) => re.test(t));
+			return !KEPT.every(([, m]) => said(t, m));
 		}],
 		['the troubleshooting section', '#trouble', async () => {
 			// Removing only the heading leaves the commands, so the check that
@@ -305,7 +397,14 @@ if (PROVE) {
 		}],
 		['the accounts correction', 'main p', async () => {
 			const t = await load(`${BASE}/accounts.html`);
-			return !/does not recreate it/.test(t);
+			return !ACCOUNT_FACT(t);
+		}],
+		['the translated sentence', 'main p', async () => {
+			// The same removal, on the seven generated pages: the bank still holds
+			// the entry, and the page no longer renders it. A check that only asked
+			// whether the bank had an entry would pass here.
+			const t = await translated('accounts.html', /passphrase does not recreate/i);
+			return t.missing.length === LOCS.length;
 		}],
 	];
 	for (const [what, sel, run] of CASES) {
@@ -313,6 +412,30 @@ if (PROVE) {
 		const caught = await run();
 		say(caught, `broken on purpose: removing ${what} is caught`, 'the check still passed');
 		damage = null;
+	}
+	// BACKUP_FACT, against the page as it actually read until this was corrected.
+	// Removing an element cannot prove this one -- three separate sentences carry
+	// the fact, and any of them satisfies the predicate -- and the failure was
+	// never a missing sentence. It was a page that said something, confidently,
+	// and said the opposite of what doExport does. So it is given those words
+	// back, with the neighbours that make a page-wide match pass: "encrypted"
+	// and "passphrase" both appear, a few rows up, about something else.
+	{
+		const was = [
+			'Change passphrase… — set a new one; your encrypted data is re-wrapped under it.',
+			'Export a backup — write your chats, Diamonds and workspace files to a file you keep.',
+			'It restores your work and not your account: your key is not in it.',
+			'Import a backup… — bring an exported identity into this browser.',
+			'Your account is a signing key held in this browser. The passphrase does not recreate it, only decrypts the copy already stored here, so the same passphrase in a fresh browser starts a separate account with its own credits and no Pro.',
+			'Two things carry the key across and nothing else does: Link another device, which shows a pairing code to type into the new browser, and a passkey, which stands a new device up in one gesture.',
+			'Take an Export a backup as well, for the chats, Diamonds and workspace files the key does not carry.',
+			'A backup holds everything you have written.',
+			'Not the key — importing it does not make anyone you — but every chat, Diamond and workspace file is in it as plain text, so keep it as private as the work itself.',
+		].join('\n');
+		say(!BACKUP_FACT(was), 'broken on purpose: "your key is not in it" is caught', 'the check still passed');
+		// And the same text must still satisfy the OTHER property, or the case
+		// above would be proving nothing more than that some words changed.
+		say(ACCOUNT_FACT(was), 'and that page still says the account fact, so the two are independent');
 	}
 	// The palette check, against a colour that does not clear the floor.
 	{

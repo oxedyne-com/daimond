@@ -387,10 +387,36 @@ check('and told the user, naming the Diamond it moved',
 	!!booted.title && /brought back/i.test(booted.title)
 		&& !!booted.body && booted.body.includes('Stranded in the project'),
 	JSON.stringify(booted.title) + ' | ' + JSON.stringify(booted.body));
-check('and said the copies in their folder were left where they are',
-	!!booted.body && /left exactly where they are/i.test(booted.body)
-		&& (await at('folder', 'diamonds/' + D + '/crystal.json')) === crystalOf('crystal of D'),
-	JSON.stringify(booted.body));
+// THE PROPERTY. Adoption COPIES; the user's own files stay in their folder,
+// and the dialog invites them to delete those copies once satisfied. So the
+// message must say the folder copies are still there and where to find them,
+// and must never claim Daimond moved or removed anything -- and the file must
+// really still be on disk. A user who reads "moved" does not go looking, and a
+// user who reads "copied" about files that were not copied deletes the only
+// remaining set.
+//
+// This was `/left exactly where they are/`, which the rewrite broke by dropping
+// one adverb. The wording is not the property; the file still being there is.
+const stillInTheFolder = (b) => {
+	const bits = b.split(/(?<=[.!?;])\s+/);
+	const neg  = /\b(not|no|never|nothing|none|nor)\b|n[’']t\b/i;
+	const gone = /\b(moved|removed|deleted|erased|taken away)\b/i;
+	return {
+		// It says the user's copies stayed put.
+		kept:     bits.some(x => /\b(left|still|remains?|remained|untouched|unchanged|kept|in place|where they (are|were))\b/i.test(x)
+			&& /\b(cop(y|ies|ied)|files?|originals?|them|these)\b/i.test(x)),
+		// It says where they are.
+		where:    /diamonds\/|\bfolder\b/i.test(b),
+		// It never claims Daimond took them away.
+		notMoved: !bits.some(x => gone.test(x) && !neg.test(x)),
+	};
+};
+const told   = stillInTheFolder(booted.body || '');
+const onDisk = (await at('folder', 'diamonds/' + D + '/crystal.json')) === crystalOf('crystal of D');
+check('and said the copies in their folder are still there, untaken — and they are',
+	!!booted.body && told.kept && told.where && told.notMoved && onDisk,
+	Object.entries({ ...told, onDisk }).filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', ')
+		|| JSON.stringify(booted.body));
 
 // A resource the browser could not load is the dev stack, not the page: no
 // gateway runs here, so its probes answer 401 or 502 and neither is a throw.

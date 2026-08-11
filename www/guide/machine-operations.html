@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Daimond guide, home">
-			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Guide pages">
@@ -43,22 +43,22 @@
 	<h2 id="s1">Before you start</h2>
 	<p>Three things decide whether any of this will work. Checking them takes a minute; discovering them afterwards takes an hour, because the error the browser reports names none of them.</p>
 
-	<h3 id="s2">1. A browser installed from a <code>.deb</code></h3>
-	<p>A snap or flatpak browser confines the programs it starts, and that confinement reaches Daimond's hand. The <code>home</code> interface a snap gets does not grant the hidden directories at the top of your home directory, and the hand's journal lives at <code>~/.local/share/daimond/hand/journal/</code>, behind one of them. It cannot open the file it would have recorded its reason in, so it exits without a word and Chrome reports only <em>Native host has exited</em>. There is nothing in that sentence to act on and nothing to configure: the confinement is what a snap is for. Moving the journal does not help either, because the browser hands the program its own environment and <code>DAIMOND_HAND_JOURNAL_DIR</code> never reaches it.</p>
-	<p>You need not work this out yourself. The installer looks at every browser profile on the machine, writes into the ones that can use it and names the ones that cannot; where every browser it finds is confined it stops, rather than leaving you an install that appears to have worked. <code>--check</code> reports the same, and flags a confined browser even with a usable one installed beside it, because the one you are actually using decides.</p>
+	<h3 id="s2">1. A browser installed from a <code translate="no">.deb</code></h3>
+	<p>A snap or flatpak browser confines the programs it starts, and that confinement reaches Daimond's hand. The <code translate="no">home</code> interface a snap gets does not grant the hidden directories at the top of your home directory, and the hand's journal lives at <code translate="no">~/.local/share/daimond/hand/journal/</code>, behind one of them. It cannot open the file it would have recorded its reason in, so it exits without a word and Chrome reports only <em>Native host has exited</em>. There is nothing in that sentence to act on and nothing to configure: the confinement is what a snap is for. Moving the journal does not help either, because the browser hands the program its own environment and <code translate="no">DAIMOND_HAND_JOURNAL_DIR</code> never reaches it.</p>
+	<p>You need not work this out yourself. The installer looks at every browser profile on the machine, writes into the ones that can use it and names the ones that cannot; where every browser it finds is confined it stops, rather than leaving you an install that appears to have worked. <code translate="no">--check</code> reports the same, and flags a confined browser even with a usable one installed beside it, because the one you are actually using decides.</p>
 	<p>To see what you have before you start:</p>
-	<pre><code>snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
+	<pre><code translate="no">snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
 flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
-	<p>Anything either command names is confined. What works is Chrome, Brave, Vivaldi or Edge installed as a <code>.deb</code>, or a Chromium <code>.deb</code> from somewhere other than Ubuntu's archive.</p>
-	<div class="note"><strong><code>apt install chromium-browser</code> gives you the snap.</strong> Ubuntu's <code>chromium-browser</code> package has been a stub that installs the snap since 20.04, so the usual way of getting a browser without the Software app lands you in the same place. Reach for one of the four <code>.deb</code>s above instead.</div>
+	<p>Anything either command names is confined. What works is Chrome, Brave, Vivaldi or Edge installed as a <code translate="no">.deb</code>, or a Chromium <code translate="no">.deb</code> from somewhere other than Ubuntu's archive.</p>
+	<div class="note"><strong><code translate="no">apt install chromium-browser</code> gives you the snap.</strong> Ubuntu's <code translate="no">chromium-browser</code> package has been a stub that installs the snap since 20.04, so the usual way of getting a browser without the Software app lands you in the same place. Reach for one of the four <code translate="no">.deb</code>s above instead.</div>
 
 	<h3 id="s3">2. Run that browser once before you install</h3>
-	<p>The installer writes one small file into the browser's profile directory, and that directory is created the first time the browser starts. Install a browser, never open it, and <code>install.sh</code> reports finding nothing — correctly, because there is nothing there yet.</p>
+	<p>The installer writes one small file into the browser's profile directory, and that directory is created the first time the browser starts. Install a browser, never open it, and <code translate="no">install.sh</code> reports finding nothing — correctly, because there is nothing there yet.</p>
 
 	<h3 id="s4">3. Linux, with Landlock in the kernel</h3>
-	<p>The compartment is Landlock and seccomp, and both are Linux. Landlock arrived in Linux 5.13; <a href="#s29">Unconventional systems</a> sets out what older and unusual machines get. The hand does build and run on macOS and Windows and will introduce itself to the page, but it reports that it can fence nothing, and Daimond then refuses every command rather than run one unfenced. The refusal names what is missing: macOS wants a sandbox profile applied through <code>sandbox_exec</code>, or App Sandbox entitlements if the hand ever ships in a bundle; Windows wants a Job Object to bound the process tree and an AppContainer SID to bound what it may open. Neither is built.</p>
+	<p>The compartment is Landlock and seccomp, and both are Linux. Landlock arrived in Linux 5.13; <a href="#s29">Unconventional systems</a> sets out what older and unusual machines get. The hand does build and run on macOS and Windows and will introduce itself to the page, but it reports that it can fence nothing, and Daimond then refuses every command rather than run one unfenced. The refusal names what is missing: macOS wants a sandbox profile applied through <code translate="no">sandbox_exec</code>, or App Sandbox entitlements if the hand ever ships in a bundle; Windows wants a Job Object to bound the process tree and an AppContainer SID to bound what it may open. Neither is built.</p>
 
-	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your account is a signing key held in the browser you made it in, and the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. Before you retire the old browser, do both of these in it: <strong><span class="ui">Link another device</span></strong>, then type the code in the new browser, which is one of only two things that carry the key across (a passkey is the other); and <strong><span class="ui">Export a backup</span></strong>, which holds the chats, Diamonds and workspace files the key does not bring. See <a href="sync.html">Cross-device sync</a> and <a href="accounts.html">Accounts</a>.</div>
+	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your account is a signing key held in the browser you made it in. The passphrase does not recreate that key, it only decrypts the copy already stored there, so the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. The key has to travel, so before you retire the old browser do one of these in it: <strong><span class="ui">Link another device</span></strong>, then type the code in the new browser; add a passkey; or <strong><span class="ui">Export a backup</span></strong>, which writes the chats, Diamonds and workspace files together with the key, still wrapped under your passphrase, for a browser that has no account of its own yet. See <a href="sync.html">Cross-device sync</a> and <a href="accounts.html">Accounts</a>.</div>
 
 	<div class="note"><strong>Not the same thing as the Machine workspace.</strong> The <span class="ui">Machine</span> chip in the <a href="email-web-files.html">Workspace</a> panel gives Daimond read and write access to a real folder on your disk. Machine Operations lets it <strong>run programs</strong>. Two separate grants, made separately. Operations does need the workspace: a command runs against a real folder, so the workspace has to be one, and the same one.</div>
 
@@ -68,25 +68,25 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<ol class="steps">
 		<li>
 			<h3 id="s6">Build the hand</h3>
-			<pre><code>cargo build --release --manifest-path hand/Cargo.toml</code></pre>
-			<p><code>--manifest-path</code>, not <code>-p</code>: the hand is a cargo workspace of its own, so <code>-p</code> reports no such package and builds nothing.</p>
+			<pre><code translate="no">cargo build --release --manifest-path hand/Cargo.toml</code></pre>
+			<p><code translate="no">--manifest-path</code>, not <code translate="no">-p</code>: the hand is a cargo workspace of its own, so <code translate="no">-p</code> reports no such package and builds nothing.</p>
 		</li>
 		<li>
 			<h3 id="s7">Grant a folder, and register the hand</h3>
-			<pre><code>hand/install/install.sh --workspace ~/work</code></pre>
-			<p>Put your own folder in place of <code>~/work</code>. It bounds everything any command can read or write, so choose one for the work: the script refuses your home directory and <code>/</code> outright, since granting either grants everything. It has to exist already.</p>
+			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
+			<p>Put your own folder in place of <code translate="no">~/work</code>. It bounds everything any command can read or write, so choose one for the work: the script refuses your home directory and <code>/</code> outright, since granting either grants everything. It has to exist already.</p>
 			<p>That one run does three things, each with a failure you would otherwise meet later:</p>
 			<ul>
-				<li><strong>Writes your folder into <code>root.txt</code></strong>, at <code>~/.local/share/daimond/hand/journal/root.txt</code>. The hand will not serve a page until it has been told, and it never guesses, a guessed folder being a guess about what a command may touch. To change it later, run the same command with a different folder.</li>
+				<li><strong>Writes your folder into <code translate="no">root.txt</code></strong>, at <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>. The hand will not serve a page until it has been told, and it never guesses, a guessed folder being a guess about what a command may touch. To change it later, run the same command with a different folder.</li>
 				<li><strong>Creates that journal directory at mode 700.</strong> It holds the record of every command every Diamond has run, so the hand refuses to write it anywhere other users can read; a directory made under the usual umask is 755, and the hand would not start.</li>
 				<li><strong>Writes the registration</strong> into every usable browser profile, and prints which. That file is what lets the browser start the hand at all. It is JSON and nothing else: the script builds nothing, downloads nothing, starts nothing and needs no root.</li>
 			</ul>
-			<div class="note"><strong><code>DAIMOND_HAND_ROOT</code> is a trap.</strong> The environment variable does the same job as <code>root.txt</code> and takes precedence, and it will not work: your browser starts the hand with <em>its own</em> environment, and yours is not in it. Use the file.</div>
+			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> is a trap.</strong> The environment variable does the same job as <code translate="no">root.txt</code> and takes precedence, and it will not work: your browser starts the hand with <em>its own</em> environment, and yours is not in it. Use the file.</div>
 		</li>
 		<li>
 			<h3 id="s8">Load the extension</h3>
-			<p>The previous step printed the path. Open <code>chrome://extensions</code>, turn on <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select the <code>ext/</code> directory.</p>
-			<p>It carries a fixed public key, so its id is the same on every machine — which is how the registration written a moment ago can already name it — and the manifest names a single origin, <code>https://daimond.oxedyne.com</code>, as the only page allowed to speak to it. No other page in your browser can reach it at all.</p>
+			<p>The previous step printed the path. Open <code translate="no">chrome://extensions</code>, turn on <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select the <code translate="no">ext/</code> directory.</p>
+			<p>It carries a fixed public key, so its id is the same on every machine — which is how the registration written a moment ago can already name it — and the manifest names a single origin, <code translate="no">https://daimond.oxedyne.com</code>, as the only page allowed to speak to it. No other page in your browser can reach it at all.</p>
 		</li>
 		<li>
 			<h3 id="s9">Restart the browser</h3>
@@ -95,44 +95,44 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	</ol>
 
 	<h3 id="s10">Then check it</h3>
-	<pre><code>hand/install/install.sh --check</code></pre>
-	<p>Changes nothing, and prints one line per thing that has to be true: a usable browser, the registration, the binary, the journal directory and its mode, <code>root.txt</code>, the journal sitting outside the granted folder, and the extension. A failing line carries its fix on the line below it. Work from the top, since a later line often fails only because an earlier one did.</p>
+	<pre><code translate="no">hand/install/install.sh --check</code></pre>
+	<p>Changes nothing, and prints one line per thing that has to be true: a usable browser, the registration, the binary, the journal directory and its mode, <code translate="no">root.txt</code>, the journal sitting outside the granted folder, and the extension. A failing line carries its fix on the line below it. Work from the top, since a later line often fails only because an earlier one did.</p>
 
 	<h2 id="s11">The last two steps are yours</h2>
 	<p>Nothing above chose anything on your behalf. The two things left are the two that are decisions.</p>
-	<p><strong>Open the same folder in Daimond.</strong> On the Workspace panel, use the <span class="ui">Machine</span> chip to open the folder you granted. It has to be the same one: the hand writes a token into <code>&lt;folder&gt;/.daimond/workspace.id</code> and names it when it introduces itself, and the page reads that file through the handle it already holds and compares. A workspace that is the browser's own storage, or a different folder from the one in <code>root.txt</code>, has its commands refused with a line saying which. The token lives inside <code>.daimond</code> because the compartment always denies that directory, so a command cannot read the token and cannot answer for a folder it is not in.</p>
-	<p><strong>Allow the first command.</strong> The first time Daimond wants to run something, a <strong>Daimond Hands</strong> window opens and asks. No browser permission covers “may run programs on this computer”, so that window <em>is</em> the approval and the extension records your answer itself, which is also what makes it revocable: the browser has nothing to take away. Until you allow it, nothing runs.</p>
+	<p><strong>Open the same folder in Daimond.</strong> On the Workspace panel, use the <span class="ui">Machine</span> chip to open the folder you granted. It has to be the same one: the hand writes a token into <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> and names it when it introduces itself, and the page reads that file through the handle it already holds and compares. A workspace that is the browser's own storage, or a different folder from the one in <code translate="no">root.txt</code>, has its commands refused with a line saying which. The token lives inside <code translate="no">.daimond</code> because the compartment always denies that directory, so a command cannot read the token and cannot answer for a folder it is not in.</p>
+	<p><strong>Allow the first command.</strong> The first time Daimond wants to run something, a <strong translate="no">Daimond Hands</strong> window opens and asks. No browser permission covers “may run programs on this computer”, so that window <em>is</em> the approval and the extension records your answer itself, which is also what makes it revocable: the browser has nothing to take away. Until you allow it, nothing runs.</p>
 	<p>The window names the folder and the page that asked, and says in one line how far a command can reach on this machine. <span class="ui">What this covers, and what it does not</span> opens the rest: what the compartment stops, what it does not, and how to withdraw the permission.</p>
 
 	<h2 id="s12">When it does not work</h2>
-	<p>Start with <code>install.sh --check</code> again: it walks every check below in order and stops at the first thing that is wrong. The three steps it automates are useful anyway, being what to reach for when <code>--check</code> passes and Daimond still says the hand is not there.</p>
+	<p>Start with <code translate="no">install.sh --check</code> again: it walks every check below in order and stops at the first thing that is wrong. The three steps it automates are useful anyway, being what to reach for when <code translate="no">--check</code> passes and Daimond still says the hand is not there.</p>
 
 	<h3 id="s13">Run the hand yourself</h3>
-	<pre><code>hand/target/release/daimond-hand &lt; /dev/null</code></pre>
+	<pre><code translate="no">hand/target/release/daimond-hand &lt; /dev/null</code></pre>
 	<p>starts the hand exactly the way your browser will, with no browser at the other end, so whatever it would have said to the browser it says to you. Three answers:</p>
 	<ul>
-		<li><code>daimond-hand: the page closed the pipe.</code> — configured and ready. Whatever is wrong is on the browser's side, and restarting it is the first thing to try.</li>
-		<li><em>This hand has not been told which folder it may work in</em> — <code>root.txt</code> is missing. Run <code>install.sh --workspace</code> again.</li>
-		<li><em>…is readable by users other than its owner</em> — the journal directory is not 700, and the hand will not write the record of your commands where another account can read it. <code>chmod 700</code> it.</li>
+		<li><code translate="no">daimond-hand: the page closed the pipe.</code> — configured and ready. Whatever is wrong is on the browser's side, and restarting it is the first thing to try.</li>
+		<li><em>This hand has not been told which folder it may work in</em> — <code translate="no">root.txt</code> is missing. Run <code translate="no">install.sh --workspace</code> again.</li>
+		<li><em>…is readable by users other than its owner</em> — the journal directory is not 700, and the hand will not write the record of your commands where another account can read it. <code translate="no">chmod 700</code> it.</li>
 	</ul>
 	<p>Anything else is a whole sentence naming the path, the cause and the fix, the hand having nowhere to print a code anyone could look up.</p>
-	<pre><code>hand/target/release/daimond-hand --report</code></pre>
-	<p>prints what the compartment can enforce on <em>this</em> kernel and, at greater length, what it cannot. Read the second list rather than skimming it: on a kernel below Linux 7.1 it includes <a href="#s20">a way out of the compartment entirely</a>. It also names the folder from <code>root.txt</code>, so a stale one shows up here and not at the first command.</p>
+	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
+	<p>prints what the compartment can enforce on <em>this</em> kernel and, at greater length, what it cannot. Read the second list rather than skimming it: on a kernel below Linux 7.1 it includes <a href="#s20">a way out of the compartment entirely</a>. It also names the folder from <code translate="no">root.txt</code>, so a stale one shows up here and not at the first command.</p>
 
 	<h3 id="s14">Read the journal</h3>
-	<pre><code>tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
+	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
 	<p>One JSON object per line, in the order things happened: the handshake, every command, every refusal with its reason. If the hand started at all it wrote something here. An empty directory after a failed attempt means it never got far enough, which on Ubuntu almost always means the confined browser at the top of this page.</p>
 
 	<h3 id="s15">Ask the extension</h3>
 	<p>In the browser, on the Daimond tab, open the developer console and run:</p>
-	<pre><code>await DaimondHand.status()</code></pre>
-	<p>It answers with JSON: whether a hand is paired, which folder it says it was granted, what it can enforce, and, where the answer is no, a <code>reason</code> written as a whole sentence and not a code. Daimond shows the model that same sentence, so it explains what the daimon has been told.</p>
+	<pre><code translate="no">await DaimondHand.status()</code></pre>
+	<p>It answers with JSON: whether a hand is paired, which folder it says it was granted, what it can enforce, and, where the answer is no, a <code translate="no">reason</code> written as a whole sentence and not a code. Daimond shows the model that same sentence, so it explains what the daimon has been told.</p>
 
 	<h2 id="s16">What it actually is</h2>
 	<p>Not a virtual machine, not a container, not emulation. A command starts as an ordinary process, owned by you, on your own kernel, against your own files, with capabilities removed first. Nothing is simulated and nothing copied in, so a build here does the work the same build does in your own terminal. Four parts, each doing one job:</p>
 	<ul>
-		<li><strong>The page asks.</strong> Daimond works out what this turn may touch and sends the whole rule with the request. It never sends a shell line: <code>argv</code> is an array, and there is nothing to inject into.</li>
-		<li><strong>The extension relays.</strong> <strong>Daimond Hands</strong> is the only thing the page can hand a command to, and one origin may speak to it.</li>
+		<li><strong>The page asks.</strong> Daimond works out what this turn may touch and sends the whole rule with the request. It never sends a shell line: <code translate="no">argv</code> is an array, and there is nothing to inject into.</li>
+		<li><strong>The extension relays.</strong> <strong translate="no">Daimond Hands</strong> is the only thing the page can hand a command to, and one origin may speak to it.</li>
 		<li><strong>A small local program runs it.</strong> The <em>hand</em> builds the compartment out of the rule it was sent, applies it to itself, and then <em>becomes</em> the command. It is no supervisor watching a child; nothing is left of it once the command starts.</li>
 		<li><strong>Your browser starts the hand.</strong> The whole of the introduction, and why there is no port and no password. A background service on a port would be reachable by every page you visit, defended only by a secret you had pasted somewhere.</li>
 	</ul>
@@ -140,40 +140,41 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<div class="note"><strong>It is free, and it is not part of Pro.</strong> Nothing about a command touches Daimond's gateway: the request goes from the page to an extension to a program on your own disk and back. There is nothing to meter, so nothing is metered. A command costs what the model thinking about it costs, like any other turn.</div>
 
 	<h3 id="s17">Daimond implements no tools</h3>
-	<p>There is no built-in <code>ls</code>, no built-in <code>grep</code>, no bundled toolbox and no shell. <code>ls</code> is <code>/usr/bin/ls</code>, the one already on your machine, at the version you installed.</p>
+	<p>There is no built-in <code translate="no">ls</code>, no built-in <code translate="no">grep</code>, no bundled toolbox and no shell. <code translate="no">ls</code> is <code translate="no">/usr/bin/ls</code>, the one already on your machine, at the version you installed.</p>
 
-	<p>Every program on the computer is reachable, the compartment adding the system to it <strong>read-only</strong>: <code>/usr</code>, <code>/bin</code>, <code>/sbin</code>, <code>/lib</code>, <code>/lib32</code>, <code>/lib64</code>, <code>/libx32</code>, <code>/etc</code>, <code>/opt</code>, and the harmless devices <code>/dev/null</code>, <code>/dev/zero</code>, <code>/dev/full</code>, <code>/dev/random</code> and <code>/dev/urandom</code>. Without them nothing starts, not even <code>cat</code>: the loader has to read the shared objects, and the process has to open something for the standard streams.</p>
+	<p>Every program on the computer is reachable, the compartment adding the system to it <strong>read-only</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>, and the harmless devices <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> and <code translate="no">/dev/urandom</code>. Without them nothing starts, not even <code translate="no">cat</code>: the loader has to read the shared objects, and the process has to open something for the standard streams.</p>
 
-	<p>A bare name is looked up on <code>PATH</code>, which is <code>/usr/local/bin:/usr/bin:/bin</code> unless a granted toolchain has added to it. What that finds is resolved to an absolute path and checked against the compartment like anything else, so finding is not permission: a <code>PATH</code> pointing outside finds a program the command may not run, and the refusal names it.</p>
+	<p>A bare name is looked up on <code translate="no">PATH</code>, which is <code translate="no">/usr/local/bin:/usr/bin:/bin</code> unless a granted toolchain has added to it. What that finds is resolved to an absolute path and checked against the compartment like anything else, so finding is not permission: a <code translate="no">PATH</code> pointing outside finds a program the command may not run, and the refusal names it.</p>
 
-	<div class="note"><strong>There is no shell, so there is no shell syntax.</strong> A command is a list — <code>["cargo", "test", "--lib"]</code> — and a semicolon, pipe, redirection, backtick, <code>$(…)</code> or <code>&amp;&amp;</code> arrives at the program as a literal argument. To chain two commands the daimon runs the tool twice, which is better anyway: it reads the first result before choosing the second.</div>
+	<div class="note"><strong>There is no shell, so there is no shell syntax.</strong> A command is a list — <code translate="no">["cargo", "test", "--lib"]</code> — and a semicolon, pipe, redirection, backtick, <code>$(…)</code> or <code translate="no">&amp;&amp;</code> arrives at the program as a literal argument. To chain two commands the daimon runs the tool twice, which is better anyway: it reads the first result before choosing the second.</div>
 
 	<h2 id="s18">What a command can and cannot do</h2>
 
 	<h3 id="s19">Files</h3>
 	<ul>
-		<li><strong>Read and write inside the granted folder.</strong> That, minus Daimond's own <code>.daimond</code> directory, is the writable world.</li>
-		<li><strong>A private temporary directory.</strong> Writable, with <code>TMPDIR</code> pointing at it, removed when the run ends, unreachable by any other run, and the one place outside your folder a command may write. <code>/tmp</code> is outside the compartment, and a build that cannot write a temporary file fails part-way through for a reason nobody can read.</li>
-		<li><strong>The system, read-only.</strong> <code>/usr</code>, <code>/etc</code>, <code>/opt</code> and the rest of the list above.</li>
+		<li><strong>Read and write inside the granted folder.</strong> That, minus Daimond's own <code translate="no">.daimond</code> directory, is the writable world.</li>
+		<li><strong>A private temporary directory.</strong> Writable, with <code translate="no">TMPDIR</code> pointing at it, removed when the run ends, unreachable by any other run, and the one place outside your folder a command may write. <code translate="no">/tmp</code> is outside the compartment, and a build that cannot write a temporary file fails part-way through for a reason nobody can read.</li>
+		<li><strong>The system, read-only.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> and the rest of the list above.</li>
 		<li><strong>Everything else is refused by the kernel</strong>, not by a check somebody wrote. A file one folder outside the grant comes back <code>Permission denied</code>, and the daimon is shown that refusal instead of the file.</li>
 	</ul>
 	<p>One consequence to learn before it looks like a broken tool. Where the whole granted folder is writable — a chat not scoped to a Diamond — that folder <em>itself</em> cannot be listed, and a file cannot be created directly in it. Landlock cannot grant a directory and withhold part of it, so the children are granted one by one and the directory is not. Everything one level down works normally.</p>
 
 	<h3 id="s20">Named local sockets are refused, always</h3>
-	<p>A command cannot create a unix socket, whatever else it was allowed. The cost is not small: a local database reached over a socket file, <code>docker</code>, anything wanting X11, and <code>ssh-agent</code>. <code>socketpair</code> is untouched, which is what builds actually use, so a from-scratch <code>cargo build</code> is unaffected.</p>
+	<p>A command cannot create a unix socket, whatever else it was allowed. The cost is not small: a local database reached over a socket file, <code translate="no">docker</code>, anything wanting X11, and <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code> is untouched, which is what builds actually use, so a from-scratch <code translate="no">cargo build</code> is unaffected.</p>
 	<p>Below Landlock ABI 9 — Linux 7.1 — connecting to a socket file is not governed by the compartment at all. Measured: with the whole fence in force and the network refused, one message to the session bus starts a process that was never fenced, and that process reads a file the fence denies. That is no leak at the edge of the compartment but a way out of it, so it is closed unconditionally: reaching the session bus has nothing to do with whether a build was allowed to fetch a crate.</p>
 
-	<h3 id="s21"><code>ssh</code> does not work</h3>
-	<p>Two independent reasons, and closing either alone would not be enough. <code>~/.ssh</code> is not in the compartment: every path in one is built from the folder you granted, so nothing outside that folder can be named, and the app cannot add one. And the agent socket is a unix socket, refused by the paragraph above. <code>git push</code> over SSH fails for both reasons at once. Granting your home directory would remove the first reason along with most of the point of the compartment, which is why the installer refuses it.</p>
-	<p>Everything that touches only the repository does work: <code>git status</code>, <code>diff</code>, <code>log</code>, <code>add</code> and a local <code>commit</code> are ordinary file operations inside the folder you granted.</p>
+	<h3 id="s21"><code translate="no">ssh</code> does not work</h3>
+	<p>Two independent reasons, and closing either alone would not be enough. <code translate="no">~/.ssh</code> is not in the compartment: every path in one is built from the folder you granted, so nothing outside that folder can be named, and the app cannot add one. And the agent socket is a unix socket, refused by the paragraph above. <code translate="no">git push</code> over SSH fails for both reasons at once. Granting your home directory would remove the first reason along with most of the point of the compartment, which is why the installer refuses it.</p>
+	<p>Everything that touches only the repository does work: <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> and a local <code translate="no">commit</code> are ordinary file operations inside the folder you granted.</p>
 
 	<h3 id="s22">A toolchain needs a grant</h3>
-	<p>Open a Diamond and the Workspace panel shows a <strong>Toolchains</strong> row with four buttons: <span class="ui">Rust</span>, <span class="ui">Node</span>, <span class="ui">Python</span>, <span class="ui">Go</span>. All four start off, so <code>cargo</code> is refused until you turn Rust on: <code>~/.cargo</code> and <code>~/.rustup</code> sit under your home directory, and your home directory is not in the compartment.</p>
+	<p>Open a Diamond and the Workspace panel shows a <strong>Toolchains</strong> row with five buttons: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. All five start off, so <code translate="no">cargo</code> is refused until you turn Rust on: <code translate="no">~/.cargo</code> and <code translate="no">~/.rustup</code> sit under your home directory, and your home directory is not in the compartment.</p>
+	<p><span class="ui" translate="no">Git</span> is the odd one out, because it puts no program within reach: <code translate="no">git</code> is already in the hand's read-only base, which is why <code translate="no">git status</code> and a local <code translate="no">commit</code> work with no grant at all. What the button adds is your own configuration, read-only — your name, your email, and the hooks <code translate="no">core.hooksPath</code> names, so a commit is attributed to you and a pre-commit hook actually runs. Your stored passwords and <code translate="no">~/.ssh</code> are denied by name, even though the compartment would not reach them anyway.</p>
 	<p>Three things about that are deliberate:</p>
 	<ul>
-		<li><strong>It is never inferred from what was asked to run.</strong> A compartment that widened itself to fit the requested binary would be a compartment the model chooses, and the whole arrangement rests on its not being one. <code>cargo</code> is reachable because you granted the Rust toolchain, and for no other reason.</li>
+		<li><strong>It is never inferred from what was asked to run.</strong> A compartment that widened itself to fit the requested binary would be a compartment the model chooses, and the whole arrangement rests on its not being one. <code translate="no">cargo</code> is reachable because you granted the Rust toolchain, and for no other reason.</li>
 		<li><strong>It is per Diamond.</strong> A grant belongs to one Diamond, alongside the folders that Diamond holds, and is taken back the same way.</li>
-		<li><strong>It is a short list of named directories, never the home directory.</strong> Rust grants <code>~/.cargo/bin</code> and <code>~/.rustup</code> read-only, makes the registry, the git checkouts and the package-cache lock writable because cargo cannot build without writing them, and <em>denies</em> <code>~/.cargo/credentials.toml</code>, where <code>cargo login</code> writes your crates.io token. The other three are drawn the same way, and each leaves out the file holding a registry token.</li>
+		<li><strong>It is a short list of named directories, never the home directory.</strong> Rust grants <code translate="no">~/.cargo/bin</code> and <code translate="no">~/.rustup</code> read-only, makes the registry, the git checkouts and the package-cache lock writable because cargo cannot build without writing them, and <em>denies</em> <code translate="no">~/.cargo/credentials.toml</code>, where <code translate="no">cargo login</code> writes your crates.io token. The other four are drawn the same way, and each leaves out the file holding a secret: a registry token for the language toolchains, and for Git the passwords a credential helper stores in plain text.</li>
 	</ul>
 
 	<h3 id="s23">The network</h3>
@@ -206,25 +207,25 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>It is a word in the chat header beside the model, because a mode you have to remember is one you will be wrong about. Click it to change it, or press <kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> on a Mac — and type the rung's name.</p>
 
 	<h2 id="s29">Unconventional systems</h2>
-	<p>The compartment is built out of a fixed list of absolute paths, and that is what decides whether a given machine works. Run <code>--report</code> on yours before assuming either way.</p>
+	<p>The compartment is built out of a fixed list of absolute paths, and that is what decides whether a given machine works. Run <code translate="no">--report</code> on yours before assuming either way.</p>
 
 	<h3 id="s30">Will not work</h3>
 	<ul>
-		<li><strong>NixOS and Guix.</strong> Programs live in <code>/nix/store</code> or <code>/gnu/store</code>, neither granted, and <code>/usr/bin</code> holds almost nothing. A bare name resolves through <code>PATH</code> to a store path outside the compartment, and the command is refused by name. The app cannot widen it today.</li>
-		<li><strong>A kernel without Landlock.</strong> Before Linux 5.13, or compiled out, or absent from the active LSM list, or removed by a hardening patch. The hand reports <code>fence:none</code> and Daimond refuses every command rather than run one unfenced. Check that <code>landlock</code> appears in <code>/sys/kernel/security/lsm</code>.</li>
+		<li><strong>NixOS and Guix.</strong> Programs live in <code translate="no">/nix/store</code> or <code translate="no">/gnu/store</code>, neither granted, and <code translate="no">/usr/bin</code> holds almost nothing. A bare name resolves through <code translate="no">PATH</code> to a store path outside the compartment, and the command is refused by name. The app cannot widen it today.</li>
+		<li><strong>A kernel without Landlock.</strong> Before Linux 5.13, or compiled out, or absent from the active LSM list, or removed by a hardening patch. The hand reports <code translate="no">fence:none</code> and Daimond refuses every command rather than run one unfenced. Check that <code translate="no">landlock</code> appears in <code translate="no">/sys/kernel/security/lsm</code>.</li>
 		<li><strong>An architecture other than x86-64 or aarch64.</strong> The filter's syscall numbers are written out per architecture and there is no third table. The hand will not guess one, so there is no filter, and without a filter no command runs.</li>
 	</ul>
 
 	<h3 id="s31">Partly</h3>
 	<ul>
 		<li><strong>Linux 5.13 to 6.6.</strong> Files are fenced, but Landlock has no network rules before Linux 6.7, so a command that would have to run with the network withheld is refused outright, with a sentence saying so, instead of running with the network it was supposed to lose. Bypass works, and Guarded works until the turn reads something.</li>
-		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code>/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code>/snap</code> is granted, so a program installed that way is refused, while what your distribution put under <code>/usr</code> is reachable in the same session. That is about the programs a command runs; a browser packaged that way is a separate problem, and a fatal one — see <a href="#s2">Before you start</a>.</li>
-		<li><strong>Version managers other than the two that are known.</strong> The toolchain paths are a fixed list, and <code>~/.nvm</code> and <code>~/.pyenv</code> are the only version managers on it. <code>asdf</code>, <code>mise</code>, <code>volta</code>, <code>rbenv</code> and <code>sdkman</code> install under <code>~/.asdf</code>, <code>~/.local/share</code>, <code>~/.volta</code>, <code>~/.rbenv</code> and <code>~/.sdkman</code>, none of which anything grants — including the Python grant, which covers <code>~/.local/bin</code> and <code>~/.local/lib</code> and pointedly not <code>~/.local/share</code>.</li>
+		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code translate="no">/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code translate="no">/snap</code> is granted, so a program installed that way is refused, while what your distribution put under <code translate="no">/usr</code> is reachable in the same session. That is about the programs a command runs; a browser packaged that way is a separate problem, and a fatal one — see <a href="#s2">Before you start</a>.</li>
+		<li><strong>Version managers other than the two that are known.</strong> The toolchain paths are a fixed list, and <code translate="no">~/.nvm</code> and <code translate="no">~/.pyenv</code> are the only version managers on it. <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> and <code translate="no">sdkman</code> install under <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> and <code translate="no">~/.sdkman</code>, none of which anything grants — including the Python grant, which covers <code translate="no">~/.local/bin</code> and <code translate="no">~/.local/lib</code> and pointedly not <code translate="no">~/.local/share</code>.</li>
 	</ul>
 
 	<h3 id="s32">Fine</h3>
 	<ul>
-		<li><strong>Debian, Ubuntu, Fedora, Arch, openSUSE</strong> with their own packages, on a kernel new enough for <code>--report</code> to name a Landlock ABI.</li>
+		<li><strong>Debian, Ubuntu, Fedora, Arch, openSUSE</strong> with their own packages, on a kernel new enough for <code translate="no">--report</code> to name a Landlock ABI.</li>
 		<li><strong>musl and Alpine</strong>, given the same.</li>
 		<li><strong>BusyBox coreutils.</strong> A multi-call binary decides what it is from the name it was invoked by, and the hand execs the resolved binary <em>under the name that was asked for</em>, so it still knows which tool it is meant to be.</li>
 	</ul>
@@ -233,15 +234,15 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>The <span class="ui">Terminal</span> panel opens a real terminal on the same machine, inside the same compartment, and you type into it. It is separate from a command run by the daimon, and it exists because some programs ask their questions of a terminal and not of standard input. Keystrokes are never written to the journal, for that same reason. It needs a hand paired, like everything else on this page.</p>
 
 	<h2 id="s34">What is recorded</h2>
-	<p>Every run — what was asked, what it was refused, what it returned — is appended to the journal in <code>~/.local/share/daimond/hand/journal/</code>, as ordinary JSON lines you can read. The entries are hash-chained, and the journal sits outside every compartment, because the hand refuses a fence that would reach it. So a command cannot rewrite the record of itself, and no permission mode turns this off.</p>
+	<p>Every run — what was asked, what it was refused, what it returned — is appended to the journal in <code translate="no">~/.local/share/daimond/hand/journal/</code>, as ordinary JSON lines you can read. The entries are hash-chained, and the journal sits outside every compartment, because the hand refuses a fence that would reach it. So a command cannot rewrite the record of itself, and no permission mode turns this off.</p>
 
 	<h2 id="s35">What is not protected</h2>
-	<p><code>--report</code> prints two lists, and the second is the point of running it. Every entry in it was measured on a running kernel rather than inferred, and it changes with your kernel, so read your own. The entries fall into a few groups:</p>
+	<p><code translate="no">--report</code> prints two lists, and the second is the point of running it. Every entry in it was measured on a running kernel rather than inferred, and it changes with your kernel, so read your own. The entries fall into a few groups:</p>
 	<ul>
-		<li><strong>Asking about a file is not opening it.</strong> <code>stat</code> still answers outside the compartment, so sizes, timestamps, ownership and the presence or absence of a file are readable. The compartment governs opening.</li>
-		<li><strong>The system grant is wide.</strong> <code>/usr</code>, <code>/etc</code> and <code>/opt</code> read-only is what lets a command run at all, and it also means every world-readable file under <code>/etc</code> can be read and every tool on the machine executed. <code>/etc</code> in particular holds a great deal of machine-identifying detail.</li>
+		<li><strong>Asking about a file is not opening it.</strong> <code translate="no">stat</code> still answers outside the compartment, so sizes, timestamps, ownership and the presence or absence of a file are readable. The compartment governs opening.</li>
+		<li><strong>The system grant is wide.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> and <code translate="no">/opt</code> read-only is what lets a command run at all, and it also means every world-readable file under <code translate="no">/etc</code> can be read and every tool on the machine executed. <code translate="no">/etc</code> in particular holds a great deal of machine-identifying detail.</li>
 		<li><strong>The filter is a deny-list.</strong> It removes named capabilities from a command and is no syscall sandbox. Anything it did not name is permitted, including a call a future kernel adds.</li>
-		<li><strong>A filter cannot follow a pointer.</strong> It sees a syscall number and six registers, never what they point at: no path, no address, no filename. So a refused <code>chmod</code> is refused everywhere and an allowed one allowed everywhere. <code>chmod 777</code> is refused; <code>chmod 644</code> on a private key is not, because 644 adds no write and is the mode cargo sets on everything it unpacks.</li>
+		<li><strong>A filter cannot follow a pointer.</strong> It sees a syscall number and six registers, never what they point at: no path, no address, no filename. So a refused <code translate="no">chmod</code> is refused everywhere and an allowed one allowed everywhere. <code translate="no">chmod 777</code> is refused; <code translate="no">chmod 644</code> on a private key is not, because 644 adds no write and is the mode cargo sets on everything it unpacks.</li>
 		<li><strong>Timestamps are not protected anywhere.</strong> A command can rewrite any file's times, on any part of the machine, because cargo cannot unpack a crate from the registry without doing it. That is the clearest place where keeping builds working cost coverage.</li>
 		<li><strong>Things already open, and names already made.</strong> A file descriptor opened before the compartment took hold keeps working, and a hard link made earlier is a second name for the same file: a command cannot create one into a denied subtree, and cannot undo one that exists.</li>
 		<li><strong>The one exception to “only inside your folder”</strong> is the private temporary directory described above.</li>
@@ -251,8 +252,8 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>Three different things, and all three come up.</p>
 	<ul>
 		<li><strong>Withdraw the permission.</strong> Click the Daimond Hands icon in the toolbar. <em>Running commands on this computer</em> is listed there beside the sites you have approved, with a Revoke button. Revoking stops whatever is running at that moment — immediately, not at the end of the current build.</li>
-		<li><strong>Take the folder away.</strong> Delete <code>root.txt</code>. The hand then refuses to serve at all, whatever the browser says, and the refusal is a whole sentence and not a silent nothing.</li>
-		<li><strong>Remove the registration.</strong> <code>hand/install/uninstall.sh</code>, or <code>--dir DIR</code> for one directory. That deletes the file the installer wrote, so the browser can no longer start the hand. The binary is left where it is; the script did not put it there.</li>
+		<li><strong>Take the folder away.</strong> Delete <code translate="no">root.txt</code>. The hand then refuses to serve at all, whatever the browser says, and the refusal is a whole sentence and not a silent nothing.</li>
+		<li><strong>Remove the registration.</strong> <code translate="no">hand/install/uninstall.sh</code>, or <code translate="no">--dir DIR</code> for one directory. That deletes the file the installer wrote, so the browser can no longer start the hand. The binary is left where it is; the script did not put it there.</li>
 	</ul>
 
 	<div class="next">

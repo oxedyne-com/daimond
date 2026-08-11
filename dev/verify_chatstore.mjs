@@ -107,7 +107,7 @@ check('with its transcript intact',
 	!!(found && (found.messages || []).some(m => m.content === 'a question from before the move')));
 // The tile's name is an <input>, so its value is the label — textContent is blank.
 const onRail = await p.evaluate(() => [...document.querySelectorAll('#session-list .chat-box')]
-	.map(b => { const i = b.querySelector('.tile-label'); return (i ? i.value : '') + ' ' + b.textContent; }).join(' | '));
+	.map(b => { const i = b.querySelector('.tile-when'); return (i ? i.textContent.trim() : '') + ' ' + b.textContent; }).join(' | '));
 check('and it is on the rail, where the user can see it', /From The Old Store/.test(onRail));
 
 const afterMig = await p.evaluate(() => ({

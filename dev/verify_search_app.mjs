@@ -60,6 +60,13 @@ const sameSet = (a, b) => {
 /// What is in `a` and not in `b`.
 const minus = (a, b) => (a || []).filter((x) => !(b || []).includes(x));
 
+/// The part of the engine note that speaks about the engine now chosen: what
+/// is left once the general sentence about vendors is taken off the front.
+const engineTail = (note, general) =>
+	(/\S/.test(general) && note.indexOf(general) === 0 ? note.slice(general.length) : note);
+/// Whether that part calls the chosen engine free on its own account.
+const claimsFree = (note, general) => /\bfree\b/i.test(engineTail(note, general));
+
 /// A key that could not plausibly be anything else in a storage dump.
 const SECRET = 'searchkey-' + process.pid + '-do-not-store-in-the-clear';
 
@@ -318,6 +325,20 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	// one file to the left — but that the line agrees with the REGISTRY, and that
 	// an engine with no figure we can cite says nothing about being free.
 	{
+		// The line is TWO claims stitched together: a general one about vendors
+		// ("most give a free allowance"), identical whichever engine is chosen,
+		// and a per-engine tail that is the only place a figure may be stated.
+		// Only the tail is judged here, and it is found by removing the general
+		// sentence THE APP ITSELF PAINTED, read back from the catalogue. A copy
+		// of that sentence written out in this file is the same staleness one
+		// directory to the left: an editor's comma turns this check red and it
+		// then reports a product fault where there is none. It also has to be
+		// the general sentence and not merely something before the tail, so the
+		// prefix is asserted rather than assumed — a restructure that folds a
+		// per-engine claim into the shared opening goes red here instead of
+		// slipping past the rule underneath.
+		const general = await p.evaluate(() =>
+			(window.DaimondI18n && window.DaimondI18n.t('search.engine_note')) || '');
 		const seen = [];
 		for (const id of await p.evaluate(() => Object.keys(window.DaimondSearch.KNOWN))) {
 			seen.push(await p.evaluate((want) => {
@@ -344,12 +365,18 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 		check(withFigure.length > 0 && mismatched.length === 0,
 			'and the number on screen is the registry\'s, so one edit moves it',
 			JSON.stringify(mismatched.map((r) => ({ id: r.id, free: r.free, note: r.note }))));
+		// The general sentence really is the shared opening every note begins with.
+		const strays = seen.filter((r) => !/\S/.test(general) || r.note.indexOf(general) !== 0);
+		check(strays.length === 0,
+			'the sentence about vendors in general opens every engine note, so what follows '
+			+ 'it is that engine\'s own claim',
+			JSON.stringify({ general, strays: strays.map((r) => ({ id: r.id, note: r.note })) }));
 		// Nothing says "free" about an engine whose allowance nobody wrote down.
 		const freeWord = seen.filter((r) => r.free === 0 && r.id !== 'credits'
-			&& /\bfree\b/i.test(r.note.replace(/Most give you a free allowance[^.]*\./i, '')));
+			&& claimsFree(r.note, general));
 		check(freeWord.length === 0,
 			'and no engine without a figure is called free on its own account',
-			JSON.stringify(freeWord.map((r) => r.id)));
+			JSON.stringify(freeWord.map((r) => ({ id: r.id, tail: engineTail(r.note, general) }))));
 	}
 	await choose('exa');
 
@@ -823,6 +850,34 @@ out.push('--- self-test: breaking each property in the live page');
 		'an unknown web route is refused by nothing even with Everything paused, so the '
 		+ 'guard really is matching on the path and not on a prefix');
 	await p.evaluate(() => DaimondPause.set('root', true));
+}
+
+// (g) A free tier claimed for an engine nobody wrote a figure for — the shape
+// §9 forbids, and the one this rule exists to catch. The sentence is planted on
+// the live note for an engine whose registry entry has no figure, then the same
+// `claimsFree` the check above runs is run over it. The general sentence stays
+// where it is, so this also shows that the rule is reading the per-engine tail
+// and not merely finding the word "free" somewhere in the paragraph.
+{
+	const r = await p.evaluate(() => {
+		const sel = document.getElementById('set-search-engine');
+		const el = document.getElementById('search-engine-note');
+		if (!sel || !el) return null;
+		const bare = Object.keys(window.DaimondSearch.KNOWN).find((id) =>
+			id !== window.DaimondSearch.CREDITS && !(window.DaimondSearch.KNOWN[id] || {}).free);
+		if (!bare) return null;
+		sel.value = bare;
+		sel.dispatchEvent(new Event('change', { bubbles: true }));
+		const general = (window.DaimondI18n && window.DaimondI18n.t('search.engine_note')) || '';
+		const honest = (el.textContent || '').trim();
+		el.appendChild(document.createTextNode(' It is free to use.'));
+		const forged = (el.textContent || '').trim();
+		sel.dispatchEvent(new Event('change', { bubbles: true }));	// painted back
+		return { id: bare, general, honest, forged };
+	});
+	red(!!r && !claimsFree(r.honest, r.general) && claimsFree(r.forged, r.general),
+		'an engine with no figure that is told it is free IS caught, while the general '
+		+ 'sentence about vendors in the same paragraph is not mistaken for one');
 }
 
 await s.close();

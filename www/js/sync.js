@@ -571,8 +571,31 @@
 	///
 	/// Whether the merge finished is recorded in `lastFailed`, because a merge
 	/// that did not is a reason not to push over the parcel it came from.
+	/// Announce that a pull has RUN -- landed, found nothing, or failed on the
+	/// wire. Once per boot, and the distinction that matters is "this device has
+	/// asked the other ones", not "the answer was good news".
+	///
+	/// The retention sweep waits on this. A device coming back after a month
+	/// holds trash records that may have been restored elsewhere meanwhile, and
+	/// destroying on them before hearing is how a restore is defeated by a
+	/// tombstone -- so the sweep is held until the mailbox has been read. A
+	/// failed pull releases it too: a device that cannot reach the gateway must
+	/// still eventually destroy what its own records say is due, or an account
+	/// whose gateway is down would keep everything for ever.
+	var announcedPull = false;
+	function notePulled() {
+		if (announcedPull) return;
+		announcedPull = true;
+		try { window.dispatchEvent(new Event('daimond:pulled')); } catch (e) { /* no window */ }
+	}
+
 	async function pull(quiet) {
 		if (!ready()) return -1;
+		try { return await pullOnce(quiet); }
+		finally { notePulled(); }
+	}
+
+	async function pullOnce(quiet) {
 		lastFailed = [];		// what follows is the only merge this answers for.
 		setStatus('syncing', t('sync.syncing'));
 		var res;

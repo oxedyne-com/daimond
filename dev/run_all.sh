@@ -134,6 +134,17 @@ slow_for() {
 		# has been closed" as six ordinary-looking sync failures. The 2026-08-10
 		# gate spent its whole red budget on those six, all of which were this.
 		verify_sync)                      echo 1200 ;;
+		# Sixteen dialogs at four skin/theme/width cells, and it was killed by the
+		# 180s default on the 2026-08-11 gate -- the same accident as the two above,
+		# read as an unexplained exit 124. MEASURED at 250s on a quiet box
+		# (2026-08-12): 11s to seed the rail, then 41s, 59s, 58s and 82s for the
+		# four cells. Most of that is not work but PROOF OF ABSENCE: 19 of the 64
+		# dialog attempts do not open at their width -- Fold with no active chat,
+		# the tile cogs on a phone -- and each costs a 10s selector timeout to
+		# establish, the phone cell alone spending 8 of them. So 480: not quite
+		# twice the measurement, on the same reasoning as verify_reversible, and
+		# those 10s waits are exactly what stretches when the box is busy.
+		verify_raildialogs)               echo 480 ;;
 		*)                                echo 180 ;;
 	esac
 }

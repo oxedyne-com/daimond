@@ -324,6 +324,10 @@
 	'tile.settings': 'Settings for this tile',
 	'tile.settings_named': 'Settings for "{name}"',
 	'tile.close_named': 'Close "{name}"',
+	// The name field in a chat's cog dialog. A chat needs no name, so the hint
+	// says what happens when it is left empty rather than asking for one.
+	'tile.dlg_name': 'Name',
+	'tile.dlg_name_hint': 'Unnamed: the rail shows the time',
 	'tile.dlg_running': 'Running',
 	'tile.dlg_detail': 'Detail',
 	'tile.detail_simple': 'Simple',
@@ -1223,6 +1227,35 @@
 	'rail.created_unreadable': 'Diamond created, but not readable',
 	'rail.created_unreadable_body': '"{name}" was written but could not be read back, so it is not in the rail. Reload the page. If it is still missing, this device’s storage is refusing to serve what it accepted.',
 
+	// ── When a chat happened, and keeping it ───────────────────
+	// A chat carries no name, so the rail says WHEN: a day heading, and the
+	// time within that day on each tile. Neither repeats the other.
+	'rail.day_today':        'Today',
+	'rail.day_yesterday':    'Yesterday',
+	'rail.day_earlier':      'Earlier',
+	// Under Today only, and lower case: the heading above has already spoken,
+	// so the tile finishes the phrase rather than starting a sentence.
+	'rail.when_now':         'just now',
+	'rail.when_min':         '{n} min ago',
+	'rail.when_hr':          '{n} hr ago',
+	// What a nameless chat is called inside a sentence — a toast, a label —
+	// where the bare time would leave the sentence naming nothing.
+	'rail.a_chat':           'a chat',
+	'rail.chat_from':        'the chat from {when}',
+	'rail.show_preview':     'Show the first message',
+	'rail.show_preview_help': 'Show the first thing you said in each chat, under the time. Turn it off and the rail says only when.',
+	// The way across, offered on the tile and again in the trash. The body is
+	// the one place the difference between a chat and a Diamond is stated.
+	'tile.keep':             'Keep',
+	'tile.keep_help':        'Make a Diamond of this chat, with the whole conversation as its first artefact.',
+	'keep.title':            'Keep as a Diamond',
+	'keep.body':             'Name it, and this conversation is kept whole inside it. Chats expire; Diamonds do not.',
+	'keep.ok':               'Keep it',
+	'keep.gone':             'That chat is no longer here',
+	'keep.gone_body':        'It was destroyed on this device or another one. Nothing was made.',
+	'keep.made':             '{name} kept, with the conversation inside it.',
+	'keep.made_bare':        '{name} made, but the conversation could not be written into it.',
+
 	// ── The PPTW: pause, play, traffic light ───────────────────
 	// One control at six placements. The state words are lower case because
 	// they are appended to an action in the accessible name — "Pause Alpha —
@@ -1881,6 +1914,14 @@
 	'agents.no_diamond':        'no Diamond',
 	'agents.no_diamond_help':   'This run has no Diamond',
 	'agents.only_from':         'Show only agents from "{name}"',
+	// A run dispatched from a chat rather than a Diamond. It has no crystal, so
+	// say where its report actually is instead of naming a thing that is missing.
+	'agents.from_chat':         'a chat',
+	'agents.from_chat_help':    'Sent from the chat “{name}”.',
+	'agents.no_diamond_fold':   'This agent was sent from a chat, so there is no crystal to fold it into. Its report is in that conversation, and its full text is under Read.',
+	'agents.report_one':        'An agent you sent has finished.',
+	'agents.report_n':          '{n} agents you sent have finished.',
+	'agents.no_task':           'An agent was asked for with no task, so nothing was started.',
 	'changepass.title':         'Change passphrase',
 	'changepass.enter_current': 'Enter your current passphrase.',
 	'changepass.next':          'Next',
@@ -1945,6 +1986,14 @@
 	'permmode.run_title':    'Run this command?',
 	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nThe “ask every time” permission mode puts every command to you first.',
 	'permmode.run_ok':       'Run it',
+
+	// A dispatched worker asking to act on a page. Nobody is reading its
+	// transcript, so the app puts the question for it — and every clause here is
+	// load-bearing: who is acting, why the app is asking, what a click can do,
+	// that it cannot be undone, and that the yes covers this one act only.
+	'permmode.act_worker_title': 'An agent wants to act on a page',
+	'permmode.act_worker_body':  'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
+	'permmode.type_worker_body': 'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
 
 	// ── When conversations stop being saved ────────────────────
 	// Said outright, and while the user can still act. The failure this replaces
@@ -2192,9 +2241,16 @@
 	'trash.holding.other': '{n} things, {bytes}',
 	'trash.until': 'Until {date}',
 	'trash.deleted_why': 'Deleted. It is only here.',
+	// The app did this, not the user. It must not read as a reproach.
+	'trash.expired_why': 'Its time ran out. It is only here.',
 	'trash.kind_chat': 'chat',
 	'trash.kind_diamond': 'diamond',
 	'trash.unnamed_chat': 'Unnamed chat',
+	// A trashed chat can still be made into a Diamond, which is the useful act
+	// on a conversation somebody has just found again.
+	'trash.keep': 'Keep',
+	'trash.keep_help': 'Make a Diamond of this chat, with the whole conversation as its first artefact.',
+	'trash.keep_named': 'Keep {name} as a Diamond',
 	'trash.restore': 'Restore',
 	'trash.restore_named': 'Restore {name}',
 	'trash.restore_all': 'Restore everything',
@@ -2209,5 +2265,9 @@
 	'trash.moved': 'Moved “{name}” to the trash.',
 	'trash.moved_n.one': 'Moved {n} thing to the trash.',
 	'trash.moved_n.other': 'Moved {n} things to the trash.',
+	// The retention sweep, reported once at boot. Destroyed, and not coming
+	// back: the word has to carry that.
+	'trash.swept.one': 'One thing had been in the trash for {days} days and has been destroyed.',
+	'trash.swept.other': '{n} things had been in the trash for {days} days and have been destroyed.',
 	});
 })();

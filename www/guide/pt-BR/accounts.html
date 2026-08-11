@@ -16,8 +16,8 @@
 <header class="site-head">
 	<div class="site-head-inner">
 		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
-			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond">
-			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">Guia</span>
 		</a>
 		<nav class="site-nav" aria-label="Páginas do guia">
@@ -58,8 +58,8 @@
 		<li><span class="ui">Mudar o nome…</span> — renomear a identidade.</li>
 		<li><span class="ui">Mudar a frase-senha…</span> — definir uma nova; seus dados criptografados são envolvidos de novo por ela.</li>
 		<li><span class="ui">Adicionar uma chave de acesso…</span> — um rosto, uma digital ou uma chave de segurança para um desbloqueio mais rápido.</li>
-		<li><span class="ui">Exportar um backup</span> — gravar seus chats, Diamonds e arquivos do espaço de trabalho em um arquivo que fica com você. Ele restaura seu trabalho e não sua conta: sua chave não está nele.</li>
-		<li><span class="ui">Importar um backup…</span> — trazer uma identidade exportada para este navegador.</li>
+		<li><span class="ui">Exportar um backup</span> — gravar seus chats, Diamonds, arquivos do espaço de trabalho e a chave da sua conta em um arquivo que fica com você. A chave entra envolvida, exatamente como este navegador a guarda, de modo que o arquivo não é mais fraco que o navegador e não abre com nada além da sua frase-senha.</li>
+		<li><span class="ui">Importar um backup…</span> — trazer esse arquivo de volta para cá. Onde este navegador não tem conta própria, a conta do backup é adotada, e você a destranca com a frase-senha daquela conta; onde já existe uma conta aqui, a do backup fica intocada e só o trabalho volta.</li>
 		<li><span class="ui">Sair</span> — trancar o app. Seus dados ficam no dispositivo, criptografados, até que a frase-senha seja digitada de novo.</li>
 		<li><span class="ui">Esquecer esta identidade…</span> — remover de vez a identidade e seus dados criptografados deste navegador.</li>
 	</ul>
@@ -75,8 +75,8 @@
 	</ul>
 
 	<h2 id="s5">Mover sua conta entre dispositivos</h2>
-	<p>Sua conta é uma chave de assinatura guardada neste navegador. A frase-senha não a recria, apenas decifra a cópia que já está aqui, então a mesma frase-senha em um navegador novo começa uma conta <em>separada</em> com créditos próprios e sem Pro. Duas coisas levam a chave adiante, e nada mais: <span class="ui">Vincular outro dispositivo</span>, que mostra um código de emparelhamento para digitar no navegador novo, e uma passkey, que põe um dispositivo novo de pé em um gesto. Faça uma das duas <strong>antes de</strong> remover um navegador: assim que o armazenamento dele se vai, a chave vai junto. Use também <span class="ui">Exportar um backup</span> para os chats, os Diamonds e os arquivos do espaço de trabalho que a chave não leva.</p>
-	<div class="note"><strong>Um backup guarda tudo o que você escreveu.</strong> A chave não — importá-lo não faz de ninguém você — mas cada chat, Diamond e arquivo do espaço de trabalho está ali em texto puro, então guarde-o tão em particular quanto o próprio trabalho.</div>
+	<p>Sua conta é uma chave de assinatura guardada neste navegador. A frase-senha não a recria, apenas decifra a cópia que já está aqui, então a mesma frase-senha em um navegador novo começa uma conta <em>separada</em> com créditos próprios e sem Pro. A própria chave precisa viajar, e três coisas a levam: <span class="ui">Vincular outro dispositivo</span>, que mostra um código de emparelhamento para digitar no navegador novo; uma passkey, que põe um dispositivo novo de pé em um gesto; e <span class="ui">Exportar um backup</span>, cujo arquivo leva a chave envolvida, para que <span class="ui">Importar um backup…</span> a adote em um navegador que ainda não tem conta. Faça uma delas <strong>antes de</strong> remover um navegador: assim que o armazenamento dele se vai, se nenhum backup foi feito, a chave vai junto — e com ela os créditos e qualquer licença Pro, que nada mais destranca.</p>
+	<div class="note"><strong>Um backup guarda seu trabalho às claras e sua chave sob a sua frase-senha.</strong> Cada chat, Diamond e arquivo do espaço de trabalho está ali em texto puro, então guarde-o tão em particular quanto o próprio trabalho. A chave ao lado deles está envolvida, então importar o arquivo sozinho não faz de ninguém você — mas quem tem o arquivo e a frase-senha tem a conta, e é por isso que os dois nunca devem viajar juntos.</div>
 
 	<h2 id="s6">O que fica privado</h2>
 	<p>Sua frase-senha, suas chaves de provedor, suas credenciais de e-mail, seus chats, Diamonds e arquivos vivem neste navegador e não são enviados para nós. O que guardamos no gateway é dinheiro e texto cifrado: seu saldo de créditos e suas licenças, e, para a sincronização entre dispositivos, um pacote criptografado que não podemos abrir. Não temos a chave, então não podemos ler o seu trabalho.</p>

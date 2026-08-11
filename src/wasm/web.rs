@@ -387,6 +387,24 @@ pub async fn egress_allowed(tool: &str, url: &str) -> Option<Verdict> {
 /// * `url` - The destination it wants.
 /// * `detail` - What is being sent, when the tool sends something other than the address.
 pub async fn egress_allowed_detail(tool: &str, url: &str, detail: &str) -> Option<Verdict> {
+    egress_allowed_act(tool, url, detail, false).await
+}
+
+/// As [`egress_allowed_detail`], saying whether the actor is acting ALONE.
+///
+/// `alone` does exactly one thing at the other end, and it is not about what the dialog says: it
+/// stops the answer being remembered.  The page keeps a per-host note of "acting here is
+/// approved", which is right for a person clicking through a site and wrong for a dispatched
+/// worker, where one yes about a host would license every later act on it.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `url` - The destination it wants.
+/// * `detail` - What is being sent, when the tool sends something other than the address.
+/// * `alone` - Whether the agent asking has nobody watching it.
+pub async fn egress_allowed_act(tool: &str, url: &str, detail: &str, alone: bool)
+    -> Option<Verdict>
+{
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return None,
@@ -400,8 +418,8 @@ pub async fn egress_allowed_detail(tool: &str, url: &str, detail: &str) -> Optio
     }
     let f = f.unchecked_into::<js_sys::Function>();
     let payload = fmt!(
-        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\"}}",
-        json_escape(tool), json_escape(url), json_escape(detail));
+        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\",\"alone\":{}}}",
+        json_escape(tool), json_escape(url), json_escape(detail), alone);
     let ret = match f.call1(&JsValue::NULL, &JsValue::from_str(&payload)) {
         Ok(v)  => v,
         Err(_) => return None,

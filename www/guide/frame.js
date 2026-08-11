@@ -133,12 +133,31 @@
 	// Clear air between the header's lower edge and the heading it uncovers.
 	var GAP = 12;
 
+	/// The height last published, so a size that has not moved writes nothing.
+	var lastH = -1;
+
 	/// Publish the header's height, for the rule below to keep clear of.
-	function headroom() {
-		var head = document.querySelector('.site-head');
-		if (!head) return;
-		var h = Math.round(head.getBoundingClientRect().height);
-		if (h > 0) root.style.setProperty('--guide-head-h', (h + GAP) + 'px');
+	///
+	/// `h` is the height the caller ALREADY HAS -- the observer in `settle` is
+	/// handed one with every notification, and passes it. Measuring here instead,
+	/// from inside that callback, forces a layout while the notifications are
+	/// still being delivered: any size change that was pending lands mid-delivery,
+	/// the header therefore counts as having resized again after its own turn, and
+	/// Safari reports "ResizeObserver loop completed with undelivered
+	/// notifications" -- which Chromium swallows, so it only ever showed on
+	/// WebKit. It also meant measuring and laying the page out twice in one frame,
+	/// on a phone, for a number the observer was already carrying. Only the first
+	/// call, made before anything observes, measures.
+	function headroom(h) {
+		if (h === undefined) {
+			var head = document.querySelector('.site-head');
+			if (!head) return;
+			h = head.getBoundingClientRect().height;
+		}
+		h = Math.round(h);
+		if (h <= 0 || h === lastH) return;
+		lastH = h;
+		root.style.setProperty('--guide-head-h', (h + GAP) + 'px');
 	}
 
 	/// The browser jumps to a fragment while the page is still parsing, long
@@ -166,8 +185,19 @@
 		reland();
 
 		var head = document.querySelector('.site-head');
-		if (head && window.ResizeObserver) new ResizeObserver(headroom).observe(head);
-		else window.addEventListener('resize', headroom);
+		if (head && window.ResizeObserver) {
+			new ResizeObserver(function (entries) {
+				var e = entries[entries.length - 1];
+				// The BORDER box, which is what the measurement above returns;
+				// `contentRect` is the content box and would lose the header's
+				// padding. An engine without `borderBoxSize` gets the measurement.
+				var b = e.borderBoxSize && e.borderBoxSize[0];
+				headroom(b ? b.blockSize : undefined);
+			}).observe(head);
+		} else {
+			// The listener is handed an Event, which is not a height.
+			window.addEventListener('resize', function () { headroom(); });
+		}
 	}
 
 	if (document.readyState === 'loading') {
