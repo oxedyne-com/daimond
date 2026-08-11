@@ -52,7 +52,7 @@
 	<p>Eines von beiden genügt für den Anfang. Sie können auch beides tun — einen Schlüssel für die tägliche Arbeit verbinden und Guthaben für die Fälle bereithalten, in denen Sie lieber keinen verwalten wollen.</p>
 
 	<h2 id="s4">Einen Anbieter verbinden</h2>
-	<p>Öffnen Sie die Zeile <span class="ui">Modelle</span> im Verwaltungsfeld unten links. Sie führt für jeden Anbieter, den Sie nutzen, einen Schlüssel auf und zeigt, mit welchem Modell neue Chats starten. Um einen hinzuzufügen, wählen Sie <span class="ui">+ Anbieter hinzufügen</span> und beantworten Sie dieselben drei Fragen, wer der Anbieter auch sei.</p>
+	<p>Öffnen Sie die Zeile <span class="ui">Modelle</span> im Verwaltungsfeld unten links. Sie führt für jeden Anbieter, den Sie nutzen, einen Schlüssel auf und das Modell, mit dem neue Chats starten. Um einen hinzuzufügen, wählen Sie <span class="ui">+ Anbieter hinzufügen</span> und beantworten Sie dieselben drei Fragen, wer der Anbieter auch sei.</p>
 
 	<figure class="shot" data-shot="models-form">
 		<img alt="Das Formular „Anbieter hinzufügen“: eine Auswahlliste für den Anbieter, ein Feld für den API-Schlüssel und eine Auswahlliste für das Standardmodell, mit einer Schaltfläche zum Speichern und Starten." src="../shots/models-form.png" loading="lazy">
@@ -62,7 +62,7 @@
 	<ol class="steps">
 		<li>
 			<h3 id="s5">Einen Anbieter wählen</h3>
-			<p>Wählen Sie aus der Liste — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, oder <strong>Eigener Anbieter</strong> für jeden anderen Dienst, der dieselbe Chat-Completions-API spricht. Wenn Sie „Eigener Anbieter“ wählen, erscheint ein Feld <strong>Basis-URL</strong> zum Eintragen der Adresse, unter der dieser Dienst erreichbar ist.</p>
+			<p>Wählen Sie aus der Liste — <strong>Anthropic</strong>, <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, oder <strong>Eigener Anbieter</strong> für jeden anderen Dienst, der dieselbe Chat-Completions-API spricht. Bei „Eigener Anbieter“ erscheint ein Feld <strong>Basis-URL</strong> zum Eintragen der Adresse, unter der dieser Dienst erreichbar ist.</p>
 		</li>
 		<li>
 			<h3 id="s6">Ihren API-Schlüssel einfügen</h3>
@@ -77,7 +77,7 @@
 	<div class="note"><strong>Alles bleibt auf diesem Gerät.</strong> Ihre Schlüssel, Chats und Dateien liegen nur in diesem Browser. Nichts wird an uns gesendet — ein Anbieterschlüssel, den Sie hinzufügen, spricht mit diesem Anbieter und mit sonst niemandem.</div>
 
 	<h3 id="s8">Das Standardmodell, und für einen Chat ein anderes wählen</h3>
-	<p>Ein Modell ist das Standardmodell, mit dem neue Chats und Diamonds beginnen. Für einen einzelnen Chat lässt sich jedes verbundene Modell wählen: Öffnen Sie einen Chat und nutzen Sie die Modellauswahl in seiner Kopfzeile (oben rechts im mittleren Bereich), um nur dieses Gespräch umzustellen, ohne den Standard zu ändern.</p>
+	<p>Ein Modell ist das Standardmodell, mit dem neue Chats und Diamonds beginnen. Für einen einzelnen Chat lässt sich jedes verbundene Modell wählen, über die Auswahl in seiner Kopfzeile oben rechts im mittleren Bereich; der Standard bleibt unberührt. Einem Diamond lässt sich außerdem ein eigenes Modell für die Arbeiter geben, die es losschickt.</p>
 
 	<h2 id="s9">Guthaben kaufen</h2>
 	<p>Öffnen Sie die Zeile <span class="ui">Guthaben</span> im Verwaltungsfeld. Sie zeigt Ihren Saldo und eine Reihe von Paketen zum Kauf. Es gibt kein Abonnement: Was Sie kaufen, bleibt Ihnen, und es wird nichts erneut abgebucht, außer Sie schalten die automatische Aufladung ein.</p>
@@ -90,11 +90,11 @@
 	<p>Die Zahlung wird auf der gehosteten Seite des Zahlungsanbieters abgewickelt. Weder Kartennummer noch Ablaufdatum noch Prüfziffer werden je in Daimond eingetippt, hier gibt es also nichts, was abfließen könnte.</p>
 
 	<h2 id="s10">Automatische Aufladung</h2>
-	<p>Die automatische Aufladung ist ein Dauerauftrag, Ihr eigenes Guthaben nachzukaufen, wenn es zur Neige geht, damit ein langer Auftrag nicht auf halbem Weg stehen bleibt. Sie ist die einzige Stelle, an der Daimond eine gespeicherte Karte belasten darf, während Sie weg sind, deshalb ist sie bewusst ausdrücklich. Drei Zahlen stellen sie ein, unter den Paketen in der Guthaben-Ansicht:</p>
+	<p>Die automatische Aufladung ist ein Dauerauftrag, Guthaben nachzukaufen, wenn es zur Neige geht, damit ein langer Auftrag nicht auf halbem Weg stehen bleibt. Sie ist die einzige Stelle, an der Daimond eine gespeicherte Karte belasten darf, während Sie weg sind, und deshalb bewusst ausdrücklich. Drei Zahlen stellen sie ein, unter den Paketen in der Guthaben-Ansicht:</p>
 	<ul>
 		<li><strong>Mindestsaldo</strong> — der Saldo, bei dem eine Aufladung auslöst.</li>
 		<li><strong>So viel kaufen</strong> — wie viel eine Aufladung hinzufügt.</li>
-		<li><strong>Pro Monat nie mehr ausgeben als</strong> — eine harte Obergrenze für alle Aufladungen in einem Kalendermonat. Das ist die Zahl, auf die es ankommt: eine Decke, kein Ziel, und sie wird auf demselben Codepfad durchgesetzt wie die Abbuchung, sie lässt sich also nicht umgehen.</li>
+		<li><strong>Pro Monat nie mehr ausgeben als</strong> — eine harte Obergrenze für alle Aufladungen in einem Kalendermonat. Stellen Sie diese sorgfältig ein. Sie ist eine Decke, kein Ziel, und wird auf demselben Codepfad durchgesetzt wie die Abbuchung, es kommt also nichts an ihr vorbei.</li>
 	</ul>
 
 	<div class="note">Die automatische Aufladung lässt sich ohne gespeicherte Karte nicht einschalten — ein Bedienelement, das sich einschalten lässt und dann still versagt, wäre schlimmer als eines, das ausgegraut ist und sagt, warum. Eine Karte zu speichern führt auf die gehostete Seite des Zahlungsanbieters; Daimond sieht die Kartendaten nie.</div>

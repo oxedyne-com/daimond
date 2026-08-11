@@ -86,8 +86,10 @@
 	function pauseError(node) {
 		var s = t('pause.refused.turn', { node: node });
 		if (s === 'pause.refused.turn') {
-			s = 'Paused: ' + node + ' — no turn was started and nothing was spent. '
-				+ 'Press play on it to resume.';
+			// A byte-for-byte copy of the catalogue entry, `{node}` filled in here.
+			// Assembling a second wording is how this drifted from `en.js` unnoticed.
+			s = ('{node} is paused. No turn started, nothing spent. '
+				+ 'Press play on it to resume.').replace(/\{node\}/g, node);
 		}
 		var e = new Error(s);
 		e.paused    = true;

@@ -52,7 +52,7 @@
 	<p>Either is enough to start. You can do both — connect a key for everyday work and keep credits for when you would rather not manage one.</p>
 
 	<h2 id="s4">Connecting a provider</h2>
-	<p>Open the <span class="ui">Models</span> row in the admin panel, bottom-left. It lists a key for each provider you use and shows which model new chats start on. To add one, choose <span class="ui">+ Add provider</span> and answer the same three questions, whoever the provider is.</p>
+	<p>Open the <span class="ui">Models</span> row in the admin panel, bottom-left. It lists a key for each provider you use and which model new chats start on. To add one, choose <span class="ui">+ Add provider</span> and answer the same three questions, whoever the provider is.</p>
 
 	<figure class="shot" data-shot="models-form">
 		<img alt="The Add provider form: a provider drop-down, an API key box, and a default model drop-down, with a Save and start button." src="shots/models-form.png" loading="lazy">
@@ -62,7 +62,7 @@
 	<ol class="steps">
 		<li>
 			<h3 id="s5">Choose a provider</h3>
-			<p>Pick from the list — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, or <strong>Custom</strong> for any other service that speaks the same chat-completions API. Choosing Custom reveals a <strong>Base URL</strong> box to point Daimond at that service.</p>
+			<p>Pick from the list — <strong>Anthropic</strong>, <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, or <strong>Custom</strong> for any other service speaking the same chat-completions API. Choosing Custom reveals a <strong>Base URL</strong> box to point Daimond at that service.</p>
 		</li>
 		<li>
 			<h3 id="s6">Paste your API key</h3>
@@ -77,7 +77,7 @@
 	<div class="note"><strong>Everything stays on this device.</strong> Your keys, chats and files live only in this browser. Nothing is sent to us — a provider key you add talks to that provider, and to no one else.</div>
 
 	<h3 id="s8">The default model, and picking another for one chat</h3>
-	<p>One model is the default that new chats and Diamonds begin on. Any connected model can be chosen for a single chat: open a chat and use the model selector in its header (top-right of the centre panel) to switch just that conversation, without changing the default.</p>
+	<p>One model is the default that new chats and Diamonds begin on. Any connected model can be chosen for a single chat, from the selector in its header at the top-right of the centre panel; the default is untouched. A Diamond can also be given a separate model for the workers it dispatches.</p>
 
 	<h2 id="s9">Buying credits</h2>
 	<p>Open the <span class="ui">Credits</span> row in the admin panel. It shows your balance and a set of packs to buy. There is no subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload.</p>
@@ -90,11 +90,11 @@
 	<p>Payment is handled on the payment provider's own hosted page. No card number, expiry or security code is ever typed into Daimond, so there is nothing here to leak.</p>
 
 	<h2 id="s10">Auto-reload</h2>
-	<p>Auto-reload is a standing instruction to buy your own credits when they run low, so a long job does not stop halfway. It is the one place Daimond is allowed to charge a saved card while you are away, so it is deliberately explicit. Three numbers set it, found below the packs in the Credits view:</p>
+	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, and so is deliberately explicit. Three numbers set it, below the packs in the Credits view:</p>
 	<ul>
 		<li><strong>Below</strong> — the balance at which a top-up fires.</li>
 		<li><strong>Buy</strong> — how much one top-up adds.</li>
-		<li><strong>Never more than</strong> — a hard cap on total top-ups in a calendar month. This is the number that matters: it is a ceiling, not a target, and it is enforced on the same code path as the charge, so it cannot be walked around.</li>
+		<li><strong>Never more than</strong> — a hard cap on total top-ups in a calendar month. Set this one carefully. It is a ceiling rather than a target, and it is enforced on the same code path as the charge, so nothing can walk around it.</li>
 	</ul>
 
 	<div class="note">Auto-reload cannot be switched on without a saved card — a control that turned on and then silently failed would be worse than one that is disabled and says why. Saving a card is a redirect to the payment provider's hosted page; Daimond never sees the card details.</div>

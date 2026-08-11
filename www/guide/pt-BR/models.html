@@ -52,7 +52,7 @@
 	<p>Qualquer um dos dois basta para começar. Você pode fazer os dois — conectar uma chave para o trabalho do dia a dia e guardar créditos para quando preferir não administrar nenhuma.</p>
 
 	<h2 id="s4">Conectar um provedor</h2>
-	<p>Abra a linha <span class="ui">Modelos</span> do painel de administração, no canto inferior esquerdo. Ela lista uma chave para cada provedor que você usa e mostra em que modelo os novos chats começam. Para adicionar um, escolha <span class="ui">+ Adicionar provedor</span> e responda às mesmas três perguntas, seja qual for o provedor.</p>
+	<p>Abra a linha <span class="ui">Modelos</span> do painel de administração, no canto inferior esquerdo. Ela lista uma chave para cada provedor que você usa e em que modelo os chats novos começam. Para acrescentar um, escolha <span class="ui">+ Adicionar provedor</span> e responda às mesmas três perguntas, seja qual for o provedor.</p>
 
 	<figure class="shot" data-shot="models-form">
 		<img alt="O formulário Adicionar provedor: uma lista de provedores, uma caixa para a chave de API e uma lista de modelo padrão, com um botão Salvar e começar." src="../shots/models-form.png" loading="lazy">
@@ -62,7 +62,7 @@
 	<ol class="steps">
 		<li>
 			<h3 id="s5">Escolher um provedor</h3>
-			<p>Escolha na lista — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personalizado</strong> para qualquer outro serviço que fale a mesma API chat-completions. Escolher Personalizado revela uma caixa <strong>URL base</strong> para apontar o Daimond a esse serviço.</p>
+			<p>Escolha na lista — <strong>Anthropic</strong>, <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personalizado</strong> para qualquer outro serviço que fale a mesma API de chat-completions. Escolher Personalizado revela uma caixa <strong>URL base</strong> para apontar o Daimond a esse serviço.</p>
 		</li>
 		<li>
 			<h3 id="s6">Colar sua chave de API</h3>
@@ -77,7 +77,7 @@
 	<div class="note"><strong>Tudo fica neste dispositivo.</strong> Suas chaves, chats e arquivos vivem só neste navegador. Nada é enviado para nós — a chave de provedor que você adiciona fala com aquele provedor, e com mais ninguém.</div>
 
 	<h3 id="s8">O modelo padrão, e escolher outro para um só chat</h3>
-	<p>Um modelo é o padrão em que novos chats e Diamonds começam. Qualquer modelo conectado pode ser escolhido para um único chat: abra um chat e use o seletor de modelo no cabeçalho dele (canto superior direito do painel central) para trocar só aquela conversa, sem mudar o padrão.</p>
+	<p>Um modelo é o padrão em que novos chats e Diamonds começam. Qualquer modelo conectado pode ser escolhido para um só chat, pelo seletor no cabeçalho dele, no alto à direita do painel central; o padrão fica intocado. A um Diamond também se pode dar um modelo separado para os trabalhadores que ele despacha.</p>
 
 	<h2 id="s9">Comprar créditos</h2>
 	<p>Abra a linha <span class="ui">Créditos</span> do painel de administração. Ela mostra seu saldo e um conjunto de pacotes à venda. Não há assinatura: você fica com o que compra, e nada é cobrado de novo a menos que você ligue a recarga automática.</p>
@@ -90,11 +90,11 @@
 	<p>O pagamento é feito na própria página hospedada do provedor de pagamento. Nenhum número de cartão, validade ou código de segurança é digitado no Daimond, então não há nada aqui que possa vazar.</p>
 
 	<h2 id="s10">Recarga automática</h2>
-	<p>A recarga automática é uma instrução permanente para comprar seus próprios créditos quando eles acabarem, para que um trabalho longo não pare no meio. É o único lugar em que o Daimond pode cobrar um cartão salvo enquanto você não está, e por isso é deliberadamente explícita. Três números a definem, abaixo dos pacotes na visão Créditos:</p>
+	<p>A recarga automática é uma instrução permanente para comprar créditos quando eles ficam baixos, para que um trabalho longo não pare no meio. É o único lugar em que o Daimond pode cobrar de um cartão salvo enquanto você não está, e por isso é deliberadamente explícita. Três números a definem, abaixo dos pacotes na visão Créditos:</p>
 	<ul>
 		<li><strong>Abaixo de</strong> — o saldo em que uma recarga dispara.</li>
 		<li><strong>Comprar</strong> — quanto uma recarga acrescenta.</li>
-		<li><strong>Nunca mais de</strong> — um teto rígido para o total de recargas em um mês do calendário. Este é o número que importa: é um teto, não uma meta, e é aplicado no mesmo caminho de código da cobrança, de modo que não dá para contorná-lo.</li>
+		<li><strong>Nunca mais de</strong> — um teto rígido para o total de recargas em um mês do calendário. Defina este com cuidado. É um teto e não uma meta, e é aplicado no mesmo caminho de código da cobrança, então nada consegue contorná-lo.</li>
 	</ul>
 
 	<div class="note">A recarga automática não pode ser ligada sem um cartão salvo — um controle que ligasse e depois falhasse em silêncio seria pior do que um controle desativado que diz o porquê. Salvar um cartão é um redirecionamento para a página hospedada do provedor de pagamento; o Daimond nunca vê os dados do cartão.</div>

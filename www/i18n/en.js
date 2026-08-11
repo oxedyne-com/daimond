@@ -53,7 +53,7 @@
 	// ── The top bar ────────────────────────────────────────────
 	'topbar.menu':        'Menu',
 	'topbar.open_menu':   'Open menu',
-	'topbar.brand':       'Daimond — the daimond.app home page',
+	'topbar.brand':       'Daimond, the daimond.app home page',
 	'topbar.made_by': 'Made by Oxedyne',
 	'topbar.made_with_ai': 'Code made mostly with AI',
 	'topbar.up_to_date':  'Daimond is up to date',
@@ -66,9 +66,16 @@
 	// `about.what` is the guide's opening paragraph, near enough word for word:
 	// it is already the house voice and already says it, and a second wording
 	// would be a second thing to keep true.
+	//
+	// It said "nothing to install" until the app became installable -- a service
+	// worker, a manifest and a guide section on adding it to a home screen -- at
+	// which point the About box was denying a feature that had shipped. The
+	// guide's own word is "nothing to DOWNLOAD", which is what stayed true: an
+	// installed Daimond is the same page and the same stored work, with an icon
+	// and a window of its own, and nothing is fetched to a disk.
 	'about.title':     'About Daimond',
 	'about.splash_alt': 'A figure flying through the night towards a diamond, above the curve of a planet.',
-	'about.what':      'Daimond is an AI agent workspace that runs entirely in your browser. There is no account on a server and no app to install: your chats, keys and files live only on this device.',
+	'about.what':      'Daimond is an AI agent workspace that runs in your browser. There is no server account and nothing to download. Your chats, keys and files stay on this device.',
 
 	// ── Panel names ────────────────────────────────────────────
 	// Short: they ride in a chip row and a phone tab bar.
@@ -91,11 +98,11 @@
 
 	// ── The chip row ───────────────────────────────────────────
 	// {name} is a panel's name, from `panel.*` above.
-	'chip.dock_full':    'The dock is full — choose a larger tiling in the appearance menu, or close a panel.',
+	'chip.dock_full':    'The dock is full. Choose a larger tiling in Appearance, or close a panel.',
 	'chip.show':         'Show {name}',
 	'chip.close':        'Close {name}',
 	'chip.open':         'Open {name}',
-	'chip.open_instead': 'Open {name}, in place of the panel beside the chat',
+	'chip.open_instead': 'Open {name} in place of the panel beside the chat',
 	'chip.more.one':     '{n} more panel',
 	'chip.more.other':   '{n} more panels',
 
@@ -118,11 +125,11 @@
 
 	// ── The rail ───────────────────────────────────────────────
 	'rail.diamonds':             'Diamonds',
-	'rail.diamonds_help':        'What you have brought up and cut: a repeatable method, distilled from a conversation.',
+	'rail.diamonds_help':        'A repeatable method, distilled from a conversation.',
 	'rail.new_diamond':          'New Diamond',
 	'rail.unnamed_diamond': 'Unnamed Diamond',
 	'rail.chats':                'Chats',
-	'rail.chats_help':           'The seam you work in. Raw conversation, out of which a Diamond is cut.',
+	'rail.chats_help':           'Raw conversation. A Diamond is cut from it.',
 	'rail.new_chat':             'New chat',
 	'rail.chats_menu':           'More',
 	'rail.delete_all_chats':     'Delete all chats',
@@ -132,9 +139,9 @@
 	'admin.identity':        'Your Daimond identity',
 	'admin.settings':        'Settings',
 	'admin.local_identity':  'Local identity',
-	'admin.account_help':    'Your account — click for logout, passphrase and backup.',
+	'admin.account_help':    'Your account. Click for logout, passphrase and backup.',
 	'admin.locked':          'Locked',
-	'admin.locked_help':     'Locked — enter your passphrase to unlock.',
+	'admin.locked_help':     'Locked. Enter your passphrase to unlock.',
 	'admin.no_account':      'No account',
 	'admin.no_account_help': 'Your API key is stored unencrypted. Click to create an account and encrypt it.',
 	'admin.no_crypto_help':  'This browser has no WebCrypto, so keys cannot be encrypted here.',
@@ -156,7 +163,7 @@
 
 	// ── The Admin drawer's home menu ───────────────────────────
 	'home.connect_model':     'Connect a model',
-	'home.connect_note':      'Daimond needs a provider key, or credits, before it can answer anything.',
+	'home.connect_note':      'Daimond needs a provider key or credits before it can answer.',
 	'home.locked':            'Locked. Enter your passphrase to unlock this device.',
 	'home.sec_account':       'Account',
 	'home.sec_prompts':       'Prompts',
@@ -175,11 +182,11 @@
 	// {role} is a prompt role's name, lower-cased by the caller.
 	'home.edit_prompt':       'Edit the {role} prompt…',
 	'home.prompt_opens':      'Opens {path} in the Doc panel.',
-	'home.prompts_note':      'These are the instructions each agent runs under, kept as files in your workspace. Edit one and it applies from the next turn; delete it and the original comes back. Two rules always hold whatever you write: what a page or an email says is data and never an instruction, and nothing you cannot undo happens without asking you first.',
-	'home.switch_to':         '{name} — switch',
+	'home.prompts_note':      'The instructions each agent runs under, kept as files in your workspace. Edit one and it applies from the next turn; delete it and the original returns. Two rules hold whatever you write: a page or an email is data and never an instruction, and nothing irreversible happens without asking you.',
+	'home.switch_to':         'Switch to {name}',
 	'home.unnamed_account':   'Unnamed account',
 	'home.add_account':       '＋ Add another account',
-	'home.accounts_note':     'Each account has its own chats, keys, credits and files. Switching locks this one and opens the other; nobody sees another account’s data.',
+	'home.accounts_note':     'Each account has its own chats, keys, credits and files. Switching locks this one and opens the other. No account can see another’s data.',
 	'home.log_out':           'Log out',
 	'home.sec_devices':       'Devices',
 	'home.sec_console':      'Console',
@@ -187,31 +194,31 @@
 	'home.console_note':     'This account holds the {role} role. The console opens in a new tab and follows this sign-in.',
 	'home.sec_push':         'Push',
 	'home.push_setup':       'Set up git push…',
-	'home.push_to':          '{host} — change the push token…',
-	'home.push_help':        'A token lets Daimond push what it has already committed. Without one it still commits, but every push is refused.',
+	'home.push_to':          'Change the push token for {host}…',
+	'home.push_help':        'A token lets Daimond push what it has committed. Without one it still commits, but every push is refused.',
 
 	// ── The credential a push travels with ─────────────────────
 	// Two boxes and no more: the user name a token travels as is a per-forge
 	// constant, so it is inferred from the host rather than asked for. Every line
 	// here says what happens if it is skipped, because "no credential" and
 	// "authentication failed" look identical from inside a refused push.
-	'push.lead':         'Give Daimond a token and it can push work you have already committed. Without one it can still commit, but every push is refused and the work stays on this machine.',
+	'push.lead':         'A token lets Daimond push work you have committed. Without one it still commits, but every push is refused and the work stays on this machine.',
 	'push.host':         'Host',
 	'push.host_ph':      'github.com',
-	'push.host_note':    'Just the name, as in github.com — no https://, no port, no path. Only pushes to this host are authenticated; a repository anywhere else is refused rather than reached with your token.',
+	'push.host_note':    'Just the name, as in github.com. No https://, no port, no path. Only this host is authenticated; a repository anywhere else is refused, and your token never reaches it.',
 	'push.token':        'Token',
 	'push.token_ph':     'Paste a token with push access',
-	'push.token_note':   'A token that may push is enough; it never needs more. Daimond pushes only, only fast-forward, and only to origin — force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.',
+	'push.token_note':   'Push access is enough; the token never needs more. Daimond only pushes, only fast-forward, only to origin. Force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.',
 	'push.save':         'Save',
-	'push.privacy':      'The token is encrypted under your passphrase and kept in this browser; it is never shown again, never sent to us, and never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and you will be asked for it again after a reload.',
-	'push.set':          'Set: a push reaches {host}.',
-	'push.none':         'Not set: every push is refused until a token is saved here.',
-	'push.saved':        'Saved. Encrypted under your passphrase, and used again each time you unlock.',
+	'push.privacy':      'The token is encrypted under your passphrase and kept in this browser. It is never shown again, never sent to us, never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.',
+	'push.set':          'Set. A push reaches {host}.',
+	'push.none':         'Not set. Every push is refused until a token is saved here.',
+	'push.saved':        'Saved. Encrypted under your passphrase and used each time you unlock.',
 	'push.cleared':      'Removed. Pushes are refused again until a token is saved here.',
-	'push.session_only': 'Held for this tab only: with no account there is nothing to encrypt it with, so a reload will ask for it again. Create an account to keep it.',
+	'push.session_only': 'Held for this tab only. With no account there is nothing to encrypt it with, so a reload asks for it again. Create an account to keep it.',
 	'push.err_host':     'Enter the host the push goes to, as in github.com, or empty the token box to remove the credential.',
-	'push.err_not_held': 'That was not accepted, so no push credential is held. Check the host and the token and try again.',
-	'push.not_resealed': 'Your passphrase changed, but the push token could not be re-encrypted under it. Pushing works until you reload; set the token again to keep it.',
+	'push.err_not_held': 'That was not accepted, so no push credential is held. Check the host and the token.',
+	'push.not_resealed': 'Your passphrase changed, but the push token could not be re-encrypted under it. Pushing works until you reload. Set the token again to keep it.',
 
 	// ── The devices that sync this account ─────────────────────
 	// The list is what it says it is: devices that have SYNCED. A linked device
@@ -225,11 +232,11 @@
 	// browser except inside the encrypted parcel; the wording says so, because a
 	// list of the user's devices is exactly where that question is asked.
 	'devices.rename_title': 'Name this device',
-	'devices.rename_body':  'Call this device whatever you like, so you can tell it from the others. Leave the box empty to go back to “{derived}”. The name is stored with your own encrypted data and travels only to your other devices.',
+	'devices.rename_body':  'A name to tell this device from the others. Empty the box to go back to “{derived}”. The name is stored with your own encrypted data and travels only to your other devices.',
 	'devices.rename_aria':  'Rename {name}',
-	'devices.note':        'These devices sync this account. A device appears here once it has synced, so one that holds your account but has never synced is not listed. Nothing here can sign a device out: a linked device holds the same keys as this one, so it has to be dealt with on the device itself.',
+	'devices.note':        'Devices that have synced this account. One that holds the account but has never synced is not listed. Nothing here signs a device out. A linked device holds the same keys as this one, so it has to be dealt with there.',
 	'devices.remove_aria': 'Remove {name}',
-	'devices.remove_body': '“{name}” comes off this list. It does not sign that device out: a linked device holds the same keys as this one, so if it is still in use it will put itself back the next time it syncs.',
+	'devices.remove_body': '“{name}” comes off this list. That does not sign the device out. It holds the same keys as this one, so it reappears the next time it syncs.',
 	'devices.remove':      'Remove',
 	'devices.remove_title':'Remove this device',
 
@@ -242,13 +249,13 @@
 	'money.own_keys':        'Your own keys',
 	'money.left_at_rate':    '~{mins} min at this rate',
 	'money.spent_so_far':    '{amt} spent',
-	'money.spent_help':      'Your provider does not report a balance, so this is what has gone through this key since Daimond started counting.',
-	'money.estimate_help':   'Estimated: the figure you entered, less what has been spent since. Update it in Models when you top up.',
+	'money.spent_help':      'Your provider reports no balance, so this is what has gone through this key since Daimond started counting.',
+	'money.estimate_help':   'Your own figure, less what has been spent since. Update it in Models when you top up.',
 	'astat.locked':          'Locked',
 	'astat.credits':             'Credits',
 	'astat.credits_help':        'Buy credits, or connect your own provider key',
 	'astat.pro_owned':           'Owned',
-	'astat.pro_owned_help':      'You own Daimond Pro — sync, cloud storage and Email are on.',
+	'astat.pro_owned_help':      'You own Daimond Pro. Sync, cloud storage and Email are on.',
 	'astat.pro_upgrade':         'Upgrade to Pro',
 	'astat.pro_upgrade_help':    'Own Daimond once to turn on sync, cloud storage and Email.',
 	'astat.tools':               'Tools · {have}',
@@ -259,7 +266,7 @@
 	'astat.evictable':           'evictable',
 	'astat.store_of':            '{used} of {quota} this browser allows.',
 	'astat.store_persistent':    'Marked persistent, so the browser will not evict it.',
-	'astat.store_evictable':     'NOT persistent: the browser may evict this workspace under storage pressure. Click to ask for permanent storage.',
+	'astat.store_evictable':     'Not persistent: the browser may evict this workspace under storage pressure. Click to ask for permanent storage.',
 	'astat.not_connected':       'not connected',
 	'astat.native_help':         'Let the agents work on a real folder on this machine.',
 	'astat.n_files':             '{n} files',
@@ -268,11 +275,11 @@
 	'astat.counted':             '{n} files under {folder}.',
 	'astat.counted_partial':     '{n} files under {folder}, counted until you stopped it.',
 	'astat.count_again':         'Click to count again.',
-	'astat.count_offer':         'The browser will not say how big a real folder is. Click to count it — on a large tree this reads every file and can take a while; you can stop it at any point.',
+	'astat.count_offer':         'Click to count it. The browser will not say how big a real folder is, and counting reads every file, so a large tree takes a while. You can stop at any point.',
 
 	// ── Pro, in its own words ──────────────────────────────────
 	'pro.owned_plain':     'You own Daimond Pro. Cross-device sync, cloud storage and Email are on. Nothing renews.',
-	'pro.offer_plain':     'Own Daimond with one payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email — reading and sending your own mail in the workspace. No subscription; metered use like inference and bandwidth is still paid from credits.',
+	'pro.offer_plain':     'Own Daimond with one payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace. No subscription. Inference, bandwidth and other metered use are still paid from credits.',
 	'pro.checkout_failed': 'Could not start checkout',
 
 	// ── The egress gate ────────────────────────────────────────
@@ -280,17 +287,17 @@
 	// user's own information out. {host} is a hostname; keep it where a reader
 	// will look for it.
 	'egress.type_title':  'Type into {host}?',
-	'egress.type_body':   'This turn has read content from outside your workspace, and Daimond now wants to type into the page at {host} — which may send it.\n\nWhat it wants to enter:\n\n{text}\n\nIf you did not expect that, decline.',
+	'egress.type_body':   'This turn has read content from outside your workspace. Daimond now wants to type into the page at {host}, which may send it on.\n\nWhat it wants to enter:\n\n{text}\n\nIf you did not expect this, decline.',
 	'egress.type_ok':     'Type it',
 	'egress.nothing':     '(nothing)',
 	'egress.act_title':   'Act on {host}?',
-	'egress.act_body':    'This turn has read content from outside your workspace, and Daimond now wants to act on the page at {host}.\n\nA link on a page is written by whoever wrote the page, and following one can carry information away with it.\n\nAllow it, only if you expected this.',
+	'egress.act_body':    'This turn has read content from outside your workspace. Daimond now wants to act on the page at {host}.\n\nWhoever wrote the page wrote its links, and following one can carry information away.\n\nAllow this only if you expected it.',
 	'egress.act_ok':      'Allow acting on {host}',
 	'egress.heavy_title': 'Send this to {host}?',
-	'egress.heavy_body':  'This turn has read content from outside your workspace, and Daimond now wants to reach {host} with an unusually long address.\n\nAn address can carry information out. This one is carrying:\n\n{text}\n\nIf you did not expect that, decline — nothing is lost but this one request.',
+	'egress.heavy_body':  'This turn has read content from outside your workspace. Daimond now wants to reach {host} with an unusually long address.\n\nAn address can carry information out. This one carries:\n\n{text}\n\nIf you did not expect this, decline. Nothing is lost but the one request.',
 	'egress.heavy_ok':    'Send it anyway',
 	'egress.reach_title': 'Reach {host}?',
-	'egress.reach_body':  'This turn has read content from outside your workspace — a web page, or a message. Something in it may be trying to steer Daimond.\n\nIt now wants to reach {host}, which it has not visited before. Anything it knows could be carried in that address.\n\nAllow it, only if you expected this.',
+	'egress.reach_body':  'This turn has read a web page or a message from outside your workspace, and something in it may be steering Daimond.\n\nIt now wants to reach {host}, which it has not visited before. Anything it knows could ride in that address.\n\nAllow this only if you expected it.',
 	'egress.reach_ok':    'Allow {host}',
 	// A search, where the thing leaving is the QUERY rather than an address.
 	// {query} is the user's own search text, already truncated, and it stands
@@ -304,14 +311,14 @@
 	// that engine -- and the last sentence tells a frightened reader that
 	// declining is cheap. Neither may be compressed away.
 	'egress.search_title': 'Search the web?',
-	'egress.search_body':  'This turn has read content from outside your workspace, and Daimond now wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching with {engine}, which is your setting and not the model’s choice. The query is the thing that leaves this device.\n\nIf you did not expect that, decline — nothing is lost but this one search.',
+	'egress.search_body':  'This turn has read content from outside your workspace. Daimond now wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching with {engine}, which is your setting. The query is what leaves this device.\n\nIf you did not expect this, decline. Nothing is lost but the one search.',
 	'egress.search_ok':    'Run this search',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.copy_message':   'Copy message',
 	'chat.include_turn':   'Include this turn when folding',
 	'chat.connect_to_chat': 'Connect a provider, or unlock, to chat on this model.',
-	'tile.cost_estimated': 'Estimated — this model is not in the price table.',
+	'tile.cost_estimated': 'Estimated. This model is not in the price table.',
 	'tile.cost_so_far':    'Cost so far for this chat.',
 	'tile.click_to_open':  'Click to open, double-click to rename',
 	'tile.settings': 'Settings for this tile',
@@ -320,12 +327,12 @@
 	'tile.dlg_running': 'Running',
 	'tile.dlg_detail': 'Detail',
 	'tile.detail_simple': 'Simple',
-	'tile.detail_simple_help': 'A quiet tile: the name, whether it is running, and what is waiting.',
+	'tile.detail_simple_help': 'The name, whether it is running, and what is waiting.',
 	'tile.detail_max': 'Max',
-	'tile.detail_max_help': 'Everything this tile knows: the models, the context meter, the cost, the version and when it last moved.',
+	'tile.detail_max_help': 'Models, context, cost, version and when it last moved.',
 	'tile.spend_help': 'What this Diamond has cost, over {turns} turns.',
 	'tile.detail_default': 'Default ({what})',
-	'tile.detail_default_help': 'Follow the view set in Appearance, including when you change it.',
+	'tile.detail_default_help': 'Follow the view set in Appearance, and any change to it.',
 	'tile.detail_note': 'Tiles follow the view unless you set one differently here.',
 
 	// ── The models a Diamond runs on, and the context its chats hold ──
@@ -340,7 +347,7 @@
 	'tile.diamond_model_help': 'This Diamond thinks with {model}.',
 	'tile.model_note': 'A worker keeps the model it started on. A new model applies to the next one dispatched.',
 	'tile.model_change_title': 'Start a new daimon?',
-	'tile.model_change_body': 'This Diamond thinks with {from}. Continuing on {to} starts a new daimon: the crystal carries over, the conversation does not. The change is recorded in the crystal’s history.',
+	'tile.model_change_body': 'This Diamond thinks with {from}. Continuing on {to} starts a new daimon. The crystal carries over; the conversation does not. The change goes into the crystal’s history.',
 	'tile.model_change_ok': 'Change model',
 	'tile.model_change_note': 'Daimon moved from {from} to {to}.',
 	'tile.model_change_unlogged': 'The model changed, but the history entry could not be written.',
@@ -349,29 +356,29 @@
 	'tile.context_unknown': 'This model publishes no context window, so there is nothing to measure against until a request is refused.',
 	'tile.context_used_folds': 'Context window used: {used} / {all}. Folds at {at}%.',
 	'tile.fold_context': 'Fold now',
-	'tile.fold_context_help': 'Summarise the earlier part of this conversation now, rather than waiting for it to fill up',
+	'tile.fold_context_help': 'Summarise the earlier part of this conversation now, before it fills up',
 	'tile.fold_context_title': 'Fold this conversation?',
-	'tile.fold_context_body': 'The earlier part is summarised by a model — a paid call — and the summary becomes what this chat remembers. The messages on screen stay where they are.',
+	'tile.fold_context_body': 'A model summarises the earlier part, which costs a call, and the summary becomes what this chat remembers. The messages on screen stay where they are.',
 	'tile.fold_context_ok': 'Fold',
-	'tile.fold_nothing': 'Nothing to fold: this conversation is already as short as it goes.',
+	'tile.fold_nothing': 'Nothing to fold. This conversation is already as short as it goes.',
 	'tile.fold_mid_turn': 'Wait for this turn to finish before folding.',
-	'tile.fold_unavailable': 'This chat has no agent to fold — say something first.',
+	'tile.fold_unavailable': 'This chat has no agent to fold. Say something first.',
 	'tile.fold_failed': 'The fold did not finish',
 
 	'tile.dlg_delete': 'Delete',
 	'tile.start':          'Start',
 	'tile.start_help':     'Confirm the model and start this chat',
 	'tile.workers':        'Workers',
-	'tile.worker_model_help': 'The model the workers dispatched by a Diamond cut from this chat run on; left alone they run on the chat’s own model.',
+	'tile.worker_model_help': 'The model workers run on. Left alone, they run on the chat’s own model.',
 	'tile.folded':         'Folded',
 	'tile.fold_all':       'Fold all',
-	'tile.folded_help':    'Already folded into "{name}" — fold again to add anything new since.',
+	'tile.folded_help':    'Already folded into "{name}". Fold again to add what is new since.',
 	'tile.fold_all_help':  'Fold this whole chat into a Diamond',
 	'tile.dlg_colour':  'Colour',
 	'tile.colour_bg':   'Background',
 	'tile.colour_fg':   'Text',
 	'tile.colour_clear':'Use the theme’s colours',
-	'tile.colour_faint':'These two are hard to read together — {ratio}:1, where {min}:1 is the usual floor for text this size. Left as chosen.',
+	'tile.colour_faint':'These two contrast at {ratio}:1, below the usual {min}:1 floor for text this size. Left as chosen.',
 
 	// ── The spend governor ─────────────────────────────────────
 	'gov.past_budget': 'Well past your run budget',
@@ -384,10 +391,10 @@
 	'gov.would_pass':  'That would pass your {budget} pace budget for one run.',
 	'gov.run_n.one':   'Run {n} agent',
 	'gov.run_n.other': 'Run {n} agents',
-	'spend.includes_estimate': 'Includes a model not in the price table — estimated.',
+	'spend.includes_estimate': 'Estimated. At least one model here is not in the price table.',
 
 	// ── Models and provider keys ───────────────────────────────
-	'models.lead':                  'A key for each provider you use. One model is the default that new chats and Diamonds start on; any of them can be picked for a single chat.',
+	'models.lead':                  'A key for each provider you use. New chats and Diamonds start on the default model; any model can be picked for a single chat.',
 	'models.add':                   '+ Add provider',
 	'models.provider':              'Provider',
 	'models.choose_provider':       'Choose a provider…',
@@ -400,7 +407,7 @@
 	'models.model_id_ph':           'Model id (type manually)',
 	'models.default_note':          'New agents use this unless you choose another for them.',
 	'models.save_start':            'Save & start',
-	'models.privacy':               '<strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.',
+	'models.privacy':               '<strong>Everything stays on this device.</strong> Your keys, chats and files live only in this browser, and nothing is sent to us.',
 
 	// The Models panel: a row per provider, expandable to the models it runs.
 	// A vendor's name (Groq, Fireworks AI) is a proper noun and is NOT here;
@@ -418,7 +425,7 @@
 	'models.via':                  'via {provider}',
 	'models.count.one':            '{n} model',
 	'models.count.other':          '{n} models',
-	'models.row_paid_help':        'These models spend your Daimond balance. Your browser calls {provider} directly — the key is minted for you, and nothing goes through Daimond.',
+	'models.row_paid_help':        'These models spend your Daimond balance. Your browser calls {provider} directly with a key minted for you; nothing passes through Daimond.',
 	'models.row_own_help':         'These models are billed to your own {provider} account. They do not touch your Daimond balance.',
 	// What a row says about its key. The symbol in front is added by the code.
 	'models.sealed':               'sealed',
@@ -429,7 +436,7 @@
 	'models.offline':              'account service unreachable',
 	'models.could_not_connect':    'could not connect',
 	'models.unlock_to_use':        'unlock to use',
-	'models.sealed_unlock':        'sealed — unlock to use',
+	'models.sealed_unlock':        'sealed, unlock to use',
 	'models.top_up_to_use':        'top up to use',
 	'models.top_up':               'Top up your credits →',
 	'models.ask_provider':         'Ask this provider what it can run',
@@ -445,10 +452,10 @@
 	'models.model_make_default':   'Make this the model new chats and Diamonds start on.',
 	'models.model_paid':           'Spends your Daimond balance, via {provider}.',
 	'models.model_own':            'Billed to your own {provider} account.',
-	'models.model_twin':           'Another provider serves a model of this name — this is the {provider} one.',
+	'models.model_twin':           'Another provider serves a model of this name. This is the {provider} one.',
 	'models.remove':               'Remove {provider}',
 	'models.starts_on':            'New chats start on: {model}',
-	'models.no_default':           'No default model yet — star one above.',
+	'models.no_default':           'No default model yet. Star one above.',
 	'models.none_yet':             'No provider yet',
 	'models.err_refused':          'The account service refused (HTTP {status}).',
 	'models.err_bad_key':          'The account service sent a key Daimond cannot use.',
@@ -457,8 +464,8 @@
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user's own figure less an
 	// estimate, and saying so is the whole point of showing it.
-	'models.credit_auto':          '{amount} left on this key — the provider said so at {when}.',
-	'models.credit_manual':        '{amount} left: your {base} from {when}, less about {spent} spent since.',
+	'models.credit_auto':          '{amount} left on this key, as the provider said at {when}.',
+	'models.credit_manual':        '{amount} left. Your {base} from {when}, less about {spent} spent since.',
 	'models.credit_unknown':       'Nothing known about what is left on this key.',
 	'models.credit_check':         'Ask what is left',
 	'models.credit_recheck':       'Ask again',
@@ -483,7 +490,7 @@
 	// vendor changes its tier, and nobody re-reads eight locales to catch it.
 	// The per-engine line under the field (`.search-engine-note`) is the one
 	// that can be accurate.
-	'search.engine_note':     'Which service Daimond searches with. Most give you a free allowance each month if you bring your own key.',
+	'search.engine_note':     'Which service Daimond searches with. Most give a free allowance each month if you bring your own key.',
 	'search.credits':         'Daimond credits',
 	'search.key':             'API key',
 	'search.key_note':        'Kept on this device, sealed with your passphrase, and sent only with the search it pays for.',
@@ -512,27 +519,27 @@
 
 	// ── Credits, packs and Pro ─────────────────────────────────
 	// Anything the user is CHARGED says US dollars out loud. See `billing.*`.
-	'credits.lead':      "Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.",
+	'credits.lead':      'Buy credits and Daimond runs the model for you, with no provider key to manage. No subscription. You keep what you buy, and nothing is charged again unless you turn on auto-reload.',
 	'credits.balance':   'Balance: {amount}',
 	'credits.balance_unavailable': 'Balance unavailable.',
 	'credits.see_spend': 'See where your spending goes →',
-	'credits.offline':   'The Daimond account service is unreachable, so credits are unavailable right now. Your own provider key still works.',
-	'credits.need_account': 'Credits let you use Daimond without holding a provider key. They need an account — a passphrase kept on this device.',
+	'credits.offline':   'The Daimond account service is unreachable, so credits are unavailable. Your own provider key still works.',
+	'credits.need_account': 'Credits let you use Daimond without a provider key. They need an account: a passphrase kept on this device.',
 	'credits.create_account': 'Create an account',
 	'credits.added':     'Credits added',
 	'credits.now':       'Your balance is now {amount}.',
 	'pro.owned':         '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and Email are on. Nothing renews.',
-	'pro.offer':         '<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email — reading and sending your own mail in the workspace.</p>',
+	'pro.offer':         '<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace.</p>',
 	'pro.fine':          'No subscription. Metered use (inference, bandwidth, storage beyond the free tier) is paid from credits, whether or not you own Pro.',
 	'pro.buy':           'Own Daimond',
-	'pro.buy_priced':    'Own Daimond — {price}',
+	'pro.buy_priced':    'Own Daimond for {price}',
 	'billing.usd_note':  'You are billed in US dollars; the converted figure is approximate.',
 	'billing.rates_as_of': 'Rates as of {date}, approximate.',
 
 	// ── Auto-reload ────────────────────────────────────────────
 	// Every amount here is charged to a card, so the copy stays plain.
 	'autoreload.title':            'Auto-reload',
-	'autoreload.lead':             'Daimond can buy its own credits when they run low, so a long job does not stop halfway. It charges the card below, without asking, up to a limit you set here.',
+	'autoreload.lead':             'Daimond can buy credits when they run low, so a long job does not stop halfway. It charges the card below without asking, up to a limit you set here.',
 	'autoreload.card_word':        'card',
 	'autoreload.card_has':         '{brand} ending {last4}',
 	'autoreload.replace':          'Replace…',
@@ -541,18 +548,18 @@
 	'autoreload.save_card':        'Save a card',
 	'autoreload.save_card_help':   'Opens Stripe’s own page. Nothing is charged, and no card detail reaches Daimond.',
 	'autoreload.switch_on':        'Buy credits automatically',
-	'autoreload.switch_no_card':   'Buy credits automatically — save a card first',
+	'autoreload.switch_no_card':   'Buy credits automatically (save a card first)',
 	'autoreload.when_below':       'When the balance falls below',
 	'autoreload.when_below_hint':  'A reload fires the moment a turn takes the balance under this.',
 	'autoreload.buy_amount':       'Buy this much',
 	'autoreload.buy_amount_hint':  'One top-up. The gateway will not sell more than {max} at a time.',
 	'autoreload.monthly_cap':      'Never spend more, per month, than',
-	'autoreload.monthly_cap_hint': 'A hard ceiling on what auto-reload may spend in a calendar month. It cannot be exceeded, only raised here.',
+	'autoreload.monthly_cap_hint': 'The most auto-reload may spend in a calendar month. Raise it here if you need more.',
 	'autoreload.spent':            'Spent this month: {spent}',
 	'autoreload.spent_of':         'Spent this month: {spent} of {cap}',
 	'autoreload.last_error':       'The last automatic top-up failed: {reason}',
 	'autoreload.saving':           'Saving…',
-	'autoreload.on_note':          'On. Daimond will keep itself topped up, within your monthly limit.',
+	'autoreload.on_note':          'On. Daimond tops itself up, within your monthly limit.',
 	'autoreload.off_note':         'Off. Nothing will be charged.',
 
 	// ── The chat ───────────────────────────────────────────────
@@ -565,11 +572,11 @@
 	'chat.fold_now_help': 'Fold this conversation now, keeping a summary of what came before.',
 	'chat.steps':          'Steps',
 	'chat.concise': 'Concise',
-	'chat.concise_help': 'Ask for short answers in this chat. Every message you send goes with the /concise skill, which is a file in your workspace you can edit.',
+	'chat.concise_help': 'Ask for short answers in this chat. Every message carries the /concise skill, a file in your workspace you can edit.',
 	'chat.concise_failed_title': 'Concise is not available',
-	'chat.concise_failed': 'Daimond could not write .daimond/skills/concise.md, so the chip would refuse every turn rather than shorten it. Open a workspace folder, or check the Files panel, and try again.',
+	'chat.concise_failed': 'Daimond could not write .daimond/skills/concise.md, so the chip would refuse every turn instead of shortening it. Open a workspace folder, or check the Files panel, and try again.',
 	'chat.steps_help':     'Show or hide the tool steps in the thread',
-	'chat.collapse_help':  'Collapse every answer, leaving what you asked — and pick turns to fold',
+	'chat.collapse_help':  'Collapse every answer, leaving what you asked, and pick turns to fold',
 	'chat.input_ph':       'Type a message…',
 	'chat.send':           'Send',
 	// The turn indicator: what the three dots at the foot of the thread say while
@@ -597,7 +604,7 @@
 	// to two clipped rows. What happens to a queued message is said in full by the
 	// line above the bubbles (chat.queue_help), at the moment it matters.
 	'chat.queue_ph':       'Type the next message…',
-	'chat.queue_help':     'Waiting — sent when this answer finishes',
+	'chat.queue_help':     'Waiting. Sent when this answer finishes',
 	'chat.queued_pending': 'Not sent yet. Click to edit it.',
 	'chat.queue_cancel':   'Do not send this',
 	'chat.queue_returned': 'That turn did not finish, so what you queued is back in the box, unsent.',
@@ -611,12 +618,12 @@
 	// finishes -- because a promise of "shortly" that a quiet turn cannot keep is
 	// worse than no promise.
 	'chat.send_into':         'Send into this answer',
-	'chat.interject_help':    'Waiting — goes in at the model’s next step, or when this answer finishes',
+	'chat.interject_help':    'Waiting. Goes in at the model’s next step, or when this answer finishes',
 	'chat.interject_pending': 'Not delivered yet. Click to edit it.',
 	'chat.interjected':       'You cut in here',
 	'chat.interjected_help':  'Said into the turn at this point. The model had it from here on.',
 	'chat.compacted':         'Conversation folded',
-	'chat.compacted_help':    'Daimond replaced the earlier part of this conversation with a summary so it fits the model’s context window.',
+	'chat.compacted_help':    'Daimond replaced the earlier part with a summary so the conversation fits the model’s context window.',
 	// The same thing said on the chat's TILE, for a queue left on a conversation
 	// the user has walked away from: the bubbles are only drawn in the chat on
 	// screen, and money about to be spent should not depend on remembering.
@@ -636,8 +643,8 @@
 	// is not called "This panel".
 	'web.pause':      'Web access',
 	'web.blind_title': "You're driving. I'm not watching.",
-	'web.blind_note':  'Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.',
-	'web.resumed':     "I've resumed — check",
+	'web.blind_note':  'Daimond has stopped reading this page. No text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, so this page can never take the wheel from you.',
+	'web.resumed':     'I’ve resumed, check',
 	// {where} is what the extension said Daimond stopped at, e.g. a sign-in page.
 	'web.blind_title_at': 'You’re driving. I stopped at {where}.',
 	// The header: what is on screen, and who has the wheel.
@@ -654,28 +661,28 @@
 	'web.who_view_only_help': 'This page can be shown, but not operated. Install Daimond Hands to drive it.',
 	// Opening a site through the extension. {host} is a hostname, already escaped;
 	// these are placed as markup, so keep the tags and add none.
-	'web.opening':         '<b>Opening {host}…</b><br>A <b>Daimond Hands</b> window is opening in front — approve the site there, and Chrome will then ask once to confirm. Both happen only the first time for a site.',
+	'web.opening':         '<b>Opening {host}…</b><br>A <b>Daimond Hands</b> window opens in front. Approve the site there, then confirm once in Chrome. Both happen only the first time for a site.',
 	'web.not_approved':    '<b>{host} was not approved.</b><br>',
-	'web.approval_closed': 'The approval window was closed, or you said no. If you meant to allow it, ask me to open the site again and click <b>Allow, then confirm in Chrome</b> — the window opens in front of this one, and the <b>Daimond Hands</b> icon keeps the question until you answer it.',
+	'web.approval_closed': 'The approval window was closed, or you said no. To allow it, ask for the site again and click <b>Allow, then confirm in Chrome</b>. The window opens in front of this one, and the <b>Daimond Hands</b> icon holds the question until you answer it.',
 	// An answer that arrived after Daimond had stopped waiting: the site was
 	// approved late, or refused late. The first sits above the driving note.
-	'web.approved_late':   '<b>{host} was approved.</b> Your answer arrived after Daimond had given up waiting, so the panel said otherwise for a moment. The page is open now.',
+	'web.approved_late':   '<b>{host} was approved.</b> Your answer arrived after Daimond gave up waiting, so the panel said otherwise for a moment. The page is open now.',
 	'web.answer_late':     'Your answer came after Daimond had stopped waiting. ',
 	'web.driving_tab':     '<b>Daimond is driving {host}</b> in a browser tab. Watch it there, or pull a live picture into this panel.',
 	'web.show_live':       'Show live view here',
-	'web.real_tab':       'The page opens as a real browser window — it has to be a real tab to carry your own sign-ins — so this panel only ever shows a picture of it.',
-	'web.mirror_wait':    'Waiting for the first picture of that tab; if Chrome has put a permission window in front of you, it is waiting on your answer.',
-	'web.mirror_silent':  'Nothing has come back from Daimond Hands for a while, so there is no live picture here — the tab itself is still open, and is still the page.',
-	'web.mirror_refused': 'This tab cannot be photographed, so there is no live picture to show; watch the tab itself, or ask again below.',
+	'web.real_tab':       'The page opens as a real browser tab, which is what carries your own sign-ins, so this panel only shows a picture of it.',
+	'web.mirror_wait':    'Waiting for the first picture of that tab. If Chrome has put a permission window in front, it wants your answer.',
+	'web.mirror_silent':  'Nothing has come back from Daimond Hands for a while, so there is no live picture. The tab itself is still open, and is still the page.',
+	'web.mirror_refused': 'This tab cannot be photographed, so there is no live picture. Watch the tab itself, or ask for the picture again.',
 	// A site that refuses to be framed, which is most of them.
-	'web.blocked':         '<b>{host}</b> will not display inside another page. Most sites block this — it is the web’s protection against clickjacking, not a fault.',
+	'web.blocked':         '<b>{host}</b> will not display inside another page. Most sites block this as protection against clickjacking; it is not a fault.',
 	'web.blocked_hands':   'Daimond Hands can drive it in a real tab.',
 	'web.blocked_install': 'Install Daimond Hands to drive it live.',
 	'web.open_new_tab':    'Open in a new tab',
 	'web.read_as_text':    'Read it as text',
 	'web.reading':         'Reading…',
 	'web.read_failed':     'That page could not be read: {reason}',
-	'web.readonly_badge':  'Read-only copy — not the live site. Do not sign in here.',
+	'web.readonly_badge':  'Read-only copy, not the live site. Do not sign in here.',
 
 	// ── Compose ────────────────────────────────────────────────
 	'compose.from':       'From',
@@ -696,7 +703,7 @@
 	'agents.stop_all':       'Stop all agents',
 	'agents.clear_finished': 'Clear finished agents',
 	'agent.model_vision':    'This task names an image, so it runs on the Diamond’s image model, {model}.',
-	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this Diamond — it runs on the text model, {model}.',
+	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this Diamond, so it runs on the text model, {model}.',
 	// ── Pending ────────────────────────────────────────────────
 	'pending.empty':        'Nothing waiting on you.',
 	'pending.sort':         'Sort',
@@ -728,8 +735,8 @@
 
 	// The pitch, shown while Email is not unlocked on this account. The first
 	// two carry markup and are placed as markup; keep the tags and add none.
-	'mail.pitch.head':    '<b>Daimond can read your mail.</b> Your inbox lands in the workspace as ordinary files, so every agent can read it, search it, and work from it.',
-	'mail.pitch.fine':    'Email is part of Pro — one payment, kept for good, alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference. Nothing renews.',
+	'mail.pitch.head':    '<b>Daimond can read your mail.</b> Your inbox lands in the workspace as ordinary files, so every agent can read, search and work from it.',
+	'mail.pitch.fine':    'Email is part of Pro, one payment kept for good, alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference. Nothing renews.',
 	'mail.pitch.privacy': 'Daimond’s gateway makes the connection and forgets your password. No mail is ever stored on our side.',
 	'mail.pitch.unknown': 'The account service is not reachable, so Daimond cannot tell whether Email is unlocked here.',
 	'mail.pro_pitch':     'Email is part of Pro. Own Daimond once to turn it on, along with sync and cloud storage.',
@@ -754,13 +761,13 @@
 	'mail.folders_loading': 'Looking for folders…',
 	'mail.refreshed_held': '{done} folders refreshed in {boxes} mailboxes; {held} held by a pause.',
 	'mail.refreshed': '{done} folders refreshed in {boxes} mailboxes.',
-	'mail.count.never': 'Not fetched yet, so there is no count to show.',
+	'mail.count.never': 'Not fetched yet, so there is no count.',
 	'mail.count.asat': '{n} messages, as at {when}.',
 	'mail.count.more': '{n} more were waiting on the server then.',
 	'mail.settings': 'Mailbox settings',
 	'mail.settings_named': 'Settings for {address}',
 	'mail.all_mailboxes': 'All mailboxes',
-	'mail.refresh_all': 'Refresh every folder of every mailbox — {folders} folders in {boxes} mailboxes',
+	'mail.refresh_all': 'Refresh all {folders} folders in {boxes} mailboxes',
 	'mail.every.0': 'Manual only',
 	'mail.every.300': 'Every 5 minutes',
 	'mail.every.900': 'Every 15 minutes',
@@ -771,7 +778,7 @@
 	'mail.every.86400': 'Once a day',
 	'mail.every.secs': 'Every {n} seconds',
 	'mail.every_for': 'How often {folder} refreshes itself',
-	'mail.cfg.head': 'How often each folder goes and looks, and which of them are allowed to. Every refresh costs credits, so nothing polls until you say so.',
+	'mail.cfg.head': 'How often each folder goes and looks, and which of them may. Every refresh costs credits, so nothing polls until you say so.',
 	'mail.cfg.self': 'Holds every folder below.',
 	'mail.cfg.title': 'Settings for {address}',
 	'mail.folders_err':     'The folder list could not be fetched: {reason}',
@@ -805,15 +812,15 @@
 	'mail.note.still_older.other': '{n} older still on the server',
 
 	// The foot of the list: what the cap held back.
-	'mail.more.note.one':   '{n} older message still on the server. Daimond fetches the newest {batch} at a time, so your whole mailbox is never pulled down at once.',
-	'mail.more.note.other': '{n} older messages still on the server. Daimond fetches the newest {batch} at a time, so your whole mailbox is never pulled down at once.',
+	'mail.more.note.one':   '{n} older message still on the server. Daimond fetches the newest {batch} at a time, so a whole mailbox is never pulled down at once.',
+	'mail.more.note.other': '{n} older messages still on the server. Daimond fetches the newest {batch} at a time, so a whole mailbox is never pulled down at once.',
 	'mail.more.next':       'Fetch next {n}',
 	'mail.more.stop':       'Stop',
 	'mail.more.all':        'Fetch all',
 
 	// Walking a whole mailbox down. {count} is `mail.all.count`, already worded.
 	'mail.all.title':        'Fetch all {n} remaining messages?',
-	'mail.all.body':         'They are downloaded in batches of {batch} and written into the workspace, so a large mailbox takes a while and uses disk. Syncing is metered against your credits by the megabyte. You can stop part-way; what has arrived stays.',
+	'mail.all.body':         'They arrive in batches of {batch} and are written into the workspace, so a large mailbox takes a while and uses disk. Syncing is metered against your credits by the megabyte. Stop part-way and what has arrived stays.',
 	'mail.all.ok':           'Fetch all',
 	'mail.all.progress':     'Fetched {got} of {total}…',
 	'mail.all.count.one':    '{n} message',
@@ -862,10 +869,10 @@
 	'mail.preset.icloud':      'iCloud requires an <b>app-specific password</b>.',
 	'mail.preset.fastmail':    'Fastmail requires an app password with IMAP access.',
 	'mail.unreachable.proton': 'Proton mail is only reachable through the Proton Bridge running on your own machine, which Daimond’s gateway cannot connect to.',
-	'mail.unreachable.tuta':   'Tuta does not offer IMAP at all, so no mail client can read it — Daimond included.',
+	'mail.unreachable.tuta':   'Tuta offers no IMAP, so no mail client can read it, Daimond included.',
 
 	// What can go wrong.
-	'mail.err.unlock_first':        'Unlock Daimond with your passphrase first — the mail password is encrypted under it.',
+	'mail.err.unlock_first':        'Unlock Daimond first. The mail password is encrypted under your passphrase.',
 	'mail.err.draft_needs_mailbox': 'A draft needs a mailbox to be from.',
 	'mail.err.draft_unreadable':   'That draft could not be read.',
 	'mail.err.msg_unreadable':     'That message could not be read.',
@@ -914,13 +921,13 @@
 	'identity.title_create':       'Create your account',
 	'identity.title_unlock':       'Unlock Daimond',
 	'identity.title_welcome':      'Welcome back, {name}',
-	'identity.title_linked':       'Linked — now unlock it',
-	'identity.lead_create':        'Choose a name — Daimond generates the passphrase itself, below. Already use Daimond on another device? Don’t make a new account here: use “Have a pairing code?” to link this one instead. (Opening a real folder for agents to edit needs Chrome, Edge or Brave.)',
+	'identity.title_linked':       'Linked. Now unlock it',
+	'identity.lead_create':        'Choose a name. Daimond generates the passphrase itself, below. If you already use Daimond on another device, do not make a second account: choose “Have a pairing code?” to link this one. (Opening a real folder for agents to edit needs Chrome, Edge or Brave.)',
 	'identity.lead_unlock':        'Enter your passphrase to unlock this device and decrypt your saved key.',
-	'identity.lead_linked':        'This device is linked to your account. Enter the SAME passphrase you use on your other device — not a new one — to bring your chats and files here.',
-	'identity.lead_linked_named':  'This device is linked to your account “{name}”. Enter the SAME passphrase you use on your other device — not a new one — to bring your chats and files here.',
+	'identity.lead_linked':        'This device is linked to your account. Enter the SAME passphrase you use on your other device, not a new one, to bring your chats and files here.',
+	'identity.lead_linked_named':  'This device is linked to your account “{name}”. Enter the SAME passphrase you use on your other device, not a new one, to bring your chats and files here.',
 	// {bits} is a number read off the shipped wordlist, not a constant.
-	'identity.gen_note':           'Eight words picked at random by this device — about {bits} bits, far past anything that can be guessed. It is the key to everything you store here, and nobody can reset it for you. Write it on paper. Your password manager may also offer to keep it, which is safe with a passphrase this strong.',
+	'identity.gen_note':           'Eight words picked at random by this device, about {bits} bits, far past anything that can be guessed. It is the key to everything you store here, and nobody can reset it for you. Write it on paper. A password manager may also offer to keep it, which is safe at this strength.',
 
 	// ── Passkeys ───────────────────────────────────────────────
 	// Every one of these is a dead end explained: a passkey that will not open
@@ -960,17 +967,17 @@
 	// A refused parcel. Say what is too large, and what usually makes it so:
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
-	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. One very large Diamond or workspace file is the usual cause — remove or shrink it and sync resumes on its own.',
+	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. Usually one very large Diamond or workspace file is the cause; shrink or remove it and sync resumes on its own.',
 	// A Diamond the parcel had no room for. Named, because the only thing the user can
 	// do about it is find that Diamond, and said aloud rather than logged, because
 	// nothing else on screen would look any different.
-	'sync.diamonds_left.one':   '{n} Diamond did not fit in this device’s sync parcel, so it is not reaching your other devices until it is smaller: {names}',
-	'sync.diamonds_left.other': '{n} Diamonds did not fit in this device’s sync parcel, so they are not reaching your other devices until they are smaller: {names}',
+	'sync.diamonds_left.one':   '{n} Diamond did not fit in this device’s sync parcel and will not reach your other devices until it is smaller: {names}',
+	'sync.diamonds_left.other': '{n} Diamonds did not fit in this device’s sync parcel and will not reach your other devices until they are smaller: {names}',
 	// A session that has ended and could not be taken again. Same label as the
 	// two below for the same reason: what the user needs to know is that this
 	// device's work is not travelling, and the difference is in the hover.
 	'sync.signed_out':        'Sync paused',
-	'sync.signed_out_reason': 'This device is no longer signed in to the Daimond account service, and signing in again did not work, so its work is not reaching your other devices. It resumes on its own as soon as the service can be reached; if it does not, lock Daimond and unlock it.',
+	'sync.signed_out_reason': 'This device is signed out of the Daimond account service and could not sign in again, so its work is not reaching your other devices. It resumes as soon as the service is reachable. If it does not, lock Daimond and unlock it.',
 	// A reconcile that did not finish. Both of these mean the same thing to the
 	// user — this device's work is still only here — so they share a label and
 	// differ in the reason.
@@ -988,7 +995,7 @@
 	// A deletion the gateway would not carry out on one request. Say the two
 	// numbers, and say plainly that nothing of theirs has gone.
 	'chunks.sweep_held':          'Cleanup paused',
-	'chunks.sweep_held_reason':   'Cloud storage is holding {n} of its {m} stored pieces that no file on this account still refers to. They have NOT been deleted: no single request may remove more than half of what is stored, and this device is not in a position to insist. Nothing of yours is missing — the space is freed by the next sync that can account for all of it.',
+	'chunks.sweep_held_reason':   'Cloud storage holds {n} of its {m} stored pieces that no file on this account still refers to. They have NOT been deleted, because no single request may remove more than half of what is stored. Nothing of yours is missing, and the space is freed by the next sync that can account for it all.',
 
 	// ── Pairing a second device ────────────────────────────────
 	// The quotation marks around a button's name are curly on purpose; keep
@@ -998,16 +1005,16 @@
 	'pair.have_code':     'Have a pairing code?',
 	'pair.making_code':   'Making a one-time code…',
 	'pair.scan_lead':     'On your other phone, point its camera at this to open Daimond and link it:',
-	'pair.no_camera':     'No camera? Open Daimond there, choose “Have a pairing code?”, and enter:',
+	'pair.no_camera':     'Without a camera, open Daimond there, choose “Have a pairing code?”, and enter:',
 	'pair.type_lead':     'On your other device, open Daimond, choose “Have a pairing code?”, and enter:',
 	'pair.code_expiry':   'This code works once and expires in about {mins} minutes. You will unlock the other device with your usual passphrase.',
 	'pair.code_ph':       'pairing code',
-	'pair.code_check':    'This is the code from your other device — it should match the one shown there.',
-	'pair.scanned_lead':  'Scanned from your other device. Just tap “Link this device” below to bring your account here.',
+	'pair.code_check':    'This is the code from your other device. It should match the one shown there.',
+	'pair.scanned_lead':  'Scanned from your other device. Tap “Link this device” below to bring your account here.',
 	'pair.manual_lead':   'On the device you already use, choose “Link another device” and type the code it shows here.',
 	'pair.linked':        'This device is linked',
-	'pair.linked_note':   'It now holds your account. Tap Unlock, then enter the SAME passphrase you use on your other device — not a new one.',
-	'pair.linked_named':  'It now holds your account “{name}”. Tap Unlock, then enter the SAME passphrase you use on your other device — not a new one.',
+	'pair.linked_note':   'It now holds your account. Tap Unlock, then enter the SAME passphrase you use on your other device, not a new one.',
+	'pair.linked_named':  'It now holds your account “{name}”. Tap Unlock, then enter the SAME passphrase you use on your other device, not a new one.',
 	// Naming the device while linking it: the one moment the user is holding the
 	// device in question. Optional — an unnamed device still syncs.
 	'pair.name_this':     'Name this device (optional)',
@@ -1025,15 +1032,15 @@
 	// The one-time presentation handover. Say that it happened and that it is
 	// this device's own from now on, or a German interface on a new phone reads
 	// as a fault rather than as the other device's setting.
-	'pair.look_carried': 'Your theme, language and panel layout came across too. This device keeps its own from here — change either without affecting the other.',
+	'pair.look_carried': 'Your theme, language and panel layout came across too. Each device keeps its own from now on, so changing one leaves the other alone.',
 
 	// ── The appearance menu ────────────────────────────────────
 	'menu.view':            'View',
 	'menu.view_simple':     'Simple',
 	'menu.view_max':        'Max',
-	'menu.view_simple_help': 'Calm and uncluttered: each thing shows its name and whether it is running, and everything else is one press away.',
-	'menu.view_max_help':   'Everything on screen at once: models, cost and context beside each thing, so you can compare them without opening anything.',
-	'menu.view_note':       'Sets the shape too. Individual tiles can differ — use the cog on the tile.',
+	'menu.view_simple_help': 'Each thing shows its name and whether it is running. Everything else is one press away.',
+	'menu.view_max_help':   'Models, cost and context beside each thing, so you can compare them without opening anything.',
+	'menu.view_note':       'Sets the shape of every tile too. Use a tile’s cog to set that tile differently.',
 	'menu.theme':         'Theme',
 	'menu.tone_light':    'Light',
 	'menu.tone_mid':      'Intermediate',
@@ -1068,7 +1075,7 @@
 	'menu.arrangement_keep':   'Keep this arrangement with {name}',
 	'menu.arrangement_keep_this': 'Keep this arrangement with this Diamond',
 	'menu.arrangement_forget': 'Forget it',
-	'menu.arrangement_note':   'Opening this Diamond again restores the panels it was worked in. Nothing is remembered until you ask for it.',
+	'menu.arrangement_note':   'Opening this Diamond again restores the panels it was worked in. Nothing is remembered until you ask.',
 
 	// ── Text-size steps ────────────────────────────────────────
 	'size.small':  'Small',
@@ -1098,13 +1105,13 @@
 	'gallery.unpin':            'Remove {name} from the top bar',
 
 	// ── Spending ───────────────────────────────────────────────
-	'spend.intro':           'Two pots, kept apart: inference runs on your own provider key, and credits pay the gateway for the few things that leave the browser.',
+	'spend.intro':           'Two pots, kept apart. Inference runs on your own provider key; credits pay the gateway for the few things that leave the browser.',
 	'spend.inference':       'Inference',
 	'spend.inference_hint':  'billed to your own provider key',
 	'spend.credits':         'Credits',
-	'spend.credits_hint':    'gateway services — web, mail, sync',
+	'spend.credits_hint':    'gateway services: web, mail, sync',
 	'spend.no_usage':        'No usage recorded.',
-	'spend.no_account':      'No gateway account yet. Credits pay for the few things that leave the browser — fetching a web page, syncing or sending mail, cross-device sync. Add a passphrase and credits to begin.',
+	'spend.no_account':      'No gateway account yet. Credits pay for the few things that leave the browser: fetching a web page, sending or syncing mail, cross-device sync. Add a passphrase and credits to begin.',
 	'spend.this_week':       'this week',
 	'spend.this_month':      'this month',
 	'spend.session':         'this session',
@@ -1136,10 +1143,10 @@
 	'spend.left_unknown':     'This provider does not say what is left, and you have not told Daimond.',
 	// Where the headline figure came from. A total the providers billed is not an
 	// estimate, and marking it "≈" said the opposite of the truth.
-	'spend.all_reported':          'Every turn in this window came with a cost from the provider, so this is what was charged, not an estimate.',
+	'spend.all_reported':          'Every turn in this window came with a cost from the provider, so this is what was charged.',
 	'spend.part_reported':         '{amount} of this was reported by the providers; the rest is priced from Daimond\'s rate table.',
-	'spend.none_reported':         'Priced from Daimond\'s rate table — no provider reported a cost for these turns.',
-	'spend.none_reported_unknown': 'Priced from Daimond\'s rate table, and one of these models is not in it, so the figure is a rough guide only.',
+	'spend.none_reported':         'Priced from Daimond’s rate table. No provider reported a cost for these turns.',
+	'spend.none_reported_unknown': 'Priced from Daimond’s rate table, which is missing one of these models, so the figure is a rough guide.',
 	// Why a total the user remembers as larger has fallen: the old rate table ran
 	// high, and the estimates it made were corrected once, here, on this device.
 	'spend.repriced': 'Estimates made before the rate table was corrected have been repriced on this device; under the old table this period read {amount}.',
@@ -1179,13 +1186,13 @@
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML
 	// in them is rendered. Keep the tags that are there and add none.
-	'tools.head':         '<b>{have} of {all}</b> tools. Most of what Daimond can do it can do for nothing — the tools below are simply what it is. A few reach the world outside the browser, and those cost what they cost to run.',
+	'tools.head':         '<b>{have} of {all}</b> tools. Most of what Daimond does costs nothing. A few reach the world outside the browser, and those cost what they cost to run.',
 	'tools.built_in':     'Built in',
 	'tools.unlocked':     'Unlocked',
-	'tools.unlock_price': 'Unlock — {price}',
+	'tools.unlock_price': 'Unlock for {price}',
 	'tools.sec_unlocked': 'Unlocked on this account',
 	'tools.sec_shop':     'Get more tools',
-	'tools.shop_fine':    'Bought once, kept for good. Nothing renews. What a tool costs to run — a mailbox synced, a page fetched — is metered against credits, so ongoing cost tracks ongoing use.',
+	'tools.shop_fine':    'Bought once, kept for good. Nothing renews. What a tool costs to run, a mailbox synced or a page fetched, is metered against credits, so ongoing cost tracks ongoing use.',
 	'tools.unreachable':  'The account service could not be reached, so what is unlocked here is unknown.',
 	'tools.no_service':   'The account service is unavailable.',
 
@@ -1207,14 +1214,14 @@
 	'rail.name':             'Name',
 	'rail.model':            'Model',
 	'rail.worker_model':     'Model for workers',
-	'rail.worker_model_help': 'This Diamond’s daimon dispatches workers, several at a time; left as it is they run on the Diamond’s own model.',
+	'rail.worker_model_help': 'The daimon dispatches workers several at a time. Left as it is, they run on the Diamond’s own model.',
 	'rail.err_name':         'Give the Diamond a name.',
 	'rail.err_model':        'Choose a model for this Diamond to think with.',
-	'rail.err_no_key':       'That provider has no readable key yet — unlock, or add one.',
-	'rail.err_no_key_worker': 'The workers’ provider has no readable key yet, so they would fall back to the Diamond’s own model — unlock it, or choose another.',
+	'rail.err_no_key':       'That provider has no readable key yet. Unlock, or add one.',
+	'rail.err_no_key_worker': 'The workers’ provider has no readable key yet, so they would fall back to the Diamond’s own model. Unlock the key, or choose another provider.',
 	'rail.create_failed':    'Could not create Diamond',
 	'rail.created_unreadable': 'Diamond created, but not readable',
-	'rail.created_unreadable_body': '"{name}" was written, but Daimond could not read it back, so it is not in the rail. Reload the page; if it is still missing, this device\u2019s storage is refusing to serve what it accepted.',
+	'rail.created_unreadable_body': '"{name}" was written but could not be read back, so it is not in the rail. Reload the page. If it is still missing, this device’s storage is refusing to serve what it accepted.',
 
 	// ── The PPTW: pause, play, traffic light ───────────────────
 	// One control at six placements. The state words are lower case because
@@ -1247,18 +1254,17 @@
 	// The refusals enforcement speaks at the spend boundary. {node} is a
 	// HUMAN name -- DaimondPause.label(), not the node id -- because
 	// "root/diamonds/a1b2/self" names the node exactly and tells the reader
-	// nothing. Each says what did NOT happen, that no money moved, and
-	// where the control is -- except the web one, which says only the first
-	// two. `root/web` had no control anywhere in the app, so "press play on it"
-	// sent a reader hunting for a button that was not there; it stays silent
-	// about the control so that it is true both before the Web panel gets one
-	// and after.
+	// nothing. All four say the same three things: what did NOT happen, that no
+	// money moved, and where the control is. The web one once stayed silent
+	// about the control, because `root/web` had no widget anywhere in the app;
+	// the Web panel header has one now, and dev/verify_search_i18n.mjs asserts
+	// all four name it, in every language.
 	'pause.web':              'Web',
 	'pause.refused_title':    'Paused',
-	'pause.refused.turn':     'Paused: {node} — no turn was started and nothing was spent. Press play on it to resume.',
-	'pause.refused.dispatch': 'Paused: {node} — no agents were dispatched and nothing was spent. Press play on it to resume.',
-	'pause.refused.web':      'Paused: {node} — the page was not fetched and nothing was spent. Press play on it to resume.',
-	'pause.refused.mail':     'Paused: {node} — the mailbox was not contacted and nothing was spent. Press play on it to resume.',
+	'pause.refused.turn':     '{node} is paused. No turn started, nothing spent. Press play on it to resume.',
+	'pause.refused.dispatch': '{node} is paused. No agents dispatched, nothing spent. Press play on it to resume.',
+	'pause.refused.web':      '{node} is paused. The page was not fetched and nothing was spent. Press play on it to resume.',
+	'pause.refused.mail':     '{node} is paused. The mailbox was not contacted and nothing was spent. Press play on it to resume.',
 
 	// ── Tags ───────────────────────────────────────────────────
 	'tag.only_agents':   'Show only agents tagged "{tag}"',
@@ -1277,7 +1283,7 @@
 	// The rail's boolean filter: the tags wanted, the tags refused, and how two
 	// or more wanted tags combine. A chip in the rail cycles off, wanted,
 	// refused, off; a chip in the summary comes out of the filter altogether.
-	'tag.exclude_next':  'Showing Diamonds tagged "{tag}" — click again to hide them instead',
+	'tag.exclude_next':  'Showing Diamonds tagged "{tag}". Click again to hide them.',
 	'tag.clear_exclude': 'Stop hiding Diamonds tagged "{tag}"',
 	'tag.not_tagged':    'Not tagged "{tag}"',
 	'tag.mode_all':      'All',
@@ -1294,16 +1300,16 @@
 	// {n} is how many tags are behind it.
 	'tag.pool_toggle':    'Filter by tag ({n})',
 	'tag.pool_show_help': 'Show every tag you can filter on',
-	'tag.pool_hide_help': 'Put the tags away. Anything you are filtering on stays on, and stays on show.',
+	'tag.pool_hide_help': 'Put the tags away. Anything you are filtering on stays on, and stays in view.',
 	// The chips that are doing the filtering, shown on their own while the tags
 	// are put away.
 	'tag.active_aria':    'Tags the rail is filtering on',
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help':        'Delete the tag "{tag}" everywhere',
 	'tag.delete_title':       'Delete this tag?',
-	'tag.delete_body_used.one':   'Delete the tag "{tag}"? It is on {n} Diamond, and will be taken off it. Nothing else about that Diamond changes.',
-	'tag.delete_body_used.other': 'Delete the tag "{tag}"? It is on {n} Diamonds, and will be taken off all of them. Nothing else about those Diamonds changes.',
-	'tag.delete_body_unused': 'Delete the tag "{tag}"? It is on no Diamonds, so this only takes it off the list.',
+	'tag.delete_body_used.one':   'Delete the tag "{tag}"? It comes off the {n} Diamond carrying it. Nothing else about that Diamond changes.',
+	'tag.delete_body_used.other': 'Delete the tag "{tag}"? It comes off all {n} Diamonds carrying it. Nothing else about them changes.',
+	'tag.delete_body_unused': 'Delete the tag "{tag}"? No Diamond carries it, so this only takes it off the list.',
 	'tag.delete_ok':          'Delete the tag',
 	'tag.deleted':            'Tag "{tag}" deleted.',
 	'tag.deleted_from.one':   'Tag "{tag}" deleted from {n} Diamond.',
@@ -1312,12 +1318,12 @@
 
 	// ── Starting and interrupting a turn ───────────────────────
 	'chat.choose_model':   'Choose a model to start this chat.',
-	'chat.no_key_start':   'That provider has no readable key yet — unlock, or add one, to start this chat.',
+	'chat.no_key_start':   'That provider has no readable key yet. Unlock, or add one, to start this chat.',
 	'chat.connect_start':  'Connect a provider to start this chat.',
 	'chat.pending_hint':   'Pick a model in this chat\u2019s tile and press \u25b6 Start to begin.',
 	'chat.start_selected': 'Start with the selected model',
 	'chat.stop':           'Stop',
-	'turn.interrupted':       'Interrupted — the browser closed before this finished.',
+	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.continue':          'Continue',
 	'turn.continue_help':     'Run this turn again from your message.',
@@ -1332,33 +1338,37 @@
 	'fold.into':             'Fold into…',
 	'fold.n_turns_into.one':   'Fold {n} turn into…',
 	'fold.n_turns_into.other': 'Fold {n} turns into…',
-	'fold.no_diamonds':      'No Diamonds yet — create one:',
+	'fold.no_diamonds':      'No Diamonds yet. Create one:',
 	'fold.new_diamond':      '＋ New Diamond…',
 	'fold.connect_first':    'Connect a provider to fold into a Diamond.',
 	'fold.create_and_fold':  'Create and fold',
-	'fold.no_key':           'That Diamond\u2019s provider has no readable key — unlock, or add one, to fold into it.',
+	'fold.no_key':           'That Diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
 	'fold.nothing_new':      'Nothing new to fold',
 	'fold.nothing_new_body': '"{chat}" has not changed since it was folded into "{diamond}".',
 	'fold.proposing':        'Proposing fold…',
 	'fold.diamond_gone':     'Diamond is gone',
 	'fold.diamond_gone_body': 'The Diamond that dispatched this agent no longer exists.',
-	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists — it may have been deleted in another tab. Nothing was folded.',
+	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists; it may have been deleted in another tab. Nothing was folded.',
 	'fold.empty_reply':      'The model returned nothing to fold, so nothing was proposed. Try again.',
-	'fold.proposed_toast':   'Fold proposed — Accept or Reject it below.',
-	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}" — open it to Accept or Reject.',
+	'fold.proposed_toast':   'Fold proposed. Accept or Reject it below.',
+	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}". Open it to Accept or Reject.',
 	'fold.pending_badge':    'fold waiting',
 	'fold.pending_badge_help': 'A proposed fold is waiting on this Diamond. Open it to accept or reject the change.',
 	// The fold diff's heading. Four shapes rather than one with glue, because a
 	// language that puts the target first cannot reorder a fragment.
-	'diff.folding_chat':      'Folding "{chat}" — review the change, then Accept or Reject.',
-	'diff.folding_chat_into': 'Folding "{chat}" into "{diamond}" — review the change, then Accept or Reject.',
-	'diff.proposed':          'Proposed fold — review the change, then Accept or Reject.',
-	'diff.proposed_into':     'Proposed fold into "{diamond}" — review the change, then Accept or Reject.',
-	'diff.no_change':         'No change proposed — the crystal already covers this.',
-	'diff.no_change_into':    'No change proposed into "{diamond}" — the crystal already covers this.',
+	'diff.folding_chat':      'Folding "{chat}". Review the change, then Accept or Reject.',
+	'diff.folding_chat_into': 'Folding "{chat}" into "{diamond}". Review the change, then Accept or Reject.',
+	'diff.proposed':          'Proposed fold. Review the change, then Accept or Reject.',
+	'diff.proposed_into':     'Proposed fold into "{diamond}". Review the change, then Accept or Reject.',
+	'diff.no_change':         'No change proposed. The crystal already covers this.',
+	'diff.no_change_into':    'No change proposed into "{diamond}". The crystal already covers this.',
 	'diff.accept':            'Accept fold',
 	'diff.reject':            'Reject',
-	'diff.nothing_to_apply':  'Nothing to apply — the proposal matches the current crystal.',
+	'diff.nothing_to_apply':  'Nothing to apply. The proposal matches the current crystal.',
+	// What accepting would take OUT. A fold that only adds needs no warning; one
+	// that drops a key the crystal already holds is the change worth naming, and
+	// {keys} is the list of them, joined by the caller.
+	'fold.keys_lost':         'Accepting this removes: {keys}',
 
 	// ── The crystal ────────────────────────────────────────────
 	'crystal.page':           'Page',
@@ -1384,14 +1394,14 @@
 	'crystal.delta_help':     'The raw input this fold was made from',
 	'crystal.delta_at':       'Delta folded at v{v}',
 	'crystal.read_delta_failed': 'Could not read the delta',
-	'crystal.steer_paused':   'Paused — press play on its tile',
+	'crystal.steer_paused':   'Paused. Press play on its tile',
 	'crystal.view_switch':    'Which face of this Diamond',
 	'crystal.view_crystal':   'Crystal',
 	'crystal.view_chat':      'Chat',
 	'crystal.chat_empty':     'Nothing said yet. The crystal is what this Diamond knows; this is how it came to know it.',
 	'crystal.dispatch_after_error': 'The turn ended badly, so the agents it asked for were not started.',
 	'crystal.steering':       'Steering…',
-	'crystal.no_key_steer':   'This Diamond\u2019s provider has no readable key — unlock, or add one, to steer it.',
+	'crystal.no_key_steer':   'This Diamond’s provider has no readable key. Unlock, or add one, to steer it.',
 	'crystal.page_failed':    'This Diamond’s page did not load, so its data is shown instead.',
 	'crystal.page_partial':   'This Diamond’s page did not show everything it holds, so its data is shown instead.',
 	'crystal.page_reset':     'Reset the page',
@@ -1420,7 +1430,7 @@
 	'arte.drop_help':      'Not an artefact of this Diamond',
 	'arte.drop_named': 'Drop "{name}" as an artefact',
 	'arte.file_gone':      'That file is not there any more',
-	'arte.file_gone_body': '\u201c{path}\u201d was recorded as an artefact of this Diamond, but it cannot be read now — it may have been renamed, moved or deleted.',
+	'arte.file_gone_body': '“{path}” is an artefact of this Diamond, but it cannot be read now; it may have been renamed, moved or deleted.',
 	'arte.nothing_to_open': 'Nothing to open',
 	'arte.no_viewer':      'This artefact is a \u201c{kind}\u201d, which this version has no viewer for.',
 
@@ -1428,8 +1438,8 @@
 	'attach.to_focus':     'Attach to current focus',
 	'attach.note':         'Note',
 	'attach.read':         'Read',
-	'attach.note_help':    'The path is worth knowing about. Cheap: costs a few tokens.',
-	'attach.read_help':    'The contents are wanted now. Costs real money — a file can run to thousands of tokens.',
+	'attach.note_help':    'The path is worth knowing. Costs a few tokens.',
+	'attach.read_help':    'The contents are wanted now. A file can run to thousands of tokens.',
 	'attach.add':          'Attach',
 	'attach.view_stack':   'Stack',
 	'attach.view_icons':   'Icons',
@@ -1459,7 +1469,7 @@
 	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
 	'dws.kits':            'Toolchains',
-	'dws.kits_help':       'Which compilers and package managers a command from this Diamond may reach on your computer. Off unless you say so \u2014 nothing here is chosen by a daimon.',
+	'dws.kits_help':       'Which compilers and package managers a command from this Diamond may reach on your computer. Off unless you say so; no daimon chooses this.',
 	'dws.kit_on':          'Grant the {kit} toolchain to {name}',
 	'dws.kit_off':         'Take the {kit} toolchain back from {name}',
 	'dws.kit_failed':      'That toolchain grant was not saved',
@@ -1481,7 +1491,7 @@
 	'link.drop_confirm':   'Remove the \u201c{rel}\u201d link with \u201c{name}\u201d? Both Diamonds stay; only the link goes.',
 	'link.drop_failed':    'Could not remove the link',
 	'link.gone':           'That Diamond is not there any more',
-	'link.gone_body':      '\u201c{ref}\u201d is linked from this Diamond, but no Diamond of that id can be read now \u2014 it may have been deleted.',
+	'link.gone_body':      '“{ref}” is linked from this Diamond, but no Diamond of that id can be read now; it may have been deleted.',
 	'link.gone_name':      '(deleted Diamond)',
 	'link.add_btn':        'Link',
 	'link.add_title':      'Link this Diamond to another',
@@ -1492,7 +1502,7 @@
 	'link.change_pick':    'Change',
 	'link.rel_label':      'Relation',
 	'link.rel_ph':         'How are they related?',
-	'link.rel_sug_help':   'Suggestions only \u2014 any word will do',
+	'link.rel_sug_help':   'Suggestions only; any word will do',
 	'link.rel_use':        'Use \u201c{rel}\u201d',
 	'link.note_label':     'Note',
 	'link.note_ph':        'Why, in a sentence (optional)',
@@ -1512,7 +1522,7 @@
 	'agents.a_diamond':           'Diamond',
 	'agents.clear_diamond_filter': 'Clear the Diamond filter',
 	'instructions.chip_help':     'Your standing instructions, given to every agent. Click to open.',
-	'instructions.chip_two':      'Two layers are in force: yours, and this project\u2019s. Click to open yours.',
+	'instructions.chip_two':      'Two layers are in force, yours and this project’s. Click to open yours.',
 
 	// ── The System section: Daimond's own store ────────────────
 	'sys.head':  'System',
@@ -1553,7 +1563,7 @@
 	'trig.note':            'These live in {path}, where you and this Diamond can both read them.',
 	'trig.edit_title':      'Edit: {what}',
 	'trig.minutes':         'Minutes',
-	'trig.minutes_note':    'Minutes you are actually working, not minutes on the clock — a tab left open overnight counts none of them.',
+	'trig.minutes_note':    'Minutes you are working, not minutes on the clock. A tab left open overnight counts none of them.',
 	'trig.mailbox':         'Mailbox',
 	'trig.folder':          'Folder',
 	'trig.no_mailbox':      'No mailbox set up yet',
@@ -1609,23 +1619,23 @@
 	'files.saving':          'Saving…',
 	'files.saved':           'Saved.',
 	'files.save_failed':     'Save failed: {reason}',
-	'files.save_cancelled':  'Save cancelled — the file changed on disk.',
+	'files.save_cancelled':  'Save cancelled. The file changed on disk.',
 	'files.discard':         'Discard',
 	'files.discard_title':   'Discard your changes?',
 	'files.keep_editing':    'Keep editing',
 	'files.unsaved_body':    'Your changes to {path} have not been saved. Close the editor and lose them?',
-	'files.editing_stopped': 'Editing stopped — nothing was written.',
+	'files.editing_stopped': 'Editing stopped. Nothing was written.',
 	'files.overwrite':       'Overwrite',
 	'files.conflict_title':  'It changed while you were editing',
-	'files.conflict_body':   'This file changed on disk since you opened it — most likely an agent edited it. Save anyway and overwrite those changes?',
-	'files.changed_while_editing': 'This file changed on disk — an agent edited it. Your edits are kept; saving will ask before overwriting.',
-	'files.reloaded':        'Reloaded — the file changed on disk.',
+	'files.conflict_body':   'This file changed on disk since you opened it, most likely an agent. Save anyway and overwrite those changes?',
+	'files.changed_while_editing': 'This file changed on disk; an agent edited it. Your edits are kept, and saving asks before overwriting.',
+	'files.reloaded':        'Reloaded. The file changed on disk.',
 	'files.compile':         'Compile',
 	'files.compiling':       'compiling',
 	'files.compiling_path':  'Compiling {path} …',
 	'files.compiled':        'Compiled → {path} ({size})',
 	'files.compile_failed':  'Compile failed: {reason}',
-	'files.binary_note':     'This is a binary file of {size}. It is stored and synced like everything else here, but there is nothing to show — download it to open it in something that understands it.',
+	'files.binary_note':     'A binary file of {size}. It is stored and synced like everything else here, but there is nothing to show. Download it to open it in something that understands it.',
 	// Cloud storage, seen from the Workspace panel.
 	'files.cloud':           'Cloud',
 	'files.cloud_storage':   'Cloud storage',
@@ -1637,7 +1647,7 @@
 	'files.cloud_away':      '{n} of them ({bytes}) are not on this device.',
 	'files.cloud_here':      'all of them are also on this device.',
 	'files.cloud_none':      'Nothing is in cloud storage yet. Without it your workspace is limited to what this browser grants you.',
-	'files.cloud_none_quota': 'Nothing is in cloud storage yet. Without it your workspace is limited to what this browser grants you — {quota} here.',
+	'files.cloud_none_quota': 'Nothing is in cloud storage yet. Without it your workspace is limited to what this browser grants you, {quota} here.',
 	'files.cloud_cap':       'This browser has granted {quota}, of which {used} is used. Files are freed automatically as it fills, unless you have pinned them.',
 	'files.reclaim':         'Free up space',
 	'files.reclaim_help':    'Free up space on this device now',
@@ -1645,7 +1655,7 @@
 	'files.pinned_short':    'Pinned to this device',
 	'files.pinned_help':     'Pinned: always kept on this device. Click to release.',
 	'files.pin_help':        'Pin: never free this one to make room.',
-	'files.free_help':       'Free up space: keep it in cloud storage, drop the copy here',
+	'files.free_help':       'Keep it in cloud storage; drop the copy here',
 	'files.fetch':           'Fetch',
 	'files.fetch_body':      'Bring "{path}" onto this device? That downloads {size}.',
 	'files.fetching':        'Fetching {path}…',
@@ -1657,10 +1667,10 @@
 	// one thing they most need to know before pointing an agent at a directory.
 	'files.change_root':      'Change folder…',
 	'files.change_root_help': 'Point the agent at a different folder on this machine',
-	'files.machine_scope':    'The agent works only inside {name}. Nothing above or outside that folder is visible to Daimond.',
+	'files.machine_scope':    'The agent works only inside {name}. Nothing outside that folder is visible to Daimond.',
 	'files.machine_return':   'Put the agent back to work in {name}',
 	'files.forget_root':      'Forget this folder',
-	'files.forget_root_help': 'Stop offering this folder. Daimond keeps no record of it, and the next time you will pick one.',
+	'files.forget_root_help': 'Stop offering this folder. Daimond keeps no record of it, and asks you to pick one next time.',
 	'files.root_forgotten':   'Forgotten. Daimond no longer holds a record of that folder.',
 
 	// Diamond files an earlier build left in a folder, brought back into Daimond's own storage.
@@ -1668,13 +1678,42 @@
 	// are still there for them to delete when they are satisfied.
 	'files.adopted_title.one':   'A Diamond was brought back',
 	'files.adopted_title.other': '{n} Diamonds were brought back',
-	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies in the folder were left exactly where they are, under diamonds/ — you can delete them once you are satisfied.',
+	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies were left where they are, under diamonds/; delete them once you are satisfied.',
 	'files.adopted_kept':        'These differed from what Daimond already held, so both copies were kept:\n{paths}',
 	// And what did not come back. The copy runs under a budget, and a file past it is
 	// left where it is — which the user has to be told, or a Diamond arrives missing a
 	// part of itself and looks whole.
 	'files.adopt_left_title':    'Some files stayed in the folder',
-	'files.adopted_skipped':     'These were not copied — over 8 MiB, or unreadable — so a Diamond that needs one is here without it, or not here at all:\n{paths}',
+	'files.adopted_skipped':     'These were not copied, being over 8 MiB or unreadable, so a Diamond that needs one is here without it, or not here at all:\n{paths}',
+
+	// ── The file viewer ────────────────────────────────────────
+	// A file is shown as what it IS: decoded where the browser can decode it,
+	// laid out where it is text-shaped, and dumped as bytes otherwise. The floor
+	// is the tier that matters, so its wording says what the file is and why the
+	// bytes are what a reader is looking at, rather than apologising.
+	//
+	// {fmt} is a format's name, from the `fileview.fmt.*` lookup the viewer does
+	// per media variant; where a locale has no entry the library's own English
+	// label ("PDF document") stands. {shown}, {total}, {from} and {to} are
+	// already formatted numbers -- grouped by the reader's own locale -- so they
+	// are never re-formatted here.
+	'fileview.read_failed':      'This file could not be read: {reason}',
+	'fileview.disagree':         'The name says {named}. The bytes say {found}, and the bytes are what is shown.',
+	'fileview.empty':            'This file is empty.',
+	'fileview.too_large':        'A {fmt} of {size} is too large to hold in memory here. Its bytes follow; download it to open it elsewhere.',
+	'fileview.decode_failed':    'This browser could not decode this {fmt}.',
+	'fileview.frame_title':      'The contents of {name}',
+	'fileview.json_bad':         'This is not one JSON value, so it is shown as text.',
+	'fileview.tree_capped':      'The tree is cut short here; the file is larger than it shows.',
+	'fileview.rows_capped':      'Showing the first {shown} rows of {total}.',
+	'fileview.capped':           'Showing the first {shown} of {total}.',
+	// The honest floor. Two sentences rather than one with a hole in it: with the
+	// format unknown, "no viewer here for a Unknown" is what the hole fills with.
+	'fileview.hex_note':         'There is no viewer here for a {fmt}, so these are its bytes.',
+	'fileview.hex_note_unknown': 'Nothing here recognises this file, so these are its bytes.',
+	'fileview.hex_prev':         'Earlier bytes',
+	'fileview.hex_next':         'Later bytes',
+	'fileview.hex_at':           'Bytes {from} to {to} of {total}',
 
 	// ── One message, read ──────────────────────────────────────
 	'msg.unknown_sender':    '(unknown sender)',
@@ -1715,38 +1754,38 @@
 	'passkey.have_one':          'I have a passkey for Daimond',
 	'passkey.use_one':           'Use a passkey',
 	'passkey.browser_cannot':    'This browser cannot use your passkey, so the passphrase is the way in here.',
-	'passkey.adopt_note':        'Already have Daimond elsewhere? If you added a passkey there, it brings the account here — no pairing code, no passphrase.',
+	'passkey.adopt_note':        'If you added a passkey on another device, it brings that account here without a pairing code or a passphrase.',
 	'passkey.looking':           'Looking for your passkey…',
 	'passkey.waiting':           'Waiting for your passkey…',
 	'passkey.err_unusable':      'The passkey could not be used.',
 	'passkey.err_did_not_work':  'That passkey did not work. Use your passphrase.',
 	'passkey.err_enter_pass':    'Enter your passphrase.',
 	'passkey.add_title':         'Add a passkey',
-	'passkey.add_body':          'Confirm your passphrase to protect it with a passkey. Your device will then ask you to create the passkey — Face ID, Touch ID, Windows Hello or a security key.',
+	'passkey.add_body':          'Confirm your passphrase to protect it with a passkey. Your device then asks you to create it: Face ID, Touch ID, Windows Hello or a security key.',
 	'passkey.continue':          'Continue',
 	'passkey.not_added':         'Passkey not added',
 	'passkey.err_create_failed2': 'The passkey could not be created.',
 	'passkey.err_create_retry':  'The passkey could not be created. You can try again from Settings.',
 	'passkey.added':             'Passkey added',
-	'passkey.added_synced':      'You can now unlock Daimond with your passkey. Because your passkey syncs between your own devices, it will bring this account to a new phone or laptop as well — no pairing code needed. Your passphrase still works and remains the fallback.',
-	'passkey.added_local':       'You can now unlock Daimond on this device with your passkey. The account service could not be reached, so for now the passkey works here only; add it again once you are online to have it carry the account to your other devices. Your passphrase still works and remains the fallback.',
+	'passkey.added_synced':      'You can now unlock Daimond with your passkey. It syncs between your own devices, so it brings this account to a new phone or laptop without a pairing code. Your passphrase still works, and remains the fallback.',
+	'passkey.added_local':       'You can now unlock Daimond on this device with your passkey. The account service could not be reached, so for now it works here only; add it again once you are online and it will carry the account to your other devices. Your passphrase still works, and remains the fallback.',
 	'passkey.added_offer':       'Next time, Daimond will ask for your passkey instead of your passphrase. You can remove it from Settings at any time.',
 	'passkey.remove_title':      'Remove passkey?',
-	'passkey.remove_body':       'This removes the passkey from this device and stops it opening your account anywhere else — you will unlock with your passphrase. The passkey itself stays in your authenticator until you delete it there.',
+	'passkey.remove_body':       'The passkey comes off this device and stops opening your account anywhere else, so you unlock with your passphrase. The passkey itself stays in your authenticator until you delete it there.',
 	'passkey.removed':           'Passkey removed',
 	'passkey.removed_body':      'This device will ask for your passphrase from now on.',
 	'passkey.offer_title':       'Unlock with your face?',
-	'passkey.offer_body':        'Daimond can unlock with Face ID, Touch ID or your device PIN instead of the passphrase. It also carries this account to your other devices, since your passkey syncs between them. Your passphrase keeps working either way.',
+	'passkey.offer_body':        'Daimond can unlock with Face ID, Touch ID or your device PIN instead of the passphrase. Your passkey syncs between your devices, so it carries this account to them as well. Your passphrase keeps working either way.',
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title':  'Save your credits first?',
-	'forget.credits_body':   'This account holds {amount}. That is kept on Daimond\u2019s server and unlocked only by this identity. A backup saves the identity in encrypted form, so another device can take it over — but only with this account\u2019s passphrase, which the backup does not contain. If the passphrase is lost, nothing can bring the balance back. Export a backup now?',
+	'forget.credits_body':   'This account holds {amount}, kept on Daimond’s server and unlocked only by this identity. A backup saves the identity encrypted, so another device can take it over, but only with this account’s passphrase, which the backup does not contain. Lose the passphrase and nothing brings the balance back. Export a backup now?',
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
 	'forget.ok':             'Erase everything',
 	'forget.body':           'This erases your passphrase, your encrypted API key, and all of your chats, Diamonds and spend history on this device.',
 	'forget.tail':           'There is no recovery. Everything is gone.',
-	'forget.body_secondary': 'This removes the account \u201c{name}\u201d from this browser — its passphrase, keys, chats, Diamonds, spend and files.',
+	'forget.body_secondary': 'This removes the account “{name}” from this browser: its passphrase, keys, chats, Diamonds, spend and files.',
 	'forget.tail_secondary': 'There is no recovery. Other accounts here are untouched.',
 	'forget.abandons':       'It also abandons {amount} held on the server. Only this identity unlocks it, and only this account\u2019s passphrase opens a backup of the identity.',
 
@@ -1754,7 +1793,7 @@
 	'rename.title':               'Change name',
 	'rename.failed':              'Could not rename',
 	'changepass.lead':            'This replaces your current passphrase. There is no recovery, so write the new one down before you continue.',
-	'changepass.gen_note':        'Eight words picked at random by this device — about {bits} bits, far past anything that can be guessed. It becomes the key to everything you store here, and nobody can reset it for you. Write it on paper. Your password manager may also offer to update it, which is safe with a passphrase this strong.',
+	'changepass.gen_note':        'Eight words picked at random by this device, about {bits} bits, far past anything that can be guessed. It becomes the key to everything you store here, and nobody can reset it for you. Write it on paper. A password manager may also offer to update it, which is safe at this strength.',
 	'changepass.new_ph':          'New passphrase',
 	'changepass.again_ph':        'Type it once more',
 	'changepass.change_it':       'Change it',
@@ -1768,13 +1807,13 @@
 	'changepass.key_not_resealed': 'The passphrase changed, but your API key could not be re-encrypted. Re-enter it in Settings.',
 	'changepass.changed':         'Passphrase changed',
 	'changepass.changed_body':    'Your new passphrase is active. Your saved API key was re-encrypted under it.',
-	'changepass.passkey_stale':   'Your passkey could not be updated, so it will ask for the new passphrase — re-add it from Settings.',
+	'changepass.passkey_stale':   'Your passkey could not be updated, so it will ask for the new passphrase. Re-add it from Settings.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable':      'That backup file could not be read.',
 	'backup.not_a_backup':    'That is not a Daimond backup.',
 	'backup.identity_title':  'Account identity restored',
-	'backup.identity_body':   'The backup carried the identity for \u201c{name}\u201d, and this browser is now that account \u2014 including the credits and Pro licence held on the server for it. Unlock it with that account\u2019s passphrase; the backup does not contain the passphrase, and nothing else can open it.',
+	'backup.identity_body':   'The backup carried the identity for “{name}”, so this browser is now that account, with the credits and Pro licence held on the server for it. Unlock with that account’s passphrase; the backup does not contain it, and nothing else opens the account.',
 	'backup.identity_kept':   'This browser already holds an account, so the identity for \u201c{name}\u201d in that backup was left alone. Everything else was restored.',
 	'backup.identity_failed': 'The identity in that backup could not be restored.',
 	'backup.restored':        'Backup restored',
@@ -1787,23 +1826,23 @@
 	// only two places they could go — a folder named after a stranger inside this
 	// workspace, or into that account's private storage — and neither is a restore, so
 	// they are left out and the user is told rather than left to notice.
-	'backup.n_foreign.one':   '{n} file in that backup belongs to another account at the browser it came from, so it was not restored and remains only in the backup file.',
-	'backup.n_foreign.other': '{n} files in that backup belong to another account at the browser it came from, so they were not restored and remain only in the backup file.',
+	'backup.n_foreign.one':   '{n} file in that backup belongs to another account at that browser, so it was not restored and stays only in the backup.',
+	'backup.n_foreign.other': '{n} files in that backup belong to another account at that browser, so they were not restored and stay only in the backup.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other':            'Other (type manually)…',
 	'models.enter_key_first':  'Enter your API key to load models…',
-	'models.key_rejected':     'That API key was rejected — check it and try again.',
-	'models.list_failed':      'Could not load models automatically — pick "Other" and type a model id.',
+	'models.key_rejected':     'That API key was rejected. Check it and try again.',
+	'models.list_failed':      'Could not load models automatically. Pick "Other" and type a model id.',
 
 
 	// ── The provider form's refusals ───────────────────────────
 	'byok.err_provider': 'Choose a provider first.',
 	'byok.err_base_url': 'Enter the provider base URL.',
-	'byok.err_bad_url':  'That base URL is not a web address — it should start with https:// and name the provider\u2019s host.',
+	'byok.err_bad_url':  'That base URL is not a web address. It should start with https:// and name the provider’s host.',
 	'byok.err_key':      'Paste your API key.',
 	'byok.err_model':    'Choose a model, or wait a moment for the list to load.',
-	'byok.err_rejected': 'That API key was rejected by the provider — check it and try again.',
+	'byok.err_rejected': 'The provider rejected that API key. Check it and try again.',
 
 	// ── Confirming something irreversible ──────────────────────
 	'confirm.yes_do_it':    'Yes, do it',
@@ -1816,17 +1855,27 @@
 	'checkout.cancelled_body':   'Nothing was charged and your balance is unchanged.',
 	'checkout.card_saved':       'Card saved',
 	'checkout.card_saved_body':  'Daimond can now top up your credits automatically. Set the limits below, then switch it on. Nothing has been charged.',
-	'checkout.card_pending_body': 'Stripe has taken the card. It may take a moment to appear here — reopen Credits shortly. Nothing has been charged.',
+	'checkout.card_pending_body': 'Stripe has taken the card. It may take a moment to appear here; reopen Credits shortly. Nothing has been charged.',
 	'checkout.pro_unlocked':     'Pro unlocked',
 	'checkout.pro_unlocked_body': 'You own Daimond. Cross-device sync, cloud storage and Email are on. Nothing renews.',
 	'checkout.received':         'Payment received',
 	'checkout.pro_pending_body': 'Your Pro unlock is being confirmed and will appear here shortly. Reopen Credits in a moment.',
 	'checkout.credits_pending_body': 'Your credits are still being confirmed. They will appear here shortly.',
 
+	// ── Going out to a checkout ────────────────────────────────
+	// The two ways buying can fail before Stripe is ever reached: the account
+	// service did not answer, and it answered without the address to go to. Both
+	// arrive at the user through `friendlyError`, which shows them verbatim.
+	// A card and a credit pack are named apart, because a buyer who pressed
+	// "Save a card" should not be told about a checkout they did not start.
+	'gateway.acct_unreachable': 'Could not reach the Daimond account service. Try again shortly.',
+	'gateway.session_no_url':   'The checkout session came back without a URL.',
+	'gateway.card_no_url':      'The card session came back without a URL.',
+
 	// ── A few more from the Workspace and Agents panels ────────
 	'files.folder_open_failed': 'Could not open that folder.',
 	'files.import':             'Import',
-	'files.import_body':        'Copy "{name}" into the workspace? Everything in it will then sync to your other devices, and count towards your storage.',
+	'files.import_body':        'Copy "{name}" into the workspace? Everything in it then syncs to your other devices and counts towards your storage.',
 	'files.this_file':          'this file',
 	'files.unsaved_close':      'Your changes to {path} have not been saved. Close it and lose them?',
 	'agents.no_diamond':        'no Diamond',
@@ -1842,8 +1891,8 @@
 	'err.denied_403':   'The provider denied access (403). Check your key and plan.',
 	'err.notfound_404': 'That endpoint was not found (404). Check the base URL in Settings.',
 	'err.ratelimit_429': 'The provider is rate-limiting you (429). Wait a moment and retry.',
-	'err.server_5xx':   'The provider had a server error. Please try again shortly.',
-	'err.generic':      'Something went wrong. Please try again.',
+	'err.server_5xx':   'The provider had a server error. Try again shortly.',
+	'err.generic':      'Something went wrong. Try again.',
 	'err.reply_cut':    'The reply ran out of room at {max} tokens, so a tool call arrived incomplete and could not run. Raise the reply length in Settings, or ask for a smaller change',
 
 	// ── How long a reply may be ────────────────────────────────
@@ -1857,7 +1906,7 @@
 	'settings.max_rounds':         'Steps per turn',
 	'settings.crystal_limits':   'Size limits',
 	'settings.crystal_cap':      'Crystal size limit',
-	'settings.crystal_cap_note': 'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is told to put the detail in a file in the Diamond’s scope instead.',
+	'settings.crystal_cap_note': 'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon puts the detail in a file in the Diamond’s scope.',
 	'settings.crystal_cap_auto': 'Default',
 	'settings.crystal_page_cap': 'Page size limit',
 	'settings.crystal_page_cap_note': 'The page that renders a Diamond’s data. It travels in every sync, so it shares the budget with the data itself.',
@@ -1867,7 +1916,7 @@
 	'settings.fold_model':         'Fold with',
 	'settings.fold_model_own':     'The conversation’s own model',
 	'settings.fold_model_group':   'Fold with instead',
-	'settings.fold_model_note':    'When a conversation outgrows its window it is summarised, and the summary becomes what the model remembers. This chooses what writes it. Only chats on the same provider use it — every other chat folds with its own model.',
+	'settings.fold_model_note':    'When a conversation outgrows its window it is summarised, and the summary becomes what the model remembers. This chooses what writes it, for chats on the same provider; every other chat folds with its own model.',
 
 	// ── The permission ladder ──────────────────────────────────
 	// What Daimond does WITHOUT ASKING. Nothing here moves the fence, the
@@ -1890,11 +1939,11 @@
 	'permmode.bypass_blurb': 'Nothing is asked. Commands run and pages are fetched, whatever the turn has read.',
 
 	'permmode.bypass_title': 'Stop asking?',
-	'permmode.bypass_body':  'Bypass means Daimond stops asking. It will run commands on your machine without putting them to you, and it will fetch a page it chose without asking — including on a turn that has already read a web page, an email, or a build log written by somebody else.\n\nThat last one is the whole of what you are giving up. It is the moment where something you did not write could talk Daimond into sending your work somewhere.\n\nWhat bypass does NOT change: a command still runs inside the same fence, and each Diamond still reaches only its own folders; the system-call filter under it is untouched; text from outside is still marked as somebody else\u2019s words; and every command is still written into the machine hand\u2019s journal, so what happened can be checked afterwards.\n\nYou will not be asked this again.',
+	'permmode.bypass_body':  'Bypass stops the asking. Daimond runs commands on your machine and fetches pages it chose without putting either to you, including on a turn that has already read a web page, an email, or a build log written by somebody else.\n\nThat last case is what you are giving up. It is where something you did not write could talk Daimond into sending your work somewhere.\n\nBypass leaves the rest alone. A command still runs inside the same fence; each Diamond still reaches only its own folders; the system-call filter under it is untouched; text from outside is still marked as somebody else’s words; and every command still goes into the machine hand’s journal, so what ran can be checked afterwards.\n\nYou will not be asked this again.',
 	'permmode.bypass_ok':    'Use bypass',
 
 	'permmode.run_title':    'Run this command?',
-	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nYou are in the \u201cask every time\u201d permission mode, so every command is put to you first.',
+	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nThe “ask every time” permission mode puts every command to you first.',
 	'permmode.run_ok':       'Run it',
 
 	// ── When conversations stop being saved ────────────────────
@@ -1910,24 +1959,47 @@
 	// ── The delivery check ─────────────────────────────────────
 	// A page checking itself. The check NAMES are what a reader scans down, so
 	// keep them short; the details are the sentence under a failure.
+	//
+	// The page around them (verify.html) is here too. It used to be English in
+	// every language, under a verdict that was translated -- so a reader was told
+	// "manifest self-consistent" in their own language beneath a heading that was
+	// not. The verdict lines are the sentences a person acts on, so they carry
+	// their emphasis: {NOT} in `verdict_no` is deliberate and should stay loud in
+	// whatever way the language has.
+	'verify.page_title':      'Verify Daimond',
+	'verify.page_lede':       'Check that the Daimond this page came from is the published open source. The evidence is a hash you can reproduce yourself.',
+	'verify.checking':        'Checking this build…',
+	'verify.recheck':         'Check again',
+	'verify.hashing':         'hashing served files… {done} / {total}',
+	'verify.ids':             'build {build}  ·  bundle {bundle}',
+	'verify.verdict_ok':      'This build is the published source, and it was sealed.',
+	'verify.verdict_no':      'This build does NOT match the published source.',
+	'verify.verdict_partial': 'Could not fully verify. The checks say why.',
+	'verify.independent':     'The independent check.',
+	'verify.independent_body': 'A page cannot fully vouch for itself. Build the public source and run the verifier; nothing this server controls is in that loop:',
+	// Stands in the command below where the page could not read its own origin.
+	'verify.this_site':       'this site',
+	// {url} is the transparency log's address, held by the page and never by a
+	// translation -- keep the placeholder and the anchor around the words.
+	'verify.green_means':     'Green means the bytes this site served are the source you just built, and that build is a sealed entry in the public <a href="{url}">transparency log</a>.',
 	'verify.check_manifest':  'manifest',
 	'verify.check_self':      'manifest self-consistent',
 	'verify.check_log':       'public transparency log',
 	'verify.check_sealed':    'sealed in the public log',
 	'verify.check_files':     'every served file matches the manifest',
-	'verify.no_manifest':     'this build was served without a manifest.json — it cannot be checked',
+	'verify.no_manifest':     'this build was served without a manifest.json, so it cannot be checked',
 	'verify.self_mismatch':   'the manifest bundle hash does not match its file list',
 	'verify.log_broken':      'the public log is not an intact chain: {reason}',
-	'verify.log_unreachable': 'could not reach the public log (offline, or blocked by policy) — run verify/check.mjs to be sure',
+	'verify.log_unreachable': 'could not reach the public log (offline, or blocked by policy); run verify/check.mjs to be sure',
 	'verify.on_record':       '{n} releases on record',
-	'verify.never_published': 'this served bundle is NOT in the public history — it was never published',
+	'verify.never_published': 'this served bundle is NOT in the public history; it was never published',
 	'verify.unreadable':      '(unreadable)',
 	'verify.files_differ':    '{n} differ: {list}',
 	'verify.files_ok':        '{n} files',
 	'verify.chain_order':     'entry {n} out of order',
 	'verify.chain_break':     'entry {n} does not chain on {prev}',
 	'verify.chain_hash':      'entry {n} hash mismatch',
-	'verify.caveat':          'A page cannot fully vouch for itself: a tampered server could tamper with this very check. For an independent verdict, build the public source and run verify/check.mjs, or use the delivery-verify browser extension — neither of which this server can touch.',
+	'verify.caveat':          'A page cannot vouch for itself: a tampered server could tamper with this check too. For an independent verdict, build the public source and run verify/check.mjs, or use the delivery-verify browser extension. This server can touch neither.',
 
 	// ── Versions and the release history ───────────────────────
 	'rel.version':          'Version',
@@ -1946,7 +2018,7 @@
 	'rel.months_ago.other': '{n} months ago',
 	'rel.years_ago.one':    '{n} year ago',
 	'rel.years_ago.other':  '{n} years ago',
-	'rel.title_named':      '{name} — build {build}, published {date}.',
+	'rel.title_named':      '{name}, build {build}, published {date}.',
 	'rel.title_prerelease': 'Pre-release, build {build}, published {date}.',
 	'rel.title_behind':     'A newer build has been published; reload to take it.',
 	'rel.title_click':      'Click for what changed.',
@@ -1957,14 +2029,14 @@
 	'rel.sealed_no':        'sealed #{n}',
 	'rel.sealed_builds.one':   '{n} sealed build',
 	'rel.sealed_builds.other': '{n} sealed builds',
-	'rel.foot':             'A release is declared; a build is deployed. Every build above is recorded in a chain that cannot be rewritten without breaking. There is no way back to an older one, on purpose.',
+	'rel.foot':             'A release is declared; a build is deployed. Every build here is recorded in a chain that cannot be rewritten without breaking. There is deliberately no way back to an older one.',
 
 	// ── Updates ────────────────────────────────────────────────
 	'update.checking':   'Checking for updates…',
 	'update.latest':     'You are on the latest version',
 	'update.ready':      'Update ready',
 	'update.click_now':  'Click to update now.',
-	'update.ready_help': 'Update ready — it will apply when this finishes, or click to force it.',
+	'update.ready_help': 'Update ready. It applies when this finishes, or click to force it.',
 	'update.updated':    'Daimond updated',
 	'update.stale':      'Daimond is out of date and must reload to keep working. Click to reload.',
 
@@ -1982,15 +2054,15 @@
 	// One still picture of the Diamonds and the links between them. It is an
 	// instrument for checking the structure, so the wording states what is
 	// there rather than praising it.
-	'graph.no_diamonds':        'There are no Diamonds yet, so there is nothing to draw.',
+	'graph.no_diamonds':        'No Diamonds yet, so there is nothing to draw.',
 	'graph.isolated':           'Not linked',
 	'graph.unnamed':            'Untitled',
 	'graph.link_mode': 'Link',
 	'graph.link_help': 'Click the Diamond a link starts at, then the one it points at. Escape cancels.',
 	'graph.organise': 'Organise',
-	'graph.organise_help': 'Lay the Diamonds out again to reduce crossings, and keep where it puts them.',
+	'graph.organise_help': 'Lay the Diamonds out again to reduce crossings, and keep the new positions.',
 	'graph.pick_source': 'Click the source, then the target. Escape cancels.',
-	'graph.pick_target': 'From {name} — click the target, or Escape.',
+	'graph.pick_target': 'From {name}. Click the target, or press Escape.',
 	'graph.menu_link': 'Link from here…',
 	'graph.menu_open': 'Open this Diamond',
 	'graph.menu_reset_node': 'Put this Diamond back',
@@ -1998,8 +2070,22 @@
 	'graph.menu_reset_view': 'Reset the view',
 	'graph.menu_edit_link': 'Edit this link…',
 	'graph.menu_drop_link': 'Delete this link',
+	// The zoom control that takes in the whole picture. One word: it rides in a
+	// row of zoom buttons beside the numbers.
+	'graph.fit': 'All',
+	'graph.fit_help': 'Scale the picture until every Diamond is on screen.',
 	'graph.edit_title': 'Link',
 	'graph.new_title': 'New link',
+	// A link carries several relations, added one at a time. `graph.rel_pool` heads
+	// the words already used elsewhere in this graph, offered so the same idea is
+	// not written three ways.
+	'graph.rels_label': 'Relations',
+	'graph.rel_add_ph': 'part-of, blocks… one at a time',
+	'graph.rel_add': 'Add this relation',
+	'graph.rel_pool': 'Already in use',
+	'graph.rel_none': 'No relation yet.',
+	'graph.rel_remove': 'Remove {rel}',
+	'graph.rel_full': 'A link carries at most {n} characters of relation.',
 	'graph.rel_label': 'Relation',
 	'graph.rel_ph': 'part-of, blocks, supersedes…',
 	'graph.note_label': 'Note',
@@ -2059,30 +2145,30 @@
 	'term.starting':         'Starting a terminal…',
 	'term.running':          'The terminal is running.',
 	'term.nothing_running':  'There is no program running in this terminal.',
-	'term.not_paired':       'There is no machine hand paired with this browser, so there is no machine to open a terminal on. Everything else in Daimond works without one.',
-	'term.no_composer':      'This build of Daimond cannot say what a terminal would be allowed to touch, so it will not open one. The compartment is worked out by the Rust side of the app, and this page is older than that. Update Daimond; commands and the file tools are unaffected.',
-	'term.unreadable_request': 'Daimond could not read its own answer about what this terminal would be allowed to touch, so nothing was started. Reload the app, and if it happens again the app needs updating.',
-	'term.no_relay_script':  'The terminal relay did not load in this page, so no terminal can be opened. That is a fault in the app rather than anything about your machine: reload Daimond.',
-	'term.no_renderer':      'The terminal itself did not load in this page, so there is nothing to draw one on. That is a fault in the app rather than anything about your machine: reload Daimond.',
+	'term.not_paired':       'No machine hand is paired with this browser, so there is no machine to open a terminal on. Everything else in Daimond works without one.',
+	'term.no_composer':      'This build cannot say what a terminal would be allowed to touch, so it will not open one. The Rust side of the app works that out, and this page is older than it. Update Daimond; commands and the file tools are unaffected.',
+	'term.unreadable_request': 'Daimond could not read its own answer about what this terminal would be allowed to touch, so nothing was started. Reload the app; if it happens again, the app needs updating.',
+	'term.no_relay_script':  'The terminal relay did not load in this page, so no terminal can be opened. Nothing is wrong with your machine. Reload Daimond.',
+	'term.no_renderer':      'The terminal itself did not load in this page, so there is nothing to draw one on. Nothing is wrong with your machine. Reload Daimond.',
 
 	// The durable trail, shown on the lock screen only when the app is
 	// actually looping -- three boots in ninety seconds. See breadcrumb.js.
-	'trail.looping':         'Daimond has restarted {n} times in the last minute. This is what it did — copy it into a bug report.',
+	'trail.looping':         'Daimond has restarted {n} times in the last minute. This is what it did; copy it into a bug report.',
 	'trail.copy':            'Copy',
 	'trail.copied':          'Copied',
 	'trail.clear':           'Clear',
 
 	// A safe start: the app opens without the sync engine, so a device that
 	// cannot stay open long enough to be used gets to be used. See safe.js.
-	'safe.armed':            'Daimond has started without syncing, so it should stay open. Your work is safe on this device; it is just not travelling to your other devices until this is turned back on.',
+	'safe.armed':            'Daimond has started without syncing, so it should stay open. Your work is safe on this device, and reaches your other devices again once syncing is turned back on.',
 	'safe.offer':            'If Daimond will not stay open, start it without syncing. Your work stays on this device and nothing is deleted.',
 	'safe.turn_off':         'Start without syncing',
 	'safe.turn_on':          'Turn syncing back on',
 	'safe.chip':             'Sync off (safe start)',
-	'safe.chip_reason':      'Daimond started without syncing, so this device’s work is not reaching your other devices. Nothing has been lost — it is all still here.',
+	'safe.chip_reason':      'Daimond started without syncing, so this device’s work is not reaching your other devices. Nothing is lost; it is all still here.',
 	'safe.chip_click':       'Click to turn syncing back on.',
 	'safe.turn_on_title':    'Turn syncing back on?',
-	'safe.turn_on_ask':      'Daimond will restart and try to sync with your other devices again. If it starts closing itself again, it will go back to a safe start on its own.',
+	'safe.turn_on_ask':      'Daimond restarts and tries to sync with your other devices again. If it starts closing itself, it goes back to a safe start on its own.',
 	'safe.turn_on_ok':       'Restart with syncing',
 
 
@@ -2090,11 +2176,11 @@
 	// panel. See safe.js and breadcrumb.js.
 	'home.sec_sync':        'Syncing and diagnostics',
 	'settings.sync':        'Syncing',
-	'settings.sync_on_note': 'This device is sending its work to your other devices. Stopping is immediate and loses nothing — everything stays here.',
+	'settings.sync_on_note': 'This device is sending its work to your other devices. Stopping is immediate and loses nothing; everything stays here.',
 	'settings.sync_off_note': 'This device is not syncing. Its work is safe here and is not reaching your other devices.',
 	'settings.trail':       'Diagnostics',
 	'settings.trail_copy':  'Copy the app’s own trail',
-	'settings.trail_note':  'What Daimond last did — event names and a clock, no keys, no message text, nothing from your files. Safe to paste into a bug report.',
+	'settings.trail_note':  'What Daimond last did: event names and a clock, no keys, no message text, nothing from your files. Safe to paste into a bug report.',
 	'settings.trail_empty': 'Nothing recorded yet.',
 	// ── The Trash ──────────────────────────────────────────────
 	// Deleting a chat or a Diamond moves it here and asks nothing. The two
@@ -2105,7 +2191,7 @@
 	'trash.holding.one': '{n} thing, {bytes}',
 	'trash.holding.other': '{n} things, {bytes}',
 	'trash.until': 'Until {date}',
-	'trash.deleted_why': 'Deleted — it is only here.',
+	'trash.deleted_why': 'Deleted. It is only here.',
 	'trash.kind_chat': 'chat',
 	'trash.kind_diamond': 'diamond',
 	'trash.unnamed_chat': 'Unnamed chat',

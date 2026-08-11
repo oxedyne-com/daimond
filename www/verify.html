@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Verify Daimond</title>
+<title data-i18n="verify.page_title">Verify Daimond</title>
 <style>
 	:root { color-scheme: dark light; --bg:#17130F; --fg:#ECE6DC; --dim:#A79E92; --line:#332C25;
 		--ok:#7FB069; --no:#E07A67; --warn:#D6A24A; --acc:#D2604F; }
@@ -34,28 +34,31 @@
 </head>
 <body>
 <main>
-	<h1>Verify Daimond</h1>
-	<p class="lede">Check that the Daimond this page came from is the published, open source — not our word for it, a hash you can reproduce.</p>
+	<h1 data-i18n="verify.page_title">Verify Daimond</h1>
+	<p class="lede" data-i18n="verify.page_lede">Check that the Daimond this page came from is the published open source. The evidence is a hash you can reproduce yourself.</p>
 
 	<div class="card">
-		<div id="verdict" class="verdict"><span class="dot" id="dot"></span><span id="headline">Checking this build…</span></div>
+		<div id="verdict" class="verdict"><span class="dot" id="dot"></span><span id="headline" data-i18n="verify.checking">Checking this build…</span></div>
 		<div id="ids" class="mono" style="margin-top:8px"></div>
 		<ul class="checks" id="checks"></ul>
 		<p class="prog" id="prog"></p>
-		<p style="margin-top:14px"><button id="recheck" disabled>Check again</button></p>
+		<p style="margin-top:14px"><button id="recheck" disabled data-i18n="verify.recheck">Check again</button></p>
 	</div>
 
 	<div class="card caveat" id="caveat"></div>
 
 	<div class="card">
-		<b>The check that actually counts.</b>
-		<p class="lede" style="margin:8px 0 6px">A page can't fully vouch for itself. For an independent verdict, build the public source and run the verifier — nothing this server controls is in the loop:</p>
+		<b data-i18n="verify.independent">The independent check.</b>
+		<p class="lede" style="margin:8px 0 6px" data-i18n="verify.independent_body">A page cannot fully vouch for itself. Build the public source and run the verifier; nothing this server controls is in that loop:</p>
+		<!-- The commands are commands. They are the same in every language and are
+		     deliberately unmarked; only the stand-in for this site's address is a
+		     word, and the script replaces it with the address itself. -->
 		<pre>git clone https://github.com/oxedyne-com/daimond
 cd daimond
 rustup target add wasm32-unknown-unknown
 wasm-pack build --target web --out-dir www/pkg
-node verify/check.mjs --url <span id="origin">this site</span></pre>
-		<p class="lede" style="margin:6px 0 0">Green means the bytes this site served are the source you just built, and that build is a sealed entry in the public <a href="https://github.com/oxedyne-com/daimond/blob/main/verify/transparency.jsonl">transparency log</a>.</p>
+node verify/check.mjs --url <span id="origin" data-i18n="verify.this_site">this site</span></pre>
+		<p class="lede" style="margin:6px 0 0" id="green"></p>
 	</div>
 </main>
 
@@ -72,13 +75,65 @@ node verify/check.mjs --url <span id="origin">this site</span></pre>
 	var dot = document.getElementById('dot'), headline = document.getElementById('headline');
 	var checksEl = document.getElementById('checks'), idsEl = document.getElementById('ids');
 	var progEl = document.getElementById('prog'), caveatEl = document.getElementById('caveat');
-	var btn = document.getElementById('recheck');
-	try { document.getElementById('origin').textContent = location.origin; } catch (e) {}
+	var btn = document.getElementById('recheck'), greenEl = document.getElementById('green');
+	var LOG = 'https://github.com/oxedyne-com/daimond/blob/main/verify/transparency.jsonl';
+
+	/// The table's string, or the English beside the key while the tables load --
+	/// and for a page served without them at all. Named `tOr` because
+	/// `dev/i18nfallback.mjs` finds fallbacks by that name and holds every one of
+	/// them to the catalogue's own wording.
+	function tOr(key, english, vars) {
+		var s = window.DaimondI18n ? DaimondI18n.t(key, vars) : key;
+		if (s !== key) return s;
+		if (!vars) return english;
+		return String(english).replace(/\{(\w+)\}/g, function (whole, k) {
+			return vars[k] != null ? String(vars[k]) : whole;
+		});
+	}
+
+	/// A sentence put on a node, and the node RE-MARKED with the key it came from.
+	///
+	/// The mark is what `apply()` repaints from, and the headline changes what it
+	/// is saying: it ships marked `verify.checking` and then carries a verdict.
+	/// Leaving the old mark on it means the table landing a moment later paints
+	/// "Checking this build…" back over a finished verdict.
+	///
+	/// The key is written twice at each call, once here and once inside the `tOr`
+	/// that resolves the words. That is deliberate: `dev/i18nfallback.mjs` finds a
+	/// fallback by the `tOr(` around it, so a helper that took the English itself
+	/// would hide every sentence on this page from the check that keeps them in
+	/// step with the catalogue.
+	function say(node, key, text) {
+		node.setAttribute('data-i18n', key);
+		node.textContent = text;
+	}
+
+	// This site's own address, in the command a reader is meant to copy. The mark
+	// goes with it: the address is not a string any table has, and a repaint would
+	// put the stand-in back over it.
+	try {
+		var originEl = document.getElementById('origin');
+		originEl.removeAttribute('data-i18n');
+		originEl.textContent = location.origin;
+	} catch (e) {}
+
+	/// The closing sentence, whose last words are a link. The address is the
+	/// page's, never a translation's -- {url} is filled here so a locale file
+	/// carries the sentence and not the URL.
+	function paintGreen() {
+		greenEl.innerHTML = tOr('verify.green_means',
+			'Green means the bytes this site served are the source you just built, and that build is'
+			+ ' a sealed entry in the public <a href="{url}">transparency log</a>.', { url: LOG });
+	}
+	paintGreen();
+
 	// Bring in the chosen language, if there is one, and redraw when it lands.
 	if (window.DaimondI18n) {
 		try {
 			DaimondI18n.load(DaimondI18n.locale()).then(function () {
 				DaimondI18n.apply();
+				try { document.documentElement.lang = DaimondI18n.locale(); } catch (e) {}
+				paintGreen();
 				if (!btn.disabled) run();
 			});
 		} catch (e) { /* English is already here */ }
@@ -88,17 +143,25 @@ node verify/check.mjs --url <span id="origin">this site</span></pre>
 
 	async function run() {
 		btn.disabled = true; checksEl.innerHTML = ''; idsEl.textContent = '';
-		dot.className = 'dot'; headline.textContent = 'Checking this build…';
+		dot.className = 'dot';
+		say(headline, 'verify.checking', tOr('verify.checking', 'Checking this build…'));
 		progEl.textContent = '';
 		var v = await window.DaimondVerify.check({
-			onProgress: function (d, t) { progEl.textContent = 'hashing served files… ' + d + ' / ' + t; },
+			onProgress: function (d, t) {
+				progEl.textContent = tOr('verify.hashing', 'hashing served files… {done} / {total}',
+					{ done: d, total: t });
+			},
 		});
 		progEl.textContent = '';
 		dot.className = 'dot ' + (v.ok ? 'ok' : v.failed ? 'no' : 'warn');
-		headline.textContent = v.ok ? 'This build is the published source, and it was sealed.'
-			: v.failed ? 'This build does NOT match the published source.'
-			: 'Could not fully verify — see below.';
-		if (v.build) idsEl.textContent = 'build ' + v.build + '  ·  bundle ' + v.bundle;
+		if (v.ok) say(headline, 'verify.verdict_ok',
+			tOr('verify.verdict_ok', 'This build is the published source, and it was sealed.'));
+		else if (v.failed) say(headline, 'verify.verdict_no',
+			tOr('verify.verdict_no', 'This build does NOT match the published source.'));
+		else say(headline, 'verify.verdict_partial',
+			tOr('verify.verdict_partial', 'Could not fully verify. The checks say why.'));
+		if (v.build) idsEl.textContent = tOr('verify.ids', 'build {build}  ·  bundle {bundle}',
+			{ build: v.build, bundle: v.bundle });
 		v.checks.forEach(function (c) {
 			var m = mark(c);
 			var li = document.createElement('li');

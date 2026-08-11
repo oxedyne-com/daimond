@@ -308,7 +308,7 @@
 					kind: 'tool-misses',
 					what: r.missedAfter + ' of your turns using ' + name
 						+ ' needed correcting afterwards.',
-					do_: 'It is answering, but not with what was wanted. Worth watching what it returns.',
+					do_: 'It answers, but with the wrong thing. Check what it returns.',
 				});
 			}
 		});
@@ -321,7 +321,7 @@
 					kind: 'model-misses',
 					what: Math.round(100 * r.missed / r.turns) + '% of turns on ' + m
 						+ ' needed correcting (' + r.missed + ' of ' + r.turns + ').',
-					do_: 'Worth trying a different model on whatever uses this one most.',
+					do_: 'Try a different model on whatever uses this one most.',
 				});
 			}
 		});
@@ -347,7 +347,7 @@
 				out.push({
 					kind: 'repeated',
 					what: 'You have asked for the same thing ' + r.n + ' times.',
-					do_: 'That is a line for the crystal, or a skill worth having.',
+					do_: 'Put it in the crystal, or make it a skill.',
 				});
 			}
 		});
@@ -426,7 +426,7 @@
 		if (!f.length) {
 			// Silence is a valid week. An Optimiser that always finds three
 			// things is inventing them.
-			L.push('Nothing. That is a real answer, not a missing section.');
+			L.push('Nothing. This section is empty because nothing stood out.');
 		} else {
 			f.forEach(function (x) { L.push('- **' + x.what + '** ' + x.do_); });
 		}

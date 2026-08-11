@@ -450,17 +450,26 @@ try {
 		bin ? String(bin.hexAt) : '');
 	// The two paging controls are found by the words on them, in whatever
 	// language the app is speaking, and never by their position in the bar.
+	//
+	// THE CATALOGUE IS THE AUTHORITY, and it was not always. `fileview.hex_prev`
+	// and `fileview.hex_next` were absent from `i18n/en.js` until 2026-08-11, so
+	// this held 'Earlier bytes' and 'Later bytes' itself and compared the buttons
+	// against its own copy. A check carrying its own wording goes on passing after
+	// the catalogue's wording changes -- it stops asking about the app and starts
+	// asking about itself. A key the catalogue has not got is now a FAILURE here,
+	// which is what it should have been: the panel would be showing a raw key.
 	const paging = await page.evaluate(() => {
-		const t = (k, e) => {
-			const s = window.DaimondI18n ? DaimondI18n.t(k) : k;
-			return (s == null || s === k) ? e : s;
+		const cat = (k) => {
+			const s = window.DaimondI18n ? window.DaimondI18n.t(k) : null;
+			return (s == null || s === k) ? null : s;
 		};
-		const want = [t('fileview.hex_prev', 'Earlier bytes'), t('fileview.hex_next', 'Later bytes')];
+		const want = ['fileview.hex_prev', 'fileview.hex_next'].map((k) => ({ key: k, said: cat(k) }));
 		const say  = Array.from(document.querySelectorAll('#fv-host .fv-hexbar .fv-btn'))
 			.map((b) => b.textContent);
-		return want.every((w) => say.indexOf(w) !== -1);
+		return { want, say, ok: want.every((w) => w.said !== null && say.indexOf(w.said) !== -1) };
 	});
-	check(paging, 'the dump can be walked forwards and back, by controls that say so');
+	check(paging.ok, 'the dump can be walked forwards and back, by controls the catalogue names',
+		paging.ok ? '' : JSON.stringify(paging));
 
 	// ── The original bug, stated as a fixture ────────────────────
 	await put('view/notes.log', LOGBYTES);

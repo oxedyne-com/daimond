@@ -109,7 +109,7 @@
 			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
 		</button>
 		<div class="brand-group">
-		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond — the daimond.app home page" data-i18n-aria-label="topbar.brand">
+		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond, the daimond.app home page" data-i18n-aria-label="topbar.brand">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
 		</a>
@@ -182,7 +182,7 @@
 					aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list"
 					placeholder="Go to a panel, or a setting…" data-i18n-placeholder="pal.placeholder">
 				<button class="ui-close pal-close" id="pal-close" type="button" title="Close"
-					aria-label="Close Go to" data-i18n-title="common.close" data-i18n-aria-label="pal.close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+					aria-label="Close the Go to box" data-i18n-title="common.close" data-i18n-aria-label="pal.close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 			</div>
 			<ul class="pal-list" id="pal-list" role="listbox" aria-label="Results" data-i18n-aria-label="pal.results"></ul>
 		</div>
@@ -221,7 +221,7 @@
 					     handler in daimond.js binds by `[data-close]` and does not care
 					     where the button sits. -->
 					<button class="addbtn panel-close ui-close" data-close="rail" title="Close panel"
-						aria-label="Close Diamonds" data-i18n-title="common.close_panel" data-i18n-aria-label="rail.close_rail">
+						aria-label="Close the Diamonds panel" data-i18n-title="common.close_panel" data-i18n-aria-label="rail.close_rail">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
@@ -230,7 +230,7 @@
 				     is cut and polished above it. The order is not decoration --
 				     a chat is raw and a Diamond is worked, and the rail says so
 				     without needing a word of explanation. -->
-				<div class="railhead"><span role="heading" aria-level="2" title="What you have brought up and cut: a repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
+				<div class="railhead"><span role="heading" aria-level="2" title="A repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
 					<button class="addbtn" id="new-diamond-btn" title="New Diamond" data-i18n-title="rail.new_diamond">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
@@ -259,7 +259,7 @@
 				     list used to grow until the chat tiles were off the bottom of the
 				     rail with no way to get them back. -->
 				<div class="rhandle" id="handle-rail-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
-				<div class="railhead"><span role="heading" aria-level="2" title="The seam you work in. Raw conversation, out of which a Diamond is cut." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
+				<div class="railhead"><span role="heading" aria-level="2" title="Raw conversation. A Diamond is cut from it." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
 					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
@@ -357,7 +357,7 @@
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. One model is the default that new chats and Diamonds start on; any of them can be picked for a single chat.</p>
+							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. New chats and Diamonds start on the default model; any model can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
 							<button type="button" id="models-add" class="models-add" data-i18n="models.add">+ Add provider</button>
 
@@ -432,7 +432,7 @@
 					<!-- Credits: reached from the "Credits" status row. -->
 					<div class="admin-view" id="admin-credits" style="display:none">
 						<div class="settings-section" id="credits-section">
-							<p class="cfg-lead" data-i18n="credits.lead">Don't want to manage a provider key? Buy credits and Daimond runs the model for you. No subscription: you keep what you buy, and nothing is charged again unless you turn on auto-reload below.</p>
+							<p class="cfg-lead" data-i18n="credits.lead">Buy credits and Daimond runs the model for you, with no provider key to manage. No subscription. You keep what you buy, and nothing is charged again unless you turn on auto-reload.</p>
 							<div class="pro-block" id="credits-pro"></div>
 							<div class="credits-balance" id="credits-balance"></div>
 							<div class="credits-packs" id="credits-packs"></div>
@@ -453,20 +453,20 @@
 					     authenticate with a message that names neither box. -->
 					<div class="admin-view" id="admin-push" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead" data-i18n="push.lead">Give Daimond a token and it can push work you have already committed. Without one it can still commit, but every push is refused and the work stays on this machine.</p>
+							<p class="cfg-lead" data-i18n="push.lead">A token lets Daimond push work you have committed. Without one it still commits, but every push is refused and the work stays on this machine.</p>
 							<div id="push-state" class="cfg-fieldnote"></div>
 							<label class="cfg-fieldlabel" for="cfg-push-host" data-i18n="push.host">Host</label>
 							<input type="text" id="cfg-push-host" placeholder="github.com" data-i18n-placeholder="push.host_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-							<p class="cfg-fieldnote" data-i18n="push.host_note">Just the name, as in github.com — no https://, no port, no path. Only pushes to this host are authenticated; a repository anywhere else is refused rather than reached with your token.</p>
+							<p class="cfg-fieldnote" data-i18n="push.host_note">Just the name, as in github.com. No https://, no port, no path. Only this host is authenticated; a repository anywhere else is refused, and your token never reaches it.</p>
 							<!-- Built exactly as #cfg-api-key is, and masked by installSecretMask
 							     for the same reason: a real password field is what makes a browser
 							     or a manager offer to save it, and this one belongs in neither. -->
 							<label class="cfg-fieldlabel" for="cfg-push-token" data-i18n="push.token">Token</label>
 							<input type="text" id="cfg-push-token" placeholder="Paste a token with push access" data-i18n-placeholder="push.token_ph" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-							<p class="cfg-fieldnote" data-i18n="push.token_note">A token that may push is enough; it never needs anything more. Daimond pushes only, only fast-forward, and only to origin — force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.</p>
+							<p class="cfg-fieldnote" data-i18n="push.token_note">Push access is enough; the token never needs more. Daimond only pushes, only fast-forward, only to origin. Force, delete, mirror and any other remote are refused whatever the token allows. Empty this box and save to remove it.</p>
 							<button type="button" id="push-save" data-i18n="push.save">Save</button>
 							<div id="push-note" class="login-error"></div>
-							<p class="cfg-hint" data-i18n="push.privacy">The token is encrypted under your passphrase and kept in this browser; it is never shown again, never sent to us, and never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and you will be asked for it again after a reload.</p>
+							<p class="cfg-hint" data-i18n="push.privacy">The token is encrypted under your passphrase and kept in this browser. It is never shown again, never sent to us, never given to a model. Without an account there is nothing to encrypt it with, so it is held for this tab only and asked for again after a reload.</p>
 						</div>
 					</div>
 
@@ -537,7 +537,7 @@
 						     system-prompt tweak, so what it asks for is a file in the
 						     workspace the user can read and edit. -->
 						<button class="chip-btn" id="concise-chip" aria-pressed="false" style="display:none"
-							title="Ask for short answers in this chat" data-i18n="chat.concise"
+							title="Ask for short answers in this chat. Every message carries the /concise skill, a file in your workspace you can edit." data-i18n="chat.concise"
 							data-i18n-title="chat.concise_help">Concise</button>
 						<!-- Fold, on the surface rather than only in the tile dialog.
 						     Folding is done MID-FLOW -- when a thread has grown heavy, not
@@ -546,7 +546,7 @@
 						     Diamond's chat face, which is the persistent conversation there
 						     is anything to fold. -->
 						<button class="chip-btn" id="chat-fold-btn" style="display:none"
-							title="Fold this conversation now, keeping a summary"
+							title="Fold this conversation now, keeping a summary of what came before."
 							data-i18n="chat.fold_now" data-i18n-title="chat.fold_now_help">Fold</button>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
@@ -624,7 +624,7 @@
 						<div class="web-blind-eye">◍</div>
 						<div class="web-blind-title" data-i18n="web.blind_title">You're driving. I'm not watching.</div>
 						<div class="web-blind-note" data-i18n-html="web.blind_note">Daimond has stopped reading this page — no text, no picture, no keystrokes. Sign in, then click <b>Resume Daimond</b> in the browser tab to hand the wheel back. That button is in the tab, not here, so this page can never take the wheel from you.</div>
-						<button class="web-takeover" id="web-takeover" data-i18n="web.resumed">I've resumed — check</button>
+						<button class="web-takeover" id="web-takeover" data-i18n="web.resumed">I’ve resumed, check</button>
 					</div>
 				</div>
 			</aside>

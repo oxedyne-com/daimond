@@ -39,7 +39,7 @@
 	<p class="lede">The sources a daimon works from: mail you can read and answer, web pages it can show or drive, files it can read and write, and the tools it does the work with.</p>
 
 	<h2 id="s1">Email</h2>
-	<p>The Email panel lives in the dock, on the right. It holds your mailboxes and what is in them. A browser cannot open a mail connection on its own, so Daimond makes the connection through a gateway, which hands back the raw message and then forgets your credential. Your mail is written into the Workspace as ordinary files, so the agent's file tools already read it.</p>
+	<p>The Email panel lives in the dock and holds your mailboxes and what is in them. A browser cannot open a mail connection on its own, so Daimond connects through a gateway, which hands back the raw message and forgets your credential. Your mail is written into the Workspace as ordinary files, so the agent's file tools already read it.</p>
 
 	<figure class="shot" data-shot="email">
 		<img alt="The Email panel: the mailboxes at the top and a list of messages below, with buttons to write, add a mailbox and sync." src="shots/email.png" loading="lazy">
@@ -47,7 +47,7 @@
 	</figure>
 
 	<h3 id="s2">Adding a mailbox</h3>
-	<p>Choose <span class="ui">+</span> (add a mailbox) in the Email panel header. Type your address and Daimond guesses the server settings for common providers; every field stays editable, because a guess is not a fact. Most providers want an <strong>app password</strong> — a one-purpose password you generate in your mail account's security settings — rather than your account password. The panel tells you where to find it for your provider.</p>
+	<p>Choose <span class="ui">+</span> (add a mailbox) in the Email panel header. Type your address and Daimond guesses the server settings for common providers; every field stays editable, because a guess is not a fact. Most providers want an <strong>app password</strong> — a one-purpose password you generate in your mail account's security settings — and not your account password. The panel says where to find it for your provider.</p>
 	<div class="note">Your mail credential is stored on this device, wrapped under your passphrase. It is handed to the gateway only for a single sync, held for one conversation with your mail server, and then forgotten. Daimond stores no mail on any server and never sees your account password.</div>
 
 	<h3 id="s3">Reading and syncing</h3>
@@ -58,7 +58,7 @@
 	<div class="note"><strong>Only you can send mail.</strong> The <span class="ui">Send</span> button is the one thing in Daimond that puts mail on the wire, and only a person can press it. The daimon can draft a message beside you, but it cannot send it.</div>
 
 	<h2 id="s5">The Web panel</h2>
-	<p>Ask Daimond to open a web page — <em>“show me the Rust ownership chapter”</em> — or paste a link into the chat. There are three ways it can put a page on the stage, and which one works depends on the site.</p>
+	<p>Ask Daimond to open a web page — <em>“show me the Rust ownership chapter”</em> — or paste a link into the chat. Three ways it can put a page on the stage, and which works depends on the site.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="The Web panel showing a page on the stage, with back, reload and open-in-a-tab controls in its header." src="shots/web-panel.png" loading="lazy">
@@ -68,7 +68,7 @@
 	<div class="cards">
 		<div class="card">
 			<h3 id="s6">Show it</h3>
-			<p>The page appears in the panel — but most sites refuse to be embedded (it is the web's clickjacking defence, the same in every browser), so this works only for the minority that allow it.</p>
+			<p>The page appears in the panel. Most sites refuse to be embedded — the web's clickjacking defence, the same in every browser — so this works only for the minority that allow it.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">Read it</h3>
@@ -85,66 +85,76 @@
 	<h2 id="s9">The Workspace</h2>
 	<p>The Workspace panel, in the dock, is your files as an ordinary tree of folders. This is where the agent reads and writes: uploads, mail, documents and anything it produces all live here.</p>
 
-	<p>With a Diamond open, the panel shows either everything here or only the files that Diamond holds. Attaching a file or a folder to a Diamond neither moves nor copies it: it stays where it is and the Diamond points at it, so the same folder can sit in two Diamonds and an edit shows in both. A Diamond's daimon can open the files in its workspace and nothing else — <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> sets out what that protects you from, and what it does not.</p>
+	<p>With a Diamond open, the panel shows either everything here or only the files that Diamond holds. The <strong>📎</strong> on every row attaches one to whatever is in focus; <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> sets out what attaching does, what a daimon may then open, and what that protects you from.</p>
+
+	<h3 id="s10">Three ways to get a file in</h3>
+	<p>Getting a file into the workspace and attaching it to a Diamond are separate acts. There are three ways in, and each is for a different case:</p>
+	<ul>
+		<li><strong>Upload</strong> — the arrow-into-tray button in the panel header. For one file or a handful. An ordinary file picker, in every browser.</li>
+		<li><strong>Import a folder…</strong> — for a whole folder that should live in the browser workspace and sync. Chromium-based browsers only.</li>
+		<li><strong>Open a real folder</strong> — the <span class="ui">Machine</span> chip. Your own disk <em>is</em> the workspace: nothing is copied and nothing syncs. Chromium-based browsers only.</li>
+	</ul>
+	<p>An agent can also write a file where it is allowed to, and mail arrives here as ordinary files.</p>
 
 	<figure class="shot" data-shot="workspace">
 		<img alt="The Workspace panel: three chips reading Browser, Machine and Cloud, buttons to import a folder or save a copy, and a file tree in which one file is marked as being in cloud storage and another is pinned." src="shots/workspace.png" loading="lazy">
 		<figcaption>The Workspace. The chips name where the workspace lives; below them, <em>interviews.txt</em> is in cloud storage rather than on this device, and <em>report-draft.txt</em> is pinned so it is always kept here.</figcaption>
 	</figure>
 
-	<h3 id="s10">Working with files</h3>
-	<p>The Workspace header carries buttons to add a <span class="ui">🗋</span> file, add a <span class="ui">🗀</span> folder, <span class="ui">⤒</span> upload files, go <span class="ui">↑</span> up a level, and <span class="ui">⟳</span> refresh the view. A filter box narrows a long list.</p>
+	<h3 id="s11">Working with files</h3>
+	<p>The Workspace header carries buttons for a <span class="ui">New file</span>, a <span class="ui">New folder</span>, <span class="ui">Upload files</span>, <span class="ui">Parent folder</span> and <span class="ui">Refresh</span>. Under them a <strong>breadcrumb</strong> names every folder above the one you are in, each clickable, so a folder three deep is never a dead end. A filter box narrows a long list, and searches from where you are downward rather than stopping at the current folder.</p>
+	<p>Below the tree, <strong>System</strong> opens Daimond's own files: the store the Diamonds themselves live in. They are kept in the browser rather than in the folder you have open, and they travel between your devices. The tree above deliberately leaves them out, since a delete cross beside <code>diamonds/</code> would take every Diamond you have.</p>
 
-	<h3 id="s11">Where a workspace lives</h3>
+	<h3 id="s12">Where a workspace lives</h3>
 	<p>Three chips at the top of the panel name the places a workspace involves. Clicking one opens that place's controls.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s12">Browser</h3>
-			<p>This browser's own private storage, kept on your device and reachable by nothing outside Daimond. It is where a workspace lives unless you say otherwise. Its size is whatever the browser is willing to grant — which on an iPhone is not much — and a browser may clear it without warning.</p>
+			<h3 id="s13">Browser</h3>
+			<p>This browser's own private storage, on your device and reachable by nothing outside Daimond. It is where a workspace lives unless you say otherwise. Its size is whatever the browser grants, which on an iPhone is not much, and a browser may clear it without warning.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">Machine</h3>
-			<p>A real folder on this computer's disk. The agent works in it directly, so you see the same files in your own file manager, and it is roomier than what a browser grants. But it stays on that one computer and does not travel to your other devices, and only a Chromium-based browser can open one.</p>
-			<p><strong>The folder is the whole of what the agent can see.</strong> It works only inside the folder you chose: nothing above it, and nothing outside it, is visible to Daimond. Clicking the chip while the agent is working there says so, and offers <span class="ui">Forget this folder</span> if you want Daimond to stop holding a record of it.</p>
+			<h3 id="s14">Machine</h3>
+			<p>A real folder on this computer's disk. The agent works in it directly, so the same files are in your own file manager, and it is roomier than what a browser grants. But it stays on that one computer, never travelling to your other devices, and only a Chromium-based browser can open one.</p>
+			<p><strong>The folder is the whole of what the agent can see.</strong> Nothing above it and nothing outside it is visible to Daimond. Clicking the chip while the agent is working there says so, and offers <span class="ui">Forget this folder</span> to stop Daimond holding a record of it.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">Cloud</h3>
-			<p>Not a third place to work, but where the workspace is kept. It is what allows a workspace to be far larger than any one device can hold. Its chip opens a view of what is stored, what is not on this device, a <span class="ui">Free up space</span> button and a <span class="ui">Credits</span> button.</p>
+			<h3 id="s15">Cloud</h3>
+			<p>Not a third place to work but where the workspace is kept, which is what lets it be far larger than any one device holds. Its chip opens a view of what is stored, what is not on this device, a <span class="ui">Free up space</span> button and a <span class="ui">Credits</span> button.</p>
 		</div>
 	</div>
 
-	<p>The first two are alternatives: the agent works in one or the other. The third is not an alternative — it is where the bytes are kept. The admin panel's storage rows show how much space each place is using.</p>
+	<p>The first two are alternatives, the agent working in one or the other. The third is not an alternative but where the bytes are kept. The admin panel's storage rows show how much space each is using.</p>
 
 	<div class="note">What is kept in cloud storage is <strong>encrypted before it leaves</strong>, as a sync parcel is, so we hold bytes we cannot read.</div>
 
-	<h3 id="s15">Held, in cloud storage, or pinned</h3>
+	<h3 id="s16">Held, in cloud storage, or pinned</h3>
 	<p>A file is in one of three states, and the tree shows which:</p>
 	<ul>
 		<li><strong>Held on this device</strong> — it opens at once.</li>
-		<li><strong>In cloud storage only</strong> — shown with a cloud mark. It is still your file, still listed, still safe, simply not on this device at the moment. Clicking it brings it down, and so does the fetch control on its row.</li>
-		<li><strong>Pinned</strong> — kept on this device always, and never freed automatically. The pin sits on the row, beside a control that frees a held file's space.</li>
+		<li><strong>In cloud storage only</strong> — marked with a cloud. Still your file, still listed, still safe, simply not here at the moment. Clicking it brings it down, and so does the fetch control on its row.</li>
+		<li><strong>Pinned</strong> — kept on this device always and never freed automatically. The pin sits on the row, beside a control that frees a held file's space.</li>
 	</ul>
-	<p>As the browser's storage fills, the files you have gone longest without using are freed back to cloud storage on their own; a pinned file never is.</p>
+	<p>As the browser's storage fills, the files longest unused are freed back to cloud storage on their own; a pinned file never is.</p>
 
 	<div class="note"><strong>Freeing a file is not deleting it.</strong> It stays in cloud storage, the tree still lists it, and it comes back when it is asked for. Only a deliberate delete removes a file.</div>
 
-	<h3 id="s16">Any kind of file</h3>
-	<p>Any file travels between your devices and is stored, whatever kind it is: a photograph, a recording, a PDF, a spreadsheet, up to a gigabyte for one file. Opening a file that is not text shows its size and a download button rather than trying to display it.</p>
+	<h3 id="s17">Any kind of file</h3>
+	<p>Any file is stored and travels between your devices, up to a gigabyte each. Opening one that is not text shows its size and a download button instead of trying to display it.</p>
 
-	<h3 id="s17">Moving files in and out</h3>
-	<p>Two buttons sit beside the chips. <span class="ui">Import a folder…</span> copies a folder from this computer into the workspace, after which it syncs and is stored like everything else. <span class="ui">Save a copy…</span> writes the workspace out to a folder on this computer. Neither changes where the agent is working, and both need a Chromium-based browser. A copy out does not fetch a file that is in cloud storage only, and says how many it left behind.</p>
+	<h3 id="s18">Moving files in and out</h3>
+	<p>Two buttons sit beside the chips. <span class="ui">Import a folder…</span> copies a folder from this computer in, after which it syncs and is stored like everything else. <span class="ui">Save a copy…</span> writes the workspace out to a folder on this computer, and says how many cloud-only files it left behind rather than fetching them. Neither changes where the agent is working, and both need a Chromium-based browser.</p>
 
-	<p>While the agent is working in a real folder, a third button appears: <span class="ui">Change folder…</span>, which is the one control that opens a folder picker. Moving between <span class="ui">Browser</span> and <span class="ui">Machine</span> does not: Daimond remembers the folder you last used, so going back to it is a single click on the chip.</p>
+	<p>While the agent is working in a real folder a third button appears, <span class="ui">Change folder…</span>, and it is the only control that opens a folder picker. Moving between <span class="ui">Browser</span> and <span class="ui">Machine</span> does not: Daimond remembers the folder you last used, so going back is one click on the chip.</p>
 
-	<h3 id="s18">What the agent may fetch</h3>
-	<p>When the agent needs a file that is in cloud storage, it is told so plainly and has to fetch it deliberately. Nothing is downloaded quietly behind a read, because a download can be large and, once storage is priced, costs you money. There is also a cap on how much the agent may bring down on its own initiative, after which it comes back and asks.</p>
+	<h3 id="s19">What the agent may fetch</h3>
+	<p>When the agent needs a file that is in cloud storage, it is told so plainly and has to fetch it deliberately. Nothing is downloaded quietly behind a read: a download can be large and, once storage is priced, costs you money. A cap limits how much the agent may bring down on its own initiative, after which it comes back and asks.</p>
 
-	<h3 id="s19">What cloud storage costs</h3>
-	<p>Cloud storage is not a subscription. Like everything else that leaves the browser it is paid for from <a href="models.html">credits</a>, and the one-time Pro unlock stays a one-time unlock. At present it is free and unmetered, until it can be sold properly.</p>
-	<div class="note">If a storage charge ever cannot be covered, <strong>nothing is deleted straight away</strong>. Reading and downloading stay free for six months, so everything can be retrieved, and only then is the paid overflow removed. The free working set is never removed.</div>
+	<h3 id="s20">What cloud storage costs</h3>
+	<p>Not a subscription. Like everything else leaving the browser it is paid for from <a href="models.html">credits</a>, and the one-time Pro unlock stays one-time. At present it is free and unmetered, until it can be sold properly.</p>
+	<div class="note">If a storage charge ever cannot be covered, <strong>nothing is deleted straight away</strong>. Reading and downloading stay free for six months, so everything can be retrieved, and only then is the paid overflow removed. The free working set never is.</div>
 
-	<h2 id="s20">Tools</h2>
+	<h2 id="s21">Tools</h2>
 	<p>Open the <span class="ui">Tools · N of M</span> row in the admin panel to see what Daimond can do. It is called Tools, not Upgrades, because most of what it lists is free and already yours.</p>
 
 	<figure class="shot" data-shot="tools-panel">
@@ -154,10 +164,10 @@
 
 	<p>Two kinds of tool appear:</p>
 	<ul>
-		<li><strong>Built-in tools</strong> — the ones the agent is already handed, free. The panel lists exactly what the agent actually holds, so it cannot promise a tool that is not there.</li>
-		<li><strong>Unlockable tools</strong> — extras with a price. The panel shows the price and whether this account already holds the unlock.</li>
+		<li><strong>Built-in tools</strong> — what the agent is already handed, free. The panel lists exactly what it holds, so it cannot promise a tool that is not there.</li>
+		<li><strong>Unlockable tools</strong> — extras with a price, shown with whether this account already holds the unlock.</li>
 	</ul>
-	<p>To add an unlockable tool, choose it in the panel and confirm the unlock; the cost is drawn from your credits, and once unlocked it stays available to the agent.</p>
+	<p>To add one, choose it and confirm; the cost is drawn from your credits, and once unlocked it stays available.</p>
 
 	<div class="next">
 		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>

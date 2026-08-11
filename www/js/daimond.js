@@ -2814,7 +2814,31 @@ import init, {
 		return { failed: failed };
 	}
 
-	var seq = 1;
+	/// A fresh chat id, unique against every chat that has ever existed here or on
+	/// any other device — not merely against the ones currently on the rail.
+	///
+	/// It used to be `'c' + seq`, with `seq` seeded at boot from the chats
+	/// `loadChats` returned. That list deliberately LEAVES OUT everything trashed
+	/// or tombstoned, so a device whose last chat had been deleted counted from
+	/// wherever the visible list stopped and handed the next chat an id the trash
+	/// still claimed. Two things then happened at once: the tile appeared and the
+	/// first reconciliation — a sync round, a trash redraw, another tab — filtered
+	/// it straight back out, because `trashed(id)` is asked wherever a list is
+	/// built; and the store, which is keyed by id, had already overwritten the
+	/// deleted chat's transcript with the new chat's. So the trash lost its
+	/// contents in the same act that made the new chat unusable.
+	///
+	/// No seeding fixes that, because everything that can still claim an id — the
+	/// trash, the tombstones, the other device's copy — is exactly what a visible
+	/// list omits; a counter seeded one notch better only moves the collision. So
+	/// the id is minted by `newMid`, which already answers this against the same
+	/// hazard for messages: a clock, a per-page counter for two in one millisecond,
+	/// and randomness for two DEVICES in one millisecond. One scheme rather than
+	/// two, and the `c` prefix stays because chats and Diamonds share one trash
+	/// record and one namespace.
+	function newChatId() {
+		return 'c' + newMid();
+	}
 
 	// Auto-incrementing chat label (Chat-0001, Chat-0002, …), persisted so the
 	// numbering survives a reload.
@@ -5794,11 +5818,11 @@ import init, {
 			} catch (e) { /* the module is not up; the phrase above still reads */ }
 			var okSearch = await confirmDialog(
 				tOr('egress.search_body',
-					'This turn has read content from outside your workspace, and Daimond now '
-					+ 'wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\n'
-					+ 'Searching with {engine}, which is your setting and not the model\'s '
-					+ 'choice. The query is the thing that leaves this device.\n\nIf you did '
-					+ 'not expect that, decline — nothing is lost but this one search.',
+					'This turn has read content from outside your workspace. Daimond now wants '
+						+ 'to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching '
+						+ 'with {engine}, which is your setting. The query is what leaves this '
+						+ 'device.\n\nIf you did not expect this, decline. Nothing is lost but the one '
+						+ 'search.',
 					{ query: shownQ, engine: eng }),
 				tOr('egress.search_ok', 'Run this search'),
 				{ title: tOr('egress.search_title', 'Search the web?'), danger: true });
@@ -6488,7 +6512,7 @@ import init, {
 			if (window.DaimondSafe) {
 				var syncing = !DaimondSafe.on();
 				item(syncing
-					? tOr('safe.turn_off', 'Stop syncing this device')
+					? tOr('safe.turn_off', 'Start without syncing')
 					: tOr('safe.turn_on', 'Turn syncing back on'), function () {
 					DaimondSafe.set(syncing, 'user');       // syncing → we are turning it OFF
 					location.reload();
@@ -6496,7 +6520,7 @@ import init, {
 				homeView.appendChild(el('div', 'admin-note', syncing
 					? tOr('settings.sync_on_note',
 						'This device is sending its work to your other devices. Stopping is '
-						+ 'immediate and loses nothing — everything stays here.')
+							+ 'immediate and loses nothing; everything stays here.')
 					: tOr('settings.sync_off_note',
 						'This device is not syncing. Its work is safe here and is not reaching '
 						+ 'your other devices.')));
@@ -6531,8 +6555,8 @@ import init, {
 				});
 				homeView.appendChild(trailOut);
 				homeView.appendChild(el('div', 'admin-note', tOr('settings.trail_note',
-					'What Daimond last did — event names and a clock, no keys, no message text, '
-					+ 'nothing from your files.')));
+					'What Daimond last did: event names and a clock, no keys, no message text, '
+						+ 'nothing from your files. Safe to paste into a bug report.')));
 			}
 
 			// Several people can share this browser, each with their own account. Switching locks
@@ -6787,9 +6811,8 @@ import init, {
 		async function askRemoveDevice(id, shown) {
 			var ok = await confirmDialog(
 				tOr('devices.remove_body',
-					'“{name}” comes off this list. It does not sign that device out: a linked '
-					+ 'device holds the same keys as this one, so if it is still in use it will '
-					+ 'put itself back the next time it syncs.', { name: shown }),
+					'“{name}” comes off this list. That does not sign the device out. It holds '
+						+ 'the same keys as this one, so it reappears the next time it syncs.', { name: shown }),
 				tOr('devices.remove', 'Remove'),
 				{ title: tOr('devices.remove_title', 'Remove this device'), danger: true });
 			if (!ok) return;
@@ -7721,7 +7744,7 @@ import init, {
 		// whichever key happened to be default, which are not always the same provider.
 		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
 		var chat = {
-			id: 'c' + (seq++),
+			id: newChatId(),
 			name: nextChatLabel(),
 			app: null,
 			messages: [],
@@ -9096,7 +9119,8 @@ import init, {
 			var r = contrastRatio(bg, fg);
 			if (r >= TILE_CONTRAST_MIN) { faint.hidden = true; return; }
 			var words = tOr('tile.colour_faint',
-				'These two are hard to read together — {ratio}:1, where {min}:1 is the usual floor for text this size. Left as chosen.',
+				'These two contrast at {ratio}:1, below the usual {min}:1 floor for text '
+					+ 'this size. Left as chosen.',
 				{ ratio: r.toFixed(1), min: TILE_CONTRAST_MIN.toFixed(1) });
 			if (faint.textContent !== words) faint.textContent = words;
 			faint.hidden = false;
@@ -10044,7 +10068,7 @@ import init, {
 		// whichever of two unrelated orders last wrote it: `newChat` unshifts, so
 		// a chat made this session jumps to the front, but `loadChats` reads
 		// IndexedDB with a bare `openCursor()`, which walks the store ascending
-		// BY ID STRING. Ids are `'c' + seq`, so that is lexicographic, not
+		// BY ID STRING. Ids were `'c' + seq` then, so that was lexicographic, not
 		// numeric -- past the tenth chat, 'c10' sorts before 'c2', and a reload
 		// silently reshuffles a list that "New chat" had just put in a sensible
 		// order. Sorting explicitly on `updatedAt` fixes both: it is stamped by
@@ -12036,8 +12060,8 @@ import init, {
 
 			if (workersHeld()) return;			// the pump is held: no new spending
 			if (b.depth >= this.MAX_GATHER_DEPTH) {
-				setCrystalStatus('Agents finished. Not reporting back: '
-					+ this.MAX_GATHER_DEPTH + ' rounds of dispatch is the limit.');
+				setCrystalStatus('Agents finished. Dispatch stops at '
+					+ this.MAX_GATHER_DEPTH + ' rounds, so there is no report back.');
 				return;
 			}
 			// The Diamond must still exist and still be the one on screen. A gather
@@ -12056,7 +12080,7 @@ import init, {
 					: mine.length + ' workers you dispatched have')
 				+ ' finished. Their reports follow. Read them, say what they add up to, and'
 				+ ' write anything worth keeping into the crystal. Do not dispatch again'
-				+ ' unless something is genuinely unresolved.\n\n' + parts.join('\n\n');
+				+ ' unless something is still unresolved.\n\n' + parts.join('\n\n');
 
 			setCrystalStatus(mine.length === 1
 				? 'Agent finished; reporting back.'
@@ -14703,7 +14727,7 @@ import init, {
 				var r = await DaimondCloud.reclaim(true);
 				showModeMsg(r.evicted.length
 					? ('Freed ' + fmtBytes(r.freed) + ' from ' + r.evicted.length + ' files; they stay in cloud storage.')
-					: 'Nothing to free — everything here is either pinned or not in cloud storage.');
+					: 'Nothing to free. Everything here is pinned or not in cloud storage.');
 				showCloudView();
 			});
 		}
@@ -14792,7 +14816,7 @@ import init, {
 			var busy = false;
 			try { busy = !!(window.DaimondCore && DaimondCore.busy()); } catch (e) { busy = false; }
 			if (busy) {
-				showModeMsg('The agent is working. Wait for it to finish before changing where it works.', true);
+				showModeMsg('Wait for the agent to finish before changing where it works.', true);
 			}
 			return busy;
 		}
@@ -15684,7 +15708,7 @@ import init, {
 			var seed = '';
 			if (p === INSTRUCTIONS_FILE) {
 				seed = '# Standing instructions\n\n'
-					+ 'Everything written here is given to every agent Daimond runs — chats, the\n'
+					+ 'Everything written here goes to every agent Daimond runs: chats, the\n'
 					+ 'daimon of each Diamond, and every worker it dispatches.\n\n'
 					+ '## House rules\n\n'
 					+ '- \n';
@@ -16799,7 +16823,7 @@ import init, {
 		var m = diamondModel(f.id);
 		if (!rec) {
 			rec = {
-				id: 'c' + (seq++),
+				id: newChatId(),
 				diamondId: f.id,
 				name: f.name || t('rail.unnamed_diamond'),
 				app: null,                 // a daimon runs on `diamondApp`, never its own
@@ -16986,8 +17010,8 @@ import init, {
 		{
 			name: 'Daimond Help',
 			crystal: '# Daimond Help\n\n'
-				+ 'Ask me how Daimond works and I will answer from what is actually here — '
-				+ 'the panels, the tools, the settings — rather than from a manual.\n\n'
+				+ 'Ask me how Daimond works. I answer from this build itself: its '
+				+ 'panels, its tools, its settings.\n\n'
 				+ 'The user guide is mirrored at `system/guide/`, one file per page. '
 				+ 'Search it before answering, and say which page an answer came from.\n\n'
 				+ '## What I know\n\n'
@@ -16999,11 +17023,11 @@ import init, {
 		{
 			name: 'Daimond Optimiser',
 			crystal: '# Daimond Optimiser\n\n'
-				+ 'I notice what should have been written down, what should have been '
-				+ 'cheaper, and what should have been automatic -- and hand you the '
-				+ 'change, not the chart.\n\n'
-				+ 'What I read is `system/usage/digest.md`: counts of turns, spend, '
-				+ 'models and tool calls, kept on this device. I never see what any '
+				+ 'I find what should have been written down, what should have been '
+				+ 'cheaper and what should have been automatic, and I hand you the '
+				+ 'change to make.\n\n'
+				+ 'I read `system/usage/digest.md`: counts of turns, spend, models '
+				+ 'and tool calls, kept on this device. I never see what any '
 				+ 'conversation was about.\n\n'
 				+ '## What I have noticed\n\n'
 				+ '- Nothing yet.\n',
@@ -17018,8 +17042,8 @@ import init, {
 				kind: 'activity', minutes: 30, on: false,
 				instruction: 'Read system/usage/digest.md. Say, briefly, the one thing '
 					+ 'that would make the work go better, and cite the number you got it '
-					+ 'from. If nothing stands out, say so in one line and stop -- a '
-					+ 'week with nothing to report is a real answer.',
+					+ 'from. If nothing stands out, say so in one line and stop. A quiet '
+					+ 'week needs no findings.',
 			}],
 		},
 	];
@@ -24420,8 +24444,8 @@ import init, {
 			var note = document.getElementById('search-engine-note');
 			if (note) {
 				note.textContent = tOr('search.engine_note',
-					'Which service Daimond searches with. Most give you a free allowance '
-					+ 'each month if you bring your own key.');
+					'Which service Daimond searches with. Most give a free allowance each month '
+						+ 'if you bring your own key.');
 				// Where a key comes from, for the engine now chosen. A vendor's own
 				// signup page in a real tab: it is somebody else's site and somebody
 				// else's session, so it is not one Daimond can draw.
@@ -24470,7 +24494,7 @@ import init, {
 			var say = '';
 			if (!open) {
 				say = S.isSealed(cur)
-					? tOr('models.sealed_unlock', 'sealed — unlock to use')
+					? tOr('models.sealed_unlock', 'sealed, unlock to use')
 					: tOr('models.unlock_to_use', 'unlock to use');
 			} else if (!S.hasKey(cur)) {
 				say = S.byokOnly(cur)
@@ -24510,14 +24534,14 @@ import init, {
 				sbtn.id = 'cfg-sync-btn';
 				var on = !DaimondSafe.on();
 				sbtn.textContent = on
-					? tOr('safe.turn_off', 'Stop syncing this device')
+					? tOr('safe.turn_off', 'Start without syncing')
 					: tOr('safe.turn_on', 'Turn syncing back on');
 				var snote = document.createElement('p');
 				snote.className = 'cfg-fieldnote';
 				snote.textContent = on
 					? tOr('settings.sync_on_note',
 						'This device is sending its work to your other devices. Stopping is '
-						+ 'immediate and loses nothing — everything stays here.')
+							+ 'immediate and loses nothing; everything stays here.')
 					: tOr('settings.sync_off_note',
 						'This device is not syncing. Its work is safe here and is not reaching '
 						+ 'your other devices.');
@@ -24540,9 +24564,8 @@ import init, {
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.textContent = tOr('settings.trail_note',
-				'A short list of what Daimond last did — event names and a clock, no keys, no '
-				+ 'message text, nothing from your files. Safe to read and safe to paste into a '
-				+ 'bug report.');
+				'What Daimond last did: event names and a clock, no keys, no message text, '
+					+ 'nothing from your files. Safe to paste into a bug report.');
 			var out = document.createElement('pre');
 			out.className = 'id-trail-text';
 			out.id = 'cfg-trail-text';
@@ -24589,7 +24612,7 @@ import init, {
 			var head = document.createElement('h4');
 			head.className = 'cfg-fieldhead';
 			head.id = 'cfg-crystal-limits';
-			head.textContent = tOr('settings.crystal_limits', 'Crystal size limits');
+			head.textContent = tOr('settings.crystal_limits', 'Size limits');
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			lab.setAttribute('for', 'cfg-crystal-cap');
@@ -24601,8 +24624,8 @@ import init, {
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-crystal-cap-note';
 			note.textContent = tOr('settings.crystal_cap_note',
-				'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon is '
-				+ 'told to put the detail in a file in the Diamond’s scope instead.');
+				'A crystal is a Diamond’s summary, so it has a ceiling. Past it, a daimon '
+					+ 'puts the detail in a file in the Diamond’s scope.');
 			section.insertBefore(head, form);
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
@@ -24775,8 +24798,8 @@ import init, {
 			note.className = 'cfg-fieldnote';
 			note.textContent = tOr('settings.fold_model_note',
 				'When a conversation outgrows its window it is summarised, and the summary '
-				+ 'becomes what the model remembers. This chooses what writes it. Only chats on '
-				+ 'the same provider use it — every other chat folds with its own model.');
+					+ 'becomes what the model remembers. This chooses what writes it, for chats on '
+					+ 'the same provider; every other chat folds with its own model.');
 			// Under the round limit, which is the other bound on how a turn behaves.
 			var after = document.getElementById('cfg-max-rounds-note') || anchor;
 			section.insertBefore(lab, after.nextSibling);
@@ -25491,7 +25514,9 @@ import init, {
 			return;
 		}
 		chats = await loadChats();  // restore persisted chats (survive reload)
-		chats.forEach(function (c) { var n = parseInt((c.id || '').replace(/^c/, ''), 10); if (n >= seq) seq = n + 1; });
+		// NOTHING IS SEEDED FROM THIS LIST. A counter used to be, and `loadChats`
+		// omits every chat in the trash — which is how a new chat came back with an
+		// id the trash still owned. See `newChatId`.
 		updateUserRow();
 
 		// Identity gate. A returning user unlocks FIRST: nothing of theirs is

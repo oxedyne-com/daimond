@@ -39,7 +39,7 @@
 	<p class="lede">As fontes de que um daimon parte: correio que você pode ler e responder, páginas web que ele pode mostrar ou dirigir, arquivos que ele pode ler e escrever, e as ferramentas com que faz o trabalho.</p>
 
 	<h2 id="s1">E-mail</h2>
-	<p>O painel E-mail vive no dock, à direita. Ele guarda suas caixas de correio e o que há nelas. Um navegador não consegue abrir sozinho uma conexão de correio, então o Daimond faz a conexão por um gateway, que devolve a mensagem bruta e em seguida esquece sua credencial. Seu correio é escrito no Espaço como arquivos comuns, de modo que as ferramentas de arquivo do agente já o leem.</p>
+	<p>O painel E-mail vive no dock e guarda suas caixas de correio e o que há nelas. Um navegador não consegue abrir uma conexão de correio sozinho, então o Daimond se conecta por um gateway, que devolve a mensagem bruta e esquece a sua credencial. Seu correio é escrito no Espaço como arquivos comuns, então as ferramentas de arquivo do agente já o leem.</p>
 
 	<figure class="shot" data-shot="email">
 		<img alt="O painel E-mail: as caixas de correio no alto e uma lista de mensagens abaixo, com botões para escrever, adicionar uma caixa e sincronizar." src="../shots/email.png" loading="lazy">
@@ -47,7 +47,7 @@
 	</figure>
 
 	<h3 id="s2">Adicionar uma caixa de correio</h3>
-	<p>Escolha <span class="ui">+</span> (adicionar uma caixa de correio) no cabeçalho do painel E-mail. Digite seu endereço e o Daimond adivinha as configurações de servidor dos provedores comuns; todo campo continua editável, porque um palpite não é um fato. A maioria dos provedores quer uma <strong>senha de app</strong> — uma senha de propósito único que você gera nas configurações de segurança da sua conta de e-mail — em vez da senha da conta. O painel diz onde encontrá-la no seu provedor.</p>
+	<p>Escolha <span class="ui">+</span> (adicionar uma caixa de correio) no cabeçalho do painel E-mail. Digite seu endereço e o Daimond adivinha as configurações de servidor dos provedores comuns; todo campo continua editável, porque um palpite não é um fato. A maioria dos provedores quer uma <strong>senha de app</strong> — uma senha de propósito único que você gera nas configurações de segurança da sua conta de correio — e não a senha da sua conta. O painel diz onde encontrá-la no seu provedor.</p>
 	<div class="note">Sua credencial de correio fica guardada neste dispositivo, envolvida pela sua frase-senha. Ela é entregue ao gateway apenas para uma única sincronização, mantida durante uma conversa com o seu servidor de correio, e depois esquecida. O Daimond não guarda correio em servidor nenhum e nunca vê a senha da sua conta.</div>
 
 	<h3 id="s3">Ler e sincronizar</h3>
@@ -58,7 +58,7 @@
 	<div class="note"><strong>Só você pode enviar correio.</strong> O botão <span class="ui">Enviar</span> é a única coisa no Daimond que põe correio na linha, e só uma pessoa pode apertá-lo. O daimon pode rascunhar uma mensagem ao seu lado, mas não pode enviá-la.</div>
 
 	<h2 id="s5">O painel Web</h2>
-	<p>Peça ao Daimond que abra uma página web — <em>“me mostre o capítulo de ownership do Rust”</em> — ou cole um link no chat. Há três maneiras de ele pôr uma página no palco, e qual delas funciona depende do site.</p>
+	<p>Peça ao Daimond que abra uma página web — <em>“me mostre o capítulo de ownership do Rust”</em> — ou cole um link no chat. Há três formas de pôr uma página no palco, e qual funciona depende do site.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="O painel Web mostrando uma página no palco, com os controles Voltar, Recarregar e Abrir em uma aba no cabeçalho." src="../shots/web-panel.png" loading="lazy">
@@ -68,7 +68,7 @@
 	<div class="cards">
 		<div class="card">
 			<h3 id="s6">Mostrá-la</h3>
-			<p>A página aparece no painel — mas a maioria dos sites se recusa a ser incorporada (é a defesa da web contra o sequestro de cliques, a mesma em todo navegador), então isso só funciona para a minoria que permite.</p>
+			<p>A página aparece no painel. A maioria dos sites recusa ser incorporada — a defesa da web contra clickjacking, a mesma em todo navegador —, então isso só funciona para a minoria que permite.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">Lê-la</h3>
@@ -85,66 +85,76 @@
 	<h2 id="s9">O Espaço de trabalho</h2>
 	<p>O painel Espaço, no dock, são os seus arquivos como uma árvore comum de pastas. É aqui que o agente lê e escreve: os envios, o correio, os documentos e tudo o que ele produz vivem aqui.</p>
 
-	<p>Com um Diamond aberto, o painel mostra ou tudo o que está aqui ou apenas os arquivos que aquele Diamond guarda. Anexar um arquivo ou uma pasta a um Diamond não o move nem o copia: ele fica onde está e o Diamond aponta para ele, de modo que a mesma pasta pode estar em dois Diamonds e uma edição aparece nos dois. O daimon de um Diamond pode abrir os arquivos do seu espaço de trabalho e nada mais — <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> explica do que isso protege você, e do que não protege.</p>
+	<p>Com um Diamond aberto, o painel mostra ou tudo o que há aqui ou apenas os arquivos que aquele Diamond guarda. O <strong>📎</strong> em cada linha anexa um ao que estiver em foco; <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> expõe o que anexar faz, o que um daimon pode então abrir, e do que isso protege você.</p>
+
+	<h3 id="s10">Três formas de trazer um arquivo para dentro</h3>
+	<p>Trazer um arquivo para o espaço de trabalho e anexá-lo a um Diamond são atos separados. Há três vias de entrada, e cada uma é para um caso:</p>
+	<ul>
+		<li><strong>Enviar arquivos</strong> — o botão de seta para dentro da bandeja, no cabeçalho do painel. Para um arquivo ou um punhado. Um seletor de arquivos comum, em todo navegador.</li>
+		<li><strong>Importar uma pasta…</strong> — para uma pasta inteira que deva viver no espaço de trabalho do navegador e sincronizar. Só em navegadores baseados no Chromium.</li>
+		<li><strong>Abrir uma pasta de verdade</strong> — o chip <span class="ui">Máquina</span> — seu próprio disco <em>é</em> o espaço de trabalho: nada é copiado e nada sincroniza. Só em navegadores baseados no Chromium.</li>
+	</ul>
+	<p>Um agente também pode escrever um arquivo onde tem permissão, e o correio chega aqui como arquivos comuns.</p>
 
 	<figure class="shot" data-shot="workspace">
 		<img alt="O painel Espaço: três chips escritos Browser, Machine e Cloud, botões para importar uma pasta ou salvar uma cópia, e uma árvore de arquivos em que um arquivo está marcado como estando no armazenamento na nuvem e outro está fixado." src="../shots/workspace.png" loading="lazy">
 		<figcaption>O Espaço. Os chips nomeiam onde o espaço de trabalho vive; abaixo deles, <em>interviews.txt</em> está no armazenamento na nuvem em vez de neste dispositivo, e <em>report-draft.txt</em> está fixado para ser sempre mantido aqui.</figcaption>
 	</figure>
 
-	<h3 id="s10">Trabalhar com arquivos</h3>
-	<p>O cabeçalho do Espaço traz botões para criar um <span class="ui">🗋</span> arquivo, criar uma <span class="ui">🗀</span> pasta, <span class="ui">⤒</span> enviar arquivos, subir <span class="ui">↑</span> um nível, e <span class="ui">⟳</span> atualizar a visão. Uma caixa de filtro estreita uma lista longa.</p>
+	<h3 id="s11">Trabalhar com arquivos</h3>
+	<p>O cabeçalho do Espaço traz botões de <span class="ui">Novo arquivo</span> opcional, um <span class="ui">Nova pasta</span>, <span class="ui">Enviar arquivos</span>, <span class="ui">Pasta acima</span> e <span class="ui">Atualizar</span>. Abaixo deles, um <strong>caminho da pasta</strong> nomeia cada pasta acima daquela em que você está, todas clicáveis, então uma pasta três níveis abaixo nunca é um beco sem saída. Uma caixa de filtro estreita uma lista longa, e busca de onde você está para baixo em vez de parar na pasta atual.</p>
+	<p>Abaixo da árvore, <strong>Sistema</strong> abre os arquivos do próprio Daimond: o depósito em que os Diamonds moram. Eles ficam no navegador e não na pasta que você tem aberta, e viajam entre os seus dispositivos. A árvore acima os deixa de fora de propósito, porque uma cruz de excluir ao lado de <code>diamonds/</code> levaria todos os Diamonds que você tem.</p>
 
-	<h3 id="s11">Onde um espaço de trabalho vive</h3>
+	<h3 id="s12">Onde um espaço de trabalho vive</h3>
 	<p>Três chips no alto do painel nomeiam os lugares que um espaço de trabalho envolve. Clicar em um deles abre os controles daquele lugar.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s12">Navegador</h3>
-			<p>O armazenamento privado do próprio navegador, mantido no seu dispositivo e fora do alcance de tudo o que não seja o Daimond. É onde um espaço de trabalho vive a menos que você diga o contrário. O tamanho dele é o que o navegador estiver disposto a conceder — o que, num iPhone, não é muito — e um navegador pode apagá-lo sem aviso.</p>
+			<h3 id="s13">Navegador</h3>
+			<p>O armazenamento privado do próprio navegador, no seu dispositivo e fora do alcance de tudo o que não seja o Daimond. É onde um espaço de trabalho vive, a menos que você diga o contrário. O tamanho dele é o que o navegador conceder, que em um iPhone não é muito, e um navegador pode limpá-lo sem avisar.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">Máquina</h3>
-			<p>Uma pasta de verdade no disco deste computador. O agente trabalha nela diretamente, então você vê os mesmos arquivos no seu próprio gerenciador de arquivos, e ela é mais folgada do que o que um navegador concede. Mas fica naquele único computador e não viaja para os seus outros dispositivos, e só um navegador baseado em Chromium consegue abrir uma.</p>
-			<p><strong>A pasta é tudo o que o agente consegue ver.</strong> Ele trabalha só dentro da pasta que você escolheu: nada acima dela, nada fora dela, é visível para o Daimond. Clicar no chip enquanto o agente está trabalhando ali diz isso, e oferece <span class="ui">Esquecer esta pasta</span> se você quiser que o Daimond pare de guardar registro dela.</p>
+			<h3 id="s14">Máquina</h3>
+			<p>Uma pasta de verdade no disco deste computador. O agente trabalha nela diretamente, então os mesmos arquivos estão no seu gerenciador de arquivos, e há mais espaço do que um navegador concede. Mas ela fica naquele computador e nunca viaja para os seus outros dispositivos, e só um navegador baseado no Chromium consegue abrir uma.</p>
+			<p><strong>A pasta é tudo o que o agente consegue ver.</strong> Nada acima dela nem fora dela é visível para o Daimond. Clicar no chip enquanto o agente trabalha ali diz isso, e oferece <span class="ui">Esquecer esta pasta</span> para o Daimond parar de guardar um registro dela.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">Nuvem</h3>
-			<p>Não é um terceiro lugar para trabalhar, mas onde o espaço de trabalho é guardado. É o que permite a um espaço de trabalho ser muito maior do que um único dispositivo comporta. O chip dele abre uma visão do que está guardado e do que não está neste dispositivo; um botão <span class="ui">Liberar espaço</span> e um botão <span class="ui">Créditos</span> também ficam ali.</p>
+			<h3 id="s15">Nuvem</h3>
+			<p>Não é um terceiro lugar para trabalhar, mas onde o espaço de trabalho é guardado, o que permite que ele seja bem maior do que qualquer dispositivo comporta. O chip dele abre uma visão do que está guardado e do que não está neste dispositivo; um botão <span class="ui">Liberar espaço</span> e um botão <span class="ui">Créditos</span> também ficam ali.</p>
 		</div>
 	</div>
 
-	<p>Os dois primeiros são alternativas: o agente trabalha em um ou no outro. O terceiro não é uma alternativa — é onde os bytes ficam guardados. As linhas de armazenamento do painel de administração mostram quanto espaço cada lugar está usando.</p>
+	<p>Os dois primeiros são alternativas, com o agente trabalhando em um ou no outro. O terceiro não é alternativa, e sim onde os bytes ficam guardados. As linhas de armazenamento do painel de administração mostram quanto espaço cada um está usando.</p>
 
 	<div class="note">O que é guardado no armazenamento na nuvem é <strong>criptografado antes de sair</strong>, como é um pacote de sincronização, de modo que guardamos bytes que não podemos ler.</div>
 
-	<h3 id="s15">Guardado, na nuvem, ou fixado</h3>
+	<h3 id="s16">Guardado, na nuvem, ou fixado</h3>
 	<p>Um arquivo está em um de três estados, e a árvore mostra qual:</p>
 	<ul>
 		<li><strong>Guardado neste dispositivo</strong> — ele abre na hora.</li>
-		<li><strong>Só no armazenamento na nuvem</strong> — mostrado com uma marca de nuvem. Continua sendo seu arquivo, continua listado, continua seguro, apenas não está neste dispositivo no momento. Clicar nele o traz para baixo, e o controle de busca na linha dele também.</li>
-		<li><strong>Fixado</strong> — mantido neste dispositivo sempre, e nunca liberado automaticamente. O alfinete fica na linha, ao lado de um controle que libera o espaço de um arquivo guardado.</li>
+		<li><strong>Só no armazenamento na nuvem</strong> — marcado com uma nuvem. Continua sendo seu arquivo, continua listado, continua seguro, apenas não está aqui no momento. Clicar nele o traz para baixo, e o controle de buscar na linha dele faz o mesmo.</li>
+		<li><strong>Fixado</strong> — mantido sempre neste dispositivo e nunca liberado sozinho. O alfinete fica na linha, ao lado de um controle que libera o espaço de um arquivo guardado.</li>
 	</ul>
-	<p>Conforme o armazenamento do navegador enche, os arquivos que você passou mais tempo sem usar são liberados sozinhos de volta para o armazenamento na nuvem; um arquivo fixado nunca é.</p>
+	<p>Conforme o armazenamento do navegador enche, os arquivos há mais tempo sem uso são liberados sozinhos de volta para a nuvem; um arquivo fixado nunca é.</p>
 
 	<div class="note"><strong>Liberar um arquivo não é excluí-lo.</strong> Ele continua no armazenamento na nuvem, a árvore ainda o lista, e ele volta quando é pedido. Só uma exclusão deliberada remove um arquivo.</div>
 
-	<h3 id="s16">Qualquer tipo de arquivo</h3>
-	<p>Qualquer arquivo viaja entre os seus dispositivos e é armazenado, seja de que tipo for: uma fotografia, uma gravação, um PDF, uma planilha, até um gigabyte por arquivo. Abrir um arquivo que não é texto mostra o tamanho dele e um botão de download, em vez de tentar exibi-lo.</p>
+	<h3 id="s17">Qualquer tipo de arquivo</h3>
+	<p>Qualquer arquivo é guardado e viaja entre os seus dispositivos, até um gigabyte cada um. Abrir um que não seja texto mostra o tamanho dele e um botão de download em vez de tentar exibi-lo.</p>
 
-	<h3 id="s17">Mover arquivos para dentro e para fora</h3>
-	<p>Dois botões ficam ao lado dos chips. <span class="ui">Importar uma pasta…</span> copia uma pasta deste computador para dentro do espaço de trabalho, depois do que ela sincroniza e é armazenada como todo o resto. <span class="ui">Salvar uma cópia…</span> escreve o espaço de trabalho em uma pasta deste computador. Nenhum dos dois muda onde o agente está trabalhando, e ambos precisam de um navegador baseado em Chromium. Uma cópia para fora não busca um arquivo que está só no armazenamento na nuvem, e diz quantos deixou para trás.</p>
+	<h3 id="s18">Mover arquivos para dentro e para fora</h3>
+	<p>Dois botões ficam ao lado dos chips. <span class="ui">Importar uma pasta…</span> copia para dentro uma pasta deste computador, e daí em diante ela sincroniza e é guardada como todo o resto. <span class="ui">Salvar uma cópia…</span> escreve o espaço de trabalho para uma pasta deste computador, e diz quantos arquivos que só estão na nuvem ele deixou para trás em vez de buscá-los. Nenhum dos dois muda onde o agente trabalha, e ambos precisam de um navegador baseado no Chromium.</p>
 
-	<p>Enquanto o agente está trabalhando em uma pasta de verdade, aparece um terceiro botão: <span class="ui">Mudar de pasta…</span>, que é o único controle que abre um seletor de pastas. Alternar entre <span class="ui">Navegador</span> e <span class="ui">Máquina</span> não abre: o Daimond lembra a última pasta que você usou, então voltar a ela é um único clique no chip.</p>
+	<p>Enquanto o agente trabalha em uma pasta de verdade, aparece um terceiro botão, <span class="ui">Mudar de pasta…</span>, e ele é o único controle que abre um seletor de pastas. Alternar entre <span class="ui">Navegador</span> e <span class="ui">Máquina</span> não abre: o Daimond lembra a última pasta que você usou, então voltar é um clique no chip.</p>
 
-	<h3 id="s18">O que o agente pode buscar</h3>
-	<p>Quando o agente precisa de um arquivo que está no armazenamento na nuvem, isso lhe é dito claramente e ele tem de buscá-lo deliberadamente. Nada é baixado em silêncio por trás de uma leitura, porque um download pode ser grande e, uma vez que o armazenamento seja cobrado, custa dinheiro a você. Há também um teto para quanto o agente pode trazer por iniciativa própria, depois do qual ele volta e pergunta.</p>
+	<h3 id="s19">O que o agente pode buscar</h3>
+	<p>Quando o agente precisa de um arquivo que está no armazenamento na nuvem, isso lhe é dito com todas as letras e ele tem de buscá-lo de propósito. Nada é baixado em silêncio por trás de uma leitura: um download pode ser grande e, quando o armazenamento tiver preço, custa dinheiro a você. Um teto limita quanto o agente pode baixar por iniciativa própria, e depois disso ele volta e pergunta.</p>
 
-	<h3 id="s19">Quanto custa o armazenamento na nuvem</h3>
-	<p>O armazenamento na nuvem não é uma assinatura. Como tudo o mais que sai do navegador, ele é pago com <a href="models.html">créditos</a>, e o desbloqueio único do Pro continua sendo um desbloqueio único. Por ora ele é gratuito e não medido, até que possa ser vendido como deve.</p>
-	<div class="note">Se algum dia uma cobrança de armazenamento não puder ser coberta, <strong>nada é excluído de imediato</strong>. A leitura e o download continuam gratuitos por seis meses, de modo que tudo pode ser recuperado, e só então o excedente pago é removido. O conjunto de trabalho gratuito nunca é removido.</div>
+	<h3 id="s20">Quanto custa o armazenamento na nuvem</h3>
+	<p>Não é assinatura. Como tudo o mais que sai do navegador, é pago com <a href="models.html">créditos</a>, e o desbloqueio Pro de pagamento único continua único. Por enquanto é gratuito e sem medição, até que possa ser vendido como deve.</p>
+	<div class="note">Se algum dia uma cobrança de armazenamento não puder ser coberta, <strong>nada é excluído de imediato</strong>. Ler e baixar continuam gratuitos por seis meses, então tudo pode ser recuperado, e só então o excedente pago é removido. O conjunto de trabalho gratuito nunca é.</div>
 
-	<h2 id="s20">Ferramentas</h2>
+	<h2 id="s21">Ferramentas</h2>
 	<p>Abra a linha <span class="ui">Ferramentas · N de M</span> do painel de administração para ver o que o Daimond sabe fazer. Ela se chama Ferramentas, e não Melhorias, porque a maior parte do que ela lista é gratuita e já é sua.</p>
 
 	<figure class="shot" data-shot="tools-panel">
@@ -154,10 +164,10 @@
 
 	<p>Aparecem dois tipos de ferramenta:</p>
 	<ul>
-		<li><strong>Ferramentas inclusas</strong> — as que o agente já recebe, de graça. O painel lista exatamente o que o agente de fato tem, então não pode prometer uma ferramenta que não está lá.</li>
-		<li><strong>Ferramentas desbloqueáveis</strong> — extras com um preço. O painel mostra o preço e se esta conta já tem o desbloqueio.</li>
+		<li><strong>Ferramentas inclusas</strong> — o que já é entregue ao agente, de graça. O painel lista exatamente o que ele tem, então não pode prometer uma ferramenta que não existe.</li>
+		<li><strong>Ferramentas desbloqueáveis</strong> — extras com preço, mostrados junto com a informação de se esta conta já tem o desbloqueio.</li>
 	</ul>
-	<p>Para acrescentar uma ferramenta desbloqueável, escolha-a no painel e confirme o desbloqueio; o custo sai dos seus créditos, e uma vez desbloqueada ela continua disponível para o agente.</p>
+	<p>Para acrescentar uma, escolha-a e confirme; o custo é debitado dos seus créditos, e uma vez desbloqueada ela continua disponível.</p>
 
 	<div class="next">
 		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>

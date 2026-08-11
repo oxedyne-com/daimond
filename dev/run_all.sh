@@ -284,6 +284,36 @@ if wants_gateway; then
 	fi
 fi
 
+# ── Phase 0: the static checks, which need no browser and take a second ─────
+#
+# Neither of these had ever run under this suite, and on 2026-08-11 the second one
+# would have caught 39 English fallbacks left behind by a catalogue rewrite -- text
+# that ships in all eight locales whenever the catalogue fails to load, and that
+# nothing else looks at. They cost about a second between them, so they run first:
+# a red here explains reds later, and a suite that finds it after two hours of
+# browsers has learnt the same thing far too late.
+#
+# A named subset is honoured, so `run_all.sh verify_tags` still means just that.
+static_one() {                  # name, command…
+	local name="$1"; shift
+	local out code
+	out=$("$@" 2>&1); code=$?
+	mkdir -p "$SCRATCH/out"
+	printf '%s\n' "$out" > "$SCRATCH/out/$name.log"
+	if [ $code -eq 0 ]; then
+		pass=$((pass+1)); say "PASS  $name  — $(echo "$out" | tail -1)"
+	else
+		fail=$((fail+1)); failed="$failed $name"
+		say "FAIL  $name (exit $code)  — $(echo "$out" | tail -1)"
+		say "      full output: $SCRATCH/out/$name.log"
+	fi
+}
+if [ $# -eq 0 ]; then
+	say "── Phase 0 (static, no browser)"
+	static_one i18ncheck    node dev/i18ncheck.mjs
+	static_one i18nfallback node dev/i18nfallback.mjs --quiet
+fi
+
 # ── Phase 1: :9002 clear ────────────────────────────────────────────────
 if [ -n "$PHASE1" ]; then
 	if gateway_up; then

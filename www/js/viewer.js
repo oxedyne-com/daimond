@@ -194,6 +194,13 @@
 	// ── Small helpers ────────────────────────────────────────────────
 
 	/// The app's string for `key`, or `english` where there is no table yet.
+	///
+	/// The bound function is called `tOr` everywhere below, and the name is not a
+	/// preference: `dev/i18nfallback.mjs` finds fallbacks by looking for `tOr(`,
+	/// `tf(` and `tr(`, so a helper called anything else keeps its English out of
+	/// that check and free to drift from the catalogue. Every `fileview.*` string
+	/// is in `i18n/en.js`; the second argument is what shows while the tables are
+	/// still loading, and it must stay byte for byte the catalogue's own.
 	function tOrOf(opts) {
 		var fn = opts && opts.t;
 		return function (key, english, vars) {
@@ -330,26 +337,26 @@
 		close();
 		if (!host) return;
 		var mine = ++epoch;
-		var t = tOrOf(opts);
+		var tOr = tOrOf(opts);
 		var handler = (info && info.handler) || handlerFor(info);
 		last = { host: host, path: path, info: info, opts: opts, hexAt: resume };
 
 		var root = el('div', 'fileview');
 		root.setAttribute('data-viewer', handler);
-		root.appendChild(meta(info, t));
-		if (info && info.disagree) root.appendChild(disagreeLine(info, t));
+		root.appendChild(meta(info, tOr));
+		if (info && info.disagree) root.appendChild(disagreeLine(info, tOr));
 		var body = el('div', 'fv-body');
 		root.appendChild(body);
 		host.textContent = '';
 		host.appendChild(root);
 
 		try {
-			await draw(handler, body, path, info, opts, t, mine, resume);
+			await draw(handler, body, path, info, opts, tOr, mine, resume);
 		} catch (e) {
 			if (mine !== epoch) return;
 			body.textContent = '';
 			body.appendChild(el('p', 'fv-warn',
-				t('fileview.read_failed', 'This file could not be read: {reason}',
+				tOr('fileview.read_failed', 'This file could not be read: {reason}',
 					{ reason: (e && e.message) ? e.message : String(e) })));
 			if (opts && typeof opts.onError === 'function') opts.onError(e);
 		}
@@ -373,16 +380,16 @@
 	/// The format name is looked up per variant with the library's own English
 	/// as the fallback, so a translation can name a PDF in the reader's language
 	/// without this file holding a table of format names in any language.
-	function meta(info, t) {
+	function meta(info, tOr) {
 		var row = el('div', 'fv-meta');
-		row.appendChild(el('span', 'fv-fmt', fmtName(info && info.media, info && info.label, t)));
+		row.appendChild(el('span', 'fv-fmt', fmtName(info && info.media, info && info.label, tOr)));
 		row.appendChild(el('span', 'fv-size', fmtBytes((info && info.size) || 0)));
 		return row;
 	}
 
-	function fmtName(media, label, t) {
+	function fmtName(media, label, tOr) {
 		var v = media || 'Unknown';
-		return t('fileview.fmt.' + v, label || v);
+		return tOr('fileview.fmt.' + v, label || v);
 	}
 
 	/// One line, when the name and the bytes do not agree.
@@ -390,18 +397,18 @@
 	/// `identify` acts on the bytes, so the format shown is always what the bytes
 	/// said; the line says both and says which won, because a person looking at a
 	/// broken export needs to know the claim as well as the evidence.
-	function disagreeLine(info, t) {
+	function disagreeLine(info, tOr) {
 		return el('p', 'fv-warn fv-disagree',
-			t('fileview.disagree',
-				'The name says {named}. The bytes say {found}, and that is what is shown here.',
+			tOr('fileview.disagree',
+				'The name says {named}. The bytes say {found}, and the bytes are what is shown.',
 				{
 					// The LABEL, not the variant name. `byName`/`byMagic` are
 					// identifiers -- `Pdf`, `Text` -- and a sentence built from them
 					// read "The bytes say Pdf", which is the code's word for the
 					// format arriving on screen in front of a person who is already
 					// looking at something that went wrong.
-					named: fmtName(info.byName, info.byNameLabel, t),
-					found: fmtName(info.byMagic, info.byMagicLabel, t),
+					named: fmtName(info.byName, info.byNameLabel, tOr),
+					found: fmtName(info.byMagic, info.byMagicLabel, tOr),
 				}));
 	}
 
@@ -410,10 +417,10 @@
 	/// Draw one tier into `body`. `mine` is the epoch this draw belongs to; every
 	/// await is followed by a check of it, so a file opened while another was
 	/// still reading cannot paint over the newer one.
-	async function draw(handler, body, path, info, opts, t, mine, resume) {
+	async function draw(handler, body, path, info, opts, tOr, mine, resume) {
 		var size = (info && info.size) || 0;
 		if (!size) {
-			body.appendChild(el('p', 'fv-note', t('fileview.empty', 'This file is empty.')));
+			body.appendChild(el('p', 'fv-note', tOr('fileview.empty', 'This file is empty.')));
 			return;
 		}
 
@@ -425,32 +432,32 @@
 		var whole = (handler === 'image' || handler === 'audio' || handler === 'video'
 			|| handler === 'frame' || handler === 'doc');
 		if (whole && size > CAP_WHOLE) {
-			body.appendChild(el('p', 'fv-note', t('fileview.too_large',
-				'This is a {fmt} of {size}, too large to hold in memory here. Its bytes follow; '
-				+ 'download it to open it in something that understands it.',
-				{ fmt: fmtName(info.media, info.label, t), size: fmtBytes(size) })));
-			await hex(body, path, info, opts, t, mine, resume);
+			body.appendChild(el('p', 'fv-note', tOr('fileview.too_large',
+				'A {fmt} of {size} is too large to hold in memory here. Its bytes follow; '
+				+ 'download it to open it elsewhere.',
+				{ fmt: fmtName(info.media, info.label, tOr), size: fmtBytes(size) })));
+			await hex(body, path, info, opts, tOr, mine, resume);
 			return;
 		}
 
 		switch (handler) {
-			case 'image':	return await media(body, 'img',   path, info, opts, t, mine);
-			case 'audio':	return await media(body, 'audio', path, info, opts, t, mine);
-			case 'video':	return await media(body, 'video', path, info, opts, t, mine);
-			case 'frame':	return await frame(body, path, info, opts, t, mine);
-			case 'doc':	return await doc(body, path, info, opts, t, mine);
-			case 'json':	return await json(body, path, info, opts, t, mine);
-			case 'table':	return await table(body, path, info, opts, t, mine);
-			case 'markdown':	return await markdown(body, path, info, opts, t, mine);
-			case 'text':	return await plain(body, path, info, opts, t, mine);
-			default:	return await hex(body, path, info, opts, t, mine, resume);
+			case 'image':	return await media(body, 'img',   path, info, opts, tOr, mine);
+			case 'audio':	return await media(body, 'audio', path, info, opts, tOr, mine);
+			case 'video':	return await media(body, 'video', path, info, opts, tOr, mine);
+			case 'frame':	return await frame(body, path, info, opts, tOr, mine);
+			case 'doc':	return await doc(body, path, info, opts, tOr, mine);
+			case 'json':	return await json(body, path, info, opts, tOr, mine);
+			case 'table':	return await table(body, path, info, opts, tOr, mine);
+			case 'markdown':	return await markdown(body, path, info, opts, tOr, mine);
+			case 'text':	return await plain(body, path, info, opts, tOr, mine);
+			default:	return await hex(body, path, info, opts, tOr, mine, resume);
 		}
 	}
 
 	/// A picture, a sound or a moving picture, on a `Blob` carrying the probe's
 	/// media type. The type is not decoration: a `Blob` typed
 	/// `application/octet-stream` is a picture that does not appear.
-	async function media(body, tag, path, info, opts, t, mine) {
+	async function media(body, tag, path, info, opts, tOr, mine) {
 		var blob = await wholeBlob(path, info.size, info.mime, opts);
 		if (mine !== epoch) return;
 		var n = el(tag, 'fv-' + tag);
@@ -465,8 +472,8 @@
 		// formats a given browser may simply not carry.
 		n.addEventListener('error', function () {
 			if (n.parentNode) n.parentNode.replaceChild(el('p', 'fv-warn',
-				t('fileview.decode_failed', 'This browser could not decode this {fmt}.',
-					{ fmt: fmtName(info.media, info.label, t) })), n);
+				tOr('fileview.decode_failed', 'This browser could not decode this {fmt}.',
+					{ fmt: fmtName(info.media, info.label, tOr) })), n);
 		});
 		n.src = mint(blob);
 		body.appendChild(n);
@@ -499,12 +506,12 @@
 	/// `<embed>` rather than a bare frame because it takes the type EXPLICITLY,
 	/// which is what keeps the browser off its own sniffing, and because it has
 	/// no navigable document for anything to reach through.
-	async function doc(body, path, info, opts, t, mine) {
+	async function doc(body, path, info, opts, tOr, mine) {
 		var blob = await wholeBlob(path, info.size, info.mime, opts);
 		if (mine !== epoch) return;
 		var e = el('embed', 'fv-doc');
 		e.setAttribute('type', info.mime || 'application/pdf');
-		e.setAttribute('title', t('fileview.frame_title', 'The contents of {name}',
+		e.setAttribute('title', tOr('fileview.frame_title', 'The contents of {name}',
 			{ name: path.split('/').pop() || path }));
 		e.src = mint(blob);
 		body.appendChild(e);
@@ -517,13 +524,13 @@
 	/// `allow-forms`, `allow-popups`, `allow-modals` or `allow-top-navigation`.
 	/// The one flag is there so a page's own scripting works while it stays in an
 	/// origin of its own.
-	async function frame(body, path, info, opts, t, mine) {
+	async function frame(body, path, info, opts, tOr, mine) {
 		var blob = await wholeBlob(path, info.size, info.mime, opts);
 		if (mine !== epoch) return;
 		var f = el('iframe', 'fv-frame');
 		f.setAttribute('sandbox', 'allow-scripts');
 		f.setAttribute('referrerpolicy', 'no-referrer');
-		f.setAttribute('title', t('fileview.frame_title', 'The contents of {name}',
+		f.setAttribute('title', tOr('fileview.frame_title', 'The contents of {name}',
 			{ name: path.split('/').pop() || path }));
 		f.src = mint(blob);
 		body.appendChild(f);
@@ -537,10 +544,10 @@
 	/// that did not, and it is deliberately plain: something honest on screen
 	/// beats a blank panel, but nothing here should tempt anybody to move the
 	/// editor into it.
-	async function plain(body, path, info, opts, t, mine) {
+	async function plain(body, path, info, opts, tOr, mine) {
 		var got = await headText(path, info.size, opts);
 		if (mine !== epoch) return;
-		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, t));
+		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, tOr));
 		body.appendChild(el('pre', 'fv-plain', got.text));
 	}
 
@@ -550,10 +557,10 @@
 	/// button svg` whole. That is correct and is not loosened here: the file being
 	/// rendered may have been written by an agent, and this panel is inside our
 	/// origin.
-	async function markdown(body, path, info, opts, t, mine) {
+	async function markdown(body, path, info, opts, tOr, mine) {
 		var got = await headText(path, info.size, opts);
 		if (mine !== epoch) return;
-		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, t));
+		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, tOr));
 		// `md-body` is render.css's own hook for a block of rendered markdown; it
 		// carries the link colours, so a document's links look like the app's.
 		var box = el('div', 'fv-md md-body');
@@ -563,10 +570,10 @@
 	}
 
 	/// JSON as a tree that opens and closes.
-	async function json(body, path, info, opts, t, mine) {
+	async function json(body, path, info, opts, tOr, mine) {
 		var got = await headText(path, info.size, opts);
 		if (mine !== epoch) return;
-		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, t));
+		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, tOr));
 		var data, ok = true;
 		try { data = JSON.parse(got.text); } catch (e) { ok = false; }
 		if (!ok) {
@@ -574,7 +581,7 @@
 			// three are worth saying rather than papering over, and the text is
 			// still the most useful thing to show.
 			body.appendChild(el('p', 'fv-note',
-				t('fileview.json_bad', 'This is not one JSON value, so it is shown as text.')));
+				tOr('fileview.json_bad', 'This is not one JSON value, so it is shown as text.')));
 			body.appendChild(el('pre', 'fv-plain', got.text));
 			return;
 		}
@@ -582,7 +589,7 @@
 		body.appendChild(node(data, null, 0, budget));
 		if (budget.left <= 0) {
 			body.appendChild(el('p', 'fv-note',
-				t('fileview.tree_capped', 'The tree is cut short here; the file is larger than it shows.')));
+				tOr('fileview.tree_capped', 'The tree is cut short here; the file is larger than it shows.')));
 		}
 	}
 
@@ -630,10 +637,10 @@
 	/// The first row is drawn as a header. That is a guess, and it is the guess
 	/// nearly every one of these files rewards; a wrong one costs a reader one
 	/// bold row and nothing else.
-	async function table(body, path, info, opts, t, mine) {
+	async function table(body, path, info, opts, tOr, mine) {
 		var got = await headText(path, info.size, opts);
 		if (mine !== epoch) return;
-		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, t));
+		if (got.capped) body.appendChild(cappedLine(info.size, CAP_TEXT, tOr));
 		var rows = parseDelim(got.text, info.media === 'Tsv' ? '\t' : ',');
 		var wrap = el('div', 'fv-tablewrap');
 		var tbl  = el('table', 'fv-table');
@@ -649,7 +656,7 @@
 		wrap.appendChild(tbl);
 		body.appendChild(wrap);
 		if (rows.length > shown) {
-			body.appendChild(el('p', 'fv-note', t('fileview.rows_capped',
+			body.appendChild(el('p', 'fv-note', tOr('fileview.rows_capped',
 				'Showing the first {shown} rows of {total}.',
 				{ shown: fmtExact(shown), total: fmtExact(rows.length) })));
 		}
@@ -685,21 +692,21 @@
 	/// costs four kilobytes of memory. The bar names the exact range and the
 	/// exact total, because at this tier the exact number IS the information --
 	/// "12 KB" is no use to somebody counting into a header.
-	async function hex(body, path, info, opts, t, mine, at) {
+	async function hex(body, path, info, opts, tOr, mine, at) {
 		// Two sentences, because one with a `{fmt}` hole in it cannot serve both
 		// cases: the format is the whole point when it is known, and when it is not
 		// the hole fills with the word "Unknown" and the line reads "no viewer here
 		// for a Unknown".
 		body.appendChild(el('p', 'fv-note', info.media === 'Unknown'
-			? t('fileview.hex_note_unknown',
+			? tOr('fileview.hex_note_unknown',
 				'Nothing here recognises this file, so these are its bytes.')
-			: t('fileview.hex_note',
+			: tOr('fileview.hex_note',
 				'There is no viewer here for a {fmt}, so these are its bytes.',
-				{ fmt: fmtName(info.media, info.label, t) })));
+				{ fmt: fmtName(info.media, info.label, tOr) })));
 
 		var bar  = el('div', 'fv-hexbar');
-		var prev = el('button', 'fv-btn', t('fileview.hex_prev', 'Earlier bytes'));
-		var next = el('button', 'fv-btn', t('fileview.hex_next', 'Later bytes'));
+		var prev = el('button', 'fv-btn', tOr('fileview.hex_prev', 'Earlier bytes'));
+		var next = el('button', 'fv-btn', tOr('fileview.hex_next', 'Later bytes'));
 		var at_  = el('span', 'fv-hexat');
 		prev.type = 'button'; next.type = 'button';
 		bar.appendChild(prev); bar.appendChild(next); bar.appendChild(at_);
@@ -716,7 +723,7 @@
 			var u8 = await readBytes(path, off, PAGE, opts);
 			if (mine !== epoch) return;
 			pre.textContent = hexLines(u8, off);
-			at_.textContent = t('fileview.hex_at', 'Bytes {from} to {to} of {total}', {
+			at_.textContent = tOr('fileview.hex_at', 'Bytes {from} to {to} of {total}', {
 				from:  fmtExact(off),
 				to:    fmtExact(off + Math.max(u8.length, 1) - 1),
 				total: fmtExact(info.size),
@@ -760,8 +767,8 @@
 
 	/// The line that says a read stopped short. Never omitted: a truncation
 	/// nobody mentions reads as a corrupt file.
-	function cappedLine(size, cap, t) {
-		return el('p', 'fv-note', t('fileview.capped',
+	function cappedLine(size, cap, tOr) {
+		return el('p', 'fv-note', tOr('fileview.capped',
 			'Showing the first {shown} of {total}.',
 			{ shown: fmtBytes(cap), total: fmtBytes(size) }));
 	}

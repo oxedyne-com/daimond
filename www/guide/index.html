@@ -36,9 +36,9 @@
 
 <main>
 	<h1>Getting started</h1>
-	<p class="lede">Daimond is an AI agent workspace that runs entirely in your browser. There is no account on a server and no app to install: your chats, keys and files live only on this device.</p>
+	<p class="lede">Daimond is an AI agent workspace that runs entirely in your browser. There is no account on a server and nothing to download: your chats, keys and files live only on this device.</p>
 
-	<p>Nothing leaves your device unless you direct it to. Daimond reaches the outside world only at your request: when you connect your own model provider, so your messages go to that provider; when you spend credits to run a model, fetch a page, or sync mail; and when you link a second device. Everything else stays in this browser, and <a href="accounts.html">Accounts &amp; privacy</a> sets out exactly what goes where, and how you can check it for yourself.</p>
+	<p>Nothing leaves your device unless you direct it to. Your messages go to the model provider you connected; credits pay for a model run, a page fetched or a mailbox synced; a device you link gets an encrypted parcel. Everything else stays in this browser. <a href="accounts.html">Accounts &amp; privacy</a> sets out what goes where, and how to check it yourself.</p>
 
 	<figure class="shot" data-shot="getting-started">
 		<img alt="The Daimond workspace on first run: the Diamonds and Chats rail on the left, the chat panel in the centre, and the admin panel at the bottom-left." src="shots/getting-started.png" loading="lazy">
@@ -51,27 +51,27 @@
 	<ol class="steps">
 		<li>
 			<h3 id="s2">Create an account</h3>
-			<p>On first run Daimond offers to <strong>protect this device</strong> with a passphrase. Type your name and a passphrase, then choose <span class="ui">Create account</span>. The passphrase encrypts your stored keys and mail credentials, and it is your on-device identity. It is never sent anywhere, so keep it somewhere safe — if you lose it, the encrypted data is gone.</p>
-			<p>You may also choose <span class="ui">Skip for now</span> and set a passphrase later, but connecting a provider key works best once a passphrase is in place to protect it.</p>
+			<p>On first run Daimond offers to <strong>protect this device</strong> with a passphrase. Type your name and a passphrase, then choose <span class="ui">Create account</span>. The passphrase encrypts your stored keys and mail credentials, and it is your on-device identity. It is never sent anywhere, so keep it somewhere safe: if you lose it, the encrypted data is gone.</p>
+			<p><span class="ui">Skip for now</span> lets you set one later, though a provider key is best added once a passphrase is there to protect it.</p>
 		</li>
 		<li>
 			<h3 id="s3">Connect a model, or buy credits</h3>
-			<p>A daimon needs a model to think with. You have two ways to give it one, both reached from the admin panel at the bottom-left:</p>
+			<p>A daimon needs a model to think with. Two ways to give it one, both in the admin panel at the bottom-left:</p>
 			<ul>
 				<li><strong>Bring your own key.</strong> Open the <span class="ui">Models</span> row, choose <span class="ui">+ Add provider</span>, pick a provider, paste its API key, and star a default model. Your messages then go straight to that provider on your own account.</li>
-				<li><strong>Buy credits.</strong> Open the <span class="ui">Credits</span> row and buy a pack. Daimond runs the model for you, with no provider key to manage and no subscription.</li>
+				<li><strong>Buy credits.</strong> Open the <span class="ui">Credits</span> row and buy a pack. Daimond runs the model for you: no provider key to manage, no subscription.</li>
 			</ul>
 			<p>Either one is enough. See <a href="models.html">Models &amp; credits</a> for the detail.</p>
 		</li>
 		<li>
 			<h3 id="s4">Start a chat</h3>
-			<p>Choose <span class="ui">New chat</span> at the top of the rail (the <strong>＋</strong> beside <strong>Chats</strong>), type a message in the box at the bottom of the centre panel, and send it with <span class="ui">➤</span>. That centre panel is where you talk to the daimon, and Daimond is built around that conversation.</p>
+			<p>Choose <span class="ui">New chat</span> at the top of the rail (the <strong>＋</strong> beside <strong>Chats</strong>), type in the box at the bottom of the centre panel, and send with <span class="ui">➤</span>. That centre panel is where you talk to the daimon, and Daimond is built around that conversation.</p>
 		</li>
 	</ol>
 
 	<h2 id="s5">What you are looking at</h2>
-	<p>The screen has three zones. The <strong>rail</strong> on the left lists what you are working on and, below a movable divider, the <strong>admin panel</strong>. The <strong>stage</strong> in the centre holds the conversation and anything you are reading beside it. The <strong>dock</strong> on the right holds the sources you pull from — Email, the Workspace, live agent runs and your spending.</p>
-	<p>Across the top, every panel has a chip you can click to open or close it, and a button at the far right sets the theme, the text size and how the dock tiles. Neither is anything you need on the way to a first answer; both are laid out on <a href="interface.html">The interface</a>.</p>
+	<p>The screen has three zones. The <strong>rail</strong> on the left lists what you are working on and, below a movable divider, the <strong>admin panel</strong>. The <strong>stage</strong> in the centre holds the conversation and anything you read beside it. The <strong>dock</strong> on the right holds the sources you pull from: Email, the Workspace, agent runs, your spending, what is waiting on you, and the Trash.</p>
+	<p>Across the top, every panel has a chip that opens or closes it, and buttons at the far right for the About dialog, this guide, and the theme, text size and dock tiling. None of it is needed on the way to a first answer; all of it is laid out on <a href="interface.html">The interface</a>.</p>
 
 	<figure class="shot" data-shot="admin-panel">
 		<img alt="The admin panel at the bottom-left: an identity row, a Models row, a Credits row, a Tools row, and workspace storage rows." src="shots/admin-panel.png" loading="lazy">
@@ -79,6 +79,9 @@
 	</figure>
 
 	<p>The admin panel is where Daimond is set up and where it tells you what it is costing. Each row is a button that opens the thing it names: your identity, <span class="ui">Models</span>, <span class="ui">Credits</span>, <span class="ui">Tools</span>, <span class="ui">Version</span>, and the storage your workspace is using. The next page walks through every part of the screen.</p>
+
+	<h2 id="s6">Keeping it to hand</h2>
+	<p>Your browser's own <span class="ui">Install</span>, or <span class="ui">Add to Home Screen</span> on a phone, gives Daimond an icon and a window of its own. It is the same page and the same stored work: nothing is downloaded, nothing moves, and a build the server has moved past is still refused rather than served from a cache.</p>
 
 	<div class="next">
 		<span></span>

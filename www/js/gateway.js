@@ -236,9 +236,13 @@
 	/// claim about a node this function knows nothing about, and it will be wrong
 	/// again the next time a leaf arrives before its control does. Each caller
 	/// writes its own complete sentence, and owns whether it can promise a button.
+	/// `english` is the WHOLE sentence, `{node}` included, so it is a byte-for-byte
+	/// copy of the catalogue entry rather than a second assembly of one. A fallback
+	/// stitched together here drifted from `en.js` the first time the wording was
+	/// revised, and nothing noticed because it only shows when the table is absent.
 	function pauseWords(key, node, english) {
 		var s = t(key, { node: node });
-		return (s === key) ? ('Paused: ' + node + ' — ' + english) : s;
+		return (s === key) ? english.replace(/\{node\}/g, node) : s;
 	}
 
 	/// Is this node paused? A leaf's own flag, and cheap enough to sit in front
@@ -294,7 +298,7 @@
 					// The whole sentence, clause included: every mail leaf has had a
 					// control on it since phase G, so this one can promise a button.
 					return { node: stop, message: pauseWords('pause.refused.mail', stop,
-						'the mailbox was not contacted and nothing was spent. '
+						'{node} is paused. The mailbox was not contacted and nothing was spent. '
 						+ 'Press play on it to resume.') };
 				}
 				return null;
@@ -325,7 +329,7 @@
 					// thing would be a second thing to keep in step for the sake of
 					// one noun. What was held is the web, whichever door was tried.
 					return { node: hold, message: pauseWords('pause.refused.web', hold,
-						'the page was not fetched and nothing was spent. '
+						'{node} is paused. The page was not fetched and nothing was spent. '
 						+ 'Press play on it to resume.') };
 				}
 			}
@@ -664,10 +668,10 @@
 	async function buyCredits(packMinor) {
 		if (!state.authed) {
 			var ok = await bootstrap();
-			if (!ok) throw new Error('Could not reach the Daimond account service. Try again shortly.');
+			if (!ok) throw new Error(t('gateway.acct_unreachable'));
 		}
 		var j = await post('/api/checkout/credits', { pack_minor: packMinor });
-		if (!j.url) throw new Error('The checkout session came back without a URL.');
+		if (!j.url) throw new Error(t('gateway.session_no_url'));
 		window.location = j.url;
 	}
 
@@ -680,10 +684,10 @@
 	async function saveCard() {
 		if (!state.authed) {
 			var ok = await bootstrap();
-			if (!ok) throw new Error('Could not reach the Daimond account service. Try again shortly.');
+			if (!ok) throw new Error(t('gateway.acct_unreachable'));
 		}
 		var j = await post('/api/card/setup', {});
-		if (!j.url) throw new Error('The card session came back without a URL.');
+		if (!j.url) throw new Error(t('gateway.card_no_url'));
 		window.location = j.url;
 	}
 
@@ -710,7 +714,7 @@
 	async function buyPro() {
 		if (!state.authed) {
 			var ok = await bootstrap();
-			if (!ok) throw new Error('Could not reach the Daimond account service. Try again shortly.');
+			if (!ok) throw new Error(t('gateway.acct_unreachable'));
 		}
 		var r = await gwFetch('/api/checkout/pro', {
 			method: 'POST',
@@ -721,7 +725,7 @@
 		var j = null; try { j = await r.json(); } catch (e) {}
 		// Already held is not an error to shout about: reflect it and stop.
 		if (r.status === 409) { state.pro = true; return { held: true }; }
-		if (!r.ok || !j || !j.url) throw new Error((j && j.error) || 'The checkout session came back without a URL.');
+		if (!r.ok || !j || !j.url) throw new Error((j && j.error) || t('gateway.session_no_url'));
 		window.location = j.url;
 		return { held: false };
 	}

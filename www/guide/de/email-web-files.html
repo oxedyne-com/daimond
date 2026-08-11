@@ -39,7 +39,7 @@
 	<p class="lede">Die Quellen, aus denen ein Daimon arbeitet: Mail, die Sie lesen und beantworten können, Webseiten, die er zeigen oder bedienen kann, Dateien, die er lesen und schreiben kann, und die Werkzeuge, mit denen er die Arbeit tut.</p>
 
 	<h2 id="s1">E-Mail</h2>
-	<p>Das E-Mail-Panel sitzt im Dock, rechts. Es hält Ihre Postfächer und was darin liegt. Ein Browser kann von sich aus keine Mail-Verbindung öffnen, deshalb stellt Daimond die Verbindung über ein Gateway her, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten dann vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben, die Dateiwerkzeuge des Agenten lesen sie also ohnehin.</p>
+	<p>Das E-Mail-Panel sitzt im Dock und hält Ihre Postfächer und was darin liegt. Ein Browser kann von sich aus keine Mail-Verbindung öffnen, deshalb verbindet sich Daimond über ein Gateway, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben, die Dateiwerkzeuge des Agenten lesen sie also ohnehin.</p>
 
 	<figure class="shot" data-shot="email">
 		<img alt="Das E-Mail-Panel: oben die Postfächer und darunter eine Liste der Nachrichten, mit Schaltflächen zum Schreiben, zum Hinzufügen eines Postfachs und zum Synchronisieren." src="../shots/email.png" loading="lazy">
@@ -47,7 +47,7 @@
 	</figure>
 
 	<h3 id="s2">Ein Postfach hinzufügen</h3>
-	<p>Wählen Sie <span class="ui">+</span> (Postfach hinzufügen) in der Kopfzeile des E-Mail-Panels. Geben Sie Ihre Adresse ein, und Daimond rät die Servereinstellungen für gängige Anbieter; jedes Feld bleibt änderbar, denn eine Vermutung ist keine Tatsache. Die meisten Anbieter wollen ein <strong>App-Passwort</strong> — ein Passwort für genau einen Zweck, das Sie in den Sicherheitseinstellungen Ihres Mail-Kontos erzeugen — statt Ihres Kontopassworts. Das Panel sagt Ihnen, wo Sie es bei Ihrem Anbieter finden.</p>
+	<p>Wählen Sie <span class="ui">+</span> (Postfach hinzufügen) in der Kopfzeile des E-Mail-Panels. Geben Sie Ihre Adresse ein, und Daimond rät die Servereinstellungen für gängige Anbieter; jedes Feld bleibt änderbar, denn eine Vermutung ist keine Tatsache. Die meisten Anbieter wollen ein <strong>App-Passwort</strong> — ein Passwort für genau einen Zweck, das Sie in den Sicherheitseinstellungen Ihres Mail-Kontos erzeugen — und nicht Ihr Kontopasswort. Das Panel sagt, wo Sie es bei Ihrem Anbieter finden.</p>
 	<div class="note">Ihre Mail-Zugangsdaten liegen auf diesem Gerät, unter Ihrer Passphrase verpackt. Sie werden dem Gateway nur für eine einzelne Synchronisierung gereicht, für ein Gespräch mit Ihrem Mailserver gehalten und dann vergessen. Daimond legt auf keinem Server Mail ab und sieht Ihr Kontopasswort nie.</div>
 
 	<h3 id="s3">Lesen und synchronisieren</h3>
@@ -58,7 +58,7 @@
 	<div class="note"><strong>Nur Sie können Mail senden.</strong> Die Schaltfläche <span class="ui">Senden</span> ist in Daimond die einzige Stelle, an der Mail auf die Leitung geht, und nur ein Mensch kann sie drücken. Der Daimon kann eine Nachricht neben Ihnen entwerfen, aber senden kann er sie nicht.</div>
 
 	<h2 id="s5">Das Web-Panel</h2>
-	<p>Bitten Sie Daimond, eine Webseite zu öffnen — <em>„zeig mir das Kapitel über Ownership in Rust“</em> — oder fügen Sie einen Link in den Chat ein. Es gibt drei Wege, eine Seite auf die Bühne zu bringen, und welcher davon geht, hängt von der Website ab.</p>
+	<p>Bitten Sie Daimond, eine Webseite zu öffnen — <em>„zeig mir das Kapitel über Ownership in Rust“</em> — oder fügen Sie einen Link in den Chat ein. Drei Wege gibt es, eine Seite auf die Bühne zu bringen, und welcher geht, hängt von der Website ab.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="Das Web-Panel zeigt eine Seite auf der Bühne, mit Zurück, Neu laden und In einem Tab öffnen in seiner Kopfzeile." src="../shots/web-panel.png" loading="lazy">
@@ -68,7 +68,7 @@
 	<div class="cards">
 		<div class="card">
 			<h3 id="s6">Zeigen</h3>
-			<p>Die Seite erscheint im Panel — aber die meisten Websites lassen sich nicht einbetten (das ist die Clickjacking-Abwehr des Webs, in jedem Browser gleich), das geht also nur bei der Minderheit, die es erlaubt.</p>
+			<p>Die Seite erscheint im Panel. Die meisten Websites lassen sich nicht einbetten — die Clickjacking-Abwehr des Webs, in jedem Browser gleich —, das geht also nur bei der Minderheit, die es erlaubt.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">Lesen</h3>
@@ -85,66 +85,76 @@
 	<h2 id="s9">Der Arbeitsbereich</h2>
 	<p>Das Arbeitsbereich-Panel im Dock ist Ihre Dateisammlung als gewöhnlicher Baum aus Ordnern. Hier liest und schreibt der Agent: Uploads, Mail, Dokumente und alles, was er hervorbringt, liegt hier.</p>
 
-	<p>Wenn ein Diamond geöffnet ist, zeigt das Panel entweder alles hier oder nur die Dateien, die dieses Diamond behält. Eine Datei oder einen Ordner bei einem Diamond zu behalten verschiebt und kopiert nichts: Die Datei bleibt, wo sie ist, und das Diamond zeigt auf sie, derselbe Ordner kann also bei zwei Diamonds liegen, und eine Änderung zeigt sich in beiden. Der Daimon eines Diamonds kann die Dateien in seinem Arbeitsbereich öffnen und sonst nichts — <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> legt dar, wovor das schützt und wovor nicht.</p>
+	<p>Bei geöffnetem Diamond zeigt das Panel entweder alles hier oder nur die Dateien, die dieses Diamond hält. Die <strong>📎</strong> in jeder Zeile hängt eine Datei an das an, was gerade im Fokus ist; <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> legt dar, was das Anhängen bewirkt, was ein Daimon dann öffnen darf und wovor Sie das schützt.</p>
+
+	<h3 id="s10">Drei Wege, eine Datei hineinzubekommen</h3>
+	<p>Eine Datei in den Arbeitsbereich zu bekommen und sie an ein Diamond zu hängen, sind zwei getrennte Handlungen. Es gibt drei Wege hinein, jeder für einen anderen Fall:</p>
+	<ul>
+		<li><strong>Hochladen</strong> — die Schaltfläche mit dem Pfeil in die Ablage, in der Kopfzeile des Panels. Für eine Datei oder eine Handvoll. Eine gewöhnliche Dateiauswahl, in jedem Browser.</li>
+		<li><strong>Einen Ordner importieren …</strong> — für einen ganzen Ordner, der im Browser-Arbeitsbereich liegen und synchronisieren soll. Nur in Browsern auf Chromium-Basis.</li>
+		<li><strong>Einen echten Ordner öffnen</strong> — der Chip <span class="ui">Rechner</span> — Ihre eigene Platte <em>ist</em> der Arbeitsbereich: Es wird nichts kopiert, und es synchronisiert nichts. Nur in Browsern auf Chromium-Basis.</li>
+	</ul>
+	<p>Ein Agent kann außerdem eine Datei schreiben, wo er darf, und Mail kommt hier als gewöhnliche Dateien an.</p>
 
 	<figure class="shot" data-shot="workspace">
 		<img alt="Das Arbeitsbereich-Panel: drei Chips mit Browser, Machine und Cloud, Schaltflächen zum Importieren eines Ordners oder zum Speichern einer Kopie und ein Dateibaum, in dem eine Datei als im Cloud-Speicher liegend markiert und eine andere angeheftet ist." src="../shots/workspace.png" loading="lazy">
 		<figcaption>Der Arbeitsbereich. Die Chips benennen, wo der Arbeitsbereich liegt; darunter liegt <em>interviews.txt</em> im Cloud-Speicher statt auf diesem Gerät, und <em>report-draft.txt</em> ist angeheftet, damit sie immer hier bleibt.</figcaption>
 	</figure>
 
-	<h3 id="s10">Mit Dateien arbeiten</h3>
-	<p>Die Kopfzeile des Arbeitsbereichs trägt Schaltflächen: eine neue <span class="ui">🗋</span> Datei anlegen, einen neuen <span class="ui">🗀</span> Ordner anlegen, <span class="ui">⤒</span> Dateien hochladen, <span class="ui">↑</span> eine Ebene höher und <span class="ui">⟳</span> die Ansicht auffrischen. Ein Filterfeld verengt eine lange Liste.</p>
+	<h3 id="s11">Mit Dateien arbeiten</h3>
+	<p>Die Kopfzeile des Arbeitsbereichs trägt Schaltflächen für <span class="ui">Neue Datei</span>, einen <span class="ui">Neuer Ordner</span>, <span class="ui">Dateien hochladen</span>, <span class="ui">Übergeordneter Ordner</span> und <span class="ui">Aktualisieren</span>. Darunter benennt eine <strong>Brotkrumenspur</strong> jeden Ordner über dem, in dem Sie stehen, jeder anklickbar, ein Ordner drei Ebenen tief ist also nie eine Sackgasse. Ein Filterfeld verengt eine lange Liste und sucht von Ihrem Standort abwärts, statt am aktuellen Ordner haltzumachen.</p>
+	<p>Unter dem Baum öffnet <strong>System</strong> Daimonds eigene Dateien: den Speicher, in dem die Diamonds selbst liegen. Sie liegen im Browser statt in dem Ordner, den Sie geöffnet haben, und sie reisen zwischen Ihren Geräten. Der Baum darüber lässt sie bewusst aus, denn ein Löschkreuz neben <code>diamonds/</code> würde jedes Diamond mitnehmen, das Sie haben.</p>
 
-	<h3 id="s11">Wo ein Arbeitsbereich liegt</h3>
+	<h3 id="s12">Wo ein Arbeitsbereich liegt</h3>
 	<p>Drei Chips oben im Panel benennen die Orte, die ein Arbeitsbereich betrifft. Ein Klick auf einen öffnet die Bedienelemente dieses Ortes.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s12">Browser</h3>
-			<p>Der eigene private Speicher dieses Browsers, auf Ihrem Gerät gehalten und für nichts außerhalb von Daimond erreichbar. Dort liegt ein Arbeitsbereich, wenn Sie nichts anderes sagen. Seine Größe ist, was der Browser zugestehen will — auf einem iPhone nicht viel — und ein Browser kann ihn ohne Warnung leeren.</p>
+			<h3 id="s13">Browser</h3>
+			<p>Der eigene private Speicher dieses Browsers, auf Ihrem Gerät und für nichts außerhalb von Daimond erreichbar. Dort liegt ein Arbeitsbereich, wenn Sie nichts anderes sagen. Seine Größe ist, was der Browser zugesteht — auf einem iPhone nicht viel —, und ein Browser kann ihn ohne Warnung leeren.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">Rechner</h3>
-			<p>Ein echter Ordner auf der Platte dieses Rechners. Der Agent arbeitet direkt darin, Sie sehen dieselben Dateien also in Ihrem eigenen Dateimanager, und er ist geräumiger als das, was ein Browser zugesteht. Aber er bleibt auf diesem einen Rechner und reist nicht zu Ihren anderen Geräten, und nur ein Browser auf Chromium-Basis kann einen öffnen.</p>
-			<p><strong>Der Ordner ist alles, was der Agent sehen kann.</strong> Er arbeitet nur innerhalb des Ordners, den Sie gewählt haben: nichts darüber und nichts außerhalb ist für Daimond sichtbar. Ein Klick auf den Chip, während der Agent dort arbeitet, sagt das und bietet <span class="ui">Diesen Ordner vergessen</span> an, wenn Daimond keine Aufzeichnung darüber mehr halten soll.</p>
+			<h3 id="s14">Rechner</h3>
+			<p>Ein echter Ordner auf der Platte dieses Rechners. Der Agent arbeitet direkt darin, dieselben Dateien liegen also in Ihrem eigenen Dateimanager, und er ist geräumiger als das, was ein Browser zugesteht. Aber er bleibt auf diesem einen Rechner, reist nie zu Ihren anderen Geräten, und nur ein Browser auf Chromium-Basis kann einen öffnen.</p>
+			<p><strong>Der Ordner ist alles, was der Agent sehen kann.</strong> Nichts darüber und nichts außerhalb ist für Daimond sichtbar. Ein Klick auf den Chip, während der Agent dort arbeitet, sagt das und bietet <span class="ui">Diesen Ordner vergessen</span> an, damit Daimond keine Aufzeichnung darüber mehr hält.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">Cloud</h3>
-			<p>Kein dritter Ort zum Arbeiten, sondern der Ort, an dem der Arbeitsbereich aufbewahrt wird. Er ist es, der einen Arbeitsbereich weit größer sein lässt, als ein einzelnes Gerät fassen kann. Sein Chip öffnet eine Ansicht dessen, was gespeichert ist, was nicht auf diesem Gerät liegt, eine Schaltfläche <span class="ui">Platz schaffen</span> und eine Schaltfläche <span class="ui">Guthaben</span> darin.</p>
+			<h3 id="s15">Cloud</h3>
+			<p>Kein dritter Ort zum Arbeiten, sondern der Ort, an dem der Arbeitsbereich aufbewahrt wird — das ist es, was ihn weit größer sein lässt, als ein einzelnes Gerät fasst. Sein Chip öffnet eine Ansicht dessen, was gespeichert ist und was nicht auf diesem Gerät liegt; eine Schaltfläche <span class="ui">Platz schaffen</span> und eine Schaltfläche <span class="ui">Guthaben</span> darin.</p>
 		</div>
 	</div>
 
-	<p>Die ersten beiden sind Alternativen: Der Agent arbeitet im einen oder im anderen. Das dritte ist keine Alternative — dort liegen die Bytes. Die Speicherzeilen im Verwaltungsfeld zeigen, wie viel Platz jeder Ort belegt.</p>
+	<p>Die ersten beiden sind Alternativen, der Agent arbeitet im einen oder im anderen. Das dritte ist keine Alternative, sondern der Ort, an dem die Bytes liegen. Die Speicherzeilen im Verwaltungsfeld zeigen, wie viel Platz jeder belegt.</p>
 
 	<div class="note">Was im Cloud-Speicher liegt, ist <strong>verschlüsselt, bevor es hinausgeht</strong>, wie ein Synchronisierungspaket auch, wir halten also Bytes, die wir nicht lesen können.</div>
 
-	<h3 id="s15">Gehalten, im Cloud-Speicher oder angeheftet</h3>
+	<h3 id="s16">Gehalten, im Cloud-Speicher oder angeheftet</h3>
 	<p>Eine Datei ist in einem von drei Zuständen, und der Baum zeigt, in welchem:</p>
 	<ul>
 		<li><strong>Auf diesem Gerät gehalten</strong> — sie öffnet sich sofort.</li>
-		<li><strong>Nur im Cloud-Speicher</strong> — mit einer Wolke gekennzeichnet. Es ist weiter Ihre Datei, weiter aufgeführt, weiter sicher, nur eben gerade nicht auf diesem Gerät. Ein Klick holt sie herunter, und das Holen-Element in ihrer Zeile ebenso.</li>
+		<li><strong>Nur im Cloud-Speicher</strong> — mit einer Wolke gekennzeichnet. Weiter Ihre Datei, weiter aufgeführt, weiter sicher, nur gerade nicht hier. Ein Klick holt sie herunter, und das Holen-Element in ihrer Zeile ebenso.</li>
 		<li><strong>Angeheftet</strong> — immer auf diesem Gerät gehalten und nie von selbst freigegeben. Die Nadel sitzt in der Zeile, neben einem Element, das den Platz einer gehaltenen Datei freigibt.</li>
 	</ul>
-	<p>Wenn der Speicher des Browsers voll läuft, werden die Dateien, die Sie am längsten nicht benutzt haben, von selbst in den Cloud-Speicher zurückgegeben; eine angeheftete Datei nie.</p>
+	<p>Wenn der Speicher des Browsers voll läuft, werden die am längsten unbenutzten Dateien von selbst in den Cloud-Speicher zurückgegeben; eine angeheftete Datei nie.</p>
 
 	<div class="note"><strong>Eine Datei freizugeben heißt nicht, sie zu löschen.</strong> Sie bleibt im Cloud-Speicher, der Baum führt sie weiter auf, und sie kommt zurück, wenn sie angefordert wird. Nur ein bewusstes Löschen entfernt eine Datei.</div>
 
-	<h3 id="s16">Jede Art von Datei</h3>
-	<p>Jede Datei reist zwischen Ihren Geräten und wird gespeichert, gleich welcher Art: ein Foto, eine Aufnahme, ein PDF, eine Tabelle, bis zu einem Gigabyte je Datei. Eine Datei zu öffnen, die kein Text ist, zeigt ihre Größe und eine Schaltfläche zum Herunterladen, statt zu versuchen, sie darzustellen.</p>
+	<h3 id="s17">Jede Art von Datei</h3>
+	<p>Jede Datei wird gespeichert und reist zwischen Ihren Geräten, bis zu einem Gigabyte je Stück. Eine zu öffnen, die kein Text ist, zeigt ihre Größe und eine Schaltfläche zum Herunterladen, statt zu versuchen, sie darzustellen.</p>
 
-	<h3 id="s17">Dateien hinein- und hinausbewegen</h3>
-	<p>Zwei Schaltflächen sitzen neben den Chips. <span class="ui">Einen Ordner importieren …</span> kopiert einen Ordner von diesem Rechner in den Arbeitsbereich; danach synchronisiert er und wird gespeichert wie alles andere. <span class="ui">Eine Kopie speichern …</span> schreibt den Arbeitsbereich in einen Ordner auf diesem Rechner. Keines von beiden ändert, wo der Agent arbeitet, und beide brauchen einen Browser auf Chromium-Basis. Eine Kopie hinaus holt keine Datei, die nur im Cloud-Speicher liegt, und sagt, wie viele sie zurückgelassen hat.</p>
+	<h3 id="s18">Dateien hinein- und hinausbewegen</h3>
+	<p>Zwei Schaltflächen sitzen neben den Chips. <span class="ui">Einen Ordner importieren …</span> kopiert einen Ordner von diesem Rechner herein; danach synchronisiert er und wird gespeichert wie alles andere. <span class="ui">Eine Kopie speichern …</span> schreibt den Arbeitsbereich in einen Ordner auf diesem Rechner und sagt, wie viele Dateien es zurückgelassen hat, die nur im Cloud-Speicher liegen, statt sie zu holen. Keines von beiden ändert, wo der Agent arbeitet, und beide brauchen einen Browser auf Chromium-Basis.</p>
 
-	<p>Während der Agent in einem echten Ordner arbeitet, erscheint eine dritte Schaltfläche: <span class="ui">Ordner wechseln…</span>, das einzige Element, das eine Ordnerauswahl öffnet. Der Wechsel zwischen <span class="ui">Browser</span> und <span class="ui">Rechner</span> tut das nicht: Daimond merkt sich den zuletzt benutzten Ordner, dorthin zurück ist also ein einziger Klick auf den Chip.</p>
+	<p>Während der Agent in einem echten Ordner arbeitet, erscheint eine dritte Schaltfläche, <span class="ui">Ordner wechseln…</span>, das einzige Element, das eine Ordnerauswahl öffnet. Der Wechsel zwischen <span class="ui">Browser</span> und <span class="ui">Rechner</span> tut das nicht: Daimond merkt sich den zuletzt benutzten Ordner, zurück ist also ein Klick auf den Chip.</p>
 
-	<h3 id="s18">Was der Agent holen darf</h3>
-	<p>Wenn der Agent eine Datei braucht, die im Cloud-Speicher liegt, wird ihm das klar gesagt, und er muss sie bewusst holen. Hinter einem Lesevorgang wird nichts still heruntergeladen, denn ein Download kann groß sein und kostet Sie Geld, sobald Speicher bepreist ist. Es gibt außerdem eine Grenze, wie viel der Agent von sich aus herunterholen darf; danach kommt er zurück und fragt.</p>
+	<h3 id="s19">Was der Agent holen darf</h3>
+	<p>Wenn der Agent eine Datei braucht, die im Cloud-Speicher liegt, wird ihm das klar gesagt, und er muss sie bewusst holen. Hinter einem Lesevorgang wird nichts still heruntergeladen: Ein Download kann groß sein und kostet Sie Geld, sobald Speicher bepreist ist. Eine Grenze beschränkt, wie viel der Agent von sich aus herunterholen darf; danach kommt er zurück und fragt.</p>
 
-	<h3 id="s19">Was Cloud-Speicher kostet</h3>
-	<p>Cloud-Speicher ist kein Abonnement. Wie alles andere, das den Browser verlässt, bezahlt er sich aus <a href="models.html">Guthaben</a>, und die einmalige Pro-Freischaltung bleibt eine einmalige Freischaltung. Zurzeit ist er kostenlos und ungemessen, bis er ordentlich verkauft werden kann.</p>
-	<div class="note">Wenn eine Speichergebühr einmal nicht gedeckt werden kann, <strong>wird nicht sofort etwas gelöscht</strong>. Lesen und Herunterladen bleiben sechs Monate lang frei, sodass sich alles zurückholen lässt, und erst danach wird der bezahlte Überhang entfernt. Der freie Arbeitsvorrat wird nie entfernt.</div>
+	<h3 id="s20">Was Cloud-Speicher kostet</h3>
+	<p>Kein Abonnement. Wie alles andere, das den Browser verlässt, bezahlt er sich aus <a href="models.html">Guthaben</a>, und die einmalige Pro-Freischaltung bleibt einmalig. Zurzeit ist er kostenlos und ungemessen, bis er ordentlich verkauft werden kann.</p>
+	<div class="note">Wenn eine Speichergebühr einmal nicht gedeckt werden kann, <strong>wird nicht sofort etwas gelöscht</strong>. Lesen und Herunterladen bleiben sechs Monate lang frei, sodass sich alles zurückholen lässt, und erst danach wird der bezahlte Überhang entfernt. Der freie Arbeitsvorrat nie.</div>
 
-	<h2 id="s20">Werkzeuge</h2>
+	<h2 id="s21">Werkzeuge</h2>
 	<p>Öffnen Sie die Zeile <span class="ui">Werkzeuge · N von M</span> im Verwaltungsfeld, um zu sehen, was Daimond kann. Sie heißt Werkzeuge, nicht Erweiterungen, denn das meiste, was sie aufführt, ist kostenlos und schon Ihres.</p>
 
 	<figure class="shot" data-shot="tools-panel">
@@ -154,10 +164,10 @@
 
 	<p>Zwei Arten von Werkzeug erscheinen:</p>
 	<ul>
-		<li><strong>Eingebaute Werkzeuge</strong> — die, die dem Agenten schon in die Hand gegeben sind, kostenlos. Das Panel führt genau auf, was der Agent tatsächlich hält, es kann also kein Werkzeug versprechen, das es nicht gibt.</li>
-		<li><strong>Freischaltbare Werkzeuge</strong> — Extras mit einem Preis. Das Panel zeigt den Preis und ob dieses Konto die Freischaltung schon hält.</li>
+		<li><strong>Eingebaute Werkzeuge</strong> — was dem Agenten schon in die Hand gegeben ist, kostenlos. Das Panel führt genau auf, was er hält, es kann also kein Werkzeug versprechen, das es nicht gibt.</li>
+		<li><strong>Freischaltbare Werkzeuge</strong> — Extras mit einem Preis, angezeigt mitsamt der Auskunft, ob dieses Konto die Freischaltung schon hält.</li>
 	</ul>
-	<p>Um ein freischaltbares Werkzeug hinzuzufügen, wählen Sie es im Panel und bestätigen die Freischaltung; die Kosten werden von Ihrem Guthaben abgezogen, und einmal freigeschaltet bleibt es dem Agenten verfügbar.</p>
+	<p>Um eines hinzuzufügen, wählen Sie es und bestätigen; die Kosten werden vom Guthaben abgezogen, und einmal freigeschaltet bleibt es verfügbar.</p>
 
 	<div class="next">
 		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>

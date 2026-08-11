@@ -259,8 +259,8 @@
 	/// The key is gateway.js's, so the sentence is translated once.
 	function pausedWords(node) {
 		return tf('pause.refused.mail',
-			'Paused: {node} — the mailbox was not contacted and nothing was spent. '
-			+ 'Press play on it to resume.', { node: node });
+			'{node} is paused. The mailbox was not contacted and nothing was spent. '
+				+ 'Press play on it to resume.', { node: node });
 	}
 
 	/// One pause control, from the module that owns the drawing of it.
@@ -1837,7 +1837,7 @@
 			return {
 				text: '—', when: ago(0), stale: true,
 				title: tf('mail.count.never',
-					'Not fetched yet, so there is no count to show.'),
+					'Not fetched yet, so there is no count.'),
 			};
 		}
 		var n = (f && f.count) | 0;
@@ -2049,7 +2049,7 @@
 		// should be able to see that coming.
 		var sc = refreshScale();
 		b.title = tf('mail.refresh_all',
-			'Refresh every folder of every mailbox — {folders} folders in {boxes} mailboxes',
+			'Refresh all {folders} folders in {boxes} mailboxes',
 			{ folders: sc.folders, boxes: sc.boxes });
 		b.setAttribute('aria-label', b.title);
 		b.textContent = '⟳';
@@ -2200,9 +2200,8 @@
 		if (!a) return box;
 
 		box.appendChild(html('<p class="mail-fine">'
-			+ esc(tf('mail.cfg.head', 'How often each folder goes and looks, and '
-				+ 'which of them are allowed to. Every refresh costs credits, so '
-				+ 'nothing polls until you say so.')) + '</p>'));
+			+ esc(tf('mail.cfg.head', 'How often each folder goes and looks, and which of them may. Every refresh '
+				+ 'costs credits, so nothing polls until you say so.')) + '</p>'));
 
 		// The mailbox's own leaf, first, because it governs everything below it.
 		// It carries no frequency of its own: what the user schedules is folders,

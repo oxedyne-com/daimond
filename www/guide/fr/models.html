@@ -52,7 +52,7 @@
 	<p>L’un ou l’autre suffit pour démarrer. Vous pouvez faire les deux — connecter une clé pour le travail de tous les jours et garder des crédits pour les moments où vous préférez ne pas en gérer.</p>
 
 	<h2 id="s4">Connecter un fournisseur</h2>
-	<p>Ouvrez la ligne <span class="ui">Modèles</span> du panneau d’administration, en bas à gauche. Elle liste une clé pour chaque fournisseur que vous utilisez et indique sur quel modèle démarrent les nouveaux chats. Pour en ajouter un, choisissez <span class="ui">+ Ajouter un fournisseur</span> et répondez aux trois mêmes questions, quel que soit le fournisseur.</p>
+	<p>Ouvrez la ligne <span class="ui">Modèles</span> du panneau d’administration, en bas à gauche. Elle liste une clé pour chaque fournisseur que vous utilisez et le modèle sur lequel démarrent les nouveaux chats. Pour en ajouter un, choisissez <span class="ui">+ Ajouter un fournisseur</span> et répondez aux trois mêmes questions, quel que soit le fournisseur.</p>
 
 	<figure class="shot" data-shot="models-form">
 		<img alt="Le formulaire Ajouter un fournisseur : une liste déroulante de fournisseurs, une zone pour la clé d’API et une liste déroulante de modèle par défaut, avec un bouton Enregistrer et démarrer." src="../shots/models-form.png" loading="lazy">
@@ -62,7 +62,7 @@
 	<ol class="steps">
 		<li>
 			<h3 id="s5">Choisir un fournisseur</h3>
-			<p>Prenez dans la liste — <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personnalisé</strong> pour tout autre service qui parle la même API chat-completions. Choisir Personnalisé fait apparaître une zone <strong>URL de base</strong> pour pointer Daimond vers ce service.</p>
+			<p>Prenez dans la liste — <strong>Anthropic</strong>, <strong>Fireworks AI</strong>, <strong>OpenRouter</strong>, <strong>Together AI</strong>, <strong>Groq</strong>, <strong>DeepInfra</strong>, ou <strong>Personnalisé</strong> pour tout autre service parlant la même API chat-completions. Choisir Personnalisé fait apparaître une zone <strong>URL de base</strong> pour pointer Daimond vers ce service.</p>
 		</li>
 		<li>
 			<h3 id="s6">Coller votre clé d’API</h3>
@@ -77,7 +77,7 @@
 	<div class="note"><strong>Tout reste sur cet appareil.</strong> Vos clés, vos chats et vos fichiers ne vivent que dans ce navigateur. Rien ne nous est envoyé — une clé de fournisseur que vous ajoutez parle à ce fournisseur, et à personne d’autre.</div>
 
 	<h3 id="s8">Le modèle par défaut, et en choisir un autre pour un seul chat</h3>
-	<p>Un modèle est celui par défaut, sur lequel commencent les nouveaux chats et Diamonds. N’importe quel modèle connecté peut être choisi pour un seul chat : ouvrez un chat et servez-vous du sélecteur de modèle dans son en-tête (en haut à droite du panneau central) pour ne changer que cette conversation, sans toucher au modèle par défaut.</p>
+	<p>Un modèle est celui par défaut, sur lequel commencent les nouveaux chats et Diamonds. N’importe quel modèle connecté peut être choisi pour un seul chat, depuis le sélecteur de son en-tête, en haut à droite du panneau central ; le modèle par défaut reste intact. On peut aussi donner à un Diamond un modèle distinct pour les ouvriers qu’il dépêche.</p>
 
 	<h2 id="s9">Acheter des crédits</h2>
 	<p>Ouvrez la ligne <span class="ui">Crédits</span> du panneau d’administration. Elle affiche votre solde et un ensemble de packs à acheter. Il n’y a pas d’abonnement : vous gardez ce que vous achetez, et rien n’est facturé à nouveau sauf si vous activez la recharge automatique.</p>
@@ -90,11 +90,11 @@
 	<p>Le paiement se fait sur la page hébergée par le prestataire de paiement lui-même. Aucun numéro de carte, date d’expiration ou code de sécurité n’est jamais saisi dans Daimond : il n’y a donc rien ici qui puisse fuir.</p>
 
 	<h2 id="s10">Recharge automatique</h2>
-	<p>La recharge automatique est une consigne permanente d’acheter vos propres crédits quand ils s’épuisent, pour qu’un long travail ne s’arrête pas à mi-chemin. C’est le seul endroit où Daimond a le droit de débiter une carte enregistrée en votre absence : elle est donc délibérément explicite. Trois nombres la règlent, sous les packs dans la vue Crédits :</p>
+	<p>La recharge automatique est une consigne permanente d’acheter des crédits quand ils s’épuisent, pour qu’un long travail ne s’arrête pas à mi-chemin. C’est le seul endroit où Daimond peut débiter une carte enregistrée en votre absence : elle est donc délibérément explicite. Trois nombres la règlent, sous les packs dans la vue Crédits :</p>
 	<ul>
 		<li><strong>En dessous de</strong> — le solde auquel une recharge se déclenche.</li>
 		<li><strong>Acheter</strong> — ce qu’une recharge ajoute.</li>
-		<li><strong>Jamais plus de</strong> — un plafond dur sur le total des recharges dans un mois civil. C’est le nombre qui compte : c’est un plafond, pas une cible, et il est appliqué sur le même chemin de code que le débit, si bien qu’on ne peut pas le contourner.</li>
+		<li><strong>Jamais plus de</strong> — un plafond dur sur le total des recharges dans un mois civil. Réglez celui-ci avec soin. C’est un plafond plutôt qu’une cible, et il est appliqué sur le même chemin de code que le débit : rien ne peut le contourner.</li>
 	</ul>
 
 	<div class="note">La recharge automatique ne peut pas être activée sans carte enregistrée — un contrôle qui s’activerait puis échouerait en silence serait pire qu’un contrôle désactivé qui dit pourquoi. Enregistrer une carte est une redirection vers la page hébergée du prestataire de paiement ; Daimond ne voit jamais les détails de la carte.</div>

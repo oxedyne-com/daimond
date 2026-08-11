@@ -53,22 +53,71 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-/// Push, and wait until the parcel has actually LANDED. A single push() call is
-/// not enough: one that finds another in flight (or the app busy) only
-/// reschedules and returns, so awaiting it proves nothing — the pull that
-/// follows then reads a stale blob and the Diamond checks flake. The server
-/// version advancing is the only honest signal a push made it.
-async function pushLanded(pg) {
-	const landed = await pg.evaluate(async () => {
-		const v0 = window.DaimondSync.state().version;
+/// Push, and wait until THIS DEVICE'S OWN PARCEL is what the mailbox holds.
+///
+/// A single push() call is not enough: one that finds another in flight (or the
+/// app busy) only reschedules and returns, so awaiting it proves nothing.
+///
+/// THE VERSION ADVANCING IS NOT ENOUGH EITHER, which is what this helper used
+/// to wait for, and it is why one check per run went red and never the same
+/// one. `serverVersion` moves on any completed round, and three of them are not
+/// this push:
+///
+///   * a round that was ALREADY IN FLIGHT when the caller made its change. It
+///     collected the parcel before the change existed, and it lands carrying
+///     the state as it was. The version advances, the wait is satisfied, and
+///     the pull that follows reads a mailbox that never saw the change --
+///     "the second device pulls the shared Diamond down" and "a deleted
+///     workspace file is restored by pull", both of which failed exactly here.
+///   * `pull()` adopting a higher version from another device.
+///   * push()'s own idle branch: with nothing new to send it pulls instead,
+///     which can advance the version having sent nothing at all.
+///
+/// So the wait is on the only fact the callers actually depend on: the mailbox
+/// decrypts to a parcel THIS device produced after the change. The parcel is
+/// resampled each round and every sample kept, because a stray landing round
+/// may carry a perfectly good newer parcel; what can never be accepted is the
+/// one collected before the caller's change, which is never sampled at all.
+///
+/// A push that does not land is a FAILURE, not a note. It used to print a line
+/// and carry on, so the red surfaced two hundred lines later as an unrelated
+/// merge fault.
+async function pushLanded(pg, where) {
+	const r = await pg.evaluate(async (ms) => {
+		const mailbox = async () => {
+			const res = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			const j = await res.json();
+			if (!j.present) return null;
+			try { return await window.DaimondIdentity.unwrap(j.blob); }
+			catch (e) { return null; }
+		};
+		const mine = new Set();
 		const t0 = Date.now();
-		while (window.DaimondSync.state().version <= v0 && Date.now() - t0 < 8000) {
+		let rounds = 0, held = null, sample = '';
+		while (Date.now() - t0 < ms) {
+			rounds++;
 			await window.DaimondSync.push();
-			await new Promise(r => setTimeout(r, 150));
+			sample = JSON.stringify(await window.DaimondSync.parcel());
+			mine.add(sample);
+			held = await mailbox();
+			if (held !== null && mine.has(held)) return { landed: true, rounds, took: Date.now() - t0 };
+			await new Promise(r => setTimeout(r, 200));
 		}
-		return window.DaimondSync.state().version > v0;
-	});
-	if (!landed) console.log('  note  pushLanded: version did not advance within 8s');
+		return {
+			landed: false, rounds, took: Date.now() - t0,
+			// Which it is: a mailbox holding somebody else's parcel and a mailbox
+			// holding nothing readable are different faults.
+			mailbox: held === null ? '(absent or undecryptable)' : String(held.length) + ' bytes',
+			parcel:  String(sample.length) + ' bytes',
+			state:   JSON.stringify(window.DaimondSync.state()),
+		};
+	}, 25000);
+	if (!r.landed) {
+		check('a push reached the mailbox' + (where ? ' (' + where + ')' : ''), false,
+			r.rounds + ' rounds in ' + r.took + 'ms, mailbox ' + r.mailbox
+				+ ' vs parcel ' + r.parcel + ' — ' + r.state);
+	}
+	return r.landed;
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -110,6 +159,33 @@ const installBump = (pg) => pg.evaluate(() => {
 		const after = JSON.stringify(await window.DaimondCore.collectSync());
 		return { moved: after !== before, why: after === before ? 'the parcel did not move' : '' };
 	};
+
+	/// Push until a parcel really LEAVES this device, and say whether one did.
+	///
+	/// THE SECOND BLINDING. `__bump` above makes sure there is something to send;
+	/// this makes sure it is sent. `push()` answers a caller no differently
+	/// whether it sent or stood aside -- over a live turn, and over a round
+	/// already in flight, it only reschedules and returns -- so every stubbed
+	/// refusal below (413, 402, 409) could be asserted against a gateway nobody
+	/// had spoken to. Observed: "a permanent conflict is retried, and bounded"
+	/// red at posts=0, with the chip still reading "Syncing…" from the round
+	/// that had swallowed the call.
+	///
+	/// `count` is the section's own POST counter, so what is waited for is the
+	/// thing the section measures. Re-bumped each round because a round that was
+	/// in flight may have sent the change for real before the stub went on,
+	/// leaving the engine with nothing to send and no reason to speak again.
+	window.__pushSent = async function (count, tag, ms) {
+		const t0 = Date.now();
+		let rounds = 0;
+		while (count() === 0 && Date.now() - t0 < (ms || 15000)) {
+			rounds++;
+			if (rounds > 1) await window.__bump(tag + '-' + rounds);
+			await window.DaimondSync.push();
+			if (count() === 0) await new Promise(r => setTimeout(r, 250));
+		}
+		return { sent: count() > 0, rounds: rounds, took: Date.now() - t0 };
+	};
 });
 
 /// One local change, from Node. Returns `{ moved, why }`.
@@ -148,18 +224,32 @@ async function restartGateway() {
 	let cwd, exe;
 	try {
 		cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
-		exe = fs.readlinkSync(`/proc/${pid}/exe`);
+		// Linux appends " (deleted)" to this link once the binary has been
+		// REPLACED under the running process -- which is what a rebuild does, and
+		// a rebuild during a test run is an ordinary Tuesday. Spawning the link
+		// verbatim then failed ENOENT on a path ending in that suffix, and the
+		// failure arrived as an ChildProcess 'error' EVENT rather than a throw,
+		// so it went round the whole file's try/catch and killed the run outright
+		// with everything before it green and nothing said about why.
+		exe = fs.readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, '');
 	} catch (e) { return 'could not read the gateway process: ' + e.message; }
+	if (!fs.existsSync(exe)) return 'the gateway binary is no longer at ' + exe;
 
 	try { execFileSync('pkill', ['-x', 'daimond_gateway']); } catch (e) { /* already gone */ }
 	for (let i = 0; i < 20 && await gatewayUp(); i++) await sleep(500);
 	if (await gatewayUp()) return 'the gateway would not stop';
 
+	let spawnErr = '';
 	const child = spawn(exe, [], {
 		cwd, detached: true, stdio: 'ignore',
 		env: { ...process.env, APP_MODE: process.env.APP_MODE || 'sandbox' },
 	});
+	// A spawn failure is an EVENT, not a throw. Unhandled it is fatal to the
+	// whole run — see the note on the " (deleted)" suffix above.
+	child.on('error', (e) => { spawnErr = String(e && e.message || e); });
 	child.unref();
+	await sleep(200);
+	if (spawnErr) return 'the gateway would not start: ' + spawnErr;
 	for (let i = 0; i < 60; i++) {
 		if (await gatewayUp()) return true;
 		await sleep(500);
@@ -222,7 +312,7 @@ try {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		return ((await r.json()).version) | 0;
 	});
-	await pushLanded(page);
+	await pushLanded(page, 'the conversation');
 	const pushed = await page.evaluate(async () => {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
@@ -309,10 +399,21 @@ try {
 		// there is no 409 to reconcile.
 		const changed = await window.__bump('conflict-note');
 		// This device still thinks the version is `before`. Push the fresh change.
-		await window.DaimondSync.push();		// base=before → 409 → pull → retry → success.
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
-		const j = await r.json();
-		return { before, bumped: otherJson.version, after: j.version, changed };
+		//
+		// Pushed until the mailbox moves, not once: a push that finds a round
+		// already in flight reschedules and returns, and reading the version in
+		// the same tick then reported a reconcile that had not been attempted
+		// yet as one that failed. The base is still stale whichever call ends up
+		// sending, so what is waited for is still the 409-pull-retry path.
+		let after = otherJson.version;
+		const t0 = Date.now();
+		while (after <= otherJson.version && Date.now() - t0 < 15000) {
+			await window.DaimondSync.push();		// base=before → 409 → pull → retry → success.
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+			after = ((await r.json()).version) | 0;
+			if (after <= otherJson.version) await new Promise(x => setTimeout(x, 250));
+		}
+		return { before, bumped: otherJson.version, after, changed };
 	});
 	check('the out-of-band write advanced the mailbox', conflict.bumped === conflict.before + 1,
 		'before=' + conflict.before + ' bumped=' + conflict.bumped);
@@ -331,16 +432,30 @@ try {
 
 	// (3b) Workspace files travel too: write one, push, confirm it is sealed, then
 	// delete it locally and pull it back.
+	//
+	// The push is driven by the helper, not called once: a bare push() that finds
+	// a round in flight only reschedules, and the mailbox then held a parcel with
+	// no file in it at all. That read as "a deleted workspace file is restored by
+	// pull" failing -- while the sealed check above it stayed green, because a
+	// blob that never carried the file passes "the mark is absent" perfectly.
+	// Which is why the file's presence is now asserted too: a check that only
+	// looks for something's ABSENCE is answered by having nothing.
 	const FILEMARK = 'FILEMARK-' + '5566';
-	const filePush = await page.evaluate(async (mark) => {
+	await page.evaluate(async (mark) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		await app.run_tool('file_write', JSON.stringify({ path: 'sync-note.txt', content: 'workspace ' + mark }));
-		await window.DaimondSync.push();
+	}, FILEMARK);
+	await pushLanded(page, 'the workspace file');
+	const filePush = await page.evaluate(async () => {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
-		return { version: j.version, blob: j.blob || '' };
-	}, FILEMARK);
+		let plain = '';
+		try { plain = await window.DaimondIdentity.unwrap(j.blob || ''); } catch (e) { plain = ''; }
+		return { version: j.version, blob: j.blob || '', plain };
+	});
+	check('the workspace file really travelled — the mailbox holds it, sealed',
+		filePush.plain.includes(FILEMARK), 'parcel ' + filePush.plain.length + ' bytes');
 	check('a workspace file is sealed in the pushed blob (content absent from ciphertext)',
 		!filePush.blob.includes(FILEMARK));
 
@@ -360,12 +475,19 @@ try {
 
 	// (3c) A deletion on another device propagates here (an unchanged local copy
 	// is removed; an edit would have beaten the delete).
-	const delProp = await page.evaluate(async () => {
+	// The agreeing push is driven by the helper for the same reason as (3b): the
+	// deletion below is only meaningful against a mailbox that HELD the file, and
+	// a bare push() that stood aside left there being nothing to delete.
+	await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		await app.run_tool('file_write', JSON.stringify({ path: 'DELME.txt', content: 'delete me across devices' }));
 		localStorage.removeItem('daimond-sync-filebase');
-		await window.DaimondSync.push();								// agree on DELME.txt; it enters the baseline.
+	});
+	await pushLanded(page, 'DELME.txt enters the baseline');
+	const delProp = await page.evaluate(async () => {
+		const mod = await import('../pkg/oxedyne_daimond.js');
+		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		const present = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
 		// The OTHER device deletes DELME.txt and pushes the reduced state.
 		const state = await window.DaimondCore.collectSync();
@@ -541,7 +663,7 @@ try {
 			&& before.log >= 2 && before.links.length >= 1,
 		before ? 'tags=[' + before.tags.join(',') + '] v' + before.version
 			+ ' log=' + before.log + ' links=' + before.links.length : 'absent');
-	await pushLanded(page);
+	await pushLanded(page, 'the fixture Diamonds');
 
 	// A second device: it has never seen these Diamonds, holds no per-Diamond
 	// model choice, and has no version cursor. Wiping all three is what "another
@@ -696,7 +818,7 @@ try {
 		if (id) await app.write_crystal_data(id, crystal);
 		return id;
 	}, crystalOf('HERE-' + DMARK));
-	await pushLanded(page);
+	await pushLanded(page, 'Sync-Charlie');
 
 	/// Which of the four copies below is on this device, named by the one field they
 	/// differ by. PARSED rather than compared as text: a copy that arrives as
@@ -1031,7 +1153,7 @@ try {
 	// scheduled. Let it land: a push still in flight when the next section stubs
 	// the gateway is only rescheduled, and that section would then measure a chip
 	// that says "Syncing…" for a reason that has nothing to do with it.
-	await pushLanded(page);
+	await pushLanded(page, 'the merges of (4f)/(4g)');
 	await page.waitForTimeout(500);
 
 	// ── (6) A parcel the gateway refuses as too large is VISIBLE ───────
@@ -1055,29 +1177,45 @@ try {
 		// nothing the change does can be answered by it.
 		const changed = await window.__bump('too-big-1');
 		const real = window.fetch;
+		// Counted, so "the refusal was answered" is a measurement rather than an
+		// assumption: the push below is driven until a parcel really leaves.
+		let sent = 0;
 		window.fetch = function (u, o) {
 			const url = String((u && u.url) || u || '');
 			if (url.indexOf('/api/sync') !== -1 && o && o.method === 'POST') {
+				sent++;
 				return Promise.resolve(new Response(
 					JSON.stringify({ ok: false, error: 'Sync blob exceeds the size limit' }),
 					{ status: 413, headers: { 'content-type': 'application/json' } }));
 			}
 			return real.apply(this, arguments);
 		};
-		await window.DaimondSync.push();
+		const refused = await window.__pushSent(() => sent, 'too-big-1');
 		const stalled = chip();
 		const api = window.DaimondSync.state ? window.DaimondSync.state() : null;
 		window.fetch = real;
 		// And a later successful push clears it — a stall that outlives its cause
 		// is the same lie the other way round.
+		//
+		// Driven until the engine says the stall is gone, for the third time in
+		// this file: a bare push() here found a round in flight, rescheduled, and
+		// the chip was read still holding the 413 it had never been given a
+		// chance to clear. Waiting on the STALL, not on a timer, so a stall that
+		// genuinely never clears still fails.
 		const cleared = await window.__bump('too-big-2');
-		await window.DaimondSync.push();
+		const tClear = Date.now();
+		while (window.DaimondSync.state().stalled && Date.now() - tClear < 15000) {
+			await window.DaimondSync.push();
+			if (window.DaimondSync.state().stalled) await new Promise(r => setTimeout(r, 250));
+		}
 		const after = chip();
-		return { changed, cleared, stalled, api, after };
+		return { changed, cleared, stalled, api, after, refused };
 	});
 	check('both local changes moved the parcel, so the 413 arm was reached at all',
 		tooBig.changed.moved === true && tooBig.cleared.moved === true,
 		[tooBig.changed.why, tooBig.cleared.why].filter(Boolean).join('; '));
+	check('and a parcel really reached the refusal', tooBig.refused.sent === true,
+		JSON.stringify(tooBig.refused));
 	check('a 413 push shows a stalled state on the sync chip, held (not a flash)',
 		!!(tooBig.stalled && tooBig.stalled.shown && tooBig.stalled.state === 'stalled'),
 		JSON.stringify(tooBig.stalled));
@@ -1366,6 +1504,10 @@ try {
 			return r.moved;
 		};
 		const real = window.fetch;
+		// Refusals ANSWERED, not merely offered. A push that finds a round in
+		// flight reschedules and returns, so a single call could leave every
+		// assertion below reporting on a stub nothing ever reached.
+		let sent = 0;
 		const stub = (post, get) => {
 			window.fetch = function (u, o) {
 				const url = String((u && u.url) || u || '');
@@ -1373,6 +1515,7 @@ try {
 				const method = (o && o.method) || 'GET';
 				const code = isSync ? (method === 'POST' ? post : get) : 0;
 				if (code) {
+					if (method === 'POST') sent++;
 					return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'stub' }),
 						{ status: code, headers: { 'content-type': 'application/json' } }));
 				}
@@ -1383,13 +1526,14 @@ try {
 		// A 413 first: the parcel is too large, and the chip stalls.
 		stub(413, 0);
 		await bump('gate-1');
-		await window.DaimondSync.push();
+		out.sent413 = await window.__pushSent(() => sent, 'gate-1');
 		out.stalled = chip();
 		// Then a 402 on top of it. Not entitled outranks too large: an account
 		// that may not sync at all cannot act on a parcel being oversized.
 		stub(402, 0);
 		await bump('gate-2');
-		await window.DaimondSync.push();
+		sent = 0;
+		out.sent402 = await window.__pushSent(() => sent, 'gate-2');
 		out.off = chip();
 		// A pull that WORKS must not paint "Synced" over it.
 		window.fetch = real;
@@ -1422,6 +1566,9 @@ try {
 	});
 	check('each refusal below was answered to a parcel that really left',
 		allMoved(gate.bumps), (gate.bumps || []).join(' | '));
+	check('and both refusals were reached by a parcel that was actually SENT',
+		gate.sent413.sent === true && gate.sent402.sent === true,
+		'413 ' + JSON.stringify(gate.sent413) + ', 402 ' + JSON.stringify(gate.sent402));
 	check('a 413 stalls the chip', gate.stalled && gate.stalled.state === 'stalled',
 		JSON.stringify(gate.stalled));
 	check('a 402 on top of a stall shows "Sync off" — not entitled outranks too large',
@@ -1527,23 +1674,29 @@ try {
 		return 'ok';
 	};
 
-	/// Every Diamond name the MAILBOX holds, decrypted — what the other device
-	/// would receive if it pulled this instant.
-	const namesInMailbox = () => page.evaluate(async () => {
+	/// What the MAILBOX holds, decrypted — what the other device would receive if
+	/// it pulled this instant. The Diamond names, and what the trash says about
+	/// each of them, because since the trash those are two different facts about
+	/// the same Diamond and a delete moves only the second.
+	const inMailbox = () => page.evaluate(async () => {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
-		if (!j.present) return [];
+		if (!j.present) return { names: [], trash: {} };
 		try {
 			const st = JSON.parse(await window.DaimondIdentity.unwrap(j.blob));
-			return (st.diamonds || []).map((d) => {
-				try { return JSON.parse(JSON.parse(d.data).files['.daimond/meta.json']).name; }
-				catch (e) { return '?'; }
-			});
-		} catch (e) { return ['<undecryptable>']; }
+			return {
+				names: (st.diamonds || []).map((d) => {
+					try { return JSON.parse(JSON.parse(d.data).files['.daimond/meta.json']).name; }
+					catch (e) { return '?'; }
+				}),
+				trash: (st.trash && st.trash.items) || {},
+			};
+		} catch (e) { return { names: ['<undecryptable>'], trash: {} }; }
 	});
+	const namesInMailbox = async () => (await inMailbox()).names;
 
 	await newDiamond('Quiet-Alpha');
-	await pushLanded(page);
+	await pushLanded(page, 'Quiet-Alpha');
 	const vQuiet = await quiesce(page);
 	check('the engine is quiet before the measurement, so nothing stray can carry it',
 		vQuiet > 0, 'version=' + vQuiet);
@@ -1579,21 +1732,30 @@ try {
 		JSON.stringify(second));
 
 	// A second real mutation path through the same funnel: deleting through the
-	// rail's × button, which writes the tombstone that has to travel with it.
+	// rail, which writes the TRASH RECORD that has to travel with it.
+	//
+	// Not a tombstone, and not an absence. (4b) settled what a rail delete now
+	// means -- the Diamond is trashed, its bytes still travel so the other device
+	// can restore it, and only destroying it from the trash tombstones it -- and
+	// this check went on asserting the contract that replaced. It failed on every
+	// run, naming the Diamond it had just been told would still be there.
 	await quiesce(page);
 	await countPosts(page);
 	const vDel = await page.evaluate(() => window.DaimondSync.state().version);
+	const quietId = await wasm(async (app) =>
+		(JSON.parse(await app.list_diamonds()).find(d => d.name === 'Quiet-Renamed') || {}).id || '');
 	const dropped = await removeDiamond('Quiet-Renamed');
 	const delPush = await ownPush(page, vDel);
-	const afterDel = await namesInMailbox();
+	const afterDel = await inMailbox();
+	const delRec = afterDel.trash[quietId] || null;
 	check('deleting a Diamond in the rail also travels without a turn',
 		dropped === 'ok' && delPush.landed === true,
 		dropped + ', after ' + delPush.took + 'ms');
 	// The other Diamonds are named too, so an empty or unreadable mailbox cannot
 	// pass this by holding nothing.
-	check('and the mailbox no longer offers it, while still holding the rest',
-		!afterDel.includes('Quiet-Renamed') && afterDel.includes('Link-Travel'),
-		JSON.stringify(afterDel));
+	check('and the mailbox says it is in the trash, while still holding the rest',
+		!!quietId && !!delRec && delRec.at > delRec.back && afterDel.names.includes('Link-Travel'),
+		'id=' + quietId + ' rec=' + JSON.stringify(delRec) + ' ' + JSON.stringify(afterDel.names));
 
 	// A nudge is not a poll, and this is the failure mode the fix itself could
 	// have: collectSync() persists the chats on its way past, so if THAT nudged,
@@ -1648,9 +1810,11 @@ try {
 			}
 			return real.apply(this, arguments);
 		};
-		// Pushed, refused: the engine is now paused on a 402.
-		await window.DaimondSync.push();
-		const paused = { chip: chip(), entitled: window.DaimondSync.state().entitled };
+		// Pushed, refused: the engine is now paused on a 402. Driven until one
+		// really goes -- a push over a round already in flight is only
+		// rescheduled, and the pause below would then be nobody's.
+		const reached = await window.__pushSent(() => sent, 'nudge-402');
+		const paused = { chip: chip(), entitled: window.DaimondSync.state().entitled, reached };
 		// Now a mutation of the kind that nudges. It must change nothing.
 		const before = sent;
 		await window.DaimondCore.collectSync();	// persistChats() runs on the way past
@@ -1665,7 +1829,8 @@ try {
 	check('the change that provoked the 402 really left this device',
 		refusal.changed.moved === true, refusal.changed.why);
 	check('a 402 pauses pushes and says so on the chip',
-		!!(refusal.paused.chip && refusal.paused.chip.state === 'off') && refusal.paused.entitled === false,
+		!!(refusal.paused.chip && refusal.paused.chip.state === 'off')
+			&& refusal.paused.entitled === false && refusal.paused.reached.sent === true,
 		JSON.stringify(refusal.paused));
 	check('a nudge afterwards does not restart them behind the refusal',
 		refusal.tried === 0 && refusal.entitled === false, 'attempts=' + refusal.tried);
@@ -1677,7 +1842,7 @@ try {
 	await unstub(page);
 	await page.evaluate(() => window.DaimondSync.recheck());
 	await page.waitForTimeout(1500);
-	await pushLanded(page);
+	await pushLanded(page, 'the tier coming back');
 	const back = await page.evaluate(() => window.DaimondSync.state());
 	check('and the tier coming back lifts it, with the engine syncing again',
 		back.entitled === true && back.stalled === false, JSON.stringify(back));
@@ -1702,7 +1867,7 @@ try {
 		/^[0-9a-f]{16}$/.test(roster0.self || '') && !!JSON.parse(roster0.reg)[roster0.self],
 		roster0.reg.slice(0, 120));
 
-	await pushLanded(page);
+	await pushLanded(page, 'the device roster');
 	const sealed = await page.evaluate(async () => {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
@@ -1721,7 +1886,7 @@ try {
 	}, DEV_B);
 	check('the second device pulls and learns of the first',
 		!!bSaw[roster0.self], Object.keys(bSaw).join(','));
-	await pushLanded(page);
+	await pushLanded(page, 'device B line');
 
 	// Device A again, knowing only itself, exactly as it was left.
 	const aSaw = await page.evaluate(async (r) => {
@@ -1774,7 +1939,7 @@ try {
 	check('the second device can name the first one\'s line', rename.renamed === true,
 		JSON.stringify(rename.aBefore));
 
-	await pushLanded(page);
+	await pushLanded(page, 'the typed device name');
 	const sealedNamed = await page.evaluate(async () => {
 		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
 		const j = await r.json();
@@ -1908,15 +2073,31 @@ try {
 			}
 			return real.apply(this, arguments);
 		};
-		await window.DaimondSync.push();
-		const out = { posts, changed, chip: chip(), api: window.DaimondSync.state() };
+		// Driven until a parcel really leaves. A single push() here measured a
+		// gateway nobody had spoken to: the call found a round already in flight,
+		// rescheduled, and returned exactly as it does when it sent -- posts=0,
+		// the chip still reading "Syncing…" from the other round, and all four
+		// checks below red for a reason that had nothing to do with conflicts.
+		//
+		// `posts` is zeroed before each attempt, so what the bound below measures
+		// is ONE push's retries and not the sum of every round in the window.
+		let attempts = 0;
+		const t0 = Date.now();
+		while (posts === 0 && Date.now() - t0 < 15000) {
+			attempts++;
+			if (attempts > 1) await window.__bump('storm-note-' + attempts);
+			posts = 0;
+			await window.DaimondSync.push();
+			if (posts === 0) await new Promise(r => setTimeout(r, 300));
+		}
+		const out = { posts, attempts, changed, chip: chip(), api: window.DaimondSync.state() };
 		window.fetch = real;
 		return out;
 	});
 	check('the work the conflict is about really left this device',
 		exhausted.changed.moved === true, exhausted.changed.why);
 	check('a permanent conflict is retried, and bounded', exhausted.posts >= 2 && exhausted.posts <= 6,
-		'posts=' + exhausted.posts);
+		'posts=' + exhausted.posts + ' over ' + exhausted.attempts + ' push attempts');
 	check('and running out of attempts is SAID, not swallowed',
 		!!(exhausted.chip && exhausted.chip.state === 'stalled' && exhausted.chip.shown),
 		JSON.stringify(exhausted.chip));
@@ -1928,7 +2109,7 @@ try {
 
 	// Clear the stall before the second device runs below.
 	await bumped(page, 'calm-note');
-	await pushLanded(page);
+	await pushLanded(page, 'clearing the stall');
 
 	// ── (12) Two REAL devices converge, both ways ──────────────────────
 	// Every check above simulates the second device inside this browser. That
@@ -1963,16 +2144,38 @@ try {
 		return ((JSON.parse(await app.list_diamonds()).find(d => d.id === id)) || {}).name || '(absent)';
 	}, id);
 
+	/// The same name, once the store has SETTLED on it. Every assertion below
+	/// that expects a particular name is asserting the end of a merge, and
+	/// `pull()` resolving is not the same instant as the store having finished
+	/// rewriting the directory -- two `list_diamonds()` calls microseconds apart
+	/// were observed disagreeing, which is what (4c) settles rather than
+	/// snapshots for the same reason.
+	///
+	/// Bounded, and it returns whatever it last read: a name that never arrives
+	/// fails the caller's check with the name it actually found, rather than
+	/// hanging or passing.
+	const nameSettles = async (pg, id, want, ms = 6000) => {
+		const t0 = Date.now();
+		let seen = '';
+		do {
+			seen = await nameOn(pg, id);
+			if (seen === want) return seen;
+			await pg.waitForTimeout(150);
+		} while (Date.now() - t0 < ms);
+		return seen;
+	};
+
 	// A shared Diamond, on both devices, agreed.
 	const shared = await page.evaluate(async () => {
 		const m = await import('/pkg/oxedyne_daimond.js');
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 		return await app.create_diamond('Both-Devices');
 	});
-	await pushLanded(page);
+	await pushLanded(page, 'the shared Diamond');
 	await child.page.evaluate(() => window.DaimondSync.pull());
 	check('the second device pulls the shared Diamond down',
-		(await nameOn(child.page, shared)) === 'Both-Devices');
+		(await nameSettles(child.page, shared, 'Both-Devices')) === 'Both-Devices',
+		await nameOn(child.page, shared));
 	// …and it pushes once, so it has something it believes it last sent. This is
 	// the state every idle device is in.
 	await child.page.evaluate(async () => {
@@ -1980,7 +2183,7 @@ try {
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 		await app.create_diamond('Made-On-The-Mate');
 	});
-	await pushLanded(child.page);
+	await pushLanded(child.page, 'the mate own Diamond');
 	await page.evaluate(() => window.DaimondSync.pull());
 	// Quiesce the mate, so it is in the state every idle device is in: whatever
 	// it would send, it has already sent.
@@ -1995,7 +2198,7 @@ try {
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 		await app.rename_diamond(id, 'Renamed-Over-There');
 	}, shared);
-	await pushLanded(page);
+	await pushLanded(page, 'the rename for the idle device');
 	const idleLearn = await child.page.evaluate(async () => {
 		const v0 = window.DaimondSync.state().version;
 		// The app settling, twice, which is all a device that is not being typed
@@ -2008,7 +2211,7 @@ try {
 		return { v0, v1: window.DaimondSync.state().version };
 	});
 	check('a device with nothing to send still learns what the other one did',
-		(await nameOn(child.page, shared)) === 'Renamed-Over-There',
+		(await nameSettles(child.page, shared, 'Renamed-Over-There')) === 'Renamed-Over-There',
 		'version ' + idleLearn.v0 + ' -> ' + idleLearn.v1);
 
 	// (12b) Both devices editing at once, pushing on every change, as seq 50's
@@ -2048,10 +2251,10 @@ try {
 		]);
 		await page.waitForTimeout(6000);
 	}
-	const hereName  = await nameOn(page, shared);
-	const thereName = await nameOn(page, mateOwn);
-	const mateHere  = await nameOn(child.page, shared);
-	const mateThere = await nameOn(child.page, mateOwn);
+	const hereName  = await nameSettles(page, shared, 'Here-3');
+	const thereName = await nameSettles(page, mateOwn, 'There-3');
+	const mateHere  = await nameSettles(child.page, shared, 'Here-3');
+	const mateThere = await nameSettles(child.page, mateOwn, 'There-3');
 	check('after a storm of simultaneous pushes, this device holds both sides’ work',
 		hereName === 'Here-3' && thereName === 'There-3', hereName + ' / ' + thereName);
 	check('and so does the other one — the conflict path converges, both ways',
@@ -2087,7 +2290,7 @@ try {
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 		await app.rename_diamond(id, 'Unheard-Over-There');
 	}, shared);
-	await pushLanded(page);
+	await pushLanded(page, 'the rename the shut channel must miss');
 	const blind = await child.page.evaluate(async (v0) => {
 		const t0 = Date.now();
 		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
@@ -2110,7 +2313,7 @@ try {
 	await child.page.waitForFunction(
 		v0 => window.DaimondSync.state().version > v0, blind.v1, { timeout: 15000 }).catch(() => {});
 	check('opening the channel catches the device up on what it missed while it was shut',
-		(await nameOn(child.page, shared)) === 'Unheard-Over-There',
+		(await nameSettles(child.page, shared, 'Unheard-Over-There')) === 'Unheard-Over-There',
 		'version ' + blind.v1 + ' -> ' + (await child.page.evaluate(() => window.DaimondSync.state().version)));
 	const chan = await child.page.evaluate(() => {
 		window.__wakeProbe = { focus: 0, vis: 0, idle: 0 };
@@ -2135,7 +2338,7 @@ try {
 		await app.rename_diamond(id, 'Woken-Over-There');
 	}, shared);
 	const beganWake = Date.now();
-	await pushLanded(page);
+	await pushLanded(page, 'the rename the wake channel carries');
 	const woke = await child.page.evaluate(async (v0) => {
 		const t0 = Date.now();
 		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
@@ -2149,7 +2352,7 @@ try {
 	}, chan.version);
 	const wakeMs = Date.now() - beganWake;
 	check('an idle, unfocused device applies the other one’s work with no trigger of its own',
-		(await nameOn(child.page, shared)) === 'Woken-Over-There',
+		(await nameSettles(child.page, shared, 'Woken-Over-There')) === 'Woken-Over-There',
 		'version ' + chan.version + ' -> ' + woke.v1 + ' in ' + wakeMs + 'ms');
 	check('and it converges within five seconds of the push, not on the next thing the user does',
 		woke.v1 > chan.version && wakeMs < 5000, wakeMs + 'ms');
@@ -2187,7 +2390,7 @@ try {
 			await app.rename_diamond(id, 'Woken-After-Restart');
 		}, shared);
 		const beganAgain = Date.now();
-		await pushLanded(page);
+		await pushLanded(page, 'the rename after the restart');
 		await child.page.evaluate(async (v0) => {
 			const t0 = Date.now();
 			while (Date.now() - t0 < 15000 && window.DaimondSync.state().version <= v0) {
@@ -2195,7 +2398,7 @@ try {
 			}
 		}, v2);
 		check('and it is woken again on the far side of the restart',
-			(await nameOn(child.page, shared)) === 'Woken-After-Restart',
+			(await nameSettles(child.page, shared, 'Woken-After-Restart')) === 'Woken-After-Restart',
 			'took ' + (Date.now() - beganAgain) + 'ms');
 	}
 
@@ -2219,7 +2422,7 @@ try {
 		await app.rename_diamond(id, 'Woken-Without-A-Socket');
 	}, shared);
 	const beganPoll = Date.now();
-	await pushLanded(page);
+	await pushLanded(page, 'the rename the parked request carries');
 	const polled = await child.page.evaluate(async (v0) => {
 		const t0 = Date.now();
 		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
@@ -2229,7 +2432,8 @@ try {
 	}, pollChan.version);
 	const pollMs = Date.now() - beganPoll;
 	check('a parked request wakes the idle device just as a socket does',
-		(await nameOn(child.page, shared)) === 'Woken-Without-A-Socket' && polled.v1 > pollChan.version,
+		(await nameSettles(child.page, shared, 'Woken-Without-A-Socket')) === 'Woken-Without-A-Socket'
+			&& polled.v1 > pollChan.version,
 		'version ' + pollChan.version + ' -> ' + polled.v1 + ' in ' + pollMs + 'ms');
 	check('and that route converges inside five seconds too', pollMs < 5000, pollMs + 'ms');
 	check('and still with nothing happening on the device itself',
@@ -2239,18 +2443,33 @@ try {
 	// The channel carries version integers and nothing else. What the gateway
 	// parks on and answers with is read here directly, so a future change that
 	// smuggled content down it would be caught rather than assumed against.
+	//
+	// The second half of this asks what a wait NOTHING MOVED UNDER answers, so
+	// the premise has to be established rather than assumed. Both are needed and
+	// neither was there: the mate had just pulled, and a pull schedules a push of
+	// whatever this device adds over the pulled base -- so a parcel was still on
+	// its way while the probe parked. And `above` was read from THIS device's
+	// cursor, which the mate's round had already left behind, so the probe was
+	// parking over a change that had happened rather than waiting for one that
+	// had not. It reported `changed: true`, correctly, and the check called it an
+	// invention.
+	await quiesce(child.page, 15000);
+	await quiesce(page, 15000);
 	const bare = await page.evaluate(async () => {
-		const v = window.DaimondSync.state().version;
+		// The version the GATEWAY holds this instant, not this device's belief
+		// about it.
+		const r0 = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
+		const v = ((await r0.json()).version) | 0;
 		const r = await fetch('/api/sync?above=' + v + '&ms=1000&w=wkprobe',
 			{ credentials: 'same-origin', headers: { 'x-daimond-api': '1' } });
-		return { status: r.status, json: await r.json() };
+		return { status: r.status, json: await r.json(), above: v };
 	});
 	check('a wake answer carries a version and nothing else — no blob, no device, no account',
 		bare.status === 200 && bare.json.waited === true
 			&& Object.keys(bare.json).sort().join(',') === 'changed,ok,version,waited',
 		JSON.stringify(bare.json).slice(0, 160));
 	check('and a wait that nothing moved under says so rather than inventing a change',
-		bare.json.changed === false, JSON.stringify(bare.json));
+		bare.json.changed === false, 'parked above ' + bare.above + ' — ' + JSON.stringify(bare.json));
 
 	// The gateway is deliberately restarted above, so a wake socket that was open
 	// across it reports a failed connection while it is down. That is the reconnect

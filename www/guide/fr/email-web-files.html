@@ -39,7 +39,7 @@
 	<p class="lede">Les sources dont part un daimon : le courrier que vous pouvez lire et auquel répondre, les pages web qu’il peut afficher ou conduire, les fichiers qu’il peut lire et écrire, et les outils avec lesquels il fait le travail.</p>
 
 	<h2 id="s1">E-mail</h2>
-	<p>Le panneau E-mail vit dans le dock, à droite. Il tient vos boîtes mail et ce qu’elles contiennent. Un navigateur ne peut pas ouvrir seul une connexion de messagerie : Daimond établit donc la connexion via une passerelle, qui rend le message brut puis oublie vos identifiants. Votre courrier est écrit dans l’Espace comme des fichiers ordinaires, si bien que les outils de fichiers de l’agent le lisent déjà.</p>
+	<p>Le panneau E-mail vit dans le dock et tient vos boîtes mail et ce qu’elles contiennent. Un navigateur ne peut pas ouvrir seul une connexion de messagerie : Daimond se connecte donc par une passerelle, qui rend le message brut et oublie vos identifiants. Votre courrier est écrit dans l’Espace de travail comme des fichiers ordinaires, si bien que les outils de fichiers de l’agent le lisent déjà.</p>
 
 	<figure class="shot" data-shot="email">
 		<img alt="Le panneau E-mail : les boîtes mail en haut et une liste de messages en dessous, avec des boutons pour écrire, ajouter une boîte mail et synchroniser." src="../shots/email.png" loading="lazy">
@@ -47,7 +47,7 @@
 	</figure>
 
 	<h3 id="s2">Ajouter une boîte mail</h3>
-	<p>Choisissez <span class="ui">+</span> (ajouter une boîte mail) dans l’en-tête du panneau E-mail. Saisissez votre adresse et Daimond devine les réglages de serveur pour les fournisseurs courants ; chaque champ reste modifiable, parce qu’une supposition n’est pas un fait. La plupart des fournisseurs veulent un <strong>mot de passe d’application</strong> — un mot de passe dédié à un seul usage, que vous générez dans les réglages de sécurité de votre compte de messagerie — plutôt que le mot de passe de votre compte. Le panneau vous dit où le trouver chez votre fournisseur.</p>
+	<p>Choisissez <span class="ui">+</span> (ajouter une boîte mail) dans l’en-tête du panneau E-mail. Saisissez votre adresse et Daimond devine les réglages de serveur pour les fournisseurs courants ; chaque champ reste modifiable, parce qu’une supposition n’est pas un fait. La plupart des fournisseurs veulent un <strong>mot de passe d’application</strong> — un mot de passe dédié à un seul usage, que vous générez dans les réglages de sécurité de votre compte de messagerie — et non le mot de passe de votre compte. Le panneau dit où le trouver chez votre fournisseur.</p>
 	<div class="note">Vos identifiants de messagerie sont gardés sur cet appareil, enveloppés sous votre phrase secrète. Ils ne sont remis à la passerelle que pour une seule synchronisation, tenus le temps d’une conversation avec votre serveur de messagerie, puis oubliés. Daimond ne garde aucun courrier sur aucun serveur et ne voit jamais le mot de passe de votre compte.</div>
 
 	<h3 id="s3">Lire et synchroniser</h3>
@@ -58,7 +58,7 @@
 	<div class="note"><strong>Vous seul pouvez envoyer du courrier.</strong> Le bouton <span class="ui">Envoyer</span> est la seule chose dans Daimond qui mette du courrier sur le fil, et seule une personne peut l’appuyer. Le daimon peut rédiger un message à côté de vous, mais il ne peut pas l’envoyer.</div>
 
 	<h2 id="s5">Le panneau Web</h2>
-	<p>Demandez à Daimond d’ouvrir une page web — <em>« montre-moi le chapitre de Rust sur l’ownership »</em> — ou collez un lien dans le chat. Il y a trois façons de mettre une page sur la scène, et celle qui marche dépend du site.</p>
+	<p>Demandez à Daimond d’ouvrir une page web — <em>« montre-moi le chapitre de Rust sur l’ownership »</em> — ou collez un lien dans le chat. Trois façons de mettre une page sur la scène, et celle qui marche dépend du site.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="Le panneau Web affichant une page sur la scène, avec les contrôles Retour, Recharger et Ouvrir dans un onglet dans son en-tête." src="../shots/web-panel.png" loading="lazy">
@@ -68,7 +68,7 @@
 	<div class="cards">
 		<div class="card">
 			<h3 id="s6">L’afficher</h3>
-			<p>La page apparaît dans le panneau — mais la plupart des sites refusent d’être intégrés (c’est la défense du web contre le détournement de clic, la même dans tous les navigateurs), si bien que cela ne marche que pour la minorité qui l’autorise.</p>
+			<p>La page apparaît dans le panneau. La plupart des sites refusent d’être intégrés — la défense du web contre le détournement de clic, la même dans tous les navigateurs —, cela ne marche donc que pour la minorité qui l’autorise.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">La lire</h3>
@@ -85,66 +85,76 @@
 	<h2 id="s9">L’Espace de travail</h2>
 	<p>Le panneau Espace, dans le dock, ce sont vos fichiers en arborescence ordinaire de dossiers. C’est là que l’agent lit et écrit : les fichiers téléversés, le courrier, les documents et tout ce qu’il produit vivent ici.</p>
 
-	<p>Quand un Diamond est ouvert, le panneau affiche soit tout ce qui est ici, soit seulement les fichiers que ce Diamond tient. Garder un fichier ou un dossier avec un Diamond ne le déplace ni ne le copie : il reste où il est et le Diamond pointe dessus, si bien que le même dossier peut se trouver dans deux Diamonds et qu’une modification se voit dans les deux. Le daimon d’un Diamond peut ouvrir les fichiers de son espace de travail et rien d’autre — <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> dit contre quoi cela vous protège, et contre quoi non.</p>
+	<p>Avec un Diamond ouvert, le panneau montre soit tout ce qui est ici, soit seulement les fichiers que ce Diamond tient. Le <strong>📎</strong> de chaque ligne en joint un à ce qui est au focus ; <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> expose ce que joindre fait, ce qu’un daimon peut alors ouvrir, et ce contre quoi cela vous protège.</p>
+
+	<h3 id="s10">Trois façons de faire entrer un fichier</h3>
+	<p>Faire entrer un fichier dans l’espace de travail et le joindre à un Diamond sont deux actes distincts. Il y a trois entrées, chacune pour un cas différent :</p>
+	<ul>
+		<li><strong>Téléverser</strong> — le bouton flèche-vers-le-bac dans l’en-tête du panneau. Pour un fichier ou une poignée. Un sélecteur de fichiers ordinaire, dans tous les navigateurs.</li>
+		<li><strong>Importer un dossier…</strong> — pour un dossier entier qui doit vivre dans l’espace de travail du navigateur et se synchroniser. Navigateurs Chromium uniquement.</li>
+		<li><strong>Ouvrir un vrai dossier</strong> — la puce <span class="ui">Machine</span> — votre propre disque <em>est</em> l’espace de travail : rien n’est copié et rien ne se synchronise. Navigateurs Chromium uniquement.</li>
+	</ul>
+	<p>Un agent peut aussi écrire un fichier là où il en a le droit, et le courrier arrive ici comme des fichiers ordinaires.</p>
 
 	<figure class="shot" data-shot="workspace">
 		<img alt="Le panneau Espace : trois puces marquées Browser, Machine et Cloud, des boutons pour importer un dossier ou enregistrer une copie, et une arborescence dans laquelle un fichier est marqué comme étant dans le stockage en ligne et un autre est épinglé." src="../shots/workspace.png" loading="lazy">
 		<figcaption>L’Espace. Les puces nomment l’endroit où vit l’espace de travail ; en dessous, <em>interviews.txt</em> est dans le stockage en ligne plutôt que sur cet appareil, et <em>report-draft.txt</em> est épinglé pour être toujours gardé ici.</figcaption>
 	</figure>
 
-	<h3 id="s10">Travailler avec les fichiers</h3>
-	<p>L’en-tête de l’Espace porte des boutons pour créer un <span class="ui">🗋</span> fichier, créer un <span class="ui">🗀</span> dossier, <span class="ui">⤒</span> téléverser des fichiers, remonter <span class="ui">↑</span> d’un niveau, et <span class="ui">⟳</span> actualiser la vue. Une zone de filtre resserre une longue liste.</p>
+	<h3 id="s11">Travailler avec les fichiers</h3>
+	<p>L’en-tête de l’Espace porte des boutons <span class="ui">Nouveau fichier</span> facultatif, un <span class="ui">Nouveau dossier</span>, <span class="ui">Téléverser des fichiers</span>, <span class="ui">Dossier parent</span> à <span class="ui">Actualiser</span>. En dessous, un <strong>fil d’Ariane</strong> nomme chaque dossier au-dessus de celui où vous êtes, tous cliquables, si bien qu’un dossier à trois niveaux n’est jamais un cul-de-sac. Une zone de filtre resserre une longue liste, et cherche depuis l’endroit où vous êtes vers le bas plutôt que de s’arrêter au dossier courant.</p>
+	<p>Sous l’arborescence, <strong>Système</strong> ouvre les fichiers propres à Daimond : le dépôt où vivent les Diamonds eux-mêmes. Ils sont gardés dans le navigateur plutôt que dans le dossier que vous avez ouvert, et ils voyagent entre vos appareils. L’arborescence au-dessus les laisse volontairement de côté, car une croix de suppression à côté de <code>diamonds/</code> emporterait tous les Diamonds que vous avez.</p>
 
-	<h3 id="s11">Où vit un espace de travail</h3>
+	<h3 id="s12">Où vit un espace de travail</h3>
 	<p>Trois puces en haut du panneau nomment les endroits qu’un espace de travail met en jeu. Cliquer sur l’une d’elles ouvre les contrôles de cet endroit.</p>
 
 	<div class="cards">
 		<div class="card">
-			<h3 id="s12">Navigateur</h3>
-			<p>Le stockage privé propre à ce navigateur, gardé sur votre appareil et inaccessible à tout ce qui est hors de Daimond. C’est là qu’un espace de travail vit sauf indication contraire. Sa taille est ce que le navigateur veut bien accorder — ce qui, sur un iPhone, n’est pas grand-chose — et un navigateur peut l’effacer sans prévenir.</p>
+			<h3 id="s13">Navigateur</h3>
+			<p>Le stockage privé propre à ce navigateur, sur votre appareil et hors d’atteinte de tout ce qui est extérieur à Daimond. C’est là que vit un espace de travail sauf mention contraire. Sa taille est ce que le navigateur veut bien accorder — sur un iPhone, pas grand-chose —, et un navigateur peut l’effacer sans prévenir.</p>
 		</div>
 		<div class="card">
-			<h3 id="s13">Machine</h3>
-			<p>Un vrai dossier sur le disque de cet ordinateur. L’agent y travaille directement, si bien que vous voyez les mêmes fichiers dans votre propre gestionnaire de fichiers, et c’est plus spacieux que ce qu’accorde un navigateur. Mais cela reste sur ce seul ordinateur et ne voyage pas vers vos autres appareils, et seul un navigateur fondé sur Chromium peut en ouvrir un.</p>
-			<p><strong>Le dossier est tout ce que l’agent peut voir.</strong> Il ne travaille qu’à l’intérieur du dossier que vous avez choisi : rien au-dessus, rien à l’extérieur n’est visible pour Daimond. Cliquer sur la puce pendant que l’agent y travaille le dit, et propose <span class="ui">Oublier ce dossier</span> si vous voulez que Daimond cesse d’en garder trace.</p>
+			<h3 id="s14">Machine</h3>
+			<p>Un vrai dossier sur le disque de cet ordinateur. L’agent y travaille directement, les mêmes fichiers sont donc dans votre propre gestionnaire de fichiers, et c’est plus spacieux que ce qu’accorde un navigateur. Mais il reste sur ce seul ordinateur, ne voyage jamais vers vos autres appareils, et seul un navigateur Chromium peut en ouvrir un.</p>
+			<p><strong>Le dossier est tout ce que l’agent peut voir.</strong> Rien au-dessus ni rien en dehors n’est visible pour Daimond. Cliquer la puce pendant que l’agent y travaille le dit, et propose <span class="ui">Oublier ce dossier</span> pour que Daimond cesse d’en garder trace.</p>
 		</div>
 		<div class="card">
-			<h3 id="s14">Cloud</h3>
-			<p>Non pas un troisième endroit où travailler, mais l’endroit où l’espace de travail est gardé. C’est ce qui permet à un espace de travail d’être bien plus grand que ce qu’un seul appareil peut tenir. Sa puce ouvre une vue de ce qui est stocké et de ce qui n’est pas sur cet appareil ; un bouton <span class="ui">Libérer de la place</span> et un bouton <span class="ui">Crédits</span> y figurent aussi.</p>
+			<h3 id="s15">Cloud</h3>
+			<p>Non pas un troisième lieu de travail, mais l’endroit où l’espace de travail est gardé, ce qui lui permet d’être bien plus grand que ce qu’un seul appareil contient. Sa puce ouvre une vue de ce qui est stocké et de ce qui n’est pas sur cet appareil ; un bouton <span class="ui">Libérer de la place</span> et un bouton <span class="ui">Crédits</span> y figurent aussi.</p>
 		</div>
 	</div>
 
-	<p>Les deux premiers sont des alternatives : l’agent travaille dans l’un ou dans l’autre. Le troisième n’est pas une alternative — c’est là que les octets sont gardés. Les lignes de stockage du panneau d’administration montrent combien de place chaque endroit utilise.</p>
+	<p>Les deux premiers sont des solutions de rechange l’une de l’autre, l’agent travaillant dans l’un ou dans l’autre. Le troisième n’en est pas une : c’est là que les octets sont gardés. Les lignes de stockage du panneau d’administration montrent la place que chacun occupe.</p>
 
 	<div class="note">Ce qui est gardé dans le stockage en ligne est <strong>chiffré avant de partir</strong>, comme l’est un paquet de synchronisation : nous détenons donc des octets que nous ne pouvons pas lire.</div>
 
-	<h3 id="s15">Gardé, en ligne, ou épinglé</h3>
+	<h3 id="s16">Gardé, en ligne, ou épinglé</h3>
 	<p>Un fichier est dans l’un de trois états, et l’arborescence montre lequel :</p>
 	<ul>
 		<li><strong>Gardé sur cet appareil</strong> — il s’ouvre aussitôt.</li>
-		<li><strong>Uniquement dans le stockage en ligne</strong> — signalé par une marque de nuage. C’est toujours votre fichier, toujours listé, toujours à l’abri, simplement pas sur cet appareil pour le moment. Cliquer dessus le fait descendre, et le contrôle de récupération de sa ligne aussi.</li>
-		<li><strong>Épinglé</strong> — gardé sur cet appareil en permanence, et jamais libéré automatiquement. L’épingle est sur la ligne, à côté d’un contrôle qui libère la place d’un fichier détenu.</li>
+		<li><strong>Uniquement dans le stockage en ligne</strong> — marqué d’un nuage. Toujours votre fichier, toujours listé, toujours en sûreté, simplement pas ici pour le moment. Le cliquer le fait descendre, et le contrôle de récupération de sa ligne aussi.</li>
+		<li><strong>Épinglé</strong> — gardé sur cet appareil toujours et jamais libéré automatiquement. L’épingle se trouve sur la ligne, à côté d’un contrôle qui libère la place d’un fichier tenu.</li>
 	</ul>
-	<p>À mesure que le stockage du navigateur se remplit, les fichiers que vous n’avez pas utilisés depuis le plus longtemps sont libérés d’eux-mêmes vers le stockage en ligne ; un fichier épinglé ne l’est jamais.</p>
+	<p>À mesure que le stockage du navigateur se remplit, les fichiers les plus longtemps inutilisés sont rendus d’eux-mêmes au stockage en ligne ; un fichier épinglé jamais.</p>
 
 	<div class="note"><strong>Libérer un fichier n’est pas le supprimer.</strong> Il reste dans le stockage en ligne, l’arborescence le liste toujours, et il revient quand on le demande. Seule une suppression délibérée retire un fichier.</div>
 
-	<h3 id="s16">N’importe quel type de fichier</h3>
-	<p>Tout fichier voyage entre vos appareils et est stocké, quel qu’en soit le type : une photographie, un enregistrement, un PDF, un tableur, jusqu’à un gigaoctet pour un fichier. Ouvrir un fichier qui n’est pas du texte affiche sa taille et un bouton de téléchargement plutôt que d’essayer de le montrer.</p>
+	<h3 id="s17">N’importe quel type de fichier</h3>
+	<p>Tout fichier est stocké et voyage entre vos appareils, jusqu’à un gigaoctet chacun. En ouvrir un qui n’est pas du texte affiche sa taille et un bouton de téléchargement au lieu d’essayer de l’afficher.</p>
 
-	<h3 id="s17">Faire entrer et sortir des fichiers</h3>
-	<p>Deux boutons se trouvent à côté des puces. <span class="ui">Importer un dossier…</span> copie un dossier de cet ordinateur dans l’espace de travail, après quoi il se synchronise et est stocké comme tout le reste. <span class="ui">Enregistrer une copie…</span> écrit l’espace de travail dans un dossier de cet ordinateur. Ni l’un ni l’autre ne change l’endroit où l’agent travaille, et les deux exigent un navigateur fondé sur Chromium. Une copie sortante ne récupère pas un fichier qui n’est que dans le stockage en ligne, et dit combien elle en a laissés.</p>
+	<h3 id="s18">Faire entrer et sortir des fichiers</h3>
+	<p>Deux boutons se trouvent à côté des puces. <span class="ui">Importer un dossier…</span> copie un dossier de cet ordinateur vers l’intérieur ; ensuite il se synchronise et est stocké comme tout le reste. <span class="ui">Enregistrer une copie…</span> écrit l’espace de travail vers un dossier de cet ordinateur, et dit combien de fichiers uniquement en ligne il a laissés derrière lui plutôt que d’aller les chercher. Ni l’un ni l’autre ne change l’endroit où l’agent travaille, et tous deux exigent un navigateur Chromium.</p>
 
-	<p>Pendant que l’agent travaille dans un vrai dossier, un troisième bouton apparaît : <span class="ui">Changer de dossier…</span>, qui est le seul contrôle à ouvrir un sélecteur de dossier. Passer de <span class="ui">Navigateur</span> à <span class="ui">Machine</span> ne l’ouvre pas : Daimond se souvient du dossier que vous avez utilisé en dernier, si bien qu’y revenir tient en un seul clic sur la puce.</p>
+	<p>Pendant que l’agent travaille dans un vrai dossier, un troisième bouton apparaît, <span class="ui">Changer de dossier…</span>, et c’est le seul contrôle qui ouvre un sélecteur de dossier. Le passage de <span class="ui">Navigateur</span> à <span class="ui">Machine</span> ne le fait pas : Daimond se souvient du dernier dossier utilisé, y revenir est donc un seul clic sur la puce.</p>
 
-	<h3 id="s18">Ce que l’agent peut récupérer</h3>
-	<p>Quand l’agent a besoin d’un fichier qui est dans le stockage en ligne, on le lui dit clairement et il doit le récupérer délibérément. Rien n’est téléchargé en douce derrière une lecture, parce qu’un téléchargement peut être gros et, une fois le stockage facturé, vous coûte de l’argent. Il y a aussi un plafond sur ce que l’agent peut faire descendre de sa propre initiative, après quoi il revient demander.</p>
+	<h3 id="s19">Ce que l’agent peut récupérer</h3>
+	<p>Quand l’agent a besoin d’un fichier qui est dans le stockage en ligne, on le lui dit franchement et il doit aller le chercher délibérément. Rien n’est téléchargé en silence derrière une lecture : un téléchargement peut être gros et, une fois le stockage tarifé, vous coûte de l’argent. Un plafond limite ce que l’agent peut faire descendre de sa propre initiative ; passé cela, il revient et demande.</p>
 
-	<h3 id="s19">Ce que coûte le stockage en ligne</h3>
-	<p>Le stockage en ligne n’est pas un abonnement. Comme tout le reste qui quitte le navigateur, il est payé avec des <a href="models.html">crédits</a>, et le déblocage unique de Pro reste un déblocage unique. Pour l’instant il est gratuit et non compté, jusqu’à ce qu’il puisse être vendu correctement.</p>
-	<div class="note">Si des frais de stockage ne peuvent un jour pas être couverts, <strong>rien n’est supprimé sur-le-champ</strong>. La lecture et le téléchargement restent gratuits pendant six mois, si bien que tout peut être récupéré, et ce n’est qu’ensuite que le surplus payant est retiré. Le lot de travail gratuit n’est jamais retiré.</div>
+	<h3 id="s20">Ce que coûte le stockage en ligne</h3>
+	<p>Pas un abonnement. Comme tout ce qui quitte le navigateur, il se paie sur les <a href="models.html">crédits</a>, et le déblocage Pro unique reste unique. Pour l’instant il est gratuit et non compté, jusqu’à ce qu’il puisse être vendu correctement.</p>
+	<div class="note">Si des frais de stockage ne peuvent un jour pas être couverts, <strong>rien n’est supprimé sur-le-champ</strong>. La lecture et le téléchargement restent gratuits six mois, de sorte que tout peut être récupéré, et le surplus payant n’est retiré qu’ensuite. Le lot de travail gratuit, jamais.</div>
 
-	<h2 id="s20">Outils</h2>
+	<h2 id="s21">Outils</h2>
 	<p>Ouvrez la ligne <span class="ui">Outils · N sur M</span> du panneau d’administration pour voir ce que Daimond sait faire. Elle s’appelle Outils, et non Améliorations, parce que la plupart de ce qu’elle liste est gratuit et déjà à vous.</p>
 
 	<figure class="shot" data-shot="tools-panel">
@@ -154,10 +164,10 @@
 
 	<p>Deux sortes d’outils apparaissent :</p>
 	<ul>
-		<li><strong>Outils intégrés</strong> — ceux que l’agent reçoit déjà, gratuitement. Le panneau liste exactement ce que l’agent détient réellement, il ne peut donc pas promettre un outil qui n’est pas là.</li>
-		<li><strong>Outils déblocables</strong> — des suppléments qui ont un prix. Le panneau affiche le prix et indique si ce compte détient déjà le déblocage.</li>
+		<li><strong>Outils intégrés</strong> — ce qui est déjà remis à l’agent, gratuitement. Le panneau liste exactement ce qu’il tient : il ne peut donc pas promettre un outil qui n’est pas là.</li>
+		<li><strong>Outils déblocables</strong> — des suppléments avec un prix, affichés avec l’indication que ce compte détient déjà, ou non, le déblocage.</li>
 	</ul>
-	<p>Pour ajouter un outil déblocable, choisissez-le dans le panneau et confirmez le déblocage ; le coût est prélevé sur vos crédits, et une fois débloqué il reste disponible pour l’agent.</p>
+	<p>Pour en ajouter un, choisissez-le et confirmez ; le coût est prélevé sur vos crédits, et une fois débloqué il reste disponible.</p>
 
 	<div class="next">
 		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>

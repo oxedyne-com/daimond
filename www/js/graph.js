@@ -89,74 +89,25 @@
 
 	// ── Words ──────────────────────────────────────────────────
 
-	/// The editor's own strings, held here until they reach `i18n/en.js`.
+	/// A string, from the catalogue and from nowhere else.
 	///
-	/// A key no table carries renders AS THE KEY, which would put `graph.organise`
-	/// on a button. These are the fallback for exactly that window; the lookup
-	/// below prefers a real table entry the moment one exists, so moving them into
-	/// the locale files needs no change here.
-	var STR = {
-		'graph.link_mode':       'Link',
-		'graph.link_help':       'Click the Diamond a link starts at, then the one it points at. Escape cancels.',
-		'graph.organise':        'Organise',
-		'graph.organise_help':   'Lay the Diamonds out again to reduce crossings, and keep where it puts them.',
-		'graph.pick_source':     'Click the source, then the target. Escape cancels.',
-		'graph.pick_target':     'From {name} — click the target, or Escape.',
-		'graph.menu_link':       'Link from here…',
-		'graph.menu_open':       'Open this Diamond',
-		'graph.menu_reset_node': 'Put this Diamond back',
-		'graph.menu_reset_all':  'Put every Diamond back',
-		'graph.menu_reset_view': 'Reset the view',
-		'graph.menu_edit_link':  'Edit this link…',
-		'graph.menu_drop_link':  'Delete this link',
-		'graph.edit_title':      'Link',
-		'graph.new_title':       'New link',
-		'graph.fit':             'All',
-		'graph.fit_help':        'Scale the picture until every Diamond is on screen.',
-		'graph.rels_label':      'Relations',
-		'graph.rel_add_ph':      'part-of, blocks… one at a time',
-		'graph.rel_add':         'Add this relation',
-		'graph.rel_pool':        'Already in use',
-		'graph.rel_none':        'No relation yet.',
-		'graph.rel_remove':      'Remove {rel}',
-		'graph.rel_full':        'A link carries {n} characters of relation in all, and that is the lot.',
-		'graph.note_label':      'Note',
-		'graph.note_ph':         'Whatever the relation does not say.',
-		'graph.save':            'Save',
-		'graph.create':          'Create',
-		'graph.cancel':          'Cancel',
-		'graph.drop':            'Delete',
-		'graph.self_link':       'A link joins two different Diamonds.',
-		'graph.write_failed':    'That could not be written: {err}',
-		'graph.edit_help':       'Edit this link',
-	};
-
-	/// Fill `{name}` placeholders, the way the i18n tables do.
-	function interp(s, v) {
-		if (!v) return s;
-		return String(s).replace(/\{(\w+)\}/g, function (m, k) {
-			return v[k] == null ? m : String(v[k]);
-		});
-	}
-
-	/// A string. The shipped tables win where they carry the key; `has()` asks the
-	/// ACTIVE table only, so an existing key under a part-translated locale still
-	/// falls through to DaimondI18n and its English fallback.
-	function t(k, v) {
-		if (window.DaimondI18n && DaimondI18n.has(k)) return DaimondI18n.t(k, v);
-		if (STR[k] != null) return interp(STR[k], v);
-		return window.DaimondI18n ? DaimondI18n.t(k, v) : k;
-	}
+	/// This file used to carry a `STR` table of its own English -- the whole of
+	/// the graph editor's wording -- "held here until they reach `i18n/en.js`".
+	/// They have reached it, in every locale, so the table is gone: a second copy
+	/// of a sentence is a sentence that drifts, and this one was invisible to
+	/// `dev/i18nfallback.mjs` because it was a table rather than a call with a
+	/// fallback beside it. What English the graph shows is now `i18n/en.js`'s,
+	/// which is what a translator edits.
+	///
+	/// The guard is the house form (see `terminal.js`): where the engine is not
+	/// on the page at all, the key itself is the answer. `DaimondI18n.t` already
+	/// falls back from a part-translated locale to English, so nothing else here
+	/// has to.
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
 	/// The plural form, delegated so a locale's own rule still applies.
 	function tn(k, n, v) {
-		var key = k + (n === 1 ? '.one' : '.other');
-		if (STR[key] != null && !(window.DaimondI18n && DaimondI18n.has(key))) {
-			var w = { n: n };
-			if (v) for (var x in v) if (Object.prototype.hasOwnProperty.call(v, x)) w[x] = v[x];
-			return interp(STR[key], w);
-		}
-		return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : key;
+		return window.DaimondI18n ? DaimondI18n.tn(k, n, v) : k + (n === 1 ? '.one' : '.other');
 	}
 
 	var SVGNS = 'http://www.w3.org/2000/svg';

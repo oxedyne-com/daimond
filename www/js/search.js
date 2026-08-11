@@ -278,8 +278,8 @@
 	/// header.
 	function pauseError(id) {
 		var e = new Error(tOr('pause.refused.web',
-			'Paused: {node} — the page was not fetched and nothing was spent. '
-				+ 'Press play on it to resume.',
+			'{node} is paused. The page was not fetched and nothing was spent. Press '
+				+ 'play on it to resume.',
 			{ node: id }));
 		e.paused    = true;
 		e.pauseNode = id;

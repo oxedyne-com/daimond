@@ -268,8 +268,10 @@
 	function pauseWords(node) {
 		var s = tr('pause.refused.dispatch', { node: node });
 		if (s === 'pause.refused.dispatch') {
-			s = 'Paused: ' + node + ' — no agents were dispatched and nothing was spent. '
-				+ 'Press play on it to resume.';
+			// A byte-for-byte copy of the catalogue entry, `{node}` filled in here.
+			// Assembling a second wording is how this drifted from `en.js` unnoticed.
+			s = ('{node} is paused. No agents dispatched, nothing spent. '
+				+ 'Press play on it to resume.').replace(/\{node\}/g, node);
 		}
 		return s;
 	}
