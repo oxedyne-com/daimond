@@ -536,19 +536,29 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box.active .session-box-name { color: var(--accent-text); }
 .session-box-rename { flex: 1; min-width: 0; background: var(--bg-primary); border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--text-primary); padding: 2px 6px; font-size: var(--fs-sm); }
 .session-box-rename:focus { outline: none; }
-/* The cog that replaced the closer cross. Always visible, never on hover: the
-   cross was `opacity: 0` until the pointer arrived, which is no control at all
-   on a phone -- and it put the one irreversible act on the tile's easiest
-   pixel. 20px square, the same box the pause light opposite it wears, so the
-   two ends of the header row sit on one line and one baseline. */
-.tile-cog {
+/* The cog, and the closer cross notes4 asked back beside it. Both always
+   visible, never on hover: the old cross was `opacity: 0` until the pointer
+   arrived, which is no control at all on a phone -- and it put the one
+   irreversible act on the tile's easiest pixel. 20px square each, the same
+   box the pause light opposite them wears, so the row sits on one line and
+   one baseline.
+   The cross sits OUTSIDE the cog (rightmost in source order, which this
+   flex row draws left to right) -- the same slot every other closer in the
+   app holds, from a panel head's `.panel-close` to the tile dialog's own
+   `x`. A hand that has learned "the × is at the row's far edge" finds it
+   there on a tile too; the cog, one step in, is for settings that are not
+   final. */
+.tile-cog, .tile-x {
 	flex: none; width: 20px; height: 20px; padding: 0;
 	display: flex; align-items: center; justify-content: center;
 	background: none; border: none; border-radius: var(--radius-sm);
 	line-height: 0; color: var(--text-muted);
 }
 .tile-cog:hover { color: var(--text-primary); background: var(--bg-hover); }
-.tile-cog:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tile-cog:focus-visible, .tile-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Danger on hover, not at rest: the same treatment `.queue-x` wears, so a
+   cross that ends something for good reads the same wherever it appears. */
+.tile-x:hover { color: var(--danger); background: var(--bg-hover); }
 .session-box-meta { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; font-family: var(--font-mono); }
 .session-box-ctx, .session-box-cost, .session-box-time { font-size: var(--fs-2xs); color: var(--text-muted); }
 
@@ -1337,6 +1347,18 @@ button.tag-pool { cursor: pointer; }
 .fold-menu-item { text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fold-menu-item:hover { background: var(--bg-hover); }
 .fold-menu-item.new { color: var(--accent-text); border-top: 1px solid var(--border); margin-top: 2px; }
+
+/* The Chats section's own overflow -- "Delete all chats" and, later, whatever
+   else is about the whole list rather than one tile. Same floating-popover
+   shape as `.fold-menu` above, its own class only because it hangs off a
+   different anchor and is not part of the fold feature. */
+.railhead-menu { position: fixed; z-index: 1200; background: var(--bg-secondary); border: 1px solid var(--border-2); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px; min-width: 170px; display: flex; flex-direction: column; gap: 2px; }
+.railhead-menu-item { text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); white-space: nowrap; }
+.railhead-menu-item:hover { background: var(--bg-hover); }
+.railhead-menu-item.danger { color: var(--danger); }
+.railhead-menu-item.danger:hover { background: var(--danger); color: var(--on-fill, #fff); }
+.railhead-menu-item:disabled { color: var(--text-muted); cursor: default; }
+.railhead-menu-item:disabled:hover { background: none; }
 
 /* Global spend readout (session / week / month). */
 .spend-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; border-top: 1px solid var(--border); }

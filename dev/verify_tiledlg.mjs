@@ -6,12 +6,14 @@
 // that names one button passes on a page where that button is the only thing
 // left.
 //
-//   1. Every tile carries a cog, and NO tile carries a closer cross. The
-//      DIALOG has one, in its title row — that is the way out of a window of
-//      settings, and it is not on the tile, which is the whole point of the
-//      change: the irreversible act is no longer on the tile's easiest pixel.
+//   1. Every tile carries a cog. A Diamond tile carries no closer cross — the
+//      DIALOG has one, in its title row, which is the way out of a window of
+//      settings. notes4 put a cross back on a CHAT tile specifically ("chats
+//      are ephemeral but not disposable"), so that half of the claim now
+//      holds only for a Diamond; a chat tile's own cross, and the confirm
+//      behind it, is verify_chattiles's subject, not this file's.
 //   2. Delete is reachable from the dialog, it is the ONLY way to remove a
-//      tile by hand, and it asks before it acts.
+//      DIAMOND by hand, and it asks before it acts.
 //   3. The dialog carries the settings the tile does not show — the pause
 //      control and the two colours — and carries no level control, because
 //      Simple and Max are global (notes3). Simple really hides what Max shows,
@@ -111,23 +113,31 @@ try {
 	}
 	await snap(page, 'rail-with-cogs', '#panel-rail');
 
-	// ── 1. A cog on every tile, a cross on none ──
+	// ── 1. A cog on every tile. A cross on a chat tile, none on a Diamond's ──
 	const corner = await page.evaluate(() => {
-		const boxes = [...document.querySelectorAll('.session-box')];
+		const boxes   = [...document.querySelectorAll('.session-box')];
+		const diamond = [...document.querySelectorAll('#diamond-list .session-box')];
+		const chat    = [...document.querySelectorAll('#session-list .session-box')];
 		return {
 			total:   boxes.length,
 			withCog: boxes.filter((b) => b.querySelector('.tile-cog')).length,
-			crosses: document.querySelectorAll('.session-box-close').length,
-			// Anything at all in a tile whose visible words are a lone multiplication
-			// sign: the cross by shape rather than by the class it used to wear.
-			crossy: boxes.flatMap((b) => [...b.querySelectorAll('button')])
-				.filter((x) => /^[×xX✕✖]$/.test((x.textContent || '').trim())).length,
+			diamondTotal:   diamond.length,
+			diamondCrosses: diamond.filter((b) => b.querySelector('.tile-x')).length,
+			chatTotal:      chat.length,
+			chatCrosses:    chat.filter((b) => b.querySelector('.tile-x')).length,
 		};
 	});
 	check(corner.withCog === corner.total, 'every tile carries a cog',
 		`${corner.withCog} of ${corner.total}`);
-	check(corner.crosses === 0 && corner.crossy === 0, 'no tile carries a closer cross',
-		`${corner.crosses} by class, ${corner.crossy} by shape`);
+	check(corner.diamondTotal > 0 && corner.diamondCrosses === 0,
+		'a Diamond tile carries no closer cross — the dialog is the way out',
+		`${corner.diamondCrosses} of ${corner.diamondTotal}`);
+	// notes4: brought back for a chat only, because a chat is ephemeral but not
+	// disposable. The confirm behind it is verify_chattiles's job, not this
+	// file's — here it is only asked whether the button exists.
+	check(corner.chatTotal > 0 && corner.chatCrosses === corner.chatTotal,
+		'and a chat tile carries one, restored by notes4',
+		`${corner.chatCrosses} of ${corner.chatTotal}`);
 
 	// ── 2. The dialog, and Delete at its foot ──
 	await openCog(page, '#diamond-list');

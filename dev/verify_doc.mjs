@@ -134,6 +134,53 @@ let s = null;
 	});
 	check('the document can be edited and downloaded from Doc', canEdit);
 
+	// ── The button row is one height, not two ──────────────────────────
+	// ◈ only shows itself with a Diamond open (it names what that Diamond
+	// holds), so one is made here purely to bring the button on screen.
+	//
+	// Measured, not eyeballed: "consistent" means every visible button in
+	// `.files-view-head` reports the SAME `getBoundingClientRect().height`,
+	// to within sub-pixel layout rounding. ◈ used to carry a bigger font on
+	// the same padding as its neighbours, which grew the whole button by the
+	// same fraction as the glyph — 23.6px against their 22.4px, a difference
+	// too small to name on sight and exactly the kind a screenshot alone
+	// would miss and a measurement catches every time.
+	// The new-Diamond dialog refuses to create one with no model chosen, and
+	// this suite runs with `connect: false` for everything up to here.
+	await H.connectMock(s);
+	await sleep(400);
+	await page.click('#new-diamond-btn', { force: true });
+	await page.waitForSelector('.dlg-input', { timeout: 10000 });
+	await page.fill('.dlg-input', 'Doc header probe');
+	await page.click('.dlg-ok', { force: true });
+	await sleep(900);
+	await page.evaluate(() => {
+		const r = document.querySelector('#panel-work [data-act="refresh"]');
+		if (r) r.click();
+	});
+	await sleep(700);
+	const reopened = await page.evaluate(() => {
+		const rows = Array.from(document.querySelectorAll('#panel-work .files-row'));
+		const row = rows.find(r => /chapter\.txt/.test(r.textContent || ''));
+		if (!row) return false;
+		row.click();
+		return true;
+	});
+	check('the file can be reopened with a Diamond in focus', reopened);
+	await sleep(900);
+
+	const heights = await page.evaluate(() => {
+		return Array.from(document.querySelectorAll('.files-view-head .files-btn'))
+			.filter(b => getComputedStyle(b).display !== 'none')
+			.map(b => ({ act: b.dataset.act, h: b.getBoundingClientRect().height }));
+	});
+	const holdShown = heights.some(b => b.act === 'hold');
+	check('the ◈ button is on screen for this measurement', holdShown, JSON.stringify(heights));
+	const distinct = Array.from(new Set(heights.map(b => Math.round(b.h * 10) / 10)));
+	check('every button in the row reports the same height',
+		holdShown && distinct.length === 1,
+		`${JSON.stringify(heights)} — ${distinct.length} distinct height(s)`);
+
 	// Closing it puts the panel away and leaves the tree where it was.
 	await page.evaluate(() => {
 		const b = document.querySelector('#doc-view [data-act="back"]');

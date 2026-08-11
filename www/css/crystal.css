@@ -25,10 +25,30 @@
 
 /* ── The frame ───────────────────────────────────────────────── */
 
+/* A page shorter than the panel used to leave the panel's OWN ground showing
+   below it -- the frame was sized to exactly what `measure()` reported and
+   nothing made up the difference, so a crystal whose author asked for a
+   colour of its own got that colour for a hundred pixels and the ordinary
+   panel behind it for the rest. `#crystal-body` scrolls the whole crystal
+   FACE (this frame, but also the history list, the edit form, the tag
+   editor -- everything `renderCrystal` and its neighbours draw into it), so
+   the switch to flex is scoped with `:has()` to the one child that asks for
+   it; none of those other views gain or lose anything. */
+.crystal-body:has(#crystal-frame-wrap) {
+	display: flex;
+	flex-direction: column;
+}
+
 #crystal-frame-wrap {
-	/* A grid rather than a block, so the frame cannot pick up the inline-element
-	   descender gap that leaves a stripe of panel under it. */
-	display: grid;
+	/* Flex, not grid: still one box, still no inline-element descender gap,
+	   and now able to say "take whatever height crystal-body has left". */
+	display: flex;
+	flex-direction: column;
+	flex: 1 0 auto;
+	/* A flex item's default min-height is its content's own minimum, which
+	   would refuse to shrink the wrap below the iframe's intrinsic size and
+	   defeat the fill below. */
+	min-height: 0;
 	width: 100%;
 	min-width: 0;
 	margin: 0 0 4px;
@@ -37,11 +57,17 @@
 .crystal-frame {
 	display: block;
 	width: 100%;
-	/* What the page gets before it has said how tall it is. crystal.js replaces
-	   this with an inline height on the first `height` message, so there is no
-	   `min-height` here to fight it -- a tall rule and a short crystal would
-	   leave a band of empty panel nothing could close. */
-	height: 320px;
+	/* The FLOOR is the page's own measured content, carried in on `min-height`
+	   by crystal.js rather than `height` -- so it can never win against the
+	   rule below, only raise it. The CEILING -- filling whatever `flex: 1`
+	   above handed the wrap -- is `height: 100%`, which a `min-height` never
+	   overrides because the two are different properties: the browser takes
+	   the larger of the two candidates. A page taller than the panel still
+	   grows past 100% from its own min-height and `crystal-body` scrolls it,
+	   same as before; a page shorter than the panel now reaches the floor of
+	   the panel instead of stopping short of it. */
+	height: 100%;
+	min-height: 320px;	/* before crystal.js has heard from the page at all */
 	border: 0;
 	/* The page paints itself transparent until its theme arrives, so this is the
 	   colour of the first frame or two. Naming the panel's own variable is what

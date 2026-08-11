@@ -331,8 +331,11 @@ try {
 		DaimondAdmin.home();
 		const secs = [...document.querySelectorAll('#admin-home .admin-sec')].map(e => e.textContent);
 		const rows = [...document.querySelectorAll('#admin-home .device-row')].map(r => ({
-			text:    r.innerText.replace(/\s+/g, ' ').trim(),
-			name:    (r.querySelector('.device-name') || {}).textContent || '',
+			text:      r.innerText.replace(/\s+/g, ' ').trim(),
+			name:      (r.querySelector('.device-name') || {}).textContent || '',
+			nameTitle: (r.querySelector('.device-name') || {}).title,
+			nameLabel: (r.querySelector('.device-name') || {}).getAttribute
+				? r.querySelector('.device-name').getAttribute('aria-label') : null,
 			suffix:  (r.querySelector('.device-id') || {}).textContent || '',
 			buttons: r.querySelectorAll('button').length,
 			// What each control CLAIMS to do, which is the thing worth asserting on.
@@ -383,6 +386,18 @@ try {
 	check('each line carries the tail of its OWN id, so two alike devices are still two',
 		JSON.stringify(view.rows.map(r => r.suffix).sort()) === JSON.stringify(wantSuffix),
 		view.rows.map(r => r.suffix).join(',') + ' vs ' + wantSuffix.join(','));
+
+	// notes4.txt, Admin panel: "The Device names are shortened with '...' which
+	// is fine but they should show hover text with the full name." CSS does the
+	// shortening (`.device-name{text-overflow:ellipsis}`); what is asked here is
+	// that the FULL name still reaches a mouse (`title`) and a keyboard or screen
+	// reader user, for whom a `title` is invisible (`aria-label`).
+	check('every device name carries the FULL name in a title, for a mouse to hover',
+		view.rows.every(r => r.nameTitle === r.name && r.name.length > 0),
+		JSON.stringify(view.rows.map(r => ({ name: r.name, title: r.nameTitle }))));
+	check('and in an aria-label, since a title alone says nothing to a keyboard or screen-reader user',
+		view.rows.every(r => r.nameLabel === r.name),
+		JSON.stringify(view.rows.map(r => ({ name: r.name, label: r.nameLabel }))));
 
 	// This device can be named too, and naming it must not cost it the one mark
 	// that says which line the user is standing on.

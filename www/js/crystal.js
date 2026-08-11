@@ -761,15 +761,21 @@
 		}
 	}
 
-	/// The page's own height, so the frame is as tall as its content and the
-	/// crystal scrolls in one column rather than two.
+	/// The page's own height, so the frame is at least as tall as its content
+	/// and the crystal scrolls in one column rather than two.
+	///
+	/// `minHeight`, not `height`: `height` would pin the frame to exactly this
+	/// many pixels and undo the CSS rule (crystal.css, `.crystal-frame`) that
+	/// fills the rest of a panel a short page does not reach. A `min-height`
+	/// only ever RAISES the floor -- a page taller than the panel still grows
+	/// past it, a page shorter than the panel still gets the whole panel.
 	function onHeight(m) {
 		var px = Number(m.px);
 		if (!isFinite(px)) return;
 		px = Math.max(MIN_H, Math.min(MAX_H, Math.round(px)));
 		if (px === live.height) return;
 		live.height = px;
-		live.frame.style.height = px + 'px';
+		live.frame.style.minHeight = px + 'px';
 	}
 
 	/// A link the page asked to follow. The app routes it and may refuse; this end

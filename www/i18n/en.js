@@ -108,6 +108,10 @@
 	'rail.chats':                'Chats',
 	'rail.chats_help':           'The seam you work in. Raw conversation, out of which a Diamond is cut.',
 	'rail.new_chat':             'New chat',
+	'rail.chats_menu':           'More',
+	'rail.delete_all_chats':     'Delete all chats',
+	'rail.delete_all_chats_confirm.one':   'Delete all {n} chat? This cannot be undone.',
+	'rail.delete_all_chats_confirm.other': 'Delete all {n} chats? This cannot be undone.',
 	'layout.handle':             'Drag to resize, double-click to reset',
 
 	// ── Admin ──────────────────────────────────────────────────
@@ -298,6 +302,7 @@
 	'tile.click_to_open':  'Click to open, double-click to rename',
 	'tile.settings': 'Settings for this tile',
 	'tile.settings_named': 'Settings for "{name}"',
+	'tile.close_named': 'Close "{name}"',
 	'tile.dlg_running': 'Running',
 	'tile.dlg_detail': 'Detail',
 	'tile.detail_simple': 'Simple',
@@ -868,6 +873,7 @@
 	'work.upload':     'Upload files',
 	'work.parent':     'Parent folder',
 	'work.filter_ph':  'Filter…',
+	'work.breadcrumb': 'Folder path',
 
 	// ── The phone shell ────────────────────────────────────────
 	'mnav.chat':     'Chat',
@@ -1418,6 +1424,12 @@
 	'dws.mode_all':        'Everything',
 	'dws.mode_diamond':    'This Diamond',
 	'dws.empty':           'Nothing is kept with this Diamond yet. What you keep here is what its daimon can open.',
+	// An attachment records the workspace it was made in, so one made on the
+	// machine can say so when the browser sandbox is what is open.
+	'dws.not_here':        'Kept with this Diamond, but it lives {where}, which is not the workspace you have open. Its daimon cannot reach it from here.',
+	'dws.in_machine':      'in the folder "{name}" on this machine',
+	'dws.in_browser':      'in the browser workspace',
+	'dws.a_folder':        'a folder',
 	'dws.attach_dir':      'Keep this folder with {name}',
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
 	'dws.elsewhere':       'Lives in the workspace',

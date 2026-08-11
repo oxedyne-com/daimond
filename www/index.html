@@ -232,6 +232,18 @@
 					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
+					<!-- The section's own overflow, for an act that is about every chat
+					     rather than one -- "Delete all chats" lives behind this, not
+					     beside the "+" above. A cross next to "+" would have been a
+					     second closer that behaved nothing like the rest: every other
+					     cross in this app removes the one thing beside it, and a cross
+					     that removed everything below it would be the same glyph
+					     promoted to a different, much larger act with no visible change
+					     to warn a hand that has learned to trust it. daimond.js builds
+					     the dropdown; nothing here decides what is in it. -->
+					<button class="addbtn" id="chats-menu-btn" title="More" data-i18n-title="rail.chats_menu" aria-haspopup="menu" aria-expanded="false">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+					</button>
 				</div>
 				<div class="session-list" id="session-list"></div>
 			</div>

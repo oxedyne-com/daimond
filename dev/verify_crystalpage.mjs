@@ -242,6 +242,40 @@ const REPORT_CARRYING = 'function (d, k) { return k.filter(function (x) {'
 const PAGE_BROKEN = '<!doctype html><meta charset="utf-8"><title>broken</title>'
 	+ '<body>a page that will not parse<script>this is not ) valid javascript(<\/script>';
 
+/// A real, protocol-speaking page with a solid background it chose for itself --
+/// what a page looks like after a person asked the daimon for one, or hand-edited
+/// `crystal.html` directly. Content is deliberately ONE short line, so the page's
+/// own measured height is far short of the panel: the property under test is
+/// whether the REST of the panel picks up this colour or the app's ordinary
+/// chrome shows through beneath it.
+const SOLID_BG = '#ff00aa';
+const PAGE_SOLID_BG = [
+	'<!doctype html><meta charset="utf-8"><title>solid</title>',
+	'<style>html,body{background:' + SOLID_BG + ';margin:0;padding:0}',
+	'body{font-family:sans-serif;color:#fff;padding:8px}</style>',
+	'<body><div id="r"></div><script>',
+	'(function(){',
+	'var R=document.getElementById("r"),last=-1;',
+	'function post(o){o.dc=1;o.v=1;parent.postMessage(o,"*");}',
+	'function measure(){var px=Math.ceil(Math.max(document.body.scrollHeight,',
+	'R.getBoundingClientRect().height))+2;',
+	'if(Math.abs(px-last)<2)return;last=px;post({cmd:"height",px:px});}',
+	'addEventListener("message",function(e){if(e.source!==parent)return;',
+	'var m=e.data;if(!m||m.dc!==1||m.v!==1)return;',
+	'if(m.cmd==="data"){var d=m.data||{};',
+	'var h="<h1>"+(d.title||"")+"</h1><p>"+(d.summary||"")+"</p>";',
+	// `lines`, rendered one `<p>` per entry: how the TALL fixture below gets
+	// genuine, measurable content height rather than a hard-coded number this
+	// page would have to be trusted to report honestly.
+	'(d.lines||[]).forEach(function(l){h+="<p>"+l+"</p>";});',
+	'R.innerHTML=h;',
+	'post({cmd:"rendered",keys:Object.keys(d)});measure();}});',
+	'if(window.ResizeObserver)new ResizeObserver(measure).observe(document.body);',
+	'post({cmd:"ready"});',
+	'})();',
+	'<\/script>',
+].join('\n');
+
 // ── The fixtures ─────────────────────────────────────────────────────
 const D = {
 	good:    { name: 'Page Good',    page: probePage({ report: REPORT_ALL }) },
@@ -251,6 +285,8 @@ const D = {
 	sparse:  { name: 'Page Sparse',  page: probePage({ report: REPORT_CARRYING, csp: OWN_POLICY }) },
 	renav:   { name: 'Page Renav',   page: probePage({ report: REPORT_ALL }) },
 	extra:   { name: 'Page Extra',   page: PAGE_BROKEN },
+	bgshort: { name: 'Page BgShort', page: PAGE_SOLID_BG },
+	bgtall:  { name: 'Page BgTall',  page: PAGE_SOLID_BG },
 };
 D.good.data = {
 	title:    'The good page',
@@ -268,6 +304,15 @@ D.silent.data = { title: 'SILENT-PAGE-TITLE', summary: 'The page said hello and 
 // Two keys that carry nothing. A page that skips them has skipped nothing.
 D.sparse.data = { title: 'SPARSE-PAGE-TITLE', summary: 'All of it, drawn.', facts: [], open: [] };
 D.renav.data  = { title: 'RENAV-PAGE-TITLE', summary: 'Then it went somewhere else.' };
+// One short line, deliberately: the whole point of this fixture is that its
+// measured content height is a fraction of the panel's.
+D.bgshort.data = { title: 'BgShort', summary: 'One short line.' };
+// The other half of the same fix, on the same page format: content that is
+// genuinely tall, measured by the page itself rather than asserted here.
+D.bgtall.data = {
+	title: 'BgTall', summary: 'Overflow probe.',
+	lines: Array.from({ length: 150 }, (_, i) => 'Line ' + i + ' of a very long crystal page.'),
+};
 // The unknown key is an OBJECT, not a string: a form that keeps unknown keys by
 // stringifying them passes the easy version of this check and mangles the real
 // one. And it does NOT begin with an underscore — those belong to the channel
@@ -991,6 +1036,71 @@ try {
 			await answerDialog(true, 1200);
 		}
 	}
+
+	// ══ 10. A page shorter than the panel still fills the panel ═══════
+	//
+	// notes4.txt: "When I changed the background of a crystal, it did not take
+	// up the whole useable area of the panel." `PAGE_SOLID_BG` is one short
+	// line on a solid colour it chose for itself -- so its OWN measured height
+	// is a fraction of the panel's, and what is asked is whether the REST of
+	// the panel picks up that colour or shows the app's ordinary chrome
+	// beneath it.
+	//
+	// Measured, not eyeballed, and measured so the check DISCRIMINATES: a probe
+	// that only asked "is the frame present" or "is SOME colour showing" would
+	// read the same whether the frame fills the panel or stops a hundred pixels
+	// in — coverage, the frame's height as a fraction of the panel's, is the
+	// number that tells the two apart. Run against the code as it shipped
+	// before this fix (`.crystal-frame` pinned to `height: <content px>`) this
+	// reads about 12%; the fix (`height: 100%` floored by a `min-height` the
+	// content sets) reads at or near 100%.
+	await showDiamond(D.bgshort.name);
+	await p.waitForTimeout(900);
+	const cover = await p.evaluate(() => {
+		const body  = document.getElementById('crystal-body');
+		const frame = document.querySelector('.crystal-frame');
+		const b = body ? body.getBoundingClientRect() : null;
+		const f = frame ? frame.getBoundingClientRect() : null;
+		return {
+			bodyH:  b ? b.height : 0,
+			frameH: f ? f.height : 0,
+			// The colour a page too short to reach the bottom of `crystal-body`
+			// would leave exposed there, sampled where the frame USED to stop.
+			// `getComputedStyle` on an element outside the sandboxed frame --
+			// this reads the app's own chrome, never the page's.
+			belowColor: (b && f) ? getComputedStyle(body).backgroundColor
+				: null,
+		};
+	});
+	const coverage = cover.bodyH ? (cover.frameH / cover.bodyH) : 0;
+	// A LITTLE under 100%, not exactly: a scrollbar or a sub-pixel layout
+	// rounding is not the property under test. 85% is well clear of both —
+	// and worlds away from the ~12% the code shipped with before this fix.
+	check(coverage > 0.85,
+		'a page far shorter than the panel still fills nearly all of it',
+		`frame ${cover.frameH.toFixed(0)}px of ${cover.bodyH.toFixed(0)}px available `
+			+ `(${(coverage * 100).toFixed(0)}%)`);
+
+	// A page taller than the panel must still scroll rather than being
+	// squashed down to the panel's own height -- the other half of the same
+	// fix, on the same page format so the only variable is content length.
+	await showDiamond(D.bgtall.name);
+	await p.waitForTimeout(900);
+	const tall = await p.evaluate(() => {
+		const body  = document.getElementById('crystal-body');
+		const frame = document.querySelector('.crystal-frame');
+		return {
+			bodyClientH: body ? body.clientHeight : 0,
+			bodyScrollH: body ? body.scrollHeight : 0,
+			frameH:      frame ? frame.getBoundingClientRect().height : 0,
+		};
+	});
+	check(tall.frameH > tall.bodyClientH * 1.5,
+		'a page much TALLER than the panel is not squashed down to fit it',
+		`frame ${tall.frameH.toFixed(0)}px, panel ${tall.bodyClientH.toFixed(0)}px`);
+	check(tall.bodyScrollH > tall.bodyClientH,
+		'and the panel scrolls to reach the rest of it',
+		`scrollHeight ${tall.bodyScrollH.toFixed(0)}px, clientHeight ${tall.bodyClientH.toFixed(0)}px`);
 
 	// A resource the browser could not load is the dev stack, not the page: no
 	// gateway runs here, so its probes answer 401 or 502 and neither is a throw.

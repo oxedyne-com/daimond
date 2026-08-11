@@ -6343,7 +6343,13 @@ import init, {
 			ids.forEach(function (id) {
 				var d = reg[id], r = el('div', 'device-row');
 				var shown = deviceShownName(d);
-				r.appendChild(el('span', 'device-name', shown));
+				var nameEl = el('span', 'device-name', shown);
+				// The row shortens this with CSS ellipsis, which is fine on screen and
+				// says nothing to a mouse that never hovers or a screen reader that
+				// never reads a `title` at all -- so the full name goes on both.
+				nameEl.title = shown;
+				nameEl.setAttribute('aria-label', shown);
+				r.appendChild(nameEl);
 				r.appendChild(el('span', 'device-id', id.slice(-4)));
 				r.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(d.seen)));
@@ -7530,6 +7536,15 @@ import init, {
 		if (current === chat) sessionNameEl.textContent = name;
 	}
 
+	/// End a chat, for good, asking nobody. THE place a chat stops existing.
+	///
+	/// Every path that destroys a chat -- the tile's × (`tileCloser`), the tile
+	/// dialog's Delete, "Delete all chats" -- calls THIS, never `chats = chats
+	/// .filter(...)` of its own. A Trash panel, if the user builds one, changes
+	/// what happens in here (write a tombstone the user can undo, say, rather
+	/// than only one a stale tab cannot resurrect) and nothing that calls it
+	/// needs to change. Named for what happens to the chat, not for whichever
+	/// button happened to ask.
 	function removeChat(chat) {
 		// A chat deleted mid-turn must take its turn with it. Otherwise the
 		// fetch runs on and the reply lands minutes later on whatever is on
@@ -7568,11 +7583,11 @@ import init, {
 
 	/// Delete a chat, asking first. THE way a chat is removed by hand.
 	///
-	/// One function rather than a handler on a button, because Delete moved from
-	/// the tile's corner into the foot of its dialog and a second copy of the
-	/// confirm would be a second place for it to be forgotten. `removeChat` above
-	/// does the work and asks nothing -- it is also what a sync deletion uses,
-	/// where there is nobody to ask.
+	/// One function rather than a handler on a button, because Delete lives in
+	/// two places on the tile -- the dialog's foot and, since notes4, the corner
+	/// × -- and a second copy of the confirm would be a second place for it to
+	/// be forgotten. `removeChat` above does the work and asks nothing -- it is
+	/// also what a sync deletion uses, where there is nobody to ask.
 	async function deleteChat(chat) {
 		var n = (chat.messages || []).length;
 		var msg = n
@@ -7581,6 +7596,82 @@ import init, {
 		if (!await confirmDialog(msg, t('tile.delete_chat'), { title: t('tile.delete_chat') })) return false;
 		removeChat(chat);
 		return true;
+	}
+
+	/// Delete every ordinary chat, asking first with the count in the question
+	/// itself ("Delete all 14 chats?") -- notes4's ruling that bulk delete wants
+	/// a STRONGER confirmation than one chat's, not a lighter one.
+	///
+	/// Lives behind the Chats section's own overflow (`chats-menu-btn`), never
+	/// as a second cross beside "+". Every other cross in this app closes the
+	/// one thing beside it -- a panel, a tile, a queued message -- and a cross
+	/// that emptied the whole list underneath it would be the same glyph
+	/// promoted to a much larger act with nothing about its look to say so; the
+	/// first absent-minded click on the wrong corner would be somebody's work.
+	/// A menu item you have to open first, naming exactly what it takes, does
+	/// not have that failure mode.
+	///
+	/// Reuses `removeChat` per chat rather than a bulk code path of its own, so
+	/// a chat mid-turn is aborted and the current-chat handoff runs exactly as
+	/// it does for a single delete -- one tested way to remove a chat, called
+	/// several times, not two ways that could disagree.
+	async function deleteAllChats() {
+		var loose = chats.filter(function (c) { return !c.diamondId; });
+		var n = loose.length;
+		if (n === 0) return;
+		var msg = tn('rail.delete_all_chats_confirm', n, { n: n });
+		var ok = await confirmDialog(msg, t('rail.delete_all_chats'), { title: t('rail.delete_all_chats') });
+		if (!ok) return;
+		loose.forEach(function (c) { removeChat(c); });
+	}
+
+	// ── The Chats section's own overflow ────────────────────────
+	// A floating popover off `#chats-menu-btn`, the same shape `openFoldPicker`
+	// below draws off its own anchor -- one entry today ("Delete all chats"),
+	// room for more later without the railhead itself growing buttons.
+	var _chatsMenu = null;
+	function closeChatsMenu() {
+		if (!_chatsMenu) return;
+		_chatsMenu.remove(); _chatsMenu = null;
+		document.removeEventListener('click', onChatsMenuOutside, true);
+		document.removeEventListener('keydown', onChatsMenuKey, true);
+		var btn = document.getElementById('chats-menu-btn');
+		if (btn) btn.setAttribute('aria-expanded', 'false');
+	}
+	function onChatsMenuOutside(e) { if (_chatsMenu && !_chatsMenu.contains(e.target)) closeChatsMenu(); }
+	function onChatsMenuKey(e) { if (e.key === 'Escape') { e.preventDefault(); closeChatsMenu(); } }
+
+	function openChatsMenu(anchor) {
+		if (_chatsMenu) { closeChatsMenu(); return; }		// second press on the button toggles it shut
+		var menu = document.createElement('div');
+		menu.className = 'railhead-menu';
+		menu.setAttribute('role', 'menu');
+		var del = document.createElement('button');
+		del.type = 'button';
+		del.className = 'railhead-menu-item danger';
+		del.setAttribute('role', 'menuitem');
+		del.textContent = t('rail.delete_all_chats');
+		// Nothing to delete, nothing to press -- disabled rather than hidden, so
+		// the menu's shape does not jump depending on what is in the rail.
+		var n = chats.filter(function (c) { return !c.diamondId; }).length;
+		if (n === 0) del.disabled = true;
+		del.addEventListener('click', function () {
+			closeChatsMenu();
+			deleteAllChats();
+		});
+		menu.appendChild(del);
+
+		document.body.appendChild(menu);
+		var r = anchor.getBoundingClientRect();
+		var left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
+		menu.style.left = Math.max(8, left) + 'px';
+		menu.style.top = (r.bottom + 4) + 'px';
+		_chatsMenu = menu;
+		anchor.setAttribute('aria-expanded', 'true');
+		setTimeout(function () {
+			document.addEventListener('click', onChatsMenuOutside, true);
+			document.addEventListener('keydown', onChatsMenuKey, true);
+		}, 0);
 	}
 
 	// ── Fold a chat into a Diamond (§7.2) ────────────────────────
@@ -8270,11 +8361,21 @@ import init, {
 	// pause control, its colours, its models, its triggered actions and, at the
 	// foot, Delete.
 	//
-	// The tile's closer cross is gone. It was `opacity: 0` until hover, which is
-	// no control at all on a phone, and it put the one irreversible act on the
-	// tile's most reachable pixel while opening the tile had no keyboard route at
-	// all. Delete now sits at the foot of a dialog you had to open, behind a
-	// confirm; the cog is what the corner offers instead.
+	// The tile's closer cross went for exactly the same reason the level-of-
+	// detail note below gives for something else: it was `opacity: 0` until
+	// hover, which is no control at all on a phone, and it put the one
+	// irreversible act on the tile's most reachable pixel while opening the
+	// tile had no keyboard route at all. Delete moved to the foot of the cog's
+	// dialog, behind a confirm.
+	//
+	// notes4 asked for the × back on a CHAT tile specifically ("chats are
+	// ephemeral but not disposable"). It is `tile-x` / `tileCloser` below --
+	// always visible like the cog, and wired to the same `deleteChat` confirm
+	// the dialog's foot uses, so ending a chat from the corner and ending it
+	// from the dialog ask the identical question. A Diamond tile keeps the
+	// cog-only shape from this comment: nothing in notes4 touches it, and a
+	// Diamond's crystal is worked, not ephemeral -- it does not want a
+	// one-click way to throw it away.
 	//
 	// LEVEL OF DETAIL IS NOT HERE ANY MORE. Simple and Max were a per-tile
 	// override on top of the global view, and the author's ruling in notes3 is
@@ -8442,6 +8543,30 @@ import init, {
 			e.stopPropagation();
 			e.preventDefault();
 			onOpen();
+		});
+		return b;
+	}
+
+	/// The × in a chat tile's top right, restored beside the cog (notes4,
+	/// "the closer came back"). It does not merely hide the tile: a chat is
+	/// ephemeral but not disposable, so `onClose` is `deleteChat`, the SAME
+	/// confirm-then-remove path the cog's own dialog offers at its foot --
+	/// one function that knows how to end a chat, not two that could drift.
+	///
+	/// `name` labels the button the way `tileCog` labels itself, so a screen
+	/// reader hears which chat a × belongs to rather than a bare "Close".
+	function tileCloser(name, onClose) {
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'tile-x';
+		b.title = t('common.close');
+		b.setAttribute('aria-label', t('tile.close_named', { name: name || '' }));
+		b.innerHTML = CLOSE_SVG;
+		b.addEventListener('click', function (e) {
+			// Same reason as the cog: the tile itself must not also open.
+			e.stopPropagation();
+			e.preventDefault();
+			onClose();
 		});
 		return b;
 	}
@@ -9412,6 +9537,20 @@ import init, {
 			repaintPause();
 			return;
 		}
+		// Newest touched first (notes4: "the ordering is weird"). `loose` used to
+		// draw in plain array order, and that order was never a sort -- it was
+		// whichever of two unrelated orders last wrote it: `newChat` unshifts, so
+		// a chat made this session jumps to the front, but `loadChats` reads
+		// IndexedDB with a bare `openCursor()`, which walks the store ascending
+		// BY ID STRING. Ids are `'c' + seq`, so that is lexicographic, not
+		// numeric -- past the tenth chat, 'c10' sorts before 'c2', and a reload
+		// silently reshuffles a list that "New chat" had just put in a sensible
+		// order. Sorting explicitly on `updatedAt` fixes both: it is stamped by
+		// `touchChat` on creation, on every turn sent and every reply landed (not
+		// the `touched`/`updated` pair a tag's pool conflated, at seq48's cost --
+		// see reference_daimond_tag_loss_incident), so it is the one field that
+		// actually answers "which of these did I touch most recently".
+		loose.sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
 		loose.forEach(function (s) { sessionList.appendChild(sessionBox(s)); });
 		updateActiveSession();
 		// A chat appearing or going changes what is under the root, and the root's
@@ -9592,6 +9731,12 @@ import init, {
 				onDelete: function () { return deleteChat(s); },
 			});
 		}));
+		// Outside the cog, the row's far edge -- see the comment above `.tile-cog,
+		// .tile-x` in app.css for why that slot and not the near one. `deleteChat`
+		// is the same confirm-then-remove the dialog's own foot calls, so a
+		// one-click close and a settings-dialog delete ask the identical question
+		// and can never drift apart into two answers for one act.
+		header.appendChild(tileCloser(s.name, function () { deleteChat(s); }));
 		box.appendChild(header);
 
 		if (status === 'pending') {
@@ -12866,6 +13011,61 @@ import init, {
 		}
 		function joinPath(dir, name) { return dir ? (dir + '/' + name) : name; }
 
+		/// Go to a directory, but never past the edge of what a Diamond may see.
+		///
+		/// Shared by the parent-folder button and the breadcrumb below it: both
+		/// name a target and both have to stop at the same boundary, which used
+		/// to be written out twice and could drift.
+		function goDir(target) {
+			if (diamondScope() && target && !withinDiamond(target)) { list(''); return; }
+			list(target);
+		}
+
+		/// The path line as a trail of clickable folder names, not a string.
+		///
+		/// A single "up" arrow only ever undoes the last step down, so three
+		/// folders deep it takes three clicks to surface -- and it sits in the
+		/// header, away from the name of the folder the user is actually asking
+		/// about. Naming every ancestor where the current folder is already
+		/// named answers "how do I get back" without a second control to notice.
+		///
+		/// `root` is shown for an empty `dir` and is never clickable there -- it
+		/// already names where the user is. `go(path)` is called with `''` for
+		/// the root and the joined path for anything else.
+		function renderCrumbs(el, root, dir, go) {
+			if (!el) return;
+			el.innerHTML = '';
+			el.setAttribute('role', 'navigation');
+			el.setAttribute('aria-label', t('work.breadcrumb'));
+			var segs = String(dir || '').split('/').filter(Boolean);
+			function crumb(label, path, isLast) {
+				var b = document.createElement('button');
+				b.type = 'button';
+				b.className = 'path-crumb';
+				b.textContent = label;
+				if (isLast) {
+					b.disabled = true;
+					b.setAttribute('aria-current', 'location');
+				} else {
+					b.addEventListener('click', function () { go(path); });
+				}
+				el.appendChild(b);
+				if (!isLast) {
+					var sep = document.createElement('span');
+					sep.className = 'path-sep';
+					sep.textContent = '›';
+					sep.setAttribute('aria-hidden', 'true');
+					el.appendChild(sep);
+				}
+			}
+			crumb(root, '', segs.length === 0);
+			var acc = '';
+			for (var i = 0; i < segs.length; i++) {
+				acc = acc ? (acc + '/' + segs[i]) : segs[i];
+				crumb(segs[i], acc, i === segs.length - 1);
+			}
+		}
+
 		var filterEl = null, filter = '', lastEntries = [], filterTimer = null;
 
 		/// With no filter, show the current directory. With one, search the whole
@@ -12968,16 +13168,26 @@ import init, {
 				var ref = l.other || '';
 				var i = ref.indexOf(':');
 				if (i <= 0) return;
-				var kind = ref.slice(0, i), path = ref.slice(i + 1).trim();
+				var parsed = parseRef(ref);
+				var kind = parsed.kind, path = parsed.path;
 				if ((kind !== 'file' && kind !== 'dir') || !path) return;
 				if (underPath(path, own)) return;
-				if (seen[ref]) return;
-				seen[ref] = 1;
+				// Keyed on the THING, so one folder attached before roots were
+				// recorded and again after does not draw two rows.
+				var key = kind + ':' + path;
+				if (seen[key]) return;
+				seen[key] = 1;
 				out.push({
 					link: l,
 					ref:  ref,
 					path: path,
 					dir:  kind === 'dir',
+					// Whether this attachment can be opened from the workspace that
+					// is open now. An unreachable one is still SHOWN -- it is the
+					// user's own decision and they may simply have the other
+					// workspace closed -- but it is never handed to a daimon.
+					here:  refReachable(ref),
+					where: refWhere(ref),
 					// Attached to be consulted rather than worked on. The tool door
 					// spells this as an allow plus a write fence; here it is a badge.
 					ro:   l.rel === 'consulted',
@@ -13026,7 +13236,11 @@ import init, {
 
 		/// The attachment record for a reference, or nothing.
 		function attachedOf(ref) {
-			for (var i = 0; i < attached.length; i++) if (attached[i].ref === ref) return attached[i];
+			for (var i = 0; i < attached.length; i++) {
+				// By what it names: a link written before roots were recorded still
+				// has to light its own row up.
+				if (sameThing(attached[i].ref, ref)) return attached[i];
+			}
 			return null;
 		}
 
@@ -13037,7 +13251,7 @@ import init, {
 		/// the same folder goes on holding it.
 		async function toggleDirHold(path) {
 			if (!currentDiamond) return;
-			var id = currentDiamond.id, ref = 'dir:' + path;
+			var id = currentDiamond.id, ref = rootedRef('dir', path);
 			var rec = attachedOf(ref);
 			var link = rec ? rec.link : await linkTo(id, ref);
 			try {
@@ -13259,7 +13473,7 @@ import init, {
 			viewEl.style.display = 'none'; docEmbed(false);
 			await loadAttached();
 			if (curDir) {
-				pathEl.textContent = '/' + curDir;
+				renderCrumbs(pathEl, t('dws.title'), curDir, goDir);
 				var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir }));
 				if (typeof res === 'string' && res.indexOf('Error') === 0) {
 					treeEl.innerHTML = '';
@@ -13275,7 +13489,7 @@ import init, {
 			}
 			// The composed root. The path line names it rather than showing "/",
 			// which would be a lie: this is not a directory.
-			pathEl.textContent = t('dws.title');
+			renderCrumbs(pathEl, t('dws.title'), '', goDir);
 			treeEl.innerHTML = '';
 			var own = ownDir();
 			var entries = [];
@@ -13448,13 +13662,9 @@ import init, {
 				if (curFile) { closeView(); return; }
 				if (!curDir) return;
 				var parts = curDir.split('/').filter(Boolean); parts.pop();
-				var up = parts.join('/');
-				// Going up out of a Diamond's workspace lands back at the workspace
-				// itself, not at whatever directory happens to be above: the tree
-				// there shows a set of paths, and the parent of one of them is very
-				// often somewhere the daimon may not go.
-				if (diamondScope() && !withinDiamond(up)) { list(''); return; }
-				list(up);
+				// goDir stops at a Diamond's own boundary the same way the
+				// breadcrumb above the tree does -- see its comment.
+				goDir(parts.join('/'));
 			});
 			// The scope row is about the open Diamond, and in Diamond scope so is
 			// every row of the tree; attaching or detaching changes what is in it.
@@ -14243,7 +14453,7 @@ import init, {
 			curDir = dir || '';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; docEmbed(false);
-			pathEl.textContent = '/' + curDir;
+			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
 			await loadAttached();		// so a row can say whether it is attached
 			var res = await tools().run_tool('file_list', JSON.stringify({ path: curDir || '.' }));
@@ -14362,7 +14572,12 @@ import init, {
 				hold.textContent = '◈';
 				hold.dataset.act = 'hold-dir';
 				hold.dataset.path = full;
-				hold.title = t(on ? 'dws.detach_dir' : 'dws.attach_dir', { name: currentDiamond.name });
+				var rec  = attachedOf('dir:' + full);
+				var away = !!(rec && rec.here === false);
+				if (away) hold.classList.add('away');
+				hold.title = away
+					? t('dws.not_here', { where: rec.where })
+					: t(on ? 'dws.detach_dir' : 'dws.attach_dir', { name: currentDiamond.name });
 				hold.setAttribute('aria-pressed', on ? 'true' : 'false');
 				hold.setAttribute('aria-label', hold.title);
 				hold.addEventListener('click', function (ev) { ev.stopPropagation(); toggleDirHold(full); });
@@ -14465,7 +14680,8 @@ import init, {
 			}
 			holdBtn.addEventListener('click', async function () {
 				if (!currentDiamond) return;
-				var id = currentDiamond.id, self = 'diamond:' + id, ref = 'file:' + path;
+				var id = currentDiamond.id, self = 'diamond:' + id;
+				var ref = rootedRef('file', path);
 				var link = await heldLink(id, path);
 				try {
 					if (link) await diamondApp().remove_link(link.owner, link.id);
@@ -15074,7 +15290,7 @@ import init, {
 			var path = document.getElementById('sys-path');
 			if (!tree) return;
 			sysDir = dir || '';
-			if (path) path.textContent = '/' + sysDir;
+			renderCrumbs(path, t('sys.head'), sysDir, sysList);
 			var raw = '';
 			try { raw = await Wasm.store_list(sysDir); }
 			catch (e) { tree.innerHTML = ''; tree.appendChild(sysNote(friendlyError(e))); return; }
@@ -15089,16 +15305,9 @@ import init, {
 			});
 			rows.sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
 			tree.innerHTML = '';
-			if (sysDir) {
-				var up = document.createElement('div');
-				up.className = 'files-row dir sys-row';
-				up.textContent = '📁 ..';
-				sysRowAsButton(up, t('sys.up'), function () {
-					var cut = sysDir.lastIndexOf('/');
-					sysList(cut < 0 ? '' : sysDir.slice(0, cut));
-				});
-				tree.appendChild(up);
-			}
+			// The way back out is the breadcrumb above the tree now, not a folder-
+			// shaped row mixed in with real ones -- so there is nothing to prepend
+			// here even when `sysDir` is set.
 			if (!rows.length) { tree.appendChild(sysNote(t('sys.empty'))); return; }
 			rows.forEach(function (e) {
 				var full = sysDir ? (sysDir + '/' + e.name) : e.name;
@@ -15265,10 +15474,18 @@ import init, {
 				var list = [];
 				try { list = await attachmentsOf(did); } catch (e) { list = []; }
 				var d = diamonds.find(function (x) { return x.id === did; });
+				// ONLY what is reachable from the workspace that is open. An
+				// attachment recorded against the other root is a path that would be
+				// allowed and absent: `diamond_bounds` would put it in the scope, the
+				// tool door would let the daimon reach for it, and the store would
+				// answer NotFoundError -- which reads as an empty folder rather than
+				// as a folder that is somewhere else. Leaving it out means the daimon
+				// never sees a door that opens onto nothing.
+				var here = list.filter(function (a) { return a.here !== false; });
 				return {
 					own_dir:   'diamonds/' + did,
-					attached:  list.map(function (a) { return a.path; }),
-					read_only: list.filter(function (a) { return a.ro; })
+					attached:  here.map(function (a) { return a.path; }),
+					read_only: here.filter(function (a) { return a.ro; })
 						.map(function (a) { return a.path; }),
 					// The toolchains the USER granted this Diamond, from the store. Never
 					// inferred from anything a model asked to run — see `Toolkit` in
@@ -16270,7 +16487,7 @@ import init, {
 	async function grantConsulted(diamondId, path) {
 		try {
 			await diamondApp().add_link(diamondId, 'diamond:' + diamondId,
-				'dir:' + path, 'consulted', '', 'user');
+				rootedRef('dir', path), 'consulted', '', 'user');
 		} catch (e) { /* the Diamond simply will not see it; nothing else breaks */ }
 	}
 
@@ -19140,11 +19357,21 @@ import init, {
 
 			// Opening it is the obvious click, and every kind already has a panel that knows
 			// how to show it — so this routes rather than rendering anything itself.
+			var parsed = parseRef(l.other);
+			var path   = parsed.path || rest;
+			// An attachment recorded in the OTHER workspace is not lost and is not
+			// broken -- it is somewhere the app is not looking right now. Saying that
+			// is the whole point: silence here reads as an empty folder, which is what
+			// sent a daimon to report an empty book-shaped container.
+			var away   = !refReachable(l.other);
+
 			var openBtn = document.createElement('button');
-			openBtn.className = 'arte-open';
-			openBtn.textContent = rest;
-			openBtn.title = l.rel ? (l.rel + ' \u00b7 ' + l.other) : l.other;
-			openBtn.addEventListener('click', function () { openArtefact(kind, rest); });
+			openBtn.className = 'arte-open' + (away ? ' away' : '');
+			openBtn.textContent = path;
+			openBtn.title = away
+				? t('dws.not_here', { where: refWhere(l.other) })
+				: (l.rel ? (l.rel + ' \u00b7 ' + path) : path);
+			openBtn.addEventListener('click', function () { openArtefact(kind, path); });
 
 			// The quieter, more useful one: put a reference in the steer box. The hard part of
 			// steering is naming which thing you mean, and this is the picker for it.
@@ -19192,11 +19419,99 @@ import init, {
 	/// A reference is `file:<path>` for a file and `dir:<path>` for a folder, and
 	/// both say the same thing: this is in that Diamond's workspace, and its
 	/// daimon may open it.
+	// ── An attachment remembers which workspace it was made in ──────────
+	//
+	// A path is meaningless without the root it was written against.
+	// `books/elearnity/CheapThinking` is a folder on the user's disk in the
+	// Machine workspace and nothing whatever in the Browser sandbox, yet an
+	// attachment recorded only the path. So a folder attached on the machine and
+	// opened later in the browser was ALLOWED and ABSENT: `diamond_bounds` put it
+	// in the scope, the tool door let the daimon reach for it, and OPFS answered
+	// NotFoundError. The Diamond looked equipped and was not, and the daimon
+	// reported an empty container -- which is what a person reads as "my Diamond
+	// is broken". `dev/ROOT_SEPARATION.md` §2.1 says a single tree spanning two
+	// roots is the confusion to prevent; this is that confusion in the links.
+
+	/// Which workspace is open, as an attachment records it.
+	function currentRoot() {
+		var h = null;
+		try { h = Files.folder(); } catch (e) { /* the panel has not started yet */ }
+		return h ? { kind: 'machine', name: String(h.name || '') }
+			: { kind: 'browser', name: '' };
+	}
+
+	/// A reference carrying the workspace it belongs to: `dir:[machine:usr]books/x`.
+	///
+	/// Bracketed and leading, so it cannot be mistaken for part of a path -- and a
+	/// path is free to contain a colon, which a Maildir name does
+	/// (`…daimond:2,S`), so the root cannot simply be a second colon-field.
+	function rootedRef(kind, path) {
+		var r = currentRoot();
+		return kind + ':[' + (r.kind === 'machine' ? 'machine:' + r.name : 'browser')
+			+ ']' + path;
+	}
+
+	/// Split a reference into its kind, its workspace, and its path.
+	///
+	/// A reference written before this carries no workspace. Those come back with
+	/// `root: null` and are GRANDFATHERED -- resolved against whatever is open,
+	/// exactly as they were before -- because refusing them would empty the
+	/// workspace of every Diamond that predates the change.
+	function parseRef(ref) {
+		var s = String(ref || '');
+		var i = s.indexOf(':');
+		if (i <= 0) return { kind: '', root: null, name: '', path: '' };
+		var kind = s.slice(0, i), rest = s.slice(i + 1);
+		var m = /^\[(browser|machine)(?::([^\]]*))?\]/.exec(rest);
+		if (!m) return { kind: kind, root: null, name: '', path: rest.trim() };
+		return {
+			kind: kind,
+			root: m[1],
+			name: m[2] || '',
+			path: rest.slice(m[0].length).trim(),
+		};
+	}
+
+	/// Two references name the same thing when their kind and path agree.
+	///
+	/// The workspace is deliberately NOT part of the identity. The control is a
+	/// toggle, and pressing it on a file an older rootless link already holds must
+	/// take that link off rather than add a second one beside it that the button
+	/// cannot see.
+	function sameThing(a, b) {
+		var x = parseRef(a), y = parseRef(b);
+		return x.kind === y.kind && x.path === y.path;
+	}
+
+	/// Whether an attachment can be reached from the workspace open right now.
+	function refReachable(ref) {
+		var p = parseRef(ref);
+		if (!p.root) return true;                 // written before roots were recorded
+		var r = currentRoot();
+		if (p.root !== r.kind) return false;
+		// A different folder on the same machine is a different place. Comparing the
+		// name is weak -- two folders can share one -- but it catches the ordinary
+		// case, and being wrong here costs a warning rather than access.
+		return p.root !== 'machine' || !p.name || p.name === r.name;
+	}
+
+	/// How to say where an unreachable attachment actually lives.
+	function refWhere(ref) {
+		var p = parseRef(ref);
+		if (!p.root) return '';
+		return p.root === 'machine'
+			? t('dws.in_machine', { name: p.name || t('dws.a_folder') })
+			: t('dws.in_browser');
+	}
+
 	async function linkTo(diamondId, ref) {
 		try {
 			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
 			for (var i = 0; i < links.length; i++) {
-				if (links[i].other === ref) return links[i];
+				// Matched on what it names, not on the string: an attachment made
+				// before roots were recorded must still be found by a button that
+				// now writes one.
+				if (sameThing(links[i].other, ref)) return links[i];
 			}
 		} catch (e) { /* unreadable: treat as not held */ }
 		return null;
@@ -19204,7 +19519,7 @@ import init, {
 
 	/// The link by which a Diamond holds this file, or nothing.
 	async function heldLink(diamondId, path) {
-		return await linkTo(diamondId, 'file:' + path);
+		return await linkTo(diamondId, rootedRef('file', path));
 	}
 
 	/// Does this Diamond hold this file?
@@ -23449,6 +23764,11 @@ import init, {
 		sendUserMessage();
 	});
 	newSessionBtn.addEventListener('click', newChat);
+	var chatsMenuBtn = document.getElementById('chats-menu-btn');
+	if (chatsMenuBtn) chatsMenuBtn.addEventListener('click', function (e) {
+		e.stopPropagation();		// same defensive habit `fold`'s own click handler wears
+		openChatsMenu(chatsMenuBtn);
+	});
 	if (newDiamondBtn) newDiamondBtn.addEventListener('click', createDiamond);
 	// The two faces of a Diamond. Each remembers itself per Diamond, so going back to
 	// one you were reading the conversation of puts you back in the conversation.

@@ -79,7 +79,16 @@ const rel = await page.evaluate(async () => {
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const rows = JSON.parse(await app.list_diamonds());
 	const links = JSON.parse(await app.links_touching('diamond:' + rows[0].id) || '[]');
-	return links.filter(l => l.other === 'file:notes/spec.md').map(l => ({ rel: l.rel, by: l.by }));
+	// Matched on WHAT IT NAMES, not on the reference string. A reference now
+	// carries the workspace it was recorded in (`file:[browser]notes/spec.md`),
+	// because a path without its root was allowed and absent -- see
+	// dev/verify_attachroot.mjs. An assertion pinned to the old spelling would
+	// go red for a change of format and say "no link was written", which is the
+	// opposite of what happened.
+	return links
+		.filter(l => String(l.other).replace(/^file:(\[[^\]]*\])?/, '') === 'notes/spec.md'
+			&& String(l.other).indexOf('file:') === 0)
+		.map(l => ({ rel: l.rel, by: l.by, ref: l.other }));
 });
 check(rel.length === 1, `exactly one link was written (${JSON.stringify(rel)})`);
 check(rel[0] && rel[0].rel === 'holds', `it says "holds", not "produced" (${JSON.stringify(rel[0])})`);

@@ -150,7 +150,17 @@ await page.click('.files-row[data-path="docs"] [data-act="hold-dir"]', { force: 
 await page.waitForTimeout(900);
 
 let links = await linksOf();
-const dirLink = links.filter(l => l.other === 'dir:docs');
+// A reference now carries the workspace it was recorded in
+// (`dir:[browser]docs`), because a path without its root was allowed and absent
+// -- see dev/verify_attachroot.mjs. These checks are about WHAT IS ATTACHED, so
+// they compare the thing named and ignore the workspace; an assertion pinned to
+// the old spelling reports "no link was written" for a change of format, which
+// is the opposite of what happened.
+const names = (ref) => String(ref).replace(/^(file|dir):(\[[^\]]*\])?/, '');
+const isDir = (ref) => String(ref).indexOf('dir:') === 0;
+const namesDir = (ref, path) => isDir(ref) && names(ref) === path;
+
+const dirLink = links.filter(l => namesDir(l.other, 'docs'));
 check(dirLink.length === 1, `one link was written for the folder (${JSON.stringify(links)})`);
 check(dirLink[0] && dirLink[0].rel === 'holds', `it says "holds" (${JSON.stringify(dirLink[0])})`);
 check(dirLink[0] && dirLink[0].by === 'user', 'and that the user did it, not a fold');
@@ -171,7 +181,7 @@ for (const parent of ['a', 'b']) {
 	await page.waitForTimeout(700);
 }
 links = await linksOf();
-check(links.some(l => l.other === 'dir:a/notes') && links.some(l => l.other === 'dir:b/notes'),
+check(links.some(l => namesDir(l.other, 'a/notes')) && links.some(l => namesDir(l.other, 'b/notes')),
 	`both same-named folders are attached (${links.map(l => l.other).join(', ')})`);
 
 // A file joins the way it always did: the ◈ on the open file.
@@ -287,7 +297,7 @@ await page.click('.files-row[data-path="docs"] .files-hold', { force: true });
 await page.waitForTimeout(1000);
 
 links = await linksOf();
-check(!links.some(l => l.other === 'dir:docs'), 'detaching drops the link');
+check(!links.some(l => namesDir(l.other, 'docs')), 'detaching drops the link');
 const survived = await page.evaluate(async () => {
 	const m = await import('/pkg/oxedyne_daimond.js');
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
