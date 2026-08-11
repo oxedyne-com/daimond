@@ -89,6 +89,14 @@ await p.evaluate((id) => {
 	}]));
 }, SEEDED_ID);
 
+// The chat this test writes its transcript into, held by id so every later
+// step drives THAT one whatever order the rail chooses to draw.
+const workingChatId = await p.evaluate(() => {
+	const on = document.querySelector('#session-list .chat-box.active')
+		|| document.querySelector('#session-list .chat-box');
+	return on ? on.dataset.id : '';
+});
+
 await reloadAndIn(s, NAME);
 
 const migrated = await readStore(s);
@@ -145,10 +153,17 @@ check('and a day of tool results is exactly what it refuses',
 	wouldHaveFailed === 'QuotaExceededError', wouldHaveFailed || 'it fitted, which it should not have');
 
 // Now work, with the origin's localStorage in that state.
-await p.evaluate(() => {
-	const b = [...document.querySelectorAll('#session-list .chat-box')][0];
+// THE CHAT THIS TEST MEANS, not whichever tile happens to be first. Chat tiles
+// now list newest-touched first, which put the MIGRATED chat at the top — a
+// chat carrying no model, so the turn typed into it went nowhere and ten checks
+// failed for a reason that had nothing to do with storage. The house rule is to
+// assert meaning rather than position; it applies to what a test DRIVES just as
+// much as to what it checks.
+await p.evaluate((id) => {
+	const b = [...document.querySelectorAll('#session-list .chat-box')]
+		.find(x => x.dataset.id === id);
 	if (b) b.click();
-});
+}, workingChatId);
 await p.waitForTimeout(500);
 await chat(s, '@text written while localStorage was full');
 const fullRows = await readStore(s);
@@ -168,10 +183,17 @@ check('the store it moved to is sized for the job', quota > 100 * 1024 * 1024,
 
 // ── 4. A tool result is shortened on its way in, and says how much went ────
 
-await p.evaluate(() => {
-	const b = [...document.querySelectorAll('#session-list .chat-box')][0];
+// THE CHAT THIS TEST MEANS, not whichever tile happens to be first. Chat tiles
+// now list newest-touched first, which put the MIGRATED chat at the top — a
+// chat carrying no model, so the turn typed into it went nowhere and ten checks
+// failed for a reason that had nothing to do with storage. The house rule is to
+// assert meaning rather than position; it applies to what a test DRIVES just as
+// much as to what it checks.
+await p.evaluate((id) => {
+	const b = [...document.querySelectorAll('#session-list .chat-box')]
+		.find(x => x.dataset.id === id);
 	if (b) b.click();
-});
+}, workingChatId);
 await p.waitForTimeout(400);
 const BIG = 'Z'.repeat(20000);
 await chat(s, '@tool file_write {"path":"big.txt","content":"' + BIG + '"}');

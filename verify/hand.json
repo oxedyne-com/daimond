@@ -1,12 +1,12 @@
 {
 	"algo": "sha-256",
-	"source": "3a81ca0c28ed783759b4d1732b9a0ef7e4f31427d8f13225ad21c1a7cb089ecd",
+	"source": "503c15f7aeae3f31e1a04a9f1bb289a0b66cc289242bcfa26c30a546429f417d",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
 	"files": {
-		"Cargo.lock": "2eb0aaa5d706fb0c9156556074df45d9672b3c4aef382e4b0d82c9997fb20877",
-		"Cargo.toml": "634b269bd8be61df3c22f41a8ec7cf1058447aa4e088a48bde3f76f65c046cd5",
+		"Cargo.lock": "845d05622508c36f02521879677d062f5d3b9d412bb58e2e6ee7ca65bb17e4b6",
+		"Cargo.toml": "a8ca8e05a275b24111d87c11eb3be75823a12fefdea9fa45426b7d020d2e8959",
 		"README.md": "17829aa8501bb066dd4a775ac3338db2f1c94a614f5dea6cc5dbf5d0a09f81db",
 		"REVIEW.md": "5f24035019483e338ea46a06b6513b0a27e5d4df9cd68afc5cccd2bd141a9ec0",
 		"install/README.md": "53343deaec6f5b21749e7797b9fe2904be5d356911f0e35fc90d5392202766c9",

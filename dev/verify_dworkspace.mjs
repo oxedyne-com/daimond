@@ -141,12 +141,14 @@ check((await page.$eval('.files-dws-hint', e => e.textContent)) === await T('dws
 	'in the app’s own words');
 
 // ── Attaching a directory ──────────────────────────────────────────────
+// The paperclip superseded the ◈ here on 2026-08-11 (ATTACH_CONTRACT.md §4):
+// one control, one hover text, regardless of what it is about to do.
 await setScope('all');
 await page.waitForTimeout(300);
-const dirBtnTitle = await page.$eval('.files-row[data-path="docs"] [data-act="hold-dir"]', b => b.title);
-check(dirBtnTitle === await T('dws.attach_dir', { name: 'Ship a CSV parser' }),
-	`a folder offers to join the open Diamond, and names it: ${JSON.stringify(dirBtnTitle)}`);
-await page.click('.files-row[data-path="docs"] [data-act="hold-dir"]', { force: true });
+const dirBtnTitle = await page.$eval('.files-row[data-path="docs"] [data-act="attach"]', b => b.title);
+check(dirBtnTitle === await T('attach.to_focus'),
+	`a folder offers to attach to the open focus: ${JSON.stringify(dirBtnTitle)}`);
+await page.click('.files-row[data-path="docs"] [data-act="attach"]', { force: true });
 await page.waitForTimeout(900);
 
 let links = await linksOf();
@@ -164,18 +166,18 @@ const dirLink = links.filter(l => namesDir(l.other, 'docs'));
 check(dirLink.length === 1, `one link was written for the folder (${JSON.stringify(links)})`);
 check(dirLink[0] && dirLink[0].rel === 'holds', `it says "holds" (${JSON.stringify(dirLink[0])})`);
 check(dirLink[0] && dirLink[0].by === 'user', 'and that the user did it, not a fold');
-check(await page.$eval('.files-row[data-path="docs"] [data-act="hold-dir"]',
+check(await page.$eval('.files-row[data-path="docs"] [data-act="attach"]',
 	b => b.classList.contains('on') && b.getAttribute('aria-pressed') === 'true'),
 	'the control reports the state it just reached');
-check(await page.$eval('.files-row[data-path="docs"] [data-act="hold-dir"]', b => b.title)
-	=== await T('dws.detach_dir', { name: 'Ship a CSV parser' }),
-	'and now offers the way back out');
+check(await page.$eval('.files-row[data-path="docs"] [data-act="attach"]', b => b.title)
+	=== await T('attach.to_focus'),
+	'and the same hover text takes it back out -- the control, not the label, says which');
 
 // Two folders with the same basename: the case that makes a basename useless.
 for (const parent of ['a', 'b']) {
 	await page.click(`.files-row[data-path="${parent}"] .files-name`, { force: true });
 	await page.waitForTimeout(700);
-	await page.click(`.files-row[data-path="${parent}/notes"] [data-act="hold-dir"]`, { force: true });
+	await page.click(`.files-row[data-path="${parent}/notes"] [data-act="attach"]`, { force: true });
 	await page.waitForTimeout(700);
 	await page.click('[data-act="up"]', { force: true });
 	await page.waitForTimeout(700);
@@ -184,16 +186,16 @@ links = await linksOf();
 check(links.some(l => namesDir(l.other, 'a/notes')) && links.some(l => namesDir(l.other, 'b/notes')),
 	`both same-named folders are attached (${links.map(l => l.other).join(', ')})`);
 
-// A file joins the way it always did: the ◈ on the open file.
+// A file joins the way it always did: the paperclip on the open file.
 await page.fill('.files-filter-input', 'other');
 await page.waitForTimeout(900);
 for (const row of await page.$$('.files-row')) {
 	const nm = await row.$eval('.files-name', e => e.textContent).catch(() => '');
 	if (nm.includes('other.md')) { await row.click({ force: true }); break; }
 }
-await page.waitForSelector('[data-act="hold"]', { timeout: 8000 });
+await page.waitForSelector('[data-act="attach"]', { timeout: 8000 });
 await page.waitForTimeout(400);
-await page.click('[data-act="hold"]', { force: true });
+await page.click('[data-act="attach"]', { force: true });
 await page.waitForTimeout(800);
 await page.click('[data-act="back"]', { force: true });
 await page.waitForTimeout(400);

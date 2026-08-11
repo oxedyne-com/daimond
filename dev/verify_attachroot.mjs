@@ -155,7 +155,9 @@ for (const row of await page.$$('#panel-work .files-row')) {
 	// The row's name carries a folder glyph before the name — matched on the
 	// name, not on the decoration.
 	if (nm.replace(/^[^A-Za-z0-9._-]+/, '').trim() === 'papers') {
-		const hold = await row.$('.files-hold');
+		// The paperclip superseded this ◈ on 2026-08-11 (ATTACH_CONTRACT.md §8) --
+		// same control, new class.
+		const hold = await row.$('.attach-btn');
 		if (hold) { await hold.click({ force: true }); attachedIt = true; }
 		break;
 	}

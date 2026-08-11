@@ -35,7 +35,7 @@ for (const row of await page.$$('.files-row')) {
 }
 await page.waitForTimeout(1500);
 const before = await page.evaluate(() => {
-	const b = document.querySelector('[data-act="hold"]');
+	const b = document.querySelector('[data-act="attach"]');
 	if (!b) return 'no hold button in the DOM at all';
 	const r = b.getBoundingClientRect();
 	return { display: b.style.display, w: Math.round(r.width), h: Math.round(r.height) };
@@ -56,7 +56,7 @@ for (const row of await page.$$('.files-row')) {
 }
 await page.waitForTimeout(1500);
 const after = await page.evaluate(() => {
-	const b = document.querySelector('[data-act="hold"]');
+	const b = document.querySelector('[data-act="attach"]');
 	if (!b) return 'no hold button';
 	const r = b.getBoundingClientRect();
 	// Its neighbours, so the answer can say WHERE on screen it is.

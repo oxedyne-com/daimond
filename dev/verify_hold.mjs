@@ -12,6 +12,8 @@ const s = await open({ name: 'hold' });
 const { page } = s;
 let bad = 0;
 const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); if (!ok) bad++; };
+// Every expected string is asked of the running app, never spelled here.
+const T = (k, v) => page.evaluate(([k, v]) => DaimondI18n.t(k, v || undefined), [k, v || null]);
 
 const boxes = () => page.$$eval('.diamond-box .session-box-name', els => els.map(e => e.textContent));
 
@@ -47,12 +49,12 @@ async function openTheFile() {
 		const nm = await row.$eval('.files-name', e => e.textContent).catch(() => '');
 		if (nm.includes('spec.md')) { await row.click({ force: true }); break; }
 	}
-	await page.waitForSelector('[data-act="hold"]', { timeout: 8000 });
+	await page.waitForSelector('[data-act="attach"]', { timeout: 8000 });
 	await page.waitForTimeout(500);
 }
 await openTheFile();
 
-const holdState = () => page.$eval('[data-act="hold"]', b => ({
+const holdState = () => page.$eval('[data-act="attach"]', b => ({
 	shown: b.style.display !== 'none',
 	on: b.classList.contains('on'),
 	pressed: b.getAttribute('aria-pressed'),
@@ -62,10 +64,13 @@ const holdState = () => page.$eval('[data-act="hold"]', b => ({
 let st = await holdState();
 check(st.shown, 'the control is offered while a Diamond is open');
 check(!st.on && st.pressed === 'false', `it starts unheld (${JSON.stringify(st)})`);
-check(/Ship a CSV parser/.test(st.label), `it names the Diamond it would keep the file with: ${JSON.stringify(st.label)}`);
+// The paperclip's hover text is fixed and says the same thing everywhere
+// (ATTACH_CONTRACT.md §4) -- it no longer names the Diamond, which row it
+// sits on used to leak into the label and now does not.
+check(st.label === await T('attach.to_focus'), `it says "Attach to current focus": ${JSON.stringify(st.label)}`);
 
 // Keep it.
-await page.click('[data-act="hold"]', { force: true });
+await page.click('[data-act="attach"]', { force: true });
 await page.waitForTimeout(700);
 st = await holdState();
 check(st.on && st.pressed === 'true', `after keeping, the control reports the state (${JSON.stringify(st)})`);
@@ -113,7 +118,7 @@ st = await holdState();
 check(st.on, `reopening the file still shows it as kept (${JSON.stringify(st)})`);
 
 // And it can be put down again, leaving nothing behind.
-await page.click('[data-act="hold"]', { force: true });
+await page.click('[data-act="attach"]', { force: true });
 await page.waitForTimeout(700);
 st = await holdState();
 check(!st.on, 'it can be put down again');

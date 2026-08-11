@@ -489,7 +489,13 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 
 .admin-item:focus-visible {
 	outline: 2px solid var(--accent);
-	outline-offset: 2px;
+	/* INSET, so the ring cannot be cut off. Drawn 2px OUTSIDE, the last item in
+	   the drawer needed 4px the container did not have -- measured at -0.6px of
+	   room, with overflow hidden and nothing to scroll -- so a keyboard user lost
+	   the bottom of the ring on the one control at the edge, where it is hardest
+	   to guess where you are. An inset ring is bounded by the button itself and
+	   is therefore clip-proof at every spacing and in every palette. */
+	outline-offset: -2px;
 	background: var(--bg-hover);
 }
 .admin-item.danger { color: var(--danger); }
@@ -943,6 +949,23 @@ button.tag-pool { cursor: pointer; }
 	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1; padding: 2px 5px; }
 .arte-use:hover { color: var(--accent); }
 .arte-drop:hover { color: var(--danger, #e5534b); }
+
+/* Note or Read, toggleable on the tile (ATTACH_CONTRACT.md §6). Note is the
+   cheaper of the two by a wide margin, so it carries no colour of its own;
+   Read spends the user's money and says so by picking up the accent, the same
+   way a lit `.on` control does everywhere else in this app. */
+.attach-state { flex-shrink: 0; background: none; border: 1px solid var(--border-2);
+	border-radius: 999px; cursor: pointer; color: var(--text-secondary);
+	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 7px; }
+.attach-state:hover { border-color: var(--accent); }
+.attach-state.read { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
+
+/* A chat's queue for its next turn, above the composer -- ATTACH_CONTRACT.md
+   §5: "showing exactly what the crystal footer shows". Reusing `.arte-list`
+   is what makes that literally true rather than a promise to keep two things
+   in step; this rule only adds the margin a footer above a composer needs
+   that a list under a strip button did not. */
+.chat-attach-strip { margin: 0 0 6px; max-height: 22vh; }
 
 /* Links: how this Diamond stands to the other Diamonds. The artefact strip
    above holds the links pointing at a file, a page or a chat; these are the

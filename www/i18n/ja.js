@@ -98,6 +98,10 @@
 	'rail.chats':                'チャット',
 	'rail.chats_help':           '作業する鉱脈。Diamond を切り出す元になる、生の会話です。',
 	'rail.new_chat':             '新しいチャット',
+	'rail.chats_menu': 'その他',
+	'rail.delete_all_chats': 'すべてのチャットを削除',
+	'rail.delete_all_chats_confirm.one': 'すべてのチャット（{n} 件）を削除しますか。取り消せません。',
+	'rail.delete_all_chats_confirm.other': 'すべてのチャット（{n} 件）を削除しますか。取り消せません。',
 	'layout.handle':             'ドラッグでサイズ変更、ダブルクリックでリセット',
 
 	// ── 管理 ───────────────────────────────────────────────────
@@ -540,6 +544,7 @@
 	'work.upload':     'ファイルをアップロード',
 	'work.parent':     '親フォルダー',
 	'work.filter_ph':  '絞り込み…',
+	'work.breadcrumb': 'フォルダーのパス',
 
 	// ── スマートフォンの外枠 ───────────────────────────────────
 	'mnav.chat':     'チャット',
@@ -1101,6 +1106,7 @@
 	'tile.click_to_open':  'クリックで開く、ダブルクリックで名前を変更',
 	'tile.settings': 'このタイルの設定',
 	'tile.settings_named': '「{name}」の設定',
+	'tile.close_named': '「{name}」を閉じる',
 	'tile.dlg_running': '稼働',
 	'tile.dlg_detail': '詳細度',
 	'tile.spend_help': 'この Diamond の費用（{turns} ターン）。',
@@ -1347,6 +1353,19 @@
 	'arte.nothing_to_open': '開くものがありません',
 	'arte.no_viewer':      'この成果物は「{kind}」で、このバージョンには表示する手段がありません。',
 
+	// ── フォーカスへの添付 (ATTACH_CONTRACT.md) ────────────
+	'attach.to_focus':     '現在のフォーカスに添付',
+	'attach.note':         'メモ',
+	'attach.read':         '読む',
+	'attach.note_help':    'パスを知っておく価値があります。安価です：数トークンほどしかかかりません。',
+	'attach.read_help':    '中身を今すぐ読み込みます。実際にお金がかかります — ファイル一つで数千トークンに達することもあります。',
+	'attach.add':          '添付',
+	'attach.view_stack':   'スタック',
+	'attach.view_icons':   'アイコン',
+	'attach.prefix_note':  '{paths} をメモして',
+	'attach.prefix_read':  '{paths} を全部読んで。',
+	'attach.cleared':      '添付を消去しました',
+
 	// ── この Diamond の作業領域 ────────────────────────────────
 	'dws.title':           'この Diamond の作業領域',
 	'dws.count.one':       '{n} 件',
@@ -1354,6 +1373,10 @@
 	'dws.mode_all':        'すべて',
 	'dws.mode_diamond':    'この Diamond',
 	'dws.empty':           'この Diamond にはまだ何も持たせていません。ここに持たせたものが、その daimon が開けるものです。',
+	'dws.not_here':        'この Diamond に持たせていますが、今開いている作業領域ではなく{where}にあります。ここからは、その daimon は届きません。',
+	'dws.in_machine':      'この端末の「{name}」フォルダー',
+	'dws.in_browser':      'ブラウザの作業領域',
+	'dws.a_folder':        'フォルダー',
 	'dws.attach_dir':      'このフォルダーを {name} に持たせる',
 	'dws.detach_dir':      'このフォルダーを {name} から外す',
 	'dws.kits':            'ツールチェーン',

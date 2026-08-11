@@ -97,6 +97,10 @@
 	'rail.chats':                '聊天',
 	'rail.chats_help':           '你干活的矿脉。原始的对话，Diamond 就是从中切出来的。',
 	'rail.new_chat':             '新建聊天',
+	'rail.chats_menu': '更多',
+	'rail.delete_all_chats': '删除所有聊天',
+	'rail.delete_all_chats_confirm.one': '删除全部 {n} 个聊天？这无法撤销。',
+	'rail.delete_all_chats_confirm.other': '删除全部 {n} 个聊天？这无法撤销。',
 	'layout.handle':             '拖动调整大小，双击复位',
 
 	// ── 账户与设置 ─────────────────────────────────────────────
@@ -537,6 +541,7 @@
 	'work.upload':     '上传文件',
 	'work.parent':     '上级文件夹',
 	'work.filter_ph':  '筛选…',
+	'work.breadcrumb': '文件夹路径',
 
 	// ── 手机界面 ───────────────────────────────────────────────
 	'mnav.chat':     '聊天',
@@ -1099,6 +1104,7 @@
 	'tile.click_to_open':  '点击打开，双击重命名',
 	'tile.settings': '此磁贴的设置',
 	'tile.settings_named': '「{name}」的设置',
+	'tile.close_named': '关闭“{name}”',
 	'tile.dlg_running': '运行',
 	'tile.dlg_detail': '详略',
 	'tile.spend_help': '该 Diamond 的花费（共 {turns} 轮）。',
@@ -1343,6 +1349,19 @@
 	'arte.nothing_to_open': '没有可打开的东西',
 	'arte.no_viewer':      '这件产物是“{kind}”，这个版本还没有能看它的查看器。',
 
+	// ── 附加到焦点 (ATTACH_CONTRACT.md) ────────────
+	'attach.to_focus':     '附加到当前焦点',
+	'attach.note':         '备注',
+	'attach.read':         '阅读',
+	'attach.note_help':    '值得知道这个路径。便宜：只要几个 token。',
+	'attach.read_help':    '现在就要读取内容。要花真金白银 — 一个文件可能耗费成千上万个 token。',
+	'attach.add':          '添加附件',
+	'attach.view_stack':   '堆叠',
+	'attach.view_icons':   '图标',
+	'attach.prefix_note':  '记下 {paths}',
+	'attach.prefix_read':  '完整阅读 {paths}。',
+	'attach.cleared':      '附件已清除',
+
 	// ── 这个 Diamond 的工作区 ──────────────────────────────────
 	'dws.title':           '这个 Diamond 的工作区',
 	'dws.count.one':       '{n} 项',
@@ -1350,6 +1369,10 @@
 	'dws.mode_all':        '全部',
 	'dws.mode_diamond':    '这个 Diamond',
 	'dws.empty':           '这个 Diamond 还没有留下任何东西。你留在这里的，就是它的 daimon 能打开的。',
+	'dws.not_here':        '留在这个 Diamond 里，但它在{where}，不是你现在打开的这个工作区。它的 daimon 没法从这里够到它。',
+	'dws.in_machine':      '这台机器上的“{name}”文件夹里',
+	'dws.in_browser':      '浏览器工作区里',
+	'dws.a_folder':        '文件夹',
 	'dws.attach_dir':      '把这个文件夹留在 {name} 里',
 	'dws.detach_dir':      '不再把这个文件夹留在 {name} 里',
 	'dws.kits':            '工具链',

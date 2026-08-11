@@ -99,6 +99,10 @@
 	'rail.chats':                '채팅',
 	'rail.chats_help':           '작업하는 광맥. Diamond을 잘라 내는 바탕이 되는 날것의 대화예요.',
 	'rail.new_chat':             '새 채팅',
+	'rail.chats_menu': '더보기',
+	'rail.delete_all_chats': '모든 채팅 삭제',
+	'rail.delete_all_chats_confirm.one': '채팅 {n}개를 모두 지울까요? 되돌릴 수 없어요.',
+	'rail.delete_all_chats_confirm.other': '채팅 {n}개를 모두 지울까요? 되돌릴 수 없어요.',
 	'layout.handle':             '끌어서 크기 조절, 두 번 클릭하면 원래대로',
 
 	// ── 계정과 설정 ────────────────────────────────────────────
@@ -541,6 +545,7 @@
 	'work.upload':     '파일 올리기',
 	'work.parent':     '상위 폴더',
 	'work.filter_ph':  '거르기…',
+	'work.breadcrumb': '폴더 경로',
 
 	// ── 휴대폰 화면 ────────────────────────────────────────────
 	'mnav.chat':     '채팅',
@@ -1102,6 +1107,7 @@
 	'tile.click_to_open':  '누르면 열리고, 두 번 누르면 이름을 바꿔요',
 	'tile.settings': '이 타일 설정',
 	'tile.settings_named': '"{name}" 설정',
+	'tile.close_named': '"{name}" 닫기',
 	'tile.dlg_running': '실행',
 	'tile.dlg_detail': '표시 정도',
 	'tile.spend_help': '이 Diamond의 비용({turns}턴).',
@@ -1348,6 +1354,19 @@
 	'arte.nothing_to_open': '열 것이 없어요',
 	'arte.no_viewer':      '이 산출물은 “{kind}”인데, 이 버전에는 그것을 볼 수단이 없어요.',
 
+	// ── 포커스에 첨부 (ATTACH_CONTRACT.md) ────────────
+	'attach.to_focus':     '현재 포커스에 첨부',
+	'attach.note':         '메모',
+	'attach.read':         '읽기',
+	'attach.note_help':    '경로를 알아 두면 좋아요. 저렴해요: 토큰 몇 개면 충분해요.',
+	'attach.read_help':    '지금 내용을 읽어들여요. 실제로 돈이 들어요 — 파일 하나가 수천 토큰에 이를 수 있어요.',
+	'attach.add':          '첨부',
+	'attach.view_stack':   '스택',
+	'attach.view_icons':   '아이콘',
+	'attach.prefix_note':  '{paths} 메모해줘',
+	'attach.prefix_read':  '{paths} 전체를 읽어줘.',
+	'attach.cleared':      '첨부를 지웠어요',
+
 	// ── 이 Diamond의 작업 공간 ─────────────────────────────────
 	'dws.title':           '이 Diamond의 작업 공간',
 	'dws.count.one':       '{n}개',
@@ -1355,6 +1374,10 @@
 	'dws.mode_all':        '전체',
 	'dws.mode_diamond':    '이 Diamond',
 	'dws.empty':           '아직 이 Diamond에 둔 것이 없어요. 여기에 두는 것이 그 daimon이 열 수 있는 것이에요.',
+	'dws.not_here':        '이 Diamond에 두었지만, 지금 열어 둔 작업 공간이 아니라 {where}에 있어요. 여기서는 그 daimon이 닿지 않아요.',
+	'dws.in_machine':      '이 기기의 "{name}" 폴더',
+	'dws.in_browser':      '브라우저 작업 공간',
+	'dws.a_folder':        '폴더',
 	'dws.attach_dir':      '이 폴더를 {name}에 두기',
 	'dws.detach_dir':      '이 폴더를 {name}에서 빼기',
 	'dws.kits':            '툴체인',

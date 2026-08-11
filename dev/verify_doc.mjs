@@ -174,8 +174,11 @@ let s = null;
 			.filter(b => getComputedStyle(b).display !== 'none')
 			.map(b => ({ act: b.dataset.act, h: b.getBoundingClientRect().height }));
 	});
-	const holdShown = heights.some(b => b.act === 'hold');
-	check('the ◈ button is on screen for this measurement', holdShown, JSON.stringify(heights));
+	// `attach`, not `hold`: the ◈ became the paperclip when attaching stopped
+	// meaning "keep with this Diamond" and started meaning "attach to whatever is
+	// in focus". The height property is unchanged — this is the button's name.
+	const holdShown = heights.some(b => b.act === 'attach');
+	check('the attach button is on screen for this measurement', holdShown, JSON.stringify(heights));
 	const distinct = Array.from(new Set(heights.map(b => Math.round(b.h * 10) / 10)));
 	check('every button in the row reports the same height',
 		holdShown && distinct.length === 1,

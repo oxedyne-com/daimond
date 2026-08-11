@@ -524,6 +524,11 @@
 				     not. Visually hidden — it says nothing a sighted reader cannot
 				     already see. -->
 				<div class="vh" id="chat-say" role="status" aria-live="polite"></div>
+				<!-- What an ordinary chat has queued for its NEXT TURN ONLY, exactly as
+				     the crystal footer shows for a Diamond -- see ATTACH_CONTRACT.md §5.
+				     Built in JS; hidden until the first thing is attached, and cleared
+				     when the turn is sent. -->
+				<div class="arte-list chat-attach-strip" id="chat-attachments" style="display:none"></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>

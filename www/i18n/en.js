@@ -110,7 +110,7 @@
 	'rail.new_chat':             'New chat',
 	'rail.chats_menu':           'More',
 	'rail.delete_all_chats':     'Delete all chats',
-	'rail.delete_all_chats_confirm.one':   'Delete all {n} chat? This cannot be undone.',
+	'rail.delete_all_chats_confirm.one':   'Delete your {n} chat? This cannot be undone.',
 	'rail.delete_all_chats_confirm.other': 'Delete all {n} chats? This cannot be undone.',
 	'layout.handle':             'Drag to resize, double-click to reset',
 
@@ -1416,6 +1416,19 @@
 	'arte.file_gone_body': '\u201c{path}\u201d was recorded as an artefact of this Diamond, but it cannot be read now — it may have been renamed, moved or deleted.',
 	'arte.nothing_to_open': 'Nothing to open',
 	'arte.no_viewer':      'This artefact is a \u201c{kind}\u201d, which this version has no viewer for.',
+
+	// ── Attach to focus (ATTACH_CONTRACT.md) ────────────
+	'attach.to_focus':     'Attach to current focus',
+	'attach.note':         'Note',
+	'attach.read':         'Read',
+	'attach.note_help':    'The path is worth knowing about. Cheap: costs a few tokens.',
+	'attach.read_help':    'The contents are wanted now. Costs real money — a file can run to thousands of tokens.',
+	'attach.add':          'Attach',
+	'attach.view_stack':   'Stack',
+	'attach.view_icons':   'Icons',
+	'attach.prefix_note':  'Note {paths}',
+	'attach.prefix_read':  'Read {paths} in full.',
+	'attach.cleared':      'Attachments cleared',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title':           'This Diamond\u2019s workspace',

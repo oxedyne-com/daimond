@@ -91,6 +91,10 @@
 	'rail.chats': 'Chats',
 	'rail.chats_help': 'O veio em que você trabalha. Conversa bruta, da qual um Diamond é lapidado.',
 	'rail.new_chat': 'Novo chat',
+	'rail.chats_menu': 'Mais',
+	'rail.delete_all_chats': 'Excluir todos os chats',
+	'rail.delete_all_chats_confirm.one': 'Excluir seu {n} chat? Isso não pode ser desfeito.',
+	'rail.delete_all_chats_confirm.other': 'Excluir seus {n} chats? Isso não pode ser desfeito.',
 	'layout.handle': 'Arraste para redimensionar, clique duas vezes para restaurar',
 
 	// ── Admin ──────────────────────────────────────────────────
@@ -422,6 +426,7 @@
 	'work.upload': 'Enviar arquivos',
 	'work.parent': 'Pasta acima',
 	'work.filter_ph': 'Filtrar…',
+	'work.breadcrumb': 'Caminho da pasta',
 
 	// ── The phone shell ────────────────────────────────────────
 	'mnav.chat': 'Chat',
@@ -1058,6 +1063,7 @@
 	'tile.click_to_open': 'Clique para abrir, clique duas vezes para renomear',
 	'tile.settings': 'Ajustes deste bloco',
 	'tile.settings_named': 'Ajustes de “{name}”',
+	'tile.close_named': 'Fechar “{name}”',
 	'tile.dlg_running': 'Em execução',
 	'tile.dlg_detail': 'Detalhe',
 	'tile.spend_help': 'O que este Diamond custou, ao longo de {turns} turnos.',
@@ -1310,6 +1316,19 @@
 	'arte.nothing_to_open': 'Nada para abrir',
 	'arte.no_viewer': 'Este artefato é um “{kind}”, para o que esta versão não tem visualizador.',
 
+	// ── Attach to focus (ATTACH_CONTRACT.md) ────────────
+	'attach.to_focus': 'Anexar ao foco atual',
+	'attach.note': 'Nota',
+	'attach.read': 'Ler',
+	'attach.note_help': 'Vale a pena saber o caminho. Barato: custa alguns tokens.',
+	'attach.read_help': 'O conteúdo é necessário agora. Custa dinheiro de verdade — um arquivo pode chegar a milhares de tokens.',
+	'attach.add': 'Anexar',
+	'attach.view_stack': 'Pilha',
+	'attach.view_icons': 'Ícones',
+	'attach.prefix_note': 'Anote {paths}',
+	'attach.prefix_read': 'Leia {paths} por completo.',
+	'attach.cleared': 'Anexos limpos',
+
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'O espaço de trabalho deste Diamond',
 	'dws.count.one': '{n} item',
@@ -1317,6 +1336,10 @@
 	'dws.mode_all': 'Tudo',
 	'dws.mode_diamond': 'Este Diamond',
 	'dws.empty': 'Ainda não há nada mantido com este Diamond. O que você mantém aqui é o que o daimon dele pode abrir.',
+	'dws.not_here': 'Mantido com este Diamond, mas ele vive {where}, que não é o espaço de trabalho que você tem aberto. O daimon dele não consegue alcançá-lo daqui.',
+	'dws.in_machine': 'na pasta “{name}” nesta máquina',
+	'dws.in_browser': 'no espaço de trabalho do navegador',
+	'dws.a_folder': 'uma pasta',
 	'dws.attach_dir': 'Manter esta pasta com {name}',
 	'dws.detach_dir': 'Parar de manter esta pasta com {name}',
 	'dws.kits': 'Cadeias de ferramentas',

@@ -7892,6 +7892,8 @@ import init, {
 			renderHistory(chat.messages);
 		}
 		syncComposer();   // reflect THIS chat's own generating state
+		renderChatAttachments();
+		syncComposerAttachPrefix();
 		updateActiveSession();
 		updateMeters();
 		// Anything queued on this chat is drawn again — renderHistory has just
@@ -10446,6 +10448,10 @@ import init, {
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
 		if (!current) { newChat(); }
 		var chat = current;
+		// The attachment queue was for THIS turn only (ATTACH_CONTRACT.md §4) --
+		// cleared here, where the turn is actually sent, whichever of the three
+		// paths below it takes.
+		clearChatAttach(chat.id);
 		// The chip's state at the moment of TYPING is what travels, including into
 		// the queue: a message held behind a running turn was asked for under the
 		// chip as it stood then, not as it stands when the queue drains.
@@ -13244,14 +13250,18 @@ import init, {
 			return null;
 		}
 
-		/// Put a folder into the open Diamond's workspace, or take it out again.
+		/// Put a folder or file into the open Diamond's workspace, or take it out
+		/// again. The paperclip's Diamond-focus behaviour (ATTACH_CONTRACT.md
+		/// §4): a permanent `holds` link, exactly as the old ◈ wrote for a
+		/// folder — generalised here to a file, which is the gap that started
+		/// this work.
 		///
-		/// Taking it out removes the link and NOTHING else: the folder and every
-		/// file in it stay exactly where they are, and any other Diamond holding
-		/// the same folder goes on holding it.
-		async function toggleDirHold(path) {
+		/// Taking it out removes the link and NOTHING else: the folder or file
+		/// stays exactly where it is, and any other Diamond holding it goes on
+		/// holding it.
+		async function toggleAttachHold(path, dir) {
 			if (!currentDiamond) return;
-			var id = currentDiamond.id, ref = rootedRef('dir', path);
+			var id = currentDiamond.id, ref = rootedRef(dir ? 'dir' : 'file', path);
 			var rec = attachedOf(ref);
 			var link = rec ? rec.link : await linkTo(id, ref);
 			try {
@@ -13261,6 +13271,45 @@ import init, {
 			// One signal, and everything that draws links redraws: this tree through
 			// refreshAttached, the strip above the steer box, and the graph.
 			signalLinksChanged();
+		}
+
+		/// The paperclip's click, wherever it is pressed: a Diamond in focus
+		/// writes the `holds` link above; an ordinary chat in focus queues it for
+		/// the next turn only and writes nothing to the store; nothing in focus
+		/// never reaches here, because the button is not offered at all.
+		async function toggleAttach(path, dir) {
+			var f = attachFocus();
+			if (!f) return;
+			if (f.kind === 'diamond') { await toggleAttachHold(path, dir); return; }
+			chatAttachToggle(f.id, rootedRef(dir ? 'dir' : 'file', path), dir, path);
+		}
+
+		/// Paint the paperclip so it says the same thing everywhere it appears:
+		/// same icon, same words, same meaning (§4). Hidden entirely with
+		/// nothing in focus — a control that does nothing when pressed teaches
+		/// people to distrust every control.
+		function paintAttachBtn(btn, path, dir) {
+			var f = attachFocus();
+			if (!f) { btn.style.display = 'none'; return; }
+			btn.style.display = '';
+			var ref = rootedRef(dir ? 'dir' : 'file', path);
+			var on = false, away = false, where = '';
+			if (f.kind === 'diamond') {
+				var rec = attachedOf(ref);
+				on = !!rec;
+				away = !!(rec && rec.here === false);
+				where = rec ? rec.where : '';
+			} else {
+				var rec2 = chatAttachFind(f.id, ref);
+				on = !!rec2;
+				away = on && !refReachable(ref);
+				where = on ? refWhere(ref) : '';
+			}
+			btn.classList.toggle('on', on);
+			btn.classList.toggle('away', away);
+			btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+			btn.title = away ? t('dws.not_here', { where: where }) : t('attach.to_focus');
+			btn.setAttribute('aria-label', btn.title);
 		}
 
 		/// Reload the attachment set and repaint whatever is on screen for it.
@@ -14562,27 +14611,22 @@ import init, {
 					row.appendChild(freeB);
 				}
 			}
-			// A folder can be put into the open Diamond's workspace from here, the
-			// way a file can from the ◈ on the open file. Only a folder needs this:
-			// a file is attached where it is read.
-			if (e.dir && currentDiamond) {
-				var on = !!attachedOf('dir:' + full);
-				var hold = document.createElement('button');
-				hold.className = 'files-res files-hold' + (on ? ' on' : '');
-				hold.textContent = '◈';
-				hold.dataset.act = 'hold-dir';
-				hold.dataset.path = full;
-				var rec  = attachedOf('dir:' + full);
-				var away = !!(rec && rec.here === false);
-				if (away) hold.classList.add('away');
-				hold.title = away
-					? t('dws.not_here', { where: rec.where })
-					: t(on ? 'dws.detach_dir' : 'dws.attach_dir', { name: currentDiamond.name });
-				hold.setAttribute('aria-pressed', on ? 'true' : 'false');
-				hold.setAttribute('aria-label', hold.title);
-				hold.addEventListener('click', function (ev) { ev.stopPropagation(); toggleDirHold(full); });
-				row.appendChild(hold);
-			}
+			// The paperclip: "Attach to current focus" (ATTACH_CONTRACT.md §4), on
+			// every row -- a file as much as a folder, which is the gap that
+			// started this. Hidden with nothing in focus rather than shown inert.
+			var attach = document.createElement('button');
+			attach.className = 'attach-btn';
+			attach.type = 'button';
+			attach.dataset.act = 'attach';
+			attach.dataset.path = full;
+			attach.textContent = '📎';
+			attach.addEventListener('click', function (ev) {
+				ev.stopPropagation();
+				toggleAttach(full, !!e.dir);
+				paintAttachBtn(attach, full, !!e.dir);
+			});
+			paintAttachBtn(attach, full, !!e.dir);
+			row.appendChild(attach);
 			if (!manage) return;
 			var ren = document.createElement('button');
 			ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = t('files.rename_move');
@@ -14644,56 +14688,73 @@ import init, {
 		/// Show a binary file as what it is: something to save, not something to
 		/// read. The workspace carries these now, so the panel has to meet one
 		/// without spilling a screen of replacement characters.
-		/// Wire the ◈ button that attaches the open file to the open Diamond.
+		/// Wire the paperclip that attaches the open file to whatever is in focus
+		/// (ATTACH_CONTRACT.md §4): a permanent `holds` link for a Diamond, or
+		/// this turn only for an ordinary chat, and hidden with neither open.
 		///
-		/// Artefacts are otherwise harvested at a fold, from what a turn WROTE. That is
-		/// right for everything an agent produces and no use at all for the work a
-		/// person brought with them, which is most of what a Diamond is for. This
-		/// writes the link there and then: a fold is the moment the user blesses what
-		/// an AGENT did, and there is nothing to bless when the user is the one doing
-		/// it.
-		///
-		/// It says `holds`, not `produced`. The Diamond did not make this file.
+		/// A Diamond's own attachments are otherwise harvested at a fold, from
+		/// what a turn WROTE. That is right for everything an agent produces and
+		/// no use at all for the work a person brought with them, which is most
+		/// of what a Diamond is for. This writes the link there and then: a fold
+		/// is the moment the user blesses what an AGENT did, and there is
+		/// nothing to bless when the user is the one doing it. It says `holds`,
+		/// not `produced` -- the Diamond did not make this file.
 		///
 		/// Shared by the text view and the viewer, because a PDF somebody dropped in is
-		/// exactly the kind of thing a Diamond ought to be able to hold, and a button
-		/// that appeared over a `.md` and vanished over a `.pdf` would read as a bug.
+		/// exactly the kind of thing worth attaching, and a button that appeared over
+		/// a `.md` and vanished over a `.pdf` would read as a bug.
 		///
 		/// # Arguments
 		/// * `path` - The file on screen.
 		/// * `holdBtn` - The button, or null where the view has none.
 		async function wireHold(path, holdBtn) {
 			if (!holdBtn) return;
+			holdBtn.classList.add('attach-btn');
+			holdBtn.dataset.act = 'attach';
+			holdBtn.textContent = '📎';
 			async function paint() {
-				if (!currentDiamond) {
-					holdBtn.style.display = 'none';
-					return;
-				}
+				var f = attachFocus();
+				if (!f) { holdBtn.style.display = 'none'; return; }
 				holdBtn.style.display = '';
-				var on = await fileIsHeld(currentDiamond.id, path);
+				var on = false, away = false, where = '';
+				if (f.kind === 'diamond') {
+					var link = await heldLink(f.id, path);
+					on = !!link;
+				} else {
+					var rec = chatAttachFind(f.id, rootedRef('file', path));
+					on = !!rec;
+					away = on && !refReachable(rootedRef('file', path));
+					where = on ? refWhere(rootedRef('file', path)) : '';
+				}
 				holdBtn.classList.toggle('on', on);
-				holdBtn.title = on
-					? t('files.hold_drop', { name: currentDiamond.name })
-					: t('files.hold_add',  { name: currentDiamond.name });
+				holdBtn.classList.toggle('away', away);
+				holdBtn.title = away ? t('dws.not_here', { where: where }) : t('attach.to_focus');
 				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
 				holdBtn.setAttribute('aria-label', holdBtn.title);
 			}
 			holdBtn.addEventListener('click', async function () {
-				if (!currentDiamond) return;
-				var id = currentDiamond.id, self = 'diamond:' + id;
-				var ref = rootedRef('file', path);
-				var link = await heldLink(id, path);
-				try {
-					if (link) await diamondApp().remove_link(link.owner, link.id);
-					else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
-				} catch (e) { /* already gone, or already there: repaint tells the truth */ }
-				signalLinksChanged();
-				renderArtefacts();
+				var f = attachFocus();
+				if (!f) return;
+				if (f.kind === 'diamond') {
+					var id = f.id, self = 'diamond:' + id;
+					var ref = rootedRef('file', path);
+					var link = await heldLink(id, path);
+					try {
+						if (link) await diamondApp().remove_link(link.owner, link.id);
+						else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
+					} catch (e) { /* already gone, or already there: repaint tells the truth */ }
+					signalLinksChanged();
+					renderArtefacts();
+				} else {
+					chatAttachToggle(f.id, rootedRef('file', path), false, path);
+				}
 				paint();
 			});
 			await paint();
-			// The Diamond can change under an open file, and the button names it.
+			// The focus, or its links, can change under an open file, and the
+			// button names it either way.
 			document.addEventListener('daimond-links-changed', paint);
+			document.addEventListener('daimond-diamond-changed', paint);
 		}
 
 		/// Show a file that is not characters: a picture, a sound, a video, a PDF, a
@@ -14717,7 +14778,7 @@ import init, {
 				'  <span>' +
 				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download_help')) + '">⤓ '
 					+ esc(t('files.download')) + '</button>' +
-				'    <button class="files-btn" data-act="hold" title="">◈</button>' +
+				'    <button class="files-btn" data-act="attach" title="">📎</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
@@ -14753,7 +14814,7 @@ import init, {
 					a.click(); URL.revokeObjectURL(a.href);
 				} catch (e) { fileMsg(friendlyError(e), true); }
 			});
-			await wireHold(path, viewEl.querySelector('[data-act="hold"]'));
+			await wireHold(path, viewEl.querySelector('[data-act="attach"]'));
 			await DaimondViewer.show(
 				viewEl.querySelector('.files-view-viewer'), path, info,
 				{
@@ -14850,7 +14911,7 @@ import init, {
 				// the panel's own header, where the rest of "how this is shown" lives
 				// and where it can be reached without the toolbar in view.
 				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">⤓</button>' +
-				'    <button class="files-btn" data-act="hold" title="">◈</button>' +
+				'    <button class="files-btn" data-act="attach" title="">📎</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
@@ -14873,7 +14934,7 @@ import init, {
 			// the user is the one doing it.
 			//
 			// It says `holds`, not `produced`. The Diamond did not make this file.
-			await wireHold(path, viewEl.querySelector('[data-act="hold"]'));
+			await wireHold(path, viewEl.querySelector('[data-act="attach"]'));
 
 			viewEl.querySelector('[data-act="download"]').addEventListener('click', function () {
 				var blob = new Blob([curContent], { type: 'text/plain' });
@@ -18203,6 +18264,8 @@ import init, {
 				chatOutput.appendChild(blank);
 			}
 			syncComposer();
+			renderChatAttachments();          // the chat footer never applies to a Diamond
+			syncComposerAttachPrefix();       // may seed the composer -- see ATTACH_CONTRACT.md §6
 			return;
 		}
 		// `current` is the daimon's own conversation on BOTH faces, because both
@@ -18214,6 +18277,8 @@ import init, {
 		updateActiveSession();
 		showCentre('focus');
 		syncComposer();
+		renderChatAttachments();
+		syncComposerAttachPrefix();
 		// A proposal left pending on this Diamond is restored rather than lost.
 		if (pendingFolds[f.id]) renderFoldDiff(f.id);
 		else await renderCrystal();
@@ -19333,6 +19398,10 @@ import init, {
 			links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]')
 				.filter(function (l) { return l.other && l.other.indexOf('diamond:') !== 0; });
 		} catch (e) { links = []; }
+		// A link gone since the state was last read leaves an orphan entry in the
+		// local Note/Read map -- deletions are never tracked there, on purpose
+		// (see pruneAttachState), so every render is the moment that gets noticed.
+		pruneAttachState(links.map(function (l) { return l.id; }));
 
 		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
 		strip.style.display = '';
@@ -19408,6 +19477,27 @@ import init, {
 
 			row.appendChild(tag);
 			row.appendChild(openBtn);
+			// Note \u21c4 Read, only for what the paperclip actually wrote (`holds`) --
+			// ATTACH_CONTRACT.md \u00a76. What a fold harvested (`produced`) or a tool
+			// merely looked at (`consulted`) is bookkeeping, not an attachment a
+			// person made, and carries no such choice.
+			if (l.rel === 'holds' && (kind === 'file' || kind === 'dir')) {
+				var state = readAttachState(l.id);
+				var stateBtn = document.createElement('button');
+				stateBtn.type = 'button';
+				stateBtn.className = 'attach-state' + (state === 'read' ? ' read' : '');
+				stateBtn.textContent = t(state === 'read' ? 'attach.read' : 'attach.note');
+				stateBtn.title = t(state === 'read' ? 'attach.read_help' : 'attach.note_help');
+				stateBtn.setAttribute('aria-pressed', state === 'read' ? 'true' : 'false');
+				stateBtn.addEventListener('click', function (ev) {
+					ev.stopPropagation();
+					writeAttachState(l.id, state === 'read' ? 'note' : 'read');
+					renderArtefacts();
+					// A still-fresh agent's seeded prefix reads this same store.
+					syncComposerAttachPrefix();
+				});
+				row.appendChild(stateBtn);
+			}
 			row.appendChild(useBtn);
 			row.appendChild(drop);
 			list.appendChild(row);
@@ -19526,6 +19616,287 @@ import init, {
 	async function fileIsHeld(diamondId, path) {
 		return !!(await heldLink(diamondId, path));
 	}
+
+	// ── Attach to focus — the paperclip's control and states ───────────
+	//
+	// ATTACH_CONTRACT.md is the design; this is its implementation. One control
+	// means the same thing on a folder row, a file row and the Doc header:
+	// "attach this to whatever is in focus" (§4). What the click DOES depends on
+	// what is in focus, never on which row it was pressed on.
+
+	/// What "current focus" means for the attach control.
+	///
+	/// `currentDiamond` is set on BOTH of a Diamond's faces — its crystal and
+	/// its own daimon chat — so it is checked first and covers both. An
+	/// ordinary chat is `current` with no `diamondId` of its own; a Diamond's
+	/// own thread always carries one (see `daimonChat`). Neither means nothing
+	/// is open, and the control must then be hidden rather than shown inert.
+	function attachFocus() {
+		if (currentDiamond) return { kind: 'diamond', id: currentDiamond.id, name: currentDiamond.name };
+		if (current && !current.diamondId) return { kind: 'chat', id: current.id };
+		return null;
+	}
+
+	// A Diamond's Note/Read is local to this device, on purpose, kept OUTSIDE
+	// the link record — link id → 'read' (Note is the unwritten default, so
+	// nothing is stored for it).
+	//
+	// The link's own `note` field looked like the obvious place, and was tried
+	// first: rejected because `note` is a user-facing free-text field, already
+	// editable from a different dialog (the Diamond-to-Diamond Link form), and
+	// this project has already lost data once to a field carrying two meanings
+	// at once — the tag-loss incident, where `updated` served both "when this
+	// changed" and "when this synced", and a union between two devices'
+	// disagreement silently dropped tags on the loser. That the UI does not
+	// surface `note` for a `holds` link TODAY was exactly the argument made
+	// for the field that lost the tags; it is not a safe argument twice.
+	//
+	// The cost of a dedicated local store is real and is written down rather
+	// than discovered later: it does not sync, so a second device shows Note
+	// for a link until it is set on THAT device too. This is the direction the
+	// safe default protects: Note is the cheap one, so a device this state has
+	// never reached is never the device that spends the user's money unasked.
+	var ATTACH_STATE_KEY = 'daimond-attach-state';
+
+	function loadAttachStateMap() {
+		try { return JSON.parse(localStorage.getItem(ATTACH_STATE_KEY) || '{}'); }
+		catch (e) { return {}; }
+	}
+	function saveAttachStateMap(map) {
+		try { localStorage.setItem(ATTACH_STATE_KEY, JSON.stringify(map)); }
+		catch (e) { /* private mode: state holds for this session only */ }
+	}
+
+	/// Drop whatever this map holds for a link that is no longer live.
+	///
+	/// Deletions are never tracked -- there is no event for "a link went away"
+	/// that this map listens for -- so an orphan is found the only way it can
+	/// be: by comparing against the set of ids that ARE live, whenever that set
+	/// is next read. Called once per render, with every id the render just saw,
+	/// not once per link -- pruning against a partial set would read a link
+	/// merely off-screen as gone.
+	function pruneAttachState(liveIds) {
+		var map = loadAttachStateMap(), changed = false, live = liveIds || [];
+		Object.keys(map).forEach(function (id) {
+			if (live.indexOf(id) < 0) { delete map[id]; changed = true; }
+		});
+		if (changed) saveAttachStateMap(map);
+	}
+
+	/// This link's Note/Read, defaulting to Note for one the map has never
+	/// heard of — an id from another device, or one this device has not yet
+	/// set (ATTACH_CONTRACT.md §6: Note is what an attachment starts as).
+	function readAttachState(linkId) {
+		return loadAttachStateMap()[linkId] === 'read' ? 'read' : 'note';
+	}
+	function writeAttachState(linkId, state) {
+		var map = loadAttachStateMap();
+		if (state === 'read') map[linkId] = 'read'; else delete map[linkId];
+		saveAttachStateMap(map);
+	}
+
+	// A chat's attachments live here and nowhere else — ATTACH_CONTRACT.md §4:
+	// "writes NOTHING to the store". Keyed by chat id so switching away and back
+	// keeps what is queued; cleared the moment that chat's turn is sent.
+	var chatAttach = {};			// chatId -> [{ ref, dir, path, state }]
+
+	function chatAttachList(chatId) { return chatAttach[chatId] || (chatAttach[chatId] = []); }
+
+	function chatAttachFind(chatId, ref) {
+		var list = chatAttachList(chatId);
+		for (var i = 0; i < list.length; i++) if (sameThing(list[i].ref, ref)) return list[i];
+		return null;
+	}
+
+	/// Add or remove one, from whichever control was pressed — a row's, or the
+	/// Doc header's.
+	function chatAttachToggle(chatId, ref, dir, path) {
+		var list = chatAttachList(chatId);
+		for (var i = 0; i < list.length; i++) {
+			if (sameThing(list[i].ref, ref)) { list.splice(i, 1); attachChanged(); return; }
+		}
+		// Note is the default — ATTACH_CONTRACT.md §6: the cheaper of the two by
+		// a wide margin, and a default that spends the user's money unasked is
+		// the wrong default.
+		list.push({ ref: ref, dir: !!dir, path: path, state: 'note' });
+		attachChanged();
+	}
+
+	function chatAttachSetState(chatId, ref, state) {
+		var rec = chatAttachFind(chatId, ref);
+		if (!rec || rec.state === state) return;
+		rec.state = state;
+		attachChanged();
+	}
+
+	/// Empty the queue for one chat. Called when its turn is sent — the
+	/// attachment was for that turn and no other (§4) — never on a mere switch
+	/// away, which must not lose what was queued.
+	function clearChatAttach(chatId) {
+		if (!chatAttach[chatId] || !chatAttach[chatId].length) return;
+		delete chatAttach[chatId];
+		attachChanged();
+	}
+
+	/// `Note <path1>, <path2>, …` / `Read <path1>, <path2>, … in full.` —
+	/// ATTACH_CONTRACT.md §6. An unreachable attachment is left out entirely: a
+	/// path handed to a model that cannot open it produces a turn spent
+	/// apologising (§7).
+	function attachPrefixText(list) {
+		var notes = [], reads = [];
+		(list || []).forEach(function (a) {
+			if (!refReachable(a.ref)) return;
+			(a.state === 'read' ? reads : notes).push(a.path);
+		});
+		var out = [];
+		if (notes.length) out.push(t('attach.prefix_note', { paths: notes.join(', ') }));
+		if (reads.length) out.push(t('attach.prefix_read', { paths: reads.join(', ') }));
+		return out.length ? out.join('\n') + '\n' : '';
+	}
+
+	// The text this module put in front of the composer last, per chat (or per
+	// Diamond, while its agent is still fresh) — so a later change can find and
+	// replace it rather than stacking a second copy, and an edit the user made
+	// to it is left alone rather than fought.
+	var attachPrefixWritten = {};
+
+	/// Put the generated prefix in front of whatever is typed, replacing only
+	/// the text this module itself wrote there last — so attaching one more
+	/// thing, or flipping Note ⇄ Read, updates it, while a person who has
+	/// edited or deleted it keeps their own words. This is the `✎ Page`
+	/// decision of 2026-08-10 applied here: a prompt the app writes and hides is
+	/// a prompt nobody can argue with (§6).
+	async function syncComposerAttachPrefix() {
+		var f = attachFocus();
+		if (!f) return;
+		var list;
+		if (f.kind === 'chat') {
+			list = chatAttachList(f.id);
+		} else {
+			// A Diamond's attachments are permanent, so the prefix is offered
+			// once — "when a new agent is initialised" (§6) — and not re-forced
+			// on every later turn.
+			if (!current || current.messages.length) return;
+			var links = [];
+			try { links = JSON.parse(await diamondApp().links_touching('diamond:' + f.id) || '[]'); }
+			catch (e) { links = []; }
+			pruneAttachState(links.map(function (l) { return l.id; }));
+			list = [];
+			links.forEach(function (l) {
+				if (l.rel !== 'holds') return;
+				var p = parseRef(l.other);
+				if ((p.kind !== 'file' && p.kind !== 'dir') || !p.path) return;
+				list.push({ ref: l.other, path: p.path, state: readAttachState(l.id) });
+			});
+		}
+		var input = document.getElementById('chat-input');
+		if (!input) return;
+		var text = attachPrefixText(list);
+		var last = attachPrefixWritten[f.id] || '';
+		var val  = input.value;
+		if (last && val.indexOf(last) === 0) input.value = text + val.slice(last.length);
+		else if (text) input.value = text + val;
+		attachPrefixWritten[f.id] = text;
+		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
+	}
+
+	/// One tile in a footer: the crystal's own (`renderArtefacts`) and the
+	/// chat's (`renderChatAttachments`) draw the same row, so a chat's footer
+	/// shows exactly what the crystal footer shows (§5).
+	///
+	/// # Arguments
+	/// * `kind`  - 'file' or 'dir', for the badge.
+	/// * `path`  - shown, and named in the generated prefix.
+	/// * `away`  - true when the workspace this was attached from is not open.
+	/// * `where` - said instead of reading as empty (§7).
+	/// * `state` - 'note' | 'read'.
+	function attachTileRow(kind, path, away, where, state, onState, onDrop) {
+		var row = document.createElement('div');
+		row.className = 'arte-row';
+
+		var tag = document.createElement('span');
+		tag.className = 'arte-kind';
+		tag.textContent = kind;
+		row.appendChild(tag);
+
+		var openEl = document.createElement('span');
+		openEl.className = 'arte-open' + (away ? ' away' : '');
+		openEl.textContent = path;
+		openEl.title = away ? t('dws.not_here', { where: where }) : path;
+		row.appendChild(openEl);
+
+		var stateBtn = document.createElement('button');
+		stateBtn.type = 'button';
+		stateBtn.className = 'attach-state' + (state === 'read' ? ' read' : '');
+		stateBtn.textContent = t(state === 'read' ? 'attach.read' : 'attach.note');
+		stateBtn.title = t(state === 'read' ? 'attach.read_help' : 'attach.note_help');
+		stateBtn.setAttribute('aria-pressed', state === 'read' ? 'true' : 'false');
+		stateBtn.addEventListener('click', function (ev) { ev.stopPropagation(); onState(); });
+		row.appendChild(stateBtn);
+
+		var drop = document.createElement('button');
+		drop.type = 'button';
+		drop.className = 'arte-drop';
+		drop.textContent = '×';
+		drop.title = t('arte.drop_help');
+		drop.setAttribute('aria-label', t('arte.drop_named', { name: path }));
+		drop.addEventListener('click', function (ev) { ev.stopPropagation(); onDrop(); });
+		row.appendChild(drop);
+
+		return row;
+	}
+
+	/// The chat footer: `#chat-attachments`, above the composer — what a chat
+	/// in focus has queued for its next turn, and only its next turn. Shown
+	/// when the first thing is attached, gone when the turn is sent or the last
+	/// tile is taken off.
+	function renderChatAttachments() {
+		var box = document.getElementById('chat-attachments');
+		if (!box) return;
+		var f = attachFocus();
+		var list = (f && f.kind === 'chat') ? chatAttachList(f.id) : [];
+		box.innerHTML = '';
+		if (!list.length) { box.style.display = 'none'; return; }
+		box.style.display = '';
+		list.forEach(function (a) {
+			var away = !refReachable(a.ref);
+			box.appendChild(attachTileRow(a.dir ? 'dir' : 'file', a.path, away, refWhere(a.ref), a.state,
+				function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
+				function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); }));
+		});
+	}
+
+	/// Everywhere the attachment set is drawn redraws: the chat footer, and the
+	/// composer's generated prefix.
+	function attachChanged() {
+		renderChatAttachments();
+		syncComposerAttachPrefix();
+	}
+
+	// A Diamond's own links changing — attaching or detaching a folder or file,
+	// or flipping a tile's Note ⇄ Read — can change what a still-fresh agent
+	// would be seeded with.
+	document.addEventListener('daimond-links-changed', function () { syncComposerAttachPrefix(); });
+
+	// A small surface for tests, and for anything that later wants to inspect or
+	// drive an attachment from outside this module — same reason
+	// `window.DaimondArtefacts` exists. `chatToggle` is also the only way to put
+	// an unreachable (machine-rooted) chat attachment in place for a test: the
+	// native folder picker that makes one for real cannot be driven headless
+	// (see dev/verify_attachroot.mjs).
+	window.DaimondAttach = {
+		focus:        attachFocus,
+		chatList:     chatAttachList,
+		chatToggle:   chatAttachToggle,
+		chatState:    chatAttachSetState,
+		chatClear:    clearChatAttach,
+		prefixText:   attachPrefixText,
+		syncPrefix:   syncComposerAttachPrefix,
+		render:       renderChatAttachments,
+		// The local, unsynced Note/Read map -- see its own comment above.
+		diamondState:    readAttachState,
+		diamondSetState: writeAttachState,
+	};
 
 	/// Show an artefact in whichever panel already owns that kind of thing.
 	///
