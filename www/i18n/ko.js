@@ -1366,6 +1366,10 @@
 	'attach.prefix_note':  '{paths} 메모해줘',
 	'attach.prefix_read':  '{paths} 전체를 읽어줘.',
 	'attach.cleared':      '첨부를 지웠어요',
+	'attach.list':         '첨부',
+	'attach.pick_title':   '파일과 폴더 첨부',
+	'attach.pick_empty':   '여기에는 아무것도 없어요.',
+	'attach.already':      '이미 첨부됨',
 
 	// ── 이 Diamond의 작업 공간 ─────────────────────────────────
 	'dws.title':           '이 Diamond의 작업 공간',

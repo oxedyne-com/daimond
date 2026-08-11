@@ -1331,6 +1331,10 @@
 	'attach.prefix_note': 'Notiere {paths}',
 	'attach.prefix_read': 'Lies {paths} vollständig.',
 	'attach.cleared': 'Anhänge geleert',
+	'attach.list': 'Anhänge',
+	'attach.pick_title': 'Dateien und Ordner anhängen',
+	'attach.pick_empty': 'Hier ist nichts.',
+	'attach.already': 'Bereits angehängt',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'Der Arbeitsbereich dieses Diamonds',

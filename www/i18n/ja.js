@@ -1365,6 +1365,10 @@
 	'attach.prefix_note':  '{paths} をメモして',
 	'attach.prefix_read':  '{paths} を全部読んで。',
 	'attach.cleared':      '添付を消去しました',
+	'attach.list':         '添付',
+	'attach.pick_title':   'ファイルとフォルダーを添付',
+	'attach.pick_empty':   'ここには何もありません。',
+	'attach.already':      '添付済み',
 
 	// ── この Diamond の作業領域 ────────────────────────────────
 	'dws.title':           'この Diamond の作業領域',

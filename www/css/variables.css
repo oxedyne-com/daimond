@@ -65,6 +65,24 @@
 	--font:              system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, var(--font-cjk, sans-serif), sans-serif;
 	--font-mono:         ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 
+	/* ── The safe area ───────────────────────────────────────────────
+	   What the hardware has already taken: the notch or the status bar at the
+	   top, the home indicator at the foot, and in landscape a notch down one
+	   side. In a browser tab these are all zero, because the browser's own
+	   chrome is standing in that space. Installed on a home screen there is no
+	   chrome, the page owns the whole screen, and anything laid out to the
+	   viewport's edge lands under the hardware.
+
+	   Named once here rather than written as `env(...)` at each use, for two
+	   reasons: a stylesheet that says `var(--safe-t)` reads as a decision
+	   rather than a browser quirk, and one that says it can be TESTED --
+	   Chrome reports zero insets on every desktop, so dev/verify_pwa.mjs sets
+	   these four to an iPhone's real numbers and looks at what moved. */
+	--safe-t:            env(safe-area-inset-top, 0px);
+	--safe-r:            env(safe-area-inset-right, 0px);
+	--safe-b:            env(safe-area-inset-bottom, 0px);
+	--safe-l:            env(safe-area-inset-left, 0px);
+
 	/* ── The type scale ──────────────────────────────────────────────
 	   Every font size in the app comes from here, so that text can be made
 	   larger without the frame growing with it: the user's choice moves
@@ -103,6 +121,41 @@
 
 	--header-h:          44px;
 	--logo-h:            24px;
+	/* ── The attachment footer's cap, and why it is six ──────────────
+	   ATTACH_CONTRACT.md §5 asks for "a cap on the stack, after which the
+	   footer scrolls, visibly", because it "currently grows without limit and
+	   pushes the composer up the screen".
+
+	   The number is measured, not chosen for being round. One tile is 32px
+	   tall at `--fs-scale: 1` -- the tallest thing on it is the Note/Read pill
+	   at 23px, plus the row's 8px of padding and its rule -- which is what
+	   `--attach-row-h` states, and what `.arte-row` is held to as a minimum.
+	   The chat panel at a 1500x950 window is 884px; an empty composer takes
+	   76px, leaving the conversation 762px. Six tiles is 192px: a quarter of
+	   the reading area, leaving 570px of conversation, which is still most of
+	   the panel. Seven crosses a third of it, and the panel is for the
+	   conversation.
+
+	   Six is also, to a fraction of a tile, the accidental cap that was
+	   already here: `max-height: 22vh` came to 209px at that height, or 6.4
+	   tiles. That cap was invisible, cut the seventh tile at an arbitrary
+	   place, and moved with the window instead of with the tiles. This one is
+	   stated in the unit a person counts in.
+
+	   Measured without any cap: at 22 attachments the footer stands 713px and
+	   the conversation above it is 43px, one line. It is the reading area the
+	   stack eats, the panel being a column anchored at the bottom.
+
+	   `--attach-peek` leaves the seventh tile showing by 14px. A stack cut
+	   mid-tile is the plainest statement that there is more below, and it is
+	   there as well as the scrollbar, not instead of it. */
+	--attach-row-h:      calc(23px * var(--fs-scale) + 9px);
+	--attach-cap:        6;
+	--attach-peek:       14px;
+	/* One icon cell, sized so two rows of them come to the same 192px that six
+	   tiles do: one cap, one footer height, whichever view is showing. */
+	--attach-icon-h:     84px;
+	--attach-icon-w:     88px;
 	/* Default panel widths (user-pullable, persisted). */
 	--rail-w:            220px;
 	--agents-w:          240px;
@@ -449,3 +502,9 @@
 :root:lang(zh) { --font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC'; }
 :root:lang(ja) { --font-cjk: 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans CJK JP', 'Noto Sans JP'; }
 :root:lang(ko) { --font-cjk: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK KR', 'Noto Sans KR'; }
+
+/* A short window is mostly composer and chrome already, so six tiles there
+   would be half of what is left. Four. */
+@media (max-height: 700px) {
+	:root { --attach-cap: 4; }
+}

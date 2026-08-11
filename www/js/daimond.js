@@ -3172,6 +3172,12 @@ import init, {
 			// The search row's five option labels: one of them is a phrase this app
 			// made up, and the kinds beside all of them are ours too.
 			try { SearchRow.render(); } catch (e) { /* the section is not up yet */ }
+			// Both attachment footers. Their chrome carries three words of ours --
+			// the view the toggle offers, "Attach", and the name of the scrolling
+			// region -- and a footer stands on screen for as long as anything is
+			// attached to what is in focus, so it cannot wait to be rebuilt.
+			try { renderChatAttachments(); } catch (e) { /* nothing is attached */ }
+			try { renderArtefacts(); } catch (e) { /* no Diamond is open */ }
 		});
 
 		// And the surfaces that come and go. Each hands over the node that shows
@@ -5207,6 +5213,13 @@ import init, {
 
 			var input = null;
 			var form = null;
+			var picked = null;
+			// A `pick` dialog is one whose BODY the caller draws — a browsable
+			// list, a grid, anything the three fixed kinds cannot express — while
+			// the card, the focus trap, Escape, Enter and the two buttons stay the
+			// app's own. It exists so that a new picker is not a new modal: this
+			// app has one modal and it should go on having one.
+			if (opts.kind === 'pick') picked = opts.build(card);
 			if (opts.kind === 'prompt') {
 				input = document.createElement('input');
 				input.className = 'dlg-input';
@@ -5260,6 +5273,7 @@ import init, {
 				resolve(value);
 			}
 			async function submit() {
+				if (opts.kind === 'pick') return close(picked.read());
 				if (opts.kind === 'form') {
 					var vals = form.read();
 					var bad2 = opts.validate ? await opts.validate(vals) : '';
@@ -5274,9 +5288,17 @@ import init, {
 				if (bad) { err.textContent = bad; input.focus(); return; }
 				close(v);
 			}
+			// What a dialog answers when it is dismissed rather than accepted. A
+			// confirm says false; every kind that returns a VALUE says null,
+			// because `false` is a perfectly good value for one to return.
+			function nothing() {
+				return (opts.kind === 'prompt' || opts.kind === 'form' || opts.kind === 'pick') ? null : false;
+			}
 			function onKey(e) {
-				var nullish = (opts.kind === 'prompt' || opts.kind === 'form') ? null : false;
-				if (e.key === 'Escape') { e.preventDefault(); close(nullish); }
+				if (e.key === 'Escape') { e.preventDefault(); close(nothing()); }
+				// Not on a `pick`: its body is full of buttons -- a folder to walk
+				// into, a row to tick -- and swallowing Enter would make the
+				// keyboard route into a folder unreachable.
 				else if (e.key === 'Enter' && (opts.kind === 'prompt' || opts.kind === 'form')) {
 					e.preventDefault(); submit();
 				}
@@ -5284,11 +5306,9 @@ import init, {
 			}
 			document.addEventListener('keydown', onKey, true);
 			back.addEventListener('mousedown', function (e) {
-				if (e.target === back) close((opts.kind === 'prompt' || opts.kind === 'form') ? null : false);
+				if (e.target === back) close(nothing());
 			});
-			if (cancel) cancel.addEventListener('click', function () {
-				close((opts.kind === 'prompt' || opts.kind === 'form') ? null : false);
-			});
+			if (cancel) cancel.addEventListener('click', function () { close(nothing()); });
 			ok.addEventListener('click', submit);
 
 			(input || ok).focus();
@@ -13284,6 +13304,39 @@ import init, {
 			chatAttachToggle(f.id, rootedRef(dir ? 'dir' : 'file', path), dir, path);
 		}
 
+		/// Is this path attached to whatever is in focus, and if so, is the
+		/// workspace it was attached from the one that is open?
+		///
+		/// One answer for both focuses, so a row, the Doc header and the `+`
+		/// picker cannot disagree about whether a thing is already attached.
+		function attachStateOf(path, dir) {
+			var f = attachFocus();
+			if (!f) return { on: false, away: false, where: '' };
+			var ref = rootedRef(dir ? 'dir' : 'file', path);
+			if (f.kind === 'diamond') {
+				var rec = attachedOf(ref);
+				return { on: !!rec, away: !!(rec && rec.here === false), where: rec ? rec.where : '' };
+			}
+			var rec2 = chatAttachFind(f.id, ref);
+			return { on: !!rec2, away: !!rec2 && !refReachable(ref),
+				where: rec2 ? refWhere(ref) : '' };
+		}
+
+		/// Is this path attached to whatever is in focus, asked of the store
+		/// rather than of this panel's cache?
+		///
+		/// `attachStateOf` reads `attached`, which is filled when the tree is
+		/// listed -- right for painting a row that only exists because the tree
+		/// was listed, and wrong for anything that can be asked before the
+		/// panel has ever been opened.
+		async function attachedTruly(path, dir) {
+			var f = attachFocus();
+			if (!f) return false;
+			var ref = rootedRef(dir ? 'dir' : 'file', path);
+			if (f.kind === 'diamond') return !!(await linkTo(f.id, ref));
+			return !!chatAttachFind(f.id, ref);
+		}
+
 		/// Paint the paperclip so it says the same thing everywhere it appears:
 		/// same icon, same words, same meaning (§4). Hidden entirely with
 		/// nothing in focus — a control that does nothing when pressed teaches
@@ -13292,19 +13345,8 @@ import init, {
 			var f = attachFocus();
 			if (!f) { btn.style.display = 'none'; return; }
 			btn.style.display = '';
-			var ref = rootedRef(dir ? 'dir' : 'file', path);
-			var on = false, away = false, where = '';
-			if (f.kind === 'diamond') {
-				var rec = attachedOf(ref);
-				on = !!rec;
-				away = !!(rec && rec.here === false);
-				where = rec ? rec.where : '';
-			} else {
-				var rec2 = chatAttachFind(f.id, ref);
-				on = !!rec2;
-				away = on && !refReachable(ref);
-				where = on ? refWhere(ref) : '';
-			}
+			var st = attachStateOf(path, dir);
+			var on = st.on, away = st.away, where = st.where;
 			btn.classList.toggle('on', on);
 			btn.classList.toggle('away', away);
 			btn.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -15488,6 +15530,46 @@ import init, {
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
 			folder:        function () { return folderHandle; },
+			// ── What the `+` picker borrows ────────────────────────────
+			//
+			// The picker in the attachment footer browses the SAME tree this
+			// panel does (ATTACH_CONTRACT.md §5: a supplement to the Workspace
+			// panel, not a replacement), so it borrows the panel's listing, its
+			// breadcrumb and its attach action rather than growing a second
+			// answer to any of the three. A second listing parser is how two
+			// views of one folder come to disagree about what is in it.
+
+			/// One directory as data, filtered exactly as the tree filters it —
+			/// no dotfiles, and no `diamonds/` at the root, which is Daimond's
+			/// own store and is not the user's to browse.
+			entries:       async function (dir) {
+				var res = await tools().run_tool('file_list', JSON.stringify({ path: dir || '.' }));
+				if (typeof res === 'string' && res.indexOf('Error') === 0) return [];
+				var atRoot = !dir || dir === '.' || dir === '/';
+				return parseListing(res).filter(function (e) {
+					if (e.name.charAt(0) === '.') return false;
+					return !(atRoot && e.name === 'diamonds' && e.dir);
+				}).sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+			},
+			/// The app's own breadcrumb, so a path reads the same in the picker
+			/// as it does in the panel.
+			crumbs:        renderCrumbs,
+			/// Is this already attached to whatever is in focus?
+			///
+			/// Asked of the STORE for a Diamond, not of this panel's cached
+			/// list: that cache is filled when the tree is listed, so a picker
+			/// opened before the Workspace panel has ever been shown would be
+			/// told nothing is attached -- and `attachAdd` would then toggle,
+			/// which on an attachment that really is there means DETACH. The
+			/// `+` must never take something off.
+			attached:      attachedTruly,
+			/// Attach it, unless it is attached already. The picker only ever
+			/// ADDS: a tick that could also detach would make one press of OK
+			/// both give and take away, and nothing on the row says which.
+			attachAdd:     async function (path, dir) {
+				if (await attachedTruly(path, !!dir)) return;
+				await toggleAttach(path, !!dir);
+			},
 			// A PDF is put on the panel from outside this module, so the header's
 			// line-number toggle has to be told to stand down from there too.
 			syncLineNo:    syncLineNo,
@@ -19416,16 +19498,12 @@ import init, {
 		// Most recent first: what was last touched is what is being worked on.
 		links.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
 
-		list.innerHTML = '';
-		links.forEach(function (l) {
+		// The SAME component the chat footer draws (§5), given this footer's own
+		// items. Everything below builds an ITEM; nothing below builds a row, so
+		// the two footers cannot drift apart by one of them being edited.
+		renderAttachFooter(list, links.map(function (l) {
 			var kind = l.other.slice(0, l.other.indexOf(':'));
 			var rest = l.other.slice(l.other.indexOf(':') + 1);
-
-			var row = document.createElement('div');
-			row.className = 'arte-row';
-
-			// Opening it is the obvious click, and every kind already has a panel that knows
-			// how to show it — so this routes rather than rendering anything itself.
 			var parsed = parseRef(l.other);
 			var path   = parsed.path || rest;
 			// An attachment recorded in the OTHER workspace is not lost and is not
@@ -19433,75 +19511,51 @@ import init, {
 			// is the whole point: silence here reads as an empty folder, which is what
 			// sent a daimon to report an empty book-shaped container.
 			var away   = !refReachable(l.other);
-
-			var openBtn = document.createElement('button');
-			openBtn.className = 'arte-open' + (away ? ' away' : '');
-			openBtn.textContent = path;
-			openBtn.title = away
-				? t('dws.not_here', { where: refWhere(l.other) })
-				: (l.rel ? (l.rel + ' \u00b7 ' + path) : path);
-			openBtn.addEventListener('click', function () { openArtefact(kind, path); });
-
-			// The quieter, more useful one: put a reference in the steer box. The hard part of
-			// steering is naming which thing you mean, and this is the picker for it.
-			var useBtn = document.createElement('button');
-			useBtn.className = 'arte-use';
-			useBtn.textContent = '\u21b3';
-			useBtn.title = t('arte.refer_help');
-			useBtn.addEventListener('click', function () {
-				// The Diamond's composer, which is the chat one -- there is no
-				// separate steer box any more, and this used to name it.
-				var box = document.getElementById('chat-input');
-				if (!box) return;
-				box.value = (box.value ? box.value.replace(/\s*$/, ' ') : '') + rest + ' ';
-				box.focus();
-				box.style.height = 'auto';
-				box.style.height = Math.min(box.scrollHeight, 120) + 'px';
-			});
-
-			var drop = document.createElement('button');
-			drop.className = 'arte-drop';
-			drop.textContent = '\u00d7';
-			drop.title = t('arte.drop_help');
-			drop.setAttribute('aria-label', t('arte.drop_named', { name: rest }));
-			drop.addEventListener('click', async function () {
-				try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
-				// Dropping an artefact removes a link, so it is a link change too.
-				signalLinksChanged();
-				renderArtefacts();
-			});
-
-			var tag = document.createElement('span');
-			tag.className = 'arte-kind';
-			tag.textContent = kind;
-
-			row.appendChild(tag);
-			row.appendChild(openBtn);
 			// Note \u21c4 Read, only for what the paperclip actually wrote (`holds`) --
 			// ATTACH_CONTRACT.md \u00a76. What a fold harvested (`produced`) or a tool
 			// merely looked at (`consulted`) is bookkeeping, not an attachment a
 			// person made, and carries no such choice.
-			if (l.rel === 'holds' && (kind === 'file' || kind === 'dir')) {
-				var state = readAttachState(l.id);
-				var stateBtn = document.createElement('button');
-				stateBtn.type = 'button';
-				stateBtn.className = 'attach-state' + (state === 'read' ? ' read' : '');
-				stateBtn.textContent = t(state === 'read' ? 'attach.read' : 'attach.note');
-				stateBtn.title = t(state === 'read' ? 'attach.read_help' : 'attach.note_help');
-				stateBtn.setAttribute('aria-pressed', state === 'read' ? 'true' : 'false');
-				stateBtn.addEventListener('click', function (ev) {
-					ev.stopPropagation();
+			var state = (l.rel === 'holds' && (kind === 'file' || kind === 'dir'))
+				? readAttachState(l.id) : '';
+			return {
+				kind:   kind,
+				path:   path,
+				hint:   l.rel ? (l.rel + ' \u00b7 ' + path) : path,
+				// Nothing to open, and the tile says where it lives instead (\u00a77).
+				shut:   away,
+				reason: away ? t('dws.not_here', { where: refWhere(l.other) }) : '',
+				state:  state,
+				onState: function () {
 					writeAttachState(l.id, state === 'read' ? 'note' : 'read');
 					renderArtefacts();
 					// A still-fresh agent's seeded prefix reads this same store.
 					syncComposerAttachPrefix();
-				});
-				row.appendChild(stateBtn);
-			}
-			row.appendChild(useBtn);
-			row.appendChild(drop);
-			list.appendChild(row);
-		});
+				},
+				// Opening it is the obvious click, and every kind already has a panel
+				// that knows how to show it \u2014 so this routes rather than rendering
+				// anything itself.
+				onOpen: function () { openArtefact(kind, path); },
+				// The quieter, more useful one: put a reference in the composer. The hard
+				// part of steering is naming which thing you mean, and this is the picker
+				// for it.
+				onRefer: function () {
+					// The Diamond's composer, which is the chat one -- there is no
+					// separate steer box any more, and this used to name it.
+					var box = document.getElementById('chat-input');
+					if (!box) return;
+					box.value = (box.value ? box.value.replace(/\s*$/, ' ') : '') + rest + ' ';
+					box.focus();
+					box.style.height = 'auto';
+					box.style.height = Math.min(box.scrollHeight, 120) + 'px';
+				},
+				onDrop: async function () {
+					try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+					// Dropping an artefact removes a link, so it is a link change too.
+					signalLinksChanged();
+					renderArtefacts();
+				},
+			};
+		}));
 	}
 
 	/// The link by which a Diamond holds this reference, or nothing.
@@ -19800,50 +19854,197 @@ import init, {
 		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
 	}
 
-	/// One tile in a footer: the crystal's own (`renderArtefacts`) and the
-	/// chat's (`renderChatAttachments`) draw the same row, so a chat's footer
-	/// shows exactly what the crystal footer shows (§5).
+	/// One tile in a footer, in whichever view is chosen. The crystal's footer
+	/// (`renderArtefacts`) and the chat's (`renderChatAttachments`) both draw
+	/// it, so a chat's footer shows exactly what the crystal footer shows (§5).
 	///
 	/// # Arguments
-	/// * `kind`  - 'file' or 'dir', for the badge.
-	/// * `path`  - shown, and named in the generated prefix.
-	/// * `away`  - true when the workspace this was attached from is not open.
-	/// * `where` - said instead of reading as empty (§7).
-	/// * `state` - 'note' | 'read'.
-	function attachTileRow(kind, path, away, where, state, onState, onDrop) {
+	/// * `item.kind`   - 'file', 'dir' or 'url', for the badge.
+	/// * `item.path`   - shown, and named in the generated prefix.
+	/// * `item.hint`   - said on hover where the tile has no room for it.
+	/// * `item.shut`   - there is NO opening this one, for the reason below.
+	/// * `item.reason` - why, in a sentence, drawn on the tile.
+	/// * `item.state`  - 'note' | 'read', or nothing for a tile that has neither.
+	/// * `item.onOpen`, `onRefer`, `onState`, `onDrop` - each optional; a tile
+	///   grows only the controls it is given.
+	function attachTile(item) {
+		var icons = attachView() === 'icons';
+		// One item, two shapes, ONE function. A second function per view is how
+		// the crystal footer and the chat footer came to disagree in the first
+		// place -- and §9's trash arrives wanting a third caller, not a third
+		// renderer.
+		//
+		// `shut` is not "away": it is "there is no opening this", which is what
+		// §7's unreachable attachment and §9's trashed Diamond have in common,
+		// and §9 says to build it once. The reason is drawn as TEXT and not
+		// only as a hover title, because a tooltip is unavailable to a touch
+		// and an item that is silently inert on a phone is the empty-folder
+		// failure this exists to end.
 		var row = document.createElement('div');
-		row.className = 'arte-row';
+		row.className = (icons ? 'attach-icon' : 'arte-row') + (item.shut ? ' shut' : '');
 
 		var tag = document.createElement('span');
 		tag.className = 'arte-kind';
-		tag.textContent = kind;
+		tag.textContent = icons ? (item.kind === 'dir' ? '📁' : '📄') : item.kind;
+		if (icons) tag.setAttribute('aria-hidden', 'true');
 		row.appendChild(tag);
 
-		var openEl = document.createElement('span');
-		openEl.className = 'arte-open' + (away ? ' away' : '');
-		openEl.textContent = path;
-		openEl.title = away ? t('dws.not_here', { where: where }) : path;
-		row.appendChild(openEl);
+		var name = document.createElement(item.onOpen && !item.shut ? 'button' : 'span');
+		name.className = 'arte-open' + (item.shut ? ' away' : '');
+		name.textContent = icons ? attachLeaf(item.path) : item.path;
+		// `hint` is the crystal footer's relation -- `holds`, `produced`,
+		// `consulted` -- which says how a thing got here, and is worth a
+		// hover where it will not fit on the tile.
+		name.title = item.reason || item.hint || item.path;
+		if (name.tagName === 'BUTTON') {
+			name.type = 'button';
+			name.addEventListener('click', function (ev) { ev.stopPropagation(); item.onOpen(); });
+		}
+		row.appendChild(name);
 
-		var stateBtn = document.createElement('button');
-		stateBtn.type = 'button';
-		stateBtn.className = 'attach-state' + (state === 'read' ? ' read' : '');
-		stateBtn.textContent = t(state === 'read' ? 'attach.read' : 'attach.note');
-		stateBtn.title = t(state === 'read' ? 'attach.read_help' : 'attach.note_help');
-		stateBtn.setAttribute('aria-pressed', state === 'read' ? 'true' : 'false');
-		stateBtn.addEventListener('click', function (ev) { ev.stopPropagation(); onState(); });
-		row.appendChild(stateBtn);
+		if (item.reason) {
+			var why = document.createElement('span');
+			why.className = 'arte-why';
+			why.textContent = item.reason;
+			row.appendChild(why);
+		}
 
-		var drop = document.createElement('button');
-		drop.type = 'button';
-		drop.className = 'arte-drop';
-		drop.textContent = '×';
-		drop.title = t('arte.drop_help');
-		drop.setAttribute('aria-label', t('arte.drop_named', { name: path }));
-		drop.addEventListener('click', function (ev) { ev.stopPropagation(); onDrop(); });
-		row.appendChild(drop);
+		if (item.state) {
+			var read = item.state === 'read';
+			var stateBtn = document.createElement('button');
+			stateBtn.type = 'button';
+			stateBtn.className = 'attach-state' + (read ? ' read' : '');
+			stateBtn.textContent = t(read ? 'attach.read' : 'attach.note');
+			stateBtn.title = t(read ? 'attach.read_help' : 'attach.note_help');
+			stateBtn.setAttribute('aria-pressed', read ? 'true' : 'false');
+			stateBtn.addEventListener('click', function (ev) { ev.stopPropagation(); item.onState(); });
+			row.appendChild(stateBtn);
+		}
+
+		// The refer arrow is the crystal footer's own: it puts a reference in the
+		// composer. A chat has nothing to refer to that its prefix does not
+		// already name, so it passes none and the tile simply has no arrow.
+		if (item.onRefer) {
+			var useBtn = document.createElement('button');
+			useBtn.type = 'button';
+			useBtn.className = 'arte-use';
+			useBtn.textContent = '↳';
+			useBtn.title = t('arte.refer_help');
+			useBtn.addEventListener('click', function (ev) { ev.stopPropagation(); item.onRefer(); });
+			row.appendChild(useBtn);
+		}
+
+		if (item.onDrop) {
+			var drop = document.createElement('button');
+			drop.type = 'button';
+			drop.className = 'arte-drop';
+			drop.textContent = '×';
+			drop.title = t('arte.drop_help');
+			drop.setAttribute('aria-label', t('arte.drop_named', { name: item.path }));
+			drop.addEventListener('click', function (ev) { ev.stopPropagation(); item.onDrop(); });
+			row.appendChild(drop);
+		}
 
 		return row;
+	}
+
+	/// The last segment of a path — what an icon has room to say.
+	function attachLeaf(path) {
+		var s = String(path || '');
+		var i = s.lastIndexOf('/');
+		return i < 0 ? s : s.slice(i + 1);
+	}
+
+	// ── The footer, and the chrome both footers wear ───────────────────
+	//
+	// ATTACH_CONTRACT.md §5 gives a Diamond's crystal footer and a chat's
+	// `#chat-attachments` the same three additions: a cap past which the stack
+	// scrolls, a view toggle, and a `+`. They get them by BEING the same
+	// component -- `renderAttachFooter` draws both -- rather than by two
+	// renderers being kept in step, which is a promise nobody can keep.
+
+	// Which view the footer is in, remembered PER USER and not per Diamond
+	// (§5), so it is a device preference like the workspace's scope chips
+	// beside it, and not a property of the thing being looked at.
+	var ATTACH_VIEW_KEY = 'daimond-attach-view';
+	// This session's answer, held in memory as well as in storage, so that the
+	// toggle still works where `localStorage` throws -- a private window, or a
+	// browser with site data switched off. Reading the store on every render
+	// would make the control silently inert there, which is worse than not
+	// remembering the choice.
+	var attachViewNow = null;
+
+	function attachView() {
+		if (attachViewNow) return attachViewNow;
+		try { attachViewNow = localStorage.getItem(ATTACH_VIEW_KEY) === 'icons' ? 'icons' : 'stack'; }
+		catch (e) { attachViewNow = 'stack'; }
+		return attachViewNow;
+	}
+	function setAttachView(v) {
+		attachViewNow = v === 'icons' ? 'icons' : 'stack';
+		try { localStorage.setItem(ATTACH_VIEW_KEY, attachViewNow); }
+		catch (e) { /* private mode: the choice holds for this session only */ }
+		renderChatAttachments();
+		renderArtefacts();
+	}
+
+	/// The bar above the tiles: the view toggle, and `+`.
+	///
+	/// It carries no count. The crystal footer already has one on the strip
+	/// that opens it, and a number printed twice a few pixels apart is a
+	/// number the reader has to check against itself.
+	function attachFooterHead() {
+		var head = document.createElement('div');
+		head.className = 'attach-head';
+
+		// One control, two positions -- not two buttons, one of which is always
+		// inert. Its word is the view it will GIVE you, which is the only thing
+		// a person wants to know before pressing it.
+		var to = attachView() === 'icons' ? 'stack' : 'icons';
+		var view = document.createElement('button');
+		view.type = 'button';
+		view.className = 'attach-view-btn';
+		view.dataset.act = 'attach-view';
+		view.dataset.view = to;
+		view.textContent = t(to === 'icons' ? 'attach.view_icons' : 'attach.view_stack');
+		view.title = view.textContent;
+		view.setAttribute('aria-label', view.textContent);
+		view.addEventListener('click', function (ev) { ev.stopPropagation(); setAttachView(to); });
+		head.appendChild(view);
+
+		var add = document.createElement('button');
+		add.type = 'button';
+		add.className = 'attach-add';
+		add.dataset.act = 'attach-add';
+		add.textContent = '+';
+		add.title = t('attach.add');
+		add.setAttribute('aria-label', t('attach.add'));
+		add.addEventListener('click', function (ev) { ev.stopPropagation(); attachPicker(); });
+		head.appendChild(add);
+
+		return head;
+	}
+
+	/// Draw a footer: the chrome, then the tiles, in whichever view is chosen.
+	///
+	/// The tiles go in their own scrolling box rather than the footer itself
+	/// scrolling, so the toggle and the `+` stay put while the stack moves
+	/// under them -- chrome that scrolls away is chrome nobody finds twice.
+	function renderAttachFooter(box, items) {
+		var icons = attachView() === 'icons';
+		box.innerHTML = '';
+		box.appendChild(attachFooterHead());
+
+		var body = document.createElement('div');
+		body.className = 'attach-body' + (icons ? ' icons' : '');
+		// A scrolling region is a keyboard stop and needs a name, or a screen
+		// reader announces "group" and nothing else.
+		body.tabIndex = 0;
+		body.setAttribute('role', 'group');
+		body.setAttribute('aria-label', t('attach.list'));
+		items.forEach(function (it) { body.appendChild(attachTile(it)); });
+		box.appendChild(body);
+		return body;
 	}
 
 	/// The chat footer: `#chat-attachments`, above the composer — what a chat
@@ -19855,15 +20056,119 @@ import init, {
 		if (!box) return;
 		var f = attachFocus();
 		var list = (f && f.kind === 'chat') ? chatAttachList(f.id) : [];
-		box.innerHTML = '';
-		if (!list.length) { box.style.display = 'none'; return; }
+		if (!list.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
 		box.style.display = '';
-		list.forEach(function (a) {
+		renderAttachFooter(box, list.map(function (a) {
 			var away = !refReachable(a.ref);
-			box.appendChild(attachTileRow(a.dir ? 'dir' : 'file', a.path, away, refWhere(a.ref), a.state,
-				function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
-				function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); }));
+			return {
+				kind:   a.dir ? 'dir' : 'file',
+				path:   a.path,
+				// Attached from a workspace that is not open: there is nothing to
+				// open, and the tile says where it lives instead (§7).
+				shut:   away,
+				reason: away ? t('dws.not_here', { where: refWhere(a.ref) }) : '',
+				state:  a.state,
+				onState: function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
+				onDrop:  function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); },
+			};
+		}));
+	}
+
+	/// The `+`: attach files and folders without leaving what you are reading.
+	///
+	/// ATTACH_CONTRACT.md §5 calls this a SUPPLEMENT to the Workspace panel,
+	/// not a replacement — so it browses the panel's own tree through the
+	/// panel's own listing, and does one thing the panel does not: several at
+	/// once, from where you already are.
+	async function attachPicker() {
+		if (!attachFocus()) return;			// no focus, nothing to attach to
+		var dir = '';
+		var ticked = {};				// path -> { dir }
+		var picked = await dialog({
+			kind:  'pick',
+			title: t('attach.pick_title'),
+			okLabel: t('attach.add'),
+			build: function (card) {
+				var crumbs = document.createElement('div');
+				crumbs.className = 'files-path attach-pick-path';
+				card.appendChild(crumbs);
+				var listEl = document.createElement('div');
+				listEl.className = 'attach-pick';
+				card.appendChild(listEl);
+				show('');
+				async function show(next) {
+					dir = next || '';
+					Files.crumbs(crumbs, t('panel.work'), dir, show);
+					listEl.innerHTML = '';
+					var rows = await Files.entries(dir);
+					if (!rows.length) {
+						var none = document.createElement('div');
+						none.className = 'files-empty';
+						none.textContent = t('attach.pick_empty');
+						listEl.appendChild(none);
+						return;
+					}
+					// One store read per row, awaited before the row is drawn: a
+					// tick that appears empty and is then found to be attached
+					// would be a row that lies about the state it is in.
+					var have = [];
+					for (var j = 0; j < rows.length; j++) {
+						have.push(await Files.attached(
+							dir ? (dir + '/' + rows[j].name) : rows[j].name, rows[j].dir));
+					}
+					rows.forEach(function (e, j) {
+						var full = dir ? (dir + '/' + e.name) : e.name;
+						var row = document.createElement('div');
+						row.className = 'attach-pick-row';
+
+						var box2 = document.createElement('input');
+						box2.type = 'checkbox';
+						box2.className = 'attach-pick-tick';
+						box2.dataset.path = full;
+						// Already attached: shown ticked so the set reads honestly,
+						// and fixed, because unticking here would mean OK both
+						// attaches and detaches and nothing on the row says which.
+						box2.checked = have[j] || !!ticked[full];
+						box2.disabled = have[j];
+						box2.title = have[j] ? t('attach.already') : t('attach.add');
+						box2.setAttribute('aria-label', full);
+						box2.addEventListener('change', function () {
+							if (box2.checked) ticked[full] = { dir: !!e.dir };
+							else delete ticked[full];
+						});
+						row.appendChild(box2);
+
+						// A folder is two things at once here: something to attach
+						// whole, and something to walk into. The tick does the
+						// first, the name does the second.
+						var nameEl = document.createElement(e.dir ? 'button' : 'label');
+						nameEl.className = 'attach-pick-name' + (e.dir ? ' dir' : '');
+						nameEl.textContent = (e.dir ? '📁 ' : '📄 ') + e.name;
+						if (e.dir) {
+							nameEl.type = 'button';
+							nameEl.addEventListener('click', function () { show(full); });
+						} else {
+							nameEl.addEventListener('click', function () {
+								if (box2.disabled) return;
+								box2.checked = !box2.checked;
+								box2.dispatchEvent(new Event('change'));
+							});
+						}
+						row.appendChild(nameEl);
+						listEl.appendChild(row);
+					});
+				}
+				return { read: function () { return ticked; } };
+			},
 		});
+		if (!picked) return;
+		var paths = Object.keys(picked);
+		for (var i = 0; i < paths.length; i++) {
+			await Files.attachAdd(paths[i], picked[paths[i]].dir);
+		}
+		// A Diamond's attachments are links, and everything that draws links
+		// redraws off that one signal; a chat's are not, so it is told directly.
+		attachChanged();
 	}
 
 	/// Everywhere the attachment set is drawn redraws: the chat footer, and the
@@ -19896,6 +20201,10 @@ import init, {
 		// The local, unsynced Note/Read map -- see its own comment above.
 		diamondState:    readAttachState,
 		diamondSetState: writeAttachState,
+		// The footer's own chrome: which view it is in, and the `+` picker.
+		view:         attachView,
+		setView:      setAttachView,
+		pick:         attachPicker,
 	};
 
 	/// Show an artefact in whichever panel already owns that kind of thing.

@@ -63,10 +63,19 @@
 	/// Read the stamp, never from cache -- the whole point is to see the server's current truth.
 	/// Any failure (offline, no stamp deployed, bad JSON) resolves to null and is simply ignored;
 	/// a broken check must never break the app or nag the user.
+	///
+	/// The shell worker is told every id this reads. It caches code, so it must
+	/// never hold a build the server has moved past, and this is the one place in
+	/// the app that knows -- so the worker takes ITS answer rather than forming a
+	/// second opinion on a timer of its own. See www/sw.js.
 	function readStamp() {
 		return fetch(SRC, { cache: 'no-store' })
 			.then(function (r) { return r.ok ? r.json() : null; })
 			.then(function (j) { return (j && typeof j.build === 'string') ? j : null; })
+			.then(function (j) {
+				if (j) { try { window.DaimondPWA.tellBuild(j.build); } catch (e) {} }
+				return j;
+			})
 			.catch(function () { return null; });
 	}
 

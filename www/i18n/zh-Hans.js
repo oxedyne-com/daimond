@@ -1361,6 +1361,10 @@
 	'attach.prefix_note':  '记下 {paths}',
 	'attach.prefix_read':  '完整阅读 {paths}。',
 	'attach.cleared':      '附件已清除',
+	'attach.list':         '附件',
+	'attach.pick_title':   '附加文件和文件夹',
+	'attach.pick_empty':   '这里没有内容。',
+	'attach.already':      '已附加',
 
 	// ── 这个 Diamond 的工作区 ──────────────────────────────────
 	'dws.title':           '这个 Diamond 的工作区',

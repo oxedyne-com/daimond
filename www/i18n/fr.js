@@ -1336,6 +1336,10 @@
 	'attach.prefix_note': 'Note {paths}',
 	'attach.prefix_read': 'Lis {paths} en entier.',
 	'attach.cleared': 'Pièces jointes effacées',
+	'attach.list': 'Pièces jointes',
+	'attach.pick_title': 'Joindre des fichiers et des dossiers',
+	'attach.pick_empty': 'Il n’y a rien ici.',
+	'attach.already': 'Déjà joint',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'L’espace de travail de ce Diamond',

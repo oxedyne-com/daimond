@@ -1328,6 +1328,10 @@
 	'attach.prefix_note': 'Anote {paths}',
 	'attach.prefix_read': 'Leia {paths} por completo.',
 	'attach.cleared': 'Anexos limpos',
+	'attach.list': 'Anexos',
+	'attach.pick_title': 'Anexar arquivos e pastas',
+	'attach.pick_empty': 'Não há nada aqui.',
+	'attach.already': 'Já anexado',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'O espaço de trabalho deste Diamond',

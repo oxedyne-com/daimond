@@ -37,6 +37,31 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="assets/daimond_mark.svg">
+<!-- Installable on a home screen. `app.webmanifest`, NOT `manifest.json`: that
+     name is taken, by the transparency manifest -- the SHA-256 of every served
+     file, which verify/check.mjs and js/verify.js read to prove the code in this
+     browser is the published source. Two different manifests, one of them much
+     older, so the newcomer is the one that moves. -->
+<link rel="manifest" href="app.webmanifest">
+<!-- The colour the platform paints its own furniture with in standalone mode.
+     js/pwa.js keeps it on whichever of the eleven palettes is in use; this is the
+     default, for the moment before any script runs. -->
+<meta name="theme-color" content="#15120F">
+<!-- iOS reads its own tags rather than the manifest. `apple-touch-icon` is the
+     home-screen icon (SVG is not honoured, hence the PNG), and "capable" is what
+     makes a pinned Daimond open without Safari's chrome.
+
+     The status bar stays `default` -- iOS then keeps its own bar above the page
+     rather than letting the page run under it. `black-translucent` would look
+     better on the dark palettes and unreadable on the light ones, because it
+     forces white status text whatever the page is wearing, and Daimond ships
+     eleven palettes of which three are paper. The safe-area insets still matter
+     in every style: the home indicator, and the notch in landscape. -->
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Daimond">
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/render.css">
@@ -1077,6 +1102,10 @@
 <script src="js/handpty.js"></script>
 <script src="js/terminal.js"></script>
 <script src="js/spend.js"></script>
+<!-- pwa.js beside updater.js, deliberately: the updater reads build.json and pwa.js
+     passes what it read to the shell worker, so the worker's cache is emptied by
+     the same reading that moves the update chip. -->
+<script src="js/pwa.js"></script>
 <script src="js/updater.js"></script>
 <script src="js/workspace.js"></script>
 <script src="js/release.js"></script>

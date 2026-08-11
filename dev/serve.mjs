@@ -32,6 +32,10 @@ const TYPES = {
 	// fetch dynamically imported module" -- a MIME type, reported as a broken compiler.
 	'.mjs': 'text/javascript; charset=utf-8',
 	'.css': 'text/css; charset=utf-8', '.json': 'application/json',
+	// The web app manifest. Steel already serves this extension correctly
+	// (fe2o3_net::file), and without it here a locally served Daimond is not
+	// installable -- which is exactly the thing that has to be testable locally.
+	'.webmanifest': 'application/manifest+json',
 	'.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png',
 	'.woff2': 'font/woff2', '.map': 'application/json', '.pdf': 'application/pdf',
 	'.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8',

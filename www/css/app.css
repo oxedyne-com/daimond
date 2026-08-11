@@ -84,7 +84,11 @@ svg { display: block; }
 }
 
 /* ── App frame: topbar + four panels ─────────────────────────── */
-#app { display: flex; flex-direction: column; height: 100vh; padding: 10px 12px 12px; gap: 8px; }
+/* The safe-area insets are added to the frame's own padding, not substituted for
+   it: installed on a home screen there is no browser chrome holding the notch and
+   the home indicator off the layout, and the top bar landed under the status bar.
+   They are all zero in a browser tab, so this is the same padding it always was. */
+#app { display: flex; flex-direction: column; height: 100vh; padding: calc(10px + var(--safe-t)) calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l)); gap: 8px; }
 
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px; }
 .brand { display: flex; align-items: center; text-decoration: none; transition: opacity 0.15s ease; }
@@ -93,7 +97,7 @@ svg { display: block; }
    screen uses, in place of the mark plus a UI-font "Daimond". Two variants swap
    by theme because the topbar sits on the theme background: white lettering on
    the dark theme, dark grey on the light and lollypop themes. */
-.brand-wordmark { height: var(--logo-h); width: auto; display: block; }
+.brand-wordmark { height: calc(var(--logo-h) * 1.5); width: auto; display: block; }
 /* The brand group. The wordmark was one of two marks here; the maker's badge has
    since moved to the other end of the bar, so this is now a group of one -- kept
    as a group because the bar distributes its children with space-between, and a
@@ -934,9 +938,10 @@ button.tag-pool { cursor: pointer; }
 	color: var(--text-muted); font-size: var(--fs-xs); font-family: var(--font-mono);
 	padding: 4px 2px; margin: 2px 0; cursor: pointer; }
 .arte-strip:hover { color: var(--text-secondary); }
-.arte-list { max-height: 30vh; overflow-y: auto; margin: 0 0 6px;
+.arte-list { margin: 0 0 6px;
 	border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
-.arte-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+.arte-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px;
+	min-height: var(--attach-row-h); box-sizing: border-box;
 	border-bottom: 1px solid var(--border); }
 .arte-row:last-child { border-bottom: none; }
 .arte-kind { flex-shrink: 0; font-size: var(--fs-3xs-2xs); font-family: var(--font-mono);
@@ -944,7 +949,17 @@ button.tag-pool { cursor: pointer; }
 .arte-open { flex: 1; min-width: 0; text-align: left; background: none; border: none;
 	color: var(--text-primary); font-size: var(--fs-xs-sm); font-family: var(--font-mono);
 	padding: 2px 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.arte-open:hover { color: var(--accent); }
+button.arte-open:hover { color: var(--accent); }
+/* A tile for something that cannot be opened. Not a button, because there is
+   nothing to press -- and the reason is TEXT, not a hover title, because a
+   tooltip is unavailable to a touch and an item that is silently inert on a
+   phone is exactly the empty-folder failure this exists to end. Wanted twice
+   over: ATTACH_CONTRACT.md §7 for an attachment from a workspace that is not
+   open, and §9 for a Diamond in the trash. */
+span.arte-open { cursor: default; }
+.arte-open.away { color: var(--text-muted); font-style: italic; }
+.arte-why { flex-basis: 100%; order: 9; padding: 0 0 3px 40px;
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); line-height: 1.4; }
 .arte-use, .arte-drop { flex-shrink: 0; background: none; border: none; cursor: pointer;
 	color: var(--text-muted); font-size: var(--fs-sm); line-height: 1; padding: 2px 5px; }
 .arte-use:hover { color: var(--accent); }
@@ -965,7 +980,81 @@ button.tag-pool { cursor: pointer; }
    is what makes that literally true rather than a promise to keep two things
    in step; this rule only adds the margin a footer above a composer needs
    that a list under a strip button did not. */
-.chat-attach-strip { margin: 0 0 6px; max-height: 22vh; }
+.chat-attach-strip { margin: 0 0 6px; }
+
+/* The chrome both footers wear: the view toggle and `+`, above the tiles and
+   outside the scroll, because chrome that scrolls away is chrome nobody finds
+   a second time. */
+.attach-head { display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+	padding: 3px 5px; border-bottom: 1px solid var(--border); }
+.attach-view-btn { background: none; border: 1px solid var(--border-2); border-radius: 999px;
+	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
+	line-height: 1.6; padding: 0 9px; }
+.attach-view-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+.attach-add { background: none; border: none; cursor: pointer; color: var(--text-muted);
+	font-size: var(--fs-sm); line-height: 1; padding: 2px 6px; min-width: 26px; min-height: 26px; }
+.attach-add:hover { color: var(--accent); }
+
+/* The tiles themselves, and the only thing in either footer that scrolls. The
+   cap is `--attach-cap` tiles, which is six and is measured -- variables.css
+   says how it was arrived at. `scrollbar-gutter: stable` keeps the width from
+   twitching as the last tile is taken off, and the track is painted rather
+   than left as an overlay that fades: the contract asks for a footer that
+   LOOKS like it scrolls. */
+.attach-body { max-height: calc(var(--attach-cap) * var(--attach-row-h) + var(--attach-peek));
+	overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
+.attach-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.attach-body::-webkit-scrollbar { width: 10px; }
+.attach-body::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 5px; }
+.attach-body::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 5px;
+	border: 2px solid var(--bg-secondary); }
+
+/* The other view: rows of sizeable icons (§5), which the note is explicit are
+   NOT button-sized. An 88x84 cell against the 26px buttons beside it -- big
+   enough to hit without aiming, and to read the name off at a glance. */
+.attach-body.icons { display: flex; flex-wrap: wrap; align-content: flex-start;
+	gap: 8px; padding: 8px; }
+.attach-icon { position: relative; width: var(--attach-icon-w); height: var(--attach-icon-h);
+	box-sizing: border-box; display: flex; flex-direction: column; align-items: center;
+	gap: 2px; padding: 6px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius);
+	background: var(--bg-secondary); }
+.attach-icon .arte-kind { min-width: 0; font-size: 26px; line-height: 1.05; }
+.attach-icon .arte-open { flex: none; width: 100%; text-align: center; white-space: normal;
+	overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+	font-size: var(--fs-3xs-2xs); line-height: 1.25; word-break: break-word; }
+.attach-icon .attach-state { margin-top: auto; }
+/* The reason a shut tile gives is a sentence, and a sentence does not fit an
+   88px cell. On an icon it is the hover title and the cell says `?`; the stack
+   view is where it is written out, and the toggle is one press away. */
+.attach-icon .arte-why { position: absolute; top: 2px; left: 4px; padding: 0;
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); overflow: hidden;
+	width: 12px; height: 12px; white-space: nowrap; text-indent: -999px; }
+.attach-icon .arte-why::after { content: '?'; position: absolute; left: 0; top: 0; text-indent: 0; }
+.attach-icon.shut { border-style: dashed; }
+/* The refer arrow and the × sit in the corner of an icon rather than in a row
+   of their own: a cell this size has no row to spare. */
+.attach-icon .arte-use, .attach-icon .arte-drop { position: absolute; top: 0; padding: 1px 4px;
+	font-size: var(--fs-xs); opacity: 0; }
+.attach-icon .arte-use { right: 16px; }
+.attach-icon .arte-drop { right: 0; }
+.attach-icon:hover .arte-use, .attach-icon:hover .arte-drop,
+.attach-icon:focus-within .arte-use, .attach-icon:focus-within .arte-drop { opacity: 1; }
+
+/* The `+` picker: the workspace's own tree, in the app's own dialog, with a
+   tick per row. Nothing here is a new modal -- see `dialog`'s `pick` kind. */
+.attach-pick { max-height: 46vh; overflow-y: auto; margin: 8px 0 0;
+	border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
+.attach-pick-path { border-bottom: none; padding: 4px 2px; }
+.attach-pick-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+	border-bottom: 1px solid var(--border); }
+.attach-pick-row:last-child { border-bottom: none; }
+.attach-pick-tick { flex: none; width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+.attach-pick-tick:disabled { cursor: default; }
+.attach-pick-name { flex: 1; min-width: 0; text-align: left; background: none; border: none;
+	padding: 0; color: var(--text-primary); font-size: var(--fs-xs-sm);
+	font-family: var(--font-mono); cursor: pointer;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-pick-name.dir:hover { color: var(--accent); }
 
 /* Links: how this Diamond stands to the other Diamonds. The artefact strip
    above holds the links pointing at a file, a page or a chat; these are the

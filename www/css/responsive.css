@@ -25,7 +25,10 @@
 	#app {
 		height: 100vh;
 		height: 100dvh;
-		padding: 8px 8px 0;
+		/* The foot stays at nought: the bottom bar owns the home indicator's
+		   space, in its own padding, and adding it here as well would lift the
+		   bar clear of the screen edge by twice the inset. */
+		padding: calc(8px + var(--safe-t)) calc(8px + var(--safe-r)) 0 calc(8px + var(--safe-l));
 		gap: 6px;
 		overflow: hidden;
 	}
@@ -72,7 +75,7 @@
 		flex: none;
 		border-top: 1px solid var(--border);
 		background: var(--bg-primary);
-		padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+		padding: 6px 4px calc(6px + var(--safe-b));
 		margin: 0 -8px;
 	}
 	.mnav button {

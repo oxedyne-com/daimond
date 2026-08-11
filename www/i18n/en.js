@@ -1429,6 +1429,10 @@
 	'attach.prefix_note':  'Note {paths}',
 	'attach.prefix_read':  'Read {paths} in full.',
 	'attach.cleared':      'Attachments cleared',
+	'attach.list':         'Attachments',
+	'attach.pick_title':   'Attach files and folders',
+	'attach.pick_empty':   'Nothing here.',
+	'attach.already':      'Already attached',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title':           'This Diamond\u2019s workspace',
