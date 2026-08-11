@@ -424,8 +424,9 @@ try {
 	};
 
 	/// Delete the named Diamond the way a person does — the cog, then Delete at
-	/// the foot of its dialog, then the confirm. This is the call site that has
-	/// to write the tombstone.
+	/// the foot of its dialog. THERE IS NO CONFIRM ANY MORE: since the trash,
+	/// deleting is reversible and asks nothing, and this is the call site that
+	/// has to put the Diamond into the state that travels.
 	const removeDiamond = async (name) => {
 		const found = await page.evaluate((nm) => {
 			const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
@@ -439,12 +440,20 @@ try {
 		if (!found) return 'not in the rail';
 		await page.waitForSelector('.tile-dlg-delete', { timeout: 8000 });
 		await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
-		await page.waitForSelector('.dlg-card', { timeout: 8000 });
-		await page.evaluate(() => {
-			const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
-			card.querySelector('.dlg-ok').click();
-		});
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(1500);
+		return 'ok';
+	};
+
+	/// Destroy a Diamond for good, out of the trash. THIS is now the call site
+	/// that writes the tombstone.
+	///
+	/// By ID rather than by looking the name up in the panel: this file runs
+	/// sections that empty the store on purpose, and a lookup that went through
+	/// the panel would report "not in the trash" for a record that is perfectly
+	/// present — testing the fixture rather than the tombstone.
+	const purgeDiamond = async (id) => {
+		await page.evaluate((i) => window.DaimondCore.trashPurge(i), id);
+		await page.waitForTimeout(1200);
 		return 'ok';
 	};
 
@@ -572,24 +581,58 @@ try {
 	check('the second Diamond arrives as well', !!bravoBack && bravoBack.name === 'Sync-Bravo',
 		bravoBack ? bravoBack.name : 'absent');
 
-	// (4b) Deleting through the rail must leave a tombstone in the parcel —
-	// without one the other device still holds the Diamond and hands it straight
-	// back on the next pull.
+	// (4b) Deleting through the rail must put the Diamond into a state the
+	// parcel CARRIES — and, since the trash, that state is not a tombstone.
+	//
+	// The two are different promises and both are asked here. Trashing has to
+	// travel WITH THE BYTES, or the other device holds a name it cannot restore;
+	// destroying has to travel as a tombstone, or the other device still holds
+	// the Diamond and hands it straight back on the next pull. The old shape of
+	// this check — delete in the rail, expect a tombstone — would now pass with
+	// a trash that quietly destroyed everything, which is the failure the panel
+	// exists to prevent.
+	// What the parcel carried BEFORE the delete, so "its bytes still travel" is a
+	// comparison rather than an absolute: earlier sections of this file empty the
+	// store on purpose, and a Diamond whose bytes were not in the parcel to begin
+	// with cannot be asked to still be in it.
+	const carriedBefore = await page.evaluate(async (id) => {
+		const state = await window.DaimondSync.parcel();
+		return (state.diamonds || []).some(d => d.id === id);
+	}, ids.B);
 	const removed = await removeDiamond('Sync-Bravo');
 	const parcel = await page.evaluate(async (id) => {
-		const state = await window.DaimondCore.collectSync();
+		const state = await window.DaimondSync.parcel();
+		const rec   = (state.trash && state.trash.items) ? state.trash.items[id] : null;
 		return {
-			v:      state.v,
-			tombed: !!(state.diamondTombs && state.diamondTombs[id]),
-			listed: (state.diamonds || []).some(d => d.id === id),
-			count:  (state.diamonds || []).length,
+			v:       state.v,
+			tombed:  !!(state.diamondTombs && state.diamondTombs[id]),
+			trashed: !!(rec && rec.at > rec.back),
+			listed:  (state.diamonds || []).some(d => d.id === id),
+			count:   (state.diamonds || []).length,
 		};
 	}, ids.B);
-	check('a Diamond deleted in the rail is tombstoned in the parcel',
-		removed === 'ok' && parcel.tombed, removed + ', tombed=' + parcel.tombed);
-	check('and is no longer offered as a live Diamond',
-		!parcel.listed, 'diamonds carried=' + parcel.count);
+	check('a Diamond deleted in the rail travels as TRASHED, so the other device can restore it',
+		removed === 'ok' && parcel.trashed, removed + ', trashed=' + parcel.trashed);
+	check('and it is NOT tombstoned by that — deleting it is not destroying it',
+		!parcel.tombed, 'tombed=' + parcel.tombed);
+	check('while its bytes travel exactly as before, or there would be nothing to restore',
+		parcel.listed === carriedBefore,
+		'carried before=' + carriedBefore + ', after=' + parcel.listed + ' (of ' + parcel.count + ')');
 	check('the parcel declares itself v2', parcel.v === 2, 'v=' + parcel.v);
+
+	// And destroying it from the trash is what lays the tombstone.
+	const purged = await purgeDiamond(ids.B);
+	const afterPurge = await page.evaluate(async (id) => {
+		const state = await window.DaimondSync.parcel();
+		return {
+			tombed: !!(state.diamondTombs && state.diamondTombs[id]),
+			listed: (state.diamonds || []).some(d => d.id === id),
+		};
+	}, ids.B);
+	check('destroying it from the trash IS what tombstones it in the parcel',
+		purged === 'ok' && afterPurge.tombed, purged + ', tombed=' + afterPurge.tombed);
+	check('and it is no longer offered as a live Diamond',
+		!afterPurge.listed, 'listed=' + afterPurge.listed);
 
 	// (4c) A deletion made on ANOTHER device reaches this one, and does not come
 	// back on the cycle after — the failure a tombstone-less delete would show as

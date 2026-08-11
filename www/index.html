@@ -84,6 +84,7 @@
 <link rel="stylesheet" href="css/spend.css">
 <link rel="stylesheet" href="css/passkey.css">
 <link rel="stylesheet" href="css/workspace.css">
+<link rel="stylesheet" href="css/trash.css">
 <link rel="stylesheet" href="css/terminal.css">
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
@@ -935,6 +936,31 @@
 			</div>
 			<div class="spend-view" id="spend-view"></div>
 		</aside>
+
+		<!-- Trash: what has been deleted, and is not gone. Deleting a chat or a
+		     Diamond moves it here and asks nothing; the two questions in this app
+		     that cannot be taken back are both in this panel. See js/trash.js. -->
+		<aside class="panel trash" id="panel-trash" data-panel="trash" data-zone="dock" data-label="Trash" data-i18n-label="panel.trash">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.trash">Trash</span>
+				<span class="rail-count" id="trash-count"></span>
+				<span class="trash-actions">
+					<button class="addbtn" id="trash-restore-all" data-act="trash-restore-all" title="Restore everything" aria-label="Restore everything" data-i18n-title="trash.restore_all" data-i18n-aria-label="trash.restore_all">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 10 2.5-5.8"/><path d="M4 4v5h5"/></svg>
+					</button>
+					<button class="addbtn danger" id="trash-empty" data-act="trash-empty" title="Empty trash" aria-label="Empty trash" data-i18n-title="trash.empty" data-i18n-aria-label="trash.empty">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="trash" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<!-- What the trash is holding, in bytes, and for how long it holds it.
+			     A trash that grows in silence is how storage fills with things
+			     somebody believes they deleted. -->
+			<div class="trash-note" id="trash-note"></div>
+			<div class="trash-list arte-list" id="trash-list"></div>
+		</aside>
 	</div>
 
 	<!-- Mobile: the dwellable destinations. The chat is the floor; "things"
@@ -1072,6 +1098,10 @@
 <script src="js/signals.js"></script>
 <script src="js/governor.js"></script>
 <script src="js/pause.js"></script>
+<!-- trash.js BEFORE sync.js, daimond.js and graph.js: all three ask it whether
+     something has been deleted while they build the lists they draw, so the
+     store has to be there when they do. -->
+<script src="js/trash.js"></script>
 <script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase

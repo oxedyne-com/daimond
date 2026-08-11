@@ -534,7 +534,15 @@
 		return reader().then(function (a) {
 			return Promise.all([a.list_diamonds(), a.all_links()]);
 		}).then(function (raw) {
-			var diamonds = JSON.parse(raw[0] || '[]');
+			// A trashed Diamond is gone from the rail, and it has to be gone from
+			// the picture too: `classify` below counts a link whose far end is not
+			// in this list as DANGLING, which is exactly what a link into a deleted
+			// Diamond is. Leaving it in would draw a node for something the rail
+			// says does not exist, and offer to open it.
+			var diamonds = JSON.parse(raw[0] || '[]').filter(function (d) {
+				try { return !(window.DaimondTrash && DaimondTrash.has(d && d.id)); }
+				catch (e) { return true; }
+			});
 			var links    = JSON.parse(raw[1] || '[]');
 			// The rail is ordered by when a Diamond was last worked on, which
 			// changes under the picture. Ordered by id it does not.

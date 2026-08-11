@@ -37,8 +37,10 @@
 	// half. The terminal belongs here for the plainest reason: at the half detent
 	// it is eleven rows, and eleven rows is not a terminal.
 	var DEFAULT_FULL = { doc: 1, compose: 1, tools: 1, term: 1 };
-	// Guests with nothing to "ask about" hide the ask pill.
-	var NO_ASK       = { compose: 1, tools: 1 };
+	// Guests with nothing to "ask about" hide the ask pill. The trash is one:
+	// asking the daimon about a list of things you have deleted would offer to
+	// spend money on the one surface whose whole subject is undoing a mistake.
+	var NO_ASK       = { compose: 1, tools: 1, trash: 1 };
 
 	var sheetEl, bodyEl, grabEl, titleEl, askWrap, askInput, askSend;
 	var guest = null;			// the panel id currently in the sheet, or null

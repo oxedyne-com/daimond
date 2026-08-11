@@ -499,6 +499,19 @@
 		// scroll offset into a picture whose size depends on this window.
 		try { if (window.DaimondGraph) state.graph = DaimondGraph.snapshot(); }
 		catch (e) { log('graph snapshot failed', e); }
+		// WHAT IS IN THE TRASH, which is a fact about the ACCOUNT and not about
+		// the browser it was deleted in. Deleting already propagates through
+		// tombstones, so a trash that stayed local would be strictly worse than
+		// no trash at all: a restore on this device would be silently undone by
+		// the other one, which had buried the same chat and never heard
+		// otherwise. Attached here, beside the pause tree and the graph, because
+		// trash.js holds the state and answers for it.
+		//
+		// Its snapshot is a SORTED map of two stamps per id and moves only when a
+		// stamp does, which is the whole of what keeps two collects
+		// byte-identical -- the same contract the pause tree keeps above.
+		try { if (window.DaimondTrash) state.trash = DaimondTrash.snapshot(); }
+		catch (e) { log('trash snapshot failed', e); }
 		return state;
 	}
 
@@ -525,6 +538,19 @@
 		if (window.DaimondGraph) {
 			try { DaimondGraph.adopt(state && state.graph); }
 			catch (e) { log('graph adopt failed', e); failed.push('graph'); }
+		}
+		// BEFORE the chats and the Diamonds, and that ordering is the whole of it.
+		// `applySync` below rebuilds both lists from their stores, and what those
+		// lists may contain is decided by this record: adopting it afterwards
+		// would put a chat the other device deleted back on the rail until
+		// something else happened to redraw it.
+		//
+		// The merge itself takes the LATER of each stamp independently, so a
+		// deletion cannot resurrect and a restore cannot be buried whichever
+		// order the parcels arrive in -- see js/trash.js.
+		if (window.DaimondTrash) {
+			try { DaimondTrash.adopt(state && state.trash); }
+			catch (e) { log('trash adopt failed', e); failed.push('trash'); }
 		}
 		var report = null;
 		try { report = await DaimondCore.applySync(state); }

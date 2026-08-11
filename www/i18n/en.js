@@ -119,8 +119,6 @@
 	'rail.new_chat':             'New chat',
 	'rail.chats_menu':           'More',
 	'rail.delete_all_chats':     'Delete all chats',
-	'rail.delete_all_chats_confirm.one':   'Delete your {n} chat? This cannot be undone.',
-	'rail.delete_all_chats_confirm.other': 'Delete all {n} chats? This cannot be undone.',
 	'layout.handle':             'Drag to resize, double-click to reset',
 
 	// ── Admin ──────────────────────────────────────────────────
@@ -354,10 +352,6 @@
 	'tile.fold_failed': 'The fold did not finish',
 
 	'tile.dlg_delete': 'Delete',
-	'tile.delete_chat':    'Delete chat',
-	'tile.delete_chat_body.one':   'Delete "{name}" and its {n} message? This cannot be undone.',
-	'tile.delete_chat_body.other': 'Delete "{name}" and its {n} messages? This cannot be undone.',
-	'tile.delete_chat_empty': 'Delete "{name}"?',
 	'tile.start':          'Start',
 	'tile.start_help':     'Confirm the model and start this chat',
 	'tile.workers':        'Workers',
@@ -1202,8 +1196,6 @@
 	'rail.rename_diamond':   'Rename Diamond',
 	'rail.rename':           'Rename',
 	'rail.rename_failed':    'Rename failed',
-	'rail.delete_diamond':   'Delete Diamond',
-	'rail.delete_diamond_body': 'Delete the Diamond "{name}" — its crystal, its history and its deltas? This cannot be undone.',
 	'rail.delete_failed':    'Delete failed',
 	'rail.create':           'Create',
 	'rail.name':             'Name',
@@ -2098,5 +2090,32 @@
 	'settings.trail_copy':  'Copy the app’s own trail',
 	'settings.trail_note':  'What Daimond last did — event names and a clock, no keys, no message text, nothing from your files. Safe to paste into a bug report.',
 	'settings.trail_empty': 'Nothing recorded yet.',
+	// ── The Trash ──────────────────────────────────────────────
+	// Deleting a chat or a Diamond moves it here and asks nothing. The two
+	// questions that cannot be taken back are both in this panel.
+	'panel.trash': 'Trash',
+	'trash.nothing': 'Nothing has been deleted.',
+	'trash.kept_days': 'Kept for {days} days, then destroyed.',
+	'trash.holding.one': '{n} thing, {bytes}',
+	'trash.holding.other': '{n} things, {bytes}',
+	'trash.until': 'Until {date}',
+	'trash.deleted_why': 'Deleted — it is only here.',
+	'trash.kind_chat': 'chat',
+	'trash.kind_diamond': 'diamond',
+	'trash.unnamed_chat': 'Unnamed chat',
+	'trash.restore': 'Restore',
+	'trash.restore_named': 'Restore {name}',
+	'trash.restore_all': 'Restore everything',
+	'trash.purge': 'Delete permanently',
+	'trash.purge_named': 'Delete {name} permanently',
+	'trash.purge_ask': 'Delete “{name}” for good? It goes from every device, and there is no way back.',
+	'trash.purge_ok': 'Delete permanently',
+	'trash.empty': 'Empty trash',
+	'trash.empty_ask.one': 'Destroy the {n} thing in the trash for good? It goes from every device, and there is no way back.',
+	'trash.empty_ask.other': 'Destroy all {n} things in the trash for good? They go from every device, and there is no way back.',
+	'trash.empty_ok': 'Empty trash',
+	'trash.moved': 'Moved “{name}” to the trash.',
+	'trash.moved_n.one': 'Moved {n} thing to the trash.',
+	'trash.moved_n.other': 'Moved {n} things to the trash.',
 	});
 })();

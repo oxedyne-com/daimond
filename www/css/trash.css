@@ -1,0 +1,66 @@
+/* trash.css — the Trash panel, and the one line the shared tile component
+   needed in order to take a third caller.
+
+   `.arte-row` is the tile the crystal footer, the chat footer and this panel
+   all draw (ATTACH_CONTRACT.md §9). Its "cannot be opened" state, `shut`, and
+   the reason it draws in `.arte-why` are app.css's and are used here unchanged
+   -- this file adds only what an attachment has no use for.
+
+   Written after a rebase onto seq 110, which generalised the same tile from the
+   other side: the two views, the cap, the `+`. Both halves are one component,
+   which is what §9 asked for in advance. */
+
+/* The FACTS about the item, under the reason: the day it stops existing and
+   what it weighs. Laid out exactly as `.arte-why` is -- a full-width line at
+   the foot of a wrapping row, indented past the kind badge -- because they are
+   the same kind of thing, a line the tile is too narrow to carry inline, and
+   two different layouts for that would drift. One order later, so the reason
+   comes first: why you cannot open it, then what keeping it costs.
+
+   IT WRAPS. The first screenshot of the finished panel, before the rebase, had
+   this line ellipsised to "Deleted -- it is only here. · Un…" in a dock column:
+   the date and the size, which are the whole reason it exists, cut off. A label
+   may be shortened, because its full text is in its `title` and the user chose
+   the name. A fact the user is meant to act on may not. */
+.arte-note { flex-basis: 100%; order: 10; padding: 0 0 3px 40px;
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); line-height: 1.4;
+	white-space: normal; overflow-wrap: anywhere; }
+/* An icon cell has no room for a sentence, and app.css already answers the
+   reason there with a `?`; a date and a size are no different. */
+.attach-icon .arte-note { display: none; }
+
+/* ── The panel ──────────────────────────────────────────────── */
+
+/* The head's controls, in a row. Without this they stack into a vertical
+   column down the right of the heading — which is what the first screenshot of
+   the finished panel showed, the three buttons one above the other and the
+   count pushed off on its own line. The other panels each declare the same
+   thing for their own action group; see `.mail-actions`, `.spend-actions`. */
+.trash-actions { display: flex; align-items: center; gap: 4px; }
+
+/* What the trash is holding, and for how long. It sits under the head and
+   above the list, where a person reading the panel meets it before the tiles
+   rather than after them. */
+.trash-note { padding: 6px 10px; font-size: var(--fs-xs); color: var(--text-secondary);
+	border-bottom: 1px solid var(--border); }
+
+.trash-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0;
+	border: none; border-radius: 0; background: none; }
+.trash-list .rail-note { padding: 12px 10px; }
+
+/* Restore is the affirmative act on a tile whose other button destroys, so it
+   is a word rather than a glyph and it is the one that looks pressable.
+
+   `--border-strong`, the CONTROL boundary, not `--border-2`, which divides one
+   region from another -- the rule `verify_theme` keeps, and whose named failure
+   is "a new control written by copying an old one". This was copied from
+   `.attach-state` beside it, which is exactly that. */
+.trash-restore { flex-shrink: 0; background: none; border: 1px solid var(--border-strong);
+	border-radius: 999px; cursor: pointer; color: var(--text-secondary);
+	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 8px; }
+.trash-restore:hover { border-color: var(--accent); color: var(--accent-text); }
+.trash-purge:hover { color: var(--danger, #e5534b); }
+
+/* Emptying the trash is the one control in this panel's head that destroys, so
+   it is the one that carries the colour. */
+.trash-actions .addbtn.danger:hover { color: var(--danger, #e5534b); }

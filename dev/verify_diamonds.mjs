@@ -72,8 +72,10 @@ async function create(p, name) {
 }
 
 /// Delete the named Diamond the way a person does: the cog in its corner, then
-/// Delete at the foot of the dialog, then the confirm. The closer cross it used
-/// to press is gone (phase C).
+/// Delete at the foot of the dialog. The closer cross it used to press is gone
+/// (phase C), and so is the confirm that followed — since the trash, deleting a
+/// Diamond is reversible and asks nothing, and what this file is about is that
+/// the change reaches the other window either way.
 async function remove(p, name) {
 	const found = await p.evaluate((nm) => {
 		const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
@@ -87,12 +89,7 @@ async function remove(p, name) {
 	if (!found) return 'not in the rail';
 	await p.waitForSelector('.tile-dlg-delete', { timeout: 8000 });
 	await p.evaluate(() => document.querySelector('.tile-dlg-delete').click());
-	await p.waitForSelector('.dlg-card', { timeout: 8000 });
-	await p.evaluate(() => {
-		const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
-		card.querySelector('.dlg-ok').click();
-	});
-	await p.waitForTimeout(900);
+	await p.waitForTimeout(1600);
 	return 'ok';
 }
 

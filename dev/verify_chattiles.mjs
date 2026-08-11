@@ -3,15 +3,20 @@
 // Three properties, each traced to a real complaint in notes4:
 //
 //   1. THE CLOSER CAME BACK. A chat tile carries a × again (a Diamond tile does
-//      not — verify_tiledlg covers that half). It does not remove the tile on
-//      its own click: a chat is ephemeral but not disposable, so it asks first,
-//      NAMING THE CHAT, and only removes it on "yes".
+//      not — verify_tiledlg covers that half). SINCE THE TRASH, IT ASKS NOTHING:
+//      the chat goes to the trash, so the press takes nothing away and a dialog
+//      in front of it would only teach people to click through dialogs. What is
+//      asserted is therefore both halves — no dialog, AND the chat is in the
+//      trash afterwards, which is what makes the silence safe.
 //
 //   2. DELETE ALL CHATS lives behind the Chats section's own overflow (the ⋯ /
-//      `#chats-menu-btn`), never as a second cross beside "+". The confirm it
-//      opens NAMES THE COUNT — "Delete all 14 chats?", not a generic warning —
-//      because the author's ruling was that bulk delete wants a STRONGER
-//      confirmation than one chat's, not a lighter one.
+//      `#chats-menu-btn`), never as a second cross beside "+". It too asks
+//      nothing and puts every chat in the trash. THIS IS THE BUTTON THE TRASH
+//      WAS BUILT FOR: it shipped with a dialog naming the count and no way back,
+//      and somebody pressed it expecting an undo. The count in the question was
+//      never the protection; the protection is that the chats are still there.
+//      The confirm that names a count now lives on "Empty trash", where it is
+//      true — see dev/verify_trash.mjs.
 //
 //   3. ORDERING. Tiles list newest-touched first. Before this file's fix,
 //      `renderSessionList` drew `chats` in plain array order, which was never a
@@ -29,9 +34,9 @@
 // cleanly aborts rather than passing quietly.
 //
 //   node dev/verify_chattiles.mjs --break nocross     # 1: no × on a chat tile
-//   node dev/verify_chattiles.mjs --break noconfirm   # 1: × deletes without asking
+//   node dev/verify_chattiles.mjs --break notrash     # 1: × destroys instead of trashing
 //   node dev/verify_chattiles.mjs --break nomenu      # 2: the overflow does nothing
-//   node dev/verify_chattiles.mjs --break weakcount   # 2: the confirm drops the count
+//   node dev/verify_chattiles.mjs --break bulkasks    # 2: "Delete all" puts a dialog back
 //   node dev/verify_chattiles.mjs --break noorder     # 3: tiles are not sorted
 //   node dev/verify_chattiles.mjs                     # and then, clean
 //
@@ -73,12 +78,14 @@ const BREAKS = {
 		find: '\t\theader.appendChild(tileCloser(s.name, function () { deleteChat(s); }));',
 		with: '',
 	}],
-	// The × is there, but it removes the chat on click rather than asking —
-	// the exact regression the confirm exists to prevent.
-	noconfirm: [{
+	// The × is there and the tile goes, but the chat is DESTROYED rather than
+	// trashed — the shape the app had when somebody lost fourteen chats. The
+	// "no dialog" half of check 1 still passes under this break, which is the
+	// whole reason the trash half is asked as well.
+	notrash: [{
 		file: 'js/daimond.js',
-		find: '\t\theader.appendChild(tileCloser(s.name, function () { deleteChat(s); }));',
-		with: '\t\theader.appendChild(tileCloser(s.name, function () { removeChat(s); }));',
+		find: '\t\ttry { DaimondTrash.put(chat.id, \'chat\'); }',
+		with: '\t\ttry { throw new Error(\'broken on purpose\'); }',
 	}],
 	// The overflow button is in the markup but wired to nothing.
 	nomenu: [{
@@ -86,12 +93,16 @@ const BREAKS = {
 		find: 'openChatsMenu(chatsMenuBtn);',
 		with: '',
 	}],
-	// "Delete all chats" still asks, but the question no longer says how much
-	// it is about to take — the generic confirm a single delete already gives.
-	weakcount: [{
+	// "Delete all chats" asks again. A dialog in front of a reversible act is
+	// the habit this change removed, and a break that puts one back must fail
+	// the check that says it is gone.
+	bulkasks: [{
 		file: 'js/daimond.js',
-		find: "\t\tvar msg = tn('rail.delete_all_chats_confirm', n, { n: n });",
-		with: "\t\tvar msg = t('rail.delete_all_chats');",
+		find: '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(c.name); });',
+		with: '\t\tconfirmDialog(\'Delete all \' + n + \' chats?\', \'Delete\').then(function (ok) {\n'
+			+ '\t\t\tif (!ok) return;\n'
+			+ '\t\t\tloose.forEach(function (c) { removeChat(c); });\n'
+			+ '\t\t});',
 	}],
 	// The tile list draws in whatever order `chats` happens to hold, which is
 	// what "the ordering is weird" was about.
@@ -194,13 +205,6 @@ const openDialogMsg = (page) => page.evaluate(() => {
 		.find((c) => c.getClientRects().length);
 	return card ? (card.querySelector('.dlg-msg') || {}).textContent || '' : null;
 });
-const clickDialog = (page, cls) => page.evaluate((c) => {
-	const btns = [...document.querySelectorAll('.modal.dlg .' + c)]
-		.filter((b) => b.getClientRects().length);
-	const b = btns[btns.length - 1];
-	if (b) b.click();
-}, cls);
-
 const s = await open({
 	name: 'chattiles', profile: PROFILE, connect: false, defaults: false,
 });
@@ -283,34 +287,37 @@ try {
 	});
 	check('the top chat tile carries a × ', crossCount === 1, String(crossCount));
 
+	// Foxtrot's id, taken BEFORE it is deleted: the trash is keyed by id, and a
+	// check that looked it up by name afterwards would be asking the panel to
+	// agree with itself.
+	const foxId = await page.evaluate(() => new Promise((res) => {
+		const req = indexedDB.open('daimond-chats', 1);
+		req.onsuccess = () => {
+			const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
+			all.onsuccess = () => res(((all.result || []).find((c) => c.name === 'Foxtrot') || {}).id || '');
+			all.onerror = () => res('');
+		};
+		req.onerror = () => res('');
+	}));
+
 	const clicked1 = await clickCross();
-	await page.waitForTimeout(300);
-	const askMsg = clicked1 ? await openDialogMsg(page) : null;
-	check('the × does not delete on its own click — it opens a confirm first',
-		askMsg !== null,
-		!clicked1 ? 'no × to click' : askMsg === null ? 'no dialog appeared; the tile may already be gone' : 'a dialog opened');
-	check('and the confirm NAMES THE CHAT ("Foxtrot"), not a generic warning',
-		!!(askMsg && askMsg.includes('Foxtrot')), JSON.stringify(askMsg));
-	await shot(s, 'chattiles-close-confirm' + (BREAK ? '-' + BREAK : ''));
-
-	// Say no: the tile must still be there, in the same place.
-	await clickDialog(page, 'dlg-cancel');
-	await page.waitForTimeout(400);
-	const afterNo = await tileNames(page);
-	check('answering "no" leaves the chat exactly where it was',
-		JSON.stringify(afterNo) === JSON.stringify(TOUCH_ORDER),
-		`${afterNo.join(', ')}`);
-
-	// Say yes: Foxtrot, and only Foxtrot, is gone.
-	const clicked2 = await clickCross();
-	await page.waitForTimeout(300);
-	if (clicked2) await clickDialog(page, 'dlg-ok');
 	await page.waitForTimeout(500);
+	const askMsg = clicked1 ? await openDialogMsg(page) : null;
+	check('the × asks NOTHING — a delete you can undo does not want a dialog',
+		clicked1 && askMsg === null,
+		!clicked1 ? 'no × to click' : `a dialog opened: ${JSON.stringify(askMsg)}`);
 	const afterYes = await tileNames(page);
-	const wantAfterYes = clicked2 ? TOUCH_ORDER.filter((n) => n !== 'Foxtrot') : TOUCH_ORDER;
-	check('answering "yes" removes THAT chat — the list is everyone else, still newest-first',
-		clicked2 && JSON.stringify(afterYes) === JSON.stringify(wantAfterYes),
+	const wantAfterYes = clicked1 ? TOUCH_ORDER.filter((n) => n !== 'Foxtrot') : TOUCH_ORDER;
+	check('and the press removes THAT chat — the list is everyone else, still newest-first',
+		clicked1 && JSON.stringify(afterYes) === JSON.stringify(wantAfterYes),
 		`${afterYes.join(', ')}`);
+	// The half that makes the silence above safe rather than reckless.
+	const inTrash = await page.evaluate((id) => {
+		try { return !!(window.DaimondTrash && DaimondTrash.has(id)); } catch (e) { return false; }
+	}, foxId);
+	check('THE CHAT IS IN THE TRASH, which is why the × no longer has to ask',
+		!!foxId && inTrash, foxId ? `${foxId} not in the trash record` : 'could not read the id');
+	await shot(s, 'chattiles-closed' + (BREAK ? '-' + BREAK : ''));
 
 	// ── 2. DELETE ALL CHATS ─────────────────────────────────────────
 	// Reachable from the section's own overflow, and nowhere beside "+".
@@ -350,38 +357,32 @@ try {
 		return true;
 	});
 
-	let n = (await tileNames(page)).length;		// 10, after Foxtrot's removal above
 	await page.click('#chats-menu-btn');
 	await page.waitForTimeout(300);
 	const menuItem = await menuItemText();
 	check('the overflow menu offers "Delete all chats"', !!menuItem, String(menuItem));
 
 	const pickedItem1 = await clickDeleteAllItem();
-	await page.waitForTimeout(300);
+	await page.waitForTimeout(800);
 	const bulkMsg = pickedItem1 ? await openDialogMsg(page) : null;
-	check(`the bulk confirm NAMES THE COUNT — "…all ${n} chat…", not a generic warning`,
-		!!(bulkMsg && new RegExp('all\\s+' + n + '\\s+chats?', 'i').test(bulkMsg)),
-		!pickedItem1 ? 'no menu item to click' : JSON.stringify(bulkMsg));
-	await shot(s, 'chattiles-deleteall-confirm' + (BREAK ? '-' + BREAK : ''));
-
-	// Say no first: nothing is touched.
-	await clickDialog(page, 'dlg-cancel');
-	await page.waitForTimeout(400);
-	const afterBulkNo = await tileNames(page);
-	check('answering "no" to the bulk confirm leaves every chat standing',
-		afterBulkNo.length === n, `${afterBulkNo.length} of ${n}`);
-
-	// Say yes: every ordinary chat is gone, and the rail says so.
-	await page.click('#chats-menu-btn');
-	await page.waitForTimeout(300);
-	const pickedItem2 = await clickDeleteAllItem();
-	await page.waitForTimeout(300);
-	if (pickedItem2) await clickDialog(page, 'dlg-ok');
-	await page.waitForTimeout(600);
+	check('"Delete all chats" asks NOTHING — the chats are all in the trash a moment later',
+		pickedItem1 && bulkMsg === null,
+		!pickedItem1 ? 'no menu item to click' : `a dialog opened: ${JSON.stringify(bulkMsg)}`);
 	const afterBulkYes = await tileNames(page);
-	check('answering "yes" empties the Chats rail entirely',
-		pickedItem2 && afterBulkYes.length === 0,
+	check('and it empties the Chats rail entirely',
+		pickedItem1 && afterBulkYes.length === 0,
 		`${afterBulkYes.length} left: ${afterBulkYes.join(', ')}`);
+	// NAMED, not counted: every chat that was on the rail is in the trash by
+	// name, so a run that trashed nine of ten cannot pass.
+	const trashedNames = await page.evaluate(async () => {
+		try { return (await window.DaimondCore.trashList()).map((i) => i.name); }
+		catch (e) { return []; }
+	});
+	check('EVERY chat that was on the rail is in the trash, by name',
+		TOUCH_ORDER.filter((x) => x !== 'Foxtrot').every((x) => trashedNames.includes(x))
+			&& trashedNames.includes('Foxtrot'),
+		`trash holds: ${trashedNames.join(', ') || 'nothing'}`);
+	await shot(s, 'chattiles-deleteall' + (BREAK ? '-' + BREAK : ''));
 	const emptyNote = await page.evaluate(() =>
 		(document.querySelector('#session-list .rail-note') || {}).textContent || '');
 	check('and the rail says there are no chats, rather than showing an empty list with no explanation',

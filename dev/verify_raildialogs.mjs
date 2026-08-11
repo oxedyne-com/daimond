@@ -221,18 +221,31 @@ const DIALOGS = [
 		name: 'Tile dialog (chat)', sel: '.tile-dlg-card',
 		reach: async (p) => { await press(p, '#session-list .tile-cog'); },
 	},
+	// The two confirms that used to be here — "Delete a Diamond" and "Delete a
+	// chat" — are gone: since the trash, deleting is reversible and asks nothing.
+	// The QUESTION moved rather than disappeared, so the coverage moves with it.
+	// Both of these are reached by deleting something first, which is now the
+	// step that opens no dialog at all.
 	{
-		name: 'Delete a Diamond (confirm)', sel: '.modal.dlg .dlg-card',
+		name: 'Delete permanently (confirm)', sel: '.modal.dlg .dlg-card',
 		reach: async (p) => {
 			await press(p, '#diamond-list .tile-cog');
 			await press(p, '.tile-dlg-delete');
+			await p.waitForTimeout(1200);
+			await p.evaluate(() => { try { DaimondPanels.show('trash'); } catch (e) { /* not up */ } });
+			await p.waitForTimeout(700);
+			await press(p, '#trash-list .trash-purge');
 		},
 	},
 	{
-		name: 'Delete a chat (confirm)', sel: '.modal.dlg .dlg-card',
+		name: 'Empty trash (confirm)', sel: '.modal.dlg .dlg-card',
 		reach: async (p) => {
 			await press(p, '#session-list .tile-cog');
 			await press(p, '.tile-dlg-delete');
+			await p.waitForTimeout(1200);
+			await p.evaluate(() => { try { DaimondPanels.show('trash'); } catch (e) { /* not up */ } });
+			await p.waitForTimeout(700);
+			await press(p, '#trash-empty');
 		},
 	},
 	{

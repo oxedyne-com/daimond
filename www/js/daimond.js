@@ -751,6 +751,165 @@ import init, {
 		t[id] = Date.now();
 		try { localStorage.setItem(TOMBS_KEY, JSON.stringify(t)); } catch (e) { /* best effort */ }
 	}
+	/// Whether something is in the trash — a chat or a Diamond, one question.
+	///
+	/// Asked wherever a list is BUILT rather than wherever one is drawn. A
+	/// trashed thing is meant to be gone from the rail, from the finders, from
+	/// the graph and from every daimon's reach, and the only way to be sure of
+	/// that is for it never to enter the arrays those things are made from.
+	/// Half-alive is worse than either state: a daimon that can still read a
+	/// Diamond you deleted is a surprise nobody wants.
+	///
+	/// Tolerant of a build without the module: the app then behaves as it did
+	/// before there was a trash, which is a rail with everything on it rather
+	/// than a rail with nothing.
+	function trashed(id) {
+		try { return !!(window.DaimondTrash && DaimondTrash.has(id)); }
+		catch (e) { return false; }
+	}
+
+	/// Whether a workspace path lives inside a TRASHED Diamond's own directory.
+	///
+	/// A Diamond is stored at `diamonds/<id>/`, which is an ordinary part of the
+	/// workspace tree, so an attachment can name it. Deleting the Diamond has to
+	/// close that door as well as take the tile off the rail — otherwise another
+	/// Diamond's daimon goes on reading a Diamond the user deleted, which is
+	/// exactly the half-alive state this feature refuses.
+	function underTrashedDiamond(path) {
+		var m = /^diamonds\/([^/]+)(?:\/|$)/.exec(String(path || ''));
+		return !!(m && trashed(m[1]));
+	}
+
+	// ── The trash, as the panel sees it ────────────────────────
+	//
+	// `js/trash.js` owns the STATE — two stamps per id, merged so that neither a
+	// deletion nor a restore can be undone by the other device — and it draws the
+	// panel. What it cannot own is what a chat or a Diamond actually IS: where
+	// the name comes from, what the thing weighs, and what destroying one has to
+	// take with it. That is all here, behind four functions, so the panel never
+	// reaches into a store.
+
+	/// How many bytes a string of JSON really occupies. `String.length` counts
+	/// UTF-16 units, so a transcript in Japanese would be reported at half its
+	/// size — and the whole point of the figure is that a trash quietly holding
+	/// hundreds of megabytes is how somebody's storage fills with things they
+	/// believe they deleted.
+	function jsonBytes(s) {
+		try { return new Blob([s]).size; }
+		catch (e) { return String(s || '').length; }
+	}
+
+	/// Everything in the trash, newest first, ready to draw.
+	///
+	/// An entry whose subject is no longer here is DROPPED, not shown: the other
+	/// device destroyed it for good, its tombstone arrived and did its work, and
+	/// a tile offering to restore nothing would be the app lying about what it
+	/// still has.
+	async function trashList() {
+		var want;
+		try { want = DaimondTrash.ids(); } catch (e) { return []; }
+		if (!want.length) return [];
+		var byChat = {};
+		storedChats().forEach(function (c) { if (c && c.id) byChat[c.id] = c; });
+		var byDiamond = {};
+		try {
+			JSON.parse(await diamondApp().list_diamonds()).forEach(function (d) {
+				if (d && d.id) byDiamond[d.id] = d;
+			});
+		} catch (e) { /* no store to read: the Diamonds simply cannot be listed */ }
+		var out = [];
+		for (var i = 0; i < want.length; i++) {
+			var w = want[i], rec = null, name = '', bytes = 0;
+			// Asked of BOTH stores rather than only the one the record's kind
+			// names. The kind is a hint that travelled from another device and a
+			// lookup that trusted it would lose the item on a disagreement.
+			if (byChat[w.id]) {
+				rec = byChat[w.id];
+				name = rec.name || t('trash.unnamed_chat');
+				bytes = jsonBytes(JSON.stringify(rec));
+				w.kind = 'chat';
+			} else if (byDiamond[w.id]) {
+				rec = byDiamond[w.id];
+				name = rec.name || t('rail.unnamed_diamond');
+				w.kind = 'diamond';
+				try { bytes = (await diamondApp().export_diamond_size(w.id)) | 0; }
+				catch (e) { bytes = 0; }		// an older engine: the size is unknown, not nought
+			}
+			if (!rec) { try { DaimondTrash.forget(w.id); } catch (e) {} continue; }
+			out.push({
+				id:    w.id,
+				kind:  w.kind,
+				name:  name,
+				at:    w.at,
+				due:   DaimondTrash.dueAt(w.at),
+				bytes: bytes,
+			});
+		}
+		return out;
+	}
+
+	/// Put one thing back exactly where it was. Nothing was destroyed, so
+	/// nothing has to be rebuilt: lifting the state is the whole act.
+	async function trashRestore(id) {
+		try { if (!DaimondTrash.back(id)) return false; }
+		catch (e) { return false; }
+		// Both lists are re-read from their stores rather than patched, because
+		// the store is the truth and this is the same reconciliation a parcel
+		// arriving from the other device goes through.
+		await onChatsChangedElsewhere();
+		await loadDiamonds();
+		bumpDiamonds();			// the other TABS, and the next push
+		nudgeSync();
+		return true;
+	}
+
+	/// Destroy one thing for good. The caller has asked; this does not.
+	async function trashPurge(id) {
+		var byChat = {};
+		storedChats().forEach(function (c) { if (c && c.id) byChat[c.id] = c; });
+		if (byChat[id]) { destroyChat(id); return true; }
+		return await destroyDiamond(id);
+	}
+
+	/// Retention. Whatever has been in the trash for its whole term is destroyed,
+	/// here, on this device, without being told to by another one.
+	///
+	/// THAT IS WHY IT IS A FUNCTION OF THE STAMP AND NOT OF A MESSAGE. Every
+	/// device holds the same `at` for the same item, so every device reaches the
+	/// same verdict on the same day — including one that has been switched off
+	/// for six weeks and comes back to a trash whose whole contents are due. It
+	/// sweeps its own, lays its own tombstones, and converges with devices that
+	/// did the same thing a month earlier, rather than depending on a tombstone
+	/// that has since aged out of the parcel.
+	var _sweeping = false;
+	async function trashSweep() {
+		// Destroying something moves the trash record, which is exactly the event
+		// that asks for a sweep — so without this the first expiry would call the
+		// second sweep from inside the first.
+		if (_sweeping) return 0;
+		var due;
+		try { due = DaimondTrash.sweep(); } catch (e) { return 0; }
+		if (!due.length) return 0;
+		_sweeping = true;
+		try { return await sweepDue(due); }
+		finally { _sweeping = false; }
+	}
+
+	/// Destroy a list of expired entries, one at a time. Split out of
+	/// `trashSweep` only so the re-entrancy guard above wraps the whole walk.
+	async function sweepDue(due) {
+		for (var i = 0; i < due.length; i++) {
+			try { await trashPurge(due[i].id); }
+			catch (e) {
+				// Loud. A retention sweep that half-worked leaves the user with a
+				// panel promising to destroy something on a date that has passed.
+				try { console.warn('[trash] could not destroy ' + due[i].id + ' at its retention date', e); }
+				catch (e2) { /* no console */ }
+			}
+		}
+		return due.length;
+	}
+
 	/// The Diamonds deleted on purpose, by id, with anything past its TTL pruned.
 	function loadDiamondTombs() {
 		var t = readJson(DIAMOND_TOMBS_KEY, {}), now = Date.now(), out = {};
@@ -1254,16 +1413,25 @@ import init, {
 			session: c.session || null,
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
-	/// Open the store and hand back what it holds, hydrated.
+	/// Open the store and hand back what it holds, hydrated — everything the user
+	/// still has, which is not everything the store still holds. A trashed chat
+	/// stays on disk, whole, and is left out here: `chats` is the rail, and the
+	/// rail is what has not been deleted.
 	async function loadChats() {
 		var tombs = loadTombs();
 		var stored = await ChatStore.boot();
 		return stored
-			.filter(function (c) { return c && c.id && !tombs[c.id]; })
+			.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); })
 			.map(hydrateChat);
 	}
 	/// The stored chats as the store last saw them, with no read and no wait. For the
 	/// places that want a list of names rather than a conversation.
+	///
+	/// TRASHED CHATS ARE IN THIS LIST, and that is deliberate: it is what the sync
+	/// parcel and the backup are built from, and a trashed chat must travel. Trash
+	/// is a state, not a deletion, so a device that received the state and not the
+	/// transcript would have nothing to restore. `loadChats` above is the one that
+	/// answers "what is on the rail".
 	function storedChats() {
 		var tombs = loadTombs();
 		return ChatStore.stored().filter(function (c) { return c && c.id && !tombs[c.id]; });
@@ -1276,7 +1444,11 @@ import init, {
 	// DaimondApp; chats it has never seen are added; chats deleted elsewhere go.
 	async function onChatsChangedElsewhere() {
 		var tombs = loadTombs();
-		var stored = (await ChatStore.refresh()).filter(function (c) { return c && c.id && !tombs[c.id]; });
+		// Trashed as well as tombstoned. This is also the path a RESTORE comes
+		// back through: the record never left the store, so re-reading it with the
+		// trash record lifted is the whole of putting the chat back on the rail.
+		var stored = (await ChatStore.refresh())
+			.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); });
 		var mine = {};
 		chats.forEach(function (c) { mine[c.id] = c; });
 		var merged = stored.map(function (s) {
@@ -1309,9 +1481,12 @@ import init, {
 			}
 			return c;
 		});
-		// A chat created here but not yet saved must not be dropped.
+		// A chat created here but not yet saved must not be dropped — unless it
+		// was deleted here a moment ago, which is the one reason this tab holds a
+		// chat the rebuilt list has deliberately left out.
 		chats.forEach(function (c) {
-			if (!merged.some(function (m) { return m.id === c.id; }) && !tombs[c.id]) merged.push(c);
+			if (!merged.some(function (m) { return m.id === c.id; })
+				&& !tombs[c.id] && !trashed(c.id)) merged.push(c);
 		});
 		chats = merged;
 		if (current && !current._generating && chats.indexOf(current) !== -1) {
@@ -2175,8 +2350,16 @@ import init, {
 		var models = diamondModels();
 		// A Diamond deleted here is on its way out, not on its way over.
 		held = held.filter(function (d) { return d && d.id && !tombs[d.id]; });
+		// A TRASHED Diamond still travels, whole. Trash is a state rather than a
+		// deletion, so the far device has to hold the same bytes: restoring it
+		// there must produce the Diamond, not an empty name. It sorts LAST, below
+		// every live Diamond, because when the budget cannot carry everything the
+		// thing the user is working on has the better claim on the wire.
 		held.sort(function (a, b) {
-			return diamondStamp(b) - diamondStamp(a) || (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
+			var ta = trashed(a.id) ? 1 : 0, tb = trashed(b.id) ? 1 : 0;
+			return ta - tb
+				|| diamondStamp(b) - diamondStamp(a)
+				|| (a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
 		});
 		var used = 0;
 		for (var i = 0; i < held.length; i++) {
@@ -3287,7 +3470,12 @@ import init, {
 	// Spending is a DOCK panel and rises the same way: the phone bar has four
 	// seats and they are spoken for, and a panel with no seat and no sheet is a
 	// panel a phone cannot reach at all.
-	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1 };
+	// The trash is a guest rather than a destination: it is a short list you dip
+	// into to undo something, not somewhere you sit. It also has to be one — a
+	// destination needs a `body[data-mpanel="…"]` rule in responsive.css and a
+	// place in the bottom bar, and a panel with neither shows a blank screen
+	// when it is asked for.
+	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1 };
 	function mshow(name) {
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
 		if (MOBILE_GUESTS[name] && window.DaimondSheet) {
@@ -3315,6 +3503,7 @@ import init, {
 		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
+		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
 	}
 	document.querySelectorAll('#mnav button').forEach(function (b) {
 		b.addEventListener('click', function () { mshow(b.dataset.mp); });
@@ -4109,6 +4298,7 @@ import init, {
 			// real program on the user's machine, so it begins when a person asks
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
+			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
 			if (isMobile()) mshow(id);
 		}
 
@@ -7556,16 +7746,15 @@ import init, {
 		if (current === chat) sessionNameEl.textContent = name;
 	}
 
-	/// End a chat, for good, asking nobody. THE place a chat stops existing.
+	/// Take a chat off the rail and out of this tab's live state, whatever is
+	/// about to happen to it. Shared by the trash path and the permanent one, so
+	/// a live turn is killed exactly once and in one way.
 	///
-	/// Every path that destroys a chat -- the tile's × (`tileCloser`), the tile
-	/// dialog's Delete, "Delete all chats" -- calls THIS, never `chats = chats
-	/// .filter(...)` of its own. A Trash panel, if the user builds one, changes
-	/// what happens in here (write a tombstone the user can undo, say, rather
-	/// than only one a stale tab cannot resurrect) and nothing that calls it
-	/// needs to change. Named for what happens to the chat, not for whichever
-	/// button happened to ask.
-	function removeChat(chat) {
+	/// It deliberately forgets NOTHING that could be wanted back — the pause
+	/// flag and the tile's own look stay put, because a restore has to return
+	/// the chat as it was. Forgetting them belongs to destruction, which is
+	/// where it now is.
+	function detachChat(chat) {
 		// A chat deleted mid-turn must take its turn with it. Otherwise the
 		// fetch runs on and the reply lands minutes later on whatever is on
 		// screen — billed to a chat that no longer exists. This holds for any
@@ -7581,15 +7770,6 @@ import init, {
 		chat._interject = [];
 		if (current === chat) renderQueue();
 		chats = chats.filter(function (c) { return c.id !== chat.id; });
-		// A paused chat that is deleted must not leave its flag behind: the id is
-		// unreachable, so the Chats section would stay amber with nothing on the
-		// rail to resume.
-		try { DaimondPause.forget(DaimondPause.id('root', 'chats', chat.id)); }
-		catch (e) { /* module not up */ }
-		// Same reasoning for how the tile drew itself: an id nobody can reach.
-		forgetTilePrefs(chat.id);
-		tombstone(chat.id);      // so a stale tab cannot resurrect it
-		persistChats();
 		if (current === chat) {
 			// The next CHAT, never the next daimon: a daimon's record has no tile and
 			// is reached through its Diamond, so opening one as a chat would put a
@@ -7598,29 +7778,96 @@ import init, {
 			if (current) selectChat(current);
 			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
+	}
+
+	/// Move a chat to the trash, asking nobody. THE place a chat leaves the rail.
+	///
+	/// Every path that deletes a chat -- the tile's × (`tileCloser`), the tile
+	/// dialog's Delete, "Delete all chats" -- calls THIS, never `chats = chats
+	/// .filter(...)` of its own.
+	///
+	/// IT WRITES NO TOMBSTONE, and that is the change. A tombstone is a deletion
+	/// that travels and cannot be taken back; this is a STATE that travels and
+	/// can. The record stays in the store — whole, with its transcript — and is
+	/// still packed into every parcel, so the other device holds the same chat in
+	/// the same trash and a restore on either device restores it on both. See
+	/// `js/trash.js` for why the state is two stamps rather than a flag.
+	///
+	/// Named for what happens to the chat, not for whichever button asked.
+	function removeChat(chat) {
+		detachChat(chat);
+		try { DaimondTrash.put(chat.id, 'chat'); }
+		catch (e) {
+			// No trash module in this build: a delete that quietly did nothing
+			// would leave the chat on the rail and look like a broken button, so
+			// it falls back to the deletion this used to be.
+			tombstone(chat.id);
+		}
+		persistChats();
 		renderSessionList();
 	}
 
-	/// Delete a chat, asking first. THE way a chat is removed by hand.
+	/// Destroy a chat for good: the tombstone, and everything that was kept
+	/// against a restore. There is no way back from here and nothing calls it
+	/// without having asked.
+	function destroyChat(id) {
+		if (!id) return;
+		var chat = chats.find(function (c) { return c.id === id; });
+		if (chat) detachChat(chat);
+		// A paused chat that is destroyed must not leave its flag behind: the id
+		// is unreachable, so the Chats section would stay amber with nothing on
+		// the rail to resume.
+		try { DaimondPause.forget(DaimondPause.id('root', 'chats', id)); }
+		catch (e) { /* module not up */ }
+		// Same reasoning for how the tile drew itself: an id nobody can reach.
+		forgetTilePrefs(id);
+		tombstone(id);						// the deletion, and it travels
+		try { DaimondTrash.forget(id); }	// nothing left for the panel to show
+		catch (e) { /* module not up */ }
+		persistChats();
+		renderSessionList();
+	}
+
+	/// Delete a chat. THE way a chat is removed by hand.
+	///
+	/// IT ASKS NOTHING, because it takes nothing away: the chat is in the Trash
+	/// panel a second later with Restore beside it. The question this used to put
+	/// up has moved to the two acts that cannot be undone — "Delete permanently"
+	/// on one item and "Empty trash" — because a dialog in front of a reversible
+	/// act teaches people to click through dialogs, and then the irreversible one
+	/// is clicked through too.
 	///
 	/// One function rather than a handler on a button, because Delete lives in
 	/// two places on the tile -- the dialog's foot and, since notes4, the corner
-	/// × -- and a second copy of the confirm would be a second place for it to
-	/// be forgotten. `removeChat` above does the work and asks nothing -- it is
-	/// also what a sync deletion uses, where there is nobody to ask.
-	async function deleteChat(chat) {
-		var n = (chat.messages || []).length;
-		var msg = n
-			? tn('tile.delete_chat_body', n, { name: chat.name })
-			: t('tile.delete_chat_empty', { name: chat.name });
-		if (!await confirmDialog(msg, t('tile.delete_chat'), { title: t('tile.delete_chat') })) return false;
+	/// × -- and a second copy of the rule would be a second place for it to drift.
+	function deleteChat(chat) {
 		removeChat(chat);
+		saidMoved(chat.name);
 		return true;
 	}
 
-	/// Delete every ordinary chat, asking first with the count in the question
-	/// itself ("Delete all 14 chats?") -- notes4's ruling that bulk delete wants
-	/// a STRONGER confirmation than one chat's, not a lighter one.
+	/// "Moved X to the trash" — said once for a burst.
+	///
+	/// Said out loud at all because what the button now does is not what it has
+	/// meant for the life of this app, and the panel it went to may well be
+	/// closed. Coalesced because toasts are drawn at one fixed place and stack on
+	/// top of each other: deleting three chats in three seconds otherwise puts
+	/// three overlapping boxes over the composer, which is how a reassurance
+	/// becomes a mess. One name when it was one thing, a count when it was
+	/// several — and that is also what makes "Delete all chats" a single line
+	/// rather than fourteen.
+	var _movedNames = [], _movedTimer = null;
+	function saidMoved(name) {
+		_movedNames.push(name);
+		if (_movedTimer) return;
+		_movedTimer = setTimeout(function () {
+			var n = _movedNames.length, first = _movedNames[0];
+			_movedNames = []; _movedTimer = null;
+			toast(n === 1 ? t('trash.moved', { name: first }) : tn('trash.moved_n', n, { n: n }));
+		}, 700);
+	}
+
+	/// Delete every ordinary chat.
 	///
 	/// Lives behind the Chats section's own overflow (`chats-menu-btn`), never
 	/// as a second cross beside "+". Every other cross in this app closes the
@@ -7631,18 +7878,21 @@ import init, {
 	/// A menu item you have to open first, naming exactly what it takes, does
 	/// not have that failure mode.
 	///
+	/// THIS IS THE BUTTON THE TRASH WAS BUILT FOR. It shipped with a dialog
+	/// naming the count and no way back, and somebody pressed it expecting an
+	/// undo. The dialog was never the protection — a person about to delete
+	/// fourteen chats already believes that is what they want — so it is gone,
+	/// and what replaces it is that the fourteen are all still there.
+	///
 	/// Reuses `removeChat` per chat rather than a bulk code path of its own, so
 	/// a chat mid-turn is aborted and the current-chat handoff runs exactly as
 	/// it does for a single delete -- one tested way to remove a chat, called
 	/// several times, not two ways that could disagree.
-	async function deleteAllChats() {
+	function deleteAllChats() {
 		var loose = chats.filter(function (c) { return !c.diamondId; });
 		var n = loose.length;
 		if (n === 0) return;
-		var msg = tn('rail.delete_all_chats_confirm', n, { n: n });
-		var ok = await confirmDialog(msg, t('rail.delete_all_chats'), { title: t('rail.delete_all_chats') });
-		if (!ok) return;
-		loose.forEach(function (c) { removeChat(c); });
+		loose.forEach(function (c) { removeChat(c); saidMoved(c.name); });
 	}
 
 	// ── The Chats section's own overflow ────────────────────────
@@ -10333,6 +10583,20 @@ import init, {
 		tombs:           loadTombMap,
 		tombstone:       tombstoneIn,
 		mergeTombs:      mergeTombMap,
+		// The trash. `js/trash.js` owns the state and draws the panel; these four
+		// are what a chat and a Diamond are, which that module has no business
+		// knowing. See the block above `loadDiamondTombs`.
+		trashList:       trashList,
+		trashRestore:    trashRestore,
+		trashPurge:      trashPurge,
+		trashSweep:      trashSweep,
+		/// The one tile component (ATTACH_CONTRACT.md §9). Published so the Trash
+		/// panel draws the same row the attachment footers draw rather than a
+		/// second one that looks like it.
+		attachTile:      attachTile,
+		/// Whether something is in the trash, for anything outside this file that
+		/// builds a list of Diamonds — `js/graph.js` does.
+		trashed:         trashed,
 	};
 	/// Point the one composer at whichever chat is on screen: showing Stop while
 	/// that chat generates and nothing is typed, ready to type either way.
@@ -13352,6 +13616,12 @@ import init, {
 				var kind = parsed.kind, path = parsed.path;
 				if ((kind !== 'file' && kind !== 'dir') || !path) return;
 				if (underPath(path, own)) return;
+				// A door onto a Diamond that has been deleted. It is dropped rather
+				// than shown unreachable: "not in this workspace" is a state the
+				// user can put right by opening the other workspace, and this one
+				// they put right by restoring the Diamond, in the panel that lists
+				// it. See `underTrashedDiamond`.
+				if (underTrashedDiamond(path)) return;
 				// Keyed on the THING, so one folder attached before roots were
 				// recorded and again after does not draw two rows.
 				var key = kind + ':' + path;
@@ -15767,6 +16037,13 @@ import init, {
 			///   user is looking at.
 			bounds:        async function (id) {
 				var did = id || (currentDiamond ? currentDiamond.id : '');
+				// A trashed Diamond has no workspace to confine anything to. It is
+				// answered here rather than at the callers because this is the one
+				// input to the fence: `scopeAgentTo` refuses a scope with no
+				// `own_dir` and throws rather than starting a turn, which is the
+				// behaviour wanted — an agent dispatched into a deleted Diamond
+				// must not run at the reach of an ordinary workspace turn.
+				if (trashed(did)) return { own_dir: '', attached: [], read_only: [], toolkits: [] };
 				if (!did) return { own_dir: '', attached: [], read_only: [], toolkits: [] };
 				var list = [];
 				try { list = await attachmentsOf(did); } catch (e) { list = []; }
@@ -17115,7 +17392,13 @@ import init, {
 				_diamondAgain = false;
 				try {
 					var json = await diamondApp().list_diamonds();
-					diamonds = JSON.parse(json);
+					// Trashed Diamonds are still in the store and are left out here.
+					// `diamonds` is what the rail, the tag pool, the fold picker and
+					// the graph are all built from, so one filter is what makes a
+					// trashed Diamond gone from every one of them at once.
+					diamonds = JSON.parse(json).filter(function (d) {
+						return d && d.id && !trashed(d.id);
+					});
 				} catch (e) { diamonds = []; }
 				renderDiamondList();
 				// The triggers travel with the Diamonds: the pause tree needs a leaf
@@ -17663,42 +17946,36 @@ import init, {
 		repaintPause();
 	}
 
-	/// Delete a Diamond, asking first. THE way a Diamond is removed by hand.
+	/// Move a Diamond to the trash. THE way a Diamond is removed by hand.
 	///
-	/// Lifted out of the closer cross it used to hang on, because Delete now sits
-	/// at the foot of the tile's dialog and there must be exactly one path that
-	/// asks, forgets the arrangement, forgets the pause flags and lays the
-	/// tombstone. Resolves true when the Diamond went.
+	/// IT ASKS NOTHING and it DESTROYS NOTHING. The store keeps every byte of
+	/// `diamonds/<id>/` — the crystal, its versions, the log, the sidecars — and
+	/// so does the other device, because a Diamond is still collected into every
+	/// parcel while it is in the trash. What changes is a state that travels: it
+	/// leaves the rail, the graph, the fold picker and every daimon's reach, and
+	/// appears in the Trash panel with Restore beside it.
+	///
+	/// So the arrangement, the pause flags, the tile's colours and the chosen
+	/// view all STAY. They are what makes a restore return the Diamond you
+	/// deleted rather than a Diamond with its name. Forgetting them is part of
+	/// destroying it, and lives in `destroyDiamond`.
+	///
+	/// The daimon's conversation rides with its Diamond rather than being trashed
+	/// beside it: a chat with a `diamondId` has no tile of its own, so a second
+	/// entry in the panel would be one act of the user's shown as two things to
+	/// restore. It becomes unreachable exactly when its Diamond does, and is
+	/// destroyed with it.
+	///
+	/// Resolves true when the Diamond went.
 	async function deleteDiamond(f) {
-		if (!await confirmDialog(t('rail.delete_diamond_body', { name: f.name }),
-			t('rail.delete_diamond'), { title: t('rail.delete_diamond') })) return false;
-		// A deleted Diamond's arrangement has nothing left to restore, and the
-		// layout blob is rewritten whole on every change, so leaving it would
-		// grow the write for ever.
-		DaimondPanels.forgetArrangement(f.id);
-		// And its pause flags, for the same reason: a leaf id nobody can reach
-		// keeps the Diamonds section — and the root above it — amber for ever,
-		// and travels in every sync parcel for the life of the account.
-		try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', f.id)); }
-		catch (e) { /* module not up */ }
-		forgetTilePrefs(f.id);
-		forgetDiamondView(f.id);
-		// The daimon's conversation goes with its daimon. Left behind it would be a
-		// chat record with no tile, no Diamond and no way to reach it, sitting in
-		// IndexedDB and travelling in every sync parcel for the life of the account —
-		// and `daimonChat` would hand it back if the id were ever reused.
-		var dchat = chats.find(function (c) { return c.diamondId === f.id; });
-		if (dchat) removeChat(dchat);
-		try {
-			await diamondApp().delete_diamond(f.id);
-		} catch (e2) {
-			noticeDialog(t('rail.delete_failed'), friendlyError(e2));
+		try { DaimondTrash.put(f.id, 'diamond'); }
+		catch (e) {
+			// No trash module in this build. Falling back to a silent permanent
+			// deletion would be the exact failure this feature exists about, so it
+			// refuses and says why instead.
+			noticeDialog(t('rail.delete_failed'), friendlyError(e));
 			return false;
 		}
-		// Before the rail is redrawn, so the next push carries the deletion:
-		// without a tombstone the other device still holds this Diamond and
-		// simply hands it back on the following pull.
-		diamondTombstone(f.id);
 		if (currentDiamond && currentDiamond.id === f.id) {
 			currentDiamond = null;
 			signalDiamondChanged();
@@ -17706,8 +17983,69 @@ import init, {
 			showCentre('chat');
 			renderEmptyState();
 		}
+		// A daimon mid-turn in a Diamond that has just left the rail must stop:
+		// the reply would land on a conversation nobody can reach and be billed
+		// for it. Same rule `detachChat` keeps for an ordinary chat.
+		var dchat = chats.find(function (c) { return c.diamondId === f.id; });
+		if (dchat) { detachChat(dchat); persistChats(); }
 		bumpDiamonds();
-		loadDiamonds();
+		await loadDiamonds();
+		saidMoved(f.name);
+		return true;
+	}
+
+	/// Destroy a Diamond for good: the store, the tombstone, and everything that
+	/// was kept against a restore. There is no way back and nothing calls it
+	/// without having asked. Resolves true when the Diamond went.
+	async function destroyDiamond(id) {
+		var f = diamonds.find(function (x) { return x.id === id; }) || { id: id };
+		// A destroyed Diamond's arrangement has nothing left to restore, and the
+		// layout blob is rewritten whole on every change, so leaving it would
+		// grow the write for ever.
+		try { DaimondPanels.forgetArrangement(id); } catch (e) { /* no layout engine */ }
+		// And its pause flags, for the same reason: a leaf id nobody can reach
+		// keeps the Diamonds section — and the root above it — amber for ever,
+		// and travels in every sync parcel for the life of the account.
+		try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', id)); }
+		catch (e) { /* module not up */ }
+		forgetTilePrefs(id);
+		forgetDiamondView(id);
+		// The daimon's conversation goes with its daimon. Left behind it would be a
+		// chat record with no tile, no Diamond and no way to reach it, sitting in
+		// IndexedDB and travelling in every sync parcel for the life of the account —
+		// and `daimonChat` would hand it back if the id were ever reused.
+		var dchat = storedChats().find(function (c) { return c.diamondId === id; });
+		if (dchat) destroyChat(dchat.id);
+		// THE TOMBSTONE GOES DOWN FIRST, and the order is the point.
+		//
+		// It records the ACCOUNT'S decision, which is true whether or not this
+		// device happens to hold the bytes. A device can perfectly well hold the
+		// trash record and not the Diamond — the parcel has a ceiling, and a
+		// Diamond over it travels late or not at all — and with the tombstone
+		// written after the store deletion, "Delete permanently" on such a device
+		// threw on a Diamond it did not have and the decision never left it.
+		// Written first, the deletion travels either way, and every device that
+		// does hold the bytes acts on it in `applyDiamonds`.
+		diamondTombstone(id);
+		try {
+			await diamondApp().delete_diamond(id);
+		} catch (e2) {
+			// Not a dialog. Nothing is lost and nothing is stuck: the tombstone
+			// above is already down, so this device deletes its own copy on the
+			// next merge exactly as the others delete theirs.
+			try { console.warn('[trash] the store would not delete ' + id + '; the tombstone stands', e2); }
+			catch (e3) { /* no console */ }
+		}
+		try { DaimondTrash.forget(id); } catch (e) { /* module not up */ }
+		if (currentDiamond && currentDiamond.id === id) {
+			currentDiamond = null;
+			signalDiamondChanged();
+			sessionNameEl.textContent = t('chat.no_chat');
+			showCentre('chat');
+			renderEmptyState();
+		}
+		bumpDiamonds();
+		await loadDiamonds();
 		return true;
 	}
 
@@ -20008,24 +20346,38 @@ import init, {
 		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
 	}
 
-	/// One tile in a footer, in whichever view is chosen. The crystal's footer
-	/// (`renderArtefacts`) and the chat's (`renderChatAttachments`) both draw
-	/// it, so a chat's footer shows exactly what the crystal footer shows (§5).
+	/// One tile in a footer or a panel, in whichever view is chosen. The
+	/// crystal's footer (`renderArtefacts`), the chat's
+	/// (`renderChatAttachments`) and the Trash panel all draw it, so a chat's
+	/// footer shows exactly what the crystal footer shows (§5) and the trash
+	/// shows the same tile again rather than a second one that resembles it
+	/// (§9).
 	///
 	/// # Arguments
-	/// * `item.kind`   - 'file', 'dir' or 'url', for the badge.
-	/// * `item.path`   - shown, and named in the generated prefix.
-	/// * `item.hint`   - said on hover where the tile has no room for it.
-	/// * `item.shut`   - there is NO opening this one, for the reason below.
-	/// * `item.reason` - why, in a sentence, drawn on the tile.
-	/// * `item.state`  - 'note' | 'read', or nothing for a tile that has neither.
+	/// * `item.kind`    - 'file', 'dir', 'url', 'chat', 'diamond' — the badge.
+	/// * `item.path`    - shown, and named in the generated prefix. A caller
+	///   whose subject has a name rather than a path passes the name.
+	/// * `item.hint`    - said on hover where the tile has no room for it.
+	/// * `item.shut`    - there is NO opening this one, for the reason below.
+	/// * `item.reason`  - why, in a sentence, drawn on the tile.
+	/// * `item.note`    - a quiet line of FACTS about it: a date, a size.
+	/// * `item.state`   - 'note' | 'read', or nothing for a tile that has neither.
+	/// * `item.view`    - force 'stack' or 'icons'; otherwise the user's choice.
+	/// * `item.actions` - extra controls, in the caller's order:
+	///   `{ cls, text, title, aria, pressed, on }`.
 	/// * `item.onOpen`, `onRefer`, `onState`, `onDrop` - each optional; a tile
 	///   grows only the controls it is given.
 	function attachTile(item) {
-		var icons = attachView() === 'icons';
+		// The user's choice of view belongs to the ATTACHMENT footers, which is
+		// where the toggle that sets it lives. A caller with no toggle of its own
+		// says which view it wants and is not silently switched into the other
+		// one by a preference set somewhere else — the Trash panel's tiles carry
+		// a date and a size that an 88px cell cannot show, and it has no control
+		// to get back with.
+		var icons = (item.view || attachView()) === 'icons';
 		// One item, two shapes, ONE function. A second function per view is how
 		// the crystal footer and the chat footer came to disagree in the first
-		// place -- and §9's trash arrives wanting a third caller, not a third
+		// place -- and §9's trash arrived wanting a third caller, not a third
 		// renderer.
 		//
 		// `shut` is not "away": it is "there is no opening this", which is what
@@ -20063,6 +20415,20 @@ import init, {
 			row.appendChild(why);
 		}
 
+		// The facts about the item, on a line of their own BELOW the reason.
+		// Its own element rather than words added to `reason`, because the two
+		// are different kinds of thing -- one says why this cannot be opened,
+		// the other what keeping it costs and until when -- and anything reading
+		// the reason has to find the reason and nothing else. It wraps for the
+		// same reason `.arte-why` does: a dock column is narrow, and a fact the
+		// user is meant to act on may not be the thing that gets shortened.
+		if (item.note) {
+			var note = document.createElement('span');
+			note.className = 'arte-note';
+			note.textContent = item.note;
+			row.appendChild(note);
+		}
+
 		if (item.state) {
 			var read = item.state === 'read';
 			var stateBtn = document.createElement('button');
@@ -20074,6 +20440,27 @@ import init, {
 			stateBtn.addEventListener('click', function (ev) { ev.stopPropagation(); item.onState(); });
 			row.appendChild(stateBtn);
 		}
+
+		// Controls this component has no name for, in the caller's own order.
+		// Note/Read, refer and drop are the attachment footers' verbs and stay
+		// named above, because a footer's own controls should not be assembled
+		// from a list. A THIRD caller with a third verb -- the trash's Restore --
+		// would otherwise need either a fourth named slot that two of the three
+		// callers never use, or a second renderer. Before the refer arrow and
+		// the drop cross, so `×` stays where it is on every other tile in the
+		// app: last.
+		(item.actions || []).forEach(function (a) {
+			if (!a) return;
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = a.cls || 'arte-act';
+			b.textContent = a.text || '';
+			if (a.title) b.title = a.title;
+			if (a.aria) b.setAttribute('aria-label', a.aria);
+			if (a.pressed !== undefined) b.setAttribute('aria-pressed', a.pressed ? 'true' : 'false');
+			b.addEventListener('click', function (ev) { ev.stopPropagation(); a.on(); });
+			row.appendChild(b);
+		});
 
 		// The refer arrow is the crystal footer's own: it puts a reference in the
 		// composer. A chat has nothing to refer to that its prefix does not
@@ -21613,6 +22000,38 @@ import init, {
 		// And the Terminal, for the same reason: a panel left open in the saved
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
+		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
+		// Retention, on every boot and nowhere else. A device that has been off
+		// for six weeks comes back to a trash whose whole contents are due, and
+		// works that out from the stamps it already holds rather than from a
+		// message another device may no longer be sending. After the Diamonds are
+		// read, because destroying one goes through the store this step opened.
+		step('trashSweep', function () { return trashSweep(); });
+		// A restore, or a trashing, in ANOTHER TAB — or in this one, or in a
+		// parcel that has just arrived. None of them redraws these two lists on
+		// its own: the chats fire a nonce this file already watches, but the
+		// trash record is the thing that decides what those lists CONTAIN.
+		//
+		// Coalesced, because "Delete all chats" moves the record once per chat
+		// and re-reading both stores fourteen times over would make the one act
+		// this whole feature exists for the slowest thing in the app.
+		var _trashRedraw = null;
+		try {
+			DaimondTrash.subscribe(function () {
+				if (_trashRedraw) return;
+				_trashRedraw = setTimeout(function () {
+					_trashRedraw = null;
+					onChatsChangedElsewhere();
+					loadDiamonds();
+					// And retention, here as well as at the boot: a desktop left
+					// open for a month would otherwise never reach its own thirty
+					// day mark. `trashSweep` refuses to run inside itself, so the
+					// destruction it does — which moves the record — cannot start
+					// another one.
+					trashSweep();
+				}, 60);
+			});
+		} catch (e) { /* no trash module in this build */ }
 		// Fold back whatever was in flight when the tab last died. Runs after Workers.load, so an
 		// interrupted agent's record exists to enrich; repaints the affected chat and the panel.
 		recoverInterrupted();
@@ -21814,6 +22233,9 @@ import init, {
 		// colouring another's rail would be a money bug, not a cosmetic one. Not
 		// dead code: a guard against the day the reload goes.
 		try { if (window.DaimondPause) DaimondPause.reset(); } catch (e) { /* ignore */ }
+		// And the trash, for the same reason and with the same guard: one
+		// account's deleted chats must never show in another's panel.
+		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
 		DaimondAccounts.setCurrent(id);
 		location.reload();
 	}
@@ -22625,6 +23047,9 @@ import init, {
 		// has changed before, and one account's pauses colouring another's rail is
 		// a money bug rather than a cosmetic one. Not dead code: a guard.
 		try { if (window.DaimondPause) DaimondPause.reset(); } catch (e) { /* ignore */ }
+		// And the trash, for the same reason and with the same guard: one
+		// account's deleted chats must never show in another's panel.
+		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
 		// Sweep every store this account owns. removeItem is namespaced to the current account, so
 		// these clear THIS account's keys and no other's. remove() below sweeps anything not named
 		// here; the explicit list is what the old, single-account reset erased.
@@ -22642,6 +23067,12 @@ import init, {
 			 // afterwards is a new account, and it must not inherit the erased
 			 // one's identity as a device or the devices it used to sync with.
 			 'daimond-devices', 'daimond-device-id', 'daimond-device-tombs',
+			 // The trash. It is keyed by chat and Diamond id, and a chat id is
+			 // `c1`, `c2`, … from a counter this list resets — so a record left
+			 // behind here would hide the NEXT account's first chat, on an id it
+			 // has every right to reuse. Same class of fault as the pause tree
+			 // above, and the same reason it is named rather than swept.
+			 'daimond-trash',
 			].forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
 
@@ -23185,6 +23616,15 @@ import init, {
 			// deep, with nothing marking which files belong to whom — so its absence
 			// is what puts the restore into its legacy path. See `doImport`.
 			workspaceScope: 'account',
+			// WHAT WAS IN THE TRASH, and when. A backup carries every trashed
+			// chat and Diamond already -- `storedChats()` and the store walk both
+			// include them, because trashing destroys nothing -- so leaving the
+			// STATE out would make a restore quietly un-delete everything the user
+			// had deleted. The record is two stamps per id and costs nothing.
+			trash: (function () {
+				try { return window.DaimondTrash ? DaimondTrash.snapshot() : null; }
+				catch (e) { return null; }
+			})(),
 		};
 		try {
 			var list = await diamondApp().list_diamonds();
@@ -23324,6 +23764,14 @@ import init, {
 					byId[r.id] = merged;
 				});
 				ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
+			}
+			// The trash, by the same merge the sync uses: later of each stamp, so
+			// restoring an old backup cannot un-delete something deleted since,
+			// and cannot re-delete something restored since. A backup written
+			// before this field existed carries none and changes nothing.
+			if (data.trash) {
+				try { DaimondTrash.adopt(data.trash); }
+				catch (e) { /* no trash module in this build */ }
 			}
 			if (Array.isArray(data.ledger) && data.ledger.length) {
 				// MERGED, not written over. The ledger is what the user was charged, and

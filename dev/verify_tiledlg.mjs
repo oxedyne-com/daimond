@@ -323,41 +323,39 @@ try {
 		await openCog(page, '#diamond-list');
 	}
 
-	// ── 3. Delete asks first, and "no" leaves the tile alone ──
+	// ── 3. Delete asks nothing, because it takes nothing away ──
+	//
+	// This used to assert a confirm and a "no" that left the tile standing. Since
+	// the trash, Delete is reversible and asks nothing — the question moved to
+	// "Delete permanently" and "Empty trash", where it is true (see
+	// dev/verify_trash.mjs). What is asserted here is the pair that makes the
+	// silence safe: the tile goes, AND the Diamond is in the trash.
 	const before = await page.evaluate(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
 	await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
-	await page.waitForTimeout(500);
+	await page.waitForTimeout(1800);
 	const asked = await page.evaluate(() => {
 		const dlgs = [...document.querySelectorAll('.modal.dlg .dlg-card')]
 			.filter((c) => c.getClientRects().length && !c.classList.contains('tile-dlg-card'));
 		return dlgs.length ? (dlgs[0].querySelector('.dlg-msg') || {}).textContent || '(no message)' : null;
 	});
-	check(asked !== null, 'Delete asks before it acts', asked ? asked.slice(0, 60) + '…' : 'nothing was asked');
-	await snap(page, 'delete-confirm', '.modal.dlg .dlg-card');
-	// Say no.
-	await page.evaluate(() => {
-		const c = [...document.querySelectorAll('.modal.dlg .dlg-cancel')].pop();
-		if (c) c.click();
-	});
-	await page.waitForTimeout(700);
+	check(asked === null, 'Delete asks nothing — it is reversible',
+		asked ? `a dialog opened: ${asked.slice(0, 60)}…` : 'no dialog');
 	const after = await page.evaluate(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
-	check(JSON.stringify(before) === JSON.stringify(after),
-		'saying no leaves the Diamond where it was', `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+	check(!after.includes('Alpha') && before.includes('Alpha'),
+		'and the Diamond leaves the rail', `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
 
-	// ── 4. Delete really deletes, when the answer is yes ──
-	await openCog(page, '#diamond-list');
-	await page.evaluate(() => document.querySelector('.tile-dlg-delete').click());
-	await page.waitForTimeout(400);
-	await page.evaluate(() => {
-		const okb = [...document.querySelectorAll('.modal.dlg .dlg-ok')].pop();
-		if (okb) okb.click();
+	// ── 4. Where it went ──
+	const inTrash = await page.evaluate(async () => {
+		try { return (await window.DaimondCore.trashList()).map((x) => x.name); }
+		catch (e) { return []; }
 	});
-	await page.waitForTimeout(1800);
-	const left = await page.evaluate(() =>
-		[...document.querySelectorAll('#diamond-list .session-box-name')].map((n) => n.textContent.trim()));
-	check(!left.includes('Alpha'), 'saying yes removes the Diamond', JSON.stringify(left));
+	check(inTrash.includes('Alpha'), 'IT IS IN THE TRASH, which is why Delete no longer has to ask',
+		JSON.stringify(inTrash));
+	await page.evaluate(() => window.DaimondPanels.show('trash'));
+	await page.waitForTimeout(700);
+	await snap(page, 'delete-trash', '#panel-trash');
 
 	// ── 5. Simple hides, Max shows, and the choice survives a reload ──
 	//
@@ -446,11 +444,17 @@ try {
 		&& !backToSimple.ver.visible && !backToSimple.time.visible,
 		'Max can be turned back to Simple', backToSimple && JSON.stringify(backToSimple));
 
-	// ── 6. Nothing else deletes a tile ──
+	// ── 6. Nothing on a tile DESTROYS anything ──
 	//
 	// Searched, not enumerated: every control inside a tile is pressed on a
-	// fresh page, and the rail is counted afterwards. A tile that vanished
-	// without a confirm is a second delete path, whatever it is called.
+	// fresh page, and the rail is counted afterwards. The rule used to be "a
+	// tile that vanished without a confirm is a second delete path"; since the
+	// trash it is the stronger and simpler "whatever a click removes must be
+	// recoverable". A control that took a tile off the rail and put nothing in
+	// the trash destroyed something, whatever it is called.
+	const trashBefore = await page.evaluate(async () => {
+		try { return (await window.DaimondCore.trashList()).length; } catch (e) { return 0; }
+	});
 	const railBefore = await page.evaluate(() =>
 		document.querySelectorAll('.session-box').length);
 	const controls = await page.evaluate(() => [...document.querySelectorAll('.session-box')]
@@ -479,8 +483,13 @@ try {
 		await page.keyboard.press('Escape');
 		await page.waitForTimeout(150);
 	}
-	check(vanished.length === 0, 'no control on a tile deletes it without asking',
-		vanished.length ? vanished.join(', ') : `${controls.length} control(s) pressed, ${railBefore} tile(s) standing`);
+	const trashAfter = await page.evaluate(async () => {
+		try { return (await window.DaimondCore.trashList()).length; } catch (e) { return -1; }
+	});
+	check(vanished.length === trashAfter - trashBefore,
+		'no control on a tile DESTROYS anything — everything a click removed is in the trash',
+		`${controls.length} control(s) pressed; ${vanished.length} tile(s) vanished `
+		+ `(${vanished.join(', ') || 'none'}); trash went ${trashBefore} → ${trashAfter}`);
 
 	// 502 is the dev server proxying to a gateway that is not running, which is
 	// the ordinary state of a browser-only run and not a fault of the page.
