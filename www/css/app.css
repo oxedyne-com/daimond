@@ -103,31 +103,9 @@ svg { display: block; }
    as a group because the bar distributes its children with space-between, and a
    wordmark that is a direct child of that gets a different left edge. */
 .brand-group { display: flex; align-items: center; flex: none; min-width: 0; }
-/* The maker's badge, at the right-hand end of the bar in the place the README
-   link held. It is a lozenge with its own white plate and its own border, so it
-   takes no palette treatment and no dark/light twin. Drawn at twice the height
-   it began at, by the user's decision: it is now the tallest thing in the bar,
-   which is a flex row of no declared height and grows to it. The margin buys it
-   more air than the row's 4px gap, so a signature does not read as one more
-   control in the run of icon buttons. */
-.made-by { position: relative; display: flex; align-items: center; margin: 0 4px; flex: none; }
-/* The two halves of the badge, laid over the artwork. Each is a real element
-   with its own name, so a screen reader meets two claims rather than one
-   picture, and each is now a link: the flame to Oxedyne, the chip to the
-   AI-disclosure mark it is claiming. */
-.made-by .mb-hit { position: absolute; top: 0; bottom: 0; width: 50%; display: block; }
-.made-by .mb-oxedyne { left: 0; }
-.made-by .mb-ai { right: 0; }
-/* The whole plate dims under either half, because the artwork is one file and
-   there is no half of it to dim on its own. Written on the parent rather than as
-   `.mb-oxedyne:hover ~ img`, which was what stood here and matched nothing: the
-   image is the FIRST child, so no sibling combinator can reach back to it. */
-.made-by:has(.mb-hit:hover) img { opacity: 0.85; }
-.made-by .mb-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.made-by img { height: calc((var(--logo-h) - 6px) * 2); width: auto; display: block; transition: opacity 0.15s ease; }
-.made-by:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-/* The phone stands the badge down entirely; the rule lives in responsive.css
-   beside the account of why anything in this row may be dropped at all. */
+/* The maker's badge no longer lives in this row -- it is in the About dialog,
+   which the button in its old slot opens. Its rules are down with the dialog's,
+   because that is the only place it is drawn now. */
 .brand-wordmark.wm-on-light { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-dark { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
@@ -987,7 +965,11 @@ span.arte-open { cursor: default; }
    a second time. */
 .attach-head { display: flex; align-items: center; justify-content: flex-end; gap: 4px;
 	padding: 3px 5px; border-bottom: 1px solid var(--border); }
-.attach-view-btn { background: none; border: 1px solid var(--border-2); border-radius: 999px;
+/* `--border-strong`, the control boundary, NOT `--border-2`, which divides one
+   region from another. A control that borrows the divider token disappears at
+   its own edge in the paler palettes, and this is the rule verify_theme keeps:
+   the failure it catches is a new control written by copying an old one. */
+.attach-view-btn { background: none; border: 1px solid var(--border-strong); border-radius: 999px;
 	cursor: pointer; color: var(--text-secondary); font-size: var(--fs-3xs-2xs);
 	line-height: 1.6; padding: 0 9px; }
 .attach-view-btn:hover { border-color: var(--accent); color: var(--accent-text); }
@@ -1606,7 +1588,14 @@ span.arte-open { cursor: default; }
 /* The passphrase field carries a reveal toggle inside its right edge, so a long
    passphrase typed on a phone can be checked. The input reserves room for it. */
 .pass-wrap { position: relative; display: flex; }
-.pass-wrap input { flex: 1; padding-right: 40px; }
+/* THE RESERVATION IS PART OF THE FIELD, and it has to survive a skin. Any skin
+   that restates `padding` on inputs -- warm does, in `calc(9px * scale)
+   calc(13px * scale)` -- wipes the right-hand reservation with the shorthand,
+   and the typed passphrase then runs under the eye by ~17px at the default
+   reading size. A skin cannot be expected to know which fields carry something
+   inside them, so the field insists rather than the skin remembering. Measured
+   with dev/probe_passeye.mjs, which reports the overlap in pixels. */
+.pass-wrap input { flex: 1; padding-right: 40px !important; }
 .pass-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
 	width: 32px; height: 32px; padding: 0; display: flex; align-items: center;
 	justify-content: center; background: none; border: none; color: var(--text-muted);
@@ -1692,6 +1681,81 @@ span.arte-open { cursor: default; }
 .dlg-actions .dlg-ok.danger { background: var(--danger); border-color: var(--danger); color: var(--on-fill, #fff); }
 .dlg-actions .dlg-ok.danger:hover { filter: brightness(1.1); }
 .tile-fold.folded { color: var(--text-secondary); border-style: dashed; }
+
+/* ── About ───────────────────────────────────────────────────────
+   Inkscape's shape: the splash artwork owns the top of the card and reaches its
+   edges, the identity sits under it, and the small print is a quiet row along
+   the foot. It is the `.modal-card` / `.dlg-card` furniture every other dialog
+   wears, with a class of its own for the parts that are only true here. */
+/* `--about-pad` mirrors the card's own padding, and exists because the phone
+   changes it (mobile.css drops `.modal-card` to 16px). Two bleeding children
+   below cancel that padding out, and a bleed measured against the wrong number
+   is a picture hanging over the edge of its card. */
+.about-card { width: 480px; --about-pad: 24px; }
+/* Full bleed. The card pads its contents and the splash is a picture, not a
+   paragraph -- a margin round it reads as an accident.
+
+   The width is the content box PLUS both paddings, which is exactly the padding
+   box, so nothing overflows. That matters more than it looks: `.modal-card` is
+   `overflow-y: auto`, and CSS computes `overflow-x: visible` to `auto` when the
+   other axis is not visible -- so a splash one pixel wider than its padding box
+   would hang a horizontal scrollbar under the picture on every open. */
+.about-splash {
+	display: block;
+	width: calc(100% + var(--about-pad) * 2);
+	/* Stated, not inherited: a splash squashed to a fixed height is the classic
+	   way this goes wrong, and the artwork's own 863x448 is what decides it. */
+	height: auto;
+	margin: calc(var(--about-pad) * -1) calc(var(--about-pad) * -1) 0;
+	border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+}
+.about-body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 18px; }
+/* The wordmark, at about twice the height the top bar draws it. `.brand-wordmark`
+   is carried alongside for the light/dark swap, which is written against that
+   class; the height here wins because it is the later rule. */
+.about-word { height: 46px; width: auto; }
+.about-said {
+	font-size: var(--fs-base); color: var(--text-secondary);
+	line-height: 1.55; text-align: center; margin: 0; max-width: 34em;
+}
+/* The version, said the way the rail's status panel says it: the same label
+   word, the id in the mono face, and the app's one copy button beside it. */
+.about-ver { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: var(--fs-xs); }
+.about-ver-label { color: var(--text-muted); }
+.about-build { font-family: var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+/* The foot. A rule across the card, then the signature -- which is what the
+   `100% + 48px` is doing again: the line spans the card, the badge does not. */
+.about-maker {
+	display: flex; align-items: center; justify-content: center;
+	width: calc(100% + var(--about-pad) * 2);
+	margin: 6px calc(var(--about-pad) * -1) 0;
+	padding: 14px var(--about-pad) 2px;
+	border-top: 1px solid var(--border);
+}
+/* ONE rule across the foot, not two. `.tile-dlg-foot` draws its own, which is
+   right where the foot is the first thing under the body -- here the signature
+   is already below a rule, and a second line 60px under the first read as a
+   mistake in every palette. */
+.about-card .tile-dlg-foot { border-top: none; margin-top: 10px; padding-top: 0; }
+/* The maker's badge. One lozenge with its own white plate and its own border,
+   so it takes no palette treatment and needs no dark/light twin -- it looks the
+   same on every theme, which is the point of a mark. */
+.made-by { position: relative; display: flex; align-items: center; flex: none; }
+/* The two halves of the badge, laid over the artwork. Each is a real element
+   with its own name, so a screen reader meets two claims rather than one
+   picture, and each is a link: the flame to Oxedyne, the chip to the
+   AI-disclosure mark it is claiming. `verify_badge.mjs` reads the 50% out of
+   this rule and measures the artwork against it, so the two cannot drift. */
+.made-by .mb-hit { position: absolute; top: 0; bottom: 0; width: 50%; display: block; }
+.made-by .mb-oxedyne { left: 0; }
+.made-by .mb-ai { right: 0; }
+/* The whole plate dims under either half, because the artwork is one file and
+   there is no half of it to dim on its own. Written on the parent rather than as
+   `.mb-oxedyne:hover ~ img`, which was what stood here and matched nothing: the
+   image is the FIRST child, so no sibling combinator can reach back to it. */
+.made-by:has(.mb-hit:hover) img { opacity: 0.85; }
+.made-by .mb-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.made-by img { height: 40px; width: auto; display: block; transition: opacity 0.15s ease; }
 
 /* ── A tile's own dialog (the cog) ───────────────────────────────
    Same `.modal` / `.modal-card` furniture as every other dialog, so Escape,

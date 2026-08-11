@@ -36,14 +36,17 @@
 	.topbar { overflow: hidden; }
 	.top-meter { min-width: 0; overflow: hidden; }
 	/* ...and `overflow: hidden` is not a fit, it is a guillotine. Signed in, the
-	   row ran 22-40px past a phone's width, so the appearance-and-layout button
-	   -- theme, skin, reading size -- was CLIPPED OFF the screen on every phone
-	   tested, and on an iPhone SE the guide "?" went with it. The maker's badge
-	   now holds that slot, and it is a signature rather than a control: it is
-	   worth less room than the two controls it would push off, so on a phone it
-	   stands down. It hides at this width and not at its old 560px, because what
-	   decides it is the crowding of THIS row, and this row is crowded from 760. */
-	.top-actions .made-by { display: none; }
+	   row once ran 22-40px past a phone's width, so the appearance-and-layout
+	   button -- theme, skin, reading size -- was CLIPPED OFF the screen on every
+	   phone tested, and on an iPhone SE the guide "?" went with it. The maker's
+	   badge held that slot then, and stood down here because a signature is
+	   worth less room than the two controls it would push off.
+
+	   Nothing stands down now: the badge has moved into the About dialog and the
+	   slot holds a 32px icon button instead of a ~70px lozenge, so the row is
+	   NARROWER than it was even with the badge hidden. The phone therefore keeps
+	   About, which is where the badge's two claims now are -- a signature the
+	   phone could never show at all is worse than one behind a button. */
 
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }
@@ -212,9 +215,34 @@
 	.tile-dlg-swatch { align-self: flex-start; }
 }
 
-@media (max-width: 360px) {
+/* 380, not the 360 this began at. The bar's right-hand row is five controls
+   once you are signed in -- update, About, link a device, guide, appearance --
+   and at the full 40px touch box those five want 216px, which the layout only
+   affords from 380 up. Between 361 and 379 the bar's `overflow: hidden` was
+   taking 3-17px off the appearance menu at the end of the row: an iPhone SE
+   (2nd/3rd gen) and an iPhone 8 are both 375.
+
+   The policy is the one this block was written for and is unchanged by About
+   arriving: the bar gets smaller rather than shedding a control, because every
+   one of the five is the only way to the thing it opens. `verify_about.mjs`
+   measures the row for a clip at 320, 375 and 390 so the next control added
+   here fails loudly rather than quietly amputating the last one. */
+/* THE WORDMARK STANDS DOWN BEFORE A CONTROL DOES. It is half again its old
+   height on a desktop, which also makes it ~32px wider, and the signed-in header
+   carries five controls -- so at 390px (iPhone 12/13/14/15) the row clipped 20px
+   off the last of them. The policy in the block below is that the bar gets
+   smaller rather than shedding a control; a signature shrinking is the cheapest
+   thing in the row, so it goes first. Below 380 it drops further still. */
+@media (max-width: 430px) {
+	.brand-wordmark { height: var(--logo-h); }
+}
+
+@media (max-width: 380px) {
 	.topbar { gap: 8px; }
 	.brand-wordmark { height: 20px; }
+	/* 2px between the buttons rather than 4. The TARGETS keep their 34px, which
+	   is what a thumb lands on; it is only the air between them that goes. */
+	.top-actions { gap: 2px; }
 	.top-actions .icon-btn,
 	.top-actions .update-chip,
 	#drawer-btn { min-width: 34px; min-height: 34px; }

@@ -50,9 +50,18 @@
 	'topbar.made_by': 'Made by Oxedyne',
 	'topbar.made_with_ai': 'Code made mostly with AI',
 	'topbar.up_to_date':  'Daimond is up to date',
+	'topbar.about':       'About Daimond',
 	'topbar.guide':       'Open the user guide',
 	'topbar.guide_short': 'User guide',
 	'topbar.appearance':  'Appearance and layout',
+
+	// ── About ──────────────────────────────────────────────────
+	// `about.what` is the guide's opening paragraph, near enough word for word:
+	// it is already the house voice and already says it, and a second wording
+	// would be a second thing to keep true.
+	'about.title':     'About Daimond',
+	'about.splash_alt': 'A figure flying through the night towards a diamond, above the curve of a planet.',
+	'about.what':      'Daimond is an AI agent workspace that runs entirely in your browser. There is no account on a server and no app to install: your chats, keys and files live only on this device.',
 
 	// ── Panel names ────────────────────────────────────────────
 	// Short: they ride in a chip row and a phone tab bar.

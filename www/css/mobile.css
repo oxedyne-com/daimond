@@ -374,6 +374,10 @@
 		max-height: calc(100dvh - 24px);
 		padding: 16px;
 	}
+	/* The About card's two bleeding children cancel the card's padding out, so
+	   they have to be told it changed here. Without this the splash hangs 8px
+	   past the card on each side and the rule above the signature does the same. */
+	.about-card { --about-pad: 16px; }
 	/* The create screen asks for more room than the shared 80vh (see app.css) and
 	   takes 92vh -- but `vh` counts the strip behind the address bar, which a
 	   phone does not show, so on a phone the card ran past the fold and cut

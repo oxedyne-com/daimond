@@ -43,9 +43,17 @@
 	'topbar.made_by': '由 Oxedyne 制作',
 	'topbar.made_with_ai': '代码主要由 AI 编写',
 	'topbar.up_to_date':  'Daimond 已是最新版本',
+	'topbar.about':       '关于 Daimond',
 	'topbar.guide':       '打开使用指南',
 	'topbar.guide_short': '使用指南',
 	'topbar.appearance':  '外观与布局',
+
+	// ── 关于 ───────────────────────────────────────────────────
+	// `about.what` 就是指南的开篇一段：它已经把话说清楚了，再写一版只会多一处
+	// 要跟着维护的文字。
+	'about.title':      '关于 Daimond',
+	'about.splash_alt': '一个身影在夜空中飞向一颗钻石，下方是行星的弧线。',
+	'about.what':       'Daimond 是一个完全在你浏览器里运行的 AI 智能体工作区。服务器上没有账户，也没有应用要装：你的聊天、密钥和文件只存在这台设备上。',
 
 	// ── 面板名称 ───────────────────────────────────────────────
 	// 要短：它们排在一行标签里，也排在手机的底部标签栏里。

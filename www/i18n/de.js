@@ -41,9 +41,18 @@
 	'topbar.made_by': 'Von Oxedyne gemacht',
 	'topbar.made_with_ai': 'Code überwiegend mit KI erstellt',
 	'topbar.up_to_date': 'Daimond ist aktuell',
+	'topbar.about': 'Über Daimond',
 	'topbar.guide': 'Handbuch öffnen',
 	'topbar.guide_short': 'Handbuch',
 	'topbar.appearance': 'Aussehen und Anordnung',
+
+	// ── Über ───────────────────────────────────────────────────
+	// `about.what` ist der Eröffnungsabsatz des Handbuchs, auf „du“ gebracht:
+	// er sagt es bereits, und eine zweite Fassung wäre eine zweite, die stimmen
+	// muss.
+	'about.title': 'Über Daimond',
+	'about.splash_alt': 'Eine Gestalt fliegt durch die Nacht auf einen Diamanten zu, über der Rundung eines Planeten.',
+	'about.what': 'Daimond ist ein KI-Agenten-Arbeitsplatz, der vollständig in deinem Browser läuft. Es gibt kein Konto auf einem Server und keine App zu installieren: deine Chats, Schlüssel und Dateien liegen nur auf diesem Gerät.',
 
 	// ── Panel names ────────────────────────────────────────────
 	'panel.rail': 'Diamonds',

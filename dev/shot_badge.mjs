@@ -1,11 +1,17 @@
-// shot_badge.mjs — the maker's badge in the top bar, at its doubled height.
+// shot_badge.mjs — the maker's badge, which is now in the About dialog.
 //
-// The badge is drawn at twice the height it began at, which makes it taller than
-// the wordmark beside it and taller than everything else in the bar. Two things
-// have to be looked at rather than asserted: whether the bar still reads as one
-// row of related marks, and whether anything above it clips the badge's plate --
-// this app's recurring defect is ink drawn outside a border box and sliced by an
-// ancestor's overflow, so the measurement is taken as well as the picture.
+// It used to sit in the top bar at twice its original height, and this script
+// photographed the bar and measured whether anything above it sliced the plate.
+// The badge has moved: the bar holds an About button in that slot and both of
+// the badge's claims are in the dialog it opens, where each is a link with room
+// to be read.
+//
+// The same two questions still matter, in the new place. Does the foot of the
+// dialog read as one quiet signature row rather than as another control? And is
+// anything clipping the plate -- this app's recurring defect is ink drawn
+// outside a border box and sliced by an ancestor's overflow, and the card the
+// badge now sits in is `overflow-y: auto`, which is exactly such an ancestor.
+// So the measurement is taken as well as the picture.
 import { open } from './harness.mjs';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -17,41 +23,58 @@ const s = await open({ name: 'badge', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
 
-// The bar at four widths: the desktop default, a narrow desktop, and the two
-// steps either side of the 760px cut where the badge is dropped on purpose. 780
-// is the width that matters -- the badge is still drawn there, in the crowded
-// row whose overflow is a guillotine, so the row is measured as well as shot.
-for (const w of [1400, 900, 780, 700]) {
-	await p.setViewportSize({ width: w, height: 800 });
+/// Open About, and wait for the artwork rather than for the card: the splash is
+/// the tallest thing in it and the foot is not where it will finally be until
+/// the picture has laid out.
+async function openAbout() {
+	for (let i = 0; i < 3; i++) { await p.keyboard.press('Escape'); await p.waitForTimeout(90); }
+	await p.evaluate(() => { const b = document.getElementById('about-btn'); if (b) b.click(); });
+	await p.waitForSelector('.about-card .made-by img', { timeout: 8000 });
+	await p.waitForFunction(() => {
+		const i = document.querySelector('.about-card .about-splash');
+		return i && i.complete && i.naturalWidth > 0;
+	}, null, { timeout: 8000 });
+	await p.waitForTimeout(300);
+}
+
+// The card at four widths: two desktops, and the two either side of the phone
+// breakpoint. The badge is drawn at every one of them now -- on a phone it used
+// to be dropped from the bar entirely, which is the loss this move undid.
+for (const w of [1400, 900, 780, 390]) {
+	await p.setViewportSize({ width: w, height: 900 });
 	await p.waitForTimeout(400);
-	const bar = await p.$('.topbar');
-	if (bar) {
-		await bar.screenshot({ path: path.join(OUT, `badge_bar_${w}.png`) });
-	}
+	await openAbout();
+	const card = await p.$('.about-card');
+	if (card) await card.screenshot({ path: path.join(OUT, `badge_about_${w}.png`) });
 	const fit = await p.evaluate(() => {
-		const bar = document.querySelector('.topbar');
-		const act = document.querySelector('.top-actions');
-		const mb  = document.querySelector('.made-by');
-		const vis = mb && getComputedStyle(mb).display !== 'none';
-		const r = bar.getBoundingClientRect();
+		const card = document.querySelector('.about-card');
+		const row  = card.querySelector('.about-maker');
+		const mb   = card.querySelector('.made-by');
+		const r = mb.getBoundingClientRect(), rr = row.getBoundingClientRect();
 		return {
-			badgeDrawn: !!vis,
-			// Does the row still fit, or is `overflow: hidden` cutting it?
-			rowOverflow: +(act.scrollWidth - act.clientWidth).toFixed(1),
-			barOverflow: +(bar.scrollWidth - bar.clientWidth).toFixed(1),
-			// The last control in the row, and whether it is still on screen.
-			lastRight: +(act.lastElementChild.getBoundingClientRect().right - r.right).toFixed(1),
+			badgeDrawn: mb.getClientRects().length > 0,
+			badge: { w: +r.width.toFixed(1), h: +r.height.toFixed(1) },
+			// Is the signature row still a row, or has it wrapped?
+			rowH: +rr.height.toFixed(1),
+			// Does the card have to scroll to show it?
+			cardScroll: card.scrollHeight - card.clientHeight,
+			// The two hit areas, which are the point of the artwork being here.
+			hits: [...card.querySelectorAll('.mb-hit')].map(a => {
+				const b = a.getBoundingClientRect();
+				return { name: a.getAttribute('aria-label'), w: Math.round(b.width), x: Math.round(b.x) };
+			}),
 		};
 	});
 	console.log(`${String(w).padStart(5)}px  ${JSON.stringify(fit)}`);
 }
 
-await p.setViewportSize({ width: 1400, height: 800 });
+await p.setViewportSize({ width: 1400, height: 900 });
 await p.waitForTimeout(400);
+await openAbout();
 
 // An 8x crop of the badge itself, for the eye: the plate's border is 1px and a
 // clipped edge at 1x is a rumour.
-const badge = await p.$('.made-by');
+const badge = await p.$('.about-card .made-by');
 if (badge) {
 	const b = await badge.boundingBox();
 	await p.screenshot({
@@ -64,14 +87,12 @@ if (badge) {
 // Whether anything above it cuts the badge off, measured the way the sweep does:
 // the painted rectangle against every ancestor that could clip it.
 const m = await p.evaluate(() => {
-	const img = document.querySelector('.made-by img');
-	const wm  = document.querySelector('.brand-wordmark:not([style*="none"])');
+	const img = document.querySelector('.about-card .made-by img');
 	const r   = img.getBoundingClientRect();
 	const out = { badge: { w: r.width, h: r.height }, clippers: [] };
-	const word = [...document.querySelectorAll('.brand-wordmark')]
-		.find(e => getComputedStyle(e).display !== 'none');
+	const word = document.querySelector('.about-card .about-word:not([aria-hidden])');
 	out.wordmark = word ? word.getBoundingClientRect().height : null;
-	out.topbar = document.querySelector('.topbar').getBoundingClientRect().height;
+	out.card = document.querySelector('.about-card').getBoundingClientRect().height;
 	for (let el = img.parentElement; el && el !== document.documentElement; el = el.parentElement) {
 		const cs = getComputedStyle(el);
 		if (cs.overflow === 'visible' && cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
@@ -85,9 +106,6 @@ const m = await p.evaluate(() => {
 			rightroom: +(a.right - r.right).toFixed(2),
 		});
 	}
-	// Does the bar itself still contain it?
-	const bar = document.querySelector('.topbar').getBoundingClientRect();
-	out.inBar = { headroom: +(r.top - bar.top).toFixed(2), footroom: +(bar.bottom - r.bottom).toFixed(2) };
 	return out;
 });
 console.log(JSON.stringify(m, null, 1));

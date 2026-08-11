@@ -92,6 +92,14 @@
 	box-shadow: var(--shadow-2);
 	padding: calc(24px * var(--space-scale));
 }
+/* The About card's splash and its foot rule bleed to the card's edges by
+   cancelling its padding out, so the loosened padding above has to be told to
+   them as well -- `--about-pad` is that number, and it is set here for the same
+   reason the line above it is. A bleed measured against the sharp skin's 24px
+   would hang the picture past the edge of a warm card. `verify_about.mjs`
+   measures the splash against the card's padding box in BOTH skins, so a third
+   skin that changes this fails loudly instead of quietly. */
+:root[data-skin="warm"] .about-card { --about-pad: calc(24px * var(--space-scale)); }
 :root[data-skin="warm"] .pass-gen {
 	padding: calc(12px * var(--space-scale));
 	border-color: transparent;

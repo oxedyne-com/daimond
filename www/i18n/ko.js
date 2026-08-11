@@ -45,9 +45,17 @@
 	'topbar.made_by': 'Oxedyne가 만들었어요',
 	'topbar.made_with_ai': '코드는 대부분 AI로 만들었어요',
 	'topbar.up_to_date':  'Daimond이 최신 상태예요',
+	'topbar.about':       'Daimond 정보',
 	'topbar.guide':       '사용 안내 열기',
 	'topbar.guide_short': '사용 안내',
 	'topbar.appearance':  '모양과 배치',
+
+	// ── 정보 ───────────────────────────────────────────────────
+	// `about.what`은 안내서의 첫 문단이에요. 이미 그렇게 말하고 있으니 표현을
+	// 하나 더 만들지 않아요.
+	'about.title':      'Daimond 정보',
+	'about.splash_alt': '행성의 곡선 위 밤하늘을 날아 다이아몬드로 향하는 사람의 모습.',
+	'about.what':       'Daimond은 온전히 브라우저 안에서 도는 AI 에이전트 작업 공간이에요. 서버에 계정도 없고 설치할 앱도 없어요. 채팅도 키도 파일도 이 기기에만 있어요.',
 
 	// ── 패널 이름 ──────────────────────────────────────────────
 	// 짧게. 칩 줄과 휴대폰 탭 바에 들어가요.

@@ -9458,17 +9458,34 @@ import init, {
 	/// * `body` - An element to put under it.
 	/// * `opts.onDelete` - Async; called after the dialog closes. Omit for no Delete.
 	/// * `opts.deleteLabel` - What the destructive button says.
+	/// * `opts.hero` - An element ABOVE the heading, for a dialog that leads with
+	///   artwork rather than with words.
+	/// * `opts.quietTitle` - Draw no heading. The title still names the dialog to
+	///   the accessibility tree; it is only the pixels that go. For a dialog whose
+	///   artwork already says what it is, where a heading repeating it is furniture.
+	/// * `opts.cardClass` - An extra class on the card, for a dialog with a shape
+	///   of its own.
 	function openBodyDialog(title, body, opts) {
 		opts = opts || {};
 		var back = document.createElement('div');
 		back.className = 'modal dlg tile-dlg';
 		var card = document.createElement('div');
-		card.className = 'modal-card dlg-card tile-dlg-card';
+		card.className = 'modal-card dlg-card tile-dlg-card' + (opts.cardClass ? ' ' + opts.cardClass : '');
 		card.setAttribute('role', 'dialog');
 		card.setAttribute('aria-modal', 'true');
+		if (opts.hero) card.appendChild(opts.hero);
 		var h = document.createElement('h2');
-		h.textContent = title || '';
+		// Marked, not merely set, exactly as `dialog()` marks its own -- this
+		// helper is handed FINISHED strings, so nothing else in the app knows what
+		// key to repaint it from, and a dialog left open while the language changes
+		// stayed in the language it was opened in. `mark` looks the key up from the
+		// words, so a title that is CONTENT rather than a table string (a mailbox
+		// address, an object's name) is set and left unmarked, which is right.
+		mark(h, '', title || '');
 		h.id = 'body-dlg-h-' + (++_tileDlgSeq);
+		// Clipped, not `display: none`: a heading taken out of the pixels must stay
+		// in the accessibility tree, because it is what `aria-labelledby` points at.
+		if (opts.quietTitle) h.className = 'vh';
 		card.setAttribute('aria-labelledby', h.id);
 		card.appendChild(h);
 		if (body) card.appendChild(body);
@@ -9480,13 +9497,13 @@ import init, {
 			del = document.createElement('button');
 			del.type = 'button';
 			del.className = 'dlg-ok danger tile-dlg-delete';
-			del.textContent = opts.deleteLabel || t('tile.dlg_delete');
+			mark(del, '', opts.deleteLabel || t('tile.dlg_delete'));
 			row.appendChild(del);
 		}
 		var done = document.createElement('button');
 		done.type = 'button';
 		done.className = 'modal-close dlg-cancel tile-dlg-done';
-		done.textContent = opts.okLabel || t('dlg.done');
+		mark(done, '', opts.okLabel || t('dlg.done'));
 		row.appendChild(done);
 		card.appendChild(row);
 		back.appendChild(card);
@@ -9518,6 +9535,143 @@ import init, {
 				await opts.onDelete();
 			});
 			done.focus();
+		});
+	}
+
+	// ── About ──────────────────────────────────────────────────
+	//
+	// Inkscape's shape, which is the one the user asked for: the splash artwork
+	// takes the top of the card and reaches its edges, the app's identity sits
+	// under it, and the small print is a quiet row along the foot.
+	//
+	// It is built on `openBodyDialog` and not on a modal of its own, so Escape,
+	// the backdrop, the focus trap and the return of focus to whatever opened it
+	// are the ones every other dialog in the app already has. A second modal
+	// written for one screen is a second modal to fix every time the first one
+	// is.
+	//
+	// The maker's badge is HERE rather than in the top bar because that is where
+	// its two claims can be read. In the bar it was a 36px lozenge with two
+	// invisible hit areas laid over it — a signature nobody could parse, dropped
+	// entirely on a phone for want of room. In the foot of this dialog each claim
+	// keeps its own hit area, its own name and its own destination, and the phone
+	// gets them too.
+
+	/// The maker's badge: one artwork, two claims, two links.
+	///
+	/// The artwork is a single file with no ids to hook, so the halves are laid
+	/// OVER it at 50% rather than cut out of it — see `verify_badge.mjs`, which
+	/// measures where the two marks actually sit and fails if the split stops
+	/// falling in the gap between them.
+	function makerBadge() {
+		var span = document.createElement('span');
+		span.className = 'made-by';
+		var img = document.createElement('img');
+		img.src = 'assets/made_by_oxedyne.svg';
+		img.alt = '';                       // the two links below carry the words
+		img.setAttribute('aria-hidden', 'true');
+		span.appendChild(img);
+		// Two separate claims, so two separate hit areas: the Oxedyne flame leads
+		// to Oxedyne, and the AI-disclosure chip leads to the mark it is claiming,
+		// at need2know.ai, where the disclosure is defined rather than merely
+		// asserted. `noopener noreferrer` on both — an external target gets no
+		// handle on this window and no referrer off it.
+		[
+			['mb-oxedyne', 'https://oxedyne.com', 'topbar.made_by'],
+			['mb-ai', 'https://need2know.ai/mostly-ai/code', 'topbar.made_with_ai'],
+		].forEach(function (spec) {
+			var a = document.createElement('a');
+			a.className = 'mb-hit ' + spec[0];
+			a.href = spec[1];
+			a.target = '_blank';
+			a.rel = 'noopener noreferrer';
+			DaimondI18n.bind(a, 'title', spec[2]);
+			DaimondI18n.bind(a, 'aria-label', spec[2]);
+			span.appendChild(a);
+		});
+		return span;
+	}
+
+	/// The About dialog.
+	///
+	/// Opened by the header's "i", which stands where the badge used to.
+	function openAbout() {
+		// ── The artwork, above the heading. The website's splash, copied into
+		// `www/assets` so the app carries its own asset; it is fixed-colour and
+		// brings its own black ground, so it takes no theme treatment and looks
+		// the same on every palette.
+		var hero = document.createElement('img');
+		hero.className = 'about-splash';
+		hero.src = 'assets/splash.svg';
+		DaimondI18n.bind(hero, 'alt', 'about.splash_alt');
+
+		var body = document.createElement('div');
+		body.className = 'about-body';
+
+		// ── The identity. A wordmark rather than the word, because the app's name
+		// is drawn and not typed — the same asset the top bar and the unlock screen
+		// use, in the same light/dark pair, because unlike the splash it IS palette
+		// artwork and would vanish on the wrong ground.
+		var id = document.createElement('div');
+		id.className = 'about-id';
+		[['wm-on-dark', 'daimond_word.svg'], ['wm-on-light', 'daimond_word_dark.svg']].forEach(function (w) {
+			var wm = document.createElement('img');
+			wm.className = 'about-word brand-wordmark ' + w[0];
+			wm.src = 'assets/' + w[1];
+			// One of the pair is drawn and the other is not; only the drawn one may
+			// speak, or a reader meets the app's name twice.
+			if (w[0] === 'wm-on-dark') wm.alt = 'Daimond';
+			else { wm.alt = ''; wm.setAttribute('aria-hidden', 'true'); }
+			id.appendChild(wm);
+		});
+		body.appendChild(id);
+
+		// ── What it is. The guide's opening paragraph, which is the house voice
+		// and already says it: no second description to drift from the first.
+		var said = document.createElement('p');
+		said.className = 'about-said';
+		DaimondI18n.bind(said, '', 'about.what');
+		body.appendChild(said);
+
+		// ── The build, shown the way the rail's status panel shows it: the version
+		// row's words, the id in the mono face, and the app's one copy button
+		// beside it. `buildId()` is what THIS TAB is running.
+		var ver = document.createElement('div');
+		ver.className = 'about-ver';
+		var vlabel = document.createElement('span');
+		vlabel.className = 'about-ver-label';
+		DaimondI18n.bind(vlabel, '', 'rel.version');
+		var vid = document.createElement('code');
+		vid.className = 'about-build';
+		var known = buildId();
+		vid.textContent = known;
+		ver.appendChild(vlabel);
+		ver.appendChild(vid);
+		ver.appendChild(idCopyBtn(tOr('copy.what_build', 'the build id'), function () { return vid.textContent; }));
+		body.appendChild(ver);
+		// Nothing has read `build.json` on a first boot, and the release log is
+		// fetched later still — so an empty id is asked for directly rather than
+		// leaving a blank line where the version belongs.
+		if (!known) {
+			fetch('build.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+				.then(function (j) { if (j && j.build) vid.textContent = j.build; })
+				.catch(function () { /* an unstamped dev tree has no build id to show */ });
+		}
+
+		// ── The small print: who made it, and how. A quiet row along the foot,
+		// under a rule, because it is a signature and not a feature.
+		var foot = document.createElement('div');
+		foot.className = 'about-maker';
+		foot.appendChild(makerBadge());
+		body.appendChild(foot);
+
+		// The heading is drawn by the artwork and the wordmark, so it is not drawn
+		// again in words — but it still names the dialog to a screen reader.
+		return openBodyDialog(t('about.title'), body, {
+			hero:       hero,
+			quietTitle: true,
+			cardClass:  'about-card',
+			okLabel:    t('common.close'),
 		});
 	}
 
@@ -24312,6 +24466,11 @@ import init, {
 		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide();
 		else window.open('guide/', '_blank');       // no web module: the guide still stands alone
 	});
+
+	// About: what this is, which build you are running, and who made it. It sits
+	// beside the guide because the two are the same kind of question.
+	var aboutBtn = document.getElementById('about-btn');
+	if (aboutBtn) aboutBtn.addEventListener('click', function () { openAbout(); });
 	document.getElementById('byok-save').addEventListener('click', async function () {
 		var next = {
 			baseUrl: document.getElementById('cfg-base-url').value.trim(),

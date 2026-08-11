@@ -123,31 +123,27 @@
 				<svg class="ic ic-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 				<svg class="ic ic-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
 			</button>
-			<!-- Who made it, and how. Two marks in one plate: the Oxedyne flame on
-			     the left, the AI-disclosure chip on the right. They are separate
-			     claims and get separate hit areas — the flame leads to Oxedyne, and
-			     the chip now leads to the mark it is claiming, at need2know.ai,
-			     which is where the disclosure is defined rather than merely
-			     asserted. Both open in a new tab and both carry
-			     rel="noopener noreferrer": an external target gets no handle on
-			     this window and no referrer off it.
+			<!-- About, in the slot the maker's badge held. The badge said who made
+			     Daimond and how, in a 36px lozenge with two invisible hit areas
+			     over it: two claims that nobody could read and that a phone dropped
+			     entirely. Both survive, in the dialog this opens, where each has
+			     room to be a sentence.
 
-			     It sits at this end of the bar, in the place the README link held:
-			     a signature belongs where the maker's other marks are, not wedged
-			     against the product's own wordmark where two logos read as one.
-
-			     The artwork is one file with no ids to hook, so the halves are laid
-			     over it rather than cut out of it. The badge carries its own plate,
-			     so unlike the wordmark it needs no light/dark twin. -->
-			<span class="made-by">
-				<img src="assets/made_by_oxedyne.svg" alt="" aria-hidden="true">
-				<a class="mb-hit mb-oxedyne" href="https://oxedyne.com" target="_blank" rel="noopener noreferrer"
-					title="Made by Oxedyne" aria-label="Made by Oxedyne"
-					data-i18n-title="topbar.made_by" data-i18n-aria-label="topbar.made_by"></a>
-				<a class="mb-hit mb-ai" href="https://need2know.ai/mostly-ai/code" target="_blank" rel="noopener noreferrer"
-					title="Code made with mostly AI" aria-label="Code made with mostly AI"
-					data-i18n-title="topbar.made_with_ai" data-i18n-aria-label="topbar.made_with_ai"></a>
-			</span>
+			     The glyph is an "i" in a circle, which is what "about" is drawn as
+			     everywhere. The guide button beside it is a "?" in a circle, so the
+			     two are deliberately separated by where the dot sits: the "i" wears
+			     its dot on TOP of the stem, the "?" underneath its hook. Two
+			     buttons in one row that read the same are two buttons that do the
+			     same thing, as far as the user is concerned. -->
+			<button class="icon-btn" id="about-btn" title="About Daimond" aria-label="About Daimond"
+				data-i18n-title="topbar.about" data-i18n-aria-label="topbar.about">
+				<!-- The dot is r=1.2 and not the "?"'s r=0.6, and the stem starts 2.4
+				     units below it. At 18px that is the difference between a dotted
+				     "i" and a plain vertical bar: 8x crops of both glyphs were read
+				     side by side, and the first attempt's r=0.6 dot merged into the
+				     stem at every size the bar draws. -->
+				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11.6v5"/></svg>
+			</button>
 			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide" data-i18n-title="topbar.guide" data-i18n-aria-label="topbar.guide_short">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
 			</button>

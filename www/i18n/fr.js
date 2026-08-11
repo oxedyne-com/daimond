@@ -39,9 +39,17 @@
 	'topbar.made_by': 'Réalisé par Oxedyne',
 	'topbar.made_with_ai': 'Code réalisé surtout avec de l’IA',
 	'topbar.up_to_date': 'Daimond est à jour',
+	'topbar.about': 'À propos de Daimond',
 	'topbar.guide': 'Ouvrir le guide d’utilisation',
 	'topbar.guide_short': 'Guide',
 	'topbar.appearance': 'Apparence et disposition',
+
+	// ── À propos ───────────────────────────────────────────────
+	// `about.what` est le paragraphe d’ouverture du guide : il le dit déjà, et
+	// une seconde formulation serait une seconde à tenir à jour.
+	'about.title': 'À propos de Daimond',
+	'about.splash_alt': 'Une silhouette vole dans la nuit vers un diamant, au-dessus de la courbe d’une planète.',
+	'about.what': 'Daimond est un espace de travail à agents IA qui fonctionne entièrement dans votre navigateur. Il n’y a pas de compte sur un serveur ni d’application à installer : vos chats, vos clés et vos fichiers ne vivent que sur cet appareil.',
 
 	// ── Panel names ────────────────────────────────────────────
 	'panel.rail': 'Diamonds',

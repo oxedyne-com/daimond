@@ -221,6 +221,21 @@ const DIALOGS = [
 		escape: true,
 	},
 	{
+		// About: the splash, the wordmark, the build and the maker's badge. It is
+		// `openBodyDialog` with a hero above the heading, so it inherits this
+		// file's subject matter rather than reimplementing it — which is the
+		// reason to check it here rather than trusting that it does.
+		name:   'About',
+		open:   { connect: false },
+		reach:  async (page) => {
+			await press(page, '#about-btn');
+			await page.waitForSelector('.about-card', { timeout: 8000 });
+		},
+		sel:    '.about-card',
+		close:  '.about-card .tile-dlg-done',
+		escape: true,
+	},
+	{
 		name:   'Appearance menu',
 		open:   { connect: false },
 		reach:  async (page) => {
