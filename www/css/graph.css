@@ -425,3 +425,10 @@
 	gap: 6px;
 	margin-top: 10px;
 }
+
+/* The link editor's title row: the pair being linked, and the way out. The head
+   ellipsises rather than pushing the cross off the end of a 260px box, which is
+   what `min-width: 0` on a flex child is for. The row carries the space the head
+   used to carry itself. */
+.graph-edit-top { margin-bottom: 8px; }
+.graph-edit-top .graph-edit-head { margin-bottom: 0; min-width: 0; }

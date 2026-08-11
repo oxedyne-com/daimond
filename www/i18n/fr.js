@@ -12,6 +12,11 @@
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Fermer',
+	'common.close_named': 'Fermer {name}',
+	'admin.close_drawer': 'Fermer le panneau Admin',
+	'rail.close_rail': 'Fermer le panneau Diamonds',
+	'sheet.close': 'Fermer la feuille',
+	'pal.close': 'Fermer la boîte Aller à',
 	'common.dismiss': 'Fermer',
 	'agents.read': 'Lire',
 	'common.close_panel': 'Fermer le panneau',
@@ -509,7 +514,6 @@
 	'pair.link_this': 'Associer cet appareil',
 	'pair.have_code': 'Vous avez un code d’association ?',
 	'pair.making_code': 'Création d’un code à usage unique…',
-	'pair.done': 'Terminé',
 	'pair.scan_lead': 'Sur votre autre téléphone, visez ceci avec l’appareil photo pour ouvrir Daimond et l’associer :',
 	'pair.no_camera': 'Pas d’appareil photo ? Ouvrez Daimond là-bas, choisissez « Vous avez un code d’association ? », et saisissez :',
 	'pair.type_lead': 'Sur votre autre appareil, ouvrez Daimond, choisissez « Vous avez un code d’association ? », et saisissez :',

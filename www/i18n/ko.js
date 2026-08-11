@@ -17,6 +17,11 @@
 
 	// ── 공통 낱말 ──────────────────────────────────────────────
 	'common.close':        '닫기',
+	'common.close_named':  '{name} 닫기',
+	'admin.close_drawer':  '관리 패널 닫기',
+	'rail.close_rail':     'Diamonds 패널 닫기',
+	'sheet.close':         '시트 닫기',
+	'pal.close':           '이동 상자 닫기',
 	'common.dismiss': '닫기',
 	'agents.read': '읽기',
 	'common.close_panel':  '패널 닫기',
@@ -652,7 +657,6 @@
 	'pair.link_this':     '이 기기 연결',
 	'pair.have_code':     '페어링 코드가 있나요?',
 	'pair.making_code':   '한 번만 쓰는 코드를 만드는 중…',
-	'pair.done':          '완료',
 	'pair.scan_lead':     '다른 휴대폰의 카메라를 여기에 대면 Daimond이 열리고 연결돼요:',
 	'pair.no_camera':     '카메라가 없나요? 그 기기에서 Daimond을 열고 “페어링 코드가 있나요?”를 고른 다음, 이것을 입력하세요:',
 	'pair.type_lead':     '다른 기기에서 Daimond을 열고 “페어링 코드가 있나요?”를 고른 다음, 이것을 입력하세요:',

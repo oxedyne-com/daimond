@@ -12,6 +12,11 @@
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Fechar',
+	'common.close_named': 'Fechar {name}',
+	'admin.close_drawer': 'Fechar o painel Admin',
+	'rail.close_rail': 'Fechar o painel Diamonds',
+	'sheet.close': 'Fechar a folha',
+	'pal.close': 'Fechar a caixa Ir para',
 	'common.dismiss': 'Dispensar',
 	'agents.read': 'Ler',
 	'common.close_panel': 'Fechar painel',
@@ -505,7 +510,6 @@
 	'pair.link_this': 'Vincular este dispositivo',
 	'pair.have_code': 'Tem um código de pareamento?',
 	'pair.making_code': 'Criando um código de uso único…',
-	'pair.done': 'Pronto',
 	'pair.scan_lead': 'No seu outro celular, aponte a câmera para isto para abrir o Daimond e vinculá-lo:',
 	'pair.no_camera': 'Sem câmera? Abra o Daimond lá, escolha “Tem um código de pareamento?” e digite:',
 	'pair.type_lead': 'No seu outro dispositivo, abra o Daimond, escolha “Tem um código de pareamento?” e digite:',

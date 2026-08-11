@@ -170,7 +170,7 @@ const DIALOGS = [
 			await page.waitForTimeout(600);
 		},
 		sel:   '.pair-box',
-		close: { label: 'Done', in: '.pair-scrim' },
+		close: '.pair-box .ui-close',
 		trap:  true,
 	},
 	{

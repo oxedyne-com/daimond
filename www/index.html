@@ -173,9 +173,17 @@
 	     the visible surfaces be selective. -->
 	<div class="pal-scrim" id="palette" hidden>
 		<div class="pal-box" role="dialog" aria-modal="true" aria-label="Go to" data-i18n-aria-label="pal.title">
-			<input class="pal-input" id="pal-input" type="text" role="combobox" autocomplete="off"
-				aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list"
-				placeholder="Go to a panel, or a setting…" data-i18n-placeholder="pal.placeholder">
+			<!-- The search box and the way out, on one row. The palette is opened
+			     with a key and was closed with one, which is right for the hands
+			     that summoned it and no help at all to a thumb: on a phone the box
+			     is 358px of a 390px screen. -->
+			<div class="pal-top">
+				<input class="pal-input" id="pal-input" type="text" role="combobox" autocomplete="off"
+					aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list"
+					placeholder="Go to a panel, or a setting…" data-i18n-placeholder="pal.placeholder">
+				<button class="ui-close pal-close" id="pal-close" type="button" title="Close"
+					aria-label="Close Go to" data-i18n-title="common.close" data-i18n-aria-label="pal.close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+			</div>
 			<ul class="pal-list" id="pal-list" role="listbox" aria-label="Results" data-i18n-aria-label="pal.results"></ul>
 		</div>
 	</div>
@@ -212,7 +220,8 @@
 					     the same scope. `data-close` and the classes are unchanged; the
 					     handler in daimond.js binds by `[data-close]` and does not care
 					     where the button sits. -->
-					<button class="addbtn panel-close" data-close="rail" title="Close panel" data-i18n-title="common.close_panel">
+					<button class="addbtn panel-close ui-close" data-close="rail" title="Close panel"
+						aria-label="Close Diamonds" data-i18n-title="common.close_panel" data-i18n-aria-label="rail.close_rail">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
@@ -330,7 +339,13 @@
 				<div class="admin-body" id="admin-body">
 					<div class="admin-drawer-head">
 						<span class="admin-title" id="admin-drawer-title">Admin</span>
-						<button class="admin-back" id="admin-close" title="Close" data-i18n-title="common.close">×</button>
+						<!-- The drawn cross, not the '×' character: a glyph's ink is not
+						     centred in its own em box and which box it gets depends on
+						     whichever font the platform found it in. `.ui-close` carries
+						     the shape and the 44px thumb floor; `.admin-back` stays as the
+						     hook the drawer's own rules and two verifiers reach for. -->
+						<button class="admin-back ui-close" id="admin-close" title="Close" aria-label="Close the Admin panel"
+							data-i18n-title="common.close" data-i18n-aria-label="admin.close_drawer"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 					</div>
 					<div class="admin-scroll" id="admin-scroll">
 
@@ -981,7 +996,12 @@
 	<div class="msheet-grab" id="msheet-grab">
 		<span class="msheet-bar" aria-hidden="true"></span>
 		<span class="msheet-title" id="msheet-title"></span>
-		<button class="msheet-close" id="msheet-close" title="Close" aria-label="Close" data-i18n-title="common.close" data-i18n-aria-label="common.close">✕</button>
+		<!-- Drawn, like every other closer in the app. The '✕' character it used to
+		     carry sat wherever the platform's fallback font put it, and the sheet
+		     is the one surface where the closer is the only way out that does not
+		     need a drag. -->
+		<button class="msheet-close ui-close" id="msheet-close" title="Close" aria-label="Close the sheet"
+			data-i18n-title="common.close" data-i18n-aria-label="sheet.close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 	</div>
 	<div class="msheet-scroll" id="msheet-body"></div>
 	<div class="msheet-ask" id="msheet-ask">
@@ -1071,6 +1091,10 @@
      immediately, because it is both the baseline and the fallback. -->
 <script src="js/i18n.js"></script>
 <script src="i18n/en.js"></script>
+<!-- closer.js right after the words it uses: it builds the one cross every
+     dialog, popover, drawer and sheet wears, and it is loaded before ANY of
+     them so a classic script and the wasm module can both reach for it. -->
+<script src="js/closer.js"></script>
 <!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
      ready before the first turn. -->
 <script src="js/journal.js"></script>

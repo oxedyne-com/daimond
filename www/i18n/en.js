@@ -23,6 +23,13 @@
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close':        'Close',
+	// The spoken name of a closer, so a reader hears which of the app's
+	// crosses this is rather than a fourth button called Close.
+	'common.close_named':  'Close {name}',
+	'admin.close_drawer':  'Close the Admin panel',
+	'rail.close_rail':     'Close the Diamonds panel',
+	'sheet.close':         'Close the sheet',
+	'pal.close':           'Close the Go to box',
 	'common.dismiss': 'Dismiss',
 	'agents.read': 'Read',
 	'common.close_panel':  'Close panel',
@@ -990,7 +997,6 @@
 	'pair.link_this':     'Link this device',
 	'pair.have_code':     'Have a pairing code?',
 	'pair.making_code':   'Making a one-time code…',
-	'pair.done':          'Done',
 	'pair.scan_lead':     'On your other phone, point its camera at this to open Daimond and link it:',
 	'pair.no_camera':     'No camera? Open Daimond there, choose “Have a pairing code?”, and enter:',
 	'pair.type_lead':     'On your other device, open Daimond, choose “Have a pairing code?”, and enter:',

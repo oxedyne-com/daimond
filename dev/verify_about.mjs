@@ -613,7 +613,7 @@ try {
 			said:  (c.querySelector('.about-said').textContent || '').trim(),
 			alt:   c.querySelector('.about-splash').getAttribute('alt') || '',
 			label: (c.querySelector('.about-ver-label').textContent || '').trim(),
-			close: (c.querySelector('.tile-dlg-done').textContent || '').trim(),
+			close: c.querySelector('.tile-dlg-done').title || '',
 			links: [...c.querySelectorAll('a[href]')].map(a => a.getAttribute('aria-label') || ''),
 		};
 	});
@@ -653,7 +653,7 @@ try {
 			said:  c ? (c.querySelector('.about-said').textContent || '').trim() : '',
 			alt:   c ? (c.querySelector('.about-splash').getAttribute('alt') || '') : '',
 			label: c ? (c.querySelector('.about-ver-label').textContent || '').trim() : '',
-			close: c ? (c.querySelector('.tile-dlg-done').textContent || '').trim() : '',
+			close: c ? (c.querySelector('.tile-dlg-done').title || '') : '',
 			links: c ? [...c.querySelectorAll('a[href]')].map(a => a.getAttribute('aria-label') || '') : [],
 			fr,
 		};

@@ -15,6 +15,11 @@
 
 	// ── 共通の語 ───────────────────────────────────────────────
 	'common.close':        '閉じる',
+	'common.close_named':  '{name}を閉じる',
+	'admin.close_drawer':  '管理パネルを閉じる',
+	'rail.close_rail':     'Diamonds パネルを閉じる',
+	'sheet.close':         'シートを閉じる',
+	'pal.close':           '移動ボックスを閉じる',
 	'common.dismiss': '閉じる',
 	'agents.read': '読む',
 	'common.close_panel':  'パネルを閉じる',
@@ -651,7 +656,6 @@
 	'pair.link_this':     'この端末をリンク',
 	'pair.have_code':     'ペアリングコードをお持ちですか？',
 	'pair.making_code':   '使い捨てのコードを作成中…',
-	'pair.done':          '完了',
 	'pair.scan_lead':     'もう一方のスマートフォンのカメラをこれに向けると、Daimond が開いてリンクされます：',
 	'pair.no_camera':     'カメラがありませんか。そちらで Daimond を開き、「ペアリングコードをお持ちですか？」を選んで次を入力してください：',
 	'pair.type_lead':     'もう一方の端末で Daimond を開き、「ペアリングコードをお持ちですか？」を選んで次を入力してください：',

@@ -238,6 +238,22 @@
 		return e;
 	}
 
+	/// The title row for one of the three surfaces this file puts over the app.
+	///
+	/// They were dismissible by Escape and by a click outside, and by nothing
+	/// else. On a 390px phone the appearance menu is 359px wide: nineteen pixels
+	/// of screen either side is not a way out, and it is what the user reported.
+	/// The row also gives the popover a NAME on screen — until now it was
+	/// identified only by the button that opened it, which on a phone is behind
+	/// it.
+	///
+	/// Falls back to a bare row if closer.js is somehow absent, rather than
+	/// throwing and taking the whole popover with it.
+	function closerHead(title, onClose) {
+		if (window.DaimondCloser) return DaimondCloser.head(title, { onClose: onClose });
+		return el('div', 'ui-head', title);
+	}
+
 	// ── The gallery: every panel there is, searchable ────────────────────
 
 	var galEl, galQuery = '';
@@ -247,6 +263,8 @@
 		if (!galEl) return;
 		var model = P().model();
 		galEl.innerHTML = '';
+
+		galEl.appendChild(closerHead(t('gallery.title'), closeGallery));
 
 		var input = document.createElement('input');
 		input.className = 'gal-search';
@@ -353,6 +371,7 @@
 		menuEl = menuEl || document.getElementById('settings-menu');
 		if (!menuEl) return;
 		menuEl.innerHTML = '';
+		menuEl.appendChild(closerHead(t('topbar.appearance'), closeMenu));
 		var model = P().model();
 
 		// Spacing -- the overall shape (corners, typeface, room between things),
@@ -597,7 +616,10 @@
 		renderMenu();
 		openPop(menuEl, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
-		var first = menuEl.querySelector('button');
+		// The first SETTING, not the closer. The closer is first in the document
+		// now, and landing the keyboard on Close would offer the way out before
+		// the thing itself.
+		var first = menuEl.querySelector('button:not(.ui-close)');
 		if (first) first.focus();
 	}
 
@@ -835,6 +857,8 @@
 			});
 		}
 		if (palEl) palEl.addEventListener('mousedown', function (e) { if (e.target === palEl) closePalette(); });
+		var palX = document.getElementById('pal-close');
+		if (palX) palX.addEventListener('click', function (e) { e.preventDefault(); closePalette(); });
 
 		document.addEventListener('keydown', function (e) {
 			// Ctrl/Cmd-K is the convention users arrive already knowing, and it is

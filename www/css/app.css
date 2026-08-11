@@ -1288,6 +1288,52 @@ span.arte-open { cursor: default; }
 /* ── Mobile nav (hidden on desktop; see responsive.css) ──────── */
 .mnav { display: none; }
 
+/* ── The closer, and the row it sits in ──────────────────────────
+   Built by www/js/closer.js, worn by every dialog, popover, drawer and sheet.
+   One set of rules, because five spellings of one control is how four of them
+   ended up under the thumb's floor.
+
+   28px here and 44px where the pointer is coarse (see responsive.css). The
+   drawn cross keeps `.ic`'s 16px in both: the TARGET is a thumb's and the INK
+   is an eye's, and growing the ink with the box would put a great black X in
+   the corner of every card on a phone.
+
+   In flow, never absolute. `.modal-card` and `.pop` are both `overflow-y:
+   auto`, so an absolutely positioned closer would resolve against the initial
+   containing block -- 4px from the top of the VIEWPORT rather than of the card
+   -- and would stay there while the content scrolled underneath it. */
+.ui-close {
+	flex: none;
+	display: flex; align-items: center; justify-content: center;
+	width: 28px; height: 28px; padding: 0;
+	border: none; border-radius: var(--radius-sm); background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+.ui-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+.ui-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The title row: what the surface is, and the way out beside it. `flex-start`
+   rather than centre, because a long name wraps and would otherwise drag the
+   cross down the side of it. */
+.ui-head {
+	display: flex; align-items: flex-start; justify-content: space-between;
+	gap: 12px; margin-bottom: 10px;
+}
+/* The row carries the space the heading used to carry itself; left on, the
+   heading's margin would open a gap under the cross as well as under the
+   words. */
+.ui-head > :first-child { flex: 1 1 auto; min-width: 0; }
+.ui-head h2 { margin-bottom: 0; overflow-wrap: anywhere; }
+/* A dialog's own heading keeps its type; a popover's title is a label, so it
+   is set like one. Not `.pop-head`, which marks a SECTION inside the popover:
+   a second one of those at the top would read as an empty first section. */
+.ui-head-title {
+	font-size: var(--fs-sm); font-weight: 600;
+	color: var(--text-secondary);
+	overflow-wrap: anywhere;
+}
+.pop > .ui-head { margin-bottom: 4px; padding: 2px 0 2px 6px; }
+
 /* Modal */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .modal-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 400px; max-width: 90vw; max-height: 80vh; overflow-y: auto; }
@@ -1691,7 +1737,30 @@ span.arte-open { cursor: default; }
    changes it (mobile.css drops `.modal-card` to 16px). Two bleeding children
    below cancel that padding out, and a bleed measured against the wrong number
    is a picture hanging over the edge of its card. */
-.about-card { width: 480px; --about-pad: 24px; }
+.about-card { width: 480px; --about-pad: 24px; position: relative; }
+/* The closer, over the splash rather than under it. Every other card in the app
+   puts its cross in a title row above the content; this card's content STARTS
+   with a full-bleed picture, so a row above it would push the artwork off the
+   top edge and a row below it would put the way out halfway down the card.
+   Absolute here and nowhere else: it is positioned against the card, and it
+   scrolls with the picture it sits on, which is the behaviour that made
+   absolute wrong everywhere the content is text.
+
+   The heading in this row is `.vh` -- About is titled by its artwork -- so the
+   row collapses to the cross and needs no width of its own. */
+.about-card > .ui-head {
+	position: absolute; top: 8px; right: 8px; z-index: 1;
+	margin: 0; gap: 0;
+}
+/* The splash brings its own near-black ground, so the muted grey every other
+   closer wears would sink into it. A dark disc under white ink reads on the
+   artwork whatever the palette, because the artwork is fixed-colour too. */
+.about-card > .ui-head .ui-close {
+	background: rgba(0, 0, 0, 0.45);
+	color: #fff;
+	border-radius: 999px;
+}
+.about-card > .ui-head .ui-close:hover { background: rgba(0, 0, 0, 0.7); color: #fff; }
 /* Full bleed. The card pads its contents and the splash is a picture, not a
    paragraph -- a margin round it reads as an accident.
 
@@ -1769,40 +1838,14 @@ span.arte-open { cursor: default; }
 	color: var(--text-muted); margin: 14px 0 6px;
 }
 .tile-dlg-card h2 { margin-bottom: 4px; overflow-wrap: anywhere; }
-/* The title row: the Diamond's name, and the way out. `flex-start` rather than
-   centre, because the name wraps -- a long one would otherwise drag the cross
-   down the side of it. The row carries the space the h2 used to carry itself,
-   so the margin comes off the heading; left on, it would open a gap under the
-   cross as well as under the words. */
-.tile-dlg-title {
-	display: flex; align-items: flex-start; justify-content: space-between;
-	gap: 12px; margin-bottom: 10px;
-}
-.tile-dlg-title h2 { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
-/* The closer. Modelled on `.crystal-reply-x` but IN FLOW, not absolute.
-   `.crystal-reply-x` can be absolute because `.crystal-reply` is
-   `position: relative`; `.modal-card` is not positioned at all, so the same
-   rule here would resolve against the initial containing block -- the cross
-   would be placed 4px from the top of the VIEWPORT rather than of the card, and
-   would stay there while the card's content scrolled underneath it. The card is
-   `overflow-y: auto` and this dialog is long enough to use it.
-   28px square, which clears the 24px target floor without a touch override, and
-   the hover ground and focus ring the app's other quiet closers wear
-   (`.admin-back`). */
-.tile-dlg-x {
-	flex: none;
-	display: flex; align-items: center; justify-content: center;
-	width: 28px; height: 28px; padding: 0;
-	border: none; border-radius: var(--radius-sm); background: none;
-	color: var(--text-muted);
-	cursor: pointer;
-}
-/* No type size here any more: the cross is a drawn path, not a character, so it
-   takes the 16px `.ic` default every other closer in the app takes. The old
-   `font-size`/`line-height` pair existed to give the '×' glyph enough ink, and
-   sized nothing once the glyph went. */
-.tile-dlg-x:hover { color: var(--text-primary); background: var(--bg-hover); }
-.tile-dlg-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The title row -- the Diamond's name, and the way out -- is `.ui-head` now;
+   the element carries both classes so the selectors written against this one
+   keep working. */
+/* The closer. Its shape, its hover ground, its focus ring and its touch floor
+   are all `.ui-close` now — this dialog was where the app's cross was worked
+   out, and the rest of the app has since caught up with it. The class survives
+   as the hook `shot_tiledlg` reaches for and as the place to say anything true
+   of THIS cross alone. */
 .tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
 .tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
 .tile-dlg-seg { display: flex; gap: 6px; }

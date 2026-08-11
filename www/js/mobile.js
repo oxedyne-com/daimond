@@ -46,6 +46,10 @@
 	var guest = null;			// the panel id currently in the sheet, or null
 	var detent = 'half';		// full | half | peek
 	var closing = false;		// re-entrancy guard against DaimondPanels.hide
+	// What had the keyboard when the sheet went up, so the sheet can give it
+	// back. Without this a dismissal dropped focus on the document body and the
+	// next Tab started again from the top of the app.
+	var opener = null;
 
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
@@ -116,6 +120,10 @@
 		var el = document.getElementById('panel-' + id);
 		if (!el) return;
 		if (guest && guest !== id) stashBack();		// only one thing up at a time
+		// Captured before anything in the sheet takes the keyboard, and only on
+		// the FIRST raise: swapping one guest for another must not make the
+		// outgoing guest the thing focus goes home to.
+		if (!guest) opener = document.activeElement;
 		el.style.display = '';						// clear any inline none left by apply()
 		bodyEl.appendChild(el);
 		guest = id;
@@ -149,6 +157,12 @@
 		document.body.classList.remove('sheet-open');
 		sheetEl.classList.remove('open');		// slides down (transform), then rests
 		applyH(0);
+		// Give the keyboard back to whatever raised the sheet, if it is still on
+		// screen — a panel that redrew underneath may have taken it with it.
+		if (opener && opener.focus && opener.getClientRects && opener.getClientRects().length) {
+			try { opener.focus(); } catch (e) { /* gone with the redraw */ }
+		}
+		opener = null;
 	}
 
 	/// A user dismissal: tear the sheet down AND tell the engine the panel
@@ -248,10 +262,50 @@
 			if (e.target.closest('.session-box, .diamond-box')) closeDrawer();
 		});
 
+		// The rail's own closer, which responsive.css leaves on screen here alone
+		// (see the note beside `.panel.rail .panel-close`). On a desktop it hides
+		// the rail panel; on a phone the rail IS the drawer, so it closes the
+		// drawer instead — a cross closes the ONE thing it sits on, and here that
+		// thing is the drawer.
+		//
+		// Caught in the CAPTURE phase and stopped, because the panel engine binds
+		// every `[data-close]` on the bubble: left to reach it, `hide('rail')`
+		// would set `display: none` on the drawer, and the hamburger — which only
+		// toggles `body.drawer-open` — would then open nothing at all.
+		if (rail) rail.addEventListener('click', function (e) {
+			var b = e.target.closest && e.target.closest('.panel-close');
+			if (!b || !isPhone()) return;
+			e.stopPropagation();
+			e.preventDefault();
+			closeDrawer();
+			var burger2 = document.getElementById('drawer-btn');
+			// The keyboard goes back to what opened the drawer.
+			if (burger2) { try { burger2.focus(); } catch (x) { /* not on screen */ } }
+		}, true);
+
 		// A left-edge swipe opens the drawer; a swipe on the open drawer's
 		// scrim is caught by the scrim tap. Gesture, always paired with the
 		// visible hamburger — never gesture-only.
 		bindEdgeSwipe();
+
+		// Escape, which neither of these two answered. They are the only surfaces
+		// in the app that cover it and had no key out at all — a phone shell run
+		// on a tablet with a keyboard, or on a desktop narrowed past 760px, left
+		// the keyboard with nothing to press.
+		//
+		// The innermost thing goes first, and a keystroke a dialog has already
+		// dealt with is left alone: the app's dialogs call `preventDefault` on the
+		// Escape they consume, so `defaultPrevented` is how one closed OVER the
+		// sheet avoids taking the sheet down with it.
+		document.addEventListener('keydown', function (e) {
+			if (e.key !== 'Escape' || e.defaultPrevented) return;
+			if (guest) { close(); return; }
+			if (document.body.classList.contains('drawer-open')) {
+				closeDrawer();
+				var burger3 = document.getElementById('drawer-btn');
+				if (burger3) { try { burger3.focus(); } catch (x) { /* not on screen */ } }
+			}
+		});
 
 		// Keep the sheet honest across a keyboard show/hide and rotation.
 		if (window.visualViewport) {

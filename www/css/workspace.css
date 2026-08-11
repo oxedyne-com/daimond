@@ -322,12 +322,20 @@
 	flex-direction: column;
 	max-height: 70vh;
 }
+/* The search box and the closer share a row, so the rule that used to divide
+   the box from the list now divides the ROW from it -- otherwise the cross sat
+   below the line it belongs above. */
+.pal-top {
+	flex: none;
+	display: flex; align-items: center; gap: 4px;
+	padding-right: 8px;
+	border-bottom: 1px solid var(--border);
+}
 .pal-input {
-	width: 100%;
+	flex: 1; min-width: 0;
 	box-sizing: border-box;
 	background: none;
 	border: none;
-	border-bottom: 1px solid var(--border);
 	color: var(--text-primary);
 	font-size: var(--fs-xl);
 	padding: 14px 16px;

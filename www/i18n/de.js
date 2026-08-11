@@ -13,6 +13,11 @@
 
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Schließen',
+	'common.close_named': '{name} schließen',
+	'admin.close_drawer': 'Admin-Bereich schließen',
+	'rail.close_rail': 'Diamonds-Bereich schließen',
+	'sheet.close': 'Blatt schließen',
+	'pal.close': 'Feld „Gehe zu“ schließen',
 	'common.dismiss': 'Schließen',
 	'agents.read': 'Lesen',
 	'common.close_panel': 'Panel schließen',
@@ -508,7 +513,6 @@
 	'pair.link_this': 'Dieses Gerät verknüpfen',
 	'pair.have_code': 'Hast du einen Kopplungscode?',
 	'pair.making_code': 'Einmalcode wird erzeugt…',
-	'pair.done': 'Fertig',
 	'pair.scan_lead': 'Richte die Kamera deines anderen Telefons hierauf, um Daimond dort zu öffnen und zu verknüpfen:',
 	'pair.no_camera': 'Keine Kamera? Öffne Daimond dort, wähle „Hast du einen Kopplungscode?“ und gib ein:',
 	'pair.type_lead': 'Öffne Daimond auf deinem anderen Gerät, wähle „Hast du einen Kopplungscode?“ und gib ein:',

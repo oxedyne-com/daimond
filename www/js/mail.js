@@ -2263,8 +2263,10 @@
 		var body  = settingsBody(address);
 		var title = tf('mail.cfg.title', 'Settings for {address}', { address: address });
 		if (deps && typeof deps.bodyDialog === 'function') {
+			// No Done. Everything in this dialog has already taken effect by the
+			// time you would press it, so the way out is the cross in the corner
+			// and the foot is left to the one act that decides something.
 			return deps.bodyDialog(title, body, {
-				okLabel:     tf('dlg.done', 'Done'),
 				deleteLabel: t('mail.remove_mailbox'),
 				onDelete:    function () { return removeAccount(address); },
 			});

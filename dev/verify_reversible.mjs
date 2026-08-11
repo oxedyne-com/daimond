@@ -150,6 +150,13 @@ const SURFACES = [
 		ready:  '#cp-modal',
 		root:   '#cp-modal',
 		leaves: ['Cancel', 'Change it'],
+		// The app's closer answers to "Close <the thing it closes>" now, not to a
+		// bare "Close": one cross per surface, each named after what it shuts, so
+		// a reader hears which of the app's crosses this is. A closer IS a one-way
+		// door and always was — that is what `leaves` exists to say — so it is
+		// named by the shape of its name rather than by a list that has to be
+		// edited every time a dialog is renamed.
+		leavesRe: [/^Close /],
 	},
 	{
 		name:   'Email panel',
@@ -220,6 +227,13 @@ const SURFACES = [
 		// is, and which is exactly what `leaves` exists to say. Both spellings are
 		// named because the control carries the glyph and the word.
 		leaves: ['Delete', 'Done', 'Close', '✕'],
+		// The app's closer answers to "Close <the thing it closes>" now, not to a
+		// bare "Close": one cross per surface, each named after what it shuts, so
+		// a reader hears which of the app's crosses this is. A closer IS a one-way
+		// door and always was — that is what `leaves` exists to say — so it is
+		// named by the shape of its name rather than by a list that has to be
+		// edited every time a dialog is renamed.
+		leavesRe: [/^Close /],
 	},
 ];
 

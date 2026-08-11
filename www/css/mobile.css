@@ -85,6 +85,27 @@
 	   One column, its natural height, scrolled by the drawer. That is the phone
 	   idiom anyway, and it retires the rail-split handle here: there are no
 	   longer two regions for it to divide. */
+	/* The Admin panel rises from the identity row, which is right on a desktop
+	   where the rail is a full-height column and there is room above it. In the
+	   drawer there is not: at 390x844 the identity row sits ~310px down and the
+	   panel is `min(70vh, 540px)` tall, so it grew UPWARDS off the screen and its
+	   own head -- the title and the × -- landed 214px above the top edge, out of
+	   reach with no way to scroll to it. Measured, not guessed.
+
+	   Pinned to the top of the drawer instead, and capped to the drawer's own
+	   height. The rail carries a `transform`, which makes it the containing block
+	   for a fixed descendant, so these insets resolve against the drawer's
+	   padding box rather than the viewport -- the panel is the drawer's width and
+	   moves in and out with it. */
+	.panel.rail .admin-body {
+		position: fixed;
+		top: 0;
+		bottom: auto;
+		left: 0;
+		right: 0;
+		margin-bottom: 0;
+		max-height: calc(100dvh - 16px - var(--safe-t) - var(--safe-b));
+	}
 	.panel.rail .rail-top { flex: none; overflow: visible; min-height: 0; }
 	.panel.rail .diamond-list,
 	.panel.rail .session-list { overflow: visible; }

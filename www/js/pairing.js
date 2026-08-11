@@ -328,10 +328,25 @@
 		document.addEventListener('keydown', onKey, true);
 		scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
 		build(box, close);
+		// The way out, in the corner. The only pointer dismissal this dialog
+		// offered was a "Done" 64x37 at its foot -- under the thumb's floor, and
+		// at the wrong end of a card that on a phone is 358px of a 390px screen.
+		// The heading is lifted into the closer's row rather than a second title
+		// being invented, so the card still names itself once.
+		if (window.DaimondCloser) {
+			var h3 = box.querySelector('h3');
+			var row = h3
+				? DaimondCloser.head(h3.textContent || '', { titleEl: h3, onClose: close })
+				: DaimondCloser.head('', { name: t('common.close'), onClose: close });
+			box.insertBefore(row, box.firstChild);
+		}
 		document.body.appendChild(scrim);
 		// Once it is in the document and can be focused: the first control in it,
-		// so the keyboard starts inside the thing covering the screen.
-		var f0 = stops()[0];
+		// so the keyboard starts inside the thing covering the screen. Not the
+		// closer, which is first in the document now -- landing on it would offer
+		// the way out before the code the dialog exists to show.
+		var f0 = stops().filter(function (n) { return !n.classList.contains('ui-close'); })[0]
+			|| stops()[0];
 		if (f0) { try { f0.focus(); } catch (e) { /* not focusable */ } }
 		return close;
 	}
@@ -353,12 +368,10 @@
 			box.appendChild(p);
 			var err = el('div', 'pair-err');
 			box.appendChild(err);
-			var row = el('div', 'pair-row');
-			var done = el('button', 'pair-btn ghost', t('pair.done'));
-			done.addEventListener('click', close);
-			row.appendChild(done);
-			box.appendChild(row);
-
+			// No Done at the foot. This dialog shows a code and decides nothing, so
+			// its way out is the cross in the corner -- and the old button was a
+			// 64x37 ghost at the bottom right, below the thumb's floor and at the
+			// far end of a card that fills a phone.
 			create().then(function (res) {
 				// The friction-free path: a QR of the pairing URL that the other
 				// phone's own camera opens. Falls back to the typed code below it

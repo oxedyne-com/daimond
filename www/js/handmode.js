@@ -136,6 +136,12 @@
 
 	function render() {
 		pop.innerHTML = '';
+		// The way out, in the corner every other closer in the app holds. This
+		// popover is 359px wide on a 390px phone and left 8px of screen to its
+		// right to tap: Escape and a click outside are not enough on their own.
+		if (window.DaimondCloser) {
+			pop.appendChild(DaimondCloser.head(t('permmode.title'), { onClose: close }));
+		}
 		var h = document.createElement('div');
 		h.className = 'pop-head';
 		h.textContent = t('permmode.lead');

@@ -15,6 +15,11 @@
 
 	// ── 通用词 ─────────────────────────────────────────────────
 	'common.close':        '关闭',
+	'common.close_named':  '关闭{name}',
+	'admin.close_drawer':  '关闭管理面板',
+	'rail.close_rail':     '关闭 Diamonds 面板',
+	'sheet.close':         '关闭工作表',
+	'pal.close':           '关闭“前往”框',
 	'common.dismiss': '关闭',
 	'agents.read': '阅读',
 	'common.close_panel':  '关闭面板',
@@ -648,7 +653,6 @@
 	'pair.link_this':     '关联这台设备',
 	'pair.have_code':     '有配对码吗？',
 	'pair.making_code':   '正在生成一次性配对码…',
-	'pair.done':          '完成',
 	'pair.scan_lead':     '用你另一部手机的摄像头对准它，就会打开 Daimond 并完成关联：',
 	'pair.no_camera':     '没有摄像头？在那台设备上打开 Daimond，选“有配对码吗？”，然后输入：',
 	'pair.type_lead':     '在你另一台设备上打开 Daimond，选“有配对码吗？”，然后输入：',

@@ -51,6 +51,14 @@
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }
 	.panel-close { display: none !important; }
+	/* Except the RAIL's. Every other panel is a destination reached from the
+	   bottom bar and has nothing to be closed back to, but the rail here is the
+	   DRAWER, and the drawer covers 335 of a 390px screen. Its only dismissals
+	   were a tap on the 55px of scrim beside it and the hamburger — which the
+	   drawer itself is drawn on top of. A surface that big needs a way out on
+	   the surface. The click is caught in mobile.js and closes the drawer, not
+	   the panel. */
+	.panel.rail .panel-close { display: flex !important; }
 	/* The header tags are how a DESKTOP grows its layout; a phone reaches the
 	   rail through the hamburger and raises a thing as a sheet instead. */
 	.panel-tags { display: none !important; }
@@ -143,7 +151,6 @@
 	.astat-id .user-row { padding: 9px 4px; }
 	.astat-id #settings-btn { min-width: 40px; min-height: 40px; }
 	.admin-item { padding-top: 10px; padding-bottom: 10px; }
-	#admin-close { min-width: 40px; min-height: 40px; }
 	.tile-label { padding-top: 6px; padding-bottom: 6px; }
 	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not
 	   a thumb's. */
@@ -175,6 +182,25 @@
 	.tagf-pool, .tagf-active { max-height: calc(6em + 16px); }
 	.addbtn { width: 34px; height: 34px; font-size: var(--fs-xl); }
 	.icon-btn { padding: 8px 10px; font-size: var(--fs-2xl); }
+	/* ── The closer's thumb floor ─────────────────────────────────────────────
+	   Every way out of every dialog, popover, drawer and sheet, at 44x44 — the
+	   iOS Human Interface floor, above the 24px WCAG 2.2 AA one, because this is
+	   the control a user reaches for when they are stuck and there is no second
+	   attempt if they miss it.
+
+	   The BOX grows; the ink does not. `.ic` stays 16px inside it, so a phone
+	   gets a bigger target rather than a bigger cross.
+
+	   This is the user's report answered: on a 390px screen the appearance menu
+	   is 359px wide, which leaves 19px either side to tap and no closer at all.
+	   A margin is not a way out. */
+	.ui-close { width: 44px; height: 44px; }
+	/* The two closers written in static markup, which predate `.ui-close` and
+	   carry it now: the phone sheet's and the admin drawer's. Named as well,
+	   because each also carries a size of its own from the block it was tuned
+	   in and the last rule would otherwise win. */
+	.msheet-close, #admin-close, .admin-back { min-width: 44px; min-height: 44px; }
+
 	/* These named classes that do not exist (`.files-row-del`), so on touch the
 	   file buttons stayed hidden and could not be reached at all. The real class
 	   is `.files-del`, and the file buttons hide with `visibility`, not

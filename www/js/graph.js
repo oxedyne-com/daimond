@@ -1911,8 +1911,21 @@
 
 		var from = isNew ? spec.from : l.from;
 		var to   = isNew ? spec.to   : l.to;
-		editor.appendChild(h('div', 'graph-edit-head',
-			nameOf(from) + ' → ' + nameOf(to)));
+		// The pair being linked, and the way out beside it. Cancel stays at the
+		// foot: it is one half of a decision, not a dismissal, and it sits with
+		// Save and Drop where the decisions are. The cross is what a hand reaches
+		// for to leave a form alone, and on a phone this editor is 260px of a
+		// 390px screen with the Graph panel filling the rest.
+		var head = h('div', 'graph-edit-head', nameOf(from) + ' → ' + nameOf(to));
+		if (window.DaimondCloser) {
+			editor.appendChild(DaimondCloser.head('', {
+				cls: 'graph-edit-top', titleEl: head,
+				name: isNew ? t('graph.new_title') : t('graph.edit_title'),
+				onClose: function () { closeEditor(); },
+			}));
+		} else {
+			editor.appendChild(head);
+		}
 
 		// The relations, as chips. A link used to carry one word in one field; it
 		// carries a set now, and the set is edited the way a Diamond's tags are --

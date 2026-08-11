@@ -5372,6 +5372,36 @@ import init, {
 		return tookFocus(scope);
 	}
 
+	/// One closer, named after what it closes. No handler: the callers below bind
+	/// their own `close`, which is declared after the button is built.
+	function closerFor(name, cls) {
+		if (window.DaimondCloser) return DaimondCloser.make({ name: name, cls: cls });
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'ui-close' + (cls ? ' ' + cls : '');
+		b.innerHTML = CLOSE_SVG;		// trusted markup, built here
+		b.title = t('common.close');
+		b.setAttribute('aria-label', t('common.close_named', { name: name }));
+		return b;
+	}
+
+	/// A dialog's title row: its heading, and the way out beside it.
+	///
+	/// `name` is what the closer says it closes, so a reader hears "Close Change
+	/// passphrase" rather than the fourth button in the app called Close. The
+	/// row is in FLOW, never absolute: `.modal-card` scrolls, and a corner
+	/// pinned to the viewport would slide away from the card under it.
+	function closerRow(titleEl, name, onClose, cls) {
+		if (window.DaimondCloser) {
+			return DaimondCloser.head('', { titleEl: titleEl, name: name, onClose: onClose, closeCls: cls });
+		}
+		// closer.js absent: the heading alone, rather than no dialog at all.
+		var row = document.createElement('div');
+		row.className = 'ui-head';
+		row.appendChild(titleEl);
+		return row;
+	}
+
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
@@ -5392,7 +5422,15 @@ import init, {
 
 			var h = document.createElement('h2');
 			say(h, opts.title || '');
-			card.appendChild(h);
+			// The heading and the way out, on one row. Every kind of dialog this
+			// helper builds already had a Cancel or an OK at its foot, and on a
+			// phone that is a button you scroll to: the confirm that erases an
+			// identity puts its Cancel 214px down a card that is taller than the
+			// screen. The cross does exactly what Cancel and Escape do -- see
+			// `nothing()` -- so a notice, a prompt, a form and a picker all answer
+			// it the same way.
+			card.appendChild(closerRow(h, opts.title || t('common.close'),
+				function () { close(nothing()); }));
 
 			if (opts.message) {
 				var p = document.createElement(opts.pre ? 'pre' : 'p');
@@ -5912,12 +5950,10 @@ import init, {
 				modalHeadEl.className = 'admin-view-head';
 				modalHeadTitle = document.createElement('div');
 				modalHeadTitle.className = 'admin-title';
-				var x = document.createElement('button');
-				x.type = 'button';
-				x.className = 'admin-back';
-				mark(x, 'title', t('common.close'));
-				mark(x, 'aria-label', t('common.close'));
-				x.textContent = '×';
+				// The drawn cross, at the thumb's floor: `closerFor` is the app's one
+				// closer, and `admin-back` rides along as the hook the modal's own
+				// rules reach for.
+				var x = closerFor(t('drawer.admin'), 'admin-back');
 				x.addEventListener('click', function () { (headClose || closeAdmin)(); });
 				modalHeadEl.appendChild(modalHeadTitle);
 				modalHeadEl.appendChild(x);
@@ -5960,6 +5996,8 @@ import init, {
 		/// Bring the Admin drawer into view on `title`. In form mode the drawer's
 		/// own header is hidden, because the form supplies its own. Opening arms the
 		/// click-away close.
+		var drawerOpener = null;		// what to give the keyboard back to
+
 		function showDrawer(title, formMode, key) {
 			if (adminWrap) {
 				adminWrap.classList.add('admin-open');
@@ -5976,6 +6014,11 @@ import init, {
 			}
 			if (!drawerOpen) {
 				drawerOpen = true;
+				// What had the keyboard when the drawer went up, so its closer can
+				// give it back. Only on the way IN: switching from Home to Models is
+				// not a new opening, and taking the reading again there would make
+				// the drawer's own last-clicked row the thing focus went home to.
+				drawerOpener = document.activeElement;
 				// Defer, so the very click that opened the drawer does not close it.
 				setTimeout(function () {
 					if (drawerOpen) document.addEventListener('mousedown', outsideClose, true);
@@ -6015,6 +6058,14 @@ import init, {
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
 			drawerOpen = false;
 			document.removeEventListener('mousedown', outsideClose, true);
+			// The keyboard goes back to whatever opened the drawer -- the identity
+			// row or the cog. Left alone it fell to the document body, and the next
+			// Tab started again from the top of the app.
+			if (drawerOpener && drawerOpener.focus && drawerOpener.getClientRects
+				&& drawerOpener.getClientRects().length) {
+				try { drawerOpener.focus(); } catch (e) { /* gone with the redraw */ }
+			}
+			drawerOpener = null;
 		}
 
 		/// The resting menu, shown IN the open drawer: the account's controls and
@@ -6211,10 +6262,10 @@ import init, {
 				var title = document.createElement('div');
 				title.className = 'admin-title';
 				mark(title, '', opts.title || '');
-				var back = document.createElement('button');
-				back.className = 'admin-back';
+				// The same drawn cross, at the same thumb's floor, as every other
+				// way out in the app. It was a '×' character in a 2x6px box.
+				var back = closerFor(opts.title || t('common.cancel'), 'admin-back');
 				mark(back, 'title', t('common.cancel'));
-				back.textContent = '×';
 				head.appendChild(title);
 				head.appendChild(back);
 				formView.appendChild(head);
@@ -8866,9 +8917,11 @@ import init, {
 		card.setAttribute('role', 'dialog');
 		card.setAttribute('aria-modal', 'true');
 
-		// The title row: the object's name, and the way out beside it.
+		// The title row: the object's name, and the way out beside it. `ui-head`
+		// as well as `tile-dlg-title`, because this row is where the app's title
+		// row was worked out and the rest of the app wears it now.
 		var top = document.createElement('div');
-		top.className = 'tile-dlg-title';
+		top.className = 'tile-dlg-title ui-head';
 		var h = document.createElement('h2');
 		h.textContent = opts.name || t('tile.settings');   // escaped via textContent (H5)
 		// Named by its own heading. `a11y_report.md` §5 counts every dialog in the
@@ -8876,23 +8929,12 @@ import init, {
 		// already on screen and this is what points the tree at them.
 		h.id = 'tile-dlg-h-' + (++_tileDlgSeq);
 		card.setAttribute('aria-labelledby', h.id);
-		var x = document.createElement('button');
-		x.type = 'button';
-		// `tile-dlg-done` as well, because that class has never meant "the button
-		// that says Done" -- it means "the control that finishes with this
-		// dialog", which is what the rest of the app and the escapability checks
-		// reach for. The cross is that control now.
-		x.className = 'tile-dlg-x tile-dlg-done';
-		// The same drawn cross every other closer in the app wears, and not the '×'
-		// character. The button is a flex-centred 28px square, so the BOX was centred
-		// correctly -- but a glyph's ink is not centred within its own em box, and
-		// which box it gets depends on whichever font the platform found it in.
-		// Centre the ink, not the box: a path on the 24-unit grid is centred by
-		// geometry and cannot drift with the font.
-		x.innerHTML = CLOSE_SVG;		// trusted markup, built here
-		x.title = t('common.close');
-		// The visible character is gone, so the spoken name has to come from here.
-		x.setAttribute('aria-label', t('common.close'));
+		// Built by the shared factory, which is where the drawn cross, the spoken
+		// name and the thumb floor now live. `tile-dlg-x` and `tile-dlg-done` ride
+		// along: the second has never meant "the button that says Done" -- it
+		// means "the control that finishes with this dialog", which is what the
+		// rest of the app and the escapability checks reach for.
+		var x = closerFor(opts.name || t('tile.settings'), 'tile-dlg-x tile-dlg-done');
 		top.appendChild(h);
 		top.appendChild(x);
 		card.appendChild(top);
@@ -9737,9 +9779,33 @@ import init, {
 		// in the accessibility tree, because it is what `aria-labelledby` points at.
 		if (opts.quietTitle) h.className = 'vh';
 		card.setAttribute('aria-labelledby', h.id);
-		card.appendChild(h);
+		// The cross, beside the heading, exactly as the tile dialog wears it --
+		// this is the same dialog with a caller-drawn body, and the two must not
+		// offer different ways out. It carries `tile-dlg-done` because that class
+		// has never meant "the button that says Done": it means "the control that
+		// finishes with this dialog", which is what seven verifiers reach for, and
+		// the cross is that control now.
+		//
+		// `close` is declared inside the promise below, so the cross reaches it
+		// through `finish` rather than by name: one dismissal path, not a second
+		// one written out here that could drift from it.
+		var finish = null;
+		card.appendChild(closerRow(h, title || t('common.close'),
+			function () { if (finish) finish(true); }, 'tile-dlg-done'));
 		if (body) card.appendChild(body);
 
+		// The foot holds what the dialog DECIDES, and nothing else.
+		//
+		// It used to end with a full-width Done whatever the caller was doing,
+		// which on About was "a massive close button at the bottom" -- a control
+		// that costs a scroll and a long reach on a phone, takes the room the
+		// content wants, and does exactly what the cross in the corner does. A
+		// dismissal is not a decision and does not belong in the row of decisions.
+		//
+		// `okLabel` is therefore opt-IN and means "this dialog's foot chooses
+		// something": `editLongText` passes Save, because a person who has typed
+		// eight lines of instruction wants to press a word rather than trust a
+		// corner. A caller that only wants out passes nothing.
 		var row = document.createElement('div');
 		row.className = 'dlg-actions tile-dlg-foot';
 		var del = null;
@@ -9750,12 +9816,15 @@ import init, {
 			mark(del, '', opts.deleteLabel || t('tile.dlg_delete'));
 			row.appendChild(del);
 		}
-		var done = document.createElement('button');
-		done.type = 'button';
-		done.className = 'modal-close dlg-cancel tile-dlg-done';
-		mark(done, '', opts.okLabel || t('dlg.done'));
-		row.appendChild(done);
-		card.appendChild(row);
+		var done = null;
+		if (opts.okLabel) {
+			done = document.createElement('button');
+			done.type = 'button';
+			done.className = 'modal-close dlg-cancel';
+			mark(done, '', opts.okLabel);
+			row.appendChild(done);
+		}
+		if (row.children.length) card.appendChild(row);
 		back.appendChild(card);
 		document.body.appendChild(back);
 
@@ -9771,20 +9840,24 @@ import init, {
 				refocus(prev, prevHost);
 				resolve(v);
 			}
+			finish = close;			// the cross above, wired to the one way out
 			function onKey(e) {
 				if (e.key === 'Escape') { e.preventDefault(); close(true); }
 				else if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
 			back.addEventListener('mousedown', function (e) { if (e.target === back) close(true); });
-			done.addEventListener('click', function () { close(true); });
+			if (done) done.addEventListener('click', function () { close(true); });
 			if (del) del.addEventListener('click', async function () {
 				// The dialog goes first: a confirm drawn over its own opener reads as
 				// two modals, and the answer is about the mailbox, not about the dialog.
 				close(false);
 				await opts.onDelete();
 			});
-			done.focus();
+			// The keyboard starts on the foot's decision where there is one, and
+			// otherwise on the cross -- which is the only control the dialog owns,
+			// and is where a keyboard user needs to be able to get to first.
+			(done || card.querySelector('.ui-close')).focus();
 		});
 	}
 
@@ -9917,11 +9990,14 @@ import init, {
 
 		// The heading is drawn by the artwork and the wordmark, so it is not drawn
 		// again in words — but it still names the dialog to a screen reader.
+		// No foot button. About decides nothing, so its whole way out is the cross
+		// in the corner: the full-width Close it shipped with was a control you
+		// scrolled to in order to do what the corner already did, and it took the
+		// room the splash and the signature wanted.
 		return openBodyDialog(t('about.title'), body, {
 			hero:       hero,
 			quietTitle: true,
 			cardClass:  'about-card',
-			okLabel:    t('common.close'),
 		});
 	}
 
@@ -23145,7 +23221,13 @@ import init, {
 
 			var h = document.createElement('h2');
 			h.textContent = t('changepass.title');
-			card.appendChild(h);
+			// This card is 626px tall on a 390px phone and its Cancel is 557px
+			// down it — off the fold, behind a scroll, on the one screen where a
+			// user who opened it by mistake most wants out. `finishCp` is set once
+			// `close` exists below; the cross does what Cancel does.
+			var finishCp = null;
+			card.appendChild(closerRow(h, t('changepass.title'),
+				function () { if (finishCp) finishCp(); }));
 
 			var msg = document.createElement('p');
 			msg.className = 'dlg-msg';
@@ -23280,6 +23362,9 @@ import init, {
 				refocus(prev, prevHost);
 				resolve(value);
 			}
+			// The cross in the title row, wired to the same dismissal Cancel and
+			// Escape use: null, meaning the passphrase was not changed.
+			finishCp = function () { close(null); };
 			function submit() {
 				if (genMode) {
 					if (!ack.checked) {

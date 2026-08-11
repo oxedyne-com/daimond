@@ -114,6 +114,15 @@ export async function open(opts = {}) {
 		// account, and nothing that needs an entitlement (mail, a pack) can be tested
 		// twice: the grant would land on an account the next run does not have.
 		profile   = null,
+		// A TOUCH context: `pointer: coarse` and `any-pointer: coarse` in the media
+		// queries, which is what a tablet reports and what several of the app's
+		// touch-target rules are written against. Without it a 900px window is a
+		// mouse, and a rule that only lifts a control for a finger looks absent.
+		touch     = false,
+		// Called with the page before it is navigated, for a verifier that serves
+		// a damaged file through `page.route`. It has to run BEFORE `goto`, which
+		// is the whole reason it cannot be done by the caller afterwards.
+		route     = null,
 	} = opts;
 
 	const args = ['--no-sandbox', '--disable-dev-shm-usage'];
@@ -151,6 +160,7 @@ export async function open(opts = {}) {
 		args,
 		env,
 		viewport:       { width: 1500, height: 950 },
+		hasTouch:       touch,
 	});
 
 	const page = browser.pages()[0] || await browser.newPage();
@@ -163,6 +173,7 @@ export async function open(opts = {}) {
 	page.on('pageerror', e => errs.push(`pageerror: ${e.message}`));
 	page.on('crash', () => errs.push('PAGE CRASHED'));
 
+	if (route) await route(page);
 	await page.goto(APP, { waitUntil: 'domcontentloaded' });
 
 	const s = { browser, page, errs, logs, name };

@@ -153,7 +153,7 @@ const DIALOGS = [
 			await page.waitForSelector('.pair-scrim', { timeout: 8000 });
 		},
 		sel:    '.pair-scrim',
-		close:  { label: 'Done', in: '.pair-scrim' },
+		close:  '.pair-box .ui-close',
 		escape: true,
 	},
 	{
@@ -164,7 +164,7 @@ const DIALOGS = [
 			await page.waitForSelector('#palette', { state: 'visible', timeout: 8000 });
 		},
 		sel:    '#palette',
-		close:  null,          // it offers none; the check below says so out loud
+		close:  '#pal-close',
 		escape: true,
 	},
 	{
@@ -188,7 +188,7 @@ const DIALOGS = [
 			await page.waitForSelector('#panel-gallery', { state: 'visible', timeout: 8000 });
 		},
 		sel:      '#panel-gallery',
-		close:    null,
+		close:    '#panel-gallery .ui-close',
 		escape:   true,
 		viewport: { width: 900, height: 820 },
 	},
@@ -243,7 +243,7 @@ const DIALOGS = [
 			await page.waitForSelector('#settings-menu', { state: 'visible', timeout: 8000 });
 		},
 		sel:    '#settings-menu',
-		close:  null,
+		close:  '#settings-menu .ui-close',
 		escape: true,
 	},
 ];
@@ -334,10 +334,11 @@ for (const d of DIALOGS) {
 
 	// ── 3. A way out for the pointer ──
 	//
-	// Either a control that says so, or dismissal by clicking away from it. A
-	// popover is not obliged to carry an X — clicking elsewhere is how everyone
-	// already dismisses one — but SOMETHING has to work, or a user with no
-	// keyboard is stuck looking at it.
+	// Either a control that says so, or dismissal by clicking away from it.
+	// Every surface here now carries a cross (see verify_closers, which is about
+	// nothing else), but the fallback stays: what this file asks is whether a
+	// user with no keyboard is stuck, and "the X went missing but a tap outside
+	// still works" is a different failure from "there is no way out at all".
 	try {
 		const s = await start();
 		let by = null;
