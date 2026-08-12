@@ -204,6 +204,17 @@
 	'models.credit_base_set':      '我现在有这么多',
 	'models.credit_base_update':   '更新我填的数',
 	'models.credit_base_bad':      '这不是一个金额。请输入美元数字。',
+	// 问来的数目，减去此后这台设备亲眼看着花掉的钱。
+	'models.credit_auto_spent':    '还剩 {amount}。提供商在 {when} 说的是 {base}，减去此后在这里花掉的约 {spent}。',
+	// 数字有多旧。没有这一句，停住不动的数字和最新的数字看着一模一样。
+	'models.age_now':              '刚刚查过。',
+	'models.age_mins.one':         '{n} 分钟前查过。',
+	'models.age_mins.other':       '{n} 分钟前查过。',
+	'models.age_hours.one':        '{n} 小时前查过。',
+	'models.age_hours.other':      '{n} 小时前查过。',
+	'models.age_days.one':         '{n} 天前查过。',
+	'models.age_days.other':       '{n} 天前查过。',
+	'models.age_failed':           '上次查询没有回应，这个数字从那以后就没有动过。',
 
 	// ── 搜索 ───────────────────────────────────────────────────
 	// “搜索引擎”指的是所用的那家服务，不是搜索这个动作。
@@ -643,6 +654,12 @@
 	'sync.when_hours':     '{n} 小时前',
 	'sync.when_days':      '{n} 天前',
 
+	// ── 账户的公开用户名 ───────────────────────────────────────
+	'handle.taken':    '这个用户名已被别人使用，请换一个。',
+	'handle.invalid':  '用户名为 3 至 24 个字符：小写字母、数字，以及它们之间的连字符。',
+	'handle.reserved': '这个用户名由 Daimond 保留，无法使用。',
+	'handle.failed':   '现在无法更改用户名，请稍后再试。',
+
 	// ── 云端存储清理 ───────────────────────────────────────────
 	'chunks.sweep_held':          '清理已暂停',
 	'chunks.sweep_held_reason':   '云端存储里的 {m} 个片段中，有 {n} 个已经没有本账户的任何文件再引用。它们并没有被删除，因为一次请求最多只能删掉已存内容的一半。你的东西一件都没少，等到下一次同步能把它们全部对上，空间就会释放。',
@@ -962,6 +979,7 @@
 	'typst.load_failed':   'Typst 编译器加载失败：{reason}',
 	'typst.no_pdf':        'Typst 没有产出 PDF（未知的编译错误）。',
 	'typst.compile_error': 'Typst 编译错误：{reason}',
+	'typst.pack_locked':   '排版属于本账户尚未购买的工具包。名称和价格见「工具」面板：一次购买，长期保留，用钱支付而非扣除额度。',
 
 	// ── 提示 ───────────────────────────────────────────────────
 	'toast.copied': '已复制',
@@ -1409,11 +1427,23 @@
 	'attach.pick_title':   '附加文件和文件夹',
 	'attach.pick_empty':   '这里没有内容。',
 	'attach.already':      '已附加',
+	'attach.ws_mark':      '工作区',
+	'attach.ws_add':       '把文件夹放进工作区',
+	'attach.not_here':     '这个对话保留着它，但它在{where}，不是你现在打开的工作区。从这里够不到。',
+	'attach.ws_help':      '这个对话可以读取和更改的文件夹。放进来就是授权，之后不会再问你。',
+	'attach.ws_on':        '在这个对话的工作区里：可以读取和更改其中的内容。按一下移出。',
+	'attach.ws_off':       '不在工作区里，所以这个对话打不开它。按一下放进来。',
+	'attach.ws_empty':     '还没有放入任何文件夹。这个对话碰不到你的任何东西，只有它自己的工作文件夹。用回形针，或上面的 + 放一个进来。',
+	'attach.group_prompt': '交给模型的',
+	'attach.group_prompt_help': '发送时会在提示中写出路径或引用内容。这不会带来任何访问权限。',
+	'attach.read_block':   '{path} 的内容：',
+	'attach.read_cut':     '{path} 就放到这里为止。',
 
 	// ── 这个 Diamond 的工作区 ──────────────────────────────────
 	'dws.title':           '这个 Diamond 的工作区',
 	'dws.count.one':       '{n} 项',
 	'dws.count.other':     '{n} 项',
+	'dws.none_yet':        '这里还没有放东西',
 	'dws.mode_all':        '全部',
 	'dws.mode_diamond':    '这个 Diamond',
 	'dws.empty':           '这个 Diamond 还没有留下任何东西。你留在这里的，就是它的 daimon 能打开的。',
@@ -1458,7 +1488,6 @@
 	'link.pick_empty':     '还没有别的 Diamond 可以关联。',
 	'link.change_pick':    '更改',
 	'link.rel_label':      '关系',
-	'link.rel_ph':         '它们是什么关系？',
 	'link.rel_sug_help':   '只是建议，任何词都行',
 	'link.rel_use':        '用“{rel}”',
 	'link.note_label':     '备注',
@@ -1478,6 +1507,7 @@
 	'agents.already_folded_body': '这个智能体的摘要已经折叠进晶体了。',
 	'agents.a_diamond':           'Diamond',
 	'agents.clear_diamond_filter': '清除 Diamond 筛选',
+	'agents.clear_chat_filter':    '清除聊天筛选',
 	'instructions.chip_help':     '你的常设指令，交给每一个智能体。点击打开。',
 
 	// ── 每一类智能体被告知的事 ─────────────────────────────────
@@ -1758,8 +1788,10 @@
 	'agents.no_diamond':        '没有 Diamond',
 	'agents.no_diamond_help':   '这次运行没有对应的 Diamond',
 	'agents.only_from':         '只显示来自“{name}”的智能体',
+	'agents.only_from_chat':    '只显示来自这个聊天的智能体',
 	'agents.from_chat':         '一段聊天',
 	'agents.from_chat_help':    '从聊天“{name}”里派出。',
+	'agents.from_chat_help_when': '从一段你还没有命名的聊天里派出（最后活动：{when}）。',
 	'agents.no_diamond_fold':   '这个智能体是从聊天里派出的，所以没有可以折叠进去的晶体。它的报告在那段对话里，全文在“阅读”下面。',
 	'agents.report_one':        '你派出的一个智能体已经结束。',
 	'agents.report_n':          '你派出的 {n} 个智能体已经结束。',
@@ -1909,6 +1941,7 @@
 	'pending.cancel': '作罢',
 	'pending.cancel_named': '作罢：{what}',
 	'pending.noted': '已知悉，并从列表中移除。',
+	'pending.opened': '已打开待发送。发出前会一直留在这里。',
 	'pending.diamond_gone': '提出这件事的 Diamond 已经没有了，所以没人可以谈。',
 	'pending.discuss_prompt': '在我同意之前，这件事我们还需要再谈谈：“{headline}”',
 	'crystal.steer_paused': '已暂停。请在磁贴上按播放',

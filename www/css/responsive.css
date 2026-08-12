@@ -48,6 +48,20 @@
 	   About, which is where the badge's two claims now are -- a signature the
 	   phone could never show at all is worse than one behind a button. */
 
+	/* The lockup drops to the base logo height for the WHOLE mobile shell, not
+	   only for phones. The wordmark was redrawn at 4.44:1 (it was 2.65:1), so at
+	   the desktop's 36px it is 160px wide rather than 96, and the row -- burger,
+	   lockup, five controls -- ran past its box anywhere below 476px. At 24px the
+	   lockup is 106px and the row fits from 422px up, which covers the whole band
+	   this shell is drawn on above the phone rule below.
+
+	   Scoped to `.topbar` on purpose. These rules were written unscoped, and
+	   `.brand-wordmark` is also worn by the About dialog's lockup (it carries the
+	   class for the light/dark swap) -- so an unscoped height here silently beat
+	   `.about-word`, and About drew its signature at 20-24px on every phone
+	   instead of the 46px its own rule asks for. */
+	.topbar .brand-wordmark { height: var(--logo-h); }
+
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }
 	.panel-close { display: none !important; }
@@ -241,6 +255,27 @@
 	.tile-dlg-swatch { align-self: flex-start; }
 }
 
+/* THE WORDMARK STANDS DOWN BEFORE A CONTROL DOES, and on a phone it now stands
+   down to the mark alone. The lockup was redrawn at 4.44:1, so even at the base
+   24px it is 106px wide, and the row -- burger, lockup, five controls -- needs
+   422px to hold that. Every phone but the two Pro Maxes is narrower, and the
+   only heights that would have fitted (17px at 390) put the lettering below
+   legible. Squashing the artwork is not on the table: the proportions are the
+   author's.
+
+   So the WORD goes and the MARK stays. The mark is the brand -- it is what the
+   chat header wears at 18px (`#chead-mark`) and what the extension ships alone
+   -- and at 24px tall it is 17px wide, which the row can hold down to 320px with
+   room to spare. That is why the height rule that used to drop to 20px below 380
+   has gone: with the word off the bar there is nothing left to save.
+
+   Swapped with `content`, not by hiding one image and showing another, so the
+   two ink variants keep their single light/dark rule and the markup is
+   untouched. The identity modal does the same thing two files over. */
+@media (max-width: 430px) {
+	.topbar .brand-wordmark { content: url("../assets/daimond_mark.svg"); }
+}
+
 /* 380, not the 360 this began at. The bar's right-hand row is five controls
    once you are signed in -- update, About, link a device, guide, appearance --
    and at the full 40px touch box those five want 216px, which the layout only
@@ -253,23 +288,16 @@
    one of the five is the only way to the thing it opens. `verify_about.mjs`
    measures the row for a clip at 320, 375 and 390 so the next control added
    here fails loudly rather than quietly amputating the last one. */
-/* THE WORDMARK STANDS DOWN BEFORE A CONTROL DOES. It is half again its old
-   height on a desktop, which also makes it ~32px wider, and the signed-in header
-   carries five controls -- so at 390px (iPhone 12/13/14/15) the row clipped 20px
-   off the last of them. The policy in the block below is that the bar gets
-   smaller rather than shedding a control; a signature shrinking is the cheapest
-   thing in the row, so it goes first. Below 380 it drops further still. */
-@media (max-width: 430px) {
-	.brand-wordmark { height: var(--logo-h); }
-}
-
 @media (max-width: 380px) {
 	.topbar { gap: 8px; }
-	.brand-wordmark { height: 20px; }
 	/* 2px between the buttons rather than 4. The TARGETS keep their 34px, which
 	   is what a thumb lands on; it is only the air between them that goes. */
 	.top-actions { gap: 2px; }
 	.top-actions .icon-btn,
 	.top-actions .update-chip,
 	#drawer-btn { min-width: 34px; min-height: 34px; }
+	/* The unlock lockup, at 54px, is 240px wide -- which is the entire content
+	   width of a 90vw card on a 320px phone, so it ran to both padding edges and
+	   over them. 40px is 177px, and leaves the card its margins back. */
+	#identity-modal .login-logo { height: 40px; }
 }

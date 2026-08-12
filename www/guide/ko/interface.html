@@ -7,6 +7,18 @@
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
+<style>
+/* The region map. On a phone the whole schematic scaled to the column width put
+   its labels at five pixels, which is a diagram that says nothing to the reader
+   who most needs it. It keeps a floor on its width and scrolls sideways inside
+   its own box instead: the page still never scrolls sideways, and the words can
+   still be read. The same treatment the widget map on improve.html has, and the
+   floor is set from the same measurement -- 720px puts this map's smallest label
+   at the eleven rendered pixels that one's smallest label already gets, because
+   this map's smallest type is 9 units against that one's 10. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 720px; }
+</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -30,6 +42,7 @@
 			<a href="sync.html">기기 간 동기화</a>
 			<a href="spending.html">지출</a>
 			<a href="../machine-operations.html">기기에서 명령 실행</a>
+			<a href="../improve.html">Daimond 개선</a>
 		</nav>
 	</div>
 </header>
@@ -38,7 +51,7 @@
 	<h1>인터페이스</h1>
 	<p class="lede">화면 한 바퀴: 세 구역과 저마다 하는 일이에요. 구역을 알고 나면 Daimond의 모든 것에 자리가 생겨요.</p>
 
-	<figure class="diagram">
+	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Daimond 창의 이름 붙은 구역들</title>
 			<desc id="rm-desc">창의 도식. 위쪽을 가로지르는 것이 상단 바. 그 아래로 세 구역이 나란히 있어요. 왼쪽이 레일(칸막이 위에는 하고 있는 일, 아래에는 관리 패널), 가운데가 스테이지(대화), 오른쪽이 독(메일, 작업 공간, 에이전트)이에요.</desc>
@@ -62,13 +75,11 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
 			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">상단 바</text>
-			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
-			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
 			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
 			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
 			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
@@ -200,7 +211,7 @@
 	<h3 id="s4">관리 패널</h3>
 	<p>칸막이 아래의 관리 패널은 기계의 상태를 한눈에 보여 줘요. 설정이 팝업이 아니라 여기 있으니, 그 옆에서 채팅이 살아 있어요. 앱 비밀번호가 뭐냐고 Daimond에게 물으면서, 그것을 묻는 칸을 화면에 그대로 둘 수 있죠. 손댈 수 있는 줄은 저마다 그 이름이 가리키는 것을 여는 버튼이에요.</p>
 	<ul>
-		<li> <strong>신원 줄</strong> — 이 기기에서 내가 누구인지 — 옆에 설정 톱니가 있어요.</li>
+		<li> <strong>신원 줄</strong> (이 기기에서 내가 누구인지)옆에 설정 톱니가 있어요.</li>
 		<li><span class="ui">모델</span>. 연결한 제공자의 수를 세어 보여 주고, 모델 화면을 열어요.</li>
 		<li><span class="ui">크레딧</span>. 잔액을 보여 주고, 크레딧 화면을 열어요.</li>
 		<li><span class="ui">도구 · M개 중 N개</span>. 쓸 수 있는 도구가 몇인지 보여 주고, 도구 패널을 열어요.</li>
@@ -209,7 +220,7 @@
 	</ul>
 
 	<h3 id="s5">지금 돌리고 있는 버전</h3>
-	<p> <span class="ui">버전</span> 행은 빌드 번호가 아니라 이름과 지난 시간으로 읽혀요 — <span class="ui">버전 · Albany · 오늘</span> . 릴리스에는 서오스트레일리아의 지명이 알파벳 순으로 붙어서, 아무것도 찾아보지 않고 차례를 읽을 수 있어요. 이름이 표시하는 것은 <strong>이정표</strong>예요. Daimond은 하루에도 빌드를 여럿 내보내니, 하나하나에 이름을 붙이면 소음이 돼요. 줄에 포인터를 올리면 빌드 id와 낸 날짜가 나와요.</p>
+	<p> <span class="ui">버전</span> 행은 빌드 번호가 아니라 이름과 지난 시간으로 읽혀요 (<span class="ui">버전 · Albany · 오늘</span>). 릴리스에는 서오스트레일리아의 지명이 알파벳 순으로 붙어서, 아무것도 찾아보지 않고 차례를 읽을 수 있어요. 이름이 표시하는 것은 <strong>이정표</strong>예요. Daimond은 하루에도 빌드를 여럿 내보내니, 하나하나에 이름을 붙이면 소음이 돼요. 줄에 포인터를 올리면 빌드 id와 낸 날짜가 나와요.</p>
 	<p>줄을 누르면 관리 패널에 <strong>릴리스 이력이</strong>이 열려요. 위에서부터 이렇게 읽어요.</p>
 	<ul>
 		<li><strong>예정된 것</strong>이 맨 먼저, 점선 테두리로.</li>
@@ -291,7 +302,7 @@
 	</div>
 
 	<h2 id="s22">상단 바</h2>
-	<p>위쪽에는 워드마크, 지출 미터, <strong>패널 칩</strong>이 놓이고, 오른쪽 끝에는 <strong>다른 기기 연결</strong> 버튼, <strong>About</strong> 대화상자, 이 <strong>안내서</strong>, 그리고 <strong>모양과 배치</strong> 메뉴가 있어요. 새 빌드가 나오면 그 옆에 칩이 하나 나타나요.</p>
+	<p>위쪽에는 워드마크, <strong>패널 칩</strong>이 놓이고, 오른쪽 끝에는 <strong>다른 기기 연결</strong> 버튼, <strong>About</strong> 대화상자, 이 <strong>안내서</strong>, 그리고 <strong>모양과 배치</strong> 메뉴가 있어요. 새 빌드가 나오면 그 옆에 칩이 하나 나타나요.</p>
 
 	<h3 id="s23">칩</h3>
 	<p>패널에는 모두 칩이 있어요. 열려 있든 닫혀 있든 있고, 누르면 그 패널이 켜지고 꺼져요. 열린 패널의 칩은 채워져 있으니, 이 줄은 화면에 무엇이 있는지 보여 주는 지도로 읽혀요. 닫힌 패널만 칩을 가졌다면, 앱이 가장 비었을 때 줄이 가장 길어지고, 하나 쓸 때마다 칩이 옆으로 밀렸을 거예요. 자리를 지키는 칩이라야 그 자리를 익힐 수 있죠. (에이전트는 <em>모든</em>이라는 말의 예외예요. 첫 에이전트가 돌기 전까지는 비켜 있어요.)</p>
@@ -306,7 +317,7 @@
 	<p>이 줄이 빠짐없지 않아도 되는 것은 패널 모음이 빠짐없기 때문이에요. 자주 쓴다고 순위가 매겨지지도 않아요. 스스로 차례를 바꾸는 줄은, 자리가 고정되어야 자라는 몸의 기억을 부숴 버리니까요.</p>
 
 	<h3 id="s25">명령 팔레트</h3>
-	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> (Mac에서는) 를 누르면, 치는 것만으로 어떤 패널이나 설정에도 닿는 검색 칸이 열려요. 결과 사이는 화살표 키로 옮기고, <span class="ui">Enter</span> 로 고른 것을 실행하고, <span class="ui">Esc</span> 로 닫아요. 늘어서는 것은 패널, 팔레트, 네 가지 글자 크기, 독 분할, 언어, 통화, 그리고 권한 모드예요. 칩이 보이는 패널로 가는 가장 빠른 길은 결코 아니고, 패널이 몇이든 빠짐없이 남는 길이에요.</p>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> (Mac에서는) 를 누르면, 치는 것만으로 어떤 패널이나 설정에도 닿는 검색 칸이 열려요. 결과 사이는 화살표 키로 옮기고, <span class="ui">Enter</span> 로 고른 것을 실행하고, <span class="ui">Esc</span> 로 닫아요. 늘어서는 것은 패널, 팔레트, 네 가지 글자 크기, 독 분할, 언어, 통화, 그리고 권한 모드예요. 칩이 보이는 패널로 가는 가장 빠른 길은 결코 아니고, 패널이 몇이든 빠짐없이 남는 길이에요.</p>
 
 	<h3 id="s26">키보드로, 귀로</h3>
 	<p>Daimond은 마우스 없이도 몰 수 있어요. <span class="ui">Tab</span> 은 그려진 차례대로 조작을 옮겨 다니고, <span class="ui">Enter</span> 또는 <span class="ui">Space</span> 는 지금 있는 조작을 눌러 주고, <span class="ui">Esc</span> 는 열려 있는 것을 닫아요. 어떤 대화상자든 메뉴든 시트든 모서리에 가위표가 있고, 같은 방식으로 만든 하나의 조작이며, 휴대폰에서 엄지에 맞는 크기예요.</p>
@@ -322,18 +333,18 @@
 	<h3 id="s27">모양과 배치</h3>
 	<p>오른쪽 위 버튼은 Daimond이 무엇을 하는지가 아니라 어떻게 보이고 어떻게 앉는지에 대한 선택을 모아 둔 메뉴 하나를 열어요.</p>
 	<ul>
-		<li><strong>보기</strong> — <span class="ui">심플</span> 또는 <span class="ui">최대</span>. 심플은 저마다 이름과 돌고 있는지만 보여 주고, 나머지는 모두 한 번 누르면 나오게 둬요. 최대는 모델과 비용과 컨텍스트를 옆에 붙이니, 둘 다 열지 않고도 견줄 수 있어요. 인터페이스의 모양도 이것이 함께 정해요. 가장 빽빽한 밀도에 널찍한 모양이라는 짝은 아무도 원하지 않으니까요. 타일 자신의 톱니는 그 타일에 대해서는 여전히 이보다 앞서요.</li>
-		<li><strong>테마</strong> — 세 묶음에 팔레트 열하나예요. <span class="ui">밝게</span>, <span class="ui">중간</span> 그리고 <span class="ui">어둡게</span>. 묶음은 찾는 방법이고, 그 안에서는 취향껏 고르면 돼요. 다만 <span class="ui">호박빛</span>만은 그리는 모든 것에서 파란빛을 빼요. 밤늦게 읽기 위한 거예요. 이 안내서는 Daimond 안에서 보일 때 앱이 입은 팔레트를 그대로 입어요.</li>
-		<li><strong>글자 크기</strong> — 네 단계, <span class="ui">작게</span>, <span class="ui">기본</span>, <span class="ui">크게</span> 그리고 <span class="ui">더 크게</span>. 바뀌는 것은 글자뿐이에요. 틀도, 여백도, 패널 너비도 그대로예요. 이건 읽기를 위한 조작이지 확대가 아니니까요. 인터페이스 전체를 크게 하려면 브라우저 자체의 확대를 쓰세요. 메뉴의 보기는 고르려는 크기로 짜여 있으니, 조작이 변화를 말로 부르는 대신 보여 줘요.</li>
-		<li><strong>독 분할</strong> — <span class="ui">자동</span>, <span class="ui">1</span> 열, <span class="ui">2×2</span>, <span class="ui">2×3</span> 또는 <span class="ui">3×2</span>, 저마다 고르는 격자 모양으로 그려져요. 분할은 <em>독이 패널을 몇 개나 담을 수 있는지</em>를 열 곱하기 행으로 정해요. 한 열이면 넷, 2 × 2도 넷, 2 × 3이나 3 × 2면 여섯이에요. <span class="ui">자동</span> 는 창이 정하게 두고, 두 번째 열이 들어갈 자리가 생기면 두 열로 가요. 더 작은 격자로 바꾸면 들어가지 못하게 된 패널부터 닫혀요. 가장 최근에 연 것이 먼저이고, 저마다 보이고 누를 수 있는 칩으로 돌아가요.</li>
-		<li><strong>언어</strong> 그리고 <strong>통화</strong> — Daimond이 말하는 언어와, 금액을 보여 주는 단위예요. 아직 표가 없는 언어는 영어로 남고, 표시가 어떻든 청구는 늘 미국 달러예요.</li>
+		<li><strong>보기</strong>: <span class="ui">심플</span> 또는 <span class="ui">최대</span>. 심플은 저마다 이름과 돌고 있는지만 보여 주고, 나머지는 모두 한 번 누르면 나오게 둬요. 최대는 모델과 비용과 컨텍스트를 옆에 붙이니, 둘 다 열지 않고도 견줄 수 있어요. 인터페이스의 모양도 이것이 함께 정해요. 가장 빽빽한 밀도에 널찍한 모양이라는 짝은 아무도 원하지 않으니까요. 타일 자신의 톱니는 그 타일에 대해서는 여전히 이보다 앞서요.</li>
+		<li><strong>테마</strong>, 세 묶음에 팔레트 열하나예요. <span class="ui">밝게</span>, <span class="ui">중간</span> 그리고 <span class="ui">어둡게</span>. 묶음은 찾는 방법이고, 그 안에서는 취향껏 고르면 돼요. 다만 <span class="ui">호박빛</span>만은 그리는 모든 것에서 파란빛을 빼요. 밤늦게 읽기 위한 거예요. 이 안내서는 Daimond 안에서 보일 때 앱이 입은 팔레트를 그대로 입어요.</li>
+		<li><strong>글자 크기</strong>: 네 단계, <span class="ui">작게</span>, <span class="ui">기본</span>, <span class="ui">크게</span> 그리고 <span class="ui">더 크게</span>. 바뀌는 것은 글자뿐이에요. 틀도, 여백도, 패널 너비도 그대로예요. 이건 읽기를 위한 조작이지 확대가 아니니까요. 인터페이스 전체를 크게 하려면 브라우저 자체의 확대를 쓰세요. 메뉴의 보기는 고르려는 크기로 짜여 있으니, 조작이 변화를 말로 부르는 대신 보여 줘요.</li>
+		<li><strong>독 분할</strong>: <span class="ui">자동</span>, <span class="ui">1</span> 열, <span class="ui">2×2</span>, <span class="ui">2×3</span> 또는 <span class="ui">3×2</span>, 저마다 고르는 격자 모양으로 그려져요. 분할은 <em>독이 패널을 몇 개나 담을 수 있는지</em>를 열 곱하기 행으로 정해요. 한 열이면 넷, 2 × 2도 넷, 2 × 3이나 3 × 2면 여섯이에요. <span class="ui">자동</span> 는 창이 정하게 두고, 두 번째 열이 들어갈 자리가 생기면 두 열로 가요. 더 작은 격자로 바꾸면 들어가지 못하게 된 패널부터 닫혀요. 가장 최근에 연 것이 먼저이고, 저마다 보이고 누를 수 있는 칩으로 돌아가요.</li>
+		<li><strong>언어</strong> 그리고 <strong>통화</strong>: Daimond이 말하는 언어와, 금액을 보여 주는 단위예요. 아직 표가 없는 언어는 영어로 남고, 표시가 어떻든 청구는 늘 미국 달러예요.</li>
 	</ul>
 
 	<h3 id="s28">배치를 Diamond과 함께 남기기</h3>
 	<p>Diamond을 고른 상태에서 모양 메뉴는 지금의 패널 배치를 그 Diamond과 함께 남기겠느냐고 물어요. 이미 저장한 것을 새로 고치거나 잊게 할 수도 있고요. 그 Diamond을 다시 열면 배치가 돌아오니, 일로 돌아가는 것이 패널을 손으로 다시 짜는 일이 되지 않아요. 저장은 부탁했을 때만 되고, 짐작하지도 뒤에서 하지도 않아요. 말없이 패널을 닫는 전환은 일이 사라진 것처럼 읽히니까요.</p>
 
 	<h2 id="s29">좁은 화면에서는</h2>
-	<p>휴대폰 너비 아래에서는 칩과 패널 모음이 휴대폰 껍데기에 자리를 내줘요. 같은 물음에 더 적은 자리로 답하는 방식이죠. 채팅이 바닥이 되고, 패널은 그 위로 끌 수 있는 시트로 올라오고, 레일은 왼쪽 위 버튼으로 여는 서랍이 돼요. 아래쪽에 놓인 줄 — <span class="ui">채팅</span>, <span class="ui">메일</span>, <span class="ui">파일</span>, <span class="ui">에이전트</span> — 이 그 사이를 옮겨 다니고, 관리 패널은 서랍 아래에서 만나요. 잃는 것은 없어요. 같은 패널을 한 번에 하나씩 보여 줄 뿐이에요.</p>
+	<p>휴대폰 너비 아래에서는 칩과 패널 모음이 휴대폰 껍데기에 자리를 내줘요. 같은 물음에 더 적은 자리로 답하는 방식이죠. 채팅이 바닥이 되고, 패널은 그 위로 끌 수 있는 시트로 올라오고, 레일은 왼쪽 위 버튼으로 여는 서랍이 돼요. 아래쪽에 놓인 줄 (<span class="ui">채팅</span>, <span class="ui">메일</span>, <span class="ui">파일</span>, <span class="ui">에이전트</span>) 이 그 사이를 옮겨 다니고, 관리 패널은 서랍 아래에서 만나요. 잃는 것은 없어요. 같은 패널을 한 번에 하나씩 보여 줄 뿐이에요.</p>
 	<p>홈 화면에 넣으면 Daimond은 브라우저 장식 없는 저만의 창에서 돌고, 노치와 홈 인디케이터를 피해 자리를 잡아요. 같은 페이지이고 저장된 작업도 같으니, 그리로 옮겨야 할 것은 없어요.</p>
 
 	<div class="next">
@@ -354,6 +365,7 @@
 		<a href="sync.html">기기 간 동기화</a>
 		<a href="spending.html">지출</a>
 		<a href="../machine-operations.html">기기에서 명령 실행</a>
+		<a href="../improve.html">Daimond 개선</a>
 	</nav>
 </footer>
 </body>

@@ -206,6 +206,17 @@
 	'models.credit_base_set':      '지금 이만큼 있어요',
 	'models.credit_base_update':   '내가 적은 금액 고치기',
 	'models.credit_base_bad':      '금액이 아니에요. 미국 달러 숫자를 넣어 주세요.',
+	// 물어본 금액에서, 그 뒤로 이 기기가 지켜본 지출을 뺀 값이에요.
+	'models.credit_auto_spent':    '{amount} 남았어요. {when}에 제공자가 알려 준 {base}에서, 그 뒤로 여기서 쓴 {spent}쯤을 뺀 값이에요.',
+	// 숫자가 얼마나 오래됐는지. 이것이 없으면 멈춘 숫자와 최신 숫자가 똑같아 보여요.
+	'models.age_now':              '방금 확인했어요.',
+	'models.age_mins.one':         '{n}분 전에 확인했어요.',
+	'models.age_mins.other':       '{n}분 전에 확인했어요.',
+	'models.age_hours.one':        '{n}시간 전에 확인했어요.',
+	'models.age_hours.other':      '{n}시간 전에 확인했어요.',
+	'models.age_days.one':         '{n}일 전에 확인했어요.',
+	'models.age_days.other':       '{n}일 전에 확인했어요.',
+	'models.age_failed':           '지난번 확인은 응답이 없어서, 그 뒤로 이 숫자는 그대로예요.',
 
 	// ── 검색 ───────────────────────────────────────────────────
 	// '검색 엔진'은 검색이라는 행위가 아니라 쓰는 서비스를 가리켜요.
@@ -647,6 +658,12 @@
 	'sync.when_hours':     '{n}시간 전',
 	'sync.when_days':      '{n}일 전',
 
+	// ── 계정의 공개 핸들 ───────────────────────────────────────
+	'handle.taken':    '그 핸들은 이미 다른 사람이 쓰고 있어요. 다른 것을 시도해 보세요.',
+	'handle.invalid':  '핸들은 3~24자예요. 소문자, 숫자, 그리고 그 사이의 하이픈을 쓸 수 있어요.',
+	'handle.reserved': '그 핸들은 Daimond가 보유하고 있어 사용할 수 없어요.',
+	'handle.failed':   '지금은 핸들을 바꾸지 못했어요. 잠시 뒤에 다시 시도해 주세요.',
+
 	// ── 클라우드 저장소 정리 ───────────────────────────────────
 	'chunks.sweep_held':          '정리 일시 중지',
 	'chunks.sweep_held_reason':   '클라우드 저장소에 있는 조각 {m}개 가운데 {n}개는 이 계정의 어떤 파일도 더는 참조하지 않습니다. 삭제하지 않았습니다. 한 번의 요청으로 저장된 것의 절반을 넘게 지울 수 없기 때문입니다. 사용자의 것은 하나도 사라지지 않았고, 전부를 설명할 수 있는 다음 동기화에서 공간이 확보됩니다.',
@@ -966,6 +983,7 @@
 	'typst.load_failed':   'Typst 컴파일러를 불러오지 못했어요: {reason}',
 	'typst.no_pdf':        'Typst이 PDF를 내놓지 않았어요 (원인 모를 컴파일 오류).',
 	'typst.compile_error': 'Typst 컴파일 오류: {reason}',
+	'typst.pack_locked':   '조판은 이 계정이 구매하지 않은 도구 팩에 들어 있어요. 이름과 가격은 도구 패널에 나와요. 한 번 사면 계속 쓸 수 있고, 크레딧이 아니라 돈으로 결제해요.',
 
 	// ── 알림 ───────────────────────────────────────────────────
 	'toast.copied': '복사했어요',
@@ -1414,11 +1432,23 @@
 	'attach.pick_title':   '파일과 폴더 첨부',
 	'attach.pick_empty':   '여기에는 아무것도 없어요.',
 	'attach.already':      '이미 첨부됨',
+	'attach.ws_mark':      '작업 공간',
+	'attach.ws_add':       '폴더를 작업 공간에 넣기',
+	'attach.not_here':     '이 대화가 가지고 있지만 {where} 있어서, 지금 열어 둔 작업 공간이 아닙니다. 여기서는 닿을 수 없어요.',
+	'attach.ws_help':      '이 대화가 읽고 바꿀 수 있는 폴더입니다. 여기에 넣는 것이 곧 허가이고, 다시 묻지 않습니다.',
+	'attach.ws_on':        '이 대화의 작업 공간에 있습니다. 안에 있는 것을 읽고 바꿀 수 있어요. 누르면 빼냅니다.',
+	'attach.ws_off':       '작업 공간에 없어서 이 대화가 열 수 없어요. 누르면 넣습니다.',
+	'attach.ws_empty':     '넣어 둔 폴더가 없습니다. 이 대화는 당신의 것에 닿지 못하고 자기 작업 폴더만 씁니다. 클립이나 위의 + 로 하나 넣어 주세요.',
+	'attach.group_prompt': '모델 앞에 놓인 것',
+	'attach.group_prompt_help': '보낼 때 프롬프트에 경로를 적거나 내용을 인용합니다. 권한은 늘지 않아요.',
+	'attach.read_block':   '{path} 의 내용:',
+	'attach.read_cut':     '{path} 는 여기까지만 들어갑니다.',
 
 	// ── 이 Diamond의 작업 공간 ─────────────────────────────────
 	'dws.title':           '이 Diamond의 작업 공간',
 	'dws.count.one':       '{n}개',
 	'dws.count.other':     '{n}개',
+	'dws.none_yet':        '아직 여기에 둔 것이 없습니다',
 	'dws.mode_all':        '전체',
 	'dws.mode_diamond':    '이 Diamond',
 	'dws.empty':           '아직 이 Diamond에 둔 것이 없어요. 여기에 두는 것이 그 daimon이 열 수 있는 것이에요.',
@@ -1463,7 +1493,6 @@
 	'link.pick_empty':     '아직 연결할 다른 Diamond이 없어요.',
 	'link.change_pick':    '바꾸기',
 	'link.rel_label':      '관계',
-	'link.rel_ph':         '둘은 어떤 관계인가요?',
 	'link.rel_sug_help':   '제안일 뿐이에요. 어떤 낱말이든 괜찮아요',
 	'link.rel_use':        '“{rel}” 쓰기',
 	'link.note_label':     '메모',
@@ -1483,6 +1512,7 @@
 	'agents.already_folded_body': '이 에이전트의 요약은 이미 결정체에 접혀 들어갔어요.',
 	'agents.a_diamond':           'Diamond',
 	'agents.clear_diamond_filter': 'Diamond 거르기 해제',
+	'agents.clear_chat_filter':    '채팅 거르기 해제',
 	'instructions.chip_help':     '모든 에이전트에게 건네는, 늘 지켜야 할 지시예요. 누르면 열려요.',
 
 	// ── 에이전트마다 듣는 말 ───────────────────────────────────
@@ -1763,8 +1793,10 @@
 	'agents.no_diamond':        'Diamond 없음',
 	'agents.no_diamond_help':   '이 실행에는 Diamond이 없어요',
 	'agents.only_from':         '“{name}”에서 나온 에이전트만 보기',
+	'agents.only_from_chat':    '이 채팅에서 나온 에이전트만 보기',
 	'agents.from_chat':         '채팅',
 	'agents.from_chat_help':    '“{name}” 채팅에서 보냈어요.',
+	'agents.from_chat_help_when': '아직 이름을 붙이지 않은 채팅에서 보냈어요 (마지막 활동: {when}).',
 	'agents.no_diamond_fold':   '이 에이전트는 채팅에서 보낸 것이라, 접어 넣을 크리스털이 없어요. 보고는 그 대화 안에 있고, 전체 글은 ‘읽기’에서 볼 수 있어요.',
 	'agents.report_one':        '보낸 에이전트 하나가 끝났어요.',
 	'agents.report_n':          '보낸 에이전트 {n}개가 끝났어요.',
@@ -1914,6 +1946,7 @@
 	'pending.cancel': '버리기',
 	'pending.cancel_named': '버리기: {what}',
 	'pending.noted': '확인했고 목록에서 내렸습니다.',
+	'pending.opened': '보내려고 열었습니다. 보낼 때까지 여기 남습니다.',
 	'pending.diamond_gone': '이것을 올린 Diamond 가 사라져서 상의할 상대가 없습니다.',
 	'pending.discuss_prompt': '승인하기 전에 이것을 더 이야기해야 합니다: “{headline}”',
 	'crystal.steer_paused': '일시정지. 타일에서 재생을 누르세요',

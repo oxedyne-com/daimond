@@ -657,7 +657,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .cmeter { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }
 .chat-model-select { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-xs); padding: 3px 6px; max-width: 170px; }
 .chat-model-select:hover { border-color: var(--accent); color: var(--text-primary); }
-.chat-model-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* A pulldown, so `:focus-visible` -- see the note at `.settings-select`. */
+.chat-model-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 .chat-output { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .chat-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
@@ -959,6 +960,73 @@ span.arte-open { cursor: default; }
    in step; this rule only adds the margin a footer above a composer needs
    that a list under a strip button did not. */
 .chat-attach-strip { margin: 0 0 6px; }
+
+/* ── A chat's footer is TWO GROUPS, and the difference is the point ──
+   The workspace is a COLLECTIVE claim: take a folder out and the fence shrinks.
+   So it is drawn as one bounded box with a rail down its edge -- one thing made
+   of parts -- headed by the app's own words for it, `astat.workspace_browser`
+   and `astat.workspace_native`, the same words the account strip uses.
+   The attachments are individuals: a header and a plain list, no box, because
+   dropping one changes nothing but itself.
+   The strip's own frame comes off for this. A box inside a box reads as one
+   thing with a mistake in it, and the two groups now carry their own edges. */
+.chat-attach-strip { border: none; background: none; }
+.attach-group + .attach-group { margin-top: 10px; }
+/* Compounded with `.attach-head`, which is the class it also wears and which sets
+   `justify-content: flex-end` for a band that is nothing but controls. Equal
+   specificity would leave the winner to be decided by which rule came later in
+   this file, and a group's NAME belongs at the left however the file is ordered. */
+.attach-head.attach-group-head { justify-content: space-between; border-bottom: none;
+	padding: 1px 3px 3px; }
+.attach-group-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-size: var(--fs-3xs-2xs); font-family: var(--font-mono); color: var(--text-muted);
+	text-transform: uppercase; letter-spacing: .04em; }
+
+/* The fence, drawn as a fence: one box, one rail, whatever is inside it. The
+   rail is the accent because this is the one thing on the surface that grants
+   anything -- and it is the only accent edge in the footer, so it cannot be
+   confused with the Read pill's. The cap is `--ws-cap` rows, in the same unit
+   and for the same reason `--attach-cap` is: see variables.css. */
+.ws-body { border: 1px solid var(--border-strong); border-left: 3px solid var(--accent);
+	/* Square down the rail's own side. A rounded left corner turns a 3px rail
+	   into a sliver that curves away from the row it is meant to bracket. */
+	border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg-tertiary);
+	max-height: calc(var(--ws-cap) * var(--attach-row-h) + var(--attach-peek));
+	overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }
+.ws-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ws-body::-webkit-scrollbar { width: 10px; }
+.ws-body::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 5px; }
+.ws-body::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 5px;
+	border: 2px solid var(--bg-secondary); }
+/* The sentence for the empty fence. It wraps, it is the tallest thing this
+   group is ever drawn at, and it is deliberately not a hint about a button:
+   what it says is what the chat can reach. */
+.ws-empty { padding: 7px 9px; line-height: 1.45; }
+
+/* What has merely been put in front of the model: no box and no ground of its
+   own, so the eye reads a list of separate things beside a bounded one. */
+.at-group .attach-body { border-top: 1px solid var(--border); }
+
+/* Two groups share the room one group used to have. Both are capped and both
+   scroll, so the composer stays where it is however much is marked or attached
+   -- which is the property `verify_attachfocus` measures. */
+#chat-attachments.two { --attach-cap: 3; --ws-cap: 2; }
+@media (max-height: 700px) {
+	#chat-attachments.two { --attach-cap: 2; --ws-cap: 2; }
+}
+
+/* The workspace mark, on a folder's tile in either group: SQUARE, where
+   Note/Read is round. Two independent things sit side by side here, and one of
+   them decides what the agent may change -- telling them apart must not depend
+   on reading two short words, or on telling two accent tints apart. */
+.attach-ws { flex-shrink: 0; background: none; border: 1px solid var(--border-2);
+	/* 3px, not `--radius-sm`: at this height every radius the app has still reads
+	   as a pill beside the round one, and the two controls must be told apart
+	   without reading either word. */
+	border-radius: 3px; cursor: pointer; color: var(--text-secondary);
+	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 7px; }
+.attach-ws:hover { border-color: var(--accent); }
+.attach-ws.on { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
 
 /* The chrome both footers wear: the view toggle and `+`, above the tiles and
    outside the scroll, because chrome that scrolls away is chrome nobody finds
@@ -1349,7 +1417,28 @@ span.arte-open { cursor: default; }
 .settings-section input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
 .settings-section input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .settings-select { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.settings-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* ── Why a pulldown says `:focus-visible` and a text field does not ──
+   The accent ring means "the keyboard is here". A mouse click that paints it
+   says something untrue, which is why the forty-odd button rules in this app
+   are `:focus-visible` -- and this rule, alone among the pulldowns, was not.
+
+   The two selectors are NOT interchangeable, and which controls they differ on
+   was measured rather than assumed (a real `page.mouse.click`, the pointer then
+   parked off the control so `:hover` could not be mistaken for a ring):
+
+     control            Chromium :focus-visible   Firefox :focus-visible
+     <select>           true                      FALSE
+     <input type=text>  true                      true
+     <button>           false                     false
+     [tabindex] div     false                     false
+
+   So on a pulldown the change is real -- Firefox stops ringing a clicked
+   select, which is what Firefox does for every other select on the web -- while
+   on a TEXT FIELD it paints identically in both engines, because a control that
+   takes typing always matches `:focus-visible` by design. The app's text-field
+   `:focus` rules are therefore left exactly as they are: changing them moves no
+   pixel in any engine, and the caret is what says typing will land there. */
+.settings-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .settings-select option:disabled { color: var(--text-muted); }
 .settings-section button { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
 .settings-section button:hover { background: var(--accent-hover); }
@@ -1477,7 +1566,8 @@ span.arte-open { cursor: default; }
    gets the air; the text side does not need it. This is the base every pulldown
    in the app inherits, the dialog's larger one included. */
 .tile-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 5px 18px 5px 6px; }
-.tile-model:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* A pulldown, so `:focus-visible` -- see the note at `.settings-select`. */
+.tile-model:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .tile-start { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: var(--fs-xs); white-space: nowrap; }
 .tile-start:hover { background: var(--accent-hover); }
 
@@ -1741,7 +1831,11 @@ span.arte-open { cursor: default; }
    exactly the part worth reading. */
 .dlg-msg { font-size: var(--fs-base); color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dlg-input { width: 100%; margin-bottom: 4px; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
-.dlg-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* `.dlg-input` is worn by the dialog's text fields AND by its pulldown
+   (`.dlg-input.dlg-select`), so it takes `:focus-visible` for the pulldown's
+   sake -- see the note at `.settings-select`. On the text fields it resolves to
+   exactly what `:focus` did. */
+.dlg-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 /* A models pulldown in a dialog: the same box as the text fields beside it, so the
    form reads as one form. A long model id is allowed to be long -- truncating it
    would hide the very part that tells two of them apart. */

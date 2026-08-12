@@ -30,6 +30,7 @@
 			<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 			<a href="spending.html">Ausgaben</a>
 			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+			<a href="../improve.html">Daimond verbessern</a>
 		</nav>
 	</div>
 </header>
@@ -39,7 +40,7 @@
 	<p class="lede">Ein Chat ist ein Gespräch mit dem Daimon. Ein Diamond ist ein dauerhafter Behälter für ein Vorhaben und hält, was Sie über ein Stück Arbeit herausgefunden haben, damit spätere Arbeit davon ausgeht. Hier: Chats beginnen und lesen, die Bedienelemente für einen Zug, einen Chat in ein Diamond einklappen, der Arbeitsbereich, in dem ein Diamond arbeitet, Dateien an beides anhängen und ordnen, was sich ansammelt.</p>
 
 	<h2 id="s1">Einen Chat beginnen und zu ihm zurückkehren</h2>
-	<p>Wählen Sie <span class="ui">Neuer Chat</span> — das <strong>＋</strong> neben <strong>Chats</strong> in der Leiste. Tippen Sie in das Feld unten im mittleren Bereich und senden Sie mit <span class="ui">➤</span>. Jeder Chat, den Sie beginnen, steht unter <strong>Chats</strong>, das neueste zuerst; klicken Sie einen an, um ihn in die Mitte zurückzuholen. Ein neuer Chat startet mit Ihrem Standardmodell, und die Auswahl in seiner Kopfzeile ändert das Modell nur für diesen Chat.</p>
+	<p>Wählen Sie <span class="ui">Neuer Chat</span>, das <strong>＋</strong> neben <strong>Chats</strong> in der Leiste. Tippen Sie in das Feld unten im mittleren Bereich und senden Sie mit <span class="ui">➤</span>. Jeder Chat, den Sie beginnen, steht unter <strong>Chats</strong>, das neueste zuerst; klicken Sie einen an, um ihn in die Mitte zurückzuholen. Ein neuer Chat startet mit Ihrem Standardmodell, und die Auswahl in seiner Kopfzeile ändert das Modell nur für diesen Chat.</p>
 
 	<p>Eine Chat-Kachel trägt ein <span class="ui">×</span>, und das <span class="ui">⋯</span> am Kopf der Liste <strong>Chats</strong> enthält <span class="ui">Alle Chats löschen</span>. Keines fragt nach: Beide verschieben Chats in den <strong>Papierkorb</strong>, wo sie sich zurückholen lassen. Die Rückfragen sind zu den beiden Handlungen gewandert, die sich nicht rückgängig machen lassen, und beide stehen in diesem Bereich.</p>
 
@@ -112,9 +113,9 @@
 
 	<p>Jedes Schreiben hält eine Fassung fest, ein Kristall hat also eine Historie, und nichts wird überschrieben. Die Historie führt jede Fassung auf, die neueste zuerst, jede mit dem, was sie hervorgebracht hat:</p>
 	<ul>
-		<li><span class="ui">Ansehen</span> — diese Version lesen.</li>
-		<li><span class="ui">Wiederherstellen</span> — diese Version wieder zur aktuellen machen.</li>
-		<li><span class="ui">Delta</span> — die rohe Eingabe ansehen, die ein Einklappen verbraucht hat, das Material, das der Agent zum Verdichten bekam.</li>
+		<li><span class="ui">Ansehen</span>: diese Version lesen.</li>
+		<li><span class="ui">Wiederherstellen</span>: diese Version wieder zur aktuellen machen.</li>
+		<li><span class="ui">Delta</span>: die rohe Eingabe ansehen, die ein Einklappen verbraucht hat, das Material, das der Agent zum Verdichten bekam.</li>
 	</ul>
 
 	<div class="note"><strong>Wiederherstellen zerstört nichts.</strong> Der Text, der aktuell war, kommt zuerst in die Historie; eine ältere Version wiederherzustellen fügt der Historie also etwas hinzu, statt sie zu ersetzen — eine Wiederherstellung, die Sie nicht meinten, lässt sich selbst rückgängig machen.</div>
@@ -147,7 +148,7 @@
 		<li><strong>Ein gewöhnlicher Chat ist im Fokus.</strong> Der Anhang gilt für den <em>nächsten Zug allein</em>, und steht in einer Fußzeile über dem Feld, die sich leert, sobald der Zug gesendet ist.</li>
 	</ul>
 	<p>Jeder Anhang trägt einen von zwei Zuständen, auf seiner Kachel umschaltbar. <strong>Notiz</strong> sagt, dass der Pfad erwähnenswert ist, und kostet ein paar Tokens. <strong>Lesen</strong> sagt, dass der Inhalt jetzt gebraucht wird, und eine Datei kann auf Tausende kommen. Ein Anhang beginnt bei Notiz, weil das viel billiger ist: Eine Voreinstellung, die ungefragt Ihr Geld ausgibt, wäre die falsche.</p>
-	<p>So oder so wird der Text, den es erzeugt — <em>Notiere …</em>, oder <em>Lies … vollständig.</em> —, vor Ihre Nachricht ins Feld geschrieben, zum Bearbeiten oder Löschen vor dem Senden. Ein Prompt, den die App schreibt und versteckt, ist ein Prompt, dem niemand widersprechen kann.</p>
+	<p>So oder so wird der Text, den es erzeugt (<em>Notiere …</em>, oder <em>Lies … vollständig.</em>) vor Ihre Nachricht ins Feld geschrieben, zum Bearbeiten oder Löschen vor dem Senden. Ein Prompt, den die App schreibt und versteckt, ist ein Prompt, dem niemand widersprechen kann.</p>
 	<p>Die Fußzeile trägt ein <strong>+</strong> zum Anhängen mehrerer Dinge, ohne zu verlassen, was Sie gerade lesen, und einen Umschalter zwischen den Kacheln als <span class="ui">Stapel</span> und Reihen größerer <span class="ui">Symbole</span>. Ab sechs Kacheln — vier, wenn das Fenster niedrig ist — scrollt sie, statt zu wachsen, das Verfassen-Feld bleibt also, wo es ist. Ein Anhang aus einem Arbeitsbereich, der nicht der offene ist, sagt, wo er liegt, statt sich als leerer Ordner zu lesen, und bleibt aus dem erzeugten Text heraus: Ein Pfad, den ein Modell nicht öffnen kann, erkauft einen Zug voller Entschuldigungen.</p>
 
 	<h3 id="s17">Was ein Daimon öffnen kann</h3>
@@ -163,9 +164,9 @@
 	<h3 id="s19">Agenten anhalten und stoppen</h3>
 	<p>Die Kopfzeile des Agenten-Panels trägt drei Bedienelemente, die auf <em>alle</em> Agenten auf einmal wirken, und dieselben drei sitzen auf jeder Kachel, damit Sie auf einen einzelnen wirken können:</p>
 	<ul>
-		<li><strong>Pausieren</strong> <span class="ui">⏸</span> — hängt auf, was läuft, und hält die Warteschlange an. Ein laufender Agent behält, was er hervorgebracht hatte; ein wartender startet nicht. Nichts Neues startet, bis Sie fortsetzen. Das ist die Bremse für ein Auffächern, das schneller ausgibt, als Sie wollten.</li>
-		<li><strong>Fortsetzen</strong> <span class="ui">▶</span> — setzt jeden pausierten Agenten dort fort, wo er stehen geblieben ist, und nimmt seine eigene Arbeit wieder auf, statt von vorn zu beginnen; eine Pause kostet also nichts als die Wartezeit.</li>
-		<li><strong>Stopp</strong> <span class="ui">✕</span> — Agenten sofort beenden. Jeder behält, was er geschafft hat, als gestoppte Kachel; <span class="ui">Fertige Agenten entfernen</span> entfernt sie. Der sofortige Notschalter.</li>
+		<li><strong>Pausieren</strong> <span class="ui">⏸</span>: hängt auf, was läuft, und hält die Warteschlange an. Ein laufender Agent behält, was er hervorgebracht hatte; ein wartender startet nicht. Nichts Neues startet, bis Sie fortsetzen. Das ist die Bremse für ein Auffächern, das schneller ausgibt, als Sie wollten.</li>
+		<li><strong>Fortsetzen</strong> <span class="ui">▶</span>: setzt jeden pausierten Agenten dort fort, wo er stehen geblieben ist, und nimmt seine eigene Arbeit wieder auf, statt von vorn zu beginnen; eine Pause kostet also nichts als die Wartezeit.</li>
+		<li><strong>Stopp</strong> <span class="ui">✕</span>: Agenten sofort beenden. Jeder behält, was er geschafft hat, als gestoppte Kachel; <span class="ui">Fertige Agenten entfernen</span> entfernt sie. Der sofortige Notschalter.</li>
 	</ul>
 	<p>Jede Kachel zeigt ihre <strong>Kosten im Lauf</strong>, die Tokens und Dollar laufen live auf statt erst am Ende, Sie sehen die Ausgaben also, während Sie entscheiden, ob Sie anhalten. Unter der Kopfzeile sagt eine Zeile, wie viele Agenten <strong>laufen, angehalten sind und in der Warteschlange stehen</strong>, was Größe und Kosten eines Auffächerns auf einen Blick lesbar macht. Was Daimond von sich aus tut, ist auf der Seite <a href="spending.html">Ausgaben</a> beschrieben.</p>
 
@@ -174,7 +175,7 @@
 	<p>Zwei Grenzen gelten. Ein Arbeiter kann keinen weiteren Arbeiter losschicken, die Delegation geht also eine Ebene tief und hört auf. Und es wird immer nur ein Diamond gelenkt, kein zweites arbeitet also vor sich hin, während Sie wegsehen.</p>
 
 	<h2 id="s20">Tags</h2>
-	<p>Diamonds sammeln sich an, also lassen sie sich taggen. Ein Tag ist ein kurzes Etikett Ihrer Wahl, bearbeitet über <span class="ui">Tags</span> im Kristall eines Diamonds. Vier sind als Anfang vorgeschlagen — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> und <strong>org</strong> —, Daimond erlegt aber keine Systematik auf, und Sie können tippen, was zu Ihrer Arbeit passt.</p>
+	<p>Diamonds sammeln sich an, also lassen sie sich taggen. Ein Tag ist ein kurzes Etikett Ihrer Wahl, bearbeitet über <span class="ui">Tags</span> im Kristall eines Diamonds. Vier sind als Anfang vorgeschlagen (<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> und <strong>org</strong>), Daimond erlegt aber keine Systematik auf, und Sie können tippen, was zu Ihrer Arbeit passt.</p>
 
 	<p>Was Sie eintippen, wird geglättet: Ein Tag wird kleingeschrieben, beschnitten und entdoppelt, mit bis zu <strong>8</strong> Tags an einem Diamond und <strong>24</strong> Zeichen je Tag. Tags liegen in den eigenen Metadaten des Diamonds, auf diesem Gerät, wie alles andere.</p>
 
@@ -209,6 +210,7 @@
 		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 		<a href="spending.html">Ausgaben</a>
 		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+		<a href="../improve.html">Daimond verbessern</a>
 	</nav>
 </footer>
 </body>

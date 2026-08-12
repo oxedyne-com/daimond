@@ -504,6 +504,12 @@
 	'sync.when_hours': 'vor {n} Std.',
 	'sync.when_days': 'vor {n} T.',
 
+	// ── Das öffentliche Handle des Kontos ──────────────────────
+	'handle.taken': 'Dieses Handle hat bereits jemand anderes. Nimm ein anderes.',
+	'handle.invalid': 'Ein Handle hat 3 bis 24 Zeichen: Kleinbuchstaben, Ziffern und Bindestriche dazwischen.',
+	'handle.reserved': 'Dieses Handle ist für Daimond reserviert und kann nicht vergeben werden.',
+	'handle.failed': 'Das Handle konnte gerade nicht geändert werden. Versuche es gleich noch einmal.',
+
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Aufräumen angehalten',
 	'chunks.sweep_held_reason': 'Der Cloud-Speicher hält {n} von {m} gespeicherten Teilen, auf die keine Datei dieses Kontos mehr verweist. Gelöscht wurden sie NICHT, denn eine einzelne Anfrage darf nie mehr als die Hälfte des Gespeicherten entfernen. Von deinen Daten fehlt nichts; der Platz wird beim nächsten Sync frei, der alles zuordnen kann.',
@@ -798,6 +804,18 @@
 	'models.credit_base_set': 'So viel habe ich, Stand jetzt',
 	'models.credit_base_update': 'Meine Angabe aktualisieren',
 	'models.credit_base_bad': 'Das ist kein Betrag. Gib eine Zahl in US-Dollar ein.',
+	// Eine abgefragte Zahl, von der dieses Gerät seither Geld abgehen sah.
+	'models.credit_auto_spent': 'Noch {amount}. Der Anbieter nannte {base} am {when}, abzüglich rund {spent}, die seither hier ausgegeben wurden.',
+	// Wie alt die Angabe ist. Ohne das sieht eine Zahl, die stillsteht, genauso
+	// aus wie eine aktuelle.
+	'models.age_now': 'Gerade eben abgefragt.',
+	'models.age_mins.one': 'Vor {n} Minute abgefragt.',
+	'models.age_mins.other': 'Vor {n} Minuten abgefragt.',
+	'models.age_hours.one': 'Vor {n} Stunde abgefragt.',
+	'models.age_hours.other': 'Vor {n} Stunden abgefragt.',
+	'models.age_days.one': 'Vor {n} Tag abgefragt.',
+	'models.age_days.other': 'Vor {n} Tagen abgefragt.',
+	'models.age_failed': 'Die letzte Abfrage blieb ohne Antwort, seither hat sich diese Zahl nicht bewegt.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Du steuerst. Ich bin bei {where} stehen geblieben.',
@@ -932,6 +950,7 @@
 	'typst.load_failed': 'Der Typst-Compiler ließ sich nicht laden: {reason}',
 	'typst.no_pdf': 'Typst hat kein PDF erzeugt (unbekannter Compile-Fehler).',
 	'typst.compile_error': 'Typst-Compile-Fehler: {reason}',
+	'typst.pack_locked': 'Das Setzen gehört zu einem Werkzeugpaket, das dieses Konto nicht gekauft hat. Im Bereich „Werkzeuge“ stehen Name und Preis: einmal gekauft, dauerhaft behalten und mit Geld bezahlt statt aus Ihrem Guthaben.',
 
 
 	// ── The Admin drawer ───────────────────────────────────────
@@ -1380,11 +1399,23 @@
 	'attach.pick_title': 'Dateien und Ordner anhängen',
 	'attach.pick_empty': 'Hier ist nichts.',
 	'attach.already': 'Bereits angehängt',
+	'attach.ws_mark': 'Arbeitsbereich',
+	'attach.ws_add': 'Einen Ordner in den Arbeitsbereich aufnehmen',
+	'attach.not_here': 'Von diesem Chat gehalten, liegt aber {where}, und das ist nicht der Arbeitsbereich, den Sie geöffnet haben. Dieser Chat kann es von hier aus nicht erreichen.',
+	'attach.ws_help': 'Die Ordner, die dieser Chat lesen und ändern darf. Ein Ordner hier hinein zu setzen ist die Erlaubnis, und danach wird nicht noch einmal gefragt.',
+	'attach.ws_on': 'Im Arbeitsbereich dieses Chats: er darf lesen und ändern, was darin liegt. Zum Herausnehmen drücken.',
+	'attach.ws_off': 'Nicht im Arbeitsbereich, dieser Chat kann den Ordner also nicht öffnen. Zum Aufnehmen drücken.',
+	'attach.ws_empty': 'Kein Ordner ist aufgenommen. Dieser Chat erreicht nichts von Ihnen, nur seinen eigenen Arbeitsordner. Nehmen Sie einen mit der Büroklammer auf, oder oben mit +.',
+	'attach.group_prompt': 'Vor dem Modell',
+	'attach.group_prompt_help': 'Wird beim Senden im Prompt genannt oder zitiert. Das gewährt keinen Zugriff.',
+	'attach.read_block': 'Der Inhalt von {path}:',
+	'attach.read_cut': 'So viel von {path} passt hier hinein.',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'Der Arbeitsbereich dieses Diamonds',
 	'dws.count.one': '{n} Element',
 	'dws.count.other': '{n} Elemente',
+	'dws.none_yet':    'Noch nichts hinterlegt',
 	'dws.mode_all': 'Alles',
 	'dws.mode_diamond': 'Dieses Diamond',
 	'dws.empty': 'Bei diesem Diamond wird noch nichts behalten. Was du hier behältst, ist das, was sein Daimon öffnen kann.',
@@ -1429,7 +1460,6 @@
 	'link.pick_empty': 'Es gibt noch kein anderes Diamond zum Verknüpfen.',
 	'link.change_pick': 'Ändern',
 	'link.rel_label': 'Beziehung',
-	'link.rel_ph': 'Wie hängen sie zusammen?',
 	'link.rel_sug_help': 'Nur Vorschläge — jedes Wort geht',
 	'link.rel_use': '„{rel}“ verwenden',
 	'link.note_label': 'Notiz',
@@ -1449,11 +1479,16 @@
 	'agents.already_folded_body': 'Die Zusammenfassung dieses Agenten wurde bereits in den Kristall eingeklappt.',
 	'agents.a_diamond': 'Diamond',
 	'agents.clear_diamond_filter': 'Den Diamond-Filter aufheben',
+	'agents.clear_chat_filter':    'Den Chat-Filter aufheben',
 	'agents.no_diamond': 'kein Diamond',
 	'agents.no_diamond_help': 'Dieser Lauf hat kein Diamond',
 	'agents.only_from': 'Nur Agenten aus „{name}“ zeigen',
+	'agents.only_from_chat': 'Nur Agenten aus diesem Chat zeigen.',
 	'agents.from_chat': 'ein Chat',
 	'agents.from_chat_help': 'Aus dem Chat „{name}“ gesendet.',
+	// In Klammern, wie bei „rail.chat_from“: {when} ist mal „gerade eben“, mal
+	// eine Uhrzeit, mal ein Datum, und keine Präposition passt zu allen dreien.
+	'agents.from_chat_help_when': 'Aus einem Chat gesendet, dem du keinen Namen gegeben hast (zuletzt {when}).',
 	'agents.no_diamond_fold': 'Dieser Agent wurde aus einem Chat geschickt, es gibt also keinen Kristall, in den er eingeklappt werden könnte. Sein Bericht steht in diesem Gespräch, und sein voller Text steht unter „Lesen“.',
 	'agents.report_one': 'Ein Agent, den du geschickt hast, ist fertig.',
 	'agents.report_n': '{n} Agenten, die du geschickt hast, sind fertig.',
@@ -1876,6 +1911,7 @@
 	'pending.cancel': 'Verwerfen',
 	'pending.cancel_named': 'Verwerfen: {what}',
 	'pending.noted': 'Vermerkt und von der Liste genommen.',
+	'pending.opened': 'Zum Senden geöffnet. Bleibt hier, bis er gesendet ist.',
 	'pending.diamond_gone': 'Der Diamond, der dies aufgeworfen hat, ist fort, also gibt es niemanden, mit dem man es besprechen könnte.',
 	'pending.discuss_prompt': 'Wir müssen das noch besprechen, bevor ich zustimme: „{headline}“',
 	'crystal.steer_paused': 'Pausiert. Auf der Kachel auf Play drücken',

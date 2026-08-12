@@ -626,21 +626,75 @@ pub fn safety_clause() -> String {
     crate::prompts::SAFETY_CLAUSE.to_string()
 }
 
-/// The tools this build gives a chat, as JSON: `[{"tool":…,"blurb":…}]`.
+/// The tools this build gives a chat, as JSON: `[{"tool":…,"blurb":…,"pack":…}]`.
 ///
 /// The Tools panel tells a user what Daimond can do, and the only honest source for that is
 /// the registry the agent is actually handed -- a list written out again in JavaScript would
 /// drift, and the first a user would know of it is a tool that does not work or one they never
 /// knew they had.
+///
+/// `pack` is the catalogue key of the pack a tool is sold in, and empty for one Daimond ships
+/// free.  It is here because the belt and the shop are no longer the same list: a tool with a
+/// non-empty `pack` is priced by the gateway and listed by `/api/tools`, and a panel that also
+/// showed it under "Built in" would be telling the user it was free.
 #[wasm_bindgen]
 pub fn builtin_tools() -> String {
     let items = crate::tools::Tool::browser()
         .iter()
         .map(|t| fmt!(
-            r#"{{"tool":"{}","blurb":"{}"}}"#,
+            r#"{{"tool":"{}","blurb":"{}","pack":"{}"}}"#,
             t.name(),
             crate::llm::json_escape(t.summary()),
+            t.pack().unwrap_or(""),
         ))
         .collect::<Vec<String>>();
     fmt!("[{}]", items.join(","))
+}
+
+/// Tell this build which tool packs the account has not bought, comma separated.
+///
+/// The gateway is the authority -- `/api/tools` answers, per account, which unlocks are held --
+/// and the page is the courier: it calls this after each read with the packs that came back
+/// locked.  Nothing else calls it, and in particular nothing derived from anything a model said
+/// does, exactly as with [`set_permission_mode`].
+///
+/// Passing an empty string locks nothing, which is what a device that has never reached the
+/// gateway is left with.  See the section note in [`crate::tools`] for why that is the safe
+/// default rather than the lax one.
+///
+/// # Arguments
+/// * `csv` - The locked pack keys, as the gateway's catalogue spells them.
+#[wasm_bindgen]
+pub fn set_locked_packs(csv: String) {
+    crate::tools::set_locked_packs(&csv);
+}
+
+/// Which packs this build currently holds locked, comma separated.
+///
+/// Read rather than remembered by the page, for the same reason [`permission_mode`] is: a caller
+/// that failed to set one should see what is actually in force, not what it meant to set.
+#[wasm_bindgen]
+pub fn locked_packs() -> String {
+    crate::tools::locked_packs().join(",")
+}
+
+/// Whether a named tool is sold in a pack this account has not bought.
+///
+/// The whole question in one call, so a caller in JavaScript holds NO copy of a pack key: it names
+/// the tool it is about to run and is told whether it may.  The mapping from tool to pack and the
+/// state of that pack both live in [`crate::tools`], which is also what
+/// [`Tool::guard`](crate::tools::Tool::guard) consults -- so the human's Compile button and the
+/// model's `typst_compile` cannot come to different conclusions about the same purchase.
+///
+/// A tool this build does not know, and a tool that is shipped free, both answer `false`: there is
+/// nothing to have bought.
+///
+/// # Arguments
+/// * `name` - The tool's stable name, as `Tool::name` spells it, e.g. `typst_compile`.
+#[wasm_bindgen]
+pub fn tool_locked(name: String) -> bool {
+    match crate::tools::Tool::from_name(&name).and_then(|t| t.pack()) {
+        Some(pack) => crate::tools::pack_locked(pack),
+        None       => false,
+    }
 }

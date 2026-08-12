@@ -479,6 +479,19 @@
 	'models.credit_base_set':      'I have this much, as of now',
 	'models.credit_base_update':   'Update my figure',
 	'models.credit_base_bad':      'That is not an amount. Enter a number of US dollars.',
+	// A probed figure that this device has since watched money leave. It stops
+	// claiming to be what the provider said, because it no longer is.
+	'models.credit_auto_spent':    '{amount} left. The provider said {base} at {when}, less about {spent} spent here since.',
+	// How old the reading is. Without it a figure that has quietly stopped
+	// updating looks exactly like one that is current.
+	'models.age_now':              'Checked just now.',
+	'models.age_mins.one':         'Checked {n} minute ago.',
+	'models.age_mins.other':       'Checked {n} minutes ago.',
+	'models.age_hours.one':        'Checked {n} hour ago.',
+	'models.age_hours.other':      'Checked {n} hours ago.',
+	'models.age_days.one':         'Checked {n} day ago.',
+	'models.age_days.other':       'Checked {n} days ago.',
+	'models.age_failed':           'The last check did not answer, so this figure has not moved since.',
 
 	// ── Search ─────────────────────────────────────────────────
 	// The engine is the USER's setting, not the model's choice, so every string
@@ -726,6 +739,7 @@
 	'pending.cancel':       'Drop it',
 	'pending.cancel_named': 'Drop it: {what}',
 	'pending.noted':        'Noted, and taken off the list.',
+	'pending.opened':       'Opened for sending. It stays here until it is sent.',
 	'pending.diamond_gone': 'The Diamond that raised this is gone, so there is nobody to discuss it with.',
 	'pending.discuss_prompt': 'We need to discuss this further before I approve it: “{headline}”',
 
@@ -994,6 +1008,15 @@
 	'sync.when_mins':      '{n}m ago',
 	'sync.when_hours':     '{n}h ago',
 	'sync.when_days':      '{n}d ago',
+
+	// ── The account's public handle ─────────────────────────────
+	// The public name, minted by the gateway and the same on every device of
+	// the account. Three refusals and a shrug, because "no" on its own leaves
+	// the user guessing which no it was.
+	'handle.taken':    'Someone else already has that handle. Try another.',
+	'handle.invalid':  'A handle is 3 to 24 characters: lower-case letters, numbers, and hyphens between them.',
+	'handle.reserved': 'That handle is kept by Daimond and cannot be taken.',
+	'handle.failed':   'The handle could not be changed just now. Try again shortly.',
 
 	// ── Cloud storage cleanup ──────────────────────────────────
 	// A deletion the gateway would not carry out on one request. Say the two
@@ -1483,11 +1506,26 @@
 	'attach.pick_title':   'Attach files and folders',
 	'attach.pick_empty':   'Nothing here.',
 	'attach.already':      'Already attached',
+	'attach.not_here':     'Held by this chat, but it lives {where}, which is not the workspace you have open. This chat cannot reach it from here.',
+	// The workspace group in the chat footer. Its heading is not here: it is
+	// `astat.workspace_browser` / `astat.workspace_native`, so the footer, the
+	// account strip and the guide say the same words about the same idea.
+	'attach.ws_mark':      'Workspace',
+	'attach.ws_add':       'Mark a folder into the workspace',
+	'attach.ws_help':      'The folders this chat may read and change. Marking one in is the permission, and nothing will ask you again.',
+	'attach.ws_on':        'In this chat’s workspace: it may read and change what is inside. Press to take it out.',
+	'attach.ws_off':       'Not in the workspace, so this chat cannot open it. Press to mark it in.',
+	'attach.ws_empty':     'No folder is marked in. This chat can reach nothing of yours, only its own working folder. Mark one in with the paperclip, or with + above.',
+	'attach.group_prompt': 'In front of the model',
+	'attach.group_prompt_help': 'Named or quoted in the prompt when you send. This grants no reach.',
+	'attach.read_block':   'The contents of {path}:',
+	'attach.read_cut':     'That is as much of {path} as fits here.',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title':           'This Diamond\u2019s workspace',
 	'dws.count.one':       '{n} item',
 	'dws.count.other':     '{n} items',
+	'dws.none_yet':        'Nothing kept here yet',
 	'dws.mode_all':        'Everything',
 	'dws.mode_diamond':    'This Diamond',
 	'dws.empty':           'Nothing is kept with this Diamond yet. What you keep here is what its daimon can open.',
@@ -1534,7 +1572,6 @@
 	'link.pick_empty':     'There is no other Diamond to link to yet.',
 	'link.change_pick':    'Change',
 	'link.rel_label':      'Relation',
-	'link.rel_ph':         'How are they related?',
 	'link.rel_sug_help':   'Suggestions only; any word will do',
 	'link.rel_use':        'Use \u201c{rel}\u201d',
 	'link.note_label':     'Note',
@@ -1554,6 +1591,7 @@
 	'agents.already_folded_body': 'This agent\u2019s summary has already been folded into the crystal.',
 	'agents.a_diamond':           'Diamond',
 	'agents.clear_diamond_filter': 'Clear the Diamond filter',
+	'agents.clear_chat_filter':    'Clear the chat filter',
 	'instructions.chip_help':     'Your standing instructions, given to every agent. Click to open.',
 	'instructions.chip_two':      'Two layers are in force, yours and this project’s. Click to open yours.',
 
@@ -1914,10 +1952,14 @@
 	'agents.no_diamond':        'no Diamond',
 	'agents.no_diamond_help':   'This run has no Diamond',
 	'agents.only_from':         'Show only agents from "{name}"',
+	'agents.only_from_chat':    'Show only agents from this chat.',
 	// A run dispatched from a chat rather than a Diamond. It has no crystal, so
 	// say where its report actually is instead of naming a thing that is missing.
 	'agents.from_chat':         'a chat',
 	'agents.from_chat_help':    'Sent from the chat “{name}”.',
+	// The same chip when the chat has no name: the label is then the rail's derived
+	// phrase, and quoting a description as if it were a name is what this avoids.
+	'agents.from_chat_help_when': 'Sent from a chat you have not named, last used {when}.',
 	'agents.no_diamond_fold':   'This agent was sent from a chat, so there is no crystal to fold it into. Its report is in that conversation, and its full text is under Read.',
 	'agents.report_one':        'An agent you sent has finished.',
 	'agents.report_n':          '{n} agents you sent have finished.',
@@ -2094,6 +2136,7 @@
 	'typst.load_failed':   'Typst compiler failed to load: {reason}',
 	'typst.no_pdf':        'Typst produced no PDF (unknown compile error).',
 	'typst.compile_error': 'Typst compile error: {reason}',
+	'typst.pack_locked':   'Typesetting is part of a tool pack this account has not bought. The Tools panel names it and its price: bought once, kept for good, and paid for in money rather than out of your credits.',
 
 	// ── Toasts ─────────────────────────────────────────────────
 	'toast.copied': 'Copied',

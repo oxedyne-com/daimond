@@ -1331,8 +1331,19 @@ import init, {
 		/// mutation (`touchChat` is called before every save) and the message count moves
 		/// when another tab's turns are unioned in.
 		function stampOf(c) {
+			// THE HOLDINGS ARE IN THE STAMP, and this is not an optimisation detail:
+			// attaching a file, flipping Note to Read and marking a folder into the
+			// chat's workspace move none of the three counts above, so the record was
+			// found unchanged and NEVER WRITTEN. The mirror said it had taken -- the
+			// footer, the fence and `chatList` all read the mirror -- and the database
+			// still held the record from before, so every attachment a chat had died
+			// at the next reload and the workspace mark would have died with it.
+			// Stringified rather than counted, because Note to Read changes no length;
+			// cheap for the same reason the transcript is not stringified here, in
+			// reverse -- a handful of short records against a megabyte of turns.
 			return String(c.updatedAt || 0) + ':' + ((c.messages || []).length)
-				+ ':' + ((c.session && c.session.msgs) ? c.session.msgs.length : 0);
+				+ ':' + ((c.session && c.session.msgs) ? c.session.msgs.length : 0)
+				+ ':' + JSON.stringify(c.holds || []);
 		}
 
 		async function write(list) {
@@ -1352,13 +1363,23 @@ import init, {
 					await conn();
 				}
 				var t = tx('readwrite');
-				var seen = {};
+				var seen = {}, put = {};
 				list.forEach(function (c) {
 					if (!c || !c.id) return;
 					seen[c.id] = true;
+					// STAMPED AS IT IS AT THIS MOMENT, which is the state `put` clones:
+					// the value is structured-cloned synchronously here, and the record
+					// can be mutated again before the transaction settles. Taking the
+					// stamp afterwards, off the live object, wrote one state to disk and
+					// recorded a LATER one as being there -- so the next save found
+					// nothing to do and the change was lost with no error anywhere. It
+					// bit the moment two edits landed in one tick, which is exactly what
+					// attaching a folder and marking it into the workspace is.
+					var stamp = stampOf(c);
+					put[c.id] = stamp;
 					// Only what has moved. A `put` of every chat on every turn rewrites the
 					// whole store for one appended message.
-					if (disk[c.id] !== stampOf(c)) t.store.put(c);
+					if (disk[c.id] !== stamp) t.store.put(c);
 				});
 				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
 				//
@@ -1395,7 +1416,7 @@ import init, {
 				// moment later would then find nothing to delete -- a chat the user
 				// deleted on purpose, left behind for the next read to resurrect.
 				var next = {};
-				list.forEach(function (c) { if (c && c.id) next[c.id] = stampOf(c); });
+				Object.keys(put).forEach(function (id) { next[id] = put[id]; });
 				Object.keys(kept).forEach(function (id) { if (!next[id]) next[id] = kept[id]; });
 				disk = next;
 				usable = true;
@@ -1711,6 +1732,13 @@ import init, {
 			prevPrompt: c.prevPrompt || 0, prevCompletion: c.prevCompletion || 0, lastPrompt: c.lastPrompt || 0,
 			prevCached: c.prevCached || 0, prevCost: c.prevCost || 0,
 			session: c.session || null,
+			// THE CHAT'S WORKSPACE AND ITS ATTACHMENTS, which this did not carry and
+			// which were therefore lost on every reload -- `slimChat` wrote them out
+			// faithfully, nothing read them back, and the first save after boot then
+			// wrote the empty list over the user's own. A scope that quietly empties
+			// itself overnight is worse than one that was never offered, and the
+			// workspace mark rides here, so it would have taken the fence with it.
+			holds: Array.isArray(c.holds) ? c.holds : [],
 			updatedAt: c.updatedAt || 0, foldedInto: c.foldedInto || null };
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
@@ -1773,6 +1801,10 @@ import init, {
 				c.prevCost         = s.prevCost || 0;
 				c.lastPrompt       = s.lastPrompt || 0;
 				c.foldedInto       = s.foldedInto || c.foldedInto || null;
+				// A folder marked into the workspace in ANOTHER TAB is a change to
+				// what this tab's next turn may touch, so it is adopted with the rest
+				// of the fresher record rather than left to whichever tab saves last.
+				if (Array.isArray(s.holds)) c.holds = s.holds;
 				c.updatedAt        = s.updatedAt || 0;
 				// The model's conversation only ever moves forward, so a stored copy is
 				// taken when there is one and never traded for nothing: a tab that saved
@@ -3460,6 +3492,11 @@ import init, {
 	var agentFilter   = document.getElementById('agent-filter');
 	var agentQuery       = '';   // the agents panel search text, lower-cased
 	var agentDiamondFilter = null; // filter agents to one Diamond id, or null
+	// A run dispatched from an ordinary chat has no Diamond, so it cannot be
+	// filtered by one. Its chip names the conversation, and this is what that
+	// chip sets -- a second variable rather than a second meaning for the first,
+	// because a chat id and a Diamond id are different keys on the run.
+	var agentChatFilter  = null; // filter agents to one chat id, or null
 	var agentTagFilter   = null; // filter agents to one tag, or null
 	var newDiamondBtn   = document.getElementById('new-diamond-btn');
 	var crystalView     = document.getElementById('crystal-view');
@@ -6096,54 +6133,60 @@ import init, {
 		}
 	}
 
-	/// Confine a chat's dispatched worker: read anywhere, write where the user said.
+	/// Confine a chat to its WORKSPACE: the folders the user marked into it, and nothing else.
 	///
-	/// The chat's `scopeAgentTo`, and the asymmetry between the two is the design. A Diamond
-	/// fences both verbs, because a daimon may see only what its Diamond holds. A chat is the
-	/// user's own conversation over their whole workspace, so its worker READS wherever the
-	/// chat can — equal reach, since a person asked the question either way — and WRITES only
-	/// in the chat's own working folder and whatever the user attached. A command cannot be
-	/// inspected for whether it writes, so it counts as a write and runs only in an attached
-	/// folder on the machine: no attachment, no command.
+	/// **One function for the conversation and for every worker it dispatches**, because they
+	/// are one blast radius. The asymmetry that used to live here — a worker's writing fenced,
+	/// its reading free — was answered on 2026-08-11, when a daimon in an ordinary chat edited
+	/// two files of the user's own book in a directory under no version control. No worker was
+	/// involved, so a worker-only fence could not have helped, and reading is a blast radius
+	/// too. `chat_bounds` in src/tools.rs now IS `diamond_bounds`, so both verbs are fenced and
+	/// both surfaces are fenced by one rule.
+	///
+	/// **The mark is the permission, and nothing here asks anything.** The friction is paid once,
+	/// when a folder is marked into the workspace; inside it the model works as freely as before.
+	///
+	/// **What is handed over is the MARKED set and not the paperclip's whole list** — see
+	/// `chatScopePaths`. Note and Read are a cost decision about what is quoted into the prompt
+	/// and grant no reach whatever, so a caller passing everything attached would have made Note
+	/// into a grant.
 	///
 	/// Set, then read back and compared, exactly as `scopeAgentTo` is. A scope that failed
-	/// silently would leave the worker writing anywhere in the workspace.
+	/// silently would leave a turn with the reach of the whole workspace.
 	///
 	/// # Arguments
-	/// * `app` - The freshly built DaimondApp.
-	/// * `chatId` - The chat this worker was dispatched from.
+	/// * `app` - The freshly built DaimondApp — the chat's own, or a worker's.
+	/// * `chatId` - The chat whose workspace this is.
 	async function scopeChatTo(app, chatId) {
 		if (!app || typeof app.set_chat_scope !== 'function'
 			|| typeof app.diamond_scope !== 'function') {
-			throw new Error('This build of the engine cannot confine a chat\'s worker.');
+			throw new Error('This build of the engine cannot confine a chat.');
 		}
 		if (!chatId) {
-			throw new Error('A worker was dispatched without a chat to work for.');
+			throw new Error('A turn was started without a chat to work for.');
 		}
 		var scratch = chatScratchDir(chatId);
-		var attached = await chatScopePaths(chatId);
-		app.set_chat_scope(scratch, JSON.stringify(attached));
+		var marked = await chatScopePaths(chatId);
+		app.set_chat_scope(scratch, JSON.stringify(marked));
 
 		var got = {};
 		try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
-		catch (e) { throw new Error('The engine could not say what this worker is confined to.'); }
+		catch (e) { throw new Error('The engine could not say what this chat is confined to.'); }
 		if (got.nowhere) {
-			throw new Error('This chat\'s scope named no usable place, so a worker in it could '
-				+ 'not write anything at all.');
+			throw new Error('This chat\'s scope named no usable place, so nothing in it could '
+				+ 'read or write anything at all.');
 		}
-		var wrote = Array.isArray(got.write_allow) ? got.write_allow : [];
-		if (!wrote.length) {
-			throw new Error('The scope did not take: this worker\'s writing is not confined.');
+		// The ALLOW-LIST is what a chat carries now, exactly as a Diamond does. This used to
+		// assert the opposite — that `allow` was empty and `write_allow` was not — which is the
+		// shape `chat_bounds` stopped producing, so every chat-dispatched worker refused to
+		// start. Fenced in the safe direction, and still a break.
+		var allow = Array.isArray(got.allow) ? got.allow : [];
+		if (!allow.length) {
+			throw new Error('The scope did not take: this chat is not confined to anything.');
 		}
-		if (wrote.indexOf(scratch) < 0) {
-			throw new Error('The scope took, but without this chat\'s own folder: the engine holds '
-				+ wrote.join(', ') + ' and not ' + scratch + '.');
-		}
-		// A chat's worker must NOT carry a read allow-list. If one is here, something composed a
-		// Diamond's scope into this worker and it would silently stop reading the user's files.
-		if ((got.allow || []).length) {
-			throw new Error('This worker carries a Diamond\'s scope as well as a chat\'s, so it '
-				+ 'could read neither properly.');
+		if (allow.indexOf(scratch) < 0) {
+			throw new Error('The scope took, but without this chat\'s own folder: the engine '
+				+ 'holds ' + allow.join(', ') + ' and not ' + scratch + '.');
 		}
 		return got;
 	}
@@ -12280,8 +12323,23 @@ import init, {
 	/// button: `text` is the user's message; the rest is durability.
 	async function runTurn(chat, text) {
 		var app;
+		// A workspace that changed while this chat was mid-turn could not be applied then --
+		// `compose` INTERSECTS, so a live app cannot be widened -- and the mark is applied here
+		// instead, at the first moment there is no turn to disturb.
+		if (chat._scopeStale) { chat.app = null; chat._scopeStale = false; }
 		try { app = ensureApp(chat); }
 		catch (e) { appendError('Could not start agent: ' + String(e)); return; }
+		// THE CONVERSATION IS FENCED, not only the workers it dispatches. The incident this
+		// answers had no worker in it at all. Fails the turn rather than running it unfenced:
+		// a scope that did not take is the one failure here that matters.
+		//
+		// An ORDINARY chat only. A Diamond's own thread is a chat record with a `diamondId`,
+		// and its reach is its Diamond's -- `diamond_bounds`, from the links -- so handing it a
+		// chat's workspace would fence a daimon to a set nobody marked for it.
+		if (!chat.diamondId) {
+			try { await scopeChatTo(app, chat.id); }
+			catch (e) { appendError(friendlyError(e)); return; }
+		}
 
 		var umid = newMid();
 		// Scored HERE, before the message joins the record, because what is being
@@ -13668,8 +13726,9 @@ import init, {
 			task.textContent = run.task;
 			card.appendChild(task);
 
-			// Chips carry where the run came from without a tree: its Diamond, that
-			// Diamond's inherited tags, and the model. The Diamond and tag chips filter.
+			// Chips carry where the run came from without a tree: its Diamond or the
+			// chat that sent it, that Diamond's inherited tags, and the model. All but
+			// the model filter the panel.
 			var chips = document.createElement('div'); chips.className = 'achips';
 			chips.appendChild(agentDiamondChip(run));
 			agentTagsOf(run).slice(0, TAG_CHIPS_SHOWN).forEach(function (tag) {
@@ -14154,6 +14213,19 @@ import init, {
 	// PRIORITY IS SET BY THE DAIMON THAT RAISED IT (§5.3, settled with the user),
 	// and you may override it. Anything else means setting a priority by hand on
 	// every item, which nobody does twice.
+	//
+	// NOTHING IN THE SHIPPED APP RAISES ONE, and a user has therefore never seen a
+	// tile here. The one thing it was built for -- approving outgoing mail -- was
+	// built instead as the Drafts list at the top of the Email panel, which
+	// `mail.js` says in as many words ("the only thing in the panel that is
+	// waiting on the user"), and `src/prompts.rs` now tells the daimon that a
+	// draft it writes appears there. A daimon cannot reach this panel either: the
+	// three answers only mean anything for a proposal a daimon authored, and there
+	// is no tool with which to author one. So this is a candidate for deletion
+	// rather than for a caller invented to justify it -- see the note in
+	// `DaimondPendingView` for what deleting it would take. The `execute` path is
+	// kept correct in the meantime, because a half-working thing that ships is
+	// still a thing that ships.
 	var PENDING_KEY = 'daimond-pending';
 	var PRIORITIES  = ['high', 'normal', 'low'];
 
@@ -14291,6 +14363,17 @@ import init, {
 			box.appendChild(line);
 			box.appendChild(body);
 
+			// A draft whose composer has already been opened says so. Without it the
+			// tick reads as a button that did nothing: the window it opened is on top
+			// of this panel, and coming back to a tile that looks untouched is what
+			// makes somebody press it twice.
+			if (it.opened) {
+				var seen = document.createElement('div');
+				seen.className = 'rail-note pend-opened';
+				seen.textContent = t('pending.opened');
+				box.appendChild(seen);
+			}
+
 			if (it.files && it.files.length) {
 				var files = document.createElement('div');
 				files.className = 'pend-files';
@@ -14330,16 +14413,72 @@ import init, {
 
 		/// Do it. What that means depends on the kind, and there is exactly one
 		/// kind today: a draft the daimon wrote, which the mail panel sends.
+		///
+		/// OPENING A COMPOSER IS NOT DOING IT, so a draft tile stays. It used to be
+		/// dropped the instant the window opened, which lost the action outright
+		/// when the composer was closed without sending: nothing had happened, and
+		/// there was no longer anything on the list to say so. The tile leaves when
+		/// the draft file has gone -- sending discards it, see `sweep` -- or when
+		/// the user drops it by hand.
 		execute: async function (it) {
 			if (it.kind === 'draft' && it.files && it.files[0] && window.DaimondMail) {
 				try { await DaimondMail.openDraft(it.files[0]); }
 				catch (e) { toast(friendlyError(e), true); return; }
-			} else {
-				// A note has nothing to run: approving it is acknowledging it, and
-				// saying so is better than a tick that quietly means nothing.
-				toast(t('pending.noted'));
+				it.opened = Date.now();
+				this.save();
+				return;
 			}
-			Pending.drop(it.id);
+			// A note has nothing to run: approving it is acknowledging it, and
+			// saying so is better than a tick that quietly means nothing.
+			toast(t('pending.noted'));
+			this.drop(it.id);
+		},
+
+		/// Drop the tiles whose action has already happened somewhere else.
+		///
+		/// A draft that has been sent is discarded from `drafts/` by the mail panel,
+		/// so the file being gone is the one honest signal that the tile is finished.
+		/// That is what lets `execute` leave the tile up without turning the list
+		/// into something the user has to tidy: it tidies itself, on the fact rather
+		/// than on the click. Called wherever mail touches the workspace, which is
+		/// every moment a draft can appear or vanish.
+		sweep: async function () {
+			if (!this.items.length) return;
+			var live = [];
+			for (var i = 0; i < this.items.length; i++) {
+				var it = this.items[i];
+				// Only a draft that has been opened: an unopened one is still an
+				// invitation, and a `note` has no file to have lost.
+				if (it.kind !== 'draft' || !it.opened || !it.files || !it.files[0]) {
+					live.push(it);
+					continue;
+				}
+				// A DROP IS DESTRUCTIVE, so only a door that ANSWERED may cause one --
+				// and `read_file` throws the same way for a file that is gone and for
+				// a store that is not up (measured: both come back as an OPFS error,
+				// with nothing in either to tell them apart). Taking the two alike
+				// would empty this list the first time the workspace was unavailable.
+				//
+				// So the question is asked of the FOLDER instead, through the file
+				// tool, which never throws: a missing folder comes back as text
+				// beginning "Error", and a listing that arrives is proof the door is
+				// up. Matched on the bare name rather than parsed, because the only
+				// way that can be wrong is by finding a name that is there -- which
+				// keeps the tile, and keeping a tile too long is the safe mistake.
+				var path = it.files[0];
+				var cut  = path.lastIndexOf('/');
+				var name = cut >= 0 ? path.slice(cut + 1) : path;
+				var listing = null;
+				try {
+					listing = await tools().run_tool('file_list',
+						JSON.stringify({ path: cut >= 0 ? path.slice(0, cut) : '' }));
+				} catch (e) { listing = null; }
+				var answered = (typeof listing === 'string') && !/^\s*Error\b/i.test(listing);
+				if (!answered || listing.indexOf(name) !== -1) live.push(it);
+			}
+			if (live.length === this.items.length) return;
+			this.items = live;
+			this.save();
 		},
 
 		/// Discuss it: back to the daimon that raised it, with the details already
@@ -14356,18 +14495,26 @@ import init, {
 		},
 	};
 
-	// What is waiting on the user, published so a daimon's proposal can be raised
-	// from anywhere -- the mail panel, a tool, a trigger -- without a second copy
-	// of the store growing beside this one.
 	// One Diamond's triggered actions, read-only. Published so that anything
 	// building a picture of the pause tree -- the widget verifier does exactly
 	// this -- can ask what the leaves ARE rather than assuming a shape.
 	window.DaimondTriggersOf = function (id) { return Triggers.of(id).slice(); };
 
+	// The Pending panel's whole surface to the rest of the world -- and, `add`
+	// aside, its whole set of callers, which are all in `dev/`. Removing the panel
+	// is this object, the `Pending` module above it, `#panel-pending` in
+	// `index.html`, the `pending.*` keys in the eight catalogues, the `.pend-*`
+	// rules in `app.css`, and the Pending half of `dev/verify_triggers.mjs`.
+	// Nothing else reads any of it: it is not in the sync parcel, and no daimon
+	// tool writes to it.
 	window.DaimondPendingView = {
 		add:   function (item) { return Pending.add(item); },
 		items: function () { return Pending.items.slice(); },
 		drop:  function (id) { return Pending.drop(id); },
+		/// Take off whatever has already happened elsewhere. Published because the
+		/// signal is a FILE, and the module that moves the file is the mail panel:
+		/// it is called from the mail deps (`refreshFiles`) and at boot.
+		sweep: function () { return Pending.sweep(); },
 	};
 	// The two layers of standing instructions, for the same reason: what reaches
 	// every agent should be askable from outside the one function that composes it.
@@ -16043,6 +16190,9 @@ import init, {
 			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
+			// The chat footer names the workspace it is drawing, and which
+			// holdings can be reached at all changed the moment the root did.
+			attachChanged();
 			await rereadRootRules();
 			await adoptFolderDiamonds();
 			list('');
@@ -16144,6 +16294,7 @@ import init, {
 			rootHandle = folderHandle || rootHandle;
 			folderHandle = null;
 			renderMode();
+			attachChanged();			// the footer names the root, and reachability just moved
 			await rereadRootRules();		// the sandbox has its own DAIMOND.md and its own prompts
 			list('');
 		}
@@ -16202,6 +16353,7 @@ import init, {
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
 			folderHandle = null;
 			renderMode(lost);
+			attachChanged();			// the footer names the root, and reachability just moved
 			showModeMsg('Lost access to the folder. Reconnect to continue.', true);
 			refresh();
 		}
@@ -18852,24 +19004,96 @@ import init, {
 		return tagsOf(agentDiamondOf(run));
 	}
 
-	/// One Diamond chip on a run's tile: names the parent, and filters to it.
+	/// The chat a run was dispatched from, looked up live, or null.
+	function agentChatOf(run) {
+		if (!run || !run.chatId) return null;
+		for (var i = 0; i < chats.length; i++) if (chats[i].id === run.chatId) return chats[i];
+		return null;
+	}
+
+	/// The name the USER gave that chat, or '' when they never gave it one.
+	///
+	/// The live chat wins over the run's snapshot, which was taken at dispatch and
+	/// does not follow a rename; the snapshot is all that is left once the chat
+	/// itself has gone to the trash.
+	function agentChatName(run) {
+		var s = agentChatOf(run);
+		if (s) return s.name || '';
+		return (run && run.chatName) || '';
+	}
+
+	/// What to call that chat where a chip has to name it.
+	///
+	/// `chatDisplayName` and nothing of its own, so the rail and the chip call one
+	/// conversation by one phrase -- the user's name for it, or "the chat from
+	/// 09:12". Seq 115 deleted default chat names, and until this the chip fell
+	/// through to the placeholder: every chat tile read "a chat", which is the one
+	/// case the chip exists for, two conversations' agents running at once.
+	function agentChatLabel(run) {
+		var s = agentChatOf(run);
+		if (s) return chatDisplayName(s);
+		return (run && run.chatName) || tOr('agents.from_chat', 'a chat');
+	}
+
+	/// One chip on a run's tile: names where the run came from, and filters to it.
+	///
+	/// "Where from" is a Diamond for a dispatched run and a CHAT for one an
+	/// ordinary conversation sent. Both filter. The chat half did not: the chip was
+	/// drawn, the comment said it filtered, and the listener was still hung on
+	/// `run.diamondId` -- which a chat-dispatched run does not have -- so every
+	/// chat chip was inert from the day it was added.
 	function agentDiamondChip(run) {
 		var el = document.createElement('button');
-		el.className = 'tag-chip diamond-chip' + (agentDiamondFilter === run.diamondId ? ' tag-active' : '');
+		// Which filter this chip is the subject of depends on which end the run
+		// hangs off. A chat-dispatched run has no `diamondId` at all, so the
+		// Diamond comparison can never mark it active.
+		var on = run.diamondId
+			? (agentDiamondFilter === run.diamondId)
+			: (!!run.chatId && agentChatFilter === run.chatId);
+		el.className = 'tag-chip diamond-chip' + (on ? ' tag-active' : '');
 		// A chat-dispatched run says which CONVERSATION sent it. The chip existed with
 		// a Diamond-less branch before anything could reach it, and that branch says
 		// only "not from a Diamond" -- true, and no help at all when two chats have
 		// agents running at once. A name is what tells them apart.
-		el.style.setProperty('--tag-h', tagHue(run.diamondName || run.chatName || ''));
+		//
+		// The hue is keyed to the chat's ID rather than to what the chip says. Names
+		// are optional and now usually absent, and hashing the empty string handed
+		// every unnamed chat the same colour -- the second way two conversations
+		// became one. An id is per chat and never changes under a rename.
+		var chat = run.chatId ? agentChatOf(run) : null;
+		var given = run.chatId ? agentChatName(run) : '';
+		el.style.setProperty('--tag-h', tagHue(run.diamondName || run.chatId || ''));
 		el.textContent = '↳ ' + (run.diamondName
-			|| (run.chatId ? (run.chatName || tOr('agents.from_chat', 'a chat')) : t('agents.no_diamond')));
-		el.title = run.diamondId
-			? t('agents.only_from', { name: run.diamondName })
-			: run.chatId
-				? tOr('agents.from_chat_help', 'Sent from the chat “{name}”.',
-					{ name: run.chatName || tOr('agents.from_chat', 'a chat') })
-				: t('agents.no_diamond_help');
-		if (run.diamondId) el.addEventListener('click', function (e) { e.stopPropagation(); setAgentDiamondFilter(run.diamondId); });
+			|| (run.chatId ? agentChatLabel(run) : t('agents.no_diamond')));
+		// The title says where the run came from AND what pressing the chip does.
+		// Provenance alone left a button whose only description was a fact about
+		// the past, which is how a control comes to look like a label.
+		var acts = ' ' + t('agents.only_from_chat');
+		if (run.diamondId) {
+			el.title = t('agents.only_from', { name: run.diamondName });
+		} else if (given) {
+			el.title = tOr('agents.from_chat_help', 'Sent from the chat “{name}”.', { name: given }) + acts;
+		} else if (chat) {
+			// A derived phrase is a description, and the named key puts quotation marks
+			// round it -- "the chat 'a chat'". This one says the same thing without
+			// dressing a description as a name, and adds the one fact the chip's own
+			// short label leaves out.
+			el.title = tOr('agents.from_chat_help_when', 'Sent from a chat you have not named, last used {when}.',
+				{ when: tileWhen(chat.updatedAt || Date.now()) }) + acts;
+		} else if (!run.chatId) {
+			el.title = t('agents.no_diamond_help');
+		} else {
+			// The chat has gone to the trash: there is no name to quote and no time
+			// left to read, so the title is what the chip DOES and nothing else. It
+			// used to be left blank, which is defensible for a label and not for a
+			// button.
+			el.title = t('agents.only_from_chat');
+		}
+		if (run.diamondId) {
+			el.addEventListener('click', function (e) { e.stopPropagation(); setAgentDiamondFilter(run.diamondId); });
+		} else if (run.chatId) {
+			el.addEventListener('click', function (e) { e.stopPropagation(); setAgentChatFilter(run.chatId); });
+		}
 		return el;
 	}
 
@@ -18877,12 +19101,17 @@ import init, {
 	/// task, Diamond name, model and inherited tags are searched.
 	function agentMatches(run) {
 		if (agentDiamondFilter && run.diamondId !== agentDiamondFilter) return false;
+		if (agentChatFilter && run.chatId !== agentChatFilter) return false;
 		if (agentTagFilter && agentTagsOf(run).indexOf(agentTagFilter) === -1) return false;
 		if (!agentQuery) return true;
 		// The chat's name is searchable beside the Diamond's: it is the only word on a
 		// chat-dispatched tile that says where the run came from, and a panel holding
 		// two conversations' fan-outs is exactly when somebody types a name into the box.
-		var hay = [run.name, run.task, run.diamondName, run.chatName, shortModel(run.model)]
+		// Its LIVE name, so a chat renamed after it dispatched answers to what it is
+		// called now. The chip's derived phrase is deliberately NOT searched: it is a
+		// description every unnamed chat shares, so "chat" would match all of them and
+		// match nothing in particular -- and a relative time moves under the query.
+		var hay = [run.name, run.task, run.diamondName, agentChatName(run), shortModel(run.model)]
 			.concat(agentTagsOf(run)).join(' ').toLowerCase();
 		return hay.indexOf(agentQuery) !== -1;
 	}
@@ -18890,7 +19119,16 @@ import init, {
 	/// Filter the panel to one Diamond (toggles off if it is already the filter).
 	function setAgentDiamondFilter(diamondId) {
 		agentDiamondFilter = (agentDiamondFilter === diamondId) ? null : diamondId;
-		agentTagFilter = null;   // one filter at a time, as the rail has one
+		agentChatFilter = null;  // one filter at a time, as the rail has one
+		agentTagFilter = null;
+		Workers.render();
+	}
+
+	/// Filter the panel to one chat (toggles off if it is already the filter).
+	function setAgentChatFilter(chatId) {
+		agentChatFilter = (agentChatFilter === chatId) ? null : chatId;
+		agentDiamondFilter = null;
+		agentTagFilter = null;
 		Workers.render();
 	}
 
@@ -18898,7 +19136,20 @@ import init, {
 	function setAgentTagFilter(tag) {
 		agentTagFilter = (agentTagFilter === tag) ? null : tag;
 		agentDiamondFilter = null;
+		agentChatFilter = null;
 		Workers.render();
+	}
+
+	/// What to call the chat the panel is filtered to.
+	///
+	/// Asked of the runs rather than of the chat store, because `agentChatLabel`
+	/// already answers it for every state a chat can be in -- named, unnamed, or
+	/// gone to the trash with only the run's snapshot left.
+	function agentChatFilterLabel() {
+		for (var i = 0; i < Workers.runs.length; i++) {
+			if (Workers.runs[i].chatId === agentChatFilter) return agentChatLabel(Workers.runs[i]);
+		}
+		return tOr('agents.from_chat', 'a chat');
 	}
 
 	/// The active agents filter, as one removable chip beside the search box,
@@ -18948,7 +19199,10 @@ import init, {
 	function renderAgentFilter() {
 		if (!agentFilter) return;
 		agentFilter.innerHTML = '';
-		if (!agentDiamondFilter && !agentTagFilter) { agentFilter.style.display = 'none'; return; }
+		if (!agentDiamondFilter && !agentChatFilter && !agentTagFilter) {
+			agentFilter.style.display = 'none';
+			return;
+		}
 		agentFilter.style.display = '';
 		var chip;
 		if (agentDiamondFilter) {
@@ -18961,6 +19215,16 @@ import init, {
 			chip.textContent = '↳ ' + label;
 			chip.title = t('agents.clear_diamond_filter');
 			chip.addEventListener('click', function () { setAgentDiamondFilter(id); });
+		} else if (agentChatFilter) {
+			// Hued off the chat's ID, exactly as the tile's chip is, so the standing
+			// filter and the chip that set it are visibly the same thing.
+			var cid = agentChatFilter;
+			chip = document.createElement('button');
+			chip.className = 'tag-chip tag-active diamond-chip';
+			chip.style.setProperty('--tag-h', tagHue(cid));
+			chip.textContent = '↳ ' + agentChatFilterLabel();
+			chip.title = t('agents.clear_chat_filter');
+			chip.addEventListener('click', function () { setAgentChatFilter(cid); });
 		} else {
 			var tag = agentTagFilter;
 			chip = tagChip(tag, 'tag-active', function () { setAgentTagFilter(tag); });
@@ -21295,15 +21559,22 @@ import init, {
 		// (see pruneAttachState), so every render is the moment that gets noticed.
 		pruneAttachState(links.map(function (l) { return l.id; }));
 
-		if (!links.length) { strip.style.display = 'none'; list.style.display = 'none'; return; }
+		// THE STRIP STAYS AT ZERO. It used to hide itself, and the list with it, so
+		// that a new Diamond was not given an empty shelf to explain -- but the `+`
+		// that attaches the first thing lives inside that list, which made the one
+		// control unreachable in exactly the state it exists for. At zero the strip
+		// reads as the offer rather than as a count of nothing.
 		strip.style.display = '';
 		// This strip is the Diamond's workspace in one line: the files, folders and
 		// pages that are part of this pursuit -- which is the same set the Workspace
 		// panel draws as a tree, and the same set its daimon may open. It used to
 		// call them artefacts, which named only how most of them got here.
-		strip.textContent = '\u25c8 ' + tn('dws.count', links.length);
+		strip.textContent = '\u25c8 ' + (links.length
+			? tn('dws.count', links.length)
+			: t('dws.none_yet'));
 		strip.title = t('dws.title');
 		if (!strip.dataset.open) { list.style.display = 'none'; return; }
+		list.style.display = '';
 
 		// Most recent first: what was last touched is what is being worked on.
 		links.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
@@ -21311,7 +21582,7 @@ import init, {
 		// The SAME component the chat footer draws (§5), given this footer's own
 		// items. Everything below builds an ITEM; nothing below builds a row, so
 		// the two footers cannot drift apart by one of them being edited.
-		renderAttachFooter(list, links.map(function (l) {
+		var body = renderAttachFooter(list, links.map(function (l) {
 			var kind = l.other.slice(0, l.other.indexOf(':'));
 			var rest = l.other.slice(l.other.indexOf(':') + 1);
 			var parsed = parseRef(l.other);
@@ -21366,6 +21637,16 @@ import init, {
 				},
 			};
 		}));
+
+		// An empty box with a `+` above it says what to press and not why it is
+		// worth pressing. This is the sentence that was written for the state and
+		// had nowhere to appear while the state hid itself.
+		if (!links.length) {
+			var none = document.createElement('div');
+			none.className = 'rail-note arte-empty';
+			none.textContent = t('dws.empty');
+			body.appendChild(none);
+		}
 	}
 
 	/// The link by which a Diamond holds this reference, or nothing.
@@ -21598,6 +21879,7 @@ import init, {
 			if (sameThing(list[i].ref, ref)) {
 				list.splice(i, 1);
 				persistChats(); attachChanged();
+				dropChatApp(chatId);
 				return;
 			}
 		}
@@ -21607,7 +21889,24 @@ import init, {
 		// nor Read grants a worker permission to change anything, which is why
 		// the write fence is drawn from the LIST and not from the state.
 		list.push({ ref: ref, dir: !!dir, path: path, state: 'note' });
+		// ── `ws`: is this in the chat's WORKSPACE? ──────────────────────
+		//
+		// The second, INDEPENDENT thing an attachment carries, and the only one that
+		// reaches the fence. `state` is a cost decision about the prompt and grants
+		// nothing; `ws` is the blast radius. A path can be in the workspace and Read
+		// at once, so they are two fields and never one with three values.
+		//
+		// Written here rather than in the object literal above so that
+		// `verify_attachfocus --break notedefault`, which anchors on that line
+		// verbatim, still finds it.
+		//
+		// FALSE, always, whatever was attached. Attaching a folder used to grant
+		// write reach to it by the mere fact of the attachment, and inheriting that
+		// as a default would carry the old meaning through the change under a new
+		// name. Marking in is its own press.
+		list[list.length - 1].ws = false;
 		persistChats(); attachChanged();
+		dropChatApp(chatId);
 	}
 
 	function chatAttachSetState(chatId, ref, state) {
@@ -21617,12 +21916,49 @@ import init, {
 		persistChats(); attachChanged();
 	}
 
-	/// Everything this chat holds that can actually be opened from the workspace
-	/// that is open now, as workspace-relative paths.
+	/// Mark this folder into the chat's workspace, or take it back out.
+	///
+	/// THE PRESS THAT IS THE PERMISSION. Nothing is asked here and nothing is asked
+	/// later: the fence is geography, and this is where the geography is drawn.
+	///
+	/// The app is dropped because `compose` in src/tools.rs INTERSECTS — which is
+	/// what makes it safe to call from anywhere — so re-scoping the app a live chat
+	/// already holds can only ever narrow it. A folder marked in while an app exists
+	/// would then be a control that visibly did something and reached nothing, which
+	/// is the defect class this whole surface was rebuilt to end.
+	function chatAttachSetWorkspace(chatId, ref, on) {
+		var rec = chatAttachFind(chatId, ref);
+		if (!rec || !!rec.ws === !!on) return;
+		rec.ws = !!on;
+		persistChats(); attachChanged();
+		dropChatApp(chatId);
+	}
+
+	/// Throw away the engine instance a chat holds, so the next turn builds one with
+	/// the workspace as it stands now.
+	///
+	/// A chat MID-TURN keeps its app: the running turn owns it — abort and interject
+	/// both go through it — and its scope was settled when it started. The mark is
+	/// applied at the top of the next turn instead, which is what `_scopeStale` is
+	/// read for. An underscore field, so `slimChat` leaves it out of the record and
+	/// it never rides the sync parcel.
+	function dropChatApp(chatId) {
+		var c = chats.find(function (x) { return x.id === chatId; });
+		if (!c) return;
+		if (c._generating) { c._scopeStale = true; return; }
+		c.app = null;
+	}
+
+	/// The folders this chat's workspace is MADE OF, as workspace-relative paths.
 	///
 	/// The INPUT to a fence and not a fence: the bounds are composed in Rust, by
 	/// `chat_bounds`, and a page that built its own would be a second opinion
 	/// about what a worker may touch, free to drift from the one enforced.
+	///
+	/// **Marked only.** Note and Read are a cost decision about what is quoted into
+	/// the prompt, and neither grants any reach — so a path attached as Read and not
+	/// marked in is not here, and the engine will refuse to open it. Handing over the
+	/// whole attachment list is exactly the mistake that would make Note a grant.
 	///
 	/// Unreachable holdings are left out for the reason `Files.bounds` leaves
 	/// them out of a Diamond's: a path that is allowed and absent reads to the
@@ -21635,6 +21971,9 @@ import init, {
 		// the record being intact — the record is intact precisely so a restore works.
 		if (trashed(chatId)) return [];
 		return chatAttachList(chatId)
+			// The MARK, and nothing else, is what widens the fence. First, so that
+			// everything below it is a question about a folder that is already in.
+			.filter(function (a) { return !!a.ws; })
 			.filter(function (a) { return refReachable(a.ref); })
 			// A door onto a Diamond the user deleted, closed for the same reason
 			// `attachmentsOf` closes it: the path resolves, and reads as an empty
@@ -21708,6 +22047,59 @@ import init, {
 		return out.length ? out.join('\n') + '\n' : '';
 	}
 
+	// Where a quoted file starts and stops. A fence rather than a sentence, so no
+	// closing word needs translating and nothing in the file can be mistaken for the
+	// end of it; four backticks because three are what a file of code contains.
+	var ATTACH_FENCE = '````';
+	// How much of one file is quoted. A person who presses Read on a 40 MB log has
+	// asked for something the composer cannot hold and the model would not read; the
+	// cut is said in words rather than made silently.
+	var ATTACH_READ_MAX = 40000;
+
+	/// The CONTENTS of everything marked Read, quoted under the prefix.
+	///
+	/// **The app quotes the file rather than telling the model to open it**, and the
+	/// reason is the fence. `Read notes/spec.md in full.` was an instruction the app
+	/// then refused to let the model carry out: a chat may open only what is marked
+	/// into its workspace, and Read grants no reach. So the very first Read a user
+	/// pressed produced a refusal caused by the app itself.
+	///
+	/// Quoting is also what Read has always claimed to be — "the contents are wanted
+	/// now" — it costs the same tokens, it saves a round trip, and it is the whole
+	/// point of separating the two ideas: a file the chat may QUOTE need not be a
+	/// folder the chat may CHANGE.
+	///
+	/// Read through `Wasm.read_file`, the raw door, and NOT through the `file_read`
+	/// TOOL: the tool is model-facing and numbers every line, so the tool's answer
+	/// quoted into a prompt is the user's file with a gutter down it that nobody
+	/// asked for. This project has shipped that mistake twice. The raw door is also
+	/// unfenced, which is right here: it is the USER quoting their own file into
+	/// their own message, and the fence governs what the MODEL may open on its own.
+	/// A file that will not read is passed over in silence; it is still named in the
+	/// prefix line above.
+	///
+	/// # Arguments
+	/// * `list` - A chat's holdings.
+	async function attachReadBodies(list) {
+		var want = (list || []).filter(function (a) {
+			return a.state === 'read' && a.path && refReachable(a.ref);
+		});
+		var out = '';
+		for (var i = 0; i < want.length; i++) {
+			var body = null;
+			try { body = await Wasm.read_file(want[i].path); }
+			catch (e) { body = null; }
+			if (typeof body !== 'string') continue;
+			var cut = body.length > ATTACH_READ_MAX;
+			out += '\n' + t('attach.read_block', { path: want[i].path }) + '\n'
+				+ ATTACH_FENCE + '\n'
+				+ (cut ? body.slice(0, ATTACH_READ_MAX) : body).replace(/\n?$/, '\n')
+				+ ATTACH_FENCE + '\n';
+			if (cut) out += t('attach.read_cut', { path: want[i].path }) + '\n';
+		}
+		return out;
+	}
+
 	// The text this module put in front of the composer last, per chat (or per
 	// Diamond, while its agent is still fresh) — so a later change can find and
 	// replace it rather than stacking a second copy, and an edit the user made
@@ -21746,6 +22138,11 @@ import init, {
 		var input = document.getElementById('chat-input');
 		if (!input) return;
 		var text = attachPrefixText(list);
+		// A CHAT quotes what it marked Read; a Diamond does not. A daimon may open
+		// everything its Diamond holds, so the instruction there is one it can carry
+		// out, and quoting the same file into a seeded composer would pay for it
+		// twice. Two surfaces, one control, and the difference is the fence.
+		if (text && f.kind === 'chat') text += await attachReadBodies(list);
 		var last = attachPrefixWritten[f.id] || '';
 		var val  = input.value;
 		if (last && val.indexOf(last) === 0) input.value = text + val.slice(last.length);
@@ -21942,36 +22339,81 @@ import init, {
 	/// It carries no count. The crystal footer already has one on the strip
 	/// that opens it, and a number printed twice a few pixels apart is a
 	/// number the reader has to check against itself.
-	function attachFooterHead() {
+	/// # Arguments
+	/// * `o.title` - What this band names, where it heads a GROUP rather than a whole
+	///   footer. A group without a name is two lists of tiles nobody can tell apart.
+	/// * `o.help`  - The one sentence the title says on hover.
+	/// * `o.view`  - `false` to leave the view toggle off this band.
+	/// * `o.add`   - `false` to leave the `+` off it.
+	function attachFooterHead(o) {
+		o = o || {};
 		var head = document.createElement('div');
-		head.className = 'attach-head';
+		head.className = 'attach-head' + (o.title ? ' attach-group-head' : '');
+
+		if (o.title) {
+			var name = document.createElement('span');
+			name.className = 'attach-group-title';
+			name.textContent = o.title;
+			if (o.help) name.title = o.help;
+			head.appendChild(name);
+		}
 
 		// One control, two positions -- not two buttons, one of which is always
 		// inert. Its word is the view it will GIVE you, which is the only thing
 		// a person wants to know before pressing it.
-		var to = attachView() === 'icons' ? 'stack' : 'icons';
-		var view = document.createElement('button');
-		view.type = 'button';
-		view.className = 'attach-view-btn';
-		view.dataset.act = 'attach-view';
-		view.dataset.view = to;
-		view.textContent = t(to === 'icons' ? 'attach.view_icons' : 'attach.view_stack');
-		view.title = view.textContent;
-		view.setAttribute('aria-label', view.textContent);
-		view.addEventListener('click', function (ev) { ev.stopPropagation(); setAttachView(to); });
-		head.appendChild(view);
+		if (o.view !== false) {
+			var to = attachView() === 'icons' ? 'stack' : 'icons';
+			var view = document.createElement('button');
+			view.type = 'button';
+			view.className = 'attach-view-btn';
+			view.dataset.act = 'attach-view';
+			view.dataset.view = to;
+			view.textContent = t(to === 'icons' ? 'attach.view_icons' : 'attach.view_stack');
+			view.title = view.textContent;
+			view.setAttribute('aria-label', view.textContent);
+			view.addEventListener('click', function (ev) { ev.stopPropagation(); setAttachView(to); });
+			head.appendChild(view);
+		}
 
-		var add = document.createElement('button');
-		add.type = 'button';
-		add.className = 'attach-add';
-		add.dataset.act = 'attach-add';
-		add.textContent = '+';
-		add.title = t('attach.add');
-		add.setAttribute('aria-label', t('attach.add'));
-		add.addEventListener('click', function (ev) { ev.stopPropagation(); attachPicker(); });
-		head.appendChild(add);
+		if (o.add !== false) {
+			var add = document.createElement('button');
+			add.type = 'button';
+			add.className = 'attach-add';
+			add.dataset.act = 'attach-add';
+			add.textContent = '+';
+			add.title = o.mark ? t('attach.ws_add') : t('attach.add');
+			add.setAttribute('aria-label', add.title);
+			// A CONTROL MEANS WHAT ITS POSITION SAYS. This `+` sits in the workspace
+			// group, under a sentence that says to mark a folder in with it, so a
+			// folder it adds is marked in. One that merely attached would be the
+			// control that visibly did something and changed no permission.
+			add.addEventListener('click', function (ev) {
+				ev.stopPropagation();
+				attachPicker({ mark: !!o.mark });
+			});
+			head.appendChild(add);
+		}
 
 		return head;
+	}
+
+	/// The scrolling box of tiles, in whichever view is chosen.
+	///
+	/// Its own function because a chat's footer has TWO of them -- the workspace and
+	/// the attachments -- and a second copy of the scroll region is how the two would
+	/// come to scroll, name and cap themselves differently.
+	function attachBody(items, o) {
+		o = o || {};
+		var icons = !o.stack && attachView() === 'icons';
+		var body = document.createElement('div');
+		body.className = (o.cls || 'attach-body') + (icons ? ' icons' : '');
+		// A scrolling region is a keyboard stop and needs a name, or a screen
+		// reader announces "group" and nothing else.
+		body.tabIndex = 0;
+		body.setAttribute('role', 'group');
+		body.setAttribute('aria-label', o.label || t('attach.list'));
+		items.forEach(function (it) { body.appendChild(attachTile(it)); });
+		return body;
 	}
 
 	/// Draw a footer: the chrome, then the tiles, in whichever view is chosen.
@@ -21980,47 +22422,123 @@ import init, {
 	/// scrolling, so the toggle and the `+` stay put while the stack moves
 	/// under them -- chrome that scrolls away is chrome nobody finds twice.
 	function renderAttachFooter(box, items) {
-		var icons = attachView() === 'icons';
 		box.innerHTML = '';
 		box.appendChild(attachFooterHead());
-
-		var body = document.createElement('div');
-		body.className = 'attach-body' + (icons ? ' icons' : '');
-		// A scrolling region is a keyboard stop and needs a name, or a screen
-		// reader announces "group" and nothing else.
-		body.tabIndex = 0;
-		body.setAttribute('role', 'group');
-		body.setAttribute('aria-label', t('attach.list'));
-		items.forEach(function (it) { body.appendChild(attachTile(it)); });
+		var body = attachBody(items);
 		box.appendChild(body);
 		return body;
 	}
 
-	/// The chat footer: `#chat-attachments`, above the composer — what a chat
-	/// in focus has queued for its next turn, and only its next turn. Shown
-	/// when the first thing is attached, gone when the turn is sent or the last
-	/// tile is taken off.
+	/// Which workspace is open, in the app's own words — the ones the account strip
+	/// and the guide already use for it, so the footer is not a second vocabulary
+	/// for one idea.
+	function workspaceTitle() {
+		return t(currentRoot().kind === 'machine'
+			? 'astat.workspace_native' : 'astat.workspace_browser');
+	}
+
+	/// The chat footer: `#chat-attachments`, above the composer. TWO GROUPS,
+	/// workspace first, because they are two different kinds of claim:
+	///
+	///  * **The workspace** is what this chat may READ AND CHANGE. Its meaning is
+	///    COLLECTIVE — take a folder out and the fence shrinks — so it is drawn as
+	///    one bounded thing made of parts rather than as tiles that happen to be
+	///    adjacent, and it is the stack whatever view the tiles below it are in.
+	///  * **The attachments** are what has merely been put in front of the model.
+	///    Each is its own decision: drop one and nothing about reach changes.
+	///
+	/// A folder that is both wears both marks and appears ONCE, in the workspace:
+	/// the groups are by primary role, not a partition of the record.
+	///
+	/// **THE WORKSPACE GROUP IS DRAWN WHEN IT IS EMPTY**, which is the state that
+	/// most needs saying — the chat can reach nothing, and the control that fixes
+	/// that lives in this group's own header. The crystal footer hid itself at zero
+	/// until 4216383 and took the `+` inside it out of reach in exactly the state it
+	/// exists for; this is that lesson, not a second discovery of it.
 	function renderChatAttachments() {
 		var box = document.getElementById('chat-attachments');
 		if (!box) return;
 		var f = attachFocus();
-		var list = (f && f.kind === 'chat') ? chatAttachList(f.id) : [];
-		if (!list.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
-		box.style.display = '';
-		renderAttachFooter(box, list.map(function (a) {
+		if (!f || f.kind !== 'chat') { box.innerHTML = ''; box.style.display = 'none'; return; }
+		var held = chatAttachList(f.id);
+		var marked = [], noted = [];
+		held.forEach(function (a) { (a.ws ? marked : noted).push(a); });
+
+		/// One holding as a tile, whichever group it is in. The SAME component the
+		/// crystal footer and the Trash panel draw, so the three cannot drift.
+		var toTile = function (a) {
 			var away = !refReachable(a.ref);
 			return {
 				kind:   a.dir ? 'dir' : 'file',
 				path:   a.path,
 				// Attached from a workspace that is not open: there is nothing to
-				// open, and the tile says where it lives instead (§7).
+				// open, and the tile says where it lives instead (§7). In the CHAT's
+				// own words: `dws.not_here` says "kept with this Diamond" and "its
+				// daimon", which named the wrong thing entirely on a surface where
+				// there is no Diamond and no daimon.
 				shut:   away,
-				reason: away ? t('dws.not_here', { where: refWhere(a.ref) }) : '',
+				reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : '',
 				state:  a.state,
+				// A fence has to read as ONE thing, and an icon cell reads as an
+				// item on its own. The workspace is the stack in either view.
+				view:   a.ws ? 'stack' : null,
+				// Only a FOLDER can be marked in: the workspace is a union of
+				// folders, and a fence around a single file is a fence around the
+				// folder that holds it wearing a smaller name.
+				actions: a.dir ? [{
+					cls:     'attach-ws' + (a.ws ? ' on' : ''),
+					text:    t('attach.ws_mark'),
+					title:   t(a.ws ? 'attach.ws_on' : 'attach.ws_off'),
+					pressed: !!a.ws,
+					on:      function () { chatAttachSetWorkspace(f.id, a.ref, !a.ws); },
+				}] : [],
 				onState: function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
 				onDrop:  function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); },
 			};
+		};
+
+		box.style.display = '';
+		box.innerHTML = '';
+		// Two groups on screen share the room one group used to have -- see the cap
+		// note in variables.css. This class is what that arithmetic reads.
+		box.classList.toggle('two', noted.length > 0);
+
+		// ── The workspace ──────────────────────────────────────────────
+		var ws = document.createElement('section');
+		ws.className = 'attach-group ws-group';
+		// The `+` lives HERE, in the group that is always drawn, so the route to
+		// marking the first folder is never behind the state it is meant to end.
+		ws.appendChild(attachFooterHead({
+			title: workspaceTitle(),
+			help:  t('attach.ws_help'),
+			view:  false,
+			mark:  true,
 		}));
+		var wsBody = attachBody(marked.map(toTile),
+			{ cls: 'ws-body', stack: true, label: workspaceTitle() });
+		if (!marked.length) {
+			// The sentence the empty state exists to say. Not a hint about a button:
+			// what the chat can reach, which is nothing of the user's.
+			var none = document.createElement('div');
+			none.className = 'rail-note ws-empty';
+			none.textContent = t('attach.ws_empty');
+			wsBody.appendChild(none);
+		}
+		ws.appendChild(wsBody);
+		box.appendChild(ws);
+
+		// ── What has been put in front of the model ────────────────────
+		if (noted.length) {
+			var at = document.createElement('section');
+			at.className = 'attach-group at-group';
+			at.appendChild(attachFooterHead({
+				title: t('attach.group_prompt'),
+				help:  t('attach.group_prompt_help'),
+				add:   false,
+			}));
+			at.appendChild(attachBody(noted.map(toTile)));
+			box.appendChild(at);
+		}
 	}
 
 	/// The `+`: attach files and folders without leaving what you are reading.
@@ -22029,13 +22547,18 @@ import init, {
 	/// not a replacement — so it browses the panel's own tree through the
 	/// panel's own listing, and does one thing the panel does not: several at
 	/// once, from where you already are.
-	async function attachPicker() {
-		if (!attachFocus()) return;			// no focus, nothing to attach to
+	/// # Arguments
+	/// * `opts.mark` - Also mark the FOLDERS it adds into the chat's workspace,
+	///   which is what the `+` in the workspace group means.
+	async function attachPicker(opts) {
+		var f0 = attachFocus();
+		if (!f0) return;			// no focus, nothing to attach to
+		var mark = !!(opts && opts.mark) && f0.kind === 'chat';
 		var dir = '';
 		var ticked = {};				// path -> { dir }
 		var picked = await dialog({
 			kind:  'pick',
-			title: t('attach.pick_title'),
+			title: mark ? t('attach.ws_add') : t('attach.pick_title'),
 			okLabel: t('attach.add'),
 			build: function (card) {
 				var crumbs = document.createElement('div');
@@ -22114,6 +22637,11 @@ import init, {
 		var paths = Object.keys(picked);
 		for (var i = 0; i < paths.length; i++) {
 			await Files.attachAdd(paths[i], picked[paths[i]].dir);
+			// A file cannot be marked in -- the workspace is a union of folders --
+			// so it is attached and nothing more, whichever `+` was pressed.
+			if (mark && picked[paths[i]].dir) {
+				chatAttachSetWorkspace(f0.id, rootedRef('dir', paths[i]), true);
+			}
 		}
 		// A Diamond's attachments are links, and everything that draws links
 		// redraws off that one signal; a chat's are not, so it is told directly.
@@ -22143,6 +22671,10 @@ import init, {
 		chatList:     chatAttachList,
 		chatToggle:   chatAttachToggle,
 		chatState:    chatAttachSetState,
+		// The workspace mark: the one thing on a holding that widens the fence.
+		// Published beside `chatState` so a verifier can prove the two are
+		// INDEPENDENT -- that setting either leaves the other where it was.
+		chatWs:       chatAttachSetWorkspace,
 		// What a chat's worker may write in, and where it always may. Published
 		// because it is exactly what `scopeChatTo` hands the engine, so a verifier
 		// can ask what the fence was built from without dispatching anything.
@@ -22338,6 +22870,42 @@ import init, {
 		body.appendChild(add);
 	}
 
+	// ── A link's relations, read the Graph's way ────────────────────────
+	//
+	// The Graph settled how a `rel` field splits (`www/js/graph.js`, "Relations"):
+	// one comma-joined string in the store, several words on the screen. This
+	// surface asks it rather than answering for itself. The four wrappers exist
+	// only so a caller here reads as a caller here, and so the one place that
+	// would have to change if the Graph were ever absent is this block.
+
+	/// The relations a stored `rel` names.
+	function linkRels(rel) {
+		var g = window.DaimondGraph && DaimondGraph.rels;
+		// No Graph means no reader, and one relation is what the field said before
+		// there were several -- which is the honest reading of a lone string.
+		if (!g) { return String(rel || '').trim() ? [String(rel).trim()] : []; }
+		return g.of(rel);
+	}
+
+	/// Those relations as the store keeps them.
+	function linkRelsToStore(list) {
+		var g = window.DaimondGraph && DaimondGraph.rels;
+		return g ? g.toStore(list) : list.join(',');
+	}
+
+	/// A typed relation, tidied as the store would keep it.
+	function linkRelTidy(s) {
+		var g = window.DaimondGraph && DaimondGraph.rels;
+		return g ? g.tidy(s) : String(s || '').replace(/,/g, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
+	}
+
+	/// The longest a joined `rel` may be. The Graph knows the figure; this asks
+	/// rather than keeping a second copy of it beside the first.
+	function linkRelMax() {
+		var g = window.DaimondGraph && DaimondGraph.rels;
+		return (g && g.MAX) || REL_MAX;
+	}
+
 	/// One link, laid out left to right in the direction it was asserted.
 	///
 	/// The two ends sit in their stored order -- this Diamond first when it is the
@@ -22346,7 +22914,13 @@ import init, {
 	function linkRow(l, selfRef) {
 		var out  = (l.from === selfRef);
 		var name = linkOtherName(l.other);
-		var rel  = l.rel || t('link.rel_blank');
+		// A link carries a SET of relations, and the store keeps them comma-joined.
+		// The Graph drew them as chips from the day the set arrived; this surface
+		// printed the raw field, so `blocks,informs` read literally as that. Split
+		// by the Graph's own reader rather than a second one here -- one comma, one
+		// answer to how many relations a link has.
+		var words = linkRels(l.rel);
+		var rel   = words.length ? words.join(', ') : t('link.rel_blank');
 
 		var row = document.createElement('div');
 		row.className = 'link-row ' + (out ? 'link-row-out' : 'link-row-in');
@@ -22362,9 +22936,18 @@ import init, {
 		var self = document.createElement('span');
 		self.className = 'link-self';
 		self.textContent = t('link.this');
-		var relEl = document.createElement('span');
-		relEl.className = 'link-rel';
-		relEl.textContent = rel;
+		// One chip per relation, hued like a tag because it is the same kind of
+		// thing: a word the user chose and will choose again. They go straight into
+		// the phrase, which is already a wrapping flex row, so a link carrying four
+		// relations wraps instead of running off the rail.
+		var relEls = words.length
+			? words.map(function (w) { return tagChip(w, 'link-rel'); })
+			: [(function () {
+				var blank = document.createElement('span');
+				blank.className = 'link-rel link-rel-blank';
+				blank.textContent = rel;
+				return blank;
+			})()];
 		var other = document.createElement('button');
 		other.className = 'link-other';
 		other.type = 'button';
@@ -22379,13 +22962,16 @@ import init, {
 
 		var phrase = document.createElement('div');
 		phrase.className = 'link-phrase';
+		var putRels = function () {
+			relEls.forEach(function (el) { phrase.appendChild(el); });
+		};
 		if (out) {
 			phrase.appendChild(self);  phrase.appendChild(linkArrow());
-			phrase.appendChild(relEl); phrase.appendChild(linkArrow());
+			putRels();                 phrase.appendChild(linkArrow());
 			phrase.appendChild(other);
 		} else {
 			phrase.appendChild(other); phrase.appendChild(linkArrow());
-			phrase.appendChild(relEl); phrase.appendChild(linkArrow());
+			putRels();                 phrase.appendChild(linkArrow());
 			phrase.appendChild(self);
 		}
 		var said = out ? t('link.out_help', { rel: rel, name: name })
@@ -22556,45 +23142,138 @@ import init, {
 			paintPicks();
 		});
 
-		// 2. The relation. Three words are offered and none is enforced: what a
-		//    relation may say is the user's business, exactly as a tag is.
+		// 2. The relations, as chips. A link carries a SET, and this box used to
+		//    take one line of free text -- so the only way to say two things was to
+		//    type a comma and hope, and what came back was printed as one word with
+		//    a comma in it. Edited the way the Graph edits the same field, and the
+		//    way a Diamond's tags are edited: close a chip to drop it, click a
+		//    suggestion to take it, type a word that is nobody's suggestion.
+		//    `linkForm.rel` stays the STORED string throughout, so a repaint under a
+		//    half-filled form restores the chips and `add_link` is handed what it
+		//    always was.
 		var relField = document.createElement('div');
 		relField.className = 'link-field';
 		var relLbl = document.createElement('div');
 		relLbl.className = 'link-label';
 		relLbl.textContent = t('link.rel_label');
+		// The two rows' layout is set here rather than in the stylesheet: each is a
+		// single flex line living only inside this form, and a rule in the sheet
+		// would be a rule other surfaces could reach for and drift on.
+		var relChips = document.createElement('div');
+		relChips.className = 'link-rel-chips';
+		relChips.id = 'link-rel-chips';
+		relChips.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px';
+		var relRow = document.createElement('div');
+		relRow.className = 'link-rel-add';
+		relRow.style.cssText = 'display:flex;align-items:center;gap:4px';
 		var relIn = document.createElement('input');
 		relIn.className = 'link-rel-input';
 		relIn.id = 'link-rel';
 		relIn.type = 'text';
 		relIn.autocomplete = 'off';
 		relIn.spellcheck = false;
-		relIn.maxLength = REL_MAX;
-		relIn.placeholder = t('link.rel_ph');
-		relIn.value = linkForm.rel || '';
+		relIn.maxLength = linkRelMax();
+		relIn.placeholder = t('graph.rel_add_ph');
 		relIn.setAttribute('aria-label', t('link.rel_label'));
-		relIn.addEventListener('input', function () { linkForm.rel = relIn.value; });
+		relIn.style.flex = '1';       // the sheet gives it width:100%, which would push `+` off
+		relIn.style.minWidth = '0';
+		var relAdd = document.createElement('button');
+		relAdd.className = 'link-sug link-rel-add-btn';
+		relAdd.id = 'link-rel-add';
+		relAdd.type = 'button';
+		relAdd.textContent = '+';
+		relAdd.title = t('graph.rel_add');
+		relAdd.setAttribute('aria-label', t('graph.rel_add'));
+		relRow.appendChild(relIn);
+		relRow.appendChild(relAdd);
 		var sug = document.createElement('div');
 		sug.className = 'link-rel-sug';
 		sug.id = 'link-rel-sug';
 		sug.title = t('link.rel_sug_help');
-		DEFAULT_REL_SUGGESTIONS.forEach(function (word) {
-			var b = document.createElement('button');
-			b.className = 'link-sug';
-			b.type = 'button';
-			b.dataset.rel = word;
-			b.textContent = word;
-			b.title = t('link.rel_use', { rel: word });
-			b.addEventListener('click', function () {
-				linkForm.rel = word;
-				relIn.value = word;
-				relIn.focus();
+		var relHint = document.createElement('div');
+		relHint.className = 'link-err link-rel-hint';
+		relHint.id = 'link-rel-hint';
+
+		/// The relations chosen so far, read back from what will be stored.
+		function relsChosen() { return linkRels(linkForm.rel); }
+
+		/// Take a word onto the link. False when it was refused for want of room,
+		/// which is the one refusal that has to be said out loud: the store would
+		/// truncate, and half a relation is a relation nobody wrote.
+		function addRel(word) {
+			var w = linkRelTidy(word);
+			relHint.textContent = '';
+			if (!w) return true;
+			var have = relsChosen();
+			if (have.indexOf(w) !== -1) { relIn.value = ''; paintRels(); return true; }
+			if (linkRelsToStore(have.concat([w])).length > linkRelMax()) {
+				relHint.textContent = t('graph.rel_full', { n: linkRelMax() });
+				return false;
+			}
+			linkForm.rel = linkRelsToStore(have.concat([w]));
+			relIn.value = '';
+			paintRels();
+			return true;
+		}
+
+		/// Draw the chosen relations and whatever suggestions are left.
+		function paintRels() {
+			var have = relsChosen();
+			relChips.textContent = '';
+			if (!have.length) {
+				var bare = document.createElement('span');
+				bare.className = 'link-none';
+				bare.textContent = t('graph.rel_none');
+				relChips.appendChild(bare);
+			}
+			have.forEach(function (word) {
+				var c = tagChip(word, 'link-rel');
+				var x = document.createElement('button');
+				x.className = 'tag-x';
+				x.type = 'button';
+				x.textContent = '×';
+				x.title = t('graph.rel_remove', { rel: word });
+				x.setAttribute('aria-label', t('graph.rel_remove', { rel: word }));
+				x.addEventListener('click', function () {
+					linkForm.rel = linkRelsToStore(relsChosen().filter(function (u) { return u !== word; }));
+					relHint.textContent = '';
+					paintRels();
+				});
+				c.appendChild(x);
+				relChips.appendChild(c);
 			});
-			sug.appendChild(b);
+			// A suggestion for a word the link already carries offers nothing, so
+			// the row shows what is still on the table and no more.
+			sug.textContent = '';
+			DEFAULT_REL_SUGGESTIONS.filter(function (w) { return have.indexOf(w) === -1; })
+				.forEach(function (word) {
+					var b = document.createElement('button');
+					b.className = 'link-sug';
+					b.type = 'button';
+					b.dataset.rel = word;
+					b.textContent = word;
+					b.title = t('link.rel_use', { rel: word });
+					b.addEventListener('click', function () { addRel(word); relIn.focus(); });
+					sug.appendChild(b);
+				});
+		}
+
+		relIn.addEventListener('keydown', function (e) {
+			// A comma is the separator the store uses, so typing one ends the word
+			// exactly as Enter does rather than going into it.
+			if (e.key !== 'Enter' && e.key !== ',') return;
+			e.preventDefault();
+			e.stopPropagation();          // Enter here adds a relation, it does not save
+			addRel(relIn.value);
 		});
+		relAdd.addEventListener('click', function () { addRel(relIn.value); relIn.focus(); });
+
 		relField.appendChild(relLbl);
-		relField.appendChild(relIn);
+		relField.appendChild(relChips);
+		relField.appendChild(relRow);
 		relField.appendChild(sug);
+		relField.appendChild(relHint);
+		paintRels();
 
 		// 3. The note: whatever the one word does not say.
 		var noteField = document.createElement('div');
@@ -22636,6 +23315,10 @@ import init, {
 				pick.focus();
 				return;
 			}
+			// A word typed and not added is a word the user meant, so it is taken on
+			// the way out -- the same bargain the Graph's editor strikes. If it will
+			// not fit, the form stays open saying so rather than saving without it.
+			if (!addRel(relIn.value)) { relIn.focus(); return; }
 			save.disabled = true;
 			try {
 				await diamondApp().add_link(diamondId, selfRef, 'diamond:' + linkForm.target.id,
@@ -22726,11 +23409,12 @@ import init, {
 		linkSec.appendChild(linkStrip);
 		linkSec.appendChild(linkBody);
 
-		// The artefact strip: a count, above the steer box, that hides at zero.
+		// The artefact strip: a count, above the steer box, that opens the list.
 		//
 		// A count rather than a list, because the crystal already scrolls and a scrollable
-		// region inside a scrollable one makes the wheel ambiguous. Hidden while empty, so a
-		// new Diamond is not given a permanently empty shelf to explain.
+		// region inside a scrollable one makes the wheel ambiguous. It reads as an offer
+		// at zero rather than hiding: the control that attaches the first thing is inside
+		// the list, so a strip that hid itself hid the way in. See `renderArtefacts`.
 		var arte = document.createElement('button');
 		arte.className = 'arte-strip';
 		arte.id = 'arte-strip';
@@ -23400,7 +24084,13 @@ import init, {
 		step('loadDiamonds', function () {
 			return loadDiamonds().then(function () { return seedDefaultDiamonds(); });
 		});
-		step('Pending.load', function () { Pending.load(); Pending.render(); });
+		step('Pending.load', function () {
+			Pending.load(); Pending.render();
+			// Anything answered on another device, or in a session that ended before
+			// the panel could notice, is taken off here rather than greeting the
+			// user as work still owed.
+			Pending.sweep();
+		});
 		step('triggerClock', function () { startTriggerClock(); });
 		step('expiryClock', function () { startExpiryClock(); });
 		step('updateSpend', function () { updateSpend(); });
@@ -26782,7 +27472,11 @@ import init, {
 				// panel's, in a second place. See `readRaw` at :11835.
 				readText:     function (path) { return Wasm.read_file(path); },
 				openFile:     Files.open,
-				refreshFiles: Files.refresh,
+				// The workspace tree, and the Pending panel with it. Mail calls this
+				// at every moment a draft file can appear or vanish -- saving one,
+				// discarding one, sending one -- which is exactly when a tile waiting
+				// on that draft has stopped being owed.
+				refreshFiles: function () { Files.refresh(); Pending.sweep(); },
 				runTool:      function (name, args) {
 					return tools().run_tool(name, JSON.stringify(args || {}));
 				},

@@ -100,6 +100,34 @@
 	font-size: var(--fs-xs); line-height: 1.5;
 	color: var(--text-primary);
 }
+/* How old the figure above it is, and whether the last attempt to renew it answered.
+
+   It is set below the statement it qualifies, at the chip size the rest of the provider
+   furniture uses and in the secondary ink: it is a caveat on the figure, not a second figure,
+   and a line that competed with the amount would make the amount harder to read for the sake
+   of something read once. `.stale` lifts it a rung, to the ink the panel's own sentences are
+   set in, because past a certain age the caveat IS the message.
+
+   NOT `--warn`, which is what this reached for first. That token is a dot and a pill's
+   lettering, and dev/verify_theme records it at 1.95 against its worst surface on Lollypop
+   where a word needs 4.5 -- so an amber caution here would have been invisible on one palette
+   and short on several. A rung of the text ramp carries the emphasis on all eleven, because
+   the ramp is the thing that is held to the floor. */
+.models-credit-age {
+	padding: 0 11px 8px;
+	font-size: var(--fs-2xs); line-height: 1.45;
+	color: var(--text-secondary);
+}
+.models-credit-age.stale { color: var(--text-primary); font-weight: 600; }
+/* And the same on the closed row's balance, which is all a passer-by sees. Dotted, because a
+   solid rule under a number reads as a link; in the number's OWN ink, for the reason above,
+   with the words in the tooltip. */
+.models-bal[data-stale] {
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+	text-decoration-color: currentColor;
+}
+
 /* Asking the provider is the other way of answering the same question, so it stays on the
    statement's surface -- and keeps its own width, which is what says it acts on this one key
    rather than on the row it sits in. */
@@ -128,17 +156,33 @@
 	font-family: var(--font-mono);
 	background: var(--bg-primary); border: 1px solid var(--border-strong);
 	border-radius: var(--radius-sm); color: var(--text-primary);
-	transition: border-color .12s ease, box-shadow .12s ease;
+	transition: border-color .12s ease;
 }
 /* Rest, hover, focus, in three steps: the border firms up under the pointer, and takes the
-   accent with a soft ring once the field is being typed in. The ring is the accent's own tint,
-   so there is a ring in every palette rather than a dark-only glow. */
+   accent once the field is being typed in.
+   THE THIRD STEP USED TO BE INVISIBLE. It was `outline: none` plus a 3px ring in
+   `--accent-soft`, and `--accent-soft` is a tint of the surface it is drawn on: measured
+   1.03-1.48 against `--bg-primary`, `--bg-secondary` and `--bg-tertiary` on all eleven
+   palettes, where WCAG 2.2 SC 2.4.11 asks 3.0 of a focus indicator. What was left was the
+   border recoloured to `--accent`, which is 1.11-1.81 against the `--border-strong` it
+   replaces -- so this field had, in effect, no focus mark at all. The soft ring is dropped
+   for the same real outline the app's other twenty-one fields carry, drawn outside the
+   control against the surface, where it measures 3.87-6.75. The three steps survive: the
+   pointer firms the border, the keyboard draws the ring. */
 .settings-section .models-credit-input:hover { border-color: var(--text-muted); }
 .settings-section .models-credit-input:focus {
-	outline: none; border-color: var(--accent);
-	box-shadow: 0 0 0 3px var(--accent-soft);
+	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
 }
-.settings-section .models-credit-input::placeholder { color: var(--text-secondary); opacity: .7; }
+/* The quiet rung, plainly, like the other ten placeholders in this app.
+   `--text-secondary` at `opacity: .7` looked like the same idea and was not: the
+   dimming composites the ink towards the field's own ground, and the result
+   measured 2.99 (Lollypop), 3.00 (Light), 3.08 (Mist), 3.21 (Sage), 3.27
+   (Linen) -- the lowest readings of any text in the app, in the band where the
+   surfaces are palest and there is least room to lose. A placeholder is text a
+   person reads to find out what the field wants; WCAG 2.2 SC 1.4.3 exempts it
+   from nothing. `--text-muted` is the rung for this and carries 4.83-6.65 on
+   `--bg-primary` across the eleven. */
+.settings-section .models-credit-input::placeholder { color: var(--text-muted); }
 /* And the caret's own ring on the buttons, matching the admin rows: a button that answered only
    to hover left a keyboard user with nothing to see. */
 .settings-section .models-credit .models-refetch:focus-visible {

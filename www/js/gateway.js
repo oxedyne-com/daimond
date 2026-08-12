@@ -611,12 +611,14 @@
 			// Register (idempotent: an existing binding is simply re-confirmed).
 			var ts  = Math.floor(Date.now() / 1000);
 			var sig = await DaimondIdentity.sign(ACCOUNT_MSG + pub + ':' + ts);
-			// A best-effort country from the browser locale, so the operator's
-			// usage map has something to shade. Omitted when nothing reliable
-			// is available; the gateway stores "" for an absent or bad value.
+			// NO COUNTRY IS DERIVED. It used to be guessed from the browser's
+			// locale and time zone so the operator's map had something to shade,
+			// which meant the one item taken without the user's involvement was
+			// the one nobody had asked about. The privacy policy now says the
+			// country is optional, entered by the user, and never worked out
+			// from the browser: `deriveCountry` is kept, unused, until a field
+			// exists to pass one here deliberately.
 			var body = { pubkey: pub, alg: alg, ts: ts, sig: sig };
-			var cc = deriveCountry();
-			if (cc) body.country = cc;
 			await post('/api/account', body);
 
 			// Prove possession of the key and take a session.

@@ -47,7 +47,24 @@
 .files-mode-chip        { color: var(--text-secondary); background: var(--bg-tertiary); }
 .files-mode-chip.active { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
 .files-mode-chip.cloud  { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
-.files-mode-chip.ghost  { opacity: 0.55; }
+/* "Nothing in cloud storage yet" -- the chip is quieter because there is nothing
+   behind it, NOT because it is switched off: it keeps `role="button"`,
+   `tabindex="0"` and its click, and its title is a sentence the reader is meant
+   to read. `opacity: 0.55` over the whole chip put those words at 2.22:1 in
+   Light and Lollypop, 2.26 in Mist, 2.84 in Dark -- under even the audit's
+   invisible-text alarm, and nowhere near the 4.5 an 11px label asks for.
+   Opacity cannot be the answer: measured across the eleven palettes it takes
+   0.93 before the words clear 4.5, and 0.93 is not a ghost. So the fade moves to
+   the GLYPH, which carries no words, and the label drops to the app's own quiet
+   rung instead -- 4.51 (Light) to 5.37 (Dusk), and still a rung below the two
+   chips beside it. The chip reads as quiet; the sentence stays readable.
+
+   The `:not()` guard is not decoration: `.ghost` is also put on the Machine chip
+   when no folder can be picked, and that chip can be the LIT one at the same
+   time. The old rule only set an opacity, so the lit accent survived under it; a
+   colour would have taken it away. */
+.files-mode-chip.ghost:not(.active):not(.cloud) { color: var(--text-muted); }
+.files-mode-chip.ghost .ic                      { opacity: 0.55; }
 .files-mode-chip.act    { cursor: pointer; }
 .files-mode-chip.act:hover  { background: var(--bg-hover); border-color: var(--accent); }
 .files-mode-chip.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

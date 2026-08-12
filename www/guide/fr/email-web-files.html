@@ -30,6 +30,7 @@
 			<a href="sync.html">Synchronisation entre appareils</a>
 			<a href="spending.html">Dépenses</a>
 			<a href="../machine-operations.html">Commandes sur la machine</a>
+			<a href="../improve.html">Améliorer Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -47,7 +48,7 @@
 	</figure>
 
 	<h3 id="s2">Ajouter une boîte mail</h3>
-	<p>Choisissez <span class="ui">+</span> (ajouter une boîte mail) dans l’en-tête du panneau E-mail. Saisissez votre adresse et Daimond devine les réglages de serveur pour les fournisseurs courants ; chaque champ reste modifiable, parce qu’une supposition n’est pas un fait. La plupart des fournisseurs veulent un <strong>mot de passe d’application</strong> — un mot de passe dédié à un seul usage, que vous générez dans les réglages de sécurité de votre compte de messagerie — et non le mot de passe de votre compte. Le panneau dit où le trouver chez votre fournisseur.</p>
+	<p>Choisissez <span class="ui">+</span> (ajouter une boîte mail) dans l’en-tête du panneau E-mail. Saisissez votre adresse et Daimond devine les réglages de serveur pour les fournisseurs courants ; chaque champ reste modifiable, parce qu’une supposition n’est pas un fait. La plupart des fournisseurs veulent un <strong>mot de passe d’application</strong> (un mot de passe dédié à un seul usage, que vous générez dans les réglages de sécurité de votre compte de messagerie) et non le mot de passe de votre compte. Le panneau dit où le trouver chez votre fournisseur.</p>
 	<div class="note">Vos identifiants de messagerie sont gardés sur cet appareil, enveloppés sous votre phrase secrète. Ils ne sont remis à la passerelle que pour une seule synchronisation, tenus le temps d’une conversation avec votre serveur de messagerie, puis oubliés. Daimond ne garde aucun courrier sur aucun serveur et ne voit jamais le mot de passe de votre compte.</div>
 
 	<h3 id="s3">Lire et synchroniser</h3>
@@ -58,7 +59,7 @@
 	<div class="note"><strong>Vous seul pouvez envoyer du courrier.</strong> Le bouton <span class="ui">Envoyer</span> est la seule chose dans Daimond qui mette du courrier sur le fil, et seule une personne peut l’appuyer. Le daimon peut rédiger un message à côté de vous, mais il ne peut pas l’envoyer.</div>
 
 	<h2 id="s5">Le panneau Web</h2>
-	<p>Demandez à Daimond d’ouvrir une page web — <em>« montre-moi le chapitre de Rust sur l’ownership »</em> — ou collez un lien dans le chat. Trois façons de mettre une page sur la scène, et celle qui marche dépend du site.</p>
+	<p>Demandez à Daimond d’ouvrir une page web (<em>« montre-moi le chapitre de Rust sur l’ownership »</em>) ou collez un lien dans le chat. Trois façons de mettre une page sur la scène, et celle qui marche dépend du site.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="Le panneau Web affichant une page sur la scène, avec les contrôles Retour, Recharger et Ouvrir dans un onglet dans son en-tête." src="../shots/web-panel.png" loading="lazy">
@@ -90,9 +91,9 @@
 	<h3 id="s10">Trois façons de faire entrer un fichier</h3>
 	<p>Faire entrer un fichier dans l’espace de travail et le joindre à un Diamond sont deux actes distincts. Il y a trois entrées, chacune pour un cas différent :</p>
 	<ul>
-		<li><strong>Téléverser des fichiers</strong> — le bouton flèche-vers-le-bac dans l’en-tête du panneau. Pour un fichier ou une poignée. Un sélecteur de fichiers ordinaire, dans tous les navigateurs.</li>
-		<li><strong>Importer un dossier…</strong> — pour un dossier entier qui doit vivre dans l’espace de travail du navigateur et se synchroniser. Navigateurs Chromium uniquement.</li>
-		<li><strong>Ouvrir un vrai dossier</strong> — la puce <span class="ui">Machine</span> — votre propre disque <em>est</em> l’espace de travail : rien n’est copié et rien ne se synchronise. Navigateurs Chromium uniquement.</li>
+		<li><strong>Téléverser des fichiers</strong>: le bouton flèche-vers-le-bac dans l’en-tête du panneau. Pour un fichier ou une poignée. Un sélecteur de fichiers ordinaire, dans tous les navigateurs.</li>
+		<li><strong>Importer un dossier…</strong>: pour un dossier entier qui doit vivre dans l’espace de travail du navigateur et se synchroniser. Navigateurs Chromium uniquement.</li>
+		<li><strong>Ouvrir un vrai dossier</strong>: la puce <span class="ui">Machine</span> — votre propre disque <em>est</em> l’espace de travail : rien n’est copié et rien ne se synchronise. Navigateurs Chromium uniquement.</li>
 	</ul>
 	<p>Un agent peut aussi écrire un fichier là où il en a le droit, et le courrier arrive ici comme des fichiers ordinaires.</p>
 
@@ -131,9 +132,9 @@
 	<h3 id="s16">Gardé, en ligne, ou épinglé</h3>
 	<p>Un fichier est dans l’un de trois états, et l’arborescence montre lequel :</p>
 	<ul>
-		<li><strong>Gardé sur cet appareil</strong> — il s’ouvre aussitôt.</li>
-		<li><strong>Uniquement dans le stockage en ligne</strong> — marqué d’un nuage. Toujours votre fichier, toujours listé, toujours en sûreté, simplement pas ici pour le moment. Le cliquer le fait descendre, et le contrôle de récupération de sa ligne aussi.</li>
-		<li><strong>Épinglé</strong> — gardé sur cet appareil toujours et jamais libéré automatiquement. L’épingle se trouve sur la ligne, à côté d’un contrôle qui libère la place d’un fichier tenu.</li>
+		<li><strong>Gardé sur cet appareil</strong>: il s’ouvre aussitôt.</li>
+		<li><strong>Uniquement dans le stockage en ligne</strong>: marqué d’un nuage. Toujours votre fichier, toujours listé, toujours en sûreté, simplement pas ici pour le moment. Le cliquer le fait descendre, et le contrôle de récupération de sa ligne aussi.</li>
+		<li><strong>Épinglé</strong>: gardé sur cet appareil toujours et jamais libéré automatiquement. L’épingle se trouve sur la ligne, à côté d’un contrôle qui libère la place d’un fichier tenu.</li>
 	</ul>
 	<p>À mesure que le stockage du navigateur se remplit, les fichiers les plus longtemps inutilisés sont rendus d’eux-mêmes au stockage en ligne ; un fichier épinglé jamais.</p>
 
@@ -164,8 +165,8 @@
 
 	<p>Deux sortes d’outils apparaissent :</p>
 	<ul>
-		<li><strong>Outils intégrés</strong> — ce qui est déjà remis à l’agent, gratuitement. Le panneau liste exactement ce qu’il tient : il ne peut donc pas promettre un outil qui n’est pas là.</li>
-		<li><strong>Outils déblocables</strong> — des suppléments avec un prix, affichés avec l’indication que ce compte détient déjà, ou non, le déblocage.</li>
+		<li><strong>Outils intégrés</strong>: ce qui est déjà remis à l’agent, gratuitement. Le panneau liste exactement ce qu’il tient : il ne peut donc pas promettre un outil qui n’est pas là.</li>
+		<li><strong>Outils déblocables</strong>: des suppléments avec un prix, affichés avec l’indication que ce compte détient déjà, ou non, le déblocage.</li>
 	</ul>
 	<p>Pour en ajouter un, choisissez-le et confirmez ; le coût est prélevé sur vos crédits, et une fois débloqué il reste disponible.</p>
 
@@ -187,6 +188,7 @@
 		<a href="sync.html">Synchronisation entre appareils</a>
 		<a href="spending.html">Dépenses</a>
 		<a href="../machine-operations.html">Commandes sur la machine</a>
+		<a href="../improve.html">Améliorer Daimond</a>
 	</nav>
 </footer>
 </body>

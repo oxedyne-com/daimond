@@ -30,6 +30,7 @@
 			<a href="sync.html">Cross-device sync</a>
 			<a href="spending.html">Spending</a>
 			<a href="machine-operations.html">Machine Operations</a>
+			<a href="improve.html">Improving Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -47,7 +48,7 @@
 	</figure>
 
 	<h3 id="s2">Adding a mailbox</h3>
-	<p>Choose <span class="ui">+</span> (add a mailbox) in the Email panel header. Type your address and Daimond guesses the server settings for common providers; every field stays editable, because a guess is not a fact. Most providers want an <strong>app password</strong> — a single-purpose password you generate in your mail account's security settings — and not your account password. The panel says where to find it for your provider.</p>
+	<p>Choose <span class="ui">+</span> (add a mailbox) in the Email panel header. Type your address and Daimond guesses the server settings for common providers; every field stays editable, because a guess is not a fact. Most providers want an <strong>app password</strong> (a single-purpose password you generate in your mail account's security settings) and not your account password. The panel says where to find it for your provider.</p>
 	<div class="note">Your mail credential is stored on this device, wrapped under your passphrase. It is handed to the gateway only for a single sync, held for one conversation with your mail server, and then forgotten. Daimond stores no mail on any server and never sees your account password.</div>
 
 	<h3 id="s3">Reading and syncing</h3>
@@ -58,7 +59,7 @@
 	<div class="note"><strong>Only you can send mail.</strong> The <span class="ui">Send</span> button is the one thing in Daimond that puts mail on the wire, and only a person can press it. The daimon can draft a message beside you, but it cannot send it.</div>
 
 	<h2 id="s5">The Web panel</h2>
-	<p>Ask Daimond to open a web page — <em>“show me the Rust ownership chapter”</em> — or paste a link into the chat. Three ways it can put a page on the stage, and which works depends on the site.</p>
+	<p>Ask Daimond to open a web page (<em>“show me the Rust ownership chapter”</em>) or paste a link into the chat. Three ways it can put a page on the stage, and which works depends on the site.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="The Web panel showing a page on the stage, with back, reload and open-in-a-tab controls in its header." src="shots/web-panel.png" loading="lazy">
@@ -68,11 +69,11 @@
 	<div class="cards">
 		<div class="card">
 			<h3 id="s6">Show it</h3>
-			<p>The page appears in the panel. Most sites refuse to be embedded — the web's clickjacking defence, the same in every browser — so this works only for the minority that allow it.</p>
+			<p>The page appears in the panel. Most sites refuse to be embedded (the web's clickjacking defence, the same in every browser), so this works only for the minority that allow it.</p>
 		</div>
 		<div class="card">
 			<h3 id="s7">Read it</h3>
-			<p>Daimond fetches the page and reads its text, so it works when showing does not. It reads the words, not pictures or anything drawn by JavaScript, and you do not see the page — Daimond does.</p>
+			<p>Daimond fetches the page and reads its text, so it works when showing does not. It reads the words, not pictures or anything drawn by JavaScript, and you do not see the page. Daimond does.</p>
 		</div>
 		<div class="card">
 			<h3 id="s8">Drive it</h3>
@@ -80,7 +81,7 @@
 		</div>
 	</div>
 
-	<div class="note"><strong>Signing in stays yours.</strong> When you sign in on a driven page, Daimond stops watching entirely — no text, no picture, no keystrokes — and never sees your password. You hand the wheel back with <strong>Resume Daimond</strong>, and that button is in the browser tab, not in Daimond, so a page can never take the wheel from you.</div>
+	<div class="note"><strong>Signing in stays yours.</strong> When you sign in on a driven page, Daimond stops watching entirely (no text, no picture, no keystrokes) and never sees your password. You hand the wheel back with <strong>Resume Daimond</strong>, and that button is in the browser tab, not in Daimond, so a page can never take the wheel from you.</div>
 
 	<h2 id="s9">The Workspace</h2>
 	<p>The Workspace panel, in the dock, is your files as an ordinary tree of folders. This is where the agent reads and writes: uploads, mail, documents and anything it produces all live here.</p>
@@ -90,9 +91,9 @@
 	<h3 id="s10">Three ways to get a file in</h3>
 	<p>Getting a file into the workspace and attaching it to a Diamond are separate acts. There are three ways in, and each is for a different case:</p>
 	<ul>
-		<li><strong>Upload files</strong> — the arrow-into-tray button in the panel header. For one file or a handful. An ordinary file picker, in every browser.</li>
-		<li><strong>Import a folder…</strong> — for a whole folder that should live in the browser workspace and sync. Chromium-based browsers only.</li>
-		<li><strong>Open a real folder</strong> — the <span class="ui">Machine</span> chip. Your own disk <em>is</em> the workspace: nothing is copied and nothing syncs. Chromium-based browsers only.</li>
+		<li><strong>Upload files</strong>: the arrow-into-tray button in the panel header. For one file or a handful. An ordinary file picker, in every browser.</li>
+		<li><strong>Import a folder…</strong>: for a whole folder that should live in the browser workspace and sync. Chromium-based browsers only.</li>
+		<li><strong>Open a real folder</strong>: the <span class="ui">Machine</span> chip. Your own disk <em>is</em> the workspace: nothing is copied and nothing syncs. Chromium-based browsers only.</li>
 	</ul>
 	<p>An agent can also write a file where it is allowed to, and mail arrives here as ordinary files.</p>
 
@@ -131,9 +132,9 @@
 	<h3 id="s16">Held, in cloud storage, or pinned</h3>
 	<p>A file is in one of three states, and the tree shows which:</p>
 	<ul>
-		<li><strong>Held on this device</strong> — it opens at once.</li>
-		<li><strong>In cloud storage only</strong> — marked with a cloud. Still your file, still listed, still safe, simply not here at the moment. Clicking it brings it down, and so does the fetch control on its row.</li>
-		<li><strong>Pinned</strong> — kept on this device always and never freed automatically. The pin sits on the row, beside a control that frees a held file's space.</li>
+		<li><strong>Held on this device</strong>: it opens at once.</li>
+		<li><strong>In cloud storage only</strong>: marked with a cloud. Still your file, still listed, still safe, simply not here at the moment. Clicking it brings it down, and so does the fetch control on its row.</li>
+		<li><strong>Pinned</strong>: kept on this device always and never freed automatically. The pin sits on the row, beside a control that frees a held file's space.</li>
 	</ul>
 	<p>As the browser's storage fills, the files longest unused are freed back to cloud storage on their own; a pinned file never is.</p>
 
@@ -164,8 +165,8 @@
 
 	<p>Two kinds of tool appear:</p>
 	<ul>
-		<li><strong>Built-in tools</strong> — what the agent is already handed, free. The panel lists exactly what it holds, so it cannot promise a tool that is not there.</li>
-		<li><strong>Unlockable tools</strong> — extras with a price, shown with whether this account already holds the unlock.</li>
+		<li><strong>Built-in tools</strong>: what the agent is already handed, free. The panel lists exactly what it holds, so it cannot promise a tool that is not there.</li>
+		<li><strong>Unlockable tools</strong>: extras with a price, shown with whether this account already holds the unlock.</li>
 	</ul>
 	<p>To add one, choose it and confirm; the cost is drawn from your credits, and once unlocked it stays available.</p>
 
@@ -187,6 +188,7 @@
 		<a href="sync.html">Cross-device sync</a>
 		<a href="spending.html">Spending</a>
 		<a href="machine-operations.html">Machine Operations</a>
+		<a href="improve.html">Improving Daimond</a>
 	</nav>
 </footer>
 </body>

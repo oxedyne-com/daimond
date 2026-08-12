@@ -809,26 +809,30 @@ pub enum Bound {
     OnlyUnder(String),
     /// Nothing OUTSIDE these prefixes may be WRITTEN, and reading is not restricted at all.
     ///
-    /// The chat's rule, and the difference from [`Bound::OnlyUnder`] is the whole of it: that one
-    /// fences both verbs, this one fences a single verb and leaves the other alone.
+    /// A single verb fenced, where [`Bound::OnlyUnder`] fences both.  The presence of a single rule
+    /// of this kind makes writing an allow-list, exactly as [`Bound::OnlyUnder`] does for both
+    /// verbs.  [`fence_spec`] reads it too: a command is a write as far as this is concerned, so a
+    /// turn whose write allow-list names no place ON THE MACHINE gets no fence and runs nothing.
     ///
-    /// It exists because a chat is not a Diamond.  A Diamond is a curated thing whose daimon may
-    /// see only what the Diamond holds, and confining both verbs is the point of it.  A chat is the
-    /// user's own conversation over their whole workspace: *"summarise these ten files"* must not
-    /// require attaching ten files first, so a chat's worker reads wherever the chat can -- equal
-    /// reach, since a person asked the question, and equal reach is not a widening.  What an
-    /// unattended worker must not do is ALTER something nobody put in front of it, so writing is
-    /// an allow-list and reading is not.
+    /// **NO LONGER WHAT A CHAT GETS**, and the reason is worth keeping because the argument it
+    /// replaces was a good one.  This was [`chat_bounds`]' rule: a chat is the user's own
+    /// conversation over their whole workspace, so *"summarise these ten files"* must not require
+    /// attaching ten files first, and a worker reading what the chat could already read is equal
+    /// reach rather than greater.  Writing was fenced because that is the verb that alters a disk.
     ///
-    /// The justification is the paperclip's own semantics: its two states are Note and Read, and
-    /// both of them are reading.  Attaching has never granted write permission, so making it grant
-    /// one would have been the change -- and the one place ceremony belongs is where something
-    /// autonomous is about to alter a disk.
+    /// What that missed is that reading is a blast radius too, and that the chat ITSELF was never
+    /// fenced at all -- only the workers it dispatched.  On 2026-08-11 a daimon in an ordinary chat
+    /// edited two files of the user's own book to work around a compiler limitation and put them
+    /// back only because it chose to, in a directory under no version control.  The user's answer
+    /// was a SCOPE and not a gate: *"by at the very least nominating a folder tree, at least the
+    /// potential blast radius can be limited"* -- Claude Code's working directory, where the
+    /// friction is paid once at the `cd` and nothing interrupts you inside it.  So a chat has a
+    /// WORKSPACE now, the way a Diamond does, [`chat_bounds`] composes exactly what
+    /// [`diamond_bounds`] does, and this variant has no producer.
     ///
-    /// The presence of a single rule of this kind makes writing an allow-list, exactly as
-    /// [`Bound::OnlyUnder`] does for both verbs.  [`fence_spec`] reads it too: a command is a write
-    /// as far as this is concerned, so a turn whose write allow-list names no place ON THE MACHINE
-    /// gets no fence and runs nothing.
+    /// It is kept rather than deleted because it is still the honest expression of *"read freely,
+    /// write here"*, both doors and [`compose`] still enforce it, and the shape is the obvious one
+    /// for a surface that later wants it.  Nothing in this build produces one.
     OnlyWriteUnder(String),
     /// A toolchain the user granted this Diamond (see [`Toolkit`]).
     ///
@@ -884,50 +888,46 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
     out
 }
 
-/// The bounds a chat's dispatched worker runs with: read anywhere, write in two kinds of place.
+/// The bounds a chat runs with -- its own turn and every worker it dispatches: **the chat's
+/// workspace**, and nothing else.
 ///
-/// The chat's answer to [`diamond_bounds`], and the difference between them is the difference
-/// between the two surfaces.  A Diamond confines both verbs because a daimon may see only what its
-/// Diamond holds.  A chat is the user's own conversation over their whole workspace and is
-/// unscoped by design, so a worker it dispatches READS wherever the chat can -- equal reach, since
-/// a person asked the question -- and WRITES only where the user deliberately put something.
+/// **The same shape as [`diamond_bounds`], because a chat has a workspace the way a Diamond has
+/// one.**  It delegates rather than restating, so the two cannot drift: a chat fenced by a second
+/// copy of this reasoning would be fenced by whichever copy someone last remembered to edit, and
+/// the only difference between the surfaces is what fills the arguments.
 ///
-/// `scratch` is the chat's own working folder, always writable, so a worker always has somewhere
-/// to put what it produces without the user having to answer a question first.  `attached` are the
-/// places the user put in the chat's scope with the paperclip; they are writable because putting a
-/// folder in scope is the deliberate act that says so.
+/// A chat used to be unfenced and its WORKERS fenced on the write verb alone (see
+/// [`Bound::OnlyWriteUnder`], which this no longer produces).  That left the conversation itself --
+/// the surface that actually edits things -- with the run of the whole tree, and on 2026-08-11 it
+/// edited two files of the user's own book uninvited.  The remedy the user asked for is a WORKING
+/// DIRECTORY and not a permission dialog: mark a folder into the workspace, and inside it nothing
+/// interrupts you.  The mark IS the permission, and this is where that sentence is enforced.
+///
+/// **What the workspace is NOT is everything the paperclip attached.**  An attachment carries two
+/// independent things and only one of them reaches here.  Note and Read are a COST decision about
+/// what goes into the prompt -- Note names a path so the user need not type it, Read pulls the
+/// contents in -- they are mutually exclusive, they are both reading, and neither grants any reach.
+/// The workspace mark is separate and orthogonal: a path can be in the workspace *and* Read.  A
+/// caller that passed its whole attachment list here would have made Note into a grant, which is
+/// exactly what `dev/ATTACH_CONTRACT.md` §6 has always said it must not be.
+///
+/// `scratch` is the chat's own working folder under [`CHAT_ROOT`] -- always in the workspace and
+/// always writable, so an agent has somewhere to put what it produces without the user answering a
+/// question first, exactly as a Diamond's own directory is.  `workspace` are the paths the user
+/// marked into this chat's workspace.  `read_only` are those of them to be consulted rather than
+/// edited; there is no control for that on the chat surface yet, and the argument is here so that
+/// when one arrives it plugs into the rule [`diamond_bounds`] already enforces instead of inventing
+/// a second idea.
 ///
 /// A scope with no places at all is [`Bound::Nowhere`], for the reason [`diamond_bounds`] gives:
 /// the empty prefix is not a folder but every folder.
 ///
 /// # Arguments
 /// * `scratch` - The chat's own working directory, workspace-relative.
-/// * `attached` - What the user put in this chat's scope.
-pub fn chat_bounds(scratch: &str, attached: &[String]) -> Vec<Bound> {
-    let mut out: Vec<Bound> = Vec::new();
-    let mut places = 0usize;
-    let s = normalise(scratch);
-    if !s.is_empty() {
-        out.push(Bound::OnlyWriteUnder(s));
-        places += 1;
-    }
-    for path in attached {
-        let p = normalise(path);
-        if p.is_empty() {
-            continue;
-        }
-        out.push(Bound::OnlyWriteUnder(p));
-        places += 1;
-    }
-    if places == 0 {
-        return vec![Bound::Nowhere];
-    }
-    // Daimond's own directory is out of bounds here as everywhere. The READ fence matters more in
-    // a chat's worker than in a Diamond's, because this is the one scope that reads freely
-    // otherwise, and `.daimond` holds the rules about what agents may do.
-    out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
-    out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
-    out
+/// * `workspace` - The paths the user marked into this chat's workspace.
+/// * `read_only` - Which of them may be read but not written.
+pub fn chat_bounds(scratch: &str, workspace: &[String], read_only: &[String]) -> Vec<Bound> {
+    diamond_bounds(scratch, workspace, read_only)
 }
 
 /// The bounds a Diamond's daimon runs with: its own workspace, and nothing else.
@@ -2512,6 +2512,78 @@ pub fn set_mode(m: Mode) -> Mode {
 }
 
 
+// ── Tools that are sold rather than shipped ─────────────────────────
+//
+// Most of the belt is what Daimond IS, and is free.  A pack is a tool the gateway sells: the
+// account buys an entitlement once, keeps it for good, and the tool runs on this device because
+// that account holds it.  The catalogue that names the packs and prices them lives in the gateway
+// (`crate::catalogue` there, one table, the same one the till charges against), so nothing here
+// knows a price or a name -- only which packs this account has NOT bought.
+//
+// The page is the courier and the gateway is the authority.  `/api/tools` answers, per account,
+// which unlocks are held; the page hands the shortfall down here and the tool refuses on it.  The
+// direction matters: this build is told what is LOCKED, never what is unlocked.  A device that has
+// never been told anything therefore locks nothing, which is the honest default for the two cases
+// that produce it -- a first run before the gateway has been reached, and a paid-up account whose
+// gateway is briefly unreachable.  Taking a bought tool away from a customer because their network
+// blinked is a worse failure than letting an unbilled compile through, and the gate that matters
+// is the one on BUYING, which is server-side and cannot be reached from here at all.
+//
+// This is not a DRM claim and must not be read as one.  The client is open source and runs in the
+// user's own browser, so anyone willing to edit it can call the tool.  What this stops is the
+// model reaching a tool the account did not buy, which is the case that actually arises: nothing
+// derived from anything a model said reaches `set_locked_packs`, exactly as nothing derived from a
+// model reaches `set_mode`.
+
+thread_local! {
+    /// The packs the gateway sells that this account has not bought, lower-cased.
+    ///
+    /// Empty means nothing is locked -- see the section note on why that is the safe default.
+    static LOCKED_PACKS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The catalogue key under which Typst typesetting is sold.
+///
+/// The ONE place the pack's identifier is written down, so renaming it is a single edit here and a
+/// matching edit to the `tools` catalogue on the gateway's `/api/checkout/pack` route.  The
+/// gateway's entitlement key, the Stripe `metadata[pack]` and this constant are all the same
+/// string; the pack's display NAME and its price are the catalogue's to state and are deliberately
+/// absent from this build.
+pub const PACK_TYPST: &str = "typst";
+
+/// Tell this build which packs the account has not bought.
+///
+/// Called by the page after each `/api/tools` read, and by nothing else.  The list is comma
+/// separated, as the catalogue spells its keys; blank entries are dropped and case is folded, so a
+/// page that passes `"Typst, "` says the same thing as one that passes `"typst"`.
+///
+/// # Arguments
+/// * `csv` - The locked pack keys, comma separated.  Empty locks nothing.
+pub fn set_locked_packs(csv: &str) {
+    let list: Vec<String> = csv
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    LOCKED_PACKS.with(|c| *c.borrow_mut() = list);
+}
+
+/// The packs currently locked on this device, as [`set_locked_packs`] was last told them.
+pub fn locked_packs() -> Vec<String> {
+    LOCKED_PACKS.with(|c| c.borrow().clone())
+}
+
+/// Whether `pack` is sold-but-unbought on this account.
+///
+/// # Arguments
+/// * `pack` - The catalogue key, e.g. [`PACK_TYPST`].
+pub fn pack_locked(pack: &str) -> bool {
+    let want = pack.trim().to_lowercase();
+    LOCKED_PACKS.with(|c| c.borrow().iter().any(|p| *p == want))
+}
+
+
 // ── Reaching outward once a stranger has spoken ─────────────────────
 //
 // Marking a stranger's words tells the model what they are.  It does not stop a model that reads
@@ -3540,10 +3612,11 @@ pub struct ToolContext {
     /// may write your files, may read what it shipped, and may never touch the rules about what it
     /// may do -- nor another skill's files, which are not its business.
     ///
-    /// Empty for an ordinary turn, where the user is the author and may edit their own skills, and
-    /// for the user's own chat, whose reach is the workspace and whose commands are fenced to the
-    /// folder they granted.  A Diamond's worker carries [`diamond_bounds`] plus any
-    /// [`toolkit_bounds`] the user granted that Diamond; a skill's turn carries [`skill_bounds`].
+    /// Empty for an ordinary turn, where the user is the author and may edit their own skills.  A
+    /// chat carries [`chat_bounds`] -- its own turn and every worker it dispatches alike, so a
+    /// worker cannot reach what the conversation that sent it could not.  A Diamond's worker
+    /// carries [`diamond_bounds`] plus any [`toolkit_bounds`] the user granted that Diamond; a
+    /// skill's turn carries [`skill_bounds`].
     //
     // Named `no_write` for the write lockout it began as.  `bounds` is the right name for it now,
     // and renaming it reaches `src/handler.rs`, which is not this change's remit.
@@ -3593,6 +3666,20 @@ impl ToolContext {
     pub fn refusal(&self, path: &str, writing: bool) -> String {
         let p = normalise(path);
         if !self.within_allow_list(&p) {
+            // A chat's own words. The Diamond sentence below points at a Diamond that does not
+            // exist and at a panel that is not where a chat's scope is changed, and a model told to
+            // repair the wrong thing repairs the wrong thing.
+            if self.is_chat_scoped() {
+                return fmt!(
+                    "Refused: '{}' is not in this chat's workspace. This chat's workspace is: {}. \
+                    Inside it you may read, write and create freely and need ask nobody for \
+                    anything; outside it there is nothing to ask for. Address paths under those \
+                    folders -- a search or a listing must name one rather than starting at '.'. If \
+                    you need another, say which and let the user add it with the paperclip. Note \
+                    and Read do not add anything: they only decide what is quoted into the \
+                    conversation.",
+                    path, self.allowed_places());
+            }
             return fmt!(
                 "Refused: '{}' is not in this Diamond's workspace. A daimon can only open the \
                 files its Diamond holds -- the user puts them there, and you cannot add to it \
@@ -3707,11 +3794,61 @@ impl ToolContext {
         !declared
     }
 
-    /// Whether this turn declared a WRITE allow-list, i.e. whether it is a chat's scope.
+    /// Whether this turn declared a WRITE allow-list.
     ///
-    /// As [`ToolContext::is_scoped`], the DECLARATION decides and not what survived it.
+    /// As [`ToolContext::is_scoped`], the DECLARATION decides and not what survived it.  Nothing in
+    /// this build produces one -- see [`Bound::OnlyWriteUnder`] -- so this is false for every turn
+    /// the app composes, and it is kept beside the rule it reads rather than deleted out from under
+    /// it.
     pub fn is_write_scoped(&self) -> bool {
         self.no_write.iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_)))
+    }
+
+    /// Whether the workspace this turn carries is a CHAT's rather than a Diamond's.
+    ///
+    /// Both surfaces are now fenced by the same rule ([`chat_bounds`] delegates to
+    /// [`diamond_bounds`]), which is the point -- and it leaves nothing in the bound list to say
+    /// which surface asked for it.  Two refusals have to say, because a model told the wrong one
+    /// attempts the wrong repair: *"attach it to this Diamond in the Workspace panel"* names a
+    /// panel that is not where a chat's workspace is changed, and names a Diamond that does not
+    /// exist.
+    ///
+    /// The test is the scratch folder, and it is the scope itself answering rather than a flag a
+    /// caller has to remember to set -- the same reasoning [`Tool::asserted_by`] is written from:
+    /// in this build the scope IS the identity.  A chat's own working folder is always in its
+    /// scope and always lives under [`CHAT_ROOT`]; a Diamond's own directory never does.
+    pub fn is_chat_scoped(&self) -> bool {
+        self.no_write.iter().any(|b| match b {
+            Bound::OnlyUnder(p) => {
+                let n = normalise(p);
+                !n.is_empty() && under(&n, CHAT_ROOT)
+            },
+            _ => false,
+        })
+    }
+
+    /// The places this turn may reach, spelled for a model to read, or `"nothing at all"`.
+    ///
+    /// A refusal that says only where a path is NOT leaves the model guessing at where it may go,
+    /// and a model guessing spends a round trip per guess.  This is measured rather than assumed:
+    /// a chat scoped to `papers` meets `Refused: '.' is not in this chat's workspace` for
+    /// `file_search`, `file_glob` and `file_list` alike, because they all default to the root --
+    /// and knowing the answer is `papers` is the difference between recovering in this turn and
+    /// recovering in the next one.
+    fn allowed_places(&self) -> String {
+        let places: Vec<String> = self.no_write.iter()
+            .filter_map(|b| match b {
+                Bound::OnlyUnder(p) => {
+                    let n = normalise(p);
+                    if n.is_empty() { None } else { Some(n) }
+                },
+                _ => None,
+            })
+            .collect();
+        if places.is_empty() {
+            return fmt!("nothing at all");
+        }
+        places.join(", ")
     }
 
     fn within_allow_list(&self, p: &str) -> bool {
@@ -3847,6 +3984,30 @@ const SEARCH_MAX_COLUMNS: usize = 500;
 /// The most paths `file_glob` returns in one call.
 const GLOB_PATHS_MAX: usize = 500;
 
+/// The most directory entries one `file_search` or `file_glob` walk looks at.
+///
+/// Every other cap here bounds the ANSWER -- [`GLOB_PATHS_MAX`] paths, [`SEARCH_MATCHES_MAX`]
+/// matches, [`MAX_OUTPUT`] bytes -- and not one of them bounds the WORK.  A `**` pattern over a
+/// real machine folder walked until the turn ended, and the turn never ended: the answer was
+/// small, the walk was not, and a cap on what comes back cannot tell those two apart.
+///
+/// **An entry count and not a deadline**, deliberately, because the walk has to be repeatable.
+/// `offset` pages a search by walking the tree again and passing over the matches an earlier page
+/// reported, so a walk that stopped on the clock would stop in a different place on every call:
+/// page two would begin from a tree that ends somewhere else, skipping files and repeating others,
+/// with nothing on the surface to show it.  A count stops in the same place every time -- which is
+/// also the only reason it can be tested.  Time is bounded through it rather than by it: no single
+/// entry costs an unbounded amount (a glob opens no file at all, a search reads at most
+/// [`SEARCH_MAX_FILE`] bytes of one and the matcher has its own step budget, which is what
+/// `undecided` counts), so a bound on entries is a bound on the turn.
+///
+/// Twenty thousand is roughly four times this repository with [`SKIP_DIRS`] passed over, and two
+/// and a half times the whole tree of applications it sits in; the same repository WITH `.git` and
+/// `target` is ninety-five thousand, which is the shape that needs stopping.  So an ordinary
+/// project is walked whole and never sees this number, and what meets it is a folder nobody meant
+/// to search.
+const WALK_ENTRIES_MAX: usize = 20_000;
+
 /// Directories `file_search` and `file_glob` do not walk unless the call asks for them.
 ///
 /// Everything else is walked, dotted or not.  The old rule skipped every name beginning with a
@@ -3942,6 +4103,91 @@ impl Skips {
             return Vec::new();
         }
         SKIP_DIRS.iter().enumerate().filter(|(i, _)| !self.on[*i]).map(|(_, d)| *d).collect()
+    }
+}
+
+/// One walk's entry budget, and where it ran out.
+///
+/// It exists to be SAID OUT LOUD, not merely to stop the walk.  A walk that stopped early and kept
+/// quiet hands back a short list that reads exactly like a complete one, and the shortest list of
+/// all -- none -- reads as "that file is not there".  `file_glob` has been read that way once
+/// already, when the passed-over `.git` answered "no paths matched" about a ref that was sitting
+/// right there and sent agents hunting for it elsewhere.  A silent stop is worse than the hang it
+/// replaces: a hang is visibly wrong, while a truncated answer is confidently wrong.
+///
+/// So the type carries the two things a notice needs -- how much was looked at, and where the
+/// looking stopped -- and [`WalkBudget::notice`] is the only way the walks report either.
+pub struct WalkBudget {
+    /// Entries still affordable.
+    left:   usize,
+    /// What it started with, which is what the notice quotes.
+    max:    usize,
+    /// The directory the walk was in when the budget ran out, empty for the root itself.
+    stop:   Option<String>,
+    /// Directories still waiting on the stack when it ran out, so the notice can say how much of
+    /// the tree is missing rather than only that some of it is.
+    queued: usize,
+}
+
+impl WalkBudget {
+
+    /// A budget of [`WALK_ENTRIES_MAX`] entries.
+    pub fn new() -> Self {
+        Self { left: WALK_ENTRIES_MAX, max: WALK_ENTRIES_MAX, stop: None, queued: 0 }
+    }
+
+    /// Charge one directory entry, answering whether the walk may look at it.
+    ///
+    /// The first refusal records where the walk had got to; later ones are free, so a caller may
+    /// keep asking without the record moving.
+    ///
+    /// # Arguments
+    /// * `here` - The directory being walked, as the model spells it.
+    pub fn spend(&mut self, here: &str) -> bool {
+        if self.left == 0 {
+            if self.stop.is_none() {
+                self.stop = Some(here.to_string());
+            }
+            return false;
+        }
+        self.left -= 1;
+        true
+    }
+
+    /// Whether the budget ran out before the walk finished.
+    pub fn spent(&self) -> bool {
+        self.stop.is_some()
+    }
+
+    /// Record how many directories were left unwalked, once the walk has stopped.
+    ///
+    /// # Arguments
+    /// * `dirs` - Directories still on the walk's stack.
+    pub fn unwalked(&mut self, dirs: usize) {
+        self.queued = dirs;
+    }
+
+    /// The plain-English account of a walk that stopped early, empty for one that did not.
+    ///
+    /// Worded as a STOP and never as an absence, and it names the directory the walk had reached,
+    /// because the only useful next move is to ask again lower down.
+    ///
+    /// # Arguments
+    /// * `tool` - The tool's name, for the `[tool]` prefix the other notices use.
+    /// * `start` - Where the walk began, as the caller wrote it.
+    /// * `advice` - What that tool's caller should do instead, in that tool's own arguments.
+    pub fn notice(&self, tool: &str, start: &str, advice: &str) -> String {
+        let stop = match &self.stop {
+            Some(d) => d,
+            None    => return String::new(),
+        };
+        let here = if stop.is_empty() { "." } else { stop.as_str() };
+        fmt!(
+            "\n[{}] STOPPED EARLY: this walk looked at {} entries under '{}' and stopped there, \
+            in '{}', with at least {} more director(ies) never opened and whatever lies inside \
+            them. What is above is PART of the answer and not the whole of it, so a short or empty \
+            result here does NOT mean there is nothing to find. {}",
+            tool, self.max, start, here, self.queued, advice)
     }
 }
 
@@ -4248,10 +4494,26 @@ fn scan_file(
 /// # Arguments
 /// * `opts` - What the call asked for.
 /// * `stats` - What the walk actually did.
-fn search_notes(opts: &SearchOpts, stats: &SearchStats) -> String {
+/// * `budget` - The entry budget, which says whether the tree was walked to the end.
+/// * `start` - Where the walk began, as the caller wrote it.
+fn search_notes(
+    opts:   &SearchOpts,
+    stats:  &SearchStats,
+    budget: &WalkBudget,
+    start:  &str,
+)
+    -> String
+{
     let mut out = fmt!(
         "\n[file_search] {} match(es) in {} file(s); {} file(s) searched.",
         stats.matched, stats.hit_files, stats.files);
+    // First among the notices, because it is the one that changes how every other line is to be
+    // read: "no matches" under a stopped walk means "none where it looked", not "none here".
+    out.push_str(&budget.notice("file_search", start,
+        "Narrow it and ask again: set 'path' to a directory further down -- the walk had got as \
+        far as the one named above -- or pass a 'glob' so fewer files are opened. Paging with \
+        'offset' will NOT reach past this point, because the later files were never opened at \
+        all."));
     let mut missed: Vec<String> = Vec::new();
     if stats.skipped > 0 {
         missed.push(fmt!(
@@ -4679,11 +4941,15 @@ impl Tool {
     /// so a tool that left it empty would file every machine-made claim as the person's own, which
     /// is the one value it must never take.
     ///
-    /// The name comes from the turn's SCOPE rather than from a field, because in this build the
-    /// scope is the identity: a turn confined to `diamonds/<id>` is that Diamond's daimon by
-    /// construction, and a tool-holding turn confined to nothing is the user's chat.  A name passed
-    /// down instead would be a second thing every caller had to remember to set, and the value it
-    /// would carry is the one already inferable here.
+    /// The name comes from the turn's own PREFIX rather than from a field, because in this build
+    /// that is the identity: a turn whose paths are rooted at `diamonds/<id>` is that Diamond's
+    /// daimon by construction, and a tool-holding turn with no prefix is the user's chat.  A name
+    /// passed down instead would be a second thing every caller had to remember to set, and the
+    /// value it would carry is the one already inferable here.
+    ///
+    /// The BOUNDS cannot answer this, and could once: a chat is now fenced by an allow-list too
+    /// (see [`chat_bounds`]), so "confined at all" no longer distinguishes the two surfaces.
+    /// [`ToolContext::is_chat_scoped`] is what asks the bounds, and it asks a different question.
     ///
     /// # Arguments
     /// * `ctx` - The turn's context, whose `path_prefix` says which agent this is.
@@ -4732,12 +4998,50 @@ impl Tool {
         })
     }
 
+    /// The catalogue key of the pack this tool is sold in, or `None` for a tool Daimond ships free.
+    ///
+    /// Nearly every tool is free and answers `None`.  A tool that answers a key is refused by
+    /// [`guard`](Tool::guard) whenever [`pack_locked`] says the account has not bought it.
+    pub fn pack(&self) -> Option<&'static str> {
+        match self {
+            Tool::TypstCompile => Some(PACK_TYPST),
+            _                  => None,
+        }
+    }
+
+    /// Why a call to a tool this account has not bought did not run, or `None` when it may.
+    ///
+    /// Written to the model, in English, like every other refusal here: the model relays it to the
+    /// user in the language they are reading in, which a string composed in this build could not.
+    /// It says the three things a user needs and no more -- that the tool is a pack, where the
+    /// pack is bought, and that it is a one-off -- so the answer arrives in the conversation and
+    /// nothing has to be put up in front of them to deliver it.
+    fn pack_refusal(&self) -> Option<String> {
+        let pack = match self.pack() {
+            Some(p) => p,
+            None    => return None,
+        };
+        if !pack_locked(pack) {
+            return None;
+        }
+        Some(fmt!(
+            "'{}' is part of the {} pack, which this account has not bought, so nothing was \
+            compiled. Tell the user plainly: the pack is in the Tools panel, it is bought once \
+            and kept for good, and it is paid for in money rather than out of their credits -- so \
+            it costs nothing if they are running on their own API key. Do not ask them to buy it \
+            and do not try the tool again; say what you would have produced with it, and offer to \
+            leave the source where they can typeset it themselves.",
+            self.name(), pack))
+    }
+
     /// The single door: what a turn bounded by a skill's declaration may not do, refused in plain
     /// English and returned as text so the model can recover.  `None` when the call is in bounds.
     ///
     /// This lives here, at the one place both the native and the wasm transports dispatch through,
     /// rather than in each tool -- a guard that has to be remembered in eight places is a guard
-    /// that will be missing from one of them.
+    /// that will be missing from one of them.  The entitlement check is here for that reason and
+    /// not at the compile itself: `typst_compile` has three dispatch arms across the two
+    /// transports, and a check written into one of them is a check absent from the other two.
     ///
     /// **It is the door and not the whole house.**  It can only check the paths a call NAMES, and
     /// two tools reach paths they do not name: `file_search` and `file_glob` walk a tree from a
@@ -4749,6 +5053,12 @@ impl Tool {
     /// * `args_json` - The tool's arguments, as the model sent them.
     /// * `ctx` - The context whose bounds the call is checked against.
     fn guard(&self, args_json: &str, ctx: &ToolContext) -> Outcome<Option<String>> {
+        // Before the arguments are even read.  A tool the account has not bought is refused for
+        // that reason and no other -- a model told its 'path' was missing would fix the path and
+        // call again, and learn the real answer on the second attempt instead of the first.
+        if let Some(refusal) = self.pack_refusal() {
+            return Ok(Some(refusal));
+        }
         let writes = res!(Self::write_targets(self, args_json, ctx));
         let read   = res!(Self::read_target(self, args_json));
         // `artefact_add` and `typst_compile` name a path that is neither a bounds target nor a
@@ -4874,8 +5184,8 @@ impl Tool {
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace an exact, unique substring in a workspace file. 'old_string' must be the file's own bytes: file_read prefixes each line with its number and a TAB, and those characters are not in the file, so strip them from anything you copy out of a read. Give enough surrounding text to be unique -- the edit is refused, not guessed at, when the string appears twice or not at all.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
-            Tool::FileSearch  => "Search the contents of workspace files and return the matching lines as 'path:line:text', ripgrep's own format. 'query' is a REGULAR EXPRESSION by default -- '.', '*', '+', '?', '[]', '()', '|', '^', '$', '\\d', '\\w', '\\s' and '\\b' all mean what they usually do -- so pass \"fixed\":true when you want the text matched literally, and set \"ignore_case\":true to fold case. Narrow it with \"glob\" (e.g. '**/*.rs', '*.{md,typ}') and \"path\", and ask for surrounding lines with \"before\" and \"after\". It returns at most 200 matches unless you raise \"limit\"; when it stops early it SAYS so and gives you the \"offset\" to page on with, and it also says which directories, oversized files and non-text files it did not look inside -- read that notice before concluding something is absent. It walks .github, .cargo and every other dotted directory; only .git, .hg, .svn, node_modules and target are passed over, and \"all\":true includes those -- as does NAMING one, so \"path\":\".git\" or \"glob\":\".git/**\" searches the repository's own files and nothing else extra. IT READS EVERY FILE IT SEARCHES, so over a large tree it is slow. Where the 'run' tool is available -- it needs Daimond's machine hand, and refuses in plain English where there is none -- 'rg' is far faster and worth trying FIRST on anything the size of a source repository: run [\"rg\",\"-n\",\"pattern\",\"path\"]. Two things can go wrong with that and neither is worth fighting: run itself REFUSES where there is no hand, and where there is one 'rg' may simply not be installed, in which case the command fails to start. Either way, come straight back to this tool rather than hunting for a way around it.",
-            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first where this build can see modification times. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did. Naming one walks it: 'path':'.git' or a pattern like '.git/refs/**' looks inside the repository's own directory, which is how you read HEAD, a reflog or a ref -- and file_read opens any of those by path regardless, since the skip is about walking and never about reading.",
+            Tool::FileSearch  => "Search the contents of workspace files and return the matching lines as 'path:line:text', ripgrep's own format. 'query' is a REGULAR EXPRESSION by default -- '.', '*', '+', '?', '[]', '()', '|', '^', '$', '\\d', '\\w', '\\s' and '\\b' all mean what they usually do -- so pass \"fixed\":true when you want the text matched literally, and set \"ignore_case\":true to fold case. Narrow it with \"glob\" (e.g. '**/*.rs', '*.{md,typ}') and \"path\", and ask for surrounding lines with \"before\" and \"after\". It returns at most 200 matches unless you raise \"limit\"; when it stops early it SAYS so and gives you the \"offset\" to page on with, and it also says which directories, oversized files and non-text files it did not look inside -- read that notice before concluding something is absent. It walks .github, .cargo and every other dotted directory; only .git, .hg, .svn, node_modules and target are passed over, and \"all\":true includes those -- as does NAMING one, so \"path\":\".git\" or \"glob\":\".git/**\" searches the repository's own files and nothing else extra. IT READS EVERY FILE IT SEARCHES, so over a large tree it is slow -- and the walk is bounded: past twenty thousand directory entries it STOPS, says 'STOPPED EARLY' and names the directory it had reached, and everything below that was never opened, so treat that answer as a part of one and ask again with a narrower 'path' rather than reading it as an absence. Where the 'run' tool is available -- it needs Daimond's machine hand, and refuses in plain English where there is none -- 'rg' is far faster and worth trying FIRST on anything the size of a source repository: run [\"rg\",\"-n\",\"pattern\",\"path\"]. Two things can go wrong with that and neither is worth fighting: run itself REFUSES where there is no hand, and where there is one 'rg' may simply not be installed, in which case the command fails to start. Either way, come straight back to this tool rather than hunting for a way around it.",
+            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first where this build can see modification times. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did. Naming one walks it: 'path':'.git' or a pattern like '.git/refs/**' looks inside the repository's own directory, which is how you read HEAD, a reflog or a ref -- and file_read opens any of those by path regardless, since the skip is about walking and never about reading. The walk is bounded: past twenty thousand directory entries it STOPS, says 'STOPPED EARLY' and names the directory it had reached, and nothing below that point was looked at -- so a short or empty result carrying that notice means narrow the 'path' or the pattern and ask again, NOT that the file is missing.",
             Tool::FileDelete  => "Delete a file, or a directory when recursive is true, from the workspace.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
@@ -4892,7 +5202,7 @@ impl Tool {
             Tool::WebRead     => "Read the full rendered text of the open page — the way to answer 'what does this page say' (a price, a spec, a table, an article). It returns the page's visible text with JavaScript already run, from the main content region (a docs site's navigation and chrome are dropped), and it does NOT truncate to a node budget the way web_snapshot does. Reach for this FIRST whenever you need to know a page's content rather than click something on it: one web_read answers what twenty web_snapshots and web_scrolls cannot. It works on a real page under Daimond Hands and on a page Daimond itself built; a cross-origin page that is only being shown must be read with web_fetch instead.",
             Tool::WebClick    => "Click one node on the open page, named by its integer 'ref' from the most recent web_snapshot. Snapshot first: a ref from an older snapshot may now point at a different node, or at nothing. Assume the page changed after the click, so call web_snapshot again before your next action. Anything the user cannot undo — a purchase, a message sent, a form submitted to a site they have not already approved — is to be put to the user before you click it.",
             Tool::WebType     => "Type text into one field on the open page, named by its integer 'ref' from the most recent web_snapshot. Set submit to true to press Enter afterwards, which usually navigates. Snapshot first, and snapshot again afterwards, because typing and submitting stale the refs. Never type a password, a card number, or any other credential: the user enters those themselves, and while they do, Daimond is not watching the page at all.",
-            Tool::TypstCompile => "Compile a Typst source file in the workspace to a PDF, using the compiler bundled into this page. Give it the workspace path of a '.typ' file; the PDF is written beside it unless you name 'out'. This is real typesetting, so it is the right way to produce a document the user can print or send. Its limits are firm and worth knowing before you write the source: only five fonts are bundled (Libertinus Serif regular/bold/italic/bold-italic and New Computer Modern Math), so any other font falls back; and the compiler has NO file or network access of its own, so '#import \"@preview/...\"', 'read()', 'image()' and every other reference to an outside file will fail. Write self-contained Typst. On a compile error it returns the compiler's own diagnostics, which name the line -- read them and fix the source rather than trying again unchanged.",
+            Tool::TypstCompile => "Compile a Typst source file in the workspace to a PDF, using the compiler bundled into this page. Give it the workspace path of a '.typ' file; the PDF is written beside it unless you name 'out'. This is real typesetting, so it is the right way to produce a document the user can print or send. Its limits are firm and worth knowing before you write the source: only five fonts are bundled (Libertinus Serif regular/bold/italic/bold-italic and New Computer Modern Math), so any other font falls back; and the compiler has NO file or network access of its own, so '#import \"@preview/...\"', 'read()', 'image()' and every other reference to an outside file will fail. Write self-contained Typst. On a compile error it returns the compiler's own diagnostics, which name the line -- read them and fix the source rather than trying again unchanged. This one is sold as a pack rather than shipped free, so on an account that has not bought it the call is refused and says so; that refusal is the answer, not a fault to retry around.",
             Tool::WebScroll   => "Scroll the open page up or down; 'amount' is how many screens to move, and defaults to one. Scrolling changes what is in the VIEWPORT for a screenshot or for triggering lazy-loaded content — it does NOT reveal more of a web_snapshot (a snapshot already covers the whole page) and it is not how you read a long page (use web_read for that).",
             Tool::LinkList    => "Read the graph: how the Diamonds, files, pages and chats in this workspace are related to one another. Give 'node' as a 'kind:rest' reference — 'diamond:<id>', 'file:notes/report.md', 'url:https://…', 'chat:<id>' — and you get every link touching that thing, found from EITHER end, so it answers 'what does this point at' and 'what points at this' in one call. Give no 'node' and you get every link in the store, which is the shape of the whole body of work. Each link carries its two ends, a one-or-two-word 'rel' saying what the relation is, a 'note', the Diamond whose sidecar holds the record ('owner'), the id, and 'by' — 'user' where a person drew the line and 'agent:…' where a model asserted it, which is the difference between something established and something suggested. Direction is recorded because 'supersedes' is not symmetric, NOT because anything flows along a link. Read this before you conclude that two things are unrelated, or invent a relation between them: the answer is often already written down, by the user.",
             Tool::LinkAdd     => "Record that two things are related, and how. 'from' and 'to' are 'kind:rest' references — 'diamond:<id>', 'file:notes/report.md', 'url:https://…', 'chat:<id>' — and they may not be the same thing. 'rel' is one or two words for what the relation IS ('supersedes', 'produced', 'derives from', 'contradicts'); it is lowercased and shortened to fit, and it may be left empty, which says only that the two are connected. 'note' is one sentence for whatever the relation does not say. The record is stored ONCE, on the Diamond named by 'from' when that end is a Diamond and on this Diamond otherwise, and it is found from both ends — so never assert the reverse as a second link, or the graph gains a duplicate nobody can tell from a real second relation. It is stamped as yours, so a later reader can tell what you claimed from what the user drew. Assert what you have established, not what you suspect: a graph of guesses is worse than a sparse one, because the user cannot tell which is which without checking every edge.",
@@ -4930,7 +5240,7 @@ impl Tool {
             Tool::WebClick    => "Click something on the open page.",
             Tool::WebType     => "Type into the open page. Never a password: you enter those.",
             Tool::WebScroll   => "Scroll the open page.",
-            Tool::TypstCompile => "Typeset a Typst file into a PDF, here in the browser.",
+            Tool::TypstCompile => "Typeset a Typst file into a PDF, here in the browser. Sold as a pack: bought once from the Tools panel and kept, and paid for in money rather than out of your credits.",
             Tool::LinkList    => "Read how your Diamonds, files and pages relate to one another.",
             Tool::LinkAdd     => "Record that two of them are related, and in what way.",
             Tool::LinkRemove  => "Take one of those relations back out.",
@@ -5337,16 +5647,27 @@ impl Tool {
                 // envelope rather than in among the user's own files.
                 let mut untrusted: Vec<String> = Vec::new();
                 let mut stats = SearchStats::default();
+                // The bound on the WALK: see the native arm.  It matters most here, where every
+                // entry costs a round trip into the browser's own filesystem.
+                let mut budget = WalkBudget::new();
                 let mut stack = vec![start];
                 'walk: while let Some(dir) = stack.pop() {
                     let mut entries = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
                         Ok(e)  => e,
                         Err(_) => continue,
                     };
+                    let here = if strip.is_empty() {
+                        dir.clone()
+                    } else {
+                        dir.strip_prefix(&strip).unwrap_or(dir.as_str()).to_string()
+                    };
                     // Name order, so the walk is repeatable and `offset` can page it honestly.
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
                     for (name, is_dir, _) in entries.iter().rev() {
                         if *is_dir {
+                            if !budget.spend(&here) {
+                                break; // out of budget: stop growing the walk, and stop below
+                            }
                             if opts.walk.skips(name) {
                                 stats.skipped += 1;
                                 continue;
@@ -5357,6 +5678,9 @@ impl Tool {
                     for (name, is_dir, size) in &entries {
                         if *is_dir {
                             continue;
+                        }
+                        if !budget.spend(&here) {
+                            break 'walk;
                         }
                         let child = Self::join_rel(&dir, name);
                         let disp = if strip.is_empty() {
@@ -5401,8 +5725,9 @@ impl Tool {
                         }
                     }
                 }
-                Ok(Self::search_output(
-                    ctx, &query, trusted, untrusted, &search_notes(&opts, &stats)))
+                budget.unwalked(stack.len());
+                let notes = search_notes(&opts, &stats, &budget, &raw);
+                Ok(Self::search_output(ctx, &query, trusted, untrusted, &notes, budget.spent()))
             }
             // OPFS reports a name, a kind and a size and no modification time, so the paths come
             // back in path order and the result says as much rather than implying a recency it
@@ -5425,14 +5750,26 @@ impl Tool {
                 let mut hits: Vec<GlobHit> = Vec::new();
                 let mut skipped = 0usize;
                 let mut refused = 0usize;
+                // The bound on the WALK: see the native arm.  This is the arm the unbounded walk
+                // was seen on -- a `**` pattern over an open machine folder, one round trip per
+                // entry, and a turn that never ended.
+                let mut budget = WalkBudget::new();
                 let mut stack = vec![start];
-                while let Some(dir) = stack.pop() {
+                'walk: while let Some(dir) = stack.pop() {
                     let mut entries = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
                         Ok(e)  => e,
                         Err(_) => continue,
                     };
+                    let here = if strip.is_empty() {
+                        dir.clone()
+                    } else {
+                        dir.strip_prefix(&strip).unwrap_or(dir.as_str()).to_string()
+                    };
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
                     for (name, is_dir, _) in &entries {
+                        if !budget.spend(&here) {
+                            break 'walk;
+                        }
                         let child = Self::join_rel(&dir, name);
                         if *is_dir {
                             if walk.skips(name) {
@@ -5457,7 +5794,9 @@ impl Tool {
                         }
                     }
                 }
-                Ok(Self::glob_output(&pattern, &raw, hits, limit, skipped, refused, walk, false))
+                budget.unwalked(stack.len());
+                Ok(Self::glob_output(
+                    &pattern, &raw, hits, limit, skipped, refused, walk, false, &budget))
             }
             Tool::FileDelete => {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
@@ -6053,17 +6392,26 @@ impl Tool {
     /// * `trusted` - Match lines from the user's own files.
     /// * `untrusted` - Match lines from files written by a stranger.
     /// * `notes` - The account of what was and was not searched.
+    /// * `partial` - Whether the walk stopped before it had seen the whole tree, which is the
+    ///   difference between "there is no such line" and "there is none in the part that was read".
     fn search_output(
         ctx:        &ToolContext,
         query:      &str,
         trusted:    Vec<String>,
         untrusted:  Vec<String>,
         notes:      &str,
+        partial:    bool,
     )
         -> String
     {
         let mut out = if trusted.is_empty() && untrusted.is_empty() {
-            fmt!("No matches for '{}'.", query)
+            // The sentence itself changes, and not only the notes below it: this line is the one
+            // a reader takes the answer from, and on a stopped walk the flat form of it is false.
+            if partial {
+                fmt!("No matches for '{}' in the part of the tree this call reached.", query)
+            } else {
+                fmt!("No matches for '{}'.", query)
+            }
         } else {
             trusted.join("\n")
         };
@@ -6113,13 +6461,24 @@ impl Tool {
         // Match lines from under `mail/`, which are a stranger's words and go in an envelope.
         let mut untrusted: Vec<String> = Vec::new();
         let mut stats = SearchStats::default();
+        // The bound on the WALK, as against the bound on the answer that `limit` is.  A search
+        // that matches nothing walks every file there is, and on a large enough folder it never
+        // comes back.
+        let mut budget = WalkBudget::new();
         let mut stack = vec![root.clone()];
         'walk: while let Some(dir) = stack.pop() {
             let entries = Self::sorted_entries(&dir);
+            let here = ctx.workspace.display_rel(&dir);
             // Sub-directories are pushed in reverse so they pop in name order, which makes the
             // whole walk a repeatable pre-order -- what `offset` needs to page honestly.
             for (name, p, is_dir) in entries.iter().rev() {
                 if *is_dir {
+                    // Charged before the skip test, and so charged for every entry the walk lays
+                    // eyes on: what costs the browser a round trip is reading the entry, not
+                    // deciding to descend into it.
+                    if !budget.spend(&here) {
+                        break; // out of budget: stop growing the walk, and stop below
+                    }
                     if opts.walk.skips(name) {
                         stats.skipped += 1;
                         continue;
@@ -6130,6 +6489,9 @@ impl Tool {
             for (_, p, is_dir) in &entries {
                 if *is_dir {
                     continue;
+                }
+                if !budget.spend(&here) {
+                    break 'walk;
                 }
                 let rel = ctx.workspace.display_rel(p);
                 // The bound, per file, because a walk reaches what the door was never shown.
@@ -6173,8 +6535,9 @@ impl Tool {
                 }
             }
         }
-        Ok(Self::search_output(
-            ctx, &query, trusted, untrusted, &search_notes(&opts, &stats)))
+        budget.unwalked(stack.len());
+        let notes = search_notes(&opts, &stats, &budget, &path);
+        Ok(Self::search_output(ctx, &query, trusted, untrusted, &notes, budget.spent()))
     }
 
     /// Find files by path pattern, reading none of them (native).
@@ -6195,9 +6558,16 @@ impl Tool {
         let mut hits: Vec<GlobHit> = Vec::new();
         let mut skipped = 0usize;
         let mut refused = 0usize;
+        // The bound on the WALK.  `limit` bounds what comes back, which on a `**` pattern over a
+        // machine folder is a handful of paths found by looking at everything there is.
+        let mut budget = WalkBudget::new();
         let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
+        'walk: while let Some(dir) = stack.pop() {
+            let here = ctx.workspace.display_rel(&dir);
             for (name, p, is_dir) in Self::sorted_entries(&dir) {
+                if !budget.spend(&here) {
+                    break 'walk;
+                }
                 if is_dir {
                     if walk.skips(&name) {
                         skipped += 1;
@@ -6228,7 +6598,8 @@ impl Tool {
                 hits.push(GlobHit { path: rel, when });
             }
         }
-        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, true))
+        budget.unwalked(stack.len());
+        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, true, &budget))
     }
 
     /// Compose a `file_glob` result: the paths, then what the walk did not look in.
@@ -6243,6 +6614,7 @@ impl Tool {
     /// * `walk` - Which directories this call passed over, and which it walked because it was
     ///   asked to by name.
     /// * `timed` - Whether the modification times are real, and so worth sorting by.
+    /// * `budget` - The entry budget, which says whether the whole tree was walked.
     fn glob_output(
         pattern:    &str,
         path:       &str,
@@ -6252,6 +6624,7 @@ impl Tool {
         refused:    usize,
         walk:       Skips,
         timed:      bool,
+        budget:     &WalkBudget,
     )
         -> String
     {
@@ -6268,7 +6641,16 @@ impl Tool {
             out.push('\n');
         }
         if found == 0 {
-            out.push_str(&fmt!("No paths under '{}' match '{}'.\n", path, pattern));
+            // The flat sentence is a claim about the whole tree, and a walk that stopped early
+            // has not earned it.  This is the line a reader takes the answer from, so it is the
+            // line that has to be true.
+            if budget.spent() {
+                out.push_str(&fmt!(
+                    "No paths matching '{}' turned up in the part of '{}' this call reached.\n",
+                    pattern, path));
+            } else {
+                out.push_str(&fmt!("No paths under '{}' match '{}'.\n", path, pattern));
+            }
         }
         let order = if timed {
             "most recently modified first"
@@ -6278,6 +6660,12 @@ impl Tool {
         out.push_str(&fmt!(
             "[file_glob] {} of {} path(s) matching '{}' under '{}', {}.",
             shown, found, pattern, path, order));
+        // First among the notices, because it changes how the count above is to be read: `found`
+        // is what turned up before the walk stopped, not what is there.
+        out.push_str(&budget.notice("file_glob", path,
+            "Narrow it and ask again: set 'path' to a directory further down -- the walk had got \
+            as far as the one named above -- or write the pattern with a directory in it, so each \
+            call has less ground to cover."));
         if found > shown {
             out.push_str(&fmt!(
                 "\n[file_glob] {} more are NOT shown; narrow the pattern or the 'path'.",
@@ -6469,17 +6857,18 @@ impl Tool {
             Some(c) => c,
             None    => {
                 let d = ctx.default_cwd();
-                // A chat's worker, with nothing in scope but its own working folder. Its own
-                // words, because the Diamond sentence below would point at a Diamond that does not
-                // exist and at a panel that is not where this is fixed.
-                if d.is_empty() && ctx.is_write_scoped() {
+                // A chat, or a worker it dispatched, with nothing in scope but its own working
+                // folder. Its own words, because the Diamond sentence below would point at a
+                // Diamond that does not exist and at a panel that is not where this is fixed.
+                // Asked FIRST: both surfaces now carry the same kind of allow-list, so
+                // `is_scoped` is true for a chat too and the order is what tells them apart.
+                if d.is_empty() && ctx.is_chat_scoped() {
                     return Ok(fmt!(
-                        "Refused: nothing on this computer is in this chat's scope, so there is \
-                        nowhere for a command to run. You may READ the user's files wherever they \
-                        are, and your own working folder is in Daimond's storage, which is not a \
-                        place on this computer. Tell the user which folder the command needs and \
-                        ask them to attach it to this chat with the paperclip; running commands is \
-                        the one thing that waits for that."));
+                        "Refused: this chat's workspace holds nothing on this computer, so there \
+                        is nowhere for a command to run. Your own working folder is in Daimond's \
+                        storage, which is not a place on this computer. Tell the user which folder \
+                        the command needs and ask them to add it to this chat's workspace with the \
+                        paperclip; once it is in, you may work in it freely."));
                 }
                 if d.is_empty() && ctx.is_scoped() {
                     return Ok(fmt!(
@@ -7793,6 +8182,177 @@ mod tests {
         assert!(unscoped.rw.iter().any(|g| covers(g, others)),
             "the contrast this rests on: with no bounds the fence is the whole grant, which is \
             what a worker got until a scope was set");
+    }
+
+    // ── A chat reaches its own workspace, and nothing else ───────────────────
+    //
+    // A chat used to be fenced on WRITING alone, and only in the workers it dispatched -- the
+    // conversation itself carried no bounds at all.  On 2026-08-11 a daimon in an ordinary chat
+    // edited two files of the user's own book, in a directory under no version control, and put
+    // them back only because it chose to.  No worker was involved, so no worker fence could have
+    // helped.
+    //
+    // These are written as the thing going wrong, and each is contrasted with the SAME path on an
+    // unbounded context -- so a check that stopped measuring the bounds goes quiet rather than
+    // green.  `cargo test --lib` reaches all of them; `src/wasm` is `#[cfg(target_arch = "wasm32")]`
+    // and nothing here runs a wasm test runner, so a proof placed there could never fail.
+
+    /// A context scoped to a chat whose workspace holds `workspace`, as `chat_bounds` builds it.
+    fn chatted(workspace: &[&str], read_only: &[&str]) -> ToolContext {
+        let mut c = ctx();
+        let a: Vec<String> = workspace.iter().map(|x| x.to_string()).collect();
+        let r: Vec<String> = read_only.iter().map(|x| x.to_string()).collect();
+        c.no_write = chat_bounds("chats/c1/work", &a, &r);
+        c
+    }
+
+    #[test]
+    fn test_a_chat_cannot_read_or_write_outside_its_workspace_00() {
+        let c = chatted(&["books/elearnity"], &[]);
+        // The incident, as a pair of assertions. `thinking.typ` and `config.typ` were two files of
+        // the user's book that an ordinary chat rewrote to work around a compiler limitation.
+        assert!(!c.may_write("books/other/thinking.typ"),
+            "a chat may not edit a file in a folder nobody put in its workspace -- the whole change");
+        assert!(!c.may_read("books/other/config.typ"),
+            "nor read one: reading is a blast radius too, and a scope that fenced one verb left \
+            the model free to carry the contents of anything anywhere");
+        // Inside the workspace, both verbs, with nothing asked -- a fence that also
+        // interrupted would have missed the point. Nothing in `may_write` can ask; the assertion
+        // that matters is that it says yes.
+        assert!(c.may_read("books/elearnity/ch1.typ"), "inside the workspace, reading is free");
+        assert!(c.may_write("books/elearnity/ch1.typ"), "and so is writing");
+        assert!(c.may_write("books/elearnity/new/dir/file.md"),
+            "including making somewhere new, which is what working in a folder means");
+        // The control: the same four paths with no bounds at all, which is what a chat carried
+        // before this. Every assertion above passes here, so a check that stopped reading the
+        // bounds would report green.
+        let free = ctx();
+        for p in ["books/other/thinking.typ", "books/other/config.typ"] {
+            assert!(free.may_read(p) && free.may_write(p),
+                "the control: unbounded, '{}' is reachable both ways -- so the refusals above are \
+                the bounds speaking and not the path", p);
+        }
+    }
+
+    #[test]
+    fn test_a_chat_with_an_empty_workspace_reaches_its_own_scratch_and_no_further_00() {
+        // The consistent answer, and the same one a Diamond gets: somewhere to think, and nothing
+        // of the user's. Putting a folder in the workspace is therefore the first act of a working
+        // chat, which is the friction the user accepted in exchange for a real boundary. WHAT AN
+        // EMPTY WORKSPACE MEANS IS A DECISION FOR THE PAGE, not for this file: it decides what to
+        // pass, and this decides what the answer is once it has. Passing the workspace root here
+        // would restore the old reach in one argument, which is why the page must say so
+        // deliberately rather than by omission.
+        let c = chatted(&[], &[]);
+        assert!(c.may_write("chats/c1/work/draft.md"),
+            "a chat always has somewhere to put what it produces, or 'where do I work' becomes a \
+            question the user has to answer before starting");
+        assert!(c.may_read("chats/c1/work/draft.md"));
+        assert!(!c.may_read("books/elearnity/ch1.typ"),
+            "and nothing of the user's until they mark a folder into its workspace");
+        assert!(!c.may_write("books/elearnity/ch1.typ"));
+        // Its scratch is in the browser's storage, so there is nowhere on the machine to run a
+        // command -- which is where "no attachment, no command" comes from, and it survives the
+        // move from a write allow-list to a both-verb one because it was never a rule of its own.
+        assert_eq!(c.default_cwd(), fmt!(""),
+            "a chat's own working folder is not a place on this computer");
+        assert!(c.is_chat_scoped(),
+            "and `Tool::run` has to be able to say so in the chat's words rather than a Diamond's");
+        // Which means it must NOT say so for a Diamond, whose refusal names a Diamond and a panel.
+        assert!(!scoped(&[], &[]).is_chat_scoped(),
+            "a Diamond told to add a folder 'to this chat with the paperclip' would send the user \
+            to a control that is not on the screen they are looking at");
+        assert!(!ctx().is_chat_scoped(), "and an unbounded turn is neither");
+        // With a folder in the workspace there IS somewhere, and it is that folder.
+        assert_eq!(chatted(&["books/elearnity"], &[]).default_cwd(), fmt!("books/elearnity"));
+    }
+
+    #[test]
+    fn test_a_chats_refusal_says_where_it_may_go_and_not_only_where_it_may_not_00() {
+        // `file_search`, `file_glob` and `file_list` all default to the workspace root, and a
+        // scoped chat meets `Refused: '.' is not in this chat's workspace` for every one of them
+        // (measured in dev/verify_chatscope.mjs). A refusal that named only the failure would send
+        // the model guessing one folder per round trip.
+        let c = chatted(&["books/elearnity"], &["reference/handbook"]);
+        let r = c.refusal("books/other/thinking.typ", true);
+        assert!(r.contains("books/elearnity") && r.contains("reference/handbook"),
+            "the refusal must name the workspace it is refusing on behalf of: {}", r);
+        assert!(r.contains("chats/c1/work"),
+            "including the chat's own folder, which is where the model should put what it \
+            produces: {}", r);
+        assert!(r.contains("paperclip") && !r.contains("Diamond"),
+            "and it must point at the control that fixes it, on the surface the user is looking \
+            at: {}", r);
+        // A Diamond's refusal is the other one, still.
+        assert!(scoped(&[], &[]).refusal("secrets/keys.txt", true).contains("Diamond"));
+    }
+
+    #[test]
+    fn test_a_chats_read_only_workspace_path_is_consulted_and_not_edited_00() {
+        // The machinery `diamond_bounds` already had, reached from the chat side rather than
+        // reinvented. Note and Read are NOT this: both of them are reading, and they decide what a
+        // turn spends rather than what it may change.
+        let c = chatted(&["books/elearnity"], &["reference/handbook"]);
+        assert!(c.may_read("reference/handbook/ch1.md"), "consulting it is the point");
+        assert!(!c.may_write("reference/handbook/ch1.md"), "editing it is not");
+        assert!(c.may_write("books/elearnity/ch1.typ"), "and the writable path is untouched");
+        // A read-only path listed nowhere else is still allowed in: the caller must not have to
+        // name a thing twice to say "readable, not writable".
+        let only = chatted(&[], &["reference/handbook"]);
+        assert!(only.may_read("reference/handbook/ch1.md"));
+        assert!(!only.may_write("reference/handbook/ch1.md"));
+    }
+
+    #[test]
+    fn test_a_chats_scope_is_composed_the_way_a_diamonds_is_00() {
+        // The claim the whole design rests on, asserted structurally rather than restated: the two
+        // surfaces are fenced by ONE rule, so they cannot drift.
+        assert_eq!(chat_bounds("chats/c1/work", &[fmt!("notes")], &[fmt!("refs")]),
+                   diamond_bounds("chats/c1/work", &[fmt!("notes")], &[fmt!("refs")]),
+            "a chat is scoped the way a Diamond is, or the argument for either is only as good as \
+            whichever copy of it was last edited");
+        // No `OnlyWriteUnder` anywhere in it. That variant is what let a chat read the whole
+        // workspace, and its absence is what makes the fence a real one.
+        assert!(!chat_bounds("chats/c1/work", &[fmt!("notes")], &[])
+                .iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_))),
+            "a chat's writing is fenced by the same rule that fences its reading");
+        // Nothing expressible at all fails CLOSED, for the reason the empty prefix is dangerous:
+        // `under(p, "")` is true for every path, so an allow-list of nothing would be an
+        // allow-list of everything.
+        assert_eq!(chat_bounds("", &[], &[]), vec![Bound::Nowhere]);
+        assert_eq!(chat_bounds(".", &[fmt!("..")], &[fmt!("")]), vec![Bound::Nowhere],
+            "and a scope whose every path normalises away is the same case arriving disguised");
+        // Daimond's own directory is out of a chat's bounds as it is out of a Diamond's.
+        let c = chatted(&["books/elearnity"], &[]);
+        assert!(!c.may_read(".daimond/config.json"));
+        assert!(!c.may_write(".daimond/skills/x.md"));
+    }
+
+    #[test]
+    fn test_a_chats_worker_cannot_reach_past_the_chat_that_sent_it_00() {
+        // The leak this closes, and it is the one `set_diamond_scope` was written for on the
+        // Diamond side: a fence on the conversation alone is worthless if the conversation can ask
+        // something else to fetch what it cannot reach. Both carry the same bounds, so composing
+        // one onto the other is the identity and there is no widening to be had.
+        let chat   = chat_bounds("chats/c1/work", &[fmt!("books/elearnity")], &[]);
+        let worker = chat_bounds("chats/c1/work", &[fmt!("books/elearnity")], &[]);
+        let mut both = ctx();
+        both.no_write = compose(&chat, &worker);
+        // Asserted on what the composed bounds PERMIT rather than on the list being the same list:
+        // `compose` normalises and reorders, and a test on the structure would be measuring the
+        // spelling of `.daimond/` rather than the reach of a worker.
+        assert!(both.may_read("books/elearnity/ch1.typ") && both.may_write("books/elearnity/ch1.typ"),
+            "a worker dispatched from a chat keeps the chat's own reach");
+        assert!(!both.may_read("books/other/thinking.typ"),
+            "and gains nothing the chat did not have");
+        // And a worker handed a WIDER list than the chat holds does not get it: composition
+        // intersects, which is the invariant that makes it safe to call from anywhere.
+        let wider = chat_bounds("chats/c1/work", &[fmt!("books")], &[]);
+        let mut c = ctx();
+        c.no_write = compose(&chat, &wider);
+        assert!(!c.may_read("books/other/thinking.typ"),
+            "composing a wider scope onto a narrower one must narrow, never widen");
+        assert!(c.may_read("books/elearnity/ch1.typ"), "and must keep what both permitted");
     }
 
     #[test]
@@ -9970,6 +10530,211 @@ mod tests {
         assert!(out.as_text().contains("7 more are NOT shown"), "{}", out);
     }
 
+    // ── A tree larger than one call may walk ────────────────────────
+    //
+    // `limit` bounds what comes BACK and never bounded what was DONE: a `**` pattern over a real
+    // machine folder walked until the turn ended, and the turn never ended.  Two things are
+    // checked here and the second is the one that matters.  A walk over a tree larger than the
+    // bound has to come back -- and it has to SAY it stopped, because a short answer that reads
+    // as a complete one sends a model looking for a file somewhere else, while a hang at least
+    // looked wrong.
+    //
+    // Nothing below assumes which end of the tree a walk starts from: the two tools push their
+    // sub-directories in opposite orders, so each check asks what came back and tests the
+    // property against that.
+
+    /// The oversized fixture's layout, bumped whenever the layout changes so that a stale one on
+    /// disk is rebuilt rather than quietly used.
+    const BIG_FIXTURE: &str = "walkbound-2";
+
+    /// The path of a tree deliberately larger than [`WALK_ENTRIES_MAX`], building it if needed.
+    ///
+    /// Kept under the user's cache between runs rather than made afresh: twenty-odd thousand
+    /// files is seconds of work, and every run after the first reads one marker file instead.
+    /// Not `std::env::temp_dir()`, which is a tmpfs on these machines, where a fixture this size
+    /// is resident memory; and not `scratch::scratch_dir` either, which is unique per call and
+    /// swept, where this one is meant to survive.
+    ///
+    /// The shape is what the checks need.  `bulk/` is larger than the whole budget on its own and
+    /// sorts between two small directories holding one named file each, so whichever end a walk
+    /// starts from it reaches one of them, spends itself in the bulk, and never arrives at the
+    /// other.  That unreached file is the point: it is there, it matches, a bounded walk must not
+    /// report it, and a walk rooted at its own directory must.
+    fn big_root() -> std::path::PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set to place the fixture");
+        let root = std::path::PathBuf::from(home).join(".cache/daimond").join(BIG_FIXTURE);
+        let stamp = root.join("stamp.txt");
+        if std::fs::read_to_string(&stamp).map(|s| s.trim() == BIG_FIXTURE).unwrap_or(false) {
+            return root;
+        }
+        // Spread over many directories rather than heaped in one, so what is proved is that the
+        // bound holds ACROSS a walk and not merely within a single listing.
+        let dirs = 120;
+        let per  = (WALK_ENTRIES_MAX / dirs) + 40;
+        for d in 0..dirs {
+            let sub = root.join("bulk").join(fmt!("d{:03}", d));
+            std::fs::create_dir_all(&sub).expect("mkdir");
+            // Empty, and that is not laziness: what is being bounded is the WALK, and a byte in
+            // one of these costs a whole filesystem block -- twenty-odd thousand of them would
+            // leave a hundred megabytes in the user's cache to prove nothing at all.
+            for f in 0..per {
+                std::fs::write(sub.join(fmt!("f{:03}.txt", f)), b"").expect("write");
+            }
+        }
+        for tag in ["aaa", "zzz"] {
+            let sub = root.join(fmt!("{}_edge", tag));
+            std::fs::create_dir_all(&sub).expect("mkdir");
+            std::fs::write(
+                sub.join(fmt!("needle-{}.txt", tag)),
+                fmt!("NEEDLE-IN-{}\n", tag.to_uppercase())).expect("write");
+        }
+        std::fs::write(&stamp, BIG_FIXTURE).expect("stamp");
+        root
+    }
+
+    /// A tool context on the oversized fixture.
+    fn big_ctx() -> ToolContext {
+        let ws = Workspace::new(big_root()).expect("the fixture is a workspace");
+        ToolContext { workspace: ws, ..ctx() }
+    }
+
+    /// The needle a walk from the root did NOT reach, and the directory holding it.
+    ///
+    /// Asked rather than assumed, and the absence of one is itself the first check: if both come
+    /// back then the walk covered a tree larger than its budget, which is the unbounded walk.
+    fn missed_needle(found: &[String]) -> (&'static str, &'static str) {
+        for (name, dir) in [("needle-aaa.txt", "aaa_edge"), ("needle-zzz.txt", "zzz_edge")] {
+            if !found.iter().any(|p| p.ends_with(name)) {
+                return (name, dir);
+            }
+        }
+        panic!("both needles came back, so the walk was not bounded: {:?}", found);
+    }
+
+    /// A whole `file_glob` result, notices and all.
+    fn glob_text(c: &ToolContext, args: &str) -> String {
+        Tool::FileGlob.execute_sync(args, c).expect("glob").as_text().to_string()
+    }
+
+    /// A whole `file_search` result, notices and all.
+    fn search_text(c: &ToolContext, args: &str) -> String {
+        Tool::FileSearch.execute_sync(args, c).expect("search").as_text().to_string()
+    }
+
+    /// The directory a `STOPPED EARLY` notice names, if it carries one.
+    fn stopped_in(text: &str) -> Option<String> {
+        let line = match text.lines().find(|l| l.contains("STOPPED EARLY")) {
+            Some(l) => l,
+            None    => return None,
+        };
+        match line.split_once("and stopped there, in '") {
+            Some((_, rest)) => rest.split_once('\'').map(|(dir, _)| dir.to_string()),
+            None            => None,
+        }
+    }
+
+    #[test]
+    fn test_a_walk_over_a_tree_larger_than_the_bound_stops_and_says_where() {
+        let c = big_ctx();
+        // The control first: both needles are there and both match, proved by walking each edge
+        // directory on its own. Without this the checks below would pass on an empty fixture.
+        let mut present: Vec<String> = Vec::new();
+        for dir in ["aaa_edge", "zzz_edge"] {
+            present.extend(glob_says(&c, &fmt!(
+                r#"{{"pattern":"needle-*.txt","path":"{}"}}"#, dir)));
+        }
+        assert!(present.len() > 1, "the fixture holds no needle to miss: {:?}", present);
+
+        let found = glob_says(&c, r#"{"pattern":"**/needle-*.txt"}"#);
+        assert!(found.len() < present.len(),
+            "a walk from the root reported every needle in a tree larger than one walk's budget, \
+            so nothing stopped it: {:?}", found);
+
+        let text = glob_text(&c, r#"{"pattern":"**/needle-*.txt"}"#);
+        let stop = stopped_in(&text)
+            .unwrap_or_else(|| panic!("the walk stopped early and did not say so: {}", text));
+        // Where it stopped is the only part of the notice a next call can act on, so it has to be
+        // a real directory of this tree rather than a form of words.
+        let abs = c.workspace.resolve(&stop).expect("the notice names a resolvable path");
+        assert!(abs.is_dir(), "the notice names '{}', which is no directory here", stop);
+        assert!(stop.starts_with("bulk"),
+            "the walk cannot have run out anywhere but in the bulk, yet it reports '{}'", stop);
+    }
+
+    #[test]
+    fn test_a_stopped_walk_does_not_answer_as_though_the_file_were_not_there() {
+        let c = big_ctx();
+        let (missed, dir) = missed_needle(&glob_says(&c, r#"{"pattern":"**/needle-*.txt"}"#));
+        let text = glob_text(&c, &fmt!(r#"{{"pattern":"{}"}}"#, missed));
+        assert!(glob_says(&c, &fmt!(r#"{{"pattern":"{}"}}"#, missed)).is_empty(),
+            "the walk reached the file this check needs it to miss: {}", text);
+        // THE CHECK. The file is there, and nothing came back. The result must therefore not be
+        // readable as "there is no such file" -- that reading is what sent an agent hunting for a
+        // ref that was in front of it, and a bound with no notice would repeat it wholesale.
+        assert!(!text.contains(&fmt!("No paths under '.' match '{}'.", missed)),
+            "an empty answer from a stopped walk claimed the tree does not hold the file: {}",
+            text);
+        assert!(text.contains("STOPPED EARLY"),
+            "an empty answer from a stopped walk did not say it stopped: {}", text);
+        assert!(text.contains("does NOT mean there is nothing to find"),
+            "the notice does not say how to read the empty answer: {}", text);
+        // And the control: named directly, the same pattern finds it -- so what is above is the
+        // bound speaking and not a missing file.
+        let got = glob_says(&c, &fmt!(r#"{{"pattern":"{}","path":"{}"}}"#, missed, dir));
+        assert!(got.iter().any(|p| p.ends_with(missed)),
+            "the fixture has lost its needle, so nothing above proves anything: {:?}", got);
+    }
+
+    #[test]
+    fn test_the_search_shares_the_walk_and_the_bound_on_it() {
+        let c = big_ctx();
+        // `file_search` stops on the match LIMIT, which a search that matches nothing never
+        // reaches -- so the unbounded walk is the one that finds nothing, and that is this one.
+        let seen = search_says(&c, r#"{"query":"NEEDLE-IN-"}"#);
+        let paths: Vec<String> = seen.iter()
+            .map(|h| h.split(':').next().unwrap_or("").to_string())
+            .collect();
+        let (missed, dir) = missed_needle(&paths);
+        let tag = if missed.contains("aaa") { "AAA" } else { "ZZZ" };
+        let text = search_text(&c, &fmt!(r#"{{"query":"NEEDLE-IN-{}"}}"#, tag));
+        assert!(text.contains("STOPPED EARLY"),
+            "a search whose walk stopped early did not say so: {}", text);
+        assert!(!text.contains(&fmt!("No matches for 'NEEDLE-IN-{}'.", tag)),
+            "the search answered a stopped walk as though the tree held no such line: {}", text);
+        assert!(text.contains("in the part of the tree this call reached"),
+            "the empty answer does not say how far the search got: {}", text);
+        // The control, again: the line is there when the search starts beside it.
+        let hits = search_says(&c, &fmt!(
+            r#"{{"query":"NEEDLE-IN-{}","path":"{}"}}"#, tag, dir));
+        assert!(!hits.is_empty(),
+            "the fixture has lost its line, so nothing above proves anything");
+    }
+
+    #[test]
+    fn test_an_ordinary_tree_is_walked_to_the_end_and_says_nothing_about_stopping() {
+        // The control for the two above: a notice that appeared whatever the tree looked like
+        // would be no notice at all, and every real workspace is smaller than the bound.
+        let c = ctx();
+        write_fixture(&c);
+        let g = Tool::FileGlob.execute_sync(r#"{"pattern":"**/*.rs"}"#, &c).expect("glob");
+        assert!(!g.as_text().contains("STOPPED EARLY"),
+            "an ordinary tree was reported as cut short: {}", g);
+        let s = Tool::FileSearch.execute_sync(r#"{"query":"TODO"}"#, &c).expect("search");
+        assert!(!s.as_text().contains("STOPPED EARLY"),
+            "an ordinary tree was reported as cut short: {}", s);
+    }
+
+    #[test]
+    fn test_a_stopped_walk_stops_in_the_same_place_every_time() {
+        // The reason the bound counts entries rather than seconds. `offset` pages a search by
+        // walking the tree again, so a walk that stopped somewhere different on each call would
+        // page over files it had already skipped and skip files it had already reported.
+        let c = big_ctx();
+        let one = glob_text(&c, r#"{"pattern":"**/needle-*.txt"}"#);
+        let two = glob_text(&c, r#"{"pattern":"**/needle-*.txt"}"#);
+        assert_eq!(one, two, "two identical calls stopped in different places");
+    }
+
 
     /// The same oracle again, but over this crate's own source rather than a hand-made fixture.
     ///
@@ -11377,6 +12142,108 @@ mod tests {
         let bare = fence_spec(&[], &m, false);
         assert!(!bare.ro.iter().any(|p| p.contains(".gitconfig")), "{:?}", bare.ro);
         assert_eq!(Ok(Toolkit::Git), Toolkit::parse("git").map_err(|_| ()));
+    }
+
+    // ── A tool that is sold rather than shipped ─────────────────────────────
+    //
+    // The gate proper is proved in the browser, where the compiler is (see
+    // `dev/verify_typstpack.mjs`): only there does a real compile happen, so only there can a
+    // refusal be shown to have STOPPED one.  What is proved here is the decision the door makes,
+    // which is what the browser then acts on -- and each of these carries its own control, so a
+    // check that stopped discriminating goes red rather than quiet.
+    //
+    // The state is thread-local and `cargo test` gives each test its own thread, so these do not
+    // contend; each still puts it back, because a test that leaves a global changed is a test that
+    // decides whether the next one passes.
+
+    #[test]
+    fn test_a_locked_pack_refuses_its_tool_and_nothing_else() {
+        let c = ctx();
+        let args = r#"{"path":"paper.typ"}"#;
+        set_locked_packs(PACK_TYPST);
+
+        let refusal = match Tool::TypstCompile.guard(args, &c) {
+            Ok(Some(r)) => r,
+            Ok(None)    => panic!("a locked pack let its tool through the door"),
+            Err(e)      => panic!("guard: {}", e),
+        };
+        // The property, not the wording: the refusal has to name the tool that was refused and
+        // the pack it is sold in, or the model cannot tell the user what to buy.
+        assert!(refusal.contains(Tool::TypstCompile.name()),
+            "the refusal does not name the tool: {}", refusal);
+        assert!(refusal.contains(PACK_TYPST),
+            "the refusal does not name the pack: {}", refusal);
+        // And it must not read as a fault, or the model retries it.
+        assert!(refusal.contains("has not bought"),
+            "the refusal does not say why: {}", refusal);
+
+        // The control, on the same locked state: a free tool is untouched. A gate that refused
+        // everything would satisfy the assertion above and be worthless.
+        match Tool::FileRead.guard(r#"{"path":"paper.typ"}"#, &c) {
+            Ok(None) => (),
+            Ok(Some(r)) => panic!("locking a pack refused a free tool: {}", r),
+            Err(e)      => panic!("guard: {}", e),
+        }
+
+        set_locked_packs("");
+    }
+
+    #[test]
+    fn test_the_same_tool_passes_the_door_once_the_pack_is_held() {
+        let c = ctx();
+        let args = r#"{"path":"paper.typ"}"#;
+
+        // Locked: refused.
+        set_locked_packs(PACK_TYPST);
+        assert!(matches!(Tool::TypstCompile.guard(args, &c), Ok(Some(_))),
+            "the control failed: a locked pack must refuse");
+
+        // Bought: the very same call, on the very same context, goes through.
+        set_locked_packs("");
+        match Tool::TypstCompile.guard(args, &c) {
+            Ok(None)    => (),
+            Ok(Some(r)) => panic!("a bought pack was still refused: {}", r),
+            Err(e)      => panic!("guard: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_a_device_that_was_never_told_locks_nothing() {
+        // The default, untouched: no gateway has been reached, so nothing is locked. This is the
+        // property that keeps a paid-up customer working through a gateway outage, and that lets
+        // the gate ship before the catalogue sells anything.
+        assert!(locked_packs().is_empty(), "a fresh build starts with something locked");
+        assert!(!pack_locked(PACK_TYPST));
+        match Tool::TypstCompile.guard(r#"{"path":"paper.typ"}"#, &ctx()) {
+            Ok(None)    => (),
+            Ok(Some(r)) => panic!("an untold device refused a tool: {}", r),
+            Err(e)      => panic!("guard: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_the_locked_list_is_read_as_the_catalogue_spells_it() {
+        // Whitespace, casing and empty entries are the page's spelling, not a different pack.
+        set_locked_packs(" TYPST , ,email ");
+        assert!(pack_locked(PACK_TYPST), "casing and padding lost a lock");
+        assert!(pack_locked("email"));
+        assert_eq!(locked_packs().len(), 2, "an empty entry became a pack: {:?}", locked_packs());
+        // The control: a pack nobody named is not locked, so the list is a list and not a flag.
+        assert!(!pack_locked("voice"));
+        set_locked_packs("");
+    }
+
+    #[test]
+    fn test_only_the_sold_tool_carries_a_pack_key() {
+        // The belt is the panel's source as well as the model's, so this is what stops a free tool
+        // being drawn with a price on it -- and a sold one being drawn as free.
+        assert_eq!(Tool::TypstCompile.pack(), Some(PACK_TYPST));
+        for t in Tool::browser() {
+            if t == Tool::TypstCompile {
+                continue;
+            }
+            assert_eq!(t.pack(), None, "'{}' is being sold and nobody meant it to be", t.name());
+        }
     }
 }
 

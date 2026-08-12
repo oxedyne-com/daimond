@@ -263,7 +263,14 @@ check('picking one replaces the search with the choice, and a way to change it',
 
 await p.click('.link-sug[data-rel="part-of"]', { force: true });
 await p.waitForTimeout(300);
-check('a suggestion chip fills the relation in', await p.inputValue('#link-rel') === 'part-of');
+// A link carries a SET of relations now, edited as the Graph edits the same
+// field: a suggestion becomes a chip ON the link and leaves the box clear for
+// the next word, rather than filling the box in and being the only one.
+const chosenRels = await p.$$eval('#link-rel-chips .tag-chip',
+	els => els.map(e => e.textContent.replace(/×$/, '').trim()));
+check('a suggestion chip puts that relation on the link, and clears the box for another',
+	chosenRels.join('|') === 'part-of' && await p.inputValue('#link-rel') === '',
+	JSON.stringify(chosenRels));
 await p.fill('#link-note', 'the pricing work feeds the console rollout');
 await p.click('#link-save', { force: true });
 await p.waitForTimeout(1200);

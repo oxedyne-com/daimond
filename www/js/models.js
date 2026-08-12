@@ -308,24 +308,7 @@
 			}
 		}
 		if (deps && deps.onChange) deps.onChange();
-		probeCredits();
-	}
-
-	/// Ask every provider that will answer what is left on its key, in the background.
-	///
-	/// Fire-and-forget on purpose: this is a nicety on a panel, and an unlock must not wait on
-	/// somebody else's server. A probe that fails writes nothing, so the row shows no balance
-	/// rather than a wrong one.
-	function probeCredits() {
-		for (var id in store.providers) {
-			if (id === CREDITS) continue;
-			if (!canProbeCredit(providerUrl(id)) || !keyFor(id)) continue;
-			(function (pid) {
-				fetchCredit(pid).then(function (got) {
-					if (got && document.getElementById('models-list')) render();
-				}).catch(function () { /* no balance is better than a wrong one */ });
-			})(id);
-		}
+		refreshCredits();
 	}
 
 	/// Store a key for a provider, sealed under the passphrase where there is one.
@@ -343,8 +326,11 @@
 			p.key = key;
 		}
 		// A key that was just pasted is a key whose balance nobody has asked about. A stale
-		// figure from the PREVIOUS key would be worse than none, so any credit record goes.
+		// figure from the PREVIOUS key would be worse than none, so any credit record goes —
+		// and with it the gate's memory of the OLD key's probes, whose floor and whose backoff
+		// were about a credential this row no longer holds.
 		delete p.credit;
+		delete probes[id];
 		save();
 		if (canProbeCredit(providerUrl(id))) {
 			fetchCredit(id).then(function (got) {
@@ -791,6 +777,95 @@
 		return String(url || '').indexOf('openrouter.ai') !== -1;
 	}
 
+	// ── When the figure is asked for again ──────────────────────────
+	// A displayed balance goes wrong two ways, and the two want opposite treatments.
+	//
+	// The user SPENT. Daimond watched them do it: the turn and its cost are already in the
+	// ledger, so the figure is walked down locally with no request at all — see `creditFor`.
+	// That is the frequent case and it costs nothing.
+	//
+	// The user TOPPED UP. Nothing in the browser can know that; only a probe finds it. So the
+	// probe happens at the moments a person would expect it to — unlocking, pasting a key,
+	// coming back to the tab, opening this panel, and a heartbeat while the tab is in front —
+	// and every one of them passes through the SAME gate, so three arriving together are still
+	// one request.
+
+	/// The shortest gap between two automatic probes of one key.
+	///
+	/// It is the user's own key and their own rate limit, which is what makes a modest poll
+	/// cheap — but it is not free, and no limit is published for OpenRouter's `/key` or
+	/// `/credits` endpoints. The way to find one out is not to hammer it, so the floor is set
+	/// far under any plausible limit (twelve requests an hour at the very worst) while staying
+	/// well inside the "I added money and came back" window this figure exists for. Every
+	/// automatic trigger shares this one floor, which is what stops them stacking.
+	var PROBE_FLOOR_MS = 5 * 60 * 1000;
+
+	/// How often a VISIBLE tab asks the gate whether the floor has passed.
+	///
+	/// Not the cadence — the floor is the cadence. This only decides how promptly the floor is
+	/// noticed once it has gone by, and it is what moves the age line on. A hidden tab does not
+	/// beat at all: browsers throttle background timers anyway, and a request nobody is there
+	/// to read is money and rate limit spent on nothing.
+	var PROBE_BEAT_MS = 60 * 1000;
+
+	/// The longest the gate will hold back a key whose probes keep failing.
+	///
+	/// A failure doubles the wait rather than retrying on the next beat: whatever is refusing —
+	/// a rate limit, a revoked key, an outage — is not fixed by asking faster, and a tab left
+	/// open overnight would otherwise spend the night retrying. A success clears it, and so
+	/// does the user asking by hand.
+	var PROBE_BACKOFF_MAX_MS = 30 * 60 * 1000;
+
+	/// When a reading is old enough for its age to be said emphatically rather than quietly.
+	///
+	/// Six floors. Inside that, a figure is between beats or has been asked for and refused
+	/// once, and neither is worth raising the voice about; past it, something has stopped
+	/// working and the age is no longer a footnote on the figure but the point of it.
+	var CREDIT_STALE_MS = 30 * 60 * 1000;
+
+	/// Per provider: `{ at, busy, ok, fails }` — when it was last ASKED, whether an ask is in
+	/// flight, whether the last completed one answered, and how many have failed in a row.
+	///
+	/// Memory only, deliberately: an attempt stamp restored from disk would hold back the one
+	/// probe a freshly loaded tab most needs, which is the exact case this feature is for.
+	var probes = {};
+
+	/// How long the gate holds this key: the floor, doubled once per consecutive failure.
+	function probeWait(id) {
+		var st = probes[id];
+		var n  = (st && st.fails) || 0;
+		return Math.min(PROBE_FLOOR_MS * Math.pow(2, n), PROBE_BACKOFF_MAX_MS);
+	}
+
+	/// Whether an AUTOMATIC probe of this key is allowed right now. The user asking by hand is
+	/// not automatic and does not come through here.
+	function probeDue(id) {
+		var st = probes[id];
+		if (!st) return true;
+		if (st.busy) return false;				// one in flight is one request already
+		return (Date.now() - st.at) >= probeWait(id);
+	}
+
+	/// Ask every key that will answer, wherever the gate allows it.
+	///
+	/// Fire-and-forget on purpose: this is a nicety on a panel, and nothing may wait on somebody
+	/// else's server. A probe that fails writes nothing, so the row keeps the figure it had —
+	/// and the age line beside it goes on ageing, which is the only thing that tells a fresh
+	/// figure from a frozen one.
+	function refreshCredits() {
+		for (var id in store.providers) {
+			if (id === CREDITS) continue;
+			if (!canProbeCredit(providerUrl(id)) || !keyFor(id)) continue;
+			if (!probeDue(id)) continue;
+			(function (pid) {
+				fetchCredit(pid).then(function (got) {
+					if (got && document.getElementById('models-list')) render();
+					else ageLines();			// a refusal still moves the line that says so
+				}).catch(function () { ageLines(); });
+			})(id);
+		}
+	}
+
 	/// Ask a provider what is left on its key.
 	///
 	/// Two questions, because a key answers only one of them. `/key` describes THIS key: its
@@ -805,7 +880,33 @@
 	/// was true once and is now a claim.
 	///
 	/// Returns `{ remainingUsd, asOf, capped }` or null.
+	///
+	/// Every route to a probe comes through here — unlock, a pasted key, the tab returning, the
+	/// beat, the panel, the button — so this is where the attempt is stamped and its outcome
+	/// recorded. One place, so the floor and the backoff cannot be walked round by adding a
+	/// caller. A key that cannot be probed at all is not an attempt and is not stamped.
 	async function fetchCredit(id) {
+		if (!store.providers[id] || !keyFor(id) || !canProbeCredit(providerUrl(id))) return null;
+		var st = probes[id] = {
+			at:    Date.now(),				// stamped BEFORE the request, so a slow one still counts
+			busy:  true,
+			ok:    probes[id] ? probes[id].ok : null,
+			fails: (probes[id] && probes[id].fails) || 0,
+		};
+		var got = null;
+		try {
+			got = await askCredit(id);
+			return got;
+		} finally {
+			st.busy  = false;
+			st.done  = Date.now();
+			st.ok    = !!got;
+			st.fails = got ? 0 : st.fails + 1;
+		}
+	}
+
+	/// The two requests themselves. See `fetchCredit`, which is what everything calls.
+	async function askCredit(id) {
 		var p = store.providers[id];
 		var url = providerUrl(id);
 		var key = keyFor(id);
@@ -877,9 +978,29 @@
 		save();
 	}
 
+	/// What the ledger says has gone on this provider's key since `since`.
+	///
+	/// The ledger is where a turn's cost is ALREADY recorded — one entry per metered turn,
+	/// carrying the provider it was billed to — so this is not a second set of books, it is the
+	/// same entries read per key. It is this device's ledger and only this device's: a second
+	/// device spending the same key is drift, and the next probe replaces the figure outright
+	/// rather than correcting it, so the drift cannot accumulate.
+	function spentSince(id, since) {
+		if (typeof since !== 'number') return 0;
+		if (!(window.DaimondLedger && typeof DaimondLedger.perProvider === 'function')) return 0;
+		var spent = 0;
+		try {
+			DaimondLedger.perProvider(since).forEach(function (row) {
+				if (row.provider === id) spent += row.usd || 0;
+			});
+		} catch (e) { spent = 0; }
+		return spent;
+	}
+
 	/// What this provider's key has left, and how that is known.
 	///
-	/// `{ mode: 'auto', usd, asOf }` — the provider said so.
+	/// `{ mode: 'auto', usd, probedUsd, asOf, spentUsd }` — the provider said so, less what has
+	/// been spent on it here since it said it.
 	/// `{ mode: 'manual', usd, baseUsd, baseAt, spentUsd }` — the user said so, less the
 	/// ledger's estimate of what has gone since.
 	/// `null` — nothing is known, and the row must show nothing at all.
@@ -888,17 +1009,23 @@
 		var c = p && p.credit;
 		if (!c) return null;
 		if (c.mode === 'auto' && typeof c.remainingUsd === 'number' && typeof c.asOf === 'number') {
-			return { mode: 'auto', usd: c.remainingUsd, asOf: c.asOf };
+			// Spending is the one movement Daimond can see for itself, so it is applied with no
+			// request at all: a figure that sat still through a morning's work was telling the
+			// user something it had every means to know was false. The probed number is kept
+			// beside it (`probedUsd`) because the sentence has to be able to say which is which.
+			var gone = spentSince(id, c.asOf);
+			return {
+				mode:      'auto',
+				// Never below zero: no key holds negative money, and an estimate that ran past
+				// the balance would be asserting something no provider could confirm.
+				usd:       Math.max(0, c.remainingUsd - gone),
+				probedUsd: c.remainingUsd,
+				spentUsd:  gone,
+				asOf:      c.asOf,
+			};
 		}
 		if (typeof c.baseUsd === 'number' && typeof c.baseAt === 'number') {
-			var spent = 0;
-			if (window.DaimondLedger && typeof DaimondLedger.perProvider === 'function') {
-				try {
-					DaimondLedger.perProvider(c.baseAt).forEach(function (row) {
-						if (row.provider === id) spent += row.usd || 0;
-					});
-				} catch (e) { spent = 0; }
-			}
+			var spent = spentSince(id, c.baseAt);
 			return {
 				mode:     'manual',
 				usd:      c.baseUsd - spent,
@@ -1069,6 +1196,7 @@
 	function removeProvider(id) {
 		delete store.providers[id];
 		delete plain[id];
+		delete probes[id];					// no floor to hold back a key that is gone
 		if (store.def.provider === id) store.def = { provider: '', model: '' };
 		// Before the store is written, so the very next push carries the deletion:
 		// there is one way into this function and every delete in the panel comes
@@ -1353,6 +1481,12 @@
 		return d.firstElementChild || d;
 	}
 
+	/// Whether an element is actually being shown. The panel stays mounted whether or not it is
+	/// open, so its mere existence says nothing about whether anybody is looking at it.
+	function onScreen(el) {
+		return !!(el && (el.offsetParent || el.getClientRects().length));
+	}
+
 	var open = {};        // provider id -> is its model list expanded
 
 	/// What a row says about its key, in the row's own terms.
@@ -1386,25 +1520,12 @@
 	function creditBlock(p) {
 		var wrap = document.createElement('div');
 		wrap.className = 'models-credit';
+		wrap.dataset.prov = p.id;
 		var c = p.credit;
 
-		if (c && c.mode === 'auto') {
-			wrap.appendChild(html('<div class="models-credit-line">'
-				+ esc(t('models.credit_auto', { amount: usd(c.usd), when: whenShort(c.asOf) }))
-				+ '</div>'));
-		} else if (c && c.mode === 'manual') {
-			wrap.appendChild(html('<div class="models-credit-line">'
-				+ esc(t('models.credit_manual', {
-					amount: usd(c.usd),
-					base:   usd(c.baseUsd),
-					spent:  usd(c.spentUsd),
-					when:   whenShort(c.baseAt),
-				}))
-				+ '</div>'));
-		} else {
-			wrap.appendChild(html('<div class="models-credit-line">'
-				+ esc(t('models.credit_unknown')) + '</div>'));
-		}
+		wrap.appendChild(html('<div class="models-credit-line"></div>'));
+		wrap.appendChild(html('<div class="models-credit-age"></div>'));
+		paintCredit(wrap);
 
 		// Ask the provider, where it will answer.
 		if (p.canProbeCredit) {
@@ -1454,6 +1575,127 @@
 		return wrap;
 	}
 
+	/// The sentence that says what is left and how it is known.
+	///
+	/// An automatic figure that has been walked down by this device's own spending is no longer
+	/// the number the provider said, so it does not go on claiming to be: it names the probed
+	/// figure, the moment it was read, and the spending applied since, in the same shape the
+	/// manual sentence has always used.
+	function creditSentence(c) {
+		if (c && c.mode === 'auto') {
+			if (c.spentUsd > 0) {
+				return t('models.credit_auto_spent', {
+					amount: usd(c.usd),
+					base:   usd(c.probedUsd),
+					spent:  usd(c.spentUsd),
+					when:   whenShort(c.asOf),
+				});
+			}
+			return t('models.credit_auto', { amount: usd(c.usd), when: whenShort(c.asOf) });
+		}
+		if (c && c.mode === 'manual') {
+			return t('models.credit_manual', {
+				amount: usd(c.usd),
+				base:   usd(c.baseUsd),
+				spent:  usd(c.spentUsd),
+				when:   whenShort(c.baseAt),
+			});
+		}
+		return t('models.credit_unknown');
+	}
+
+	/// How old the reading is, and whether the last attempt to renew it answered.
+	///
+	/// This is the line that makes a failed probe VISIBLE. A probe that fails writes nothing and
+	/// keeps the old number, which is right — no balance beats a wrong one — but silence and
+	/// freshness look identical on screen. An age that goes on climbing is the difference, and
+	/// it is why the operator console stamps every reading it shows with the instant it was
+	/// read. Empty when there is nothing that was read at a moment: a figure the user typed
+	/// carries its own date in the sentence above.
+	function ageSentence(id, c) {
+		var out = [];
+		if (c && c.mode === 'auto' && typeof c.asOf === 'number') out.push(agoWords(c.asOf));
+		var st = probes[id];
+		if (st && st.ok === false) out.push(t('models.age_failed'));
+		return out.join(' ');
+	}
+
+	/// Whether the figure is old enough to be said so in the loud colour.
+	function creditStale(id, c) {
+		var st = probes[id];
+		if (st && st.ok === false) return true;
+		if (!c || c.mode !== 'auto' || typeof c.asOf !== 'number') return false;
+		return (Date.now() - c.asOf) > CREDIT_STALE_MS;
+	}
+
+	/// How long ago, in the coarsest unit that still says something.
+	///
+	/// Rounded rather than truncated, and "just now" holds for a minute and a half: the point of
+	/// this line is whether the number is minutes or hours old, and a reader who has to work out
+	/// which from a timestamp is being asked to do the app's job.
+	function agoWords(ts) {
+		var secs = Math.max(0, Date.now() - ts) / 1000;
+		if (secs < 90) return t('models.age_now');
+		var mins = Math.round(secs / 60);
+		if (mins < 60) return tn('models.age_mins', mins);
+		var hrs = Math.round(mins / 60);
+		if (hrs < 24) return tn('models.age_hours', hrs);
+		return tn('models.age_days', Math.round(hrs / 24));
+	}
+
+	/// Write both sentences into a credit block that is already on screen.
+	function paintCredit(wrap) {
+		var id   = wrap.dataset.prov;
+		var c    = creditFor(id);
+		var line = wrap.querySelector('.models-credit-line');
+		var age  = wrap.querySelector('.models-credit-age');
+		if (line) line.textContent = creditSentence(c);
+		if (!age) return;
+		var words = ageSentence(id, c);
+		age.textContent = words;
+		age.style.display = words ? '' : 'none';
+		age.classList.toggle('stale', creditStale(id, c));
+	}
+
+	/// Move every visible age on, and with it every figure the ledger has walked down.
+	///
+	/// The closed row's mark is refreshed with the open row's sentence, because the two say the
+	/// same thing to different readers and a mark that only moved when the panel was redrawn
+	/// would be a staleness warning that had itself gone stale.
+	///
+	/// Text and attributes only, never a `render()`: redrawing the panel would wipe whatever the
+	/// user has half-typed into the "I have this much" field, and a clock is not a good enough
+	/// reason to take somebody's typing away from them.
+	function ageLines() {
+		// Nothing is being read, so nothing needs moving on: the panel is redrawn from scratch
+		// when it is next opened, which is sooner than anybody could notice.
+		if (!onScreen(document.getElementById('models-list'))) return;
+		var rows = document.querySelectorAll('.models-prov[data-prov]');
+		for (var i = 0; i < rows.length; i++) {
+			var id  = rows[i].dataset.prov;
+			var blk = rows[i].querySelector('.models-credit');
+			if (blk) paintCredit(blk);
+			var bal = rows[i].querySelector('.models-bal');
+			if (bal) paintBal(bal, id, creditFor(id));
+		}
+	}
+
+	/// The figure and its age on the closed row, which is all a passer-by sees.
+	///
+	/// The AMOUNT is rewritten here too, not only the mark. It is drawn from the same
+	/// `creditFor` as the sentence inside the row, so leaving it to the next `render()` put two
+	/// different balances on screen at once — the head still saying what the provider said while
+	/// the block below it had already counted the morning's turns off. The minted credits row is
+	/// left alone: its balance is the gateway's, not a probe's, and it has no age to carry.
+	function paintBal(bal, id, c) {
+		if (id === CREDITS) return;
+		if (c) bal.textContent = t('models.balance_left', { amount: usd(c.usd) });
+		var words = ageSentence(id, c);
+		if (words) bal.setAttribute('title', words); else bal.removeAttribute('title');
+		if (words && creditStale(id, c)) bal.setAttribute('data-stale', '1');
+		else bal.removeAttribute('data-stale');
+	}
+
 	/// A short local date and time for a figure that was true at a moment.
 	function whenShort(ts) {
 		try {
@@ -1477,6 +1719,16 @@
 	function render() {
 		var el = document.getElementById('models-list');
 		if (!el) return;
+		// Opening this panel is the "I am looking at it now" moment, and the one moment a person
+		// most expects the figure to be current. Only when the panel is actually on screen: this
+		// same function redraws for a sync pull and a change of language, and neither is somebody
+		// looking.
+		//
+		// The gate is doing two jobs here and the second is load-bearing. It stops the triggers
+		// stacking, and it TERMINATES this: a probe that answers redraws the panel, and a redraw
+		// asks again. Measured with the gate taken out, that loop reached four thousand requests
+		// in the seconds it took to hide and show the tab five times.
+		if (onScreen(el)) refreshCredits();
 		el.innerHTML = '';
 
 		var list = providers();
@@ -1490,6 +1742,9 @@
 		list.forEach(function (p) {
 			var row = document.createElement('div');
 			row.className = 'models-prov' + (p.paid ? ' paid' : '');
+			// Which key this row is about, so the age can be moved on later without redrawing
+			// the panel out from under whatever the user is typing into it.
+			row.dataset.prov = p.id;
 
 			var head = document.createElement('button');
 			head.className = 'models-prov-head';
@@ -1511,6 +1766,11 @@
 				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })
 				: t('models.row_own_help', { provider: p.name });
 			head.addEventListener('click', function () { open[p.id] = !open[p.id]; render(); });
+			// How old the figure on the head is, for somebody who has not opened the row. The
+			// full account lives in the block below; this is the one fact that cannot wait for a
+			// click, because a number with no age cannot tell you it has stopped moving.
+			var bal = head.querySelector('.models-bal');
+			if (bal) paintBal(bal, p.id, p.credit);
 			row.appendChild(head);
 
 			if (open[p.id]) {
@@ -1845,6 +2105,50 @@
 		});
 	}
 
+	// ── The tab coming back, and the beat while it is here ──────────
+	// The author's own case: money added to the provider's account on another screen, this tab
+	// left alone for hours, and the old figure still on it when he came back. Nothing in the
+	// browser can be told about a top-up, so the moment the tab is looked at again is the moment
+	// to ask. The beat covers the other half of it — a tab that is looked at all day and never
+	// hidden — and it beats only while the tab is in front.
+
+	/// The heartbeat, or null while nothing is watching.
+	var beat = null;
+
+	function beatOn() {
+		if (beat || typeof setInterval !== 'function') return;
+		beat = setInterval(function () {
+			refreshCredits();		// the gate decides whether this becomes a request
+			ageLines();				// the age moves on whether it did or not
+		}, PROBE_BEAT_MS);
+	}
+
+	function beatOff() {
+		if (beat) { clearInterval(beat); beat = null; }
+	}
+
+	if (typeof document !== 'undefined' && document.addEventListener) {
+		document.addEventListener('visibilitychange', function () {
+			if (document.visibilityState === 'hidden') { beatOff(); return; }
+			beatOn();
+			// Back in front after who knows how long. The gate is what stops a user who flicks
+			// between two tabs from spending a probe on every flick.
+			refreshCredits();
+			ageLines();
+		});
+		if (document.visibilityState !== 'hidden') beatOn();
+	}
+
+	// A turn has just finished, so the ledger has just gained what it cost. Repaint, and NOTHING
+	// else: the figure moves from books this device already keeps, with no request and no floor
+	// to spend, which is the whole reason spending is treated differently from a top-up. The
+	// event already exists and already carries this meaning — daimond.js fires it from the one
+	// place every exit from a turn passes through, and the Daimond balance in daimond.js has
+	// hung off it for the same reason since before this did.
+	if (typeof window !== 'undefined' && window.addEventListener) {
+		window.addEventListener('daimond:idle', function () { ageLines(); });
+	}
+
 	window.DaimondModels = {
 		render:         render,
 		noteUse:        noteUse,
@@ -1873,6 +2177,9 @@
 		rateFor:        rateFor,
 		// What is left on a provider's key: asked for where it can be, told to us otherwise.
 		fetchCredit:    fetchCredit,
+		// When each key was last asked, and how that went. A snapshot, so nothing outside this
+		// file can move the floor the probes are held behind.
+		creditProbes:   function () { return JSON.parse(JSON.stringify(probes)); },
 		setCreditBase:  setCreditBase,
 		creditFor:      creditFor,
 		all:            all,

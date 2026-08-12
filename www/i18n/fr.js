@@ -505,6 +505,12 @@
 	'sync.when_hours': 'il y a {n} h',
 	'sync.when_days': 'il y a {n} j',
 
+	// ── L’identifiant public du compte ─────────────────────────
+	'handle.taken': 'Cet identifiant est déjà pris par quelqu’un d’autre. Essayez-en un autre.',
+	'handle.invalid': 'Un identifiant compte 3 à 24 caractères : lettres minuscules, chiffres et traits d’union entre eux.',
+	'handle.reserved': 'Cet identifiant est réservé à Daimond et ne peut pas être pris.',
+	'handle.failed': 'L’identifiant n’a pas pu être changé pour le moment. Réessayez dans un instant.',
+
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Nettoyage en pause',
 	'chunks.sweep_held_reason': 'Le stockage cloud conserve {n} de ses {m} fragments enregistrés auxquels plus aucun fichier de ce compte ne renvoie. Ils n’ont PAS été supprimés : aucune requête ne peut retirer plus de la moitié de ce qui est stocké. Rien ne vous manque, et l’espace est libéré à la prochaine synchronisation capable de tout justifier.',
@@ -799,6 +805,19 @@
 	'models.credit_base_set': 'J’ai ce montant, à cet instant',
 	'models.credit_base_update': 'Mettre à jour mon chiffre',
 	'models.credit_base_bad': 'Ce n’est pas un montant. Saisissez un nombre de dollars américains.',
+	// Un chiffre demandé au fournisseur, dont cet appareil a vu partir de
+	// l’argent depuis.
+	'models.credit_auto_spent': 'Il reste {amount}. Le fournisseur annonçait {base} le {when}, moins environ {spent} dépensés ici depuis.',
+	// L’âge du chiffre. Sans lui, un montant qui ne bouge plus ressemble
+	// exactement à un montant à jour.
+	'models.age_now': 'Vérifié à l’instant.',
+	'models.age_mins.one': 'Vérifié il y a {n} minute.',
+	'models.age_mins.other': 'Vérifié il y a {n} minutes.',
+	'models.age_hours.one': 'Vérifié il y a {n} heure.',
+	'models.age_hours.other': 'Vérifié il y a {n} heures.',
+	'models.age_days.one': 'Vérifié il y a {n} jour.',
+	'models.age_days.other': 'Vérifié il y a {n} jours.',
+	'models.age_failed': 'La dernière vérification n’a pas répondu, ce chiffre n’a donc pas bougé depuis.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'C’est vous qui conduisez. Je me suis arrêté à {where}.',
@@ -933,6 +952,7 @@
 	'typst.load_failed': 'Le compilateur Typst n’a pas pu se charger : {reason}',
 	'typst.no_pdf': 'Typst n’a produit aucun PDF (erreur de compilation inconnue).',
 	'typst.compile_error': 'Erreur de compilation Typst : {reason}',
+	'typst.pack_locked': 'La composition fait partie d’un pack d’outils que ce compte n’a pas acheté. Le panneau Outils en donne le nom et le prix : acheté une seule fois, conservé définitivement, et payé en argent plutôt que sur vos crédits.',
 
 
 	// ── The Admin drawer ───────────────────────────────────────
@@ -1386,11 +1406,23 @@
 	'attach.pick_title': 'Joindre des fichiers et des dossiers',
 	'attach.pick_empty': 'Il n’y a rien ici.',
 	'attach.already': 'Déjà joint',
+	'attach.ws_mark': 'Espace',
+	'attach.ws_add': 'Marquer un dossier dans l’espace',
+	'attach.not_here': 'Retenu par cette conversation, mais il se trouve {where}, qui n’est pas l’espace que vous avez ouvert. Cette conversation ne peut pas l’atteindre d’ici.',
+	'attach.ws_help': 'Les dossiers que cette conversation peut lire et modifier. Marquer un dossier ici vaut permission, et rien ne vous le redemandera.',
+	'attach.ws_on': 'Dans l’espace de cette conversation : elle peut lire et modifier ce qui s’y trouve. Appuyez pour le retirer.',
+	'attach.ws_off': 'Hors de l’espace, cette conversation ne peut donc pas l’ouvrir. Appuyez pour le marquer.',
+	'attach.ws_empty': 'Aucun dossier n’est marqué. Cette conversation n’atteint rien de ce qui est à vous, seulement son propre dossier de travail. Marquez-en un avec le trombone, ou avec + ci-dessus.',
+	'attach.group_prompt': 'Devant le modèle',
+	'attach.group_prompt_help': 'Nommé ou cité dans le prompt à l’envoi. Cela n’accorde aucun accès.',
+	'attach.read_block': 'Le contenu de {path} :',
+	'attach.read_cut': 'Voilà tout ce qui tient ici de {path}.',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'L’espace de travail de ce Diamond',
 	'dws.count.one': '{n} élément',
 	'dws.count.other': '{n} éléments',
+	'dws.none_yet':    'Rien de conservé ici pour l’instant',
 	'dws.mode_all': 'Tout',
 	'dws.mode_diamond': 'Ce Diamond',
 	'dws.empty': 'Rien n’est encore gardé avec ce Diamond. Ce que vous gardez ici est ce que son daimon peut ouvrir.',
@@ -1435,7 +1467,6 @@
 	'link.pick_empty': 'Il n’y a pas encore d’autre Diamond à lier.',
 	'link.change_pick': 'Changer',
 	'link.rel_label': 'Relation',
-	'link.rel_ph': 'Quel est le rapport entre eux ?',
 	'link.rel_sug_help': 'Suggestions seulement — n’importe quel mot convient',
 	'link.rel_use': 'Utiliser « {rel} »',
 	'link.note_label': 'Note',
@@ -1455,11 +1486,16 @@
 	'agents.already_folded_body': 'Le résumé de cet agent a déjà été replié dans le cristal.',
 	'agents.a_diamond': 'Diamond',
 	'agents.clear_diamond_filter': 'Retirer le filtre Diamond',
+	'agents.clear_chat_filter':    'Retirer le filtre de conversation',
 	'agents.no_diamond': 'sans Diamond',
 	'agents.no_diamond_help': 'Cette exécution n’a pas de Diamond',
 	'agents.only_from': 'N’afficher que les agents de « {name} »',
+	'agents.only_from_chat': 'N’afficher que les agents de cette conversation.',
 	'agents.from_chat': 'un chat',
 	'agents.from_chat_help': 'Envoyé depuis le chat « {name} ».',
+	// Entre parenthèses, comme « rail.chat_from » : aucune préposition ne convient
+	// à la fois à « il y a 5 min », à une heure et à une date.
+	'agents.from_chat_help_when': 'Envoyé depuis un chat que vous n’avez pas nommé (dernière activité : {when}).',
 	'agents.no_diamond_fold': 'Cet agent a été envoyé depuis un chat : il n’y a donc pas de cristal où le replier. Son compte rendu est dans cette conversation, et son texte complet est sous « Lire ».',
 	'agents.report_one': 'Un agent que vous avez envoyé a terminé.',
 	'agents.report_n': '{n} agents que vous avez envoyés ont terminé.',
@@ -1882,6 +1918,7 @@
 	'pending.cancel': 'Abandonner',
 	'pending.cancel_named': 'Abandonner : {what}',
 	'pending.noted': 'Noté, et retiré de la liste.',
+	'pending.opened': 'Ouvert pour envoi. Reste ici jusqu’à l’envoi.',
 	'pending.diamond_gone': 'Le Diamond qui a soulevé ceci n’est plus là : il n’y a personne avec qui en discuter.',
 	'pending.discuss_prompt': 'Il faut qu’on en discute davantage avant que j’approuve : « {headline} »',
 	'crystal.steer_paused': 'En pause. Appuyez sur lecture sur sa tuile',

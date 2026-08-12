@@ -2406,6 +2406,26 @@ try {
 	// carry a WebSocket upgrade is not a reason for an idle device to go blind:
 	// the same wake arrives as a parked request answered early, and a completed
 	// response wakes a throttled background tab exactly as a frame does.
+	//
+	// Every parked request this device makes from here on, and when each was
+	// answered, so the second half of this section can say whether the one the
+	// push woke was WAITING for it. Attached before the channel is switched over:
+	// a park lasts three quarters of a minute, and a listener added later would
+	// miss the one already open and conclude there was none.
+	const parks = [];
+	const above = (p) => p ? (p.url.match(/[?&]above=(\d+)/) || [])[1] : undefined;
+	const onPark = (r) => {
+		if (r.url().includes('/api/sync?above=')) parks.push({ r, url: r.url(), began: Date.now(), ended: 0, body: null });
+	};
+	const onParkDone = (r) => {
+		const p = parks.find(q => q.r === r && !q.ended);
+		if (!p) return;
+		p.ended = Date.now();
+		p.body  = r.response().then(res => res.text()).catch(() => '');
+	};
+	child.page.on('request', onPark);
+	child.page.on('requestfinished', onParkDone);
+
 	const pollOn = await child.page.evaluate(() => window.DaimondSync.wakeVia('poll'));
 	check('the channel can be put onto parked requests instead of a socket', pollOn === 'poll', pollOn);
 	await child.page.waitForFunction(
@@ -2423,6 +2443,10 @@ try {
 	}, shared);
 	const beganPoll = Date.now();
 	await pushLanded(page, 'the rename the parked request carries');
+	// What the push itself cost, which is most of what the budget below spends:
+	// `pushLanded` re-pushes and re-reads the mailbox until this device's own
+	// parcel is what it holds, and that loop is not the wake.
+	const landedPoll = Date.now();
 	const polled = await child.page.evaluate(async (v0) => {
 		const t0 = Date.now();
 		while (Date.now() - t0 < 10000 && window.DaimondSync.state().version <= v0) {
@@ -2435,10 +2459,114 @@ try {
 		(await nameSettles(child.page, shared, 'Woken-Without-A-Socket')) === 'Woken-Without-A-Socket'
 			&& polled.v1 > pollChan.version,
 		'version ' + pollChan.version + ' -> ' + polled.v1 + ' in ' + pollMs + 'ms');
-	check('and that route converges inside five seconds too', pollMs < 5000, pollMs + 'ms');
+	check('and that route converges inside five seconds too', pollMs < 5000,
+		pollMs + 'ms, of which the push took ' + (landedPoll - beganPoll) + 'ms');
 	check('and still with nothing happening on the device itself',
 		polled.probe.focus === 0 && polled.probe.vis === 0 && polled.probe.idle === 0,
 		JSON.stringify(polled.probe));
+	// The same question the socket route above is asked, and for the same reason:
+	// WHAT pulled? push() catches up on its own every five seconds when it has
+	// nothing to send (IDLE_PULL_MIN_MS, sync.js), which is inside the budget the
+	// check above allows, so the version moving is no evidence at all that the
+	// channel did it. The channel counts the pulls it causes, and only `wakeTo`
+	// -- a version the channel itself heard -- increments that count.
+	//
+	// What is asked of `heard` is that the channel heard something ABOVE what the
+	// device held, rather than that it heard as much as the device ended up with:
+	// a pull answers with the mailbox as it stands, which may already have moved
+	// past the version that was announced, and that is the mailbox being busy
+	// rather than the channel being wrong.
+	check('and that pull was the parked channel’s doing too, by its own count',
+		polled.wake.wakes > pollChan.wake.wakes && polled.wake.heard > pollChan.version,
+		'wakes ' + pollChan.wake.wakes + ' -> ' + polled.wake.wakes
+			+ ', heard ' + polled.wake.heard + ' while holding ' + pollChan.version
+			+ ', pulled to ' + polled.v1);
+
+	// And WAS it parked? The count above cannot say, and this is the half that was
+	// never measured -- the gateway's own "waited past" line does not appear for
+	// this account at all. A request that reaches the gateway AFTER the push is
+	// answered on the spot, out of the version already in the store, and it
+	// increments the very same counter: a channel whose park had lapsed and whose
+	// next one turned up late is indistinguishable, by the count, from one that
+	// waited. Without this, the section is satisfied by the idle catch-up in
+	// push() and the parked wake is assumed rather than shown.
+	//
+	// So the request itself is watched, from the moment it leaves the browser.
+	// What is waited for is one the gateway is demonstrably HOLDING: still
+	// unanswered a full second after it was made, which no answer served out of
+	// the store on arrival ever is, and with more of its own declared wait left
+	// than the push below can take even at its slowest. Only then does the other
+	// device push. A request in that state, answered after the push was made and
+	// saying the version changed, came from the branch that was waiting for it and
+	// from nowhere else.
+	//
+	// Both devices are let settle first: a round still on its way would end the
+	// park before the push could, and prove nothing either way.
+	await quiesce(child.page, 15000);
+	await quiesce(page, 15000);
+	// Longer than an answer made on arrival takes -- those come back in tens of
+	// milliseconds on this loopback, and are seen doing so in the same run.
+	const HELD_MS = 1000;
+	const budget  = (p) => ((p.url.match(/[?&]ms=(\d+)/) || [])[1] | 0);
+	const parked  = await (async () => {
+		const t0 = Date.now();
+		while (Date.now() - t0 < 90000) {
+			// The channel holds one park at a time, so the newest unanswered one is
+			// the live one; anything older is an orphan of a torn-down loop.
+			const open = parks.filter(q => !q.ended);
+			const p    = open.length ? open[open.length - 1] : null;
+			// `pushLanded` gives up after 25s, so a park with more than that left
+			// cannot run its wait out from under the push.
+			if (p && Date.now() - p.began >= HELD_MS && p.began + budget(p) - Date.now() > 25000) return p;
+			await sleep(200);
+		}
+		return null;
+	})();
+	check('the gateway is HOLDING a request of the idle device’s own, unanswered',
+		!!parked, parked
+			? parked.url.replace(/^.*\/api/, '/api') + ', open ' + (Date.now() - parked.began)
+				+ 'ms of its ' + budget(parked) + 'ms wait'
+			: 'no request of the channel’s own was left open long enough to be woken, in 90s');
+
+	await page.evaluate(async (id) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.rename_diamond(id, 'Woken-While-Parked');
+	}, shared);
+	const parkPush = Date.now();
+	await pushLanded(page, 'the rename made while the other device had a request parked');
+	const parkLanded = Date.now();
+	for (let i = 0; i < 150 && parked && !parked.ended; i++) await sleep(100);
+	child.page.off('request', onPark);
+	child.page.off('requestfinished', onParkDone);
+	let answer = null;
+	try { answer = parked && parked.body ? JSON.parse(await parked.body) : null; }
+	catch (e) { answer = null; }
+	check('and the push wakes THAT request, rather than leaving it to run its wait out',
+		!!answer && answer.waited === true && answer.changed === true
+			&& (answer.version | 0) > (above(parked) | 0)
+			&& parked.began < parkPush && parked.ended > parkPush,
+		parked
+			? 'held on ' + above(parked) + ' for ' + (parked.ended - parked.began)
+				+ 'ms of its ' + budget(parked) + 'ms wait, answered ' + (parked.ended - parkPush)
+				+ 'ms after the push was made (which landed after ' + (parkLanded - parkPush)
+				+ 'ms): ' + JSON.stringify(answer)
+			: 'nothing was parked to wake');
+	const applied = await (async () => {
+		const name  = await nameSettles(child.page, shared, 'Woken-While-Parked');
+		const after = await child.page.evaluate(() => ({
+			version: window.DaimondSync.state().version,
+			probe:   window.__wakeProbe,
+			wake:    window.DaimondSync.wake(),
+		}));
+		return { name, ...after };
+	})();
+	check('and the device applies what that answer told it, still with nothing happening on it',
+		!!parked && applied.name === 'Woken-While-Parked' && applied.version > (above(parked) | 0)
+			&& applied.probe.focus === 0 && applied.probe.vis === 0 && applied.probe.idle === 0
+			&& applied.wake.wakes > polled.wake.wakes,
+		'version ' + (parked ? above(parked) : '?') + ' -> ' + applied.version + ', wakes '
+			+ polled.wake.wakes + ' -> ' + applied.wake.wakes + ', ' + JSON.stringify(applied.probe));
 
 	// The channel carries version integers and nothing else. What the gateway
 	// parks on and answers with is read here directly, so a future change that

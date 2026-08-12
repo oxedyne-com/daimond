@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en" data-guide-locale="en" data-guide-locales="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Improving Daimond — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/variables.css">
+<link rel="stylesheet" href="../css/guide.css">
+<script src="frame.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<style>
+/* This page's own layout, kept here rather than in guide.css because nothing
+   else in the guide is a glossary. Everything is stated in the app's own
+   palette variables, so it follows the reader's theme like the rest. */
+
+/* A pair of sentences the reader is meant to compare. */
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.pair > div { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8rem 0.9rem; background: var(--bg-secondary); }
+.pair .lead-in { display: block; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem; }
+.pair .costly { border-color: var(--border-2); }
+.pair .useful { border-color: var(--accent); }
+.pair p { margin: 0; color: var(--text-secondary); }
+
+/* The glossary. Two columns where there is room, one where there is not; the
+   crops are between 300 and 440 pixels wide, so a column of about 350 shows
+   most of them at close to their own size and none of them at twice it. */
+.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.25rem 0 2rem; align-items: start; }
+.term {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.85rem 0.9rem 0.95rem;
+}
+.term h3 { margin: 0 0 0.55rem; font-size: 1.02rem; }
+.term img {
+	display: block;
+	max-width: 100%;
+	max-height: 200px;
+	width: auto;
+	height: auto;
+	margin: 0 0 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+}
+/* The chip row is 800 pixels of real screen. Squeezed into half the column it
+   is a smear, so it takes the whole width and is read at close to its own size.
+   Legibility is the only reason any of these pictures is here. */
+.term.wide { grid-column: 1 / -1; }
+
+/* A phone shot, a dialog and the two boxes that cover the screen are portraits.
+   Shrunk to the height of a landscape crop their own lettering stops being
+   readable, which defeats the entry, so they take the full width and the prose
+   sits beside them. */
+.term.tall { grid-column: 1 / -1; }
+.term.tall::after { content: ""; display: block; clear: both; }
+.term.tall img { float: left; max-height: 620px; margin: 0 1.1rem 0.6rem 0; }
+.term p { margin: 0.35rem 0 0; font-size: 0.93rem; color: var(--text-secondary); }
+.term p.say { color: var(--text-muted); font-size: 0.88rem; margin-top: 0.5rem; }
+
+/* The widget map. Drawn in the palette's own variables, never in a fixed
+   colour, so it is legible on all eleven palettes and follows a reader who
+   changes theirs while it is on screen.
+
+   On a phone the whole schematic scaled to the column width put its labels at
+   five pixels, which is a diagram that says nothing to the reader who most
+   needs it. It keeps a floor on its width and scrolls sideways inside its own
+   box instead: the page still never scrolls sideways, and the words can still
+   be read. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 640px; }
+.widgetmap text { font-family: var(--font); }
+.wm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
+.wm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
+.wm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
+.wm-soft { fill: var(--accent-soft);  stroke: var(--accent);   stroke-width: 1; }
+.wm-fill { fill: var(--accent); }
+.wm-skel { fill: var(--text-muted); opacity: 0.32; }
+.wm-zone { fill: var(--text-muted); letter-spacing: 1.2px; }
+.wm-lab  { fill: var(--accent-text); font-weight: 700; }
+.wm-lead { stroke: var(--accent); stroke-width: 1.2; opacity: 0.75; }
+.wm-ink  { stroke: var(--text-muted); stroke-width: 1.4; fill: none; opacity: 0.55; }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="spending.html">Spending</a>
+			<a href="machine-operations.html">Machine Operations</a>
+			<a href="improve.html" aria-current="page">Improving Daimond</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Improving Daimond</h1>
+	<p class="lede">Daimond is changed by what its users report. This page is about making a note land: how to say what happened, and the names for the parts of the screen, so that whoever reads it knows at once which thing you mean.</p>
+
+	<p>A note that says the thing at the top left is broken costs somebody a search, and sometimes finds the wrong thing. A note that says the <strong>Diamonds</strong> chip in the top bar does not. Neither note is more work to write. The difference is only knowing what the parts are called, which is what the rest of this page is for.</p>
+
+	<section id="writing-a-note">
+		<h2 id="s1">Writing a note that can be acted on</h2>
+
+		<p>Three things, and the first is the one most often left out.</p>
+
+		<ol class="steps">
+			<li>
+				<h3 id="s2">Where it is</h3>
+				<p>Name the part, and the region it sits in. The screen has four regions and about twenty kinds of part, and naming both makes almost anything unique: there are crosses all over Daimond, but only one closer on the <span class="ui">Everything</span> row.</p>
+			</li>
+			<li>
+				<h3 id="s3">What you expected</h3>
+				<p>Say what you thought would happen. This is the half a reader cannot guess, and it is often the whole report: a control that does exactly what it was built to do, and surprises people anyway, is a fault in the control and not in the people.</p>
+			</li>
+			<li>
+				<h3 id="s4">What happened instead</h3>
+				<p>What you saw, in the order you saw it. Not what you think caused it. A guess at the cause narrows the search, and a wrong guess narrows it away from the fault.</p>
+			</li>
+		</ol>
+
+		<div class="pair">
+			<div class="costly">
+				<span class="lead-in">Costs a round trip</span>
+				<p>The X at the top left is broken.</p>
+			</div>
+			<div class="useful">
+				<span class="lead-in">Can be acted on</span>
+				<p>The closer on the <span class="ui">Everything</span> row put the whole rail away. I expected it to close that row.</p>
+			</div>
+		</div>
+
+		<p>A few more things that save a reply.</p>
+
+		<ul>
+			<li><strong>One note, one thing.</strong> Two faults in one note become one proposal that cannot be finished, because half of it is fixed and half is not.</li>
+			<li><strong>Say which build.</strong> The <span class="ui">Version</span> row in the admin panel names it, and hovering it gives the build id. A fault already fixed reads exactly like a fault nobody can reproduce.</li>
+			<li><strong>Say what you were doing.</strong> Even a short trail helps: which panel was open, whether you were on a phone, which palette you were wearing. A fault can be there on one palette, or one screen width, and nowhere else.</li>
+			<li><strong>Write it anyway.</strong> If you cannot name the part, describe it and say where it was on screen. An approximate note is worth far more than a note nobody writes.</li>
+		</ul>
+	</section>
+
+	<section id="regions">
+		<h2 id="s5">Saying where: the four regions</h2>
+
+		<p>Daimond has a <strong>top bar</strong> across the top, and under it three regions side by side: the <strong>rail</strong> on the left, the <strong>stage</strong> in the centre, and the <strong>dock</strong> on the right. Almost every note can start by naming one of those four. <a href="interface.html">The interface</a> tours them and says what each panel is for; this page is about the smaller parts inside them.</p>
+
+		<figure class="diagram scrolls">
+			<svg class="widgetmap" viewBox="0 0 760 470" role="img" aria-labelledby="wm-title wm-desc" preserveAspectRatio="xMidYMid meet">
+				<title id="wm-title">Where the named parts of the screen are</title>
+				<desc id="wm-desc">A schematic of the Daimond window. Across the top is the top bar, holding the chip row. Below it, three regions: the rail on the left, with a light and a closer on its top row, a head over each list, tiles in the lists, a divider between them, and rows in the admin panel underneath; the stage in the centre, with a head at the top and the composer at the bottom; and the dock on the right, holding panels.</desc>
+
+				<!-- ── The window and the top bar ─────────────────────── -->
+				<rect class="wm-win" x="10" y="10" width="740" height="450" rx="16"/>
+				<path class="wm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
+				<rect class="wm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
+				<rect class="wm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
+
+				<!-- The chip row, with two chips filled to show an open panel. -->
+				<rect class="wm-soft" x="170" y="24" width="46" height="18" rx="9"/>
+				<rect class="wm-cell" x="224" y="24" width="30" height="18" rx="9"/>
+				<rect class="wm-soft" x="262" y="24" width="36" height="18" rx="9"/>
+				<rect class="wm-cell" x="306" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="354" y="24" width="44" height="18" rx="9"/>
+				<line class="wm-ink" x1="408" y1="24" x2="408" y2="42"/>
+				<rect class="wm-cell" x="418" y="24" width="44" height="18" rx="9"/>
+				<rect class="wm-cell" x="470" y="24" width="40" height="18" rx="9"/>
+				<rect class="wm-cell" x="518" y="24" width="42" height="18" rx="9"/>
+				<circle class="wm-ink" cx="660" cy="33" r="9"/>
+				<circle class="wm-ink" cx="690" cy="33" r="9"/>
+				<circle class="wm-ink" cx="720" cy="33" r="9"/>
+				<text class="wm-lab" x="365" y="53" text-anchor="middle" font-size="12">chip row</text>
+				<text class="wm-zone" x="600" y="37" text-anchor="middle" font-size="10">TOP BAR</text>
+
+				<!-- ── The rail ───────────────────────────────────────── -->
+				<text class="wm-zone" x="22" y="80" font-size="10">RAIL</text>
+				<rect class="wm-pan" x="22" y="88" width="196" height="360" rx="10"/>
+
+				<!-- Its top row: play, pause, the light, and the rail's own closer. -->
+				<path class="wm-ink" d="M32,105 L40,110 L32,115 z"/>
+				<line class="wm-ink" x1="47" y1="105" x2="47" y2="115"/>
+				<line class="wm-ink" x1="52" y1="105" x2="52" y2="115"/>
+				<circle class="wm-fill" cx="64" cy="110" r="5"/>
+				<rect class="wm-skel" x="76" y="107" width="48" height="7" rx="3.5"/>
+				<path class="wm-ink" d="M196,105 L206,115 M206,105 L196,115"/>
+				<line class="wm-lead" x1="64" y1="118" x2="64" y2="127"/>
+				<text class="wm-lab" x="64" y="138" text-anchor="middle" font-size="12">light</text>
+				<line class="wm-lead" x1="201" y1="118" x2="201" y2="127"/>
+				<text class="wm-lab" x="208" y="138" text-anchor="end" font-size="12">closer</text>
+
+				<!-- A head over the list, with the buttons that act on the list. -->
+				<rect class="wm-skel" x="32" y="156" width="50" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="160" r="7"/>
+				<circle class="wm-cell" cx="206" cy="160" r="7"/>
+				<text class="wm-lab" x="128" y="164" text-anchor="middle" font-size="12">head</text>
+
+				<!-- A tile, with its tags and its cog. -->
+				<rect class="wm-cell" x="32" y="178" width="176" height="38" rx="6"/>
+				<rect class="wm-skel" x="40" y="186" width="72" height="6" rx="3"/>
+				<rect class="wm-soft" x="40" y="199" width="26" height="9" rx="4.5"/>
+				<rect class="wm-soft" x="70" y="199" width="22" height="9" rx="4.5"/>
+				<circle class="wm-ink" cx="196" cy="189" r="5"/>
+				<text class="wm-lab" x="146" y="193" text-anchor="middle" font-size="12">tile</text>
+
+				<!-- The divider between the two lists. -->
+				<line class="wm-lead" x1="30" y1="228" x2="210" y2="228" stroke-width="2"/>
+				<rect class="wm-fill" x="112" y="225.5" width="16" height="5" rx="2.5"/>
+				<line class="wm-lead" x1="120" y1="232" x2="120" y2="240"/>
+				<text class="wm-lab" x="120" y="251" text-anchor="middle" font-size="12">divider</text>
+
+				<!-- The second list, and a tile in it. -->
+				<rect class="wm-skel" x="32" y="266" width="34" height="8" rx="4"/>
+				<circle class="wm-cell" cx="188" cy="270" r="7"/>
+				<circle class="wm-cell" cx="206" cy="270" r="7"/>
+				<rect class="wm-cell" x="32" y="288" width="176" height="30" rx="6"/>
+				<rect class="wm-skel" x="40" y="296" width="90" height="6" rx="3"/>
+				<rect class="wm-skel" x="40" y="307" width="60" height="5" rx="2.5"/>
+
+				<!-- The admin panel: one row per question. -->
+				<line class="wm-ink" x1="26" y1="334" x2="214" y2="334"/>
+				<circle class="wm-fill" cx="40" cy="349" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="346" width="64" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="346" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="367" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="364" width="52" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="364" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="385" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="382" width="70" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="382" width="32" height="6" rx="3"/>
+				<circle class="wm-fill" cx="40" cy="403" r="3" opacity="0.6"/>
+				<rect class="wm-skel" x="50" y="400" width="58" height="6" rx="3"/>
+				<rect class="wm-skel" x="172" y="400" width="32" height="6" rx="3"/>
+				<text class="wm-lab" x="140" y="371" text-anchor="middle" font-size="12">row</text>
+
+				<!-- The spend row, at the foot of the rail. -->
+				<line class="wm-ink" x1="26" y1="422" x2="214" y2="422"/>
+				<rect class="wm-skel" x="40" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="104" y="432" width="28" height="5" rx="2.5"/>
+				<rect class="wm-skel" x="168" y="432" width="28" height="5" rx="2.5"/>
+
+				<!-- ── The stage ──────────────────────────────────────── -->
+				<text class="wm-zone" x="228" y="80" font-size="10">STAGE</text>
+				<rect class="wm-pan" x="228" y="88" width="300" height="360" rx="10"/>
+				<rect class="wm-skel" x="240" y="106" width="86" height="8" rx="4"/>
+				<rect class="wm-cell" x="396" y="101" width="44" height="16" rx="8"/>
+				<rect class="wm-cell" x="448" y="101" width="36" height="16" rx="8"/>
+				<rect class="wm-cell" x="492" y="101" width="28" height="16" rx="8"/>
+				<text class="wm-lab" x="352" y="114" text-anchor="middle" font-size="12">head</text>
+
+				<rect class="wm-soft" x="340" y="142" width="168" height="26" rx="8"/>
+				<rect class="wm-skel" x="350" y="152" width="148" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="180" width="212" height="34" rx="8"/>
+				<rect class="wm-skel" x="250" y="188" width="192" height="6" rx="3"/>
+				<rect class="wm-skel" x="250" y="200" width="150" height="6" rx="3"/>
+				<rect class="wm-cell" x="240" y="226" width="180" height="26" rx="8"/>
+				<rect class="wm-skel" x="250" y="236" width="160" height="6" rx="3"/>
+
+				<text class="wm-lab" x="330" y="392" text-anchor="middle" font-size="12">composer</text>
+				<line class="wm-lead" x1="330" y1="396" x2="330" y2="404"/>
+				<rect class="wm-cell" x="240" y="404" width="268" height="32" rx="8"/>
+				<rect class="wm-skel" x="252" y="417" width="140" height="6" rx="3"/>
+				<circle class="wm-fill" cx="490" cy="420" r="10"/>
+
+				<!-- ── The dock ───────────────────────────────────────── -->
+				<text class="wm-zone" x="538" y="80" font-size="10">DOCK</text>
+				<rect class="wm-pan" x="538" y="88" width="200" height="360" rx="10"/>
+				<rect class="wm-cell" x="550" y="98" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="110" width="52" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="130" width="150" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="144" width="120" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="158" width="136" height="6" rx="3"/>
+				<text class="wm-lab" x="638" y="185" text-anchor="middle" font-size="12">panel</text>
+				<rect class="wm-cell" x="550" y="212" width="176" height="104" rx="8"/>
+				<rect class="wm-skel" x="562" y="224" width="64" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="244" width="118" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="258" width="126" height="6" rx="3"/>
+				<rect class="wm-skel" x="574" y="272" width="98" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="286" width="88" height="6" rx="3"/>
+				<rect class="wm-cell" x="550" y="326" width="176" height="110" rx="8"/>
+				<rect class="wm-skel" x="562" y="338" width="48" height="8" rx="4"/>
+				<rect class="wm-skel" x="562" y="358" width="140" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="372" width="104" height="6" rx="3"/>
+				<rect class="wm-skel" x="562" y="386" width="128" height="6" rx="3"/>
+			</svg>
+			<figcaption>Where the named parts sit. The words in colour are the ones to use in a note; the four regions are set in small capitals. Nothing here is to scale, and a panel can be closed, moved or put away, so the regions are what stay put.</figcaption>
+		</figure>
+
+		<div class="note">
+			<strong>Two words for the centre.</strong> This guide calls it the stage. The panel gallery groups the same panels under <span class="ui">Beside the chat</span>, which is the only name the app itself puts on screen for that region. Both are understood; if you use neither and say beside the chat in your own words, that is understood too.
+		</div>
+	</section>
+
+	<section id="glossary">
+		<h2 id="s6">The parts, by name</h2>
+
+		<p>Every word below is one Daimond already uses, in its own interface or in this guide. Each entry shows the real thing, cropped out of a running Daimond, so you can match what is in front of you against the picture and use the word with confidence.</p>
+
+		<p>The pictures were taken on one of the dark palettes. On yours the colours will differ, and on a phone some of these parts move; the names do not.</p>
+
+		<!--
+		  A translator's note, and an auditor's.
+
+		  Each term here is the word the ENGLISH interface uses. It is a common
+		  noun, not a product name, so it is translated: a reader whose Daimond
+		  says "Kachel" is looking for a glossary that says "Kachel", and one
+		  that says "tile" instead defeats the whole purpose of the page.
+
+		  The word to use in a given language is the one that language's own
+		  catalogue already uses, in www/i18n/[locale].js. The key to copy it
+		  from is named after each term, so nothing has to be invented:
+
+		    chip        chip.show, and chat.concise_failed
+		    tile        tile.settings
+		    head        no key of its own. The guide's word; the markup says
+		                railhead and chead
+		    closer      common.close_named. js/closer.js is the whole control
+		    cog         tile.settings, on the button that opens it
+		    light       pause.state_play, pause.state_pause, pause.state_mixed
+		    divider     layout.handle
+		    row         astat.tools_of and the rest of astat
+		    spend row   spend.session_short, spend.period_week, spend.period_month
+		    composer    chat.input_ph, chat.send
+		    face        crystal.view_switch
+		    tag         tag.add, tag.pool_toggle
+		    dialog      dlg.are_you_sure
+		    gallery     gallery.title
+		    Go to box   pal.title, pal.close
+		    sheet       sheet.close
+		    drawer      no key of its own. The button that opens it is
+		                topbar.open_menu
+		    paperclip   attach.to_focus
+
+		  The product nouns are NOT translated, here or anywhere: Daimond,
+		  Diamond, Daimond Pro, Hands. See the head of www/i18n/en.js.
+		-->
+
+		<div class="terms">
+
+			<div class="term wide" id="term-chip">
+				<h3 id="s7">chip</h3>
+				<img src="shots/vocab-chips.png" alt="A row of small rounded buttons across the top bar, each named after a panel. Three are filled in and the rest are outlined." loading="lazy">
+				<p>A small rounded button that turns one thing on or off. The row of them across the top bar is the <strong>chip row</strong>, one chip per panel, filled in while that panel is open.</p>
+				<img src="shots/vocab-chead.png" alt="The head of the chat panel: its name at the left, then three small rounded buttons reading Guarded, Concise and Steps." loading="lazy">
+				<p>Chips are used elsewhere too: on a head, as above, on a tile, and in the rail as tags. Say which, and a chip is unambiguous.</p>
+				<p class="say">Say: the <strong>Workspace</strong> chip in the chip row.</p>
+			</div>
+
+			<div class="term" id="term-tile">
+				<h3 id="s8">tile</h3>
+				<img src="shots/vocab-tile-chat.png" alt="A chat in the rail, drawn as a bordered card with a time, the first message, a cog, a closer and two small buttons." loading="lazy">
+				<p>One Diamond or one chat, as it appears in the rail. A tile carries its own name, its cog, its closer, and whatever else belongs to that one piece of work.</p>
+				<p class="say">Say: the cog on a chat tile.</p>
+			</div>
+
+			<div class="term" id="term-head">
+				<h3 id="s9">head</h3>
+				<img src="shots/vocab-head.png" alt="The word Diamonds at the left of a narrow strip, with a plus button and a graph button at its right." loading="lazy">
+				<p>The strip that names a list or a panel and carries the buttons acting on the whole of it. Each list in the rail has one, and so does every panel.</p>
+				<p class="say">Say: the plus on the <span class="ui">Chats</span> head.</p>
+			</div>
+
+			<div class="term" id="term-closer">
+				<h3 id="s10">closer</h3>
+				<img src="shots/vocab-closer.png" alt="A small drawn cross." loading="lazy">
+				<p>The cross that closes something. Daimond has one closer, drawn one way, on every panel, tile, dialog, menu, drawer and sheet.</p>
+				<p>It always closes the one thing it sits on and never anything larger, so naming what it sits on names the closer exactly.</p>
+				<p class="say">Say: the closer on the <span class="ui">Everything</span> row.</p>
+			</div>
+
+			<div class="term" id="term-cog">
+				<h3 id="s11">cog</h3>
+				<img src="shots/vocab-cog.png" alt="A small drawn cog wheel." loading="lazy">
+				<p>The settings button. Wherever a thing has settings of its own, they are behind a cog on that thing: on a tile, on the identity row, on a mailbox.</p>
+				<p class="say">Say: the cog on the Diamond tile.</p>
+			</div>
+
+			<div class="term" id="term-light">
+				<h3 id="s12">light</h3>
+				<img src="shots/vocab-everything.png" alt="A row reading Everything, with a play arrow, a pause symbol and a round amber light before it, and a closer at the far right." loading="lazy">
+				<p>The round light beside a play and a pause, saying whether that part of Daimond is running. Green for running, red for paused, amber for partly paused, in that order, like a traffic light.</p>
+				<p>Every light in the app hangs off the one on the <span class="ui">Everything</span> row, which speaks for the lot.</p>
+				<p class="say">Say: the light on the <span class="ui">Everything</span> row is amber.</p>
+			</div>
+
+			<div class="term" id="term-divider">
+				<h3 id="s13">divider</h3>
+				<img src="shots/vocab-divider.png" alt="A thin coloured rule across the rail under the pointer, with the Chats head below it." loading="lazy">
+				<p>A line you can drag to give one list or one panel more room, and double-click to put back where it was. There are two in the rail: one between the Diamonds and the chats, one above the admin panel.</p>
+				<p class="say">Say: the divider above the admin panel.</p>
+			</div>
+
+			<div class="term" id="term-row">
+				<h3 id="s14">row</h3>
+				<img src="shots/vocab-rows.png" alt="The admin panel: a name at the top with a cog, then a stack of single lines each with a coloured dot, a label and a value." loading="lazy">
+				<p>One line in a stack of them, answering one question. The admin panel is rows; so are the mailboxes, the folders, the devices and the files.</p>
+				<p>A row that can be acted on is a button, and it opens the thing it names.</p>
+				<p class="say">Say: the <span class="ui">Version</span> row in the admin panel.</p>
+			</div>
+
+			<div class="term" id="term-spend-row">
+				<h3 id="s15">spend row</h3>
+				<img src="shots/vocab-spendrow.png" alt="Three cells at the foot of the rail, labelled Session, Week and Month, each with a small figure under it." loading="lazy">
+				<p>The three figures at the foot of the rail: this session, this week, this month. It hides itself while nothing has been spent.</p>
+				<p class="say">Say: the week cell of the spend row.</p>
+			</div>
+
+			<div class="term" id="term-composer">
+				<h3 id="s16">composer</h3>
+				<img src="shots/vocab-composer.png" alt="A wide rounded box reading Type a message, with a round send button and two small round buttons beside it." loading="lazy">
+				<p>The box you type into, with the send button beside it. There is one, at the foot of the stage, and it talks to whatever is on the stage: a chat, or a Diamond's daimon.</p>
+				<p class="say">Say: the send button on the composer.</p>
+			</div>
+
+			<div class="term" id="term-face">
+				<h3 id="s17">face</h3>
+				<img src="shots/vocab-face.png" alt="A small pair of joined buttons reading Crystal and Chat, with Crystal selected." loading="lazy">
+				<p>A Diamond has two of them, and this switch chooses which one you are looking at: the <span class="ui">Crystal</span>, which is what the Diamond knows, and the <span class="ui">Chat</span>, which is how it came to know it.</p>
+				<p class="say">Say: on the crystal face of a Diamond.</p>
+			</div>
+
+			<div class="term" id="term-tag">
+				<h3 id="s18">tag</h3>
+				<img src="shots/vocab-tile-diamond.png" alt="A Diamond tile carrying two small coloured labels reading project and urgent, with a cog at its right." loading="lazy">
+				<p>A word you file a Diamond under. Tags sit on the tile as small chips, and the <span class="ui">Filter by tag</span> row above the list narrows it to the ones you pick.</p>
+				<img src="shots/vocab-tagfilter.png" alt="A narrow row above the Diamonds list reading Filter by tag, with a count beside it." loading="lazy">
+				<p>Tags are yours alone: they never go to a model, and they never enter a crystal.</p>
+				<p class="say">Say: the tag chips under <span class="ui">Filter by tag</span>.</p>
+			</div>
+
+			<div class="term tall" id="term-dialog">
+				<h3 id="s19">dialog</h3>
+				<img src="shots/vocab-dialog.png" alt="A card centred over the app, with a title, a closer beside it, several labelled settings, and a Delete button at the foot." loading="lazy">
+				<p>A card that opens over the app and waits for an answer. Its title is on the same row as its closer, and Escape does what the closer does.</p>
+				<p class="say">Say: the <span class="ui">Delete</span> button in a chat tile's dialog.</p>
+			</div>
+
+			<div class="term tall" id="term-gallery">
+				<h3 id="s20">gallery</h3>
+				<img src="shots/vocab-gallery.png" alt="A tall card titled Panels, with a search box and every panel listed in three groups, each row carrying a star." loading="lazy">
+				<p>Every panel there is, searchable, grouped by region, each row saying whether that panel is open and carrying the pin that decides whether its chip sits in the top bar. It opens from the <span class="ui">⋯</span> chip at the end of the chip row.</p>
+				<p class="say">Say: the pin on the <span class="ui">Trash</span> row of the gallery.</p>
+			</div>
+
+			<div class="term tall" id="term-goto">
+				<h3 id="s21">Go to box</h3>
+				<img src="shots/vocab-goto.png" alt="A large box over the app with a search field and a list of results, each tagged with what kind of thing it is." loading="lazy">
+				<p>The keyboard's way to anything: <kbd>Ctrl</kbd> <kbd>K</kbd>, or <kbd>Cmd</kbd> <kbd>K</kbd> on a Mac. It reaches every panel and every setting by typing, including the ones no chip is showing.</p>
+				<p class="say">Say: typing a palette name into the Go to box.</p>
+			</div>
+
+			<div class="term tall" id="term-sheet">
+				<h3 id="s22">sheet</h3>
+				<img src="shots/vocab-sheet.png" alt="A phone screen with a panel raised over the chat from the bottom edge, a grab bar at its top and an ask box at its foot." loading="lazy">
+				<p>On a phone, a panel rises over the chat as a sheet you can drag up and down. It has a grab bar at the top, a closer beside it, and the one box you ask about it in.</p>
+				<p class="say">Say: the grab bar on the Workspace sheet.</p>
+			</div>
+
+			<div class="term tall" id="term-drawer">
+				<h3 id="s23">drawer</h3>
+				<img src="shots/vocab-drawer.png" alt="A phone screen with the rail slid in from the left over a dimmed app, holding the Diamonds, the chats and the admin panel." loading="lazy">
+				<p>On a phone, the rail slides in from the left as a drawer. It is the whole rail, so everything in it keeps its own name. The button that opens it is the three lines at the top left.</p>
+				<p class="say">Say: the admin panel, down the drawer.</p>
+			</div>
+
+			<div class="term" id="term-paperclip">
+				<h3 id="s24">paperclip</h3>
+				<img src="shots/vocab-paperclip.png" alt="A row in the Workspace panel naming a folder, with a link, a paperclip and a closer at its right." loading="lazy">
+				<p>Attaches what you are reading to what you are working on. It sits on every row of the Workspace panel and on the head of a document, and it is drawn only while there is something to attach to.</p>
+				<p class="say">Say: the paperclip on a folder row.</p>
+			</div>
+
+		</div>
+
+		<p>A few more words the rest of the guide uses, with nothing to photograph: a <strong>panel</strong> is one of the things a region holds, each with a name of its own, from <span class="ui">AI</span> to <span class="ui">Trash</span>; a <strong>crystal</strong> is what a Diamond knows, kept as a document; a <strong>daimon</strong> is the agent that thinks for a Diamond; a <strong>worker</strong> is an agent a daimon sends off to do one job. <a href="chats-and-diamonds.html">Chats &amp; Diamonds</a> explains all four.</p>
+	</section>
+
+	<section id="two-words">
+		<h2 id="s25">Where two words exist</h2>
+
+		<p>A few things in Daimond genuinely answer to more than one name, usually because the app says one and this guide says the other. They are listed here so that nobody wastes a sentence apologising for using the wrong one. Both are understood, and a note that uses either is a good note.</p>
+
+		<ul>
+			<li>The centre region is <strong>the stage</strong> in this guide and <span class="ui">Beside the chat</span> in the panel gallery.</li>
+			<li>The panel under the rail's lower divider is <strong>the admin panel</strong> everywhere a reader can see, and its own head reads <span class="ui">Admin</span>.</li>
+			<li>The <kbd>Ctrl</kbd> <kbd>K</kbd> box calls itself <strong>Go to</strong>, and this guide has also called it the palette. Palette is also the word for the eleven colour schemes, so <strong>Go to box</strong> is the one to prefer.</li>
+			<li>The button that opens the drawer on a phone says <span class="ui">Menu</span>, and what it opens is the rail.</li>
+		</ul>
+
+		<p>If you find another, that is worth a note of its own. Two names for one thing is a small fault in the app, not in the person reporting it.</p>
+	</section>
+
+	<section id="improve-panel">
+		<h2 id="s26">The Improve panel</h2>
+
+		<div class="note stop">
+			<strong>Not written yet.</strong>
+			<p>The Improve panel, where a note is written and where the proposals made from notes are read and voted on, is still being built. This section will describe it once its controls are settled, and not before: instructions for a screen that then ships differently are worse than no instructions, because a reader trusts them.</p>
+			<p>Nothing above depends on it. The words for the parts of the screen are the same words whether a note is written in a panel, in an email or on paper, and they are the part that decides whether the note can be acted on.</p>
+		</div>
+	</section>
+
+	<div class="next">
+		<a href="machine-operations.html">&larr; Machine Operations</a>
+		<a href="index.html">Back to Getting started &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
+		<a href="machine-operations.html">Machine Operations</a>
+		<a href="improve.html">Improving Daimond</a>
+	</nav>
+</footer>
+</body>
+</html>

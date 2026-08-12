@@ -163,6 +163,18 @@
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
 	var started       = false;	// The engine has attached its listeners.
+	// This device has read the mailbox and knows what is in it -- a parcel it
+	// merged, or an empty mailbox. Only then may it publish an account-wide fact
+	// nobody has told it, which at the moment means the look and nothing else.
+	// See collectParcel.
+	var pulledOk      = false;
+	// Whether this device had already synced THIS account when the page loaded.
+	// Read once, at start, before this session's own rounds move the cursor, and
+	// it is the only honest evidence that a device is not new to the account:
+	// storage full of `daimond-` keys is not, since the app writes a default
+	// theme and skin on every boot including the first. What turns on it is
+	// whether a look that arrives is worn or merely recorded -- see pairing.js.
+	var knownDevice   = false;
 
 	// ── Wake channel state ─────────────────────────────────────
 	// This tab's own channel id, named on the channel AND on every push, so the
@@ -179,6 +191,17 @@
 	var wakePolling = false;	// A park loop is running.
 	var wakeProbing = false;	// The one-shot park that decides the transport is out.
 	var wakeGen     = 0;		// Bumped on teardown, so an in-flight loop stands down.
+	// WHICH GENERATION each of those two belongs to, and the whole reason they are
+	// here: a teardown can stand a loop down but it cannot take back the request
+	// that loop is parked on, and the gateway holds one of those for three
+	// quarters of a minute. For all that time `wakePolling` was true of a loop
+	// that had already stopped listening -- so the re-armed channel turned round
+	// at its own front door (`if (wakePolling) return`) and parked NOTHING, and
+	// `wake()` reported a channel that was open on the strength of the same flag.
+	// A generation beside each flag is what tells a live park from an abandoned
+	// one. Start below zero, which is no generation at all.
+	var wakePollGen  = -1;
+	var wakeProbeGen = -1;
 	var wakeTarget  = 0;		// The highest version the channel has heard about.
 	var wakeSoon    = null;		// The coalescing timer for the pull a wake asks for.
 	var wakes       = 0;		// Wakes acted on, for the verifier and for debugging.
@@ -292,6 +315,149 @@
 		if (status !== 200 && status !== 402 && status !== 409 && status !== 413) return;
 		sessionGone = false;
 		restStatus();
+	}
+
+	// ── The account's public handle ────────────────────────────
+	//
+	// Two halves live here because both are the wire. The parcel carries the
+	// handle between the account's own devices (see collectParcel), and these
+	// two functions are how the device talks to the party that OWNS the name:
+	// the gateway mints it, reserves it, and is the only thing that can say
+	// whether a name is free.
+	//
+	// Not in identity.js, which is a crypto module and makes no requests; not in
+	// gateway.js, whose account call is the authentication and must never answer
+	// its own 401 by authenticating again. Here, beside the other thing that
+	// keeps two devices agreeing about one account.
+
+	var ACCOUNT_PATH = '/api/account';
+
+	/// Whether there is a session to ask about the handle through.
+	///
+	/// Deliberately NOT `ready()`, which also requires the sync tier: every
+	/// account has a handle, including the ones that will never buy Pro, and a
+	/// name that only paying accounts could see would be no use to a rating.
+	function handleReady() {
+		if (window.DaimondSafe && DaimondSafe.on()) return false;
+		return !!(window.DaimondIdentity && DaimondIdentity.isUnlocked()
+			&& window.DaimondGateway && DaimondGateway.state && DaimondGateway.state().authed);
+	}
+
+	/// One request to the account endpoint. `{status, json}`, never a throw.
+	///
+	/// Through `gwFetch` like everything else here, though with one difference
+	/// worth knowing: `/api/account` is on gateway.js's authentication path, so
+	/// a 401 comes straight back rather than triggering a renewal. That is
+	/// right -- a handle is not worth re-authenticating for, and the next unlock
+	/// asks again.
+	async function accountCall(method, body, query) {
+		var opts = {
+			method:      method,
+			credentials: 'same-origin',
+			headers:     { 'x-daimond-api': String(DaimondGateway.clientApi()) },
+		};
+		if (body !== undefined) {
+			opts.headers['content-type'] = 'application/json';
+			opts.body = JSON.stringify(body);
+		}
+		try {
+			var r = await DaimondGateway.gwFetch(ACCOUNT_PATH + (query || ''), opts);
+			var j = null;
+			try { j = await r.json(); } catch (e) { j = null; }
+			return { status: r.status, json: j };
+		} catch (e) {
+			// The gateway is optional: an account works offline on a BYOK key,
+			// and a name it cannot ask about is not a failure worth showing.
+			log('account call failed', e);
+			return { status: 0, json: null };
+		}
+	}
+
+	/// Ask the gateway what this account is called, and adopt the answer.
+	///
+	/// The gateway mints a handle for an account that has none -- including one
+	/// registered before handles existed -- so this both learns the name and is
+	/// how an older account comes to have one.
+	///
+	/// The answer is adopted through `adoptHandle`, which takes the LARGER
+	/// record and writes it verbatim. Hearing the same name again therefore
+	/// changes nothing and schedules no push: the stamp came from the gateway
+	/// both times, so the two records are equal rather than merely equivalent.
+	async function refreshHandle() {
+		if (!handleReady()) return null;
+		var r = await accountCall('GET');
+		if (r.status !== 200 || !r.json || r.json.ok === false) return null;
+		var rec = { h: r.json.handle || '', t: r.json.handle_ts || 0 };
+		if (!rec.h) return null;
+		var moved = false;
+		try { moved = DaimondIdentity.adoptHandle(rec); } catch (e) { log('adoptHandle threw', e); }
+		// A handle that moved is account state like any other, and the other
+		// devices are entitled to hear about it. Only on a real change, so a
+		// refresh that confirmed what we knew sends nothing.
+		if (moved) nudge();
+		return DaimondIdentity.handle();
+	}
+
+	/// Ask for a different handle. `{ok, reason, message, handle}`.
+	///
+	/// The refusals are the reason this returns a shape rather than a boolean.
+	/// A name somebody else holds, a name that is not a name, and a name the
+	/// operator keeps are three different things to tell a user, and a caller
+	/// that could only see failure would have to invent which.
+	///
+	/// The gateway's own English is ignored in favour of the catalogue: the
+	/// sentence a user reads has to be in their language, and the wire carries a
+	/// token (`reason`) precisely so it can be.
+	async function claimHandle(wanted) {
+		if (!handleReady()) return { ok: false, reason: 'offline', message: t('handle.failed') };
+		var r = await accountCall('POST', { handle: String(wanted || '') }, '?op=handle');
+		var j = r.json || {};
+		if (r.status === 200 && j.ok) {
+			// `setHandle`, not the merge: this is the gateway answering the
+			// question this device just asked, so it is the authority. A merge
+			// would refuse it if this device happened to hold a stamp further
+			// ahead, and the rename would be reported as having worked while the
+			// old name stayed on screen.
+			try { DaimondIdentity.setHandle({ h: j.handle, t: j.handle_ts }); }
+			catch (e) { log('setHandle threw', e); }
+			nudge();		// the other devices are owed the new name
+			return { ok: true, reason: j.reason || 'claimed', handle: DaimondIdentity.handle() };
+		}
+		var reason = j.reason || 'failed';
+		return { ok: false, reason: reason, message: handleMessage(reason) };
+	}
+
+	/// The sentence behind a refusal, in the user's language.
+	function handleMessage(reason) {
+		if (reason === 'taken')    return t('handle.taken');
+		if (reason === 'invalid')  return t('handle.invalid');
+		if (reason === 'reserved') return t('handle.reserved');
+		return t('handle.failed');
+	}
+
+	/// `refreshHandle`, fired and forgotten, with the rejection swallowed.
+	///
+	/// Nothing waits for a name, and an unhandled rejection from a background
+	/// request is a console error the whole suite reads as a page fault.
+	function askHandle() {
+		try { refreshHandle().catch(function (e) { log('handle refresh failed', e); }); }
+		catch (e) { log('handle refresh threw', e); }
+	}
+
+	/// Look up somebody else's handle. `{found, handle, fingerprint}`.
+	///
+	/// The half that makes a handle worth having: a name is only a name if
+	/// somebody other than its owner can resolve it. Nothing in the app calls
+	/// this yet -- sharing and ratings are the callers it is waiting for -- and
+	/// it is here rather than deferred so that what those features need already
+	/// exists and has been proved to work.
+	async function lookupHandle(wanted) {
+		if (!handleReady()) return { found: false };
+		var q = '?handle=' + encodeURIComponent(String(wanted || ''));
+		var r = await accountCall('GET', undefined, q);
+		var j = r.json || {};
+		if (r.status !== 200 || !j.ok || !j.found) return { found: false };
+		return { found: true, handle: j.handle || '', fingerprint: j.fingerprint || '' };
 	}
 
 	// ── Status indicator ───────────────────────────────────────
@@ -512,6 +678,35 @@
 		// byte-identical -- the same contract the pause tree keeps above.
 		try { if (window.DaimondTrash) state.trash = DaimondTrash.snapshot(); }
 		catch (e) { log('trash snapshot failed', e); }
+		// THE ACCOUNT'S PUBLIC HANDLE -- the name other people see, as opposed to
+		// `displayName()`, which labels this device's keypair and travels
+		// nowhere. It is a fact about the account, so a second device that shows
+		// a different one is showing a name its owner does not have.
+		//
+		// The gateway is the authority: it mints the handle, it owns the
+		// namespace, and every stamp on the record is its clock. This carries a
+		// copy so a device that is offline, or newly adopted by pairing, still
+		// knows the account's name -- and identity.js writes what arrives
+		// verbatim, so nothing on this path can stamp. See `handleSnapshot`.
+		try { if (window.DaimondIdentity) state.handle = DaimondIdentity.handleSnapshot(); }
+		catch (e) { log('handle snapshot failed', e); }
+		// AND HOW THE ACCOUNT LOOKS, for the device that has not been dressed.
+		// A pairing bundle carries this to a device linked by a code; nothing
+		// carried it to one brought across by a passkey, or to one that simply
+		// holds the identity and was unlocked with the passphrase. The mailbox is
+		// the only channel all three end at. pairing.js holds the state and
+		// answers for it, as pause.js and trash.js do above.
+		//
+		// `pulledOk` is the same rule the chunk index is committed under: a device
+		// may not publish a look it has not been told about until it has heard
+		// from the mailbox once, or a new device's factory defaults would go over
+		// the account's real look with a fresh stamp.
+		try {
+			if (window.DaimondPairing && DaimondPairing.look) {
+				var look = DaimondPairing.look.record(pulledOk, knownDevice);
+				if (look) state.look = look;
+			}
+		} catch (e) { log('look snapshot failed', e); }
 		return state;
 	}
 
@@ -551,6 +746,22 @@
 		if (window.DaimondTrash) {
 			try { DaimondTrash.adopt(state && state.trash); }
 			catch (e) { log('trash adopt failed', e); failed.push('trash'); }
+		}
+		// The account's public handle, under the same rule as everything above
+		// it: `adoptHandle` takes the larger record and writes it VERBATIM, so a
+		// parcel this device already agrees with moves nothing and the next
+		// parcel is the one that arrived, byte for byte.
+		if (window.DaimondIdentity && DaimondIdentity.adoptHandle) {
+			try { DaimondIdentity.adoptHandle(state && state.handle); }
+			catch (e) { log('handle adopt failed', e); failed.push('handle'); }
+		}
+		// How the account looks, under the same rule again -- the later record,
+		// stored verbatim -- with one thing on top of it: a device that has never
+		// had a look of its own PUTS THIS ON. Awaited, because dressing sets the
+		// language, and the language is fetched before it is written.
+		if (window.DaimondPairing && DaimondPairing.look) {
+			try { await DaimondPairing.look.adopt(state && state.look, knownDevice); }
+			catch (e) { log('look adopt failed', e); failed.push('look'); }
 		}
 		var report = null;
 		try { report = await DaimondCore.applySync(state); }
@@ -604,7 +815,9 @@
 		if (res.status !== 200 || !res.json) { log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
 		var j = res.json;
-		if (!j.present) { serverVersion = 0; saveVersion(); restStatus(); return 0; }
+		// An empty mailbox is an answer: this device has heard, and there was
+		// nothing to hear. See `pulledOk`.
+		if (!j.present) { serverVersion = 0; pulledOk = true; saveVersion(); restStatus(); return 0; }
 		var state;
 		try {
 			// The size of what arrived, before it is opened. Three copies of this
@@ -634,6 +847,7 @@
 			return serverVersion;
 		}
 		lastFailed = await applyParcel(state);
+		pulledOk   = true;			// a parcel was read; see `pulledOk`.
 		serverVersion = j.version | 0;
 		saveVersion();
 		noteSynced();
@@ -891,9 +1105,15 @@
 	/// with failures of a thing that was working as designed. Asking first costs
 	/// one request and about a second.
 	async function wakeProbe() {
-		if (wakeProbing || wakeSock || wakeTimer) return;
+		if (wakeSock || wakeTimer) return;
+		// A probe belonging to a torn-down generation is not this channel's: it
+		// stood down at the teardown, and the request it is parked on will answer
+		// to nobody. Only a probe of the CURRENT generation is a reason not to
+		// make another one, or a re-arm waits out a park it has already abandoned.
+		if (wakeProbing && wakeProbeGen === wakeGen) return;
 		var gen = wakeGen;
-		wakeProbing = true;
+		wakeProbing  = true;
+		wakeProbeGen = gen;
 		try {
 			var res;
 			try {
@@ -903,6 +1123,18 @@
 				if (gen === wakeGen) wakeRetry();		// nothing answering; try again later.
 				return;
 			}
+			// THE NEWS FIRST, WHATEVER GENERATION HEARD IT. That the mailbox has
+			// moved is a fact about the ACCOUNT, not about the channel that
+			// happened to be holding the question, so a teardown arriving between
+			// the asking and the answering is no reason to throw it away. Only
+			// `wakeWanted()` may refuse it: a device that has signed out, or been
+			// put deliberately on 'off', has no business pulling.
+			if (res.status === 200 && res.json && res.json.waited === true
+				&& res.json.changed && wakeWanted()) {
+				wakeTo(res.json.version | 0);
+			}
+			// Everything below decides what the channel does NEXT, which is the
+			// live generation's business and nobody else's.
 			if (gen !== wakeGen || !wakeWanted()) return;
 			if (res.status !== 200) { wakeRetry(); return; }
 			if (!res.json || res.json.waited !== true) {
@@ -910,12 +1142,15 @@
 				wakeMode = 'off';
 				return;
 			}
-			// It parks, and it may have answered with news already.
-			if (res.json.changed) wakeTo(res.json.version | 0);
 			wakeBackoff = WAKE_RETRY_MIN_MS;
 			wakeMode    = 'ws';
 			wakeSocket();
-		} finally { wakeProbing = false; }
+		} finally {
+			// Only the probe that still OWNS the flag may clear it. A stale one
+			// finishing late would otherwise report the live one's park as over,
+			// and the supervisor would open a second.
+			if (wakeProbeGen === gen) wakeProbing = false;
+		}
 	}
 
 	/// Open the WebSocket. Only ever reached once the probe above has shown there
@@ -997,22 +1232,42 @@
 	/// let it answer when there is a newer one. Loops until the channel is torn
 	/// down or the gateway shows it does not park.
 	async function wakePoll() {
-		if (wakePolling) return;
 		var gen = wakeGen;
+		// Only a loop of the CURRENT generation stands in the way of another. One
+		// left over from a teardown is parked on a request that may not answer for
+		// forty-five seconds, and treating that as "a park loop is running" is
+		// what left a re-armed channel with nothing parked at all until the
+		// supervisor's next tick -- half a minute of a device hearing nothing,
+		// measured. See `wakePollGen`.
+		if (wakePolling && wakePollGen === gen) return;
 		wakePolling = true;
+		wakePollGen = gen;
 		try {
 			while (gen === wakeGen && wakeWanted() && wakeMode === 'poll') {
 				var began = Date.now();
 				var res;
 				try {
+					// A stale loop stops here rather than sleeping and asking
+					// again: the backoff it would grow belongs to the live one.
+					if (gen !== wakeGen) break;
 					res = await call('GET', undefined,
 						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID));
 				} catch (e) {
 					// The gateway is down or the network went. Wait, growing,
 					// rather than spinning against a closed door.
+					if (gen !== wakeGen) break;
 					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
 					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
 					continue;
+				}
+				// THE NEWS FIRST, WHATEVER GENERATION HEARD IT -- see wakeProbe.
+				// This is the half that made the re-arm cost news rather than just
+				// time: the answer to the abandoned park says the mailbox moved,
+				// and the loop used to break on the generation two lines above
+				// reading it and discard the very thing it had been waiting for.
+				if (res.status === 200 && res.json && res.json.waited === true
+					&& res.json.changed && wakeWanted()) {
+					wakeTo(res.json.version | 0);
 				}
 				if (gen !== wakeGen) break;
 				if (res.status !== 200) {
@@ -1040,12 +1295,17 @@
 					break;
 				}
 				wakeBackoff = WAKE_RETRY_MIN_MS;
-				if (res.json.changed) wakeTo(res.json.version | 0);
+				// The news itself was acted on above, before the generation was
+				// consulted, because it is true of the account either way.
 				// However fast that answered, the next one is not immediate.
 				var spent = Date.now() - began;
 				if (spent < WAKE_POLL_FLOOR_MS) await wakeSleep(WAKE_POLL_FLOOR_MS - spent);
 			}
-		} finally { wakePolling = false; }
+		} finally {
+			// Only the loop that still OWNS the flag may clear it, or a stale one
+			// finishing late would declare the live one's park over.
+			if (wakePollGen === gen) wakePolling = false;
+		}
 	}
 
 	function wakeSleep(ms) {
@@ -1061,6 +1321,17 @@
 		if (wakeSock)  { try { wakeSock.close(); } catch (e) { /* already gone */ } wakeSock = null; }
 	}
 
+	/// Whether a park or a probe of the CURRENT generation is outstanding.
+	///
+	/// The question the supervisor actually wants answered. A park left over from
+	/// a teardown is not the channel doing anything -- it is a request the gateway
+	/// has not finished holding -- and counting it as one is what left this device
+	/// with no channel, and no complaint, for the length of a park.
+	function wakeLive() {
+		return (wakePolling && wakePollGen === wakeGen)
+			|| (wakeProbing && wakeProbeGen === wakeGen);
+	}
+
 	/// Keep the channel matching what the app is doing.
 	///
 	/// A poll rather than an event, because the two things that end a channel --
@@ -1069,8 +1340,8 @@
 	/// costs two boolean reads.
 	function wakeWatch() {
 		if (wakeWanted()) {
-			if (!wakeSock && !wakeTimer && !wakePolling && !wakeProbing) wakeStart();
-		} else if (wakeSock || wakeTimer || wakePolling) {
+			if (!wakeSock && !wakeTimer && !wakeLive()) wakeStart();
+		} else if (wakeSock || wakeTimer || wakeLive()) {
 			log('wake channel closing: sync cannot run here just now');
 			wakeStop();
 		}
@@ -1159,6 +1430,10 @@
 		if (started) return;
 		started = true;
 		loadVersion();
+		// Before anything this session pulls: a cursor that is already here can
+		// only have been left by this device reading this account's mailbox on an
+		// earlier visit. See `knownDevice`.
+		knownDevice = serverVersion > 0;
 		// The app settling (a turn or agent run just ended) is the moment to
 		// push: state is consistent and the user is between actions.
 		window.addEventListener('daimond:idle', schedule);
@@ -1178,7 +1453,10 @@
 		try { if (window.DaimondPause) DaimondPause.subscribe(nudge); }
 		catch (e) { /* no pause module in this build */ }
 		// A session becoming available (unlock → gateway bootstrap) starts it all.
-		window.addEventListener('daimond:authed', function () { onAuthed(); });
+		// The handle is asked for separately, and on the event rather than inside
+		// `onAuthed`: that path returns early without the sync tier, and an
+		// account without Pro still has a name.
+		window.addEventListener('daimond:authed', function () { askHandle(); onAuthed(); });
 		// The channel is torn down when the page goes, so the gateway is not left
 		// holding a socket for a tab that has closed. `pagehide` and not `unload`:
 		// a page restored from the back/forward cache raises `pageshow`, and the
@@ -1188,6 +1466,7 @@
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// If we booted already authed (a returning unlocked tab), reconcile now.
 		if (ready()) onAuthed();
+		askHandle();
 		// A safe start reaches nothing that would paint the chip -- `ready()` is
 		// false, so every path above returns before `restStatus`. Say it here, or
 		// the one state the user has to be told about is the one state that never
@@ -1218,6 +1497,18 @@
 		/// point has to be measured through these two rather than around them.
 		parcel:  function () { return collectParcel(); },
 		apply:   function (state) { return applyParcel(state); },
+		/// The account's public handle, and the three things anyone does with
+		/// it. `handle()` is what this device knows; `refreshHandle()` asks the
+		/// gateway, which mints one if the account has none; `claimHandle()`
+		/// renames, and says which kind of no it got; `lookupHandle()` resolves
+		/// somebody ELSE's name, which is the half that makes it a public name
+		/// rather than a label.
+		handle:        function () {
+			try { return DaimondIdentity.handle(); } catch (e) { return ''; }
+		},
+		refreshHandle: refreshHandle,
+		claimHandle:   claimHandle,
+		lookupHandle:  lookupHandle,
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },
 		/// The wake channel, as it stands. Nothing in the app turns on this; it
@@ -1227,8 +1518,13 @@
 			return {
 				mode:      wakeMode,				// '' | 'ws' | 'poll' | 'off'
 				id:        WAKE_ID,
-				open:      !!(wakeSock && wakeSock.readyState === 1) || wakePolling,
-				probing:   wakeProbing,
+				// A park that belongs to a torn-down generation is not this
+				// channel being open, however long the gateway goes on holding
+				// it -- reporting it as open is how a device with no live park
+				// looked exactly like one that had just made a fresh one.
+				open:      !!(wakeSock && wakeSock.readyState === 1)
+					|| (wakePolling && wakePollGen === wakeGen),
+				probing:   wakeProbing && wakeProbeGen === wakeGen,
 				heard:     wakeTarget,				// highest version the channel reported
 				wakes:     wakes,					// pulls this channel has caused
 			};

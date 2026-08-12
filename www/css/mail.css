@@ -319,8 +319,23 @@
 	color: var(--text-primary);
 	padding: 6px 9px; font-size: var(--fs-sm);
 }
-.compose-row > input:focus, .compose-row > select:focus {
-	outline: none; border-color: var(--accent);
+/* THE OLD INDICATOR, MISSED BY THE SWEEP THAT REPLACED THE OTHER TWENTY-ONE.
+   `outline: none; border-color: var(--accent)` makes the focus mark the resting
+   border recoloured, and these rows rest on `--border-strong` -- so the two
+   colours the reader has to tell apart are `--accent` and `--border-strong`,
+   which measure 1.11 (Midnight) to 1.81 (Light) across the eleven palettes.
+   WCAG 2.2 SC 2.4.11 asks 3.0 of a focus indicator. dev/contrast_report.md §5
+   records why every other field in the app was moved to a real outline drawn
+   OUTSIDE the control, where what it contrasts with is the surface: that
+   measures 3.87-6.75 here. The To/Subject row is the same control and gets the
+   same answer.
+   The select half takes `:focus-visible` -- see the note at `.settings-select`
+   in app.css; the input half is `:focus`, which resolves identically. */
+.compose-row > input:focus {
+	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+}
+.compose-row > select:focus-visible {
+	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
 }
 .compose-text {
 	flex: 1; min-height: 0;
@@ -467,7 +482,8 @@
 	color: var(--text-primary);
 	padding: 4px 6px; font-size: var(--fs-xs);
 }
-.mail-every:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+/* A pulldown, so `:focus-visible` -- see the note at `.settings-select`. */
+.mail-every:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 /* At a phone's width a tile cannot hold four things on one line: the folder
    name ellipsised to nothing so that a pulldown could keep its full width.

@@ -7,6 +7,18 @@
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
+<style>
+/* The region map. On a phone the whole schematic scaled to the column width put
+   its labels at five pixels, which is a diagram that says nothing to the reader
+   who most needs it. It keeps a floor on its width and scrolls sideways inside
+   its own box instead: the page still never scrolls sideways, and the words can
+   still be read. The same treatment the widget map on improve.html has, and the
+   floor is set from the same measurement -- 720px puts this map's smallest label
+   at the eleven rendered pixels that one's smallest label already gets, because
+   this map's smallest type is 9 units against that one's 10. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 720px; }
+</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -30,6 +42,7 @@
 			<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 			<a href="spending.html">Ausgaben</a>
 			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+			<a href="../improve.html">Daimond verbessern</a>
 		</nav>
 	</div>
 </header>
@@ -38,7 +51,7 @@
 	<h1>Die Oberfläche</h1>
 	<p class="lede">Ein Rundgang über den Bildschirm: drei Zonen und was jeder Teil tut. Wenn Sie die Zonen kennen, hat alles in Daimond seinen Platz.</p>
 
-	<figure class="diagram">
+	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Die benannten Bereiche des Daimond-Fensters</title>
 			<desc id="rm-desc">Ein Schema des Fensters. Oben quer verläuft die obere Leiste. Darunter drei Zonen nebeneinander: die Leiste links (woran Sie arbeiten, über einem Trenner, das Verwaltungsfeld darunter), die Bühne in der Mitte (das Gespräch) und das Dock rechts (E-Mail, Workspace und Agenten).</desc>
@@ -62,13 +75,11 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
 			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">Die obere Leiste</text>
-			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
-			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
 			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
 			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
 			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
@@ -200,7 +211,7 @@
 	<h3 id="s4">Das Verwaltungsfeld</h3>
 	<p>Unter dem Trenner ist das Verwaltungsfeld der Zustand der Maschine auf einen Blick. Einstellungen wohnen hier und nicht in einem Aufklappfenster, ein Chat bleibt also daneben lebendig: Sie können Daimond fragen, was ein App-Passwort ist, während das Feld, das nach einem fragt, noch auf dem Bildschirm steht. Jede Zeile, auf die sich einwirken lässt, ist eine Schaltfläche, die öffnet, was sie benennt:</p>
 	<ul>
-		<li>Die <strong>Identitätszeile</strong> — wer Sie auf diesem Gerät sind — mit einem Zahnrad daneben.</li>
+		<li>Die <strong>Identitätszeile</strong> (wer Sie auf diesem Gerät sind)mit einem Zahnrad daneben.</li>
 		<li><span class="ui">Modelle</span>, zählt die Anbieter, die Sie verbunden haben, und öffnet das Formular „Modelle“.</li>
 		<li><span class="ui">Guthaben</span>, zeigt Ihren Saldo und öffnet die Ansicht „Guthaben“.</li>
 		<li><span class="ui">Werkzeuge · N von M</span>, wie viele Werkzeuge verfügbar sind, öffnet das Werkzeuge-Panel.</li>
@@ -209,7 +220,7 @@
 	</ul>
 
 	<h3 id="s5">Welche Version Sie fahren</h3>
-	<p>Die Zeile <span class="ui">Version</span> liest sich als Name und Alter — <span class="ui">Version · Albany · heute</span> — nicht als Build-Nummer. Versionen sind nach Orten in Westaustralien benannt, in alphabetischer Reihenfolge, die Abfolge ist also lesbar, ohne dass Sie etwas nachschlagen. Ein Name markiert einen <strong>Meilenstein</strong>: Daimond liefert mehrere Builds am Tag aus, ein Name für jeden wäre Lärm. Fahren Sie über die Zeile für die Build-ID und ihr Veröffentlichungsdatum.</p>
+	<p>Die Zeile <span class="ui">Version</span> liest sich als Name und Alter (<span class="ui">Version · Albany · heute</span>), nicht als Build-Nummer. Versionen sind nach Orten in Westaustralien benannt, in alphabetischer Reihenfolge, die Abfolge ist also lesbar, ohne dass Sie etwas nachschlagen. Ein Name markiert einen <strong>Meilenstein</strong>: Daimond liefert mehrere Builds am Tag aus, ein Name für jeden wäre Lärm. Fahren Sie über die Zeile für die Build-ID und ihr Veröffentlichungsdatum.</p>
 	<p>Ein Klick auf die Zeile öffnet die <strong>Versionshistorie</strong>, die sich von oben nach unten liest:</p>
 	<ul>
 		<li><strong>Was geplant ist</strong>, zuerst, in gestricheltem Umriss.</li>
@@ -291,7 +302,7 @@
 	</div>
 
 	<h2 id="s22">Die obere Leiste</h2>
-	<p>Oben quer sitzen die Wortmarke, ein Ausgabenzähler, eine Reihe von <strong>Bereichs-Chips</strong>, und ganz rechts eine Schaltfläche für <strong>Weiteres Gerät verknüpfen</strong>, ein Dialog <strong>Über</strong> sowie dieses <strong>Handbuch</strong> und das Menü <strong>Darstellung und Layout</strong> — ein Chip erscheint daneben, wenn ein neuer Build da ist.</p>
+	<p>Oben quer sitzen die Wortmarke, eine Reihe von <strong>Bereichs-Chips</strong>, und ganz rechts eine Schaltfläche für <strong>Weiteres Gerät verknüpfen</strong>, ein Dialog <strong>Über</strong> sowie dieses <strong>Handbuch</strong> und das Menü <strong>Darstellung und Layout</strong> — ein Chip erscheint daneben, wenn ein neuer Build da ist.</p>
 
 	<h3 id="s23">Die Chips</h3>
 	<p>Jeder Bereich hat einen Chip, offen wie geschlossen, und ein Klick darauf schaltet diesen Bereich um. Der Chip eines offenen Bereichs ist gefüllt, die Reihe liest sich also als Karte dessen, was auf dem Bildschirm ist. Hätten nur die geschlossenen Bereiche einen, wäre die Reihe am längsten, wenn die App am leersten ist, und jeder Chip rutschte zur Seite, sobald einer benutzt wird; ein Chip, der bleibt, wo er ist, ist einer, dessen Platz Sie lernen können. (Agenten ist die Ausnahme zu <em>„jedes“</em>: Es hält sich zurück, bis der erste Agent läuft.)</p>
@@ -306,7 +317,7 @@
 	<p>Die Reihe darf nur deshalb unvollständig sein, weil die Galerie es nicht ist. Nichts wird auch danach geordnet, wie oft Sie es benutzen: Eine Reihe, die sich selbst umsortierte, zerstörte genau das Muskelgedächtnis, für das feste Plätze da sind.</p>
 
 	<h3 id="s25">Die Palette</h3>
-	<p><kbd>Strg</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> auf einem Mac — öffnet ein Suchfeld, das jeden Bereich und jede Einstellung durch Tippen erreicht. Die Pfeiltasten bewegen sich durch die Treffer, <span class="ui">Enter</span> führt den hervorgehobenen aus, <span class="ui">Esc</span> schließt sie. Sie führt die Bereiche, die Paletten, die vier Textgrößen, die Dock-Raster, die Sprachen, die Währungen und die Berechtigungsmodi auf. Sie ist nie der schnellste Weg zu einem Bereich, für den Sie einen Chip sehen; sie ist der Weg, der vollständig bleibt, wie viele Bereiche es auch gibt.</p>
+	<p><kbd>Strg</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> auf einem Mac — öffnet ein Suchfeld, das jeden Bereich und jede Einstellung durch Tippen erreicht. Die Pfeiltasten bewegen sich durch die Treffer, <span class="ui">Enter</span> führt den hervorgehobenen aus, <span class="ui">Esc</span> schließt sie. Sie führt die Bereiche, die Paletten, die vier Textgrößen, die Dock-Raster, die Sprachen, die Währungen und die Berechtigungsmodi auf. Sie ist nie der schnellste Weg zu einem Bereich, für den Sie einen Chip sehen; sie ist der Weg, der vollständig bleibt, wie viele Bereiche es auch gibt.</p>
 
 	<h3 id="s26">Mit der Tastatur, und mit dem Ohr</h3>
 	<p>Daimond lässt sich ohne Maus bedienen. <span class="ui">Tab</span> bewegt sich durch die Bedienelemente in der Reihenfolge, in der sie gezeichnet sind, <span class="ui">Enter</span> oder <span class="ui">Leertaste</span> bedient das, auf dem Sie stehen, und <span class="ui">Esc</span> schließt, was offen ist. Jeder Dialog, jedes Menü und jedes Blatt trägt außerdem ein Kreuz in der Ecke, ein Bedienelement, auf eine Art gebaut, bemessen für einen Daumen auf dem Telefon.</p>
@@ -316,24 +327,24 @@
 		<li><strong>E-Mail ist vollständig über die Tastatur bedienbar.</strong> Postfächer, Ordner, Entwürfe und Nachrichten sind Bedienelemente, die Sie erreichen und drücken können, keine Zeilen, die nur auf einen Klick antworten. Das Postfach, in dem Sie sind, und der Ordner, den Sie lesen, werden als die aktuellen angesagt, ein Screenreader sagt also, wo Sie sind, und nicht nur, was da ist.</li>
 		<li><strong>Ein Dialog behält den Fokus in sich,</strong> solange er offen ist, und gibt ihn dem zurück, was ihn geöffnet hat. Das Tabben wandert nicht hinter ein Fenster ab, das den Bildschirm bedeckt, und einen zu schließen setzt Sie nicht oben auf der Seite ab.</li>
 	</ul>
-	<p>Mit einem Screenreader wird eine Antwort <strong>einmal angesagt, wenn sie da ist</strong> — „Daimond hat geantwortet, 120 Wörter“ — und nicht, während sie geschrieben wird. Eine Live-Region wird bei jeder Änderung vorgelesen; eine strömende Antwort würde Ihnen also in Bruchstücken vorgetragen, solange das Modell weitertippt. Menschen schalten das ab, und eine App, deren Ansagen abgeschaltet sind, sieht bedienbar aus und ist es nicht. Ein Satz je Zug ist weniger, und er ist brauchbar.</p>
+	<p>Mit einem Screenreader wird eine Antwort <strong>einmal angesagt, wenn sie da ist</strong> („Daimond hat geantwortet, 120 Wörter“)und nicht, während sie geschrieben wird. Eine Live-Region wird bei jeder Änderung vorgelesen; eine strömende Antwort würde Ihnen also in Bruchstücken vorgetragen, solange das Modell weitertippt. Menschen schalten das ab, und eine App, deren Ansagen abgeschaltet sind, sieht bedienbar aus und ist es nicht. Ein Satz je Zug ist weniger, und er ist brauchbar.</p>
 	<p>Das Fenster hat durchweg benannte Regionen und echte Überschriften, die eigene Liste der Landmarken eines Screenreaders ist also ein funktionierendes Inhaltsverzeichnis der App. Was Sie nicht erreichen oder nicht hören können, ist ein Fehler, keine Grenze; sagen Sie es.</p>
 
 	<h3 id="s27">Darstellung und Layout</h3>
 	<p>Die Schaltfläche oben rechts öffnet ein Menü mit den Entscheidungen darüber, wie Daimond aussieht und sitzt, im Unterschied dazu, was es tut:</p>
 	<ul>
-		<li><strong>Ansicht</strong> — <span class="ui">Einfach</span> oder <span class="ui">Max</span>. Einfach gibt jeder Sache ihren Namen und ob sie läuft, alles Weitere ist einen Druck entfernt; Max stellt Modell, Kosten und Kontext daneben, sodass sich zwei vergleichen lassen, ohne eines zu öffnen. Damit setzt es zugleich die Form der Oberfläche, denn eine luftige Form bei höchster Dichte ist eine Kombination, die niemand will. Das eigene Zahnrad einer Kachel sticht das für diese Kachel weiterhin aus.</li>
-		<li><strong>Farbschema</strong> — elf Paletten in drei Bändern: <span class="ui">Hell</span>, <span class="ui">Mittel</span> und <span class="ui">Dunkel</span>. Das Band ist, wie Sie eines finden; darin ist die Wahl Geschmackssache — außer <span class="ui">Bernstein</span>, das aus allem, was es zeichnet, das Blau heraushält, für das Lesen spät am Abend. Dieses Handbuch trägt das Farbschema, das die App gerade trägt, wenn es in Daimond gezeigt wird.</li>
-		<li><strong>Textgröße</strong> — vier Stufen, <span class="ui">Klein</span>, <span class="ui">Normal</span>, <span class="ui">Groß</span> und <span class="ui">Größer</span>. Nur die Schrift reagiert: Rahmen, Innenabstände und Bereichsbreiten bleiben, wo sie sind, denn das ist ein Bedienelement fürs Lesen und keine Vergrößerung. Für eine größere Oberfläche nehmen Sie den Zoom des Browsers. Das Muster im Menü steht in der Größe, die gerade gewählt wird, das Element zeigt die Änderung also, statt sie zu benennen.</li>
-		<li><strong>Dock-Raster</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> Spalte, <span class="ui">2×2</span>, <span class="ui">2×3</span> oder <span class="ui">3×2</span>, jeweils als das Raster gezeichnet, das sie wählt. Das Raster entscheidet auch, <em>wie viele Bereiche das Dock halten kann</em>, seine Spalten mal seine Zeilen: vier in einer Spalte, vier bei 2×2, sechs bei 2×3 wie bei 3×2. <span class="ui">Auto</span> lässt das Fenster entscheiden und nimmt eine zweite Spalte, sobald Platz für eine da ist. Ein kleineres Raster schließt die Bereiche, die nicht mehr passen, den zuletzt geöffneten zuerst, und jeder wird wieder zu einem Chip, den Sie sehen und anklicken können.</li>
-		<li><strong>Sprache</strong> und <strong>Währung</strong> — was Daimond sagt und worin die Zahlen erscheinen. Eine Sprache ohne Tabelle bleibt vorerst Englisch; abgerechnet wird immer in US-Dollar, gleich wie die Zahlen angezeigt werden.</li>
+		<li><strong>Ansicht</strong>: <span class="ui">Einfach</span> oder <span class="ui">Max</span>. Einfach gibt jeder Sache ihren Namen und ob sie läuft, alles Weitere ist einen Druck entfernt; Max stellt Modell, Kosten und Kontext daneben, sodass sich zwei vergleichen lassen, ohne eines zu öffnen. Damit setzt es zugleich die Form der Oberfläche, denn eine luftige Form bei höchster Dichte ist eine Kombination, die niemand will. Das eigene Zahnrad einer Kachel sticht das für diese Kachel weiterhin aus.</li>
+		<li><strong>Farbschema</strong>, elf Paletten in drei Bändern: <span class="ui">Hell</span>, <span class="ui">Mittel</span> und <span class="ui">Dunkel</span>. Das Band ist, wie Sie eines finden; darin ist die Wahl Geschmackssache — außer <span class="ui">Bernstein</span>, das aus allem, was es zeichnet, das Blau heraushält, für das Lesen spät am Abend. Dieses Handbuch trägt das Farbschema, das die App gerade trägt, wenn es in Daimond gezeigt wird.</li>
+		<li><strong>Textgröße</strong>: vier Stufen, <span class="ui">Klein</span>, <span class="ui">Normal</span>, <span class="ui">Groß</span> und <span class="ui">Größer</span>. Nur die Schrift reagiert: Rahmen, Innenabstände und Bereichsbreiten bleiben, wo sie sind, denn das ist ein Bedienelement fürs Lesen und keine Vergrößerung. Für eine größere Oberfläche nehmen Sie den Zoom des Browsers. Das Muster im Menü steht in der Größe, die gerade gewählt wird, das Element zeigt die Änderung also, statt sie zu benennen.</li>
+		<li><strong>Dock-Raster</strong>: <span class="ui">Auto</span>, <span class="ui">1</span> Spalte, <span class="ui">2×2</span>, <span class="ui">2×3</span> oder <span class="ui">3×2</span>, jeweils als das Raster gezeichnet, das sie wählt. Das Raster entscheidet auch, <em>wie viele Bereiche das Dock halten kann</em>, seine Spalten mal seine Zeilen: vier in einer Spalte, vier bei 2×2, sechs bei 2×3 wie bei 3×2. <span class="ui">Auto</span> lässt das Fenster entscheiden und nimmt eine zweite Spalte, sobald Platz für eine da ist. Ein kleineres Raster schließt die Bereiche, die nicht mehr passen, den zuletzt geöffneten zuerst, und jeder wird wieder zu einem Chip, den Sie sehen und anklicken können.</li>
+		<li><strong>Sprache</strong> und <strong>Währung</strong>: was Daimond sagt und worin die Zahlen erscheinen. Eine Sprache ohne Tabelle bleibt vorerst Englisch; abgerechnet wird immer in US-Dollar, gleich wie die Zahlen angezeigt werden.</li>
 	</ul>
 
 	<h3 id="s28">Eine Anordnung bei einem Diamond behalten</h3>
 	<p>Bei ausgewähltem Diamond bietet das Darstellungsmenü an, die aktuelle Anordnung der Bereiche bei ihm zu behalten und eine schon gespeicherte zu aktualisieren oder zu vergessen. Dieses Diamond wieder zu öffnen stellt sie zurück; zu einem Stück Arbeit zurückzukehren heißt also nicht, seine Bereiche von Hand wieder zusammenzusetzen. Gespeichert wird nur, wenn Sie es verlangen, nie erschlossen und nie im Hintergrund, denn ein Wechsel, der still Bereiche schlösse, läse sich wie verlorene Arbeit.</p>
 
 	<h2 id="s29">Auf einem schmalen Bildschirm</h2>
-	<p>Unterhalb der Telefonbreite weichen die Chips und die Galerie der Telefonhülle, die dieselbe Frage mit weniger Platz beantwortet: Der Chat ist der Boden, ein Bereich steigt darüber als Blatt auf, das Sie ziehen können, und die Leiste wird zu einer Schublade, die die Schaltfläche oben links öffnet. Eine Reihe am unteren Rand — <span class="ui">Chat</span>, <span class="ui">E-Mail</span>, <span class="ui">Dateien</span>, <span class="ui">Agenten</span> — wechselt zwischen ihnen, und das Verwaltungsfeld erreichen Sie unten in der Schublade. Nichts geht verloren; es sind dieselben Bereiche, nur einer nach dem anderen gezeigt.</p>
+	<p>Unterhalb der Telefonbreite weichen die Chips und die Galerie der Telefonhülle, die dieselbe Frage mit weniger Platz beantwortet: Der Chat ist der Boden, ein Bereich steigt darüber als Blatt auf, das Sie ziehen können, und die Leiste wird zu einer Schublade, die die Schaltfläche oben links öffnet. Eine Reihe am unteren Rand (<span class="ui">Chat</span>, <span class="ui">E-Mail</span>, <span class="ui">Dateien</span>, <span class="ui">Agenten</span>) wechselt zwischen ihnen, und das Verwaltungsfeld erreichen Sie unten in der Schublade. Nichts geht verloren; es sind dieselben Bereiche, nur einer nach dem anderen gezeigt.</p>
 	<p>Auf den Startbildschirm installiert, läuft Daimond in einem eigenen Fenster ohne Browser-Beiwerk und hält sich von Notch und Home-Indikator frei. Es ist dieselbe Seite und dieselbe gespeicherte Arbeit, es muss also nichts hineinbewegt werden.</p>
 
 	<div class="next">
@@ -354,6 +365,7 @@
 		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
 		<a href="spending.html">Ausgaben</a>
 		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
+		<a href="../improve.html">Daimond verbessern</a>
 	</nav>
 </footer>
 </body>

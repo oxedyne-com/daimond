@@ -7,6 +7,18 @@
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
+<style>
+/* The region map. On a phone the whole schematic scaled to the column width put
+   its labels at five pixels, which is a diagram that says nothing to the reader
+   who most needs it. It keeps a floor on its width and scrolls sideways inside
+   its own box instead: the page still never scrolls sideways, and the words can
+   still be read. The same treatment the widget map on improve.html has, and the
+   floor is set from the same measurement -- 720px puts this map's smallest label
+   at the eleven rendered pixels that one's smallest label already gets, because
+   this map's smallest type is 9 units against that one's 10. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 720px; }
+</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -30,6 +42,7 @@
 			<a href="sync.html">端末間の同期</a>
 			<a href="spending.html">支出</a>
 			<a href="../machine-operations.html">端末でのコマンド実行</a>
+			<a href="../improve.html">Daimond の改善</a>
 		</nav>
 	</div>
 </header>
@@ -38,7 +51,7 @@
 	<h1>インターフェース</h1>
 	<p class="lede">画面のひとまわり。三つのゾーンと、それぞれの役目です。ゾーンが分かれば、Daimond のすべてに居場所があります。</p>
 
-	<figure class="diagram">
+	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Daimond のウィンドウの、名前の付いた領域</title>
 			<desc id="rm-desc">ウィンドウの模式図。上部を横切るのが上部バー。その下に三つのゾーンが横に並びます。左がレール（仕切りの上に取り組んでいるもの、下に管理パネル）、中央がステージ（会話）、右がドック（メール、作業領域、エージェント）。</desc>
@@ -62,13 +75,11 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
 			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">上部バー</text>
-			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
-			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
 			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
 			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
 			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
@@ -200,7 +211,7 @@
 	<h3 id="s4">管理パネル</h3>
 	<p>仕切りの下にある管理パネルは、機械の状態をひと目で見せます。設定はポップアップではなくここにあるので、その横でチャットは生きたままです。アプリパスワードとは何かと Daimond に尋ねながら、それを求める欄を画面に出しておけます。操作できる行はどれも、その名前が指すものを開くボタンです。</p>
 	<ul>
-		<li> <strong>識別情報の行</strong> — この端末でのあなたが誰か — 横に設定の歯車があります。</li>
+		<li> <strong>識別情報の行</strong> （この端末でのあなたが誰か）横に設定の歯車があります。</li>
 		<li><span class="ui">モデル</span>。つないだプロバイダーの数を示し、モデルの入力画面を開きます。</li>
 		<li><span class="ui">クレジット</span>。残高を示し、クレジットの画面を開きます。</li>
 		<li><span class="ui">ツール · M 個中 N 個</span>。使えるツールの数を示し、ツールのパネルを開きます。</li>
@@ -209,7 +220,7 @@
 	</ul>
 
 	<h3 id="s5">動かしているバージョン</h3>
-	<p> <span class="ui">バージョン</span> の行は、ビルド番号ではなく名前と経過として読めます — <span class="ui">バージョン · Albany · 今日</span> 。リリースには西オーストラリアの地名がアルファベット順に付くので、何も調べずに並びが読めます。名前が印すのは <strong>節目</strong>です。Daimond は一日に何度もビルドを出すので、ひとつずつ名前を付ければ雑音になります。行にポインタを合わせると、ビルド id と公開日が出ます。</p>
+	<p> <span class="ui">バージョン</span> の行は、ビルド番号ではなく名前と経過として読めます（<span class="ui">バージョン · Albany · 今日</span>）。リリースには西オーストラリアの地名がアルファベット順に付くので、何も調べずに並びが読めます。名前が印すのは <strong>節目</strong>です。Daimond は一日に何度もビルドを出すので、ひとつずつ名前を付ければ雑音になります。行にポインタを合わせると、ビルド id と公開日が出ます。</p>
 	<p>行をクリックすると、管理パネルに <strong>リリースの履歴</strong>が開きます。上から順に、こう読みます。</p>
 	<ul>
 		<li><strong>予定されているもの</strong>が最初に、破線の枠で。</li>
@@ -291,7 +302,7 @@
 	</div>
 
 	<h2 id="s22">上部バー</h2>
-	<p>上部には、ワードマーク、支出のメーター、 <strong>パネルのチップ</strong>が並び、右端には <strong>ほかの端末をリンク</strong>のボタン、 <strong>About</strong> のダイアログ、この <strong>手引き</strong>、そして <strong>外観とレイアウト</strong> のメニューがあります。新しいビルドが出ると、その横にチップが現れます。</p>
+	<p>上部には、ワードマーク、 <strong>パネルのチップ</strong>が並び、右端には <strong>ほかの端末をリンク</strong>のボタン、 <strong>About</strong> のダイアログ、この <strong>手引き</strong>、そして <strong>外観とレイアウト</strong> のメニューがあります。新しいビルドが出ると、その横にチップが現れます。</p>
 
 	<h3 id="s23">チップ</h3>
 	<p>パネルにはどれもチップがあります。開いていても閉じていてもあり、クリックすればそのパネルが切り替わります。開いているパネルのチップは塗りつぶされるので、この列は画面にあるものの地図として読めます。閉じたパネルだけにチップがあったなら、アプリがいちばん空のときに列がいちばん長くなり、ひとつ使うたびにどのチップも横へずれたでしょう。動かないチップだからこそ、位置を覚えられます。（エージェントは <em>すべての</em>という言い方の例外です。最初のエージェントが動くまでは出てきません。）</p>
@@ -306,7 +317,7 @@
 	<p>この列が欠けていてよいのは、パネルの一覧が欠けていないからです。使う頻度で順位が付くこともありません。ひとりでに並び替わる列は、位置が動かないからこそ育つ体の記憶を壊してしまいます。</p>
 
 	<h3 id="s25">コマンドパレット</h3>
-	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> （Mac の場合）を押すと、打つだけでどのパネルにも設定にも届く検索の欄が開きます。結果のあいだは矢印キーで動き、 <span class="ui">Enter</span> で選ばれているものを実行し、 <span class="ui">Esc</span> で閉じます。並ぶのは、パネル、パレット、四つの文字サイズ、ドックの分割、言語、通貨、そして権限のモードです。チップが見えているパネルへの最短路になることはありません。パネルがいくつあっても欠けない路です。</p>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> （Mac の場合）を押すと、打つだけでどのパネルにも設定にも届く検索の欄が開きます。結果のあいだは矢印キーで動き、 <span class="ui">Enter</span> で選ばれているものを実行し、 <span class="ui">Esc</span> で閉じます。並ぶのは、パネル、パレット、四つの文字サイズ、ドックの分割、言語、通貨、そして権限のモードです。チップが見えているパネルへの最短路になることはありません。パネルがいくつあっても欠けない路です。</p>
 
 	<h3 id="s26">キーボードで、耳で</h3>
 	<p>Daimond はマウスなしでも動かせます。 <span class="ui">Tab</span> は描かれた順に操作をたどり、 <span class="ui">Enter</span> または <span class="ui">Space</span> はいまいる操作を働かせ、 <span class="ui">Esc</span> は開いているものを閉じます。どのダイアログ、メニュー、シートにも隅に×があり、同じ作りの一つの操作で、スマートフォンの親指に合う大きさです。</p>
@@ -322,18 +333,18 @@
 	<h3 id="s27">外観とレイアウト</h3>
 	<p>右上のボタンは、Daimond が何をするかではなく、どう見えてどう収まるかについての選択をまとめた一つのメニューを開きます。</p>
 	<ul>
-		<li><strong>表示</strong> — <span class="ui">シンプル</span> または <span class="ui">最大</span>。シンプルは、それぞれに名前と、動いているかどうかだけを与え、ほかはすべてひと押し先に置きます。最大は、モデル、費用、コンテキストを横に並べるので、どちらも開かずに二つを比べられます。インターフェースの形もこれで決まります。いちばん詰まった密度でゆったりした形、という組み合わせは誰も欲しがらないからです。タイル自身の歯車は、そのタイルについては今もこれに優先します。</li>
-		<li><strong>テーマ</strong> — 三つの帯に十一のパレットがあります。 <span class="ui">明るい</span>, <span class="ui">中間</span> と <span class="ui">暗い</span>。帯は見つけるためのもので、その中では好みで選べます。ただし <span class="ui">琥珀</span>だけは、描くものすべてから青を抜いてあり、夜遅くの読書のためのものです。この手引きは、Daimond の中で表示されているとき、アプリが着ているパレットをそのまま着ます。</li>
-		<li><strong>文字サイズ</strong> — 四段階、 <span class="ui">小</span>, <span class="ui">標準</span>, <span class="ui">大</span> と <span class="ui">特大</span>。変わるのは文字だけです。枠も、余白も、パネルの幅もそのままです。これは読むための操作であって、拡大ではないからです。インターフェース全体を大きくしたいときは、ブラウザ自身の拡大を使ってください。メニューの見本は、選ぼうとしている大きさで組まれているので、操作は変化を名前で言うのではなく、見せます。</li>
-		<li><strong>ドックの分割</strong> — <span class="ui">自動</span>, <span class="ui">1</span> 列、 <span class="ui">2×2</span>, <span class="ui">2×3</span> または <span class="ui">3×2</span>、それぞれ選ぶ格子の形で描かれます。分割は <em>ドックがいくつパネルを収められるか</em>を、列かける行で決めます。1 列なら四つ、2 × 2 でも四つ、2 × 3 でも 3 × 2 でも六つです。 <span class="ui">自動</span> は窓に決めさせ、二列目の場所ができたら二列にします。小さい格子にすると、入らなくなったパネルから閉じられます。いちばん最近開いたものが先で、どれも、見えてクリックできるチップに戻ります。</li>
-		<li><strong>言語</strong> と <strong>通貨</strong> — Daimond が話す言葉と、金額を映す単位です。まだ表のない言語は英語のままです。表示がどうであれ、請求は常に米ドルです。</li>
+		<li><strong>表示</strong>: <span class="ui">シンプル</span> または <span class="ui">最大</span>。シンプルは、それぞれに名前と、動いているかどうかだけを与え、ほかはすべてひと押し先に置きます。最大は、モデル、費用、コンテキストを横に並べるので、どちらも開かずに二つを比べられます。インターフェースの形もこれで決まります。いちばん詰まった密度でゆったりした形、という組み合わせは誰も欲しがらないからです。タイル自身の歯車は、そのタイルについては今もこれに優先します。</li>
+		<li><strong>テーマ</strong>、三つの帯に十一のパレットがあります。 <span class="ui">明るい</span>, <span class="ui">中間</span> と <span class="ui">暗い</span>。帯は見つけるためのもので、その中では好みで選べます。ただし <span class="ui">琥珀</span>だけは、描くものすべてから青を抜いてあり、夜遅くの読書のためのものです。この手引きは、Daimond の中で表示されているとき、アプリが着ているパレットをそのまま着ます。</li>
+		<li><strong>文字サイズ</strong>：四段階、 <span class="ui">小</span>, <span class="ui">標準</span>, <span class="ui">大</span> と <span class="ui">特大</span>。変わるのは文字だけです。枠も、余白も、パネルの幅もそのままです。これは読むための操作であって、拡大ではないからです。インターフェース全体を大きくしたいときは、ブラウザ自身の拡大を使ってください。メニューの見本は、選ぼうとしている大きさで組まれているので、操作は変化を名前で言うのではなく、見せます。</li>
+		<li><strong>ドックの分割</strong>: <span class="ui">自動</span>, <span class="ui">1</span> 列、 <span class="ui">2×2</span>, <span class="ui">2×3</span> または <span class="ui">3×2</span>、それぞれ選ぶ格子の形で描かれます。分割は <em>ドックがいくつパネルを収められるか</em>を、列かける行で決めます。1 列なら四つ、2 × 2 でも四つ、2 × 3 でも 3 × 2 でも六つです。 <span class="ui">自動</span> は窓に決めさせ、二列目の場所ができたら二列にします。小さい格子にすると、入らなくなったパネルから閉じられます。いちばん最近開いたものが先で、どれも、見えてクリックできるチップに戻ります。</li>
+		<li><strong>言語</strong> と <strong>通貨</strong>：Daimond が話す言葉と、金額を映す単位です。まだ表のない言語は英語のままです。表示がどうであれ、請求は常に米ドルです。</li>
 	</ul>
 
 	<h3 id="s28">配置を Diamond と一緒に残す</h3>
 	<p>Diamond を選んでいるとき、外観のメニューは、いまのパネルの配置をその Diamond と一緒に残すことを申し出ます。すでに保存してあるものを更新したり、忘れさせたりもできます。その Diamond をまた開けば配置が戻るので、仕事に戻ることが、パネルを手で組み直すことにはなりません。保存されるのは頼んだときだけで、推し量ることも、裏で行うこともありません。黙ってパネルを閉じる切り替えは、仕事が失われたように読めるからです。</p>
 
 	<h2 id="s29">狭い画面では</h2>
-	<p>スマートフォンの幅より下では、チップとパネルの一覧はスマートフォンの外枠に道を譲ります。同じ問いに、より少ない場所で答える形です。チャットが床になり、パネルはその上にドラッグできるシートとして立ち上がり、レールは左上のボタンで開くドロワーになります。下辺に並ぶ列 — <span class="ui">チャット</span>, <span class="ui">メール</span>, <span class="ui">ファイル</span>, <span class="ui">エージェント</span> — がそのあいだを移り、管理パネルはドロワーの下から出します。失われるものはありません。同じパネルを、一度に一つずつ見せているだけです。</p>
+	<p>スマートフォンの幅より下では、チップとパネルの一覧はスマートフォンの外枠に道を譲ります。同じ問いに、より少ない場所で答える形です。チャットが床になり、パネルはその上にドラッグできるシートとして立ち上がり、レールは左上のボタンで開くドロワーになります。下辺に並ぶ列（<span class="ui">チャット</span>, <span class="ui">メール</span>, <span class="ui">ファイル</span>, <span class="ui">エージェント</span>）がそのあいだを移り、管理パネルはドロワーの下から出します。失われるものはありません。同じパネルを、一度に一つずつ見せているだけです。</p>
 	<p>ホーム画面に入れると、Daimond はブラウザの飾りのない専用の窓で動き、ノッチとホームインジケータを避けて収まります。同じページで、保存済みの作業も同じなので、そこへ移すものは何もありません。</p>
 
 	<div class="next">
@@ -354,6 +365,7 @@
 		<a href="sync.html">端末間の同期</a>
 		<a href="spending.html">支出</a>
 		<a href="../machine-operations.html">端末でのコマンド実行</a>
+		<a href="../improve.html">Daimond の改善</a>
 	</nav>
 </footer>
 </body>

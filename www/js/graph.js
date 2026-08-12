@@ -2390,5 +2390,23 @@
 		/// What is on screen, for a verifier: where every box is and what the
 		/// store said. Never used by the app itself.
 		_geometry: function () { return lastGeo; },
+		/// How a link's `rel` becomes several relations, and back.
+		///
+		/// Published because the Diamond panel draws the same link on its own
+		/// surface and has to agree with this one about where a relation ends. The
+		/// comma is a store convention, not a picture's: two readings of it would
+		/// be two answers to "how many relations does this link carry", and the
+		/// module that already carries a hand copy of `tagHue` is not the place to
+		/// start a second such pair.
+		rels: {
+			of:      relsOf,
+			toStore: relsToStore,
+			tidy:    tidyRel,
+			/// Every relation the store already holds, so a second surface can offer
+			/// the words this one does. Empty until the picture has been drawn once.
+			inUse:   relsInUse,
+			/// The store's cap, in characters of the joined string.
+			MAX:     REL_MAX,
+		},
 	};
 })();

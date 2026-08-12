@@ -501,6 +501,12 @@
 	'sync.when_hours': 'há {n} h',
 	'sync.when_days': 'há {n} d',
 
+	// ── O identificador público da conta ───────────────────────
+	'handle.taken': 'Esse identificador já é de outra pessoa. Escolha outro.',
+	'handle.invalid': 'Um identificador tem de 3 a 24 caracteres: letras minúsculas, números e hifens entre eles.',
+	'handle.reserved': 'Esse identificador é reservado ao Daimond e não pode ser tomado.',
+	'handle.failed': 'Não foi possível mudar o identificador agora. Tente de novo em instantes.',
+
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Limpeza pausada',
 	'chunks.sweep_held_reason': 'O armazenamento na nuvem mantém {n} dos seus {m} pedaços guardados aos quais nenhum arquivo desta conta ainda se refere. Eles NÃO foram apagados, porque nenhuma requisição pode remover mais da metade do que está armazenado. Nada seu está faltando, e o espaço é liberado na próxima sincronização que der conta de tudo.',
@@ -795,6 +801,18 @@
 	'models.credit_base_set': 'Tenho esta quantia, a partir de agora',
 	'models.credit_base_update': 'Atualizar o meu valor',
 	'models.credit_base_bad': 'Isso não é um valor. Digite um número de dólares americanos.',
+	// Um número consultado do qual este aparelho já viu sair dinheiro.
+	'models.credit_auto_spent': 'Restam {amount}. O provedor disse {base} em {when}, menos cerca de {spent} gastos aqui desde então.',
+	// A idade do número. Sem ela, um valor que parou de mudar parece igualzinho
+	// a um que está em dia.
+	'models.age_now': 'Consultado agora mesmo.',
+	'models.age_mins.one': 'Consultado há {n} minuto.',
+	'models.age_mins.other': 'Consultado há {n} minutos.',
+	'models.age_hours.one': 'Consultado há {n} hora.',
+	'models.age_hours.other': 'Consultado há {n} horas.',
+	'models.age_days.one': 'Consultado há {n} dia.',
+	'models.age_days.other': 'Consultado há {n} dias.',
+	'models.age_failed': 'A última consulta não respondeu, então este número não se moveu desde então.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Você está dirigindo. Eu parei em {where}.',
@@ -929,6 +947,7 @@
 	'typst.load_failed': 'O compilador Typst não carregou: {reason}',
 	'typst.no_pdf': 'O Typst não produziu PDF (erro de compilação desconhecido).',
 	'typst.compile_error': 'Erro de compilação do Typst: {reason}',
+	'typst.pack_locked': 'A composição faz parte de um pacote de ferramentas que esta conta não comprou. O painel Ferramentas mostra o nome e o preço: comprado uma vez, mantido para sempre e pago em dinheiro, não com seus créditos.',
 
 
 	// ── The Admin drawer ───────────────────────────────────────
@@ -1376,11 +1395,23 @@
 	'attach.pick_title': 'Anexar arquivos e pastas',
 	'attach.pick_empty': 'Não há nada aqui.',
 	'attach.already': 'Já anexado',
+	'attach.ws_mark': 'Espaço',
+	'attach.ws_add': 'Marcar uma pasta no espaço',
+	'attach.not_here': 'Guardado por esta conversa, mas fica {where}, que não é o espaço que você tem aberto. Esta conversa não alcança daqui.',
+	'attach.ws_help': 'As pastas que esta conversa pode ler e alterar. Marcar uma é a permissão, e nada vai perguntar de novo.',
+	'attach.ws_on': 'No espaço desta conversa: ela pode ler e alterar o que está dentro. Toque para tirar.',
+	'attach.ws_off': 'Fora do espaço, então esta conversa não consegue abrir. Toque para marcar.',
+	'attach.ws_empty': 'Nenhuma pasta marcada. Esta conversa não alcança nada seu, só a própria pasta de trabalho. Marque uma com o clipe, ou com + acima.',
+	'attach.group_prompt': 'Diante do modelo',
+	'attach.group_prompt_help': 'Citado ou nomeado no prompt ao enviar. Isso não concede acesso nenhum.',
+	'attach.read_block': 'O conteúdo de {path}:',
+	'attach.read_cut': 'É o quanto de {path} cabe aqui.',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'O espaço de trabalho deste Diamond',
 	'dws.count.one': '{n} item',
 	'dws.count.other': '{n} itens',
+	'dws.none_yet':    'Nada guardado aqui ainda',
 	'dws.mode_all': 'Tudo',
 	'dws.mode_diamond': 'Este Diamond',
 	'dws.empty': 'Ainda não há nada mantido com este Diamond. O que você mantém aqui é o que o daimon dele pode abrir.',
@@ -1425,7 +1456,6 @@
 	'link.pick_empty': 'Ainda não há outro Diamond para vincular.',
 	'link.change_pick': 'Mudar',
 	'link.rel_label': 'Relação',
-	'link.rel_ph': 'Qual é a relação entre eles?',
 	'link.rel_sug_help': 'Apenas sugestões; qualquer palavra serve',
 	'link.rel_use': 'Usar “{rel}”',
 	'link.note_label': 'Nota',
@@ -1445,11 +1475,14 @@
 	'agents.already_folded_body': 'O resumo deste agente já foi dobrado no cristal.',
 	'agents.a_diamond': 'Diamond',
 	'agents.clear_diamond_filter': 'Limpar o filtro de Diamond',
+	'agents.clear_chat_filter':    'Limpar o filtro de conversa',
 	'agents.no_diamond': 'sem Diamond',
 	'agents.no_diamond_help': 'Esta execução não tem Diamond',
 	'agents.only_from': 'Mostrar só os agentes de “{name}”',
+	'agents.only_from_chat': 'Mostrar só os agentes desta conversa.',
 	'agents.from_chat': 'um chat',
 	'agents.from_chat_help': 'Enviado a partir do chat “{name}”.',
+	'agents.from_chat_help_when': 'Enviado a partir de um chat ao qual você não deu nome (última atividade: {when}).',
 	'agents.no_diamond_fold': 'Este agente foi enviado a partir de um chat, então não há cristal onde dobrá-lo. O relatório dele está nessa conversa, e o texto completo está em “Ler”.',
 	'agents.report_one': 'Um agente que você enviou terminou.',
 	'agents.report_n': '{n} agentes que você enviou terminaram.',
@@ -1872,6 +1905,7 @@
 	'pending.cancel': 'Descartar',
 	'pending.cancel_named': 'Descartar: {what}',
 	'pending.noted': 'Anotado, e tirado da lista.',
+	'pending.opened': 'Aberto para envio. Fica aqui até ser enviado.',
 	'pending.diamond_gone': 'O Diamond que levantou isto não existe mais, então não há com quem conversar a respeito.',
 	'pending.discuss_prompt': 'Precisamos conversar mais sobre isto antes de eu aprovar: “{headline}”',
 	'crystal.steer_paused': 'Pausado. Pressione play no bloco',

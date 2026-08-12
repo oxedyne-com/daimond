@@ -158,7 +158,51 @@
 		if (h <= 0 || h === lastH) return;
 		lastH = h;
 		root.style.setProperty('--guide-head-h', (h + GAP) + 'px');
+		// THE HEADER CAN STILL GROW AFTER THE READER HAS LANDED. `search.js`
+		// builds the search box and appends it to the header, and on a narrow
+		// screen that is a whole extra row: measured at 360px, the header goes
+		// from 179px to 223px AFTER `reland` has already scrolled. A deep link
+		// into the guide therefore left its heading 44px under the header, which
+		// is the exact failure the measurement exists to prevent -- only later.
+		//
+		// So a landing is repeated whenever the height moves, for as long as the
+		// reader has not touched the page themselves. Comparing scroll positions
+		// instead of watching for input does NOT work: the browser's own scroll
+		// anchoring shifts the page by the header's growth to keep the text
+		// still, so the position always differs by exactly the amount that made
+		// the re-landing necessary.
+		settleLanding();
 	}
+
+	/// Put the reader back on their anchor, if they are still owed it.
+	///
+	/// Called from every point where the header may have changed size since the
+	/// landing, and NOT only from the resize observer: whether that observer
+	/// fires at all depends on whether the search box was appended before or
+	/// after it started watching, which is a race that came out both ways
+	/// between runs of the same test. Scrolling to a place the page is already
+	/// at costs nothing, so this is called generously and gated only on the
+	/// reader not having moved.
+	function settleLanding() {
+		if (!landed || touched) return;
+		if (Date.now() - landed > SETTLE) return;
+		reland();
+	}
+
+	/// How long after a landing a growing header may still move the page. Long
+	/// enough for a stylesheet, a web font and the search box to arrive; short
+	/// enough that nothing jumps under a reader who has begun reading.
+	var SETTLE = 4000;
+
+	/// When `reland` last ran, or 0 when it never has.
+	var landed = 0;
+
+	/// Whether the reader has scrolled the page themselves. Once they have, the
+	/// page is theirs and nothing here moves it again.
+	var touched = false;
+	['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach(function (ev) {
+		window.addEventListener(ev, function () { touched = true; }, { passive: true, capture: true });
+	});
 
 	/// The browser jumps to a fragment while the page is still parsing, long
 	/// before the header exists to be measured, so a deep link lands using the
@@ -170,6 +214,7 @@
 		if (!id) return;
 		var el = document.getElementById(id);
 		if (el && el.scrollIntoView) el.scrollIntoView();
+		if (!landed) landed = Date.now();
 	}
 
 	// Installed now, while the page is still in its head, so the rule is already
@@ -194,6 +239,13 @@
 				var b = e.borderBoxSize && e.borderBoxSize[0];
 				headroom(b ? b.blockSize : undefined);
 			}).observe(head);
+			// Everything that can still change the header's height after the
+			// first landing, each asked once: the last stylesheet and web font
+			// arrive with `load`, and the search box is built from a script that
+			// may run either side of the observer above.
+			window.addEventListener('load', function () { headroom(); settleLanding(); });
+			setTimeout(function () { headroom(); settleLanding(); }, 300);
+			setTimeout(function () { headroom(); settleLanding(); }, 1000);
 		} else {
 			// The listener is handed an Event, which is not a height.
 			window.addEventListener('resize', function () { headroom(); });

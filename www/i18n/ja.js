@@ -205,6 +205,17 @@
 	'models.credit_base_set':      'いまこれだけあります',
 	'models.credit_base_update':   '自分の申告を更新',
 	'models.credit_base_bad':      '金額ではありません。米ドルの数値を入力してください。',
+	// 問い合わせた額から、その後この端末が見届けた支出を差し引いたもの。
+	'models.credit_auto_spent':    '残りは {amount} です。{when} 時点でプロバイダーが答えた {base} から、その後ここで使った約 {spent} を引いた額です。',
+	// 数字の古さ。これがないと、止まったままの数字と最新の数字が同じに見えます。
+	'models.age_now':              'たった今確認しました。',
+	'models.age_mins.one':         '{n} 分前に確認しました。',
+	'models.age_mins.other':       '{n} 分前に確認しました。',
+	'models.age_hours.one':        '{n} 時間前に確認しました。',
+	'models.age_hours.other':      '{n} 時間前に確認しました。',
+	'models.age_days.one':         '{n} 日前に確認しました。',
+	'models.age_days.other':       '{n} 日前に確認しました。',
+	'models.age_failed':           '前回の確認は応答がなかったため、この数字はそれ以降動いていません。',
 
 	// ── 検索 ───────────────────────────────────────────────────
 	// 「検索エンジン」は検索するという動作ではなく、使うサービスのことです。
@@ -646,6 +657,12 @@
 	'sync.when_hours':     '{n} 時間前',
 	'sync.when_days':      '{n} 日前',
 
+	// ── アカウントの公開ハンドル ───────────────────────────────
+	'handle.taken':    'そのハンドルはすでに他の人が使っています。別のものをお試しください。',
+	'handle.invalid':  'ハンドルは 3〜24 文字です。小文字の英字、数字、そのあいだのハイフンが使えます。',
+	'handle.reserved': 'そのハンドルは Daimond が確保しているため、使用できません。',
+	'handle.failed':   'いまはハンドルを変更できませんでした。しばらくしてからもう一度お試しください。',
+
 	// ── クラウドストレージの整理 ───────────────────────────────
 	'chunks.sweep_held':          'クリーンアップを一時停止',
 	'chunks.sweep_held_reason':   'クラウドストレージには、このアカウントのどのファイルからも参照されない断片が {m} 件中 {n} 件あります。削除はしていません。1 回のリクエストで保存量の半分を超えて消すことはできないからです。あなたのデータが欠けているわけではなく、すべてを説明できる次回の同期で領域が解放されます。',
@@ -965,6 +982,7 @@
 	'typst.load_failed':   'Typst コンパイラーを読み込めませんでした：{reason}',
 	'typst.no_pdf':        'Typst は PDF を出力しませんでした（原因不明のコンパイルエラー）。',
 	'typst.compile_error': 'Typst のコンパイルエラー：{reason}',
+	'typst.pack_locked':   '組版はこのアカウントが購入していないツールパックに含まれています。名称と価格はツールパネルに表示されます。買い切りでずっと使え、クレジットではなく代金でのお支払いです。',
 
 	// ── トースト ───────────────────────────────────────────────
 	'toast.copied': 'コピーしました',
@@ -1415,11 +1433,23 @@
 	'attach.pick_title':   'ファイルとフォルダーを添付',
 	'attach.pick_empty':   'ここには何もありません。',
 	'attach.already':      '添付済み',
+	'attach.ws_mark':      '作業領域',
+	'attach.ws_add':       'フォルダーを作業領域に入れる',
+	'attach.not_here':     'このチャットが保持していますが、{where}にあり、いま開いている作業領域ではありません。ここからは届きません。',
+	'attach.ws_help':      'このチャットが読み書きしてよいフォルダーです。ここに入れることが許可そのもので、あとから確認を求めることはありません。',
+	'attach.ws_on':        'このチャットの作業領域にあります。中身を読んで変更できます。押すと外れます。',
+	'attach.ws_off':       '作業領域にないので、このチャットは開けません。押すと入ります。',
+	'attach.ws_empty':     'フォルダーが一つも入っていません。このチャットはあなたのものに届かず、自分の作業フォルダーだけを使えます。クリップか、上の + で入れてください。',
+	'attach.group_prompt': 'モデルに渡すもの',
+	'attach.group_prompt_help': '送信時にプロンプトで名前を挙げるか、中身を引用します。これで権限は増えません。',
+	'attach.read_block':   '{path} の内容:',
+	'attach.read_cut':     '{path} はここに入るぶんまでです。',
 
 	// ── この Diamond の作業領域 ────────────────────────────────
 	'dws.title':           'この Diamond の作業領域',
 	'dws.count.one':       '{n} 件',
 	'dws.count.other':     '{n} 件',
+	'dws.none_yet':        'まだ何も置かれていません',
 	'dws.mode_all':        'すべて',
 	'dws.mode_diamond':    'この Diamond',
 	'dws.empty':           'この Diamond にはまだ何も持たせていません。ここに持たせたものが、その daimon が開けるものです。',
@@ -1464,7 +1494,6 @@
 	'link.pick_empty':     'リンクできるほかの Diamond はまだありません。',
 	'link.change_pick':    '変更',
 	'link.rel_label':      '関係',
-	'link.rel_ph':         'どういう関係ですか？',
 	'link.rel_sug_help':   '候補にすぎません。どんな語でもかまいません',
 	'link.rel_use':        '「{rel}」を使う',
 	'link.note_label':     'メモ',
@@ -1484,6 +1513,7 @@
 	'agents.already_folded_body': 'このエージェントの要約は、すでに結晶にたたみ込まれています。',
 	'agents.a_diamond':           'Diamond',
 	'agents.clear_diamond_filter': 'Diamond の絞り込みを解除',
+	'agents.clear_chat_filter':    'チャットの絞り込みを解除',
 	'instructions.chip_help':     'すべてのエージェントに渡される、あなたの決めごとです。クリックで開きます。',
 
 	// ── それぞれのエージェントに伝えられること ─────────────────
@@ -1764,8 +1794,10 @@
 	'agents.no_diamond':        'Diamond なし',
 	'agents.no_diamond_help':   'この実行に Diamond はありません',
 	'agents.only_from':         '「{name}」から出たエージェントだけ表示',
+	'agents.only_from_chat':    'このチャットから出たエージェントだけ表示',
 	'agents.from_chat':         'チャット',
 	'agents.from_chat_help':    'チャット「{name}」から送られました。',
+	'agents.from_chat_help_when': 'まだ名前を付けていないチャットから送られました（最後の更新：{when}）。',
 	'agents.no_diamond_fold':   'このエージェントはチャットから送られたので、たたみ込む先のクリスタルがありません。報告はその会話の中にあり、全文は「読む」から見られます。',
 	'agents.report_one':        'あなたが送ったエージェントが終わりました。',
 	'agents.report_n':          'あなたが送ったエージェントのうち {n} 件が終わりました。',
@@ -1915,6 +1947,7 @@
 	'pending.cancel': '取りやめる',
 	'pending.cancel_named': '取りやめる：{what}',
 	'pending.noted': '了解し、リストから外しました。',
+	'pending.opened': '送信用に開きました。送信するまでここに残ります。',
 	'pending.diamond_gone': 'これを出した Diamond はもうないので、相談する相手がいません。',
 	'pending.discuss_prompt': '承認する前に、これについてもう少し話し合う必要があります：「{headline}」',
 	'crystal.steer_paused': '一時停止中。タイルで再生を押してください',

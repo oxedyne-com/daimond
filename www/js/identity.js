@@ -56,6 +56,7 @@
 	var K_ALG  = 'daimond-id-alg';		// 'Ed25519' | 'ECDSA-P256'.
 	var K_FP   = 'daimond-id-fp';		// public-key fingerprint, for display.
 	var K_NAME = 'daimond-id-name';		// the user's chosen display name.
+	var K_HDL  = 'daimond-id-handle';	// the ACCOUNT's public handle: {h, t}. See below.
 
 	// ── In-memory state (present only while unlocked) ──────────
 	// Both are dropped by lock(); neither is ever persisted.
@@ -305,6 +306,124 @@
 		return displayName();
 	}
 
+	// ── The account's public handle ────────────────────────────
+	//
+	// NOT `displayName()` above, and the difference is the whole of why this
+	// exists. That name labels THIS DEVICE'S KEYPAIR: it lives only here, it
+	// does not travel, and nobody else ever sees it. This one belongs to the
+	// ACCOUNT, rides the sync parcel so every device of the account agrees, and
+	// is what another person sees -- the name a Diamond is shared with, and the
+	// name a rating is attributed to. Two different things that both read as "a
+	// name", which is exactly why the wrong one is easy to reach for.
+	//
+	// THE GATEWAY OWNS IT. The handle is minted there at registration and every
+	// stamp on it is the gateway's clock, not this browser's. Nothing in this
+	// file invents either half, and that is not a detail: the record travels in
+	// the sync parcel, `push()` skips the wire only while two collects give the
+	// same bytes, and a field this device restamped on the way past would make
+	// every parcel differ from the last one sent. Two devices then push at each
+	// other for ever -- which has happened here once, over a pairing name.
+	//
+	// So both halves are copied verbatim from the server, and the merge below
+	// takes the larger record rather than writing one of its own.
+
+	/// The account's handle as stored, or `null` when there is none yet.
+	///
+	/// `{h, t}`: the name, and the server's stamp for when it was minted or
+	/// renamed. Null is the honest answer for an account that has never reached
+	/// the gateway -- Daimond runs on a BYOK key with no account at all, and
+	/// such an account has no public name because there is no namespace to have
+	/// one in.
+	function handleRecord() {
+		try {
+			var raw = localStorage.getItem(K_HDL);
+			if (!raw) return null;
+			var rec = JSON.parse(raw);
+			return saneHandle(rec);
+		} catch (e) { return null; }
+	}
+
+	/// What is a handle record, and nothing else. A hand-edited or half-written
+	/// store must not be able to put an object, or a name of any shape at all,
+	/// in front of other people.
+	function saneHandle(rec) {
+		if (!rec || typeof rec !== 'object') return null;
+		var h = (typeof rec.h === 'string') ? rec.h.trim().toLowerCase() : '';
+		var t = Number(rec.t);
+		if (!h || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(h) || h.indexOf('--') !== -1) return null;
+		if (h.length < 3 || h.length > 24) return null;
+		return { h: h, t: (isFinite(t) && t > 0) ? Math.floor(t) : 0 };
+	}
+
+	/// The handle as a string, or `''`.
+	function handle() {
+		var rec = handleRecord();
+		return rec ? rec.h : '';
+	}
+
+	/// The handle as it travels in the sync parcel.
+	///
+	/// A FIXED SHAPE, always: three keys in one order, whether or not there is a
+	/// handle to carry. A section that appears and disappears is a parcel that
+	/// differs from the last one for a reason that has nothing to do with the
+	/// user's work.
+	function handleSnapshot() {
+		var rec = handleRecord();
+		return { v: 1, h: rec ? rec.h : '', t: rec ? rec.t : 0 };
+	}
+
+	/// Whether an incoming record beats the one held, under a total order both
+	/// devices compute the same way.
+	///
+	/// The later stamp wins. On an equal stamp -- two devices that heard about
+	/// the same rename -- the lexicographically smaller name wins, which is
+	/// arbitrary but SYMMETRIC: both devices reach the same answer whichever
+	/// parcel arrives first, so the pair converges instead of taking turns.
+	function handleBeats(incoming, mine) {
+		if (!incoming) return false;
+		if (!mine) return true;
+		if (incoming.t !== mine.t) return incoming.t > mine.t;
+		return incoming.h < mine.h;
+	}
+
+	/// Take a handle record the gateway has just handed this device in answer to
+	/// its OWN request. Returns true when this device moved.
+	///
+	/// Authoritative, where `adoptHandle` below is a merge, and the difference
+	/// matters exactly once: when this device is holding a record whose stamp is
+	/// somehow ahead of the gateway's. A merge would then refuse the answer to
+	/// the very question this device asked -- the rename would be reported as
+	/// having worked, because it did, while the device went on showing the old
+	/// name. Still written VERBATIM, and still only when the record actually
+	/// differs, so this cannot restamp either.
+	function setHandle(rec) {
+		var incoming = saneHandle(rec);
+		var mine     = handleRecord();
+		if (!incoming) return false;
+		if (mine && mine.h === incoming.h && mine.t === incoming.t) return false;
+		try { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }
+		catch (e) { return false; }			// private mode: nothing was stored, nothing moved
+		try { window.dispatchEvent(new Event('daimond:handle')); } catch (e) { /* no window */ }
+		return true;
+	}
+
+	/// Take a handle record from the sync parcel. Returns true when this device
+	/// moved.
+	///
+	/// WRITTEN VERBATIM, stamp included. Nothing here reads a clock. Adopting a
+	/// record this device already agrees with writes nothing at all, so the next
+	/// parcel is byte-identical to the one that arrived -- which is what makes
+	/// the field a fixed point and keeps the two devices quiet.
+	function adoptHandle(rec) {
+		var incoming = saneHandle(rec);
+		var mine     = handleRecord();
+		if (!handleBeats(incoming, mine)) return false;
+		try { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }
+		catch (e) { return false; }			// private mode: nothing was stored, nothing moved
+		try { window.dispatchEvent(new Event('daimond:handle')); } catch (e) { /* no window */ }
+		return true;
+	}
+
 	/// Change the passphrase. Verifies the current one by unwrapping the
 	/// private key with it, then re-derives under a FRESH salt and re-wraps.
 	///
@@ -429,6 +548,7 @@
 		localStorage.removeItem(K_ALG);
 		localStorage.removeItem(K_FP);
 		localStorage.removeItem(K_NAME);
+		localStorage.removeItem(K_HDL);
 	}
 
 	// ── Signing / public key (for future Oxegen binding) ───────
@@ -536,6 +656,12 @@
 			alg:  localStorage.getItem(K_ALG) || 'Ed25519',
 			fp:   localStorage.getItem(K_FP)  || '',
 			name: localStorage.getItem(K_NAME) || '',
+			// The account's public handle travels too, so the second device
+			// shows the account's name from the moment it is adopted rather than
+			// waiting for its first gateway round -- which on a phone paired in a
+			// tunnel could be a long wait. Copied whole, stamp and all; the
+			// receiving device gets a fact, not a fresh one.
+			hdl:  handleRecord(),
 		};
 	}
 
@@ -554,6 +680,13 @@
 		localStorage.setItem(K_ALG,  b.alg || 'Ed25519');
 		localStorage.setItem(K_FP,   b.fp || '');
 		localStorage.setItem(K_NAME, b.name || '');
+		// REPLACED, not merged. This device is becoming a different account, so
+		// the handle it held belongs to somebody else now; the merge rule would
+		// keep whichever record had the later stamp and leave this device
+		// showing a name that is not its account's.
+		var hdl = saneHandle(b.hdl);
+		if (hdl) localStorage.setItem(K_HDL, JSON.stringify({ h: hdl.h, t: hdl.t }));
+		else     localStorage.removeItem(K_HDL);
 		lock();		// require an explicit unlock with the passphrase next.
 		return true;
 	}
@@ -567,8 +700,21 @@
 		lock:         lock,
 		isUnlocked:   isUnlocked,
 		fingerprint:  fingerprint,
+		/// This DEVICE's label for its own keypair. Local, private, and not the
+		/// account's public name -- see `handle` below.
 		displayName:  displayName,
 		rename:       rename,
+		/// The ACCOUNT's public handle: what other people see. Minted and
+		/// stamped by the gateway; this file only ever copies it.
+		handle:         handle,
+		handleRecord:   handleRecord,
+		/// The handle as it rides the sync parcel, and the merge that takes one
+		/// off it. See the note above `handleRecord` for why neither stamps.
+		handleSnapshot: handleSnapshot,
+		adoptHandle:    adoptHandle,
+		/// The answer to this device's own request to the gateway, which is the
+		/// authority on what the account is called. See the note above it.
+		setHandle:      setHandle,
 		changePassphrase: changePassphrase,
 		verify:       verify,
 		sign:         sign,

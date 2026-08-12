@@ -8,7 +8,8 @@
 //
 // What is pinned here: that writes count and reads do not, that re-folding does not stack
 // duplicates, that a link to a since-deleted file says so rather than failing quietly, and
-// that the strip stays hidden until there is something in it.
+// that the strip reads as an offer while there is nothing in it -- it used to hide, which
+// took the `+` inside it out of reach in the one state that control exists for.
 //
 // Run with dev/serve.mjs up. No gateway needed.
 import { open, signInAs } from './harness.mjs';
@@ -177,17 +178,34 @@ await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'artefacts');
 await p.waitForTimeout(3000);
 
+// The strip USED TO HIDE at zero, and this pinned that. It cannot: the control
+// that attaches the first thing lives inside the list the strip opens, so a
+// strip that hid itself hid the only way in, in exactly the state it is for.
+// What it must do now is read as an offer rather than as a count of nothing --
+// and still open onto that control.
 const empty = await p.evaluate(async () => {
 	const row = Array.from(document.querySelectorAll('#diamond-list .diamond-box'))
 		.find(e => /Nothing done yet/.test(e.textContent));
-	if (!row) return 'no such row';
+	if (!row) return { row: 'no such row' };
 	row.click();
 	await new Promise(r => setTimeout(r, 1200));
 	const el = document.getElementById('arte-strip');
-	return el ? el.style.display : 'absent';
+	if (!el) return { row: 'ok', strip: 'absent' };
+	const shown = getComputedStyle(el).display !== 'none';
+	el.click();
+	await new Promise(r => setTimeout(r, 700));
+	return {
+		row:   'ok',
+		shown: shown,
+		text:  el.textContent.trim(),
+		add:   !!document.querySelector('#arte-list [data-act="attach-add"]'),
+	};
 });
-check('a Diamond with no artefacts shows no strip at all',
-	empty === 'none' || empty === 'absent', empty);
+check('a Diamond with no artefacts still offers the strip, saying it holds nothing',
+	empty.shown === true && /\S/.test(empty.text || '') && !/\d/.test(empty.text || ''),
+	JSON.stringify(empty));
+check('and opening it reaches the control that attaches the first thing',
+	empty.add === true, JSON.stringify(empty));
 
 await s.close();
 

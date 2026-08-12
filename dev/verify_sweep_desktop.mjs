@@ -227,6 +227,20 @@ const AUDIT = function () {
 		if (!parsed.length) return;
 		const clips = clippers(el);
 		if (!clips.length) return;
+		// A clipper that has already thrown the element away WHOLLY takes its ring
+		// with it: ink nobody can see is not a defect. Without this the walk skips
+		// only that clipper's side (`room < -1` below) and carries on to a farther
+		// ancestor, so `body { overflow: hidden }` gets blamed for shaving ink off
+		// a control the scroller above it discarded 180px ago. That is how
+		// `select#cfg-crystal-cap` was reported as a clipped focus ring: the Admin
+		// drawer's foot is always at least 200px above the viewport's, so whenever
+		// `body` CAN clip a ring on a drawer descendant, that descendant is off
+		// screen by construction.
+		for (const k of clips) {
+			const outY = k.oy !== 'visible' && (r.bottom <= k.t + 1 || r.top >= k.b - 1);
+			const outX = k.ox !== 'visible' && (r.right <= k.l + 1 || r.left >= k.r - 1);
+			if (outX || outY) return;
+		}
 		for (const s of parsed) {
 			// Hard ink is spread and offset: a ring, an outline, a lift with a
 			// crisp edge. Blur alone fades, so a cut in it is a note.
@@ -687,7 +701,13 @@ const plant = async () => page.evaluate(() => {
 	const fb = document.createElement('button');
 	fb.id = 'probe-focus';
 	fb.textContent = 'ring';
-	(document.getElementById('session-list') || document.body).appendChild(fb);
+	// FIRST child, not last. Appended to a `#session-list` that the sweep's own
+	// workspace has already filled, the probe lands below the scrollport and is
+	// measured at `visible: 0` -- so the one check that proves this audit can see
+	// a clipped ring was itself only ever proved red against ink off screen. The
+	// guard above then correctly discards it, and the self-test says so.
+	const host = document.getElementById('session-list') || document.body;
+	host.insertBefore(fb, host.firstChild);
 });
 const clear = async () => page.evaluate(() => {
 	['sweep-probe', 'probe-off', 'probe-style', 'probe-focus'].forEach((id) => {

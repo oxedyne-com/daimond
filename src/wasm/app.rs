@@ -320,36 +320,62 @@ impl DaimondApp {
         self.registry.tools.contains(&Tool::SpawnAgent)
     }
 
-    /// Confine a chat's dispatched worker: read anywhere, write in named places, run only on the
-    /// machine paths among them.
+    /// Confine a chat to its own WORKSPACE -- its own turn, and every worker it dispatches.
     ///
-    /// The chat's answer to [`DaimondApp::set_diamond_scope`], and the asymmetry between them is
-    /// the design rather than an oversight.  A Diamond confines both verbs, because a daimon may
-    /// see only what its Diamond holds.  A chat is the user's own conversation over their whole
-    /// workspace: *"summarise these ten files"* must not require attaching ten files first, and a
-    /// worker reading what the chat could already read is equal reach, not greater -- a person
-    /// asked the question either way.  What an unattended worker must not do is ALTER something
-    /// nobody put in front of it.
+    /// **Call this on the chat's own app as well as on its workers.**  It was called on workers
+    /// alone until 2026-08-11, which meant the confinement was drawn around the thing that was
+    /// dispatched rather than around the conversation that dispatched it -- and the conversation is
+    /// what actually edits files.  On that day a daimon in an ordinary chat edited two files of the
+    /// user's own book, in a directory under no version control, and put them back only because it
+    /// chose to.  A worker fence would not have stopped it, because no worker was involved.
     ///
-    /// So: reading is free, writing is an allow-list, and a command -- which cannot be inspected
-    /// for whether it writes -- is treated as a write and runs only where the user attached
-    /// something on this machine.  A chat with nothing attached has a worker that can read and
-    /// think and write its own notes, and cannot run anything at all.
+    /// The remedy is a WORKING DIRECTORY and not a permission dialog.  Nothing here asks the user
+    /// anything: the friction is paid once, when a folder is nominated with the paperclip, and
+    /// inside that folder the model works exactly as freely as it did before.  Attaching is the
+    /// permission.  A fence that also interrupts would have missed the point twice over -- and the
+    /// permission ladder, which is where interruption lives, is a separate mechanism this does not
+    /// touch.
+    ///
+    /// The bounds are [`crate::tools::chat_bounds`], which is [`crate::tools::diamond_bounds`]:
+    /// both verbs fenced, so the blast radius is a real one.  Reading used to be free here and is
+    /// not any more, which is the cost of the change and is stated on the bound itself.
+    ///
+    /// **`workspace` is what the user MARKED into this chat's workspace, and not the paperclip's
+    /// whole attachment list.**  An attachment carries two independent things: Note or Read, which
+    /// is a cost decision about what is quoted into the prompt and grants no reach whatever; and
+    /// the workspace mark, which is what reaches here.  A path can be in the workspace and Read at
+    /// once.  A caller that handed over everything attached would have made Note into a grant.
     ///
     /// `scratch` is the chat's own working folder under [`crate::tools::CHAT_ROOT`], which is
-    /// browser storage and therefore never a path on the user's disk.  `attached` is a JSON array
-    /// of what the user put in this chat's scope with the paperclip.  Malformed input yields an
-    /// empty list rather than an error, and an empty list still leaves the scratch: a scope that
-    /// failed open would be the one bug in here that matters.
+    /// browser storage and therefore never a path on the user's disk -- so a chat with an empty
+    /// workspace has somewhere to think and nowhere to run, exactly as a Diamond with no attachment
+    /// does.  `read_only` is a JSON array of workspace paths to be consulted rather than edited; it
+    /// may be omitted, and is today, because no control on the chat surface says that yet.
+    /// Malformed input yields an empty list rather than an error, and an empty list still leaves
+    /// the scratch: a scope that failed open would be the one bug in here that matters.
     ///
     /// COMPOSED and never assigned, exactly as [`DaimondApp::set_diamond_scope`] is: a second
-    /// caller must not be able to widen what a first one set.
+    /// caller must not be able to widen what a first one set.  **A consequence the browser has to
+    /// respect: composition INTERSECTS, so re-scoping a live chat after the user adds one more
+    /// folder to its workspace does not widen it.**  A chat whose workspace has changed needs a
+    /// fresh app, which is what the page's own turn path does when the marked set no longer matches
+    /// the one its app was built with.
     ///
     /// # Arguments
     /// * `scratch` - The chat's own working directory, workspace-relative.
-    /// * `attached` - JSON array of paths the user put in this chat's scope.
-    pub fn set_chat_scope(&mut self, scratch: String, attached: String) {
-        let bounds = crate::tools::chat_bounds(&scratch, &parse_path_array(&attached));
+    /// * `workspace` - JSON array of paths the user marked into this chat's workspace.
+    /// * `read_only` - JSON array of those that may be read but not written; may be omitted.
+    pub fn set_chat_scope(
+        &mut self,
+        scratch:   String,
+        workspace: String,
+        read_only: Option<String>,
+    ) {
+        let paths = parse_path_array;
+        let bounds = crate::tools::chat_bounds(
+            &scratch,
+            &paths(&workspace),
+            &paths(&read_only.unwrap_or_default()));
         self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
     }
 
@@ -413,12 +439,16 @@ impl DaimondApp {
 
     /// What this agent is actually confined to, as the engine holds it.
     ///
-    /// Exists so that [`DaimondApp::set_diamond_scope`] can be checked rather than assumed.  A
-    /// scope that was asked for and did not take leaves an agent with the reach of an ordinary
-    /// workspace turn -- fenced to the whole granted folder rather than to one Diamond -- and a
-    /// caller that read success from the absence of an exception would never find out.  Failing
-    /// open is the one way this can go wrong that matters, so the browser sets the scope, reads it
-    /// back here, and refuses to run a turn on a disagreement.
+    /// Exists so that [`DaimondApp::set_diamond_scope`] and [`DaimondApp::set_chat_scope`] can be
+    /// checked rather than assumed.  A scope that was asked for and did not take leaves an agent
+    /// with the reach of an ordinary workspace turn -- the whole workspace, and the whole granted
+    /// folder for its commands -- and a caller that read success from the absence of an exception
+    /// would never find out.  Failing open is the one way this can go wrong that matters, so the
+    /// browser sets the scope, reads it back here, and refuses to run a turn on a disagreement.
+    ///
+    /// It answers for both surfaces because both now carry the same kind of rule: a chat's scope
+    /// arrives in `allow`, exactly as a Diamond's does, and a caller checking a chat looks for its
+    /// scratch folder there.
     ///
     /// Returns a compact JSON object:
     ///
@@ -451,10 +481,14 @@ impl DaimondApp {
                 _ => None,
             })
             .collect();
-        // The WRITE allow-list, which a chat's worker carries and a Diamond's does not. Reported
-        // beside `allow` and never merged into it: they are different fences -- one governs both
-        // verbs, the other governs writing alone -- and a caller that could not tell them apart
-        // would read a chat's freely-reading worker as a confined one.
+        // The WRITE allow-list. Reported beside `allow` and never merged into it: they are
+        // different fences -- one governs both verbs, the other governs writing alone -- and a
+        // caller that could not tell them apart would read a freely-reading turn as a confined one.
+        //
+        // EMPTY for everything this build composes. A chat used to carry one and now carries the
+        // same both-verb rule a Diamond does (see `crate::tools::Bound::OnlyWriteUnder`), so a page
+        // that still tests this field to decide whether a chat's scope took is testing a field that
+        // can no longer be anything but empty, and is failing open.
         let write_allow: Vec<String> = bounds.iter()
             .filter_map(|b| match b {
                 crate::tools::Bound::OnlyWriteUnder(p) => Some(crate::tools::normalise(p)),

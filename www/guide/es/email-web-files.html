@@ -30,6 +30,7 @@
 			<a href="sync.html">Sincronización entre dispositivos</a>
 			<a href="spending.html">Gastos</a>
 			<a href="../machine-operations.html">Comandos en el equipo</a>
+			<a href="../improve.html">Mejorar Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -47,7 +48,7 @@
 	</figure>
 
 	<h3 id="s2">Añadir un buzón</h3>
-	<p>Elige <span class="ui">+</span> (añadir un buzón) en la cabecera del panel Correo. Escribe tu dirección y Daimond adivina los ajustes de servidor de los proveedores corrientes; todos los campos siguen siendo editables, porque una conjetura no es un hecho. La mayoría de los proveedores quieren una <strong>contraseña de aplicación</strong> — una contraseña con un único propósito que generas en los ajustes de seguridad de tu cuenta de correo — y no la contraseña de tu cuenta. El panel dice dónde encontrarla para tu proveedor.</p>
+	<p>Elige <span class="ui">+</span> (añadir un buzón) en la cabecera del panel Correo. Escribe tu dirección y Daimond adivina los ajustes de servidor de los proveedores corrientes; todos los campos siguen siendo editables, porque una conjetura no es un hecho. La mayoría de los proveedores quieren una <strong>contraseña de aplicación</strong> (una contraseña con un único propósito que generas en los ajustes de seguridad de tu cuenta de correo) y no la contraseña de tu cuenta. El panel dice dónde encontrarla para tu proveedor.</p>
 	<div class="note">Tu credencial de correo se guarda en este dispositivo, envuelta bajo tu frase de paso. Se le entrega a la pasarela solo para una sincronización, se conserva durante una conversación con tu servidor de correo y luego se olvida. Daimond no guarda correo en ningún servidor y no ve nunca la contraseña de tu cuenta.</div>
 
 	<h3 id="s3">Leer y sincronizar</h3>
@@ -58,7 +59,7 @@
 	<div class="note"><strong>Solo tú puedes enviar correo.</strong> El botón <span class="ui">Enviar</span> es lo único en Daimond que pone correo en el cable, y solo una persona puede pulsarlo. El daimon puede redactar un mensaje a tu lado, pero no puede enviarlo.</div>
 
 	<h2 id="s5">El panel Web</h2>
-	<p>Pídele a Daimond que abra una página web — <em>«enséñame el capítulo de ownership de Rust»</em> — o pega un enlace en el chat. Hay tres maneras de poner una página en el escenario, y cuál funciona depende del sitio.</p>
+	<p>Pídele a Daimond que abra una página web (<em>«enséñame el capítulo de ownership de Rust»</em>) o pega un enlace en el chat. Hay tres maneras de poner una página en el escenario, y cuál funciona depende del sitio.</p>
 
 	<figure class="shot" data-shot="web-panel">
 		<img alt="El panel Web mostrando una página en el escenario, con los controles de atrás, recargar y abrir en una pestaña en su cabecera." src="../shots/web-panel.png" loading="lazy">
@@ -90,9 +91,9 @@
 	<h3 id="s10">Tres maneras de meter un archivo</h3>
 	<p>Meter un archivo en el espacio de trabajo y adjuntarlo a un Diamond son actos distintos. Hay tres vías de entrada, y cada una es para un caso:</p>
 	<ul>
-		<li><strong>Subir archivos</strong> — el botón de la flecha hacia la bandeja, en la cabecera del panel. Para un archivo o un puñado. Un selector de archivos corriente, en todos los navegadores.</li>
-		<li><strong>Importar una carpeta…</strong> — para una carpeta entera que deba vivir en el espacio de trabajo del navegador y sincronizarse. Solo en navegadores basados en Chromium.</li>
-		<li><strong>Abrir una carpeta de verdad</strong> — la ficha <span class="ui">Equipo</span> — tu propio disco <em>es</em> el espacio de trabajo: no se copia nada y no se sincroniza nada. Solo en navegadores basados en Chromium.</li>
+		<li><strong>Subir archivos</strong>: el botón de la flecha hacia la bandeja, en la cabecera del panel. Para un archivo o un puñado. Un selector de archivos corriente, en todos los navegadores.</li>
+		<li><strong>Importar una carpeta…</strong>: para una carpeta entera que deba vivir en el espacio de trabajo del navegador y sincronizarse. Solo en navegadores basados en Chromium.</li>
+		<li><strong>Abrir una carpeta de verdad</strong>: la ficha <span class="ui">Equipo</span> — tu propio disco <em>es</em> el espacio de trabajo: no se copia nada y no se sincroniza nada. Solo en navegadores basados en Chromium.</li>
 	</ul>
 	<p>Un agente también puede escribir un archivo donde tenga permiso, y el correo llega aquí como archivos corrientes.</p>
 
@@ -131,9 +132,9 @@
 	<h3 id="s16">Guardado, en la nube, o fijado</h3>
 	<p>Un archivo está en uno de tres estados, y el árbol muestra cuál:</p>
 	<ul>
-		<li><strong>Guardado en este dispositivo</strong> — se abre al instante.</li>
-		<li><strong>Solo en la nube</strong> — marcado con una nube. Sigue siendo tu archivo, sigue en la lista, sigue a salvo, simplemente no está aquí ahora mismo. Al pulsarlo se lo trae, y el control de traer de su fila hace lo mismo.</li>
-		<li><strong>Fijado</strong> — se conserva siempre en este dispositivo y nunca se libera solo. La chincheta está en la fila, junto a un control que libera el espacio de un archivo guardado.</li>
+		<li><strong>Guardado en este dispositivo</strong>: se abre al instante.</li>
+		<li><strong>Solo en la nube</strong>: marcado con una nube. Sigue siendo tu archivo, sigue en la lista, sigue a salvo, simplemente no está aquí ahora mismo. Al pulsarlo se lo trae, y el control de traer de su fila hace lo mismo.</li>
+		<li><strong>Fijado</strong>: se conserva siempre en este dispositivo y nunca se libera solo. La chincheta está en la fila, junto a un control que libera el espacio de un archivo guardado.</li>
 	</ul>
 	<p>Según se llena el almacenamiento del navegador, los archivos que llevan más tiempo sin usarse se liberan solos a la nube; un archivo fijado nunca.</p>
 
@@ -164,8 +165,8 @@
 
 	<p>Aparecen dos clases de herramienta:</p>
 	<ul>
-		<li><strong>Herramientas incorporadas</strong> — lo que ya se le entrega al agente, gratis. El panel enumera exactamente lo que tiene, así que no puede prometer una herramienta que no está.</li>
-		<li><strong>Herramientas desbloqueables</strong> — extras con precio, que muestran si esta cuenta ya tiene el desbloqueo.</li>
+		<li><strong>Herramientas incorporadas</strong>: lo que ya se le entrega al agente, gratis. El panel enumera exactamente lo que tiene, así que no puede prometer una herramienta que no está.</li>
+		<li><strong>Herramientas desbloqueables</strong>: extras con precio, que muestran si esta cuenta ya tiene el desbloqueo.</li>
 	</ul>
 	<p>Para añadir una, elígela y confirma; el coste se descuenta de tus créditos, y una vez desbloqueada sigue disponible.</p>
 
@@ -187,6 +188,7 @@
 		<a href="sync.html">Sincronización entre dispositivos</a>
 		<a href="spending.html">Gastos</a>
 		<a href="../machine-operations.html">Comandos en el equipo</a>
+		<a href="../improve.html">Mejorar Daimond</a>
 	</nav>
 </footer>
 </body>

@@ -7,6 +7,18 @@
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
+<style>
+/* The region map. On a phone the whole schematic scaled to the column width put
+   its labels at five pixels, which is a diagram that says nothing to the reader
+   who most needs it. It keeps a floor on its width and scrolls sideways inside
+   its own box instead: the page still never scrolls sideways, and the words can
+   still be read. The same treatment the widget map on improve.html has, and the
+   floor is set from the same measurement -- 720px puts this map's smallest label
+   at the eleven rendered pixels that one's smallest label already gets, because
+   this map's smallest type is 9 units against that one's 10. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 720px; }
+</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -30,6 +42,7 @@
 			<a href="sync.html">跨设备同步</a>
 			<a href="spending.html">支出</a>
 			<a href="../machine-operations.html">在本机运行命令</a>
+			<a href="../improve.html">改进 Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -38,7 +51,7 @@
 	<h1>界面</h1>
 	<p class="lede">把屏幕走一遍：三个区域，以及每一部分做什么。知道了这三个区域，Daimond 里的每样东西就都有了位置。</p>
 
-	<figure class="diagram">
+	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Daimond 窗口的各个区域</title>
 			<desc id="rm-desc">窗口的示意图。最上面横着一条顶栏。它下面并排三个区域：左边是侧栏（分隔线上方是你正在做的东西，下方是管理面板），中间是舞台（对话），右边是停靠区（邮件、工作区和智能体）。</desc>
@@ -62,13 +75,11 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
 			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">顶栏</text>
-			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
-			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
 			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
 			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
 			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
@@ -200,7 +211,7 @@
 	<h3 id="s4">管理面板</h3>
 	<p>分隔线下面，管理面板是这台机器状态的一览。设置放在这里而不是弹窗里，所以旁边的聊天一直活着：那个问你要应用专用密码的框还在屏幕上时，你就能问 Daimond 那是什么。每一行只要能动手，就是一个按钮，打开它所指的东西：</p>
 	<ul>
-		<li>一个 <strong>身份行</strong> —— 你在这台设备上是谁 —— 旁边有一个设置齿轮。</li>
+		<li>一个 <strong>身份行</strong> （你在这台设备上是谁）旁边有一个设置齿轮。</li>
 		<li><span class="ui">模型</span>，数出你连接了几家提供商，并打开模型表单。</li>
 		<li><span class="ui">额度</span>，显示你的余额，并打开额度视图。</li>
 		<li><span class="ui">工具 · N/M</span>，有多少工具可用，并打开工具面板。</li>
@@ -209,7 +220,7 @@
 	</ul>
 
 	<h3 id="s5">你跑的是哪个版本</h3>
-	<p> <span class="ui">版本</span> 行读起来是一个名字加一段时长 —— <span class="ui">版本 · Albany · 今天</span> —— 不是一个构建号。发布按字母顺序以西澳大利亚的地名命名，所以不用查什么就看得出先后。一个名字标记的是一个 <strong>里程碑</strong>：Daimond 一天要发好几个构建，每个都起名字只会变成噪音。把鼠标停在这一行上，会给出构建 id 和它发布的日期。</p>
+	<p> <span class="ui">版本</span> 行读起来是一个名字加一段时长（<span class="ui">版本 · Albany · 今天</span>），不是一个构建号。发布按字母顺序以西澳大利亚的地名命名，所以不用查什么就看得出先后。一个名字标记的是一个 <strong>里程碑</strong>：Daimond 一天要发好几个构建，每个都起名字只会变成噪音。把鼠标停在这一行上，会给出构建 id 和它发布的日期。</p>
 	<p>点这一行，会在管理面板里打开 <strong>发布历史</strong>，它从上往下读：</p>
 	<ul>
 		<li><strong>计划中的东西</strong>，排在最前，用虚线框着。</li>
@@ -291,7 +302,7 @@
 	</div>
 
 	<h2 id="s22">顶栏</h2>
-	<p>最上面一排是文字标、一个支出计量条、一行 <strong>面板标签</strong>，最右边是一个按钮，用来 <strong>关联另一台设备</strong>，一个 <strong>关于</strong> 对话框，这份 <strong>指南</strong>，以及 <strong>外观与布局</strong> 菜单。有新构建发布时，旁边会出现一个标签。</p>
+	<p>最上面一排是文字标、一行 <strong>面板标签</strong>，最右边是一个按钮，用来 <strong>关联另一台设备</strong>，一个 <strong>关于</strong> 对话框，这份 <strong>指南</strong>，以及 <strong>外观与布局</strong> 菜单。有新构建发布时，旁边会出现一个标签。</p>
 
 	<h3 id="s23">那一行标签</h3>
 	<p>每个面板都有一个标签，开着关着都有；点一个，就切换那个面板。开着的面板，它的标签是填色的，所以这一行读起来就是屏幕上有什么的一张地图。要是只有关着的面板才有标签，应用最空的时候这一行反而最长，而且每用一次，每个标签都要横着挪一格；位置不动的标签，你才记得住它在哪。（智能体是 <em>每一个</em>的例外：在第一个智能体跑起来之前，它一直不来碍事。）</p>
@@ -306,7 +317,7 @@
 	<p>这一行之所以可以不完整，只因为面板总览是完整的。也没有什么按你用得多不多来排序：一行会自己重排的标签，会毁掉固定位置本来要建立的肌肉记忆。</p>
 
 	<h3 id="s25">命令面板</h3>
-	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> （在 Mac 上）—— 打开一个搜索框，打字就能到达任何面板或任何设置。方向键在结果里移动， <span class="ui">Enter</span> 运行高亮的那一个， <span class="ui">Esc</span> 关闭它。里面列出面板、配色、四档字号、停靠区分格、语言、货币，以及权限模式。要去一个你看得见其标签的面板，这从来不是最快的路；但无论有多少面板，这条路都是齐全的。</p>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> （在 Mac 上）—— 打开一个搜索框，打字就能到达任何面板或任何设置。方向键在结果里移动， <span class="ui">Enter</span> 运行高亮的那一个， <span class="ui">Esc</span> 关闭它。里面列出面板、配色、四档字号、停靠区分格、语言、货币，以及权限模式。要去一个你看得见其标签的面板，这从来不是最快的路；但无论有多少面板，这条路都是齐全的。</p>
 
 	<h3 id="s26">用键盘，用耳朵</h3>
 	<p>不用鼠标也能操作 Daimond。 <span class="ui">Tab</span> 按控制项画出来的顺序在它们之间移动， <span class="ui">Enter</span> 或 <span class="ui">Space</span> 操作你当前所在的那一个， <span class="ui">Esc</span> 关掉当前打开的东西。每一个对话框、菜单和浮层，角上都还有一个叉：同一个控制项，同一种做法，尺寸按手机上的拇指来定。</p>
@@ -316,24 +327,24 @@
 		<li><strong>邮件完全可以用键盘操作。</strong> 邮箱、文件夹、草稿和邮件都是你能走到、能按下的控制项，不是只认鼠标点击的行。你所在的邮箱和你正在读的文件夹会被标为当前项，于是屏幕阅读器说的是你在哪里，而不只是那里有什么。</li>
 		<li><strong>对话框把焦点关在自己里面</strong> ，只要它开着；关掉时，焦点交还给打开它的那个东西。用 Tab 不会溜到盖住屏幕的窗口后面去，关掉一个也不会把你甩回页面顶端。</li>
 	</ul>
-	<p>用屏幕阅读器时，一条回答只在 <strong>到齐的那一刻播报一次</strong> —— “Daimond 回答了，120 个词” —— 而不是一边写一边播。实时区域每变一次就念一次，所以一条流式的回答，只要模型还在打字，就会被一片一片地念给你听。人们会把它关掉，而一个播报被关掉的应用，看着像能用，其实不能。一轮一句话是少了，但它能用。</p>
+	<p>用屏幕阅读器时，一条回答只在 <strong>到齐的那一刻播报一次</strong> （“Daimond 回答了，120 个词”）而不是一边写一边播。实时区域每变一次就念一次，所以一条流式的回答，只要模型还在打字，就会被一片一片地念给你听。人们会把它关掉，而一个播报被关掉的应用，看着像能用，其实不能。一轮一句话是少了，但它能用。</p>
 	<p>整个窗口都有命名的区域和真正的标题，所以屏幕阅读器自己的地标列表，就是这个应用一份能用的目录。任何你走不到、听不到的地方都是缺陷，不是限制；请说出来。</p>
 
 	<h3 id="s27">外观与布局</h3>
 	<p>右上角那个按钮打开一个菜单，里面装着关于 Daimond 长什么样、怎么摆的选择 —— 而不是它做什么：</p>
 	<ul>
-		<li><strong>视图</strong> — <span class="ui">简洁</span> 或 <span class="ui">全量</span>。简洁只给出每样东西的名字和它是不是在跑，其余的都在一按之外；全量把模型、花费和上下文摆在旁边，于是两个东西不用打开就能比。它同时定下界面的形状，因为最高密度配上疏朗的形状，是没人想要的组合。某张卡片自己的齿轮，仍然可以为那张卡片覆盖它。</li>
-		<li><strong>主题</strong> —— 十一种配色，分成三组： <span class="ui">浅色</span>, <span class="ui">中间色</span> 和 <span class="ui">深色</span>。分组是用来找的，组里选哪个是口味问题，只有 <span class="ui">琥珀</span>例外：它把蓝光从所画的一切里剔了出去，为的是深夜阅读。这份指南在 Daimond 里显示时，会跟着应用当前的配色。</li>
-		<li><strong>字号</strong> —— 四档： <span class="ui">小</span>, <span class="ui">标准</span>, <span class="ui">大</span> 和 <span class="ui">更大</span>。只有字体会跟着变：框架、留白和面板宽度都停在原处，因为这是一个用来读的控制项，不是缩放。想要更大的界面，用浏览器自己的缩放。菜单里的样例就按正在选的那一档排版，所以这个控制项是把变化显示出来，而不是说出来。</li>
-		<li><strong>停靠区分格</strong> — <span class="ui">自动</span>, <span class="ui">1</span> 列, <span class="ui">2×2</span>, <span class="ui">2×3</span> 或 <span class="ui">3×2</span>，每一个都按它所选的网格画出来。分格还决定了 <em>停靠区能装下几个面板</em>，也就是列数乘行数：单列四个，2×2 四个，2×3 或 3×2 都是六个。 <span class="ui">自动</span> 让窗口自己决定，放得下第二列时就加上。换到更小的网格，放不下的那些面板会被关掉，最近打开的先关，每一个都变回一个你看得见、点得到的标签。</li>
-		<li><strong>语言</strong> 和 <strong>货币</strong> —— Daimond 说什么话，数字用什么币显示。还没有译文表的语言仍显示英文；不论数字以什么货币显示，结算一律用美元。</li>
+		<li><strong>视图</strong>: <span class="ui">简洁</span> 或 <span class="ui">全量</span>。简洁只给出每样东西的名字和它是不是在跑，其余的都在一按之外；全量把模型、花费和上下文摆在旁边，于是两个东西不用打开就能比。它同时定下界面的形状，因为最高密度配上疏朗的形状，是没人想要的组合。某张卡片自己的齿轮，仍然可以为那张卡片覆盖它。</li>
+		<li><strong>主题</strong>，十一种配色，分成三组： <span class="ui">浅色</span>, <span class="ui">中间色</span> 和 <span class="ui">深色</span>。分组是用来找的，组里选哪个是口味问题，只有 <span class="ui">琥珀</span>例外：它把蓝光从所画的一切里剔了出去，为的是深夜阅读。这份指南在 Daimond 里显示时，会跟着应用当前的配色。</li>
+		<li><strong>字号</strong>：四档： <span class="ui">小</span>, <span class="ui">标准</span>, <span class="ui">大</span> 和 <span class="ui">更大</span>。只有字体会跟着变：框架、留白和面板宽度都停在原处，因为这是一个用来读的控制项，不是缩放。想要更大的界面，用浏览器自己的缩放。菜单里的样例就按正在选的那一档排版，所以这个控制项是把变化显示出来，而不是说出来。</li>
+		<li><strong>停靠区分格</strong>: <span class="ui">自动</span>, <span class="ui">1</span> 列, <span class="ui">2×2</span>, <span class="ui">2×3</span> 或 <span class="ui">3×2</span>，每一个都按它所选的网格画出来。分格还决定了 <em>停靠区能装下几个面板</em>，也就是列数乘行数：单列四个，2×2 四个，2×3 或 3×2 都是六个。 <span class="ui">自动</span> 让窗口自己决定，放得下第二列时就加上。换到更小的网格，放不下的那些面板会被关掉，最近打开的先关，每一个都变回一个你看得见、点得到的标签。</li>
+		<li><strong>语言</strong> 和 <strong>货币</strong>：Daimond 说什么话，数字用什么币显示。还没有译文表的语言仍显示英文；不论数字以什么货币显示，结算一律用美元。</li>
 	</ul>
 
 	<h3 id="s28">把一套布置留给某个 Diamond</h3>
 	<p>选中一个 Diamond 时，外观菜单会提出把当前的面板布置留给它，也可以更新或忘掉已经保存的那一套。再打开那个 Diamond，布置就回来，于是回到一件工作，不必再动手把面板一个个摆好。它只在你开口时才保存，从不推测，也从不在后台进行 —— 因为一次悄悄关掉面板的切换，读起来就像工作丢了。</p>
 
 	<h2 id="s29">在窄屏幕上</h2>
-	<p>低于手机宽度时，标签行和面板总览让位给手机外壳，它用更小的地方回答同一个问题：聊天是地板，面板像一张可以拖动的纸从它上面升起来，侧栏变成左上角按钮打开的抽屉。底部一行 —— <span class="ui">聊天</span>, <span class="ui">邮件</span>, <span class="ui">文件</span>, <span class="ui">智能体</span> —— 在它们之间切换，管理面板则从抽屉里往下走就能到。什么都没丢；还是那些面板，只是一次显示一个。</p>
+	<p>低于手机宽度时，标签行和面板总览让位给手机外壳，它用更小的地方回答同一个问题：聊天是地板，面板像一张可以拖动的纸从它上面升起来，侧栏变成左上角按钮打开的抽屉。底部一行（<span class="ui">聊天</span>, <span class="ui">邮件</span>, <span class="ui">文件</span>, <span class="ui">智能体</span>）在它们之间切换，管理面板则从抽屉里往下走就能到。什么都没丢；还是那些面板，只是一次显示一个。</p>
 	<p>装到主屏幕上之后，Daimond 在自己的窗口里运行，没有浏览器的边框零件，并且自动避开刘海和主屏指示条。它还是同一个页面、同一份存下来的工作，所以不需要把任何东西搬进去。</p>
 
 	<div class="next">
@@ -354,6 +365,7 @@
 		<a href="sync.html">跨设备同步</a>
 		<a href="spending.html">支出</a>
 		<a href="../machine-operations.html">在本机运行命令</a>
+		<a href="../improve.html">改进 Daimond</a>
 	</nav>
 </footer>
 </body>

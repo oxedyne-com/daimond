@@ -26,8 +26,14 @@
 	/* The muted rung, matched across the three palettes. At #736A5F this cleared
 	   only 3.1:1 on the tertiary surface -- fine by the audit's floor, but once
 	   the light and candy palettes were lifted to ~4.5 the dark theme became the
-	   hardest of the three to read, which is the incoherence the other way. */
-	--text-muted:        #877D70;
+	   hardest of the three to read, which is the incoherence the other way.
+	   #877D70 then measured 4.04 on `--bg-tertiary` and 4.28 on `--bg-secondary`.
+	   That cleared the audit's own 4.0 for this rung, but the rung is drawn at
+	   11-12px -- `.dview-btn`, `.pop-note`, `.cfg-fieldnote`, `.sys-note` -- and
+	   11px is small text, which WCAG 2.2 SC 1.4.3 asks 4.5 of. This was the
+	   worst of the eleven and is now the last to clear it: 5.16/4.78/4.52 on the
+	   three stable surfaces, 4.19 on hover. */
+	--text-muted:        #908577;
 	--accent:            #D2604F;
 	--accent-hover:      #E07A67;
 	--accent-soft:       #3A211B;
@@ -152,6 +158,13 @@
 	--attach-row-h:      calc(23px * var(--fs-scale) + 9px);
 	--attach-cap:        6;
 	--attach-peek:       14px;
+	/* The workspace group's own cap, in the same tile unit. Three rather than
+	   six because a workspace is a handful of folders where an attachment list
+	   is a pile of files, and because this group is drawn ABOVE the attachments
+	   rather than instead of them: the two together must still leave the
+	   conversation most of the panel. With both groups on screen the arithmetic
+	   tightens again -- `#chat-attachments.two` in app.css. */
+	--ws-cap:            3;
 	/* One icon cell, sized so two rows of them come to the same 192px that six
 	   tiles do: one cap, one footer height, whichever view is showing. */
 	--attach-icon-h:     84px;
@@ -179,8 +192,10 @@
 	--text-primary:      #3A1E3E;
 	--text-secondary:    #7C5578;
 	/* Same reasoning as the light theme's muted rung: #B08AAA read at 2.5-3.0:1
-	   on the candy surfaces. This keeps the mauve and clears 4.4:1. */
-	--text-muted:        #8A5E85;
+	   on the candy surfaces. #8A5E85 kept the mauve and cleared 4.40 on
+	   `--bg-tertiary`, which is under the 4.5 that 11px text asks for; two units
+	   darker clears it at 4.53 and does not visibly change the hue. */
+	--text-muted:        #885C83;
 	--accent:            #C42B7C;
 	--accent-hover:      #D13988;
 	--accent-soft:       #FBDDEF;
@@ -239,9 +254,14 @@
 	/* Muted is the quietest text in the app, not the least readable: it carries
 	   whole explanatory paragraphs (the Prompts note), the section headers and
 	   the spend labels. At #9A9187 those sat at 2.75-3.1:1 on these surfaces --
-	   below every legibility floor -- so the muted rung is set where it clears
-	   4.3:1 everywhere while staying plainly lighter than --text-secondary. */
-	--text-muted:        #787068;
+	   below every legibility floor. #787068 lifted them to 4.31-4.87, which is
+	   what the note here used to record as "clears 4.3:1 everywhere"; but the
+	   figure it clears has to be 4.5, because every one of those paragraphs is
+	   set at 11-12px and that is small text. Three units darker per channel
+	   reaches 4.83/5.08/4.51 on the stable surfaces and 4.20 on hover, and still
+	   reads a rung lighter than --text-secondary (1.16 apart, where Mist has
+	   always shipped at 1.13). */
+	--text-muted:        #756D65;
 	--accent:            #A6322A;
 	--accent-hover:      #C24A38;
 	--accent-soft:       #F6E7E2;

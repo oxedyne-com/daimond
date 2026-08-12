@@ -7,6 +7,18 @@
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
+<style>
+/* The region map. On a phone the whole schematic scaled to the column width put
+   its labels at five pixels, which is a diagram that says nothing to the reader
+   who most needs it. It keeps a floor on its width and scrolls sideways inside
+   its own box instead: the page still never scrolls sideways, and the words can
+   still be read. The same treatment the widget map on improve.html has, and the
+   floor is set from the same measurement -- 720px puts this map's smallest label
+   at the eleven rendered pixels that one's smallest label already gets, because
+   this map's smallest type is 9 units against that one's 10. */
+.diagram.scrolls { overflow-x: auto; }
+.diagram.scrolls svg { min-width: 720px; }
+</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -30,6 +42,7 @@
 			<a href="sync.html">Sincronización entre dispositivos</a>
 			<a href="spending.html">Gastos</a>
 			<a href="../machine-operations.html">Comandos en el equipo</a>
+			<a href="../improve.html">Mejorar Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -38,7 +51,7 @@
 	<h1>La interfaz</h1>
 	<p class="lede">Un recorrido por la pantalla: tres zonas, y qué hace cada parte. Una vez que conoces las zonas, todo en Daimond tiene su sitio.</p>
 
-	<figure class="diagram">
+	<figure class="diagram scrolls">
 		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
 			<title id="rm-title">Las regiones con nombre de la ventana de Daimond</title>
 			<desc id="rm-desc">Un esquema de la ventana. Arriba del todo está la barra superior. Debajo, tres zonas una al lado de otra: la barra lateral a la izquierda (aquello en lo que trabajas encima de un divisor, el panel de administración debajo), el escenario en el centro (la conversación) y el dock a la derecha (Correo, Espacio y Agentes).</desc>
@@ -62,13 +75,11 @@
 			<!-- window + top bar -->
 			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
 			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, meter, panel chips, appearance menu -->
+			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
 			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
 			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
 			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
 			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">La barra superior</text>
-			<rect class="rm-cell" x="322" y="24" width="86" height="18" rx="9"/>
-			<rect class="rm-fill" x="326" y="28" width="34" height="10" rx="5" opacity=".55"/>
 			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
 			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
 			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
@@ -200,7 +211,7 @@
 	<h3 id="s4">El panel de administración</h3>
 	<p>Debajo del divisor, el panel de administración es el estado de la máquina de un vistazo. Los ajustes viven aquí y no en una ventana emergente, así que un chat sigue vivo al lado: puedes preguntarle a Daimond qué es una contraseña de aplicación mientras la caja que te pide una sigue en pantalla. Cada fila sobre la que se puede actuar es un botón que abre lo que nombra:</p>
 	<ul>
-		<li>Una <strong>fila de identidad</strong> — quién eres en este dispositivo — con una rueda dentada al lado.</li>
+		<li>Una <strong>fila de identidad</strong> (quién eres en este dispositivo)con una rueda dentada al lado.</li>
 		<li><span class="ui">Modelos</span>, que cuenta los proveedores que has conectado y abre el formulario de Modelos.</li>
 		<li><span class="ui">Créditos</span>, que muestra tu saldo y abre la vista de Créditos.</li>
 		<li><span class="ui">Herramientas · N de M</span>, cuántas herramientas hay disponibles, y abre el panel Herramientas.</li>
@@ -209,7 +220,7 @@
 	</ul>
 
 	<h3 id="s5">Qué versión estás usando</h3>
-	<p>La fila <span class="ui">Versión</span> se lee como un nombre y una edad — <span class="ui">Versión · Albany · hoy</span> — y no como un número de compilación. Las versiones llevan nombres de lugares de Australia Occidental en orden alfabético, así que la secuencia se lee sin consultar nada. Un nombre marca un <strong>hito</strong>: Daimond publica varias compilaciones al día, y un nombre para cada una sería ruido. Pasa el ratón por la fila para ver el id de la compilación y su fecha de publicación.</p>
+	<p>La fila <span class="ui">Versión</span> se lee como un nombre y una edad (<span class="ui">Versión · Albany · hoy</span>), y no como un número de compilación. Las versiones llevan nombres de lugares de Australia Occidental en orden alfabético, así que la secuencia se lee sin consultar nada. Un nombre marca un <strong>hito</strong>: Daimond publica varias compilaciones al día, y un nombre para cada una sería ruido. Pasa el ratón por la fila para ver el id de la compilación y su fecha de publicación.</p>
 	<p>Al pulsar la fila se abre el <strong>historial de versiones</strong>, que se lee de arriba abajo:</p>
 	<ul>
 		<li><strong>Lo que está previsto</strong>, primero, con un contorno de trazos.</li>
@@ -291,7 +302,7 @@
 	</div>
 
 	<h2 id="s22">La barra superior</h2>
-	<p>A lo largo de la parte de arriba están el logotipo, un medidor de gasto, una fila de <strong>fichas de panel</strong>, y, a la derecha del todo, un botón para <strong>vincular otro dispositivo</strong>, un diálogo <strong>Acerca de</strong> y esta <strong>guía</strong>, y el menú <strong>de apariencia y disposición</strong> — y junto a ellos aparece una ficha cuando sale una compilación nueva.</p>
+	<p>A lo largo de la parte de arriba están el logotipo, una fila de <strong>fichas de panel</strong>, y, a la derecha del todo, un botón para <strong>vincular otro dispositivo</strong>, un diálogo <strong>Acerca de</strong> y esta <strong>guía</strong>, y el menú <strong>de apariencia y disposición</strong> — y junto a ellos aparece una ficha cuando sale una compilación nueva.</p>
 
 	<h3 id="s23">Las fichas</h3>
 	<p>Cada panel tiene una ficha, esté abierto o cerrado, y al pulsar una se abre o se cierra ese panel. La ficha de un panel abierto está rellena, así que la fila se lee como un mapa de lo que hay en pantalla. Si solo la tuvieran los paneles cerrados, la fila sería más larga cuanto más vacía estuviera la aplicación y cada ficha se desplazaría de lado cada vez que se usara una; una ficha que no se mueve es una cuya posición puedes aprender. (Agentes es la excepción a <em>todos</em>: se mantiene apartado hasta que corre el primer agente.)</p>
@@ -306,7 +317,7 @@
 	<p>La fila puede estar incompleta solo porque la galería no lo está. Tampoco se ordena nada por lo mucho que lo uses: una fila que se reordenara sola destruiría la memoria muscular que las posiciones fijas existen para construir.</p>
 
 	<h3 id="s25">La paleta</h3>
-	<p><kbd>Ctrl</kbd> <kbd>K</kbd> — <kbd>Cmd</kbd> <kbd>K</kbd> en un Mac — abre una caja de búsqueda que llega a cualquier panel o ajuste escribiendo. Las flechas recorren los resultados, <span class="ui">Enter</span> ejecuta el resaltado, <span class="ui">Esc</span> la cierra. Enumera los paneles, las paletas, los cuatro tamaños de texto, las cuadrículas del dock, los idiomas, las monedas y los modos de permisos. Nunca es la ruta más rápida a un panel cuya ficha ves; es la ruta que sigue completa por muchos paneles que haya.</p>
+	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> en un Mac — abre una caja de búsqueda que llega a cualquier panel o ajuste escribiendo. Las flechas recorren los resultados, <span class="ui">Enter</span> ejecuta el resaltado, <span class="ui">Esc</span> la cierra. Enumera los paneles, las paletas, los cuatro tamaños de texto, las cuadrículas del dock, los idiomas, las monedas y los modos de permisos. Nunca es la ruta más rápida a un panel cuya ficha ves; es la ruta que sigue completa por muchos paneles que haya.</p>
 
 	<h3 id="s26">Con el teclado, y de oído</h3>
 	<p>Daimond se puede manejar sin ratón. <span class="ui">Tab</span> recorre los controles en el orden en que están dibujados, <span class="ui">Enter</span> o <span class="ui">Espacio</span> acciona aquel en el que estás, y <span class="ui">Esc</span> cierra lo que esté abierto. Cada diálogo, menú y hoja lleva además un aspa en su esquina, un solo control hecho de una sola manera, del tamaño de un pulgar en un teléfono.</p>
@@ -316,24 +327,24 @@
 		<li><strong>Correo se maneja por completo desde el teclado.</strong> Los buzones, las carpetas, los borradores y los mensajes son controles a los que puedes llegar y que puedes pulsar, no filas que solo responden a un clic. El buzón en el que estás y la carpeta que lees se anuncian como los actuales, así que un lector de pantalla dice dónde estás y no solo qué hay.</li>
 		<li><strong>Un diálogo mantiene el foco dentro de sí</strong> mientras está abierto, y lo devuelve a lo que lo abrió. El tabulador no se va a pasear por detrás de una ventana que cubre la pantalla, y cerrar uno no te deja caer al principio de la página.</li>
 	</ul>
-	<p>Con un lector de pantalla, una respuesta se anuncia <strong>una vez, cuando ha llegado</strong> — «Daimond ha respondido, 120 palabras» — y no según se va escribiendo. Una región viva se lee en voz alta en cada cambio, así que una respuesta en streaming se te recitaría a trozos mientras el modelo siguiera escribiendo. La gente eso lo apaga, y una aplicación cuyos anuncios se han apagado parece accesible y no lo es. Una frase por turno es menos, y se puede usar.</p>
+	<p>Con un lector de pantalla, una respuesta se anuncia <strong>una vez, cuando ha llegado</strong> («Daimond ha respondido, 120 palabras»)y no según se va escribiendo. Una región viva se lee en voz alta en cada cambio, así que una respuesta en streaming se te recitaría a trozos mientras el modelo siguiera escribiendo. La gente eso lo apaga, y una aplicación cuyos anuncios se han apagado parece accesible y no lo es. Una frase por turno es menos, y se puede usar.</p>
 	<p>La ventana tiene regiones con nombre y encabezados de verdad por todas partes, así que la propia lista de puntos de referencia de un lector de pantalla es un índice que funciona para la aplicación. Cualquier cosa a la que no puedas llegar o que no puedas oír es un fallo, no un límite; dilo.</p>
 
 	<h3 id="s27">Apariencia y disposición</h3>
 	<p>El botón de arriba a la derecha abre un único menú con las decisiones sobre cómo se ve y se sienta Daimond, frente a lo que hace:</p>
 	<ul>
-		<li><strong>Vista</strong> — <span class="ui">Simple</span> o <span class="ui">Máx</span>. Simple da a cada cosa su nombre y si está en marcha, con todo lo demás a una pulsación; Máx pone al lado el modelo, el coste y el contexto, para comparar dos sin abrir ninguno. Fija con ello la forma de la interfaz, porque una forma aireada a densidad máxima es una combinación que nadie quiere. La rueda dentada de un mosaico sigue mandando sobre ese mosaico.</li>
-		<li><strong>Tema</strong> — once paletas en tres bandas: <span class="ui">Claro</span>, <span class="ui">Intermedio</span> y <span class="ui">Oscuro</span>. La banda es cómo encuentras una; dentro de ella la elección es cuestión de gusto, salvo <span class="ui">Ámbar</span>, que mantiene el azul fuera de todo lo que dibuja, para leer de noche. Esta guía lleva la paleta que lleve la app cuando se muestra dentro de Daimond.</li>
-		<li><strong>Tamaño del texto</strong> — cuatro pasos, <span class="ui">Pequeño</span>, <span class="ui">Normal</span>, <span class="ui">Grande</span> y <span class="ui">Muy grande</span>. Solo responde la letra: el marco, los márgenes y los anchos de panel no se mueven, porque este es un control para leer y no un zoom. Para una interfaz más grande, usa el zoom del propio navegador. La muestra del menú está compuesta en el tamaño que se elige, así que el control enseña el cambio en vez de nombrarlo.</li>
-		<li><strong>Cuadrícula del dock</strong> — <span class="ui">Auto</span>, <span class="ui">1</span> columna, <span class="ui">2×2</span>, <span class="ui">2×3</span> o <span class="ui">3×2</span>, cada una dibujada como la cuadrícula que selecciona. La cuadrícula decide también <em>cuántos paneles puede sostener el dock</em>, sus columnas por sus filas: cuatro en una columna, cuatro a 2×2, seis a 2×3 o a 3×2. <span class="ui">Auto</span> deja decidir a la ventana, y toma una segunda columna en cuanto hay sitio para ella. Una cuadrícula menor cierra los paneles que ya no caben, empezando por los abiertos más recientemente, y cada uno vuelve a ser una ficha que puedes ver y pulsar.</li>
-		<li><strong>Idioma</strong> y <strong>Moneda</strong> — en qué habla Daimond y en qué se muestran las cifras. Un idioma que aún no tiene tabla se queda en inglés; el cobro es siempre en dólares estadounidenses, se muestren las cifras como se muestren.</li>
+		<li><strong>Vista</strong>: <span class="ui">Simple</span> o <span class="ui">Máx</span>. Simple da a cada cosa su nombre y si está en marcha, con todo lo demás a una pulsación; Máx pone al lado el modelo, el coste y el contexto, para comparar dos sin abrir ninguno. Fija con ello la forma de la interfaz, porque una forma aireada a densidad máxima es una combinación que nadie quiere. La rueda dentada de un mosaico sigue mandando sobre ese mosaico.</li>
+		<li><strong>Tema</strong>, once paletas en tres bandas: <span class="ui">Claro</span>, <span class="ui">Intermedio</span> y <span class="ui">Oscuro</span>. La banda es cómo encuentras una; dentro de ella la elección es cuestión de gusto, salvo <span class="ui">Ámbar</span>, que mantiene el azul fuera de todo lo que dibuja, para leer de noche. Esta guía lleva la paleta que lleve la app cuando se muestra dentro de Daimond.</li>
+		<li><strong>Tamaño del texto</strong>: cuatro pasos, <span class="ui">Pequeño</span>, <span class="ui">Normal</span>, <span class="ui">Grande</span> y <span class="ui">Muy grande</span>. Solo responde la letra: el marco, los márgenes y los anchos de panel no se mueven, porque este es un control para leer y no un zoom. Para una interfaz más grande, usa el zoom del propio navegador. La muestra del menú está compuesta en el tamaño que se elige, así que el control enseña el cambio en vez de nombrarlo.</li>
+		<li><strong>Cuadrícula del dock</strong>: <span class="ui">Auto</span>, <span class="ui">1</span> columna, <span class="ui">2×2</span>, <span class="ui">2×3</span> o <span class="ui">3×2</span>, cada una dibujada como la cuadrícula que selecciona. La cuadrícula decide también <em>cuántos paneles puede sostener el dock</em>, sus columnas por sus filas: cuatro en una columna, cuatro a 2×2, seis a 2×3 o a 3×2. <span class="ui">Auto</span> deja decidir a la ventana, y toma una segunda columna en cuanto hay sitio para ella. Una cuadrícula menor cierra los paneles que ya no caben, empezando por los abiertos más recientemente, y cada uno vuelve a ser una ficha que puedes ver y pulsar.</li>
+		<li><strong>Idioma</strong> y <strong>Moneda</strong>: en qué habla Daimond y en qué se muestran las cifras. Un idioma que aún no tiene tabla se queda en inglés; el cobro es siempre en dólares estadounidenses, se muestren las cifras como se muestren.</li>
 	</ul>
 
 	<h3 id="s28">Guardar una disposición con un Diamond</h3>
 	<p>Con un Diamond seleccionado, el menú de apariencia ofrece guardar con él la disposición actual de paneles, y actualizar u olvidar una ya guardada. Volver a abrir ese Diamond la repone, así que volver a un trabajo no es rearmar sus paneles a mano. Solo se guarda cuando lo pides, nunca se deduce ni se hace en segundo plano, porque un cambio que cerrara paneles en silencio se leería como trabajo perdido.</p>
 
 	<h2 id="s29">En una pantalla estrecha</h2>
-	<p>Por debajo del ancho de teléfono, las fichas y la galería dejan paso al armazón de teléfono, que responde a la misma pregunta con menos sitio: el chat es el suelo, un panel sube sobre él como una hoja que puedes arrastrar, y la barra lateral pasa a ser un cajón que abre el botón de arriba a la izquierda. Una fila a lo largo del borde inferior — <span class="ui">Chat</span>, <span class="ui">Correo</span>, <span class="ui">Archivos</span>, <span class="ui">Agentes</span> — pasa de uno a otro, y al panel de administración se llega bajando por el cajón. No se pierde nada; son los mismos paneles, mostrados de uno en uno.</p>
+	<p>Por debajo del ancho de teléfono, las fichas y la galería dejan paso al armazón de teléfono, que responde a la misma pregunta con menos sitio: el chat es el suelo, un panel sube sobre él como una hoja que puedes arrastrar, y la barra lateral pasa a ser un cajón que abre el botón de arriba a la izquierda. Una fila a lo largo del borde inferior (<span class="ui">Chat</span>, <span class="ui">Correo</span>, <span class="ui">Archivos</span>, <span class="ui">Agentes</span>) pasa de uno a otro, y al panel de administración se llega bajando por el cajón. No se pierde nada; son los mismos paneles, mostrados de uno en uno.</p>
 	<p>Instalado en la pantalla de inicio, Daimond corre en su propia ventana sin el mobiliario del navegador, y se mantiene apartado del notch y del indicador de inicio. Es la misma página y el mismo trabajo guardado, así que no hay que mover nada dentro.</p>
 
 	<div class="next">
@@ -354,6 +365,7 @@
 		<a href="sync.html">Sincronización entre dispositivos</a>
 		<a href="spending.html">Gastos</a>
 		<a href="../machine-operations.html">Comandos en el equipo</a>
+		<a href="../improve.html">Mejorar Daimond</a>
 	</nav>
 </footer>
 </body>

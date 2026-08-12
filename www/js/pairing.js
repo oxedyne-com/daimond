@@ -23,7 +23,17 @@
    monitor. That the snapshot applies exactly once falls out of where it
    lives: it exists only inside one redeemed pairing parcel, which is
    consumed in the act of redeeming it, so there is nothing left for a
-   later sync to re-impose. The parcel never carries it either.
+   later sync to re-impose.
+
+   AND A CODE IS NOT THE ONLY WAY IN. A device brought across by a
+   passkey, or one that holds the identity and is unlocked by typing the
+   passphrase, redeems no bundle and so got none of the above — it came
+   up in English on the default palette however long its owner had been
+   using another language. So five of those six now also ride the SYNC
+   PARCEL, which is the one channel every route ends at, and the same
+   "once" rule governs them: only a device that has never had a look of
+   its own puts one on. The layout is the one that does not travel that
+   way. See "The account's look" below, and dev/verify_look.mjs.
 
    The snapshot rides INSIDE the bundle string. The gateway's pair
    handler reads exactly one field out of the body -- `bundle`, as a
@@ -79,9 +89,11 @@
 	// Every one of these is read at boot -- the theme, skin and language before
 	// first paint by the inline script in index.html, the reading size and the
 	// layout by their own modules as they load -- so writing them and letting the
-	// page start is the whole of applying them. There is no second mechanism, and
-	// there must not be one: a snapshot applied by poking the live DOM would drift
-	// from what a reload produces.
+	// page start is the whole of applying them HERE, where a reload is happening
+	// anyway. Nothing may poke the live DOM instead: that would drift from what a
+	// boot produces. The parcel path below, which has no reload to ride on,
+	// applies its five through each setting's own public service, which is the
+	// same call the appearance menu makes and writes the same key this reads.
 	var LOOK_KEYS = [
 		'daimond-theme',		// dark | light | lollypop
 		'daimond-skin',			// sharp | warm
@@ -128,6 +140,257 @@
 		}
 		return n;
 	}
+
+	// ── The account's look, for every OTHER way a device arrives ───
+	//
+	// The handover above travels inside one pairing bundle, so it reaches exactly
+	// the devices that were linked by a code. A device brought across by a
+	// passkey (`DaimondPasskey.adoptWithPasskey`, which the catalogue advertises
+	// as bringing the account over "without a pairing code or a passphrase"), or
+	// one that simply holds the identity and is unlocked with the passphrase, got
+	// none of it: it came up in English, on the default palette, with the default
+	// reading size, on an account whose owner had chosen otherwise years ago.
+	//
+	// WHY THE PARCEL. The mailbox is the only channel every route ends at. A
+	// passkey adopt has no session until after it has unlocked; a passphrase
+	// sign-in tells the gateway nothing about presentation; only sync reaches all
+	// of them, and it is already sealed under the account's own key, which a
+	// preference the gateway can read would not be.
+	//
+	// WHY IT CANNOT RESTAMP. The parcel must be a fixed point -- applying one and
+	// collecting must give the same bytes back -- or two devices push at each
+	// other for ever, which is how a freshly paired iPhone behaved. So the record
+	// here is written by the user CHANGING something on this device, and never by
+	// receiving somebody else's:
+	//
+	//   * `lookAdopt` takes the strictly-later record and stores it VERBATIM;
+	//   * `lookRecord` returns what is stored unless this device's own values
+	//     have moved away from what it last agreed to (`LOOK_BASE`), which only
+	//     a person can do.
+	//
+	// A device that adopts a look it is not going to wear therefore reports that
+	// same record back unchanged, and the two devices agree in one round rather
+	// than arguing. See dev/verify_look.mjs, which drives exactly that.
+	//
+	// AND IT IS WORN ONCE. Which theme a screen is on is a decision about that
+	// screen, so a look is applied only by a device that has never had one --
+	// "view settings copy across on first login" and not one moment after.
+
+	/// The account's look: `{ t: <stamp>, v: { key: value } }`, held verbatim.
+	var LOOK_REC  = 'daimond-look';
+	/// The values this device has AGREED to -- what it last published, or what it
+	/// was dressed in when it arrived. Its ABSENCE is the whole signal: a device
+	/// with no base has no look of its own, and is therefore one to dress.
+	var LOOK_BASE = 'daimond-look-base';
+
+	/// The keys that are facts about the PERSON rather than about the screen.
+	///
+	/// Five of the six that pairing carries. The layout is deliberately not among
+	/// them: it is widths, splits and which panels are pinned, every one of them
+	/// measured against the window they were arranged in, and a 27-inch desk's
+	/// arrangement imposed on a phone is worse than no arrangement at all. The
+	/// handover still carries it, because there the user is holding both devices
+	/// and has just asked for this one to be like that one; a parcel arriving
+	/// days later at a device nobody is looking at has no such warrant.
+	///
+	/// The other five all travel with the person. A language and a currency are
+	/// not properties of a screen at all; a palette and a skin are taste; and a
+	/// reading size, though it is partly about the screen, is mostly about the
+	/// eyes -- somebody who has turned the type up has done so because of how
+	/// they read, and needs it on the other machine too. All five are a starting
+	/// point the device may then change, not a setting it is stuck with.
+	var LOOK_TRAVELS = [
+		'daimond-theme',
+		'daimond-skin',
+		'daimond-locale',
+		'daimond-currency',
+		'daimond-fs-scale',
+	];
+
+	function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+	function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+	function readJSON(k) {
+		try { return JSON.parse(lsGet(k) || 'null'); } catch (e) { return null; }
+	}
+
+	/// This device's travelling values, as they stand. Unset keys are absent, so
+	/// "never chosen" stays distinguishable from "chosen and equal to the default".
+	function travelValues() {
+		var out = {};
+		for (var i = 0; i < LOOK_TRAVELS.length; i++) {
+			var k = LOOK_TRAVELS[i], v = lsGet(k);
+			if (typeof v === 'string' && v !== '' && v.length <= LOOK_VALUE_MAX) out[k] = v;
+		}
+		return out;
+	}
+
+	/// A set of values in one canonical form, so two of them can be compared and
+	/// ordered. Sorted keys: an object literal's order must never be what decides
+	/// whether this device thinks the look has changed.
+	function canon(v) {
+		var out = {}, keys = Object.keys(v || {}).sort();
+		for (var i = 0; i < keys.length; i++) out[keys[i]] = v[keys[i]];
+		return JSON.stringify(out);
+	}
+
+	/// Only the whitelisted keys, only strings, only within the ceiling. Applied
+	/// to what ARRIVES as well as to what leaves: a parcel is opened with this
+	/// account's own key, but a record is still storage a device will act on.
+	function cleanLook(v) {
+		var out = {};
+		if (!v || typeof v !== 'object') return out;
+		for (var i = 0; i < LOOK_TRAVELS.length; i++) {
+			var k = LOOK_TRAVELS[i], x = v[k];
+			if (typeof x === 'string' && x !== '' && x.length <= LOOK_VALUE_MAX) out[k] = x;
+		}
+		return out;
+	}
+
+	/// Whether `a` beats `b`, under a total order both devices compute alike.
+	///
+	/// The stamp first, and the values as the tie-break -- two devices whose
+	/// clocks agree to the millisecond would otherwise each refuse the other's
+	/// record for ever and never converge, which is the fault the handle work
+	/// found by having two renames land inside one second.
+	function beats(a, b) {
+		if (!b) return true;
+		if (a.t !== b.t) return a.t > b.t;
+		return canon(a.v) > canon(b.v);
+	}
+
+	/// Put a look ON this device, through the services that own each setting.
+	///
+	/// NOT a reload, which is what the handover above can afford because it is
+	/// already on its way back to the unlock screen: an unlocked identity does not
+	/// survive a reload, so a device dressed by the parcel would be asked for its
+	/// passphrase again seconds after signing in. And NOT the DOM, which would
+	/// drift from what a boot produces -- each of these has a public setter, which
+	/// writes the same key the boot reads, so what arrives here is what the
+	/// appearance menu itself would have produced. A setting whose service is
+	/// missing is written to storage instead, and the next boot picks it up.
+	///
+	/// Awaited, because the locale's setter fetches its table before it writes:
+	/// the caller records what this device now holds, and must not read that
+	/// before the last of it has landed.
+	async function dress(v) {
+		var apply = function (key, name, fn, val) {
+			try {
+				var svc = window[name];
+				if (svc && typeof svc[fn] === 'function') return svc[fn](val);
+			} catch (e) { /* the service refused; fall through to the key */ }
+			lsSet(key, String(val));
+			return null;
+		};
+		if (v['daimond-theme'])    apply('daimond-theme',     'DaimondTheme',     'set',         v['daimond-theme']);
+		if (v['daimond-skin'])     apply('daimond-skin',      'DaimondSkin',      'set',         v['daimond-skin']);
+		if (v['daimond-currency']) apply('daimond-currency',  'DaimondI18n',      'setCurrency', v['daimond-currency']);
+		// A number, not the string it is stored as: `setScale` refuses anything
+		// that is not one of its steps, and a string never is one.
+		if (v['daimond-fs-scale']) apply('daimond-fs-scale',  'DaimondWorkspace', 'setScale',    parseFloat(v['daimond-fs-scale']));
+		// Last, because it repaints every marked node in the app.
+		if (v['daimond-locale']) {
+			var p = apply('daimond-locale', 'DaimondI18n', 'setLocale', v['daimond-locale']);
+			if (p && typeof p.then === 'function') { try { await p; } catch (e) { /* stays as it was */ } }
+		}
+	}
+
+	/// What the parcel carries. `null` when this device has nothing to say.
+	///
+	/// `mayPublish` is the caller's word that this device has heard from the
+	/// mailbox at least once. A device that published before it had listened
+	/// would put its factory defaults over the account's real look with a fresh
+	/// stamp, and the next device to arrive would inherit those -- the same rule
+	/// that stops a chunk index being declared from a device that did not merge
+	/// one.
+	///
+	/// `known` is the caller's word that this device had already synced this
+	/// account when the page loaded. See `lookAdopt` for why that, of all things,
+	/// is what says whether a device has a look of its own.
+	function lookRecord(mayPublish, known) {
+		var rec  = readJSON(LOOK_REC);
+		var base = readJSON(LOOK_BASE);
+		var now  = travelValues();
+		if (rec && (typeof rec.t !== 'number' || !rec.v)) rec = null;		// not ours to carry
+		// No base: this device has never agreed to anything. It is either waiting
+		// to be dressed, or it is the first device of an account nobody has
+		// published a look for -- and only the caller knows which, because only
+		// the caller knows whether the mailbox has been read.
+		if (!base) {
+			// A device that has synced this account before HAS a look: it has been
+			// wearing one all along, and a build shipping is no reason to put the
+			// account's look up for grabs. Its own values become its base,
+			// quietly, and it publishes when its user next changes something.
+			if (known) { lsSet(LOOK_BASE, JSON.stringify(now)); return rec; }
+			if (!mayPublish || !Object.keys(now).length) return rec;
+			lsSet(LOOK_REC,  JSON.stringify({ t: stampAfter(rec), v: now }));
+			lsSet(LOOK_BASE, JSON.stringify(now));
+			return readJSON(LOOK_REC);
+		}
+		// The one thing that publishes: this device's own values have moved away
+		// from what it last agreed to, which nothing but a person does. Receiving
+		// another device's record never comes through here, so applying a parcel
+		// cannot change what this device would send -- the fixed point.
+		if (canon(now) !== canon(base)) {
+			lsSet(LOOK_REC,  JSON.stringify({ t: stampAfter(rec), v: now }));
+			lsSet(LOOK_BASE, JSON.stringify(now));
+			return readJSON(LOOK_REC);
+		}
+		return rec;
+	}
+
+	/// A stamp that always advances past the record being replaced, so two
+	/// changes inside one millisecond are still two changes.
+	function stampAfter(rec) {
+		var prev = (rec && typeof rec.t === 'number') ? rec.t : 0;
+		return Math.max(Date.now(), prev + 1);
+	}
+
+	/// Take a look out of a parcel: hold the later record, and WEAR it if this
+	/// device has never worn one.
+	///
+	/// Stored verbatim, never restamped, and only ever replaced by a record that
+	/// strictly beats the one held. Applying this device's own parcel therefore
+	/// writes nothing at all.
+	///
+	/// `known` says this device had already synced this account when the page
+	/// loaded, and it is the ONLY honest evidence that a device has a look of its
+	/// own. Not "some of these keys are set": daimond.js writes a default theme
+	/// and a default skin into two of them on every boot, so a phone that has done
+	/// nothing but show the sign-in screen already looks like one that chose. A
+	/// stored sync cursor cannot be produced by anything but this device having
+	/// read this account's mailbox before, which is exactly the thing a device
+	/// being dressed has never done.
+	///
+	/// Resolves to what was done, for the verifier: `{held, dressed}`.
+	async function lookAdopt(rec, known) {
+		var out = { held: false, dressed: false };
+		if (!rec || typeof rec !== 'object' || typeof rec.t !== 'number' || rec.t <= 0) return out;
+		var clean = { t: rec.t, v: cleanLook(rec.v) };
+		if (!Object.keys(clean.v).length) return out;
+		var held = readJSON(LOOK_REC);
+		if (held && (typeof held.t !== 'number' || !held.v)) held = null;
+		if (!beats(clean, held)) return out;
+		lsSet(LOOK_REC, JSON.stringify(clean));
+		out.held = true;
+		// And now the once-only half. A device with a look of its own -- it chose
+		// one, or it was dressed when it arrived, or it has simply been syncing
+		// this account for a year -- records the account's news without wearing
+		// it. A phone and a desk are allowed to disagree about a palette; what
+		// they may not do is disagree about whose account this is.
+		if (readJSON(LOOK_BASE) || known) return out;
+		await dress(clean.v);
+		// Read BACK, rather than trusting what was asked for: a service may
+		// normalise what it was given, and a base that disagreed with storage
+		// would make the very next collect think the user had just changed
+		// something, and republish.
+		lsSet(LOOK_BASE, JSON.stringify(travelValues()));
+		out.dressed = true;
+		return out;
+	}
+
+	/// Whether this device has recorded a look of its own. The caller adds what it
+	/// knows about the sync cursor; see `lookAdopt`.
+	function lookDressed() { return !!readJSON(LOOK_BASE); }
 
 	// ── Transport ──────────────────────────────────────────────
 	//
@@ -591,8 +854,18 @@
 	// `stashName` is published because the naming and the roster are two modules:
 	// this one takes the name, daimond.js consumes it when the device's line is
 	// minted, and the seam between them is worth being able to exercise.
+	//
+	// `look` is the half sync.js drives: `record()` is what the parcel carries,
+	// `adopt()` is what a parcel brings, and `dressed()` says whether this device
+	// already has a look of its own -- the fact the once-only rule turns on.
 	window.DaimondPairing = { create: create, redeem: redeem, showLink: showLink, showRedeem: showRedeem,
-		stashName: stashName };
+		stashName: stashName,
+		look: {
+			record:  lookRecord,
+			adopt:   lookAdopt,
+			dressed: lookDressed,
+			travels: function () { return LOOK_TRAVELS.slice(); },
+		} };
 
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
 	else start();

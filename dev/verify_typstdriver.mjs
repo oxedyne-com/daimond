@@ -17,6 +17,19 @@
 //   3. The bytes go to the workspace through the WASM write, which is what applies the path jail,
 //      the real-folder override and the per-account namespace. Asserted by setting a namespace and
 //      finding the PDF inside it rather than at the origin root.
+//
+// WHAT CHANGED WHEN TYPESETTING WAS SOLD. Claims 2 and 3 used to prove the compile worked FOR
+// EVERYONE, which is no longer what the app claims: typesetting is a pack now, and an account that
+// has not bought it is refused at the driver. Read literally, this file would have gone red on a
+// correct build -- and the tempting fix, deleting the compiles, would have thrown away the only
+// check that the compiler works at all.
+//
+// So the three claims stand, and the account they are made about is stated instead of assumed:
+// each compile below first makes sure the pack is HELD, which is the condition under which "it
+// compiles" was ever true. The refusal is not tested here. It has a file of its own,
+// `dev/verify_typstpack.mjs`, which drives all three doors into the compiler; this one goes on
+// answering the question it was written for -- is the compiler reachable and does it write to the
+// right place -- for the customer who is entitled to an answer.
 import { open, shot } from './harness.mjs';
 
 const ok = [], bad = [];
@@ -41,6 +54,17 @@ const atBoot = await p.evaluate(() => ({
 check('the Typst driver is installed at boot, with no file opened',
 	atBoot.installed === true && atBoot.opened === false,
 	`installed: ${atBoot.installed}, a file view open: ${atBoot.opened}`);
+
+// The compiles below are the ENTITLED account's, so say so rather than relying on a fresh profile
+// happening to have been told nothing. Stated once, and asserted, so this file cannot quietly
+// become a test of the refusal and go on calling itself a test of the compiler.
+const held = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	mod.set_locked_packs('');
+	return mod.tool_locked('typst_compile');
+});
+check('the account these claims are made about holds the typesetting pack',
+	held === false, `typst_compile locked: ${held}`);
 
 const built = await p.evaluate(async () => {
 	const r = await window.DaimondTypst.compile('= A heading\n\nA paragraph, and $x^2 + y^2$.\n');

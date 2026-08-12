@@ -30,6 +30,7 @@
 			<a href="sync.html">Sincronização entre dispositivos</a>
 			<a href="spending.html">Gastos</a>
 			<a href="../machine-operations.html">Comandos na máquina</a>
+			<a href="../improve.html">Melhorar o Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -39,7 +40,7 @@
 	<p class="lede">Um chat é uma conversa com o daimon. Um Diamond é um recipiente durável para uma busca, que guarda o que você apurou sobre um trabalho para que o trabalho seguinte parta dali. Aqui: começar e ler chats, os controles de turno, dobrar um chat em um Diamond, o espaço de trabalho em que um Diamond trabalha, anexar arquivos a qualquer um dos dois, e organizar o que você acumula.</p>
 
 	<h2 id="s1">Começar um chat e voltar a ele</h2>
-	<p>Escolha <span class="ui">Novo chat</span> — o <strong>＋</strong> ao lado de <strong>Chats</strong> na barra lateral. Digite na caixa no rodapé do painel central e envie com <span class="ui">➤</span>. Todo chat que você começa fica listado sob <strong>Chats</strong>, do mais novo ao mais antigo; clique em um para trazê-lo de volta ao centro. Um chat novo começa no seu modelo padrão, e o seletor no cabeçalho dele muda o modelo só daquele chat.</p>
+	<p>Escolha <span class="ui">Novo chat</span>, o <strong>＋</strong> ao lado de <strong>Chats</strong> na barra lateral. Digite na caixa no rodapé do painel central e envie com <span class="ui">➤</span>. Todo chat que você começa fica listado sob <strong>Chats</strong>, do mais novo ao mais antigo; clique em um para trazê-lo de volta ao centro. Um chat novo começa no seu modelo padrão, e o seletor no cabeçalho dele muda o modelo só daquele chat.</p>
 
 	<p>Um bloco de chat traz um <span class="ui">×</span>, e o <span class="ui">⋯</span> do cabeçalho de <strong>Chats</strong> traz <span class="ui">Excluir todos os chats</span>. Nenhum dos dois pergunta: ambos movem os chats para a <strong>Lixeira</strong>, de onde podem ser trazidos de volta. As perguntas se mudaram para os dois atos que não podem ser desfeitos, e os dois estão naquele painel.</p>
 
@@ -112,9 +113,9 @@
 
 	<p>Cada escrita guarda um instantâneo, então um cristal tem histórico e nada é sobrescrito. O histórico lista todas as versões, da mais nova para a mais antiga, cada uma com o que a produziu:</p>
 	<ul>
-		<li><span class="ui">Ver</span> — ler aquela versão.</li>
-		<li><span class="ui">Restaurar</span> — tornar aquela versão a atual de novo.</li>
-		<li><span class="ui">Delta</span> — ver a entrada bruta que uma dobra consumiu, o material que foi dado ao agente para reduzir.</li>
+		<li><span class="ui">Ver</span>: ler aquela versão.</li>
+		<li><span class="ui">Restaurar</span>: tornar aquela versão a atual de novo.</li>
+		<li><span class="ui">Delta</span>: ver a entrada bruta que uma dobra consumiu, o material que foi dado ao agente para reduzir.</li>
 	</ul>
 
 	<div class="note"><strong>Restaurar não é destrutivo.</strong> O texto que era o atual é guardado antes no histórico, então restaurar uma versão antiga acrescenta ao histórico em vez de substituí-lo — uma restauração que você não queria pode ela mesma ser desfeita.</div>
@@ -147,7 +148,7 @@
 		<li><strong>Um chat comum está em foco.</strong> O anexo vale para o <em>próximo turno apenas</em>, mostrado em um rodapé acima da caixa, que se limpa quando o turno é enviado.</li>
 	</ul>
 	<p>Cada anexo carrega um de dois estados, alternado no bloco dele. <strong>Nota</strong> diz que vale a pena saber o caminho, e custa alguns tokens. <strong>Ler</strong> diz que o conteúdo é necessário agora, e um arquivo pode chegar aos milhares. Um anexo começa em Nota, que é bem mais barato: um padrão que gasta o seu dinheiro sem pedir seria o padrão errado.</p>
-	<p>De um jeito ou de outro, o texto que ele gera — <em>Anote …</em>, ou <em>Leia … por completo.</em> — é escrito na caixa, na frente da sua mensagem, para você editar ou apagar antes de enviar. Um prompt que o app escreve e esconde é um prompt com o qual ninguém pode discordar.</p>
+	<p>De um jeito ou de outro, o texto que ele gera (<em>Anote …</em>, ou <em>Leia … por completo.</em>) é escrito na caixa, na frente da sua mensagem, para você editar ou apagar antes de enviar. Um prompt que o app escreve e esconde é um prompt com o qual ninguém pode discordar.</p>
 	<p>O rodapé traz um <strong>+</strong> para anexar várias coisas sem sair do que você está lendo, e uma chave entre os blocos em <span class="ui">Pilha</span> e as fileiras maiores em <span class="ui">Ícones</span>. Passados seis blocos — quatro quando a janela é baixa — ele rola em vez de crescer, então a barra de escrita fica onde está. Um anexo feito em um espaço de trabalho que não é o aberto diz onde ele vive, em vez de parecer uma pasta vazia, e fica de fora do texto gerado: um caminho que um modelo não consegue abrir compra um turno gasto em desculpas.</p>
 
 	<h3 id="s17">O que um daimon pode abrir</h3>
@@ -163,9 +164,9 @@
 	<h3 id="s19">Segurar e parar agentes</h3>
 	<p>O cabeçalho do painel Agentes traz três controles que agem sobre <em>todo</em> agente de uma vez, e os mesmos três aparecem em cada bloco para que você aja sobre um só:</p>
 	<ul>
-		<li><strong>Pausar</strong> <span class="ui">⏸</span> — suspende o que está rodando e segura a fila. Um agente em execução guarda o que já tinha produzido; um que espera não começa. Nada novo é lançado até você retomar. Este é o freio para um leque que gasta mais rápido do que você pretendia.</li>
-		<li><strong>Retomar</strong> <span class="ui">▶</span> — continua cada agente pausado de onde ele parou, retomando o próprio trabalho em vez de recomeçar, de modo que uma pausa não custa mais do que a espera.</li>
-		<li><strong>Parar</strong> <span class="ui">✕</span> — encerra os agentes de vez. Cada um guarda o que conseguiu fazer, como um bloco parado; <span class="ui">Limpar os agentes concluídos</span> os remove. O botão de emergência imediato.</li>
+		<li><strong>Pausar</strong> <span class="ui">⏸</span>: suspende o que está rodando e segura a fila. Um agente em execução guarda o que já tinha produzido; um que espera não começa. Nada novo é lançado até você retomar. Este é o freio para um leque que gasta mais rápido do que você pretendia.</li>
+		<li><strong>Retomar</strong> <span class="ui">▶</span>: continua cada agente pausado de onde ele parou, retomando o próprio trabalho em vez de recomeçar, de modo que uma pausa não custa mais do que a espera.</li>
+		<li><strong>Parar</strong> <span class="ui">✕</span>: encerra os agentes de vez. Cada um guarda o que conseguiu fazer, como um bloco parado; <span class="ui">Limpar os agentes concluídos</span> os remove. O botão de emergência imediato.</li>
 	</ul>
 	<p>Cada bloco mostra o <strong>custo enquanto roda</strong>, os tokens e os dólares se acumulando ao vivo e não apenas no fim, para você ver o gasto enquanto decide se segura. Sob o cabeçalho, uma linha diz quantos agentes estão <strong>rodando, pausados e na fila</strong>, o que torna legíveis num relance o tamanho e o custo de um leque. As medidas que o Daimond toma por conta própria estão na página <a href="spending.html">Gastos</a> deste guia.</p>
 
@@ -174,7 +175,7 @@
 	<p>Valem dois limites. Um trabalhador não pode despachar outro trabalhador, então a delegação desce um nível e para. E um Diamond é guiado por vez, então nenhum segundo Diamond fica trabalhando pelas suas costas.</p>
 
 	<h2 id="s20">Etiquetas</h2>
-	<p>Os Diamonds se acumulam, então podem receber etiquetas. Uma etiqueta é um rótulo curto que você escolhe, editado a partir de <span class="ui">Etiquetas</span> no cristal de um Diamond. Quatro são sugeridas para começar — <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> e <strong>org</strong> — mas o Daimond não impõe taxonomia nenhuma, e você pode digitar o que convier ao seu trabalho.</p>
+	<p>Os Diamonds se acumulam, então podem receber etiquetas. Uma etiqueta é um rótulo curto que você escolhe, editado a partir de <span class="ui">Etiquetas</span> no cristal de um Diamond. Quatro são sugeridas para começar (<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> e <strong>org</strong>), mas o Daimond não impõe taxonomia nenhuma, e você pode digitar o que convier ao seu trabalho.</p>
 
 	<p>O que você digita é arrumado: uma etiqueta vai para minúsculas, é aparada e não se repete, com até <strong>8</strong> etiquetas em um Diamond e <strong>24</strong> caracteres em cada uma. As etiquetas ficam guardadas nos metadados do próprio Diamond, neste dispositivo, como todo o resto.</p>
 
@@ -209,6 +210,7 @@
 		<a href="sync.html">Sincronização entre dispositivos</a>
 		<a href="spending.html">Gastos</a>
 		<a href="../machine-operations.html">Comandos na máquina</a>
+		<a href="../improve.html">Melhorar o Daimond</a>
 	</nav>
 </footer>
 </body>

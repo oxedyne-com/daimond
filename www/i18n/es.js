@@ -502,6 +502,12 @@
 	'sync.when_hours': 'hace {n} h',
 	'sync.when_days': 'hace {n} d',
 
+	// ── El identificador público de la cuenta ──────────────────
+	'handle.taken': 'Ese identificador ya lo tiene otra persona. Prueba con otro.',
+	'handle.invalid': 'Un identificador tiene de 3 a 24 caracteres: minúsculas, números y guiones entre ellos.',
+	'handle.reserved': 'Ese identificador está reservado para Daimond y no se puede tomar.',
+	'handle.failed': 'El identificador no se ha podido cambiar ahora mismo. Inténtalo de nuevo en breve.',
+
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Limpieza en pausa',
 	'chunks.sweep_held_reason': 'El almacenamiento en la nube conserva {n} de sus {m} fragmentos guardados a los que ya no hace referencia ningún archivo de esta cuenta. NO se han borrado, porque ninguna petición puede eliminar más de la mitad de lo almacenado. No falta nada tuyo, y el espacio se libera con la próxima sincronización que pueda dar cuenta de todo.',
@@ -796,6 +802,18 @@
 	'models.credit_base_set': 'Tengo esto, a día de hoy',
 	'models.credit_base_update': 'Actualizar mi cifra',
 	'models.credit_base_bad': 'Eso no es un importe. Escribe un número de dólares estadounidenses.',
+	// Una cifra consultada de la que este dispositivo ya vio salir dinero.
+	'models.credit_auto_spent': 'Quedan {amount}. El proveedor dijo {base} el {when}, menos unos {spent} gastados aquí desde entonces.',
+	// Qué antigüedad tiene la cifra. Sin esto, una que se ha quedado quieta
+	// parece igual de reciente que una al día.
+	'models.age_now': 'Consultado hace un momento.',
+	'models.age_mins.one': 'Consultado hace {n} minuto.',
+	'models.age_mins.other': 'Consultado hace {n} minutos.',
+	'models.age_hours.one': 'Consultado hace {n} hora.',
+	'models.age_hours.other': 'Consultado hace {n} horas.',
+	'models.age_days.one': 'Consultado hace {n} día.',
+	'models.age_days.other': 'Consultado hace {n} días.',
+	'models.age_failed': 'La última consulta no obtuvo respuesta, así que esta cifra no se ha movido desde entonces.',
 
 	// ── The Web panel, continued ───────────────────────────────
 	'web.blind_title_at': 'Conduces tú. Yo me he parado en {where}.',
@@ -930,6 +948,7 @@
 	'typst.load_failed': 'El compilador de Typst no se pudo cargar: {reason}',
 	'typst.no_pdf': 'Typst no produjo ningún PDF (error de compilación desconocido).',
 	'typst.compile_error': 'Error de compilación de Typst: {reason}',
+	'typst.pack_locked': 'La composición tipográfica forma parte de un paquete de herramientas que esta cuenta no ha comprado. El panel Herramientas indica su nombre y su precio: se compra una vez, se conserva para siempre y se paga con dinero, no con tus créditos.',
 
 
 	// ── The Admin drawer ───────────────────────────────────────
@@ -1377,11 +1396,23 @@
 	'attach.pick_title': 'Adjuntar archivos y carpetas',
 	'attach.pick_empty': 'Aquí no hay nada.',
 	'attach.already': 'Ya adjunto',
+	'attach.ws_mark': 'Espacio',
+	'attach.ws_add': 'Marcar una carpeta en el espacio',
+	'attach.not_here': 'Lo tiene este chat, pero está {where}, que no es el espacio que tienes abierto. Este chat no puede alcanzarlo desde aquí.',
+	'attach.ws_help': 'Las carpetas que este chat puede leer y cambiar. Marcar una es el permiso, y no se te volverá a preguntar.',
+	'attach.ws_on': 'En el espacio de este chat: puede leer y cambiar lo que hay dentro. Pulsa para sacarla.',
+	'attach.ws_off': 'Fuera del espacio, así que este chat no puede abrirla. Pulsa para marcarla.',
+	'attach.ws_empty': 'No hay ninguna carpeta marcada. Este chat no alcanza nada tuyo, solo su propia carpeta de trabajo. Marca una con el clip, o con + arriba.',
+	'attach.group_prompt': 'Ante el modelo',
+	'attach.group_prompt_help': 'Se nombra o se cita en el prompt al enviar. Esto no concede ningún acceso.',
+	'attach.read_block': 'El contenido de {path}:',
+	'attach.read_cut': 'Esto es todo lo que cabe aquí de {path}.',
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'El espacio de trabajo de este Diamond',
 	'dws.count.one': '{n} elemento',
 	'dws.count.other': '{n} elementos',
+	'dws.none_yet':    'Aquí todavía no hay nada',
 	'dws.mode_all': 'Todo',
 	'dws.mode_diamond': 'Este Diamond',
 	'dws.empty': 'Todavía no se guarda nada con este Diamond. Lo que guardes aquí es lo que su daimon puede abrir.',
@@ -1426,7 +1457,6 @@
 	'link.pick_empty': 'Todavía no hay otro Diamond al que vincular.',
 	'link.change_pick': 'Cambiar',
 	'link.rel_label': 'Relación',
-	'link.rel_ph': '¿Cómo se relacionan?',
 	'link.rel_sug_help': 'Solo sugerencias: vale cualquier palabra',
 	'link.rel_use': 'Usar «{rel}»',
 	'link.note_label': 'Nota',
@@ -1446,11 +1476,14 @@
 	'agents.already_folded_body': 'El resumen de este agente ya se plegó en el cristal.',
 	'agents.a_diamond': 'Diamond',
 	'agents.clear_diamond_filter': 'Quitar el filtro de Diamond',
+	'agents.clear_chat_filter':    'Quitar el filtro de chat',
 	'agents.no_diamond': 'sin Diamond',
 	'agents.no_diamond_help': 'Esta ejecución no tiene Diamond',
 	'agents.only_from': 'Mostrar solo los agentes de «{name}»',
+	'agents.only_from_chat': 'Mostrar solo los agentes de este chat.',
 	'agents.from_chat': 'un chat',
 	'agents.from_chat_help': 'Enviado desde el chat «{name}».',
+	'agents.from_chat_help_when': 'Enviado desde un chat al que no le has puesto nombre (última actividad: {when}).',
 	'agents.no_diamond_fold': 'Este agente se envió desde un chat, así que no hay ningún cristal en el que plegarlo. Su informe está en esa conversación, y su texto completo está en «Leer».',
 	'agents.report_one': 'Un agente que enviaste ha terminado.',
 	'agents.report_n': '{n} agentes que enviaste han terminado.',
@@ -1873,6 +1906,7 @@
 	'pending.cancel': 'Descartar',
 	'pending.cancel_named': 'Descartar: {what}',
 	'pending.noted': 'Anotado, y fuera de la lista.',
+	'pending.opened': 'Abierto para enviar. Sigue aquí hasta que se envíe.',
 	'pending.diamond_gone': 'El Diamond que planteó esto ya no está, así que no hay con quién hablarlo.',
 	'pending.discuss_prompt': 'Tenemos que hablar más de esto antes de que lo apruebe: «{headline}»',
 	'crystal.steer_paused': 'En pausa. Pulsa play en su tarjeta',

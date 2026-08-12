@@ -30,6 +30,7 @@
 			<a href="sync.html">跨设备同步</a>
 			<a href="spending.html">支出</a>
 			<a href="../machine-operations.html">在本机运行命令</a>
+			<a href="../improve.html">改进 Daimond</a>
 		</nav>
 	</div>
 </header>
@@ -39,7 +40,7 @@
 	<p class="lede">一场聊天是与 daimon 的一次对话。一个 Diamond 是某项追求的持久容器，装着你在一件工作上想明白的东西，好让往后的工作从它开始。这一页讲：怎么开始和阅读聊天、轮次的控制项、把一场聊天折叠进 Diamond、Diamond 做事所在的工作区、给两者附加文件，以及怎么整理越积越多的东西。</p>
 
 	<h2 id="s1">开始一场聊天，以及回到它</h2>
-	<p>选择 <span class="ui">新建聊天</span> ——就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong> ，它在侧栏里。在中间面板底部的框里打字，然后用 <span class="ui">➤</span>发送。你开的每一场聊天都列在 <strong>聊天</strong>下面，最新的在前；点一个，它就回到中间。新聊天从你的默认模型开始，它头部的选择器只为这一场换模型。</p>
+	<p>选择 <span class="ui">新建聊天</span>，就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong> ，它在侧栏里。在中间面板底部的框里打字，然后用 <span class="ui">➤</span>发送。你开的每一场聊天都列在 <strong>聊天</strong>下面，最新的在前；点一个，它就回到中间。新聊天从你的默认模型开始，它头部的选择器只为这一场换模型。</p>
 
 	<p>每张聊天卡片上有一个 <span class="ui">×</span>，而 <span class="ui">⋯</span> 在 <strong>聊天</strong> 标题栏上，里面装着 <span class="ui">删除全部聊天</span>。两者都不先问：它们都把聊天移到 <strong>回收站</strong>里，在那里可以把它们找回来。要问的问题挪到了那两个撤不回的动作上，两个都在那个面板里。</p>
 
@@ -112,9 +113,9 @@
 
 	<p>每一次写入都会存下一个版本，所以晶体有历史，没有东西被盖掉。历史把每一个版本都列出来，最新的在前，每一条都标明是什么产生了它：</p>
 	<ul>
-		<li><span class="ui">查看</span> —— 读那个版本。</li>
-		<li><span class="ui">恢复</span> —— 让那个版本重新成为当前版本。</li>
-		<li><span class="ui">增量</span> —— 看一次折叠吃进去的原始输入，也就是交给智能体去归纳的材料。</li>
+		<li><span class="ui">查看</span>：读那个版本。</li>
+		<li><span class="ui">恢复</span>：让那个版本重新成为当前版本。</li>
+		<li><span class="ui">增量</span>：看一次折叠吃进去的原始输入，也就是交给智能体去归纳的材料。</li>
 	</ul>
 
 	<div class="note"><strong>恢复不会毁掉东西。</strong> 当前的文本会先存进历史，所以恢复一个旧版本是往历史里添一笔，而不是替换它 —— 一次并非本意的恢复，自己也能撤销。</div>
@@ -147,7 +148,7 @@
 		<li><strong>焦点是一场普通的聊天。</strong> 这次附加只对 <em>下一轮有效</em>，显示在输入框上方的一条页脚里，这一轮发出去就清空。</li>
 	</ul>
 	<p>每一个附件都带着两种状态之一，在它的小卡片上切换。 <strong>记下</strong> 表示这条路径值得知道，花掉几个词元。 <strong>读取</strong> 表示现在就要内容，而一个文件可能要几千个。附件从记下开始，因为它便宜得多：一个不问一声就花你钱的默认值，是错的默认值。</p>
-	<p>不管哪一种，它生成的那句话 —— <em>记下 …</em>，或者 <em>完整读取 …。</em> —— 会写进输入框里，排在你的消息前面，发送前可以改，也可以删。应用自己写了又藏起来的提示词，是没人能跟它争辩的提示词。</p>
+	<p>不管哪一种，它生成的那句话（<em>记下 …</em>，或者 <em>完整读取 …。</em>）会写进输入框里，排在你的消息前面，发送前可以改，也可以删。应用自己写了又藏起来的提示词，是没人能跟它争辩的提示词。</p>
 	<p>这条页脚上有一个 <strong>+</strong> ，用来连着附加几样东西而不必离开你正在读的内容；还有一个开关，在小卡片 <span class="ui">堆叠</span> 和一行行更大的 <span class="ui">图标</span>之间切换。超过六张小卡片 —— 窗口矮的时候是四张 —— 它就滚动而不再长高，输入区因此不动。在不是当前打开的那个工作区里做的附加，会说明它住在哪里，而不是读起来像个空文件夹；它也不会进入生成的那句话里：一条模型打不开的路径，只会换来一轮道歉。</p>
 
 	<h3 id="s17">daimon 能打开什么</h3>
@@ -163,9 +164,9 @@
 	<h3 id="s19">按住和停掉智能体</h3>
 	<p>智能体面板的头部有三个控制项，一次作用于 <em>每一个</em> 智能体；同样的三个也挂在每一张卡片上，好让你只对其中一个动手：</p>
 	<ul>
-		<li><strong>暂停</strong> <span class="ui">⏸</span> —— 把正在跑的挂起来，把队列按住。正在跑的智能体保留它已经做出来的东西；在等的那个不会开始。在你恢复之前，不会有新的启动。这是给一次花钱比你想的还快的扇出准备的刹车。</li>
-		<li><strong>恢复</strong> <span class="ui">▶</span> —— 让每一个暂停的智能体从停下的地方继续，接着自己的活干，而不是从头再来，所以一次暂停只花掉等待的时间。</li>
-		<li><strong>停止</strong> <span class="ui">✕</span> —— 直接结束智能体。每一个都以一张“已停止”的卡片保留它来得及做完的部分； <span class="ui">清除已结束的智能体</span> 把它们移走。这就是那个即刻生效的急停开关。</li>
+		<li><strong>暂停</strong> <span class="ui">⏸</span>：把正在跑的挂起来，把队列按住。正在跑的智能体保留它已经做出来的东西；在等的那个不会开始。在你恢复之前，不会有新的启动。这是给一次花钱比你想的还快的扇出准备的刹车。</li>
+		<li><strong>恢复</strong> <span class="ui">▶</span>：让每一个暂停的智能体从停下的地方继续，接着自己的活干，而不是从头再来，所以一次暂停只花掉等待的时间。</li>
+		<li><strong>停止</strong> <span class="ui">✕</span>：直接结束智能体。每一个都以一张“已停止”的卡片保留它来得及做完的部分； <span class="ui">清除已结束的智能体</span> 把它们移走。这就是那个即刻生效的急停开关。</li>
 	</ul>
 	<p>每张卡片都显示它的 <strong>运行中的花费</strong>，词元和美元实时累加，不是等跑完才出现，这样你在决定要不要按住它的时候，就看得见它正在花多少。头部下面有一行写着有多少个智能体在 <strong>运行、暂停和排队</strong>，于是一次扇出的规模和花费一眼就看得出来。Daimond 自己会采取的措施，写在 <a href="spending.html">支出</a> 那一页。</p>
 
@@ -174,7 +175,7 @@
 	<p>有两条限制。工人不能再派工人，所以委派只走一层就停。而且同一时间只引导一个 Diamond，所以不会有第二个 Diamond 在你没看着的时候自顾自地干活。</p>
 
 	<h2 id="s20">标签</h2>
-	<p>Diamonds 会越积越多，所以可以给它们打标签。标签就是你自己定的一个短词，在 Diamond 的晶体上从 <span class="ui">标签</span> 里编辑。有四个起步的建议 —— <strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 和 <strong>org</strong> —— 但 Daimond 不强加任何分类法，你可以打任何顺手的词。</p>
+	<p>Diamonds 会越积越多，所以可以给它们打标签。标签就是你自己定的一个短词，在 Diamond 的晶体上从 <span class="ui">标签</span> 里编辑。有四个起步的建议（<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> 和 <strong>org</strong>），但 Daimond 不强加任何分类法，你可以打任何顺手的词。</p>
 
 	<p>你打的字会被理一遍：标签会转成小写、去掉两头的空白、去重；一个 Diamond 上最多 <strong>8</strong> 个标签，每个最多 <strong>24</strong> 个字符。标签和别的东西一样，存在这个 Diamond 自己的元数据里，就在这台设备上。</p>
 
@@ -209,6 +210,7 @@
 		<a href="sync.html">跨设备同步</a>
 		<a href="spending.html">支出</a>
 		<a href="../machine-operations.html">在本机运行命令</a>
+		<a href="../improve.html">改进 Daimond</a>
 	</nav>
 </footer>
 </body>
