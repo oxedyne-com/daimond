@@ -45,8 +45,27 @@ const DIAG_FULL = 3;
 // The main source path inside the compiler's shadow filesystem.
 const MAIN = '/main.typ';
 
+// ── The memo is the incremental compiler, and it is not an optimisation ─────
+//
+// `_compilerPromise` holds ONE `TypstCompiler` for the life of the document. It is
+// never freed and never rebuilt, and the module-URL guard at the foot of this file
+// exists specifically to stop a second one being installed.
+//
+// THAT MEMO IS WHY A REBUILD IS HALF A SECOND RATHER THAN THREE. Every compile calls
+// `reset_shadow()` and re-`add_source`s all 63 files of a book, which wipes the shadow
+// filesystem -- but NOT comemo's memo cache, which is keyed on content hashes. Identical
+// text re-added under the same path hashes the same, so the cached layout is still valid
+// and only what changed is laid out again. Measured on the author's 281-page book: 2960 ms
+// the first time, 182 ms the second, 384 ms after a real edit -- a factor of fifteen, and
+// the whole difference between a watch loop and a build.
+//
+// So a tidy-up that gave each compile a fresh `TypstCompiler` -- which would look like good
+// hygiene, and which nothing here would fail on -- is a silent fifteen-fold regression. It
+// would break no test, because every test would still get its PDF. The measurements are in
+// `dev/TYPST_WATCH.md` §4.
 let _compilerPromise = null;   // memoised compiler build
 let _glue = null;              // the glue module, kept for its font-resolver builder
+let _init = null;              // the wasm exports, kept so the heap can be read
 let _bundled = null;           // the bundled font bytes, kept so a project set can re-add them
 let _fontState = '';           // which project fonts the live compiler was last given
 
@@ -58,7 +77,7 @@ function getCompiler() {
 		const mod = await import(GLUE.href);
 		_glue = mod;
 		// Initialise the wasm module from the vendored path.
-		await mod.default(WASM);
+		_init = await mod.default(WASM);
 		const builder = new mod.TypstCompilerBuilder();
 		// No external file/package access is needed: sources are
 		// injected as shadow files, so a dummy access model is fine.
@@ -179,8 +198,9 @@ function literalAt(text, range) {
 ///
 /// # Arguments
 /// * `d`   - The diagnostic object typst returned.
-/// * `ctx` - `{ texts, count, root, single }`: the sources by shadow path, how
-///           many files went in, where the root was put, and whether this was a
+/// * `ctx` - `{ texts, count, root, searched, single }`: the sources by shadow path,
+///           how many files went in, where the root was put, which folders a
+///           root-relative name was looked for in, and whether this was a
 ///           single-file compile with no project behind it at all.
 function explainDiag(d, ctx) {
 	const where = d.path ? (d.path + (rangeLine(d.range) >= 0 ? ':' + (rangeLine(d.range) + 1) : '')) : '';
@@ -212,11 +232,12 @@ function explainDiag(d, ctx) {
 		}
 		return head + 'this line reaches for ' + (named ? '"' + named + '"' : 'a file')
 			+ ', which was not among the ' + ctx.count + ' files gathered for this compile. '
-			+ 'The project root was put at ' + ctx.root + ', and everything the sources name by a '
-			+ 'literal path was read from there. A path built at run time -- joined from a '
-			+ 'variable, say -- cannot be seen when the project is gathered, and would look '
-			+ 'exactly like this. Check that the file exists under the root, and that the source '
-			+ 'names it as a plain string.'
+			+ 'The project root was put at ' + ctx.root + ', worked out from the imports rather '
+			+ 'than set anywhere, and a name beginning with "/" was looked for in '
+			+ (ctx.searched.length ? ctx.searched.join(', then ') : 'the root') + '. A path built '
+			+ 'at run time -- joined from a variable, say -- cannot be seen when the project is '
+			+ 'gathered, and would look exactly like this. Check that the file is in one of those '
+			+ 'folders, and that the source names it as a plain string.'
 			+ '\n  typst said: ' + msg;
 	}
 	const line = lineAt(text, rangeLine(d.range));
@@ -321,7 +342,7 @@ export async function compilePdf(source) {
 			return { pdf: pdf };
 		}
 		const texts = {}; texts[MAIN] = source;
-		const diag = explainDiags(ret, { texts: texts, count: 1, root: 'nowhere', single: true });
+		const diag = explainDiags(ret, { texts: texts, count: 1, root: 'nowhere', searched: [], single: true });
 		return { error: diag || tt('typst.no_pdf') };
 	} catch (e) {
 		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
@@ -468,7 +489,7 @@ function missingFamilies(wanted, available) {
 	return out;
 }
 
-/// Compile a gathered project to a PDF.
+/// Compile a gathered project to `fmt`, which is `'pdf'` or `'vector'`.
 ///
 /// The argument carries CONTENTS, never a path to contents: `sources` and
 /// `assets` are keyed by position in the compiler's in-memory shadow filesystem,
@@ -478,8 +499,9 @@ function missingFamilies(wanted, available) {
 /// of these.  There is nothing here that could open a file if it tried.
 ///
 /// # Arguments
-/// * `p` - `{ root, main, sources, assets, fonts, fontDirs }`.
-export async function compileProjectPdf(p) {
+/// * `p`   - `{ root, main, sources, assets, fonts, fontDirs, searched }`.
+/// * `fmt` - `'pdf'` for the publishing path, `'vector'` for the live view.
+async function compileProjectAs(p, fmt) {
 	if (await packLocked()) {
 		return { error: tt('typst.pack_locked') };
 	}
@@ -503,10 +525,15 @@ export async function compileProjectPdf(p) {
 	for (const s of p.sources) for (const set of fontSetsOf(s[1])) wanted.push(set);
 	const missing = missingFamilies(wanted, available);
 	if (missing.length) {
+		// Where it looked, always -- and when it found nothing, the folders it looked
+		// in rather than the root alone. The search starts at the compiled file's own
+		// folder and works outward to the root, so naming the root (which this did
+		// until seq 117) described neither where it looked nor where to put a font.
+		const where = (p.searched || []).length ? p.searched : [String(p.root || 'the project root')];
 		const dirs = (p.fontDirs || []).length
 			? 'Fonts were looked for in ' + p.fontDirs.join(' and ') + '.'
-			: 'No font directory was found under the project root: this compile looked for '
-				+ '"assets/fonts" and "fonts" there, and neither exists.';
+			: 'No font directory was found: this compile looked for an "assets/fonts" and a '
+				+ '"fonts" folder in ' + where.join(', then ') + ', and found neither.';
 		return { error: 'This project asks for the font "' + missing.join('", and for "')
 			+ '", which is not among the fonts available to compile it. Nothing was produced. '
 			+ 'A missing family is not an error to Typst -- it substitutes another silently -- '
@@ -533,16 +560,60 @@ export async function compileProjectPdf(p) {
 			}
 		}
 		const count = p.sources.length + (p.assets || []).length;
-		const ret = compiler.compile(String(p.main), undefined, 'pdf', DIAG_FULL);
-		const pdf = extractPdf(ret);
-		if (pdf && pdf.length > 4) {
-			return { pdf: pdf };
+		const ret = compiler.compile(String(p.main), undefined, fmt, DIAG_FULL);
+		const out = extractPdf(ret);
+		if (out && out.length > 4) {
+			return fmt === 'vector' ? { vector: out } : { pdf: out };
 		}
-		const ctx = { texts: texts, count: count, root: String(p.root || 'the workspace root'), single: false };
+		const ctx = { texts: texts, count: count, root: String(p.root || 'the workspace root'),
+				searched: (p.searched || []), single: false };
 		return { error: explainDiags(ret, ctx) || tt('typst.no_pdf') };
 	} catch (e) {
 		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
 	}
+}
+
+/// Compile a gathered project to a PDF -- the publishing path, unchanged.
+export async function compileProjectPdf(p) {
+	return await compileProjectAs(p, 'pdf');
+}
+
+// ── Laying the pages out is not writing the document out ────────────────────
+//
+// Measured on the author's 281-page book, on the same warm compiler and the same
+// layout: `compile → 'pdf'` is 1834-2069 ms and `compile → 'vector'` is 235-272 ms.
+// WRITING THE PDF IS ABOUT EIGHT TIMES WHAT LAYING THE PAGES OUT COSTS. A watch loop
+// that produced a PDF on every save would therefore spend seven eighths of its time
+// making a file nobody is going to open, since the reader is looking at the screen.
+//
+// `vector` is typst.ts's own intermediate format (SIR), which the vendored renderer
+// (`typst_ts_renderer_bg.wasm`, the same typst checkout -- see the version note in
+// `www/js/typstwatch.js`) turns into SVG. The pages are the SAME layout from the SAME
+// compiler with the SAME fonts, drawn as glyph outlines rather than as text, so the
+// live view is the book and not an approximation of it. `dev/verify_typstwatch.mjs`
+// proves that against poppler rather than asserting it.
+//
+// PDF stays the publishing path and is untouched: the Compile button still writes one,
+// `file_show` still opens one, and export is unaffected.
+
+/// Compile a gathered project to typst.ts's vector format, for the live view.
+///
+/// Returns `{ vector: Uint8Array }` or `{ error: string }`, with the error composed
+/// exactly as the PDF path composes it -- the same diagnostics, naming the same file
+/// and line -- so a failed rebuild reads the same wherever it came from.
+export async function compileProjectVector(p) {
+	return await compileProjectAs(p, 'vector');
+}
+
+/// The compiler's wasm heap, in megabytes, or 0 before it has been built.
+///
+/// A wasm32 `WebAssembly.Memory` can GROW and can NEVER SHRINK, so this is the
+/// high-water mark of everything compiled in this page so far rather than a reading
+/// of what is live. That is the property the watch loop's budget rests on: a figure
+/// that only ever goes up can be compared against a ceiling without sampling.
+export function heapMB() {
+	if (!_init || !_init.memory) return 0;
+	return _init.memory.buffer.byteLength / 1048576;
 }
 
 // ── The driver the agent's `typst_compile` tool reaches ─────────
@@ -575,5 +646,19 @@ if (typeof window !== 'undefined' && !window.DaimondTypst) {
 		/// path this side could open, which is how the OPFS jail stays the only
 		/// way a byte gets in.
 		compileProject: function (project) { return compileProjectPdf(project); },
+		/// The same project, laid out but not written out: `{ vector }` or
+		/// `{ error }`. What the live view draws, and what makes it affordable.
+		compileProjectVector: function (project) { return compileProjectVector(project); },
+		/// The compiler's wasm heap in MB, which never shrinks. The watch loop's
+		/// budget is measured against this.
+		heapMB: heapMB,
 	};
+	// The live view registers `window.DaimondTypstWatch`, which is the one object
+	// `src/wasm/typst.rs` looks for when a compile finishes at the page's door. It
+	// is loaded from HERE, beside the driver, for the same reason the driver is
+	// loaded from `daimond.js`: a module nothing imports is a module nothing
+	// installs, and a Rust side that cannot import would find nothing on `window`.
+	// It costs a few kilobytes; the renderer wasm it needs is fetched lazily, on
+	// the first live view, and a session that never compiles never pays for it.
+	import('./typstwatch.js').catch(function () { /* no live view on this build */ });
 }

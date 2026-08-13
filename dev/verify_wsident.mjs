@@ -336,9 +336,20 @@ async function ask(root, ws, folder) {
 
 /// What the ENGINE does with that answer, through the real `pty_request` — the
 /// same composition a Terminal panel goes through, on the real wasm.
+/// A Diamond with a folder ATTACHED, which is the only kind that has anywhere to
+/// run. Its own directory `diamonds/d1` is in the browser's storage whatever
+/// folder is open, so a Diamond holding nothing else is refused a terminal on
+/// its own account — a true answer, and not the one this file is asking about.
+/// Passing it here would leave every check below reading a refusal for the wrong
+/// reason, which is how this one went red on 2026-08-13: the fence stopped
+/// mapping store paths onto the disk, and the fixture had never attached
+/// anything.
+///
+/// `notes` is never opened, made or reached. The folder verdict is settled
+/// before a path is looked at, so what it needs is a NAME the fence can express.
 async function engine() {
 	return await page.evaluate(async () => JSON.parse(await window.Wasm.pty_request(JSON.stringify({
-		own_dir: 'diamonds/d1', attached: [], read_only: [],
+		own_dir: 'diamonds/d1', attached: ['notes'], read_only: [],
 		cwd: 'diamonds/d1', cols: 80, rows: 24,
 	}))));
 }

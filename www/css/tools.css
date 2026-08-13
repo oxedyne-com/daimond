@@ -1,21 +1,36 @@
-/* tools.css — the Tools panel: what Daimond can do, and what the rest would cost.
+/* tools.css — the Tools panel: what Daimond can do for you, and what more it could.
  *
- * One card shape for every tool, whether it is free, owned or for sale. The shop is a
- * section inside Tools, not a different room — a tool you have and a tool you could
- * have are the same kind of thing, and the only difference is the button. */
+ * One card shape for every capability, whether it is included, owned or for sale. The
+ * shelf is a section inside Tools, not a different room — a thing you have and a thing
+ * you could have are the same kind of thing, and the only difference is the button.
+ *
+ * The card is two layers on purpose. The head is written for a person and is the only
+ * part most readers will ever look at; the disclosure below it holds the individual
+ * functions, in the mono face that says plainly "this is a name for the machine". Those
+ * are the only monospace glyphs on the panel, so opening a card looks like opening a
+ * lid. */
 
 .tools-body {
 	flex: 1; min-height: 0; overflow-y: auto;
 	padding: 12px 14px 18px;
 	display: flex; flex-direction: column; gap: 8px;
 }
+/* A column flex item shrinks by default, and this column always overflows: the panel is
+   a scroller. Without this every card was squeezed to fit the viewport and the blurbs
+   were cut off mid-sentence with the disclosure button pushed out of existence — the
+   whole redesign invisible, on a rule nothing on the panel had written. */
+.tools-body > * { flex: 0 0 auto; }
 
-.tools-head {
+.tools-intro {
 	font-size: var(--fs-sm); line-height: 1.55;
 	color: var(--text-secondary);
-	padding-bottom: 4px;
 }
-.tools-head b { color: var(--text-primary); }
+.tools-count {
+	font-size: var(--fs-xs-sm); line-height: 1.5;
+	color: var(--text-muted);
+	padding-bottom: 2px;
+}
+.tools-count b { color: var(--text-primary); font-weight: 600; }
 
 .tools-sec {
 	margin-top: 12px;
@@ -23,54 +38,73 @@
 	color: var(--text-muted);
 }
 
-.tools-card {
-	display: grid;
-	/* `minmax(0, 1fr)`, not `1fr`: a `1fr` track's automatic minimum is its
-	   MIN-CONTENT, and a tool name is one unbreakable monospace identifier. In
-	   a narrow stage seat `typst_compile` therefore pushed the card 7px wider
-	   than its own box at 205px and 22px at 190px, so the card's right border
-	   was drawn outside the panel it lives in. A zero minimum lets the track
-	   shrink and the name below wrap instead. */
-	grid-template-columns: minmax(0, 1fr) auto;
-	align-items: center;
-	gap: 4px 12px;
+.tools-none {
+	font-size: var(--fs-xs-sm); line-height: 1.5;
+	color: var(--text-muted);
 	padding: 10px 12px;
+	border: 1px dashed var(--border);
+	border-radius: var(--radius);
+}
+
+/* ── One capability ─────────────────────────────────────────── */
+
+.cap {
+	display: flex; flex-direction: column;
 	background: var(--bg-tertiary);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
+	overflow: hidden;
 }
-/* A tool that is for sale is the one thing here asking for a decision, so it is the one
-   thing that is not the colour of the furniture. */
-.tools-card.locked { background: var(--bg-secondary); border-color: var(--border-2); }
+/* A capability that is for sale is the one thing here asking for a decision, so it is
+   the one thing that is not the colour of the furniture. */
+.cap[data-state="locked"] { background: var(--bg-secondary); border-color: var(--border-2); }
 
-.tools-name {
-	grid-column: 1;
+.cap-head {
+	/* Wrapping, not two fixed tracks. In a narrow stage seat an Unlock button is a
+	   third of the width, and a two-track grid gave the sentence beside it four words
+	   a line. Here the button drops to a line of its own the moment the text would be
+	   squeezed below `240px`, and `margin-left: auto` keeps it right where it lands. */
+	display: flex; flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 8px 12px;
+	padding: 11px 12px;
+}
+
+/* `min-width: 0` because a flex item's automatic minimum is its MIN-CONTENT, and one
+   long unbreakable word would otherwise push the card's right border outside the panel
+   it lives in. */
+.cap-text { flex: 1 1 240px; min-width: 0; }
+.cap-name {
 	font-size: var(--fs-sm-base); font-weight: 600;
 	color: var(--text-primary);
-	font-family: var(--font-mono);
-	/* `break-word`, not `anywhere`: it breaks only when the identifier alone
-	   will not fit, so a name that does fit is never split for the sake of it.
-	   Wrapping rather than truncating, because which tool this is is the one
-	   thing the card must say. */
 	overflow-wrap: break-word;
 }
-.tools-card.locked .tools-name { font-family: inherit; }
-.tools-blurb {
-	grid-column: 1; grid-row: 2;
+.cap-blurb {
+	margin-top: 3px;
 	font-size: var(--fs-xs-sm); line-height: 1.5;
 	color: var(--text-secondary);
 }
+/* Why a locked row is locked, said where the row is rather than in a tooltip: a
+   capability that simply reads "£25" tells the reader the price and not the position. */
+.cap-why {
+	margin-top: 5px;
+	font-size: var(--fs-xs); line-height: 1.45;
+	color: var(--accent-text);
+}
 
-.tools-tag {
-	grid-column: 2; grid-row: 1 / span 2;
+.cap-side {
+	flex: 0 0 auto;
+	margin-left: auto;
+	display: flex; align-items: center;
+}
+.cap-chip {
 	font-size: var(--fs-2xs);
 	color: var(--text-muted);
 	white-space: nowrap;
 }
-.tools-tag.on { color: var(--ok); }
+.cap-chip.on { color: var(--ok); }
 
 .tools-buy {
-	grid-column: 2; grid-row: 1 / span 2;
 	background: var(--accent); color: var(--on-fill, #fff);
 	border: 1px solid var(--accent); border-radius: var(--radius-sm);
 	padding: 8px 14px; font-size: var(--fs-sm);
@@ -78,6 +112,64 @@
 }
 .tools-buy:hover { filter: brightness(1.08); }
 .tools-buy:disabled { opacity: 0.6; cursor: default; }
+
+/* ── The lid ────────────────────────────────────────────────── */
+
+.cap-more {
+	align-self: flex-start;
+	margin: 0 0 2px 8px;
+	padding: 4px 4px 8px;
+	background: none; border: 0;
+	font-size: var(--fs-2xs);
+	color: var(--text-muted);
+	cursor: pointer;
+	text-align: left;
+}
+.cap-more:hover { color: var(--text-secondary); }
+.cap-more::before {
+	content: '▸';
+	display: inline-block;
+	margin-right: 5px;
+	transition: transform 0.12s ease;
+}
+.cap-more[aria-expanded="true"]::before { transform: rotate(90deg); }
+
+.cap-fns {
+	border-top: 1px solid var(--border);
+	padding: 4px 12px 10px;
+	display: flex; flex-direction: column;
+}
+/* `display` beats `hidden`. The browser hides a `[hidden]` element with a UA rule of
+   `display: none`, and any author `display` at all — the `flex` above — outranks it. The
+   lid therefore did nothing at all: the functions sat open under every capability while
+   the button said "What it does (9)". A verifier that asked the CLASS rather than
+   `checkVisibility()` would have called that green. */
+.cap-fns[hidden] { display: none; }
+.cap-fn {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1px;
+	padding: 7px 0;
+	border-bottom: 1px solid var(--border);
+}
+.cap-fn:last-child { border-bottom: 0; }
+
+.cap-fn-name {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs-sm);
+	color: var(--text-primary);
+	/* `break-word`, not `anywhere`: it breaks only when the identifier alone will not
+	   fit, so a name that does fit is never split for the sake of it. */
+	overflow-wrap: break-word;
+}
+.cap-fn-blurb {
+	font-size: var(--fs-xs); line-height: 1.45;
+	color: var(--text-secondary);
+}
+.cap-fn-pack {
+	font-size: var(--fs-2xs);
+	color: var(--accent-text);
+}
 
 .tools-fine {
 	font-size: var(--fs-xs); line-height: 1.5;

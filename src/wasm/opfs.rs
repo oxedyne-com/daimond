@@ -491,7 +491,46 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
     // `close` is inherited from `WritableStream` and flushes the file.
     res!(JsFuture::from(writable.close()).await
         .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_str(&e); IO, File, Write)));
+    announce_write(path);
     Ok(())
+}
+
+/// Say on the page that `path` has just been written.
+///
+/// **This is the one door for bytes**, so it is the one place that can say so:
+/// a daimon's `file_write`, the Doc panel's Save, a compiled PDF and an upload all
+/// arrive here.  Anything on the page that follows a file — the Typst live view is
+/// the first — hears about a write the moment it lands, instead of finding out on
+/// its next poll.
+///
+/// A `CustomEvent` on `window` rather than a call to a named object, deliberately:
+/// this module has no business knowing which features exist, and a second follower
+/// should not have to be added to a list here.  Nothing subscribes by default, and
+/// an event nobody hears costs a dispatch.
+///
+/// The other actor — an external editor writing into a real folder the user marked
+/// in — cannot be announced by anything, because the File System Access API has no
+/// change events.  That one is polled.  Both actors drive the same loop; only the
+/// way they are noticed differs.
+///
+/// # Arguments
+/// * `path` - The workspace-relative path just written.
+fn announce_write(path: &str) {
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None    => return,
+    };
+    let detail = js_sys::Object::new();
+    if js_sys::Reflect::set(&detail, &JsValue::from_str("path"), &JsValue::from_str(path)).is_err() {
+        return;
+    }
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail);
+    let ev = match web_sys::CustomEvent::new_with_event_init_dict("daimond-file-written", &init) {
+        Ok(e)  => e,
+        Err(_) => return,
+    };
+    let _ = win.dispatch_event(&ev);
 }
 
 /// Create the directory `path` under `root`, and any parents it needs.
@@ -692,6 +731,52 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
     let buf_val = res!(JsFuture::from(part.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_str(&e); IO, File, Read)));
     Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
+}
+
+/// When `path` was last written, and how long it is: `(last_modified_ms, size)`.
+///
+/// Nothing is read.  A `File` handle knows both without a byte of it being
+/// materialised, so asking sixty-three files whether they have changed costs about
+/// thirteen milliseconds -- measured, three runs, in `dev/measure_typstbook.mjs`.
+/// That is what makes a watch loop affordable: the File System Access API has no
+/// change events for a real folder, so polling is the only mechanism there is, and
+/// this is the cheapest honest question to poll with.
+///
+/// **The same test `www/js/cloud.js` already uses**, which compares `lastModified`
+/// WITH `size` rather than either alone.  Two answers to "has this file changed" is
+/// how one caller decides a file is fresh while another decides it is stale, so this
+/// is deliberately the same pair rather than a second convention.
+///
+/// `None` when there is nothing at `path` -- which for a watcher is itself a change,
+/// and for a cache is a reason to re-read rather than an error.
+///
+/// # Arguments
+/// * `root` - Which filesystem root the path is under.
+/// * `path` - The workspace-relative path.
+pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
+    let handle = res!(resolve_root(root, path).await);
+    let components = res!(jail_components(path));
+    let (dir, leaf) = match open_parent(&handle, components).await {
+        Ok(v)  => v,
+        Err(_) => return Ok(None),
+    };
+    let file_val = match JsFuture::from(dir.get_file_handle(&leaf)).await {
+        Ok(v)  => v,
+        Err(_) => return Ok(None),
+    };
+    let file_handle: FileSystemFileHandle = match file_val.dyn_into() {
+        Ok(h)  => h,
+        Err(_) => return Ok(None),
+    };
+    let blob_val = match JsFuture::from(file_handle.get_file()).await {
+        Ok(v)  => v,
+        Err(_) => return Ok(None),
+    };
+    let file: File = match blob_val.dyn_into() {
+        Ok(f)  => f,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some((file.last_modified(), file.size())))
 }
 
 /// Read the entries of `dir`, returning `(name, is_dir, size)` per entry.

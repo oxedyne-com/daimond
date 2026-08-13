@@ -1021,6 +1021,52 @@
 
 	// ── The panel ───────────────────────────────────────────────────
 
+	/// Can the Back control actually do anything? It is drawn only where it can.
+	///
+	/// A control that does nothing when it is pressed teaches the reader to
+	/// distrust every control on the panel, so this decides whether `#web-back` is
+	/// on screen at all. There are three separate reasons it cannot work, and all
+	/// three hold in the app as it ships:
+	///
+	///   * UNDER HANDS THE FRAME IS NOT THE PAGE. `extNote` hides the frame and
+	///     leaves whatever it last held -- the guide, usually -- inside it. A Back
+	///     that "worked" there would walk the GUIDE's history behind a header
+	///     naming a live site.
+	///   * A CROSS-ORIGIN PAGE'S HISTORY IS NOT OURS TO WALK. That is the
+	///     same-origin policy: reading `contentWindow.history` throws.
+	///   * OUR OWN PAGES ARE SANDBOXED WITHOUT `allow-same-origin`. See the
+	///     `sandbox` attribute on `#web-frame` in index.html, and the note at the
+	///     top of `guide/frame.js` explaining why it is deliberate: a page an agent
+	///     wrote must not be able to reach the user's keys. An opaque origin is
+	///     cross-origin to us too, so the guide and the local driver are no more
+	///     reachable than anybody else's site.
+	///
+	/// PROBED rather than decided from a table of drivers. The last reason is the
+	/// one that could plausibly change -- a guide frame of its own, or a
+	/// back-channel through `guide/frame.js` -- and asking the frame means the
+	/// control returns by itself when it can work again, instead of waiting for
+	/// somebody to remember this line.
+	function canGoBack() {
+		// Not a question about the frame: under the extension it is not the page,
+		// and an idle panel has nothing in it.
+		if (state.driver === 'ext' || state.driver === 'none') return false;
+		try {
+			return !!(els.frame && els.frame.contentWindow && els.frame.contentWindow.history);
+		} catch (e) {
+			return false;                   // opaque or cross-origin: not ours
+		}
+	}
+
+	/// Draw the Back control, or take it away.
+	///
+	/// Called from `render` and from the frame's own `load`: what the frame HOLDS
+	/// is what decides, and that changes when a document arrives rather than when
+	/// one is asked for. Painting only on render left the control judging the
+	/// document it was about to replace.
+	function paintBack() {
+		if (els.back) els.back.style.display = canGoBack() ? '' : 'none';
+	}
+
 	function render() {
 		if (!els.url) return;
 		// An empty iframe is a blank white rectangle, which reads as a broken panel
@@ -1052,6 +1098,7 @@
 			: state.mode === 'agent'
 				? t('web.who_daimond_help')
 				: hasExt() ? t('web.who_ready_help') : t('web.who_view_only_help');
+		paintBack();                        // shown only where it can act
 		els.blind.style.display = (state.mode === 'user') ? 'flex' : 'none';
 		// Name why the wheel is with the user, when the broker told us. A specific
 		// cause ("stopped at the sign-in page for …") reassures far more than the
@@ -1181,8 +1228,11 @@
 		els.url    = document.getElementById('web-url');
 		els.mode   = document.getElementById('web-mode');
 		els.body   = document.getElementById('web-body');
+		els.back   = document.getElementById('web-back');
 		if (!els.frame) return;
 
+		// A document arriving is the moment Back's answer can change. See paintBack.
+		els.frame.addEventListener('load', paintBack);
 		window.addEventListener('message', onBridgeMessage);
 		document.getElementById('web-takeover').addEventListener('click', takeover);
 		document.getElementById('web-reload').addEventListener('click', function () {
@@ -1191,10 +1241,12 @@
 		document.getElementById('web-pop').addEventListener('click', function () {
 			if (state.url) window.open(state.url, '_blank', 'noopener');
 		});
-		document.getElementById('web-back').addEventListener('click', function () {
-			// A cross-origin frame's history is not ours to walk, so this is a real
-			// back only where we own the page.
-			try { els.frame.contentWindow.history.back(); } catch (e) { /* not ours */ }
+		els.back.addEventListener('click', function () {
+			// `canGoBack` has already decided this control is on screen, so the
+			// catch is a guard against the frame changing under a press rather than
+			// the ordinary case it used to swallow.
+			if (!canGoBack()) return;
+			try { els.frame.contentWindow.history.back(); } catch (e) { /* gone since */ }
 		});
 		detect();
 		render();

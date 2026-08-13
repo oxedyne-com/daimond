@@ -36,7 +36,7 @@
 // the editor, numbered. The viewer was never what decided: `openFile` in
 // daimond.js is, and nothing drove it. It asked "do these bytes decode as
 // characters", which the front of a PDF with no binary comment does. The last
-// section therefore opens files the way a person does and reads `#doc-view`.
+// section therefore opens files the way a person does and reads `#pv-view`.
 //
 // TO SEE THESE FAIL, break it like this -- this lane could not run a browser
 // (a subagent launching one is what has OOMed this machine), so the lead should
@@ -586,9 +586,14 @@ try {
 	});
 	await page.waitForTimeout(800);
 
-	/// Click a row in the Workspace tree and say what the Doc panel then holds.
+	/// Click a row in the Workspace tree and say what the PREVIEW panel then holds.
 	///
-	/// `#doc-view` and not the test's own host: the claim is about the panel.
+	/// `#pv-view` and not the test's own host: the claim is about the panel. It was
+	/// `#doc-view` until the Doc panel was split in two — a file that is not
+	/// characters is a RENDERING, and renderings go to the Preview panel so that
+	/// whatever is being edited can stay on screen beside them. `pre` still reads the
+	/// DOC panel, because "not one character of it reaches the editor" is a claim
+	/// about the editor.
 	const inPanel = async (name) => {
 		const clicked = await page.evaluate((n) => {
 			const r = document.querySelector('.files-tree .files-row[data-path="' + n + '"]');
@@ -598,12 +603,12 @@ try {
 		}, name);
 		await page.waitForTimeout(1200);
 		const got = await page.evaluate(() => {
-			const fv  = document.querySelector('#doc-view .fileview');
+			const fv  = document.querySelector('#pv-view .fileview');
 			const pre = document.querySelector('#doc-view .files-view-body');
 			return {
 				viewer: fv ? fv.getAttribute('data-viewer') : null,
-				frame:  !!document.querySelector('#doc-view .fileview iframe'),
-				embed:  !!document.querySelector('#doc-view .fileview embed'),
+				frame:  !!document.querySelector('#pv-view .fileview iframe'),
+				embed:  !!document.querySelector('#pv-view .fileview embed'),
 				pre:    pre ? pre.textContent.slice(0, 80) : null,
 			};
 		});
@@ -627,7 +632,7 @@ try {
 	// near-black and no near-white pixel in it at all -- and this fixture,
 	// rendered, scores about 46% and 25%. Anywhere in that gap would do.
 	await page.waitForTimeout(2500);		// the viewer loads and paints
-	const ink = await inkCensus('#doc-view .fv-doc');
+	const ink = await inkCensus('#pv-view .fv-doc');
 	check(!!ink && ink.dark > 0.02 && ink.light > 0.02,
 		'and the page is drawn: there is ink on paper where the PDF is',
 		ink ? `dark ${(ink.dark * 100).toFixed(1)}%, light ${(ink.light * 100).toFixed(1)}%`
@@ -639,8 +644,8 @@ try {
 	// in a letterbox with empty panel beneath it is not "showing the PDF", and no
 	// check that reads the DOM would ever have noticed.
 	const fills = await page.evaluate(() => {
-		const e = document.querySelector('#doc-view .fv-doc');
-		const p = document.getElementById('doc-view');
+		const e = document.querySelector('#pv-view .fv-doc');
+		const p = document.getElementById('pv-view');
 		if (!e || !p) return null;
 		return { doc: e.getBoundingClientRect().height, panel: p.getBoundingClientRect().height };
 	});

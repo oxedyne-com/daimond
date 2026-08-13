@@ -13,16 +13,21 @@
 // once at the `cd` and nothing inside interrupts you. So:
 //
 //   * A CHAT HAS A WORKSPACE, the set of folders the user marked into it, and it
-//     is fenced to it for BOTH VERBS. Reading is a blast radius too.
-//   * THE MARK IS THE PERMISSION. Inside the workspace a write happens with
-//     nothing asked. A fence that also interrupted would have missed the point,
-//     so the control below is as load-bearing as the refusals.
+//     is fenced to it FOR WRITING AND RUNNING. Reading is free inside whatever
+//     the user already opened (amended 2026-08-13; this file asserted the
+//     opposite for a day, and `dev/verify_chatfence.mjs` asserted this one, and
+//     they cannot both be right).
+//   * THE MARK IS THE PERMISSION, and what it grants is WRITING. Inside the
+//     workspace a write happens with nothing asked. A fence that also
+//     interrupted would have missed the point, so the control below is as
+//     load-bearing as the refusals.
 //   * NOTE AND READ ARE NOT THE MARK. They are a cost decision about what is
 //     quoted into the prompt — a path costs a few tokens, a file costs
 //     thousands — and neither grants any reach. A path attached as Read and NOT
-//     marked into the workspace is not reachable.
-//   * AN EMPTY WORKSPACE IS THE CHAT'S OWN SCRATCH AND NOTHING ELSE, which is
-//     what a Diamond with no attachment gets.
+//     marked into the workspace is readable, as everything is, and cannot be
+//     changed.
+//   * AN EMPTY WORKSPACE IS THE CHAT'S OWN SCRATCH AND NOTHING ELSE TO WRITE IN,
+//     which is what a Diamond with no attachment gets.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST.
 //
@@ -142,15 +147,16 @@ try {
 	// ── An empty workspace ──
 	const bare = await chatApp([], [], ['quoted'], BREAK);
 	check('a chat declares a workspace even when the user has marked nothing into it',
-		Array.isArray(bare.allow) && bare.allow.indexOf('chats/c-scope/work') >= 0,
+		Array.isArray(bare.write_allow) && bare.write_allow.indexOf('chats/c-scope/work') >= 0
+			&& (bare.allow || []).length === 0,
 		JSON.stringify(bare));
 
 	const bareRead = await tool('file_read', { path: 'books/thinking.typ' });
-	check('with an empty workspace the user\'s files are not readable',
-		/Refused/.test(bareRead), bareRead.slice(0, 100));
+	check('with an empty workspace the user\'s files are still readable',
+		/the user own chapter/.test(bareRead), bareRead.slice(0, 100));
 
 	const bareWrite = await tool('file_write', { path: 'books/thinking.typ', content: 'rewritten\n' });
-	check('nor writable — this is the file the incident was about',
+	check('and not writable — this is the file the incident was about',
 		/Refused/.test(bareWrite), bareWrite.slice(0, 100));
 	const bookAfter = await onDisk('books/thinking.typ');
 	check('and the refusal is real: the chapter is untouched on disk',
@@ -165,7 +171,7 @@ try {
 	// ── A folder marked into the workspace ──
 	const held = await chatApp(['papers'], ['refs'], ['quoted'], BREAK);
 	check('a marked folder is in the workspace the engine holds',
-		(held.allow || []).indexOf('papers') >= 0, JSON.stringify(held.allow));
+		(held.write_allow || []).indexOf('papers') >= 0, JSON.stringify(held.write_allow));
 
 	const readIn = await tool('file_read', { path: 'papers/spec.md' });
 	check('inside the workspace, reading works',
@@ -195,33 +201,41 @@ try {
 	check('and editing a file already in the workspace works, with nothing asked',
 		/as the chat left it/.test(spec) && (await asked()).dialogs === 0, spec.slice(0, 100));
 
-	// ── Outside it, both verbs ──
+	// ── Outside it, one verb ──
 	const outRead = await tool('file_read', { path: 'elsewhere/notes.md' });
-	check('outside the workspace, reading is refused',
-		/Refused/.test(outRead), outRead.slice(0, 110));
-	check('and the refusal names the chat\'s workspace, not a Diamond\'s',
-		/chat/i.test(outRead) && !/Diamond's workspace/.test(outRead), outRead.slice(0, 140));
+	check('outside the workspace, reading works',
+		/the user own note/.test(outRead), outRead.slice(0, 110));
 
 	const outWrite = await tool('file_write', { path: 'elsewhere/notes.md', content: 'clobbered\n' });
 	check('outside the workspace, writing is refused', /Refused/.test(outWrite), outWrite.slice(0, 110));
+	check('and the refusal names the chat\'s workspace, not a Diamond\'s',
+		/chat/i.test(outWrite) && !/Diamond's workspace/.test(outWrite), outWrite.slice(0, 140));
+	check('and it says the read it was probably about is allowed',
+		/Reading is not fenced/.test(outWrite), outWrite.slice(0, 200));
 	const noteAfter = await onDisk('elsewhere/notes.md');
 	check('and that refusal is real too — the note is untouched',
 		/the user own note/.test(noteAfter) && !/clobbered/.test(noteAfter), noteAfter.slice(0, 100));
 
 	// A walk reaches paths it does not name, so the door is not the whole house:
-	// `file_list` re-asks per entry, and a fence that only held at the named path
-	// would list the whole workspace back.
+	// `file_list` re-asks per entry. It now lists outside the workspace, which is
+	// what "summarise these ten files" needs — and every entry it lists is still
+	// refused to every writing tool.
 	const listOut = await tool('file_list', { path: 'elsewhere' });
-	check('and a directory listing outside the workspace is refused as well',
-		/Refused/.test(listOut), listOut.slice(0, 110));
+	check('and a directory listing outside the workspace works',
+		/notes\.md/.test(listOut), listOut.slice(0, 110));
 
 	// ── Note and Read are not the mark ──
+	//
+	// The mark grants WRITING. Note and Read decide what is quoted into the prompt
+	// and grant nothing at all — which is now asserted as it always should have
+	// been: the quoted path is no more writable than any other, and no less
+	// readable.
 	const quotedRead = await tool('file_read', { path: 'quoted/passage.md' });
-	check('a path attached to be QUOTED is not thereby in the workspace',
-		/Refused/.test(quotedRead), quotedRead.slice(0, 110));
+	check('a path attached to be QUOTED is readable, as everything in the workspace is',
+		/a passage quoted into the chat/.test(quotedRead), quotedRead.slice(0, 110));
 	const quotedWrite = await tool('file_write',
 		{ path: 'quoted/passage.md', content: 'rewritten by the chat\n' });
-	check('and certainly not writable',
+	check('and attaching it did not make it writable — Note is not a grant',
 		/Refused/.test(quotedWrite), quotedWrite.slice(0, 110));
 	check('and it is untouched on disk',
 		/a passage quoted into the chat/.test(await onDisk('quoted/passage.md')));
@@ -241,6 +255,10 @@ try {
 	const ownDir = await tool('file_read', { path: '.daimond/config.json' });
 	check('Daimond\'s own directory is not readable from a chat',
 		/Refused/.test(ownDir), ownDir.slice(0, 100));
+	const ownWrite = await tool('file_write',
+		{ path: '.daimond/config.json', content: '{"owned":true}\n' });
+	check('nor writable — it holds the rules about what agents may do',
+		/Refused/.test(ownWrite), ownWrite.slice(0, 100));
 	check('and the control that makes that mean something: the file IS there',
 		/seeded/.test(await onDisk('.daimond/config.json')));
 

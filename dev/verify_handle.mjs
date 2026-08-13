@@ -309,7 +309,7 @@ async function stub(page, { refuseGet = false, broken = true } = {}) {
 	await page.route('**/api/auth/challenge', r => r.fulfill(json({ ok: true, challenge: 'chal-h', challenge_id: 'cid-h' })));
 	await page.route('**/api/auth/verify',    r => r.fulfill(json({ ok: true })));
 	await page.route('**/api/balance',        r => r.fulfill(json({ ok: true, credits_minor: 5000, currency: 'usd', entries: [] })));
-	await page.route('**/api/licence',        r => r.fulfill(json({ ok: true, licence: true, currency: 'usd' })));
+	await page.route('**/api/licence',        r => r.fulfill(json({ ok: true, licence: true, held: true, currency: 'usd' })));
 	// The sync mailbox is not what this is about, and a device pushing into a
 	// 404 retries. Answer it, emptily.
 	await page.route('**/api/sync**', r => r.fulfill(json({ ok: true, version: 0, blob: null })));

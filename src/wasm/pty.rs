@@ -47,6 +47,7 @@ use crate::tools::{
     normalise,
     refusal_line,
     toolkit_bounds,
+    Bound,
     Kit,
     Machine,
 };
@@ -236,6 +237,13 @@ pub async fn close(id: &str, sig: &str) -> Outcome<String> {
 // turn the Diamond's workspace into bounds, turn the bounds into a compartment,
 // and say what may run inside it.  Only the last two lines differ, because a
 // terminal is a session rather than a result.
+//
+// **The verb split does not reach here.**  A scope leaves READING free at the
+// file tools (`tools::Bound::OnlyWriteUnder`), and `fence_spec` deliberately
+// does not follow it: a program is opaque, so a terminal reaches the folders
+// the user marked in and nothing else, exactly as it did before.  A session is
+// a person at a keyboard running programs of their own choosing, which is the
+// case for keeping that fence rather than relaxing it.
 
 /// The terminal a person is given when nobody named a program.
 ///
@@ -395,13 +403,36 @@ pub async fn pty_request(ask_json: String) -> String {
     let tainted = extract_json_bool(ask, "tainted") == Some(true);
     let fence = fence_spec(&bounds, &machine, crate::tools::mode().withholds_net(tainted));
     if fence.rw.is_empty() && fence.ro.is_empty() {
-        return refused(
-            "this Diamond's bounds do not describe any folder a terminal could run in, so there \
-            is no fence to open one inside. Nothing was opened.");
+        // Two states arrive here and a person can only act on one of them, so they are told
+        // apart. A Diamond that named itself and nothing else is the ORDINARY case -- a fresh
+        // Diamond, with a Terminal panel and no folder yet -- and the sentence it gets has to
+        // say what to do about it, or the user meets a wall with no door in it. A scope naming
+        // nowhere at all is the panel having no Diamond to ask for, which is a different
+        // situation and no amount of attaching would fix.
+        return refused(if bounds.iter().any(|b| matches!(b, Bound::Nowhere)) {
+            "there is no Diamond here for a terminal to belong to, so there is nothing to say \
+            what one may touch. Open a Diamond and try again."
+        } else {
+            "this Diamond has no folder on this computer attached to it, so there is nowhere for \
+            a terminal to run. A Diamond's own files live in Daimond's storage, which is not a \
+            place on this computer. Attach a folder in the Workspace panel, then open the \
+            terminal again."
+        });
     }
 
     let root = machine.root.trim_end_matches('/').to_string();
-    let cwd_rel = normalise(&extract_json_string(ask, "cwd").unwrap_or_default());
+    // Where the session starts, by the same rule a command starts by: `tools::start_dir`, which
+    // both edges now share. The panel sends the Diamond's own directory as the `cwd`, because
+    // that is what a Diamond IS to it -- and that directory is in the browser's storage and not
+    // on this machine, so a session that took it literally asked for a terminal outside its own
+    // fence and was refused. Every Diamond terminal, including one with a folder attached and
+    // nothing whatever wrong with it.
+    let asked = normalise(&extract_json_string(ask, "cwd").unwrap_or_default());
+    let cwd_rel = if asked.is_empty() || crate::tools::is_store_path(&asked) {
+        crate::tools::start_dir(&bounds)
+    } else {
+        asked
+    };
     let cwd = if cwd_rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, cwd_rel) };
     // The hand refuses a working directory outside the fence, and so does the
     // extension. Refused here as well, where the sentence can still name the

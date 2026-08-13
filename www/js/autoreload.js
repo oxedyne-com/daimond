@@ -80,7 +80,15 @@
 		if (!G || !G.state().authed) { host.innerHTML = ''; return; }
 
 		var s = await G.autoReload();
-		if (!s) { host.innerHTML = ''; return; }         // no gateway: the panel is not the place to complain
+		// A read that came back with nothing leaves what is on screen ALONE.
+		//
+		// It used to blank the host, so one refused or dropped request -- a renewal in
+		// flight, a gateway restarting -- took the auto-reload controls off the page
+		// entirely and nothing put them back. An empty space says the feature does not
+		// exist; the settings already drawn are the last thing the gateway actually
+		// said, which is nearer the truth. With nothing drawn, nothing appears, which
+		// is the original intent: no gateway, and the panel is not the place to complain.
+		if (!s) return;
 		cur = s;
 		host.innerHTML = '';
 
@@ -233,6 +241,24 @@
 			if (b) { b.disabled = false; b.textContent = t('common.save'); }
 		}
 	}
+
+	// ── A session that lands after Credits was opened fills the panel in ──
+	//
+	// `render` draws nothing without a gateway session, and that session is taken
+	// asynchronously at boot: an account POST, a challenge, a signature and a verify,
+	// then a balance. A user who reached Credits before all that landed was shown an
+	// empty space where the standing instruction to spend their money should be, and
+	// nothing redrew it for the life of the page. The panel was not late, it was
+	// absent, and the only way back was a reload.
+	//
+	// `daimond:authed` is raised at the moment there is a session -- a first unlock,
+	// or a renewal that came good -- so it is the moment the missing panel can be
+	// drawn. Only when the host is EMPTY, so an ordinary renewal over a panel already
+	// on screen costs no request.
+	window.addEventListener('daimond:authed', function () {
+		var host = document.getElementById('autoreload');
+		if (host && !host.firstChild) render();
+	});
 
 	window.DaimondAutoReload = {
 		render:   render,

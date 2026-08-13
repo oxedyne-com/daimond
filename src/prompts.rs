@@ -122,6 +122,24 @@ impl Role {
 		!matches!(self, Self::Reducer | Self::Compactor)
 	}
 
+	/// Whether an agent in this role can put a file on the user's SCREEN.
+	///
+	/// Named separately from [`has_tools`](Role::has_tools) because it is a different
+	/// question and answers differently for exactly one role. The chat and the daimon
+	/// are talking to somebody who is looking at the panel; a worker is not, and
+	/// [`Tool::FileShow`](crate::tools::Tool::FileShow) refuses it for that reason --
+	/// several workers run at once and the panel is one panel.
+	///
+	/// This exists so [`SHOW_NOTE`] does not reach the actor it is false for.
+	/// [`DEFAULT_CHAT`] records the same lesson from the other side: the paragraph
+	/// about dispatching workers is in the chat's own default rather than composed in,
+	/// because it is false for the daimon. Text placed in the wrong default reaches
+	/// the wrong actor, and an agent told it can do something it will then be refused
+	/// spends a turn finding that out and tells the user something untrue on the way.
+	pub fn can_show(&self) -> bool {
+		matches!(self, Self::Chat | Self::Daimon)
+	}
+
 	/// What this role is told when the user has not said otherwise.
 	pub fn default_prompt(&self) -> &'static str {
 		match self {
@@ -142,6 +160,10 @@ impl Role {
 	/// rewriting the job must not be able to change the format by accident; the
 	/// compactor gets nothing appended at all, since its output is prose nobody
 	/// parses.
+	///
+	/// [`SHOW_NOTE`] is the one piece here that is not appended to every role with
+	/// tools, because it is the one that is FALSE for one of them: see
+	/// [`can_show`](Role::can_show).
 	pub fn compose(&self, text: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
 		if matches!(self, Self::Reducer) {
@@ -150,7 +172,12 @@ impl Role {
 		if !self.has_tools() {
 			return body.to_string();
 		}
-		fmt!("{}\n\n{}\n\n{}\n\n{}", body, VISION_NOTE, SEARCH_NOTE, SAFETY_CLAUSE)
+		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
+		if self.can_show() {
+			out.push_str(&fmt!("\n\n{}", SHOW_NOTE));
+		}
+		out.push_str(&fmt!("\n\n{}\n\n{}", SEARCH_NOTE, SAFETY_CLAUSE));
+		out
 	}
 }
 
@@ -164,6 +191,40 @@ pub const VISION_NOTE: &str =
 	 A PNG, JPEG, GIF or WebP read with file_read comes back as the picture itself, not as a \
 	 refusal — so when the answer is on the screen rather than in the source, take or find a \
 	 screenshot and read it, and say what you can see.";
+
+/// That a file can be put on the user's SCREEN, appended to every role that can do it.
+///
+/// The note exists because its absence was reported as a fact about the app. Asked to compile a
+/// Typst source and display the PDF, a daimon answered that it could not display a PDF inline,
+/// "the file tools return raw bytes for it rather than a rendered view", and apologised. The
+/// panel had been drawing PDFs since it was written. The model held eleven tools that return
+/// bytes and none that shows anything, and it did what a model always does with that ambiguity:
+/// it resolved it against the app and told the user a limitation that was really its own.
+///
+/// So this is not decoration on the tool's description. A tool the model does not know it has is
+/// a tool that does not exist, and the failure mode is not a missed call -- it is a confident,
+/// courteous denial that the product can do something it has always done. The last sentence names
+/// that denial in the words it actually came out in, because a model that recognises the sentence
+/// it is about to write is a model that can stop.
+///
+/// **It is composed in for [`Role::can_show`] and not for every role with tools**, unlike
+/// [`VISION_NOTE`] and [`SEARCH_NOTE`] beside it. A dispatched worker holds the same file tools
+/// and is refused this one -- nobody is reading its transcript and the panel is not its to take.
+/// Telling it otherwise would spend a turn on a refusal and, worse, invite it to report to its
+/// conductor that it had shown the user something.
+pub const SHOW_NOTE: &str =
+	"## Showing the user a file\n\n\
+	 file_show puts a workspace file on their screen, in the document panel beside this \
+	 conversation — a PDF as its typeset pages in the browser's own document viewer, a picture \
+	 drawn, sound and video with a player, HTML rendered, JSON as a tree, CSV as a table, \
+	 Markdown rendered, source in an editor, and anything else as a paged dump of its bytes with \
+	 the format named. It takes a path, so after you write or recompile a file, call it again \
+	 with the same path to put the new version in front of them.\n\n\
+	 Reach for it whenever the answer is a document rather than a sentence: you have just \
+	 produced something, or they asked to see a file, or the thing under discussion is easier \
+	 looked at than described. Never tell the user that Daimond cannot display a PDF, a picture \
+	 or a document — it can, this is how, and saying otherwise describes your own toolbox rather \
+	 than the app they are using.";
 
 /// That the web can be searched, and whose choice the engine is, appended to every role that
 /// holds tools.
@@ -369,9 +430,15 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], tainted: bool, mode: Mode) ->
 		return String::new();
 	}
 	let os = if m.os.trim().is_empty() { "this computer" } else { m.os.trim() };
+	// "To a command" is load-bearing and costs two words. The file tools and the fence no longer
+	// answer alike -- a scope fences writing and running and leaves reading free
+	// (`tools::Bound::OnlyWriteUnder`), while a command's fence is both verbs -- so a briefing that
+	// said "reachable" without saying to WHAT would teach a daimon that it cannot read a file it
+	// can read perfectly well, and it would stop trying.
 	let mut s = fmt!(
 		"## This computer\n\nCommands run on {} through Daimond's machine hand: only the paths \
-		below are reachable, and every other path is refused.", os);
+		below are reachable to a command, and every other path is refused. Your file tools are \
+		not fenced this way -- they read the whole workspace.", os);
 	if !fence.rw.is_empty() {
 		s.push_str(&fmt!("\nRead and write: {}", fence.rw.join(", ")));
 	}
@@ -754,6 +821,17 @@ mod tests {
 		m
 	}
 
+	/// A Diamond with a folder attached, which is the only kind of Diamond that describes a
+	/// machine at all.
+	///
+	/// Its OWN directory is in the browser's storage whatever folder the user opened, so
+	/// `tools::fence_spec` does not grant it and a Diamond with nothing attached has nowhere on
+	/// this computer to run -- which `machine_note` answers with silence rather than with a
+	/// briefing about paths the hand would refuse.  Every test below wants the other case.
+	fn diamond() -> Vec<Bound> {
+		diamond_bounds("diamonds/d1", &[fmt!("notes")], &[])
+	}
+
 	#[test]
 	fn test_no_hand_means_not_one_word_about_a_machine() {
 		// Every token here is paid on every request of every turn, so an absent capability is not
@@ -765,6 +843,19 @@ mod tests {
 		}
 		// A granted toolkit does not put a briefing back either: there is still nowhere to run it.
 		assert_eq!(machine_note(&Machine::default(), &[Toolkit::Rust.bound()], false, Mode::default()), "");
+		// A HAND, and a turn with nothing on the machine to reach: a Diamond with no attachment,
+		// and a chat whose user has marked no folder in. Both hold their own working folder, and
+		// that folder is in the browser's storage -- so the fence grants nothing and the briefing
+		// is silence rather than a list of paths the hand would refuse to resolve. The briefing
+		// used to name them, which told a daimon it had somewhere to work when it had not.
+		assert_eq!(machine_note(&machine(), &diamond_bounds("diamonds/d1", &[], &[]), false,
+			Mode::default()), "");
+		assert_eq!(machine_note(&machine(), &crate::tools::chat_bounds("chats/c1/work", &[], &[]),
+			false, Mode::default()), "");
+		// And the contrast, or the two lines above would pass on a briefing that never says
+		// anything: mark one folder in and the machine is described.
+		assert!(machine_note(&machine(), &crate::tools::chat_bounds("chats/c1/work",
+			&[fmt!("books")], &[]), false, Mode::default()).contains("/home/u/ws/books"));
 	}
 
 	#[test]
@@ -772,7 +863,11 @@ mod tests {
 		let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
 		let s = machine_note(&machine(), &b, false, Mode::default());
 		assert!(s.contains("linux"), "{}", s);
-		assert!(s.contains("/home/u/ws/diamonds/d1"), "{}", s);
+		// NOT the Diamond's own directory. It is in the browser's storage whatever folder is open,
+		// so the fence does not grant it (see `tools::fence_spec`) and a briefing that named it
+		// would offer the model a folder the hand refuses to resolve -- which is exactly how the
+		// daimon in the 2026-08-12 transcript came to believe it had somewhere to work.
+		assert!(!s.contains("/home/u/ws/diamonds/d1"), "{}", s);
 		assert!(s.contains("/home/u/ws/notes"), "{}", s);
 		assert!(s.contains("/home/u/ws/refs"), "{}", s);
 		assert!(s.contains("every other path is refused"), "{}", s);
@@ -807,7 +902,7 @@ mod tests {
 
 	#[test]
 	fn test_a_tainted_turn_is_told_the_network_is_gone_and_why() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		let clean = machine_note(&machine(), &b, false, Mode::default());
 		assert!(clean.contains("Network: available"), "{}", clean);
 		let tainted = machine_note(&machine(), &b, true, Mode::default());
@@ -819,7 +914,7 @@ mod tests {
 
 	#[test]
 	fn test_a_granted_toolkit_is_named_and_an_ungranted_one_is_not() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		let bare = machine_note(&machine(), &b, false, Mode::default());
 		assert!(!bare.contains("cargo"), "nothing was granted: {}", bare);
 		let mut r = b.clone();
@@ -847,7 +942,7 @@ mod tests {
 		// path this page cannot spell, and git was on PATH before the grant existed. The sentence
 		// that fits one is wrong about the other, and it is wrong in the direction that sends a
 		// daimon hunting for a git it already has.
-		let mut b = diamond_bounds("diamonds/d1", &[], &[]);
+		let mut b = diamond();
 		b.push(Toolkit::Git.bound());
 		let s = machine_note(&machine(), &b, false, Mode::default());
 		assert!(s.contains("Git toolkit:"), "{}", s);
@@ -858,7 +953,7 @@ mod tests {
 		assert!(s.contains("hooks"),
 			"a commit that suddenly runs the user's hooks arrives unannounced: {}", s);
 		// And the toolkit the sentence was written for still gets it.
-		let mut n = diamond_bounds("diamonds/d1", &[], &[]);
+		let mut n = diamond();
 		n.push(Toolkit::Node.bound());
 		let s = machine_note(&machine(), &n, false, Mode::default());
 		assert!(s.contains("name the binary in full"), "{}", s);
@@ -866,7 +961,7 @@ mod tests {
 
 	#[test]
 	fn test_a_push_credential_is_briefed_and_its_absence_costs_nothing() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		let bare = machine_note(&machine(), &b, false, Mode::default());
 		assert!(!bare.contains("git push"),
 			"a push was described to a turn that has no credential to make one: {}", bare);
@@ -895,7 +990,7 @@ mod tests {
 	fn test_the_briefing_stays_short_enough_to_pay_for_every_turn() {
 		// It is sent on every request of every turn. The number is a ceiling, not a target: this
 		// exists so that a later addition has to be argued for rather than merely appended.
-		let mut b = diamond_bounds("diamonds/d1", &[], &[]);
+		let mut b = diamond();
 		b.push(Toolkit::Rust.bound());
 		let s = machine_note(&machine(), &b, false, Mode::default());
 		assert!(s.len() < 700, "the machine briefing is {} bytes:\n{}", s.len(), s);
@@ -910,7 +1005,7 @@ mod tests {
 
 	#[test]
 	fn test_a_bypass_turn_is_not_promised_a_withdrawal_that_will_not_happen() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		// Clean. The guarded sentence promises the network will end the moment anything is read;
 		// under bypass that is simply false, and a briefing the model can catch being wrong about
 		// one thing is a briefing it has reason to doubt about the fence.
@@ -928,7 +1023,7 @@ mod tests {
 
 	#[test]
 	fn test_a_guarded_turn_is_told_why_it_has_no_network_and_an_ask_turn_too() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		for rung in [Mode::Guarded, Mode::Ask] {
 			let s = machine_note(&machine(), &b, true, rung);
 			assert!(s.contains("Network: none"), "the {} rung kept the network: {}",
@@ -943,7 +1038,7 @@ mod tests {
 
 	#[test]
 	fn test_the_ask_rung_is_named_and_the_default_costs_nothing_to_name() {
-		let b = diamond_bounds("diamonds/d1", &[], &[]);
+		let b = diamond();
 		let ask = machine_note(&machine(), &b, false, Mode::Ask);
 		assert!(ask.contains("put to the user before it runs"),
 			"the ask rung is invisible to the model it constrains: {}", ask);

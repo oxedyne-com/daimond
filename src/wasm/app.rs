@@ -337,8 +337,11 @@ impl DaimondApp {
     /// touch.
     ///
     /// The bounds are [`crate::tools::chat_bounds`], which is [`crate::tools::diamond_bounds`]:
-    /// both verbs fenced, so the blast radius is a real one.  Reading used to be free here and is
-    /// not any more, which is the cost of the change and is stated on the bound itself.
+    /// **writing and running are fenced to the workspace, and reading is free** inside whatever the
+    /// user already opened.  The verb decides, not the surface, and the argument for it is on
+    /// [`crate::tools::Bound::OnlyWriteUnder`].  For one day in August 2026 this said the opposite,
+    /// because the delegation that fenced the conversation also fenced its reading -- which nobody
+    /// decided and which took the user's own files away from their own chat.
     ///
     /// **`workspace` is what the user MARKED into this chat's workspace, and not the paperclip's
     /// whole attachment list.**  An attachment carries two independent things: Note or Read, which
@@ -446,21 +449,28 @@ impl DaimondApp {
     /// would never find out.  Failing open is the one way this can go wrong that matters, so the
     /// browser sets the scope, reads it back here, and refuses to run a turn on a disagreement.
     ///
-    /// It answers for both surfaces because both now carry the same kind of rule: a chat's scope
-    /// arrives in `allow`, exactly as a Diamond's does, and a caller checking a chat looks for its
-    /// scratch folder there.
+    /// It answers for both surfaces because both carry the same kind of rule: a chat's scope
+    /// arrives in `write_allow`, exactly as a Diamond's does, and a caller checking either looks
+    /// for its own folder there.
     ///
     /// Returns a compact JSON object:
     ///
     /// ```text
-    /// {"allow":["diamonds/d1","notes"],"no_write":[".daimond/"],"toolkits":["rust"],"nowhere":false}
+    /// {"allow":[],"write_allow":["diamonds/d1","notes"],"no_write":[".daimond/"],"toolkits":["rust"],"nowhere":false}
     /// ```
     ///
-    /// `allow` is the allow-list as [`crate::tools::Bound::OnlyUnder`] holds it, normalised -- so a
-    /// path the caller spelled `./notes/` comes back as `notes`, which is what the comparison must
-    /// be made against.  `nowhere` is the scope that named no usable place at all: it is not an
-    /// error, it is a turn that may touch nothing, and it has to be tellable apart from an unscoped
-    /// turn, whose `allow` is also empty.
+    /// **`write_allow` is where a scope lands, and `allow` is empty for everything this build
+    /// composes.**  A scope fences writing and running and leaves reading free (see
+    /// [`crate::tools::Bound::OnlyWriteUnder`]), so a page that tests `allow` to decide whether a
+    /// scope took is testing a field that can no longer be anything but empty -- and would refuse
+    /// every turn on both surfaces.  Both are reported, never merged, because they are different
+    /// fences and a caller that could not tell them apart would read a freely-reading turn as a
+    /// confined one.
+    ///
+    /// Paths are normalised -- one the caller spelled `./notes/` comes back as `notes`, which is
+    /// what the comparison must be made against.  `nowhere` is the scope that named no usable place
+    /// at all: it is not an error, it is a turn that may touch nothing, and it has to be tellable
+    /// apart from an unscoped turn, whose lists are also empty.
     pub fn diamond_scope(&self) -> String {
         let quoted = |v: Vec<String>| -> String {
             let items: Vec<String> = v.iter()
@@ -481,14 +491,15 @@ impl DaimondApp {
                 _ => None,
             })
             .collect();
-        // The WRITE allow-list. Reported beside `allow` and never merged into it: they are
-        // different fences -- one governs both verbs, the other governs writing alone -- and a
-        // caller that could not tell them apart would read a freely-reading turn as a confined one.
+        // The WRITE allow-list, which is WHERE A SCOPE LANDS on both surfaces. Reported beside
+        // `allow` and never merged into it: they are different fences -- one governs both verbs,
+        // the other governs writing and running -- and a caller that could not tell them apart
+        // would read a freely-reading turn as a confined one, or the reverse.
         //
-        // EMPTY for everything this build composes. A chat used to carry one and now carries the
-        // same both-verb rule a Diamond does (see `crate::tools::Bound::OnlyWriteUnder`), so a page
-        // that still tests this field to decide whether a chat's scope took is testing a field that
-        // can no longer be anything but empty, and is failing open.
+        // `allow` above is EMPTY for everything this build composes, and a page that tests it to
+        // decide whether a scope took is testing a field that cannot be anything but empty. That
+        // has now been wrong in both directions within a week, which is why both are reported and
+        // why `scopeAgentTo` and `scopeChatTo` in daimond.js name the one they mean.
         let write_allow: Vec<String> = bounds.iter()
             .filter_map(|b| match b {
                 crate::tools::Bound::OnlyWriteUnder(p) => Some(crate::tools::normalise(p)),

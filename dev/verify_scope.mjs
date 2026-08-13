@@ -15,6 +15,17 @@
 // It creates two Diamonds with a real secret in each, dispatches a worker into
 // one, and asks the KERNEL whether that worker's command can read the other.
 //
+// ── What a scope fences, since 2026-08-13 ───────────────────────────
+//
+// A scope fences WRITING and RUNNING and leaves READING free inside whatever the
+// user already opened (`Bound::OnlyWriteUnder` in src/tools.rs). That changes the
+// shape of the scope this file reads back — it arrives in `write_allow`, not in
+// `allow` — and changes NOTHING about the fence below, which is the point: a
+// command is an opaque program, so `fence_spec` does not split its verbs, and the
+// compartment the kernel proves here is the same compartment it proved before.
+// If a later change makes a Diamond's command read the granted root, the three
+// `cat` checks below go red, and they are meant to.
+//
 // ── Why it is written the way it is ─────────────────────────────────
 //
 // The fence is captured from `fence_spec` rather than composed here. A test that
@@ -28,11 +39,41 @@
 // only worth something because the SAME command finds the nonce in its own
 // Diamond, which is the control that runs beside it every time.
 //
+// ── The fixture that made this file prove the wrong world ───────────
+//
+// Until 2026-08-13 the two Diamonds were fenced to their OWN directories, and
+// this file made those directories: `fs.mkdirSync(<grant>/diamonds/<id>)`. With
+// that fixture on disk the fence resolved, the kernel duly proved the
+// compartment, and the file was green throughout the fortnight in which every
+// `run` in every chat and every Diamond terminal was refused in the field.
+//
+// A Diamond's own directory is in the BROWSER'S storage whatever folder is open
+// (`is_store_path` in src/tools.rs), so nothing on the user's machine ever
+// creates it. `fence_spec` mapped it under the granted root anyway, the hand
+// could not canonicalise the path, and it refused the WHOLE fence — taking the
+// user's real, attached, perfectly good folder down with it. The one directory
+// this file created was the one whose absence was the bug.
+//
+// So the fixture is now what the app actually produces: two folders the user
+// ATTACHED, `work-a` and `work-b`, one to each Diamond. Nothing under
+// `<grant>/diamonds/` is created here, and a check below asserts that no path
+// under it ever reaches the fence. The kernel is still the oracle and the
+// compartment is still proved through it; only the world it is proved in is now
+// the world the app inhabits.
+//
 // ── Running it ──────────────────────────────────────────────────────
 //
 //	xvfb-run -a -s "-screen 0 1400x900x24" node dev/verify_scope.mjs
 //
-//	  --keep   leave the scratch tree behind
+//	  --keep            leave the scratch tree behind
+//	  --engine <dir>    load the engine from `www/<dir>` instead of `www/pkg`,
+//	                    which is how `dev/breakproof_storefence.sh` runs this
+//	                    file against a bundle built with the fence break put
+//	                    back. An ARGUMENT and never an environment variable: an
+//	                    env var set once leaks into every later run in that
+//	                    shell, and a verifier quietly measuring a package nobody
+//	                    meant to test is the exact failure this file exists to
+//	                    catch.
 //
 // Headed, because Chromium loads an unpacked extension in no other mode.
 import fs from 'node:fs';
@@ -51,6 +92,11 @@ const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
 const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
 
 const KEEP	= process.argv.slice(2).includes('--keep');
+/// Which directory under `www/` the page imports the engine from.
+const ENGINE	= (() => {
+	const i = process.argv.indexOf('--engine');
+	return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : 'pkg';
+})();
 
 const BASE	= scratch('scope');
 const PROFILE	= path.join(BASE, 'profile');
@@ -127,10 +173,15 @@ refuse(whyStaleBinary(HAND, {
 // fe2o3 crate always. There is no dep-info to be had for a wasm bundle (see
 // `dev/staleguard.mjs`), so the oracle is every `.rs` under `src/`: coarse, and
 // a superset of anything hand-picked.
-refuse(whyStaleWasm(path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm'), path.join(ROOT, 'src'), {
+refuse(whyStaleWasm(path.join(ROOT, `www/${ENGINE}/oxedyne_daimond_bg.wasm`), path.join(ROOT, 'src'), {
 	subject: 'The scope the engine composes',
 	holds:   '`diamond_bounds` and the fence it builds',
 }));
+if (ENGINE !== 'pkg') {
+	console.log(`\n  !!!! THIS RUN IS NOT A RESULT. The engine under test is www/${ENGINE}, which is`);
+	console.log( '       not the app\'s bundle. It is here to be watched FAILING; a green run against');
+	console.log( '       it would mean the checks below cannot tell the two worlds apart.\n');
+}
 
 fs.writeFileSync(path.join(JOURNAL, 'root.txt'),
 	`# The one folder Daimond's machine hand may work in.\n${GRANT}\n`);
@@ -180,23 +231,43 @@ try {
 
 	await page.evaluate(() => window.DaimondHand._setWaitsForTest({ grace: 30000, slack: 60000, hello: 20000 }));
 
+	// The engine module, whichever package it comes from. `www/pkg` is the one
+	// the app booted, so it is already initialised; ANY other package has never
+	// been, and wasm-bindgen's exports are inert until it is — every call comes
+	// back "Cannot read properties of undefined (reading '__wbindgen_malloc')".
+	// Once per package, because a second `init()` instantiates a second module
+	// and the store the first one opened would be left behind it.
+	await page.evaluate(() => {
+		const done = {};
+		window.__mod = async (name) => {
+			const mod = await import(`../${name}/oxedyne_daimond.js`);
+			if (name !== 'pkg' && !done[name]) { await mod.default(); done[name] = true; }
+			return mod;
+		};
+	});
+
 	// Two Diamonds, made through the app's own edge so they are real store entries.
-	const ids = await page.evaluate(async (mock) => {
-		const mod = await import('../pkg/oxedyne_daimond.js');
+	const ids = await page.evaluate(async ([mock, engine]) => {
+		const mod = await window.__mod(engine);
 		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		const a = await app.create_diamond('Alpha');
 		const c = await app.create_diamond('Beta');
 		return { a, c };
-	}, MOCK);
+	}, [MOCK, ENGINE]);
 	check('two Diamonds exist', !!ids.a && !!ids.c, JSON.stringify(ids));
 
-	// Their workspace directories, on the granted folder — which is the workspace
-	// the file tools resolve against and the folder the hand was given, so a
-	// workspace-relative bound and an absolute fence path name the same place.
-	const dirA = path.join(GRANT, 'diamonds', ids.a);
-	const dirB = path.join(GRANT, 'diamonds', ids.c);
-	fs.mkdirSync(dirA, { recursive: true });
-	fs.mkdirSync(dirB, { recursive: true });
+	// A folder each, ATTACHED — the only kind of place a Diamond has on this
+	// machine. The user makes these with a directory picker and the app never
+	// creates them; `<grant>/diamonds/<id>` is deliberately NOT created, because
+	// nothing in the field creates it either (see the note at the head of this
+	// file). The granted folder is also the workspace the file tools resolve
+	// against, so a workspace-relative bound and an absolute fence path name the
+	// same place.
+	const dirA  = path.join(GRANT, 'work-a');
+	const dirB  = path.join(GRANT, 'work-b');
+	const store = path.join(GRANT, 'diamonds');
+	fs.mkdirSync(dirA);
+	fs.mkdirSync(dirB);
 	fs.writeFileSync(path.join(dirA, 'own.txt'), MINE + '\n');
 	fs.writeFileSync(path.join(dirB, 'secret.txt'), THEIRS + '\n');
 
@@ -220,60 +291,103 @@ try {
 		}));
 	}, GRANT);
 
-	const fenced = await page.evaluate(async ({ id, root, mock }) => {
-		const mod = await import('../pkg/oxedyne_daimond.js');
+	const fenced = await page.evaluate(async ({ id, root, mock, engine }) => {
+		const mod = await window.__mod(engine);
 		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		const before = JSON.parse(app.diamond_scope());
-		app.set_diamond_scope('diamonds/' + id, '[]', '[]', '[]');
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
 		const after = JSON.parse(app.diamond_scope());
 		// The pty composer is the one edge that hands a fence back as text, and it
 		// is the SAME `fence_spec` a command goes through.
+		//
+		// `cwd` is the Diamond's own directory because that is what the Terminal
+		// panel sends — `cwd: b.own_dir` in `Files.bounds`'s caller — and a fence
+		// question answered against a tidier request than the app makes is a
+		// question about a different app.
 		const req = JSON.parse(await mod.pty_request(JSON.stringify({
+			own_dir: 'diamonds/' + id, attached: ['work-a'], read_only: [], toolkits: [],
+			cwd: 'diamonds/' + id, cols: 80, rows: 24,
+		})));
+		// And the same Diamond with nothing attached to it, which is what a fresh
+		// one is: no folder on this machine, so nothing to fence and nothing to
+		// open. The sentence matters as much as the refusal — see the check.
+		const bare = JSON.parse(await mod.pty_request(JSON.stringify({
 			own_dir: 'diamonds/' + id, attached: [], read_only: [], toolkits: [],
 			cwd: 'diamonds/' + id, cols: 80, rows: 24,
 		})));
-		return { before, after, req, root };
-	}, { id: ids.a, root: GRANT, mock: MOCK });
+		return { before, after, req, bare, root };
+	}, { id: ids.a, root: GRANT, mock: MOCK, engine: ENGINE });
 
 	check('an unscoped agent declares no allow-list at all',
 		Array.isArray(fenced.before.allow) && fenced.before.allow.length === 0
+			&& (fenced.before.write_allow || []).length === 0
 			&& fenced.before.nowhere === false,
 		JSON.stringify(fenced.before));
+	// Read back off `write_allow`, which is where a scope lands. `allow` is the
+	// both-verb list and is empty for every scope this build composes; a check
+	// written against it would pass only in a world where a daimon could not read
+	// its user's files, and `scopeAgentTo` in daimond.js reads the same field.
 	check('a scoped agent reads back the Diamond it was confined to',
-		(fenced.after.allow || []).indexOf('diamonds/' + ids.a) >= 0,
+		(fenced.after.write_allow || []).indexOf('diamonds/' + ids.a) >= 0
+			&& (fenced.after.write_allow || []).indexOf('work-a') >= 0
+			&& (fenced.after.allow || []).length === 0,
 		JSON.stringify(fenced.after));
-	const rw = (fenced.req.fence && fenced.req.fence.rw) || [];
-	check('and the fence the engine composed names that Diamond and not the whole grant',
-		rw.indexOf(dirA) >= 0 && rw.indexOf(GRANT) < 0, JSON.stringify(rw));
-	check('and it does not name the other Diamond in any list',
-		!JSON.stringify(fenced.req.fence || {}).includes(ids.c),
-		JSON.stringify(fenced.req.fence));
+	const fence = fenced.req.fence || {};
+	const rw = fence.rw || [];
+	check('and the fence the engine composed names the folder attached to it, not the whole grant',
+		rw.indexOf(dirA) >= 0 && rw.indexOf(GRANT) < 0,
+		JSON.stringify(fenced.req).slice(0, 300));
+	// THE REGRESSION. A Diamond's own directory is in the browser's storage, so
+	// `<grant>/diamonds/<id>` is a directory nobody makes; a fence naming it is a
+	// fence the hand cannot resolve, and it refuses the whole spec — the real
+	// folder beside it included. Asserted over every list at once, because the
+	// path was equally fatal in `rw`, in `ro` and in a read carve-out.
+	check('and no part of it names a place inside Daimond\'s own storage, which is not on the disk',
+		JSON.stringify(fence).indexOf(store) < 0, JSON.stringify(fence).slice(0, 300));
+	check('and it does not name the other Diamond, or the folder attached to it, in any list',
+		!JSON.stringify(fence).includes(ids.c) && !JSON.stringify(fence).includes(dirB),
+		JSON.stringify(fence));
+	// The panel asks for a terminal in the Diamond's own directory, because that
+	// is what a Diamond is to it. The session has to start somewhere real, and
+	// `tools::start_dir` says where: the first folder the user attached.
+	check('and the session starts in that folder, though the panel asked for the Diamond itself',
+		fenced.req.cwd === dirA, JSON.stringify(fenced.req.cwd));
+	// A wall a person can get through. The refusal is shown to the USER, in the
+	// Terminal panel, verbatim: it has to name the thing they can do about it.
+	check('a Diamond with nothing attached is refused a terminal, and told to attach a folder',
+		!!fenced.bare.refused && fenced.bare.t === undefined
+			&& /attach/i.test(fenced.bare.refused) && /Workspace panel/.test(fenced.bare.refused),
+		JSON.stringify(fenced.bare).slice(0, 300));
 
 	// ── The command, and the kernel ─────────────────────────────────
 	//
 	// The fence just captured, sent down the real relay to the real hand. Not a
 	// fence this file composed: the object came out of `fence_spec`.
 	const grant = allowHand();
-	const send = async (argv, fence) => {
-		const raw = await page.evaluate(({ argv, fence }) =>
+	// `cwd` defaults to the fence's first writable root and can be named, so that
+	// a fence under test is the only thing under test: a working directory that
+	// does not exist is refused for its own reasons, and would stand in for the
+	// refusal being asked about.
+	const send = async (argv, fence, cwd) => {
+		const raw = await page.evaluate(({ argv, fence, cwd }) =>
 			window.DaimondHand.run(JSON.stringify({
 				t: 'exec', id: 'sc-' + Math.random().toString(36).slice(2, 8),
-				argv, cwd: fence.rw[0], env: [], stdin: null,
+				argv, cwd: cwd || fence.rw[0], env: [], stdin: null,
 				timeout_ms: 30000, capture: 'both', fence, toolkits: [],
 			})).then((v) => ({ ok: v }), (e) => ({ err: (e && e.message) || String(e) })),
-			{ argv, fence });
+			{ argv, fence, cwd: cwd || null });
 		if (raw.err) return { refused: raw.err };
 		try { return { out: JSON.parse(raw.ok) }; } catch (e) { return { refused: raw.ok }; }
 	};
 
 	const own = await send(['/bin/cat', path.join(dirA, 'own.txt')], fenced.req.fence);
 	await grant;
-	check('a command in Diamond A reads Diamond A\'s own file',
+	check('a command in Diamond A reads the folder attached to Diamond A',
 		!!own.out && String(own.out.stdout || '').includes(MINE),
 		JSON.stringify(own).slice(0, 300));
 
 	const theirs = await send(['/bin/cat', path.join(dirB, 'secret.txt')], fenced.req.fence);
-	check('and the same command cannot read Diamond B\'s file',
+	check('and the same command cannot read the folder attached to Diamond B',
 		!own.refused && !(theirs.out && String(theirs.out.stdout || '').includes(THEIRS)),
 		JSON.stringify(theirs).slice(0, 300));
 	check('and it is the KERNEL that refuses it, not a string check',
@@ -284,8 +398,48 @@ try {
 
 	const wrote = await send(
 		['/bin/sh', '-c', `echo x > ${path.join(dirB, 'planted.txt')}`], fenced.req.fence);
-	check('nor write into Diamond B', !fs.existsSync(path.join(dirB, 'planted.txt')),
+	check('nor write into Diamond B\'s folder', !fs.existsSync(path.join(dirB, 'planted.txt')),
 		JSON.stringify(wrote).slice(0, 200));
+
+	// ── The other door, on the same scope ───────────────────────────
+	//
+	// The kernel has just refused a COMMAND the other Diamond. The file tools are
+	// the other half of the same bound list, and they answer differently on
+	// purpose: reading is free, writing is not. Asserted here rather than left to
+	// the unit tests, because "the scope took" is a claim about the engine the page
+	// actually loaded, and because a refusal with no permission beside it would
+	// pass just as well on a scope that had failed shut.
+	//
+	// In the browser's own storage, which is where a file tool works: this browser
+	// has no real folder open (no automated one can — a real folder needs a native
+	// dialog), so the paths below are OPFS paths and never the disk fixtures above.
+	const doors = await page.evaluate(async ({ id, mock, engine }) => {
+		const mod = await window.__mod(engine);
+		const free = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		await free.run_tool('file_write', JSON.stringify({
+			path: 'work-b/secret.txt', content: 'THE OTHER DIAMONDS FILE\n' }));
+		await free.run_tool('file_write', JSON.stringify({
+			path: '.daimond/config.json', content: '{"seeded":true}\n' }));
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String);
+		return {
+			read:  await t('file_read',  { path: 'work-b/secret.txt' }),
+			write: await t('file_write', { path: 'work-b/secret.txt', content: 'clobbered\n' }),
+			own:   await t('file_read',  { path: '.daimond/config.json' }),
+			after: await free.run_tool('file_read',
+				JSON.stringify({ path: 'work-b/secret.txt' })).then(String),
+		};
+	}, { id: ids.a, mock: MOCK, engine: ENGINE });
+	check('the same scope reads a file nobody attached, through the file tools',
+		/THE OTHER DIAMONDS FILE/.test(doors.read), doors.read.slice(0, 120));
+	check('and cannot write it — which is the half that must never widen',
+		/Refused/.test(doors.write), doors.write.slice(0, 120));
+	check('and that refusal is real: the file is untouched',
+		/THE OTHER DIAMONDS FILE/.test(doors.after) && !/clobbered/.test(doors.after),
+		doors.after.slice(0, 120));
+	check('while Daimond\'s own directory is refused BOTH ways, seeded so it is a denial and not an absence',
+		/Refused/.test(doors.own), doors.own.slice(0, 120));
 
 	// The control, without which every refusal above proves nothing: the same
 	// file, with the fence the code used to compose — the whole granted root.
@@ -295,22 +449,53 @@ try {
 		!!unscoped.out && String(unscoped.out.stdout || '').includes(THEIRS),
 		JSON.stringify(unscoped).slice(0, 200));
 
+	// ── The other control: the fence as it was composed until tonight ──
+	//
+	// Not a fence the engine can produce any more, so it is written out here and
+	// sent to the REAL hand, which is the end that decides. It is the good fence
+	// above with one path added: the Diamond's own directory, mapped under the
+	// granted root as `fence_spec` used to map it. Nothing creates that
+	// directory, the hand cannot canonicalise it, and it refuses the SPEC —
+	// which is why a Diamond with a perfectly good folder attached could not run
+	// a command either. The user's real folder is in this fence and reachable in
+	// principle; the hand still says no, and that is the whole shape of the
+	// outage.
+	const preFix = {
+		rw: [path.join(store, ids.a)].concat(fenced.req.fence.rw),
+		ro: fenced.req.fence.ro, deny: fenced.req.fence.deny, net: false,
+	};
+	const old = await send(['/bin/cat', path.join(dirA, 'own.txt')], preFix, dirA);
+	// The relay resolves with the hand's own sentence rather than rejecting, so
+	// the refusal arrives INSIDE the answer. Read both shapes: a check that knew
+	// only about a rejection would call a refusal that came back as data a pass.
+	const oldWhy = String((old.out && old.out.refused) || old.refused || '');
+	check('and the fence composed BEFORE tonight is refused outright by the hand, real folder and all',
+		/cannot be resolved/i.test(oldWhy) && oldWhy.includes(path.join(store, ids.a))
+			&& !(old.out && String(old.out.stdout || '').includes(MINE)),
+		JSON.stringify(old).slice(0, 300));
+
 	// ── The toolkit grant, which only exists through this same call ──
-	const kits = await page.evaluate(async ({ id, mock }) => {
-		const mod = await import('../pkg/oxedyne_daimond.js');
+	const kits = await page.evaluate(async ({ id, mock, engine }) => {
+		const mod = await window.__mod(engine);
 		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		await app.set_toolkits(id, JSON.stringify(['rust', 'nonsense']));
 		const list = JSON.parse(await app.list_diamonds());
 		const row = list.find((d) => d.id === id) || {};
-		app.set_diamond_scope('diamonds/' + id, '[]', '[]', JSON.stringify(row.toolkits || []));
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', JSON.stringify(row.toolkits || []));
 		return { stored: row.toolkits || [], scope: JSON.parse(app.diamond_scope()) };
-	}, { id: ids.a, mock: MOCK });
+	}, { id: ids.a, mock: MOCK, engine: ENGINE });
 	check('a toolkit grant is stored, and an unknown name is dropped rather than kept',
 		JSON.stringify(kits.stored) === '["rust"]', JSON.stringify(kits.stored));
 	check('and it reaches the turn\'s bounds, which is the only way a fence ever sees one',
 		JSON.stringify(kits.scope.toolkits) === '["rust"]', JSON.stringify(kits.scope));
 
-	const noise = s.errs.filter((e) => !/favicon|ERR_ABORTED|502|Bad Gateway/i.test(e));
+	// 502 is a dev server with no gateway behind it; 401 is a gateway that IS
+	// there and has nobody signed in, which is this file exactly — it holds no
+	// account and asks the gateway for nothing. The two are the same absence
+	// seen from either side, and which one the page meets depends on whether
+	// somebody else on this machine happens to have a gateway up.
+	const noise = s.errs.filter((e) =>
+		!/favicon|ERR_ABORTED|502|Bad Gateway|401 \(Unauthorized\)/i.test(e));
 	check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 } finally {
 	await b.close().catch(() => {});

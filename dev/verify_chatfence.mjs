@@ -1,33 +1,46 @@
 // verify_chatfence.mjs — a chat's worker reads freely, writes where it was told,
 // and runs commands only where the user deliberately put something.
 //
-// A Diamond confines both verbs, because a daimon may see only what its Diamond
-// holds. A chat is the user's own conversation over their whole workspace, and
-// its worker is fenced on the VERB rather than on the surface:
+// The fence is on the VERB and not on the surface, and since 2026-08-13 that is
+// the rule everywhere — a chat, a chat's worker, and a Diamond's daimon alike:
 //
 //   * READING IS FREE. "Summarise these ten files" must not require attaching
 //     ten files first. A worker reading what the chat could already read is
 //     equal reach, not greater — a person asked the question either way.
-//   * WRITING GOES WHERE THE USER SAID: the chat's own working folder, and
-//     whatever they attached.
+//   * WRITING GOES WHERE THE USER MARKED: the chat's own working folder, and
+//     whatever they marked into its workspace.
 //   * A COMMAND COUNTS AS A WRITE, because there is no way to look at an argv
 //     and say whether it alters anything. No attachment, no command.
+//   * AND A COMMAND'S READING IS NOT SPLIT OUT EITHER. The same sentence that
+//     makes a command a write makes it opaque: it can read a million files,
+//     follow a symlink out, and hold the network on a clean turn. So its fence
+//     names the marked folders for both verbs, the granted root appears in
+//     NEITHER list, and this file asserts that — the compartment
+//     `dev/verify_scope.mjs` proves through the kernel depends on it.
 //
-// The last one is not enforced by a rule of its own: a chat's scratch lives
-// under `chats/`, which `is_store_path` answers for, so `fence_spec` cannot map
-// it onto the machine and `default_cwd` skips it. The refusal falls out of where
-// the folder lives, which is why it cannot drift from the rule it implements.
+// "No attachment, no command" is not enforced by a rule of its own: a chat's
+// scratch lives under `chats/`, which `is_store_path` answers for, so
+// `fence_spec` cannot map it onto the machine and `default_cwd` skips it. The
+// refusal falls out of where the folder lives, which is why it cannot drift from
+// the rule it implements.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST.
 //
-//   node dev/verify_chatfence.mjs --break readfence   # 1 fails: reading is fenced
-//   node dev/verify_chatfence.mjs --break writeopen   # 2 fails: writing is not
+//   node dev/verify_chatfence.mjs --break markall     # 1 fails: writing widens
+//   node dev/verify_chatfence.mjs --break writeopen   # 2 fails: nothing in scope
 //   node dev/verify_chatfence.mjs --break noscratch   # 3 fails: no working folder
 //   node dev/verify_chatfence.mjs                     # and then, clean
 //
 // The breaks are applied to the SCOPE THE PAGE ASKS FOR, not to the engine: the
 // engine is the thing under test, and a break that damaged it would prove only
 // that a damaged engine misbehaves. Each one is a plausible caller mistake.
+//
+// THERE IS NO CALLER BREAK FOR THE READ CHECKS, and that is worth saying rather
+// than leaving as a gap: no argument to `set_chat_scope` can fence a read any
+// more, because the scope it builds declares no read fence at all. That property
+// is proved red at the engine instead — `cargo test --lib tools::` with
+// `diamond_bounds` emitting `Bound::OnlyUnder`, which is the 2026-08-12
+// regression put back, turns sixteen unit tests red including the reads below.
 import { open } from './harness.mjs';
 
 const BREAK = (() => {
@@ -90,13 +103,13 @@ try {
 		let scratch = 'chats/c-test/work';
 		let list = attached.slice();
 		// The breaks, each a caller mistake rather than a damaged engine.
-		if (brk === 'readfence') {
-			// The mistake this whole design exists to avoid: fencing a chat's worker
-			// the way a Diamond's is fenced, which takes the user's own files away
-			// from it. `set_diamond_scope` is the Diamond call, used here on a chat.
-			app.set_diamond_scope(scratch, JSON.stringify(list), '[]', '[]');
-			window.__app = app;
-			return JSON.parse(app.diamond_scope() || '{}');
+		if (brk === 'markall') {
+			// The mistake ATTACH_CONTRACT §6 is about: reading the paperclip's whole
+			// list as a permission list, so a path attached only to be QUOTED is
+			// marked into the workspace and becomes writable. Now that reading is
+			// free this is a pure widening of the write fence, which is exactly the
+			// direction that must never go unnoticed.
+			list = list.concat(['elsewhere']);
 		}
 		if (brk === 'writeopen') scratch = '';      // no working folder named…
 		if (brk === 'writeopen') list = [];         // …and nothing attached either
@@ -117,8 +130,19 @@ try {
 			&& (bare.allow || []).length === 0,
 		JSON.stringify(bare));
 
+	// THE DECISION A REVIEWER STOPS AT, asserted rather than implied: this worker
+	// was marked UNSUPERVISED above (`app.set_unsupervised()`, the same call
+	// `markAlone` makes in daimond.js), and it reads freely all the same. The
+	// answer to the fear underneath the question is the network, not the fence —
+	// an unattended actor loses it on a clean turn as much as a dirty one, which
+	// the fence check below asserts, so a worker that reads widely cannot post
+	// what it read.
+	const alone = await page.evaluate(() => window.__app.is_unsupervised());
+	check('the worker under test is genuinely unattended, or the reads below prove nothing',
+		alone === true, String(alone));
+
 	const readFar = await tool('file_read', { path: 'elsewhere/notes.md' });
-	check('reading is free: a file nobody attached is readable',
+	check('reading is free, even for an unattended worker: a file nobody attached is readable',
 		/the user own note/.test(readFar), readFar.slice(0, 90));
 
 	const writeFar = await tool('file_write', { path: 'elsewhere/notes.md', content: 'clobbered\n' });
@@ -175,15 +199,23 @@ try {
 	check('and it runs in the attached folder, not at the granted root',
 		!!heldRun && /\/papers$/.test(String(heldRun.cwd || '')),
 		heldRun ? String(heldRun.cwd) : 'the hand saw nothing');
-	// The fence the command actually carried. `rw` is the attached folder and the
-	// granted root is READ-ONLY — reading is free, writing is not, expressed to the
-	// hand as the same two rules the file tools just enforced.
+	// The fence the command actually carried, and the ONE place the verb split is
+	// deliberately not followed. `rw` is the marked folder; the granted root is in
+	// NEITHER list, so a command reads exactly where it may write and no further.
+	// A program cannot be asked what it will do, which is the same sentence that
+	// makes it a write — and a fence handing it the whole root read-only would put
+	// one `tar | curl` between a stranger's instruction and everything the user
+	// owns, and would dissolve the compartment dev/verify_scope.mjs proves through
+	// the kernel.
 	const fence = heldRun && heldRun.fence;
-	check('the fence gives write to what was attached and read to the rest',
+	check('the fence gives the marked folder to a command and the granted root to nothing',
 		!!fence && (fence.rw || []).some(p => /\/papers$/.test(p))
 			&& !(fence.rw || []).includes('/home/tester/granted')
-			&& (fence.ro || []).includes('/home/tester/granted'),
+			&& !(fence.ro || []).includes('/home/tester/granted'),
 		JSON.stringify(fence));
+	check('and Daimond\'s own directory is denied to it outright',
+		!!fence && (fence.deny || []).some(p => /\/\.daimond$/.test(p)),
+		JSON.stringify(fence && fence.deny));
 	// An unattended worker gets no network inside a command, on a clean turn as
 	// much as a dirty one: it cannot be asked about a destination, so the
 	// alternative is a process reaching anywhere with nobody in the loop.

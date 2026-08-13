@@ -2547,11 +2547,16 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 
 /* ── The three zones ─────────────────────────────────────────────
    Rail (left, permanent) | Stage (middle, exclusive) | Dock (right, tagged).
-   The stage seats two so you never have to leave the conversation to do a
-   thing: the message, the page, the document — each opens BESIDE the daimon,
-   not over it. */
+   The stage seats as many panels as its width will carry, up to four, so you
+   never have to leave the conversation to do a thing: the message, the page,
+   the document and the pages it was typeset into — each opens BESIDE the
+   daimon, not over it. How many is derived from the width; see `stageMax` in
+   daimond.js, and the measurement beside `MIN_W`. */
 .stage { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 0; }
-.stage > .panel { min-height: 0; }
+/* `min-width: 0` so a seat is the width the engine gave it. A flex item's
+   automatic minimum is its content's, so without this a seat asked for 380px
+   could quietly take more and push the seat beside it off the stage. */
+.stage > .panel { min-height: 0; min-width: 0; }
 .dock { display: flex; gap: 8px; min-width: 0; min-height: 0; flex: none; }
 .pcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; flex: 1; }
 .pcol > .panel { flex: 1; min-height: 0; width: auto !important; }
@@ -2608,8 +2613,10 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    A row that drops is a row you can still press. */
 .web .chead, .doc .chead, .msg .chead { gap: 8px; flex-wrap: wrap; row-gap: 4px; }
 .web .ctitle, .doc .ctitle, .msg .ctitle { flex: 1 1 auto; min-width: 0; }
-/* The document panel holds one of two renderings: a text view or a PDF. Both
-   fill the panel; whichever is showing, the other is display:none. */
+/* The Doc panel holds the file as characters. The Preview panel holds what it
+   looks like: a PDF in `.doc-embed`, anything else the viewer draws in
+   `#pv-view`, and the live typeset pages in front of both. Each fills its
+   panel; whichever is showing, the others are display:none. */
 .doc-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
 .doc-embed { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg-tertiary); }
 /* Main needs room to be Main — but only where there is room to give. On a phone

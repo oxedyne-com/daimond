@@ -24,6 +24,9 @@
 //!   relay behind `run`, which reaches a process outside the page.
 //! - [`web`] — the Web panel edge: bindings to the `window.DaimondWeb`
 //!   driver behind the agent's web tools.
+//! - [`doc`] — the document panel's edge: bindings to `window.DaimondDoc`
+//!   behind `file_show`, which is how a model puts a file in front of the
+//!   user rather than reading its bytes.
 //! - [`typst`] — the Typst compiler edge: bindings to the `window.DaimondTypst`
 //!   driver behind `typst_compile`, which exchanges bytes only.
 //!
@@ -34,6 +37,7 @@
 
 pub mod app;
 pub mod cloud;
+pub mod doc;
 pub mod entry;
 pub mod hand;
 pub mod diamond;

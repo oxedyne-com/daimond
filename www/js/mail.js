@@ -1292,6 +1292,14 @@
 			};
 			if (older) body.before_uid = f.firstUid;
 			else       body.since_uid  = f.lastUid || 0;
+
+			// Read BEFORE the fetch, because the rebuild below moves both of them
+			// and the arrival test at the bottom is a question about the folder as
+			// it stood a moment ago.
+			var mark    = f.lastUid || 0;   // the high-water mark this fetch starts from
+			var known   = !!f.lastSync;     // has this folder ever been fetched?
+			var rebuilt = false;            // did the generation change under us?
+
 			var j = await post('/api/mail/sync', body);
 
 			// The mailbox generation changed, so every UID held locally names a
@@ -1300,6 +1308,10 @@
 			if (f.uidValidity && j.uid_validity && j.uid_validity !== f.uidValidity) {
 				f.lastUid = 0;
 				f.firstUid = 0;
+				// The re-fetch below asks for the folder from uid 0, so everything in
+				// it comes back. That is a rebuild, not a delivery, and the arrival
+				// test at the bottom of this function has to be told.
+				rebuilt = true;
 				// KNOWN AND NOT FIXED HERE: the old generation's files stay on disk.
 				// A Maildir name carries the generation it was fetched under
 				// (`<uid>.<uidValidity>.daimond:2,`), so the re-fetch below writes
@@ -1332,18 +1344,54 @@
 				// The oldest UID held is the floor a later "fetch older" reaches back from.
 				if (!f.firstUid || m.uid < f.firstUid) f.firstUid = m.uid;
 			}
-			// What the cap left behind, so the panel can offer to go back for it.
 			// A trigger watches for mail ARRIVING, and this is the only place that
 			// knows any has. Announced rather than called directly: mail must not
 			// have to know what a triggered action is, and a second listener --
 			// a badge, a sound, a notification -- costs nothing to add later.
-			if (msgs.length) {
+			//
+			// ARRIVING IS NARROWER THAN "MESSAGES CAME BACK", and the difference is
+			// money: what hears this fires a triggered action, which is a Diamond
+			// spending without being asked. Three occasions return messages and are
+			// not arrivals:
+			//
+			//   * a "fetch older" backfill, which reaches BELOW what is held. Every
+			//     message it brings is one the user has had for months, and pressing
+			//     the button was itself the asking;
+			//   * a `uidValidity` rebuild, which has just re-fetched the folder from
+			//     uid 0. The whole mailbox comes back, so announcing it is a bill the
+			//     size of the mailbox;
+			//   * the first fetch of a folder nobody has fetched before. That is a
+			//     baseline, not a delivery: a trigger armed before the account was
+			//     added would otherwise fire on everything already in it. It costs
+			//     one missed firing, once per folder, and bounds the worst case.
+			//
+			// What is left is what came in ABOVE the mark this fetch started from.
+			// The uids travel with it so a listener can say WHICH messages it acted
+			// on, rather than only how many.
+			//
+			// The mark and the `older` test OVERLAP deliberately: a backfill cannot
+			// return anything above the mark while the server honours `before_uid`,
+			// so a well-behaved one is refused twice. The rebuild is the case where
+			// the mark is no defence at all -- a generation change RENUMBERS, and the
+			// new uids are commonly far above the old ones -- which is why it has to
+			// say so itself. See dev/verify_mailtrigger.mjs, which breaks each fence
+			// in turn.
+			var fresh = (older || rebuilt || !known)
+				? []
+				: msgs.filter(function (m) { return m.uid > mark; });
+			if (fresh.length) {
 				try {
 					window.dispatchEvent(new CustomEvent('daimond:mail-arrived', {
-						detail: { mailbox: a.address, folder: name, count: msgs.length },
+						detail: {
+							mailbox: a.address,
+							folder:  name,
+							count:   fresh.length,
+							uids:    fresh.map(function (m) { return m.uid; }),
+						},
 					}));
 				} catch (e) { /* an old browser: the sync still happened */ }
 			}
+			// What the cap left behind, so the panel can offer to go back for it.
 			f.heldBack = j.held_back || 0;
 			f.limit    = j.limit || f.limit || 0;
 			f.lastSync = Date.now();

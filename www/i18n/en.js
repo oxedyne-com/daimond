@@ -83,6 +83,7 @@
 	'panel.ai':      'AI',
 	'panel.web':     'Web',
 	'panel.doc':     'Doc',
+	'panel.preview': 'Preview',
 	'panel.msg':     'Message',
 	'panel.tools':   'Tools',
 	'panel.compose': 'Compose',
@@ -255,9 +256,11 @@
 	'astat.credits':             'Credits',
 	'astat.credits_help':        'Buy credits, or connect your own provider key',
 	'astat.pro_owned':           'Owned',
-	'astat.pro_owned_help':      'You own Daimond Pro. Sync, cloud storage and Email are on.',
+	'astat.pro_owned_help':      'You have Daimond Pro. Sync, cloud storage and Email are on.',
+	'astat.pro_ended':           'Licence ended',
+	'astat.pro_ended_help':      'Your Pro licence has ended. Sync, cloud storage and Email are off; everything on this device is untouched.',
 	'astat.pro_upgrade':         'Upgrade to Pro',
-	'astat.pro_upgrade_help':    'Own Daimond once to turn on sync, cloud storage and Email.',
+	'astat.pro_upgrade_help':    'Buy five years of Pro to turn on sync, cloud storage and Email.',
 	'astat.tools':               'Tools · {have}',
 	'astat.tools_of':            'Tools · {have} of {all}',
 	'astat.tools_help':          'What Daimond can do, and what the rest would cost.',
@@ -278,8 +281,19 @@
 	'astat.count_offer':         'Click to count it. The browser will not say how big a real folder is, and counting reads every file, so a large tree takes a while. You can stop at any point.',
 
 	// ── Pro, in its own words ──────────────────────────────────
-	'pro.owned_plain':     'You own Daimond Pro. Cross-device sync, cloud storage and Email are on. Nothing renews.',
-	'pro.offer_plain':     'Own Daimond with one payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace. No subscription. Inference, bandwidth and other metered use are still paid from credits.',
+	// Pro is a FIVE-YEAR licence, not a perpetual one: it gates sync, cloud
+	// storage and Email, which are services Oxedyne has to keep running, and a
+	// licence with no end to a service is a promise to run it for ever. Terms §7
+	// says so, and nothing here may say otherwise -- what the app claims at the
+	// point of sale is the claim the Terms have to support. "No subscription.
+	// Nothing renews." stays: it is true, and it is the point.
+	'pro.owned_plain':     'You have Daimond Pro. Cross-device sync, cloud storage and Email are on. No subscription, and nothing renews.',
+	'pro.offer_plain':     'One payment, and Pro runs for five years. It turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace. No subscription, and nothing renews: at the end of five years you decide whether to buy again. Inference, bandwidth and other metered use are still paid from credits.',
+	'pro.term_note':       'Pro runs for five years from purchase.',
+	'pro.ends_on':         'Your Pro licence ends on {date}.',
+	'pro.ended_on':        'Your Pro licence ended on {date}. Sync, cloud storage and Email are off; everything on this device is untouched, and you can still pull down anything already stored.',
+	'pro.buy_again':       'Buy another five years',
+	'pro.buy_again_priced': 'Buy another five years for {price}',
 	'pro.checkout_failed': 'Could not start checkout',
 
 	// ── The egress gate ────────────────────────────────────────
@@ -545,11 +559,11 @@
 	'credits.create_account': 'Create an account',
 	'credits.added':     'Credits added',
 	'credits.now':       'Your balance is now {amount}.',
-	'pro.owned':         '<b>You own Daimond Pro.</b> Cross-device sync, cloud storage and Email are on. Nothing renews.',
-	'pro.offer':         '<p><b>Own Daimond.</b> One payment, kept for good. Pro turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace.</p>',
-	'pro.fine':          'No subscription. Metered use (inference, bandwidth, storage beyond the free tier) is paid from credits, whether or not you own Pro.',
-	'pro.buy':           'Own Daimond',
-	'pro.buy_priced':    'Own Daimond for {price}',
+	'pro.owned':         '<b>You have Daimond Pro.</b> Cross-device sync, cloud storage and Email are on. No subscription, and nothing renews.',
+	'pro.offer':         '<p><b>Daimond Pro, for five years.</b> One payment. Pro turns on cross-device sync, cloud storage, and Email, so your own mail is read and sent in the workspace.</p>',
+	'pro.fine':          'No subscription, and nothing renews. Metered use (inference, bandwidth, storage beyond the free tier) is paid from credits, whether or not you have Pro.',
+	'pro.buy':           'Buy five years of Pro',
+	'pro.buy_priced':    'Buy five years of Pro for {price}',
 	'billing.usd_note':  'You are billed in US dollars; the converted figure is approximate.',
 	'billing.rates_as_of': 'Rates as of {date}, approximate.',
 
@@ -743,6 +757,45 @@
 	'pending.diamond_gone': 'The Diamond that raised this is gone, so there is nobody to discuss it with.',
 	'pending.discuss_prompt': 'We need to discuss this further before I approve it: “{headline}”',
 
+	// A dispatched agent's request for permission, raised here because there was
+	// nobody at the screen to put it to. The agent is holding its work open until
+	// one of the three answers arrives.
+	'pending.consent.click_head': 'An agent wants to click something on {host}',
+	'pending.consent.type_head':  'An agent wants to send text to {host}',
+	'pending.consent.reach_head': 'An agent wants to reach {host}',
+	'pending.consent.why':        'It asked while this page was not in front of you, so the question is waiting here instead of on a dialog nobody would have seen.',
+	'pending.consent.agent':      'The agent is {name}. Its task: {task}',
+	'pending.consent.waiting':    'The agent is still waiting for this answer.',
+	'pending.consent.expired':    'The agent that asked has gone — this was raised before the app last reloaded. Saying yes now could not let the act happen.',
+	'pending.consent.allowed':    'Allowed. The agent has been told to go ahead.',
+	'pending.consent.gone':       'Nothing is waiting on this any more, so there was nothing to allow.',
+	'pending.consent.nochat':     'Declined. There is no conversation to take it to: two agents were running, so Daimond cannot tell which one asked.',
+
+	// The agent tile's own controls, its state word and the tally above the
+	// list. All of these were hardcoded English in a shipped panel until
+	// 2026-08-12, and `dev/i18ncheck.mjs` could not see them: it compares key
+	// sets, so a string with no key at all is invisible to it by construction.
+	'agents.act_pause':        'Pause',
+	'agents.act_pause_help':   'Hang up this agent, keeping its work so far; resume it later.',
+	'agents.act_stop':         'Stop',
+	'agents.act_stop_help':    'Stop this agent for good. It keeps whatever it managed to do.',
+	'agents.act_resume':       'Resume',
+	'agents.act_resume_help':  'Continue this agent from where it left off.',
+	'agents.act_discard_help': 'Discard this paused agent.',
+	'agents.tally_running':    '{n} running',
+	'agents.tally_paused':     '{n} paused',
+	'agents.tally_queued':     '{n} queued',
+	'agents.live':             '{n} live',
+	'agents.dropped.one':      '1 older run is not kept.',
+	'agents.dropped.other':    '{n} older runs are not kept.',
+	'agents.status_queued':      'queued',
+	'agents.status_running':     'running',
+	'agents.status_paused':      'paused',
+	'agents.status_done':        'done',
+	'agents.status_error':       'failed',
+	'agents.status_stopped':     'stopped',
+	'agents.status_interrupted': 'cut off',
+
 	'agents.search':         'Search agents',
 	'agents.search_help':    'Search agents by name, task, Diamond or tag',
 
@@ -754,10 +807,10 @@
 	// The pitch, shown while Email is not unlocked on this account. The first
 	// two carry markup and are placed as markup; keep the tags and add none.
 	'mail.pitch.head':    '<b>Daimond can read your mail.</b> Your inbox lands in the workspace as ordinary files, so every agent can read, search and work from it.',
-	'mail.pitch.fine':    'Email is part of Pro, one payment kept for good, alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference. Nothing renews.',
+	'mail.pitch.fine':    'Email is part of Pro — one payment, and five years of it — alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference. No subscription, and nothing renews.',
 	'mail.pitch.privacy': 'Daimond’s gateway makes the connection and forgets your password. No mail is ever stored on our side.',
 	'mail.pitch.unknown': 'The account service is not reachable, so Daimond cannot tell whether Email is unlocked here.',
-	'mail.pro_pitch':     'Email is part of Pro. Own Daimond once to turn it on, along with sync and cloud storage.',
+	'mail.pro_pitch':     'Email is part of Pro. Buy five years of Pro to turn it on, along with sync and cloud storage.',
 
 	// The mailbox list.
 	'mail.remove_mailbox': 'Remove this mailbox',
@@ -1213,15 +1266,47 @@
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML
 	// in them is rendered. Keep the tags that are there and add none.
-	'tools.head':         '<b>{have} of {all}</b> tools. Most of what Daimond does costs nothing. A few reach the world outside the browser, and those cost what they cost to run.',
-	'tools.built_in':     'Built in',
-	'tools.unlocked':     'Unlocked',
+	// The Tools panel. Six keys that used to be here went with the panel it was
+	// rewritten out of -- `tools.head`, `built_in`, `unlocked`, `sec_unlocked`,
+	// `sec_shop` and `shop_fine` -- and are gone rather than kept against a
+	// caller that no longer exists. These three outlived it and are still read.
 	'tools.unlock_price': 'Unlock for {price}',
-	'tools.sec_unlocked': 'Unlocked on this account',
-	'tools.sec_shop':     'Get more tools',
-	'tools.shop_fine':    'Bought once, kept for good. Nothing renews. What a tool costs to run, a mailbox synced or a page fetched, is metered against credits, so ongoing cost tracks ongoing use.',
 	'tools.unreachable':  'The account service could not be reached, so what is unlocked here is unknown.',
 	'tools.no_service':   'The account service is unavailable.',
+		'tools.intro':          'What Daimond can do for you. Most of it is included. A pack adds new ground, and is bought once in dollars rather than out of your credits.',
+		'tools.count':          '<b>{have} of {all}</b> available on this account.',
+		'tools.sec_included':   'Included',
+		'tools.sec_packs':      'Packs',
+		'tools.packs_none':     'No packs are on sale yet. When one is, it appears here.',
+		'tools.packs_fine':     'A pack is bought once and kept. It is paid for in dollars, through the same checkout as Pro, and never out of your credits — so a pack costs the same whether you run Daimond on its credits or on your own API key.',
+		'tools.status_included': 'Included',
+		'tools.status_owned':   'Yours',
+		'tools.locked_why':     'Not bought on this account: this is the {pack} pack. Daimond refuses it and says so rather than half-doing it.',
+		'tools.expand':         'What it does ({n})',
+		'tools.collapse':       'Hide what it does',
+		'tools.fn_pack':        'in the {pack} pack',
+		'tools.cap.files.name':      'Your files',
+		'tools.cap.files.blurb':     'Daimond reads, writes and edits the files in your workspace, finds things across all of them at once, and tidies up after itself.',
+		'tools.cap.cloud.name':      'Files kept in the cloud',
+		'tools.cap.cloud.blurb':     'A file this device is not holding is brought down from your cloud storage at the moment Daimond needs to read it, rather than everything being kept everywhere.',
+		'tools.cap.work.name':       'Keeping the work together',
+		'tools.cap.work.blurb':      'Daimond records which files belong to a piece of work, so something you made yourself is listed with it instead of sitting unremarked in a folder.',
+		'tools.cap.show.name':       'Showing you a file',
+		'tools.cap.show.blurb':      'Daimond puts a file on your screen beside the chat — a PDF as its typeset pages, a picture drawn, a table as a table — rather than only describing it to you.',
+		'tools.cap.machine.name':    'Your computer',
+		'tools.cap.machine.blurb':   'With Daimond’s machine hand installed, Daimond builds, tests and runs command-line tools inside the folder you granted it, and nowhere else.',
+		'tools.cap.reading.name':    'Reading the web',
+		'tools.cap.reading.blurb':   'Daimond searches with the engine you chose and reads what a page actually says, without either of you leaving Daimond.',
+		'tools.cap.browsing.name':   'Using a website',
+		'tools.cap.browsing.blurb':  'Daimond opens a page beside the chat and works it — clicking, typing, scrolling — while you watch it happen.',
+		'tools.cap.typeset.name':    'Typesetting a document',
+		'tools.cap.typeset.blurb':   'Daimond turns a Typst source into a finished PDF, properly typeset, here in the browser.',
+		'tools.cap.dispatch.name':   'Sending workers out',
+		'tools.cap.dispatch.blurb':  'Daimond breaks a large job into bounded tasks and sends a worker to each, several at a time, then folds what they bring back into one answer.',
+		'tools.cap.graph.name':      'How your work relates',
+		'tools.cap.graph.blurb':     'Daimond reads and records the relations between your Diamonds, files, pages and chats — what supersedes what, what produced what.',
+		'tools.cap.other.name':      'Not yet described',
+		'tools.cap.other.blurb':     'Daimond has these and this panel has not been told what to call them. Open it to see what they are.',
 
 
 	// ── The rail's Diamonds and chats ──────────────────────────
@@ -1928,7 +2013,7 @@
 	'checkout.card_saved_body':  'Daimond can now top up your credits automatically. Set the limits below, then switch it on. Nothing has been charged.',
 	'checkout.card_pending_body': 'Stripe has taken the card. It may take a moment to appear here; reopen Credits shortly. Nothing has been charged.',
 	'checkout.pro_unlocked':     'Pro unlocked',
-	'checkout.pro_unlocked_body': 'You own Daimond. Cross-device sync, cloud storage and Email are on. Nothing renews.',
+	'checkout.pro_unlocked_body': 'You have Daimond Pro. Cross-device sync, cloud storage and Email are on. Pro runs for five years from purchase. No subscription, and nothing renews.',
 	'checkout.received':         'Payment received',
 	'checkout.pro_pending_body': 'Your Pro unlock is being confirmed and will appear here shortly. Reopen Credits in a moment.',
 	'checkout.credits_pending_body': 'Your credits are still being confirmed. They will appear here shortly.',
@@ -2138,6 +2223,21 @@
 	'typst.compile_error': 'Typst compile error: {reason}',
 	'typst.pack_locked':   'Typesetting is part of a tool pack this account has not bought. The Tools panel names it and its price: bought once, kept for good, and paid for in money rather than out of your credits.',
 
+	// The watched live document. A few words in a bar over the pages, because the
+	// thing worth looking at is the document underneath. {heap}, {more} and {budget}
+	// are megabytes of wasm heap, and the two long ones are the only place the
+	// reader is told why a loop stopped, so they say what to do about it.
+	'typst.watch.starting': 'Laying out the pages…',
+	'typst.watch.building': 'Rebuilding…',
+	'typst.watch.live':     'Live',
+	'typst.watch.stale':    'Showing the last build that worked',
+	'typst.watch.held':     'Rebuilding stopped',
+	'typst.watch.dead':     'The compiler has stopped',
+	'typst.watch.rebuild':  'Rebuild',
+	'typst.watch.nothing':  'The compiler produced nothing and gave no reason.',
+	'typst.watch.heap':     'The compiler is holding {heap} MB and another rebuild could need {more} MB more, which is past the {budget} MB it is allowed on this page. Rebuilding on every save has stopped, and the pages below are the last ones that built. The compiler cannot give that memory back — reload the page to start it fresh, or press Rebuild to try once anyway.',
+	'typst.watch.dead_why': 'The compiler ran out of memory on this document and cannot be restarted without reloading the page. The pages below are the last ones that built. Reload, and open the same file again.',
+
 	// ── Toasts ─────────────────────────────────────────────────
 	'toast.copied': 'Copied',
 	'render.copy_failed': 'Failed',
@@ -2278,6 +2378,53 @@
 	// Deleting a chat or a Diamond moves it here and asks nothing. The two
 	// questions that cannot be taken back are both in this panel.
 	'panel.trash': 'Trash',
+
+	// ── The Improve panel ──────────────────────────────────────
+	// Where a note about Daimond is written, and where the proposals made from
+	// notes are read and voted on. See js/improve.js and dev/IMPROVE_CONTRACT.md.
+	'panel.improve':        'Improve',
+	'improve.notes':        'Notes',
+	'improve.proposals':    'Proposals',
+	'improve.box_label':    'Write a note about Daimond',
+	'improve.box_ph':       'Where it is, what you expected, and what happened instead.',
+	'improve.with':         'What goes with it',
+	'improve.with_off':     'Take the details off this note',
+	'improve.keep':         'Keep',
+	'improve.keep_help':    'Store this note on this device. Nothing is sent.',
+	'improve.send':         'Send',
+	'improve.send_help':    'Send exactly what is above to Oxedyne. Nothing else goes with it.',
+	'improve.as':           'Goes as @{handle}',
+	'improve.as_none':      'You have no account, so a note can only be kept here.',
+	'improve.nothing':      'Write something first.',
+	'improve.not_sent':     'It could not be sent, so it is kept here. Nothing has gone anywhere.',
+	'improve.copied':       'Copied.',
+	'improve.state_kept':   'Kept here',
+	'improve.state_sent':   'Sent {date}',
+	'improve.drop':         'Delete this note',
+	'improve.drop_ask':     'Delete this note? It is only on this device, so there is no other copy.',
+	'improve.drop_ok':      'Delete',
+	'improve.no_notes':     'No notes yet.',
+	// The one line that goes with a note, in the characters it travels as.
+	'improve.ctx_build':    'Build {id}',
+	'improve.ctx_touch':    'touch',
+	'improve.ctx_pointer':  'pointer',
+	'improve.ctx_palette':  'palette {name}',
+	'improve.ctx_panels':   'panels open: {list}',
+	'improve.no_props':     'No proposals yet. They are made from notes, and they arrive with a new build.',
+	'improve.as_at':        'Counts as at build {build}. They move when Daimond updates.',
+	'improve.as_at_none':   'Counts move when Daimond updates.',
+	'improve.state_open':   'Open',
+	'improve.state_taken':  'Being done',
+	'improve.state_done':   'Done',
+	'improve.state_declined': 'Declined',
+	'improve.shipped_in':   'Shipped in build {build}',
+	'improve.from_notes.one':   'From {n} note',
+	'improve.from_notes.other': 'From {n} notes',
+	'improve.tally':        '{yes} for, {no} against',
+	'improve.do':           'Do this',
+	'improve.not':          'Not this',
+	'improve.vote_held':    'Your vote is here and has not been counted yet.',
+
 	'trash.nothing': 'Nothing has been deleted.',
 	'trash.kept_days': 'Kept for {days} days, then destroyed.',
 	'trash.holding.one': '{n} thing, {bytes}',
@@ -2312,5 +2459,34 @@
 	// back: the word has to carry that.
 	'trash.swept.one': 'One thing had been in the trash for {days} days and has been destroyed.',
 	'trash.swept.other': '{n} things had been in the trash for {days} days and have been destroyed.',
+
+	// ── The Terms and the Privacy Policy, in the app ───────────
+	// js/legal.js puts both documents in Daimond's own Web panel rather than
+	// handing the reader to another website. See www/guide/legal/.
+	'legal.terms':      'Terms of Service',
+	'legal.privacy':    'Privacy Policy',
+	'legal.draft_note': 'Both are drafts, published for review during the closed beta.',
+
+	// ── Lapse notices ──────────────────────────────────────────
+	// Two clauses of the Terms promise a notice on this screen before something
+	// of the user's lapses: §13 and Privacy §9 on stored file data, §7 on the
+	// five-year Pro term. Every sentence traces to one in landing/terms.html, and
+	// none of them may be more generous than the clause it quotes. See
+	// js/lapse.js and dev/verify_legalreach.mjs.
+	'lapse.hide':                 'Hide until tomorrow',
+	'lapse.read_clause':          'What the Terms say',
+	'lapse.storage_head':         'Stored files above the free allowance will be deleted on {date}.',
+	'lapse.storage_head_undated': 'Stored files above the free allowance will be deleted when the grace period ends.',
+	'lapse.storage_why':          'Your credits will not cover the cloud storage you are holding, so the metering has paused. Nothing is being back-charged, and you can still read everything you have stored.',
+	'lapse.storage_size':         'About {size} is held above the free allowance.',
+	'lapse.storage_what':         'If the balance is not restored by then, the stored data above the free allowance is deleted. Files on this device are untouched.',
+	'lapse.top_up':               'Top up credits',
+	'lapse.credits_pitch':        'Topping up stops the stored data above the free allowance being deleted.',
+	'lapse.lic_head':             'Your Pro licence ends on {date}.',
+	'lapse.lic_head_past':        'Your Pro licence ended on {date}.',
+	'lapse.lic_off':              'Cross-device sync, cloud storage and Daimond Email switch off then, because each of those is a service we run on our side.',
+	'lapse.lic_off_past':         'Cross-device sync, cloud storage and Daimond Email are off, because each of those is a service we run on our side.',
+	'lapse.lic_keep':             'Everything on this device carries on exactly as before: your files, your chats, your Diamonds, your identity and your own provider key. Nothing is deleted, nothing is locked, and nothing you have made becomes unreadable.',
+	'lapse.lic_pull':             'Pulling down what you have already stored never stops, and your credits are unaffected.',
 	});
 })();

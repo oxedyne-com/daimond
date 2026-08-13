@@ -85,7 +85,9 @@
 <link rel="stylesheet" href="css/passkey.css">
 <link rel="stylesheet" href="css/workspace.css">
 <link rel="stylesheet" href="css/trash.css">
+<link rel="stylesheet" href="css/improve.css">
 <link rel="stylesheet" href="css/terminal.css">
+<link rel="stylesheet" href="css/lapse.css">
 	<link rel="stylesheet" href="css/release.css">
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
@@ -114,8 +116,6 @@
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
 		</a>
 		</div>
-		<!-- Repainted as cost accrues, with nothing the user pressed to cause it. -->
-		<div class="top-meter" id="top-meter" role="status"></div>
 		<div class="top-actions">
 			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
 			     closer sends it back here. -->
@@ -514,7 +514,6 @@
 						        data-i18n="crystal.view_chat">Chat</button>
 					</div>
 					<div class="chead-right">
-						<select class="chat-model-select" id="chat-model-select" title="Model for this chat" style="display:none;" data-i18n-title="chat.model_for_chat"></select>
 						<span class="cmeter" id="ai-meter"></span>
 						<!-- The controls that were an icon nobody could read. A word says what a
 						     picture of a spanner was only hinting at. -->
@@ -633,7 +632,10 @@
 				</div>
 			</aside>
 
-			<!-- A compiled document, where there is room to read it. -->
+			<!-- The document itself: the file, where there is room to read it.
+			     What it LOOKS like when it is typeset lives in the Preview panel
+			     below, because a source and its pages are two things to see at
+			     once and not two turns at one panel. -->
 			<aside class="panel doc" id="panel-doc" data-panel="doc" data-zone="stage" data-label="Doc" data-i18n-label="panel.doc">
 				<div class="chead">
 					<span class="ctitle doc-name" id="doc-name" role="heading" aria-level="2"></span>
@@ -651,10 +653,29 @@
 						</button>
 					</div>
 				</div>
-				<!-- One document, with room to read it. Text or PDF: which one is
-				     showing is decided by what was opened, not by which panel it
-				     was opened from. -->
+				<!-- The file as characters: read, or edited. Anything that is not
+				     characters is not this panel's — see #panel-preview. -->
 				<div class="doc-view" id="doc-view"></div>
+			</aside>
+
+			<!-- What a document LOOKS like.
+			     Three renderings, one at a time, and all three are the same thing:
+			     a compiled PDF in the <embed>, a file the browser or the viewer
+			     draws in #pv-view, and — standing in front of both while a .typ is
+			     being watched — the live typeset pages typstwatch.js mounts here.
+			     It is a SEPARATE PANEL from the document because the whole point is
+			     to see the source and its pages at once; while they shared one, the
+			     two took turns and the loop had to decide whose turn it was. -->
+			<aside class="panel doc preview" id="panel-preview" data-panel="preview" data-zone="stage" data-label="Preview" data-i18n-label="panel.preview">
+				<div class="chead">
+					<span class="ctitle doc-name" id="pv-name" role="heading" aria-level="2"></span>
+					<div class="chead-right">
+						<button class="addbtn panel-close" data-close="preview" title="Close panel" data-i18n-title="common.close_panel">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+						</button>
+					</div>
+				</div>
+				<div class="doc-view" id="pv-view"></div>
 				<embed class="doc-embed" id="doc-embed" type="application/pdf" style="display:none">
 			</aside>
 
@@ -980,6 +1001,58 @@
 			<div class="trash-note" id="trash-note"></div>
 			<div class="trash-list arte-list" id="trash-list"></div>
 		</aside>
+
+		<!-- Improve: where a note about Daimond is written, and where the
+		     proposals made from notes are read and voted on. A note stays on
+		     this device until somebody presses Send on that one note, and what
+		     leaves is exactly the characters on the screen. See js/improve.js
+		     and dev/IMPROVE_CONTRACT.md. -->
+		<aside class="panel improve" id="panel-improve" data-panel="improve" data-zone="dock" data-label="Improve" data-i18n-label="panel.improve">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.improve">Improve</span>
+				<span class="imp-chips">
+					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="improve.notes">Notes</button>
+					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="improve.proposals">Proposals</button>
+					<button class="addbtn panel-close" data-close="improve" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+
+			<div class="imp-view" id="improve-notes">
+				<div class="imp-write">
+					<textarea class="imp-box" id="improve-box" rows="4"
+						placeholder="Where it is, what you expected, and what happened instead."
+						data-i18n-placeholder="improve.box_ph"
+						aria-label="Write a note about Daimond" data-i18n-aria-label="improve.box_label"></textarea>
+					<!-- What goes with the note, in the exact characters that will
+					     travel, in a row with a closer on it. Closing it takes the
+					     line off the wire as well as off the screen. -->
+					<div class="imp-with" id="improve-with" hidden>
+						<div class="imp-with-body">
+							<span class="imp-with-label" data-i18n="improve.with">What goes with it</span>
+							<div class="imp-with-text" id="improve-with-text"></div>
+						</div>
+						<button type="button" class="ui-close imp-with-off" data-act="improve-with-off"
+							title="Close" data-i18n-title="common.close"
+							aria-label="Take the details off this note" data-i18n-aria-label="improve.with_off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+					</div>
+					<div class="imp-acts" id="improve-acts">
+						<button type="button" class="imp-keep" data-act="improve-keep" data-i18n="improve.keep"
+							title="Store this note on this device. Nothing is sent." data-i18n-title="improve.keep_help">Keep</button>
+						<button type="button" class="imp-send" data-act="improve-send" data-i18n="improve.send"
+							title="Send exactly what is above to Oxedyne. Nothing else goes with it." data-i18n-title="improve.send_help">Send</button>
+						<span class="imp-as" id="improve-as"></span>
+					</div>
+					<div class="imp-say" id="improve-say" role="status" aria-live="polite"></div>
+				</div>
+				<div class="imp-notes" id="improve-list"></div>
+			</div>
+
+			<div class="imp-view" id="improve-props-view" hidden>
+				<div class="imp-asat" id="improve-asat"></div>
+				<div class="imp-props" id="improve-props"></div>
+			</div>
+		</aside>
 	</div>
 
 	<!-- Mobile: the dwellable destinations. The chat is the floor; "things"
@@ -1129,7 +1202,11 @@
 <!-- trash.js BEFORE sync.js, daimond.js and graph.js: all three ask it whether
      something has been deleted while they build the lists they draw, so the
      store has to be there when they do. -->
+<!-- improve.js next: the panel a note about Daimond is written in, and the
+     proposals made from notes are read and voted on in. Nothing leaves this
+     device until somebody presses Send on one note. See dev/IMPROVE_CONTRACT.md. -->
 <script src="js/trash.js"></script>
+<script src="js/improve.js"></script>
 <script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>
 <!-- wordlist.js before identity.js: the create screen generates a passphrase
@@ -1170,6 +1247,12 @@
 <!-- The permission ladder's surface. Classic, before the module, so
      window.DaimondHandMode exists when daimond.js hands it the wasm setter. -->
 <script src="js/handmode.js"></script>
+<!-- The Terms and the Privacy Policy, in Daimond's own Web panel rather than
+     on another website, and the notices two of their clauses promise before
+     something of the user's lapses. legal.js first: lapse.js links into a
+     clause through it. -->
+<script src="js/legal.js"></script>
+<script src="js/lapse.js"></script>
 <script type="module" src="js/daimond.js"></script>
 </body>
 </html>

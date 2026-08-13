@@ -96,6 +96,7 @@ web-sys = { version = "0.3", features = [
 	"File",
 	# Telling the page the real folder was taken away (see `opfs::notify_folder_lost`).
 	"CustomEvent",
+	"CustomEventInit",
 	"EventTarget",
 ] }
 

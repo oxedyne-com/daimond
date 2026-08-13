@@ -1,10 +1,10 @@
 // verify_passcode.mjs — the beta passcode, proved at the network rather than in
 // the source.
 //
-// What this file is defending is a one-time credential that gifts a perpetual
-// Pro licence and opens the only endpoint on this gateway that receives anything
-// about how a user behaves. Every one of those words is a property somebody
-// could get wrong quietly:
+// What this file is defending is a one-time credential that gifts a five-year
+// Pro licence -- the same term a bought one runs for -- and opens the only
+// endpoint on this gateway that receives anything about how a user behaves.
+// Every one of those words is a property somebody could get wrong quietly:
 //
 //   * "one-time"  — a code that redeems twice gives the beta away.
 //   * "one-time under concurrency" — a check-then-write with no lock is TWO
@@ -84,6 +84,10 @@ const GW      = `http://127.0.0.1:${PORT}`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK    = path.join(SCRATCH, 'verify_passcode-gw');
 const LOG     = procLog('verify_passcode');
+/// A fault injected on purpose, so a guard can be shown going red:
+///
+///   --break=knob   the knob is never written, only read back
+const BREAK   = (process.argv.find(a => a.startsWith('--break=')) || '').slice(8);
 
 /// Build the working directory, and hand back its path.
 function buildWorkDir() {
@@ -308,9 +312,38 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 		return r;
 	}
 	/// Set one of the gateway's own knobs, which is how the cap is driven.
+	///
+	/// AND CONFIRM IT READS BACK, because the alternative to confirming is
+	/// measuring the wrong number without being told. `settings::str` answers a
+	/// store read that returns nothing exactly as it answers one that errors:
+	/// it falls through to what `app.jdat` declares. So a knob that has been
+	/// POSTed but is not yet readable leaves the handler running the CONFIGURED
+	/// value -- `redeem_max_fails` = 10 rather than the 3 this drives it to --
+	/// and the run then measures a cap that was never in force while reporting
+	/// on the one it thought it set. That is a silent mis-measurement, and it is
+	/// one of the two mechanisms that could explain the single unreproduced
+	/// failure of "the fourth is refused by the cap" in the 5a0bcbf gate (the
+	/// other is the lost-count path `passcode.rs::note` documents). This does not
+	/// decide which it was; it removes this one from the field for good, and
+	/// turns it into a named failure if it ever does happen.
+	///
+	/// The read goes through `view=settings`, which reads `store.get_setting` --
+	/// the same store read the handler's own `settings::str` makes.
 	async function setKnob(route, key, value) {
-		return await call(boss.jar, 'POST', '/api/admin?view=settings',
-			{ route, key, value: String(value) });
+		const r = BREAK === 'knob' ? { status: 0, j: null }
+			: await call(boss.jar, 'POST', '/api/admin?view=settings',
+				{ route, key, value: String(value) });
+		for (let i = 0; i < 10; i++) {
+			const seen = await call(boss.jar, 'GET', '/api/admin?view=settings');
+			const grp  = ((seen.j && seen.j.groups) || []).find(g => g.route === route);
+			const knob = ((grp && grp.knobs) || []).find(k => k.key === key);
+			if (knob && String(knob.value) === String(value)) return r;
+			await sleep(200);
+		}
+		check(`the ${key} knob was set and reads back`, false,
+			'it did not, so everything below it would have measured the configured '
+			+ 'value instead of the one this set');
+		return r;
 	}
 	/// Redeem, from a device that has never been seen here.
 	async function redeem(dev, code, xff) {

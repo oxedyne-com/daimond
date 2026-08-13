@@ -3,10 +3,13 @@
 //
 // Two properties, and one of them was a live defect.
 //
-//   1. THE TOP BAR HAS NO SPEND METER. `#top-meter` is in www/index.html and
-//      nothing ever writes it: `updateMeters()` in www/js/daimond.js sets
-//      `topMeter.textContent = ''` and there is no other assignment in the
-//      tree. The readout the guide was describing is the rail's `#spend-row`,
+//   1. THE TOP BAR HAS NO SPEND METER. `#top-meter` has since gone from
+//      www/index.html altogether -- markup, binding and the one line that
+//      emptied it -- so nothing in the tree writes it and nothing could. The
+//      check is unchanged and now rests on a stronger fact; what had to move is
+//      the `liveMeter` break, which staged the contrary case off that deleted
+//      line. See the note on it below.
+//      The readout the guide was describing is the rail's `#spend-row`,
 //      which `updateSpend()` fills with three cells and which `spend.js` wires
 //      as the door to the Spending panel. So the guide must not put a meter in
 //      the top bar, on `interface.html` or on `spending.html`, and the region
@@ -114,11 +117,21 @@ switch (BREAK) {
 	case 'liveMeter': {
 		// The opposite failure: the app grows a meter and the guide stays silent.
 		// The check must notice that too, or it is a check on one wording.
+		//
+		// REPOINTED. This used to hang off `topMeter.textContent = '';` -- the one
+		// line that emptied the element -- and both the element and that line have
+		// since been deleted from the app, markup and binding with them. The
+		// anchor was gone, so the only break that could turn this check round no
+		// longer applied, and a check whose contrary case cannot be staged is a
+		// check that cannot fail. It now hangs off `updateMeters()` itself, which
+		// is where a revived meter would be written, and reaches the element the
+		// way anything outside this module would have to.
 		const before = appJs;
-		appJs = appJs.replace('topMeter.textContent = \'\';',
-			'topMeter.textContent = fmtUsd(spentToday());');
+		appJs = appJs.replace('\t\taiMeter.textContent = \'\';\n\t}',
+			'\t\taiMeter.textContent = \'\';\n'
+			+ '\t\tdocument.getElementById(\'top-meter\').textContent = fmtUsd(spentToday());\n\t}');
 		if (appJs === before) die('the liveMeter break did not apply');
-		applied.push('made updateMeters() write the top meter');
+		applied.push('made updateMeters() write a top-bar meter');
 		break;
 	}
 	case 'tinylabels':

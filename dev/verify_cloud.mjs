@@ -26,6 +26,14 @@ const GW_URL = 'http://127.0.0.1:9002';
 /// called stale -- so a residency failure can be read from both ends. Silent
 /// when this run reuses a gateway it did not start.
 const GW_LOG = procLog('verify_cloud');
+/// A fault to inject on purpose, so a check can be shown going red:
+///
+///   --break=reseal   every chunk of the file changes, not only the last
+///   --break=noedit   the file is written back unchanged
+///
+/// Both bear on the partial-upload pair at the end, which is the one place here
+/// that had to be corrected rather than left to fail.
+const BREAK = (process.argv.find(a => a.startsWith('--break=')) || '').slice(8);
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -332,22 +340,40 @@ try {
 	// ── Only changed chunks are re-uploaded ──
 	// A seal draws a fresh IV each time, so without the plaintext-chunk map an
 	// edit to a large file would re-encrypt and re-send all of it.
-	const partial = await page.evaluate(async () => {
+	//
+	// ONE `push()` IS NOT ONE PUSH. `sync.js` returns early when a push is
+	// already in flight (`if (inFlight) { schedule(); return; }`), and the fetch
+	// two blocks above sets one going, so the first call here can come back
+	// having done nothing at all: measured on 2026-08-13, after push #0 the
+	// manifest still carried the pre-edit mtime (…290 against a file stamped
+	// …758) and the pre-edit key, and only push #1 offloaded. The block above
+	// already loops for the same reason and says so; this one did not, and read
+	// "unchanged=3/3" — the file untouched — as a failure to reuse chunks. So it
+	// pushes until the identity moves, which is the app's own behaviour and not
+	// a weaker assertion: what is asserted about the chunks is unchanged.
+	const partial = await page.evaluate(async (mode) => {
 		const before = window.DaimondCloud.manifest('media/pattern.bin');
 		const src = new Uint8Array(await (await window.DaimondCloud.fileAt('media/pattern.bin')).arrayBuffer());
-		src[src.length - 5] ^= 0xff;						// touch the LAST chunk only.
+		if (mode === 'reseal') { for (let i = 0; i < src.length; i++) src[i] = (src[i] + 1) & 0xff; }
+		else if (mode !== 'noedit') { src[src.length - 5] ^= 0xff; }	// touch the LAST chunk only.
 		await window.DaimondCloud.writeBlob('media/pattern.bin', new Blob([src]));
-		await window.DaimondSync.push();
+		let pushes = 0;
+		for (let i = 0; i < 4; i++) {
+			pushes++;
+			await window.DaimondSync.push();
+			if (window.DaimondCloud.manifest('media/pattern.bin').key !== before.key) break;
+			await new Promise(r => setTimeout(r, 400));
+		}
 		const after = window.DaimondCloud.manifest('media/pattern.bin');
 		let held = 0;
 		for (let i = 0; i < Math.min(before.chunks.length, after.chunks.length); i++) {
 			if (before.chunks[i].addr === after.chunks[i].addr) held++;
 		}
-		return { n: after.chunks.length, held, keyChanged: before.key !== after.key };
-	});
+		return { n: after.chunks.length, held, pushes, keyChanged: before.key !== after.key };
+	}, BREAK);
 	check('editing one chunk of a file leaves the others at their old addresses',
 		partial.held === partial.n - 1 && partial.n > 1,
-		'unchanged=' + partial.held + '/' + partial.n);
+		'unchanged=' + partial.held + '/' + partial.n + ' after ' + partial.pushes + ' push(es)');
 	check('and the file identity changes with the edit', partial.keyChanged);
 
 	// ── The free tier must survive a lapse ──

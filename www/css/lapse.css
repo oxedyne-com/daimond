@@ -1,0 +1,143 @@
+/* lapse.css — the in-app lapse notice, and the legal row in About.
+ *
+ * The app-side half of the legal work. Its twin, `css/legal.css`, styles the
+ * documents THEMSELVES, which are shown inside the Web panel's frame and load
+ * their own stylesheets; nothing here reaches into that frame and nothing there
+ * reaches out.
+ *
+ * The notice sits over the workspace rather than in a panel, because a panel can
+ * be closed, folded away, or never opened — and a promise to tell somebody
+ * before their data is deleted is not kept by a sentence in a drawer. It is
+ * bottom-right, out of the way of the rail, the composer and the top bar, and it
+ * is bounded: at most two of these can ever be up at once.
+ */
+
+/* ── The notice ──────────────────────────────────────────────────────────── */
+.lapse-notices {
+	position: fixed;
+	right: calc(12px + var(--safe-r, 0px));
+	bottom: calc(12px + var(--safe-b, 0px));
+	z-index: 900;                   /* under a modal, over the workspace */
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: min(380px, calc(100vw - 24px));
+	pointer-events: none;           /* the gap between cards is not a shield */
+}
+
+.lapse-note {
+	position: relative;
+	pointer-events: auto;
+	background: var(--bg-secondary);
+	border: 1px solid var(--warn);
+	border-left-width: 3px;
+	border-radius: var(--radius);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+	padding: 12px 34px 12px 14px;
+	font-size: var(--fs-sm);
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+/* A licence ending is not a warning: nothing is lost, and the app carries on.
+   A deletion is. The two are drawn differently for that reason alone. */
+.lapse-licence { border-color: var(--border-2); }
+
+.lapse-head {
+	color: var(--text-primary);
+	font-weight: 650;
+	font-size: var(--fs-base);
+	margin-bottom: 6px;
+}
+
+.lapse-body { margin: 0 0 6px; }
+.lapse-body:last-of-type { margin-bottom: 10px; }
+
+.lapse-acts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 14px;
+	align-items: center;
+}
+
+.lapse-act {
+	background: none;
+	border: none;
+	padding: 0;
+	font: inherit;
+	color: var(--accent-text);
+	cursor: pointer;
+	text-decoration: none;
+}
+.lapse-act:hover { text-decoration: underline; }
+.lapse-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.lapse-act-primary {
+	background: var(--accent);
+	color: var(--on-fill);
+	border-radius: var(--radius-sm);
+	padding: 5px 10px;
+	font-weight: 600;
+}
+.lapse-act-primary:hover { background: var(--accent-hover); text-decoration: none; }
+
+.lapse-x {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	width: 24px;
+	height: 24px;
+	line-height: 1;
+	background: none;
+	border: none;
+	border-radius: var(--radius-sm);
+	color: var(--text-muted);
+	font-size: 18px;
+	cursor: pointer;
+}
+.lapse-x:hover { color: var(--text-primary); background: var(--bg-hover); }
+.lapse-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A phone puts it at the TOP, and this is not symmetry for its own sake.
+   The phone shell is a conversation floor with a draggable SHEET rising from
+   the bottom — Web, Doc, Compose — and a notice anchored down there sits on
+   top of whichever one the reader just opened, including the very document
+   this notice links to. The top of the chat is the one region a sheet never
+   takes. Full width, because at 420px a 380px card centred on nothing looks
+   like a mistake. */
+@media (max-width: 760px) {
+	.lapse-notices {
+		left:   calc(8px + var(--safe-l, 0px));
+		right:  calc(8px + var(--safe-r, 0px));
+		width:  auto;
+		top:    calc(var(--safe-t, 0px) + var(--header-h, 44px) + 8px);
+		bottom: auto;
+	}
+}
+
+/* ── The legal row in About ──────────────────────────────────────────────
+   No rule of its own. `.about-maker` draws one directly below, and the card
+   already carries the note that two lines 60px apart read as a mistake. The
+   body is a centred flex column with a gap, so the row needs only its words. */
+.about-legal { text-align: center; }
+.about-legal-links {
+	display: flex;
+	justify-content: center;
+	gap: 10px;
+	font-size: var(--fs-sm);
+}
+/* The app sets no colour on a bare `a`, because it has almost none — so an
+   anchor here arrives in the browser's blue, on a card whose every other word
+   is the palette's. */
+.about-legal-links a,
+.lapse-note a { color: var(--accent-text); text-decoration: none; }
+.about-legal-links a:hover,
+.lapse-note a:hover { text-decoration: underline; }
+.about-legal-links a:focus-visible,
+.lapse-note a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.about-legal-sep { color: var(--text-muted); }
+.about-legal-note {
+	margin: 4px 0 0;
+	font-size: var(--fs-xs);
+	color: var(--text-muted);
+}

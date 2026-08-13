@@ -3482,7 +3482,6 @@ import init, {
 	// class the markup no longer carries, so the lookup found nothing and the
 	// dark-ink/light-ink swap below had been dead for as long as that class was.
 	var brandLogo     = document.getElementById('id-logo');
-	var topMeter      = document.getElementById('top-meter');
 	var aiMeter       = document.getElementById('ai-meter');
 	var agentsList    = document.getElementById('agents-list');
 	var agentsCount   = document.getElementById('agents-count');
@@ -3861,7 +3860,28 @@ import init, {
 	// destination needs a `body[data-mpanel="…"]` rule in responsive.css and a
 	// place in the bottom bar, and a panel with neither shows a blank screen
 	// when it is asked for.
-	var MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1 };
+	//
+	// GRAPH AND PENDING ARE HERE FOR EXACTLY THAT REASON, and they were not: the
+	// rule above was written and then broken by the two panels added after it.
+	// `responsive.css` un-hides four panels — ai, agents, mail, work — so asking
+	// for either of these on a phone set `body[data-mpanel="graph"]`, took the
+	// conversation off screen and put nothing in its place. A visible button, a
+	// blank screen and no way back but the hamburger. Pending was the worse of
+	// the two, because `Pending.add` shows the panel itself: a worker's consent
+	// question, raised while the tab was hidden, blanked the phone the moment its
+	// owner came back to it.
+	var MOBILE_GUESTS = {
+		web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1,
+		graph: 1, pending: 1,
+		// The Preview panel is a stage panel like the Doc panel it was split out
+		// of, and a phone shows one thing at a time -- so on a phone the source and
+		// its pages are still two sheets, raised in turn. There is no room there for
+		// them to be side by side, which is the only thing the split gave.
+		preview: 1,
+		// A panel about reporting faults that a phone cannot reach leaves out
+		// every reader most likely to meet one.
+		improve: 1,
+	};
 	function mshow(name) {
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
 		if (MOBILE_GUESTS[name] && window.DaimondSheet) {
@@ -3890,6 +3910,7 @@ import init, {
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
+		if (name === 'improve' && window.DaimondImprove) DaimondImprove.onOpen();
 	}
 	document.querySelectorAll('#mnav button').forEach(function (b) {
 		b.addEventListener('click', function () { mshow(b.dataset.mp); });
@@ -3908,15 +3929,18 @@ import init, {
 	//          below) split by a handle that moves but does not go away.
 	//
 	//   stage  the middle. Its occupants are EXCLUSIVE to it: they take the
-	//          stage, solo or two side by side, and never dock at the right.
-	//          `ai` is the default occupant and is restored whenever the stage
-	//          would otherwise be empty.
+	//          stage, side by side, and never dock at the right. `ai` is the
+	//          default occupant and is restored whenever the stage would
+	//          otherwise be empty.
 	//
-	//          Two seats, because you should never have to leave the
+	//          Several seats, because you should never have to leave the
 	//          conversation to do a thing. Read the message, watch the page,
-	//          read the document — with the daimon still beside it, to be asked
-	//          about it. This is the same rule the Admin panel follows: a form
-	//          opens next to a live chat, not over it.
+	//          read the document beside the pages it was typeset into — with the
+	//          daimon still there, to be asked about any of it. This is the same
+	//          rule the Admin panel follows: a form opens next to a live chat,
+	//          not over it.
+	//
+	//          HOW MANY seats is not a constant. See `stageMax`.
 	//
 	//   dock   the right. The sources you pull from. A closed panel is a tag in
 	//          the header; clicking the tag docks it, and its own closer sends
@@ -3949,7 +3973,42 @@ import init, {
 		}
 
 		var KEY      = 'daimond-layout';
-		var STAGE_MAX = 2;      // two seats. A third would make each unreadable.
+
+		/// The most seats the stage will draw, however wide the screen.
+		///
+		/// The cap used to be the constant 2, whose stated reason was "a third
+		/// would make each unreadable". That reason is about WIDTH, not about the
+		/// number two, and the dock had already learnt the same lesson one function
+		/// below: its cap used to be the constant 4, which was how many dock panels
+		/// happened to exist. So the stage derives its cap from the width it
+		/// actually has (see `stageMax`) and this is only the ceiling.
+		///
+		/// Four, because that is what was asked for, and because a fifth seat needs
+		/// 1940px of stage on its own -- more than a 1920 screen has before the rail
+		/// and the dock have taken theirs.
+		var STAGE_CAP = 4;
+		/// The fewest seats the stage ever offers, and it is NOT derived.
+		///
+		/// Two is the app's premise rather than a width: you should never have to
+		/// leave the conversation to do a thing, so the guest opens BESIDE the
+		/// daimon. Below the room for two readable seats they are simply squeezed --
+		/// which is exactly what the old two-seat clamp did when `room` fell under
+		/// twice the floor -- and nothing is closed.
+		///
+		/// A derived floor of one was tried and is a trap: with one seat the first
+		/// guest evicts the conversation out of the stage array, leaving `open.ai`
+		/// true and `seated('ai')` false. That is the state half the repair paths in
+		/// this file exist to heal, and on a 1200px laptop it took the chat off
+		/// screen in a case that shows both today.
+		///
+		/// It is also what a phone gets. Below 760px `stage` is bookkeeping rather
+		/// than a tiling -- the chat is the floor and a guest rises over it as a
+		/// sheet -- so the phone keeps the number the app shipped with and the sheet
+		/// goes on deciding what is on screen.
+		var STAGE_MIN_SEATS = 2;
+		/// A divider's width. `.phandle` in app.css; the seats have to be told,
+		/// because n seats want n-1 of them out of the same room.
+		var HANDLE = 10;
 
 		/// How the dock tiles, and therefore how many panels it can hold.
 		///
@@ -3967,6 +4026,21 @@ import init, {
 		};
 		// The rail holds the settings forms, so it needs a width a form can be
 		// filled in at, not the width of a list of names.
+		//
+		// `stage` is the floor for ONE SEAT, and it is the number the seat count is
+		// derived from, so it is measured rather than chosen. `dev/measure_seat.mjs`
+		// and `dev/measure_seat2.mjs` walk a stage panel down a ladder of widths:
+		//
+		//   chrome    at 205px the Web panel's header takes three wrapped rows (79px
+		//             against 53px from 340px up) and at 180px its close button
+		//             leaves the panel entirely; the AI panel's title overflows by
+		//             20px at 240px and 49px at 205px. Nothing overflows from 260px.
+		//   reading   a line of the document body holds 28 characters at 240px, 36 at
+		//             300px, 41 at 340px and 46 at 380px; a line of chat, 45 at 380px.
+		//
+		// 45 characters is the bottom of the measure prose is set at, and 380 is
+		// where both of them reach it. The chrome floor is 260 and is not the
+		// question: a seat you can operate but cannot read is not a seat.
 		var MIN_W    = { rail: 260, stage: 380, dock: 260 };
 		// Neither pane of the rail may be crushed, and neither of the two LISTS in
 		// its upper pane: a Diamonds list dragged to nothing is a list you cannot
@@ -3983,7 +4057,6 @@ import init, {
 		var widths = { rail: 320, dock: 300 };
 		var split  = 0.5;       // the Admin panel's share of the rail's height
 		var railSplit = 0.5;    // the Diamonds list's share of what the two rail lists share
-		var seat   = 0.5;       // the first stage occupant's share of the stage
 		var railForced = false; // a folded rail the user re-opened via its tag
 		var grid   = 'auto';    // which of GRIDS the dock is tiled on
 		var pinned = null;      // panel ids kept on the chip row; null means all of them
@@ -3994,7 +4067,45 @@ import init, {
 		var stacks    = {};     // occupancy -> each panel's share of the column
 		var dockSeats = [];     // { el, ids } per drawn column, as apply() seated them
 		var stackEls  = {};     // the divider elements, kept rather than rebuilt
+		// And what the stage's own occupants have made of ITS width, on exactly the
+		// same terms and for the same reason: keyed by occupancy -- 'ai|doc|preview'
+		// -- so a boundary the user moved belongs to the panels either side of it and
+		// finds them again wherever they next sit together. A guest joining makes a
+		// different occupancy, so that arrangement starts even and the old one is
+		// untouched, waiting for the newcomer to leave.
+		var seats    = {};      // occupancy -> each seat's share of the stage
+		var seatEls  = {};      // the stage's dividers, kept rather than rebuilt
 		var tagsEl, stageEl, dockEl, mainEl;
+
+		/// How much width the stage actually has.
+		///
+		/// MEASURED, not computed from `window.innerWidth`. The rail folds away on
+		/// its own below NARROW, the dock is one column's width times however many
+		/// columns it draws, and a stage width worked out from the window would have
+		/// to restate both of those and then stay in step with them. The stage is
+		/// `flex: 1` between the two, so the browser has already done the arithmetic.
+		///
+		/// The fallback is for the first call only, before anything has been laid
+		/// out; it errs low, which errs towards fewer seats.
+		function stageRoom() {
+			var w = stageEl ? stageEl.clientWidth : 0;
+			if (w > 0) return w;
+			var rail = (open.rail && (window.innerWidth >= NARROW || railForced))
+				? Math.max(MIN_W.rail, widths.rail) + HANDLE : 0;
+			var dk = dock.length ? Math.max(MIN_W.dock, widths.dock) * dockCols() + HANDLE : 0;
+			return Math.max(MIN_W.stage, window.innerWidth - rail - dk);
+		}
+
+		/// How many seats the stage can hold at the width it has right now.
+		///
+		/// n seats need n floors and the n-1 dividers between them, so the room buys
+		/// `(room + HANDLE) / (MIN_W.stage + HANDLE)` of them, between
+		/// `STAGE_MIN_SEATS` and `STAGE_CAP`.
+		function stageMax() {
+			if (isMobile()) return STAGE_MIN_SEATS;
+			var n = Math.floor((stageRoom() + HANDLE) / (MIN_W.stage + HANDLE));
+			return Math.max(STAGE_MIN_SEATS, Math.min(STAGE_CAP, n));
+		}
 
 		/// The dock's shape right now, with `auto` resolved against the window.
 		function gridOf() {
@@ -4054,6 +4165,10 @@ import init, {
 			msg:     hasMail,
 			compose: hasMail,
 			doc:     function () { return !!usedPanels().doc; },
+			// And the preview waits for the same reason and on the same terms: it
+			// holds a rendering of a document, so before there is a document there
+			// is nothing for it to be a preview OF.
+			preview: function () { return !!usedPanels().preview; },
 		};
 		/// Whether a panel has earned its place in the row yet.
 		function revealed(id) {
@@ -4082,7 +4197,7 @@ import init, {
 			try {
 				localStorage.setItem(KEY, JSON.stringify({
 					open: open, stage: stage, dock: dock,
-					widths: widths, split: split, railSplit: railSplit, seat: seat,
+					widths: widths, split: split, railSplit: railSplit, seats: seats,
 					grid: grid, pinned: pinned, arrangements: arrangements, stacks: stacks,
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
@@ -4096,10 +4211,13 @@ import init, {
 			// dragged hard to one end comes back where it was left.
 			if (typeof st.split === 'number' && st.split >= 0 && st.split <= 1) split = st.split;
 			if (typeof st.railSplit === 'number' && st.railSplit >= 0 && st.railSplit <= 1) railSplit = st.railSplit;
-			if (typeof st.seat  === 'number' && st.seat  >= 0 && st.seat  <= 1) seat  = st.seat;
+			// NOT capped here, and that is deliberate. A saved layout naming more
+			// guests than the stage can seat used to be sliced, which left the ones
+			// dropped OPEN and seated nowhere -- the state half the repair paths in
+			// this file exist to heal. `fitStage`, in `apply`, closes them instead:
+			// properly, with a measured width, and back to a chip the user can click.
 			if (Array.isArray(st.stage)) {
-				stage = st.stage.filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; })
-					.slice(0, STAGE_MAX);
+				stage = st.stage.filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; });
 			}
 			if (typeof st.grid === 'string' && (st.grid === 'auto' || GRIDS[st.grid])) grid = st.grid;
 			// A pin list is filtered against the panels that actually exist, so a
@@ -4112,15 +4230,8 @@ import init, {
 			// still has one number per panel: a stack whose occupancy has changed
 			// underneath it is not a stack the numbers describe, and an even split
 			// is the honest answer rather than a share applied to the wrong panel.
-			if (st.stacks && typeof st.stacks === 'object') {
-				Object.keys(st.stacks).forEach(function (k) {
-					var ids = k.split('|'), v = st.stacks[k];
-					if (!Array.isArray(v) || v.length !== ids.length || ids.length < 2) return;
-					if (!ids.every(def)) return;
-					if (!v.every(function (x) { return typeof x === 'number' && x > 0 && x <= 1; })) return;
-					stacks[k] = v.slice();
-				});
-			}
+			readShares(st.stacks, stacks);
+			readShares(st.seats,  seats);
 			if (Array.isArray(st.dock)) {
 				dock = st.dock.filter(function (id) { return def(id) && zoneOf(id) === 'dock' && open[id]; })
 					.slice(0, dockMax());
@@ -4134,7 +4245,7 @@ import init, {
 		function seatOpenPanels() {
 			PANELS.forEach(function (p) {
 				if (!open[p.id]) return;
-				if (p.zone === 'stage' && stage.indexOf(p.id) === -1 && stage.length < STAGE_MAX) stage.push(p.id);
+				if (p.zone === 'stage' && stage.indexOf(p.id) === -1 && stage.length < stageMax()) stage.push(p.id);
 				if (p.zone === 'dock'  && dock.indexOf(p.id)  === -1 && dock.length  < dockMax()) dock.push(p.id);
 			});
 			normaliseStage();
@@ -4226,14 +4337,35 @@ import init, {
 		// waiting for the newcomer to leave again.
 
 		function stackKey(ids) { return ids.join('|'); }
+
+		/// Take a stored share table off a saved layout into `into`.
+		///
+		/// A share is read only if it still names panels that exist and still has one
+		/// number per panel: an arrangement whose occupancy has changed underneath it
+		/// is not one the numbers describe.
+		function readShares(src, into) {
+			if (!src || typeof src !== 'object') return;
+			Object.keys(src).forEach(function (k) {
+				var ids = k.split('|'), v = src[k];
+				if (!Array.isArray(v) || v.length !== ids.length || ids.length < 2) return;
+				if (!ids.every(def)) return;
+				if (!v.every(function (x) { return typeof x === 'number' && x > 0 && x <= 1; })) return;
+				into[k] = v.slice();
+			});
+		}
+
 		function seatOf(colId) {
 			return dockSeats.filter(function (s) { return s.el.id === colId; })[0] || null;
 		}
 
 		/// The stored shares for an occupancy, normalised to sum to one, or null
-		/// when there are none to honour and the column should share evenly.
-		function sharesOf(ids) {
-			var s = stacks[stackKey(ids)];
+		/// when there are none to honour and the room should be shared evenly.
+		///
+		/// Takes the TABLE as well as the occupancy: the dock's columns and the
+		/// stage's seats are the same kind of thing keyed the same way, and one
+		/// reading of a share table is better than two that can drift apart.
+		function sharesOf(table, ids) {
+			var s = table[stackKey(ids)];
 			if (!Array.isArray(s) || s.length !== ids.length) return null;
 			var sum = 0;
 			for (var i = 0; i < s.length; i++) {
@@ -4333,7 +4465,7 @@ import init, {
 				// Too short to give everyone a usable panel: share it evenly and put
 				// the handles away, rather than offer a divider that cannot move.
 				if (room < MIN_H.stack * n) { even(); return; }
-				var shares = sharesOf(ids) || ids.map(function () { return 1 / n; });
+				var shares = sharesOf(stacks, ids) || ids.map(function () { return 1 / n; });
 				var px = fitStack(shares, room, MIN_H.stack);
 				els.forEach(function (el, i) {
 					if (i === n - 1) { el.style.flex = '1 1 auto'; el.style.height = ''; return; }
@@ -4343,28 +4475,120 @@ import init, {
 			});
 		}
 
-		/// Share the stage between its two occupants. Solo takes it all.
-		function applySeat() {
-			if (isMobile()) return;			// the phone shell owns the layout below 760
-			var handle = document.getElementById('handle-stage');
-			var two = stage.length === 2;
-			if (handle) handle.style.display = two ? '' : 'none';
-			var w = stageEl ? stageEl.clientWidth : 0;
-			stage.forEach(function (id, i) {
-				var el = elOf(id);
-				if (!el) return;
-				if (!two) { el.style.flex = '1 1 auto'; el.style.width = ''; return; }
-				// Clamp so neither seat is crushed, then express as a basis.
-				var room  = w - (handle ? handle.offsetWidth : 0);
-				var first = Math.round(seat * w);
-				if (room > MIN_W.stage * 2) {
-					first = Math.max(MIN_W.stage, Math.min(first, room - MIN_W.stage));
-				} else {
-					first = Math.round(room / 2);       // no room to honour the ratio
-				}
-				el.style.flex  = '0 0 auto';
-				el.style.width = (i === 0 ? first : Math.max(0, room - first)) + 'px';
+		// ── The stage's seats ─────────────────────────────────
+		// The stage used to hold two panels and one divider, built in `init` and
+		// never moved. It now holds as many as the width will carry, so the
+		// dividers are built the way the dock's are: one per boundary, kept rather
+		// than rebuilt, and each moving ITS boundary and no other.
+
+		/// The divider for the boundary after seat `i`, built once and kept: a
+		/// handle rebuilt under the pointer would drop the drag holding it.
+		///
+		/// The first keeps the id `handle-stage`, which is what it was called when
+		/// there was only ever one of them.
+		function seatHandle(i) {
+			var h = seatEls[i];
+			if (!h) {
+				h = document.createElement('div');
+				h.className = 'phandle';
+				h.id = i ? ('handle-stage-' + i) : 'handle-stage';
+				// Marked, not set: these are built once and never rebuilt, so a
+				// spoken name written in now would stay in the language it was
+				// written in.
+				DaimondI18n.bind(h, 'title', 'layout.handle');
+				bindSeat(h, i);
+				seatEls[i] = h;
+			}
+			return h;
+		}
+
+		/// The dividers currently standing in the stage, in order.
+		function seatHandles() {
+			var out = [];
+			for (var i = 0; i < stage.length - 1; i++) out.push(seatHandle(i));
+			return out;
+		}
+
+		/// Give each stage occupant its share of the stage's width.
+		///
+		/// Pixels cut from a proportion, as the dock's stacked columns are, so an
+		/// arrangement the user tuned survives a resize. The last seat takes what
+		/// the rounding leaves, so nothing shows as a gap at the right-hand edge.
+		function applySeats() {
+			var n   = stage.length;
+			var els = stage.map(elOf);
+			var hs  = seatHandles();
+			// The phone shell owns the layout below 760: `#stage` is `display:
+			// contents` there, the chat is the floor and a guest rises over it as a
+			// sheet. So the seating stands back — but it CLEARS UP FIRST. A width cut
+			// for a 427px desktop seat, left on a panel that is now the whole of a
+			// 390px screen, is the engine reaching into a layout that is not its own;
+			// so is a divider left standing, which only `responsive.css`'s
+			// `!important` was hiding.
+			if (isMobile()) {
+				els.forEach(function (el) { if (el) { el.style.flex = ''; el.style.width = ''; } });
+				hs.forEach(function (h) { h.style.display = 'none'; });
+				return;
+			}
+			// `1 1 0` and not `1 1 auto`: from a content basis the seats come out
+			// whatever their contents happen to measure -- an empty chat took 435px
+			// of a 736px stage and left the message 291 -- where an equal share is
+			// what the old two-seat clamp gave when there was no room to honour the
+			// ratio. A solo seat fills the stage either way.
+			var even = function () {
+				els.forEach(function (el) { if (el) { el.style.flex = '1 1 0'; el.style.width = ''; } });
+			};
+			// Measured with the dividers STANDING, always -- the lesson `.hstack`
+			// learnt in the dock: a hidden one is 0px wide, so a stage that had just
+			// put its dividers away would measure itself roomier, decide it could
+			// divide after all, and put them back.
+			hs.forEach(function (h) { h.style.display = ''; });
+			if (n < 2 || els.indexOf(null) !== -1) { even(); return; }
+			var room = stageEl ? stageEl.clientWidth : 0;
+			hs.forEach(function (h) { room -= h.offsetWidth; });
+			// Too narrow to give everyone a seat worth reading: share it evenly
+			// rather than hand out widths that add up to more than there is.
+			// `fitStage` should already have closed the overflow; this is what keeps
+			// a frame where it has not yet run from overflowing the stage.
+			if (room < MIN_W.stage * n) { even(); return; }
+			var shares = sharesOf(seats, stage) || stage.map(function () { return 1 / n; });
+			var px = fitStack(shares, room, MIN_W.stage);
+			var spent = 0;
+			els.forEach(function (el, i) {
+				el.style.flex = '0 0 auto';
+				var w = (i === n - 1) ? Math.max(0, room - spent) : px[i];
+				spent += w;
+				el.style.width = w + 'px';
 			});
+		}
+
+		/// Close whatever the stage can no longer seat, and answer whether it had to.
+		///
+		/// NARROWING CLOSES; WIDENING DOES NOT RE-ADMIT, and the asymmetry is on
+		/// purpose. A window dragged narrow has to give something up or the seats
+		/// overflow the stage and the rightmost is half off the screen. But an app
+		/// that re-opens panels you closed is worse than one that makes you click:
+		/// the panels come back from a width, not from a decision, and there is no
+		/// way to tell it not to. So coming back out is a chip away.
+		///
+		/// The RIGHTMOST goes first — which is the newest, since a guest opens to the
+		/// right — as the dock's own regrid does and for the same reason: nobody
+		/// asked for anything here, the window merely shrank, and the panel opened
+		/// most recently is the one the user is least likely to have arranged
+		/// deliberately. It is the opposite of the eviction in `show`, and the
+		/// difference is who acted: there the user asked for a panel, so the guest
+		/// they reached for most recently is exactly the one to keep. The
+		/// conversation is never closed by either.
+		function fitStage() {
+			var max = stageMax(), closed = false;
+			while (stage.length > max) {
+				var id = stage[stage.length - 1];
+				if (id === 'ai') break;
+				stage.pop();
+				open[id] = false;
+				closed = true;
+			}
+			return closed;
 		}
 
 		/// The dock's columns, grown to `n`. Columns are never destroyed while they
@@ -4404,8 +4628,29 @@ import init, {
 			apply();
 		}
 
+		/// Put away every panel that is shut.
+		///
+		/// Called TWICE by `apply`, and the first call is the one that is easy to
+		/// miss. Every panel is declared in the markup as a child of `main` — the
+		/// dock's panels are only moved into a column when they are opened — so a
+		/// shut panel that has not been hidden yet is still taking width out of the
+		/// row, and the stage is what is left of that row. Measured on the boot of a
+		/// saved layout: six closed dock panels loose in a 2376px main left the stage
+		/// measuring 752px, `stageMax` answered 2, and two panels the user had open
+		/// were closed for good by a width that was never real.
+		///
+		/// The second call is still needed: the dock's unseen sweep and `fitStage`
+		/// both close panels DURING the pass, and those have to go away too.
+		function hideClosed() {
+			PANELS.forEach(function (p) {
+				if (p.id === 'rail') return;
+				if (!open[p.id]) { var el = elOf(p.id); if (el) el.style.display = 'none'; }
+			});
+		}
+
 		function apply() {
 			normaliseStage();
+			hideClosed();
 
 			// Below the phone breakpoint the phone shell owns the layout: the chat
 			// is the floor, guests rise as a sheet, the rail is a drawer. The
@@ -4425,18 +4670,6 @@ import init, {
 				if (railEl) railEl.style.display = railOn ? '' : 'none';
 				document.getElementById('handle-rail').style.display = railOn ? '' : 'none';
 				if (railEl && railOn) railEl.style.width = Math.max(MIN_W.rail, widths.rail) + 'px';
-
-				// Stage: the occupants in order, with the handle between them. Do NOT
-				// clear the container — appendChild MOVES an element, and emptying it
-				// would destroy the very panels living there.
-				var handleStage = document.getElementById('handle-stage');
-				stage.forEach(function (id, i) {
-					var el = elOf(id);
-					if (!el) return;
-					el.style.display = '';
-					stageEl.appendChild(el);                       // re-appending reorders in place
-					if (i === 0 && handleStage) stageEl.appendChild(handleStage);
-				});
 
 				// Dock: tiled on the chosen grid. Never more columns than there are
 				// panels to put in them, or a lone panel would sit in a half-width
@@ -4490,14 +4723,40 @@ import init, {
 				dockEl.style.display = dock.length ? '' : 'none';
 				document.getElementById('handle-dock').style.display = dock.length ? '' : 'none';
 				if (dock.length) dockEl.style.width = Math.max(MIN_W.dock, widths.dock) * cols.length + 'px';
+
+				// Stage: whatever it can still seat, in order, with a divider between
+				// each adjacent pair. Do NOT clear the container — appendChild MOVES
+				// an element, and emptying it would destroy the very panels living
+				// there.
+				//
+				// AFTER THE RAIL AND THE DOCK, and that ordering is load-bearing rather
+				// than tidy. The stage is `flex: 1` between the two, so its width is
+				// whatever they leave it -- and until `dockEl.style.width` is set, a
+				// dock still at its CONTENT width can be enormous. Measured on the boot
+				// of a saved four-seat layout: the stage came back 819px of a 2376px
+				// main, `stageMax` answered 2, and two panels the user had open were
+				// closed for good by a measurement taken one statement too early.
+				fitStage();
+				// Every divider comes out first, wherever it ended up, and only the
+				// ones with a boundary to move go back. A handle left standing for a
+				// seat that has closed is a 10px strip at the end of the stage that
+				// moves nothing.
+				Object.keys(seatEls).forEach(function (k) {
+					var h = seatEls[k];
+					if (h.parentNode) h.parentNode.removeChild(h);
+				});
+				stage.forEach(function (id, i) {
+					var el = elOf(id);
+					if (!el) return;
+					el.style.display = '';
+					if (i > 0) stageEl.appendChild(seatHandle(i - 1));
+					stageEl.appendChild(el);                       // re-appending reorders in place
+				});
 			}
 
 			// Anything closed is hidden, and shows up as a tag instead. A guest
 			// currently up in the sheet is `open`, so it is never hit here.
-			PANELS.forEach(function (p) {
-				if (p.id === 'rail') return;
-				if (!open[p.id]) { var el = elOf(p.id); if (el) el.style.display = 'none'; }
-			});
+			hideClosed();
 
 			renderTags();
 			applySplit();
@@ -4507,7 +4766,7 @@ import init, {
 			// would be drawn as a strip across the column the phone lays out.
 			placeStacks();
 			applyStacks();
-			applySeat();
+			applySeats();
 			save();
 		}
 
@@ -4524,7 +4783,8 @@ import init, {
 			var railFolded = open.rail && window.innerWidth < NARROW && !railForced;
 			var g = gridOf();
 			return {
-				grid: grid, cols: g.cols, rows: g.rows, gridLabel: g.label, dockMax: dockMax(),
+				grid: grid, cols: g.cols, rows: g.rows, gridLabel: g.label,
+				dockMax: dockMax(), stageMax: stageMax(),
 				panels: PANELS.map(function (p) {
 					var isOpenNow = !!open[p.id];
 					var folded = (p.id === 'rail' && railFolded);
@@ -4545,7 +4805,7 @@ import init, {
 						// warns rather than refuses, since that is a real choice.
 						full: (p.zone === 'dock' && !isOpenNow && dock.length >= dockMax()),
 						evicts: (p.zone === 'stage' && !isOpenNow && p.id !== 'ai'
-							&& stage.length >= STAGE_MAX),
+							&& stage.length >= stageMax()),
 					};
 				}),
 			};
@@ -4641,8 +4901,8 @@ import init, {
 			});
 		}
 
-		/// Open a panel in its own zone. A stage panel takes the free seat, or
-		/// evicts the other guest — never the AI, which is what one is talking to.
+		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
+		/// the oldest guest — never the AI, which is what one is talking to.
 		function show(id) {
 			if (!def(id)) return;
 			// Before anything else, and before the already-open shortcut below: an
@@ -4651,6 +4911,12 @@ import init, {
 			// layout ALREADY carrying this state -- saved by a version that had the
 			// bug -- heals the first time anything asks for the panel again.
 			reveal(id);
+			// The Doc panel's header can go stale while the panel is off screen: the
+			// live view stops when the panel goes, and the `<embed>` it stood in for
+			// comes back with the PDF in it. Ahead of the already-open shortcut, since
+			// on a phone a panel that is open but not the sheet on screen goes through
+			// that branch and comes back the same way.
+			if (id === 'preview') retitleDoc();
 			// Already open in the engine, but on a phone that does not mean it is on
 			// screen: a guest is only visible while it is the one in the sheet. So
 			// re-present it — this is why the guide "?" (which shows the Web panel,
@@ -4664,10 +4930,24 @@ import init, {
 			if (open[id] && seated(id)) { if (isMobile()) mshow(id); return; }
 			var zone = zoneOf(id);
 			if (zone === 'stage') {
-				if (stage.length >= STAGE_MAX) {
-					var evict = stage.filter(function (x) { return x !== 'ai'; })[0];
+				// THE OLDEST GUEST GOES, and this is the one place the dock's rule does
+				// NOT transfer. A dock panel shed by a regrid is shed because the grid
+				// shrank, so the newest is the safest to take. A stage guest is evicted
+				// because the user just ASKED for something, and the newest guest is
+				// the one they most recently reached for and are most likely still
+				// using. Measured on the case that matters: compiling `main.typ` on a
+				// three-seat stage of [chat, guide, source] opens the pages — and
+				// evicting the newest closed the SOURCE, leaving the guide standing.
+				// With two seats there was only ever one guest and no choice to make.
+				if (stage.length >= stageMax()) {
+					var guests = stage.filter(function (x) { return x !== 'ai'; });
+					var evict  = guests[0];
 					if (evict) { open[evict] = false; stage = stage.filter(function (x) { return x !== evict; }); }
-					else stage = stage.slice(0, STAGE_MAX - 1);
+					// A full stage with no guest in it is a stage of nothing but the
+					// conversation, which `STAGE_MIN_SEATS` makes impossible. The
+					// slice keeps the FIRST seat, so were it ever to happen the daimon
+					// would keep it rather than be evicted into `open`-but-unseated.
+					else stage = stage.slice(0, stageMax() - 1);
 				}
 				stage.push(id);
 			} else if (zone === 'dock') {
@@ -4685,6 +4965,7 @@ import init, {
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
+			if (id === 'improve' && window.DaimondImprove) DaimondImprove.onOpen();
 			if (isMobile()) mshow(id);
 		}
 
@@ -4742,36 +5023,60 @@ import init, {
 			});
 		}
 
-		/// The stage's own divider: it moves a boundary between two panels rather
-		/// than the width of one.
-		function bindSeat(handle) {
+		/// The boundary between the i-th and (i+1)-th seat of the stage.
+		///
+		/// It moves THAT boundary and no other: what the seat on the left gains, the
+		/// one on its right gives up, and every other seat is left exactly where the
+		/// user put it. The widths are read at pointerdown and the drag is arithmetic
+		/// on them, so four seats do not shuffle under the hand.
+		///
+		/// This is the dock's `bindStack` turned on its side, and it replaced a
+		/// version that stored ONE fraction for the whole stage -- which is all a
+		/// stage of exactly two ever needs, and no use at all for three.
+		function bindSeat(handle, i) {
 			if (!handle) return;
-			var startX = 0, startW = 0, dragging = false;
+			var ids = null, base = null, room = 0, startX = 0, dragging = false;
 			handle.addEventListener('pointerdown', function (e) {
-				var first = elOf(stage[0]);
-				if (!first) return;
-				dragging = true;
-				startX = e.clientX;
-				startW = first.getBoundingClientRect().width;
+				if (i + 1 >= stage.length) return;
+				var px = stage.map(function (id) {
+					var el = elOf(id);
+					return el ? el.getBoundingClientRect().width : 0;
+				});
+				room = px.reduce(function (a, b) { return a + b; }, 0);
+				if (room <= 0) return;
+				ids = stage.slice(); base = px; startX = e.clientX; dragging = true;
 				handle.setPointerCapture(e.pointerId);
 				handle.classList.add('dragging');
 				document.body.classList.add('resizing');
 			});
 			handle.addEventListener('pointermove', function (e) {
-				if (!dragging || !stageEl) return;
-				var w = stageEl.clientWidth;
-				if (!w) return;
-				seat = Math.max(0, Math.min(1, (startW + (e.clientX - startX)) / w));
-				applySeat();
+				if (!dragging) return;
+				// Clamped on the way in rather than after the fact, so holding the
+				// pointer far past the edge of the stage and coming back does not have
+				// to unwind a share that was never legal.
+				var dx = Math.max(MIN_W.stage - base[i],
+					Math.min(e.clientX - startX, base[i + 1] - MIN_W.stage));
+				var px = base.slice();
+				px[i] += dx; px[i + 1] -= dx;
+				seats[stackKey(ids)] = px.map(function (v) { return v / room; });
+				applySeats();
 			});
 			handle.addEventListener('pointerup', function (e) {
+				if (!dragging) return;
 				dragging = false;
 				handle.releasePointerCapture(e.pointerId);
 				handle.classList.remove('dragging');
 				document.body.classList.remove('resizing');
 				save();
 			});
-			handle.addEventListener('dblclick', function () { seat = 0.5; applySeat(); save(); });
+			// The whole stage back to even, not just this pair: with three seats the
+			// pair alone leaves the stage in a state nobody asked for, and a reset
+			// that resets some of it is worse than none.
+			handle.addEventListener('dblclick', function () {
+				delete seats[stackKey(stage)];
+				applySeats();
+				save();
+			});
 		}
 
 		// ── The rail's split ──────────────────────────────────
@@ -4910,7 +5215,10 @@ import init, {
 				open: JSON.parse(JSON.stringify(open)),
 				stage: stage.slice(), dock: dock.slice(),
 				widths: { rail: widths.rail, dock: widths.dock },
-				seat: seat, grid: grid,
+				// The whole table, not this arrangement's own row: a share belongs to
+				// the panels either side of the boundary, and the Diamond being put
+				// away is not what makes it true.
+				seats: JSON.parse(JSON.stringify(seats)), grid: grid,
 			};
 			save();
 			return true;
@@ -4932,12 +5240,14 @@ import init, {
 			if (!a) return false;
 			if (a.open) { open = {}; Object.keys(a.open).forEach(function (k) { if (def(k)) open[k] = !!a.open[k]; }); }
 			if (typeof a.grid === 'string' && (a.grid === 'auto' || GRIDS[a.grid])) grid = a.grid;
-			stage = (a.stage || []).filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; })
-				.slice(0, STAGE_MAX);
+			// Uncapped, as `load` is: `fitStage` closes what will not fit, with a
+			// measured width and back to a chip, rather than leaving it open and
+			// seated nowhere.
+			stage = (a.stage || []).filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; });
 			dock  = (a.dock  || []).filter(function (id) { return def(id) && zoneOf(id) === 'dock'  && open[id]; })
 				.slice(0, dockMax());
 			if (a.widths) { if (a.widths.rail) widths.rail = a.widths.rail; if (a.widths.dock) widths.dock = a.widths.dock; }
-			if (typeof a.seat === 'number' && a.seat >= 0 && a.seat <= 1) seat = a.seat;
+			readShares(a.seats, seats);
 			seatOpenPanels();
 			apply();
 			return true;
@@ -4948,16 +5258,9 @@ import init, {
 			tagsEl  = document.getElementById('panel-tags');
 			stageEl = document.getElementById('stage');
 			dockEl  = document.getElementById('dock');
-			// The stage's divider is built here rather than in the markup, because
-			// it belongs between two occupants and only exists when there are two.
-			var hs = document.createElement('div');
-			hs.className = 'phandle';
-			hs.id = 'handle-stage';
-			// Marked, not set: this divider is built once and never rebuilt, so its
-			// spoken name would otherwise stay in the language it was built in --
-			// which the stacked dividers already knew, three hundred lines below.
-			DaimondI18n.bind(hs, 'title', 'layout.handle');
-			stageEl.appendChild(hs);
+			// The stage's dividers are built on demand rather than in the markup,
+			// because each belongs BETWEEN two occupants and exists only while there
+			// are two to sit between. See `seatHandle`.
 
 			scan();
 			load();
@@ -4966,15 +5269,20 @@ import init, {
 			bindHandle(document.getElementById('handle-dock'), 'dock');
 			bindSplit(document.getElementById('handle-split'));
 			bindRailSplit(document.getElementById('handle-rail-split'));
-			bindSeat(hs);
-			// The split and the seat are pixel sizes cut from a proportion, so they
+			// The split and the seats are pixel sizes cut from a proportion, so they
 			// have to be recut whenever their container changes size. A window
 			// resize is only one of the ways that happens, and the only one the
 			// window tells us about.
+			//
+			// The stage's observer also asks whether the seats still FIT: the stage
+			// narrows when the rail is unfolded or the dock takes a second column,
+			// neither of which is a window resize.
 			if (window.ResizeObserver) {
 				var railEl = elOf('rail');
 				if (railEl)  new ResizeObserver(applySplit).observe(railEl);
-				if (stageEl) new ResizeObserver(applySeat).observe(stageEl);
+				if (stageEl) new ResizeObserver(function () {
+					if (fitStage()) apply(); else applySeats();
+				}).observe(stageEl);
 				var railTop = document.getElementById('rail-top');
 				if (railTop) new ResizeObserver(applyRailSplit).observe(railTop);
 				// So is a stacked column's share of its column.
@@ -6045,11 +6353,22 @@ import init, {
 	///
 	/// **This is a security boundary and it is set from JavaScript, so it is read back.** A
 	/// scope that throws and is ignored, or one that silently fails to take, leaves the agent
-	/// with the reach of an ordinary workspace turn: its file tools may open anything in the
+	/// with the reach of an ordinary workspace turn: its file tools may CHANGE anything in the
 	/// workspace, and — because both doors read the one bound list — its commands are fenced to
 	/// the whole folder the user granted the machine hand rather than to this Diamond's part of
 	/// it. That is failing open, so it throws rather than returning false, and the caller does
 	/// not start a turn on a scope it could not establish.
+	///
+	/// **What is read back is `write_allow`.** A scope fences writing and running, and leaves
+	/// reading free inside the workspace the user already opened (`Bound::OnlyWriteUnder` in
+	/// src/tools.rs). `allow` — the both-verb list — is empty for every scope this build
+	/// composes, so a check written against it would refuse every turn.
+	///
+	/// **This field and the one in `scopeChatTo` are ONE field with TWO readers, and it has
+	/// been wrong in both directions inside a week** — `write_allow` when the engine had moved
+	/// to `allow`, then `allow` when it moved back. Each time every scoped turn on that surface
+	/// refused to start. Change one of these two and you are changing both: `diamond_scope`
+	/// reports both lists precisely so a reader has to say which it means.
 	///
 	/// The same discipline as `applyPermissionMode`: set it, ask the engine what it now holds,
 	/// and refuse on disagreement.
@@ -6084,7 +6403,7 @@ import init, {
 			throw new Error('That Diamond\'s workspace named no usable folder, so an agent in it '
 				+ 'could not touch anything.');
 		}
-		var allow = Array.isArray(got.allow) ? got.allow : [];
+		var allow = Array.isArray(got.write_allow) ? got.write_allow : [];
 		if (!allow.length) {
 			throw new Error('The scope did not take: this agent is not confined to anything.');
 		}
@@ -6136,12 +6455,13 @@ import init, {
 	/// Confine a chat to its WORKSPACE: the folders the user marked into it, and nothing else.
 	///
 	/// **One function for the conversation and for every worker it dispatches**, because they
-	/// are one blast radius. The asymmetry that used to live here — a worker's writing fenced,
-	/// its reading free — was answered on 2026-08-11, when a daimon in an ordinary chat edited
-	/// two files of the user's own book in a directory under no version control. No worker was
-	/// involved, so a worker-only fence could not have helped, and reading is a blast radius
-	/// too. `chat_bounds` in src/tools.rs now IS `diamond_bounds`, so both verbs are fenced and
-	/// both surfaces are fenced by one rule.
+	/// are one blast radius. The asymmetry that used to live here was a SURFACE one — a worker
+	/// fenced, the conversation not — and it was answered on 2026-08-11, when a daimon in an
+	/// ordinary chat edited two files of the user's own book in a directory under no version
+	/// control. No worker was involved, so a worker-only fence could not have helped.
+	/// `chat_bounds` in src/tools.rs IS `diamond_bounds`, so both surfaces are fenced by one
+	/// rule — and that rule fences the VERB: writing and running go where the user marked, and
+	/// reading is free inside the workspace they already opened.
 	///
 	/// **The mark is the permission, and nothing here asks anything.** The friction is paid once,
 	/// when a folder is marked into the workspace; inside it the model works as freely as before.
@@ -6176,11 +6496,12 @@ import init, {
 			throw new Error('This chat\'s scope named no usable place, so nothing in it could '
 				+ 'read or write anything at all.');
 		}
-		// The ALLOW-LIST is what a chat carries now, exactly as a Diamond does. This used to
-		// assert the opposite — that `allow` was empty and `write_allow` was not — which is the
-		// shape `chat_bounds` stopped producing, so every chat-dispatched worker refused to
-		// start. Fenced in the safe direction, and still a break.
-		var allow = Array.isArray(got.allow) ? got.allow : [];
+		// The WRITE allow-list is what a chat carries, exactly as a Diamond does. This field has
+		// now been wrong in both directions inside a week — first `write_allow` when the engine
+		// had moved to `allow`, then `allow` when it moved back — and each time every scoped
+		// turn refused to start. Fenced in the safe direction, and still a break, which is why
+		// `diamond_scope` reports both and this names the one it means.
+		var allow = Array.isArray(got.write_allow) ? got.write_allow : [];
 		if (!allow.length) {
 			throw new Error('The scope did not take: this chat is not confined to anything.');
 		}
@@ -6189,6 +6510,133 @@ import init, {
 				+ 'holds ' + allow.join(', ') + ' and not ' + scratch + '.');
 		}
 		return got;
+	}
+
+	// ── The asynchronous half of consent ───────────────────────
+	//
+	// Everything above this line is a DIALOG, and a dialog only works on somebody
+	// who is looking at it. A dispatched worker acts while the user is somewhere
+	// else — that is what dispatching one is FOR — so the question it cannot ask
+	// for itself was being put to an empty room: the modal went up behind a tab
+	// nobody had in front of them, the worker sat on it holding a slot in the
+	// pool, and the user came back to a dialog with no context and pressed
+	// Escape. A refusal by dismissal is how the work died.
+	//
+	// So when the question cannot be answered where it stands, it is raised on
+	// the PENDING panel instead and the worker waits on the tile. The three
+	// answers that panel already offers are exactly the three this question has:
+	// do it, discuss it first, drop it.
+	//
+	// THE WORKER GENUINELY RESUMES. `egressAllowed` returns a promise, the engine
+	// awaits it (`egress_allowed_act`, src/wasm/web.rs), and answering the tile
+	// resolves that promise — so a yes is the tool call carrying on from where it
+	// stopped, not a fresh dispatch, and the driver sees the click at the moment
+	// the tick is pressed. What does NOT survive is a reload: a promise is
+	// memory, so a tile whose page has gone is marked expired when it is loaded
+	// and says so, rather than offering a tick that would do nothing. See
+	// `Pending.load`.
+
+	/// Whether a question put on the screen right now could actually be answered.
+	///
+	/// Two ways for the answer to be no, and both are facts rather than guesses
+	/// about somebody's attention:
+	///
+	///   * the document is not on screen — another tab, another window, a locked
+	///     phone. A modal raised into a hidden page is not asked, it is queued.
+	///   * a dialog is already up. A second one stacks on the first, neither says
+	///     which agent it belongs to, and the one underneath cannot be reached.
+	///
+	/// A VISIBLE TAB THE USER HAS WALKED AWAY FROM STILL GETS THE DIALOG. There is
+	/// no honest signal for "in the room", and one invented out of idle time would
+	/// withdraw a question from under somebody halfway through reading it — which
+	/// is a worse failure than the one being fixed.
+	function someoneCanAnswer() {
+		try {
+			if (document.visibilityState === 'hidden') return false;
+			if (document.querySelector('.modal.dlg')) return false;
+		} catch (e) { return false; }		// no document at all: nobody to ask.
+		return true;
+	}
+
+	// Requests parked on the Pending panel, by tile id, each holding the
+	// `resolve` of the promise the engine is awaiting. In memory, and
+	// deliberately so — see the note above on what a reload takes with it.
+	var _parked = Object.create(null);
+
+	/// Answer a parked request, if it is still parked. Returns whether it was.
+	///
+	/// EVERY route out of a tile comes through here, `drop` included, so no
+	/// removal can leave a worker waiting on a tile that is no longer on the
+	/// panel. A removal means a refusal, because the safe direction is no.
+	///
+	/// # Arguments
+	/// * `id` - The tile's id, which is also the parked request's.
+	/// * `verdict` - `'allow'` or `'deny'`, as the engine reads it.
+	function settleConsent(id, verdict) {
+		var go = _parked[id];
+		if (!go) return false;
+		delete _parked[id];
+		try { go(verdict); } catch (e) { /* the awaiting turn has already gone */ }
+		return true;
+	}
+
+	/// Which worker is asking, as far as the app can tell.
+	///
+	/// The payload the engine sends carries no actor id — `egress_allowed_act`
+	/// names the tool, the destination and whether the asker is alone, and
+	/// nothing else — so this is an inference, and it is only drawn where it
+	/// cannot be wrong: exactly one worker running means exactly one worker could
+	/// have asked. With two in flight the tile says "an agent", carries no
+	/// Diamond, and `discuss` has nowhere to take it, which is why that branch
+	/// exists rather than a guess.
+	function askingWorker() {
+		var live = (Workers.runs || []).filter(function (r) { return r.status === 'running'; });
+		return live.length === 1 ? live[0] : null;
+	}
+
+	/// Raise this request on the Pending panel, and wait there for its answer.
+	///
+	/// # Arguments
+	/// * `req` - The engine's payload: `{ tool, url, detail, alone }`.
+	/// * `host` - The destination, already parsed, which is what the tile names.
+	function parkConsent(req, host) {
+		var tool = String(req.tool || '');
+		var who  = askingWorker();
+		var head, body;
+		if (tool === 'web_type') {
+			head = t('pending.consent.type_head', { host: host });
+			// The same words the dialog would have used, because it is the same
+			// question — and the text being sent is quoted in full for the same
+			// reason it is on the dialog: it is the thing being authorised.
+			body = tOr('permmode.type_worker_body',
+				'An agent working on its own wants to type this into {host} and send it:\n\n{text}\n\nYou are not driving it and it cannot ask you itself, so Daimond is asking. Text sent to a site cannot be recalled. Saying yes allows this one act and nothing after it.',
+				{ host: host, text: String(req.detail || '') || t('egress.nothing') });
+		} else if (tool === 'web_click') {
+			head = t('pending.consent.click_head', { host: host });
+			body = tOr('permmode.act_worker_body',
+				'An agent working on its own wants to click something on {host}. You are not driving it and it cannot ask you itself, so Daimond is asking. Clicking can spend your money, send a message or submit a form, and none of that can be taken back. Saying yes allows this one click and nothing after it.',
+				{ host: host });
+		} else {
+			head = t('pending.consent.reach_head', { host: host });
+			body = t('egress.reach_body', { host: host });
+		}
+		var detail = body + '\n\n' + t('pending.consent.why');
+		if (who) {
+			detail += '\n\n' + t('pending.consent.agent',
+				{ name: who.name || '', task: String(who.task || '').slice(0, 300) });
+		}
+		var id = Pending.add({
+			kind:        'consent',
+			headline:    head,
+			detail:      detail,
+			priority:    'high',		// something is stopped until it is answered.
+			diamondId:   who ? (who.diamondId || '') : '',
+			diamondName: who ? (who.diamondName || '') : '',
+		});
+		// The panel would not take it. Refuse rather than assume: a request that
+		// could not be raised is a request nobody answered.
+		if (!id) return Promise.resolve('deny');
+		return new Promise(function (resolve) { _parked[id] = resolve; });
 	}
 
 	/// Whether this act may happen, now that something from outside has been read.
@@ -6285,6 +6733,19 @@ import init, {
 		var host = egressHost(url);
 		if (!host) return 'deny';						// unparseable: nothing to show the user.
 		if (!strict && host === location.host) return 'allow';	// Daimond's own pages.
+
+		// A DISPATCHED WORKER'S QUESTION, WHEN THERE IS NOBODY TO PUT IT TO. It
+		// goes on the Pending panel and the worker waits on the tile; answering
+		// the tile resolves this promise, so a yes is the tool call carrying on.
+		// See `parkConsent`.
+		//
+		// ONLY `alone` DIVERTS. The user's own turn belongs to a user who is in
+		// the loop by definition — they typed the thing that started it — and
+		// moving their question off the screen they are looking at would be a
+		// worse answer than the dialog. Below the same-origin shortcut, so our own
+		// pages are no more gated for a worker than for anybody else, and above
+		// the two act branches, which are the only tools that carry `alone`.
+		if (req.alone && !someoneCanAnswer()) return await parkConsent(req, host);
 
 		// Typing into a page is not reading it. The text is the thing being sent, so
 		// it is shown, and consent is for this one act — a form post is exactly the
@@ -7376,7 +7837,13 @@ import init, {
 			// there is -- saw nothing at all about the money paying for their work.
 			// Whether there is an account is one input to what may be said, not a
 			// precondition for saying anything.
-			if (!locked && moneyRows(st, arow)) return;
+			// `proRow`, `tools` and `storage` are not about the account row and must
+			// run either way. Drawn HERE as well as at the foot, because this return
+			// skipped all three: an account with a balance -- which is to say, any
+			// account the money rows can draw for -- saw a Pro row, a Tools count and
+			// a storage figure frozen at whatever they happened to be the first time
+			// the panel drew, with no way to refresh them short of a reload.
+			if (!locked && moneyRows(st, arow)) { proRow(); tools(); storage(); return; }
 			arow.style.display = '';
 			row('astat-account', 'off', '',
 				locked ? t('astat.locked')
@@ -7503,40 +7970,58 @@ import init, {
 			el2.title = moneyTitle(r);
 		}
 
-		/// The Pro row: owned, or an invitation to own it. Shown only when the
-		/// gateway has answered for an account, since Pro is a fact about that
+		/// The Pro row: held, ended, or an invitation to buy it. Shown only when
+		/// the gateway has answered for an account, since Pro is a fact about that
 		/// account -- a locked or unconnected app cannot say, so it says nothing.
+		///
+		/// THREE states and not two. A licence that ran its five years and ended is
+		/// not the same thing as one that was never bought, and a row reading
+		/// "Upgrade to Pro" at somebody who had paid would be telling them they
+		/// never had.
 		function proRow() {
 			var r = document.getElementById('astat-pro');
 			if (!r) return;
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
 			if (locked || !st.authed || st.pro === null) { r.style.display = 'none'; return; }
 			r.style.display = '';
+			var when = proEndDate(st);
 			if (st.pro) {
 				row('astat-pro', 'ok', 'Pro', t('astat.pro_owned'));
-				r.title = t('astat.pro_owned_help');
+				r.title = t('astat.pro_owned_help') + ' ' + proTermLine(st);
+			} else if (proHasEnded(st)) {
+				row('astat-pro', 'off', 'Pro', t('astat.pro_ended'));
+				r.title = when ? t('pro.ended_on', { date: when }) : t('astat.pro_ended_help');
 			} else {
 				row('astat-pro', 'off', 'Pro', t('astat.pro_upgrade'));
 				r.title = t('astat.pro_upgrade_help');
 			}
-			// The value reads as a link when there is an upgrade to take.
+			// The value reads as a link when there is a purchase to make -- which
+			// an ended licence is, since the gateway will sell another term.
 			r.classList.toggle('astat-pro-upgrade', !st.pro);
 		}
 
-		/// The Pro popup: own it, or the confirmation that it is owned. Its own
-		/// surface rather than the Credits drawer, because Pro is a single
-		/// decision -- one payment -- not a balance to watch.
+		/// The Pro popup: buy it, buy another five years of it, or the confirmation
+		/// that it is held and the day it ends. Its own surface rather than the
+		/// Credits drawer, because Pro is a single decision -- one payment -- not a
+		/// balance to watch.
 		async function showPro() {
 			var st = (window.DaimondGateway && DaimondGateway.state()) || {};
 			if (st.pro) {
-				noticeDialog('Daimond Pro', t('pro.owned_plain'));
+				noticeDialog('Daimond Pro', t('pro.owned_plain') + '\n\n' + proTermLine(st));
 				return;
 			}
+			// An ended licence leads with the day it ended. The offer follows it,
+			// and the checkout behind the button really does go through: the
+			// gateway's re-purchase guard fires only on a RUNNING licence.
+			var ended = proHasEnded(st);
+			var when  = proEndDate(st);
 			var price = st.proPriceMinor ? DaimondGateway.fmtMoney(st.proPriceMinor, st.currency) : '';
 			var ok = await confirmDialog(
-				t('pro.offer_plain'),
-				price ? t('pro.buy_priced', { price: price }) : t('pro.buy'),
-				{ title: t('astat.pro_upgrade'), danger: false, cancelLabel: t('dlg.not_now') });
+				(ended && when ? t('pro.ended_on', { date: when }) + '\n\n' : '')
+					+ t('pro.offer_plain'),
+				proBuyLabel(st, price),
+				{ title: ended ? t('astat.pro_ended') : t('astat.pro_upgrade'),
+				  danger: false, cancelLabel: t('dlg.not_now') });
 			if (!ok) return;
 			try {
 				var r = await DaimondGateway.buyPro();       // navigates to Stripe, or returns {held}
@@ -8205,18 +8690,15 @@ import init, {
 	// The centre header no longer carries chat token/cost readouts — those live
 	// in the chat's tile (per-chat) and the spend row (global). Kept clear for
 	// chats; the Diamond crystal view sets its own centre meter directly.
+	//
+	// `#top-meter` is GONE, markup and binding both. It was a `role="status"`
+	// region in the top bar whose only writer was the line that emptied it: an
+	// empty live region announces nothing to a screen reader and reserved a flex
+	// slot in the top bar for ever. A slot kept for a readout nobody draws is the
+	// same shape of defect as a panel nobody can reach.
 	function updateMeters() {
-		topMeter.textContent = '';
 		if (!current) { aiMeter.textContent = ''; return; }
 		aiMeter.textContent = '';
-	}
-
-	// The per-chat model now lives in the chat tile (pending: a pulldown;
-	// active: a locked chip — §7.1), never the centre header. This keeps the
-	// obsolete header selector hidden whatever calls it.
-	function refreshChatModel() {
-		var sel = document.getElementById('chat-model-select');
-		if (sel) sel.style.display = 'none';
 	}
 
 	// ── Chats ──────────────────────────────────────────────────
@@ -12955,12 +13437,32 @@ import init, {
 			if (n > 0 && this.slotFree && this.slotFree.indexOf(n) === -1) this.slotFree.push(n);
 		},
 
+		/// How many runs survive a reload.
+		///
+		/// It was twelve, and it was SILENT: `runs.unshift` puts the newest first,
+		/// so the thirteenth-oldest agent vanished on every reload with no count,
+		/// no note and no way to tell a short list from a truncated one — in the
+		/// panel whose whole job is to say what ran. Two hundred now, with the
+		/// number that did not fit kept beside them and shown at the foot of the
+		/// list, so the panel says what it is not showing.
+		KEEP: 200,
+
+		/// How many runs the last write could not keep. Persisted with them,
+		/// because the question this answers — "is this all of them?" — is asked
+		/// after the reload that made it unanswerable.
+		dropped: 0,
+
 		/// Keep a record of every run. The live DaimondApp cannot survive a reload —
 		/// its fetch dies with the page — but the RECORD must, so an agent that
 		/// was cut off says so instead of vanishing.
+		///
+		/// A write that does not fit STEPS DOWN rather than failing whole: the
+		/// quota is spent mostly on reports, one long report can exceed it, and
+		/// losing the oldest runs is a cost where losing the record of everything
+		/// is a bug.
 		persist: function () {
-			try {
-				localStorage.setItem(WORKERS_KEY, JSON.stringify(this.runs.slice(0, 12).map(function (r) {
+			var self = this;
+			var all = this.runs.map(function (r) {
 					return {
 						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
 						// The tile is the DURABLE home of a report — it survives a reload, and it
@@ -12977,8 +13479,21 @@ import init, {
 						// still says what the run actually cost rather than re-guessing it.
 						cachedTokens: r.cachedTokens || 0, costUsd: r.costUsd || 0,
 					};
-				})));
-			} catch (e) { /* quota — runs stay in memory */ }
+				});
+			var n = Math.min(all.length, this.KEEP);
+			for (;;) {
+				try {
+					localStorage.setItem(WORKERS_KEY, JSON.stringify({
+						v: 2, dropped: all.length - n, runs: all.slice(0, n) }));
+					self.dropped = all.length - n;
+					return;
+				} catch (e) {
+					// Halve and try again. Nothing kept at all is the one outcome
+					// worth spending several attempts to avoid.
+					if (n <= 1) { self.dropped = all.length; return; }
+					n = Math.floor(n / 2);
+				}
+			}
 		},
 
 		load: function () {
@@ -12986,7 +13501,11 @@ import init, {
 			// the leaf as the pump's starting point.
 			migrateWorkerHold();
 			lastHold = workersHeld();
-			var stored = readJson(WORKERS_KEY, []);
+			var raw = readJson(WORKERS_KEY, []);
+			// Two shapes: a bare array is what every release before the count was
+			// kept wrote, and reading it is a line rather than a migration.
+			var stored = Array.isArray(raw) ? raw : ((raw && raw.runs) || []);
+			this.dropped = (!Array.isArray(raw) && raw && raw.dropped) | 0;
 			if (!stored.length) return;
 			var self = this;
 			this.runs = stored.map(function (r) {
@@ -13681,7 +14200,7 @@ import init, {
 				shown++;
 				agentsList.appendChild(self.tile(run));
 			});
-			if (agentsCount) agentsCount.textContent = live > 0 ? live + ' live' : '';
+			if (agentsCount) agentsCount.textContent = live > 0 ? t('agents.live', { n: live }) : '';
 			updateAgentStat(nRun, nPause, nQueue);
 			updateAgentControls(nRun, nPause, nQueue);
 			// The clear control appears only when there is something finished to
@@ -13698,6 +14217,16 @@ import init, {
 				none.className = 'agents-empty';
 				none.textContent = t('agents.no_match');
 				agentsList.appendChild(none);
+			}
+			// What is NOT here. A list that has quietly lost its oldest entries
+			// reads exactly like a list that never had them, and this panel is the
+			// record of what ran — so the number that did not survive the last
+			// write is at the foot of it, in words.
+			if (this.dropped > 0) {
+				var cut = document.createElement('div');
+				cut.className = 'rail-note agents-dropped';
+				cut.textContent = tn('agents.dropped', this.dropped);
+				agentsList.appendChild(cut);
 			}
 		},
 
@@ -13716,7 +14245,10 @@ import init, {
 				: run.status === 'paused' ? 'paused'
 				: run.status === 'error' ? 'err'
 				: (run.status === 'stopped' || run.status === 'interrupted') ? 'stopped' : 'ok');
-			pill.textContent = run.status;
+			// The state in the reader's own language. It used to be the internal
+			// status word, which is the one label on the tile a person actually
+			// reads and was English whatever the app was set to.
+			pill.textContent = tOr('agents.status_' + run.status, run.status);
 			ah.appendChild(an); ah.appendChild(pill);
 			card.appendChild(ah);
 
@@ -13811,11 +14343,15 @@ import init, {
 			// read. Previously the panel offered neither.
 			var acts = document.createElement('div'); acts.className = 'aacts';
 			if (run.status === 'running' || run.status === 'queued') {
-				acts.appendChild(actBtn('pause', 'Pause', 'Hang up this agent, keeping its work so far; resume it later.', function () { self.pause(run); }));
-				acts.appendChild(actBtn('cross', 'Stop', 'Stop this agent for good. It keeps whatever it managed to do.', function () { self.stop(run); }));
+				acts.appendChild(actBtn('pause', t('agents.act_pause'), t('agents.act_pause_help'),
+					function () { self.pause(run); }));
+				acts.appendChild(actBtn('cross', t('agents.act_stop'), t('agents.act_stop_help'),
+					function () { self.stop(run); }));
 			} else if (run.status === 'paused') {
-				acts.appendChild(actBtn('play', 'Resume', 'Continue this agent from where it left off.', function () { self.resume(run); }));
-				acts.appendChild(actBtn('cross', 'Stop', 'Discard this paused agent.', function () { self.stop(run); }));
+				acts.appendChild(actBtn('play', t('agents.act_resume'), t('agents.act_resume_help'),
+					function () { self.resume(run); }));
+				acts.appendChild(actBtn('cross', t('agents.act_stop'), t('agents.act_discard_help'),
+					function () { self.stop(run); }));
 			} else {
 				if (run.text.trim()) {
 					// A failed agent's "summary" is an error message, not a result,
@@ -14214,18 +14750,27 @@ import init, {
 	// and you may override it. Anything else means setting a priority by hand on
 	// every item, which nobody does twice.
 	//
-	// NOTHING IN THE SHIPPED APP RAISES ONE, and a user has therefore never seen a
-	// tile here. The one thing it was built for -- approving outgoing mail -- was
-	// built instead as the Drafts list at the top of the Email panel, which
-	// `mail.js` says in as many words ("the only thing in the panel that is
-	// waiting on the user"), and `src/prompts.rs` now tells the daimon that a
-	// draft it writes appears there. A daimon cannot reach this panel either: the
-	// three answers only mean anything for a proposal a daimon authored, and there
-	// is no tool with which to author one. So this is a candidate for deletion
-	// rather than for a caller invented to justify it -- see the note in
-	// `DaimondPendingView` for what deleting it would take. The `execute` path is
-	// kept correct in the meantime, because a half-working thing that ships is
-	// still a thing that ships.
+	// WHAT ACTUALLY RAISES A TILE, and why it took so long to find. For most of
+	// this panel's life nothing did: it was built for approving outgoing mail,
+	// that was built instead as the Drafts list at the top of the Email panel, and
+	// no other caller was ever written. A user had never seen a tile here.
+	//
+	// The caller it was missing is CONSENT, asked when nobody can answer it. The
+	// gate in `egressAllowed` is a dialog, and a dispatched worker acts precisely
+	// when the user is looking at something else, so a worker's question was being
+	// put to an empty room and the work died on the dismissal. `parkConsent` puts
+	// it here instead, as a `consent` tile, and the worker WAITS on the tile: the
+	// engine is awaiting the promise that `execute` and `drop` resolve. So the
+	// three answers are the three that question has, they are answerable an hour
+	// later, and a yes is the tool call carrying on rather than a fresh dispatch.
+	//
+	// The one thing a tile cannot survive is a RELOAD, because what it is holding
+	// is a promise. `load` marks those expired and the tile says so instead of
+	// offering a tick that would do nothing.
+	//
+	// `kind` is therefore one of three: `consent` (a turn is waiting on it),
+	// `draft` (a message to open and send) and `note` (nothing to run, and
+	// approving it is acknowledging it).
 	var PENDING_KEY = 'daimond-pending';
 	var PRIORITIES  = ['high', 'normal', 'low'];
 
@@ -14235,6 +14780,14 @@ import init, {
 		load: function () {
 			this.items = readJson(PENDING_KEY, []) || [];
 			if (!Array.isArray(this.items)) this.items = [];
+			// A parked consent request is a PROMISE, and a promise does not
+			// survive a reload. The tile does, because "an agent asked and got no
+			// answer" is worth keeping — but it is marked for what it now is, so
+			// that nothing on it offers to let through an act there is no longer
+			// anything to let through. See `tile` and `execute`.
+			this.items.forEach(function (it) {
+				if (it && it.kind === 'consent') it.expired = true;
+			});
 		},
 		save: function () {
 			try { localStorage.setItem(PENDING_KEY, JSON.stringify(this.items)); }
@@ -14269,7 +14822,15 @@ import init, {
 			return rec.id;
 		},
 
+		/// Take one item off the list, whatever the reason.
+		///
+		/// A worker parked on this tile is refused HERE rather than in each of the
+		/// three answers, so that no route out — the ✕, `discuss`, anything added
+		/// later — can leave a turn waiting on something that is no longer on the
+		/// panel. `execute` settles its `allow` first, which takes the request out
+		/// of the register, so this deny then finds nothing and does nothing.
 		drop: function (id) {
+			settleConsent(id, 'deny');
 			this.items = this.items.filter(function (x) { return x.id !== id; });
 			this.save();
 		},
@@ -14374,6 +14935,19 @@ import init, {
 				box.appendChild(seen);
 			}
 
+			// A parked consent request says whether anything is still on the other
+			// end of it. The two states look the same on a tile and mean opposite
+			// things — one is a turn held open waiting for this answer, the other
+			// is the record of a question that was never answered in time — so the
+			// tile says which, in words, above the buttons.
+			if (it.kind === 'consent') {
+				var held = document.createElement('div');
+				held.className = 'rail-note pend-consent';
+				held.textContent = it.expired
+					? t('pending.consent.expired') : t('pending.consent.waiting');
+				box.appendChild(held);
+			}
+
 			if (it.files && it.files.length) {
 				var files = document.createElement('div');
 				files.className = 'pend-files';
@@ -14396,6 +14970,22 @@ import init, {
 			go.textContent = '✓'; go.title = t('pending.execute');
 			go.setAttribute('aria-label', t('pending.execute_named', { what: it.headline }));
 			go.addEventListener('click', function () { Pending.execute(it); });
+			// A tick that cannot do the thing is not offered. The turn this one
+			// belonged to went with the page it was asked on, so "do it" would
+			// grant a permission to nobody and take the tile away as though
+			// something had happened. The other two answers still mean what they
+			// say: there is a record to clear, and something to talk about.
+			if (it.kind === 'consent' && it.expired) {
+				go.disabled = true;
+				go.title = t('pending.consent.expired');
+				go.setAttribute('aria-label', t('pending.consent.expired'));
+				// Dimmed HERE because `app.css` has no `.pend-act:disabled` rule,
+				// and a button that reads as live and does nothing is the same lie
+				// as a tick that grants a permission to nobody. Move this into the
+				// stylesheet the moment that rule exists.
+				go.style.opacity = '0.4';
+				go.style.cursor = 'not-allowed';
+			}
 			var ask = document.createElement('button');
 			ask.type = 'button'; ask.className = 'pend-act pend-ask';
 			ask.textContent = '?'; ask.title = t('pending.discuss');
@@ -14421,6 +15011,25 @@ import init, {
 		/// the draft file has gone -- sending discards it, see `sweep` -- or when
 		/// the user drops it by hand.
 		execute: async function (it) {
+			// A parked consent request: the tick IS the yes the worker is waiting
+			// on, and pressing it resumes the tool call where it stopped.
+			//
+			// `settleConsent` reports whether anything was still waiting, and that
+			// answer is not decoration: a tile that outlived its turn must say so
+			// rather than report a permission it granted to nobody. The tile is
+			// marked expired at load, so this is the second line of the same
+			// defence and covers the case where the turn ended while the tile was
+			// on screen.
+			if (it.kind === 'consent') {
+				if (!settleConsent(it.id, 'allow')) {
+					toast(t('pending.consent.gone'), true);
+					this.drop(it.id);
+					return;
+				}
+				toast(t('pending.consent.allowed'));
+				this.drop(it.id);
+				return;
+			}
 			if (it.kind === 'draft' && it.files && it.files[0] && window.DaimondMail) {
 				try { await DaimondMail.openDraft(it.files[0]); }
 				catch (e) { toast(friendlyError(e), true); return; }
@@ -14485,8 +15094,22 @@ import init, {
 		/// sent. Phase E is what gave this somewhere to land -- before it there was
 		/// no conversation to return the user TO.
 		discuss: async function (it) {
+			// Discussing an ACT is declining it. The worker cannot wait on a
+			// conversation — it is holding a tool call open — and a yes arrived at
+			// three messages later would be a yes to a turn that had already been
+			// told no. So it is refused first, and the talking happens afterwards.
+			if (it.kind === 'consent') settleConsent(it.id, 'deny');
 			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
-			if (!f) { toast(t('pending.diamond_gone'), true); Pending.drop(it.id); return; }
+			if (!f) {
+				// A consent tile often has no Diamond on it: the engine's payload
+				// carries no actor, so the app only names one when exactly one
+				// worker was running. Saying that is better than "the Diamond is
+				// gone", which would be a claim about something that was never there.
+				toast(it.kind === 'consent'
+					? t('pending.consent.nochat') : t('pending.diamond_gone'), true);
+				Pending.drop(it.id);
+				return;
+			}
 			Pending.drop(it.id);
 			await selectDiamond(f, 'chat');
 			var text = t('pending.discuss_prompt', { headline: it.headline })
@@ -14500,13 +15123,11 @@ import init, {
 	// this -- can ask what the leaves ARE rather than assuming a shape.
 	window.DaimondTriggersOf = function (id) { return Triggers.of(id).slice(); };
 
-	// The Pending panel's whole surface to the rest of the world -- and, `add`
-	// aside, its whole set of callers, which are all in `dev/`. Removing the panel
-	// is this object, the `Pending` module above it, `#panel-pending` in
-	// `index.html`, the `pending.*` keys in the eight catalogues, the `.pend-*`
-	// rules in `app.css`, and the Pending half of `dev/verify_triggers.mjs`.
-	// Nothing else reads any of it: it is not in the sync parcel, and no daimon
-	// tool writes to it.
+	// The Pending panel's whole surface to the rest of the world. The production
+	// caller is `parkConsent`, which reaches `Pending.add` directly rather than
+	// through here -- it is in the same module -- so what this publishes is for
+	// the verifiers and for anything later that wants to raise or read a tile
+	// from outside. It is not in the sync parcel, and no daimon tool writes to it.
 	window.DaimondPendingView = {
 		add:   function (item) { return Pending.add(item); },
 		items: function () { return Pending.items.slice(); },
@@ -14524,10 +15145,67 @@ import init, {
 	// Daimond is free and BYOK by default; credits are for the user who does not want
 	// to hold a provider key at all. The gateway is optional — if it is down, the
 	// app carries on exactly as before and simply offers nothing here.
-	/// The Pro block at the top of the Credits drawer: an offer to own Daimond,
-	/// or the confirmation that it is owned. Pro is the one-time unlock that
-	/// turns on cross-device sync, cloud storage and Email; credits are separate
-	/// and pay for metered use (inference, bandwidth), whether or not Pro is held.
+	// ── The five-year term ─────────────────────────────────────
+	//
+	// Pro is a FIVE-YEAR licence. It gates sync, cloud storage and Email, which
+	// are services Oxedyne has to keep running, and a licence with no end to a
+	// service is a promise to run it for ever. Terms §7 says so and the gateway
+	// enforces it, so no surface in this app may imply otherwise -- least of all
+	// the two that stand at the point of sale, `showPro` and `renderPro`.
+	//
+	// Three functions, used from both this scope and `DaimondAdmin`'s.
+
+	/// The day a licence ends, in the reader's language, or '' when the gateway
+	/// has not named one.
+	function proEndDate(st) {
+		if (!st || !st.proExpiresTs) return '';
+		var loc;
+		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
+		catch (e) { loc = undefined; }
+		try {
+			return new Date(st.proExpiresTs * 1000).toLocaleDateString(loc || undefined,
+				{ day: 'numeric', month: 'long', year: 'numeric' });
+		} catch (e) { return ''; }
+	}
+
+	/// Has this account's licence run out?
+	///
+	/// The GATEWAY's answer, and where it has to be computed, the GATEWAY's
+	/// clock: `proNowTs` is what the server said the time was when it answered.
+	/// `Date.now()` would let a device with its clock set wrong decide that a
+	/// running licence had ended, or that an ended one was still running -- and
+	/// either way put a wrong day in front of somebody who had paid.
+	function proHasEnded(st) {
+		if (!st) return false;
+		if (st.proExpired) return true;
+		return !!(st.proExpiresTs && st.proNowTs && st.proNowTs >= st.proExpiresTs);
+	}
+
+	/// The one sentence a buyer ever sees about their term: the day it ends, the
+	/// day it ended, or -- with no licence to date -- how long one runs for.
+	function proTermLine(st) {
+		var when = proEndDate(st);
+		if (!when) return t('pro.term_note');
+		return proHasEnded(st)
+			? t('pro.ended_on', { date: when })
+			: t('pro.ends_on',  { date: when });
+	}
+
+	/// What the button on a Pro offer says, and it must match what the checkout
+	/// will do: the gateway's re-purchase guard fires only on a RUNNING licence,
+	/// so a licence that ended can be bought again and the button says so.
+	function proBuyLabel(st, price) {
+		if (proHasEnded(st) && !st.pro) {
+			return price ? t('pro.buy_again_priced', { price: price }) : t('pro.buy_again');
+		}
+		return price ? t('pro.buy_priced', { price: price }) : t('pro.buy');
+	}
+
+	/// The Pro block at the top of the Credits drawer: an offer to buy Daimond
+	/// Pro, or the confirmation that it is held and the day it ends. Pro is the
+	/// one-time, five-year unlock that turns on cross-device sync, cloud storage
+	/// and Email; credits are separate and pay for metered use (inference,
+	/// bandwidth), whether or not Pro is held.
 	function renderPro() {
 		var host = document.getElementById('credits-pro');
 		if (!host || !window.DaimondGateway) return;
@@ -14541,22 +15219,29 @@ import init, {
 		if (st.pro) {
 			var owned = document.createElement('div');
 			owned.className = 'pro-owned';
-			owned.innerHTML = t('pro.owned');
+			// The term goes here and nowhere else in the drawer: this is the only
+			// surface a buyer ever reads their own end date off.
+			owned.innerHTML = t('pro.owned') + ' ' + proTermLine(st);
 			host.appendChild(owned);
 			return;
 		}
 		// Pro is a real charge, so the price says US dollars out loud and hangs
 		// the converted figure off it. See `billing.usd_note` below.
 		var price = st.proPriceMinor ? DaimondGateway.fmtBilled(st.proPriceMinor, st.currency) : '';
+		// A licence that RAN and ended leads with the day it ended, because that
+		// is the fact somebody who paid came here for -- and because an offer with
+		// nothing above it reads as though they had never bought at all.
+		var ended = proHasEnded(st);
+		var when  = proEndDate(st);
 		var box = document.createElement('div');
 		box.className = 'pro-offer';
-		// Static copy plus the formatted price (a number); no user text, so
+		// Static copy, a formatted price and a formatted date; no user text, so
 		// innerHTML is safe here and reads better than a pile of createElement.
 		box.innerHTML =
-			t('pro.offer')
+			(ended && when ? '<p><b>' + t('pro.ended_on', { date: when }) + '</b></p>' : '')
+			+ t('pro.offer')
 			+ '<p class="pro-fine">' + t('pro.fine') + '</p>'
-			+ '<button class="pro-buy" id="pro-buy">'
-			+ (price ? t('pro.buy_priced', { price: price }) : t('pro.buy')) + '</button>'
+			+ '<button class="pro-buy" id="pro-buy">' + proBuyLabel(st, price) + '</button>'
 			+ (usdDisplay() ? '' : '<p class="pro-fine">' + t('billing.usd_note') + '</p>')
 			+ '<div class="pro-err" id="pro-err"></div>';
 		host.appendChild(box);
@@ -14812,10 +15497,19 @@ import init, {
 
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
 	var Files = (function () {
-		var pathEl, treeEl, viewEl, modeEl;
+		// `viewEl` is the DOC panel's body -- the file as characters. `pvEl` is the
+		// PREVIEW panel's -- what a file looks like when something draws it. They
+		// were one element until the two panels were split apart, which is why so
+		// much below comes in pairs.
+		var pathEl, treeEl, viewEl, pvEl, modeEl;
 		var cloudChipEl = null;		// the Cloud chip, repainted as residency moves.
 		var modeReconnect = null;	// the handle the mode row is offering to reconnect
 		var curDir = '';
+		// The DOC panel's file, and nothing else's. A picture opened into the
+		// Preview panel must not touch these: they are what the editor saves, what
+		// the conflict check compares against and what the line-number toggle asks
+		// about, and a PDF answering "no lines" for a Markdown file still open
+		// beside it would be the split's first bug.
 		var curFile = null, curContent = '';
 		var editing = false;   // a file is open in the editor with unsaved changes possible
 		var listed = false;
@@ -15410,8 +16104,12 @@ import init, {
 		/// ordinary listing of whichever real directory was opened.
 		async function listDiamond(dir) {
 			curDir = dir || '';
+			// The DOCUMENT closes when you walk the tree; the preview does not.
+			// Walking away from a source file is not walking away from the pages it
+			// was typeset into, and tearing the embed down here would have taken the
+			// PDF off the screen every time a folder was clicked.
 			curFile = null; listed = true;
-			viewEl.style.display = 'none'; docEmbed(false);
+			viewEl.style.display = 'none'; syncLineNo();
 			await loadAttached();
 			if (curDir) {
 				renderCrumbs(pathEl, t('dws.title'), curDir, goDir);
@@ -15550,6 +16248,17 @@ import init, {
 			// the daimon. So the viewer renders into the Doc panel, and the tree
 			// stays put behind it instead of being hidden to make room.
 			viewEl = document.getElementById('doc-view');
+			// And the PREVIEW panel's body, for the same reason and one panel over:
+			// what a file LOOKS like is something you attend to beside the daimon,
+			// and beside the source it came from.
+			pvEl   = document.getElementById('pv-view');
+			// The preview's own closer lets go of what it is holding, as well as
+			// closing the panel. The layout engine's generic `[data-close]` binding
+			// only ever hides a panel, and a hidden `<embed>` still holds every blob
+			// URL the session has minted for it. Both listeners fire and both call
+			// `hide`; the second is a no-op on a panel that is already shut.
+			var pvClose = document.querySelector('#panel-preview [data-close="preview"]');
+			if (pvClose) pvClose.addEventListener('click', function () { closePreview(); });
 			// The line-number toggle belongs to the document, so it is wired here
 			// where the view's own state is, and not with the panel's furniture.
 			var lnBtn = document.getElementById('doc-lineno');
@@ -15970,7 +16679,7 @@ import init, {
 		async function showCloudView() {
 			if (!window.DaimondCloud) return;
 			curFile = null;
-			docEmbed(false);
+			syncLineNo();                    // a report has no lines of a file to number
 			viewEl.style.display = '';
 			var s  = await DaimondCloud.summary();
 			var ix = DaimondCloud.index();
@@ -16367,7 +17076,15 @@ import init, {
 		/// Empty the panel. Used by the lock, so a locked app shows no file names.
 		function clear() {
 			if (treeEl) treeEl.innerHTML = '';
-			if (viewEl) { viewEl.style.display = 'none'; docEmbed(false); }
+			if (viewEl) { viewEl.style.display = 'none'; }
+			// Both panels: a locked app shows no file names, and the preview draws
+			// one in its header as surely as the document does.
+			if (pvEl) { pvEl.style.display = 'none'; pvEl.innerHTML = ''; }
+			docEmbed(false);
+			pvFile = null; curFile = null;
+			var pn = document.getElementById('pv-name');
+			if (pn) pn.textContent = '';
+			syncLineNo();
 		}
 
 		// Parse the plain-text file_list output into entries. Lines are
@@ -16398,7 +17115,7 @@ import init, {
 			if (diamondScope()) { await listDiamond(dir); return; }
 			curDir = dir || '';
 			curFile = null; listed = true;
-			viewEl.style.display = 'none'; docEmbed(false);
+			viewEl.style.display = 'none'; syncLineNo();   // the preview is not ours to close
 			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
 			treeEl.innerHTML = '<div class="files-empty">…</div>';
 			await loadAttached();		// so a row can say whether it is attached
@@ -16662,14 +17379,21 @@ import init, {
 		/// do with most of what a person owns. The floor is now a hex dump naming the
 		/// format, which is the difference between "unsupported" and "inspectable".
 		///
-		/// `curContent` stays null, which is what makes `syncLineNo` hide the
-		/// line-number toggle over a file that has no lines.
-		async function showViewedFile(path, info) {
+		/// It goes to the PREVIEW panel, not the Doc panel, and the axis is exactly
+		/// the one `openFile` already routes on: `DaimondViewer.editable` asks
+		/// whether the file is characters somebody could change. If it is, it belongs
+		/// where the editor is; if it is not, what is on screen is a RENDERING of it,
+		/// which is what the Preview panel is for. So a PDF and the Markdown beside
+		/// it are both up at once instead of taking turns at one panel.
+		///
+		/// `pvFile` and `pvStore` are the preview's own; `curFile` and `curContent`
+		/// belong to the document and are deliberately untouched here.
+		async function showViewedFile(path, info, store) {
 			DaimondViewer.close();          // whatever was open lets go of its blob URLs
-			curFile = path; curContent = null; editing = false;
+			pvFile = path; pvStore = !!store;
 			docEmbed(false);
-			viewEl.style.display = '';
-			viewEl.innerHTML =
+			pvEl.style.display = '';
+			pvEl.innerHTML =
 				'<div class="files-view-head">' +
 				'  <span class="files-view-name"></span>' +
 				'  <span>' +
@@ -16681,21 +17405,21 @@ import init, {
 				'</div>' +
 				'<div class="files-view-msg" style="display:none"></div>' +
 				'<div class="files-view-viewer"></div>';
-			viewEl.querySelector('.files-view-name').textContent = path;
-			var nameEl = document.getElementById('doc-name');
+			pvEl.querySelector('.files-view-name').textContent = path;
+			var nameEl = document.getElementById('pv-name');
 			if (nameEl) nameEl.textContent = path;
-			DaimondPanels.markUsed('doc');
-			DaimondPanels.show('doc');
+			DaimondPanels.markUsed('preview');
+			DaimondPanels.show('preview');
 			DaimondPanels.reflow();
-			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
+			pvEl.querySelector('[data-act="back"]').addEventListener('click', closePreview);
 			// The download is built from the bytes, with the format's own media type on
 			// it. The text path's handler makes a `text/plain` Blob out of `curContent`,
 			// which is null here -- it would have saved the word "null".
-			viewEl.querySelector('[data-act="download"]').addEventListener('click', async function () {
+			pvEl.querySelector('[data-act="download"]').addEventListener('click', async function () {
 				try {
 					var parts = [], at = 0, CH = 4 * 1024 * 1024;
 					while (at < info.size) {
-						var b = storeFile
+						var b = pvStore
 							? await Wasm.store_read_bytes(path, at, CH)
 							: await Wasm.read_bytes(path, at, CH);
 						if (!b || !b.length) break;
@@ -16709,20 +17433,46 @@ import init, {
 					a.href = URL.createObjectURL(new Blob(parts, { type: info.mime }));
 					a.download = path.split('/').pop() || 'file';
 					a.click(); URL.revokeObjectURL(a.href);
-				} catch (e) { fileMsg(friendlyError(e), true); }
+				} catch (e) { fileMsg(friendlyError(e), true, pvEl); }
 			});
-			await wireHold(path, viewEl.querySelector('[data-act="attach"]'));
+			await wireHold(path, pvEl.querySelector('[data-act="attach"]'));
 			await DaimondViewer.show(
-				viewEl.querySelector('.files-view-viewer'), path, info,
+				pvEl.querySelector('.files-view-viewer'), path, info,
 				{
-					store:   storeFile,
+					store:   pvStore,
 					t:       t,
 					wasm:    Wasm,
-					onError: function (e) { fileMsg(friendlyError(e), true); },
+					onError: function (e) { fileMsg(friendlyError(e), true, pvEl); },
 				});
 		}
 
-		/// Open `path` in the Doc panel.
+		/// Let the preview go: the pages, the bytes and every blob URL behind them.
+		///
+		/// The twin of `closeView`, which does the same for the document. Two panels,
+		/// two closers, and neither one takes the other's file off the screen.
+		function closePreview() {
+			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
+			// The viewer mints a blob URL per picture, sound or page it shows, and a
+			// blob URL holds its bytes until it is revoked. A session that opened
+			// forty files would otherwise still be holding all forty.
+			DaimondViewer.close();
+			pvEl.style.display = 'none';
+			pvEl.innerHTML = '';
+			docEmbed(false);
+			pvFile = null; _docPdf = '';
+			var n = document.getElementById('pv-name');
+			if (n) n.textContent = '';
+			DaimondPanels.hide('preview');
+		}
+
+		/// Open `path` — in the Doc panel if it is characters, in the Preview panel
+		/// if what can be shown of it is a rendering.
+		///
+		/// WHICH PANEL IS DECIDED BY WHAT THE FILE IS, never by which seat happens to
+		/// be free. `main.typ` and `notes.md` are things to edit and go to the Doc
+		/// panel; `main.pdf`, a photograph and a hex dump are things to look at and
+		/// go to the Preview panel, beside whatever is being edited rather than over
+		/// it.
 		///
 		/// `opts.store` opens it from Daimond's OWN store rather than from the active
 		/// workspace. The distinction is not cosmetic: with a folder open, the two
@@ -16731,7 +17481,12 @@ import init, {
 		/// project's copy, and saving it would write the user's standing instructions
 		/// into the project.
 		async function openFile(path, opts) {
-			storeFile = !!(opts && opts.store);
+			// Which door THIS open came through. It is only committed to `storeFile`
+			// once the file is known to be the document panel's: a picture opened
+			// from the store used to flip the flag under a text file still open in
+			// the editor, so the next read, conflict check or save went to the wrong
+			// root.
+			var store = !!(opts && opts.store);
 			// ASK WHAT THE FILE IS BEFORE DECODING IT AS CHARACTERS.
 			//
 			// What was here asked `DaimondCloud.fileAt`, which resolves through the
@@ -16748,7 +17503,7 @@ import init, {
 			// `file_probe` reads 512 bytes and answers with the format, from the magic
 			// bytes AND the name, saying so when the two disagree.
 			var info = null;
-			try { info = await DaimondViewer.probe(path, { store: storeFile }); }
+			try { info = await DaimondViewer.probe(path, { store: store }); }
 			catch (e) {
 				// A missing file falls through to the text path, which reports it
 				// properly -- but the failure is SAID before it does. This catch used
@@ -16782,12 +17537,14 @@ import init, {
 			// why the file could not be opened. The viewer would draw a header naming
 			// no format over a dump of nothing.
 			if (info && !DaimondViewer.editable(info)) {
-				await showViewedFile(path, info);
+				await showViewedFile(path, info, store);
 				return;
 			}
+			// Only now: this open is the document's, so the door it came through is
+			// the door the editor, the conflict check and the save must all use.
+			storeFile = store;
 			var content = await readRaw(path);
 			curFile = path; curContent = content; editing = false;
-			docEmbed(false);
 			viewEl.style.display = '';
 			var isTypst = /\.typ$/i.test(path);
 			var compileBtn = isTypst
@@ -16957,9 +17714,17 @@ import init, {
 				// build the 30 MB wasm once between them; a private memo here would have been a
 				// second one the tool could not reach.
 				if (!window.DaimondTypst) await import('./typst.js');
-				// Always compile the freshest source from OPFS.
-				var src = await readBytes(path);
-				var out = await window.DaimondTypst.compile(src);
+				// The PROJECT door, not the single-file one. A book is a closure of
+				// imports, pictures and fonts, and the gathering happens in Rust so the
+				// button and the model's `typst_compile` cannot disagree about what a
+				// project is -- and so every byte is read under the OPFS path jail.
+				//
+				// This was `DaimondTypst.compile(readBytes(path))`, which hands the
+				// compiler ONE source: the gatherer shipped in seq 116 with no production
+				// caller at all, so a 63-file book compiled here came back "only the one
+				// source was given to the compiler" and the daimon reading that concluded
+				// the compiler could not resolve imports.
+				var out = await Wasm.typst_compile_project(path);
 				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
 					msgEl.classList.add('err');
@@ -16999,8 +17764,13 @@ import init, {
 		}
 
 		// Briefly flash a status line in the open file's header (Saved / error).
-		function fileMsg(text, isErr) {
-			var el = viewEl && viewEl.querySelector('.files-view-msg');
+		//
+		// `host` says WHICH header: the document's by default, the preview's when
+		// the preview is the one that failed. Without it a picture that would not
+		// decode reported itself in the header of an unrelated text file.
+		function fileMsg(text, isErr, host) {
+			var into = host || viewEl;
+			var el = into && into.querySelector('.files-view-msg');
 			if (!el) {
 				// No file is open (e.g. a delete from the tree), so there is no
 				// header to flash. Say it where the user is actually looking.
@@ -17117,11 +17887,13 @@ import init, {
 			inp.click();
 		}
 
-		/// Show or hide the panel's PDF embed, and the text view with it.
+		/// Show or hide the PREVIEW panel's PDF embed, and the other renderings of
+		/// that panel with it.
 		///
-		/// One panel, two renderings: whichever is showing, the other is not.
-		/// Releasing the blob URL when the embed goes away keeps a long session
-		/// from holding every PDF it has ever compiled.
+		/// One panel, three renderings -- the embed, whatever the viewer draws in
+		/// `#pv-view`, and the live typeset pages -- and whichever is showing, the
+		/// others are not. Releasing the blob URL when the embed goes away keeps a
+		/// long session from holding every PDF it has ever compiled.
 		function docEmbed(on) {
 			var e = document.getElementById('doc-embed');
 			if (!e) return;
@@ -17130,18 +17902,28 @@ import init, {
 				e.removeAttribute('src');
 				if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
 			}
-			syncLineNo();
 		}
 
 		/// Put the header's line-number toggle where the panel is: on and pressed
-		/// only over a text file being READ, since a PDF, a binary, the cloud view
-		/// and the editor's textarea have no lines to number, and a control that
-		/// cannot do anything is one the reader has to rule out.
+		/// only over a text file being READ, since a binary, the cloud view and the
+		/// editor's textarea have no lines to number, and a control that cannot do
+		/// anything is one the reader has to rule out.
+		///
+		/// IT ASKS ABOUT THE DOC PANEL AND NOTHING ELSE, and that is what the split
+		/// of the preview out of this panel bought. The predicate used to carry a
+		/// `#doc-view` display term, because a PDF and the live typeset pages could
+		/// each stand in front of the text view inside the SAME panel, and it carried
+		/// a written argument for why `#typst-live` needed no term of its own. Both
+		/// are gone with the cause: the pages are a different panel now, nothing
+		/// stands in front of the document, and a toggle that belongs to the file in
+		/// the editor is decided by the file in the editor.
+		///
+		/// `docEmbed` no longer calls this either, for the same reason: the embed's
+		/// coming and going says nothing about the document.
 		function syncLineNo() {
 			var btn = document.getElementById('doc-lineno');
 			if (!btn) return;
-			var text = !!curFile && typeof curContent === 'string' && !editing
-				&& !!viewEl && viewEl.style.display !== 'none';
+			var text = !!curFile && typeof curContent === 'string' && !editing;
 			btn.style.display = text ? '' : 'none';
 			btn.classList.toggle('on', showLineNos);
 			btn.setAttribute('aria-pressed', showLineNos ? 'true' : 'false');
@@ -17167,6 +17949,12 @@ import init, {
 		/// workspace's. Set by `openFile` and read by every path that goes back to
 		/// disk for the same file — the read, the conflict check and the save.
 		var storeFile = false;
+
+		/// The PREVIEW panel's own file, and its own door. Separate variables and
+		/// not a second use of the two above: the panels hold different files at the
+		/// same time, which is the whole reason there are two of them.
+		var pvFile  = null;
+		var pvStore = false;
 
 		async function readRaw(path) {
 			return storeFile ? await Wasm.store_read(path) : await Wasm.read_file(path);
@@ -17205,6 +17993,10 @@ import init, {
 		/// Close the document. Typed work is never thrown away in silence: leaving
 		/// the view mid-edit used to discard it without a word, which made Back the
 		/// only exit from edit mode AND a destructive one.
+		///
+		/// It closes the DOCUMENT and not the preview. Backing out of a source file
+		/// leaves the pages it was typeset into on screen, which is the point of
+		/// their being two panels; `closePreview` is the other half.
 		async function closeView() {
 			var ta = viewEl.querySelector('.files-edit');
 			if (editing && ta && ta.value !== curContent) {
@@ -17214,12 +18006,7 @@ import init, {
 					{ title: t('files.discard_title'), danger: true, cancelLabel: t('files.keep_editing') });
 				if (!go) return;
 			}
-			if (_pdfUrl) { URL.revokeObjectURL(_pdfUrl); _pdfUrl = null; }
-			// The viewer mints a blob URL per picture, sound or page it shows, and a
-			// blob URL holds its bytes until it is revoked. A session that opened forty
-			// files would otherwise still be holding all forty.
-			DaimondViewer.close();
-			viewEl.style.display = 'none'; docEmbed(false);
+			viewEl.style.display = 'none';
 			curFile = null; editing = false;
 			syncLineNo();                        // after the file is let go, not before
 			DaimondPanels.hide('doc');
@@ -17425,9 +18212,16 @@ import init, {
 				if (await attachedTruly(path, !!dir)) return;
 				await toggleAttach(path, !!dir);
 			},
-			// A PDF is put on the panel from outside this module, so the header's
-			// line-number toggle has to be told to stand down from there too.
-			syncLineNo:    syncLineNo,
+			/// Let go of the preview panel, for something else to take its turn.
+			///
+			/// The compiled PDF and the live typeset pages are both put on that panel
+			/// from OUTSIDE this module, and both need the viewer's rendering out of
+			/// the way first — the bytes it is holding released with it.
+			previewAside: function () {
+				if (pvEl) { pvEl.style.display = 'none'; pvEl.innerHTML = ''; }
+				DaimondViewer.close();
+				pvFile = null;
+			},
 			// Mail arrives as bytes, not text: a message with a JPEG attached is
 			// not a string, and writing it as one silently corrupts it.
 			writeBytes:    writeWorkspaceBytes,
@@ -17500,6 +18294,17 @@ import init, {
 			},
 		};
 	})();
+
+	// The daimon's door to the Doc panel. `file_show` in src/tools.rs reaches it
+	// from the wasm through `window.DaimondDoc`, which `js/viewer.js` installs --
+	// but only THIS module can open a file: the panel, its header and the routing
+	// between the editor and the viewer all live in this closure. So the opener is
+	// handed over, and viewer.js keeps the question of what showing a file MEANS.
+	//
+	// Registered here rather than on first use of the panel: a tool call can arrive
+	// before the user has opened anything, and a door wired lazily is a door the
+	// model finds shut and reports as absent.
+	if (window.DaimondViewer && DaimondViewer.opener) DaimondViewer.opener(Files.open);
 
 	// ── The Terminal panel ─────────────────────────────────────
 	//
@@ -19171,10 +19976,15 @@ import init, {
 	function updateAgentStat(nRun, nPause, nQueue) {
 		var el = document.getElementById('agents-stat');
 		if (!el) return;
+		// Through the catalogue, like everything else on this panel. These three
+		// and the tile's own buttons were the last hardcoded English in a shipped
+		// panel, and `dev/i18ncheck.mjs` could not see them: it compares key SETS
+		// between locales, so a string that was never given a key is invisible to
+		// it by construction.
 		var parts = [];
-		if (nRun)   parts.push(nRun + ' running');
-		if (nPause) parts.push(nPause + ' paused');
-		if (nQueue) parts.push(nQueue + ' queued');
+		if (nRun)   parts.push(t('agents.tally_running', { n: nRun }));
+		if (nPause) parts.push(t('agents.tally_paused',  { n: nPause }));
+		if (nQueue) parts.push(t('agents.tally_queued',  { n: nQueue }));
 		el.textContent = parts.join(' · ');
 		el.style.display = parts.length ? '' : 'none';
 	}
@@ -20087,13 +20897,22 @@ import init, {
 
 		// Each showing rebinds, so the buttons are replaced rather than added to: a listener
 		// left over from the last draft would send this one to the wrong person.
-		[send, save, attach, discard].forEach(function (b) {
+		//
+		// `file` IS IN THIS LIST, and was not. It is the only one here that takes
+		// its listener below rather than above, so it looked like markup rather
+		// than a control and the rule the comment states was quietly not applied
+		// to it: every open added another `change` handler, each closed over a
+		// stale `atts` and a stale `paintAtts`, so the Nth open read every picked
+		// file into memory N times. The newest handler painted last, so the chips
+		// looked right, which is why it went unnoticed.
+		[send, save, attach, file, discard].forEach(function (b) {
 			var n = b.cloneNode(true);
 			b.parentNode.replaceChild(n, b);
 		});
 		send    = document.getElementById('compose-send');
 		save    = document.getElementById('compose-save');
 		attach  = document.getElementById('compose-attach');
+		file    = document.getElementById('compose-file');
 		discard = document.getElementById('compose-discard');
 
 		function busy(on) {
@@ -20263,29 +21082,92 @@ import init, {
 		});
 	}
 
-	/// Show a compiled PDF on the stage, beside the chat.
+	/// The PDF the Doc panel last put in its `<embed>`, so the header can be asked
+	/// again later what it should be saying.
+	var _docPdf = '';
+
+	/// The `.typ` the live view is following, when that is the document `pdf` was
+	/// just compiled from. Empty when the live view is idle, or is following
+	/// something else.
+	///
+	/// Tied to THIS document rather than to "a watch is running anywhere": the loop
+	/// may still be following the last file for a moment, and renaming this header
+	/// after that one would put a second wrong name where the first was.
+	function liveSource(pdf) {
+		try {
+			var w = window.DaimondTypstWatch;
+			var st = w ? w.state() : null;
+			if (!st || st.mode === 'idle' || !st.path) return '';
+			return st.path.replace(/\.typ$/i, '.pdf') === pdf ? st.path : '';
+		} catch (e) { return ''; }         // no live view is the ordinary case
+	}
+
+	/// Show a compiled PDF on the stage, beside the chat AND beside its source.
 	///
 	/// It used to render inside the ~260px Workspace panel, where a page's body
 	/// text is about three pixels tall, while the widest panel in the app sat
 	/// empty. Compiling a chapter and then reading it is the whole point of the
 	/// Typst loop, so the document goes where there is room to read it — and now
 	/// with the daimon still beside it, to be asked about what it says.
+	///
+	/// The pages go to the PREVIEW panel, which is what makes the loop the shape it
+	/// was built for: the `.typ` stays open in the Doc panel, the pages rebuild
+	/// beside it on every save, and neither has to take a turn at the other's panel.
 	function showDoc(name, url) {
 		var e = document.getElementById('doc-embed');
-		var n = document.getElementById('doc-name');
-		var v = document.getElementById('doc-view');
+		var n = document.getElementById('pv-name');
+		var v = document.getElementById('pv-view');
 		if (!e || !n) return;
-		// A PDF and a text file are two renderings of one panel, not two panels.
-		// The text view steps aside rather than being torn down, so closing the
-		// PDF does not lose the file it was compiled from.
-		if (v) v.style.display = 'none';
+		// The preview's other rendering steps aside — a file the viewer had drawn
+		// here — rather than being torn down, since one panel still shows one thing.
+		// It is no longer the TEXT view that steps aside: that is a different panel
+		// now, and the file it holds is very often the source of these very pages.
+		//
+		// Through the Workspace panel's own door, because the viewer's hold on that
+		// element is ITS bookkeeping. Reaching in from here and clearing the variable
+		// directly was tried: `pvFile` lives in that module's closure, so the compile
+		// threw "pvFile is not defined" and the pages were laid out into a panel
+		// nothing ever opened.
+		if (v) Files.previewAside();
 		e.style.display = '';
 		e.src = url;
-		n.textContent = name;
-		Files.syncLineNo();                  // the text view has stepped aside
-		DaimondPanels.markUsed('doc');       // it now has something to hold
-		DaimondPanels.show('doc');
+		// THE HEADER NAMES THE FILE THE READER IS EDITING, NOT THE ONE THAT FELL OUT
+		// OF COMPILING IT. Pressing ⚙ Compile leaves the pages on screen and rebuilds
+		// them from the `.typ` on every save, so a header reading `proj/main.pdf`
+		// over pages laid out from `proj/main.typ` names a file nobody is looking at.
+		//
+		// SPLITTING THE PREVIEW OUT DID NOT MAKE THIS UNNECESSARY, which was worth
+		// checking rather than assuming: the reason was never "there is nowhere else
+		// to name the source". It is that a header must name what is UNDER it, and
+		// while the live view is standing what is under it is a layout of the source,
+		// which the PDF on disk may already be behind. Both panels then read
+		// `proj/main.typ`, and that is the truth about both: the source, and the
+		// source typeset. The PDF is still written, and the line under the Compile
+		// button still says where and how big — which is where a by-product belongs.
+		_docPdf = name;
+		n.textContent = liveSource(name) || name;
+		DaimondPanels.markUsed('preview');   // it now has something to hold
+		DaimondPanels.show('preview');
 		DaimondPanels.reflow();
+	}
+
+	/// Ask the header again what the Doc panel is holding.
+	///
+	/// Called when the panel is REOPENED, because the live view can let go while it
+	/// is shut: closing the panel is what ends the watch, and the `<embed>` the live
+	/// pages stood in for comes back with the PDF in it. A header still naming the
+	/// source would then be pointing at a file the reader is no longer looking at —
+	/// and at one the embed need not even match, since the loop may have rebuilt the
+	/// pages from later edits than the press that wrote the PDF.
+	///
+	/// It says nothing when the embed does not have the panel's turn: the live view
+	/// and the text view each name their own document, and this must not overwrite
+	/// either.
+	function retitleDoc() {
+		var n = document.getElementById('pv-name');
+		var e = document.getElementById('doc-embed');
+		if (!n || !e || !_docPdf || e.style.display === 'none') return;
+		n.textContent = liveSource(_docPdf) || _docPdf;
 	}
 
 	/// Create a Diamond, on a model the user chose.
@@ -24104,6 +24986,7 @@ import init, {
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
+		if (window.DaimondImprove && DaimondPanels.isOpen('improve')) DaimondImprove.onOpen();
 		// Expiry and retention, on every boot. A device that has been off for six
 		// weeks comes back to a trash whose whole contents are due, and works
 		// that out from the stamps it already holds rather than from a message
@@ -26123,7 +27006,6 @@ import init, {
 					.filter(function (id) { return !/flux|stable-?diffusion|sdxl|playground|embed|nomic|bge-|whisper|tts|rerank|moderation|vision-only|image|dall-?e|imagen|midjourney|upscal|inpaint|speech|audio|transcri|guard/i.test(id); })
 					.sort();
 				try { localStorage.setItem('daimond-models', JSON.stringify(ids)); } catch (e) {}
-				refreshChatModel();
 				var opts = ids.map(function (id) { return { value: id, label: id }; });
 				opts.push({ value: MODEL_OTHER, label: t('models.other') });
 				var want = (prevSel && ids.indexOf(prevSel) !== -1) ? prevSel
@@ -27233,13 +28115,14 @@ import init, {
 		document.getElementById('cfg-base-url').addEventListener('change', function () { fetchModels(); });
 		// Reveal the manual model box only when "Other…" is chosen.
 		document.getElementById('cfg-model').addEventListener('change', syncModelCustom);
-		// Per-chat model override: switch the model for the current chat only.
-		document.getElementById('chat-model-select').addEventListener('change', function () {
-			if (!current) return;
-			current.model = this.value;
-			current.app = null;	// rebuilt with the new model on the next turn
-			updateMeters();
-		});
+		// THE PER-CHAT MODEL LIVES ON THE CHAT TILE, and the header selector that
+		// used to hold it is gone -- markup, listener and the function that kept
+		// it hidden. It shipped with `display:none`, the only code that touched
+		// its display set `none` unconditionally, and nothing ever put an option
+		// in it, so this listener could not fire; it nonetheless cleared
+		// `current.app`, which is how a control nobody can reach still reads as a
+		// route somebody might wire up. See `www/index.html`, where the `<select>`
+		// was.
 
 	// ── Input wiring ───────────────────────────────────────────
 	// Grow with the content up to ~12 lines (the CSS max-height); past that it
@@ -27307,7 +28190,14 @@ import init, {
 		// while another is the one in the sheet — so an open Graph the user is not
 		// looking at is brought forward rather than closed, which is what pressing
 		// its button means there.
-		var showing = !isMobile() || document.body.dataset.mpanel === 'graph';
+		//
+		// ASKED OF THE SHEET, because that is where the Graph rises. This used to
+		// read `document.body.dataset.mpanel === 'graph'`, a value nothing can set
+		// and no stylesheet can match: written as though a mobile Graph
+		// destination existed, when the panel had none at all and asking for it
+		// blanked the screen. See `MOBILE_GUESTS`.
+		var showing = !isMobile()
+			|| !!(window.DaimondSheet && DaimondSheet.guest() === 'graph');
 		if (DaimondPanels.isOpen('graph') && showing) { DaimondPanels.hide('graph'); return; }
 		DaimondPanels.show('graph');
 		// Showing an already-open panel changes no attribute, so ask for the

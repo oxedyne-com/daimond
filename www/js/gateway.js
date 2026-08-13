@@ -24,8 +24,18 @@
 		currency: 'usd',
 		entries:  [],
 		offline:  false,    // the gateway could not be reached
-		pro:      null,     // holds a Pro licence? null until asked.
+		pro:      null,     // Pro RUNNING right now? null until asked.
 		proPriceMinor: null,// the one-time Pro price, from the gateway.
+		// The five-year term, so a lapse can be explained rather than merely
+		// obeyed. `proExpiresTs` is when the licence ends (Unix seconds, null
+		// when none is held), `proExpired` says a licence exists and its term
+		// has run out, `proTermSecs` is the term itself, and `proNowTs` is the
+		// GATEWAY's clock at the moment it answered -- a countdown drawn
+		// against the device's own clock would be wrong on a device set wrong.
+		proExpiresTs: null,
+		proExpired:   false,
+		proTermSecs:  null,
+		proNowTs:     null,
 		// The console role, once asked for. `undefined` means not yet asked;
 		// null means asked and the answer was no. Switching account clears it,
 		// because it is an answer about whoever is signed in now.
@@ -602,6 +612,7 @@
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
 		state.role = undefined;			// a new unlock is a new question
 		state.pro  = null;			// re-asked for whoever unlocked now
+		forgetLicenceTerm();			// and so are its dates
 		var pub = DaimondIdentity.publicKeyB64url();
 		if (!pub) return false;
 		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
@@ -732,13 +743,43 @@
 		return { held: false };
 	}
 
+	/// Drop what is known about THIS account's licence dates.
+	///
+	/// One account's expiry date must not sit on screen under the next person's
+	/// session, and a stale date is worse than none: a notice drawn from it would
+	/// name a day that means nothing to whoever is looking at it. `proTermSecs`
+	/// is not cleared -- five years is a fact about the product, not about
+	/// whoever is signed in.
+	function forgetLicenceTerm() {
+		state.proExpiresTs = null;
+		state.proExpired   = false;
+		state.proNowTs     = null;
+	}
+
 	/// Whether this account holds Pro, asked of the gateway. Sets `state.pro`
 	/// and returns it, or leaves it null when the gateway cannot be reached.
+	///
+	/// Pro is a FIVE-YEAR licence, not a perpetual one, so the presence of a
+	/// licence record is no longer the answer: this reads `held`, which the
+	/// gateway sets from the same term check the sync, storage and mail doors
+	/// ask before opening. Reading `j.licence` -- as this did -- would have shown
+	/// Pro for a licence the gateway had already stopped honouring, which is the
+	/// worst of both: the app claims a capability every request then refuses.
+	///
+	/// The dates are carried through beside it, because a lapse has to be
+	/// EXPLAINED and not merely obeyed. The gateway deliberately still returns
+	/// the record and its expiry after the term ends, so the app can say which
+	/// licence ended and when, and offer another.
 	async function refreshLicence() {
 		if (!state.authed) { state.pro = null; return null; }
 		try {
 			var j = await get('/api/licence');
-			state.pro = !!(j && j.licence);
+			state.pro = !!(j && j.held);
+			state.proExpiresTs = (j && typeof j.expires_ts === 'number' && j.expires_ts > 0)
+				? j.expires_ts : null;
+			state.proExpired = !!(j && j.expired);
+			if (j && typeof j.term_secs === 'number') state.proTermSecs = j.term_secs;
+			if (j && typeof j.now_ts    === 'number') state.proNowTs    = j.now_ts;
 			if (j && typeof j.pro_price_minor === 'number') state.proPriceMinor = j.pro_price_minor;
 			if (j && j.currency) state.currency = j.currency;
 		} catch (e) {
@@ -825,6 +866,7 @@
 		var had = state.credits !== null;
 		state.credits = null;
 		state.pro    = null;
+		forgetLicenceTerm();
 		// One account's money must not sit on screen under the next person's session, and the
 		// header only repaints when it is told to.
 		if (had) announce();

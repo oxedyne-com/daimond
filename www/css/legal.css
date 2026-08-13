@@ -1,0 +1,132 @@
+/* legal.css — the Terms and the Privacy Policy, shown inside Daimond.
+ *
+ * The two documents are generated into `www/guide/legal/` from the published
+ * landing pages (dev/legal-pages.mjs), so what arrives here is the landing
+ * page's ARTICLE and none of its styling: the landing sheet is written against
+ * its own token names (--bg-2, --text-2) which the app does not define, and
+ * loading a second palette inside the app's frame would give the reader a page
+ * that ignores their theme.
+ *
+ * So this sheet is small on purpose. `guide.css` already styles the frame, the
+ * headings, the prose, the lists and the links; only the handful of shapes the
+ * legal pages bring with them are below, each in the app's own tokens so every
+ * palette and the reader's text size carry through.
+ */
+
+/* ── The draft banner ─────────────────────────────────────────────────────
+   INSIDE the sticky header, not under it. It says the document is not in force,
+   which is the first thing a reader has to know and the last thing that should
+   scroll away — and a second sticky element cannot sit under the first without
+   either overlapping it or leaving a slice of prose showing between the two.
+   Being part of the header also means `frame.js` measures it, so a jump to a
+   section lands clear of the banner as well as the nav. */
+.draft-banner {
+	background: var(--warn-bg);
+	border-top: 1px solid var(--border);
+	color: var(--text-primary);
+	text-align: center;
+	padding: 0.6rem 1rem;
+	font-size: 0.9rem;
+	font-weight: 600;
+	line-height: 1.4;
+}
+.draft-banner strong { color: var(--warn); }
+
+/* ── The document's own head ─────────────────────────────────────────────── */
+.legal-head { margin-bottom: 1.6rem; }
+.legal-head h1 { margin-top: 0; }
+.legal-meta { color: var(--text-muted); font-size: 0.9rem; }
+.legal-meta span { display: inline-block; margin-right: 1.2rem; }
+
+/* ── An open point ───────────────────────────────────────────────────────
+   Every [TO CONFIRM] is drawn as a gap and not as prose, because that is what
+   it is. A reader of a draft is owed the difference at a glance. */
+.tbc {
+	background: var(--accent-soft);
+	color: var(--text-primary);
+	border: 1px dashed var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 0.02em 0.4em;
+	font-size: 0.9em;
+	font-weight: 600;
+	white-space: normal;
+}
+
+/* ── Contents ────────────────────────────────────────────────────────────
+   One column, not the landing page's two: this is read in a panel that is
+   often 420px wide, where two columns of eighteen entries is a wall. */
+.legal-toc {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	padding: 1rem 1.2rem;
+	margin-bottom: 1.6rem;
+}
+.legal-toc h2 { border: none; padding: 0; margin: 0 0 0.5rem; font-size: 1rem; }
+.legal-toc ol { margin: 0; padding-left: 1.3rem; color: var(--text-secondary); }
+.legal-toc li { margin-bottom: 0.25rem; }
+
+/* ── The device / server split ───────────────────────────────────────────── */
+.split {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1rem;
+	margin: 1.2rem 0;
+}
+.split .col {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	padding: 1rem 1.2rem;
+}
+.split .col h3 { margin-top: 0.2rem; }
+.split .col ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+.split .col-tag {
+	display: block;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--accent-text);
+	margin-bottom: 0.3rem;
+}
+.split .col-server .col-tag { color: var(--text-muted); }
+@media (max-width: 620px) { .split { grid-template-columns: 1fr; } }
+
+/* ── The notice-at-collection table ──────────────────────────────────────
+   Scrolls inside its own box. A table with five columns cannot be made to fit
+   a phone or a narrow panel, and the alternative to a scrollbar here is the
+   whole document scrolling sideways. */
+.legal-table-wrap {
+	overflow-x: auto;
+	margin: 1.1rem 0 1.3rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+}
+.legal-table {
+	width: 100%;
+	min-width: 560px;
+	border-collapse: collapse;
+	font-size: 0.88rem;
+}
+.legal-table th,
+.legal-table td {
+	text-align: left;
+	padding: 0.6rem 0.85rem;
+	border-bottom: 1px solid var(--border);
+	color: var(--text-secondary);
+	vertical-align: top;
+}
+.legal-table th { color: var(--text-primary); font-weight: 600; background: var(--bg-secondary); }
+.legal-table tbody tr:last-child td { border-bottom: none; }
+
+/* ── A regional block ────────────────────────────────────────────────────── */
+.region {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	padding: 1rem 1.2rem;
+	margin-bottom: 0.9rem;
+}
+.region h3 { margin-top: 0.2rem; }
+.region p:last-child, .region ul:last-child { margin-bottom: 0; }

@@ -36,11 +36,14 @@
 	// A thing you mostly read or write, so it opens at full height rather than
 	// half. The terminal belongs here for the plainest reason: at the half detent
 	// it is eleven rows, and eleven rows is not a terminal.
-	var DEFAULT_FULL = { doc: 1, compose: 1, tools: 1, term: 1 };
+	var DEFAULT_FULL = { doc: 1, preview: 1, compose: 1, tools: 1, term: 1 };
 	// Guests with nothing to "ask about" hide the ask pill. The trash is one:
 	// asking the daimon about a list of things you have deleted would offer to
 	// spend money on the one surface whose whole subject is undoing a mistake.
-	var NO_ASK       = { compose: 1, tools: 1, trash: 1 };
+	// Improve is another, for the opposite reason: it is ALREADY a box you write
+	// in, and a second box under it that sends what you write to a model is two
+	// boxes with opposite meanings.
+	var NO_ASK       = { compose: 1, tools: 1, trash: 1, improve: 1 };
 
 	var sheetEl, bodyEl, grabEl, titleEl, askWrap, askInput, askSend;
 	var guest = null;			// the panel id currently in the sheet, or null
@@ -186,12 +189,44 @@
 	// ── Dragging the grabber ───────────────────────────────────
 	// Drag UP grows the sheet (reveal more of the thing); drag DOWN shrinks it,
 	// and past peek it dismisses.
+	//
+	// THE SHEET MOVES FROM THE GRABBER AND FROM NOWHERE ELSE. THE GUEST OWNS
+	// EVERY DRAG INSIDE ITSELF.
+	//
+	// That is a rule and not a description, because a guest can now be a
+	// SCROLLER: the watched live document puts a tall column of typeset pages in
+	// `.tl-scroll` inside this sheet, and a nested scroller under a draggable
+	// surface is where gestures fight. Whichever of the two loses becomes
+	// impossible — a sheet that takes the drag makes the book unreadable, and a
+	// scroller that takes it makes the sheet unmovable — so the line is drawn at
+	// the grabber, which is the one strip of the sheet a guest never occupies.
+	//
+	// Measured at 390x844, with a six-page document in the sheet at `full`:
+	//
+	//     drag up from the middle of the pages   document +333px, sheet unmoved
+	//     drag down near the top, page scrolled  document back to +58, sheet unmoved
+	//     drag down at the very top             nothing moves at all: not the
+	//                                           scroller, not the sheet body, not
+	//                                           the page behind it
+	//     drag down on the grabber              sheet 736 -> 439, and the reader
+	//                                           stays on page 1 +36pt
+	//
+	// The third line is the one worth keeping: an overscroll cannot escape,
+	// because `responsive.css` pins `html, body { overscroll-behavior: none }`
+	// under 760px and `#msheet-body` is not itself a scroller. So a drag that
+	// runs off the end of the book does nothing, rather than dragging the sheet
+	// or pulling the page down to refresh — and a refresh is the one thing a live
+	// compiler does not survive.
+	//
+	// The obvious "improvement" — letting a drag anywhere in the sheet move it,
+	// which is what several phone sheets do — would take the pages away. Do not.
 	function bindGrab() {
-		var startY = 0, startH = 0, dragging = false;
+		var startY = 0, startH = 0, startDetent = 'half', dragging = false;
 		grabEl.addEventListener('pointerdown', function (e) {
 			dragging = true;
 			startY = e.clientY;
 			startH = sheetEl.getBoundingClientRect().height;
+			startDetent = detent;
 			sheetEl.classList.add('dragging');
 			grabEl.setPointerCapture(e.pointerId);
 		});
@@ -215,6 +250,23 @@
 				if (d < bestD) { bestD = d; best = o; }
 			});
 			snapTo(best[0]);
+		});
+		// A POINTER STREAM CAN END IN `pointercancel` RATHER THAN `pointerup`, and
+		// on a phone it does: the browser claims a gesture mid-drag and takes the
+		// pointer with it. Nothing listened for that, so the drag never ended —
+		// `dragging` stayed true, `.dragging` stayed on the sheet, and the sheet was
+		// left stuck at whatever height the cancelled drag had reached. Worse, the
+		// `visualViewport` re-fit below skips a sheet that is `.dragging`, so from
+		// then on a keyboard coming up no longer re-fitted it either. Measured: a
+		// cancel at 299px left the sheet at 299px through a viewport change to 600.
+		//
+		// It goes back to the detent the drag STARTED at, not to the nearest one: a
+		// gesture the user did not finish decided nothing.
+		grabEl.addEventListener('pointercancel', function (e) {
+			if (!dragging) return;
+			dragging = false;
+			try { grabEl.releasePointerCapture(e.pointerId); } catch (x) {}
+			snapTo(startDetent);
 		});
 	}
 

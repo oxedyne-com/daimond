@@ -59,9 +59,9 @@ SMTPD=${SMTPD:-dev/smtpd.mjs}
 # too exits 0 with a SKIP line when :9002 is clear, which phase 1 guarantees, so
 # the session-renewal path had never run under this suite and had been reported
 # as passing every time.
-NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_tools verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew verify_pausesync"
+NEEDS_GATEWAY="verify_autoreload verify_qr verify_spend verify_sync verify_mailsync verify_compose verify_mailfolders verify_pairing verify_passkey_adopt verify_passkey_blob verify_gwretry verify_sessionrenew verify_pausesync"
 # Of those, the two that also need an entitled account (and, for compose, mail).
-NEEDS_GRANT="verify_tools verify_compose verify_mailfolders"
+NEEDS_GRANT="verify_compose verify_mailfolders"
 
 # Verifiers that need something this suite cannot invent, and that say so by
 # exiting 2 rather than pretending. `verify_droots_real` proves the Diamond

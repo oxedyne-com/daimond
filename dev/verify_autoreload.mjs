@@ -12,7 +12,27 @@
 // Both are the gateway's rules. The browser must not have its own copy of them — it must ask, and
 // say what it is told. A client that guesses is a client that will one day guess differently from
 // the till.
+//
+// AND THE PANEL HAS TO BE THERE AT ALL. The last section drives a session whose gateway
+// bootstrap is still in flight when Credits is opened, which is the state a loaded machine
+// produces by itself. Proved red first:
+//
+//   node dev/verify_autoreload.mjs --break latefill   # the late fill is caught
+//   node dev/verify_autoreload.mjs                    # and then, clean
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
+
+const HERE  = path.dirname(fileURLToPath(import.meta.url));
+const AR_JS = path.join(HERE, '..', 'www', 'js', 'autoreload.js');
+
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+const die = (why) => { console.error('ABORT: ' + why); process.exit(2); };
+if (BREAK && BREAK !== 'latefill') die(`no break called "${BREAK}"`);
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -38,7 +58,22 @@ await p.evaluate(() => {
 		|| [...document.querySelectorAll('.astat-row')].find(r => /credit/i.test(r.textContent));
 	if (row) row.click();
 });
-await p.waitForTimeout(1800);
+// Wait for the panel, rather than sleeping at where it ought to be.
+//
+// This was a flat 1800ms, and on the gate of 2026-08-13 that was not enough: the gateway
+// session is taken asynchronously at boot — an account POST, a challenge, a signature, a
+// verify — and on a loaded machine it had not landed when the panel was read. Five checks
+// went red, including the self-test below, which correctly reported that there was nothing
+// for it to blind. A fixed sleep made this file's verdict a measurement of how busy the
+// machine was.
+//
+// BOUNDED, so a panel that never arrives still fails, and fails saying so. Waiting for the
+// condition is not the same as assuming it: the case where the session lands AFTER Credits
+// was opened is a property in its own right, and it is proved at the foot of this file.
+await p.waitForFunction(() => {
+	const h = document.getElementById('autoreload');
+	return !!h && h.textContent.trim().length > 0;
+}, null, { timeout: 15000 }).catch(() => { /* the check below reports it */ });
 
 const panel = await p.evaluate(() => {
 	const h = document.getElementById('autoreload');
@@ -198,6 +233,79 @@ console.log('\nconsole errors:', errs.slice(0, 4));
 check('nothing throws', errs.length === 0, errs[0] || '');
 
 await s.close();
+
+// ── A session that lands AFTER Credits was opened fills the panel in ────
+//
+// Everything above is measured on a session that had already landed. This is the case where
+// it has not, and until 2026-08-13 it was a permanent blank: `render` draws nothing without
+// `state.authed`, the flag is set five round trips into the boot, and NOTHING redrew the
+// panel when it flipped. A user who reached Credits a second early was shown an empty space
+// where the standing instruction to spend their money should be, for the life of the page.
+// The only way back was a reload, and nothing on screen said so.
+//
+// That is also what made the gate red rather than this file: the failure arrived as a timing
+// flake, so it read as a slow machine instead of a missing panel.
+//
+// Driven by holding the LAST leg of the bootstrap, so the app is in exactly the state a
+// loaded machine puts it in: unlocked, drawn, and not yet authed. The precondition is
+// ASSERTED and not assumed — a run where the session beat the click proves nothing, and must
+// say so rather than going green.
+const HOLD_MS = 8000;
+const late = await open({
+	name: 'autoreload-late', connect: false,
+	route: async (pg) => {
+		await pg.route('**/api/auth/verify', async (r) => {
+			await new Promise((f) => setTimeout(f, HOLD_MS));
+			await r.continue();
+		});
+		if (BREAK === 'latefill') {
+			// The listener taken back out, and only that: the panel is drawn by
+			// exactly the code that drew it before, and nothing redraws it late.
+			const src  = fs.readFileSync(AR_JS, 'utf8');
+			const hurt = src.replace(/\twindow\.addEventListener\('daimond:authed'[\s\S]*?\n\t\}\);\n/, '');
+			if (hurt === src) die('the latefill break did not reach the daimond:authed listener');
+			await pg.route('**/js/autoreload.js', (r) =>
+				r.fulfill({ status: 200, contentType: 'text/javascript', body: hurt }));
+		}
+	},
+});
+const lp = late.page;
+await lp.waitForTimeout(1500);
+await lp.evaluate(() => {
+	const row = document.getElementById('astat-credits')
+		|| [...document.querySelectorAll('.astat-row')].find(r => /credit/i.test(r.textContent));
+	if (row) row.click();
+});
+await lp.waitForTimeout(600);
+const early = await lp.evaluate(() => {
+	const h = document.getElementById('autoreload');
+	return {
+		empty:  !h || h.textContent.trim().length === 0,
+		authed: !!(window.DaimondGateway && DaimondGateway.state().authed),
+	};
+});
+// The panel AND the session, so a blank that stays blank cannot be read as a session that
+// never came.
+const filled = await lp.waitForFunction(() => {
+	const h = document.getElementById('autoreload');
+	return !!h && !!h.querySelector('.cfg-lead')
+		&& !!(window.DaimondGateway && DaimondGateway.state().authed);
+}, null, { timeout: 20000 }).then(() => true).catch(() => false);
+const lateAuthed = await lp.evaluate(() =>
+	!!(window.DaimondGateway && DaimondGateway.state().authed));
+check('Credits opened before the session lands is filled in when it does',
+	early.empty && !early.authed && filled,
+	!early.empty || early.authed
+		? 'nothing was proved: the session had already landed when Credits was opened'
+		: filled ? 'blank while unauthed, drawn once authed'
+			: `still blank ${lateAuthed ? 'WITH' : 'without'} a session, 20s on`);
+await shot(late, 'autoreload-late');
+await late.close();
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
+if (BREAK) {
+	if (bad.length) { console.log('the break was caught, as it should be'); process.exit(0); }
+	console.log('THE BREAK WAS NOT CAUGHT: this check proves nothing');
+	process.exit(1);
+}
 process.exit(bad.length ? 1 : 0);

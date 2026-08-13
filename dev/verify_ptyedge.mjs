@@ -47,9 +47,9 @@
 //
 //	hand.js and terminal.js	served through a patch, and the page reloaded.
 //	pty_request		a whole second wasm package, built from a
-//				patched src/wasm/pty.rs. Slow, and the only
-//				honest way to break a function that lives in
-//				a .wasm.
+//				patched src/wasm/pty.rs or src/tools.rs. Slow,
+//				and the only honest way to break a function
+//				that lives in a .wasm.
 //
 //	node dev/verify_ptyedge.mjs              # reuse the broken packages
 //	node dev/verify_ptyedge.mjs --prove      # build them (about three minutes)
@@ -82,9 +82,23 @@ const PROFILE	= path.join(WORK, 'profile');
 const BROKEN	= path.join(SCRATCH, 'ptyedge-broken');
 const PROVE	= process.argv.includes('--prove');
 
-// The Diamond this session belongs to, as the panel would name it: a directory
-// under the granted root, which is what `diamond_bounds` fences a turn to.
+// The Diamond this session belongs to, as the panel names it. NOT a directory on
+// this machine: it is Daimond's own storage, in the browser, whatever folder the
+// user has open — so the fence never maps it onto the disk and nothing here
+// creates it.
 const OWN_DIR	= 'diamonds/d1';
+
+// The folder the user ATTACHED to that Diamond, which is the only place on this
+// machine a Diamond has. Everything a session does happens here: the fence's one
+// writable root, and where a terminal asked for in the Diamond ends up starting.
+//
+// It is new, and its absence is what this file was missing. The old fixture made
+// `<root>/diamonds/d1` itself, so the fence resolved and the hand was happy —
+// in a world nothing but this file ever built. In the field that directory is
+// never there, the hand could not canonicalise it, and it refused the whole
+// spec: every `run` in every chat and every Diamond terminal, while these
+// checks stayed green.
+const WORK_DIR	= 'work';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -111,12 +125,19 @@ async function proved(name, breakIt, testIt, fixIt) {
 		+ `whole=${green ? 'passed' : 'FAILED'}`);
 }
 
+// The granted folder, with the two directories a user would have made in it: one
+// attached to this Diamond and one attached read-only. `<root>/diamonds/d1` is
+// NOT made, and must not be: a Diamond's own directory lives in the browser's
+// storage whatever folder is open, so nothing in the field creates it, and a
+// fixture that did would let a fence naming it resolve here and nowhere else.
+// That is exactly how this file stayed green while every Diamond terminal was
+// being refused (see WORK_DIR).
 fs.rmSync(WORK, { recursive: true, force: true });
-fs.mkdirSync(path.join(WORK, 'root', OWN_DIR), { recursive: true });
+fs.mkdirSync(path.join(WORK, 'root', WORK_DIR), { recursive: true });
 fs.mkdirSync(path.join(WORK, 'root/.daimond'), { recursive: true });
 fs.mkdirSync(path.join(WORK, 'root/shared'), { recursive: true });
 const GRANT = fs.realpathSync(path.join(WORK, 'root'));
-fs.writeFileSync(path.join(GRANT, OWN_DIR, 'hello.txt'), 'inside the fence\n');
+fs.writeFileSync(path.join(GRANT, WORK_DIR, 'hello.txt'), 'inside the fence\n');
 fs.writeFileSync(path.join(GRANT, '.daimond/secret.txt'), 'out of bounds\n');
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -408,35 +429,50 @@ function served(rel) {
 // whole run differ only in the patch.
 
 const PTY_RS = path.join(ROOT, 'src/wasm/pty.rs');
+const TOOLS_RS = path.join(ROOT, 'src/tools.rs');
 
-/// The wasm breaks, each one line of `src/wasm/pty.rs` turned into a plausible
-/// mistake.
+/// The wasm breaks, each one line of the engine turned into a plausible mistake.
+///
+/// `[file, from, to]`. Two files now: the composition lives in `src/wasm/pty.rs`
+/// and the fence it composes lives in `src/tools.rs`, and the defect this file
+/// missed for a fortnight was in the second one. A table that could only reach
+/// the first could not have proved it.
 const WASM_PATCHES = {
-	'w-term': ['None      => fmt!("[]"),', 'None      => fmt!(r#"[["TERM","xterm-256color"]]"#),'],
-	'w-nofence': ['if !fence_enforced(&machine.caps) {', 'if false {'],
-	'w-noroot': ['if !machine.rooted() {', 'if false {'],
-	'w-nopair': ['if extract_json_bool(&st, "paired") != Some(true) {', 'if false {'],
-	'w-nocwd': ['if !inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro) {', 'if false {'],
+	'w-term': [PTY_RS, 'None      => fmt!("[]"),', 'None      => fmt!(r#"[["TERM","xterm-256color"]]"#),'],
+	'w-nofence': [PTY_RS, 'if !fence_enforced(&machine.caps) {', 'if false {'],
+	'w-noroot': [PTY_RS, 'if !machine.rooted() {', 'if false {'],
+	'w-nopair': [PTY_RS, 'if extract_json_bool(&st, "paired") != Some(true) {', 'if false {'],
+	'w-nocwd': [PTY_RS, 'if !inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro) {', 'if false {'],
+	// THE DEFECT ITSELF, put back. Without the filter, `abs()` maps
+	// `diamonds/d1` under the granted root and the fence names a directory
+	// nothing creates — which is what shipped, and what the hand refused.
+	'w-storefence': [TOOLS_RS, '        .filter(|p| !is_store_path(p))\n', ''],
+	// And the other half: with the store `cwd` taken literally, a terminal is
+	// asked for in the Diamond's own directory and refused as outside its own
+	// fence, however many folders are attached to it.
+	'w-storecwd': [PTY_RS, 'if asked.is_empty() || crate::tools::is_store_path(&asked) {',
+		'if asked.is_empty() {'],
 	// The anchor carried `));` because the test used to sit inline inside
 	// `withholds_net(…)`. It was lifted into a binding on 2026-08-02 (05e3748) and
 	// this break has not matched since — so the property it exists to prove has
 	// not been proved for five days, and neither has `w-argvkit`, which is built
 	// after it. The build threw, the cache kept whatever had been made, and the
 	// guard above then skipped the rebuild for ever. Same intent, current shape.
-	'w-tainted': ['let tainted = extract_json_bool(ask, "tainted") == Some(true);',
+	'w-tainted': [PTY_RS, 'let tainted = extract_json_bool(ask, "tainted") == Some(true);',
 		'let tainted = false;'],
-	'w-argvkit': ['bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "toolkits").unwrap_or_default()));',
+	'w-argvkit': [PTY_RS, 'bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "toolkits").unwrap_or_default()));',
 		'bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "argv").unwrap_or_default()));'],
 };
 
-/// Builds one wasm package, patching `src/wasm/pty.rs` first where `name` is a
-/// break rather than the pristine build.
+/// Builds one wasm package, patching the file the break names first where `name`
+/// is a break rather than the pristine build.
 ///
 /// The file is restored whatever happens: a verifier that left a deliberate
 /// bug in the tree would be worse than no verifier.
 function buildWasm(name) {
 	const out = path.join(BROKEN, name, 'pkg');
-	const orig = fs.readFileSync(PTY_RS, 'utf8');
+	const file = name === 'whole' ? PTY_RS : WASM_PATCHES[name][0];
+	const orig = fs.readFileSync(file, 'utf8');
 	// The file's own timestamps, kept so the restore below can put them back.
 	//
 	// The staleguard that protects this verifier compares MTIMES, not content, so
@@ -446,14 +482,15 @@ function buildWasm(name) {
 	// with "that bundle is not this source". The verifier poisoned its own
 	// precondition, and three verifiers then read as red for a day with nothing
 	// wrong in the tree: `git diff` on pty.rs was empty every time anyone looked.
-	const when = fs.statSync(PTY_RS);
+	const when = fs.statSync(file);
 	try {
 		if (name !== 'whole') {
-			const [from, to] = WASM_PATCHES[name];
+			const [, from, to] = WASM_PATCHES[name];
 			if (orig.indexOf(from) < 0) {
-				throw new Error(`the wasm break "${name}" no longer matches src/wasm/pty.rs`);
+				throw new Error(`the wasm break "${name}" no longer matches `
+					+ path.relative(ROOT, file));
 			}
-			fs.writeFileSync(PTY_RS, orig.replace(from, to));
+			fs.writeFileSync(file, orig.replace(from, to));
 		}
 		const env = Object.assign({}, process.env, {
 			CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR
@@ -465,9 +502,9 @@ function buildWasm(name) {
 			['build', '--dev', '--target', 'web', '--out-dir', out],
 			{ cwd: ROOT, env, stdio: 'pipe' });
 	} finally {
-		fs.writeFileSync(PTY_RS, orig);
+		fs.writeFileSync(file, orig);
 		// Byte-identical content, so the original mtime is the truthful one.
-		try { fs.utimesSync(PTY_RS, when.atime, when.mtime); } catch (e) { /* best effort */ }
+		try { fs.utimesSync(file, when.atime, when.mtime); } catch (e) { /* best effort */ }
 	}
 	return out;
 }
@@ -821,9 +858,13 @@ check('the parked primary screen comes back at the new size, not the old one',
 
 console.log('\n── 2. pty_request ────────────────────────────────────');
 
+// What the Terminal panel sends, spelled as the panel spells it — including the
+// `cwd`, which is the Diamond's OWN directory (`cwd: b.own_dir` where the panel
+// composes this in www/js/daimond.js). A question answered against a tidier
+// request than the app makes is a question about a different app.
 const ASK = {
 	own_dir:   OWN_DIR,
-	attached:  ['shared'],
+	attached:  [WORK_DIR, 'shared'],
 	read_only: ['shared'],
 	cwd:       OWN_DIR,
 	cols:      100,
@@ -855,12 +896,33 @@ const REQ_CHECKS = {
 	'composes the wire\'s own open, with the fence in it': async () => {
 		const r = await request(ASK);
 		return r.t === 'open' && !!r.fence
-			&& r.fence.rw.indexOf(`${GRANT}/${OWN_DIR}`) >= 0
+			&& r.fence.rw.indexOf(`${GRANT}/${WORK_DIR}`) >= 0
 			&& r.fence.rw.indexOf(`${GRANT}/shared`) < 0
 			&& r.fence.ro.indexOf(`${GRANT}/shared`) >= 0
 			&& r.fence.deny.indexOf(`${GRANT}/.daimond`) >= 0
-			&& r.cwd === `${GRANT}/${OWN_DIR}`
 			&& r.size.cols === 100 && r.size.rows === 30;
+	},
+	// The Diamond's own directory is in the browser's storage, so a fence naming
+	// it names a path nothing on this machine ever makes — and the hand refuses
+	// the WHOLE spec over one such path, the user's real folder along with it.
+	// Asserted over the fence entire, because it was equally fatal in any list.
+	'names no path inside Daimond\'s own storage, which is not on this disk': async () => {
+		const r = await request(ASK);
+		return JSON.stringify(r.fence).indexOf(`${GRANT}/diamonds`) < 0;
+	},
+	// And it still has to start somewhere. The panel asks for the Diamond, which
+	// is nowhere; `tools::start_dir` answers with the first folder attached to
+	// it, the same rule a command starts by.
+	'starts the session in the attached folder, though the panel asked for the Diamond': async () => {
+		const r = await request(ASK);
+		return r.cwd === `${GRANT}/${WORK_DIR}`;
+	},
+	// A wall with a door in it. This refusal is shown to the USER verbatim, in
+	// the Terminal panel, so it has to name the thing they can do about it.
+	'refuses a Diamond with nothing attached, and says to attach a folder': async () => {
+		const r = await request(Object.assign({}, ASK, { attached: [], read_only: [] }));
+		return !!r.refused && !r.t && /attach/i.test(r.refused)
+			&& /Workspace panel/.test(r.refused);
 	},
 	'sends no TERM, which the hand sets and refuses a caller for naming': async () => {
 		const r = await request(ASK);
@@ -914,7 +976,8 @@ for (const name of Object.keys(REQ_CHECKS)) {
 // A few more that no broken build is built for, because they are not one line
 // to remove: the defaults, and the ceilings.
 {
-	const bare = await request({ own_dir: OWN_DIR, attached: [], read_only: [], cwd: OWN_DIR });
+	const bare = await request(
+		{ own_dir: OWN_DIR, attached: [WORK_DIR], read_only: [], cwd: OWN_DIR });
 	check('pty_request opens a shell when nobody named a program',
 		bare.argv.join(' ') === '/bin/sh', `argv is ${JSON.stringify(bare.argv)}`);
 	check('pty_request assumes 80x24 when the page did not say',
@@ -1260,6 +1323,16 @@ await provedWasm('a tainted session loses the network', 'w-tainted',
 	'a tainted session loses the network');
 await provedWasm('a toolkit is never inferred from argv', 'w-argvkit',
 	'a toolkit comes from what the user granted, never from argv');
+// The defect that shipped, put back in the file it shipped from. `w-storefence`
+// is the fence mapping a Diamond's own directory onto the disk again, which is
+// what the hand refused the whole spec over; `w-storecwd` is a terminal taking
+// the panel's store `cwd` literally and asking for a session outside its own
+// fence. Both of them made every Diamond terminal refuse, and this file was
+// green through all of it.
+await provedWasm('the fence never names Daimond\'s own storage', 'w-storefence',
+	'names no path inside Daimond\'s own storage, which is not on this disk');
+await provedWasm('a session starts where the Diamond actually is', 'w-storecwd',
+	'starts the session in the attached folder, though the panel asked for the Diamond');
 
 usingPkg = '';
 breaking = '';

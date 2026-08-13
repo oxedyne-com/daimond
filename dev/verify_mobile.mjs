@@ -5,7 +5,82 @@
 // the chat (never taking a bar slot), the ask pill forwards to the one
 // composer, closing the sheet returns the guest to the stage, and growing back
 // to desktop reseats everything with the chat still whole.
+//
+// AND THE RULE THE PARADIGM RESTS ON, which nothing checked until 2026-08-12:
+// EVERY PANEL A PHONE CAN BE ASKED FOR ARRIVES ON SCREEN. A phone panel needs
+// either a seat in the bottom bar with a `body[data-mpanel="…"]` rule in
+// `responsive.css`, or a place in `MOBILE_GUESTS` so it rises as a sheet. Graph
+// and Pending had neither: `responsive.css:89` hides every panel and only four
+// rules un-hide anything, so asking for either took the conversation off screen
+// and put nothing in its place — a visible button, a blank screen, and no way
+// back but the hamburger. Pending was the worse of the two, because a worker's
+// consent question opens that panel itself.
+//
+// This file could not see it. It read `dataset.mpanel` twice and both times
+// asserted it was `'ai'`, which is a fact about the floor and says nothing about
+// what the user was shown. The sweep below asks the only question that matters:
+// after asking for a panel, is that panel on the screen, and is anything?
+//
+// It is written over the PANEL SET, not a list, so the next panel added without
+// a destination fails here rather than shipping.
+//
+//   node dev/verify_mobile.mjs --break noguest   # the sweep fails for graph and
+//                                                # pending: the state before the fix
+//   node dev/verify_mobile.mjs                   # and then, clean
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open } from './harness.mjs';
+
+const WWW = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
+
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+
+// Each break is a real edit to a real file, served in place of it through
+// `page.route`, and is how that piece behaved before the fix.
+const BREAKS = {
+	// `MOBILE_GUESTS` as it was: the two panels added after the rule was written
+	// are not in it, so neither has anywhere to go on a phone.
+	noguest: [{
+		file: 'js/daimond.js',
+		find: '\tvar MOBILE_GUESTS = {\n'
+			+ '\t\tweb: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1,\n'
+			+ '\t\tgraph: 1, pending: 1,\n'
+			+ '\t};',
+		with: '\tvar MOBILE_GUESTS = { web: 1, doc: 1, msg: 1, compose: 1, tools: 1, '
+			+ 'spend: 1, term: 1, trash: 1 };',
+	}],
+};
+
+if (BREAK && !BREAKS[BREAK]) {
+	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
+	process.exit(2);
+}
+
+/// The damaged source, or a hard stop. A break whose anchor is not there exactly
+/// once broke nothing, and the run below would prove nothing.
+function damaged(spec) {
+	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const n = src.split(spec.find).length - 1;
+	if (n !== 1) {
+		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}.`);
+		process.exit(2);
+	}
+	return src.replace(spec.find, spec.with);
+}
+
+const routeBreaks = async (pg) => {
+	if (!BREAK) return;
+	for (const spec of BREAKS[BREAK]) {
+		const body = damaged(spec);
+		await pg.route('**/' + spec.file, r => r.fulfill({
+			status: 200, contentType: 'application/javascript', body,
+		}));
+	}
+};
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -23,7 +98,7 @@ const raise = async (id) => {			// force a clean open even if open-by-default
 	await sleep(450);
 };
 
-const s = await open({ signIn: true, connect: true, name: 'mobiletester' });
+const s = await open({ signIn: true, connect: true, name: 'mobiletester', route: routeBreaks });
 const { page } = s;
 
 // Become a phone. matchMedia('(max-width:760px)') flips, and the shell takes over.
@@ -123,6 +198,71 @@ const asked = await page.evaluate(async () => {
 	return { before, after, parkedH: document.getElementById('msheet').style.height };
 });
 check('ask: pill posts a user message to the chat', asked.after === asked.before + 1, JSON.stringify(asked));
+
+// ── 6a. Every panel a phone can ask for arrives on screen ──
+//
+// The panel SET is read out of the page, so a panel added later is swept
+// without anybody remembering to add it here. Two questions per panel, and they
+// are different failures: the panel the user asked for is on screen, and SOME
+// panel is — a blank main area is the defect that shipped, and a panel that is
+// merely mis-seated is the one that would replace it.
+//
+// Everything else is closed first. A dock with no free seat refuses to open
+// anything (`DaimondPanels.show` returns early), and a refusal is not the defect
+// under test — it would redden this sweep for a reason that has nothing to do
+// with whether the panel has a phone destination.
+// The PANELS, not the chips that name them: `data-panel` is on both, so the
+// element's own id is what says which is which.
+const panelIds = await page.evaluate(() =>
+	[...document.querySelectorAll('[data-panel]')]
+		.filter(e => e.id === 'panel-' + e.dataset.panel)
+		.map(e => e.dataset.panel)
+		.filter(id => id !== 'rail'));
+check('phone: the page declares its panels', panelIds.length >= 10, panelIds.join(' '));
+
+const missing = [], blank = [];
+for (const id of panelIds) {
+	const seen = await page.evaluate(async (x) => {
+		const P = window.DaimondPanels;
+		[...document.querySelectorAll('[data-panel]')].forEach((e) => {
+			if (e.id !== 'panel-' + e.dataset.panel) return;
+			const p = e.dataset.panel;
+			if (p !== x && p !== 'rail' && p !== 'ai') { try { P.hide(p); } catch (e2) {} }
+		});
+		try { P.hide(x); } catch (e2) {}
+		P.show(x);
+		await new Promise(r => setTimeout(r, 400));
+		const el = document.getElementById('panel-' + x);
+		const b = el ? el.getBoundingClientRect() : { width: 0, height: 0 };
+		// Anything at all in the main area with a real box. The bug shows here as
+		// nothing: `body[data-mpanel="graph"]` matches no un-hide rule, so every
+		// panel in `.main` keeps `display: none !important`.
+		//
+		// NOT `.rail`. `responsive.css:89` hides `.panel:not(.rail)`, so the rail
+		// keeps its box whatever happens and counting it made this a check that
+		// could not fail — it passed against the broken build, which is the one
+		// thing a check must never do.
+		const anyMain = [...document.querySelectorAll('.main .panel:not(.rail)')]
+			.some((p) => p.getBoundingClientRect().height > 20);
+		return { onScreen: b.width > 0 && b.height > 0, anyMain,
+			mpanel: document.body.dataset.mpanel,
+			guest: window.DaimondSheet ? window.DaimondSheet.guest() : null };
+	}, id);
+	if (!seen.onScreen) missing.push(id + ' (mpanel=' + seen.mpanel + ', sheet=' + seen.guest + ')');
+	if (!seen.anyMain)  blank.push(id);
+	// The sheet is put away between panels so each one is asked of a clean shell.
+	await page.evaluate(() => { try { window.DaimondSheet.close(); } catch (e) {} });
+	await sleep(250);
+}
+check('phone: every panel the user can ask for arrives on screen',
+	missing.length === 0, missing.length ? ('never appeared: ' + missing.join('; ')) : panelIds.length + ' swept');
+check('phone: and none of them leaves the main area blank',
+	blank.length === 0, blank.length ? ('blank screen for: ' + blank.join(', ')) : '');
+await shot('shots/mobile-panel-sweep.png');
+
+// Back to the chat floor for the desktop half below.
+await page.evaluate(() => { try { window.DaimondSheet.close(); } catch (e) {} window.DaimondPanels.show('ai'); });
+await sleep(350);
 
 // ── 7. Grow back to desktop: everything reseats ────────────
 await page.setViewportSize({ width: 1500, height: 950 });

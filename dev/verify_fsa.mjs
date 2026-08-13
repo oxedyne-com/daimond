@@ -231,12 +231,14 @@ const pdfInFolder = await p.evaluate(async ({ folder, text }) => {
 	if (!row) return { listed: false };
 	row.click();
 	await new Promise((res) => setTimeout(res, 1800));
-	const fv  = document.querySelector('#doc-view .fileview');
+	// The PREVIEW panel for the rendering, the DOC panel for the editor: a file
+	// that is not characters is drawn in one and must not reach the other.
+	const fv  = document.querySelector('#pv-view .fileview');
 	const pre = document.querySelector('#doc-view .files-view-body');
 	return {
 		listed: true,
 		viewer: fv ? fv.getAttribute('data-viewer') : null,
-		embed:  !!document.querySelector('#doc-view .fileview embed'),
+		embed:  !!document.querySelector('#pv-view .fileview embed'),
 		pre:    pre ? pre.textContent.slice(0, 60) : null,
 	};
 }, { folder: FOLDER, text: ASCII_PDF });

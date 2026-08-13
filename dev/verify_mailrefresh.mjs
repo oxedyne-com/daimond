@@ -198,7 +198,7 @@ async function stub(page) {
 	await page.route('**/api/auth/challenge', r => r.fulfill(json({ ok: true, challenge: 'chal-mr', challenge_id: 'cid-1' })));
 	await page.route('**/api/auth/verify',    r => r.fulfill(json({ ok: true })));
 	await page.route('**/api/balance',        r => r.fulfill(json({ ok: true, credits_minor: 5000, currency: 'usd', entries: [] })));
-	await page.route('**/api/licence',        r => r.fulfill(json({ ok: true, licence: true, currency: 'usd' })));
+	await page.route('**/api/licence',        r => r.fulfill(json({ ok: true, licence: true, held: true, currency: 'usd' })));
 
 	await page.route('**/api/mail/accounts', r => {
 		if (r.request().method() !== 'GET') return r.fulfill(json({ ok: true }));

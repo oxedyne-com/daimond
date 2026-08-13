@@ -13,7 +13,7 @@
 // door and not on the product. So each door is driven here, separately, and each is asked the
 // question that matters: NOT "did it say something" but "did a PDF appear".
 //
-// The three properties, each with its control:
+// The properties, each with its control:
 //
 //   A. Unlocked, every door compiles.  Without this the refusals below prove nothing -- a build
 //      whose compiler was simply broken would pass every locked check.
@@ -22,6 +22,12 @@
 //   C. The refusals are useful and in the reader's language: the tool's answers the MODEL in
 //      English naming the tool and the pack, the button's answers a PERSON from the catalogue the
 //      page has been translated into -- checked by reading it in a second language.
+//   D. The catalogue and the build name the SAME pack.  `gateway/app.jdat` says what is on sale
+//      and `Tool::pack` says what a sale unlocks; they ship separately, and a build older than the
+//      catalogue fails open -- the page pushes a lock nothing recognises and the pack runs free.
+//   E. The SALE and not merely the gate: with the price standing in `gateway/app.jdat` the page
+//      reads it, the engine locks the tool and the compile is refused; with the price taken out of
+//      that same string nothing is on sale, nothing locks, and the very same call compiles.
 //
 //   node dev/verify_typstpack.mjs
 //
@@ -40,7 +46,12 @@
 // Neither removal turns everything red, and a verifier that only watched one of them would have
 // signed off a half-gated product.
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open, shot, SCRATCH } from './harness.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -55,10 +66,42 @@ const SRC  = 'paper.typ';
 const PDF  = 'paper.pdf';
 const BODY = '= A heading\n\nA paragraph, and $x^2 + y^2$.\n';
 
-/// The pack key, as `src/tools.rs::PACK_TYPST` spells it. The one literal this file needs: it is
-/// what a locked account looks like from outside, and reading it back from the build would make
-/// the fixture agree with the code by construction rather than by test.
-const PACK = 'typst';
+/// Every pack key the gateway's shipped catalogue sells, read out of `gateway/app.jdat` -- the
+/// configuration a customer would actually be charged against.
+///
+/// This file used to hard-code the key. It cannot any more, because the key is now half of an
+/// agreement between two files that are deployed separately: the catalogue names the pack, and the
+/// BUILD decides which tool that pack locks. A catalogue selling `drop01` against a build whose
+/// `Tool::pack` still answers an earlier key fails OPEN -- the page pushes a lock the engine does
+/// not recognise, and the pack runs free on every device. That is the same defect this gate was
+/// written to close, wearing a different hat, so the two are read independently here and compared.
+/// It is also why the key is the pack's DROP rather than its theme: the display name may be
+/// rewritten in the catalogue on the day, and nothing here or in the build moves when it is.
+/// The `tools` string exactly as `gateway/app.jdat` states it.
+function catalogueString() {
+	const src = fs.readFileSync(path.join(HERE, '..', 'gateway', 'app.jdat'), 'utf8');
+	const m = /"tools":\s*"([^"]*)"/.exec(src);
+	return m ? m[1] : '';
+}
+
+/// The catalogue string read the way `gateway/src/catalogue.rs::parse` reads it:
+/// `tool:price_minor:Name:Blurb`, comma separated, and an entry with no price is DROPPED --
+/// "a tool with no price is a tool nobody can buy". Deliberately dumb, because it is a mirror of
+/// Rust that Rust's own tests already cover; what it is here for is to put the SHIPPED
+/// configuration in front of the page rather than a fixture somebody typed.
+function parseCatalogue(str) {
+	return str.split(',').map((entry) => {
+		const parts = entry.trim().split(':');
+		const tool  = (parts.shift() || '').trim();
+		const price = parseInt((parts.shift() || '').trim(), 10);
+		const name  = (parts.shift() || '').trim();
+		const blurb = parts.join(':').trim();
+		if (!tool || !(price > 0)) return null;
+		return { tool, name: name || 'Daimond tool', blurb, price_minor: price };
+	}).filter(Boolean);
+}
+
+const catalogueKeys = () => parseCatalogue(catalogueString()).map(t => t.tool);
 
 const s = await open({ name: 'typstpack', connect: false });
 const p = s.page;
@@ -119,6 +162,26 @@ check('the existence check can see a file that is there, and only that file',
 	`source seen: ${seesPresent}, absent PDF seen: ${seesAbsent}`);
 if (!seesPresent || seesAbsent) {
 	console.log('\nthe instrument is unsound, so nothing below would mean anything');
+	await s.close();
+	process.exit(1);
+}
+
+// ── The key the two halves have to agree on ──────────────────────────
+
+const beltEarly = await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	return JSON.parse(mod.builtin_tools());
+});
+const beltEntry = beltEarly.find(t => t.tool === 'typst_compile');
+const PACK  = beltEntry && beltEntry.pack ? beltEntry.pack : '';
+const SELLS = catalogueKeys();
+check('the build locks on the pack key the gateway\'s catalogue actually sells',
+	!!PACK && SELLS.indexOf(PACK) >= 0,
+	`the build locks on "${PACK || '(nothing)'}", the catalogue sells ${
+		SELLS.length ? SELLS.map(k => '"' + k + '"').join(', ') : '(nothing)'
+	} — a build older than the catalogue fails OPEN, so rebuild the wasm before switching the price on`);
+if (!PACK) {
+	console.log('\nthe build sells nothing, so there is no gate below to measure');
 	await s.close();
 	process.exit(1);
 }
@@ -322,6 +385,73 @@ await remove(PDF);
 const toolBought = await runTool('typst_compile', { path: SRC });
 check('bought: and so does the model\'s tool',
 	(await exists(PDF)) === true, toolBought.slice(0, 160));
+
+// ── E. Driven by the PRICE in the shipped catalogue ──────────────────
+//
+// Everything above sets the lock by hand, which proves the gate and not the SALE. This phase
+// starts from `gateway/app.jdat` -- the file an operator edits to put a pack on sale -- and lets
+// the page do the rest: `/api/tools` answers what that catalogue sells, `www/js/tools.js` reads
+// it, pushes the shortfall into the wasm, and the compile is attempted for real. Nothing between
+// the price and the refusal is simulated except the gateway's own parse, which its Rust tests
+// cover.
+//
+// And the control is the one that matters commercially: TAKE THE PRICE OUT and the same run
+// compiles, because an entry with no price is not something anyone can buy and so is not
+// something anyone is locked out of. A gate that refused either way would be a gate on the tool
+// rather than on the sale.
+
+/// Serve `/api/tools` from a catalogue string, as the gateway would for an account holding
+/// nothing, and let the panel push what it makes of it into the engine.
+async function serveCatalogue(str) {
+	const tools = parseCatalogue(str).map(t => ({
+		tool: t.tool, name: t.name, blurb: t.blurb, price_minor: t.price_minor,
+		unlocked: false, currency: 'usd',
+	}));
+	await p.unroute('**/api/tools').catch(() => {});
+	await p.route('**/api/tools', r => r.fulfill({
+		status: 200, contentType: 'application/json',
+		body: JSON.stringify({ ok: true, credits_minor: 0, tools }),
+	}));
+	await p.evaluate(() => window.DaimondTools && window.DaimondTools.reload());
+	await sleep(900);
+	return p.evaluate(async () => {
+		const mod = await import('../pkg/oxedyne_daimond.js');
+		return { locked: mod.locked_packs(), tool: mod.tool_locked('typst_compile') };
+	});
+}
+
+const SHIPPED = catalogueString();
+if (SELLS.indexOf(PACK) < 0) {
+	console.log('  skip  the shipped catalogue sells no pack this build locks on, so the '
+		+ 'end-to-end phase was NOT RUN — see the first failure above');
+} else {
+	await setLocked('');
+	const engPriced = await serveCatalogue(SHIPPED);
+	check('priced in the catalogue: the page reads it and the engine locks the tool',
+		engPriced.tool === true && engPriced.locked.split(',').indexOf(PACK) >= 0,
+		`catalogue "${SHIPPED.slice(0, 60)}…" → ${JSON.stringify(engPriced)}`);
+
+	await remove(PDF);
+	const soldRefusal = await runTool('typst_compile', { path: SRC });
+	check('priced and unbought: the compile is refused and no PDF is written',
+		(await exists(PDF)) === false && soldRefusal.includes(PACK),
+		soldRefusal.slice(0, 140));
+
+	// The control: the same catalogue with the price taken out sells nothing, so nothing locks.
+	const unpriced = SHIPPED.replace(/^([^:,]+):\d+:/, '$1::');
+	const engFree = await serveCatalogue(unpriced);
+	check('price removed: the same catalogue locks nothing',
+		engFree.tool === false && engFree.locked === '',
+		`catalogue "${unpriced.slice(0, 60)}…" → ${JSON.stringify(engFree)}`);
+
+	await remove(PDF);
+	const freeAgain = await runTool('typst_compile', { path: SRC });
+	check('price removed: the very same call compiles the document',
+		(await exists(PDF)) === true, freeAgain.slice(0, 140));
+
+	await p.unroute('**/api/tools').catch(() => {});
+	await setLocked('');
+}
 
 // ── The panel no longer calls it free ────────────────────────────────
 //

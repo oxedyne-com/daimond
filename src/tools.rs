@@ -803,36 +803,68 @@ pub enum Bound {
     MayRead(String),
     /// Nothing OUTSIDE these prefixes may be read or written.
     ///
-    /// The presence of a single rule of this kind turns the bound into an allow-list.  A path that
-    /// is under none of them is refused whatever else the bound says -- which is the whole of the
-    /// claim that a daimon can only open the files in its Diamond's workspace.
+    /// The presence of a single rule of this kind turns the bound into an allow-list for BOTH
+    /// verbs.  A path that is under none of them is refused whatever else the bound says.
+    ///
+    /// **Nothing in this build produces one**, and the reason is the rule below it: a scope fences
+    /// writing and running, never reading, so the only thing that fences a read is a deny --
+    /// [`Bound::NoRead`] on Daimond's own directory.  See [`Bound::OnlyWriteUnder`], which is what
+    /// [`diamond_bounds`] emits for every place the user marked in.
+    ///
+    /// It is kept rather than deleted because both doors, [`compose`] and [`fence_spec`] enforce it
+    /// exactly as they always did, and it is the shape a surface that genuinely wants a read fence
+    /// would ask for -- a Diamond the user marks *"may not look outside"*, say, or a skill run on a
+    /// borrowed workspace.  Deleting it would leave that surface to reinvent the intersection rules
+    /// in [`compose`], which are the part of this file it would be worst to write twice.
     OnlyUnder(String),
     /// Nothing OUTSIDE these prefixes may be WRITTEN, and reading is not restricted at all.
     ///
-    /// A single verb fenced, where [`Bound::OnlyUnder`] fences both.  The presence of a single rule
-    /// of this kind makes writing an allow-list, exactly as [`Bound::OnlyUnder`] does for both
-    /// verbs.  [`fence_spec`] reads it too: a command is a write as far as this is concerned, so a
-    /// turn whose write allow-list names no place ON THE MACHINE gets no fence and runs nothing.
+    /// **This is what a scope IS, on every surface: a chat, a chat's worker and a Diamond's daimon
+    /// alike.**  [`diamond_bounds`] emits one per place the user marked in, and [`chat_bounds`] is
+    /// that same function.  The VERB decides the reach, and not the surface:
     ///
-    /// **NO LONGER WHAT A CHAT GETS**, and the reason is worth keeping because the argument it
-    /// replaces was a good one.  This was [`chat_bounds`]' rule: a chat is the user's own
-    /// conversation over their whole workspace, so *"summarise these ten files"* must not require
-    /// attaching ten files first, and a worker reading what the chat could already read is equal
-    /// reach rather than greater.  Writing was fenced because that is the verb that alters a disk.
+    /// * **Reading is free**, within what the user has already opened -- and no further.  The outer
+    ///   edge is the root the file tools resolve against, which is the folder the user opened or
+    ///   their own OPFS namespace, and it is enforced where a path becomes components rather than
+    ///   here: `crate::wasm::opfs::split_components` refuses an absolute path and a `..` that would
+    ///   climb out, [`crate::workspace::Workspace::resolve`] does the same on native, and neither
+    ///   consults a [`Bound`] at all.  So *"summarise these ten files"* does not require attaching
+    ///   ten files first, and a worker reading what the conversation could already read is equal
+    ///   reach rather than greater -- a person asked the question either way.
+    /// * **Writing goes where the user marked.**  That is the verb that alters a disk, and the mark
+    ///   is the whole of the permission: inside it nothing interrupts anybody.
+    /// * **A command counts as a write.**  There is no way to look at an `argv` and say whether it
+    ///   will alter anything -- that is the whole reason the fence exists rather than a list of safe
+    ///   programs -- so a command runs where writing is allowed and nowhere else.  A turn whose
+    ///   write allow-list names no place ON THE MACHINE gets no fence and runs nothing.
+    /// * **An unattended worker reads freely too**, which is the answer a reviewer will stop at, so
+    ///   it is written down: an `unsupervised` agent is not fenced out of reading.  It reaches
+    ///   exactly what the conversation that dispatched it reaches, which is the point of dispatching
+    ///   one, and it is [`ToolContext::net_risk`] that answers the fear underneath the question --
+    ///   an unattended actor loses the network on a clean turn as well as a dirty one, so a worker
+    ///   that reads widely cannot also post what it read.
     ///
-    /// What that missed is that reading is a blast radius too, and that the chat ITSELF was never
-    /// fenced at all -- only the workers it dispatched.  On 2026-08-11 a daimon in an ordinary chat
-    /// edited two files of the user's own book to work around a compiler limitation and put them
-    /// back only because it chose to, in a directory under no version control.  The user's answer
-    /// was a SCOPE and not a gate: *"by at the very least nominating a folder tree, at least the
-    /// potential blast radius can be limited"* -- Claude Code's working directory, where the
-    /// friction is paid once at the `cd` and nothing interrupts you inside it.  So a chat has a
-    /// WORKSPACE now, the way a Diamond does, [`chat_bounds`] composes exactly what
-    /// [`diamond_bounds`] does, and this variant has no producer.
+    /// **[`fence_spec`] reads this rule exactly as it reads [`Bound::OnlyUnder`]: the verb is NOT
+    /// split at the machine, and a command's fence is unchanged by any of the above.**  The rule is
+    /// not *"reading is free"* flat; it is **reading is free where Daimond can see what is read**.
+    /// A file tool names one path and hands back its text, with the taint, the egress check and the
+    /// untrusted envelope all still around it.  A command is opaque, and a command that could read
+    /// the whole grant while writing into its own folder is an exfiltration path with two legs:
+    /// read anything, copy it into the marked folder, and the daimon reads the marked folder and
+    /// has the network.  So the mark is the whole of a command's reach.  See [`fence_spec`], where
+    /// the same argument sits beside the code, and `dev/verify_scope.mjs`, where the kernel proves
+    /// it.
     ///
-    /// It is kept rather than deleted because it is still the honest expression of *"read freely,
-    /// write here"*, both doors and [`compose`] still enforce it, and the shape is the obvious one
-    /// for a surface that later wants it.  Nothing in this build produces one.
+    /// The history, because the argument has now been had twice and both halves of it are right.
+    /// This was the chat's rule until 2026-08-12, when [`chat_bounds`] was made to delegate to
+    /// [`diamond_bounds`] and this variant silently lost its only producer: nobody decided to fence
+    /// a chat's reading, it fell out of a delegation, and `dev/verify_chatfence.mjs` failed against
+    /// its own stated thesis for a day.  What the delegation got RIGHT, and what survives, is that
+    /// the chat ITSELF is fenced and not merely the workers it dispatches -- on 2026-08-11 a daimon
+    /// in an ordinary chat edited two files of the user's own book to work around a compiler
+    /// limitation, in a directory under no version control, and no worker was involved.  So the
+    /// surface distinction is gone and the verb distinction is back: one rule, both surfaces, both
+    /// doors.
     OnlyWriteUnder(String),
     /// A toolchain the user granted this Diamond (see [`Toolkit`]).
     ///
@@ -888,32 +920,40 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
     out
 }
 
-/// The bounds a chat runs with -- its own turn and every worker it dispatches: **the chat's
-/// workspace**, and nothing else.
+/// The bounds a chat runs with -- its own turn and every worker it dispatches: **writing and
+/// running confined to the chat's workspace, reading free**.
 ///
 /// **The same shape as [`diamond_bounds`], because a chat has a workspace the way a Diamond has
 /// one.**  It delegates rather than restating, so the two cannot drift: a chat fenced by a second
 /// copy of this reasoning would be fenced by whichever copy someone last remembered to edit, and
 /// the only difference between the surfaces is what fills the arguments.
 ///
-/// A chat used to be unfenced and its WORKERS fenced on the write verb alone (see
-/// [`Bound::OnlyWriteUnder`], which this no longer produces).  That left the conversation itself --
-/// the surface that actually edits things -- with the run of the whole tree, and on 2026-08-11 it
-/// edited two files of the user's own book uninvited.  The remedy the user asked for is a WORKING
-/// DIRECTORY and not a permission dialog: mark a folder into the workspace, and inside it nothing
-/// interrupts you.  The mark IS the permission, and this is where that sentence is enforced.
+/// The delegation is also where the reading went, once.  A chat used to be unfenced and its WORKERS
+/// fenced on the write verb alone; on 2026-08-12 this function was made to delegate, and since
+/// [`diamond_bounds`] fenced both verbs the whole surface silently lost free reading -- a decision
+/// nobody made.  Both halves are now true at once: the conversation is fenced as its workers are
+/// (2026-08-11, when a chat's own turn edited two files of the user's book uninvited), and the
+/// fence is on the verb (see [`Bound::OnlyWriteUnder`]).  The remedy the user asked for is a
+/// WORKING DIRECTORY and not a permission dialog: mark a folder into the workspace, and inside it
+/// nothing interrupts you.  The mark IS the permission, and this is where that sentence is
+/// enforced.
 ///
 /// **What the workspace is NOT is everything the paperclip attached.**  An attachment carries two
 /// independent things and only one of them reaches here.  Note and Read are a COST decision about
 /// what goes into the prompt -- Note names a path so the user need not type it, Read pulls the
 /// contents in -- they are mutually exclusive, they are both reading, and neither grants any reach.
 /// The workspace mark is separate and orthogonal: a path can be in the workspace *and* Read.  A
-/// caller that passed its whole attachment list here would have made Note into a grant, which is
-/// exactly what `dev/ATTACH_CONTRACT.md` §6 has always said it must not be.
+/// caller that passed its whole attachment list here would have made Note into a grant of WRITING
+/// and RUNNING, which is what `dev/ATTACH_CONTRACT.md` §6 has always said it must not be -- and is
+/// the whole of what the mark grants now that reading was never the paperclip's to give.
 ///
 /// `scratch` is the chat's own working folder under [`CHAT_ROOT`] -- always in the workspace and
 /// always writable, so an agent has somewhere to put what it produces without the user answering a
-/// question first, exactly as a Diamond's own directory is.  `workspace` are the paths the user
+/// question first, exactly as a Diamond's own directory is.  **By the FILE TOOLS, which is where
+/// that promise is kept**: it is browser storage, so it is not a directory a command can run in and
+/// it is not in the fence [`fence_spec`] builds.  Granting it there named a path no browser makes
+/// on disk, and the hand -- rightly refusing a grant it cannot resolve -- then refused every root
+/// beside it, so every `run` in every chat failed.  `workspace` are the paths the user
 /// marked into this chat's workspace.  `read_only` are those of them to be consulted rather than
 /// edited; there is no control for that on the chat surface yet, and the argument is here so that
 /// when one arrives it plugs into the rule [`diamond_bounds`] already enforces instead of inventing
@@ -930,7 +970,12 @@ pub fn chat_bounds(scratch: &str, workspace: &[String], read_only: &[String]) ->
     diamond_bounds(scratch, workspace, read_only)
 }
 
-/// The bounds a Diamond's daimon runs with: its own workspace, and nothing else.
+/// The bounds a Diamond's daimon runs with: **it may write and run in its own workspace and
+/// nowhere else, and it may read anywhere the user already opened.**
+///
+/// The verb decides, and [`Bound::OnlyWriteUnder`] is where that decision is written out in full --
+/// including why the fence a COMMAND runs inside does not split the verb, and why an unattended
+/// worker reads freely too.  Read it before changing anything here.
 ///
 /// `own_dir` is the Diamond's own directory (`diamonds/<id>`), which is always in scope and always
 /// writable -- a daimon that could reach nothing until the user attached something could not even
@@ -939,10 +984,13 @@ pub fn chat_bounds(scratch: &str, workspace: &[String], read_only: &[String]) ->
 ///
 /// `attached` are the workspace-relative files and directories the user has put in this Diamond's
 /// workspace.  `read_only` are those of them the user attached to be consulted rather than edited;
-/// they are expressed as an allow plus a write fence, because that is exactly what they are and it
-/// needs no third kind of rule.
+/// they are expressed as a write allow plus a write fence, because that is exactly what they are and
+/// it needs no third kind of rule.  They stay in the write allow-list rather than being dropped from
+/// it, and that is load-bearing in one place: [`start_dir`] picks a turn's starting directory out of
+/// that list, so a Diamond whose only attachment is read-only still has somewhere on the machine to
+/// run -- which `dev/verify_diamondcwd.mjs` asserts.
 ///
-/// An EMPTY result would mean an unbounded turn -- [`ToolContext::may_read`] treats no bounds as no
+/// An EMPTY result would mean an unbounded turn -- [`ToolContext::may_write`] treats no bounds as no
 /// restriction -- so this never returns empty: `own_dir` is always present.
 ///
 /// A path that normalises away is DROPPED rather than kept, and a scope left with no places at all
@@ -964,7 +1012,7 @@ pub fn diamond_bounds(own_dir: &str, attached: &[String], read_only: &[String]) 
     let mut places = 0usize;
     let own = normalise(own_dir);
     if !own.is_empty() {
-        out.push(Bound::OnlyUnder(own));
+        out.push(Bound::OnlyWriteUnder(own));
         places += 1;
     }
     for path in attached {
@@ -972,31 +1020,71 @@ pub fn diamond_bounds(own_dir: &str, attached: &[String], read_only: &[String]) 
         if p.is_empty() {
             continue;
         }
-        out.push(Bound::OnlyUnder(p));
+        out.push(Bound::OnlyWriteUnder(p));
         places += 1;
     }
     for path in read_only {
-        // Allowed in, and fenced against writing. A path in `read_only` that is not also in
-        // `attached` is still allowed by this, which is deliberate: the caller should not have to
-        // list a thing twice to say "readable, not writable".
+        // In the scope, and fenced against writing. A path in `read_only` that is not also in
+        // `attached` is still in the scope by this, which is deliberate: the caller should not have
+        // to list a thing twice to say "consult this, do not edit it".
         let p = normalise(path);
         if p.is_empty() {
             continue;
         }
-        out.push(Bound::OnlyUnder(p.clone()));
+        out.push(Bound::OnlyWriteUnder(p.clone()));
         out.push(Bound::NoWrite(p));
         places += 1;
     }
     if places == 0 {
-        // A scope was asked for and none could be expressed.  The deny rules alone would leave an
-        // allow-list-free turn, which means NO restriction -- the opposite of what was asked.
+        // A scope was asked for and none could be expressed.  The deny rules alone would leave a
+        // turn with no write allow-list, which means NO restriction on writing -- the opposite of
+        // what was asked.
         return vec![Bound::Nowhere];
     }
-    // Daimond's own directory is out of bounds inside a Diamond too. Attaching `.daimond` would
-    // otherwise hand a daimon the rules about what agents may do.
+    // Daimond's own directory is out of bounds inside a Diamond too, and this is the ONLY rule here
+    // that fences a read: attaching `.daimond` would otherwise hand a daimon the rules about what
+    // agents may do, and now that reading is free everywhere else, the deny is the whole of what
+    // stops it. It is a deny rather than a hole in an allow-list precisely so that it does not
+    // depend on the scope naming anything.
     out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
     out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
     out
+}
+
+/// The first place in an allow-list that is a directory on the machine, or the empty string when
+/// there is none.
+///
+/// The one answer to *"where does this scope start?"*, shared by everything that has to start
+/// somewhere: [`ToolContext::default_cwd`] for a command, and [`crate::wasm::pty::pty_request`] for
+/// a terminal.  They asked it separately until 2026-08-13, and the terminal's answer was "wherever
+/// the panel said", which is the Diamond's own directory -- so every terminal was refused as
+/// starting outside its own fence while the command beside it started in the attached folder and
+/// ran.  One function, so the two cannot drift again.
+///
+/// **A path naming Daimond's own store is skipped.**  A Diamond's own directory and a chat's
+/// scratch live in the browser's storage whatever folder is open (see [`is_store_path`]), so
+/// `<granted-root>/diamonds/<id>` is a directory the hand cannot canonicalise: starting anything
+/// there names a path the user never chose and fails for a reason that points at the wrong thing.
+/// A Diamond therefore starts in its first ATTACHED path, and one with no attachment has nowhere
+/// on the machine to start at all -- which the callers say in those words rather than sending the
+/// hand a directory it will not find.
+///
+/// # Arguments
+/// * `bounds` - The turn's [`Bound`] rules, in the order they were declared.
+pub fn start_dir(bounds: &[Bound]) -> String {
+    for b in bounds {
+        // Both allow-lists, because both name places work could belong in -- a Diamond's
+        // attachments and a chat's.
+        let p = match b {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => p,
+            _ => continue,
+        };
+        let n = normalise(p);
+        if !n.is_empty() && !is_store_path(&n) {
+            return n;
+        }
+    }
+    String::new()
 }
 
 // ── The toolchain a build needs and the workspace does not hold ──────────────
@@ -1856,8 +1944,15 @@ fn env_json_of(env: &[(String, String)]) -> String {
 /// layer down, and only the mechanism changes: today the guarantee is structural because the
 /// daimon's root is a different filesystem; with a kernel fence it stays structural.
 ///
-/// Two things this function must get right, because both are silent when wrong:
+/// Three things this function must get right, because all three are silent when wrong:
 ///
+/// * **A path in Daimond's own store is not a path on the machine.** A chat's scratch, a Diamond's
+///   own directory and a mailbox live in the browser's storage whatever folder the user opened
+///   (see [`is_store_path`]), so mapping one under the granted root names a directory that does
+///   not exist -- and the hand refuses a fence it cannot resolve, which refuses the turn's REAL
+///   folders along with it.  This was live: every `run` in every chat was refused, because a chat
+///   always carries its scratch.  So [`is_store_path`] is filtered out here, exactly as
+///   [`ToolContext::default_cwd`] filters it when choosing where a command starts.
 /// * **A turn with no allow-list is not an unfenced turn.** [`may_read`](ToolContext::may_read)
 ///   treats an empty bound list as no restriction, which is correct for a file tool jailed by the
 ///   workspace root -- and catastrophic here, where there is no jail but the fence itself.  So an
@@ -1911,60 +2006,58 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
     // NOT then make the turn unscoped -- that hands back the same root through the `!scoped`
     // fallback below -- so `scoped` reads the rules that were DECLARED and `allow` the places they
     // named, and a turn that declared a scope naming nowhere gets a spec with no roots.
-    let scoped = bounds.iter().any(|b| matches!(b, Bound::OnlyUnder(_)));
+    //
+    // A path in the STORE is dropped for the same reason and a stronger one: it is not a place on
+    // this machine at all. `chats/<id>/work`, `diamonds/<id>` and `mail/<address>` resolve to the
+    // browser's own storage whatever folder is open (see `is_store_path` and
+    // `crate::wasm::opfs::resolve_root`), so `abs` would invent `<granted-root>/chats/<id>/work` --
+    // a directory nobody made, on a disk the scratch was designed never to touch. The hand then
+    // refuses the WHOLE fence, and is right to: "the fence was told to grant rw access to ...,
+    // which cannot be resolved. Granting nothing there would leave the command failing for a
+    // reason nobody could see." So every `run` in every chat was refused, including the ones whose
+    // user HAD marked a real folder in -- a chat always carries its scratch, and one unresolvable
+    // grant takes the whole fence down with it. `default_cwd` has skipped these paths since
+    // `hand/REVIEW.md` §1.18; this is the other half of that fix, which said where a command
+    // starts and left what it may touch alone.
+    // ── BOTH allow-lists, read as one ───────────────────────────────────────
+    //
+    // `Bound::OnlyWriteUnder` -- the rule every scope in this build is made of -- leaves READING
+    // free at the file tools, and this is the one place that deliberately does not follow it.  A
+    // command's fence names the marked places for reading as well as for writing, exactly as it
+    // would for a `Bound::OnlyUnder`, so nothing about the verb split reaches the machine.
+    //
+    // **THE RULE IS NOT "READING IS FREE" FLAT. It is: reading is free where Daimond can see what
+    // is read.**  A file tool names one path and hands back its text, and every other rule in this
+    // app still applies around it -- the taint, the egress check, the untrusted envelope.  A
+    // command is opaque: nobody can look at an `argv` and say what it will do, which is the same
+    // sentence that makes it a write.
+    //
+    // Follow the tidy version one step further and it is stark. A command that could read the whole
+    // grant AND write into its own folder is **an exfiltration path with two legs**: read anything
+    // on the machine, copy it into the marked folder, and the daimon reads the marked folder and
+    // has the network.  Neither leg looks like anything on its own.  So the mark is the whole of a
+    // command's reach, both verbs, and `dev/verify_scope.mjs` proves through the KERNEL that a
+    // command working for one Diamond cannot read the folder attached to another -- with a file
+    // tool reading that same folder freely in the check beside it, so the refusal is "no access to
+    // THAT" and not "no access at all".
+    //
+    // A future reader will notice the inconsistency between this and `may_read`, think it an
+    // oversight, and split the verbs here to be tidy.  It is not an oversight.  The unit test
+    // `test_the_bytes_a_scoped_diamond_hands_the_fence_00` pins this spec byte for byte, and putting
+    // the granted root into `ro` turns it and the kernel checks red together.
+    //
+    // Read as one list rather than as two branches, because two branches is how the store-path
+    // filter and the toolkit resolution below came to exist on only one of them.
+    let scoped = bounds.iter()
+        .any(|b| matches!(b, Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_)));
     let allow: Vec<String> = bounds.iter()
-        .filter_map(|b| match b { Bound::OnlyUnder(p) => Some(normalise(p)), _ => None })
+        .filter_map(|b| match b {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => Some(normalise(p)),
+            _ => None,
+        })
         .filter(|p| !p.is_empty())
+        .filter(|p| !is_store_path(p))
         .collect();
-    // ── A chat's worker: reads freely, writes where it was told, runs only there ──
-    //
-    // Answered here, complete, and returned: a write allow-list is a different fence from the one
-    // below and composing the two would produce a third thing neither surface asked for.
-    //
-    // A command is a WRITE as far as this is concerned. There is no way to look at an `argv` and
-    // say whether it will alter anything -- that is the whole reason the fence exists rather than a
-    // list of safe programs -- so a command runs where writing is allowed and nowhere else.
-    //
-    // The store paths drop out. A chat's scratch lives in the browser's storage; mapping it under
-    // the granted root would invent a folder on the user's disk that they never granted, and would
-    // hand back a fence for a turn that should have none. So a chat whose user has attached
-    // nothing gets NO ROOTS, the hand refuses, and "no attachment, no command" is a consequence of
-    // where the scratch lives rather than a second rule that could drift from this one.
-    if !scoped && bounds.iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_))) {
-        let mut rw: Vec<String> = Vec::new();
-        for b in bounds {
-            if let Bound::OnlyWriteUnder(p) = b {
-                let n = normalise(p);
-                if n.is_empty() || is_store_path(&n) {
-                    continue;
-                }
-                let a = abs(&n);
-                if !rw.contains(&a) { rw.push(a); }
-            }
-        }
-        if rw.is_empty() {
-            return FenceSpec { rw: Vec::new(), ro: Vec::new(), deny: Vec::new(), net: false };
-        }
-        // Reading is free, so the granted root comes in read-only -- which is what "a worker reads
-        // anywhere the chat can" means for a command, and is strictly less than the chat's own
-        // turn, whose fence is that same root READ AND WRITE.
-        let mut ro: Vec<String> = Vec::new();
-        let root_s = root.to_string();
-        if !rw.contains(&root_s) {
-            ro.push(root_s);
-        }
-        let mut deny: Vec<String> = bounds.iter()
-            .filter_map(|b| match b { Bound::NoRead(p) => Some(abs(p)), _ => None })
-            .collect();
-        let own = abs(DAIMOND_DIR);
-        if !deny.contains(&own) {
-            deny.push(own);
-        }
-        // No toolkit. A toolchain is a grant the user made to a Diamond, and a chat has no such
-        // record -- so there is nothing to resolve, and nothing is inferred from what was asked to
-        // run.
-        return FenceSpec { rw, ro, deny, net: !tainted };
-    }
     // A NoWrite prefix takes writing away. It may sit ABOVE an allowed path or BELOW it, and both
     // directions matter: above, the whole grant becomes read-only; below, the grant stays writable
     // and the nested prefix is re-stated as a read-only root the hand carves out of it.
@@ -1976,6 +2069,9 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
     }
     for w in &no_write {
         // Nested inside a grant, and not Daimond's own directory (which is denied outright below).
+        // A store path cannot arrive here at all: it is not in `allow`, and no allowed prefix
+        // encloses one -- `chats`, `diamonds` and `mail` are whole first segments, and the only
+        // prefix above them is the empty one, which is dropped.
         if !under(w, DAIMOND_DIR) && allow.iter().any(|a| under(w, a)) && !allow.contains(w) {
             let a = abs(w);
             if !ro.contains(&a) { ro.push(a); }
@@ -1991,7 +2087,11 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
                 let n = normalise(p);
                 // A carve-out that names nowhere carves nothing. Unguarded it read as the granted
                 // root, which is not a hole in the fence but the removal of it.
-                if n.is_empty() {
+                //
+                // Nor does one naming the store: it is browser storage and not a directory on this
+                // machine, so granting it is the unresolvable grant the allow-list above drops --
+                // and it would arrive here even on a turn with no allow-list at all.
+                if n.is_empty() || is_store_path(&n) {
                     continue;
                 }
                 if !scoped || allow.iter().any(|a| under(&n, a)) {
@@ -2002,9 +2102,8 @@ pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
             Bound::NoRead(p) => deny.push(abs(p)),
             // A toolkit names paths on the machine, not in the workspace, so `abs` would be wrong
             // for it and it is resolved below against the home the hand reported instead.
-            // `Nowhere` returned above, before any of this was computed, and a write allow-list
-            // returned above too -- a turn carrying one never reaches here, and one that somehow
-            // did would be a Diamond scope, whose own allow-list already decides it.
+            // `Nowhere` returned above, before any of this was computed. Both allow-lists were read
+            // into `allow` above, together, so neither is read again here.
             Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::NoWrite(_)
                 | Bound::Toolkit(_) | Bound::Nowhere => {},
         }
@@ -2514,9 +2613,11 @@ pub fn set_mode(m: Mode) -> Mode {
 
 // ── Tools that are sold rather than shipped ─────────────────────────
 //
-// Most of the belt is what Daimond IS, and is free.  A pack is a tool the gateway sells: the
-// account buys an entitlement once, keeps it for good, and the tool runs on this device because
-// that account holds it.  The catalogue that names the packs and prices them lives in the gateway
+// Most of the belt is what Daimond IS, and is free.  A pack is a BUNDLE the gateway sells: the
+// account buys one entitlement once, keeps it for good, and every tool in that bundle runs on this
+// device because that account holds it.  A pack may hold one tool on the day it is dropped and
+// three by the next; what is bought is the pack, not the tool.  The catalogue that names the packs
+// and prices them lives in the gateway
 // (`crate::catalogue` there, one table, the same one the till charges against), so nothing here
 // knows a price or a name -- only which packs this account has NOT bought.
 //
@@ -2543,20 +2644,39 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// The catalogue key under which Typst typesetting is sold.
+/// The catalogue key of the first drop, the pack Typst typesetting is sold in.
 ///
-/// The ONE place the pack's identifier is written down, so renaming it is a single edit here and a
-/// matching edit to the `tools` catalogue on the gateway's `/api/checkout/pack` route.  The
-/// gateway's entitlement key, the Stripe `metadata[pack]` and this constant are all the same
-/// string; the pack's display NAME and its price are the catalogue's to state and are deliberately
-/// absent from this build.
-pub const PACK_TYPST: &str = "typst";
+/// **The key is an invoice line; the NAME is a poster; they are not the same string.**  This is the
+/// key.  It is written into every entitlement the gateway records, into the Stripe `metadata[pack]`
+/// of every session that sells the pack, and into the lock the page pushes back into this build.
+/// Every sale ever made is filed under it, so it may be changed before the first sale and NEVER
+/// after: a later spelling leaves the accounts that already paid holding a key nothing recognises.
+/// A key should therefore be stable and boring.  The pack's display NAME, its blurb and its price
+/// are the catalogue's to state, are editable from the operator console without a rebuild, and are
+/// deliberately absent from this build -- so what a buyer reads can be rewritten the morning of the
+/// drop while what they bought stays put.
+///
+/// **Keyed by its DROP and not by its theme.**  A pack is a bundle at release time rather than a
+/// product line: tools are built in parallel and whatever is ready is bundled and dropped on a
+/// semi-regular schedule, so the theme is settled LATE, at the till, and the key has to be settled
+/// EARLY, at the bench.  A theme-shaped key forces the early decision that the late one then
+/// contradicts -- this pack was briefly keyed `research` for a bundle whose one member typesets --
+/// and the contradiction becomes unfixable the moment somebody has paid.  `drop01` cannot be
+/// contradicted by whatever the drop turns out to contain.
+///
+/// **The key names the PACK and never the tool.**  A tool that joins the bundle later joins by
+/// answering this same key from [`Tool::pack`]; a key spelled `typst` would leave the second member
+/// nowhere to go but a catalogue entry of its own, which is the buyer paying twice for one drop.
+///
+/// The ONE place the pack's identifier is written down here, so a change is this line and a
+/// matching edit to the `tools` catalogue on the gateway's `/api/checkout/pack` route.
+pub const PACK_DROP01: &str = "drop01";
 
 /// Tell this build which packs the account has not bought.
 ///
 /// Called by the page after each `/api/tools` read, and by nothing else.  The list is comma
 /// separated, as the catalogue spells its keys; blank entries are dropped and case is folded, so a
-/// page that passes `"Typst, "` says the same thing as one that passes `"typst"`.
+/// page that passes `"DROP01, "` says the same thing as one that passes `"drop01"`.
 ///
 /// # Arguments
 /// * `csv` - The locked pack keys, comma separated.  Empty locks nothing.
@@ -2577,7 +2697,7 @@ pub fn locked_packs() -> Vec<String> {
 /// Whether `pack` is sold-but-unbought on this account.
 ///
 /// # Arguments
-/// * `pack` - The catalogue key, e.g. [`PACK_TYPST`].
+/// * `pack` - The catalogue key, e.g. [`PACK_DROP01`].
 pub fn pack_locked(pack: &str) -> bool {
     let want = pack.trim().to_lowercase();
     LOCKED_PACKS.with(|c| c.borrow().iter().any(|p| *p == want))
@@ -3627,6 +3747,11 @@ impl ToolContext {
 
     /// Whether this turn may write to `path`, which is workspace-relative.
     ///
+    /// **This is the door the scope is enforced at**, now that a scope fences the write verb alone
+    /// (see [`Bound::OnlyWriteUnder`]): every place the user marked in is in the write allow-list,
+    /// and nothing else is.  [`ToolContext::may_read`] is the same walk with the write allow-list
+    /// left out, which is what "reading is free" means in code.
+    ///
     /// The comparison is made against the normalised path (see [`normalise`]), so
     /// `.daimond/skills/x.md`, `./.daimond/skills/x.md`, `.daimond//skills/x.md` and `a/../.daimond/skills/x.md`
     /// are one path and not four ways past the guard.
@@ -3638,12 +3763,14 @@ impl ToolContext {
             return true;
         }
         let p = normalise(path);
+        // The both-verb allow-list, which nothing in this build declares and which every rule here
+        // still honours if something does.
         if !self.within_allow_list(&p) {
             return false;
         }
-        // The write-only fence, which a chat's worker carries and a Diamond's does not. Tested
-        // beside the other allow-list rather than inside it: they answer different questions, and
-        // a turn can carry either, both or neither.
+        // The write allow-list: what a chat's workspace and a Diamond's workspace both are. Tested
+        // beside the other rather than inside it: they answer different questions, and a turn can
+        // carry either, both or neither.
         if !self.within_write_allow_list(&p) {
             return false;
         }
@@ -3655,43 +3782,46 @@ impl ToolContext {
 
     /// Why a path was refused, in the model's own terms, so it can recover rather than retry.
     ///
-    /// The two fences fail for opposite reasons and a single message would misdescribe one of
-    /// them: an allow-list refusal means "that is not in this Diamond's workspace", and a deny
-    /// refusal means "that is Daimond's own directory".  A model told the wrong one tries the
-    /// wrong repair.
+    /// The fences fail for different reasons and a single message would misdescribe most of them.
+    /// A model told the wrong one tries the wrong repair, so there are four sentences here:
+    ///
+    /// * outside the workspace, and the caller was WRITING -- *"that is not in this chat's
+    ///   workspace"*, with the folders that are, since a model that knows where it may write
+    ///   recovers in this turn rather than in the next one;
+    /// * inside the workspace and marked to be consulted -- *"attached to be read, not edited"*;
+    /// * Daimond's own directory -- *"those are not yours"*, for either verb;
+    /// * and outside a both-verb allow-list, which nothing in this build declares but every rule
+    ///   here still honours -- the same sentence as the first, because it is the same problem.
+    ///
+    /// A refusal for READING outside the workspace is gone, because that read is no longer refused
+    /// (see [`Bound::OnlyWriteUnder`]).
     ///
     /// # Arguments
     /// * `path` - The workspace-relative path that was refused.
     /// * `writing` - Whether the refused call was a write.
     pub fn refusal(&self, path: &str, writing: bool) -> String {
         let p = normalise(path);
-        if !self.within_allow_list(&p) {
+        let outside = !self.within_allow_list(&p)
+            || (writing && !self.within_write_allow_list(&p));
+        if outside {
             // A chat's own words. The Diamond sentence below points at a Diamond that does not
             // exist and at a panel that is not where a chat's scope is changed, and a model told to
             // repair the wrong thing repairs the wrong thing.
             if self.is_chat_scoped() {
                 return fmt!(
-                    "Refused: '{}' is not in this chat's workspace. This chat's workspace is: {}. \
-                    Inside it you may read, write and create freely and need ask nobody for \
-                    anything; outside it there is nothing to ask for. Address paths under those \
-                    folders -- a search or a listing must name one rather than starting at '.'. If \
-                    you need another, say which and let the user add it with the paperclip. Note \
-                    and Read do not add anything: they only decide what is quoted into the \
-                    conversation.",
+                    "Refused: '{}' is not in this chat's workspace, so it cannot be written or run \
+                    in. This chat's workspace is: {}. Inside it you may write and create freely and \
+                    need ask nobody for anything. Reading is not fenced -- you may read anything the \
+                    user can -- so if you only meant to look at it, read it. To CHANGE it, say which \
+                    path you need and let the user add it with the paperclip. Note and Read add \
+                    nothing: they only decide what is quoted into the conversation.",
                     path, self.allowed_places());
             }
             return fmt!(
-                "Refused: '{}' is not in this Diamond's workspace. A daimon can only open the \
-                files its Diamond holds -- the user puts them there, and you cannot add to it \
-                yourself. Work with what is in scope, or say what you would need and let the user \
-                attach it.", path);
-        }
-        if writing && !self.within_write_allow_list(&p) {
-            return fmt!(
-                "Refused: '{}' may be read here but not written. You are working alone, so you \
-                may read anywhere the user can, and change only what they put in scope. Write what \
-                you produce into your own working folder, or say which path you would need in \
-                scope and let the user put it there.", path);
+                "Refused: '{}' is not in this Diamond's workspace, so it cannot be written or run \
+                in. This Diamond's workspace is: {}. Reading is not fenced -- you may read anything \
+                the user can -- so if you only meant to consult it, read it. To CHANGE it, say what \
+                you would need and let the user attach it.", path, self.allowed_places());
         }
         if writing {
             return fmt!(
@@ -3730,44 +3860,49 @@ impl ToolContext {
         if !prefix.is_empty() && !is_store_path(&prefix) {
             return prefix;
         }
-        for b in &self.no_write {
-            // Both allow-lists, because both name places a command could belong in -- a Diamond's
-            // attachments and a chat's. The store paths are skipped in either: a chat's scratch and
-            // a Diamond's own directory live in the browser's storage, which is not a place on this
-            // computer, and starting a command there would name a path the user never chose.
-            let p = match b {
-                Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => p,
-                _ => continue,
-            };
-            let n = normalise(p);
-            if !n.is_empty() && !is_store_path(&n) {
-                return n;
-            }
-        }
-        String::new()
+        start_dir(&self.no_write)
     }
 
-    /// Whether this turn declared an allow-list at all, i.e. whether it is scoped to a Diamond.
+    /// Whether this turn is confined to a workspace at all -- a Diamond's or a chat's.
+    ///
+    /// Either allow-list answers yes.  A scope in this build is [`Bound::OnlyWriteUnder`], so
+    /// reading only the both-verb rule would report every scoped turn as unscoped, and the caller
+    /// that asks -- [`Tool::Run`], deciding which sentence a turn with nowhere to run gets --
+    /// would give a confined turn an ordinary turn's answer.
     ///
     /// The DECLARATION decides, not what survived it: a scope that named only Daimond's own store
     /// is still a scope, and reading it as an unscoped turn would start its commands at the granted
     /// root -- the whole grant, for a turn the user confined to one Diamond.
     pub fn is_scoped(&self) -> bool {
-        self.no_write.iter().any(|b| matches!(b, Bound::OnlyUnder(_)))
+        self.no_write.iter()
+            .any(|b| matches!(b, Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_)))
     }
 
-    /// Whether an allow-list is declared at all, and if so whether `path` is inside it.
+    /// Whether this turn may run a command in `path`, which is workspace-relative.
     ///
-    /// True when no [`Bound::OnlyUnder`] rule is present, because an absent allow-list bounds
-    /// nothing -- that is the ordinary turn, and the deny rules speak for themselves.
+    /// **A command is a write** -- there is no way to look at an `argv` and say whether it alters
+    /// anything -- so the working directory of one has to be inside the workspace and not merely
+    /// readable.  Since reading became free this could not be asked as `may_read` any more: that
+    /// question now answers yes for every path in the jail, and the guard it used to be would have
+    /// let a command start anywhere the file tools can look.  The fence downstream would still have
+    /// refused it, and a refusal from the kernel names an absolute path the user never chose.
     ///
-    /// A prefix that normalises away is DECLARED and matches nothing.  Both halves are load-bearing
-    /// and they pull opposite ways: counting it as declared is what stops a scope naming nowhere
-    /// from reading as no scope at all, and matching nothing is what stops it from reading as every
-    /// path -- which is what [`under`] says of the empty prefix, and would be the whole workspace.
+    /// Not [`ToolContext::may_write`] either, which is the neighbouring mistake: a folder attached
+    /// to be CONSULTED is a perfectly good place to run `ls` or `grep` in, and every Diamond whose
+    /// only attachment is read-only would otherwise have nowhere to run at all
+    /// (`dev/verify_diamondcwd.mjs` asserts that it does).  So this is exactly the two allow-lists
+    /// and neither deny.
     ///
     /// # Arguments
-    /// * `p` - An already-normalised workspace-relative path.
+    /// * `path` - The workspace-relative directory a command would start in.
+    pub fn may_run_in(&self, path: &str) -> bool {
+        if self.no_write.is_empty() {
+            return true;
+        }
+        let p = normalise(path);
+        self.within_allow_list(&p) && self.within_write_allow_list(&p)
+    }
+
     /// Whether a WRITE allow-list is declared, and if so whether `path` is inside it.
     ///
     /// The same shape as [`ToolContext::within_allow_list`] and the same two load-bearing halves:
@@ -3796,10 +3931,9 @@ impl ToolContext {
 
     /// Whether this turn declared a WRITE allow-list.
     ///
-    /// As [`ToolContext::is_scoped`], the DECLARATION decides and not what survived it.  Nothing in
-    /// this build produces one -- see [`Bound::OnlyWriteUnder`] -- so this is false for every turn
-    /// the app composes, and it is kept beside the rule it reads rather than deleted out from under
-    /// it.
+    /// As [`ToolContext::is_scoped`], the DECLARATION decides and not what survived it.  True for
+    /// every scoped turn this build composes -- a chat's, a chat worker's and a Diamond's alike --
+    /// since [`Bound::OnlyWriteUnder`] is what a scope is made of.
     pub fn is_write_scoped(&self) -> bool {
         self.no_write.iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_)))
     }
@@ -3817,9 +3951,14 @@ impl ToolContext {
     /// caller has to remember to set -- the same reasoning [`Tool::asserted_by`] is written from:
     /// in this build the scope IS the identity.  A chat's own working folder is always in its
     /// scope and always lives under [`CHAT_ROOT`]; a Diamond's own directory never does.
+    ///
+    /// Both allow-lists are read, for the reason [`ToolContext::is_scoped`] gives: a scope is an
+    /// [`Bound::OnlyWriteUnder`] now, and a test that read only the other rule would answer "not a
+    /// chat" for every chat there is -- handing every chat the Diamond's sentence, which names a
+    /// panel that is not where a chat's workspace is changed.
     pub fn is_chat_scoped(&self) -> bool {
         self.no_write.iter().any(|b| match b {
-            Bound::OnlyUnder(p) => {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => {
                 let n = normalise(p);
                 !n.is_empty() && under(&n, CHAT_ROOT)
             },
@@ -3827,30 +3966,49 @@ impl ToolContext {
         })
     }
 
-    /// The places this turn may reach, spelled for a model to read, or `"nothing at all"`.
+    /// The places this turn may WRITE, spelled for a model to read, or `"nothing at all"`.
     ///
     /// A refusal that says only where a path is NOT leaves the model guessing at where it may go,
     /// and a model guessing spends a round trip per guess.  This is measured rather than assumed:
-    /// a chat scoped to `papers` meets `Refused: '.' is not in this chat's workspace` for
-    /// `file_search`, `file_glob` and `file_list` alike, because they all default to the root --
-    /// and knowing the answer is `papers` is the difference between recovering in this turn and
-    /// recovering in the next one.
+    /// a chat scoped to `papers` meets `Refused: 'x' is not in this chat's workspace` for every
+    /// write outside it, and knowing the answer is `papers` is the difference between recovering in
+    /// this turn and recovering in the next one.
+    ///
+    /// Both allow-lists, deduplicated: a turn may carry either, and a path in both must be named
+    /// once.  Since reading is free (see [`Bound::OnlyWriteUnder`]) these are the places a write or
+    /// a command may go, which is exactly what the refusals that quote them are about.
     fn allowed_places(&self) -> String {
-        let places: Vec<String> = self.no_write.iter()
-            .filter_map(|b| match b {
-                Bound::OnlyUnder(p) => {
-                    let n = normalise(p);
-                    if n.is_empty() { None } else { Some(n) }
-                },
-                _ => None,
-            })
-            .collect();
+        let mut places: Vec<String> = Vec::new();
+        for b in &self.no_write {
+            let p = match b {
+                Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => normalise(p),
+                _ => continue,
+            };
+            if !p.is_empty() && !places.contains(&p) {
+                places.push(p);
+            }
+        }
         if places.is_empty() {
             return fmt!("nothing at all");
         }
         places.join(", ")
     }
 
+    /// Whether a both-verb allow-list is declared, and if so whether `p` is inside it.
+    ///
+    /// True when no [`Bound::OnlyUnder`] rule is present, because an absent allow-list bounds
+    /// nothing.  **That is every turn this build composes** -- a scope fences the write verb (see
+    /// [`Bound::OnlyWriteUnder`]) -- so this is the rule that makes reading free, by declaring
+    /// nothing rather than by exempting anything.  It is still enforced, unchanged, for a caller
+    /// that declares one.
+    ///
+    /// A prefix that normalises away is DECLARED and matches nothing.  Both halves are load-bearing
+    /// and they pull opposite ways: counting it as declared is what stops a scope naming nowhere
+    /// from reading as no scope at all, and matching nothing is what stops it from reading as every
+    /// path -- which is what [`under`] says of the empty prefix, and would be the whole workspace.
+    ///
+    /// # Arguments
+    /// * `p` - An already-normalised workspace-relative path.
     fn within_allow_list(&self, p: &str) -> bool {
         let mut declared = false;
         for b in &self.no_write {
@@ -3870,6 +4028,15 @@ impl ToolContext {
     }
 
     /// Whether this turn may read `path`, which is workspace-relative.
+    ///
+    /// **Reading is free**, and this function is where that is true rather than merely intended: a
+    /// scope declares no [`Bound::OnlyUnder`], so `within_allow_list` says yes, and what is left is
+    /// the deny on Daimond's own directory.  A chat, its workers and a Diamond's daimon all reach
+    /// every path their file root can address, which is the folder the user opened or their own
+    /// OPFS namespace -- and no further, because the root is not a rule in here but the thing paths
+    /// are resolved against (`crate::wasm::opfs::split_components`,
+    /// [`crate::workspace::Workspace::resolve`]).  See [`Bound::OnlyWriteUnder`] for why the verb is
+    /// split this way and where it deliberately is not.
     ///
     /// The carve-out wins over the fence, because a skill's own `references/` are part of the
     /// skill: a skill that shipped a document it quotes must be able to read it, whatever it
@@ -4666,6 +4833,43 @@ pub struct SearchAnswer {
     pub results: Vec<SearchHit>,
 }
 
+/// What the document panel says it drew, when a file was shown to the user.
+///
+/// Filled by [`crate::wasm::doc::show`] from the verdict `www/js/viewer.js` returns, and read
+/// only by [`Tool::show_result`].  It lives here rather than in the wasm edge for the reason
+/// [`SearchAnswer`] does: the shape is the tool's, the transport is the edge's, and the English
+/// composed from it is target-agnostic and therefore testable on a build with no browser in it.
+///
+/// **Nothing here is decided in Rust.**  Which formats have a viewer, and which of them a given
+/// file falls to, is one table in `viewer.js`, and this carries its answer across rather than
+/// holding a second copy that would drift the first time a format changed tier -- at which point
+/// the model would promise a picture over a hex dump, to a user who cannot see the disagreement.
+#[derive(Clone, Debug, Default)]
+pub struct Shown {
+    /// Which tier drew it: `doc`, `image`, `audio`, `video`, `frame`, `json`, `table`,
+    /// `markdown`, `editor`, `hex` or `empty`.
+    pub tier: String,
+    /// The format's variant name, e.g. `Pdf`.
+    pub media: String,
+    /// The format's English label, e.g. `PDF document`.
+    pub label: String,
+    /// How many bytes the file holds.
+    pub size: u64,
+    /// Which page a paged document was actually opened at, or `None` for the top.
+    ///
+    /// **What the panel used, not what the tool asked for**, and the two differ: a show with no
+    /// page named leaves a document where it was last aimed, so a rebuilt PDF comes back in the
+    /// reader's place rather than at page 1.  A model told its own argument back would say "page
+    /// 1" to somebody looking at page 214.
+    pub page: Option<u32>,
+    /// Whether the name and the leading bytes disagree about what this file is.
+    pub disagree: bool,
+    /// The format the NAME claims, as a label, when the two disagree.
+    pub named: String,
+    /// The format the BYTES show, as a label, when the two disagree.
+    pub found: String,
+}
+
 /// A built-in agent tool.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tool {
@@ -4685,6 +4889,26 @@ pub enum Tool {
     DirCreate,
     /// Bring one file down from cloud storage onto this device.
     FileFetch,
+    /// Put a workspace file in front of the user, in the panel they already read files in.
+    ///
+    /// **This is a defect class, not a feature.**  Asked to compile a Typst source and display
+    /// the PDF, a daimon answered that it could not display a PDF inline, "the file tools return
+    /// raw bytes for it rather than a rendered view" -- and then apologised.  Daimond had been
+    /// drawing PDFs the whole time: `www/js/viewer.js` hands `application/pdf` to the browser's
+    /// own document viewer, deliberately, with the security argument for doing so measured and
+    /// written beside it.  What the model held was eleven tools that return BYTES and none that
+    /// shows anything, so it reasoned from its toolbox to a limitation of the app and reported
+    /// that limitation as fact.
+    ///
+    /// A model cannot tell the difference between "this app cannot" and "I have no tool for it",
+    /// and it will always resolve that ambiguity against the app.  So the rule this variant is
+    /// written under: every surface a user can reach needs a way for the daimon to reach it, or
+    /// the daimon will eventually deny that the surface exists.
+    ///
+    /// It takes a PATH and never content.  A view handed bytes is a snapshot with nowhere for a
+    /// recompile to land; a view that names a file reads it again each time it is drawn, which is
+    /// what lets the same document be shown again after it changes.
+    FileShow,
     Shell,
     /// Run one command on the user's machine through the hand, fenced.
     ///
@@ -4817,6 +5041,11 @@ impl Tool {
             Tool::FileMove,
             Tool::DirCreate,
             Tool::FileFetch,
+            // The document panel, which the browser build has and the native build has not.  Like
+            // the compiler below it, the surface existed and only a person could reach it -- and
+            // the consequence was worse there, because a model with no way to show a file does
+            // not merely fail to show one: it tells the user the app cannot.
+            Tool::FileShow,
             // The compiler is vendored into the page, so the browser build can
             // do this and the native build cannot.  It was reachable only from a
             // human's Compile button, which meant an agent asked to produce a PDF
@@ -4983,6 +5212,14 @@ impl Tool {
         Ok(match tool {
             Tool::FileRead =>
                 Some(res!(Self::arg(args_json, "path"))),
+            // **SHOWING A FILE IS READING IT, and it is the more consequential of the two.**  A
+            // read puts a file's bytes into the model's context, where the user may never look;
+            // a show puts them on the user's screen, in a panel with a Download button on it.  A
+            // turn that may not read a path may not exhibit it either, and the same door answers
+            // both -- so a bounded skill turn cannot display another skill's files, and a
+            // Diamond's daimon cannot display another Diamond's.
+            Tool::FileShow =>
+                Some(res!(Self::arg(args_json, "path"))),
             // All three default to the workspace root, which is outside the fence and stays
             // readable.
             //
@@ -5002,9 +5239,13 @@ impl Tool {
     ///
     /// Nearly every tool is free and answers `None`.  A tool that answers a key is refused by
     /// [`guard`](Tool::guard) whenever [`pack_locked`] says the account has not bought it.
+    ///
+    /// A pack GROWS by adding an arm here that answers the key it already has: two tools naming
+    /// one pack are one purchase, which is what a bundle is.  A new pack -- the next drop -- is a
+    /// new key beside [`PACK_DROP01`] and a second catalogue entry.
     pub fn pack(&self) -> Option<&'static str> {
         match self {
-            Tool::TypstCompile => Some(PACK_TYPST),
+            Tool::TypstCompile => Some(PACK_DROP01),
             _                  => None,
         }
     }
@@ -5103,6 +5344,7 @@ impl Tool {
             Tool::DirCreate   => "dir_create",
             Tool::ArtefactAdd => "artefact_add",
             Tool::FileFetch   => "file_fetch",
+            Tool::FileShow    => "file_show",
             Tool::Shell       => "shell",
             Tool::Run         => "run",
             Tool::SpawnAgent  => "spawn_agent",
@@ -5157,6 +5399,7 @@ impl Tool {
             "dir_create"   => Some(Tool::DirCreate),
             "artefact_add" => Some(Tool::ArtefactAdd),
             "file_fetch"   => Some(Tool::FileFetch),
+            "file_show"    => Some(Tool::FileShow),
             "shell"        => Some(Tool::Shell),
             "run"          => Some(Tool::Run),
             "spawn_agent"  => Some(Tool::SpawnAgent),
@@ -5190,6 +5433,7 @@ impl Tool {
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
+            Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat. THIS IS HOW YOU SHOW SOMEBODY SOMETHING. The other file tools hand you bytes or text, which is for you; this is for them. A PDF is drawn page by page by the browser's own document viewer, so the user reads the typeset document rather than its source — say 'it is on screen now', not 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are decoded and drawn; sound and video get a player; HTML is rendered; JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and anything the panel treats as source opens in its editor where the user can change it. A format with no viewer of its own is still shown — as a paged hex dump naming the format — so this tool does not fail on an unusual file, and you must never conclude from one such file that Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so after you rewrite or recompile that file, call this again with the same path to put the new version in front of them. 'page' opens a PDF at a particular page (the top otherwise). Show a file when the user asked to see one, when you have just produced a document for them, or when the thing you are discussing is easier looked at than described — and say what you have put on screen, since the panel may be behind whatever they are reading.",
             Tool::FileFetch   => "Download one file from cloud storage onto this device, so the other file tools can reach it. The workspace is one set of files and this device holds as much of it as it can; file_list marks the rest 'in cloud storage', and file_read refuses them and says how big they are. This is the only thing that moves those bytes, and it may transfer a great deal of data at the user's expense — so fetch a file when you actually need its contents, one at a time, and never speculatively or in bulk. Once it has arrived, read it as you would any other file.",
             Tool::Shell       => "Run a shell command in the workspace and return its stdout/stderr and exit code.",
             Tool::Run         => "Run one command on the user's machine and return its output and exit code. This is how you build, test, run a linter, or use any command-line tool. Give 'argv' as an ARRAY -- the program, then each argument separately: [\"cargo\",\"test\",\"--lib\"]. It is NOT a shell command line and there is no shell: a semicolon, a pipe, a redirection, a backtick, a '$(...)' or a '&&' is passed to the program as a literal argument and will not do what it does in a terminal, and '~' is not expanded either, so '~/x' asks for a directory actually named '~' and the command reports the path missing -- write every path in 'argv' out in full from '/'. 'cwd' is the one that goes the other way: it is workspace-relative, as the file tools' paths are, and an absolute one is refused rather than joined onto the workspace root. To feed a command some input use 'stdin'; to chain two commands, call this tool twice and decide between them yourself, which is better anyway because you see the first result before choosing. It needs a companion program -- Daimond's machine hand -- that the user installs and approves once: a browser cannot start a process on its own. Where there is no hand, or where the hand says it cannot contain a command on that computer, this REFUSES and says which; believe the refusal, tell the user what you wanted to run, and carry on with the file tools. Where there is one, the command runs inside the folder they granted and not the rest of the machine. Whether it may reach the network, and whether the user is asked before it runs at all, is the permission mode they chose: the note about this computer says which, so read that rather than assuming either way. A command that fails is usually telling you something true: read its stderr before running it again.",
@@ -5202,7 +5446,7 @@ impl Tool {
             Tool::WebRead     => "Read the full rendered text of the open page — the way to answer 'what does this page say' (a price, a spec, a table, an article). It returns the page's visible text with JavaScript already run, from the main content region (a docs site's navigation and chrome are dropped), and it does NOT truncate to a node budget the way web_snapshot does. Reach for this FIRST whenever you need to know a page's content rather than click something on it: one web_read answers what twenty web_snapshots and web_scrolls cannot. It works on a real page under Daimond Hands and on a page Daimond itself built; a cross-origin page that is only being shown must be read with web_fetch instead.",
             Tool::WebClick    => "Click one node on the open page, named by its integer 'ref' from the most recent web_snapshot. Snapshot first: a ref from an older snapshot may now point at a different node, or at nothing. Assume the page changed after the click, so call web_snapshot again before your next action. Anything the user cannot undo — a purchase, a message sent, a form submitted to a site they have not already approved — is to be put to the user before you click it.",
             Tool::WebType     => "Type text into one field on the open page, named by its integer 'ref' from the most recent web_snapshot. Set submit to true to press Enter afterwards, which usually navigates. Snapshot first, and snapshot again afterwards, because typing and submitting stale the refs. Never type a password, a card number, or any other credential: the user enters those themselves, and while they do, Daimond is not watching the page at all.",
-            Tool::TypstCompile => "Compile a Typst source file in the workspace to a PDF, using the compiler bundled into this page. Give it the workspace path of a '.typ' file; the PDF is written beside it unless you name 'out'. This is real typesetting, so it is the right way to produce a document the user can print or send. Its limits are firm and worth knowing before you write the source: only five fonts are bundled (Libertinus Serif regular/bold/italic/bold-italic and New Computer Modern Math), so any other font falls back; and the compiler has NO file or network access of its own, so '#import \"@preview/...\"', 'read()', 'image()' and every other reference to an outside file will fail. Write self-contained Typst. On a compile error it returns the compiler's own diagnostics, which name the line -- read them and fix the source rather than trying again unchanged. This one is sold as a pack rather than shipped free, so on an account that has not bought it the call is refused and says so; that refusal is the answer, not a fault to retry around.",
+            Tool::TypstCompile => "Compile a Typst PROJECT to a PDF, using the compiler bundled into this page. Give it the workspace path of the '.typ' file to compile -- a book's main file, not every chapter in turn -- and the PDF is written beside it unless you name 'out'. This is real typesetting, so it is the right way to produce a document the user can print or send. Everything the file reaches is gathered and sent with it: '#import' and '#include' are followed, pictures, bibliographies and data files that a source names by a plain path are read, and fonts are picked up from an 'assets/fonts' or 'fonts' folder beside the file or above it. The project root is worked out from the imports themselves, so a book that imports '../style/x.typ' compiles as it does on the command line, and there is nothing to configure. Two limits are real: a path built at run time from a variable cannot be seen when the project is gathered, so name files as plain strings; and '#import \"@preview/...\"' fetches from Typst Universe over a network this page does not have, which no rearrangement of files will fix -- copy what the package provides into the project and import it by path instead. A font the project does not carry is REFUSED rather than substituted, because Typst substitutes silently and the line breaks and page count of what came back would not be the ones that print. On a compile error it returns the compiler's own diagnostics, which name the file and the line -- read them and fix the source rather than trying again unchanged. This one is sold as a pack rather than shipped free, so on an account that has not bought it the call is refused and says so; that refusal is the answer, not a fault to retry around.",
             Tool::WebScroll   => "Scroll the open page up or down; 'amount' is how many screens to move, and defaults to one. Scrolling changes what is in the VIEWPORT for a screenshot or for triggering lazy-loaded content — it does NOT reveal more of a web_snapshot (a snapshot already covers the whole page) and it is not how you read a long page (use web_read for that).",
             Tool::LinkList    => "Read the graph: how the Diamonds, files, pages and chats in this workspace are related to one another. Give 'node' as a 'kind:rest' reference — 'diamond:<id>', 'file:notes/report.md', 'url:https://…', 'chat:<id>' — and you get every link touching that thing, found from EITHER end, so it answers 'what does this point at' and 'what points at this' in one call. Give no 'node' and you get every link in the store, which is the shape of the whole body of work. Each link carries its two ends, a one-or-two-word 'rel' saying what the relation is, a 'note', the Diamond whose sidecar holds the record ('owner'), the id, and 'by' — 'user' where a person drew the line and 'agent:…' where a model asserted it, which is the difference between something established and something suggested. Direction is recorded because 'supersedes' is not symmetric, NOT because anything flows along a link. Read this before you conclude that two things are unrelated, or invent a relation between them: the answer is often already written down, by the user.",
             Tool::LinkAdd     => "Record that two things are related, and how. 'from' and 'to' are 'kind:rest' references — 'diamond:<id>', 'file:notes/report.md', 'url:https://…', 'chat:<id>' — and they may not be the same thing. 'rel' is one or two words for what the relation IS ('supersedes', 'produced', 'derives from', 'contradicts'); it is lowercased and shortened to fit, and it may be left empty, which says only that the two are connected. 'note' is one sentence for whatever the relation does not say. The record is stored ONCE, on the Diamond named by 'from' when that end is a Diamond and on this Diamond otherwise, and it is found from both ends — so never assert the reverse as a second link, or the graph gains a duplicate nobody can tell from a real second relation. It is stamped as yours, so a later reader can tell what you claimed from what the user drew. Assert what you have established, not what you suspect: a graph of guesses is worse than a sparse one, because the user cannot tell which is which without checking every edge.",
@@ -5228,6 +5472,7 @@ impl Tool {
             Tool::DirCreate   => "Make a folder.",
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
+            Tool::FileShow    => "Put one of your files on the screen beside the chat.",
             Tool::Shell       => "Run a command. Only where Daimond has a machine to run it on.",
             Tool::Run         => "Run a command on your computer, in the folder you granted. Needs Daimond's machine hand installed; refused where it is not, and where it cannot contain the command.",
             Tool::SpawnAgent  => "Send a worker off to do one task on its own, several at once.",
@@ -5261,6 +5506,7 @@ impl Tool {
             Tool::DirCreate => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory to create"}},"required":["path"]}"#,
             Tool::ArtefactAdd => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to record as this Diamond's artefact"},"note":{"type":"string","description":"Optional: why it belongs to this Diamond, in a few words"}},"required":["path"]}"#,
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
+            Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"}},"required":["command"]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line. A path in an argument is the machine's own: absolute, with no '~'."},"cwd":{"type":"string","description":"Workspace-relative directory to run in, e.g. 'src/api' (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
@@ -5317,6 +5563,10 @@ impl Tool {
             Tool::DirCreate  => Self::dir_create(args_json, ctx),
             Tool::ArtefactAdd => Err(err!("artefact_add is a browser-build tool"; Unimplemented)),
             Tool::FileFetch  => Self::cloud_unavailable(),
+            Tool::FileShow   => Err(err!(
+                "Tool 'file_show' puts a file in Daimond's document panel, which is part of the \
+                browser page; this is the native build, where there is no panel and nobody \
+                watching one. Describe the file instead."; Unimplemented)),
             Tool::Shell      => Self::shell(args_json, ctx).await,
             // The hand is the browser build's route to a process; the native build already has
             // one, and offering two ways to run a command is how they drift apart.
@@ -5834,6 +6084,9 @@ impl Tool {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 crate::wasm::cloud::fetch(&path).await
             }
+            // Message content rather than a string, so it leaves by the same early return that
+            // `file_read` uses for an image.
+            Tool::FileShow => return Self::file_show(args_json, ctx).await,
             Tool::FileMove => {
                 let from = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 let to   = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "to"))));
@@ -5950,18 +6203,31 @@ impl Tool {
                 let amount = extract_json_number(args_json, "amount").map(|n| n as u32);
                 crate::wasm::web::scroll(&dir, amount).await
             }
-            // Rust owns both ends of the file: the source is read and the PDF is
-            // written through `wasm::opfs`, which carries the path jail, the
-            // account namespace and the real-folder override.  The JS driver is
-            // handed a string and hands back bytes; it touches no file at all.
+            // Rust owns both ends of the file: every source, picture and font is read
+            // and the PDF is written through `wasm::opfs`, which carries the path jail,
+            // the account namespace and the real-folder override.  The JS driver is
+            // handed contents and hands back bytes; it touches no file at all.
+            //
+            // THE PROJECT DOOR, not the single-string one.  This arm read the named file
+            // and handed that ONE STRING to the compiler until seq 117, so a book's first
+            // `#import` could not resolve however the gatherer behaved -- the gatherer was
+            // never reached.  What the user got instead was a well-written refusal
+            // explaining that a single string had been compiled rather than a folder,
+            // from which the daimon reasonably concluded that the compiler could not do
+            // imports at all, and told the user to attach a folder that was already in
+            // the workspace.  A tool with no production caller is a tool that does not
+            // exist, and this was the caller.
+            //
+            // `Reach::Turn` and not the workspace's own reach: a compile follows paths
+            // this call never named, so it is held to the bounds of the turn that asked
+            // for it, entry by entry, exactly as `file_search` and `file_glob` are.
             Tool::TypstCompile => {
                 let src_rel = res!(Self::arg(args_json, "path"));
                 let out_rel = res!(Self::typst_out(args_json));
                 let src = res!(Self::scoped(ctx, &src_rel));
                 let out = res!(Self::scoped(ctx, &out_rel));
-                let bytes = res!(crate::wasm::opfs::read_file(ctx.root, &src).await);
-                let source = String::from_utf8_lossy(&bytes).to_string();
-                let pdf = res!(crate::wasm::typst::compile(&source).await);
+                let reach = crate::wasm::typst::Reach::Turn(ctx);
+                let pdf = res!(crate::wasm::typst::compile_project(&reach, ctx.root, &src).await);
                 res!(crate::wasm::opfs::write_file(ctx.root, &out, &pdf).await);
                 Ok(fmt!("Compiled {} to {} ({} bytes).", src, out, pdf.len()))
             }
@@ -6145,6 +6411,150 @@ impl Tool {
         let mut body = defang(&Self::render_search(ans));
         truncate_output(&mut body, MAX_OUTPUT.saturating_sub(envelope_overhead(&origin)));
         ctx.wrap_untrusted(&origin, &body)
+    }
+
+    /// Put `path` in front of the user, and say what they are now looking at.
+    ///
+    /// The one tool here whose whole effect is on the USER'S SCREEN, and that is what shapes it.
+    /// Nothing is written, nothing leaves the machine, and the path has already been through
+    /// [`guard`](Tool::guard) as a read -- see [`read_target`](Tool::read_target) for why showing
+    /// counts as reading.  What is left to answer is whether there is anybody in front of the
+    /// panel, and whether the file is really there.
+    ///
+    /// # Arguments
+    /// * `args_json` - The raw tool arguments: `path`, and optionally `page`.
+    /// * `ctx` - The turn's context, which knows whether this actor is working alone.
+    #[cfg(target_arch = "wasm32")]
+    async fn file_show(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        // A DISPATCHED WORKER MAY NOT TAKE THE SCREEN.  Nobody is reading its transcript, several
+        // of them run at once, and the panel is one panel: three workers each showing a file would
+        // fight over what the user is looking at, in the middle of whatever the user was actually
+        // doing.  The same reasoning `act_needs_consent` applies to a click -- an act with a
+        // consequence its actor cannot see -- arriving at a surface rather than at a page.
+        if ctx.is_unsupervised() {
+            return Ok(MessageContent::text(fmt!(
+                "Nothing was shown. You are a dispatched worker: nobody is reading this \
+                transcript, and the document panel belongs to the conversation the user is \
+                actually in. Name the file in your report instead -- the agent that dispatched \
+                you can show it.")));
+        }
+        let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
+        if !res!(crate::wasm::opfs::exists(ctx.root, &path).await) {
+            // A file in cloud storage is not a missing file, and saying which is what stops the
+            // model hunting for a path that is exactly where it should be.
+            if let Some(size) = crate::wasm::cloud::size_of(&path) {
+                return Ok(MessageContent::text(fmt!(
+                    "'{}' is in cloud storage rather than on this device, so there is nothing \
+                    here to show. It is {} bytes. Bring it down with file_fetch first, then show \
+                    it.", path, size)));
+            }
+            return Ok(MessageContent::text(fmt!(
+                "There is no file at '{}', so nothing was shown and the panel is unchanged. \
+                Check the path with file_list.", path)));
+        }
+        // A page of nought is not a page, so it is read as "no page named" rather than refused.
+        // What that MEANS is the panel's to decide, and it decides "wherever this file was last
+        // aimed" -- which is what puts a rebuilt document back in the reader's place instead of
+        // at page 1.  The page reported afterwards therefore comes from the panel's answer and
+        // never from this argument.
+        let page = match extract_json_number(args_json, "page") {
+            Some(n) if n > 0 => Some(n as u32),
+            _                => None,
+        };
+        let shown = res!(crate::wasm::doc::show(&path, page).await);
+        Ok(Self::show_result(&path, &shown))
+    }
+
+    /// What `file_show` tells the model it has just put on the user's screen.
+    ///
+    /// ONE function, called by the dispatch and by the tests, as [`search_result`](Tool::search_result)
+    /// is -- so what a test proves is what the tool says, and not a second composition that happens
+    /// to agree with it today.
+    ///
+    /// **Every branch here describes a file that IS on screen.**  There is no "cannot show" tier:
+    /// the viewer's floor is a hex dump naming the format, so a `.dSYM` and an `.ipynb` are shown
+    /// too, badly but honestly.  That matters more than it sounds, because this tool exists to
+    /// repair a false generalisation -- a daimon that reasoned from its toolbox to "this app
+    /// cannot display a PDF" -- and a result reading "no viewer for this format" is an invitation
+    /// to make exactly the same leap one file later.  So the `hex` branch names what the viewer
+    /// DOES draw, and says in as many words not to generalise from the one file in hand.
+    ///
+    /// # Arguments
+    /// * `path` - The file, as the panel was asked for it.
+    /// * `s` - What the panel answered, including which page it actually opened at.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn show_result(path: &str, s: &Shown) -> MessageContent {
+        let size = fmt!("{} bytes", s.size);
+        let what = match s.tier.as_str() {
+            // The one the defect was reported against.  It says "typeset pages, not source"
+            // because the model's own answer that day offered the source as a consolation.
+            "doc" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, drawn \
+                by the browser's own document viewer. They are looking at the typeset pages, not \
+                at any source it came from.{}",
+                path, s.label, size,
+                match s.page {
+                    Some(n) => fmt!(" It is open at page {}.", n),
+                    None    => String::new(),
+                }),
+            "image" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, decoded \
+                and drawn by the browser.", path, s.label, size),
+            "audio" | "video" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, with \
+                the player's own controls, so they can start it themselves.",
+                path, s.label, size),
+            "frame" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, \
+                rendered as a page in a sandboxed frame.", path, s.label, size),
+            "json" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, as a \
+                tree they can open and close.", path, s.label, size),
+            "table" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, as a \
+                table.", path, s.label, size),
+            "markdown" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: a {}, {}, \
+                rendered rather than as its markup.", path, s.label, size),
+            // Not a lesser outcome: this is where DAIMOND.md and the role prompts are changed,
+            // and telling the model the file is editable is what lets it say something useful.
+            "editor" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel: {}, in the \
+                panel's text editor, where they can change it and save.", path, size),
+            "empty" => fmt!(
+                "'{}' is on the user's screen now, and it holds no bytes at all -- the panel says \
+                so and there is nothing else to see. If you expected content, something did not \
+                write it.", path),
+            // The floor.  READ THE NOTE ABOVE before shortening any of this.
+            "hex" => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel -- but nothing \
+                here has a viewer for a {}, so what they can see is its bytes: a paged hex dump, \
+                sixteen to a line, with the format and the size ({}) named above it. They can \
+                walk through it; they cannot read it as a document. This is about THIS FORMAT and \
+                nothing more -- the panel draws pictures, sound, video, PDF, HTML, JSON, CSV, TSV, \
+                Markdown and text perfectly well, so do not tell the user Daimond cannot show \
+                files. If they need to read this one, say what would open it and offer to convert \
+                it to something the panel draws.",
+                path, s.label, size),
+            // A tier this build has never heard of.  The file is on screen either way, and
+            // guessing at what it looks like is how a model comes to describe a screen nobody
+            // has seen.
+            other => fmt!(
+                "'{}' is on the user's screen now, in Daimond's document panel ({}, {}). This \
+                build does not know what a '{}' view looks like, so ask them what they can see \
+                rather than describing it.", path, s.label, size, other),
+        };
+        // The disagreement, when there is one.  The panel is already saying this on screen, and
+        // the model needs it too: a user looking at a broken export will ask about it, and an
+        // agent that does not know the name and the bytes differ will guess at the wrong cause.
+        let mut out = what;
+        if s.disagree && !s.named.is_empty() && !s.found.is_empty() {
+            out.push_str(&fmt!(
+                " Note for you rather than for them: this file's NAME says {} and its BYTES say \
+                {}, and the bytes are what was drawn. The panel says so on screen.",
+                s.named, s.found));
+        }
+        MessageContent::text(out)
     }
 
     /// Resolve a tool's raw path against the context's Diamond
@@ -6888,8 +7298,34 @@ impl Tool {
         if cwd_rel.starts_with('/') {
             return Ok(run_cwd_refusal(&cwd_rel, &root));
         }
-        if !ctx.may_read(&cwd_rel) {
-            return Ok(ctx.refusal(&cwd_rel, false));
+        // Asked as a RUN and not as a read. Reading is free now (see `Bound::OnlyWriteUnder`), so
+        // `may_read` would answer yes for every path in the workspace and this guard would have
+        // quietly stopped guarding -- leaving a command to be refused two layers down by the hand,
+        // in a sentence naming an absolute path the user never chose.
+        if !ctx.may_run_in(&cwd_rel) {
+            return Ok(ctx.refusal(&cwd_rel, true));
+        }
+        // In scope, and still not a directory on this computer. A chat's scratch and a Diamond's
+        // own directory are in the browser's storage whatever folder is open (see
+        // `is_store_path`), so they pass the check above -- they ARE in the workspace -- and would
+        // then reach the hand as `<granted-root>/chats/<id>/work` for it to fail on. The model has
+        // every reason to try one: it is the first place its own refusals name.
+        //
+        // Answered here so the sentence says what to do about it. The hand's own answer,
+        // "'...' cannot be resolved to a directory on this machine", is true and points at a path
+        // the user never chose.
+        if is_store_path(&normalise(&cwd_rel)) {
+            if ctx.is_chat_scoped() {
+                return Ok(fmt!(
+                    "Refused: '{}' is your own working folder, which is in Daimond's storage and \
+                    not a place on this computer, so no command can run there. Run in a folder \
+                    the user marked into this chat's workspace, or ask them to add one with the \
+                    paperclip.", cwd_rel));
+            }
+            return Ok(fmt!(
+                "Refused: '{}' is in Daimond's storage and not a place on this computer, so no \
+                command can run there. Run in a folder attached to this Diamond, or ask the user \
+                to attach one in the Workspace panel.", cwd_rel));
         }
         // The rung the user is in, read once so that everything below -- the fence, the question,
         // and the sentence the model reads afterwards -- is describing one decision rather than
@@ -7309,19 +7745,25 @@ mod tests {
         c
     }
 
-    // ── A daimon is confined to its Diamond's workspace ──────────────────────
+    // ── A daimon writes inside its Diamond's workspace, and reads freely ─────
     //
-    // Each of these is an ESCAPE ATTEMPT. They are written as the thing going wrong, so that a
-    // check which stopped working would go quiet rather than green: every one of them passes on
-    // the unbounded context below, which is the control.
+    // The verb decides the reach (see `Bound::OnlyWriteUnder`).  Each write check below is an
+    // ESCAPE ATTEMPT, written as the thing going wrong so that a check which stopped working would
+    // go quiet rather than green: every one of them passes on the unbounded context, which is the
+    // control.  Each read check beside it is the PERMISSION that makes the refusal mean something
+    // -- "no access at all" would satisfy a refusal on its own, and would be a fence that had
+    // failed shut rather than a verb split.
 
     #[test]
-    fn test_a_daimon_cannot_read_outside_its_workspace_00() {
+    fn test_a_daimon_cannot_write_outside_its_workspace_and_reads_freely_00() {
         let c = scoped(&["notes/specs"], &[]);
-        assert!(!c.may_read("secrets/keys.txt"), "a path in no attachment must not be readable");
-        assert!(!c.may_write("secrets/keys.txt"), "nor writable");
-        // The control: the same path, unbounded.
-        assert!(ctx().may_read("secrets/keys.txt"), "the check must be the bounds and not the path");
+        assert!(!c.may_write("secrets/keys.txt"), "a path in no attachment must not be writable");
+        assert!(c.may_read("secrets/keys.txt"),
+            "and must be readable: reading is free, and a refusal here would be the 2026-08-12 \
+            delegation coming back");
+        // The control: the same path, unbounded, is writable -- so the refusal above is the bounds
+        // speaking and not the path.
+        assert!(ctx().may_write("secrets/keys.txt"), "the check must be the bounds and not the path");
     }
 
     #[test]
@@ -7338,7 +7780,8 @@ mod tests {
         let c = scoped(&[], &[]);
         assert!(c.may_write("diamonds/d1/crystal.md"));
         assert!(c.may_write("diamonds/d1/notes/draft.md"), "and to make its own folders");
-        assert!(!c.may_read("anything/else.md"), "and nothing else");
+        assert!(!c.may_write("anything/else.md"), "and change nothing else");
+        assert!(c.may_read("anything/else.md"), "though it may still read it");
     }
 
     #[test]
@@ -7353,45 +7796,76 @@ mod tests {
         // `notes/specs-old` starts with the same letters as `notes/specs` and is a different
         // place. Segment comparison is what makes the allow-list mean anything.
         let c = scoped(&["notes/specs"], &[]);
-        assert!(!c.may_read("notes/specs-old/api.md"));
-        assert!(!c.may_read("notes/specsomething"));
+        assert!(!c.may_write("notes/specs-old/api.md"));
+        assert!(!c.may_write("notes/specsomething"));
+        // The permission beside the refusal: the neighbour is READABLE, so the two lines above are
+        // the segment comparison speaking rather than a fence that shut on everything.
+        assert!(c.may_read("notes/specs-old/api.md"));
+        assert!(c.may_write("notes/specs/api.md"), "and the real place is still writable");
     }
 
     #[test]
     fn test_dot_dot_does_not_climb_out_00() {
+        // Two different guards, and only one of them is in this file. `normalise` resolves `..`
+        // lexically so a traversal cannot spell its way past the write allow-list; what stops a
+        // path climbing out of the WORKSPACE is the root the path is resolved against, and it lives
+        // in `crate::wasm::opfs::split_components` and `Workspace::resolve`, which refuse an
+        // absolute path and a `..` that pops past the root before any `Bound` is consulted.
         let c = scoped(&["notes/specs"], &[]);
         for p in ["notes/specs/../../secrets/keys.txt", "notes/specs/./../other/x.md"] {
-            assert!(!c.may_read(p), "{} must not resolve out of the workspace", p);
+            assert!(!c.may_write(p), "{} must not resolve into the write allow-list", p);
         }
+        assert!(!c.may_write("notes/specs/../../../../../etc/passwd"),
+            "and a traversal that would leave the workspace altogether is not writable either");
     }
 
     #[test]
     fn test_daimonds_own_directory_is_out_of_bounds_inside_a_diamond_00() {
         // Even attached explicitly: the rules about what agents may do are not an agent's to read.
+        // This is the ONE read a scope still refuses, so it carries the whole of that promise now.
         let c = scoped(&[".daimond"], &[]);
         assert!(!c.may_read(".daimond/skills/x.md"));
         assert!(!c.may_write(".daimond/skills/x.md"));
+        assert!(!c.may_read(".daimond/config.json"), "the config as much as the skills");
+        // The permission beside it: this context reads its neighbours freely, so the refusal above
+        // is the deny speaking and not a turn that can reach nothing.
+        assert!(c.may_read("notes/specs/api.md"));
+        // And a name that merely starts the same way is a different place.
+        assert!(c.may_read(".daimonds-notes/x.md"));
     }
 
     #[test]
     fn test_a_skills_carve_out_is_not_a_way_out_of_a_diamond_00() {
-        // A turn can be scoped AND running under a skill. The carve-out lets a skill read its own
-        // folder past the deny fence; it must not let it past the allow fence.
-        let mut c = scoped(&["notes/specs"], &[]);
-        c.no_write.push(Bound::MayRead(fmt!(".daimond/skills/mine")));
+        // A turn can be scoped AND running under a skill, and the two bounds COMPOSE -- which is
+        // the only way they are ever put together (`compose`, and `hand/REVIEW.md` §1.12).
+        // A carve-out is a hole punched in ITS OWN deny fence, so it does not survive being
+        // composed with a list that denies the same subtree: a skill running inside a Diamond
+        // cannot read its own shipped references, and is refused in those words.
+        let mut c = ctx();
+        c.no_write = compose(&diamond_bounds("diamonds/d1", &[fmt!("notes/specs")], &[]),
+            &skill_bounds(&[fmt!(".daimond/skills/mine")]));
         assert!(!c.may_read(".daimond/skills/mine/ref.md"),
-            "the allow-list is tested first, so the carve-out cannot escape it");
+            "the Diamond denies the whole of Daimond's directory, and a hole in one fence is not a \
+            hole in the other");
+        assert!(c.may_write("notes/specs/api.md"), "and the Diamond's own scope survives the merge");
+        assert!(!c.may_write("elsewhere/x.md"), "with nothing widened by the second bound");
     }
 
     #[test]
     fn test_the_refusal_says_which_fence_stopped_it_00() {
         let c = scoped(&[], &["reference/handbook"]);
-        assert!(c.refusal("secrets/keys.txt", false).contains("not in this Diamond's workspace"));
+        // Outside the workspace: refused for the WRITE, and it says where writing may go.
+        let out = c.refusal("secrets/keys.txt", true);
+        assert!(out.contains("not in this Diamond's workspace"), "{}", out);
+        assert!(out.contains("reference/handbook"), "and where it may go instead: {}", out);
+        assert!(out.contains("Reading is not fenced"),
+            "and that the read it was probably about is allowed, or the model spends a turn \
+            asking for reach it already has: {}", out);
         assert!(c.refusal("reference/handbook/ch1.md", true).contains("read here but not written"));
-        // Inside a Diamond, Daimond's own directory is refused as OUT OF SCOPE rather than as
-        // fenced -- it is not attached, and that is the truer reason to give. The fence message
-        // belongs to the turn that has no allow-list: a skill.
-        assert!(c.refusal(".daimond/skills/x.md", false).contains("not in this Diamond's workspace"));
+        // Daimond's own directory is refused as ITSELF now, for either verb: it is the only thing
+        // a scope still denies a read of, so "not in this Diamond's workspace" would be the wrong
+        // repair to suggest -- attaching it changes nothing.
+        assert!(c.refusal(".daimond/skills/x.md", false).contains("Daimond's own directory"));
         let mut skilled = ctx();
         skilled.no_write = skill_bounds(&[fmt!(".daimond/skills/mine")]);
         assert!(skilled.refusal(".daimond/skills/other/x.md", false).contains("Daimond's own directory"));
@@ -7403,8 +7877,11 @@ mod tests {
         // unbounded. diamond_bounds never returns empty, because empty means "no restriction".
         let b = diamond_bounds("diamonds/d1", &[], &[]);
         assert!(!b.is_empty(), "an empty scope must still be a scope");
-        assert!(b.iter().any(|x| matches!(x, Bound::OnlyUnder(_))),
-            "and it must carry an allow-list, or the deny rules alone would let everything else through");
+        assert!(b.iter().any(|x| matches!(x, Bound::OnlyWriteUnder(_))),
+            "and it must carry a write allow-list, or the deny rules alone would let every write \
+            through");
+        assert!(!b.iter().any(|x| matches!(x, Bound::OnlyUnder(_))),
+            "and no BOTH-VERB allow-list, which is what fenced reading and was never decided on");
     }
 
     // ── The fence the machine hand is handed ────────────────────────
@@ -7417,8 +7894,12 @@ mod tests {
     fn test_a_diamonds_fence_is_its_own_workspace_and_nothing_else_00() {
         let b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
         let f = fence_spec(&b, &Machine::at("/home/u/ws"), false);
-        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/d1")));
         assert!(f.rw.contains(&fmt!("/home/u/ws/notes")));
+        // Its OWN directory is not here, and must not be: it lives in the browser's storage
+        // whatever folder is open, so `/home/u/ws/diamonds/d1` is a directory nobody made and the
+        // hand refuses a fence naming it -- taking `notes` down with it.
+        assert!(!f.rw.contains(&fmt!("/home/u/ws/diamonds/d1")),
+            "a path in Daimond's store is not a path on the machine: rw={:?}", f.rw);
         assert!(f.deny.contains(&fmt!("/home/u/ws/.daimond")));
         assert!(!f.rw.contains(&fmt!("/home/u/ws")),
             "the workspace root is not a Diamond's to write; granting it would make every other \
@@ -7483,20 +7964,31 @@ mod tests {
 
     #[test]
     fn test_a_read_carve_out_is_not_a_way_out_of_a_diamond_00() {
-        // `may_read` tests the allow-list BEFORE the carve-out, so a skill running inside a Diamond
-        // cannot read past the Diamond by declaring a folder. The fence has to make the same
-        // ordering or the two disagree -- and the fence would be the laxer of the two.
+        // A carve-out names a folder a bounded turn may read past its own deny. It must not become
+        // a grant to a COMMAND of somewhere the Diamond never held: the file tools read freely
+        // inside the workspace, and the fence deliberately does not (see `Bound::OnlyWriteUnder`),
+        // so a carve-out outside the allow-list is exactly the case where the two must not be
+        // confused. The fence is the laxer of the two if this stops holding.
         let mut b = diamond_bounds("diamonds/d1", &[], &[]);
         b.push(Bound::MayRead(fmt!("elsewhere/secrets")));
         let f = fence_spec(&b, &Machine::at("/home/u/ws"), false);
         assert!(!f.ro.contains(&fmt!("/home/u/ws/elsewhere/secrets")),
             "the app refuses this read, so the fence must not grant it: ro={:?}", f.ro);
         // And the same carve-out inside the allow-list IS granted, or a skill could not read what
-        // it shipped.
-        let mut b2 = diamond_bounds("diamonds/d1", &[], &[]);
-        b2.push(Bound::MayRead(fmt!("diamonds/d1/refs")));
+        // it shipped. Named under an ATTACHED folder rather than under the Diamond's own
+        // directory: the Diamond's own directory is in the browser's storage, so a carve-out
+        // beneath it names nothing on this machine and is dropped for that reason instead --
+        // which would have made this half of the test pass for the wrong one.
+        let mut b2 = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+        b2.push(Bound::MayRead(fmt!("notes/refs")));
         let f2 = fence_spec(&b2, &Machine::at("/home/u/ws"), false);
-        assert!(f2.ro.contains(&fmt!("/home/u/ws/diamonds/d1/refs")), "ro={:?}", f2.ro);
+        assert!(f2.ro.contains(&fmt!("/home/u/ws/notes/refs")), "ro={:?}", f2.ro);
+        // A carve-out on the store is not a machine path, whatever allow-list it sits inside.
+        let mut b3 = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
+        b3.push(Bound::MayRead(fmt!("diamonds/d1/refs")));
+        let f3 = fence_spec(&b3, &Machine::at("/home/u/ws"), false);
+        assert!(!f3.ro.iter().any(|p| p.contains("diamonds")),
+            "the hand cannot resolve it, and refuses the whole fence over it: ro={:?}", f3.ro);
     }
 
     #[test]
@@ -7597,7 +8089,10 @@ mod tests {
 
     #[test]
     fn test_a_granted_toolkit_reaches_the_toolchain_00() {
-        let mut b = diamond_bounds("diamonds/d1", &[], &[]);
+        // With a folder attached, because the Diamond's own directory is in the browser's storage
+        // and never reaches a machine fence -- so a Diamond with nothing attached has no workspace
+        // path here for the last assertion to be about.
+        let mut b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
         b.push(Toolkit::Rust.bound());
         let f = fence_spec(&b, &machine("/home/u"), false);
         assert!(f.ro.contains(&fmt!("/home/u/.cargo/bin")),
@@ -7607,7 +8102,7 @@ mod tests {
         assert!(f.rw.contains(&fmt!("/home/u/.cargo/registry")),
             "a fetch writes here, so read-only would break the build it was granted for: rw={:?}",
             f.rw);
-        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/d1")),
+        assert!(f.rw.contains(&fmt!("/home/u/ws/notes")),
             "and the Diamond's own workspace is untouched by any of it: rw={:?}", f.rw);
     }
 
@@ -7702,8 +8197,14 @@ mod tests {
         // the Diamond -- and `~/.rustup` is not in this Diamond's workspace.
         let mut c = scoped(&[], &[]);
         c.no_write.push(Toolkit::Rust.bound());
-        assert!(!c.may_read("../.cargo/bin/cargo"), "the file tools are unmoved by a toolkit");
-        assert!(!c.may_read("elsewhere/notes.md"));
+        assert!(!c.may_write("../.cargo/bin/cargo"), "the file tools are unmoved by a toolkit");
+        assert!(!c.may_write("elsewhere/notes.md"));
+        // Reading is free, and a toolkit is not what makes it so: `../.cargo/bin/cargo` is refused
+        // by the JAIL rather than by any rule here -- `Workspace::resolve` and
+        // `crate::wasm::opfs::split_components` reject a `..` that pops past the root -- which is
+        // the outer edge free reading is free INSIDE.
+        assert!(c.workspace.resolve("../.cargo/bin/cargo").is_err(),
+            "a path outside the workspace root is refused by the jail, whatever the bounds say");
         assert!(c.may_read("diamonds/d1/crystal.md"), "and the Diamond's own files still open");
         assert!(c.may_write("diamonds/d1/crystal.md"));
         // A toolkit alone declares no allow-list, so such a turn keeps the granted root and does
@@ -7786,10 +8287,10 @@ mod tests {
             assert!(!f.rw.contains(&fmt!("/home/u/ws")),
                 "attachment {:?} granted the whole workspace root: rw={:?}", junk, f.rw);
             let c = { let mut c = ctx(); c.no_write = b.clone(); c };
-            assert!(!c.may_read("elsewhere/secrets.txt"),
+            assert!(!c.may_write("elsewhere/secrets.txt"),
                 "attachment {:?} opened the whole workspace to the file tools", junk);
-            assert!(c.may_read("diamonds/d1/crystal.md"),
-                "and the Diamond's own files must still open");
+            assert!(c.may_write("diamonds/d1/crystal.md"),
+                "and the Diamond's own files must still be writable");
         }
     }
 
@@ -8137,8 +8638,16 @@ mod tests {
         let c = scoped(&["notes"], &[]);
         let cwd = c.default_cwd();
         assert!(!cwd.is_empty(), "a scoped turn must have a directory to start in");
-        assert!(c.may_read(&cwd),
-            "and it must be one the turn may reach, or every command is refused: cwd={:?}", cwd);
+        assert!(c.may_run_in(&cwd),
+            "and it must be one the turn may RUN in, or every command is refused: cwd={:?}", cwd);
+        assert!(!c.may_run_in("elsewhere"),
+            "which is a question with a no in it -- `may_read` would say yes to every path in the \
+            workspace now, and a guard that cannot refuse is not a guard");
+        assert!(scoped(&[], &["refs"]).may_run_in("refs"),
+            "and a folder attached to be CONSULTED is still somewhere to run: `may_write` would \
+            refuse it, and that Diamond would have nowhere on the machine at all");
+        assert!(!c.may_run_in("refs"),
+            "while the Diamond that was never attached it still cannot");
         // The Diamond's ATTACHED folder, not the Diamond's own directory. Its own directory is in
         // the browser's storage whatever workspace root is open (see `is_store_path`), so
         // `<granted-root>/diamonds/d1` is a path the hand cannot canonicalise and every command
@@ -8171,13 +8680,21 @@ mod tests {
         // the point: an unscoped turn -- which is what every worker carried while nothing
         // populated the bounds -- is granted the whole folder, and Diamond B's files are in it.
         let scoped_fence = fence_spec(
-            &diamond_bounds("diamonds/dA", &[], &[]), &Machine::at("/home/u/ws"), false);
+            &diamond_bounds("diamonds/dA", &[fmt!("notes")], &[]), &Machine::at("/home/u/ws"), false);
         let others = "/home/u/ws/diamonds/dB/secret.md";
         assert!(!scoped_fence.rw.iter().chain(scoped_fence.ro.iter()).any(|g| covers(g, others)),
             "a Diamond's fence reached another Diamond: rw={:?} ro={:?}",
             scoped_fence.rw, scoped_fence.ro);
-        assert!(scoped_fence.rw.contains(&fmt!("/home/u/ws/diamonds/dA")),
-            "and its own directory is writable, or it has nowhere to work");
+        assert!(scoped_fence.rw.contains(&fmt!("/home/u/ws/notes")),
+            "and the folder it was attached is writable, or it has nowhere to work");
+        // Its OWN directory is in neither list, because it is not a directory on this machine at
+        // all. It used to be in `rw`, spelled `/home/u/ws/diamonds/dA`, and the hand refused the
+        // whole fence over it -- so a Diamond that had been attached a folder could run nothing in
+        // it either.
+        assert!(!scoped_fence.rw.iter().chain(scoped_fence.ro.iter())
+                .any(|g| g.contains("diamonds")),
+            "the store reached the machine fence: rw={:?} ro={:?}",
+            scoped_fence.rw, scoped_fence.ro);
         let unscoped = fence_spec(&[], &Machine::at("/home/u/ws"), false);
         assert!(unscoped.rw.iter().any(|g| covers(g, others)),
             "the contrast this rests on: with no bounds the fence is the whole grant, which is \
@@ -8207,15 +8724,16 @@ mod tests {
     }
 
     #[test]
-    fn test_a_chat_cannot_read_or_write_outside_its_workspace_00() {
+    fn test_a_chat_cannot_write_outside_its_workspace_and_reads_freely_00() {
         let c = chatted(&["books/elearnity"], &[]);
-        // The incident, as a pair of assertions. `thinking.typ` and `config.typ` were two files of
-        // the user's book that an ordinary chat rewrote to work around a compiler limitation.
+        // The incident, as an assertion. `thinking.typ` and `config.typ` were two files of the
+        // user's book that an ordinary chat REWROTE to work around a compiler limitation; reading
+        // them was never the complaint, and the remedy asked for was a working directory.
         assert!(!c.may_write("books/other/thinking.typ"),
             "a chat may not edit a file in a folder nobody put in its workspace -- the whole change");
-        assert!(!c.may_read("books/other/config.typ"),
-            "nor read one: reading is a blast radius too, and a scope that fenced one verb left \
-            the model free to carry the contents of anything anywhere");
+        assert!(c.may_read("books/other/config.typ"),
+            "and may read one: 'summarise these ten files' must not require marking ten folders in \
+            first, and a chat is the user's own conversation over their own files");
         // Inside the workspace, both verbs, with nothing asked -- a fence that also
         // interrupted would have missed the point. Nothing in `may_write` can ask; the assertion
         // that matters is that it says yes.
@@ -8223,13 +8741,13 @@ mod tests {
         assert!(c.may_write("books/elearnity/ch1.typ"), "and so is writing");
         assert!(c.may_write("books/elearnity/new/dir/file.md"),
             "including making somewhere new, which is what working in a folder means");
-        // The control: the same four paths with no bounds at all, which is what a chat carried
-        // before this. Every assertion above passes here, so a check that stopped reading the
+        // The control: the same paths with no bounds at all, which is what a chat carried before
+        // any of this. The WRITE assertion above passes here, so a check that stopped reading the
         // bounds would report green.
         let free = ctx();
         for p in ["books/other/thinking.typ", "books/other/config.typ"] {
             assert!(free.may_read(p) && free.may_write(p),
-                "the control: unbounded, '{}' is reachable both ways -- so the refusals above are \
+                "the control: unbounded, '{}' is reachable both ways -- so the refusal above is \
                 the bounds speaking and not the path", p);
         }
     }
@@ -8248,9 +8766,11 @@ mod tests {
             "a chat always has somewhere to put what it produces, or 'where do I work' becomes a \
             question the user has to answer before starting");
         assert!(c.may_read("chats/c1/work/draft.md"));
-        assert!(!c.may_read("books/elearnity/ch1.typ"),
-            "and nothing of the user's until they mark a folder into its workspace");
-        assert!(!c.may_write("books/elearnity/ch1.typ"));
+        assert!(!c.may_write("books/elearnity/ch1.typ"),
+            "and may CHANGE nothing of the user's until they mark a folder into its workspace");
+        assert!(c.may_read("books/elearnity/ch1.typ"),
+            "though it may read it, which is what a chat with no workspace is for: answering a \
+            question about the user's files without being given a folder first");
         // Its scratch is in the browser's storage, so there is nowhere on the machine to run a
         // command -- which is where "no attachment, no command" comes from, and it survives the
         // move from a write allow-list to a both-verb one because it was never a rule of its own.
@@ -8265,6 +8785,64 @@ mod tests {
         assert!(!ctx().is_chat_scoped(), "and an unbounded turn is neither");
         // With a folder in the workspace there IS somewhere, and it is that folder.
         assert_eq!(chatted(&["books/elearnity"], &[]).default_cwd(), fmt!("books/elearnity"));
+    }
+
+    #[test]
+    fn test_a_chats_command_runs_in_the_folder_its_user_marked_in_00() {
+        // THE BREAK, in the user's own words on 2026-08-12, arriving on every `run` in every chat:
+        //
+        //   Refused: The fence was told to grant rw access to
+        //   "/home/jason/usr/chats/cmspsonqy-1-9swbn/work", which cannot be resolved (No such file
+        //   or directory (os error 2)). Granting nothing there would leave the command failing for
+        //   a reason nobody could see, so the fence was refused instead.
+        //
+        // The hand is right and stays as it is. What was wrong is upstream: `chats/<id>/work` is
+        // in the browser's storage and no browser ever makes it on disk, so `fence_spec` was
+        // handing over a directory that exists nowhere -- and the hand refuses the WHOLE fence
+        // over one unresolvable grant, which took `books/elearnity` down with it. The chat in that
+        // transcript had marked a real folder in, and could still run nothing at all.
+        let root = "/home/jason/usr";
+        let b = chat_bounds("chats/cmspsonqy-1-9swbn/work", &[fmt!("books/elearnity")], &[]);
+        let f = fence_spec(&b, &Machine::at(root), false);
+        assert!(f.rw.contains(&fmt!("{}/books/elearnity", root)),
+            "the folder the user marked in must be writable, or marking it did nothing: rw={:?}",
+            f.rw);
+        // The property, and not the one path: NOTHING the spec names may be a path in Daimond's
+        // own store, whichever root it came from. A literal check for the scratch would go quiet
+        // the day a mailbox or a Diamond arrived in a chat's workspace by the same road.
+        for p in f.rw.iter().chain(f.ro.iter()) {
+            let rel = p.strip_prefix(&fmt!("{}/", root)).unwrap_or("");
+            assert!(!is_store_path(rel),
+                "the fence named '{}', which is browser storage and not a directory on this \
+                machine -- the hand cannot resolve it and refuses every root beside it", p);
+        }
+        // Which is to say the scratch contributes NOTHING to a machine fence: the same spec, byte
+        // for byte, as the marked folder on its own. The control is the point -- it is what says
+        // the loop above is measuring the store rule rather than a chat that happened to grant
+        // little.
+        let marked_only = vec![
+            Bound::OnlyWriteUnder(fmt!("books/elearnity")),
+            Bound::NoWrite(DAIMOND_DIR.to_string()),
+            Bound::NoRead(DAIMOND_DIR.to_string()),
+        ];
+        assert_eq!(f.to_json(), fence_spec(&marked_only, &Machine::at(root), false).to_json(),
+            "a chat's scratch must be invisible to the hand: {}", f.to_json());
+        // And the grant now agrees with what is actually there. The scratch is still always
+        // writable where it exists -- the file tools, on the browser's own storage -- so an agent
+        // still has somewhere to put what it produces without the user answering a question first.
+        let c = { let mut c = ctx(); c.no_write = b.clone(); c };
+        assert!(c.may_write("chats/cmspsonqy-1-9swbn/work/draft.md"),
+            "the scratch is writable by the file tools, which is where that promise is kept");
+        assert!(c.may_write("books/elearnity/ch1.typ"), "and so is the marked folder");
+        // "No attachment, no command" is untouched: with nothing marked in there are no roots at
+        // all, the hand refuses, and `Tool::run` says so in the chat's own words first.
+        let bare = fence_spec(&chat_bounds("chats/c1/work", &[], &[]), &Machine::at(root), false);
+        assert!(bare.rw.is_empty() && bare.ro.is_empty(),
+            "a chat with an empty workspace has nowhere on this machine: {:?}", bare);
+        // The trap that makes the line above safe rather than lucky: dropping the scratch must not
+        // read as "this turn declared no allow-list", which hands back the whole granted folder.
+        assert!(!bare.rw.contains(&fmt!("{}", root)),
+            "dropping the store paths must never fall through to the unscoped grant: {:?}", bare);
     }
 
     #[test]
@@ -8311,11 +8889,14 @@ mod tests {
                    diamond_bounds("chats/c1/work", &[fmt!("notes")], &[fmt!("refs")]),
             "a chat is scoped the way a Diamond is, or the argument for either is only as good as \
             whichever copy of it was last edited");
-        // No `OnlyWriteUnder` anywhere in it. That variant is what let a chat read the whole
-        // workspace, and its absence is what makes the fence a real one.
-        assert!(!chat_bounds("chats/c1/work", &[fmt!("notes")], &[])
-                .iter().any(|b| matches!(b, Bound::OnlyWriteUnder(_))),
-            "a chat's writing is fenced by the same rule that fences its reading");
+        // And the rule it is composed of is the WRITE fence. A `Bound::OnlyUnder` here would fence
+        // reading as well -- which is what a one-line delegation did on 2026-08-12, taking the
+        // user's own files away from their own conversation without anybody deciding to.
+        let b = chat_bounds("chats/c1/work", &[fmt!("notes")], &[]);
+        assert!(b.iter().any(|x| matches!(x, Bound::OnlyWriteUnder(_))),
+            "a chat's writing is fenced");
+        assert!(!b.iter().any(|x| matches!(x, Bound::OnlyUnder(_))),
+            "and its reading is not");
         // Nothing expressible at all fails CLOSED, for the reason the empty prefix is dangerous:
         // `under(p, "")` is true for every path, so an allow-list of nothing would be an
         // allow-list of everything.
@@ -8343,29 +8924,45 @@ mod tests {
         // spelling of `.daimond/` rather than the reach of a worker.
         assert!(both.may_read("books/elearnity/ch1.typ") && both.may_write("books/elearnity/ch1.typ"),
             "a worker dispatched from a chat keeps the chat's own reach");
-        assert!(!both.may_read("books/other/thinking.typ"),
+        assert!(!both.may_write("books/other/thinking.typ"),
             "and gains nothing the chat did not have");
+        assert!(both.may_read("books/other/thinking.typ"),
+            "including the reading, which the chat had freely -- a worker reading what the \
+            conversation could already read is equal reach and not greater");
         // And a worker handed a WIDER list than the chat holds does not get it: composition
         // intersects, which is the invariant that makes it safe to call from anywhere.
         let wider = chat_bounds("chats/c1/work", &[fmt!("books")], &[]);
         let mut c = ctx();
         c.no_write = compose(&chat, &wider);
-        assert!(!c.may_read("books/other/thinking.typ"),
+        assert!(!c.may_write("books/other/thinking.typ"),
             "composing a wider scope onto a narrower one must narrow, never widen");
-        assert!(c.may_read("books/elearnity/ch1.typ"), "and must keep what both permitted");
+        assert!(c.may_write("books/elearnity/ch1.typ"), "and must keep what both permitted");
     }
 
     #[test]
     fn test_the_bytes_a_scoped_diamond_hands_the_fence_00() {
-        // The three specs below were driven through a real `daimond-hand` on an ABI-8 kernel, and
-        // the outcomes were: Diamond A's command could not write or read `diamonds/dB` (EACCES from
-        // Landlock, not from a check in this file), could write its own directory, and the same
-        // command under the unscoped spec read `dB/secret.md` and created a file in it. Pinning the
-        // bytes is what keeps that measurement attached to this code: a change here that widened
-        // the fence would pass every predicate test above and be invisible.
+        // The specs below were driven through a real `daimond-hand` on an ABI-8 kernel, and the
+        // outcomes were: Diamond A's command could not write or read `diamonds/dB` (EACCES from
+        // Landlock, not from a check in this file), could write the directory it was granted, and
+        // the same command under the unscoped spec read `dB/secret.md` and created a file in it.
+        // Pinning the bytes is what keeps that measurement attached to this code: a change here
+        // that widened the fence would pass every predicate test above and be invisible.
+        //
+        // WHAT THAT MEASUREMENT COULD NOT SEE. The spec pinned here used to be
+        // `{"rw":["/g/diamonds/dA"],…}`, and it was measured with `/g/diamonds/dA` made by hand
+        // first. A browser never makes it: a Diamond's own directory, and a chat's scratch, live
+        // in the browser's storage whatever folder the user opened. So in the field the hand met a
+        // path it could not canonicalise and refused the WHOLE fence, correctly, and every command
+        // in every chat was refused with it. The store paths are gone from the spec now, and a
+        // Diamond hands over the folder it was attached.
         let m = Machine::at("/g");
+        assert_eq!(fence_spec(&diamond_bounds("diamonds/dA", &[fmt!("notes")], &[]), &m, false).to_json(),
+            r#"{"rw":["/g/notes"],"ro":[],"deny":["/g/.daimond"],"net":true}"#);
+        // With nothing attached there is nothing on the machine to grant, so the spec carries no
+        // roots and the hand refuses it -- which is "no attachment, no command", and is the
+        // sentence `Tool::run` gets in ahead of the hand so the user is told where to fix it.
         assert_eq!(fence_spec(&diamond_bounds("diamonds/dA", &[], &[]), &m, false).to_json(),
-            r#"{"rw":["/g/diamonds/dA"],"ro":[],"deny":["/g/.daimond"],"net":true}"#);
+            r#"{"rw":[],"ro":[],"deny":["/g/.daimond"],"net":true}"#);
         assert_eq!(fence_spec(&[], &m, false).to_json(),
             r#"{"rw":["/g"],"ro":[],"deny":["/g/.daimond"],"net":true}"#);
         // And a scope that could not be expressed hands over no roots at all, which the hand
@@ -8383,13 +8980,13 @@ mod tests {
         let b = toolkit_bounds(&[fmt!("rust"), fmt!("no-such-kit"), fmt!("rust"), fmt!("")]);
         assert_eq!(b, vec![Toolkit::Rust.bound()],
             "one grant, named once, and nothing invented from a name this build cannot express");
-        let mut full = diamond_bounds("diamonds/d1", &[], &[]);
+        let mut full = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[]);
         full.extend(toolkit_bounds(&[fmt!("rust")]));
         let f = fence_spec(&full, &machine("/home/u"), false);
         assert!(f.ro.contains(&fmt!("/home/u/.cargo/bin")),
             "a recorded grant must reach the fence, or `cargo` is refused for a Diamond the user \
             granted Rust: ro={:?}", f.ro);
-        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/d1")),
+        assert!(f.rw.contains(&fmt!("/home/u/ws/notes")),
             "and the Diamond's own scope is untouched by it: rw={:?}", f.rw);
         // The invariant that makes a grant a grant: nothing here reads what the model asked to run.
         assert!(toolkit_bounds(&[]).is_empty());
@@ -8427,10 +9024,15 @@ mod tests {
     fn test_the_guard_refuses_at_the_door_00() {
         // Not the predicate -- the door every tool dispatches through.
         let c = scoped(&["notes/specs"], &[]);
-        let out = Tool::FileRead.guard(r#"{"path":"secrets/keys.txt"}"#, &c).expect("guard");
-        assert!(out.is_some(), "file_read outside the workspace must be refused at the door");
         let w = Tool::FileWrite.guard(r#"{"path":"secrets/keys.txt","content":"x"}"#, &c).expect("guard");
-        assert!(w.is_some(), "and so must file_write");
+        assert!(w.is_some(), "file_write outside the workspace must be refused at the door");
+        // And the read of the same path is not refused, which is the change: the door enforces the
+        // verb split rather than a surface.
+        let out = Tool::FileRead.guard(r#"{"path":"secrets/keys.txt"}"#, &c).expect("guard");
+        assert!(out.is_none(), "reading is free, and the door is where that has to be true");
+        // The read the door still refuses.
+        let own = Tool::FileRead.guard(r#"{"path":".daimond/config.jdat"}"#, &c).expect("guard");
+        assert!(own.is_some(), "Daimond's own directory is not readable from a scoped turn");
         let ok = Tool::FileRead.guard(r#"{"path":"notes/specs/api.md"}"#, &c).expect("guard");
         assert!(ok.is_none(), "and what is in scope must pass");
     }
@@ -8439,17 +9041,39 @@ mod tests {
     fn test_every_path_taking_tool_is_seen_by_the_guard_00() {
         // The claim is only as good as the enumeration behind it: a tool whose path never reaches
         // write_targets or read_target is a hole. This fails if one is added without being named.
+        //
+        // Asked of Daimond's own directory, which is the one prefix BOTH verbs are refused at, so
+        // one list covers the readers and the writers alike -- and a tool wired to neither door
+        // comes back permitted, which is the hole this exists to find.
         let c = scoped(&["notes/specs"], &[]);
-        let cases: &[(Tool, &str)] = &[
-            (Tool::FileRead,   r#"{"path":"out/x.md"}"#),
+        let denied: &[(Tool, &str)] = &[
+            (Tool::FileRead,   r#"{"path":".daimond/x.md"}"#),
+            (Tool::FileWrite,  r#"{"path":".daimond/x.md","content":"x"}"#),
+            (Tool::FileEdit,   r#"{"path":".daimond/x.md","old_string":"a","new_string":"b"}"#),
+            (Tool::FileDelete, r#"{"path":".daimond/x.md"}"#),
+            (Tool::DirCreate,  r#"{"path":".daimond/x"}"#),
+            (Tool::FileFetch,  r#"{"path":".daimond/x.md"}"#),
+            // Showing a file puts its bytes on the user's screen under a Download button, so a
+            // turn that may not READ a path must not be able to exhibit it either.
+            (Tool::FileShow,   r#"{"path":".daimond/x.pdf"}"#),
+            (Tool::FileList,   r#"{"path":".daimond"}"#),
+            (Tool::FileSearch, r#"{"path":".daimond","pattern":"x"}"#),
+            (Tool::FileGlob,   r#"{"path":".daimond","pattern":"*.md"}"#),
+            (Tool::TypstCompile, r#"{"path":".daimond/x.typ"}"#),
+        ];
+        for (tool, args) in denied {
+            let got = tool.guard(args, &c).expect("guard");
+            assert!(got.is_some(), "{} reached Daimond's own directory unrefused", tool.name());
+        }
+        // The WRITE half, at a path outside the workspace that every one of these may now read.
+        // Each pair is a refusal with a permission beside it: the same path, refused to the writer
+        // and allowed to the reader, which is the whole of the verb split at the door.
+        let writes: &[(Tool, &str)] = &[
             (Tool::FileWrite,  r#"{"path":"out/x.md","content":"x"}"#),
             (Tool::FileEdit,   r#"{"path":"out/x.md","old_string":"a","new_string":"b"}"#),
             (Tool::FileDelete, r#"{"path":"out/x.md"}"#),
             (Tool::DirCreate,  r#"{"path":"out/x"}"#),
             (Tool::FileFetch,  r#"{"path":"out/x.md"}"#),
-            (Tool::FileList,   r#"{"path":"out"}"#),
-            (Tool::FileSearch, r#"{"path":"out","pattern":"x"}"#),
-            (Tool::FileGlob,   r#"{"path":"out","pattern":"*.md"}"#),
             (Tool::TypstCompile, r#"{"path":"out/x.typ"}"#),
             // A link tool NAMES no path and still changes one. `scoped` bounds this turn to
             // Diamond `d1`, so a record aimed at another Diamond's sidecar is an escape, and it
@@ -8457,15 +9081,29 @@ mod tests {
             (Tool::LinkAdd,    r#"{"from":"diamond:elsewhere","to":"diamond:d1","rel":"informs"}"#),
             (Tool::LinkRemove, r#"{"owner":"elsewhere","id":"l1"}"#),
         ];
-        for (tool, args) in cases {
+        for (tool, args) in writes {
             let got = tool.guard(args, &c).expect("guard");
-            assert!(got.is_some(), "{} reached outside the workspace unrefused", tool.name());
+            assert!(got.is_some(), "{} wrote outside the workspace unrefused", tool.name());
+        }
+        for (tool, args) in [
+            (Tool::FileRead,   r#"{"path":"out/x.md"}"#),
+            (Tool::FileShow,   r#"{"path":"out/x.pdf"}"#),
+            (Tool::FileList,   r#"{"path":"out"}"#),
+            (Tool::FileSearch, r#"{"path":"out","pattern":"x"}"#),
+            (Tool::FileGlob,   r#"{"path":"out","pattern":"*.md"}"#),
+        ] {
+            assert!(tool.guard(args, &c).expect("guard").is_none(),
+                "{} was refused a path outside the workspace, and reading is free", tool.name());
         }
         // file_move names two paths and BOTH are checked: a move out is an escape as surely as a
-        // write out, and a move in from outside reads what it must not read.
+        // write out, and a move in from outside is a write at the destination.
         let out_dest = Tool::FileMove.guard(
             r#"{"path":"notes/specs/a.md","to":"escaped/a.md"}"#, &c).expect("guard");
         assert!(out_dest.is_some(), "file_move must not carry a file out of the workspace");
+        let in_src = Tool::FileMove.guard(
+            r#"{"path":"escaped/a.md","to":"notes/specs/a.md"}"#, &c).expect("guard");
+        assert!(in_src.is_some(),
+            "nor move one in: a move deletes the source, which is a write wherever it started");
     }
 
     // ── The world model: three tools over the link graph ─────────────────────
@@ -10922,34 +11560,50 @@ mod tests {
     }
 
     #[test]
-    fn test_a_diamond_scoped_walk_stays_in_its_diamond_00() {
-        // The browser's bound, which is an allow-list.  The door already refuses `path: "."` under
-        // one, so this is the case that was latent -- but a walk started at an allowed place must
-        // still not climb out of it through an attachment's neighbour.
+    fn test_a_diamond_scoped_walk_reads_the_workspace_and_writes_only_its_own_00() {
+        // A WALK is the sharpest form of the verb split, because it reaches paths nobody named.
+        // Under a both-verb scope it was refused at the door for starting at `.`; reading is free
+        // now, so it runs -- and what must still hold is that everything it FINDS it may only read.
         let mut c = ctx();
         put(&c, "diamonds/d1/own.md", "TOPSECRET inside\n");
         put(&c, "notes/specs/api.md", "TOPSECRET attached\n");
         put(&c, "secrets/keys.txt", "TOPSECRET elsewhere\n");
+        put(&c, ".daimond/config.jdat", "TOPSECRET what agents may do\n");
         let all = search_says(&c, r#"{"query":"TOPSECRET","limit":1000}"#);
-        assert_eq!(3, all.len(), "the control must find all three: {:?}", all);
+        assert_eq!(4, all.len(), "the control must find all four: {:?}", all);
 
         let a = vec![fmt!("notes/specs")];
         c.no_write = diamond_bounds("diamonds/d1", &a, &[]);
         let out = Tool::FileSearch
             .execute_sync_guarded(r#"{"query":"TOPSECRET","path":".","limit":1000}"#, &c)
             .expect("search");
-        // Said aloud, because without it the two checks below pass on a refusal and would go on
-        // passing if the walk stopped refusing anything at all.
-        assert!(out.as_text().contains("not in this Diamond's workspace"),
-            "the door must refuse a walk that starts outside the scope: {}", out);
-        assert!(!out.as_text().contains("secrets/keys.txt"), "{}", out);
-        assert!(!out.as_text().contains("elsewhere"), "the contents leaked: {}", out);
-        // And a walk that starts INSIDE the scope runs, and still reaches only what is in it.
+        // The permission, said first, because every refusal below is worthless beside a walk that
+        // found nothing: "no access at all" satisfies "no access to THAT".
+        assert!(out.as_text().contains("secrets/keys.txt"),
+            "a walk from the root must run and reach what nobody attached: {}", out);
+        assert!(out.as_text().contains("notes/specs/api.md"), "{}", out);
+        // And the one thing a scope still denies a READ of.
+        assert!(!out.as_text().contains("what agents may do"),
+            "the walk read Daimond's own directory: {}", out);
+        assert!(out.as_text().contains("out of bounds"),
+            "and it must say it passed something over rather than answer as though it looked \
+            everywhere: {}", out);
+        // What it found, it may not change. This is the fence, and it is the half that must never
+        // widen: the file it just read is refused to every writing tool.
+        let w = Tool::FileWrite
+            .execute_sync_guarded(r#"{"path":"secrets/keys.txt","content":"clobbered"}"#, &c)
+            .expect("write");
+        assert!(w.as_text().contains("not in this Diamond's workspace"),
+            "a walk that can read a file must not make it writable: {}", w);
+        assert_eq!("TOPSECRET elsewhere\n",
+            std::fs::read_to_string(c.workspace.resolve("secrets/keys.txt").expect("resolve"))
+                .expect("the file"),
+            "and the refusal is real -- the file is untouched");
+        // The walk the turn works in is unaffected.
         let ok = Tool::FileSearch
             .execute_sync_guarded(r#"{"query":"TOPSECRET","path":"notes/specs","limit":1000}"#, &c)
             .expect("search");
         assert!(ok.as_text().contains("notes/specs/api.md"), "the attachment must still be searchable: {}", ok);
-        assert!(!ok.as_text().contains("secrets/keys.txt"), "{}", ok);
     }
 
     // ── Two bounds on one turn ──────────────────────────────────────
@@ -10982,17 +11636,20 @@ mod tests {
         assert!(c.may_read("diamonds/alpha/crystal.md"), "a daimon must reach its own Diamond");
         assert!(c.may_write("diamonds/alpha/crystal.md"), "and be able to keep its crystal");
         // 2. The other Diamond: what the assignment let through, because it discarded the
-        //    allow-list and a skill's bound has none.
-        assert!(!c.may_read("diamonds/beta/crystal.md"),
-            "the Diamond's allow-list must survive the skill's bound being applied");
-        assert!(!c.may_write("diamonds/beta/crystal.md"));
+        //    allow-list and a skill's bound has none. Stated on the WRITE, which is the verb a
+        //    scope fences (see `Bound::OnlyWriteUnder`) -- and the reading beside it is the
+        //    permission that stops this passing on a turn that reaches nothing at all.
+        assert!(!c.may_write("diamonds/beta/crystal.md"),
+            "the Diamond's write allow-list must survive the skill's bound being applied");
+        assert!(c.may_read("diamonds/beta/crystal.md"),
+            "and reading is free, as it is for every scope in this build");
         // 3. Daimond's own directory, which neither bound ever permits.
         assert!(!c.may_read(".daimond/config.jdat"));
         assert!(!c.may_read(".daimond/skills/other/SKILL.md"), "nor another skill's declaration");
         assert!(!c.may_write(".daimond/skills/mine/SKILL.md"), "nor its own");
-        // 4. The skill's carve-out. Inside a Diamond it is REFUSED -- the Diamond denies its whole
-        //    directory and allow-lists none of it, and "the allow-list wins" is what `MayRead` has
-        //    always said. Composing must not widen the Diamond to reach it.
+        // 4. The skill's carve-out. Inside a Diamond it is REFUSED -- the Diamond denies the whole
+        //    of Daimond's directory, and a hole punched in one fence is not a hole in the other
+        //    (`permits_subtree`). Composing must not widen the Diamond to reach it.
         assert!(!c.may_read(".daimond/skills/mine/ref.md"),
             "a carve-out is a hole in the skill's own deny fence, not a key to the Diamond's");
         // ...and the same carve-out on a turn that is not Diamond-scoped is alive, so what refused
@@ -11105,17 +11762,21 @@ mod tests {
             "an empty carve-out survived the merge: {:?}", m2);
         let c2 = bound_ctx(m2);
         assert!(!c2.may_read(".daimond/config.jdat"));
-        assert!(!c2.may_read("diamonds/beta/x.md"));
+        assert!(!c2.may_write("diamonds/beta/x.md"),
+            "and the Diamond's own write fence is not widened by the merge either");
     }
 
     #[test]
     fn test_a_composed_bound_reaches_the_fence_the_same_00() {
         // Both doors read the one list, so a merge that satisfied `may_read` and left the fence
         // wide would be the divergence §1.9 and §1.10 were about, arriving by a third road.
-        let (d, s) = diamond_and_skill();
+        // Attached a folder, because that is the only thing a Diamond has ON THE MACHINE: its own
+        // directory is in the browser's storage and never enters a fence.
+        let (_, s) = diamond_and_skill();
+        let d = diamond_bounds("diamonds/alpha", &[fmt!("notes")], &[]);
         let f = fence_spec(&compose(&d, &s), &Machine::at("/home/u/ws"), false);
-        assert!(f.rw.contains(&fmt!("/home/u/ws/diamonds/alpha")),
-            "the Diamond's own directory must stay writable by a command: {:?}", f.rw);
+        assert!(f.rw.contains(&fmt!("/home/u/ws/notes")),
+            "the Diamond's workspace must stay writable by a command: {:?}", f.rw);
         assert!(!f.rw.contains(&fmt!("/home/u/ws")),
             "assignment gave a skill turn the whole grant, because a skill's bound has no \
             allow-list and `fence_spec` then falls back to the root: {:?}", f.rw);
@@ -11159,22 +11820,29 @@ mod tests {
 
         let (d, s) = diamond_and_skill();
         c.no_write = compose(&d, &s);
-        // The whole-workspace walk a skill's bound permits and a Diamond's does not. Under the
-        // assignment this ran, and returned every file above; the refusal is the allow-list
-        // surviving, and it is asserted by name so the two checks under it cannot pass on a walk
-        // that simply found nothing.
+        // A whole-workspace walk under BOTH bounds. It runs, because neither fences a read, and
+        // what it may not see is what the DENY covers: Daimond's own directory, from both sides.
+        // The reachable file is named first, so the refusals under it cannot pass on a walk that
+        // found nothing.
         let out = Tool::FileSearch
             .execute_sync_guarded(r#"{"query":"TOPSECRET","path":".","limit":1000}"#, &c)
             .expect("search");
-        assert!(out.as_text().contains("not in this Diamond's workspace"),
-            "a walk from the workspace root must be refused under a Diamond's scope: {}", out);
-        assert!(!out.as_text().contains("diamonds/beta"), "the walk reached the other Diamond: {}", out);
-        assert!(!out.as_text().contains("other daimon"), "and its contents: {}", out);
+        assert!(out.as_text().contains("diamonds/beta/theirs.md"),
+            "a walk under two bounds must still run, or the refusals below prove nothing: {}", out);
         assert!(!out.as_text().contains("what agents may do"), "and Daimond's own directory: {}", out);
+        assert!(!out.as_text().contains("my shipped reference"),
+            "including the skill's own carve-out, which does not survive a Diamond's deny: {}", out);
         let g = Tool::FileGlob
             .execute_sync_guarded(r#"{"pattern":"**/*","path":"."}"#, &c).expect("glob");
-        assert!(!g.as_text().contains("diamonds/beta"), "the glob listed the other Diamond: {}", g);
-        assert!(!g.as_text().contains("config.jdat"), "and Daimond's own directory: {}", g);
+        assert!(g.as_text().contains("diamonds/beta"), "the glob must list what it may read: {}", g);
+        assert!(!g.as_text().contains("config.jdat"), "and not Daimond's own directory: {}", g);
+        // The WRITE is what the merge fences, and it is fenced from both sides at once: the other
+        // Diamond because it is outside the scope, its own skill folder because the deny covers it.
+        assert!(!c.may_write("diamonds/beta/theirs.md"),
+            "the merged bound must keep the Diamond's write fence");
+        assert!(!c.may_write(".daimond/skills/mine/SKILL.md"),
+            "and the skill's deny, so a skill cannot rewrite its own declaration");
+        assert!(c.may_write("diamonds/alpha/own.md"), "while its own Diamond stays writable");
         // And the walk the turn IS entitled to still works, so the bound is a fence and not an
         // outage.
         let own = Tool::FileSearch
@@ -11252,13 +11920,16 @@ mod tests {
                 let (d, s) = diamond_and_skill();
                 bound_ctx(m(&d, &s)).may_write("diamonds/alpha/crystal.md")
             }),
-            ("the other Diamond is refused a read", true, |m: Merge| {
-                let (d, s) = diamond_and_skill();
-                !bound_ctx(m(&d, &s)).may_read("diamonds/beta/crystal.md")
-            }),
-            ("and refused a write", true, |m: Merge| {
+            // The other Diamond, on the two verbs a scope fences. Its READING is free -- see
+            // `Bound::OnlyWriteUnder` -- so there is nothing to check there, and a check written
+            // as though there were would be asserting a rule this build does not have.
+            ("the other Diamond is refused a write", true, |m: Merge| {
                 let (d, s) = diamond_and_skill();
                 !bound_ctx(m(&d, &s)).may_write("diamonds/beta/crystal.md")
+            }),
+            ("and is nowhere to run a command", true, |m: Merge| {
+                let (d, s) = diamond_and_skill();
+                !bound_ctx(m(&d, &s)).may_run_in("diamonds/beta")
             }),
             ("Daimond's own directory is refused", false, |m: Merge| {
                 let (d, s) = diamond_and_skill();
@@ -11306,10 +11977,13 @@ mod tests {
                 !m(&d, &b).iter()
                     .any(|x| matches!(x, Bound::MayRead(p) if normalise(p).is_empty()))
             }),
-            ("the fence keeps the Diamond's own directory", true, |m: Merge| {
-                let (d, s) = diamond_and_skill();
+            // What the Diamond has ON THE MACHINE, which is the attached folder: its own directory
+            // is browser storage and never reaches a fence.
+            ("the fence keeps the Diamond's workspace", true, |m: Merge| {
+                let (_, s) = diamond_and_skill();
+                let d = diamond_bounds("diamonds/alpha", &[fmt!("notes")], &[]);
                 fence_spec(&m(&d, &s), &Machine::at("/home/u/ws"), false)
-                    .rw.contains(&fmt!("/home/u/ws/diamonds/alpha"))
+                    .rw.contains(&fmt!("/home/u/ws/notes"))
             }),
             ("and does not hand back the whole grant", true, |m: Merge| {
                 let (d, s) = diamond_and_skill();
@@ -12160,7 +12834,7 @@ mod tests {
     fn test_a_locked_pack_refuses_its_tool_and_nothing_else() {
         let c = ctx();
         let args = r#"{"path":"paper.typ"}"#;
-        set_locked_packs(PACK_TYPST);
+        set_locked_packs(PACK_DROP01);
 
         let refusal = match Tool::TypstCompile.guard(args, &c) {
             Ok(Some(r)) => r,
@@ -12171,7 +12845,7 @@ mod tests {
         // the pack it is sold in, or the model cannot tell the user what to buy.
         assert!(refusal.contains(Tool::TypstCompile.name()),
             "the refusal does not name the tool: {}", refusal);
-        assert!(refusal.contains(PACK_TYPST),
+        assert!(refusal.contains(PACK_DROP01),
             "the refusal does not name the pack: {}", refusal);
         // And it must not read as a fault, or the model retries it.
         assert!(refusal.contains("has not bought"),
@@ -12194,7 +12868,7 @@ mod tests {
         let args = r#"{"path":"paper.typ"}"#;
 
         // Locked: refused.
-        set_locked_packs(PACK_TYPST);
+        set_locked_packs(PACK_DROP01);
         assert!(matches!(Tool::TypstCompile.guard(args, &c), Ok(Some(_))),
             "the control failed: a locked pack must refuse");
 
@@ -12213,7 +12887,7 @@ mod tests {
         // property that keeps a paid-up customer working through a gateway outage, and that lets
         // the gate ship before the catalogue sells anything.
         assert!(locked_packs().is_empty(), "a fresh build starts with something locked");
-        assert!(!pack_locked(PACK_TYPST));
+        assert!(!pack_locked(PACK_DROP01));
         match Tool::TypstCompile.guard(r#"{"path":"paper.typ"}"#, &ctx()) {
             Ok(None)    => (),
             Ok(Some(r)) => panic!("an untold device refused a tool: {}", r),
@@ -12224,8 +12898,8 @@ mod tests {
     #[test]
     fn test_the_locked_list_is_read_as_the_catalogue_spells_it() {
         // Whitespace, casing and empty entries are the page's spelling, not a different pack.
-        set_locked_packs(" TYPST , ,email ");
-        assert!(pack_locked(PACK_TYPST), "casing and padding lost a lock");
+        set_locked_packs(" DROP01 , ,email ");
+        assert!(pack_locked(PACK_DROP01), "casing and padding lost a lock");
         assert!(pack_locked("email"));
         assert_eq!(locked_packs().len(), 2, "an empty entry became a pack: {:?}", locked_packs());
         // The control: a pack nobody named is not locked, so the list is a list and not a flag.
@@ -12233,11 +12907,181 @@ mod tests {
         set_locked_packs("");
     }
 
+    // ── Showing a file, which is the half no verifier in a browser can reach ──
+    //
+    // `dev/verify_fileshow.mjs` drives `window.DaimondDoc` in the real page and proves that a
+    // file the model names ends up drawn on screen.  It cannot reach any of this: the guard, the
+    // refusals and the English are Rust, and until the wasm is rebuilt they are not in the page
+    // at all.  These are the other half.
+
+    /// **A daimon may only show what its scope can already read.**
+    ///
+    /// Showing is the more consequential of the two, which is why it goes through the same door:
+    /// a read puts a file's bytes in the model's context, where the user may never look, and a
+    /// show puts them on the user's screen under a Download button.  A fence that let a bounded
+    /// turn EXHIBIT what it may not read would be no fence.
+    ///
+    /// Which is now the same door and the same answer: reading is free inside the workspace, so
+    /// showing is too, and what neither may reach is Daimond's own directory.
+    #[test]
+    fn test_file_show_is_fenced_by_the_same_door_a_read_is() {
+        let c = scoped(&["notes/specs"], &[]);
+        // In bounds: nothing to refuse.
+        match Tool::FileShow.guard(r#"{"path":"notes/specs/report.pdf"}"#, &c) {
+            Ok(None)    => (),
+            Ok(Some(r)) => panic!("a file inside the workspace was refused: {}", r),
+            Err(e)      => panic!("guard: {}", e),
+        }
+        // Whatever a read reaches, a show reaches: the two are one question, and a build where
+        // they disagreed would be one where the user's screen and the model's context had
+        // different rules.
+        assert_eq!(
+            Tool::FileShow.guard(r#"{"path":"elsewhere/secret.pdf"}"#, &c).expect("guard").is_none(),
+            Tool::FileRead.guard(r#"{"path":"elsewhere/secret.pdf"}"#, &c).expect("guard").is_none(),
+            "showing and reading must answer alike for a path outside the workspace");
+        // And the one place neither may go, with the refusal naming it: a model told only "no"
+        // tries the same path again with a different spelling.
+        let out = Tool::FileShow.guard(r#"{"path":".daimond/skills/other/ref.pdf"}"#, &c)
+            .expect("guard").expect("Daimond's own directory was shown");
+        assert!(out.contains("Daimond's own directory"),
+            "the refusal does not say what was wrong: {}", out);
+        // An absolute path is the wrong KIND of path rather than a permission problem, and it is
+        // answered as such -- the convention runs before the bounds for exactly this reason.
+        let abs = Tool::FileShow.guard(r#"{"path":"/home/u/report.pdf"}"#, &c)
+            .expect("guard").expect("an absolute path was shown");
+        assert!(abs.contains("absolute path") && abs.contains("relative to the workspace"),
+            "an absolute path was refused as a permission problem: {}", abs);
+    }
+
+    /// **The tool is in every table a tool has to be in.**
+    ///
+    /// The compiler catches the exhaustive matches -- `name`, `description`, `summary`,
+    /// `parameters` -- and catches neither `from_name`, which has a `_` arm, nor the two tables
+    /// that are vectors.  A tool half-added is offered to the model and then unanswerable, or
+    /// held by the model and never shown to the user.
+    #[test]
+    fn test_file_show_is_in_every_table_a_browser_tool_is_in() {
+        assert_eq!(Some(Tool::FileShow), Tool::from_name("file_show"));
+        assert_eq!("file_show", Tool::FileShow.name());
+        assert!(Tool::browser().contains(&Tool::FileShow),
+            "file_show is not in the browser toolbelt, so nothing is ever offered it -- and the \
+            Tools panel reads the same vector, so the user is never told either");
+        let def = Tool::FileShow.definition_json();
+        Dat::decode_string(def.as_str()).expect("the schema must be JSON the model can read");
+        assert_eq!(extract_json_string(&def, "name").as_deref(), Some("file_show"));
+        // The native build has no panel, and says so rather than failing obscurely.
+        assert!(!Tool::defaults().contains(&Tool::FileShow));
+        // It is free.  A tool that puts a file on screen behind a paywall would be a strange
+        // thing to sell, and this pins that nobody did it by accident.
+        assert_eq!(None, Tool::FileShow.pack());
+    }
+
+    /// **What the model is told about a PDF is that the user is looking at it.**
+    ///
+    /// The sentence the defect produced was *"I cannot display a PDF inline here"*.  This is the
+    /// replacement, and the property is not the wording: it is that the result names the file,
+    /// says it is on the user's screen, and names the format in words rather than in the enum's
+    /// identifier.
+    #[test]
+    fn test_showing_a_pdf_tells_the_model_the_user_can_see_it() {
+        let s = Shown {
+            tier:  fmt!("doc"),
+            media: fmt!("Pdf"),
+            label: fmt!("PDF document"),
+            size:  1_131_462,
+            ..Default::default()
+        };
+        let out = Tool::show_result("CheapThinking/thinking.pdf", &s).as_text().to_string();
+        assert!(out.contains("CheapThinking/thinking.pdf"), "{}", out);
+        assert!(out.contains("PDF document"), "the format is not named in words: {}", out);
+        assert!(out.contains("on the user's screen"), "{}", out);
+        // No page was asked for, so none is claimed: a model told "page 1" when it did not ask
+        // would repeat that to a user reading page 40.  Matched on the SENTENCE and not on the
+        // word, because the branch legitimately says "typeset pages" a clause earlier -- a bare
+        // `!contains("page")` fails against correct code, which is the shape of assertion that
+        // gets deleted rather than fixed.
+        assert!(!out.contains("open at page"),
+            "a page was claimed that nobody asked for: {}", out);
+        let aimed = Tool::show_result("book.pdf", &Shown { page: Some(214), ..s.clone() }).as_text().to_string();
+        assert!(aimed.contains("page 214"), "the page it was aimed at is not reported: {}", aimed);
+    }
+
+    /// **The floor is reported as a file that IS shown, and never as an inability.**
+    ///
+    /// This is the whole point of the tool arriving with this wording.  The defect was a false
+    /// generalisation -- from "my tools return bytes" to "this app cannot display a PDF" -- and a
+    /// result that reads "there is no viewer for this format" is an invitation to make the same
+    /// leap one file later.  So the hex branch says the file is on screen, says what the panel
+    /// DOES draw, and says not to generalise.
+    #[test]
+    fn test_a_format_with_no_viewer_is_still_reported_as_shown() {
+        let s = Shown {
+            tier:  fmt!("hex"),
+            media: fmt!("Unknown"),
+            label: fmt!("unknown format"),
+            size:  4096,
+            ..Default::default()
+        };
+        let out = Tool::show_result("build/app.bin", &s).as_text().to_string();
+        assert!(out.contains("on the user's screen"),
+            "the floor is reported as a failure to show: {}", out);
+        assert!(out.contains("hex"), "what they can actually see is not described: {}", out);
+        // The named alternatives, so the model has something true to say next.
+        for named in ["PDF", "JSON", "Markdown"] {
+            assert!(out.contains(named),
+                "the result does not say the panel draws {}, so a model reading it may conclude \
+                the panel draws nothing: {}", named, out);
+        }
+        assert!(out.contains("do not tell the user Daimond cannot show files"),
+            "nothing here stops the generalisation this tool exists to stop: {}", out);
+    }
+
+    /// **A disagreement travels to the model as well as to the screen.**
+    ///
+    /// A user looking at a `.png` that is really a PDF will ask about it, and an agent that does
+    /// not know the name and the bytes differ guesses at the wrong cause.
+    #[test]
+    fn test_a_disagreeing_file_says_so_to_the_model_too() {
+        let s = Shown {
+            tier:     fmt!("doc"),
+            media:    fmt!("Pdf"),
+            label:    fmt!("PDF document"),
+            size:     900,
+            page:     None,
+            disagree: true,
+            named:    fmt!("PNG image"),
+            found:    fmt!("PDF document"),
+        };
+        let out = Tool::show_result("export.png", &s).as_text().to_string();
+        assert!(out.contains("PNG image") && out.contains("PDF document"), "{}", out);
+        // And a file that agrees with itself is not given the note, which would otherwise arrive
+        // on every single show and read as a warning about nothing.
+        let quiet = Tool::show_result("ok.pdf", &Shown {
+            tier: fmt!("doc"), media: fmt!("Pdf"), label: fmt!("PDF document"), size: 900,
+            ..Default::default()
+        }).as_text().to_string();
+        assert!(!quiet.contains("NAME says"), "a file that agrees with itself got the note: {}", quiet);
+    }
+
+    /// **A tier this build has not heard of is not described.**
+    ///
+    /// `viewer.js` owns the table, so it can grow a tier this build does not know.  Guessing at
+    /// what the user can see is how a model comes to describe a screen nobody has looked at.
+    #[test]
+    fn test_an_unknown_tier_is_admitted_rather_than_guessed_at() {
+        let out = Tool::show_result("thing.xyz", &Shown {
+            tier: fmt!("carousel"), media: fmt!("Xyz"), label: fmt!("XYZ file"), size: 12,
+            ..Default::default()
+        }).as_text().to_string();
+        assert!(out.contains("ask them what they can see"), "{}", out);
+        assert!(out.contains("carousel"), "the unknown tier is not named for the log: {}", out);
+    }
+
     #[test]
     fn test_only_the_sold_tool_carries_a_pack_key() {
         // The belt is the panel's source as well as the model's, so this is what stops a free tool
         // being drawn with a price on it -- and a sold one being drawn as free.
-        assert_eq!(Tool::TypstCompile.pack(), Some(PACK_TYPST));
+        assert_eq!(Tool::TypstCompile.pack(), Some(PACK_DROP01));
         for t in Tool::browser() {
             if t == Tool::TypstCompile {
                 continue;
@@ -12272,6 +13116,11 @@ impl Tool {
             Tool::DirCreate  => Self::dir_create(args, ctx),
             Tool::ArtefactAdd => Err(err!("use execute() for artefact_add"; Invalid)),
             Tool::FileFetch  => Self::cloud_unavailable(),
+            // There is no panel in a test process and no user in front of one.  What IS testable
+            // here is the sentence the tool composes about what it drew, and `show_result` is
+            // called directly for that -- see the `file_show` tests.
+            Tool::FileShow   => Err(err!(
+                "file_show needs the browser's document panel."; Unimplemented)),
             Tool::Shell      => Err(err!("use execute() for shell"; Invalid)),
             Tool::Run        => Err(err!("use execute() for run"; Invalid)),
             Tool::SpawnAgent => Self::spawn_agent(args, ctx),

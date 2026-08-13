@@ -53,11 +53,23 @@
 // file is. This machine has been driven out of memory three times; a viewer
 // that reads a 900 MB video into wasm memory would be the fourth.
 //
-//     window.DaimondViewer = { probe, show, close, editable, KIND_HANDLERS }
+//     window.DaimondViewer = { probe, verdict, show, close, at, opener,
+//                              editable, KIND_HANDLERS }
+//     window.DaimondDoc    = { show }          // what the DAIMON calls
 //
 // `opts` carries `{ store, t, onError, wasm }`. Every user-visible string in
 // this file goes through `opts.t`, so the file holds no English of its own that
 // a translation pass cannot reach.
+//
+// AND ONE THING HERE IS NOT FOR THE USER AT ALL. `DaimondDoc` at the bottom is
+// the door the model reaches this panel through, and it exists because the
+// absence of it was reported as a limitation of the app: asked to display a PDF
+// that was sitting in the workspace, a daimon answered that it could not show
+// one inline, "the file tools return raw bytes for it rather than a rendered
+// view". Every word of that is true about its TOOLBOX and false about Daimond,
+// which had been drawing PDFs since the `doc` tier below was written. A model
+// reasons from the tools it holds, so a working surface it cannot reach is a
+// surface it will tell the user does not exist.
 (function () {
 	'use strict';
 
@@ -129,6 +141,16 @@
 	/// The handlers that decode bytes as characters, and so may only run when the
 	/// probe says the bytes ARE characters.
 	var TEXTY = { text: 1, json: 1, table: 1, markdown: 1 };
+
+	/// Whether a tier needs the WHOLE file in memory before it can draw anything,
+	/// which is what `CAP_WHOLE` is a ceiling on.
+	///
+	/// Asked in two places -- by `draw`, which acts on it, and by `verdict`, which
+	/// tells the model what will happen -- so it is written once. The two saying
+	/// different things would have the model promise a video over a hex dump.
+	function wholeFile(h) {
+		return h === 'image' || h === 'audio' || h === 'video' || h === 'frame' || h === 'doc';
+	}
 
 	/// Which handler `info` resolves to.
 	///
@@ -317,6 +339,104 @@
 		return info;
 	}
 
+	/// What showing `path` would put on screen, said without drawing any of it.
+	///
+	/// ONE ANSWER to "what will the user see", read by the panel's own routing and
+	/// by the daimon's `file_show` alike. A second table in Rust naming which
+	/// formats have a viewer would be a second answer, free to drift from this
+	/// file the first time a format changes tier -- and what drifts is a promise
+	/// made to a user by a model that cannot check it.
+	///
+	/// `tier` is one of the handler names above, with three answers they do not
+	/// carry:
+	///
+	///   * `editor` where the Doc panel keeps its own text view -- source, a
+	///     `Makefile`, `DAIMOND.md` -- because that is the panel's routing and not
+	///     this file's, and the model is being told what the PANEL will do;
+	///   * `hex` for a file too big for the tier it belongs to, since a prefix of
+	///     an MP4 is not a shorter video;
+	///   * `empty` for a file of no bytes, which draws a sentence and nothing else.
+	///
+	/// # Arguments
+	/// * `path` - The path, relative to whichever root `opts.store` names.
+	/// * `opts` - `{ store, wasm }`.
+	async function verdict(path, opts) {
+		var info = await probe(path, opts);
+		var tier = editable(info) ? 'editor' : info.handler;
+		if (wholeFile(tier) && info.size > CAP_WHOLE) tier = 'hex';
+		if (!info.size) tier = 'empty';
+		return {
+			path:     path,
+			tier:     tier,
+			media:    info.media,
+			// The LABEL, in the library's English. The variant name is an
+			// identifier and a sentence built from it reads "a Pdf".
+			label:    info.label,
+			size:     info.size,
+			cap:      CAP_WHOLE,
+			disagree: !!info.disagree,
+			named:    info.byNameLabel || '',
+			found:    info.byMagicLabel || '',
+		};
+	}
+
+	// ── Where a document opens ───────────────────────────────────────
+	//
+	// MEASURED, headless Chromium 1229, on a three-page PDF whose pages carry
+	// different amounts of ink, read back off the screen rather than off the DOM:
+	//
+	//   * `#page=N` on a `blob:` URL DOES reach the browser's PDF viewer through
+	//     an `<embed>` -- pages 1, 2 and 3 came up 4.8%, 29.4% and 55.9% dark.
+	//     `#zoom=scale,left,top` (in-page scroll) and `#view=FitH` move it too.
+	//   * Changing ONLY the fragment on a live `<embed>` moves nothing. A fresh
+	//     object URL is what makes the viewer read the fragment again -- which a
+	//     redraw mints anyway.
+	//   * NOTHING READS THE POSITION BACK. `contentWindow` and `contentDocument`
+	//     are both `undefined` (the viewer is out of process), scrolling produces
+	//     no message, and none of `getViewport`, `viewport`, `documentDimensions`
+	//     or `getSelectedText` posted to the element is answered. The only thing
+	//     it ever says is `{type:'documentLoaded'}`, from the PDF extension's
+	//     origin, once.
+	//
+	// So a document can be REOPENED where it was last AIMED, and cannot be
+	// reopened where the reader had scrolled to. That asymmetry is worth knowing
+	// before anything is built on top of this: a rebuilt PDF put back on screen
+	// lands wherever we last said, and page 1 is where we say by default.
+	//
+	// Kept out of `last` deliberately: `show` calls `close` before it draws, and
+	// a caller aims at a file and THEN opens it, so an aim cleared by `close`
+	// would be cleared between being set and being used.
+	var aim = null;		// { path, page }
+
+	/// Open `path` at `page` the next time it is drawn.
+	///
+	/// A page of 0 or nothing does NOT mean the top: it means "wherever this file
+	/// was last aimed", which for a file nobody has aimed is the top. That is the
+	/// difference between showing a rebuilt document and losing the reader's place
+	/// in it -- redraw it with no page and it comes back where it was put, rather
+	/// than at page 1. It is the most that is available, since nothing can read
+	/// where the reader had actually scrolled to (see above).
+	///
+	/// # Arguments
+	/// * `path` - The file the aim belongs to; an aim for one file never moves another.
+	/// * `page` - 1-based page number, or nothing to keep this file's own aim.
+	function at(path, page) {
+		var n = Math.floor(Number(page) || 0);
+		if (n > 0) { aim = { path: path, page: n }; return; }
+		if (!aim || aim.path !== path) aim = null;
+	}
+
+	/// Which page `path` will open at, or 0 for the top.
+	function aimPage(path) {
+		return (aim && aim.path === path && aim.page > 0) ? aim.page : 0;
+	}
+
+	/// The URL fragment that carries the aim for `path`, or the empty string.
+	function aimFrag(path) {
+		var n = aimPage(path);
+		return n ? '#page=' + n : '';
+	}
+
 	// The view currently on screen, so a change of language can redraw it. An
 	// app that is translated everywhere except the panel you are looking at is
 	// a bug class this project has had before.
@@ -429,9 +549,7 @@
 		// format is not a smaller file, it is a corrupt one, and handing it to a
 		// decoder produces exactly the "this app is broken" impression this whole
 		// file exists to remove.
-		var whole = (handler === 'image' || handler === 'audio' || handler === 'video'
-			|| handler === 'frame' || handler === 'doc');
-		if (whole && size > CAP_WHOLE) {
+		if (wholeFile(handler) && size > CAP_WHOLE) {
 			body.appendChild(el('p', 'fv-note', tOr('fileview.too_large',
 				'A {fmt} of {size} is too large to hold in memory here. Its bytes follow; '
 				+ 'download it to open it elsewhere.',
@@ -506,6 +624,10 @@
 	/// `<embed>` rather than a bare frame because it takes the type EXPLICITLY,
 	/// which is what keeps the browser off its own sniffing, and because it has
 	/// no navigable document for anything to reach through.
+	///
+	/// The fragment is the one thing this element takes instruction from -- see
+	/// the note on `aim` above for what was measured about it, and for the half
+	/// that does not work.
 	async function doc(body, path, info, opts, tOr, mine) {
 		var blob = await wholeBlob(path, info.size, info.mime, opts);
 		if (mine !== epoch) return;
@@ -513,7 +635,7 @@
 		e.setAttribute('type', info.mime || 'application/pdf');
 		e.setAttribute('title', tOr('fileview.frame_title', 'The contents of {name}',
 			{ name: path.split('/').pop() || path }));
-		e.src = mint(blob);
+		e.src = mint(blob) + aimFrag(path);
 		body.appendChild(e);
 	}
 
@@ -787,10 +909,66 @@
 		});
 	}
 
+	// ── The daimon's door ────────────────────────────────────────────
+	//
+	// `file_show` in `src/tools.rs` calls `DaimondDoc.show` from the wasm, the way
+	// the agent's web tools call `window.DaimondWeb`. It resolves with `verdict`'s
+	// own answer as JSON, so the sentence the model then says to the user is built
+	// from the table at the top of this file and not from a copy of it in Rust.
+	//
+	// THE OPENER IS REGISTERED RATHER THAN REACHED FOR. Only `daimond.js` can put
+	// a file in the Doc panel -- the panel, its header, its download and its
+	// editor are all inside that module's closure, and `openFile` there is what
+	// decides between the editor and this viewer. So that module hands the
+	// function over and this file keeps the question of what showing one MEANS.
+	// The alternative was a second opener, which is a second answer to the
+	// routing question that has already been got wrong twice.
+	var opener = null;
+
+	/// Register the function that puts a workspace file in the document panel.
+	/// Called once, by `daimond.js`, with its own `openFile`.
+	function setOpener(fn) {
+		opener = (typeof fn === 'function') ? fn : null;
+	}
+
+	/// Put `path` in front of the user, and say what they are now looking at.
+	///
+	/// Rejects with a plain-English `Error` when there is no panel to show it in;
+	/// the Rust edge passes that message through verbatim, because it is the only
+	/// instruction the model gets about what to do next.
+	///
+	/// # Arguments
+	/// * `path` - A workspace-relative path. Never bytes: a view that was handed
+	///   CONTENT could not be refreshed when the file changed, and the same file
+	///   shown again is the whole of how a rebuilt document reaches the reader.
+	/// * `page` - Which page to open a PDF at, or nothing to leave it where this
+	///   file was last aimed -- which is what makes a rebuilt document come back
+	///   in the reader's place rather than at page 1.
+	async function showToUser(path, page) {
+		if (!opener) {
+			throw new Error('Daimond’s document panel is not on this page, so there is '
+				+ 'nothing to show a file in.');
+		}
+		var v = await verdict(path, {});
+		at(path, page);			// before the draw, which is what reads it
+		// The page ACTUALLY used, not the one asked for. They differ whenever a
+		// re-show keeps an earlier aim, and a model told the argument back would
+		// tell the user page 1 while they are looking at page 214.
+		v.page = aimPage(path);
+		await opener(path);
+		return JSON.stringify(v);
+	}
+
+	window.DaimondDoc = { show: showToUser };
+
 	window.DaimondViewer = {
 		probe:         probe,
+		verdict:       verdict,
 		show:          show,
 		close:         close,
+		// Where a document opens next time it is drawn.
+		at:            at,
+		opener:        setOpener,
 		// The routing question a panel with an editor in it has to answer, kept
 		// here beside the table it is answered from rather than restated by every
 		// caller -- one caller restating it is what put a PDF in a <pre>.
