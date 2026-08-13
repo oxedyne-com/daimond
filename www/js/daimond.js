@@ -9331,7 +9331,7 @@ import init, {
 			return;
 		}
 		await selectDiamond(f);                          // switch the centre to the Diamond crystal
-		setCrystalBusy(true); setCrystalStatus(t('fold.proposing'));
+		setCrystalBusy(true); setCrystalStatus(t('fold.proposing'), true);
 		showCrystalSpinner();
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
@@ -15553,7 +15553,7 @@ import init, {
 			return;
 		}
 		await selectDiamond(f);
-		setCrystalBusy(true); setCrystalStatus('Proposing fold…');
+		setCrystalBusy(true); setCrystalStatus('Proposing fold…', true);
 		var cur, proposed;
 		var fa = diamondApp(diamondId);            // the Diamond's own model, not the starred one
 		try {
@@ -24415,9 +24415,37 @@ import init, {
 		renderLinks();
 	}
 
-	function setCrystalStatus(text) {
+	/// The crystal face's status line, and whether the daimon is still working.
+	///
+	/// **The crystal face had no sign of life at all.** The chat face has had a spinner since
+	/// the beginning (`showSpinner`), and it lives in `chatOutput`, which `showCentre('focus')`
+	/// hides — so the one face where a steer takes thirty seconds and draws nothing until it
+	/// finishes was the one face with no waiter. A user watching a blank crystal cannot tell a
+	/// daimon that is reading a 281-page book from one that died, and the honest reading of a
+	/// still screen is that nothing is happening.
+	///
+	/// The dots are the SAME dots, class for class, so the two faces cannot drift apart and the
+	/// reduced-motion rule that already stops them keeps working: `.chat-spinner-dot` rests at
+	/// `scale(0)`, so a reader who has asked for less motion gets three still dots rather than
+	/// three invisible ones.
+	///
+	/// # Arguments
+	/// * `text` - The line to show; empty clears it.
+	/// * `working` - True while a turn is in flight, which is what draws the dots.
+	function setCrystalStatus(text, working) {
 		var s = document.getElementById('crystal-status');
-		if (s) s.textContent = text || '';
+		if (!s) return;
+		s.textContent = '';
+		if (working) {
+			var d = document.createElement('span');
+			d.className = 'crystal-dots';
+			d.innerHTML = '<span class="chat-spinner-dot"></span>'
+				+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+			s.appendChild(d);
+		}
+		// Appended as a text node rather than assigned to textContent, which would wipe the
+		// dots that were just put there.
+		s.appendChild(document.createTextNode(text || ''));
 	}
 
 	/// Show (or clear) the crystal agent's one-shot reply. Rendered as markdown,
@@ -24519,7 +24547,7 @@ import init, {
 		// and clearing it would throw away something half-written while workers ran.
 		if (input && !preset) { input.value = ''; input.style.height = 'auto'; }
 		setCrystalBusy(true);
-		setCrystalStatus(t('crystal.steering'));
+		setCrystalStatus(t('crystal.steering'), true);
 
 		// Every `spawn_agent` call the conductor makes in this turn becomes a
 		// worker. Several calls in one turn is how it starts several agents at
@@ -24608,7 +24636,7 @@ import init, {
 					// see nothing at all: no agent, no error, no explanation.
 					else rejected += 1;
 				} else {
-					setCrystalStatus('Steering… (' + ev.name + ')');
+					setCrystalStatus('Steering… (' + ev.name + ')', true);
 				}
 				// Recorded whichever tool it was, including `spawn_agent`: the chat view
 				// is the account of what the daimon did, and a fan-out is the largest
@@ -24656,7 +24684,7 @@ import init, {
 		catch (e) {
 			marks = { attached: [], read_only: [] };
 			setCrystalStatus(tOr('crystal.marks_unread',
-				'The attachments could not be read, so this turn works only in the Diamond.'));
+				'The attachments could not be read, so this turn works only in the Diamond.'), true);
 		}
 		try {
 			// The conversation goes out and comes back. It is what makes the daimon

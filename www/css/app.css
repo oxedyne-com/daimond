@@ -1203,6 +1203,14 @@ span.arte-open { cursor: default; }
 
 /* Fold-a-delta control: enter a delta, propose a fold (writes nothing). */
 .crystal-status { font-size: var(--fs-xs); color: var(--text-muted); font-family: var(--font-mono); min-height: 14px; }
+/* The waiter on the crystal face. The dots are `.chat-spinner-dot`, the same
+   class the thread's spinner uses, so the two faces cannot drift and the
+   reduced-motion rule below already covers these. Only the box around them is
+   new: inline-flex so the dots sit ON the status line beside its words rather
+   than above them, and a right margin because `gap` would set the space before
+   the sentence to the (much tighter) space between the dots. */
+.crystal-dots { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; vertical-align: middle; }
+.crystal-dots .chat-spinner-dot { width: 5px; height: 5px; }
 /* --panel-2 and --text were never declared, so this box fell back to a white
    wash and a white hover: invisible surface on the light themes, invisible × on
    both of them. Every colour here is a real token now. */
