@@ -460,6 +460,8 @@ pub async fn handle_chat_websocket<
                                 root:        crate::tools::FileRoot::Workspace,
                                 read_seen: crate::tools::new_read_cache(),
                                 no_write:    Vec::new(),
+                                // The native handler serves no Diamond.
+                                daimon_of:   String::new(),
                             };
                             ToolRegistry::new(Tool::defaults(), ctx)
                         }

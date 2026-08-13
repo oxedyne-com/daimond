@@ -452,31 +452,6 @@ pub fn links_sidecar(id: &str) -> String {
     fmt!("{}/{}/{}links.jsonl", STORE_ROOT, id, DAIMOND_DIR)
 }
 
-/// The Diamond a turn's [`ToolContext::path_prefix`] confines it to, or nothing when it is not
-/// confined to one.
-///
-/// A daimon carries `diamonds/<id>` and is therefore acting FOR that Diamond, which is what makes
-/// a link tool able to store a record without being told where; a chat carries the empty prefix
-/// and is acting for no Diamond at all, and must say which one it means.
-///
-/// Exactly three segments would be a file inside the Diamond rather than the Diamond, so only the
-/// two-segment form answers -- and the legacy roots answer too, because a workspace that has not
-/// been opened since the rename still confines its daimons under `facets/`.
-///
-/// # Arguments
-/// * `prefix` - The turn's path prefix, as [`ToolContext`] holds it.
-pub fn own_diamond(prefix: &str) -> Option<String> {
-    let p = normalise(prefix);
-    let seg: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
-    if seg.len() != 2 || seg[1].is_empty() {
-        return None;
-    }
-    if seg[0] == STORE_ROOT || STORE_ROOTS_LEGACY.contains(&seg[0]) {
-        return Some(seg[1].to_string());
-    }
-    None
-}
-
 /// Whether a crystal write must be refused: over the ceiling, and not making it smaller.
 ///
 /// The second half is what keeps an existing oversized crystal workable.  A ceiling that refused
@@ -3741,6 +3716,23 @@ pub struct ToolContext {
     // Named `no_write` for the write lockout it began as.  `bounds` is the right name for it now,
     // and renaming it reaches `src/handler.rs`, which is not this change's remit.
     pub no_write: Vec<Bound>,
+    /// The Diamond this turn acts FOR, or empty when it acts for none.
+    ///
+    /// Identity, not reach.  It says whose sidecar a link record belongs in and whether a claim is
+    /// stamped `agent:daimon` or `agent:chat`; it grants nothing and fences nothing, and the
+    /// [`Bound`] list beside it is what decides where the turn may write.
+    ///
+    /// **Declared rather than inferred, since 2026-08-13.**  This was read out of the shape of
+    /// [`path_prefix`](ToolContext::path_prefix) -- a turn rooted at `diamonds/<id>` was that
+    /// Diamond's daimon by construction -- and the argument for that was sound while it held: a
+    /// name passed down is a second thing every caller must remember to set.  What broke it is that
+    /// the prefix had to GO.  It confined a daimon's file tools to its own directory, so a daimon
+    /// could not read the book its user had attached to it, and the path could not both open onto
+    /// the workspace and answer who was asking.  A caller that forgets this field now files a
+    /// daimon's link as a chat's, which is a wrong label on a record; a caller that forgot the old
+    /// arrangement could not exist, which is the property being given up and is worth saying out
+    /// loud.
+    pub daimon_of: String,
 }
 
 impl ToolContext {
@@ -3876,6 +3868,16 @@ impl ToolContext {
     pub fn is_scoped(&self) -> bool {
         self.no_write.iter()
             .any(|b| matches!(b, Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_)))
+    }
+
+    /// The Diamond this turn acts for, or `None` when it acts for none.
+    ///
+    /// The one reader of [`daimon_of`](ToolContext::daimon_of), so that a blank and a name are
+    /// told apart in one place rather than at each call site.  A turn that acts for no Diamond is
+    /// a chat or a worker, and a link tool in one of those must be told where its record goes.
+    pub fn daimon(&self) -> Option<String> {
+        let id = self.daimon_of.trim();
+        if id.is_empty() { None } else { Some(id.to_string()) }
     }
 
     /// Whether this turn may run a command in `path`, which is workspace-relative.
@@ -5115,6 +5117,22 @@ impl Tool {
                 vec![res!(Self::typst_out(args_json))],
             Tool::FileMove =>
                 vec![res!(Self::arg(args_json, "path")), res!(Self::arg(args_json, "to"))],
+            // A DAIMON IS NOT FENCED OUT OF THE GRAPH BY ITS WORKSPACE BOUNDS, and the paragraph
+            // above says why without meaning to: the check is for "a turn confined to one
+            // Diamond", and until 2026-08-13 a daimon was not one.  Its bounds were empty and its
+            // reach came from a path prefix instead, so this guard only ever met workers and
+            // chats.  Giving the daimon real bounds -- so that it could reach the book attached to
+            // its Diamond -- switched it on for the one turn whose JOB is the graph, and
+            // `verify_linktools` went red in the two places that prove it: a record is kept on the
+            // Diamond a link is asserted FROM, and `link_list` hands back owners that
+            // `link_remove` is then documented to take.  A daimon that can see the whole graph and
+            // edit one corner of it is not a fence, it is a broken tool.
+            //
+            // The workspace bounds are about the USER'S FILES. The link store is Daimond's own
+            // record of what relates to what, it is reached through no path the model writes, and
+            // `link_owner` above is what decides where a record goes.  A worker or a chat is still
+            // checked, which is every caller the guard was written against.
+            Tool::LinkAdd | Tool::LinkRemove if ctx.daimon().is_some() => Vec::new(),
             // An owner that cannot be worked out is no path to check.  The dispatch refuses the
             // call in plain English a moment later, and inventing a path here would refuse it for
             // the wrong reason.
@@ -5143,7 +5161,7 @@ impl Tool {
     /// # Arguments
     /// * `tool` - The link tool about to run.
     /// * `args_json` - Its arguments, as the model sent them.
-    /// * `ctx` - The turn's context, whose `path_prefix` names its own Diamond when it has one.
+    /// * `ctx` - The turn's context, which names its own Diamond when it acts for one.
     fn link_owner(tool: &Tool, args_json: &str, ctx: &ToolContext) -> Option<String> {
         if let Tool::LinkRemove = tool {
             return match extract_json_string(args_json, "owner") {
@@ -5160,7 +5178,7 @@ impl Tool {
                 }
             }
         }
-        own_diamond(&ctx.path_prefix)
+        ctx.daimon()
     }
 
     /// How a link a MODEL asserted is stamped, so a later reader can tell it from a line the user
@@ -5170,21 +5188,22 @@ impl Tool {
     /// so a tool that left it empty would file every machine-made claim as the person's own, which
     /// is the one value it must never take.
     ///
-    /// The name comes from the turn's own PREFIX rather than from a field, because in this build
-    /// that is the identity: a turn whose paths are rooted at `diamonds/<id>` is that Diamond's
-    /// daimon by construction, and a tool-holding turn with no prefix is the user's chat.  A name
-    /// passed down instead would be a second thing every caller had to remember to set, and the
-    /// value it would carry is the one already inferable here.
+    /// The name comes from [`ToolContext::daimon_of`], which a daimon's turn sets and no other
+    /// does.  It was read out of the turn's own path PREFIX until 2026-08-13, on the ground that a
+    /// turn rooted at `diamonds/<id>` is that Diamond's daimon by construction -- true while it
+    /// held, and it stopped holding when the prefix was removed so that a daimon could reach the
+    /// folder its user had attached.  A path can say where a turn may work or who it works for,
+    /// and once it stopped saying the first it could no longer be trusted for the second.
     ///
     /// The BOUNDS cannot answer this, and could once: a chat is now fenced by an allow-list too
     /// (see [`chat_bounds`]), so "confined at all" no longer distinguishes the two surfaces.
     /// [`ToolContext::is_chat_scoped`] is what asks the bounds, and it asks a different question.
     ///
     /// # Arguments
-    /// * `ctx` - The turn's context, whose `path_prefix` says which agent this is.
+    /// * `ctx` - The turn's context, which says which agent this is.
     #[cfg(any(target_arch = "wasm32", test))]
     fn asserted_by(ctx: &ToolContext) -> String {
-        match own_diamond(&ctx.path_prefix) {
+        match ctx.daimon() {
             Some(_) => fmt!("agent:daimon"),
             None    => fmt!("agent:chat"),
         }
@@ -7733,7 +7752,7 @@ mod tests {
             Err(e) => panic!("a scratch directory: {}", e),
         };
         let ws = Workspace::new(dir).expect("ws");
-        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new() }
+        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new() }
     }
 
     /// A context scoped to a Diamond, as `diamond_bounds` builds it.
@@ -9145,23 +9164,32 @@ mod tests {
     }
 
     #[test]
-    fn test_a_turns_own_diamond_is_read_from_its_prefix_and_only_from_a_prefix_00() {
-        assert_eq!(Some(fmt!("alpha")), own_diamond("diamonds/alpha"));
-        assert_eq!(Some(fmt!("alpha")), own_diamond("./diamonds/alpha/"), "normalised first");
-        // The roots the store had before, so a workspace not opened since the rename still works.
-        assert_eq!(Some(fmt!("alpha")), own_diamond("facets/alpha"));
-        assert_eq!(Some(fmt!("alpha")), own_diamond("foci/alpha"));
-        // A chat carries none, and must not be read as owning some Diamond by accident.
-        assert_eq!(None, own_diamond(""));
-        assert_eq!(None, own_diamond("."));
-        assert_eq!(None, own_diamond("diamonds"), "the store is not a Diamond");
-        assert_eq!(None, own_diamond("diamonds/alpha/notes"), "a file in one is not the Diamond");
-        assert_eq!(None, own_diamond("notes/alpha"), "nor is any other two-segment path");
+    fn test_a_turns_own_diamond_is_declared_and_never_read_out_of_a_path_00() {
+        let mut c = ctx();
+        // A chat acts for no Diamond, and must not be read as owning one by accident.
+        assert_eq!(None, c.daimon());
+        c.daimon_of = fmt!("  ");
+        assert_eq!(None, c.daimon(), "blank is not a name");
+        c.daimon_of = fmt!("alpha");
+        assert_eq!(Some(fmt!("alpha")), c.daimon());
+
+        // The property the old inference could not survive: a daimon reaching OUTSIDE its own
+        // directory is still that Diamond's daimon.  `path_prefix` answered this from the shape of
+        // the path, so a turn whose paths were workspace-relative -- which is every daimon turn
+        // since it was given the workspace -- read as a chat, and filed its links as one.
+        c.path_prefix = String::new();
+        c.no_write = diamond_bounds("diamonds/alpha", &[fmt!("books/x")], &[]);
+        assert_eq!(Some(fmt!("alpha")), c.daimon(),
+            "identity survives a turn that works outside its own folder");
+        assert_eq!("agent:daimon", Tool::asserted_by(&c));
+        c.daimon_of = String::new();
+        assert_eq!("agent:chat", Tool::asserted_by(&c),
+            "and a turn that declares none is still a chat");
     }
 
     #[test]
     fn test_a_link_is_kept_on_the_diamond_it_is_asserted_from_else_the_turns_own_00() {
-        let c = crystal_ctx();          // a daimon, prefixed to `diamonds/alpha`
+        let c = daimon_ctx();           // a daimon acting for `alpha`
         // Named: the `from` end when it is a Diamond, which is the convention the store's
         // `add_link` is documented in and what the graph view already does.
         assert_eq!(Some(fmt!("beta")), Tool::link_owner(&Tool::LinkAdd,
@@ -9226,7 +9254,7 @@ mod tests {
         // The `by` field exists to tell a drawn line from a suggested one, and the store DEFAULTS
         // it to `user` -- so a tool that left it blank would file every machine-made claim as the
         // person's own, which is the one value it must never take.
-        let by = Tool::asserted_by(&crystal_ctx());
+        let by = Tool::asserted_by(&daimon_ctx());
         assert_eq!("agent:daimon", by);
         assert_ne!("user", by);
         assert!(by.starts_with("agent:"), "{}", by);
@@ -12033,11 +12061,28 @@ mod tests {
     // landed is therefore shown through a model of `wasm::opfs::split_components` rather than
     // through the edge.
 
-    /// A crystal agent's context: confined by its Diamond's `path_prefix` and by nothing else,
-    /// which is what `src/wasm/app.rs` gives it.
-    fn crystal_ctx() -> ToolContext {
+    /// A turn confined by a `path_prefix` and by nothing else.
+    ///
+    /// **No production caller builds one of these any more.**  It was a daimon's context until
+    /// 2026-08-13, when the prefix was removed so that a daimon could reach the folder attached to
+    /// its Diamond; every [`ToolContext`] the app now composes carries an empty prefix and is
+    /// bounded by [`Bound`] instead.  The tests below are kept because they are the record of a
+    /// real escape (`../beta/crystal.md`, `hand/REVIEW.md` §1.19) and because [`Tool::scoped`] is
+    /// still the code that would have to be right if anything confined a turn this way again --
+    /// but they prove a property of that function, not of any turn that ships.  Do not read a
+    /// green here as a live compartment.
+    fn prefixed_ctx() -> ToolContext {
         let mut c = ctx();
         c.path_prefix = fmt!("diamonds/alpha");
+        c
+    }
+
+    /// A daimon's context as `src/wasm/app.rs` now composes it: acting FOR a Diamond, writing in
+    /// its own directory, and reading the whole workspace.
+    fn daimon_ctx() -> ToolContext {
+        let mut c = ctx();
+        c.daimon_of = fmt!("alpha");
+        c.no_write  = diamond_bounds("diamonds/alpha", &[], &[]);
         c
     }
 
@@ -12119,7 +12164,7 @@ mod tests {
 
     #[test]
     fn test_a_diamonds_prefix_cannot_be_left_by_a_path_the_model_wrote_00() {
-        let c = crystal_ctx();
+        let c = prefixed_ctx();
         let prefix = normalise(&c.path_prefix);
         // Three counts rather than one, because they say three different things: how many shapes
         // are refused now, how many of those the old concatenation put in another compartment, and
@@ -12178,7 +12223,7 @@ mod tests {
         // The reproduction, as it was found. A daimon steers its Diamond's crystal agent, the
         // instruction may have come from a stranger's words, and the path is a string the model
         // writes: `../beta/crystal.md` was another Diamond's private notes, readable and writable.
-        let c = crystal_ctx();
+        let c = prefixed_ctx();
         assert_eq!(Some(fmt!("diamonds/beta/crystal.md")),
             opfs_lands(&old_scoped(&c, "../beta/crystal.md")),
             "the reproduction: this is the file the concatenation opened");

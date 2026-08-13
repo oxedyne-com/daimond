@@ -125,6 +125,8 @@ impl DaimondApp {
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
             // A skill turn narrows this in the handler, where the declaration is known.
             no_write:    Vec::new(),
+            // A chat acts for no Diamond, so a link tool in one must be told which it means.
+            daimon_of:   String::new(),
         };
         // The whole file toolset is OPFS-backed in the browser; only the
         // shell tool has no in-browser executor, so it is left out.
@@ -1271,9 +1273,18 @@ impl DaimondApp {
     /// which is the other half of what notes2 asks for: *"automatically and visibly
     /// folded at the context threshold"*.
     ///
+    /// **The marks travel with the instruction.** A daimon writes and runs only where the user
+    /// attached something, and what is attached changes between one turn and the next -- so the
+    /// browser reports it per turn rather than at construction, from the same `Files.bounds` that
+    /// scopes a worker. Passing empty arrays is a turn confined to the Diamond's own directory,
+    /// which is the safe reading of "nothing was said": the reach fails closed.
+    ///
     /// # Arguments
     /// * `id` - The Diamond.
     /// * `instruction` - What the user said, before `/name` resolution.
+    /// * `attached` - JSON array of the paths the user marked into this Diamond, as workspace-
+    ///   relative strings, already filtered to those the OPEN workspace can reach.
+    /// * `read_only` - JSON array of those of them to be consulted rather than edited.
     /// * `prior` - The daimon's conversation so far, in the shape
     ///   [`DaimondApp::export_session`] produces. Empty starts a new daimon.
     /// * `on_event` - The event sink.
@@ -1287,12 +1298,16 @@ impl DaimondApp {
         &self,
         id:          String,
         instruction: String,
+        attached:    String,
+        read_only:   String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
         -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, prior, on_event).await.map_err(to_js_err)
+        self.steer_inner(&id, instruction, attached, read_only, prior, on_event)
+            .await
+            .map_err(to_js_err)
     }
 
     /// Propose a fold: run a fresh reducer over the current crystal data plus one
@@ -1541,14 +1556,29 @@ impl DaimondApp {
         &self,
         id:          &str,
         instruction: String,
+        attached:    String,
+        read_only:   String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
         -> Outcome<js_sys::Array>
     {
-        // A `/name` here matters more than in a chat, not less: a daimon's file tools are pinned to
-        // `diamonds/<id>`, so it could not read a skill for itself even if it tried, and the prose
-        // convention fails here in total silence.
+        // What this daimon may write and run in, composed from the marks the browser reports.
+        //
+        // The same function a worker's scope is built from, called with this Diamond's own
+        // directory, so the daimon and the workers it dispatches cannot come to hold different
+        // ideas of where the work is.  It FAILS CLOSED, and that is deliberate: a caller that
+        // passes nothing gets `Bound::Nowhere` beside the Diamond's own directory -- today's reach
+        // exactly, minus the pin -- rather than an unbounded turn.  The marks arrive per turn
+        // because they change per turn: the user attaches a folder and the next thing they do is
+        // ask about it, and a scope composed once at construction would still be yesterday's.
+        let marked = parse_path_array(&attached);
+        let consult = parse_path_array(&read_only);
+        let bounds = crate::tools::diamond_bounds(
+            &diamond::diamond_dir(id), &marked, &consult);
+        // A `/name` here matters more than in a chat, not less: a skill lives in the workspace, and
+        // until this turn was given the workspace a daimon could not read one for itself, so the
+        // prose convention failed here in total silence.
         //
         // What the user TYPED is kept for the log below. The record of why a crystal changed should
         // read `/pickup daimond`, which is what they did; the skill's whole text is in the skill.
@@ -1568,25 +1598,80 @@ impl DaimondApp {
         // would otherwise be paid for on every request of every steering turn.
         let page_before = diamond::read_crystal_page(id).await.unwrap_or_default();
         let mut system = Role::Daimon.compose(&self.daimon_prompt.borrow());
+        // Where this daimon stands, said per turn because only the turn knows the id and the marks.
+        //
+        // The role text cannot carry either: it is one constant shared by every Diamond, and the
+        // user may edit it (`prompts/<role>.md`).  What goes here is the part that is true of THIS
+        // Diamond at THIS moment -- its own folder, and what the paperclip has put in reach.
+        //
+        // Naming the marks is worth its tokens, and the reason is a real failure: a daimon whose
+        // user had just attached a book spent a turn globbing for it, found nothing where it was
+        // pinned, and reported that the book did not exist.  A model that is TOLD `books/x` is
+        // attached does not have to discover it, and cannot conclude it is absent.
+        system.push_str("\n\nThis Diamond's own folder is `");
+        system.push_str(&diamond::diamond_dir(id));
+        system.push_str("/`, so its crystal is `");
+        system.push_str(&diamond::diamond_dir(id));
+        system.push_str("/crystal.json` and its page is the `crystal.html` beside it. Paths you \
+            give the file tools are whole workspace-relative paths, never bare names.");
+        if marked.is_empty() && consult.is_empty() {
+            system.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
+                only place you may write. If the user asks for work on files that are not there, \
+                say what needs attaching with the paperclip rather than creating it.");
+        } else {
+            system.push_str("\n\nAttached to this Diamond, and reachable now:\n");
+            for p in &marked {
+                system.push_str("- `");
+                system.push_str(p);
+                system.push_str("` (yours to edit)\n");
+            }
+            for p in &consult {
+                system.push_str("- `");
+                system.push_str(p);
+                system.push_str("` (read it; do not edit it)\n");
+            }
+            system.push_str("Look at what is attached before you answer a question about it. You \
+                may READ anywhere in the workspace, and you may write only in the places above.");
+        }
         system.push_str("\n\nCurrent crystal.json:\n");
         system.push_str(&before);
 
-        // File tools scoped to this Diamond's directory.
+        // The daimon reaches what its workers reach, and writes where the user marked.
+        //
+        // It was PINNED here until 2026-08-13 -- `path_prefix` at `diamonds/<id>` and the OPFS
+        // root -- and the two together meant a daimon could not see the folder attached to its own
+        // Diamond.  A user attached a 281-page book, asked the daimon to set up an editing loop
+        // over it, and was told the book did not exist: the glob walked `diamonds/<id>` in browser
+        // storage, found the crystal scaffold, and correctly reported no chapters.  It then offered
+        // to CREATE the manuscript, which under the prefix would have written a skeleton into the
+        // sandbox while the real book sat on disk.  The attachment had always reached the workers
+        // (`scopeAgentTo` in `www/js/daimond.js`) and never the daimon commanding them.
+        //
+        // So the reach is now composed exactly as a worker's is, from the same function, and the
+        // two cannot drift: read freely across the workspace, write and run only in this Diamond's
+        // own directory and what the user marked into it.
+        //
+        // `FileRoot::Workspace` is what makes BOTH halves reachable at once, and it is not a
+        // widening: `opfs::resolve_root` sends a store path to OPFS whatever folder is open, so
+        // `diamonds/<id>/crystal.json` still lands in the sandbox and `books/x/ch05.typ` still
+        // lands on the machine.  Pinning OPFS was what made the second impossible.
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
             cwd:         String::new(),
-            path_prefix: diamond::diamond_dir(id),
-            // Daimond's own crystal lives in the OPFS sandbox, never the user's
-            // real folder, so the crystal agent pins the OPFS root.
-            root:        crate::tools::FileRoot::Opfs,
+            // Empty, and that is the whole of the change: a prefix CONFINES, and this turn is
+            // confined by its bounds instead.  Its own paths are whole and workspace-relative now,
+            // exactly as a worker's are, which is what `DEFAULT_DAIMON` tells the model.
+            path_prefix: String::new(),
+            root:        crate::tools::FileRoot::Workspace,
             // Shared with this app's own context, not fresh: a steering turn is stateless per
             // instruction, so a fresh cache would drop the taint the moment the turn ended and
             // `is_tainted` would answer no to the very question the daimon asks it.
             read_seen:   self.registry.ctx.read_seen.clone(),
-            // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
-            // A skill turn narrows this in the handler, where the declaration is known.
-            no_write:    Vec::new(),
+            no_write:    bounds,
+            // Who this turn acts for, which the prefix used to say and no longer can.  A link this
+            // daimon asserts goes in THIS Diamond's sidecar and is stamped `agent:daimon`.
+            daimon_of:   id.to_string(),
         };
         let registry = ToolRegistry::new(
             vec![
@@ -1599,6 +1684,13 @@ impl DaimondApp {
                 Tool::FileDelete,
                 Tool::FileMove,
                 Tool::DirCreate,
+                // Counting a file as this Diamond's, which `DEFAULT_DAIMON` has instructed the
+                // daimon to do since the tool was written -- while no registry anywhere offered
+                // it.  A prompt naming a tool that is not there does not fail loudly: the model
+                // reports that it cannot record the file, or invents a way to, and the user reads
+                // either as the app being broken.  It belongs to this turn and no other, because
+                // an artefact is recorded ON a Diamond and this is the turn that has one.
+                Tool::ArtefactAdd,
                 // The daimon commands agents; the workers do the work.
                 Tool::SpawnAgent,
                 // The world model.  These three are the daimon's and not the chat's, on the same
@@ -1717,6 +1809,8 @@ impl DaimondApp {
             // The browser agent is the user's own, not a skill's, so nothing is locked out of it.
             // A skill turn narrows this in the handler, where the declaration is known.
             no_write:    Vec::new(),
+            // The reducer holds no tools, so it asserts nothing and owns nothing.
+            daimon_of:   String::new(),
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
         let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());

@@ -10973,6 +10973,9 @@ import init, {
 				}
 			});
 
+		// A fresh daimon, tucked in beside the model it thinks with.
+		mountDaimonReset(daimonSel.parentNode, opts.id);
+
 		// ── The workers, text.
 		row('tile.model_workers', 'tile.worker_model_help',
 			rec.workerProvider || own.provider, rec.workerModel || '', true, function (p) {
@@ -10990,6 +10993,72 @@ import init, {
 		note.textContent = t('tile.model_note');
 		card.appendChild(note);
 		return daimonSel;
+	}
+
+	/// The control that ends a daimon's conversation without folding it.
+	///
+	/// **Folding is the way a daimon's thread is meant to end**, and this is the exception, so it
+	/// is drawn as one: a quiet `.tile-dlg-clear` beside the model pulldown, two levels down in a
+	/// settings dialog, rather than a second button next to Fold in the crystal header. Beside
+	/// Fold it would read as the equally weighted other option and people would reach for it,
+	/// which is the opposite of what it is for. What it IS for is the thread folding does not
+	/// serve — an afternoon of testing, or a line of enquiry that went nowhere, which nobody wants
+	/// in the crystal.
+	///
+	/// **It is not offered when there is nothing to clear.** A control that does nothing when
+	/// pressed teaches people to distrust every control, and an empty daimon is the ordinary state
+	/// of a new Diamond.
+	///
+	/// The conversation goes; the SPEND STAYS. `costUsd` and the token totals are the record of
+	/// money this Diamond has actually cost, and clearing a conversation is not a refund — a reset
+	/// that zeroed them would make the Spending panel disagree with the ledger the gateway keeps.
+	/// `lastPrompt` does go, because it measures a context that no longer exists.
+	///
+	/// # Arguments
+	/// * `row` - The daimon's model row, which this sits at the end of.
+	/// * `id` - The Diamond whose daimon would be reset.
+	function mountDaimonReset(row, id) {
+		if (!row || !id) return;
+		var f = diamonds.find(function (x) { return x.id === id; });
+		if (!f) return;
+		// `chats.find` and NOT `daimonChat(f)`: that one CREATES the record when there is none
+		// and persists it, so asking it whether a conversation exists would bring one into being
+		// — and the answer would always be "an empty one", which is the answer that hides the
+		// button. A read must not write.
+		var rec = chats.find(function (c) { return c.diamondId === id; });
+		var held = rec ? ((rec.messages || []).length
+			+ (((rec.session || {}).msgs) || []).length) : 0;
+		if (!held) return;
+
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'tile-dlg-clear';
+		b.textContent = t('tile.daimon_reset');
+		b.title = t('tile.daimon_reset_help');
+		b.addEventListener('click', async function () {
+			var ok = await confirmDialog(
+				t('tile.daimon_reset_body', { n: (rec.messages || []).length }),
+				t('tile.daimon_reset_ok'),
+				{ title: t('tile.daimon_reset_title'), danger: true });
+			if (!ok) return;
+			rec.messages = [];
+			// Both halves, and the second is the one that matters: `messages` is what the thread
+			// DRAWS, `session.msgs` is what goes to the model on the next turn. Clearing only the
+			// first would empty the screen and send the whole testing conversation anyway.
+			rec.session = null;
+			rec.lastPrompt = 0;
+			persistChats();
+			// The daimon's own directory, its crystal and its links are untouched. This ends a
+			// conversation; it does not undo anything the conversation did.
+			if (currentDiamond && currentDiamond.id === id && centreMode === 'daimon') {
+				await selectDiamond(f, 'chat');
+			}
+			// Gone, because there is now nothing to clear — the same rule that kept it off an
+			// empty daimon in the first place.
+			b.remove();
+			toast(t('tile.daimon_reset_done'));
+		});
+		row.appendChild(b);
 	}
 
 	/// A settings dialog for something that is not a tile: a title, a body somebody
@@ -24569,12 +24638,34 @@ import init, {
 			}
 		};
 		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
+		// What the user marked into this Diamond, read fresh for THIS turn.
+		//
+		// The same `Files.bounds` that scopes a dispatched worker, so the daimon and the
+		// workers it commands are told the same thing by the same function. Read per turn
+		// rather than once, because a user attaches a folder and then immediately asks
+		// about it: bounds composed at construction would still be the ones from before
+		// the paperclip was pressed.
+		//
+		// A failure here is NOT swallowed into an unscoped turn. The engine reads an
+		// absent list as "nothing is marked" and confines the daimon to the Diamond's own
+		// directory, which is the safe half of the ambiguity — but a scope that silently
+		// became narrower is still worth saying out loud, so it is reported and the turn
+		// goes ahead confined rather than being refused outright.
+		var marks = { attached: [], read_only: [] };
+		try { marks = await Files.bounds(diamondId); }
+		catch (e) {
+			marks = { attached: [], read_only: [] };
+			setCrystalStatus(tOr('crystal.marks_unread',
+				'The attachments could not be read, so this turn works only in the Diamond.'));
+		}
 		try {
 			// The conversation goes out and comes back. It is what makes the daimon
 			// persistent, which is the whole of notes2's "the daimon is meant to be
 			// persistant": it used to build a fresh session per instruction, so it could
 			// not be asked a follow-up question.
 			var after = await fa.steer_crystal(diamondId, instruction,
+				JSON.stringify(marks.attached  || []),
+				JSON.stringify(marks.read_only || []),
 				(rec.session && rec.session.msgs) || [], onEvent);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {

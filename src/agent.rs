@@ -1286,6 +1286,7 @@ mod tests {
             root:        crate::tools::FileRoot::Workspace,
             read_seen:   crate::tools::new_read_cache(),
             no_write:    Vec::new(),
+            daimon_of:   String::new(),
         })
     }
 
