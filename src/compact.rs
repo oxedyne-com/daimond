@@ -1340,6 +1340,39 @@ mod tests {
 		ImagePart::new(media, data, fmt!("shots/{}", name))
 	}
 
+	/// The screenshot this module owns, read off disk.
+	///
+	/// [`shot`] reads `shots/`, which is a SWEPT directory: `dev/verify_mobile.mjs` rewrites
+	/// those files on every mobile sweep, and `.gitignore` excludes them, so they are neither
+	/// stable across a run nor present in a clone at all.  On 2026-08-12 the sweep re-took
+	/// `mobile-desktop-after.png`, it compressed to half the size, and the overstatement in
+	/// [`test_an_image_is_not_priced_as_if_it_were_text`] fell from 29x to 15.3x.
+	///
+	/// Nothing about pricing had changed.  [`image_tokens`] still reads the header and still
+	/// never looks at `data.len()`, and the test beside this one still pins 54x34 against the
+	/// published formula.  What moved was the EVIDENCE: that assertion is a check that its own
+	/// fixture still demonstrates the problem, which is the opposite of a check that cannot
+	/// fail, and it is worth keeping exactly as it is.  Restoring the screenshot would only
+	/// wait for the next sweep, and relaxing the multiplier would trade the property away to
+	/// accommodate an accident.
+	///
+	/// So the test owns its bytes.  `src/testdata/` is committed, crosses into the public
+	/// mirror with the rest of `src/`, and is written by nothing: no sweep, no shot script, no
+	/// harness.  Re-taking a screenshot cannot reach it, and a cloner has it.
+	///
+	/// It is still a REAL screenshot of this app, for the reason given on [`shot`] -- 390x844,
+	/// the phone viewport, as `dev/verify_mobile.mjs` took it once.  A fabricated header would
+	/// confirm the arithmetic and say nothing about whether the arithmetic describes a
+	/// screenshot.
+	fn owned_shot() -> ImagePart {
+		let rel  = "src/testdata/screenshot-390x844.png";
+		let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+		let data = std::fs::read(&path)
+			.unwrap_or_else(|e| panic!("the fixture {} must be readable: {}", path.display(), e));
+		let media = crate::protocol::ImageMedia::sniff(&data).expect("the fixture must be an image");
+		ImagePart::new(media, data, rel.to_string())
+	}
+
 	/// A tool reply carrying a screenshot, as `file_read` produces one.
 	fn replies_with_image(id: &str, name: &str) -> ChatMessage {
 		ChatMessage::tool(id.to_string(), MessageContent::parts(vec![
@@ -1369,25 +1402,35 @@ mod tests {
 	/// The catastrophe this whole change exists to prevent: a screenshot priced as if it were
 	/// text.
 	///
-	/// 199,280 bytes at the text ratio of 0.27 is 53,806 tokens -- most of a 131k budget, on a
-	/// file the provider charges 1,836 for. Priced that way, the conversation folds on the turn
-	/// the screenshot is read and on every turn after it.
+	/// 62,456 bytes at the text ratio of 0.27 is 16,863 tokens, on a file the provider charges
+	/// 434 for -- a thirty-nine-fold overstatement, and this is a PHONE screenshot. The one
+	/// that provoked the change was a desktop capture of 199,280 bytes: 53,806 tokens against
+	/// 1,836 charged, most of a 131k budget. Priced that way, the conversation folds on the
+	/// turn the screenshot is read and on every turn after it.
+	///
+	/// The fixture is [`owned_shot`] and not [`shot`] on purpose; the reason is written there,
+	/// and it is that the first assertion below is a check that the fixture still demonstrates
+	/// the problem, so the fixture must be something nothing else regenerates.
 	#[test]
 	fn test_an_image_is_not_priced_as_if_it_were_text() {
-		let img = shot("mobile-desktop-after.png");
+		let img = owned_shot();
 		let as_text = (img.data.len() as f64 * DEFAULT_TOKENS_PER_BYTE) as u64;
 		let actual  = image_tokens(&img);
 		assert!(as_text > actual * 20,
 			"the fixture no longer demonstrates the overstatement: {} vs {}", as_text, actual);
 
-		// What the module actually counts.
+		// What the module actually counts. Bounded against `actual` rather than against a
+		// figure written down here, so the bound stays as tight for a fixture of any size as
+		// it was for the one it was written against: an image charged by its BYTES would be
+		// the thirty-nine-fold figure above, not twice.
 		let msg = ChatMessage::user(MessageContent::parts(vec![
 			crate::protocol::ContentPart::Image(img.clone()),
 		]));
 		let charged = msg_bytes(&msg);
 		let gauge = Gauge::default();
-		assert!(gauge.tokens(charged) < 2_200,
-			"a screenshot is being charged {} tokens", gauge.tokens(charged));
+		assert!(gauge.tokens(charged) < actual * 2,
+			"a screenshot is being charged {} tokens against the {} the provider will",
+			gauge.tokens(charged), actual);
 		assert!(gauge.tokens(charged) >= actual,
 			"a screenshot is being charged less than the provider will");
 

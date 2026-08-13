@@ -15280,12 +15280,20 @@ import init, {
 				// A stranger with no account was told to "create an account" with no
 				// way to do so from here. The way forward is now a button, not a
 				// sentence: buying credits needs an account, so offer to make one.
-				note.textContent = t('credits.need_account');
-				var make = document.createElement('button');
-				make.className = 'credit-pack';
-				make.textContent = t('credits.create_account');
-				make.addEventListener('click', function () { showIdentity('create'); });
-				wrap.appendChild(make);
+				// Not while the gateway is refusing NEW accounts. This device already
+				// has an identity, so `showIdentity('create')` would mint a SECOND
+				// local one -- which is not the way in, and cannot become one while
+				// the beta is closed. `DaimondPasscode` draws the way in just above
+				// this, so say the true thing and offer nothing that would refuse.
+				var refused = (DaimondGateway.state() || {}).refused;
+				note.textContent = t(refused ? 'credits.need_passcode' : 'credits.need_account');
+				if (!refused) {
+					var make = document.createElement('button');
+					make.className = 'credit-pack';
+					make.textContent = t('credits.create_account');
+					make.addEventListener('click', function () { showIdentity('create'); });
+					wrap.appendChild(make);
+				}
 			}
 			return;
 		}

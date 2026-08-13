@@ -567,6 +567,44 @@
 	'billing.usd_note':  'You are billed in US dollars; the converted figure is approximate.',
 	'billing.rates_as_of': 'Rates as of {date}, approximate.',
 
+	// ── The closed beta and its passcode ───────────────────────
+	// The gateway refuses to open a new account while the beta is shut, and a
+	// passcode is the one way past it. Nothing here may contradict what the
+	// gateway itself says (gateway/src/handlers/account.rs, `beta_closed`): that
+	// only the ACCOUNT is closed, that Daimond is free and works with no account
+	// at all on a provider key of the user's own, and that a passcode opens one.
+	// And nothing here may soften WHICH refusal a code met — "never issued",
+	// "already used" and "run out of time" send a person to three different
+	// places, which is the whole reason the gateway tells them apart.
+	'beta.title':              'Closed beta',
+	'beta.title_unavailable':  'No account was made',
+	'beta.title_plain':        'Beta passcode',
+	'beta.lead_beta_only':     'Daimond is not opening new accounts on this server yet. Only the account is closed, not the app: Daimond is free, runs in your browser, and works with no account at all on a provider key of your own. An account adds what the server does — credits, sync between devices, mail, and inference bought for you.',
+	'beta.lead_unavailable':   'This server could not say whether it is open to new accounts, so it made none. Nothing is wrong with your device, and Daimond works on your own provider key meanwhile. Try again in a moment.',
+	'beta.lead_no_reason':     'This device has no Daimond account yet.',
+	'beta.have_code':          'If Oxedyne sent you a beta passcode, put it in here. It works once, on this device.',
+	'beta.code':               'Passcode',
+	'beta.code_ph':            'abcd-efgh-ijkl',
+	'beta.redeem':             'Redeem',
+	'beta.redeeming':          'Redeeming…',
+	'beta.try_again':          'Try again',
+	'beta.enter_code':         'Enter a passcode',
+	'beta.still_closed':       'Still no account. The server gave the same answer.',
+	'beta.err_enter_code':     'Type the passcode you were sent.',
+	'beta.err_locked':         'Unlock Daimond first: a passcode is redeemed onto this device’s key.',
+	'beta.err_no_identity':    'This device has no identity to redeem a passcode onto. Create one first.',
+	'beta.err_unknown':        'That passcode is not one we issued. Check it character by character — twelve characters, in three groups.',
+	'beta.err_spent':          'That passcode has already been used. Each one works once, on one device.',
+	'beta.err_expired':        'That passcode has expired. Ask Oxedyne for another.',
+	'beta.err_throttled':      'Too many passcode attempts from this connection. Wait a while and try again.',
+	'beta.err_generic':        'That passcode was not accepted.',
+	'beta.err_unreachable':  'The Daimond account service could not be reached, so the passcode was not used. Try again shortly.',
+	'beta.done_title':         'You are in',
+	'beta.done_pro':           'This device has a Daimond account, and Pro is on it: sync between devices, cloud storage and Email.',
+	'beta.done_plain':         'This device has a Daimond account.',
+	'beta.done_handle':        'Other people see this account as {handle}.',
+	'beta.done_not_signed_in': 'The passcode was spent and the account exists, but this device could not finish signing in just now. It will try again on its own.',
+
 	// ── Auto-reload ────────────────────────────────────────────
 	// Every amount here is charged to a card, so the copy stays plain.
 	'autoreload.title':            'Auto-reload',
@@ -2465,7 +2503,7 @@
 	// handing the reader to another website. See www/guide/legal/.
 	'legal.terms':      'Terms of Service',
 	'legal.privacy':    'Privacy Policy',
-	'legal.draft_note': 'Both are drafts, published for review during the closed beta.',
+	'legal.draft_note': 'In force from 13 August 2026. Points marked [TO CONFIRM] are still being settled.',
 
 	// ── Lapse notices ──────────────────────────────────────────
 	// Two clauses of the Terms promise a notice on this screen before something

@@ -26,6 +26,47 @@
 // fence held: nothing in this file executes a process, and the fence is the
 // hand's to enforce and `hand/REVIEW.md`'s to argue about.
 //
+// ── A CHAT HAS A WORKSPACE, and a command runs where the user marked ─
+//
+// Rewritten on 2026-08-13. From 5389864 a chat's commands run only in the
+// folders the user marked into that chat's workspace, and this file drove a
+// chat that had marked in nothing — so `Tool::Run` refused every command on the
+// `default_cwd` path, in its own words, BEFORE the fence was ever consulted, and
+// thirteen checks went red against the world as it used to be rather than
+// against a defect. The refusal was right; the fixture was out of date.
+//
+// So the run now has two halves, and each is worth exactly as much as the other:
+//
+//   * WITH NOTHING MARKED IN, a command is refused and the sentence says what to
+//     do about it — and the host is never asked to exec anything at all.
+//   * WITH A FOLDER MARKED IN, through the control a person presses, every
+//     command below runs, AND THE HOST'S OWN LOG SAYS IT WAS DISPATCHED INTO
+//     THAT FOLDER, with a fence naming it and nothing else.
+//
+// The second half is what makes the first mean anything. A refusal on its own is
+// also what a wholly broken pipeline produces, which is how `verify_scope`'s
+// compartment checks stayed green through an outage on 2026-08-12: nothing could
+// read anything, so every "it cannot reach that" passed.
+//
+// The folder is marked in through the `+` in the chat footer's workspace group —
+// the app's own control, driven as a person drives it — and the folder it offers
+// is a folder that really is in the page's workspace, because the picker lists
+// what `Files.entries` lists and nothing else. It mirrors a real directory under
+// the folder the hand says it was granted, which is what makes it a place a
+// command could actually run. A fixture that instead wrote the holding onto the
+// chat record itself would be proving the fence against a world only this file
+// ever built, which is the mistake `dev/verify_scope.mjs` made.
+//
+// EACH HALF IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
+// damaged `www/js/daimond.js` to the real page through `page.route`; the run is
+// then expected to FAIL, and a break whose anchor does not match aborts rather
+// than passing quietly. Both breaks damage THE SCOPE THE PAGE ASKS FOR and never
+// the engine, which is the thing under test.
+//
+//   node dev/verify_handrun.mjs --break nomark       # the mark never reaches the engine
+//   node dev/verify_handrun.mjs --break inventscope  # the page invents a workspace
+//   node dev/verify_handrun.mjs                      # and then, clean
+//
 // Needs nothing running: the dev server and the mock provider are started here
 // if they are not already up. Headed, under xvfb:
 //	xvfb-run -a -s "-screen 0 1400x900x24" node dev/verify_handrun.mjs
@@ -35,10 +76,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { open as openApp, chat, transcript, mockLog, clearMockLog, scratch } from './harness.mjs';
+import { open as openApp, newChat, chat, transcript, mockLog, clearMockLog, scratch } from './harness.mjs';
+import { whyStaleWasm, refuse } from './staleguard.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
+const WWW	= path.join(ROOT, 'www');
 // The SHIPPED extension. `harness.open` hands this to `dev/extdev.mjs`, which
 // loads the development build instead: the shipped manifest names one origin,
 // `daimond.oxedyne.com`, and a page on localhost cannot reach it at all. The
@@ -49,12 +92,52 @@ const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
 const INSTALL	= path.join(ROOT, 'hand/install');
 const MOCK	= path.join(INSTALL, 'mock_host.py');
 const CFG	= path.join(INSTALL, 'mock_cfg.json');
+// Everything the mock host was sent and everything it sent back, in its own
+// words. It is the only oracle in this file that is not the app talking about
+// itself, which is what makes it the right place to ask where a command was
+// dispatched to.
+const HOSTLOG	= path.join(INSTALL, 'mock_host.log');
 const PROFILE	= scratch('verify-handrun');
 
 // The folder the hand claims it was granted. Nothing is written there — the
 // mock runs nothing — but it must be absolute, because `Tool::run` refuses a
 // root that is not, and every fence path is built from it.
 const GRANT	= scratch('handroot');
+// THE FOLDER THE USER MARKS INTO THE CHAT'S WORKSPACE, in two places at once,
+// because that is what one folder is in this app: a directory under the granted
+// root, which is where a command would run, and an entry in the page's own
+// workspace, which is what the picker lists and what the mark is made against.
+// A name in only one of the two is a name for nothing.
+const MARKED	= 'marked';
+const MARKED_ABS = path.join(GRANT, MARKED);
+
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+
+// Both damage the page's answer to "what did the user mark into this chat?", and
+// neither touches the engine that acts on it.
+const BREAKS = {
+	// The mark is made, the footer draws it, and the engine is handed nothing —
+	// which is what the app did for every chat before the mark existed, and what a
+	// caller does who forgets that `ws` is the field the fence is built from. The
+	// refusal half stays green; everything that needs a folder goes red.
+	nomark: {
+		file: 'js/daimond.js',
+		find: `			.filter(function (a) { return !!a.ws; })`,
+		with: `			.filter(function (a) { return false && !!a.ws; })`,
+	},
+	// The other direction, and the dangerous one: the page hands over a folder
+	// nobody marked in. Every command then runs, including the ones sent by a chat
+	// whose workspace is empty — so the refusal half goes red and nothing else
+	// does, which is exactly the check that half is for.
+	inventscope: {
+		file: 'js/daimond.js',
+		find: `		if (trashed(chatId)) return [];`,
+		with: `		if (trashed(chatId)) return [];\n\t\treturn ['${MARKED}'];`,
+	},
+};
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -63,6 +146,29 @@ const check = (name, pass, detail) => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/// Serve one deliberately damaged file in place of the real one, before the app
+/// is ever loaded. An anchor that does not match exactly once aborts the run: a
+/// break that broke nothing would leave a green summary meaning the opposite of
+/// what it says.
+async function installBreak(page) {
+	if (!BREAK) return;
+	const spec = BREAKS[BREAK];
+	if (!spec) {
+		console.error(`--break ${BREAK}: no such break. One of: ${Object.keys(BREAKS).join(', ')}`);
+		process.exit(2);
+	}
+	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const n = src.split(spec.find).length - 1;
+	if (n !== 1) {
+		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
+			+ 'so nothing was broken and the run below would prove nothing.');
+		process.exit(2);
+	}
+	const body = src.replace(spec.find, spec.with);
+	await page.route('**/' + spec.file,
+		(r) => r.fulfill({ status: 200, contentType: 'application/javascript', body }));
+}
 
 // ── The two servers ─────────────────────────────────────────────────
 //
@@ -133,9 +239,71 @@ function toolResult() {
 	return '';
 }
 
+// ── What the HOST was asked to do ───────────────────────────────────
+//
+// The mock appends every frame it receives to `mock_host.log`, which is the one
+// record in this run that the app did not write. Two things are asked of it that
+// nothing else here can answer: whether a refused command was really never
+// dispatched, and which directory a dispatched one was told to run in.
+//
+// The file is beside the mock and therefore SHARED — every world's runs append to
+// the same one — so this reads only what was appended after this run started and
+// keeps only the frames naming this run's granted root, which carries the world
+// number in its path.
+const logFrom = (() => { try { return fs.statSync(HOSTLOG).size; } catch (e) { return 0; } })();
+
+/// Every `exec` the model's own `run` tool caused, as `{ id, cwd, line }`.
+///
+/// Keyed on the id `Tool::run_id` composes (`run-<n>-<program>`), so the one exec
+/// this file drives through the relay by hand at the end — `r-reload`, which never
+/// goes near `Tool::Run` — is not counted as one of the model's.
+///
+/// `cwd` is read with a regex rather than by parsing: the mock truncates each
+/// logged frame at 400 characters, and a fence carrying several roots can reach
+/// that. The working directory is near the front and always survives.
+function execsSent() {
+	let text = '';
+	try {
+		const fd = fs.openSync(HOSTLOG, 'r');
+		const size = fs.fstatSync(fd).size;
+		const buf = Buffer.alloc(Math.max(0, size - logFrom));
+		if (buf.length) fs.readSync(fd, buf, 0, buf.length, logFrom);
+		fs.closeSync(fd);
+		text = buf.toString('utf8');
+	} catch (e) { return []; }
+	return text.split('\n')
+		.filter((l) => /<- \{"t": "exec"/.test(l) && l.includes(GRANT))
+		.map((l) => ({
+			id:   (/"id": "([^"]*)"/.exec(l) || [])[1] || '',
+			cwd:  (/"cwd": "([^"]*)"/.exec(l) || [])[1] || '',
+			line: l,
+		}))
+		.filter((e) => e.id.indexOf('run-') === 0);
+}
+
+// ── The bundle this file is actually asking questions about ─────────
+//
+// The wasm the browser loads is what composes every `run` request the host is
+// sent, decides where a command may start, and writes the refusals asserted
+// below. It is as much the code under test as the page's JavaScript is.
+//
+// This guard was in `verify_handreal.mjs` and NOT here, and the asymmetry was
+// the defect: a pair where one half refuses a stale bundle and the other half
+// measures it silently means the unguarded half reports on a build nobody
+// intended, and reports it green. Three lanes were misled that way on
+// 2026-08-12. It is asked before the servers are started, so a refusal costs no
+// processes and leaves nothing to clean up.
+refuse(whyStaleWasm(path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm'), path.join(ROOT, 'src'), {
+	subject: 'What the app asks the hand for',
+	holds:   'every tool call this file makes',
+}));
+
 fs.rmSync(PROFILE, { recursive: true, force: true });
 fs.mkdirSync(PROFILE, { recursive: true });
-fs.mkdirSync(GRANT, { recursive: true });
+// The granted root, and inside it the one folder this run's chat will be given.
+// It is a real directory: a mark on a folder that is not there would be a mark on
+// nothing, and the app would be the only thing that ever believed in it.
+fs.mkdirSync(MARKED_ABS, { recursive: true });
 register({ chunks: 3 });
 
 // What the children will bind: `serve.mjs` reads DAIMOND_PORT and `mockllm.mjs`
@@ -149,7 +317,9 @@ await serve('mock provider', ['dev/mockllm.mjs'], MOCK_PORT);
 // as a user meets it. Headed and on a fixed profile, because the host manifest
 // above was written into that profile's own NativeMessagingHosts directory,
 // which is where a browser started with --user-data-dir looks for it.
-const s = await openApp({ headed: true, name: 'handrun', extension: SRC, profile: PROFILE });
+const s = await openApp({
+	headed: true, name: 'handrun', extension: SRC, profile: PROFILE, route: installBreak,
+});
 const b = s.browser;
 const page = s.page;
 
@@ -196,7 +366,36 @@ try {
 
 	await waits({ grace: 4000, slack: 2000, hello: 15000 });
 
-	// ── A command runs, and its output reaches the model ────────────
+	// The chat every turn below is sent to, and therefore the chat whose workspace
+	// decides where its commands may run. Opened before anything is asked of it,
+	// because the folder is marked into THIS chat and a second one would have an
+	// empty workspace of its own.
+	await newChat(s);
+	await sleep(400);
+	const focus = await page.evaluate(() => window.DaimondAttach.focus());
+	const chatId = focus && focus.id;
+	check('a chat is in focus, so there is a workspace to mark a folder into',
+		!!chatId && focus.kind === 'chat', JSON.stringify(focus));
+
+	// The other half of the folder. `MARKED_ABS` is a directory on the machine;
+	// this is the same folder in the workspace the PAGE holds, which in a harness
+	// is OPFS — no browser can be made to answer `showDirectoryPicker()`. It is
+	// laid down through the tool door, which is how a turn would have made it, and
+	// it is what puts the folder in front of the picker below: `Files.entries` is
+	// the panel's own listing and lists nothing that is not there.
+	await page.evaluate(async (dir) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.run_tool('dir_create', JSON.stringify({ path: dir }));
+	}, MARKED);
+
+	// ── Half one: nothing marked in, and the model is told why ──────
+	//
+	// The first turn, so it is also the turn that provokes the grant window. The
+	// chat's workspace holds its own scratch and nothing else, its scratch is in
+	// the browser's storage and not a place on this computer, and there is
+	// therefore nowhere for a command to run. `Tool::Run` says so on the
+	// `default_cwd` path, above the fence and above the hand.
 	clearMockLog();
 	const grant = allowHand();
 	await chat(s, '@tool run {"argv":["cargo","test"],"timeout_ms":20000}', { timeout: 60000 });
@@ -210,6 +409,50 @@ try {
 	check('`run` is in the toolbelt the model is offered', belt.includes('run'), belt.join(' '));
 
 	let r = toolResult();
+	check('WITH NOTHING MARKED IN, a command is refused rather than run',
+		/^Refused: /.test(r) && /holds nothing on this computer/.test(r), r.slice(0, 200));
+	check('and the sentence says what to do about it, and where',
+		/paperclip/.test(r) && /add it to this chat's workspace/.test(r), r.slice(0, 400));
+	// The refusal a chat gets and the refusal a Diamond gets are different
+	// sentences on purpose (`ToolContext::is_chat_scoped`), and a model handed the
+	// wrong one is sent to a panel that is not where a chat's workspace is changed.
+	// Asserted as a property OF THE REFUSAL — `!/Diamond/` is also true of a
+	// command's output, so a check that only looked for the absence of the word
+	// would pass in exactly the case where there is no refusal to describe.
+	check('and it is the CHAT\'s words: no Diamond, no Workspace panel',
+		/^Refused: /.test(r) && !/Diamond/.test(r), r.slice(0, 300));
+	check('and nothing was dispatched — the host was never asked to run anything',
+		execsSent().length === 0, JSON.stringify(execsSent().map((e) => e.cwd)));
+
+	// ── The user marks a folder in, with the control that does it ───
+	//
+	// The `+` in the footer's workspace group: the one control whose whole job is
+	// to put a folder into this chat's workspace, driven through its dialog as a
+	// person drives it. Not `DaimondAttach.chatWs`, which would set the field and
+	// prove only that the field exists — the press is the permission, and a press
+	// that reached nothing is one of the two defects this app was rebuilt over.
+	await page.click('#chat-attachments .ws-group [data-act="attach-add"]', { force: true });
+	await page.waitForSelector('.attach-pick-row', { timeout: 10000 });
+	const ticked = await page.evaluate((name) => {
+		const row = [...document.querySelectorAll('.attach-pick-row')]
+			.find((x) => ((x.querySelector('.attach-pick-name') || {}).textContent || '').indexOf(name) >= 0);
+		if (!row) return [...document.querySelectorAll('.attach-pick-name')]
+			.map((x) => x.textContent).join(', ') || 'the picker listed nothing';
+		row.querySelector('input').click();
+		return 'ticked';
+	}, MARKED);
+	check('the folder is in the page\'s own workspace, for the picker to offer',
+		ticked === 'ticked', ticked);
+	await page.click('.dlg-ok', { force: true });
+	await sleep(1000);
+	const scope = await page.evaluate((id) => window.DaimondAttach.chatScope(id), chatId);
+	check('MARKING IT IN is what the engine is handed as this chat\'s workspace',
+		Array.isArray(scope) && scope.indexOf(MARKED) >= 0, JSON.stringify(scope));
+
+	// ── Half two: a command runs, and its output reaches the model ──
+	clearMockLog();
+	await chat(s, '@tool run {"argv":["cargo","test"],"timeout_ms":20000}', { timeout: 60000 });
+	r = toolResult();
 	check('the command\'s output reached the model',
 		/line 1 of cargo test/.test(r) && /line 3 of cargo test/.test(r), r.slice(0, 200));
 	check('so did what it wrote on standard error',
@@ -219,6 +462,20 @@ try {
 		/untrusted content begins — run: cargo test/.test(r), r.slice(0, 120));
 	check('the person watching saw it too, as it arrived',
 		/line 1 of cargo test/.test(await transcript(s)), '');
+
+	// ── And it ran WHERE THE USER MARKED, which is the whole claim ──
+	//
+	// Asked of the host's own log rather than of the app: "output came back" is
+	// true of a command dispatched anywhere, and of a pipeline that carries
+	// invented text between two halves of the same page. The working directory and
+	// the fence are the two fields that say the mark reached the wire.
+	const sent = execsSent();
+	check('the command was dispatched into the folder the user marked in',
+		sent.length > 0 && sent.every((e) => e.cwd === MARKED_ABS),
+		JSON.stringify(sent.map((e) => e.cwd)));
+	check('and fenced to that folder, not to the whole granted root',
+		sent.length > 0 && sent.every((e) => e.line.includes(`"fence": {"rw": ["${MARKED_ABS}"]`)),
+		(sent[sent.length - 1] || {}).line || 'nothing was sent');
 
 	// ── A failure is reported as a failure ──────────────────────────
 	await relink();
@@ -391,4 +648,10 @@ try {
 }
 
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
+if (BREAK) {
+	console.log(bad.length
+		? `\nbreak '${BREAK}' produced failures, as it must.`
+		: `\nBREAK '${BREAK}' CHANGED NOTHING — the check it targets is not proving anything.`);
+	process.exit(bad.length ? 0 : 1);
+}
 process.exit(bad.length ? 1 : 0);

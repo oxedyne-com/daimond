@@ -41,6 +41,54 @@ export RUSTFLAGS="--remap-path-prefix=$CARGO_DIR=/cargo --remap-path-prefix=$ROO
 
 wasm-pack build --target web --out-dir www/pkg "$@"
 
+# ── Say what it was built from ──────────────────────────────────────────
+#
+# `dev/staleguard.mjs` is what decides whether a verifier is measuring THIS
+# tree's engine, and with nothing to go on it can only compare clocks. An mtime
+# answers a different question from the one being asked -- "was the bundle
+# written after the source was?" rather than "was it built FROM this source?" --
+# and the two part company whenever files are rewritten without being changed. A
+# `git stash` and its `pop` restore byte-identical sources with new timestamps,
+# and every wasm-guarded verifier then refuses a bundle that is in fact this
+# source's. That cost a lane a rebuild it did not need on 2026-08-12.
+#
+# So the bundle now carries `www/pkg/source.json`: a SHA-256 per engine source
+# file, plus one over the wasm itself. Two properties keep it from becoming a
+# second thing to go stale. The guard REHASHES the tree in front of it rather
+# than believing the note, so an edit made afterwards is caught exactly as it
+# always was; and the note names the bundle it is about, so a bundle rebuilt by
+# any other means stops matching and the clock takes over. It can only ever
+# prevent a false refusal. It can never launder a stale bundle.
+#
+# It does NOT make rebuilds rare. A comment added to a Rust file moves that
+# file's hash just as a changed fence does, and nothing short of compiling can
+# tell those apart. What stops costing a build is source that never changed.
+#
+# The other half of this lives in `verify/lib.mjs`: `pkg/source.json` is in
+# EXCLUDE, so the note never enters a sealed manifest. It records where and when
+# a build happened, both of which differ for every honest rebuild, and sealing it
+# would make "clone it, build it, compare the hash" false for every reader.
+# Neither half is any use alone. `dev/repro-check.sh` proves the pair.
+#
+# Not fatal when it cannot be written -- an older mirror has no staleguard to
+# call, and the bundle above is built and good either way. What is lost is a
+# shortcut. Said out loud rather than swallowed, because a build that quietly
+# stopped certifying would look exactly like one that never started.
+#
+# `2>&1 >/dev/null` keeps the REASON: the hash on stdout is noise here, and the
+# reason is on stderr, and a failure reported without one is a second thing to
+# go and find out.
+if WHY=$(node dev/staleguard.mjs certify www/pkg "$ROOT" dev/build-wasm.sh 2>&1 >/dev/null); then
+	echo
+	echo "build-wasm: certified — www/pkg/source.json records the source this was built from,"
+	echo "  so a verifier compares content rather than timestamps."
+else
+	echo
+	echo "build-wasm: NOT CERTIFIED — no source record could be written beside the bundle, so"
+	echo "  verifiers fall back to comparing mtimes. The bundle itself is built and fine."
+	echo "${WHY:-  (no reason given)}" | sed 's/^/  /'
+fi
+
 # ── Say which kind of bundle this is ────────────────────────────────────
 #
 # The two prefixes above are the whole story ONLY in the mirror, where

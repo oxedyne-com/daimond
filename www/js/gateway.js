@@ -24,6 +24,17 @@
 		currency: 'usd',
 		entries:  [],
 		offline:  false,    // the gateway could not be reached
+		// The gateway ANSWERED and said no. `'beta_only'` while the beta is
+		// closed, `'unavailable'` when it could not read its own gate; null
+		// otherwise. Never both this and `offline`: a refusal is the opposite of
+		// silence, and reporting one as the other sends somebody to look at
+		// their network for a decision the server took on purpose.
+		refused:  null,
+		// The gateway's own English sentence behind that refusal, kept verbatim.
+		// The app says the refusal in the user's language off `refused`; this is
+		// what is shown when the gateway names a reason this build has never
+		// heard of, so a refusal added on the server is still legible here.
+		refusal:  '',
 		pro:      null,     // Pro RUNNING right now? null until asked.
 		proPriceMinor: null,// the one-time Pro price, from the gateway.
 		// The five-year term, so a lapse can be explained rather than merely
@@ -603,6 +614,83 @@
 		return j;
 	}
 
+	// ── A registration the gateway REFUSED ─────────────────────
+	//
+	// `/api/account` can answer three ways that are not "here is your account",
+	// and until this landed the client could tell none of them apart: `post()`
+	// throws a bare `Error` and `bootstrap()`'s catch turned every one of them
+	// into `offline: true`. So a stranger the beta had deliberately refused was
+	// dropped into BYOK-only mode and told the account service could not be
+	// reached -- which is untrue, unactionable, and points at their network for
+	// something the server decided. The `reason` field exists precisely so the
+	// browser can say which; this is the code that reads it.
+	//
+	// Two reasons are read by name because they are decisions rather than
+	// faults, and each has a different answer:
+	//
+	//   `beta_only`    403 -- the beta is closed. There IS a way in: a passcode.
+	//   `unavailable`  503 -- the gateway could not read its own gate, so it
+	//                  minted nothing. Temporary; the answer is to ask again.
+	//
+	// Anything else -- a malformed body, a signature it would not take, a
+	// gateway that did not answer at all -- stays `offline`, exactly as before.
+
+	/// The registration round, with its refusal read rather than thrown away.
+	///
+	/// Not through `post()`, and that is the whole point: `post` reduces every
+	/// failure to a message string, and the message is the one part of a refusal
+	/// the app must NOT act on -- `reason` is.
+	///
+	/// Through `gwFetch` all the same, so the shared 401 rule still applies.
+	/// `/api/account` is an auth path, so `isBootstrapOwn` answers true for it
+	/// and no renewal can be re-entered from here.
+	async function register(body) {
+		var r = await gwFetch('/api/account', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			credentials: 'same-origin',
+			body: JSON.stringify(body),
+		});
+		var j = null;
+		try { j = await r.json(); } catch (e) { j = null; }
+		if (r.ok && j && j.ok !== false) {
+			noteBalance(j);
+			return { ok: true };
+		}
+		return {
+			ok:     false,
+			status: r.status,
+			reason: (j && j.reason) || '',
+			error:  (j && (j.error || j.message)) || ('HTTP ' + r.status),
+		};
+	}
+
+	/// Whether a refusal is one the app can say something useful about.
+	function isRefusal(reason) {
+		return reason === 'beta_only' || reason === 'unavailable';
+	}
+
+	/// Tell the app a registration was refused, and why.
+	///
+	/// An event rather than a call into a panel, because what the refusal is
+	/// SHOWN in is not this file's business: js/passcode.js listens for it and
+	/// puts the sentence and the way past it on screen. A page with no `window`
+	/// -- a test harness evaluating this file -- simply does not hear it.
+	function announceRefusal() {
+		try {
+			window.dispatchEvent(new CustomEvent('daimond:refused', {
+				detail: { reason: state.refused, error: state.refusal },
+			}));
+		} catch (e) { /* no window to tell */ }
+	}
+
+	/// Forget a refusal. Called wherever the answer stops being true: a
+	/// registration that took, a redemption, a logout.
+	function forgetRefusal() {
+		state.refused = null;
+		state.refusal = '';
+	}
+
 	/// Bind this device's public key to an account, then authenticate.
 	///
 	/// Both steps are signed with the device key, so this only works while the
@@ -630,7 +718,24 @@
 			// from the browser: `deriveCountry` is kept, unused, until a field
 			// exists to pass one here deliberately.
 			var body = { pubkey: pub, alg: alg, ts: ts, sig: sig };
-			await post('/api/account', body);
+			var reg = await register(body);
+			if (!reg.ok) {
+				state.authed = false;
+				if (isRefusal(reg.reason)) {
+					// It ANSWERED. Saying "offline" here is the defect this
+					// replaces: it is not true, and it hides the one thing the
+					// person can act on.
+					state.offline = false;
+					state.refused = reg.reason;
+					state.refusal = reg.error;
+					announceRefusal();
+				} else {
+					state.offline = true;
+					forgetRefusal();
+				}
+				return false;
+			}
+			forgetRefusal();
 
 			// Prove possession of the key and take a session.
 			var ch = await post('/api/auth/challenge', { pubkey: pub, alg: alg });
@@ -647,10 +752,133 @@
 			// account at all, so a gateway that is down must not break the app.
 			state.authed = false;
 			state.offline = true;
+			// A refusal read on the LAST attempt is not evidence about this one:
+			// the beta may have been opened, or this failure may be the network
+			// rather than the door. Held over, it would leave the app offering a
+			// passcode field against a gateway nobody has heard from.
+			forgetRefusal();
 			return false;
 		} finally {
 			authing = false;
 		}
+	}
+
+	// ── The one door through a closed beta ─────────────────────
+
+	/// What a refused redemption is called, in the reader's own language.
+	///
+	/// FOUR ANSWERS AND NOT ONE. The gateway distinguishes a code it never
+	/// issued from one already used from one that has run out, and the whole
+	/// reason it bothers is that they send a person somewhere different: check
+	/// what you typed, ask whoever gave you the code who else has it, ask for
+	/// another. A single friendly "that did not work" would be easier to write
+	/// and would throw all of that away, so nothing here softens which happened.
+	///
+	/// A reason this build has never heard of falls through to the gateway's own
+	/// English sentence rather than to a shrug, so a refusal added on the server
+	/// is still legible in an old tab.
+	function redeemWords(reason, j, status) {
+		switch (reason) {
+			case 'unknown':   return t('beta.err_unknown');
+			case 'spent':     return t('beta.err_spent');
+			case 'expired':   return t('beta.err_expired');
+			case 'throttled': return t('beta.err_throttled');
+			default:          return (j && (j.error || j.message)) || t('beta.err_generic')
+				+ ' (HTTP ' + status + ')';
+		}
+	}
+
+	/// Redeem a beta passcode onto THIS device, and come out signed in.
+	///
+	/// Redemption IS the registration. The gateway takes the code and the same
+	/// device-binding proof `/api/account` takes, and writes the account inside
+	/// the one critical section that spends the code -- so a code that turns out
+	/// to be spent leaves nothing behind. There is nothing to do first and
+	/// nothing to do after except what an ordinary registration does, which is
+	/// why this ends by calling `bootstrap()` rather than by inventing a second
+	/// way to be signed in.
+	///
+	/// DELIBERATELY NOT THROUGH `gwFetch`, for the reasons `redeem()` in
+	/// pairing.js gives about its own: this endpoint takes no session, the
+	/// device making the call has none and may have no account at all, so a 401
+	/// here could not be a session that lapsed and renewing could not change the
+	/// answer. And a passcode is single-use -- a blanket retry on a refusal is
+	/// exactly the retry that must not exist here.
+	///
+	/// # Arguments
+	/// * `code` - What the user typed. Sent as typed: the gateway folds case and
+	///   drops the grouping separators, so `A1B2-C3D4-E5F6` and `a1b2c3d4e5f6`
+	///   are one code and neither has to be cleaned up here.
+	///
+	/// # Returns
+	/// `{ created, pro, wave, handle, authed }`. `authed` is whether the session
+	/// that follows was actually taken: the code is spent by then either way, so
+	/// a redemption is never reported as having failed because the round after
+	/// it did.
+	async function redeemPasscode(code) {
+		code = String(code || '').trim();
+		if (!code) throw new Error(t('beta.err_enter_code'));
+		if (!window.DaimondIdentity || !DaimondIdentity.exists()) {
+			throw new Error(t('beta.err_no_identity'));
+		}
+		if (!DaimondIdentity.isUnlocked()) throw new Error(t('beta.err_locked'));
+		var pub = DaimondIdentity.publicKeyB64url();
+		if (!pub) throw new Error(t('beta.err_no_identity'));
+		var alg = localStorage.getItem('daimond-id-alg') || 'Ed25519';
+		var ts  = Math.floor(Date.now() / 1000);
+		// The same string, signed the same way, by the same signer the ordinary
+		// registration uses. There is one device signer in this app and this is
+		// not a second one.
+		var sig = await DaimondIdentity.sign(ACCOUNT_MSG + pub + ':' + ts);
+
+		var r;
+		try {
+			r = await fetch('/api/passcode/redeem', {
+				method:      'POST',
+				credentials: 'same-origin',
+				headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+				body:        JSON.stringify({ code: code, pubkey: pub, alg: alg, ts: ts, sig: sig }),
+			});
+		} catch (e) {
+			// The request never arrived, so the code was NOT spent -- and that is
+			// the part the person needs, because they hold exactly one. A message
+			// about the passcode would be a claim about a credential nothing here
+			// has learned anything about.
+			throw new Error(t('beta.err_unreachable'));
+		}
+		probeVersion(r);
+		var j = null;
+		try { j = await r.json(); } catch (e) { j = null; }
+		if (!r.ok || !j || j.ok === false) {
+			var reason = (j && j.reason) || '';
+			var err = new Error(redeemWords(reason, j, r.status));
+			// Carried so a caller can act on WHICH refusal it was rather than on
+			// the sentence, which is translated and is not a contract.
+			err.reason = reason;
+			throw err;
+		}
+
+		// The account exists now, so whatever the gateway last refused is no
+		// longer true. Cleared BEFORE the bootstrap, so the round below starts
+		// from the state it would have had on a device that was never refused.
+		forgetRefusal();
+		var authed = await bootstrap();
+		if (authed) {
+			// The event `reauth()` raises for the same fact: there is a session
+			// now. Sync hears it and reconciles, pairing reveals its link button.
+			// A first `bootstrap()` at unlock does not raise it -- daimond.js
+			// drives that path by hand -- but nothing drives this one, and a
+			// device that redeemed and then never synced would be the whole
+			// point of the account it just got.
+			try { window.dispatchEvent(new Event('daimond:authed')); } catch (e) { /* no window */ }
+		}
+		return {
+			created: j.created === true,
+			pro:     j.pro === true,
+			wave:    typeof j.wave === 'number' ? j.wave : 0,
+			handle:  j.handle || '',
+			authed:  authed,
+		};
 	}
 
 	/// Ask for the balance outright, and keep the recent ledger entries with it.
@@ -863,6 +1091,9 @@
 	async function logout() {
 		state.authed = false;
 		state.role   = undefined;
+		// A refusal is an answer about the identity that was signed in. It must
+		// not follow the next one onto the screen.
+		forgetRefusal();
 		var had = state.credits !== null;
 		state.credits = null;
 		state.pro    = null;
@@ -898,6 +1129,10 @@
 		/// goes through this rather than carrying a copy of the rule. See the
 		/// note on `gwFetch` for which paths must NOT use it.
 		gwFetch:        gwFetch,
+		/// Redeem a beta passcode onto this device and come out signed in. The
+		/// screen that collects the code is js/passcode.js; the contract is
+		/// here, beside the registration it IS.
+		redeemPasscode: redeemPasscode,
 		refreshBalance: refreshBalance,
 		/// Read a balance out of a reply this file did not make itself — the Web panel, the mail
 		/// panel and the inference mint each hold their own `fetch` wrapper, and their replies

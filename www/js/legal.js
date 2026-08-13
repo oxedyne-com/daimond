@@ -132,7 +132,7 @@
 		var note = document.createElement('p');
 		note.className = 'about-legal-note';
 		note.textContent = t('legal.draft_note',
-			'Both are drafts, published for review during the closed beta.');
+			'In force from 13 August 2026. Points marked [TO CONFIRM] are still being settled.');
 		row.appendChild(note);
 
 		// Above the maker's signature, which is the last thing in the card.

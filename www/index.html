@@ -83,6 +83,9 @@
 <link rel="stylesheet" href="css/updater.css">
 <link rel="stylesheet" href="css/spend.css">
 <link rel="stylesheet" href="css/passkey.css">
+<!-- The beta passcode: the dialog a refused registration raises, and the block
+     it leaves behind in the Credits drawer. -->
+<link rel="stylesheet" href="css/passcode.css">
 <link rel="stylesheet" href="css/workspace.css">
 <link rel="stylesheet" href="css/trash.css">
 <link rel="stylesheet" href="css/improve.css">
@@ -433,6 +436,14 @@
 					<div class="admin-view" id="admin-credits" style="display:none">
 						<div class="settings-section" id="credits-section">
 							<p class="cfg-lead" data-i18n="credits.lead">Buy credits and Daimond runs the model for you, with no provider key to manage. No subscription. You keep what you buy, and nothing is charged again unless you turn on auto-reload.</p>
+							<!-- The closed beta, above everything an account buys, because
+							     while registration is shut it is the reason none of it is
+							     available. Empty in the served HTML and filled by
+							     js/passcode.js — what may honestly be said here depends on
+							     what the gateway last answered, so there is nothing to write
+							     until it has. `.beta-block:empty` takes the border away with
+							     the content, so a device with an account sees no gap. -->
+							<div class="beta-block" id="credits-beta"></div>
 							<div class="pro-block" id="credits-pro"></div>
 							<div class="credits-balance" id="credits-balance"></div>
 							<div class="credits-packs" id="credits-packs"></div>
@@ -1217,6 +1228,12 @@
      recover the passphrase behind a WebAuthn PRF credential. -->
 <script src="js/passkey.js"></script>
 <script src="js/gateway.js"></script>
+<!-- passcode.js AFTER gateway.js: the refusal it draws is raised by
+     gateway.js, and the redemption behind its one button is
+     DaimondGateway.redeemPasscode. Classic, before the module, so
+     window.DaimondCredits exists when daimond.js first draws the Credits
+     view. -->
+<script src="js/passcode.js"></script>
 <script src="js/chunks.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/sync.js"></script>

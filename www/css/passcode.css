@@ -1,0 +1,148 @@
+/* passcode.css — the beta passcode dialog, and its block in the Credits drawer.
+ *
+ * A real stylesheet rather than styles injected from JavaScript, because both
+ * surfaces here are drawn into markup that is already in the page: the block
+ * lives in `#credits-beta` in index.html, and the dialog is raised over a page
+ * whose stylesheets have long since loaded. Nothing here is theme-specific --
+ * every colour is a token from variables.css, so the four skins carry it
+ * without a second copy.
+ */
+
+/* ── The dialog ───────────────────────────────────────────── */
+
+.beta-scrim {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, .55);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 9999;
+	padding: 16px;
+}
+
+.beta-box {
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	max-width: 420px;
+	width: 100%;
+	padding: 20px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+	/* The refusal is three sentences and the confirmation is two; on a phone in
+	   landscape that is taller than the viewport, and a card that cannot scroll
+	   puts its buttons off the bottom of the screen. */
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
+	box-sizing: border-box;
+}
+
+.beta-box h3 {
+	margin: 0 0 8px;
+	font-size: var(--fs-xl);
+}
+
+.beta-box p {
+	margin: 0 0 12px;
+	font-size: var(--fs-base);
+	line-height: 1.45;
+	opacity: .85;
+}
+
+.beta-label {
+	display: block;
+	font-size: var(--fs-sm);
+	opacity: .85;
+	margin: 0 0 4px;
+}
+
+/* Monospaced and spaced out, because it is copied character by character off a
+   message and the one thing that must not happen is a misread l for a 1. */
+.beta-input {
+	width: 100%;
+	box-sizing: border-box;
+	font-family: ui-monospace, monospace;
+	font-size: var(--fs-3xl);
+	letter-spacing: .1em;
+	text-align: center;
+	padding: 10px;
+	border-radius: 8px;
+	border: 1px solid var(--border);
+	background: var(--bg-primary);
+	color: inherit;
+	margin: 0 0 12px;
+}
+
+.beta-err {
+	color: var(--danger);
+	font-size: var(--fs-sm);
+	line-height: 1.4;
+	min-height: 1.1em;
+	margin: 0 0 8px;
+}
+
+.beta-note {
+	font-size: var(--fs-xs);
+	opacity: .7;
+	margin: 8px 0 0;
+}
+
+.beta-row {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+}
+
+.beta-btn {
+	padding: 8px 14px;
+	border-radius: 8px;
+	border: 1px solid var(--border);
+	background: var(--accent);
+	color: #fff;
+	cursor: pointer;
+	font-size: var(--fs-base);
+	/* The thumb's floor. This card is answered on a phone as often as not. */
+	min-height: 44px;
+}
+
+.beta-btn.ghost {
+	background: transparent;
+	color: inherit;
+}
+
+.beta-btn[disabled] {
+	opacity: .6;
+	cursor: default;
+}
+
+/* ── The block in the Credits drawer ──────────────────────── */
+
+.beta-block:empty {
+	display: none;			/* no rule, no gap, on the great majority of devices */
+}
+
+.beta-block {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 12px;
+	margin: 0 0 12px;
+}
+
+.beta-head {
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	margin: 0 0 6px;
+}
+
+.beta-lead {
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+	opacity: .85;
+	margin: 0 0 10px;
+}
+
+.beta-block .beta-btn {
+	width: 100%;
+}

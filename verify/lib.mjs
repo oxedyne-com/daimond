@@ -54,6 +54,17 @@ export const EXCLUDE = new Set([
 	// one). Covering any of them would false-fail an honest rebuild. What runs in
 	// the browser — the wasm and its .js glue — is covered; these are not.
 	'pkg/LICENSE', 'pkg/package.json', 'pkg/README.md',
+	// `pkg/source.json` is the provenance note `dev/build-wasm.sh` and `dev/gate.sh`
+	// leave beside the bundle: a SHA-256 per engine source file so `dev/staleguard.mjs`
+	// can tell a stale bundle from a bundle whose timestamps merely moved. It is not
+	// executed, and it is not attestation -- it says WHERE and WHEN a build happened,
+	// both of which differ for every honest rebuild, so sealing it would make the
+	// published claim ("clone it, build it, compare the hash") false for everybody
+	// including the author's next build. It is excluded for the same reason
+	// `pkg/package.json` is, one step further: not merely toolchain-dependent but
+	// build-INSTANCE-dependent. The two halves are one change -- taught to write the
+	// note, taught not to seal it -- and `dev/repro-check.sh` is what proves it.
+	'pkg/source.json',
 ]);
 
 /// File suffixes left out of the fingerprint: TypeScript type stubs, which the
