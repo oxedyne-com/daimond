@@ -556,6 +556,7 @@
 	'credits.see_spend': 'See where your spending goes →',
 	'credits.offline':   'The Daimond account service is unreachable, so credits are unavailable. Your own provider key still works.',
 	'credits.need_account': 'Credits let you use Daimond without a provider key. They need an account: a passphrase kept on this device.',
+	'credits.need_passcode': 'Credits need an account, and this gateway is not opening new ones while the beta is closed. Redeem a passcode above to open one.',
 	'credits.create_account': 'Create an account',
 	'credits.added':     'Credits added',
 	'credits.now':       'Your balance is now {amount}.',

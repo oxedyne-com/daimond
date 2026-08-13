@@ -166,6 +166,7 @@
 	'credits.see_spend': 'Mira a dónde van tus gastos →',
 	'credits.offline': 'El servicio de cuentas de Daimond no está disponible, así que no hay créditos. Tu propia clave de proveedor sigue funcionando.',
 	'credits.need_account': 'Los créditos te permiten usar Daimond sin clave de proveedor. Necesitan una cuenta: una frase de paso guardada en este dispositivo.',
+	'credits.need_passcode': 'Los creditos necesitan una cuenta, y esta pasarela no abre cuentas nuevas mientras la beta esta cerrada. Canjea un codigo arriba para abrir una.',
 	'credits.create_account': 'Crear una cuenta',
 	'credits.added': 'Créditos añadidos',
 	'credits.now': 'Tu saldo es ahora {amount}.',

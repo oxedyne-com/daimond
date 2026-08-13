@@ -165,6 +165,7 @@
 	'credits.see_spend': 'Veja para onde vão seus gastos →',
 	'credits.offline': 'O serviço de contas do Daimond está inacessível, então os créditos estão indisponíveis. Sua própria chave de provedor continua funcionando.',
 	'credits.need_account': 'Os créditos deixam você usar o Daimond sem chave de provedor. Eles precisam de uma conta: uma frase-senha guardada neste dispositivo.',
+	'credits.need_passcode': 'Creditos precisam de uma conta, e este gateway nao abre contas novas enquanto o beta esta fechado. Resgate um codigo acima para abrir uma.',
 	'credits.create_account': 'Criar uma conta',
 	'credits.added': 'Créditos adicionados',
 	'credits.now': 'Seu saldo agora é {amount}.',

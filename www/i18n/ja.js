@@ -248,6 +248,7 @@
 	'credits.see_spend': '支出の内訳を見る →',
 	'credits.offline':   'Daimond のアカウントサービスに接続できないため、クレジットは利用できません。ご自分のプロバイダーの鍵は引き続き使えます。',
 	'credits.need_account': 'クレジットがあれば、プロバイダーの鍵なしで Daimond を使えます。利用にはアカウント、つまりこの端末に保管するパスフレーズが必要です。',
+	'credits.need_passcode': 'クレジットにはアカウントが必要ですが、クローズドベータ中は新規に作成できません。上のパスコードを引き換えてください。',
 	'credits.create_account': 'アカウントを作成',
 	'credits.added':     'クレジットを追加しました',
 	'credits.now':       '残高は {amount} になりました。',

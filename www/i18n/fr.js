@@ -168,6 +168,7 @@
 	'credits.see_spend': 'Voir où vont vos dépenses →',
 	'credits.offline': 'Le service de comptes Daimond est injoignable : les crédits sont indisponibles. Votre propre clé de fournisseur fonctionne toujours.',
 	'credits.need_account': 'Les crédits vous permettent d’utiliser Daimond sans clé de fournisseur. Ils demandent un compte : une phrase secrète gardée sur cet appareil.',
+	'credits.need_passcode': 'Les credits necessitent un compte, et cette passerelle n\'en ouvre pas de nouveau tant que la beta est fermee. Utilisez un code ci-dessus pour en ouvrir un.',
 	'credits.create_account': 'Créer un compte',
 	'credits.added': 'Crédits ajoutés',
 	'credits.now': 'Votre solde est maintenant de {amount}.',

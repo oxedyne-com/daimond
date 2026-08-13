@@ -249,6 +249,7 @@
 	'credits.see_spend': '지출이 어디로 가는지 보기 →',
 	'credits.offline':   'Daimond 계정 서비스에 연결할 수 없어서 크레딧을 쓸 수 없어요. 직접 쓰는 제공자 키는 그대로 동작해요.',
 	'credits.need_account': '크레딧이 있으면 제공자 키 없이 Daimond을 쓸 수 있어요. 크레딧에는 계정이 필요해요. 계정은 이 기기에 보관되는 암호문구예요.',
+	'credits.need_passcode': '크레딧은 계정이 필요하며, 비공개 베타 중에는 새 계정을 열 수 없습니다. 위에서 패스코드를 등록하세요.',
 	'credits.create_account': '계정 만들기',
 	'credits.added':     '크레딧을 추가했어요',
 	'credits.now':       '잔액이 {amount}(으)로 바뀌었어요.',

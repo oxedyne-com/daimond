@@ -168,6 +168,7 @@
 	'credits.see_spend': 'Sieh, wohin deine Ausgaben gehen →',
 	'credits.offline': 'Der Daimond-Kontodienst ist nicht erreichbar, daher ist Guthaben nicht verfügbar. Dein eigener Anbieter-Schlüssel funktioniert weiter.',
 	'credits.need_account': 'Mit Guthaben nutzt du Daimond ohne Anbieter-Schlüssel. Dafür braucht es ein Konto: eine Passphrase, die auf diesem Gerät bleibt.',
+	'credits.need_passcode': 'Guthaben erfordert ein Konto, und dieses Gateway eroeffnet waehrend der geschlossenen Beta keine neuen. Loesen Sie oben einen Beta-Code ein, um eines zu eroeffnen.',
 	'credits.create_account': 'Konto anlegen',
 	'credits.added': 'Guthaben hinzugefügt',
 	'credits.now': 'Dein Saldo beträgt jetzt {amount}.',

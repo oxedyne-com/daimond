@@ -246,6 +246,7 @@
 	'credits.see_spend': '看看钱花到哪儿了 →',
 	'credits.offline':   'Daimond 账户服务连不上，所以用不了额度。你自己的提供商密钥仍然可用。',
 	'credits.need_account': '有了额度，不用提供商密钥也能用 Daimond。额度需要一个账户：一个只留在这台设备上的密码短语。',
+	'credits.need_passcode': '积分需要账户，而封测期间本网关不开通新账户。请在上方兑换邀请码。',
 	'credits.create_account': '创建账户',
 	'credits.added':     '额度已到账',
 	'credits.now':       '你的余额现在是 {amount}。',
