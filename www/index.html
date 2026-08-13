@@ -560,6 +560,25 @@
 							data-i18n="chat.fold_now" data-i18n-title="chat.fold_now_help">Fold</button>
 						<button class="chip-btn" id="steps-toggle-btn" title="Show or hide the tool steps in the thread" data-i18n="chat.steps" data-i18n-title="chat.steps_help">Steps</button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
+						<!-- Full screen, and only for the crystal face — `showCentre`
+						     draws it there and nowhere else. The page a Diamond
+						     renders can be an application, and an application inside
+						     a panel inside an app reads on a phone as an app inside
+						     an app; this takes the chrome away and leaves the page.
+
+						     It is LAST in the row so that it keeps its place when
+						     everything else in the row is hidden: in full screen this
+						     button is the only thing left of the header's right-hand
+						     side, and it is the way back. Its words and its title are
+						     set from `syncCrystalFullBtn` rather than written here,
+						     because both change with the state and the label carries
+						     a word as well as a glyph while the mode is on. -->
+						<button class="chip-btn cfull-btn" id="crystal-full-btn" type="button"
+							style="display:none" aria-pressed="false">
+							<svg class="ic ic-cfull-in" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5"/></svg>
+							<svg class="ic ic-cfull-out" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5"/></svg>
+							<span class="cfull-txt" id="crystal-full-txt"></span>
+						</button>
 					</div>
 				</div>
 				<div class="chat-output" id="chat-output"></div>
@@ -1023,6 +1042,26 @@
 				<span class="imp-chips">
 					<button type="button" class="imp-chip on" data-view="notes" aria-pressed="true" data-i18n="improve.notes">Notes</button>
 					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="improve.proposals">Proposals</button>
+					<!-- What this panel is, in the guide. The one circled "i" this app
+					     draws -- the same path as the top bar's About button, because
+					     two information marks drawn differently are two marks the
+					     reader has to learn separately. It opens The interface, which
+					     is the page that names every region of the window; the header
+					     "?" beside About opens the guide's front page, and this is the
+					     same route (`DaimondWeb.guide`) asked for one page of it.
+
+					     `.icon-btn` and NOT `.addbtn`, which is what the closer beside
+					     it wears. An `.addbtn` is a glyph on a small PLATE, and in the
+					     warm skin that plate's corner is half its side -- a circle. A
+					     circled "i" inside it drew two concentric rings, magnified 6x
+					     and read side by side against the top bar's own mark. The mark
+					     brings its own circle, so it is given no second one, which is
+					     exactly how About and the guide "?" are drawn. -->
+					<button type="button" class="icon-btn imp-info" id="improve-info"
+						title="What this panel is, in the guide" data-i18n-title="improve.info"
+						aria-label="What this panel is, in the guide" data-i18n-aria-label="improve.info">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11.6v5"/></svg>
+					</button>
 					<button class="addbtn panel-close" data-close="improve" title="Close panel" data-i18n-title="common.close_panel">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
@@ -1118,6 +1157,57 @@
 <div id="identity-modal" class="modal" style="display:none;">
 	<div class="modal-card">
 		<img class="login-logo" id="id-logo" src="assets/daimond_word.svg" alt="Daimond" data-light="assets/daimond_word_dark.svg" data-dark="assets/daimond_word.svg">
+		<!-- THE FRONT DOOR, for somebody who arrived from daimond.app and has never
+		     seen this app.
+
+		     "Launch app" on the splash page lands here, on a form headed "Create
+		     your account" — which is a true instruction and a poor answer, because
+		     the account it makes is refused by a gateway in closed beta and the
+		     person is told so only afterwards. The three ways in existed (the
+		     application form at /apply.html, its waitlist half, and the passcode
+		     dialog in js/passcode.js); nothing at the door pointed at any of them.
+
+		     ABOVE the title, and above the form, because it is the answer to
+		     "what is this and can I have it" and the form is the answer to a
+		     question a stranger has not asked yet. It is three names on one
+		     wrapped row and one line of lead — this card already runs 874px and
+		     scrolls on a laptop, so the strip is the smallest thing that can
+		     carry three routes.
+
+		     THE HEAD IS INSIDE THE LEAD, on one line, and that is a correction.
+		     Written as a head ABOVE the lead the strip stood 176px tall and put
+		     "Create account" 25px under the card's own bottom edge — a first
+		     visitor could not see the button they were brought here to press.
+		     The question and the answer are one sentence, so they are set as
+		     one, and the two keys stay two so the wording of either can change
+		     without the other. The rest of that 176px is answered by the sticky
+		     foot at `.id-foot` below, which is what actually guarantees the
+		     button; this only stops the strip from spending more of the card
+		     than it needs.
+
+		     SHOWN TO A STRANGER ONLY. `syncDoors` in js/daimond.js draws it only
+		     while creating, and only when no account in this browser has ever
+		     held an identity. Somebody unlocking sees nothing; somebody adding a
+		     second account to a browser that already has one sees nothing. -->
+		<div class="id-doors" id="id-doors" style="display:none">
+			<p class="id-doors-lead"><span class="id-doors-head" data-i18n="door.head">New to Daimond?</span> <span data-i18n="door.lead">It is in closed testing, so accounts are given out by passcode.</span></p>
+			<div class="id-doors-row">
+				<!-- Root-absolute, and a new tab, for the reasons the passcode card's
+				     own link states: the app is one document at the site root, and
+				     leaving the page would take a half-typed passphrase with it. -->
+				<a class="id-door" id="id-door-test" href="/apply.html?for=test" target="_blank" rel="noopener" data-i18n="door.test">Apply to test</a>
+				<a class="id-door" id="id-door-wait" href="/apply.html?for=waitlist" target="_blank" rel="noopener" data-i18n="door.waitlist">Join the waitlist</a>
+				<!-- A DISCLOSURE, not a one-way switch. Pressing it reveals the note
+				     below (there is no device key to redeem a code onto yet, so the
+				     order has to be said rather than the field drawn); pressing it
+				     again puts the note away. It was neither before, and
+				     `verify_reversible` was right to call it the only control on this
+				     screen with no way back. `aria-expanded` is what says so to a
+				     reader, and `aria-controls` names the thing it opens. -->
+				<button type="button" class="id-door" id="id-door-code" aria-expanded="false" aria-controls="id-doors-note" data-i18n="door.code">I have a passcode</button>
+			</div>
+			<p class="id-doors-note" id="id-doors-note" style="display:none"></p>
+		</div>
 		<h2 id="id-title">Protect this device</h2>
 		<p class="cfg-lead" id="id-lead"></p>
 		<!-- Several accounts on one browser: pick whose to unlock, or add another. Built in JS, and
@@ -1156,7 +1246,15 @@
 				</div>
 			</div>
 			<div id="id-error" class="login-error"></div>
-			<button type="submit" id="id-primary">Create passphrase</button>
+			<!-- THE ONE BUTTON THIS SCREEN EXISTS FOR, in a foot that stays on
+			     screen while the card scrolls (see `.id-foot` in css/app.css).
+			     A wrapper and not `position: sticky` on the button itself,
+			     because the button's own 12px top margin would be a transparent
+			     band for the form to scroll through; the foot carries that gap
+			     as padding and paints the card's ground behind it. -->
+			<div class="id-foot">
+				<button type="submit" id="id-primary">Create passphrase</button>
+			</div>
 		</form>
 		<button type="button" id="id-choose" class="id-choose" style="display:none" data-i18n="identity.choose_own">Choose my own passphrase instead</button>
 		<button type="button" id="id-skip" class="modal-close" data-i18n="identity.skip">Skip for now</button>

@@ -272,6 +272,39 @@ ol.steps > li h3 { margin-top: 0; }
 .card h3 { margin: 0 0 0.25rem; font-size: 1rem; }
 .card p { margin: 0; font-size: 0.92rem; color: var(--text-secondary); }
 
+/* ── A control that does something ────────────────────────────────────────
+   The guide describes the app; this is the one block in it that ASKS the app
+   for something, so it is drawn as a thing to press rather than as prose with
+   a link in it. The reply lands in `.do-say`, which is a live region: a reader
+   using a screen reader must hear the outcome, since the visible change it is
+   reporting happens in the app behind this frame. */
+.do {
+	margin: 1.25rem 0;
+	padding: 1rem;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+.do-btn {
+	font: inherit;
+	font-weight: 600;
+	color: var(--on-fill, #fff);
+	background: var(--accent);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 0.55rem 1.1rem;
+	cursor: pointer;
+}
+.do-btn:hover { filter: brightness(1.08); }
+.do-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Disabled is the state between the ask and the answer, and it has to READ as
+   waiting rather than as broken. */
+.do-btn[disabled] { opacity: 0.55; cursor: default; filter: none; }
+/* Empty until there is something to say, and taking no room while it is. */
+.do-say { margin: 0.6rem 0 0; color: var(--text-primary); font-weight: 600; }
+.do-say:empty { display: none; }
+.do-note { margin: 0.6rem 0 0; font-size: 0.9rem; color: var(--text-muted); }
+
 /* ── Screenshot slots ─────────────────────────────────────────────────────
    The main agent will set a real src on each img later. Until then the figure
    shows a dashed placeholder box labelled with its data-shot name, and the

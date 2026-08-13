@@ -269,6 +269,8 @@
 	'beta.lead_unavailable':   '이 서버가 새 계정을 받는지 답하지 못해서 아무것도 만들지 않았어요. 기기에는 문제가 없고, 그동안 Daimond는 직접 준비한 제공자 키로 돌아가요. 잠시 뒤에 다시 시도해 주세요.',
 	'beta.lead_no_reason':     '이 기기에는 아직 Daimond 계정이 없어요.',
 	'beta.have_code':          'Oxedyne에서 베타 패스코드를 받았다면 여기에 넣어 주세요. 이 기기에서 한 번만 쓸 수 있어요.',
+	'beta.no_code':            '패스코드가 없나요? 각 차수의 테스트 자리는 신청을 받아 배정합니다.',
+	'beta.apply':              'Daimond 테스트 신청하기',
 	'beta.code':               '패스코드',
 	'beta.code_ph':            'abcd-efgh-ijkl',
 	'beta.redeem':             '사용하기',
@@ -290,6 +292,15 @@
 	'beta.done_plain':         '이 기기에 Daimond 계정이 생겼어요.',
 	'beta.done_handle':        '다른 사람에게는 이 계정이 {handle}로 보여요.',
 	'beta.done_not_signed_in': '패스코드는 사용됐고 계정도 있지만, 이 기기가 방금 로그인을 끝내지 못했어요. 알아서 다시 시도할 거예요.',
+
+	// ── 현관 ───────────────────────────────────────────────────
+	// 기계 번역이며 원어민이 검토하지 않았습니다.
+	'door.head': 'Daimond이 처음이신가요?',
+	'door.lead': '비공개 테스트 중이라 계정은 패스코드로 드립니다.',
+	'door.test': '테스트 신청하기',
+	'door.waitlist': '대기 명단 등록',
+	'door.code': '패스코드가 있어요',
+	'door.code_later': '먼저 패스프레이즈를 만드세요. 패스코드는 이 기기의 키에 사용됩니다. 가능해지는 즉시 코드 입력창이 저절로 열립니다.',
 
 	// ── 자동 충전 ──────────────────────────────────────────────
 	// 여기 금액은 모두 카드로 결제되니, 문장은 담백하게 둬요.
@@ -1019,6 +1030,13 @@
 	'typst.watch.rebuild':  '다시 빌드',
 	'typst.watch.nothing':  '컴파일러가 아무것도 내놓지 않고 이유도 말하지 않았어요.',
 	'typst.watch.heap':     '컴파일러가 {heap} MB를 쓰고 있고, 다시 빌드하면 {more} MB가 더 필요할 수 있어요. 이 페이지에 허용된 {budget} MB를 넘어서요. 저장할 때마다 다시 빌드하는 것을 멈췄고, 아래 페이지는 마지막으로 빌드된 것이에요. 컴파일러는 그 메모리를 돌려주지 못해요. 페이지를 새로 고쳐 처음부터 시작하거나, 그래도 한 번 해 보려면 다시 빌드를 누르세요.',
+	'typst.watch.spin':     '지켜보는 파일이 계속 바뀌었다고 하는데, 너무 커서 다시 읽어 확인할 수 없어요. 그 파일 때문에 {n}번 연속으로 페이지를 다시 짰어요. 컴파일러 메모리를 채우지 않도록, 저장할 때마다 다시 빌드하는 것을 멈췄어요. 페이지가 다시 필요하면 다시 빌드를 누르세요. 그 파일은 {what}이에요.',
+	'typst.watch.page': '쪽',
+	'typst.watch.zoom_out': '작게',
+	'typst.watch.zoom_in': '크게',
+	'typst.watch.fit': '너비에 맞추기',
+	'typst.watch.night': '어두운 종이',
+	'typst.watch.day': '밝은 종이',
 	'typst.watch.dead_why': '이 문서에서 컴파일러의 메모리가 바닥났고, 페이지를 새로 고치지 않으면 다시 시작할 수 없어요. 아래 페이지는 마지막으로 빌드된 것이에요. 새로 고친 다음 같은 파일을 다시 여세요.',
 
 	// ── 알림 ───────────────────────────────────────────────────
@@ -2003,6 +2021,17 @@
 	'crystal.view_switch': '이 Diamond 의 어느 면',
 	'crystal.view_crystal': '크리스털',
 	'crystal.view_chat': '대화',
+	'crystal.full': '전체 화면',
+	'crystal.full_help': '이 페이지로 화면을 채웁니다',
+	'crystal.full_exit': '전체 화면 끝내기',
+	'crystal.full_exit_help': '레일과 상단 막대를 되돌립니다',
+	'capp.title': '{name}',
+	'capp.make_body': '‘{name}’ 이라는 Diamond를 만들고 그 안에 {name} 페이지를 넣습니다. 기록한 내용은 이 기기의 그 Diamond에 남습니다.',
+	'capp.make_ok': '만들기',
+	'capp.exists_body': '‘{name}’ 이라는 Diamond가 이미 있고, 기록한 내용은 그 안에 있습니다. 두 번째를 만들면 그 기록은 남겨집니다.',
+	'capp.exists_ok': '열기',
+	'capp.missing_body': '이 Daimond 빌드에는 {name} 템플릿이 없어서 Diamond에 넣을 것이 없습니다. 아무것도 만들지 않았습니다. 다이몬에게 페이지를 부탁하거나, Daimond를 업데이트한 뒤 다시 시도하세요.',
+	'capp.page_failed': 'Diamond는 만들어졌지만 페이지를 쓰지 못했습니다: {why}',
 	'crystal.chat_empty': '아직 아무 말도 오가지 않았습니다. 크리스털은 이 Diamond 가 아는 것이고, 이곳은 어떻게 알게 되었는지입니다.',
 	'crystal.dispatch_after_error': '차례가 잘못 끝나서 요청된 에이전트는 시작되지 않았습니다.',
 	'instructions.chip_two': '두 겹이 적용 중입니다. 당신의 것과 이 프로젝트의 것입니다. 눌러서 당신의 것을 엽니다.',
@@ -2085,6 +2114,7 @@
 	'panel.improve': '개선',
 	'improve.notes': '메모',
 	'improve.proposals': '제안',
+	'improve.info': '이 패널이 무엇인지 안내서에서 보기',
 	'improve.box_label': 'Daimond에 대한 메모 쓰기',
 	'improve.box_ph': '어디였는지, 무엇을 기대했는지, 대신 무슨 일이 일어났는지.',
 	'improve.with': '함께 가는 것',

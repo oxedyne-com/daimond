@@ -214,6 +214,20 @@ impl Want {
 /// to embed a whole photograph is told so instead of being charged for it.
 pub const BASE64_READ_MAX: usize = 256_000;
 
+/// Whether these bytes are an SVG, which is an image that is also text.
+///
+/// Sniffed rather than taken from the extension, like every other format here. It is loose on
+/// purpose -- an XML declaration, a comment or a doctype may come first -- so it looks for the
+/// opening tag anywhere in the first few hundred bytes rather than demanding it at offset zero.
+///
+/// # Arguments
+/// * `bytes` - The start of the file.
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(512)];
+    let s = String::from_utf8_lossy(head).to_ascii_lowercase();
+    s.contains("<svg")
+}
+
 /// A file's bytes as base64, for a caller that means to EMBED it rather than look at it.
 ///
 /// This is the only way a picture reaches a crystal page, and the reason is the page's own
@@ -483,13 +497,26 @@ pub fn set_crystal_cap(bytes: usize) {
 /// THE PAGE IS CAPPED FOR THE SAME REASON THE DATA IS, and exempting it would void the data
 /// ceiling's stated purpose.  The page rides in every `versions/` snapshot where it changed, and it
 /// shares `SYNC_DIAMONDS_MAX` -- 6 MB -- with the memory itself, so bytes spent on presentation are
-/// bytes the parcel does not have for history.  Thirteen Diamonds at 16 KiB of data and 64 KiB of
-/// page is about 1 MB, which leaves the parcel room.
+/// bytes the parcel does not have for history.  Thirteen Diamonds at 16 KiB of data and 128 KiB of
+/// page is about 1.8 MB of that 6 MB, against 1 MB at the old figure.  That is the price, and it is
+/// paid in the parcel: a Diamond that does not fit is left out ENTIRELY rather than trimmed.
 ///
-/// Four times the data's ceiling because a self-contained document carries its own CSS and its own
+/// Eight times the data's ceiling because a self-contained document carries its own CSS and its own
 /// script, and none of that is memory: the figure is meant to be generous enough that an ordinary
 /// page never meets it and a page being used as an asset store meets it early.
-pub const CRYSTAL_PAGE_CAP_DEFAULT: usize = 64 * 1024;
+///
+/// RAISED FROM 64 KiB ON 2026-08-13.  The old figure was set when a crystal page was a RENDERING,
+/// and it is the wrong size for what the page became.  A capp is an application -- it carries a
+/// parser, a chart, a form and its own state machine -- and the shipped Life log arrived at 64,036
+/// bytes, 1,500 short of refusing to install itself.  The stated purpose survives the change intact,
+/// because a page being used as an asset store passes 128 KiB on its first sprite sheet or dataset;
+/// what changes is that an application now fits under a ceiling written for a document.
+///
+/// The cost that is NOT in the parcel arithmetic: the daimon rewrites the whole page to edit it, so
+/// a larger ceiling means more output tokens per edit and more room for a truncated rewrite.  That
+/// is charged to whoever asks for the change, which is the argument for moving the DEFAULT rather
+/// than removing the cap.  The user can move it either way; see [`set_crystal_page_cap`].
+pub const CRYSTAL_PAGE_CAP_DEFAULT: usize = 128 * 1024;
 
 thread_local! {
     /// The page ceiling in force, or 0 for [`CRYSTAL_PAGE_CAP_DEFAULT`].
@@ -4847,10 +4874,48 @@ fn search_notes(
 struct GlobHit {
     /// Workspace-relative path.
     path: String,
-    /// Nanoseconds since the epoch at which it was last written, `0` where the platform cannot
-    /// say.  Nanoseconds rather than seconds because a build writes many files in one second and
-    /// "most recent first" would then be alphabetical order wearing a disguise.
-    when: u64,
+    /// Nanoseconds since the epoch at which it was last written, and `None` where THIS path's
+    /// backend does not record one.  Nanoseconds rather than seconds because a build writes many
+    /// files in one second and "most recent first" would then be alphabetical order wearing a
+    /// disguise.
+    ///
+    /// Per hit and not per call.  A walk with a real folder open crosses two filesystems -- the
+    /// user's disk, which stamps its files, and the sandbox the Diamond's own store stays in,
+    /// which may not (see `wasm::opfs::resolve_root`) -- so "is there a time for this" has one
+    /// answer per path and no answer for the call.
+    when: Option<u64>,
+}
+
+/// What a `file_glob` line puts where the time goes when there is none.
+///
+/// One spelling, because the result explains it once and then repeats it per path; two spellings
+/// would leave the explanation describing a marker that is not the one printed.
+const GLOB_NO_TIME: &str = "unknown";
+
+/// Format milliseconds since the Unix epoch as an ISO-8601 UTC timestamp, to the second.
+///
+/// The proleptic Gregorian era arithmetic, which is exact and needs no calendar behind it on
+/// either target -- the browser build has no clock crate and the native one should not disagree
+/// with it about a date.
+///
+/// # Arguments
+/// * `ms` - Milliseconds since 1970-01-01T00:00:00Z.
+fn iso8601_utc(ms: u64) -> String {
+    let secs	= ms / 1_000;
+    let tod	= secs % 86_400;			// Second of the day.
+    // Shift the epoch to 0000-03-01 so that a leap day falls at the END of a cycle and every
+    // month before it has a fixed length.
+    let z	= (secs / 86_400) as i64 + 719_468;
+    let era	= z.div_euclid(146_097);		// 400-year cycle.
+    let doe	= z.rem_euclid(146_097);		// Day of the era.
+    let yoe	= (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy	= doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp	= (5 * doy + 2) / 153;			// Month, counting from March.
+    let day	= doy - (153 * mp + 2) / 5 + 1;
+    let month	= if mp < 10 { mp + 3 } else { mp - 9 };
+    let year	= yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    fmt!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, tod / 3_600, (tod / 60) % 60, tod % 60)
 }
 
 
@@ -5552,12 +5617,12 @@ impl Tool {
     /// One-line description for the LLM.
     pub fn description(&self) -> &'static str {
         match self {
-            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here, and in every other file tool, are relative to the workspace: 'src/main.rs', not '/home/you/project/src/main.rs' -- the workspace is not the machine's filesystem, so an absolute path is refused rather than followed. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it. A PICTURE IS NOT SHOWN TO YOU BY READING IT: reading an image tells you what it is -- its type, its size in pixels, its weight -- and nothing more, because being handed a picture you cannot see is a request the provider refuses and a turn that dies. Add \"as\":\"image\" to look at one, and only do that if you can see pictures. Add \"as\":\"base64\" to get the bytes encoded, which is how an image gets INTO a page: a crystal's policy allows a data: URI and nothing else -- no remote URL, no local file -- so an embedded picture is always 'data:<type>;base64,<what this returns>'.",
+            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here, and in every other file tool, are relative to the workspace: 'src/main.rs', not '/home/you/project/src/main.rs' -- the workspace is not the machine's filesystem, so an absolute path is refused rather than followed. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it. A PICTURE IS NOT SHOWN TO YOU BY READING IT: reading an image tells you what it is -- its type, its size in pixels, its weight -- and nothing more, because being handed a picture you cannot see is a request the provider refuses and a turn that dies. Add \"as\":\"image\" to look at one, and only do that if you can see pictures. Add \"as\":\"base64\" to get ANY file's bytes encoded, which is how a picture gets INTO a page: a crystal's policy allows a data: URI and nothing else -- no remote URL, no local file -- so an embedded picture is always 'data:<type>;base64,<what this returns>'. One exception worth knowing before you reach for it: an SVG is an image that is ALSO text, so read it normally and paste the <svg> element straight into the page. It needs no encoding, it costs a third fewer tokens than the base64 of the same file, and it can be styled and scaled once it is there.",
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace an exact, unique substring in a workspace file. 'old_string' must be the file's own bytes: file_read prefixes each line with its number and a TAB, and those characters are not in the file, so strip them from anything you copy out of a read. Give enough surrounding text to be unique -- the edit is refused, not guessed at, when the string appears twice or not at all.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
             Tool::FileSearch  => "Search the contents of workspace files and return the matching lines as 'path:line:text', ripgrep's own format. 'query' is a REGULAR EXPRESSION by default -- '.', '*', '+', '?', '[]', '()', '|', '^', '$', '\\d', '\\w', '\\s' and '\\b' all mean what they usually do -- so pass \"fixed\":true when you want the text matched literally, and set \"ignore_case\":true to fold case. Narrow it with \"glob\" (e.g. '**/*.rs', '*.{md,typ}') and \"path\", and ask for surrounding lines with \"before\" and \"after\". It returns at most 200 matches unless you raise \"limit\"; when it stops early it SAYS so and gives you the \"offset\" to page on with, and it also says which directories, oversized files and non-text files it did not look inside -- read that notice before concluding something is absent. It walks .github, .cargo and every other dotted directory; only .git, .hg, .svn, node_modules and target are passed over, and \"all\":true includes those -- as does NAMING one, so \"path\":\".git\" or \"glob\":\".git/**\" searches the repository's own files and nothing else extra. IT READS EVERY FILE IT SEARCHES, so over a large tree it is slow -- and the walk is bounded: past twenty thousand directory entries it STOPS, says 'STOPPED EARLY' and names the directory it had reached, and everything below that was never opened, so treat that answer as a part of one and ask again with a narrower 'path' rather than reading it as an absence. Where the 'run' tool is available -- it needs Daimond's machine hand, and refuses in plain English where there is none -- 'rg' is far faster and worth trying FIRST on anything the size of a source repository: run [\"rg\",\"-n\",\"pattern\",\"path\"]. Two things can go wrong with that and neither is worth fighting: run itself REFUSES where there is no hand, and where there is one 'rg' may simply not be installed, in which case the command fails to start. Either way, come straight back to this tool rather than hunting for a way around it.",
-            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first where this build can see modification times. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did. Naming one walks it: 'path':'.git' or a pattern like '.git/refs/**' looks inside the repository's own directory, which is how you read HEAD, a reflog or a ref -- and file_read opens any of those by path regardless, since the skip is about walking and never about reading. The walk is bounded: past twenty thousand directory entries it STOPS, says 'STOPPED EARLY' and names the directory it had reached, and nothing below that point was looked at -- so a short or empty result carrying that notice means narrow the 'path' or the pattern and ask again, NOT that the file is missing.",
+            Tool::FileGlob    => "Find files by PATH, without reading any of them: give a glob and get back the paths that match, most recently modified first. Each line is the path, a TAB, and the UTC time that file was last written ('2026-08-13T04:12:09Z'), so you can sort or filter by age without opening anything. A path whose storage keeps no modification time reads 'unknown' instead and is listed last, in path order -- that is a fact about THAT path and not about the tool, and one result can hold both kinds, because a workspace with a real folder open spans the folder on disk and Daimond's own sandboxed storage at once. Where nothing in the result has a time the column is left off altogether and the summary line says so. '*' matches within one path segment, '**' matches any number of segments, '?' matches one character, '[a-z]' a character from a set, and '{a,b}' either alternative. A pattern with no '/' in it is matched against the file NAME anywhere under the search path, so '*_test.rs' finds every test file in the tree; a pattern with a '/' is matched against the whole relative path, as in 'src/**/*.rs'. This is the tool for 'where is X' and for taking stock of a codebase; file_search is for 'which lines say X'. It walks dotted directories, passing over only .git, .hg, .svn, node_modules and target unless \"all\":true, and it says when it did. Naming one walks it: 'path':'.git' or a pattern like '.git/refs/**' looks inside the repository's own directory, which is how you read HEAD, a reflog or a ref -- and file_read opens any of those by path regardless, since the skip is about walking and never about reading. The walk is bounded: past twenty thousand directory entries it STOPS, says 'STOPPED EARLY' and names the directory it had reached, and nothing below that point was looked at -- so a short or empty result carrying that notice means narrow the 'path' or the pattern and ask again, NOT that the file is missing.",
             Tool::FileDelete  => "Delete a file, or a directory when recursive is true, from the workspace.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
@@ -5894,6 +5959,28 @@ impl Tool {
                 // refusal. The path recorded on the part is the one the model wrote, because that
                 // is the one it must use to read the file again after an elision.
                 let want = Want::read(args_json);
+                // BASE64 IS ASKED FOR, SO IT IS ANSWERED, WHATEVER THE FILE IS.
+                //
+                // This used to be reachable only through the image branch or the binary refusal
+                // below, so a caller that asked for base64 on anything TEXT-shaped had the
+                // argument silently discarded and got the file's text instead. An SVG is text.
+                // A daimon asked to put a book's cover on a crystal page found the cover was an
+                // SVG, asked for base64, was handed markup, and -- reasoning correctly from a
+                // wrong premise -- renamed the file to `.png` to try to force the issue. That
+                // failed too, and rightly: the sniff reads bytes, not extensions. It spent a
+                // turn defeated by an argument this tool had accepted and thrown away.
+                if let Want::Base64 = want {
+                    let mime = match ImageMedia::sniff(&bytes) {
+                        Some(m) => m.mime(),
+                        // A `.svg` is the case that started this, and it is worth naming
+                        // properly: it is the one image format that needs no data: URI at all,
+                        // because it is markup and goes into a page as itself.
+                        None if looks_like_svg(&bytes) => "image/svg+xml",
+                        None if is_binary(&bytes)      => "application/octet-stream",
+                        None                           => "text/plain",
+                    };
+                    return base64_result(ctx, &raw, mime, bytes);
+                }
                 if let Some(media) = ImageMedia::sniff(&bytes) {
                     return image_result(ctx, &raw, media, bytes, want);
                 }
@@ -6115,10 +6202,16 @@ impl Tool {
                 let notes = search_notes(&opts, &stats, &budget, &raw);
                 Ok(Self::search_output(ctx, &query, trusted, untrusted, &notes, budget.spent()))
             }
-            // OPFS reports a name, a kind and a size and no modification time, so the paths come
-            // back in path order and the result says as much rather than implying a recency it
-            // cannot see.  Asking the browser for each file's timestamp would mean one `getFile()`
-            // round trip per candidate -- the very cost `file_glob` exists to avoid.
+            // The times come off the listing itself.  This arm used to declare, in every result,
+            // that modification times could not be read -- on the grounds that asking for one
+            // would cost a `getFile()` round trip per candidate.  It costs nothing: the listing
+            // already opens each file to learn its size, and `lastModified` is on the same
+            // handle, so the round trip was being paid and the answer thrown away.
+            //
+            // Worse, the claim was not even true of the whole call.  With a real folder open, a
+            // walk crosses the user's disk AND the sandbox the store is carved back into (see
+            // `wasm::opfs::resolve_root`), and a file on disk knows perfectly well when it was
+            // written.  So the question is asked per path and answered per path.
             Tool::FileGlob => {
                 let pattern = res!(Self::arg(args_json, "pattern"));
                 let glob = res!(Glob::new(pattern.trim()).map_err(|e| err!(e,
@@ -6142,7 +6235,7 @@ impl Tool {
                 let mut budget = WalkBudget::new();
                 let mut stack = vec![start];
                 'walk: while let Some(dir) = stack.pop() {
-                    let mut entries = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
+                    let mut entries = match crate::wasm::opfs::list_dir_stamped(ctx.root, &dir).await {
                         Ok(e)  => e,
                         Err(_) => continue,
                     };
@@ -6152,7 +6245,7 @@ impl Tool {
                         dir.strip_prefix(&strip).unwrap_or(dir.as_str()).to_string()
                     };
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
-                    for (name, is_dir, _) in &entries {
+                    for (name, is_dir, _, when) in &entries {
                         if !budget.spend(&here) {
                             break 'walk;
                         }
@@ -6176,13 +6269,19 @@ impl Tool {
                             continue;
                         }
                         if glob.matches(&disp) {
-                            hits.push(GlobHit { path: disp, when: 0 });
+                            // Milliseconds from the browser, nanoseconds in the hit, so both arms
+                            // sort on one scale and a build's worth of files written in the same
+                            // second keeps whatever order the platform can actually distinguish.
+                            hits.push(GlobHit {
+                                path: disp,
+                                when: (*when).map(|ms| (ms as u64).saturating_mul(1_000_000)),
+                            });
                         }
                     }
                 }
                 budget.unwalked(stack.len());
                 Ok(Self::glob_output(
-                    &pattern, &raw, hits, limit, skipped, refused, walk, false, &budget))
+                    &pattern, &raw, hits, limit, skipped, refused, walk, &budget))
             }
             Tool::FileDelete => {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
@@ -6828,6 +6927,15 @@ impl Tool {
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "file_read: cannot read '{}'.", path; IO, File, Read)));
         let want = Want::read(args);
+        if let Want::Base64 = want {
+            let mime = match ImageMedia::sniff(&data) {
+                Some(m) => m.mime(),
+                None if looks_like_svg(&data) => "image/svg+xml",
+                None if is_binary(&data)      => "application/octet-stream",
+                None                          => "text/plain",
+            };
+            return base64_result(ctx, &path, mime, data);
+        }
         if let Some(media) = ImageMedia::sniff(&data) {
             return image_result(ctx, &path, media, data, want);
         }
@@ -7138,18 +7246,18 @@ impl Tool {
                 if !glob.matches(&rel) {
                     continue;
                 }
-                // Seconds since the epoch, and zero where the platform will not say -- which
-                // sorts the file last rather than pretending it was written in 1970 on purpose.
+                // Nanoseconds since the epoch, and `None` where the platform will not say -- which
+                // sorts the file last and is REPORTED as an absence, rather than pretending it
+                // was written in 1970 on purpose.
                 let when = std::fs::metadata(&p).ok()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0);
+                    .map(|d| d.as_nanos() as u64);
                 hits.push(GlobHit { path: rel, when });
             }
         }
         budget.unwalked(stack.len());
-        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, true, &budget))
+        Ok(Self::glob_output(&pattern, &path, hits, limit, skipped, refused, walk, &budget))
     }
 
     /// Compose a `file_glob` result: the paths, then what the walk did not look in.
@@ -7163,7 +7271,6 @@ impl Tool {
     /// * `refused` - How many paths this turn's bounds put out of reach.
     /// * `walk` - Which directories this call passed over, and which it walked because it was
     ///   asked to by name.
-    /// * `timed` - Whether the modification times are real, and so worth sorting by.
     /// * `budget` - The entry budget, which says whether the whole tree was walked.
     fn glob_output(
         pattern:    &str,
@@ -7173,21 +7280,33 @@ impl Tool {
         skipped:    usize,
         refused:    usize,
         walk:       Skips,
-        timed:      bool,
         budget:     &WalkBudget,
     )
         -> String
     {
         let found = hits.len();
-        // Most recently written first, ties broken by path so the order is repeatable.
+        // Most recently written first, ties broken by path so the order is repeatable.  `None`
+        // orders below every `Some`, so the paths whose time nobody knows fall to the end in path
+        // order -- which is the only order they have -- without a second pass sorting the ones
+        // that DO know back into alphabetical.
         hits.sort_by(|a, b| b.when.cmp(&a.when).then(a.path.cmp(&b.path)));
-        if !timed {
-            hits.sort_by(|a, b| a.path.cmp(&b.path));
-        }
         let shown = found.min(limit);
+        // What is true of THESE paths, counted rather than assumed.  The old flag was a property
+        // of the build, and it said "no modification times" over a listing half of which had one.
+        let stamped = hits.iter().take(shown).filter(|h| h.when.is_some()).count();
         let mut out = String::new();
         for h in hits.iter().take(shown) {
             out.push_str(&h.path);
+            // The column is dropped when not one path in the result has a time: repeating
+            // "unknown" down a whole listing costs tokens to say once what the summary line says
+            // better, and there is nothing left for a reader to tell apart.
+            if stamped > 0 {
+                out.push('\t');
+                match h.when {
+                    Some(ns) => out.push_str(&iso8601_utc(ns / 1_000_000)),
+                    None     => out.push_str(GLOB_NO_TIME),
+                }
+            }
             out.push('\n');
         }
         if found == 0 {
@@ -7202,10 +7321,21 @@ impl Tool {
                 out.push_str(&fmt!("No paths under '{}' match '{}'.\n", path, pattern));
             }
         }
-        let order = if timed {
-            "most recently modified first"
+        // Three states, and the middle one is why this is counted per path.  A workspace with a
+        // folder open spans the user's disk and the sandbox at once, so a single result can hold
+        // both kinds; saying either thing about all of it would be false about half of it.
+        let order = if shown == 0 {
+            // An ordering claim over nothing is a claim about files that are not there.
+            fmt!("nothing to list")
+        } else if stamped == 0 {
+            fmt!("in path order — no modification time was recorded for any of them")
+        } else if stamped == shown {
+            fmt!("most recently modified first, each with the UTC time it was last written")
         } else {
-            "in path order — this build cannot read modification times"
+            fmt!("most recently modified first, each with the UTC time it was last written; the \
+                last {} carry '{}' because no modification time was recorded for those paths, \
+                and they are in path order",
+                shown - stamped, GLOB_NO_TIME)
         };
         out.push_str(&fmt!(
             "[file_glob] {} of {} path(s) matching '{}' under '{}', {}.",
@@ -7316,10 +7446,16 @@ impl Tool {
     ///    first turn, and reads the scope back through
     ///    [`crate::wasm::DaimondApp::diamond_scope`] rather than assuming it took -- a scope that
     ///    failed silently would leave the worker fenced to the whole grant, which is failing open.
-    ///    A daimon's own steering turn is confined differently and more strongly: it is pinned to
-    ///    `diamonds/<id>` on the OPFS root by `path_prefix`, and it is not offered [`Tool::Run`] at
-    ///    all, so there is no fence for it to have. The user's own chat is deliberately unscoped,
-    ///    as the paragraph above says.
+    ///    A daimon's own steering turn is scoped THE SAME WAY a worker is, since 2026-08-13:
+    ///    [`diamond_bounds`] from the marks the browser reports per turn, and a fence built from
+    ///    them like any other. This paragraph used to say it was "confined differently and more
+    ///    strongly", pinned to `diamonds/<id>` on the OPFS root, and not offered [`Tool::Run`] at
+    ///    all "so there is no fence for it to have" -- and those two halves were one argument. A
+    ///    turn confined to browser storage has nowhere on the machine to run anything, so `run`
+    ///    would have produced nothing but refusals. The pin went when a daimon proved unable to
+    ///    read the book attached to its own Diamond; with it went the reason to withhold the tool,
+    ///    and the daimon now holds `run`, `file_show` and `typst_compile` like the turns either
+    ///    side of it. The user's own chat is deliberately unscoped, as the paragraph above says.
     ///
     ///    For most of a day this paragraph described a design and not the code: nothing anywhere
     ///    called `set_diamond_scope`, so no turn in the browser carried an allow-list and every
@@ -9470,6 +9606,39 @@ mod tests {
         }
     }
 
+    /// Base64 is honoured on any file, not only on the ones that sniff as a picture.
+    ///
+    /// The defect: `as` was read only inside the image branch and the binary refusal, so a
+    /// caller asking for base64 on anything text-shaped had the argument thrown away and got
+    /// the text back. An SVG is text. A daimon putting a book's cover on a crystal page hit
+    /// exactly that, and tried renaming the file to `.png` to force it -- which failed too,
+    /// because the sniff reads bytes and not extensions.
+    #[test]
+    fn test_base64_is_honoured_on_a_file_that_is_not_a_sniffable_picture() {
+        let c = ctx();
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 4 4\"><rect/></svg>";
+        let abs = c.workspace.resolve("cover.svg").expect("resolve");
+        std::fs::write(&abs, svg).expect("write");
+
+        let out = Tool::FileRead
+            .execute_sync_guarded(r#"{"path":"cover.svg","as":"base64"}"#, &c)
+            .expect("base64 must be answered");
+        let t = out.as_text();
+        // Named as what it is, so a caller can build the URI without guessing from the suffix.
+        assert!(t.contains("data:image/svg+xml;base64,"),
+            "an SVG asked for as base64 came back as something else: {}", t);
+        // And it really is the bytes, not the markup with a label on it.
+        let enc = oxedyne_fe2o3_text::base64::encode(svg);
+        assert!(t.contains(&enc), "the encoding is not of this file: {}", t);
+
+        // The control beside it: without the argument, the same file reads as text. If this
+        // ever fails, the check above is passing because everything returns base64.
+        let plain = Tool::FileRead.execute_sync_guarded(r#"{"path":"cover.svg"}"#, &c)
+            .expect("read");
+        assert!(plain.as_text().contains("<svg"), "a bare read should give the markup");
+        assert!(!plain.as_text().contains("base64,"), "a bare read must not encode");
+    }
+
     /// And when looking IS asked for, the picture is attached exactly as it always was.
     #[test]
     fn test_read_returns_an_image_as_an_image() {
@@ -11318,13 +11487,31 @@ mod tests {
 
     // ── Finding files by name ───────────────────────────────────────
 
-    /// The paths a `file_glob` result lists, ignoring its notices.
+    /// The paths a `file_glob` result lists, ignoring its notices and the time beside each one.
     fn glob_says(c: &ToolContext, args: &str) -> Vec<String> {
+        glob_lines(c, args).into_iter()
+            .map(|l| l.split('\t').next().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    /// The listing lines of a `file_glob` result whole, path and time together.
+    fn glob_lines(c: &ToolContext, args: &str) -> Vec<String> {
         let out = Tool::FileGlob.execute_sync(args, c).expect("glob");
         out.as_text().lines()
             .filter(|l| !l.starts_with("[file_glob]") && !l.starts_with("No paths"))
             .map(|l| l.to_string())
             .collect()
+    }
+
+    /// The time a `file_glob` listing put beside `path`, or `None` if it did not list it.
+    fn glob_time_of(c: &ToolContext, args: &str, path: &str) -> Option<String> {
+        for line in glob_lines(c, args) {
+            let mut parts = line.splitn(2, '\t');
+            if parts.next() == Some(path) {
+                return Some(parts.next().unwrap_or_default().to_string());
+            }
+        }
+        None
     }
 
     #[test]
@@ -11363,6 +11550,96 @@ mod tests {
         let got = glob_says(&c, r#"{"pattern":"*.md"}"#);
         assert_eq!(vec![fmt!("c.md"), fmt!("b.md"), fmt!("a.md")], got,
             "the most recently written should come first");
+    }
+
+    #[test]
+    fn test_file_glob_puts_the_real_modification_time_beside_each_path() {
+        // The order alone never told the model WHEN, so it could not filter by age, and the
+        // result said in so many words that times were unavailable -- which was never true here
+        // and is not true of an opened folder either.  The oracle is the filesystem: a timestamp
+        // set through `set_times` and converted by `date -u`, not by the code under test.
+        let c = ctx();
+        put(&c, "a.md", "x\n");
+        let abs = c.workspace.resolve("a.md").expect("resolve");
+        let when = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_700_000_000);
+        let f = std::fs::OpenOptions::new().write(true).open(&abs).expect("open");
+        f.set_times(std::fs::FileTimes::new().set_modified(when)).expect("set mtime");
+
+        let args = r#"{"pattern":"*.md"}"#;
+        assert_eq!(Some(fmt!("2023-11-14T22:13:20Z")), glob_time_of(&c, args, "a.md"),
+            "the path the filesystem stamps must come back carrying that stamp");
+        let out = glob_text(&c, args);
+        assert!(!out.contains("cannot read modification times"),
+            "a build that reads them said it could not: {}", out);
+        assert!(!out.contains(GLOB_NO_TIME),
+            "and nothing here is unknown: {}", out);
+    }
+
+    #[test]
+    fn test_a_glob_result_marks_the_missing_time_and_only_the_missing_time() {
+        // The mixed listing, which is the case the old per-CALL flag could not express: one walk
+        // with a folder open crosses the user's disk and the sandbox the store is carved back
+        // into, so the answer to "is there a time for this" changes from path to path.  Composed
+        // directly, because no native filesystem will withhold an mtime to order.
+        let hits = vec![
+            GlobHit { path: fmt!("disk/known.md"),  when: Some(1_700_000_000_000_000_000) },
+            GlobHit { path: fmt!("sandbox/a.md"),   when: None },
+            GlobHit { path: fmt!("sandbox/b.md"),   when: None },
+        ];
+        let out = Tool::glob_output(
+            "**/*.md", ".", hits, 10, 0, 0, Skips::default_rule(), &WalkBudget::new());
+        let line_of = |p: &str| out.lines()
+            .find(|l| l.starts_with(&fmt!("{}\t", p)))
+            .map(|l| l.to_string());
+        assert_eq!(Some(fmt!("disk/known.md\t2023-11-14T22:13:20Z")), line_of("disk/known.md"),
+            "the stamped path must carry its own time: {}", out);
+        assert_eq!(Some(fmt!("sandbox/a.md\t{}", GLOB_NO_TIME)), line_of("sandbox/a.md"),
+            "and the unstamped one must say so for itself: {}", out);
+        assert!(!out.contains("no modification time was recorded for any of them"),
+            "a listing with a real time in it must not report the whole call as timeless: {}", out);
+        assert!(out.contains(&fmt!("the last 2 carry '{}'", GLOB_NO_TIME)),
+            "the summary must count the paths that lack one rather than generalise: {}", out);
+        // Sorted, not merely marked: an unknown time is the end of the list, never 1970.
+        let paths: Vec<&str> = out.lines()
+            .filter(|l| !l.starts_with("[file_glob]"))
+            .filter_map(|l| l.split('\t').next())
+            .collect();
+        assert_eq!(vec!["disk/known.md", "sandbox/a.md", "sandbox/b.md"], paths, "{}", out);
+    }
+
+    #[test]
+    fn test_a_glob_result_with_no_times_at_all_says_it_once_and_lists_bare_paths() {
+        // The other half of the same rule.  Repeating "unknown" down every line of a listing
+        // spends tokens saying once what the summary says better -- and with nothing to tell
+        // apart, there is nothing for the column to carry.
+        let hits = vec![
+            GlobHit { path: fmt!("b.md"), when: None },
+            GlobHit { path: fmt!("a.md"), when: None },
+        ];
+        let out = Tool::glob_output(
+            "*.md", ".", hits, 10, 0, 0, Skips::default_rule(), &WalkBudget::new());
+        assert!(!out.contains('\t'), "the column must be dropped, not filled with a marker: {}", out);
+        assert!(out.contains("no modification time was recorded for any of them"),
+            "and the reason must be stated once: {}", out);
+        let paths: Vec<&str> = out.lines().filter(|l| !l.starts_with("[file_glob]")).collect();
+        assert_eq!(vec!["a.md", "b.md"], paths, "with nothing to order by, path order: {}", out);
+    }
+
+    #[test]
+    fn test_the_timestamps_a_glob_prints_match_the_calendar() {
+        // The oracle is GNU `date -u -d @<seconds>`, run outside this crate.  A date routine that
+        // agreed only with itself would put every file in the wrong century in step.
+        for (secs, want) in [
+            (0u64,          "1970-01-01T00:00:00Z"),
+            (951_782_400,   "2000-02-29T00:00:00Z"),   // A leap day in a leap century.
+            (1_078_012_800, "2004-02-29T00:00:00Z"),
+            (1_700_000_000, "2023-11-14T22:13:20Z"),
+            (1_755_055_929, "2025-08-13T03:32:09Z"),
+            (4_102_444_799, "2099-12-31T23:59:59Z"),
+        ] {
+            assert_eq!(want, iso8601_utc(secs * 1_000), "epoch second {}", secs);
+        }
     }
 
     #[test]

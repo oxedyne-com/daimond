@@ -13,6 +13,31 @@ button { cursor: pointer; }
 svg { display: block; }
 .ic { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.75; fill: none; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
+/* ── The small plates ────────────────────────────────────────────
+   The rail heads' `+`, the graph latch, the panel closers, the agent brakes and
+   a triggered action's way in are all the same idea: one glyph on a small
+   square. They wore a rotated diamond for one release, borrowed from the
+   splash page's mark. It came back off because a diamond inscribed in a box
+   has HALF the box's area, so the box had to grow from 22px to 30px to keep
+   the glyph off the edges -- and 8px on every one of these, in a rail head and
+   a top bar, is real estate this app has none of to give. The mark stays on
+   the splash page, where there is room for it.
+
+   The shape and paint are each button's own, below; what stays shared is the
+   focus ring, because it must be a real `outline` ON THE BUTTON.
+   `verify_a11y_keyboard` proves a control is focusable by snapshotting the
+   element's own outline and shadow and requiring them to change, and its
+   self-test strips `.addbtn`'s outline BY NAME to prove the census works. A
+   ring drawn on a pseudo-element would be a control that census calls
+   ringless, and a ring made of a background or border change would leave that
+   self-test unable to go red. So: an outline, on the button, and no
+   `border-radius` of its own -- an outline follows the corner the button is
+   already cut with, which is the square's. */
+.addbtn:focus-visible, .agc:focus-visible, .trig-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
 /* ── Copy an identifier ──────────────────────────────────────────
    One button, wherever a machine-readable string is on show: the build id in
    the rail, the account fingerprint, a device id, a build in the version
@@ -910,6 +935,66 @@ button.tag-pool { cursor: pointer; }
 .panel.ai.crystal-face .crystal-view   { order: 1; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
 
+/* ── Full screen: the crystal, alone ─────────────────────────────────
+   A capp is an application, and an application inside a panel inside an app
+   reads on a phone as an app inside an app. `[data-cfull]` on the root element
+   takes the app chrome away and leaves the page: the rail, the top bar, the
+   dock, the other stage panels, the composer and the crystal's own bar.
+
+   The mode is a USER's, and only a user's -- see `setCrystalFull` in
+   js/daimond.js. Nothing here is a media query and nothing enters it by size:
+   a phone gets the same panel it always had until somebody presses the button.
+
+   WHAT IS NOT DONE HERE, deliberately: the panel is not lifted out of `#app`
+   into a fixed, inset-0 box. `#app` already carries the safe-area insets in its
+   own padding, so leaving the panel inside it is what keeps the way out clear
+   of the notch; a fixed overlay would have to restate all four insets and would
+   be wrong the first time one of them changed. */
+:root[data-cfull] .topbar,
+:root[data-cfull] #panel-rail,
+:root[data-cfull] #handle-rail,
+:root[data-cfull] .dock,
+:root[data-cfull] .stage > .phandle,
+:root[data-cfull] .stage > .panel:not(.ai),
+:root[data-cfull] .panel.ai .chat-input-bar,
+:root[data-cfull] .panel.ai .crystal-bar,
+:root[data-cfull] .panel.ai .crystal-controls,
+:root[data-cfull] .panel.ai #diamond-view,
+:root[data-cfull] .panel.ai .chead-right > *:not(.cfull-btn) { display: none !important; }
+
+/* The one panel left takes the stage, whatever inline width the layout engine
+   last measured it at. */
+:root[data-cfull] .stage > .panel.ai {
+	flex: 1 1 auto !important;
+	width: auto !important;
+	display: flex !important;
+}
+
+/* The page runs to the panel's own edges. The gutter is chrome too.
+   Only when there IS a page: `:has()` scopes this exactly as crystal.css scopes
+   the flex column, so the built-in view -- which is prose in our own document --
+   keeps the margin every other panel's text has. */
+:root[data-cfull] .panel.ai .crystal-body:has(#crystal-frame-wrap) { padding: 0; }
+
+/* The toggle. Two glyphs, one shown at a time, and a word beside the glyph
+   ONLY while the mode is on: coming back is the thing a reader has to be able
+   to do without working out what an icon means, and it is the one moment when
+   there is room for the word because every other chip in the row has gone. */
+.cfull-btn { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; }
+/* An explicit ring rather than the browser's own. In full screen this is the
+   only control on the app, so where the keyboard is has to be legible against
+   the accent ground it wears there. */
+.cfull-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.cfull-btn .ic { width: 16px; height: 16px; }
+.cfull-btn .ic-cfull-out,
+.cfull-txt { display: none; }
+:root[data-cfull] .cfull-btn .ic-cfull-in { display: none; }
+:root[data-cfull] .cfull-btn .ic-cfull-out { display: block; }
+:root[data-cfull] .cfull-txt { display: inline; }
+/* On in the sense the header's other latched chip is on, so the mode is
+   readable from the control as well as from the screen behind it. */
+:root[data-cfull] .cfull-btn { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
+
 /* Artefact strip: what this Diamond produced or consulted. A count that hides at
    zero and opens a list, rather than a list that is always there taking room
    from the crystal above it and the steer box below. */
@@ -1745,6 +1830,64 @@ span.arte-open { cursor: default; }
 }
 #identity-modal h2 { margin-bottom: 8px; }
 #identity-modal .cfg-lead { margin: 0 0 12px; }
+
+/* ── The front door ─────────────────────────────────────────────
+   Three routes for a stranger, above the form, drawn only for a browser that
+   has never held an identity (`syncDoors`, js/daimond.js).
+
+   Its budget is HEIGHT. The create card already runs past a laptop's viewport
+   and scrolls, and the form below it is what a returning stranger comes back
+   for -- so this is a head, one line, and one wrapped row of three, and the
+   row wraps rather than shrinking the names, because a route whose name is
+   cut is a route nobody takes.
+
+   The rule is `.id-doors`, not `#id-doors`, so a second host -- a landing
+   panel, a phone sheet -- can wear the same strip without a new selector.
+   `<a>` and `<button>` in the same row: two of the three leave the app and one
+   raises a dialog, and the markup says which is which while `.id-door` makes
+   them read as one set of choices. */
+.id-doors {
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	background: var(--bg-tertiary);
+	padding: 9px 12px 10px;
+	margin: 0 0 12px;
+}
+/* The question is the first half of the lead's own sentence, so it is set on the
+   same line rather than as a head above it. Stacked, it cost a whole line for
+   three words and the strip stood 176px tall -- which is what pushed the create
+   button off the bottom of the card the night the strip was added. It keeps its
+   own key and its own weight, so it still reads as the thing being asked. */
+.id-doors-head { font-weight: 600; color: var(--text-primary); }
+.id-doors-lead { font-size: var(--fs-xs); color: var(--text-secondary); margin: 0 0 7px; line-height: 1.45; }
+.id-doors-row { display: flex; flex-wrap: wrap; gap: 6px; }
+/* One appearance for a link and a button, so the three read as three routes
+   rather than as two links and a control. `flex: 1 1 auto` with a floor lets
+   two sit on a line and the third drop under them on a narrow card, which is
+   what a 366px phone does with these three names. */
+.id-door {
+	flex: 1 1 auto; min-width: 8.5em;
+	display: inline-flex; align-items: center; justify-content: center;
+	text-align: center; text-decoration: none;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 8px 10px;
+	font-size: var(--fs-xs);
+	line-height: 1.2;
+	cursor: pointer;
+}
+.id-door:hover { border-color: var(--accent); }
+.id-door:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "I have a passcode" is a disclosure: it opens the note below it and closes it
+   again. Held open, it wears the accent it wears under the pointer, so the
+   second press is offered rather than guessed at. */
+.id-door[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+/* The answer given to somebody who presses "I have a passcode" before there is
+   a key on this device to redeem it onto. `--text-secondary` rather than a
+   dimmed muted: it is the sentence that tells them what to do next. */
+.id-doors-note { font-size: var(--fs-xs); color: var(--text-secondary); margin: 8px 0 0; line-height: 1.45; }
 /* The account switcher on the unlock screen: whose passphrase to enter, or add another. */
 .id-accounts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .id-accounts-lead { font-size: var(--fs-xs); color: var(--text-muted); }
@@ -1781,7 +1924,51 @@ span.arte-open { cursor: default; }
 	cursor: pointer; }
 .pass-eye:hover { color: var(--text-primary); }
 .pass-eye .ic { width: 20px; height: 20px; }
-#id-primary { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); margin-top: 12px; }
+/* ── The foot that holds the one next step ──────────────────────
+   `.modal-card` scrolls (`overflow-y: auto`), and the create screen is the
+   tallest thing that has ever been put in one: a logo, the stranger strip, a
+   title, a lead, a name, a generated passphrase with its note and its
+   acknowledgement, a passphrase field, a confirmation, and only then the button
+   that does the thing. On 2026-08-14, at 1500x950, it ran 1086px inside an 872px
+   box and "Create account" sat at 914-959 with the card's own edge at 912 --
+   `elementFromPoint` over the middle of the button answered `#identity-modal`. A
+   first-time visitor on a laptop could not see the button they had been sent
+   here to press. Nor could one on a phone, and that half is older than the front
+   door: at 375x812 the card was over its height by ~140px with the strip hidden
+   altogether. `dev/l11_fold.mjs` measures both.
+
+   So the foot STICKS to the bottom of the scroll port: whatever else is under
+   the fold, the next step is on screen. Sticky and not a flex footer because the
+   card is shared furniture -- a real footer means splitting every modal into a
+   scrolling body and a fixed foot, and this is one screen's problem.
+
+   It costs nothing when there is room. Sticky only lifts an element that would
+   otherwise sit below the port, so on the UNLOCK screen -- half this height, no
+   scrollbar -- the button stays exactly where it was. Its containing block is
+   the form, so it can rise no further than the form's own top.
+
+   The padding is the gap the button used to carry as `margin-top`. A margin
+   would be transparent, and the form would scroll through the 12px band above a
+   stuck button; padding on the foot paints the card's own ground there instead.
+   `--bg-secondary` is that ground: `.modal-card` sets it and no skin restates
+   it, so this follows the card through both skins and every palette.
+
+   AND THE CARD'S BOTTOM PADDING BECOMES A SPACER, three rules below. A stuck
+   element stops at the scroll port's CONTENT edge, while a scroll container's
+   own end padding is scrollable area -- so the card's 24px (34px warm, 16px on
+   a phone) was a band under the button that the acknowledgement row slid
+   through, photographed on a 375px phone in the warm skin. Covering it from the
+   foot cannot work: anything that reaches past the foot's box paints over
+   "Choose my own passphrase instead" once the card is scrolled to the end and
+   the foot is no longer stuck. Moving the same space to a `::after` puts the
+   card's inner bottom edge and its content edge in the same place, so there is
+   no band to cover, and the tail keeps the air it had. */
+.id-foot {
+	position: sticky; bottom: 0;
+	background: var(--bg-secondary);
+	padding: 12px 0 6px;
+}
+#id-primary { width: 100%; background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 10px 16px; font-size: var(--fs-lg); }
 #id-primary:hover { background: var(--accent-hover); }
 #id-primary:disabled { opacity: .5; cursor: not-allowed; }
 #id-primary:disabled:hover { background: var(--accent); }
@@ -1794,7 +1981,19 @@ span.arte-open { cursor: default; }
    it is given more of the window than the shared 80vh before it starts scrolling.
    A short window still scrolls, which is correct; this only stops a full-height
    one from hiding the button and the escape hatch under the fold. */
-#identity-modal .modal-card { max-height: 92vh; }
+#identity-modal .modal-card { max-height: 92vh; padding-bottom: 0; }
+/* The bottom padding, moved off the card and into its last line, so a stuck
+   `.id-foot` has nothing scrolling underneath it (see the foot above). The
+   number is the card's own: 24px, times `--space-scale` where a skin sets one --
+   which is how skin-warm.css writes the very padding this replaces. An id beats
+   both the skin's selector and the phone's, so this holds everywhere; a phone
+   therefore ends 8px deeper than mobile.css's 16px, which is the one place this
+   is not a straight swap and is below noticing at the end of a scroll. */
+#identity-modal .modal-card::after {
+	content: "";
+	display: block;
+	height: calc(24px * var(--space-scale, 1));
+}
 .pass-gen { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .pass-gen-words { font-family: var(--font-mono); font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-spacing: .25em; overflow-wrap: break-word; }
 .pass-gen-acts { display: flex; gap: 8px; }
@@ -2575,10 +2774,24 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    between two cards — so a stacked column gives its gap up to the handles. */
 .pcol.stacked { gap: 0; }
 .hstack { height: 16px; flex: none; cursor: row-resize; position: relative; touch-action: none; }
-/* Transparent at rest, like every other handle between two CARDS: the panels
-   carry their own borders, so a line at rest would be a third edge in the gap.
-   It answers the pointer instead. */
-.hstack::after { content: ""; position: absolute; left: 10%; right: 10%; top: 7px; height: 2px; border-radius: 2px; background: transparent; transition: background 0.15s; }
+/* STANDING, AND THE FULL WIDTH, exactly as the rail's own `.rhandle` stands
+   between Chats and Diamonds.
+
+   It used to be transparent at rest and inset a tenth either end, on the
+   reading that the panels either side "carry their own borders, so a line at
+   rest would be a third edge in the gap". They do not. A border and a radius
+   are given to `.ai, .web, .doc, .msg, .compose, .tools` -- the STAGE's cards.
+   Everything that seats in the dock (`.rail, .agents, .work, .mail, .spend`) is
+   a bare column with no edge of its own, so this line was not a third edge, it
+   was the only one -- and a divider that appears under the pointer is a
+   divider nobody finds, since finding it is what the pointer was looking for.
+   Reported as: several panels in one dock column could not be told apart.
+
+   The rail's rule is copied rather than adapted, so the two dividers are one
+   idea: `--border` at rest, `--accent` under the pointer or in a drag. Only the
+   offset differs, and only because this handle is 16px tall against the rail's
+   10px. */
+.hstack::after { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 2px; border-radius: 2px; background: var(--border); transition: background 0.15s; }
 .hstack:hover::after, .hstack.dragging::after { background: var(--accent); }
 
 /* ── The Web panel ───────────────────────────────────────────────
@@ -2718,7 +2931,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 	color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1;
 }
 .trig-btn:hover { border-color: var(--accent); color: var(--text-primary); }
-.trig-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The chooser: the light, the pulldown naming every action, and the way to
    remove the one showing. One row, and it does not change shape when a
    different action is chosen -- the light is the control reached for most and

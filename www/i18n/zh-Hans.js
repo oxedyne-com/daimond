@@ -266,6 +266,8 @@
 	'beta.lead_unavailable':   '这台服务器无法说明它是否接受新账户，因此没有创建任何账户。你的设备没有问题，其间 Daimond 仍可用你自己的供应商密钥运行。请稍后再试。',
 	'beta.lead_no_reason':     '这台设备还没有 Daimond 账户。',
 	'beta.have_code':          '如果 Oxedyne 给了你测试通行码，请填在这里。它只在这台设备上用一次。',
+	'beta.no_code':            '没有通行码？每一轮测试的名额通过申请发放。',
+	'beta.apply':              '申请参与 Daimond 测试',
 	'beta.code':               '通行码',
 	'beta.code_ph':            'abcd-efgh-ijkl',
 	'beta.redeem':             '兑换',
@@ -287,6 +289,15 @@
 	'beta.done_plain':         '这台设备有了 Daimond 账户。',
 	'beta.done_handle':        '别人看到这个账户是 {handle}。',
 	'beta.done_not_signed_in': '通行码已被使用，账户也已存在，但这台设备刚才没能完成登录。它会自行再试。',
+
+	// ── 入口 ───────────────────────────────────────────────────
+	// 机器翻译，未经母语者校对。
+	'door.head': '第一次用 Daimond？',
+	'door.lead': '它还在封闭测试，账户按通行码发放。',
+	'door.test': '申请参加测试',
+	'door.waitlist': '加入等候名单',
+	'door.code': '我有通行码',
+	'door.code_later': '请先创建口令短语：通行码是兑换到这台设备的密钥上的。一旦可以，通行码输入框会自行打开。',
 
 	// ── 自动充值 ───────────────────────────────────────────────
 	// 这里的每一笔金额都会扣到卡上，所以文案保持平实。
@@ -1015,6 +1026,13 @@
 	'typst.watch.rebuild':  '重新编译',
 	'typst.watch.nothing':  '编译器没有产出任何内容，也没有说明原因。',
 	'typst.watch.heap':     '编译器占用了 {heap} MB，再编译一次可能还需要 {more} MB，超出本页允许的 {budget} MB。每次保存就重新编译已经停止，下方是最后一次编译成功的页面。编译器无法把这块内存交回——重新加载页面可以从头开始，或者按「重新编译」再试一次。',
+	'typst.watch.spin':     '一个监看的文件一直说它变了，而它太大，无法读回来核对：为它连续排了 {n} 次页面。每次保存就重新编译已经停止，以免占满编译器的内存。需要页面时请按「重新编译」。这个文件是 {what}。',
+	'typst.watch.page': '页',
+	'typst.watch.zoom_out': '缩小',
+	'typst.watch.zoom_in': '放大',
+	'typst.watch.fit': '适应宽度',
+	'typst.watch.night': '深色纸张',
+	'typst.watch.day': '浅色纸张',
 	'typst.watch.dead_why': '编译器在这份文档上耗尽了内存，不重新加载页面就无法重启。下方是最后一次编译成功的页面。请重新加载，然后再次打开同一个文件。',
 
 	// ── 提示 ───────────────────────────────────────────────────
@@ -1998,6 +2016,17 @@
 	'crystal.view_switch': '这个 Diamond 的哪一面',
 	'crystal.view_crystal': '晶体',
 	'crystal.view_chat': '对话',
+	'crystal.full': '全屏',
+	'crystal.full_help': '让这个页面占满屏幕',
+	'crystal.full_exit': '退出全屏',
+	'crystal.full_exit_help': '把侧栏和顶栏放回来',
+	'capp.title': '{name}',
+	'capp.make_body': '这会新建一个名为“{name}”的 Diamond，并把 {name} 页面放进去。你记录的内容留在那个 Diamond 里，在这台设备上。',
+	'capp.make_ok': '新建',
+	'capp.exists_body': '你已经有一个名为“{name}”的 Diamond，你记录的内容就在里面。再建一个会把那些记录留在原处。',
+	'capp.exists_ok': '打开',
+	'capp.missing_body': '这个 Daimond 版本没有带 {name} 模板，所以没有可以放进 Diamond 的东西。什么也没有新建。可以让你的 daimon 做一个页面，或者更新 Daimond 之后再试。',
+	'capp.page_failed': 'Diamond 已新建，但它的页面写不进去：{why}',
 	'crystal.chat_empty': '还没有说过什么。晶体是这个 Diamond 所知道的，这里是它如何知道的。',
 	'crystal.dispatch_after_error': '这一轮结束得不顺利，所以它请求的代理没有启动。',
 	'instructions.chip_two': '有两层在起作用：你的和这个项目的。点击可打开你的。',
@@ -2080,6 +2109,7 @@
 	'panel.improve': '改进',
 	'improve.notes': '笔记',
 	'improve.proposals': '提案',
+	'improve.info': '在指南中查看这个面板是什么',
 	'improve.box_label': '写一条关于 Daimond 的笔记',
 	'improve.box_ph': '在哪里、你以为会怎样、结果又发生了什么。',
 	'improve.with': '一起发送的内容',

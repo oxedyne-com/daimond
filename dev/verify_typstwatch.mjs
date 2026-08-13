@@ -101,8 +101,8 @@ const BREAKS = {
 	// which is the state this feature exists to leave behind.
 	nonudge: [{
 		file: 'js/typstwatch.js',
-		find: 'function nudge() {\n\tif (S.mode !== \'live\') return;',
-		with: 'function nudge() {\n\tif (S.mode !== \'live\' || true) return;',
+		find: 'function nudge(cause, detail) {\n\tif (S.mode !== \'live\') return;',
+		with: 'function nudge(cause, detail) {\n\tif (S.mode !== \'live\' || true) return;',
 	}],
 	// The rebuild lands at the top of the document, throwing away the reader's
 	// place. This is what a naive swap does, and it is why `where`/`goTo` exist.

@@ -1,0 +1,5123 @@
+DAIMOND TYPST PACK 1
+namespace preview
+name fletcher
+version 0.5.7
+entrypoint src/exports.typ
+file 1069 LICENSE
+file 8747 src/coords.typ
+file 8409 src/default-marks.typ
+file 30 src/deps.typ
+file 16875 src/diagram.typ
+file 23951 src/draw.typ
+file 34415 src/edge.typ
+file 205 src/exports.typ
+file 10134 src/marks.typ
+file 17341 src/node.typ
+file 12453 src/shapes.typ
+file 8826 src/utils.typ
+file 502 typst.toml
+
+MIT License
+
+Copyright (c) 2023 Joseph Wilson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.#import "utils.typ": *
+#import "deps.typ": cetz
+
+/// Convert from elastic to absolute coordinates, $(u, v) |-> (x, y)$.
+///
+/// _Elastic_ coordinates are specific to the diagram and adapt to row/column
+/// sizes; _absolute_ coordinates are the final, physical lengths which are
+/// passed to `cetz`.
+///
+/// - grid (dictionary): Representation of the grid layout, including:
+///   - `origin`
+///   - `centers`
+///   - `spacing`
+///   - `flip`
+///   The `grid` is passed to #the-param[diagram][render].
+/// - uv (array): Elastic coordinate, `(float, float)`.
+#let uv-to-xy(grid, uv) = {
+	let (i, j) = vector.sub(vector-2d(uv), grid.origin)
+
+	let (n-x, n-y) = grid.centers.map(array.len)
+	if grid.flip.xy { (n-x, n-y) = (n-y, n-x) }
+	if grid.flip.x { i = (n-x - 1) - i }
+	if grid.flip.y { j = (n-y - 1) - j }
+	if grid.flip.xy { (i, j) = (j, i) }
+
+	(i, j).zip(grid.centers, grid.spacing)
+		.map(((t, c, s)) => interp(c, t, spacing: s))
+}
+
+/// Convert from absolute to elastic coordinates, $(x, y) |-> (u, v)$.
+///
+/// Inverse of `uv-to-xy()`.
+#let xy-to-uv(grid, xy) = {
+	let (i, j) = xy.zip(grid.centers, grid.spacing)
+		.map(((x, c, s)) => interp-inv(c, x, spacing: s))
+
+	let (n-x, n-y) = grid.centers.map(array.len)
+	if grid.flip.xy { (n-x, n-y) = (n-y, n-x) }
+	if grid.flip.xy { (i, j) = (j, i) }
+	if grid.flip.x { i = (n-x - 1) - i }
+	if grid.flip.y { j = (n-y - 1) - j }
+
+	vector.add((i, j), grid.origin)
+}
+
+/// Jacobian of the coordinate map `uv-to-xy()`.
+///
+/// Used to convert a "nudge" in $u v$ coordinates to a "nudge" in $x y$
+/// coordinates. This is needed because $u v$ coordinates are non-linear
+/// (they're elastic). Uses a balanced finite differences approximation.
+///
+/// - grid (dictionary): Representation of the grid layout.
+///   The `grid` is passed to #the-param[diagram][render].
+/// - uv (array): The point `(float, float)` in the $u v$-manifold where the
+///   shift tangent vector is rooted.
+/// - duv (array): The shift tangent vector `(float, float)` in $u v$ coordinates.
+#let duv-to-dxy(grid, uv, duv) = {
+	let duv = vector.scale(duv, 0.5)
+	vector.sub(
+		uv-to-xy(grid, vector.add(uv, duv)),
+		uv-to-xy(grid, vector.sub(uv, duv)),
+	)
+}
+
+/// Jacobian of the coordinate map `xy-to-uv()`.
+#let dxy-to-duv(grid, xy, dxy) = {
+	let dxy = vector.scale(dxy, 0.5)
+	vector.sub(
+		xy-to-uv(grid, vector.add(xy, dxy)),
+		xy-to-uv(grid, vector.sub(xy, dxy)),
+	)
+}
+
+/// Return a vector rooted at a $x y$ coordinate with a given angle $θ$ in $x
+/// y$-space but with a length specified in either $x y$-space or $u v$-space.
+#let vector-polar-with-xy-or-uv-length(grid, xy, target-length, θ) = {
+	if type(target-length) == length {
+		vector-polar(target-length, θ)
+	} else {
+		let unit = vector-polar(1pt, θ)
+		let det = vector.len(dxy-to-duv(grid, xy, unit))
+		vector.scale(unit, target-length/det)
+	}
+}
+
+
+
+#let NAN_COORD = (float("nan"),)*2
+
+#let default-ctx = (
+	prev: (pt: (0, 0)),
+
+	// cetz anchors assume y axis going up.
+	// see lines ending with the comment
+	// CETZ Y AXIS
+	transform: 
+		((1, 0, 0, 0),
+		 (0,-1, 0, 0),
+		 (0, 0, 1, 0),
+		 (0, 0, 0, 1)),
+
+	nodes: (:),
+	length: 1cm,
+	em-size: (width: 11pt, height: 11pt),
+	style: cetz.styles.default,
+	groups: (),
+	debug: false,
+)
+
+
+#let resolve-system(coord) = {
+	if type(coord) == dictionary and ("u", "v").all(k => k in coord) {
+		return "uv"
+	} else if type(coord) == label {
+		return "element"
+	}
+
+	let cetz-system = cetz.coordinate.resolve-system(coord)
+	if cetz-system == "xyz" and coord.len() == 2 {
+		if coord.all(x => type(x) == length) {
+			"xyz"
+		} else if coord.all(x => type(x) in (int, float)) {
+			"uv"
+		} else {
+			error("Coordinates must be two numbers (for elastic coordinates) or two lengths (for physical coordinates); got #0.", coord)
+		}
+	} else {
+		cetz-system
+	}
+}
+
+#let resolve-anchor(ctx, c) = {
+	// (name: <string>, anchor: <number, angle, string> or <none>)
+	// "name.anchor"
+	// "name"
+	if type(c) == label { c = str(c) }
+
+	let (name, anchor) = if type(c) == str {
+		let (name, ..anchor) = c.split(".")
+		if anchor.len() == 0 {
+			anchor = "default"
+		}
+		(name, anchor)
+	} else {
+		(str(c.name), c.at("anchor", default: "default"))
+	}
+
+	if name not in ctx.nodes {
+		error("Node #0 not found. Named nodes are: #..1.", name, ctx.nodes.keys())
+	}
+
+	// Resolve length anchors
+	if type(anchor) == length {
+		anchor = util.resolve-number(ctx, anchor)
+	}
+
+	let calculate-anchors = ctx.nodes.at(name).anchors
+
+	(calculate-anchors)(anchor)
+}
+
+
+
+#let resolve-relative(resolve, ctx, c) = {
+	// (rel: <coordinate>, update: <bool> or <none>, to: <coordinate>)
+	let update = c.at("update", default: true)
+
+	let target-system = ctx.target-system
+	let sub-ctx = ctx + (target-system: auto)
+
+	let (ctx, rel) = resolve(sub-ctx, c.rel, update: false)
+
+	ctx.target-system = target-system
+	let (ctx, to) = if "to" in c {
+		resolve(ctx, c.to, update: false)
+	} else {
+		(ctx, ctx.prev.pt)
+	}
+
+	if is-nan-vector(to) {
+		return (coord: to, update: update)
+	}
+
+
+	let is-xy(coord) = coord.any(x => type(x) == length)
+	let is-uv(coord) = not is-xy(coord)
+
+	let error-value = (coord: NAN_COORD, update: update)
+
+	if is-xy(rel) and is-uv(to) {
+		if "grid" not in ctx { return error-value }
+		to = uv-to-xy(ctx.grid, to)
+	} else if is-uv(rel) and is-xy(to) {
+		if "grid" not in ctx { return error-value }
+		to = xy-to-uv(ctx.grid, to)
+	}
+
+	c = vector.add(rel, to)
+
+	if ctx.target-system == "xyz" and is-uv(c) {
+		if "grid" not in ctx { return error-value }
+		c = uv-to-xy(ctx.grid, c)
+	} else if ctx.target-system == "uv" and is-xy(c) {
+		if "grid" not in ctx { return error-value }
+		c = xy-to-uv(ctx.grid, c)
+	}
+
+	(coord: c, update: update)
+}
+
+
+/// Resolve CeTZ-style coordinate expressions to absolute vectors.
+///
+/// This is an drop-in replacement of `cetz.coordinate.resolve()` but extended
+/// to handle fletcher's elastic $u v$ coordinates alongside CeTZ' physical $x
+/// y$ coordinates. The target coordinate system must be specified in the
+/// context object `ctx`.
+///
+/// Resolving $u v$ coordinates to or from $x y$ coordinates requires the
+/// diagram's `grid`, which defines the non-linear maps `uv-to-xy()` and
+/// `xy-to-uv()`. The `grid` may be supplied in the context object `ctx`.
+///
+/// If `grid` is not supplied, *coordinate resolution may fail*, in which case 
+/// the vector #fletcher.NAN_COORD is returned.
+///
+/// - ctx (dictionary): CeTZ canvas context object, additionally containing:
+///   - `target-system`: the target coordinate system to resolve to, one of
+///     `"uv"` or `"xyz"`.
+///   - `grid` (optional): the diagram's grid specification, defining the
+///     coordinate maps $u v <-> x y$. If not given, coordinates requiring this
+///     map resolve to #fletcher.NAN_COORD.
+///
+/// - ..coordinates (coordinate): CeTZ-style coordinate expression(s), e.g.,
+///   `(1, 2)`, `(45deg, 2cm)`, or `(rel: (+1, 0), to: "name")`.
+#let resolve(ctx, ..coordinates, update: true) = {
+	assert(ctx.target-system in (auto, "uv", "xyz"))
+
+	let result = ()
+	for c in coordinates.pos() {
+		let t = resolve-system(c)
+		let out = if t == "uv" {
+			if ctx.target-system in (auto, "uv") {
+				let (u, v) = c // also works for dictionaries
+				(u, v)
+			} else if ctx.target-system == "xyz" {
+				if "grid" in ctx { uv-to-xy(ctx.grid, c) }
+				else { NAN_COORD }
+			}
+		} else if t == "xyz" {
+			let c = cetz.coordinate.resolve-xyz(c)
+			c = vector-2d(c).map(x => x.abs + x.em*ctx.em-size.width)
+			if ctx.target-system in (auto, "xyz") {
+				c
+			} else if ctx.target-system == "uv" {
+				if "grid" in ctx { xy-to-uv(ctx.grid, c) }
+				else { NAN_COORD }
+			}
+		} else if t == "previous" {
+			(ctx, c) = resolve(ctx, ctx.prev.pt)
+			c
+		} else if t == "polar" {
+			c = vector-2d(cetz.coordinate.resolve-polar(c))
+			resolve(ctx, c).at(1) // ensure uv <-> xyz conversion
+		} else if t == "barycentric" {
+			cetz.coordinate.resolve-barycentric(ctx, c)
+		} else if t in ("element", "anchor") {
+			resolve-anchor(ctx, c)
+		} else if t == "tangent" {
+			cetz.coordinate.resolve-tangent(resolve, ctx, c)
+		} else if t == "perpendicular" {
+			cetz.coordinate.resolve-perpendicular(resolve, ctx, c)
+		} else if t == "relative" {
+			let result = resolve-relative(resolve, ctx, c)
+			update = result.update
+			result.coord
+		} else if t == "lerp" {
+			cetz.coordinate.resolve-lerp(resolve, ctx, c)
+		} else if t == "function" {
+			cetz.coordinate.resolve-function(resolve, ctx, c)
+		} else {
+			error("Failed to resolve coordinate #0.", c)
+		}
+
+		out = vector-2d(out)
+
+		if update { ctx.prev.pt = out }
+		result.push(out)
+	}
+
+	assert(result.all(c => c.len() == 2))
+
+	return (ctx, ..result)
+}
+
+
+#let is-grid-independent-uv-coordinate(coord) = {
+	let ctx = default-ctx + (target-system: "uv")
+	(ctx, coord) = resolve(ctx, coord)
+	not is-nan-vector(coord)
+}
+
+#import "deps.typ"
+#import deps.cetz.draw
+
+#let DEFAULT_MARKS = (
+	// all numbers are interpreted as multiples of stroke thickness
+
+	head: (
+		size: 7, // radius of curvature
+		sharpness: 24.7deg, // angle at vertex between central line and arrow's edge
+		delta: 53.5deg, // angle spanned by arc of curved arrow edge
+
+		tip-origin: 0.5,
+		tail-end: mark => calc.min(..mark.extrude),
+		tail-origin: mark => {
+			let dx = calc.cos(mark.sharpness) + calc.cos(mark.sharpness + mark.delta)
+			mark.tail-end - mark.size*mark.delta/1.8rad*dx
+		},
+
+		stroke: (cap: "round"),
+
+		draw: mark => {
+			for flip in (+1, -1) {
+				draw.arc(
+					(0, 0),
+					radius: mark.size,
+					start: flip*(90deg + mark.sharpness),
+					delta: flip*mark.delta,
+					fill: none,
+				)
+			}
+		},
+
+		cap-offset: (mark, y) => {
+			import calc: sin, sqrt, pow, cos, abs, max
+			let r = mark.size
+			let θ = mark.sharpness
+			r*(sin(θ) - sqrt(max(0, 1 - pow(cos(θ) - abs(y)/r, 2))))
+		},
+
+	),
+
+	doublehead: (
+		inherit: "head",
+		size: 10.56,
+		sharpness: 19.4deg,
+		delta: 43.5deg,
+	),
+
+	triplehead: (
+		inherit: "head",
+		size: 13.5,
+		sharpness: 25.5deg,
+		delta: 42.6deg,
+	),
+
+	harpoon: (
+		inherit: "head",
+		draw: mark => {
+			draw.arc(
+				(0, 0),
+				radius: mark.size,
+				start: -(90deg + mark.sharpness),
+				delta: -mark.delta,
+				fill: none,
+			)
+		},
+	),
+
+	straight: (
+		size: 10,
+		sharpness: 20deg,
+
+		tip-origin: mark => 0.5/calc.sin(mark.sharpness),
+		tail-origin: mark => -mark.size*calc.cos(mark.sharpness),
+
+		fill: none,
+
+		draw: mark => {
+			draw.line(
+				(180deg + mark.sharpness, mark.size),
+				(0, 0),
+				(180deg - mark.sharpness, mark.size),
+			)
+		},
+
+		cap-offset: (mark, y) => calc.tan(mark.sharpness + 90deg)*calc.abs(y),
+	),
+
+	solid: (
+		inherit: "straight",
+
+		tip-origin: 0,
+		tip-end: mark => -0.5/calc.sin(mark.sharpness),
+		tail-end: mark => -0.5/calc.sin(mark.sharpness),
+
+		stroke: none,
+		fill: auto,
+	),
+
+	stealth: (
+		size: 6,
+		stealth: 0.3,
+		angle: 25deg,
+		rear-angle: mark => calc.atan2(mark.stealth, calc.tan(mark.angle)),
+
+		tip-origin: mark => 0.5/calc.sin(mark.angle),
+		tip-end: mark => mark.size*(mark.stealth - 1)*calc.cos(mark.angle),
+		tail-origin: mark => {
+			if mark.stealth > 0 {
+				let wing-angle = (mark.rear-angle - mark.angle)/2
+
+				let miter-limit = if mark.stroke == none { 0 }
+					else { stroke(mark.stroke).miter-limit }
+
+				let miter-length = 1/calc.sin(wing-angle)
+				// stealth arrows with sharp wings look bigger due to long miter lengths
+				let extra-size = if miter-length < miter-limit {
+					// so account for extra apparent size
+					0.4*miter-length
+				} else {
+					// unless over miter limit, since wings get clipped
+					0
+				}
+
+				-(mark.size + extra-size)*calc.cos(mark.angle)
+			} else {
+				// negative stealth looks like a diamond
+				mark.tip-end - 0.5/calc.sin(mark.rear-angle)
+			}
+		},
+
+		stroke: (miter-limit: 20),
+
+		draw: mark => {
+			draw.line(
+				(0,0),
+				(180deg + mark.angle, mark.size),
+				(mark.tip-end, 0),
+				(180deg - mark.angle, mark.size),
+				close: true,
+			)
+		},
+
+		cap-offset: (mark, y) => if mark.tip {
+			-mark.stealth/calc.tan(mark.angle)*calc.abs(y)
+		} else {
+			calc.tan(mark.angle + 90deg)*calc.abs(y)
+		},
+	),
+
+	latex: (
+		size: 23, // radius of curvature
+		sharpness: 10deg, // angle at vertex between central line and arrow's edge
+		delta: 20deg, // angle spanned by arc of curved arrow edge
+
+		tip-end: mark => mark.size*(calc.sin(mark.sharpness) - calc.sin(mark.sharpness + mark.delta)),
+		tail-end: mark => mark.tip-end/2,
+		tail-origin: mark => mark.tip-end,
+
+		fill: auto,
+		stroke: none,
+		draw: mark => {
+			for flip in (+1, -1) {
+				draw.merge-path({
+					draw.arc(
+						(0, 0),
+						radius: mark.size,
+						start: flip*(90deg + mark.sharpness),
+						delta: flip*mark.delta,
+						fill: none,
+					)
+					draw.line((), ((), "|-", (0, flip*1e-1)))
+				})
+			}
+		}
+	),
+
+	cone: (
+		size: 8,
+		radius: 6,
+		angle: 30deg,
+
+		tip-end: mark => -mark.size,
+		tail-end: mark => mark.tip-end/2,
+		tail-origin: mark => mark.tip-end,
+
+		stroke: none,
+		draw: mark => {
+			for flip in (+1, -1) {
+				draw.merge-path({
+					draw.arc(
+						(-mark.size, -flip*1e-1),
+						radius: mark.radius,
+						start: 0deg,
+						stop: flip*mark.angle,
+					)
+					draw.line((), (0, 0))
+				})
+			}
+		}
+	),
+
+	circle: (
+		size: 2,
+
+		tip-end: mark => -mark.size,
+		tail-end: mark => mark.size,
+		tip-origin: mark => mark.size + 0.5,
+		tail-origin: mark => -(mark.size + 0.5),
+
+		fill: none,
+
+		draw: mark => draw.circle((0,0), radius: mark.size, fill: mark.fill),
+
+		cap-offset: (mark, y) => {
+			let r = mark.size
+			let o = r - calc.sqrt(calc.max(0, r*r - y*y))
+			if not mark.tip { o *= -1 }
+			o
+		},
+	),
+
+	square: (
+		size: 2,
+		angle: 0deg,
+		fill: none,
+		tip-origin: mark => +(mark.size + 0.5)/calc.cos(mark.angle),
+		tail-origin: mark => -(mark.size + 0.5)/calc.cos(mark.angle),
+		tip-end: mark => -mark.size/calc.cos(mark.angle),
+		tail-end: mark => +mark.size/calc.cos(mark.angle),
+		draw: mark => {
+			let x = mark.size
+			draw.rotate(mark.angle)
+			draw.rect(
+				(-x, -x), (+x, +x),
+			)
+		}
+	),
+
+	diamond: (
+		inherit: "stealth",
+		size: 4,
+		angle: 45deg,
+		stealth: -1,
+		fill: none,
+	),
+
+	bar: (
+		size: 4.9,
+		angle: 90deg,
+
+		tail-origin: mark => calc.min(..mark.extrude),
+
+		draw: mark => draw.line(
+			(mark.angle, -mark.size),
+			(mark.angle, +mark.size),
+		),
+		cap-offset: (mark, y) => {
+			let o = y*calc.tan(mark.angle - 90deg)
+			// if mark.tip { o *= -1 }
+			-o
+		},
+	),
+
+	cross: (
+		size: 4,
+		angle: 45deg,
+		draw: mark => {
+			draw.line((+mark.angle, -mark.size), (+mark.angle, +mark.size))
+			draw.line((-mark.angle, -mark.size), (-mark.angle, +mark.size))
+		},
+
+		cap-offset: (mark, y) => calc.tan(mark.angle + 90deg)*calc.abs(y),
+	),
+
+	hook: (
+		size: 2.88,
+		rim: 0.85,
+
+		tip-origin: mark => mark.size + 0.5,
+
+		stroke: (cap: "round"),
+
+		draw: mark => {
+			draw.arc(
+				(0,0),
+				start: -90deg,
+				stop: +90deg,
+				radius: mark.size,
+				fill: none,
+			)
+			draw.line((), (rel: (-mark.rim, 0)))
+		},
+	),
+
+	hooks: (
+		inherit: "hook",
+		draw: mark => {
+			for flip in (-1, +1) {
+				draw.arc(
+					(0,0),
+					start: -flip*90deg,
+					stop: +flip*90deg,
+					radius: mark.size,
+					fill: none,
+				)
+			}
+		},
+	),
+
+	">": (inherit: "head", rev: false),
+	"<": (inherit: "head", rev: true),
+
+	">>": (inherit: "head", extrude: (-2.88, 0), rev: false),
+	"<<": (inherit: "head", extrude: (-2.88, 0), rev: true),
+
+	">>>": (inherit: "head", extrude: (-6, -3, 0), rev: false),
+	"<<<": (inherit: "head", extrude: (-6, -3, 0), rev: true),
+
+	"|>": (inherit: "solid", rev: false),
+	"<|": (inherit: "solid", rev: true),
+
+	"}>": (inherit: "stealth", rev: false),
+	"<{": (inherit: "stealth", rev: true),
+
+	"|": (inherit: "bar"),
+	"||": (inherit: "bar", extrude: (-3, 0)),
+	"|||": (inherit: "bar", extrude: (-6, -3, 0)),
+
+	"/": (inherit: "bar", angle: +60deg, rev: false),
+	"\\": (inherit: "bar", angle: -60deg, rev: false),
+
+	"x": (inherit: "cross"),
+	"X": (inherit: "cross", size: 7),
+
+	"o": (inherit: "circle"),
+	"O": (inherit: "circle", size: 4),
+	"*": (inherit: "circle", fill: auto),
+	"@": (inherit: "circle", size: 4, fill: auto),
+
+	"[]": (inherit: "square"),
+	"<>": (inherit: "diamond"),
+
+
+
+
+	// crow's foot notation
+	crowfoot: (
+		many-width: 5,
+		many-length: 8,
+		one-width: 5,
+		zero-width: 3.5,
+		gap: 3,
+		first-gap: 5,
+		many: true,
+		one: true,
+		zero: true,
+		tail-origin: mark => -mark.many-length,
+		zero-fill: white,
+		fill: none,
+		draw: mark => {
+			let x = 0
+			if mark.many {
+				draw.line((0, mark.many-width), (-mark.many-length - .5, 0), (0, -mark.many-width))
+				x -= mark.many-length
+			}
+			if mark.one {
+				x -= mark.gap
+				x = calc.min(x, -mark.first-gap)
+				draw.line((x, mark.one-width), (x, -mark.one-width))
+			}
+			if mark.zero {
+				x -= mark.gap
+				draw.circle((x - mark.zero-width, 0), radius: mark.zero-width, fill: mark.zero-fill)
+			}
+		}
+	),
+	"n": (inherit: "crowfoot", zero: false, one: false, many: true),
+	"n!": (inherit: "crowfoot", zero: false, one: true, many: true),
+	"n?": (inherit: "crowfoot", zero: true, one: false, many: true),
+	"1": (inherit: "crowfoot", zero: false, one: true, many: false),
+	"1!": (inherit: "crowfoot", zero: false, one: true, many: false, extrude: mark => (0, -calc.max(4, mark.gap))),
+	"1?": (inherit: "crowfoot", zero: true, one: true, many: false),
+
+)
+
+#let MARKS = state("fletcher-marks", DEFAULT_MARKS)
+#import "@preview/cetz:0.3.4"
+#import "utils.typ": *
+#import "node.typ": *
+#import "edge.typ": *
+#import "draw.typ": draw-diagram
+#import "coords.typ": *
+
+
+
+/// Interpret #the-param[diagram][axes].
+///
+/// Returns a dictionary with:
+/// - `x`: Whether $u$ is reversed
+/// - `y`: Whether $v$ is reversed
+/// - `xy`: Whether the axes are swapped
+///
+/// - axes (array): Pair of directions specifying the interpretation of $(u, v)$
+///   coordinates. For example, `(ltr, ttb)` means $u$ goes $arrow.r$ and $v$
+///   goes $arrow.b$.
+/// -> dictionary
+#let interpret-axes(axes) = {
+	let dirs = axes.map(direction.axis)
+	let flip
+	if dirs == ("horizontal", "vertical") {
+		flip = false
+	} else if dirs == ("vertical", "horizontal") {
+		flip = true
+	} else {
+		error("Axes #0 cannot both be in the same direction. Try `axes: (ltr, ttb)`.", axes)
+	}
+
+	(
+		flip: (
+			x: axes.at(0) in (rtl, ttb),
+			y: axes.at(1) in (rtl, ttb),
+			xy: flip,
+		)
+	)
+}
+
+/// Convert an array of rects `(center: (x, y), size: (w, h))` with fractional
+/// positions into rects with integral positions.
+///
+/// If a rect is centered at a factional position `floor(x) < x < ceil(x)`, it
+/// will be replaced by two new rects centered at `floor(x)` and `ceil(x)`. The
+/// total width of the original rect is split across the two new rects according
+/// two which one is closer. (E.g., if the original rect is at `x = 0.25`, the
+/// new rect at `x = 0` has 75% the original width and the rect at `x = 1` has
+/// 25%.) The same splitting procedure is done for `y` positions and heights.
+///
+/// This is the algorithm used to determine grid layout in diagrams.
+///
+/// - rects (array): An array of rects of the form
+///   `(center: (x, y), size: (width, height))`. The coordinates `x` and `y` may
+///   be floats.
+/// -> array
+#let expand-fractional-rects(rects) = {
+	let new-rects
+	for axis in (0, 1) {
+		new-rects = ()
+		for rect in rects {
+			let coord = rect.center.at(axis)
+			let size = rect.size.at(axis)
+
+			if calc.fract(coord) == 0 {
+				rect.center.at(axis) = calc.trunc(coord)
+				new-rects.push(rect)
+			} else {
+				rect.center.at(axis) = calc.floor(coord)
+				rect.size.at(axis) = size*(calc.ceil(coord) - coord)
+				new-rects.push(rect)
+
+				rect.center.at(axis) = calc.ceil(coord)
+				rect.size.at(axis) = size*(coord - calc.floor(coord))
+				new-rects.push(rect)
+			}
+		}
+		rects = new-rects
+	}
+	new-rects
+}
+
+
+/// Determine the number and sizes of grid cells needed for a diagram with the
+/// given nodes and edges.
+///
+/// Returns a dictionary with:
+/// - `origin: (u-min, v-min)` Coordinate at the grid corner where elastic/`uv`
+///   coordinates are minimised.
+/// - `cell-sizes: (x-sizes, y-sizes)` Lengths and widths of each row and
+///   column.
+///
+/// - flip (dictionary): Describes axis order and orientation.
+/// - verts (array): Points that should be contained in the resulting grid.
+/// - rects (array): Rectangles (dictionaries of the form `(center, size)` which
+///   are used to determine cell sizes.
+#let compute-cell-sizes(flip, verts, rects) = {
+
+	if flip.xy {
+		// if x/y axes are flipped, transpose rectangles
+		rects = rects.map( ((center, size)) => {
+			(center: center, size: size.rev())
+		})
+	}
+	rects = expand-fractional-rects(rects)
+
+	// all points in diagram that should be spanned by coordinate grid
+	let points = rects.map(r => r.center)
+	points += verts
+
+	if points.len() == 0 { points.push((0,0)) }
+
+	let min-max-int(a) = (calc.floor(calc.min(..a)), calc.ceil(calc.max(..a)))
+	let (x-min, x-max) = min-max-int(points.map(p => p.at(0)))
+	let (y-min, y-max) = min-max-int(points.map(p => p.at(1)))
+	let origin = (x-min, y-min)
+	let bounding-dims = (x-max - x-min + 1, y-max - y-min + 1)
+
+	// Initialise row and column sizes
+	let cell-sizes = bounding-dims.map(n => (0pt,)*n)
+
+	// Expand cells to fit rects
+	for rect in rects {
+		let indices = vector.sub(rect.center, origin)
+		if flip.x { indices.at(0) = -1 - indices.at(0) }
+		if flip.y { indices.at(1) = -1 - indices.at(1) }
+		for axis in (0, 1) {
+			let i = indices.at(axis)
+			cell-sizes.at(axis).at(i) = calc.max(
+				cell-sizes.at(axis).at(i),
+				rect.size.at(axis),
+			)
+		}
+	}
+
+	if flip.xy {
+		cell-sizes = cell-sizes.rev()
+	}
+
+	(origin: origin, cell-sizes: cell-sizes)
+}
+
+/// Determine the centers of grid cells from their sizes and spacing between
+/// them.
+///
+/// Returns the a dictionary with:
+/// - `centers: (x-centers, y-centers)` Positions of each row and column,
+///   measured from the corner of the bounding box.
+/// - `bounding-size: (x-size, y-size)` Dimensions of the bounding box.
+///
+/// - grid (dictionary): Representation of the grid layout, including:
+///   - `cell-sizes: (x-sizes, y-sizes)` Lengths and widths of each row and
+///     column.
+///   - `spacing: (x-spacing, y-spacing)` Gap to leave between cells.
+/// -> dictionary
+#let compute-cell-centers(grid) = {
+	// (x: (c1x, c2x, ...), y: ...)
+	let centers = array.zip(grid.cell-sizes, grid.spacing)
+		.map(((sizes, spacing)) => {
+			array.zip(cumsum(sizes), sizes, range(sizes.len()))
+				.map(((end, size, i)) => end - size/2 + spacing*i)
+		})
+
+	let bounding-size = array.zip(centers, grid.cell-sizes)
+		.map(((centers, sizes)) => centers.at(-1) + sizes.at(-1)/2)
+
+	(
+		centers: centers,
+		bounding-size: bounding-size,
+	)
+}
+
+/// Determine the number, sizes and relative positions of rows and columns in
+/// the diagram's coordinate grid.
+///
+/// Rows and columns are sized to fit nodes. Coordinates are not required to
+/// start at the origin, `(0,0)`.
+#let compute-grid(rects, verts, options) = {
+	let grid = (
+		axes: options.axes,
+		spacing: options.spacing,
+	)
+
+	grid += interpret-axes(grid.axes)
+	grid += compute-cell-sizes(grid.flip, verts, rects)
+
+	// enforce minimum cell size
+	grid.cell-sizes = grid.cell-sizes.zip(options.cell-size)
+		.map(((sizes, min-size)) => sizes.map(calc.max.with(min-size)))
+
+	grid += compute-cell-centers(grid)
+
+	assert(grid.centers.at(0).len() == grid.cell-sizes.at(0).len())
+	assert(grid.centers.at(1).len() == grid.cell-sizes.at(1).len())
+
+	grid
+}
+
+#let extract-nodes-and-edges-from-equation(eq) = {
+	assert(eq.func() == math.equation)
+	let terms = flatten-sequence-to-array(eq.body)
+
+	let edges = ()
+	let nodes = ()
+
+	// convert math matrix into array-of-arrays matrix
+	let matrix = ((none,),)
+	let (x, y) = (0, 0)
+	for child in terms {
+		if child.func() == metadata {
+			if child.value.class == "node" {
+				let node = child.value
+				node.pos = (raw: (x, y))
+				nodes.push(node)
+			} else if child.value.class == "edge" {
+				let edge = child.value
+				edge.vertices.at(0) = map-auto(edge.vertices.at(0), (x, y))
+				if edge.label != none { edge.label = $edge.label$ } // why is this needed?
+				edge.vertices.at(-1) = map-auto(edge.vertices.at(-1), (rel: (1, 0)))
+				edge.node-index = none
+				edges.push(edge)
+			}
+		} else if repr(child.func()) == "linebreak" {
+			y += 1
+			x = 0
+			matrix.push((none,))
+		} else if repr(child.func()) == "align-point" {
+			x += 1
+			matrix.at(-1).push(none)
+		} else {
+			matrix.at(-1).at(-1) += child
+		}
+	}
+
+	// turn matrix into an array of nodes
+	for (y, row) in matrix.enumerate() {
+		for (x, item) in row.enumerate() {
+			if not is-space(item) {
+				nodes.push(node((x, y), $item$).value)
+			}
+		}
+	}
+
+
+	(
+		nodes: nodes,
+		edges: edges,
+	)
+}
+
+
+
+#let interpret-diagram-args(args) = {
+	if args.named().len() > 0 {
+		error("Unexpected named argument(s) #..0.", args.named().keys())
+	}
+
+	let positional-args = args.pos().flatten().join() + [] // join to ensure sequence
+	let objects = positional-args.children
+
+	let nodes = ()
+	let edges = ()
+
+	for obj in objects {
+		if obj.func() == metadata {
+			if obj.value.class == "node" {
+				let node = obj.value
+				nodes.push(node)
+
+			} else if obj.value.class == "edge" {
+				let edge = obj.value
+				edge.node-index = nodes.len()
+				edges.push(edge)
+			}
+
+		} else if obj.func() == math.equation {
+			let result = extract-nodes-and-edges-from-equation(obj)
+			nodes += result.nodes
+			edges += result.edges
+
+		} else {
+			panic("Unrecognised value passed to diagram:", obj)
+		}
+	}
+
+	(
+		nodes: nodes,
+		edges: edges,
+	)
+
+}
+
+
+
+/// Draw a diagram containing `node()`s and `edge()`s.
+///
+/// - ..args (array): Content to draw in the diagram, including nodes and edges.
+///
+///   The results of `node()` and `edge()` can be _joined_, meaning you can
+///   specify them as separate arguments, or in a block:
+///
+///   ```typ
+///   #diagram(
+///   	// one object per argument
+///   	node((0, 0), $A$),
+///   	node((1, 0), $B$),
+///   	{
+///   		// multiple objects in a block
+///   		// can use scripting, loops, etc
+///   		node((2, 0), $C$)
+///   		node((3, 0), $D$)
+///   	},
+///   	for x in range(4) { node((x, 1) [#x]) },
+///   )
+///   ```
+///
+///   Nodes and edges can also be specified in math-mode.
+///
+///   ```typ
+///   #diagram($
+///   	A & B \          // two nodes at (0,0) and (1,0)
+///   	C edge(->) & D \ // an edge from (0,1) to (1,1)
+///   	node(sqrt(pi), stroke: #1pt) // a node with options
+///   $)
+///   ```
+///
+/// - debug (bool, 1, 2, 3): Level of detail for drawing debug information.
+///   Level `1` or `true` shows a coordinate grid; higher levels show bounding boxes and
+///   anchors, etc.
+///
+/// - spacing (length, pair of lengths): Gaps between rows and columns. Ensures
+///   that nodes at adjacent grid points are at least this far apart (measured as
+///   the space between their bounding boxes).
+///
+///   Separate horizontal/vertical gutters can be specified with `(x, y)`. A
+///   single length `d` is short for `(d, d)`.
+///
+/// - cell-size (length, pair of lengths): Minimum size of all rows and columns.
+///   A single length `d` is short for `(d, d)`.
+///
+/// - node-inset (length, pair of lengths): Default value of
+///   #the-param[node][inset].
+///
+/// - node-outset (length, pair of lengths): Default value of
+///   #the-param[node][outset].
+///
+/// - node-shape (rect, circle, function): Default value of
+///   #the-param[node][shape].
+///
+/// - node-stroke (stroke, none): Default value of #the-param[node][stroke].
+///
+///   The default stroke is folded with the stroke specified for the node. For
+///   example, if `node-stroke` is `1pt` and #the-param[node][stroke] is `red`,
+///   then the resulting stroke is `1pt + red`.
+///
+/// - node-fill (paint): Default value of #the-param[node][fill].
+///
+/// - edge-stroke (stroke): Default value of #the-param[edge][stroke]. By
+///   default, this is chosen to match the thickness of mathematical arrows such
+///   as $A -> B$ in the current font size.
+///
+///   The default stroke is folded with the stroke specified for the edge. For
+///   example, if `edge-stroke` is `1pt` and #the-param[edge][stroke] is `red`,
+///   then the resulting stroke is `1pt + red`.
+///
+/// - node-corner-radius (length, none): Default value of
+///   #the-param[node][corner-radius].
+///
+/// - edge-corner-radius (length, none): Default value of
+///   #the-param[edge][corner-radius].
+///
+/// - node-defocus (number): Default value of #the-param[node][defocus].
+///
+/// - label-sep (length): Default value of #the-param[edge][label-sep].
+///
+/// - label-size (length): Default value of #the-param[edge][label-size].
+///
+/// - label-wrapper (function): Default value of
+///   #the-param[edge][label-wrapper].
+///
+/// - mark-scale (percent): Default value of #the-param[edge][mark-scale].
+///
+/// - crossing-fill (paint): Color to use behind connectors or labels to give
+///   the illusion of crossing over other objects. See
+///   #the-param[edge][crossing-fill].
+///
+/// - crossing-thickness (number): Default thickness of the occlusion made by
+///   crossing connectors. See #param[edge][crossing-thickness].
+///
+/// - axes (pair of directions): The orientation of the diagram's axes.
+///
+///   This defines the elastic coordinate system used by nodes and edges. To make
+///   the $y$ coordinate increase up the page, use `(ltr, btt)`. For the matrix
+///   convention `(row, column)`, use `(ttb, ltr)`.
+///
+///   #stack(
+///   	dir: ltr,
+///   	spacing: 1fr,
+///   	fletcher.diagram(
+///   		axes: (ltr, ttb),
+///   		debug: 1,
+///   		node((0,0), $(0,0)$),
+///   		edge((0,0), (1,0), "->"),
+///   		node((1,0), $(1,0)$),
+///   		node((1,1), $(1,1)$),
+///   		node((0.5,0.5), `axes: (ltr, ttb)`),
+///   	),
+///   	fletcher.diagram(
+///   		axes: (ltr, btt),
+///   		debug: 1,
+///   		node((0,0), $(0,0)$),
+///   		edge((0,0), (1,0), "->"),
+///   		node((1,0), $(1,0)$),
+///   		node((1,1), $(1,1)$),
+///   		node((0.5,0.5), `axes: (ltr, btt)`),
+///   	),
+///   	fletcher.diagram(
+///   		axes: (ttb, ltr),
+///   		debug: 1,
+///   		node((0,0), $(0,0)$),
+///   		edge((0,0), (1,0), "->", bend: -20deg),
+///   		node((1,0), $(1,0)$),
+///   		node((1,1), $(1,1)$),
+///   		node((0.5,0.5), `axes: (ttb, ltr)`),
+///   	),
+///   )
+///
+/// - render (function): After the node sizes and grid layout have been
+///   determined, the `render` function is called with the following arguments:
+///   - `grid`: a dictionary of the row and column widths and positions;
+///   - `nodes`: an array of nodes (dictionaries) with computed attributes
+///    (including size and physical coordinates);
+///   - `edges`: an array of connectors (dictionaries) in the diagram; and
+///   - `options`: other diagram attributes.
+///
+///   This callback is exposed so you can access the above data and draw things
+///   directly with CeTZ.
+#let diagram(
+	..args,
+	debug: false,
+	axes: (ltr, ttb),
+	spacing: 3em,
+	cell-size: 0pt,
+	edge-stroke: 0.048em,
+	node-stroke: none,
+	edge-corner-radius: 2.5pt,
+	node-corner-radius: none,
+	node-inset: 6pt,
+	node-outset: 0pt,
+	node-shape: auto,
+	node-fill: none,
+	node-defocus: 0.2,
+	label-sep: 0.4em,
+	label-size: 1em,
+	label-wrapper: edge => box(
+		[#edge.label],
+		inset: .2em,
+		radius: .2em,
+		fill: edge.label-fill,
+	),
+	mark-scale: 100%,
+	crossing-fill: white,
+	crossing-thickness: 5,
+	render: (grid, nodes, edges, options) => {
+		cetz.canvas(draw-diagram(grid, nodes, edges, debug: options.debug))
+	},
+) = {
+
+	let spacing = as-pair(spacing).map(as-length)
+	let cell-size = as-pair(cell-size).map(as-length)
+
+	let options = (
+		debug: int(debug),
+		axes: axes,
+		spacing: spacing,
+		cell-size: cell-size,
+		node-inset: node-inset,
+		node-outset: node-outset,
+		node-shape: node-shape,
+		node-stroke: node-stroke,
+		node-fill: node-fill,
+		node-corner-radius: node-corner-radius,
+		edge-corner-radius: edge-corner-radius,
+		node-defocus: node-defocus,
+		label-sep: label-sep,
+		label-size: label-size,
+		label-wrapper: label-wrapper,
+		edge-stroke: as-stroke(edge-stroke),
+		mark-scale: mark-scale,
+		crossing-fill: crossing-fill,
+		crossing-thickness: crossing-thickness,
+	)
+
+	let (nodes, edges) = interpret-diagram-args(args)
+
+	box(context {
+		let options = options
+
+		options.em-size = 1em.to-absolute()
+		options.spacing = options.spacing.map(length.to-absolute)
+		options.cell-size = options.cell-size.map(length.to-absolute)
+
+		let nodes = nodes.map(node => {
+			node = resolve-node-options(node, options)
+			node = measure-node-size(node)
+			node
+		})
+		let edges = edges.map(edge => resolve-edge-options(edge, options))
+
+		// PHASE 1: Resolve uv coordinates where possible
+
+		// try resolving node uv coordinates. this resolves to NaN coords if the
+		// resolution fails (e.g., if the coords depend on physical lengths)
+		let (ctx-with-uv-anchors, nodes) = resolve-node-coordinates(
+			nodes, ctx: (target-system: "uv"))
+
+
+		// nodes and edges whose uv coordinates can be resolved without knowing the grid
+		let rects-affecting-grid = nodes
+			.filter(node => not is-nan-vector(node.pos.uv))
+			.map(node => (center: node.pos.uv, size: node.size))
+
+		let vertices-affecting-grid = (edges
+			.map(edge => resolve-edge-vertices(edge, nodes, ctx: ctx-with-uv-anchors + (target-system: "uv")))
+			.join() + ()) // coerce none to ()
+			.filter(vert => not is-nan-vector(vert))
+
+
+		// PHASE 2: Determine elastic grid (row/column sizes) and resolve xy coordinates
+
+		// determine diagram's elastic grid layout
+		let grid = compute-grid(rects-affecting-grid, vertices-affecting-grid, options)
+
+		let ctx-with-xyz-anchors
+
+		// we run multiple passes so that anchors on enclose nodes
+		// have a chance to resolve
+		// (a better way would be to resolve coordinates and enclose nodes together)
+		for i in range(5) {
+			// now with grid determined, compute final (physical) coordinates for nodes and edges
+			(ctx-with-xyz-anchors, nodes) = resolve-node-coordinates(
+				nodes, ctx: (target-system: "xyz", grid: grid))
+
+			// resolve enclosing nodes
+			nodes = resolve-node-enclosures(nodes, ctx-with-xyz-anchors)
+		}
+
+		// resolve edges
+		edges = edges.map(edge => {
+			edge.final-vertices = resolve-edge-vertices(
+				edge, ctx: ctx-with-xyz-anchors + (target-system: "xyz", grid: grid), nodes
+			)
+
+			edge = convert-edge-corner-to-poly(edge)
+			edge = apply-edge-shift(grid, edge)
+			edge
+		})
+
+
+		render(grid, nodes, edges, options)
+	})
+}#import "utils.typ": *
+#import "marks.typ": *
+#import "coords.typ": uv-to-xy
+
+#let DEBUG_COLOR = rgb("f008")
+#let DEBUG_COLOR2 = rgb("0f08")
+
+#let draw-debug(objs) = {
+	cetz.draw.floating(objs)
+}
+
+#let draw-node-outline(node) = {
+	cetz.draw.group({
+		cetz.draw.translate(node.pos.xyz)
+		(node.shape)(node, node.outset)
+	})
+}
+
+#let draw-node(node, debug: 0) = {
+
+	let result = {
+		if node.stroke != none or node.fill != none {
+			cetz.draw.group({
+				cetz.draw.translate(node.pos.xyz)
+				for (i, extrude) in node.extrude.enumerate() {
+					cetz.draw.set-style(
+						fill: if i == 0 { node.fill },
+						stroke: node.stroke,
+					)
+					(node.shape)(node, extrude)
+				}
+			})
+		}
+
+		if node.label != none {
+			let ε = 1e-10pt // temp fix for https://github.com/Jollywatt/typst-fletcher/issues/64
+			cetz.draw.content(
+				node.pos.xyz,
+				box(
+					// wrapping label in a box allows user to control its alignment
+					align(center + horizon, node.label),
+					stroke: if debug >= 3 { DEBUG_COLOR2 + 0.25pt },
+					width:  node.size.at(0) - 2*node.inset + ε,
+					height: node.size.at(1) - 2*node.inset,
+				),
+				anchor: "center",
+			)
+		}
+	}
+
+	if node.layer != 0 { result = cetz.draw.on-layer(node.layer, result) }
+
+	(node.post)(result) // post-process (e.g., hide)
+
+	// Draw debug stuff
+	if debug >= 1 {
+		// dot at node anchor
+		draw-debug(cetz.draw.circle(
+			node.pos.xyz,
+			radius: 0.5pt,
+			fill: DEBUG_COLOR,
+			stroke: none,
+		))
+	}
+
+	if debug >= 2 and node.radius != 0pt {
+		// node bounding rectangle
+		draw-debug({
+			cetz.draw.rect(
+				..rect-at(node.pos.xyz, node.size),
+				stroke: DEBUG_COLOR + .1pt,
+			)
+
+			// node anchoring outline (what edges snap to)
+			cetz.draw.set-style(stroke: DEBUG_COLOR2 + 0.25pt)
+			draw-node-outline(node)
+		})
+	}
+
+	if debug >= 3 and "enclosed-vertices" in node {
+		draw-debug(node.enclosed-vertices.map(pos => {
+			cetz.draw.circle(pos, radius: node.inset, stroke: 0.1pt + blue)
+		}).join())
+	}
+}
+
+
+/// Draw an edge label at point along a curve.
+///
+/// Label is drawn near the point `curve(edge.label-pos)`, respecting the label
+/// options of `edge()` such as #param[edge][label-side] and
+/// #param[edge][label-angle].
+///
+/// - edge (dictionary): Edge object. Must include:
+///   - `label-pos`
+///   - `label-sep`
+///   - `label-side`
+///   - `label-anchor`
+///   - `label-angle`
+///   - `label-wrapper`
+/// - curve (function): Parametric curve $RR -> RR^2$ describing the shape of
+///   the edge in $x y$ coordinates.
+#let place-edge-label-on-curve(edge, curve, debug: 0) = {
+
+	let curve-point = curve(edge.label-pos)
+	let curve-point-ε = curve(edge.label-pos + 1e-3%)
+
+	let θ = wrap-angle-180(angle-between(curve-point, curve-point-ε))
+	let θ-normal = θ + if edge.label-side == right { +90deg } else { -90deg }
+
+	if type(edge.label-angle) == alignment {
+		edge.label-angle = θ - (
+			right: 0deg,
+			top: 90deg,
+			left: 180deg,
+			bottom: 270deg,
+		).at(repr(edge.label-angle))
+
+	} else if edge.label-angle == auto {
+		edge.label-angle = θ
+		if calc.abs(edge.label-angle) > 90deg {
+			edge.label-angle += 180deg
+		}
+	}
+
+	if edge.label-anchor == auto {
+		edge.label-anchor = angle-to-anchor(θ-normal - edge.label-angle)
+	}
+
+	let label-pos = (to: curve-point, rel: (θ-normal, -edge.label-sep))
+
+	cetz.draw.content(
+		label-pos,
+		box(
+			{
+				set text(edge.label-size)
+				(edge.label-wrapper)(edge)
+			},
+			stroke: if debug >= 2 { DEBUG_COLOR2 + 0.25pt },
+		),
+		angle: edge.label-angle,
+		anchor: if edge.label-anchor != auto { edge.label-anchor },
+	)
+
+	if debug >= 2 {
+		draw-debug(cetz.draw.circle(
+			label-pos,
+			radius: 0.75pt,
+			stroke: none,
+			fill: DEBUG_COLOR2,
+		))
+	}
+}
+
+
+// Get the arrow head adjustment for a given extrusion distance.
+//
+// Returns a pair `(from, to)` of distances.
+// If `from < 0pt` and `to > 0pt`, the path length of the edge increases.
+#let cap-offsets(edge, y) = {
+	(0, 1).map(pos => {
+		let mark = edge.marks.find(mark => calc.abs(mark.pos - pos) < 1e-3)
+		if mark == none { return 0pt }
+
+		let is-tip = (pos == 0) == mark.rev
+		let sign = if mark.rev { -1 } else { +1 }
+
+		let x = cap-offset(
+			mark + (tip: is-tip),
+			sign*y/edge.stroke.thickness,
+		)
+
+		let origin = if is-tip { mark.tip-origin } else { mark.tail-origin }
+		x -= origin*float(mark.scale)
+
+		sign*x*edge.stroke.thickness
+	})
+}
+
+#let with-decorations(edge, path) = {
+	if edge.decorations == none { return path }
+
+	let has-mark-at(t) = edge.marks.find(mark => calc.abs(mark.pos - t) < 1e-3 ) != none
+
+	let decor = edge.decorations.with(stroke: edge.stroke)
+
+	// TODO: should this be an absolute offset, not 10% the path length?
+	let ε = 1e-3 // cetz assertions sometimes fail from floating point errors
+	decor = decor.with(
+		start: if has-mark-at(0) { 0.1 } else { ε } * 100%,
+		stop: if has-mark-at(1) { 0.9 } else { 1 - ε } * 100%,
+	)
+
+	decor(path)
+}
+
+/// Draw a straight edge.
+///
+/// - edge (dictionary): The edge object, a dictionary, containing:
+///   - `vertices`: an array of two points, the line's start and end points.
+///   - `extrude`: An array of extrusion lengths to apply a multi-stroke effect
+///    with.
+///   - `stroke`: The stroke style.
+///   - `marks`: An array of marks to draw along the edge.
+///   - `label`: Content for label.
+///   - `label-side`, `label-pos`, `label-sep`, and `label-anchor`.
+/// - debug (int): Level of debug details to draw.
+#let draw-edge-line(edge, debug: 0) = {
+	let (from, to) = edge.final-vertices
+	let θ = angle-between(from, to)
+
+	// Draw line(s), one for each extrusion shift
+	for shift in edge.extrude {
+
+		let offsets = cap-offsets(edge, shift)
+		let points = (from, to).zip(offsets)
+			.map(((point, offset)) => {
+				// Shift line sideways (for multi-stroke effect)
+				point = (rel: (θ + 90deg, shift), to: point)
+				// Shift end points lengthways depending on marks
+				point = (rel: (θ, offset), to: point)
+				point
+			})
+
+		let obj = cetz.draw.line(
+			..points,
+			stroke: edge.stroke,
+		)
+
+		with-decorations(edge, obj)
+	}
+
+	// Draw marks
+	let total-path-len = vector-len(vector.sub(from, to))
+	let curve(t) = {
+		// panic(t, total-path-len)
+		t = relative-to-float(t, len: total-path-len)
+		vector.lerp(from, to, t)
+	}
+
+	for mark in edge.marks {
+		place-mark-on-curve(mark, curve, stroke: edge.stroke, debug: debug >= 3)
+	}
+
+	// Draw label
+	if edge.label != none {
+
+		// Choose label anchor based on edge direction,
+		// preferring to place labels above the edge
+		if edge.label-side == auto {
+			edge.label-side = if calc.abs(θ) < 90deg { left } else { right }
+		}
+
+		place-edge-label-on-curve(edge, curve, debug: debug)
+	}
+
+}
+
+
+/// Draw a bent edge.
+///
+/// - edge (dictionary): The edge object, a dictionary, containing:
+///   - `vertices`: an array of two points, the arc's start and end points.
+///   - `bend`: The angle of the arc.
+///   - `extrude`: An array of extrusion lengths to apply a multi-stroke effect
+///    with.
+///   - `stroke`: The stroke style.
+///   - `marks`: An array of marks to draw along the edge.
+///   - `label`: Content for label.
+///   - `label-side`, `label-pos`, `label-sep`, and `label-anchor`.
+/// - debug (int): Level of debug details to draw.
+#let draw-edge-arc(edge, debug: 0) = {
+	let (from, to) = edge.final-vertices
+
+	// Determine the arc from the stroke end points and bend angle
+	let (center, radius, start, stop) = get-arc-connecting-points(from, to, edge.bend)
+
+	let bend-dir = if edge.bend > 0deg { +1 } else { -1 }
+
+	// Draw arc(s), one for each extrusion shift
+	for shift in edge.extrude {
+
+		// Adjust arc angles to accommodate for cap offsets
+		let (δ-start, δ-stop) = cap-offsets(edge, shift)
+			.map(arclen => -bend-dir*arclen/radius*1rad)
+
+		let obj = cetz.draw.arc(
+			center,
+			radius: radius + shift,
+			start: start + δ-start,
+			stop: stop + δ-stop,
+			anchor: "origin",
+			stroke: edge.stroke,
+		)
+
+		with-decorations(edge, obj)
+	}
+
+	// Draw marks
+	let total-path-len = calc.abs(stop - start)/1rad*radius
+	let curve(t) = {
+		t = relative-to-float(t, len: total-path-len)
+		vector.add(center, vector-polar(radius, lerp(start, stop, t)))
+	}
+	for mark in edge.marks {
+		place-mark-on-curve(mark, curve, stroke: edge.stroke, debug: debug >= 3)
+	}
+
+	// Draw label
+	if edge.label != none {
+
+		if edge.label-side == auto {
+			// Choose label side to be on outside of arc
+			edge.label-side = if edge.bend > 0deg { left } else { right }
+		}
+
+		place-edge-label-on-curve(edge, curve, debug: debug)
+
+	}
+}
+
+
+
+/// Draw a multi-segment edge
+///
+/// - edge (dictionary): The edge object, a dictionary, containing:
+///   - `vertices`: an array of at least two points to draw segments between.
+///   - `corner-radius`: Radius of curvature between segments.
+///   - `extrude`: An array of extrusion lengths to apply a multi-stroke effect
+///    with.
+///   - `stroke`: The stroke style.
+///   - `marks`: An array of marks to draw along the edge.
+///   - `label`: Content for label.
+///   - `label-side`, `label-pos`, `label-sep`, and `label-anchor`.
+/// - debug (int): Level of debug details to draw.
+#let draw-edge-polyline(edge, debug: 0) = {
+
+	let verts = edge.final-vertices
+	let n-segments = verts.len() - 1
+
+	// angles of each segment
+	let θs = range(n-segments).map(i => {
+		let (vert, vert-next) = (verts.at(i), verts.at(i + 1))
+		assert(vert != vert-next, message: "Adjacent vertices must be distinct.")
+		angle-between(vert, vert-next)
+	})
+
+
+	// round corners
+	let calculate-rounded-corner(i) = {
+		let pt = verts.at(i)
+		let Δθ = wrap-angle-180(θs.at(i) - θs.at(i - 1))
+		let dir = if Δθ > 0deg { +1 } else { -1 } // +1 if ccw, -1 if cw
+
+
+		let θ-normal = θs.at(i - 1) + Δθ/2 + 90deg  // direction to center of curvature
+
+		let radius = edge.corner-radius
+		// radius *= 90deg/calc.max(calc.abs(Δθ), 45deg) // visual adjustment so that tighter bends have smaller radii
+		radius *= 1 + calc.cos(Δθ)
+		// skip correcting the corner radius for extruded strokes if there's no stroke at all
+		if edge.extrude != () {
+			radius += if dir > 0 { calc.max(..edge.extrude) } else { -calc.min(..edge.extrude) }
+		}
+		radius *= dir // ??? makes math easier or something
+
+		if calc.abs(Δθ) > 179deg {
+			// singular line; skip arc
+			(
+				arc-center: pt,
+				arc-radius: 0*radius,
+				start: θs.at(i - 1) - 90deg,
+				delta: wrap-angle-180(Δθ),
+				line-shift: 0*radius, // distance from vertex to beginning of arc
+			)
+		} else {
+
+			// distance from vertex to center of curvature
+			let dist = radius/calc.cos(Δθ/2)
+
+			(
+				arc-center: vector.add(pt, vector-polar(dist, θ-normal)),
+				arc-radius: radius,
+				start: θs.at(i - 1) - 90deg,
+				delta: wrap-angle-180(Δθ),
+				line-shift: radius*calc.tan(Δθ/2), // distance from vertex to beginning of arc
+			)
+		}
+
+	}
+
+	let rounded-corners
+	if edge.corner-radius != none {
+		rounded-corners = range(1, θs.len()).map(calculate-rounded-corner)
+	}
+
+	let lerp-scale(t, i) = {
+		if type(t) in (int, float) {
+			let τ = t*n-segments - i
+			if (0 < τ and τ <= 1 or
+				i == 0 and τ <= 0 or
+				i == n-segments - 1 and 1 < τ) { τ }
+		} else  {
+			t = as-relative(t)
+			let τ = lerp-scale(float(t.ratio), i)
+			if τ != none {τ *100% + t.length }
+		}
+	}
+
+	let debug-stroke = edge.stroke.thickness/4 + DEBUG_COLOR2
+
+	// phase keeps track of how to offset dash patterns
+	// to ensure continuity between segments
+	let phase = 0pt
+	let stroke-with-phase(phase) = stroke-to-dict(edge.stroke) + (
+		dash: if type(edge.stroke.dash) == dictionary {
+			(array: edge.stroke.dash.array, phase: phase)
+		}
+	)
+
+	// draw each segment
+	for i in range(n-segments) {
+		let (from, to) = (verts.at(i), verts.at(i + 1))
+		let marks = ()
+
+		let Δphase = 0pt
+
+		if edge.corner-radius == none {
+
+			// add phantom marks to ensure segment joins are clean
+			if i > 0 {
+				let Δθ = θs.at(i) - θs.at(i - 1)
+				marks.push((
+					inherit: "bar",
+					pos: 0,
+					angle: 90deg - Δθ/2,
+					hide: true,
+				))
+			}
+			if i < θs.len() - 1 {
+				let Δθ = θs.at(i + 1) - θs.at(i)
+				marks.push((
+					inherit: "bar",
+					pos: 1,
+					angle: 90deg + Δθ/2,
+					hide: true,
+				))
+			}
+
+			Δphase += vector-len(vector.sub(from, to))
+
+		} else { // rounded corners
+
+			if i > 0 {
+				// offset start of segment to give space for previous arc
+				let (line-shift,) = rounded-corners.at(i - 1)
+				from = vector.add(from, vector-polar(line-shift, θs.at(i)))
+			}
+
+			if i < θs.len() - 1 {
+
+				let (arc-center, arc-radius, start, delta, line-shift) = rounded-corners.at(i)
+				to = vector.add(to, vector-polar(-line-shift, θs.at(i)))
+
+				Δphase += vector-len(vector.sub(from, to))
+
+				for d in edge.extrude {
+					if delta != 0deg {
+						cetz.draw.arc(
+							arc-center,
+							radius: arc-radius - d,
+							start: start,
+							delta: delta,
+							anchor: "origin",
+							stroke: stroke-with-phase(phase + Δphase),
+						)
+					}
+
+					if debug >= 4 {
+						cetz.draw.on-layer(1, cetz.draw.circle(
+							arc-center,
+							radius: arc-radius - d,
+							stroke: debug-stroke,
+						))
+
+					}
+				}
+
+				Δphase += delta/1rad*arc-radius
+			}
+		}
+
+		marks = marks.map(resolve-mark)
+
+		// distribute original marks across segments
+		marks += edge.marks.map(mark => {
+			mark.pos = lerp-scale(mark.pos, i)
+			mark
+		}).filter(mark => mark.pos != none)
+
+		let label-pos = lerp-scale(edge.label-pos, i)
+		let label-options = if label-pos == none { (label: none) }
+		else { (label-pos: label-pos, label: edge.label) }
+
+
+		draw-edge-line(
+			edge + (
+				kind: "line",
+				final-vertices: (from, to),
+				marks: marks,
+				stroke: stroke-with-phase(phase),
+			) + label-options,
+			debug: debug,
+		)
+
+		phase += Δphase
+
+	}
+
+
+	if debug >= 4 {
+		cetz.draw.line(
+			..verts,
+			stroke: debug-stroke,
+		)
+	}
+}
+
+
+
+/// Of all the intersection points within a set of CeTZ objects, find the one
+/// which is farthest from a target point and pass it to a callback.
+///
+/// If no intersection points are found, use the target point itself.
+///
+/// - objects (cetz array, none): Objects to search within for intersections. If
+///  `none`, callback is immediately called with `target`.
+/// - target (point): Target point to sort intersections by proximity with, and
+///  to use as a fallback if no intersections are found.
+#let find-farthest-intersection(objects, target, callback) = {
+
+	if objects == none { return callback(target) }
+
+	let node-name = "intersection-finder"
+	cetz.draw.hide(cetz.draw.intersections(node-name, objects))
+
+	cetz.draw.get-ctx(ctx => {
+
+		let calculate-anchors = ctx.nodes.at(node-name).anchors
+		let anchor-names = calculate-anchors(())
+		let anchor-points = anchor-names.map(calculate-anchors)
+			.map(point => {
+				point.at(1) *= -1 // CETZ Y AXIS
+				vector-2d(vector.scale(point, 1cm))
+			}).sorted(key: point => vector-len(vector.sub(point, target)))
+
+		let anchor = anchor-points.at(-1, default: target)
+
+		callback(anchor)
+
+	})
+
+}
+
+#let find-anchor-pair((from-group, to-group), (from-point, to-point), callback) = {
+	find-farthest-intersection(from-group, from-point, from-anchor => {
+		find-farthest-intersection(to-group, to-point, to-anchor => {
+			callback((from-anchor, to-anchor))
+		})
+	})
+
+}
+
+/// Get the anchor point around a node outline at a certain angle.
+#let get-node-anchor(node, θ, callback) = {
+	let outline = cetz.draw.group({
+		cetz.draw.translate(node.pos.xyz)
+		(node.shape)(node, node.outset)
+	})
+	let dummy-line = cetz.draw.line(
+		node.pos.xyz,
+		(rel: (θ, 10*node.radius))
+	)
+
+	find-farthest-intersection(outline + dummy-line, node.pos.xyz, callback)
+}
+
+/// Return the anchor point for an edge connecting to a node with the "defocus"
+/// adjustment.
+///
+/// Basically, for very long/wide nodes, don't make edges coming in from all
+/// angles go to the exact node center, but "spread them out" a bit.
+///
+/// See https://www.desmos.com/calculator/irt0mvixky.
+#let defocus-adjustment(node, θ) = {
+	if node == none { return (0pt, 0pt) }
+	let μ = calc.pow(node.aspect, node.defocus)
+	(
+		calc.max(0pt, node.size.at(0)/2*(1 - 1/μ))*calc.cos(θ),
+		calc.max(0pt, node.size.at(1)/2*(1 - μ/1))*calc.sin(θ),
+	)
+
+}
+
+
+
+#let draw-anchored-line(edge, nodes, debug: 0) = {
+	let (from, to) = edge.final-vertices
+	let θ = angle-between(from, to) + 90deg
+
+	// TODO: do defocus adjustment sensibly
+	if nodes.at(0).len() == 1 {
+		from = vector.add(from, defocus-adjustment(nodes.at(0).at(0), θ - 90deg))
+	}
+	if nodes.at(1).len() == 1 {
+		to = vector.add(to, defocus-adjustment(nodes.at(1).at(0), θ + 90deg))
+
+	}
+
+
+	let dummy-line = cetz.draw.line(from, to)
+
+	let intersection-objects = nodes.map(nodes => {
+		nodes.map(draw-node-outline).join()
+		dummy-line
+	})
+
+
+	find-anchor-pair(intersection-objects, (from, to), anchors => {
+		let obj = draw-edge-line(edge + (
+			final-vertices: anchors,
+		), debug: debug)
+		(edge.post)(obj) // post-process (e.g., hide)
+	})
+
+}
+
+
+#let draw-anchored-arc(edge, nodes, debug: 0) = {
+	let (from, to) = edge.final-vertices
+	let θ = angle-between(from, to)
+	let θs = (θ + edge.bend, θ - edge.bend + 180deg)
+
+	let dummy-lines = (from, to).zip(θs, nodes)
+		.map(((point, φ, node)) => cetz.draw.line(
+			point,
+			vector.add(point, vector-polar(10cm, φ)), // ray emanating from node
+		))
+
+	let intersection-objects = nodes.zip(dummy-lines).map(((nodes, dummy-line)) => {
+		nodes.map(draw-node-outline).join()
+		dummy-line
+	})
+
+	find-anchor-pair(intersection-objects, (from, to), anchors => {
+		let obj = draw-edge-arc(edge + (final-vertices: anchors), debug: debug)
+		(edge.post)(obj) // post-process (e.g., hide)
+	})
+}
+
+
+#let draw-anchored-polyline(edge, nodes, debug: 0) = {
+	assert(edge.vertices.len() >= 2, message: "Polyline requires at least two vertices")
+	let verts = edge.final-vertices
+	let (from, to) = (edge.final-vertices.at(0), edge.final-vertices.at(-1))
+
+	let end-segments = (
+		edge.final-vertices.slice(0, 2), // first two vertices
+		edge.final-vertices.slice(-2), // last two vertices
+	)
+
+	let dummy-lines = end-segments.map(points => cetz.draw.line(..points))
+
+	let intersection-objects = nodes.zip(dummy-lines).map(((nodes, dummy-line)) => {
+		nodes.map(draw-node-outline).join()
+		dummy-line
+	})
+
+	find-anchor-pair(intersection-objects, (from, to), anchors => {
+		let edge = edge
+		edge.final-vertices.at(0) = anchors.at(0)
+		edge.final-vertices.at(-1) = anchors.at(1)
+		let obj = draw-edge-polyline(edge, debug: debug)
+		(edge.post)(obj) // post-process (e.g., hide)
+	})
+
+}
+
+
+#let draw-edge(edge, ..args) = {
+	let obj = if edge.kind == "line" {
+		draw-anchored-line(edge, ..args)
+	} else if edge.kind == "arc" {
+		draw-anchored-arc(edge, ..args)
+	} else if edge.kind == "poly" {
+		draw-anchored-polyline(edge, ..args)
+	} else { error("Invalid edge kind #0.", edge.kind) }
+
+	if edge.layer != 0 { obj = cetz.draw.on-layer(edge.layer, obj)}
+
+	obj
+}
+
+
+
+/// Draw diagram coordinate axes.
+///
+/// - grid (dictionary): Dictionary specifying the diagram's grid, containing:
+///   - `origin: (u-min, v-min)`, the minimum values of elastic coordinates,
+///   - `flip: (x, y, xy)`, the axes orientation (see `interpret-axes()`),
+///   - `centers: (x-centers, y-centers)`, the physical offsets of each row and each column,
+///   - `cell-sizes: (x-sizes, y-sizes)`, the physical sizes of each row and
+///     each column.
+#let draw-debug-axes(grid, debug: false, floating: true) = {
+
+	let (x-lims, y-lims) = range(2).map(axis => (
+		grid.centers.at(axis).at( 0) - grid.cell-sizes.at(axis).at( 0)/2,
+		grid.centers.at(axis).at(-1) + grid.cell-sizes.at(axis).at(-1)/2,
+	))
+
+	let (u-min, v-min) = grid.origin
+
+	let (u-len, v-len) = grid.centers.map(array.len)
+	if grid.flip.xy { (u-len, v-len) = (v-len, u-len) }
+	let v-range = range(v-min, v-min + v-len)
+	let u-range = range(u-min, u-min + u-len)
+
+	if grid.flip.x { u-range = u-range.rev() }
+	if grid.flip.y { v-range = v-range.rev() }
+	if grid.flip.xy { (u-range, v-range) = (v-range, u-range) }
+
+	import cetz.draw
+	let objs = draw.group({
+		let (a, b) = array.zip(x-lims, y-lims)
+		if a == b { b = vector.add(b, (1e-3pt, 1e-3pt)) }
+		draw.rect(a, b, stroke: DEBUG_COLOR + .5pt)
+
+		draw.set-style(stroke: (
+			paint: DEBUG_COLOR,
+			thickness: .3pt,
+			dash: "densely-dotted",
+		))
+
+		for axis in range(2) {
+			let swap(a, b) = if axis != 1 { (a, b) } else { (b, a) }
+			let x-range = (u-range, v-range).at(axis)
+			let (min, max) = (y-lims, x-lims).at(axis)
+			for (i, x) in x-range.enumerate() {
+				// coordinate line
+				draw.line(
+					swap(grid.centers.at(axis).at(i), min),
+					swap(grid.centers.at(axis).at(i), max),
+				)
+				// size bracket
+				let size = grid.cell-sizes.at(axis).at(i)
+				draw.rect(
+					(to: swap(grid.centers.at(axis).at(i), min), rel: swap(-size/2, 0)),
+					(to: swap(grid.centers.at(axis).at(i), min), rel: swap(+size/2, -1pt)),
+					fill: DEBUG_COLOR,
+					stroke: none,
+				)
+				// coordinate label
+				draw.content(
+					(to: swap(grid.centers.at(axis).at(i), min), rel: swap(0, -.2em)),
+					text(fill: DEBUG_COLOR, size: .7em)[#x],
+					anchor: if axis == 0 { "north" } else { "east" },
+				)
+			}
+		}
+
+		if debug {
+			let (u-label, v-label) = if grid.flip.xy { ($arrow$, $arrow.t.twohead$) } else { ($u$, $v$) }
+
+			let dir-to-arrow(dir) = {
+				     if dir == ltr { $arrow.r$ }
+				else if dir == rtl { $arrow.l$ }
+				else if dir == ttb { $arrow.b$ }
+				else if dir == btt { $arrow.t$ }
+			}
+
+			draw.content(
+				(x-lims.at(0), y-lims.at(0)),
+				pad(0.2em, text(0.5em, DEBUG_COLOR, $(#grid.axes.map(dir-to-arrow).join($,$))$)),
+				anchor: "north-east"
+			)
+		}
+
+	})
+
+	if floating {
+		cetz.draw.floating(objs)
+	} else {
+		objs
+	}
+}
+
+// Find candidate nodes that an edge should snap to
+//
+// Returns an array of zero or more nodes. False positives are acceptable.
+#let find-snapping-nodes(grid, nodes, key) = {
+	if type(key) == label {
+		return nodes.filter(node => node.name == key)
+	}
+
+	if type(key) == array and key.len() == 2 {
+
+		let xy-pos = key
+		let candidates = nodes.filter(node => {
+			if node.snap == false { return false }
+			point-is-in-rect(xy-pos, (
+				center: node.pos.xyz,
+				size: node.size,
+			))
+		})
+
+		if candidates.len() > 0 {
+			// filter out nodes with lower snap priority
+			let max-snap-priority = calc.max(..candidates.map(node => node.snap))
+			candidates = candidates.filter(node => node.snap == max-snap-priority)
+		}
+
+		return candidates
+	}
+
+	error("Couldn't find node corresponding to #0 in diagram.", key)
+}
+
+
+// return a pair of arrays of nodes to which the edge should snap
+#let find-nodes-for-edge(grid, nodes, edge) = {
+	let select-nodes = find-snapping-nodes.with(grid, nodes)
+	let first-last(x) = (x.at(0), x.at(-1))
+	array.zip(
+		edge.snap-to,
+		first-last(edge.vertices),
+		first-last(edge.final-vertices),
+	).map(((given, vertex, xy)) => {
+		if given == none { return () } // user explicitly disabled snapping
+		let key = map-auto(given, if type(vertex) == label { vertex } else { xy })
+		select-nodes(key)
+	})
+}
+
+#let draw-diagram(
+	grid,
+	nodes,
+	edges,
+	debug: 0,
+) = {
+
+	for edge in edges {
+		let nodes = find-nodes-for-edge(grid, nodes, edge)
+		draw-edge(edge, nodes, debug: debug)
+	}
+
+	for node in nodes {
+		draw-node(node, debug: debug)
+	}
+
+	if debug >= 1 {
+		draw-debug-axes(grid, debug: debug >= 2)
+	}
+
+}
+
+/// Make diagram contents invisible, with or without affecting layout. Works by
+/// wrapping final drawing objects in `cetz.draw.hide`.
+///
+/// #example(```
+/// rect(diagram({
+/// 	fletcher.hide({
+/// 		node((0,0), [Can't see me])
+/// 		edge("->")
+/// 	})
+/// 	node((1,1), [Can see me])
+/// }))
+/// ```)
+///
+/// - objects (content, array): Diagram objects to hide.
+/// - bounds (bool): If `false`, layout is as if the objects were never there;
+///   if `true`, the layout treats the objects is present but invisible.
+#let hide(objects, bounds: true) = {
+	if type(objects) == array { objects = objects.join() }
+	let seq = objects + []
+	seq.children.map(child => {
+		if child.func() == metadata {
+			let value = child.value
+			value.post = cetz.draw.hide.with(bounds: bounds)
+			metadata(value)
+		} else {
+			child
+		}
+	}).join()
+}
+#import "utils.typ": *
+#import "marks.typ": *
+#import "coords.typ": vector-polar-with-xy-or-uv-length, resolve, default-ctx
+
+#let EDGE_FLAGS = (
+	"dashed": (dash: "dashed"),
+	"dotted": (dash: "dotted"),
+	"double": (extrude: (-2, +2)),
+	"triple": (extrude: (-4, 0, +4)),
+	"crossing": (crossing: true),
+	"wave": (decorations: "wave"),
+	"zigzag": (decorations: "zigzag"),
+	"coil": (decorations: "coil"),
+)
+
+#let LINE_ALIASES = (
+	"-": (:),
+	"=": EDGE_FLAGS.double,
+	"==": EDGE_FLAGS.triple,
+	"--": EDGE_FLAGS.dashed,
+	"..": EDGE_FLAGS.dotted,
+	"~": EDGE_FLAGS.wave,
+	" ": (extrude: ()),
+)
+
+#let MARK_SYMBOL_ALIASES = (
+	(sym.arrow.r): "->",
+	(sym.arrow.l): "<-",
+	(sym.arrow.r.l): "<->",
+	(sym.arrow.long.r): "->",
+	(sym.arrow.long.l): "<-",
+	(sym.arrow.long.r.l): "<->",
+	(sym.arrow.double.r): "=>",
+	(sym.arrow.double.l): "<=",
+	(sym.arrow.double.r.l): "<=>",
+	(sym.arrow.double.long.r): "=>",
+	(sym.arrow.double.long.l): "<=",
+	(sym.arrow.double.long.r.l): "<=>",
+	(sym.arrow.r.tail): ">->",
+	(sym.arrow.l.tail): "<-<",
+	(sym.arrow.twohead): "->>",
+	(sym.arrow.twohead.r): "->>",
+	(sym.arrow.twohead.l): "<<-",
+	(sym.arrow.bar): "|->",
+	(sym.arrow.bar.double): "|=>",
+	(sym.arrow.hook.r): "hook->",
+	(sym.arrow.hook.l): "<-hook'",
+	(sym.arrow.squiggly.r): "~>",
+	(sym.arrow.squiggly.l): "<~",
+	(sym.arrow.long.squiggly.r): "~>",
+	(sym.arrow.long.squiggly.l): "<~",
+)
+
+
+#let interpret-marks(marks) = {
+	marks = marks.enumerate().map(((i, mark)) => {
+		resolve-mark(mark, defaults: (
+			pos: i/calc.max(1, marks.len() - 1),
+			rev: i == 0,
+		))
+	}).filter(mark => mark != none) // drop empty marks
+
+	marks = marks.map(mark => {
+		mark.tip = (mark.pos == 0) == mark.rev
+		if (mark.pos not in (0, 1)) { mark.tip = none }
+		mark
+	})
+
+	marks
+}
+
+
+
+/// Parse and interpret the marks argument provided to `edge()`. Returns a
+/// dictionary of processed `edge()` arguments.
+///
+/// - arg (string, array):
+/// Can be a string, (e.g. `"->"`, `"<=>"`), etc, or an array of marks.
+/// A mark can be a string (e.g., `">"` or `"head"`, `"x"` or `"cross"`) or a dictionary containing the keys:
+///   - `kind` (required) the mark name, e.g. `"solid"` or `"bar"`
+///   - `pos` the position along the edge to place the mark, from 0 to 1
+///   - `rev` whether to reverse the direction
+///   - parameters specific to the kind of mark, e.g., `size` or `sharpness`
+/// -> dictiony
+#let interpret-marks-arg(arg) = {
+	if type(arg) == array { return (marks: interpret-marks(arg)) }
+
+	if type(arg) == symbol {
+		if str(arg) in MARK_SYMBOL_ALIASES { arg = MARK_SYMBOL_ALIASES.at(arg) }
+		else { error("Unrecognised marks symbol #0.", arg) }
+	}
+
+	assert(type(arg) == str)
+	let text = arg
+
+	let mark-names = MARKS.get().keys().sorted(key: i => -i.len())
+	let LINES = LINE_ALIASES.keys().sorted(key: i => -i.len())
+
+	let eat(arg, options) = {
+		for option in options {
+			if arg.starts-with(option) {
+				return (arg.slice(option.len()), option)
+			}
+		}
+		return (arg, none)
+	}
+
+	let marks = ()
+	let lines = ()
+
+	let mark
+	let line
+	let flip
+
+	// first mark, [<]-x->>
+	(text, mark) = eat(text, mark-names)
+
+	// flip modifier, hook[']
+	(text, flip) = eat(text, ("'",))
+	if flip != none { mark += flip }
+
+	marks.push(mark)
+
+	let parse-error(suggestion) = error("Invalid marks shorthand #0. Try #1.", arg, suggestion)
+
+	while true {
+		// line, <[-]x->>
+		(text, line) = eat(text, LINES)
+		if line == none {
+			let suggestion = arg.slice(0, -text.len()) + "-" + text
+			parse-error(suggestion)
+		}
+		lines.push(line)
+
+		// subsequent mark, <-[x]->>
+		(text, mark) = eat(text, mark-names)
+
+		// flip modifier, hook[']
+		(text, flip) = eat(text, ("'",))
+		if flip != none { mark += flip }
+
+		marks.push(mark)
+
+		if text == "" { break }
+		if mark == none {
+			// text remains that was not recognised as mark
+			let suggestion = marks.intersperse(lines.at(0)).join()
+			parse-error(suggestion)
+		}
+	}
+
+
+	if lines.dedup().len() > 1 {
+		// different line styles were mixed
+		let suggestion = marks.intersperse(lines.at(0)).join()
+		parse-error(suggestion)
+	}
+	let line = lines.at(0)
+
+
+	// make classic math arrows slightly larger on double/triple stroked lines
+	if line == "=" {
+		marks = marks.map(mark => {
+			if mark == none { return }
+			(
+				">": (inherit: "doublehead", rev: false),
+				"<": (inherit: "doublehead", rev: true),
+			).at(mark, default: mark)
+		})
+	} else if line == "==" {
+		marks = marks.map(mark => {
+			if mark == ">" { (inherit: "triplehead", rev: false) }
+			else if mark == "<" { (inherit: "triplehead", rev: true) }
+			else {mark}
+		})
+	}
+
+	return (
+		marks: interpret-marks(marks),
+		..LINE_ALIASES.at(lines.at(0))
+	)
+}
+
+
+
+/// Interpret the positional arguments given to an `edge()`
+///
+/// Tries to intelligently distinguish the `from`, `to`, `marks`, and `label`
+/// arguments based on the argument types.
+///
+/// Generally, the following combinations are allowed:
+///
+/// ```
+/// edge(..<coords>, ..<marklabel>, ..<options>)
+/// <coords> = () or (to) or (from, to) or (from, ..vertices, to)
+/// <marklabel> = (marks, label) or (label, marks) or (marks) or (label) or ()
+/// <options> = any number of options specified as strings
+/// ```
+#let interpret-edge-args(args, options) = {
+	if args.named().len() > 0 {
+		error("Unexpected named argument(s) #..0.", args.named().keys())
+	}
+
+	let new-options = (:)
+	let pos = args.pos()
+
+	// predicates to detect the kind of a positional argument
+	let is-coord(arg) = type(arg) in (array, dictionary, label) or arg == auto
+	let is-rel-coord(arg) = is-coord(arg) or (
+		type(arg) == str and arg.match(regex("^[utdblrnsew,]+$")) != none
+	)
+	let is-arrow-symbol(arg) = type(arg) == symbol and str(arg) in MARK_SYMBOL_ALIASES
+	let is-edge-flag(arg) = type(arg) == str and arg in EDGE_FLAGS
+	let is-label-side(arg) = type(arg) == alignment
+
+	let maybe-marks(arg) = type(arg) == str and not is-edge-flag(arg) or is-arrow-symbol(arg)
+	let maybe-label(arg) = type(arg) != str and not is-arrow-symbol(arg) and not is-coord(arg)
+
+	let peek(x, ..predicates) = {
+		let preds = predicates.pos()
+		x.len() >= preds.len() and x.zip(preds).all(((arg, pred)) => pred(arg))
+	}
+
+	let assert-not-set(key, default, ..value) = {
+		if options.at(key) == default { return }
+		error(
+			"#0 specified twice with positional argument(s) #..pos and named argument #named.",
+			key, pos: value.pos().map(repr), named: repr(options.at(key)),
+		)
+	}
+
+	let coords = ()
+	let has-first-coord = false
+	let has-tail-coords = false
+
+	// First argument(s) are coordinates
+	// (<coord>, <rel-coord>*) => (<coord>, <rel-coord>*)
+	// (<rel-coord>*) => (auto, <rel-coord>*)
+	if peek(pos, is-coord) {
+		coords.push(pos.remove(0))
+		has-first-coord = true
+	}
+	while peek(pos, is-rel-coord) {
+		if type(pos.at(0)) == str {
+			coords += pos.remove(0).split(",")
+		} else {
+			coords.push(pos.remove(0))
+		}
+		has-tail-coords = true
+	}
+
+	// Allow marks argument to be in between two coordinates
+	// (<coord>, <marks>, <rel-coord>)
+	// (<marks>, <rel-coord>) => (auto, <marks>, <rel-coord>)
+	if not has-tail-coords and peek(pos, maybe-marks, is-rel-coord) {
+		new-options.marks = pos.remove(0)
+		assert-not-set("marks", (), new-options.marks)
+
+		coords.push(pos.remove(0))
+		has-tail-coords = true
+
+		if peek(pos, is-rel-coord) {
+			error("Marks argument #0 must appear after edge vertices (or between them if there are only two).", repr(new-options.marks))
+		}
+	}
+	if coords.len() > 0 or options.vertices.len() == 0 {
+		assert-not-set("vertices", (), ..coords)
+		if not has-tail-coords { coords = (auto, ..coords) }
+		if not has-first-coord { coords = (auto, ..coords) }
+		new-options.vertices = coords
+	}
+
+
+	// Allow label side argument anywhere after coordinates
+	let i = pos.position(is-label-side)
+	if i != none {
+		new-options.label-side = pos.remove(i)
+		assert-not-set("label-side", auto, new-options.label-side)
+	}
+
+
+	// Accept marks and labels after vertices
+	// (.., <marks>, <label>)
+	// (.., <label>, <marks>)
+	let marks
+	let label
+	if peek(pos, maybe-marks, maybe-label) {
+		marks = pos.remove(0)
+		label = pos.remove(0)
+	} else if peek(pos, maybe-label, maybe-marks) {
+		label = pos.remove(0)
+		marks = pos.remove(0)
+	} else if peek(pos, maybe-label) {
+		label = pos.remove(0)
+	} else if peek(pos, maybe-marks) {
+		marks = pos.remove(0)
+	}
+
+	if marks != none {
+		if "marks" in new-options {
+			error("Marks argument passed to `edge()` twice; found #0 and #1.", repr(new-options.marks), repr(marks))
+		}
+		assert-not-set("marks", (), marks)
+		new-options.marks = marks
+	}
+	if label != none {
+		assert-not-set("label", none, label)
+		new-options.label = label
+	}
+
+	// Accept any trailing positional strings as option shorthands
+	while peek(pos, is-edge-flag) {
+		new-options += EDGE_FLAGS.at(pos.remove(0))
+	}
+
+	if pos.len() > 0 {
+		error("Couldn't interpret `edge()` arguments #..0. Try using named arguments. Interpreted previous arguments as #1", pos, new-options)
+	}
+
+	new-options
+}
+
+
+
+
+
+/// Draw a connecting edge in a diagram.
+///
+///
+/// - ..args (any): An edge's positional arguments may specify:
+///   - the edge's #param[edge][vertices], each specified with a CeTZ-style coordinate
+///   - the #param[edge][label] content
+///   - arrow #param[edge][marks], like `"=>"` or `"<<-|-o"`
+///   - other style flags, like `"double"` or `"wave"`
+///
+///   Vertex coordinates must come first, and are optional:
+///
+///   ```typc
+///   edge(from, to, ..) // explicit start and end nodes
+///   edge(to, ..) == edge(auto, to, ..) // start snaps to previous node
+///   edge(..) == edge(auto, auto, ..) // snaps to previous and next nodes
+///   edge(from, v1, v2, ..vs, to, ..) // a multi-segmented edge
+///   edge(from, "->", to) // for two vertices, the marks style can come in between
+///   ```
+///
+///   All vertices except the start point can be shorthand relative coordinate
+///   string containing the characters
+///   ${#"lrudtbnesw".clusters().map(raw).join($, $)}$ or commas.
+///
+///   If given as positional arguments, an edge's #param[edge][marks] and
+///   #param[edge][label] are disambiguated by guessing based on the types. For
+///   example, the following are equivalent:
+///
+///   ```typc
+///   edge((0,0), (1,0), $f$, "->")
+///   edge((0,0), (1,0), "->", $f$)
+///   edge((0,0), (1,0), $f$, marks: "->")
+///   edge((0,0), (1,0), "->", label: $f$)
+///   edge((0,0), (1,0), label: $f$, marks: "->")
+///   ```
+///
+///   Additionally, some common options are given flags that may be given as
+///   string positional arguments. These are
+///   #fletcher.EDGE_FLAGS.keys().map(repr).map(raw).join([, ], last: [, and ]).
+///   For example, the following are equivalent:
+///
+///   ```typc
+///   edge((0,0), (1,0), $f$, "wave", "crossing")
+///   edge((0,0), (1,0), $f$, decorations: "wave", crossing: true)
+///   ```
+///
+/// - vertices (array): Array of (at least two) coordinates for the edge.
+///
+///   Vertices can also be specified as leading positional arguments, but if so,
+///   the `vertices` option must be empty. If the number of vertices is greater
+///   than two, #param[edge][kind] defaults to `"poly"`.
+///
+/// - kind (string): The kind of the edge, one of `"line"`, `"arc"`, or `"poly"`.
+///   This is chosen automatically based on the presence of other options
+///   (#param[edge][bend] implies `"arc"`, #param[edge][corner] or additional
+///   vertices implies `"poly"`).
+///
+/// - corner (none, left, right): Whether to create a right-angled corner,
+///   turning `left` or `right`.
+///   (Bending right means the corner sticks out to the left, and vice versa.)
+///
+///   #diagram(
+///   	node((0,1), `from`),
+///   	node((1,0), `to`),
+///   	edge((0,1), (1,0), `right`, "->", corner: right),
+///   	edge((0,1), (1,0), `left`, "->", corner: left),
+///   )
+///
+/// - bend (angle): Edge curvature. If `0deg`, the connector is a straight line;
+///   positive angles bend clockwise.
+///
+///   #diagram(debug: 0, {
+///   	node((0,0), $A$)
+///   	node((1,1), $B$)
+///   	let N = 4
+///   	range(N + 1)
+///   		.map(x => (x/N - 0.5)*2*100deg)
+///   		.map(θ => edge((0,0), (1,1), θ, bend: θ, ">->", label-side: center))
+///   		.join()
+///   })
+///
+/// - loop-angle (angle): Angle around the node at which edge loops stick out at. Loops are arcs
+///   with the same start/end point and a large #param[edge][bend] angle (e.g.,
+///   `120deg`). This value has no effect for non-loop edges.
+///
+///   #diagram(debug: 0, {
+///   	node((0,0), $O$)
+///   	for θ in (0deg, -90deg, 135deg) {
+///   		edge((), "->", (), bend: 125deg, loop-angle: θ, label: θ)
+///   	}
+///   })
+///
+/// - label (content): Content for the edge label. See the
+///   #param[edge][label-pos] and #param[edge][label-side] options to control
+///   the position (and #param[edge][label-sep] and #param[edge][label-anchor]
+///   for finer control).
+///
+/// - label-side (left, right, center): Which side of the edge to place the
+///   label on, viewed as you walk along it from base to tip.
+///
+///   If `center`, then the label is placed directly on the edge and
+///   #param[edge][label-fill] defaults to `true`. When `auto`, a value of
+///   `left` or `right` is  automatically chosen so that the label is:
+///    - roughly above the connector, in the case of straight lines; or
+///    - on the outside of the curve, in the case of arcs.
+///
+/// - label-pos (float, ratio, relative length): Position of the label along the
+///   edge, from the start to end.
+///
+///   A number or ratio between zero and one is interpreted as a fraction of the
+///   edge length. Physical and relative relative lengths work too. For example,
+///   `100% - 1em` means `1em` from the end.
+///
+///   #stack(
+///   	dir: ltr,
+///   	spacing: 1fr,
+///   	..(0, 0.25, 0.5, 0.75, 1).map(p => fletcher.diagram(
+///   		cell-size: 1cm,
+///   		edge((0,0), (1,0), p, "->", label-pos: p))
+///   	),
+///   )
+///
+///   For `"poly"` edges (see @edge-types), a number does not specify a fraction
+///   of the path length; instead, the $k$th vertex is at position $k/n$ where
+///   $n$ is the number of vertices. Each midpoint is then at $k/n + 0.5$.
+///
+/// - label-sep (length): Separation between the connector and the label anchor.
+///
+///   With the default anchor (automatically set to `"south"` in this case):
+///
+///   #diagram(
+///   	debug: 2,
+///   	cell-size: 8mm,
+///   	{
+///   		for (i, s) in (-5pt, 0pt, .4em, .8em).enumerate() {
+///   			edge((2*i,0), (2*i + 1,0), s, "->", label-sep: s)
+///   		}
+///   })
+///
+///   With #param[edge][label-anchor] set to `"center"`:
+///
+///   #diagram(
+///   	debug: 2,
+///   	cell-size: 8mm,
+///   	{
+///   		for (i, s) in (-5pt, 0pt, .4em, .8em).enumerate() {
+///   			edge((2*i,0), (2*i + 1,0), s, "->", label-sep: s, label-anchor: "center")
+///   		}
+///   })
+///
+///   Set #param[diagram][debug] to `2` or higher to see label anchors and
+///   outlines as seen here.
+///
+///   Default: #the-param[diagram][label-sep]
+///
+/// - label-angle (angle, left, right, top, bottom, auto): Angle to rotate the
+///   label (counterclockwise).
+///
+///   If a direction is given, the label is rotated so that the edge travels in
+///   that direction relative to the label. If `auto`, the best of `right` or
+///   `left` is chosen.
+///
+///   #for angle in (0deg, 90deg, auto, right, top, left) {
+///   	diagram(edge((0,1), (2,0), "->", [#angle], label-angle: angle))
+///   }
+///
+/// - label-anchor (anchor): The CeTZ-style anchor point of the label to use for
+///   placement (e.g., `"north-east"` or `"center"`). If `auto`, the best anchor
+///   is chosen based on #param[edge][label-side], #param[edge][label-angle],
+///   and the edge's direction.
+///
+/// - label-fill (bool, paint): The background fill for the label. If `true`,
+///   defaults to the value of #param[edge][crossing-fill]. If `false` or
+///   `none`, no fill is used. If `auto`, then defaults to `true` if the label
+///   is covering the edge (#param[edge][label-side]`: center`).
+///
+/// - label-size (auto, length): The default text size to apply to edge labels.
+///
+///   Default: #the-param[diagram][label-size]
+///
+/// - label-wrapper (auto, function): Callback function accepting a node
+///   dictionary and returning the label content. This is used to add a label
+///   background (see #param[edge][crossing-fill]), and can be used to adjust
+///   the label's padding, outline, and so on.
+///
+///   ```example
+///   #diagram(edge($f$, label-wrapper: e =>
+///   	circle(e.label, fill: e.label-fill)))
+///   ```
+///
+///   Default: #the-param[diagram][label-wrapper]
+///
+/// - stroke (stroke): Stroke style of the edge. Arrows/marks scale with the
+///   stroke thickness (and with #param[edge][mark-scale]).
+///
+/// - dash (string): The stroke's dash style. This is also set by some mark
+///   styles. For example, setting `marks: "<..>"` applies `dash: "dotted"`.
+///
+/// - decorations (none, string, function): Apply a CeTZ path decoration to the
+///   stroke. Preset options are `"wave"`, `"zigzag"`, and `"coil"` (which may
+///   also be passed as convenience positional arguments), but a decoration
+///   function may also be specified.
+///
+///   ```example
+///   #diagram(
+///   	$
+///   		A edge("wave") &
+///   		B edge("zigzag") &
+///   		C edge("coil") & D \
+///   		alpha &&& omega
+///   	$,
+///   	edge((0,1), (3,1), "<->", decorations:
+///   		cetz.decorations.wave
+///   			.with(amplitude: .4)
+///   	)
+///   )
+///   ```
+///
+/// - marks (array): The marks (arrowheads) to draw along an edge's stroke. This
+///   may be:
+///
+///   - A shorthand string such as `"->"` or `"hook'-/->>"`. Specifically,
+///     shorthand strings are of the form $M_1 L M_2$ or $M_1 L M_2 L M_3$, etc,
+///     where
+///
+///     $ M_i in #`fletcher.MARKS` = #context math.mat(..fletcher.MARKS.get().keys().map(i => $#raw(lang: none, i),$).chunks(6), delim: "{") $
+///     is a mark name and
+///     $ L in #`fletcher.LINE_ALIASES` = {#fletcher.LINE_ALIASES.keys().map(raw.with(lang: none)).join($,$)} $
+///     is the line style.
+///
+///   - An array of mark names as strings or _mark objects_ (dictionaries of
+///     parameters with a `draw` entry).
+///
+///   Shorthands are expanded into other arguments. For example,
+///   `edge(p1, p2, "=>")` is short for `edge(p1, p2, marks: (none, "head"), "double")`, or more precisely, the result of `edge(p1, p2, ..fletcher.interpret-marks-arg("=>"))`.
+///
+///   #table(
+///   	columns: (1fr, 4fr),
+///   	align: (center + horizon, horizon),
+///   	[Result], [Value of `marks`],
+///   	..(
+///   		"->",
+///   		">>-->",
+///   		"<=>",
+///   		"==>",
+///         "->>-",
+///   		"x-/-@",
+///   		"|..|",
+///   		"hook->>",
+///   		"hook'->>",
+///   		"||-*-harpoon'",
+///         ("X", (inherit: "head", size: 15, sharpness: 40deg),), ((inherit:
+///         "circle", pos: 0.5, fill: auto),),
+///   	).map(arg => (
+///   		fletcher.diagram(edge((0,0), (1,0), marks: arg, stroke: 0.8pt)),
+///   		raw(repr(arg)),
+///   	)).join()
+///   )
+///
+/// - mark-scale (percent): Scale factor for marks or arrowheads, relative to
+///   the #param[edge][stroke] thickness. See also #the-param[diagram][mark-scale].
+///
+///   #diagram(
+///   	label-sep: 10pt,
+///   	edge-stroke: 1pt,
+///   	for i in range(3) {
+///   		let s = (1 + i/2)*100%
+///   		edge((2*i,0), (2*i + 1,0), label: s, "->", mark-scale: s)
+///   	}
+///   )
+///
+///   Note that the default arrowheads scale automatically with double and
+///   triple strokes:
+///
+///   #diagram(
+///   	label-sep: 10pt,
+///   	edge-stroke: 1pt,
+///   	for (i, s) in ("->", "=>", "==>").enumerate() {
+///   		edge((2*i,0), (2*i + 1,0), s, label: raw(s, lang: none))
+///   	}
+///   )
+///
+/// - extrude (array): Draw a separate stroke for each extrusion offset to
+///   obtain a multi-stroke effect. Offsets may be numbers (specifying multiples
+///   of the stroke's thickness) or lengths.
+///
+///   #diagram({
+///   	(
+///   		(0,),
+///   		(-1.5,+1.5),
+///   		(-2,0,+2),
+///   		(-.5em,),
+///   		(0, 5pt,),
+///   	).enumerate().map(((i, e)) => {
+///   		edge(
+///   			(2*i, 0), (2*i + 1, 0), [#e], "|->",
+///   			extrude: e, stroke: 1pt, label-sep: 1em)
+///   	}).join()
+///   })
+///
+///   Notice how the ends of the line need to shift a little depending on the
+///   mark. This offset is computed with `cap-offset()`.
+///
+///   See also #the-param[node][extrude].
+///
+/// - crossing (bool): If `true`, draws a backdrop of color
+///   #param[edge][crossing-fill] to give the illusion of lines crossing each
+///    other.
+///
+///   #diagram({
+///   	edge((0,1), (1,0), stroke: 1pt)
+///   	edge((0,0), (1,1), stroke: 1pt)
+///   	edge((2,1), (3,0), stroke: 1pt)
+///   	edge((2,0), (3,1), stroke: 1pt, crossing: true)
+///   })
+///
+///   You can also pass `"crossing"` as a positional argument as a shorthand for
+///   `crossing: true`.
+///
+/// - crossing-thickness (number): Thickness of the "crossing" background stroke
+///   (applicable if #param[edge][crossing] is `true`) in multiples of the
+///   normal stroke's thickness.
+///
+///   #diagram({
+///   	(1, 2, 4, 8).enumerate().map(((i, x)) => {
+///   		edge((2*i, 1), (2*i + 1, 0), stroke: 1pt, label-sep: 1em)
+///   		edge((2*i, 0), (2*i + 1, 1), raw(str(x)), stroke: 1pt, label-sep:
+///   		2pt, label-pos: 0.3, crossing: true, crossing-thickness: x)
+///   	}).join()
+///   })
+///
+///   Default: #the-param[diagram][crossing-thickness]
+///
+/// - crossing-fill (paint): Color to use behind connectors or labels to give
+///   the illusion of crossing over other objects.
+///
+///   #let cross(x, fill) = {
+///   	edge((2*x + 0,1), (2*x + 1,0), stroke: 1pt)
+///   	edge((2*x + 0,0), (2*x + 1,1), $f$, stroke: 1pt, crossing: true, crossing-fill: fill, label-fill: true)
+///   }
+///   #diagram(crossing-thickness: 5, {
+///   	cross(0, white)
+///   	cross(1, blue.lighten(50%))
+///   })
+///
+///   Default: #the-param[diagram][crossing-fill]
+///
+/// - corner-radius (length, none): Radius of rounded corners for edges with
+///   multiple segments. Note that `none` is distinct from `0pt`.
+///
+///   #for (i, r) in (none, 0pt, 5pt).enumerate() {
+///   	if i > 0 { h(1fr) }
+///   	fletcher.diagram(
+///   		edge-stroke: 1pt,
+///   		edge((3*i, 0), "r,t,rd,r", "=>", raw(repr(r)), label-pos: 0.6, corner-radius: r)
+///   	)
+///   }
+///
+///   This length specifies the corner radius for right-angled bends. The actual
+///   radius is smaller for acute angles and larger for obtuse angles to balance
+///   things visually. (Trust me, it looks naff otherwise!)
+///
+///   Default: #the-param[diagram][edge-corner-radius]
+///
+/// - shift (length, number, pair): Amount to shift the edge sideways by,
+///   perpendicular to its direction. A pair `(from, to)` controls the shifts at
+///   each end of the edge independently, and a single shift `s` is short for
+///   `(s, s)`. Shifts can absolute lengths (e.g., `5pt`) or coordinate
+///   differences (e.g., `0.1`).
+///
+///   #diagram(
+///   	node((0,0), $A$), node((1,0), $B$),
+///   	edge((0,0), (1,0), "->", `3pt`, shift: 3pt),
+///   	edge((0,0), (1,0), "->", `-3pt`, shift: -3pt, label-side: right),
+///   )
+///
+///   If an edge has many vertices, the shifts only affect the first and last
+///   segments of the edge.
+///
+///   ```example
+///   #diagram(
+///   	node-fill: luma(70%),
+///   	node((0,0), [Hello]),
+///   	edge("u,r,d", "->"),
+///   	edge("u,r,d", "-->", shift: 8pt),
+///   	node((1,0), [World]),
+///   )
+///   ```
+///
+/// - snap-to (pair): The nodes the start and end of an edge should snap to.
+/// Each node can be a position or node #param[node][name], or `none` to disable
+/// snapping. See also #the-param[node][snap].
+///
+///   By default, an edge's first and last #param[edge][vertices] snap to nearby
+///   nodes. This option can be used in case automatic snapping fails (if there
+///   are many nodes close together, for example.)
+///
+/// - layer (number): Layer on which to draw the edge.
+///
+///   Objects on a higher `layer` are drawn on top of objects on a lower
+///   `layer`. Objects on the same layer are drawn in the order they are passed
+///   to `diagram()`.
+///
+/// - floating (bool): Whether the edge should be _floating_ so as not to affect
+///   the diagram's bounding box.
+/// 
+///   When `floating: true`, the edge is wrapped in `cetz.draw.floating(..)` which
+///   prevents the objects from affecting the canvas' bounding box.
+/// 
+///   ```example
+///   An inline #diagram($
+/// 		A edge(->, bend: #45deg, floating: #true) & B
+/// 	$) diagram.
+/// 
+/// 	#rect(width: 7cm, align(center, diagram(
+/// 		node((0,1), $A$),
+/// 		edge("->", floating: true, [centered despite label]),
+/// 		node((0,0), $B$),
+/// 	)))
+///   ```
+///
+/// - post (function): Callback function to intercept `cetz` objects before they
+///   are drawn to the canvas.
+///
+///   This can be used to hide elements without affecting layout (for use with
+///   #link("https://github.com/touying-typ/touying")[Touying], for example).
+///   The `hide()` function also helps for this purpose.
+///
+#let edge(
+	..args,
+	vertices: (),
+	label: none,
+	label-side: auto,
+	label-pos: 50%,
+	label-sep: auto,
+	label-angle: 0deg,
+	label-anchor: auto,
+	label-fill: auto,
+	label-size: auto,
+	label-wrapper: auto,
+	stroke: auto,
+	dash: none,
+	decorations: none,
+	extrude: (0,),
+	shift: 0pt,
+	kind: auto,
+	bend: 0deg,
+	loop-angle: none,
+	corner: none,
+	corner-radius: auto,
+	marks: (),
+	mark-scale: 100%,
+	crossing: false,
+	crossing-thickness: auto,
+	crossing-fill: auto,
+	snap-to: (auto, auto),
+	layer: 0,
+	floating: false,
+	post: x => x,
+) = {
+
+	let options = (
+		vertices: vertices,
+		label: label,
+		label-pos: as-relative(label-pos),
+		label-sep: label-sep,
+		label-angle: label-angle,
+		label-anchor: label-anchor,
+		label-side: label-side,
+		label-fill: label-fill,
+		label-size: label-size,
+		label-wrapper: label-wrapper,
+		stroke: stroke,
+		dash: dash,
+		decorations: decorations,
+		kind: kind,
+		bend: bend,
+		loop-angle: pass-none(as-angle)(loop-angle),
+		corner: corner,
+		corner-radius: corner-radius,
+		extrude: extrude,
+		shift: shift,
+		marks: marks,
+		mark-scale: mark-scale,
+		crossing: crossing,
+		crossing-thickness: crossing-thickness,
+		crossing-fill: crossing-fill,
+		snap-to: as-pair(snap-to),
+		layer: layer,
+		post: post,
+		floating: as-bool(floating, message: "`floating` must be boolean"),
+	)
+
+	options += interpret-edge-args(args, options)
+
+	// relative coordinate shorthands
+	let interpret-coord-str(coord) = {
+		if type(coord) != str { return coord }
+		let rel = (0, 0)
+		let dirs = (
+			"t": ( 0,-1), "n": ( 0,-1), "u": ( 0,-1),
+			"b": ( 0,+1), "s": ( 0,+1), "d": ( 0,+1),
+			"l": (-1, 0), "w": (-1, 0),
+			"r": (+1, 0), "e": (+1, 0),
+		)
+		for char in coord.clusters() {
+			rel = vector.add(rel, dirs.at(char))
+		}
+		(rel: rel)
+	}
+	options.vertices = options.vertices.map(interpret-coord-str)
+
+
+
+	if options.label-side not in (left, center, right, auto) {
+		error("`label-side` must be one of `left`, `center`, `right`, or `auto`; got #0.", options.label-side)
+	}
+	if options.label-side == center {
+		options.label-anchor = "center"
+		options.label-sep = 0pt
+	}
+
+	if type(options.shift) != array { options.shift = (options.shift, options.shift) }
+
+
+	let obj = (
+		class: "edge",
+		..options,
+		is-crossing-background: false,
+	)
+
+	// for the crossing effect, add another edge underneath
+	if options.crossing {
+		metadata((
+			..obj,
+			is-crossing-background: true
+		))
+	}
+
+	metadata(obj)
+}
+
+
+
+#let resolve-edge-options(edge, options) = {
+	// let to-pt(len) = to-abs-length(len, options.em-size)
+
+	edge += interpret-marks-arg(edge.marks)
+
+	if edge.stroke == none {
+		// hack: for no stroke, it's easier to do the following.
+		// then we have the guarantee that edge.stroke is actually
+		// a stroke, not possibly none
+		edge.extrude = ()
+		edge.marks = ()
+		edge.stroke = stroke((:))
+	}
+
+	edge.stroke = (
+		(
+			cap: "round",
+			dash: edge.dash,
+			thickness: 0.048em, // guarantees thickness is a length, not auto
+		) +
+		stroke-to-dict(options.edge-stroke) +
+		stroke-to-dict(map-auto(edge.stroke, (:)))
+	)
+	edge.stroke.thickness = edge.stroke.thickness.to-absolute()
+
+	edge.extrude = as-array(edge.extrude).map(as-number-or-length.with(
+		message: "`extrude` must be a number, length, or an array of those"
+	)).map(d => {
+		if type(d) == length { d.to-absolute() }
+		else { d*edge.stroke.thickness }
+	})
+
+	if type(edge.decorations) == str {
+		edge.decorations = (
+			"wave": cetz.decorations.wave.with(
+				amplitude: .12,
+				segment-length: .2,
+			),
+			"zigzag": cetz.decorations.zigzag.with(
+				amplitude: .12,
+				segment-length: .2,
+			),
+			"coil": cetz.decorations.coil.with(
+				amplitude: .15,
+				segment-length: .15,
+				factor: 140%,
+			),
+		).at(edge.decorations)
+	}
+
+	edge.crossing-fill = map-auto(edge.crossing-fill, options.crossing-fill)
+	edge.crossing-thickness = map-auto(edge.crossing-thickness, options.crossing-thickness)
+	edge.corner-radius = map-auto(edge.corner-radius, options.edge-corner-radius)
+
+	if edge.is-crossing-background {
+		edge.stroke = (
+			thickness: edge.crossing-thickness*edge.stroke.thickness,
+			paint: edge.crossing-fill,
+			cap: "round",
+		)
+		edge.marks = ()
+		edge.extrude = edge.extrude.map(e => e/edge.crossing-thickness)
+	}
+
+	edge.stroke = as-stroke(edge.stroke)
+
+	if edge.kind == auto {
+		if edge.vertices.len() > 2 { edge.kind = "poly" }
+		else if edge.corner != none { edge.kind = "corner" }
+		else if edge.bend != 0deg { edge.kind = "arc" }
+		else { edge.kind = "line" }
+	}
+
+	// Scale marks
+	edge.mark-scale *= options.mark-scale
+	edge.marks = edge.marks.map(mark => {
+		mark.scale *= edge.mark-scale
+		mark
+	})
+
+	edge.label-sep = map-auto(edge.label-sep, options.label-sep).to-absolute()
+	edge.label-size = map-auto(edge.label-size, options.label-size)
+
+	edge.label-fill = map-auto(edge.label-fill, edge.label-side == center)
+	if edge.label-fill == true { edge.label-fill = edge.crossing-fill }
+	if edge.label-fill == false { edge.label-fill = none }
+
+	edge.label-wrapper = map-auto(edge.label-wrapper, options.label-wrapper)
+
+	if edge.floating {
+		edge.post = x => cetz.draw.floating((edge.post)(x))
+	}
+
+	edge
+}
+
+
+#let resolve-edge-vertices(edge, ctx: (:), nodes) = {
+
+	let adjacent-node-pos(forward, default) = {
+		if edge.node-index == none { return default }
+		let indices = if forward {
+			range(edge.node-index, nodes.len())
+		} else {
+			range(0, edge.node-index).rev()
+		}
+		for i in indices {
+			if nodes.at(i).snap != false {
+				return nodes.at(i).pos.at(ctx.target-system)
+			}
+		}
+		return default
+	}
+
+	let prev-pos = adjacent-node-pos(false, (0, 0))
+	let next-pos = adjacent-node-pos(true, (rel: (1, 0)))
+
+	let ctx = default-ctx + ctx + (
+		prev: (pt: prev-pos),
+	)
+
+	edge.vertices.at(0) = map-auto(edge.vertices.at(0), prev-pos)
+	edge.vertices.at(-1) = map-auto(edge.vertices.at(-1), next-pos)
+
+	let (ctx, ..verts) = resolve(ctx, ..edge.vertices)
+	verts.map(vector-2d)
+
+}
+
+
+
+#let convert-edge-corner-to-poly(edge) = {
+	if edge.kind != "corner" { return edge }
+
+	let (from, to) = edge.final-vertices
+	let θ = angle-between(from, to)
+
+	let bend-dir = (
+		if edge.corner == right { true }
+		else if edge.corner == left { false }
+		else { error("Edge `corner` option must be `left` or `right`.") }
+	)
+
+	let θ-floor = calc.floor(θ/90deg)*90deg
+	let θ-ceil = calc.ceil(θ/90deg)*90deg
+	let θs = if bend-dir {
+		(θ-ceil, θ-floor + 180deg)
+	} else {
+		(θ-floor, θ-ceil + 180deg)
+	}
+
+	let corner-point = if calc.even(calc.floor(θ/90deg) + int(bend-dir)) {
+		(to.at(0), from.at(1))
+	} else {
+		(from.at(0), to.at(1))
+	}
+
+	let label-side = map-auto(edge.label-side, if bend-dir { left } else { right })
+
+	edge + (
+		kind: "poly",
+		final-vertices: (from, corner-point, to),
+		label-side: label-side,
+	)
+}
+
+
+
+
+// For straight edges, `shift` translates the line laterally
+#let apply-edge-shift-line(grid, edge) = {
+	let (from-xy, to-xy) = edge.final-vertices
+	let θ = angle-between(from-xy, to-xy) + 90deg
+
+	let (δ-from, δ-to) = edge.shift
+	let δ⃗-from = vector-polar-with-xy-or-uv-length(grid, from-xy, δ-from, θ)
+	let δ⃗-to = vector-polar-with-xy-or-uv-length(grid, to-xy, δ-to, θ)
+
+	edge.final-vertices.at( 0) = vector.add(from-xy, δ⃗-from)
+	edge.final-vertices.at(-1) = vector.add(to-xy, δ⃗-to)
+
+	edge
+}
+
+// For arc edges, `shift` grows/shrinks the arc concentrically
+#let apply-edge-shift-arc(grid, edge) = {
+	let (from-xy, to-xy) = edge.final-vertices
+
+	let θ = angle-between(from-xy, to-xy) + 90deg
+	let (θ-from, θ-to) = (θ + edge.bend, θ - edge.bend)
+
+	let (δ-from, δ-to) = edge.shift
+	let δ⃗-from = vector-polar-with-xy-or-uv-length(grid, from-xy, δ-from, θ-from)
+	let δ⃗-to   = vector-polar-with-xy-or-uv-length(grid, to-xy, δ-to, θ-to)
+
+	edge.final-vertices.at( 0) = vector.add(from-xy, δ⃗-from)
+	edge.final-vertices.at(-1) = vector.add(to-xy, δ⃗-to)
+
+	if edge.loop-angle != none {
+		let a = edge.loop-angle + 90deg
+		edge.final-vertices.at( 0) = vector.add(edge.final-vertices.at( 0), vector-polar(+1e-4pt, a))
+		edge.final-vertices.at(-1) = vector.add(edge.final-vertices.at(-1), vector-polar(-1e-4pt, a))
+	}
+
+	edge
+}
+
+// For poly edges, `shift` affects the first/last line segments
+#let apply-edge-shift-poly(grid, edge) = {
+	let end-segments = (
+		edge.final-vertices.slice(0, 2), // first two vertices
+		edge.final-vertices.slice(-2), // last two vertices
+	)
+
+	let θs = (
+		angle-between(..end-segments.at(0)) + 180deg,
+		angle-between(..end-segments.at(1)) + 180deg,
+	)
+
+	let ends = (edge.final-vertices.at(0), edge.final-vertices.at(-1))
+	let δs = edge.shift.zip(ends, θs).map(((d, xy, θ)) => {
+		vector-polar-with-xy-or-uv-length(grid, xy, d, θ + 90deg)
+	})
+
+	// the `shift` option is nicer if it shifts the entire segment, not just the first vertex
+	// first segment
+	edge.final-vertices.at(0) = vector.add(edge.final-vertices.at(0), δs.at(0))
+	edge.final-vertices.at(1) = vector.add(edge.final-vertices.at(1), δs.at(0))
+	// last segment
+	edge.final-vertices.at(-2) = vector.add(edge.final-vertices.at(-2), δs.at(1))
+	edge.final-vertices.at(-1) = vector.add(edge.final-vertices.at(-1), δs.at(1))
+
+	edge
+}
+
+
+/// Apply #the-param[edge][shift] by translating edge vertices.
+///
+/// - grid (dictionary): Representation of the grid layout. This is needed to
+///   support shifts specified as coordinate lengths.
+/// - edge (dictionary): The edge with a `shift` entry.
+#let apply-edge-shift(grid, edge) = {
+	if edge.kind == "line" { apply-edge-shift-line(grid, edge) }
+	else if edge.kind == "arc" { apply-edge-shift-arc(grid, edge) }
+	else if edge.kind == "poly" { apply-edge-shift-poly(grid, edge) }
+	else { edge }
+}
+
+#import "deps.typ": cetz
+
+#import "marks.typ": *
+#import "draw.typ": *
+#import "shapes.typ"
+#import "node.typ": *
+#import "edge.typ": *
+#import "diagram.typ": *
+#import "coords.typ": *
+#import "utils.typ"
+#import "utils.typ": *
+#import "deps.typ": cetz
+#import cetz.draw
+#import "default-marks.typ": *
+
+#let MARK_REQUIRED_DEFAULTS = (
+	rev: false,
+	flip: false,
+	scale: 100%,
+	extrude: (0,),
+	tip-end: 0,
+	tail-end: 0,
+	tip-origin: 0,
+	tail-origin: 0,
+)
+
+
+/// For a given mark, determine where that the stroke should terminate at,
+/// relative to the mark's origin point, as a function of the shift.
+///
+/// Imagine the tip-origin of the mark is at $(x, y) = (0, 0)$. A stroke along
+/// the line $y = "shift"$ coming from $x = -oo$ terminates at $x = "offset"$, where
+/// $"offset"$ is the result of this function.
+/// Units are in multiples of stroke thickness.
+///
+/// This is used to correctly implement multi-stroke marks, e.g.,
+/// #diagram(edge("<==>")). The function `mark-debug()` can help visualise a
+/// mark's cap offset.
+///
+/// ```example
+/// #fletcher.mark-debug("O")
+/// ```
+///
+/// The dashed green line shows the stroke tip end as a function of $y$, and the
+/// dashed red line shows where the stroke ends if the mark is acting as a tail.
+#let cap-offset(mark, shift) = {
+	let o = 0
+	let scale = float(mark.scale)
+	if "cap-offset" in mark {
+		o = (mark.cap-offset)(mark, shift/scale)
+	}
+	o += if mark.tip { mark.tip-end } else { mark.tail-end }
+	o*scale
+}
+
+
+#let apply-mark-inheritances(mark) = {
+	let marks = MARKS.get()
+	while "inherit" in mark {
+
+		if mark.inherit.at(-1) == "'" {
+			mark.flip = not mark.at("flip", default: false)
+			mark.inherit = mark.inherit.slice(0, -1)
+		}
+
+		if mark.inherit not in marks {
+			error("Mark inherits from #0 which is not defined.", repr(mark.inherit))
+		}
+
+		let parent = marks.at(mark.remove("inherit"))
+		mark = parent + mark
+	}
+	mark
+}
+
+
+
+/// Resolve a mark dictionary by applying inheritance, adding any required
+/// entries, and evaluating any closure entries.
+///
+/// ```example
+/// #context fletcher.resolve-mark((
+/// 	a: 1,
+/// 	b: 2,
+/// 	c: mark => mark.a + mark.b,
+/// ))
+/// ```
+///
+#let resolve-mark(mark, defaults: (:)) = {
+	if mark == none { return none }
+
+	if type(mark) == str { mark = (inherit: mark) }
+
+	mark = apply-mark-inheritances(mark)
+
+	// be careful to preserve the insertion order of mark
+	// as this defines the evaluation order of mark parameters
+	for (k, v) in MARK_REQUIRED_DEFAULTS + defaults {
+		if k not in mark {
+			mark.insert(k, v)
+		}
+	}
+
+	for (key, value) in mark {
+		if key == "cap-offset" { continue }
+
+		if type(value) == function {
+			mark.at(key) = value(mark)
+		}
+	}
+
+	mark
+}
+
+
+/// Draw a mark at a given position and angle
+///
+/// - mark (dictionary): Mark object to draw. Must contain a `draw` entry.
+/// - stroke (stroke): Stroke style for the mark. The stroke's paint is used as
+///   the default fill style.
+/// - origin (point): Coordinate of the mark's origin (as defined by 
+///   `tip-origin` or `tail-origin`).
+/// - angle (angle): Angle of the mark, `0deg` being $->$, counterclockwise.
+/// - debug (bool): Whether to draw the origin points.
+#let draw-mark(
+	mark,
+	stroke: 1pt,
+	origin: (0,0),
+	angle: 0deg,
+	debug: false
+) = {
+	mark = resolve-mark(mark)
+	stroke = as-stroke(stroke)
+
+	let thickness = stroke.thickness
+
+	let fill = mark.at("fill", default: auto)
+	fill = map-auto(fill, stroke.paint)
+	fill = map-auto(fill, black)
+
+	let stroke = stroke-to-dict(stroke)
+	stroke.dash = none
+
+	if "stroke" in mark {
+		if mark.stroke == none { stroke = none }
+		else if mark.stroke == auto { }
+		else { stroke += stroke-to-dict(mark.stroke) }
+	}
+
+	if "draw" not in mark {
+		error("Mark object must contain `draw` or `inherit`; resolved to #0.", mark)
+	}
+
+	draw.group({
+		draw.set-style(
+			stroke: stroke,
+			fill: fill,
+		)
+
+		draw.translate(origin)
+		draw.rotate(angle)
+		draw.scale(thickness/1cm*float(mark.scale))
+
+		if mark.at("rev", default: false) {
+			draw.translate(x: mark.tail-origin)
+			draw.scale(x: -1)
+			if debug {
+				draw.content((0,10), text(0.25em, red)[rev])
+			}
+		} else {
+			draw.translate(x: -mark.tip-origin)
+		}
+
+		if mark.flip {
+			draw.scale(y: -1)
+		}
+
+		for e in mark.extrude {
+			draw.group({
+				draw.translate(x: e)
+				mark.draw
+			})
+		}
+
+		if debug {
+			let tip = mark.at("tip", default: none)
+			if tip == true {
+				draw.content((0,-10), text(0.25em, green)[tip])
+			} else if tip == false {
+				draw.content((0,-10), text(0.25em, orange)[tail])
+			}
+		}
+
+	})
+}
+
+/// Visualise a mark's anatomy.
+///
+/// ```example
+/// #context {
+/// 	let mark = fletcher.MARKS.get().stealth
+/// 	// make a wide stealth arrow
+/// 	mark += (angle: 45deg)
+/// 	fletcher.mark-debug(mark)
+/// }
+/// ```
+///
+/// - Green/left stroke: the edge's stroke when the mark is at the tip.
+/// - Red/right stroke: edge's stroke if the mark is at the start acting as a
+///   tail.
+/// - Blue-white dot: the origin point $(0, 0)$ in the mark's coordinate frame.
+/// - `tip-origin`: the $x$-coordinate of the point of the mark's tip.
+/// - `tail-origin`: the $x$-coordinate of the mark's tip when it is acting as a
+///   reversed tail mark.
+/// - `tip-end`: The $x$-coordinate of the end point of the edge's stroke (green
+///   stroke).
+/// - `tail-end`: The $x$-coordinate of the end point of the edge's stroke when
+///   acting as a tail mark (red stroke).
+/// - Dashed green/red lines: The stroke end points as a function of $y$. This
+///   is controlled by the special `cap-offset` mark property and is used for
+///   multi-stroke effects like #diagram(edge(">==>")). See `cap-offset()`.
+///
+/// This is mainly useful for designing your own marks.
+///
+/// - mark (string, dictionary): The mark name or dictionary.
+/// - stroke (stroke): The stroke style, whose paint and thickness applies both
+///   to the stroke and the mark itself.
+///
+/// - show-labels (bool): Whether to label the tip/tail origin/end points.
+/// - show-offsets (bool): Whether to visualise the `cap-offset()` values.
+/// - offset-range (number): The span above and below the stroke line to plot
+///   the cap offsets, in multiples of the stroke's thickness.
+#let mark-debug(
+	mark,
+	stroke: 5pt,
+	show-labels: true,
+	show-offsets: true,
+	offset-range: 6,
+) = context {
+	let mark = resolve-mark(mark)
+	let stroke = as-stroke(stroke)
+
+	let t = stroke.thickness
+	let scale = float(mark.scale)
+
+
+	cetz.canvas({
+
+		draw-mark(mark, stroke: stroke)
+
+		if mark.at("rev", default: false) {
+			draw.scale(x: -1)
+			draw.translate(x: -t*mark.tail-origin*scale)
+		} else {
+			draw.translate(x: -t*mark.tip-origin*scale)
+		}
+
+
+		if show-offsets {
+
+			let samples = 100
+			let ys = range(samples + 1)
+				.map(n => n/samples)
+				.map(y => (2*y - 1)*offset-range)
+
+			let tip-points = ys.map(y => {
+				let o = cap-offset(mark + (tip: true), y)
+				(o*t, y*t)
+			})
+
+			let tail-points = ys.map(y => {
+				let o = cap-offset(mark + (tip: false), y)
+				(o*t, y*t)
+			})
+
+			draw.line(
+				..tip-points,
+				stroke: (
+					paint: rgb("0f0"),
+					thickness: 0.4pt,
+					dash: (array: (3pt, 3pt), phase: 0pt),
+				),
+			)
+			draw.line(
+				..tail-points,
+				stroke: (
+					paint: rgb("f00"),
+					thickness: 0.4pt,
+					dash: (array: (3pt, 3pt), phase: 3pt),
+				),
+			)
+
+
+		}
+
+		if show-labels {
+			for (i, (item, y, color)) in (
+				("tip-end",     +1.00, "0f0"),
+				("tail-end",    -1.00, "f00"),
+				("tip-origin",  +0.75,  "0ff"),
+				("tail-origin", -0.75,  "f0f"),
+			).enumerate() {
+				let x = mark.at(item)*float(mark.scale)
+				let c = rgb(color)
+				draw.line((t*x, 0), (t*x, y), stroke: 0.5pt + c)
+				draw.content(
+					(t*x, y),
+					pad(2pt, text(0.75em, fill: c, raw(item))),
+					anchor: if y < 0 { "north" } else { "south" },
+				)
+			}
+		}
+
+		// draw tip/tail stroke previews
+		let (min, max) = min-max((
+			"tip-end",
+			"tail-end",
+			"tip-origin",
+			"tail-origin",
+		).map(i => mark.at(i)))
+
+		let l = calc.max(5, max - min)
+
+		draw.line(
+			(t*mark.tip-end, 0),
+			(t*(min - l), 0),
+			stroke: rgb("0f06") + t,
+		)
+		draw.line(
+			(t*mark.tail-end, 0),
+			(t*(max + l), 0),
+			stroke: rgb("f006") + t,
+		)
+
+		// draw true origin dot
+		draw.circle(
+			(0, 0),
+			radius: t/4,
+			stroke: rgb("00f") + 1pt,
+			fill: white,
+		)
+	})
+}
+
+#let mark-demo(
+	mark,
+	stroke: 2pt,
+	width: 3cm,
+	height: 1cm,
+) = context {
+	let mark = resolve-mark(mark)
+	let stroke = as-stroke(stroke)
+
+	let t = stroke.thickness*float(mark.scale)
+
+	cetz.canvas({
+
+		for x in (0, width) {
+			draw.line(
+				(x, +0.5*height),
+				(x, -1.5*height),
+				stroke: red.transparentize(50%) + 0.5pt,
+			)
+		}
+
+		let x = t*(mark.tip-origin - mark.tip-end)
+		draw.line(
+			(x, 0),
+			(rel: (-x, 0), to: (width, 0)),
+			stroke: stroke,
+		)
+
+		let mark-length = t*(mark.tip-origin - mark.tail-origin)
+		draw-mark(
+			mark + (rev: true),
+			stroke: stroke,
+			origin: (mark-length, 0),
+			angle: 0deg,
+		)
+		draw-mark(
+			mark + (rev: false),
+			stroke: stroke,
+			origin: (width, 0),
+			angle: 0deg,
+		)
+
+		draw.translate((0, -height))
+
+		let x = t*(mark.tail-end - mark.tail-origin)
+		draw.line(
+			(x, 0),
+			(rel: (-x, 0), to: (width, 0)),
+			stroke: stroke,
+		)
+
+		draw-mark(
+			mark + (rev: true),
+			stroke: stroke,
+			origin: (0, 0),
+			angle: 180deg,
+		)
+		draw-mark(
+			mark + (rev: false),
+			stroke: stroke,
+			origin: (width - mark-length, 0),
+			angle: 180deg,
+		)
+
+	})
+}
+
+
+#let place-mark-on-curve(mark, path, stroke: 1pt + black, debug: false) = {
+	if mark.at("hide", default: false) { return }
+
+	let ε = 1e-4
+
+	// calculate velocity of parametrised path at point
+	let point = path(mark.pos)
+	let point-plus-ε = path(mark.pos + ε)
+	let grad = vector-len(vector.sub(point-plus-ε, point))/ε
+	if grad == 0pt { grad = ε*1pt }
+
+	let mark-length = mark.at("tip-origin", default: 0) - mark.at("tail-origin", default: 0)
+	mark-length *= float(mark.scale)
+	let Δt = mark-length*stroke.thickness/grad
+	if Δt == 0 { Δt = ε } // avoid Δt = 0 so the two points are distinct
+
+	let t = lerp(Δt, 1, mark.pos)
+	let tip-point = path(t)
+	let tail-point = path(t - Δt)
+	let θ = angle-between(tail-point, tip-point)
+
+	draw-mark(mark, origin: tip-point, angle: θ, stroke: stroke)
+
+	if debug {
+		draw.circle(
+			tip-point,
+			radius: .2pt,
+			fill: rgb("0f0"),
+			stroke: none
+		)
+		draw.circle(
+			tail-point,
+			radius: .2pt,
+			fill: rgb("f00"),
+			stroke: none
+		)
+	}
+
+}
+#import "utils.typ": *
+#import "coords.typ": uv-to-xy, default-ctx, resolve, NAN_COORD, resolve-system
+#import "shapes.typ"
+
+
+/// Draw a labelled node in a diagram which can connect to edges.
+///
+/// - ..args (any): The first positional argument is #param[node][pos] and the
+///   second, if given, is #param[node][label].
+///
+/// - pos (coordinate): Position of the node, or its center coordinate. This may
+///   be an elastic (row/column) coordinate like `(2, 1)`, or a CeTZ-style
+///   coordinate expression like `(rel: (30deg, 1cm), to: (2, 1))`.
+///
+///   See the options of `diagram()` to control the physical scale of elastic
+///   coordinates.
+///
+/// - name (label, string, none): An optional name to give the node.
+///
+///   Names can sometimes be used in place of coordinates. For example:
+///
+///   ```example
+///   #diagram(
+///   	node((0,0), $A$, name: <A>),
+///   	node((1,0.6), $B$, name: <B>),
+///   	edge(<A>, <B>, "->"),
+///   	node((rel: (1, 0), to: <B>), $C$)
+///   )
+///   ```
+///
+///   Node names are _labels_ (instead of strings like in CeTZ) to disambiguate
+///   them from other positional string arguments given to `edge()`. If a string
+///   is given, it is converted. (Since these labels are never inserted into the
+///   final document, they cannot interfere with other document labels.) 
+///
+/// - label (content): Content to display inside the node.
+///
+///   If a node is larger than its label, you can wrap the label in `align()` to
+///   control the label alignment within the node.
+///
+///   ```example
+///   #diagram(
+///   	node((0,0), align(bottom + left)[¡Hola!],
+///   		width: 3cm, height: 2cm, fill: yellow),
+///   )
+///   ```
+///
+/// - inset (length): Padding between the node's content and its outline.
+///
+///   In debug mode, the inset is visualised by a thin green outline.
+///
+///   ```example
+///   #diagram(
+///   	debug: 3,
+///   	node-stroke: 1pt,
+///   	node((0,0), [Hello,]),
+///   	edge(),
+///   	node((1,0), [World!], inset: 10pt),
+///   )
+///   ```
+///
+///   Defaults to #the-param[diagram][node-inset].
+///
+/// - outset (length): Margin between the node's bounds to the anchor
+///   points for connecting edges.
+///
+///   This does not affect node layout, only how closely edges connect to the
+///   node.
+///
+///   In debug mode, the outset is visualised by a thin green outline.
+///
+///   ```example
+///   #diagram(
+///   	debug: 3,
+///   	node-stroke: 1pt,
+///   	node((0,0), [Hello,]),
+///   	edge(),
+///   	node((1,0), [World!], outset: 10pt),
+///   )
+///   ```
+///
+///   Defaults to #the-param[diagram][node-outset].
+///
+/// - width (length, auto): Width of the node. If `auto`, the node's width is
+///   the width of the node #param[node][label], plus twice the
+///   #param[node][inset].
+///
+///   If the width is not `auto`, you can use `align` to control the placement of the node's #param[node][label].
+///
+/// - height (length, auto): Height of the node. If `auto`, the node's height is the height of the node #param[node][label], plus twice the #param[node][inset].
+///
+///   If the height is not `auto`, you can use `align` to control the placement of the node's #param[node][label].
+///
+/// - enclose (array): Positions or names of other nodes to enclose by enlarging
+///   this node.
+///
+///   If given, causes the node to resize so that its bounding rectangle
+///   surrounds the given nodes. The center #param[node][pos] does not affect
+///   the node's position if `enclose` is given, but still affects connecting
+///   edges.
+///
+///   ```example
+///   #diagram(
+///   	node-stroke: 1pt,
+///   	node((0,0), [ABC], name: <A>),
+///   	node((1,1), [XYZ], name: <Z>),
+///   	node(
+///   		text(teal)[Node group], stroke: teal,
+///   		enclose: (<A>, <Z>), name: <group>),
+///   	edge(<group>, (3,0.5), stroke: teal),
+///   )
+///   ```
+///
+/// - shape (rect, circle, function): Shape of the node's outline. If `auto`,
+///   one of `rect` or `circle` is chosen depending on the aspect ratio of the
+///   node's label.
+///
+///   Other shapes are defined in the `fletcher.shapes`
+///   submodule, including
+///   #{
+///   	dictionary(fletcher.shapes).pairs()
+///   	.filter(((k, v)) => type(v) != module)
+///   	.map(((k, v)) => [#raw(k)])
+///   	.join(last: [, and ])[, ]
+///   }.
+///
+///   Custom shapes should be specified as a function `(node, extrude, ..parameters) => (..)`
+///   which returns `cetz` objects.
+///   - The `node` argument is a dictionary containing the node's attributes,
+///     including its dimensions (`node.size`), and other options (such as
+///     `node.corner-radius`).
+///   - The `extrude` argument is a length which the shape outline should be
+///     extruded outwards by. This serves two functions: to support automatic
+///     edge anchoring with a non-zero node `outset`, and to create multi-stroke
+///     effects using the `extrude` node option.
+///   See the
+///   #link("https://github.com/Jollywatt/typst-fletcher/blob/master/src/shapes.typ", 
+///   ```plain src/shapes.typ```) source file for example shape implementations.
+///
+///   Defaults to #the-param[diagram][node-shape].
+///
+/// - stroke (stroke): Stroke style for the node outline.
+///
+///   Defaults to #the-param[diagram][node-stroke].
+///
+/// - fill (paint): Fill style of the node. The fill is drawn within the node
+///   outline as defined by the first #param(full: false)[node][extrude] value.
+///
+///   Defaults to #the-param[diagram][node-fill].
+///
+/// - defocus (number): Strength of the "defocus" adjustment for connectors
+///   incident with this node.
+///
+///   This affects how connectors attach to non-square nodes. If `0`, the
+///   adjustment is disabled and connectors are always directed at the node's
+///   exact center.
+///
+///   #stack(
+///   	dir: ltr,
+///   	spacing: 1fr,
+///   	..(0.2, 0, -1).enumerate().map(((i, defocus)) => {
+///   		fletcher.diagram(spacing: 8mm, {
+///   			node((i, 0), raw("defocus: "+str(defocus)), stroke: black, defocus: defocus)
+///   			for y in (-1, +1) {
+///   				edge((i - 1, y), (i, 0))
+///   				edge((i, y), (i, 0))
+///   				edge((i + 1, y), (i, 0))
+///   			}
+///   		})
+///   	})
+///   )
+///
+///   Defaults to #the-param[diagram][node-defocus].
+///
+/// - extrude (array): Draw strokes around the node at the given offsets to
+///   obtain a multi-stroke effect. Offsets may be numbers (specifying multiples
+///   of the stroke's thickness) or lengths.
+///
+///   The node's fill is drawn within the boundary defined by the first offset in
+///   the array.
+///
+///   #diagram(
+///   	node-stroke: 1pt,
+///   	node-fill: red.lighten(70%),
+///   	node((0,0), `(0,)`),
+///   	node((1,0), `(0, 2)`, extrude: (0, 2)),
+///   	node((2,0), `(2, 0)`, extrude: (2, 0)),
+///   	node((3,0), `(0, -2.5, 2mm)`, extrude: (0, -2.5, 2mm)),
+///   )
+///
+///   See also #the-param[edge][extrude].
+///
+/// - corner-radius (length): Radius of rounded corners, if supported by the
+///   node #param[node][shape].
+///
+///   Defaults to #the-param[diagram][node-corner-radius].
+///
+/// - layer (number): Layer on which to draw the node.
+///
+///   Objects on a higher `layer` are drawn on top of objects on a lower
+///   `layer`. Objects on the same layer are drawn in the order they are passed
+///   to `diagram()`.
+///
+///   Defaults to layer `0` unless the node #param[node][enclose]s
+///   points, in which case `layer` defaults to `-1`.
+///
+/// - snap (number, false): The snapping priority for edges connecting to this
+///   node. A higher priority means edges will automatically snap to this node
+///   over other overlapping nodes. If `false`, edges only snap to this node if
+///   manually set with #the-param[edge][snap-to].
+///
+///   Setting a lower value is useful if the node #param[node][enclose]s other
+///   nodes that you want to snap to first.
+///
+/// - post (function): Callback function to intercept `cetz` objects before they
+///   are drawn to the canvas.
+///
+///   This can be used to hide elements without affecting layout (for use with
+///   #link("https://github.com/touying-typ/touying")[Touying], for example).
+///   The `hide()` function also helps for this purpose.
+///
+#let node(
+	..args,
+	pos: auto,
+	name: none,
+	label: none,
+	inset: auto,
+	outset: auto,
+	fill: auto,
+	stroke: auto,
+	extrude: (0,),
+	width: auto,
+	height: auto,
+	radius: auto,
+	enclose: (),
+	corner-radius: auto,
+	shape: auto,
+	defocus: auto,
+	snap: 0,
+	layer: auto,
+	post: x => x,
+) = {
+	if args.named().len() > 0 { error("Unexpected named argument(s) #..0.", args.named().keys()) }
+	if args.pos().len() > 2 { error("`node()` can have up to two positional arguments; the position and label.") }
+
+	// interpret first two positional arguments
+	if args.pos().len() == 2 {
+		(pos, label) = args.pos()
+	} else if args.pos().len() == 1 {
+		let arg = args.pos().at(0)
+		// one positional argument may be the coordinate or the label
+		if type(arg) in (array, dictionary, label) {
+			pos = arg
+			label = none
+		} else {
+			pos = if enclose.len() > 0 { auto } else { () }
+			label = arg
+		}
+	}
+
+	let extrude = as-array(extrude).map(as-number-or-length.with(
+		message: "`extrude` must be a number, length, or an array of those"
+	))
+
+	if not (type(snap) in (int, float) or snap == false) {
+		error("`snap` must be a number specifying priority or `false` to disable; got #0.", repr(snap))
+	}
+
+	metadata((
+		class: "node",
+		pos: (raw: pos),
+		name: pass-none(as-label)(name),
+		label: label,
+		inset: inset,
+		outset: outset,
+		enclose: as-array(enclose),
+		size: (width, height),
+		radius: radius,
+		shape: shape,
+		stroke: stroke,
+		fill: fill,
+		corner-radius: corner-radius,
+		defocus: defocus,
+		extrude: extrude,
+		layer: layer,
+		snap: snap,
+		post: post,
+	))
+}
+
+
+
+#let resolve-node-options(node, options) = {
+
+	node.stroke = map-auto(node.stroke, options.node-stroke)
+	if node.stroke != none {
+		let base-stroke = pass-none(stroke-to-dict)(options.node-stroke)
+		node.stroke = base-stroke + stroke-to-dict(node.stroke)
+	}
+	node.stroke = pass-none(stroke)(node.stroke) // guarantee stroke or none
+
+	node.fill = map-auto(node.fill, options.node-fill)
+	node.corner-radius = map-auto(node.corner-radius, options.node-corner-radius)
+	node.inset = map-auto(node.inset, options.node-inset).to-absolute()
+	node.outset = map-auto(node.outset, options.node-outset).to-absolute()
+	node.defocus = map-auto(node.defocus, options.node-defocus)
+
+	node.size = node.size.map(pass-auto(length.to-absolute))
+	node.radius = pass-auto(length.to-absolute)(node.radius)
+
+	node.shape = map-auto(node.shape, options.node-shape)
+
+	if node.shape == auto {
+		if node.radius != auto { node.shape = "circle" }
+		if node.size != (auto, auto) { node.shape = "rect" }
+	}
+
+	let thickness = if node.stroke == none { 1pt } else {
+		map-auto(node.stroke.thickness, 1pt)
+	}
+
+	node.extrude = node.extrude.map(d => {
+		if type(d) == length { d }
+		else { d*thickness }
+	}).map(length.to-absolute)
+
+	if type(node.outset) in (int, float) {
+		node.outset *= thickness
+	}
+
+	let default-layer = if node.enclose.len() > 0 { -1 } else { 0 }
+	node.layer = map-auto(node.layer, default-layer)
+
+	node
+}
+
+
+/// Measure node labels with the style context and resolve node shapes.
+///
+/// Widths and heights that are `auto` are determined by measuring the size of
+/// the node's label.
+#let measure-node-size(node) = {
+
+	// Width and height explicitly given
+	if auto not in node.size {
+		let (width, height) = node.size
+		node.radius = vector-len((width/2, height/2))
+		node.aspect = width/height
+
+	// Radius explicitly given
+	} else if node.radius != auto {
+		node.size = (2*node.radius, 2*node.radius)
+		node.aspect = 1
+
+	// Width and/or height set to auto
+	} else {
+
+		let inner-size = node.size.map(pass-auto(i => i - 2*node.inset))
+
+		// Determine physical size of node content
+		let (width, height) = measure(box(
+			node.label,
+			width:  inner-size.at(0),
+			height: inner-size.at(1),
+		))
+
+		// let (width, height) = node.inner-size
+		let radius = vector-len((width/2, height/2)) // circumcircle
+
+		node.aspect = if width == 0pt or height == 0pt { 1 } else { width/height }
+
+		if node.shape == auto {
+			let is-roundish = calc.max(node.aspect, 1/node.aspect) < 1.5
+			node.shape = if is-roundish { "circle" } else { "rect" }
+		}
+
+		// Add node inset
+		if radius != 0pt { radius += node.inset }
+		if width != 0pt and height != 0pt {
+			width += 2*node.inset
+			height += 2*node.inset
+		}
+
+		// If width/height/radius is auto, set to measured width/height/radius
+		node.size = node.size.zip((width, height))
+			.map(((given, measured)) => map-auto(given, measured))
+		node.radius = map-auto(node.radius, radius)
+
+	}
+
+	if node.shape in (circle, "circle") { node.shape = shapes.circle }
+	if node.shape in (rect, "rect") { node.shape = shapes.rect }
+
+	node
+}
+
+
+/// Process the `enclose` options of an array of nodes.
+#let resolve-node-enclosures(nodes, ctx) = {
+
+	let nodes = nodes.map(node => {
+		// not an enclose node, leave as is
+		if node.enclose.len() == 0 { return node }
+
+		let enclosed-vertices = node.enclose.map(key => {
+			let near-node = find-node(nodes, key)
+
+			// if near-node == none or near-node.pos.raw == auto {
+			if near-node == none {
+				// if enclosed point doesn't resolve to a node
+				// enclose the point itself
+				let (_, coord) = resolve(ctx, key)
+				(coord,)
+			} else {
+				// if enclosed point resolves to a node
+				// enclose its bounding box
+				let (x, y) = near-node.pos.xyz
+				if "bounding-center" in near-node {
+					(x, y) = near-node.bounding-center
+				}
+				let (w, h) = near-node.size
+				(
+					(x - w/2, y - h/2),
+					(x - w/2, y + h/2),
+					(x + w/2, y - h/2),
+					(x + w/2, y + h/2),
+				)
+			}
+		}).join()
+
+		let (center, size) = bounding-rect(enclosed-vertices)
+
+		node.pos.xyz = center
+		node.bounding-center = center
+		node.size = vector-max(
+			size.map(d => d + node.inset*2),
+			node.size,
+		)
+		node.resolved-enclose = true
+		node.shape = shapes.rect // TODO: support different node shapes with enclose
+
+		node
+	})
+
+	nodes
+}
+
+
+#let register-node-anchors(ctx, node) = {
+	if node.name == none { return ctx }
+	let node-origin = node.pos.at(ctx.target-system)
+	let calculate-anchors
+
+	if ctx.target-system == "uv" {
+		// anchors don't make sense in elastic coordinates
+		// so just give access to the origin, but make
+		// everything else indeterminate (NAN_COORD)
+		calculate-anchors = (a) => {
+			if a == () {
+				("default",)
+			} else {
+				if a == "default" {
+					node-origin
+				} else {
+					NAN_COORD
+				}
+			}
+		}
+	} else if ctx.target-system == "xyz" {
+		if is-nan-vector(node-origin) { return ctx }
+
+		// do not compute anchors for enclose nodes before they have been resolved
+		if node.enclose.len() > 0 and "resolved-enclose" not in node {
+			calculate-anchors = (k) => NAN_COORD
+		} else {
+			let cetz-obj = (node.shape)(node, node.outset).at(0)
+			calculate-anchors = (k) => {
+				if k == "default" { return node-origin }
+				let a = ((cetz-obj)(ctx).anchors)(k)
+				if not is-number-vector(a) { return a }
+				a.at(1) *= -1 // CETZ Y AXIS
+				vector.add(
+					node-origin, // node center
+					vector-2d(vector.scale(a, ctx.length)),
+				)
+			}
+		}
+	}
+
+	ctx.nodes.insert(str(node.name), (anchors: calculate-anchors))
+	ctx
+
+}
+
+/// Resolve node positions to a target coordinate system in sequence.
+///
+/// CeTZ-style coordinate expressions work, with the previous coordinate `()`
+/// referring to the resolved position of the previous node.
+///
+/// The resolved coordinates are added to each node's `pos` dictionary. 
+///
+/// - nodes (array): Array of nodes, each a dictionary containing a `pos` entry,
+///   which should be a CeTZ-compatible coordinate expression.
+/// - ctx (dictionary): CeTZ-style context to be passed to `resolve(ctx, ..)`.
+///   This must contain `target-system`, and optionally `grid`.
+/// -> array
+#let resolve-node-coordinates(nodes, ctx: (:)) = {
+	let ctx = default-ctx + ctx
+	let system = ctx.target-system
+
+	// nodes which enclose other points are allowed to have
+	// position `auto`; they are placed after normal nodes
+	let auto-placed-nodes = ()
+
+	let coord
+	for (i, node) in nodes.enumerate() {
+
+		if node.pos.raw == auto {
+			// this node encloses other nodes
+			if ctx.target-system == "xyz" {
+				// resolve center from uv coords, if possible
+				if not is-nan-vector(node.pos.uv) {
+					(ctx, coord) = resolve(ctx, node.pos.uv)
+				}
+			} else {
+				// otherwise, we must find bounding box center later
+				auto-placed-nodes.push(i)
+				coord = NAN_COORD
+			}
+		} else {
+			// this node has a center that may be resolvable
+			(ctx, coord) = resolve(ctx, node.pos.raw)
+		}
+
+		node.pos.insert(ctx.target-system, coord)
+		nodes.at(i) = node
+		ctx = register-node-anchors(ctx, node)
+	}
+
+	for i in auto-placed-nodes {
+		let node = nodes.at(i)
+
+		// the center of enclosing nodes defaults to the center
+		// of the bounding rect of the points they enclose
+		let enclosed-points = node.enclose.map(key => {
+			let node = find-node(nodes, key)
+			if node == none {
+				// enclose key doesn't correspond to node
+				// interpret key as real coordinate
+				let (_, coord) = resolve(ctx, key)
+				coord
+			} else {
+				node.pos.at(ctx.target-system)
+			}
+		}).filter(coord => not is-nan-vector(coord))
+
+		let coord = if enclosed-points.len() > 0 {
+			bounding-rect(enclosed-points).center
+		} else { NAN_COORD }
+
+		nodes.at(i).pos.insert(ctx.target-system, coord)
+
+	}
+
+	(ctx, nodes)
+}
+#import "deps.typ": cetz
+#import cetz: draw, vector
+
+/// The standard rectangle node shape.
+///
+/// A string `"rect"` or the element function `rect` given to
+/// #the-param[node][shape] are interpreted as this shape.
+///
+/// #diagram(
+/// 	node-stroke: green,
+/// 	node-fill: green.lighten(90%),
+/// 	node((0,0), `rect`, shape: fletcher.shapes.rect)
+/// )
+///
+#let rect(node, extrude) = {
+	let r = node.corner-radius
+	let (w, h) = node.size.map(i => i/2 + extrude)
+	draw.rect(
+		(-w, -h), (+w, +h),
+		radius: if r != none { r + extrude },
+	)
+}
+
+/// The standard circle node shape.
+///
+/// A string `"circle"` or the element function `circle` given to
+/// #the-param[node][shape] are interpreted as this shape.
+///
+/// #diagram(
+/// 	node-stroke: red,
+/// 	node-fill: red.lighten(90%),
+/// 	node((0,0), `circle`, shape: fletcher.shapes.circle)
+/// )
+///
+#let circle(node, extrude) = draw.circle((0, 0), radius: node.radius + extrude)
+
+/// An elliptical node shape.
+///
+/// #diagram(
+/// 	node-stroke: orange,
+/// 	node-fill: orange.lighten(90%),
+/// 	node((0,0), `ellipse`, shape: fletcher.shapes.ellipse)
+/// )
+///
+/// - scale (number): Scale factor for ellipse radii.
+#let ellipse(node, extrude, scale: 1) = {
+	draw.circle(
+		(0, 0),
+		radius: vector.scale(node.size, 0.5).map(x => x*scale + extrude),
+	)
+}
+
+
+/// A capsule node shape.
+///
+/// #diagram(
+/// 	node-stroke: teal,
+/// 	node-fill: teal.lighten(90%),
+/// 	node((0,0), `pill`, shape: fletcher.shapes.pill)
+/// )
+///
+#let pill(node, extrude) = {
+	let size = node.size.map(i => i + 2*extrude)
+	draw.rect(
+		vector.scale(size, -0.5),
+		vector.scale(size, +0.5),
+		radius: calc.min(..size)/2,
+	)
+}
+
+
+/// A slanted rectangle node shape.
+///
+/// #diagram(
+/// 	node-stroke: olive,
+/// 	node-fill: olive.lighten(90%),
+/// 	node((0,0), `parallelogram`, shape: fletcher.shapes.parallelogram)
+/// )
+///
+/// - angle (angle): Angle of the slant, `0deg` is a rectangle. Don't set to
+///   `90deg` unless you want your document to be larger than the solar system.
+///
+/// - fit (number): Adjusts how comfortably the parallelogram fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.parallelogram.with(fit: fit, angle: 35deg)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: olive,
+///   		fill: olive.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+#let parallelogram(node, extrude, flip: false, angle: 20deg, fit: 0.8) = {
+	let (w, h) = node.size
+	if flip { (w, h) = (h, w) }
+
+	let (x, y) = (w/2 + extrude*calc.cos(angle), h/2 + extrude)
+	let δ = h/2*calc.tan(angle)
+	let μ = extrude*calc.tan(angle)
+	x += δ*fit
+
+	let verts = (
+		(-x - μ, -y),
+		(+x - δ, -y),
+		(+x + μ, +y),
+		(-x + δ, +y),
+	)
+
+	if flip { verts = verts.map(((i, j)) => (j, i)) }
+
+	let obj = draw.line(..verts, close: true)
+	draw.group(obj) // enables cetz border anchors
+}
+
+
+/// An isosceles trapezium node shape.
+///
+/// #diagram(
+/// 	node-stroke: green,
+/// 	node-fill: green.lighten(90%),
+/// 	node((0,0), `trapezium`, shape: fletcher.shapes.trapezium)
+/// )
+///
+/// - angle (angle): Angle of the slant, `0deg` is a rectangle. Don't set to
+///   `90deg` unless you want your document to be larger than the solar system.
+///
+/// - fit (number): Adjusts how comfortably the trapezium fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.trapezium.with(fit: fit, angle: 35deg)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: green,
+///   		fill: green.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+///
+/// - dir (top, bottom, left, right): The side the shorter parallel edge is on.
+#let trapezium(node, extrude, dir: top, angle: 20deg, fit: 0.8) = {
+	assert(dir in (top, bottom, left, right))
+
+	let flip = dir in (right, left) // flip along diagonal line x = y
+	let rotate = dir in (bottom, left) // rotate 180deg
+
+	let (w, h) = node.size
+	if flip { (w, h) = (h, w) }
+
+	let (x, y) = (w/2 + extrude*calc.cos(angle), h/2 + extrude)
+	let δ = h/2*calc.tan(angle)
+	let μ = extrude*calc.tan(angle)
+	x += δ*fit
+
+	let verts = (
+		(-x - μ, -y),
+		(+x + μ, -y),
+		(+x - δ, +y),
+		(-x + δ, +y),
+	)
+
+	if flip { verts = verts.map(((i, j)) => (j, i)) }
+	if rotate { verts = verts.map(((i, j)) => (-i, -j)) }
+
+	let obj = draw.line(..verts, close: true)
+	draw.group(obj) // enables cetz border anchors
+}
+
+/// A rhombus node shape.
+///
+/// #diagram(
+/// 	node-stroke: purple,
+/// 	node-fill: purple.lighten(90%),
+/// 	node((0,0), `diamond`, shape: fletcher.shapes.diamond)
+/// )
+///
+/// - fit (number): Adjusts how comfortably the diamond fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.diamond.with(fit: fit)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: purple,
+///   		fill: purple.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+#let diamond(node, extrude, fit: 0.5) = {
+	let (w, h) = node.size
+	let φ = calc.atan2(w/1pt, h/1pt)
+	let x = w/2*(1 + fit) + extrude/calc.sin(φ)
+	let y = h/2*(1 + fit) + extrude/calc.cos(φ)
+	let obj = draw.line(
+		(-x, 0pt),
+		(0pt, -y),
+		(+x, 0pt),
+		(0pt, +y),
+		close: true,
+	)
+	draw.group(obj) // enables cetz border anchors
+}
+
+/// An isosceles triangle node shape.
+///
+/// One of #param[triangle][angle] or #param[triangle][aspect] may be given, but
+/// not both. The triangle's base coincides with the label's base and widens to
+/// enclose the label; see https://www.desmos.com/calculator/i4i9svunj4.
+///
+/// #diagram(
+/// 	node-stroke: fuchsia,
+/// 	node-fill: fuchsia.lighten(90%),
+/// 	node((0,0), `triangle`, shape: fletcher.shapes.triangle)
+/// )
+///
+/// - dir (top, bottom, left, right): Direction the triangle points.
+/// - aspect (number, auto): Aspect ratio of triangle, or the ratio of its base
+///   to its height.
+/// - angle (angle, auto): Angle of the triangle opposite the base.
+/// - fit (number): Adjusts how comfortably the triangle fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.triangle.with(fit: fit, angle: 120deg)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: fuchsia,
+///   		fill: fuchsia.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+#let triangle(node, extrude, dir: top, angle: auto, aspect: auto, fit: 0.8) = {
+	assert(dir in (top, bottom, left, right))
+
+	let flip = dir in (right, left) // flip along diagonal line x = y
+	let rotate = dir in (bottom, left) // rotate 180deg
+
+	let (w, h) = node.size
+	if flip { (w, h) = (h, w) }
+
+	if angle == auto and aspect == auto { aspect = w/h }
+	if angle == auto { angle = 2*calc.atan(aspect/2) }
+	if aspect == auto { aspect = 2*calc.tan(angle/2) }
+
+	let a = aspect*h/2 + fit*w/2
+	let b = (a + fit*w/2)/aspect
+
+	a += extrude*calc.tan(45deg + angle/4)
+	b += extrude/calc.cos(90deg - angle/2)
+
+	let verts = (
+		(-a, -h/2 - extrude),
+		(+a, -h/2 - extrude),
+		(0, +b),
+	)
+
+	if flip { verts = verts.map(((i, j)) => (j, i)) }
+	if rotate { verts = verts.map(((i, j)) => (-i, -j)) }
+
+	let obj = draw.line(..verts, close: true)
+	draw.group(obj) // enables cetz border anchors
+}
+
+
+/// A pentagonal house-like node shape.
+///
+/// #diagram(
+/// 	node-stroke: eastern,
+/// 	node-fill: eastern.lighten(90%),
+/// 	node((0,0), `house`, shape: fletcher.shapes.house)
+/// )
+///
+/// - dir (top, bottom, left, right): Direction of the roof of the house.
+/// - angle (angle): The slant of the roof. A plain rectangle is `0deg`, and 
+///   `90deg` is a sky scraper stretching past Pluto.
+#let house(node, extrude, dir: top, angle: 10deg) = {
+	let flip = dir in (right, left) // flip along diagonal line x = y
+	let rotate = dir in (bottom, left) // rotate 180deg
+
+	let (w, h) = node.size
+	if flip { (w, h) = (h, w) }
+
+	let (x, y) = (w/2 + extrude, h/2 + extrude)
+	let a = h/2 + extrude*calc.tan(45deg - angle/2)
+	let b = h/2 + w/2*calc.tan(angle) + extrude/calc.cos(angle)
+
+ 	let verts = (
+		(-x, -y),
+		(-x,  a),
+		(0pt, b),
+		(+x,  a),
+		(+x, -y),
+	)
+
+	if flip { verts = verts.map(((i, j)) => (j, i)) }
+	if rotate { verts = verts.map(((i, j)) => (-i, -j)) }
+
+	let obj = draw.line(..verts, close: true)
+	draw.group(obj) // enables cetz border anchors
+}
+
+
+
+
+/// A chevron node shape.
+///
+/// #diagram(
+/// 	node-stroke: yellow,
+/// 	node-fill: yellow.lighten(90%),
+/// 	node((0,0), `chevron`, shape: fletcher.shapes.chevron)
+/// )
+///
+/// - dir (top, bottom, left, right): Direction the chevron points.
+/// - angle (angle): The slant of the arrow. A plain rectangle is `0deg`.
+/// - fit (number): Adjusts how comfortably the chevron fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.chevron.with(fit: fit)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: yellow,
+///   		fill: yellow.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+#let chevron(node, extrude, dir: right, angle: 30deg, fit: 0.8) = {
+	let flip = dir in (right, left) // flip along diagonal line x = y
+	let rotate = dir in (bottom, left) // rotate 180deg
+
+	let (w, h) = node.size
+	if flip { (w, h) = (h, w) }
+
+	let (x, y) = (w/2 + extrude, h/2 + extrude)
+	let c = w/2*calc.tan(angle)
+	let α = extrude*calc.tan(45deg - angle/2)
+	let β = extrude*calc.tan(45deg + angle/2)
+	let ɣ = extrude/calc.cos(angle) - c
+	let δ = c*fit
+	let y = h/2 + c*fit
+
+ 	let verts = (
+		(-x,  +y + α - c),
+		(0pt, +y + ɣ + c),
+		(+x,  +y + α - c),
+
+		(+x,  -y - β),
+		(0pt, -y - ɣ),
+		(-x,  -y - β),
+	)
+
+	if flip { verts = verts.map(((i, j)) => (j, i)) }
+	if rotate { verts = verts.map(((i, j)) => (-i, -j)) }
+
+
+	let obj = draw.line(..verts, close: true)
+	draw.group(obj) // enables cetz border anchors
+}
+
+
+
+
+
+/// An (irregular) hexagon node shape.
+///
+/// #diagram(
+/// 	node-stroke: aqua,
+/// 	node-fill: aqua.lighten(90%),
+/// 	node((0,0), `hexagon`, shape: fletcher.shapes.hexagon)
+/// )
+///
+/// - angle (angle): Half the exterior angle, `0deg` being a rectangle.
+/// - fit (number): Adjusts how comfortably the hexagon fits the label's bounding box.
+///
+///   #for (i, fit) in (0, 0.5, 1).enumerate() {
+///   	let s = fletcher.shapes.hexagon.with(fit: fit)
+///   	let l = box(
+///   		stroke: (dash: "dashed", thickness: 0.5pt),
+///   		inset: 10pt,
+///   		raw("fit: " + repr(fit)),
+///   	)
+///   	diagram(node((i, 0), l,
+///   		inset: 0pt,
+///   		shape: s,
+///   		stroke: aqua,
+///   		fill: aqua.lighten(90%),
+///   	))
+///   	h(5mm)
+///   }
+#let hexagon(node, extrude, angle: 30deg, fit: 0.8) = {
+	let (w, h) = node.size
+	let f = h/2*calc.tan(angle)*(1 - fit)
+	let x = w/2 + extrude*calc.tan(45deg - angle/2) - f
+	let y = h/2 + extrude
+	let z = y*calc.tan(angle)
+	let obj = draw.line(
+		(+x, -y),
+		(+x + z, 0pt),
+		(+x, +y),
+
+		(-x, +y),
+		(-x - z, 0pt),
+		(-x, -y),
+
+		close: true,
+	)
+	draw.group(obj) // enables cetz border anchors
+}
+
+
+/// A truncated rectangle node shape.
+///
+/// #diagram(
+/// 	node-stroke: maroon,
+/// 	node-fill: maroon.lighten(90%),
+/// 	node((0,0), `octagon`, shape: fletcher.shapes.octagon)
+/// )
+///
+/// - truncate (number, length): Size of the truncated corners. A number is
+///   interpreted as a multiple of the smaller of the node's width or height.
+#let octagon(node, extrude, truncate: 0.5) = {
+	let (w, h) = node.size
+	let (x, y) = (w/2 + extrude, h/2 + extrude)
+
+	let d
+	if type(truncate) == length { d = truncate }
+	else { d = truncate*calc.min(w/2, h/2)}
+	d += extrude*0.5857864376 // (1 - calc.tan(calc.pi/8))
+
+	let obj = draw.line(
+		(-x + d, -y    ),
+		(-x    , -y + d),
+		(-x    , +y - d),
+		(-x + d, +y    ),
+		(+x - d, +y    ),
+		(+x    , +y - d),
+		(+x    , -y + d),
+		(+x - d, -y    ),
+		close: true,
+	)
+	draw.group(obj) // enables cetz border anchors
+}
+#import "deps.typ": cetz
+#import cetz: vector
+
+#let error(message, ..args) = {
+	let pairs = args.pos().enumerate() + args.named().pairs()
+	let ticks(x) = "`" + if type(x) == str { x } else { repr(x) } + "`"
+	for (k, v) in pairs {
+		if type(v) == array {
+			let replacement = if v.len() > 0 {
+				v.map(ticks).join(", ")
+			} else { "()" }
+			message = message.replace("#.." + str(k), replacement)
+		}
+		if type(v) != str { v = repr(v) }
+		message = message.replace("#" + str(k), ticks(v))
+	}
+	assert(false, message: message)
+}
+
+
+// Replace `auto` with a value
+#let map-auto(value, fallback) = if value == auto { fallback } else { value }
+
+// Make a function propagate `auto`
+#let pass-auto(f) = x => if x == auto { x } else { f(x) }
+
+// Make a function propagage `none`
+#let pass-none(f) = x => if x == none { x } else { f(x) }
+
+#let as-bool(obj, message: "Expected boolean") = {
+	if type(obj) == bool { obj }
+	else { error(message + "; got #0.", repr(obj)) }
+}
+
+// for when `stroke` is already in namespace
+#let as-stroke(x) = stroke(x)
+
+#let as-label(x) = {
+	if type(x) == label { x }
+	else if type(x) == str { label(x) }
+	else { error("Expected label or string; got #0.", repr(x)) }
+}
+
+#let as-pair(obj) = {
+	if type(obj) == array {
+		if obj.len() == 2 { obj }
+		else { error("Expected a pair (array of length 2); got #0.", repr(obj))}
+	} else { (obj, obj) }
+}
+
+#let as-array(obj) = if type(obj) == array { obj } else { (obj,) }
+
+#let as-number-or-length(obj, message: "Expected a number or length") = {
+	if type(obj) in (int, float, length) { obj }
+	else { error(message + "; got #0.", repr(obj)) }
+}
+
+#let as-relative(obj, message: "Expected float or relative length") = {
+	if type(obj) == relative { obj }
+	else if type(obj) in (int, float) { obj*100% + 0pt }
+	else if type(obj) in (ratio, length) { obj + 0% + 0pt }
+	else { error(message + "; got #0.", repr(obj)) }
+}
+
+#let relative-to-float(t, len: float("inf")*1pt) = {
+	len = len.to-absolute()
+	if type(t) in (int, float, ratio) { float(t) }
+	else if type(t) == length { t.to-absolute()/len }
+	else if type(t) == relative { float(t.ratio) + t.length.to-absolute()/len }
+	else { error("Cannot convert #0 to float.", t) }
+}
+
+
+#let as-length(obj, message: "Expected a length") = {
+	if type(obj) == length { obj }
+	else { error(message + "; got #0.", repr(obj)) }
+}
+
+#let as-angle(obj, message: "Expected an angle") = {
+	if type(obj) == angle { obj }
+	else { error(message + "; got #0.", repr(obj)) }
+}
+
+#let stroke-to-dict(s) = {
+	let s = as-stroke(s)
+	let d = (
+		paint: s.paint,
+		thickness: s.thickness,
+		cap: s.cap,
+		join: s.join,
+		dash: s.dash,
+		miter-limit: s.miter-limit,
+	)
+
+	// remove auto entries to allow folding strokes by joining dicts
+	for (key, value) in d {
+		if value == auto {
+			let _ = d.remove(key)
+		}
+	}
+
+	d
+}
+
+
+#let min-max(array) = (calc.min(..array), calc.max(..array))
+#let cumsum(array) = {
+	let sum = array.at(0)
+	for i in range(1, array.len()) {
+		sum += array.at(i)
+		array.at(i) = sum
+	}
+	array
+}
+
+#let vector-len((x, y)) = 1pt*calc.sqrt((x/1pt)*(x/1pt) + (y/1pt)*(y/1pt))
+#let vector-set-len(len, v) = vector.scale(v, len/vector-len(v))
+#let vector-unitless(v) = v.map(x => if type(x) == length { x.pt() } else { x })
+#let vector-2d((x, y, ..z)) = (x, y)
+#let vector-max(a, b) = array.zip(a, b).map(vals => calc.max(..vals))
+
+#let vector-polar(r, θ) = (r*calc.cos(θ), r*calc.sin(θ))
+#let vector-angle(v) = calc.atan2(..vector-unitless(v))
+#let angle-between(from, to) = vector-angle(vector.sub(to, from))
+
+// Ensure angle is in range 0deg <= θ < 360deg
+#let wrap-angle-360(θ) = calc.rem-euclid(θ/360deg, 1)*360deg
+
+// Ensure angle is in range -180deg <= θ <= 180deg
+#let wrap-angle-180(θ) = (θ/360deg - calc.round(θ/360deg))*360deg
+
+#let angle-to-anchor(θ) = {
+	let i = calc.rem(8*θ/1rad/calc.tau, 8)
+	(
+		"east",
+		"north-east",
+		"north",
+		"north-west",
+		"west",
+		"south-west",
+		"south",
+		"south-east",
+	).at(int(calc.round(i)))
+}
+
+
+#let is-length-vector(v) = v.all(x => type(x) == length)
+#let is-number-vector(v) = v.all(x => type(x) in (int, float))
+#let is-nan-vector(v) = is-number-vector(v) and v.any(x => float(x).is-nan())
+
+
+#let lerp(a, b, t) = a*(1 - t) + b*t
+
+/// Linearly interpolate an array with linear behaviour outside bounds
+///
+/// - values (array): Array of lengths defining interpolation function.
+/// - index (int, float): Index-coordinate to sample.
+/// - spacing (length): Gradient for linear extrapolation beyond array bounds.
+#let interp(values, index, spacing: 0pt) = {
+	let max-index = values.len() - 1
+	if index < 0 {
+		values.at(0) + spacing*index
+	} else if index > max-index {
+		values.at(-1) + spacing*(index - max-index)
+	} else {
+		lerp(
+			values.at(calc.floor(index)),
+			values.at(calc.ceil(index)),
+			calc.fract(index),
+		)
+	}
+}
+
+
+/// Inverse of `interp()`.
+///
+/// - values (array): Array of lengths defining interpolation function.
+/// - value: Value to find the interpolated index of.
+/// - spacing (length): Gradient for linear extrapolation beyond array bounds.
+#let interp-inv(values, value, spacing: 0pt) = {
+	let i = 0
+	while i < values.len() {
+		if values.at(i) >= value { break }
+		i += 1
+	}
+	let (first, last) = (values.at(0), values.at(-1))
+
+	// avoids division by zero when numerator and denominator both vanish
+	let div(a, b) = if calc.abs(a) < 1e-3pt { 0 } else { a/b }
+
+	if value < first {
+		div(value - first, spacing)
+	} else if value >= last {
+		values.len() - 1 + div(value - last, spacing)
+	} else {
+		let (prev, nearest) = (values.at(i - 1), values.at(i))
+		i - 1 + div(value - prev, nearest - prev)
+	}
+}
+
+
+#let rect-at(center, size) = (-1, +1).map(dir => {
+	vector.add(center, vector.scale(size, dir/2))
+})
+
+#let point-is-in-rect(point, (center, size)) = {
+	point.zip(center, size).all(((x, o, s)) => {
+		calc.abs(x - o) <= s/2
+	})
+}
+
+#let bounding-rect(points) = {
+	let (xs, ys) = array.zip(..points)
+	let p1 = (calc.min(..xs), calc.min(..ys))
+	let p2 = (calc.max(..xs), calc.max(..ys))
+	(
+		center: vector.scale(vector.add(p1, p2), 0.5),
+		size: vector.sub(p2, p1)
+	)
+}
+
+
+/// Determine arc between two points with a given bend angle
+///
+/// The bend angle is the angle between chord of the arc (line connecting the
+/// points) and the tangent to the arc and the first point.
+///
+/// Returns a dictionary containing:
+/// - `center`: the center of the arc's curvature
+/// - `radius`
+/// - `start`: the start angle of the arc
+/// - `stop`: the end angle of the arc
+///
+/// - from (point): 2D vector of initial point.
+/// - to (point): 2D vector of final point.
+/// - angle (angle): The bend angle between chord of the arc (line connecting the
+/// points) and the tangent to the arc and the first point.
+/// -> dictionary
+///
+/// #diagram(spacing: 2cm, {
+///	    for (i, θ) in (0deg, 45deg, -90deg).enumerate() {
+///         edge((2*i, 0), (2*i + 1, 0), marks: (none, "head"), bend: θ)
+///         edge((2*i, 0), (2*i + 1, 0), [#θ], label-side: center, dash:
+///         "dotted")
+///     }
+/// })
+#let get-arc-connecting-points(from, to, angle) = {
+	// TODO: properly handle trivial arcs
+	if from == to { to = vector.add(to, (0pt, 1e-4pt)) }
+
+	let mid = vector.scale(vector.add(from, to), 0.5)
+	let (dx, dy) = vector.sub(to, from)
+	let perp = (dy, -dx)
+
+	let center = vector.add(mid, vector.scale(perp, 0.5/calc.tan(angle)))
+
+	let radius = vector-len(vector.sub(to, center))
+
+	let start = angle-between(center, from)
+	let stop = angle-between(center, to)
+
+	if start < stop and angle > 0deg { start += 360deg }
+	if start > stop and angle < 0deg { start -= 360deg }
+
+	(center: center, radius: radius, start: start, stop: stop)
+}
+
+/// Return true if a content element is a space or sequence of spaces
+#let is-space(el) = {
+	if el == none { return true }
+	if repr(el.func()) == "space" { return true }
+	if repr(el.func()) == "sequence" { return el.children.all(is-space) }
+	return false
+}
+
+#let is-sequence(it) = {
+	type(it) == content and repr(it.func()) == "sequence"
+}
+
+#let flatten-sequence-to-array(it) = {
+	if is-sequence(it) {
+		it.children.map(flatten-sequence-to-array).join() + ()
+	} else { (it,) }
+}
+
+
+// find a node near a given uv coordinate
+#let find-node-at(nodes, uv, snap: true) = {
+	nodes.filter(node => {
+		if is-nan-vector(node.pos.uv) { return false }
+
+		if snap {
+			// node must be within a one-unit block around pos
+			vector.sub(node.pos.uv, uv).all(Δ => calc.abs(Δ) < 0.1)
+		} else {
+			node.pos.uv == uv
+		}
+	})
+		.sorted(key: node => vector.len(vector.sub(node.pos.uv, uv)))
+		.at(0, default: none)
+}
+
+#let find-node(nodes, key, snap: true) = {
+	if type(key) == label {
+		let node = nodes.find(node => node.name == key)
+		assert(node != none, message: "Couldn't find node with name " + repr(key))
+		node
+	} else if type(key) == array and is-number-vector(key) {
+		find-node-at(nodes, key, snap: snap)
+	} else {
+		none
+	}
+}
+[package]
+name = "fletcher"
+version = "0.5.7"
+compiler = "0.13.0"
+entrypoint = "src/exports.typ"
+authors = ["Joseph Wilson (Jollywatt)"]
+license = "MIT"
+description = "Draw diagrams with nodes and arrows."
+repository = "https://github.com/Jollywatt/typst-fletcher"
+categories = ["visualization", "components"]
+keywords = [
+	"commutative",
+	"commuting",
+	"commute",
+	"diagram",
+	"category",
+	"flowchart",
+	"DAG",
+	"graph",
+	"finite state",
+	"network",
+	"node",
+	"arrow",
+]
+exclude = ["docs/", "tests/"]

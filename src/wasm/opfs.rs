@@ -779,7 +779,22 @@ pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
     Ok(Some((file.last_modified(), file.size())))
 }
 
-/// Read the entries of `dir`, returning `(name, is_dir, size)` per entry.
+/// When a [`File`] says it was last written, in milliseconds since the epoch, or `None` where the
+/// browser did not record one.
+///
+/// A backend that keeps no modification time answers zero, and zero is 1970 rather than a fact
+/// about the file -- so it is reported as an absence and never passed off as a time.  Same guard
+/// `www/js/cloud.js` already applies before it trusts a `lastModified` for its change test.
+fn file_stamp(f: &File) -> Option<f64> {
+    let ms = f.last_modified();
+    if ms.is_finite() && ms > 0.0 {
+        Some(ms)
+    } else {
+        None
+    }
+}
+
+/// Read the entries of `dir`, returning `(name, is_dir, size, last_modified_ms)` per entry.
 ///
 /// The names come back AS THE WORKSPACE SPELLS THEM, not as the browser stores them: a listing
 /// that returned `70074.3.daimond%3A2,S` would hand every caller a name that does not open, and
@@ -794,9 +809,17 @@ pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
 /// pair; the record fields are read with [`js_sys::Reflect`].  A file
 /// entry's size comes from its [`File`] (`getFile().size`); directory
 /// entries report a size of zero.
-async fn read_entries(dir: &FileSystemDirectoryHandle) -> Outcome<Vec<(String, bool, u64)>> {
+///
+/// **The stamp costs nothing.**  It comes off the same [`File`] the size does, and that
+/// `getFile()` round trip is already paid for every file entry -- so a walk that wanted times was
+/// never the extra call it was written up as, and the caller that believed it could not have them
+/// (`file_glob`) was going without for no reason.  It is `None` per ENTRY rather than per listing,
+/// because one listing can span a real folder and the sandbox at once (see [`resolve_root`]).
+async fn read_entries(dir: &FileSystemDirectoryHandle)
+    -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
+{
     let iter = dir.entries();
-    let mut out: Vec<(String, bool, u64)> = Vec::new();
+    let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::new();
     loop {
         let promise = res!(iter.next()
             .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_str(&e); IO, File, Read)));
@@ -826,22 +849,22 @@ async fn read_entries(dir: &FileSystemDirectoryHandle) -> Outcome<Vec<(String, b
             .map(|k| k == "directory")
             .unwrap_or(false);
 
-        let size = if is_dir {
-            0u64
+        let (size, when) = if is_dir {
+            (0u64, None)
         } else {
             match handle.dyn_into::<FileSystemFileHandle>() {
                 Ok(fh) => {
                     let file_val = res!(JsFuture::from(fh.get_file()).await
                         .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_str(&e); IO, File, Read)));
                     match file_val.dyn_into::<File>() {
-                        Ok(f)  => f.size() as u64,
-                        Err(_) => 0u64,
+                        Ok(f)  => (f.size() as u64, file_stamp(&f)),
+                        Err(_) => (0u64, None),
                     }
                 }
-                Err(_) => 0u64,
+                Err(_) => (0u64, None),
             }
         };
-        out.push((fsname::decode(&name), is_dir, size));
+        out.push((fsname::decode(&name), is_dir, size, when));
     }
     Ok(out)
 }
@@ -849,7 +872,26 @@ async fn read_entries(dir: &FileSystemDirectoryHandle) -> Outcome<Vec<(String, b
 /// List the entries of the directory at `path` under `root`, returning
 /// `(name, is_dir, size)` per entry (unsorted — the caller orders them).
 /// An empty path addresses the root directory.
+///
+/// The modification times are dropped here.  A caller that wants them asks
+/// [`list_dir_stamped`], which is the same walk and the same cost.
 pub async fn list_dir(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool, u64)>> {
+    Ok(res!(list_dir_stamped(root, path).await)
+        .into_iter()
+        .map(|(name, is_dir, size, _)| (name, is_dir, size))
+        .collect())
+}
+
+/// As [`list_dir`], with each entry's last-modified time in milliseconds since the epoch:
+/// `(name, is_dir, size, last_modified_ms)`, unsorted.
+///
+/// `None` for a directory, which has no modification time worth reporting, and for a file whose
+/// backend does not record one -- see [`file_stamp`].  PER ENTRY, because [`resolve_root`] carves
+/// the store out of an open folder, so one listing can hold both a real-disk file that knows when
+/// it was written and a sandboxed one that does not.
+pub async fn list_dir_stamped(root: FileRoot, path: &str)
+    -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
+{
     let handle = res!(resolve_root(root, path).await);
     let dir = res!(descend_dir(&handle, path).await);
     read_entries(&dir).await

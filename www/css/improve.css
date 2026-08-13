@@ -31,6 +31,13 @@
 /* Filled while its view is showing — the chip row's own rule, one chip per
    thing, filled while that thing is open. */
 .imp-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+/* The information mark, between the chips and the closer.
+   `.icon-btn` is right for the paint -- the circled "i" brings its own ring and
+   must not be given a second one by a plate -- but its padding is a top BAR's
+   room, and 5px 7px made a 30px box beside a 22px closer. Squared to the
+   closer's box, which is what the row is measured on; the ink stays the 16px
+   `.ic` either way. */
+.imp-info { width: 22px; height: 22px; padding: 0; flex: none; }
 
 .imp-view { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .imp-view[hidden] { display: none; }

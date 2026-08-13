@@ -235,6 +235,27 @@ await page.evaluate(() => { const h = document.getElementById('ring-host'); if (
 // is the app's real disabled state and not a class pinned on for the test.
 // `#id-primary:disabled { opacity: .5 }` composites against whatever is behind
 // it, so the answer is a photograph, not a declaration.
+//
+// A PHOTOGRAPH OF AN ELEMENT NOBODY CAN SEE IS NOT EVIDENCE. `.modal-card` scrolls
+// (`overflow-y: auto`), and on 2026-08-14 the identity card gained a 160px strip of
+// front-door links: content went to 1108px inside an 872px box and the primary
+// button dropped to y=937 with the card's visible edge at 912. Its bounding box was
+// still returned, the clip was still inside the viewport, and both photographs came
+// back as the modal backdrop -- identical, so the ratio was exactly 1.00 in all
+// eleven palettes and read as a contrast failure that no colour could have fixed.
+// So the button is scrolled to before it is photographed, the way a user would
+// reach it, and `paintedAt` asks the page whether the pixel about to be sampled
+// really belongs to the button. That turns "off screen" into its own named red
+// instead of a wrong answer about contrast.
+/// Is the element under this viewport point the button itself?
+const paintedAt = (page, x, y) => page.evaluate(([px, py]) => {
+	const b = document.getElementById('id-primary');
+	if (!b) return 'no #id-primary';
+	const hit = document.elementFromPoint(px, py);
+	if (!hit) return 'nothing is painted there -- the point is outside the viewport';
+	if (hit === b || b.contains(hit)) return '';
+	return `${hit.tagName.toLowerCase()}${hit.id ? '#' + hit.id : ''} is drawn over it`;
+}, [x, y]);
 {
 	const wrote = await page.$('#id-wrote');
 	if (!wrote || !(await wrote.isVisible())) {
@@ -246,10 +267,12 @@ await page.evaluate(() => { const h = document.getElementById('ring-host'); if (
 				const w = document.getElementById('id-wrote');
 				if (w.checked) { w.checked = false; w.dispatchEvent(new Event('change', { bubbles: true })); }
 			});
+			await page.locator('#id-primary').scrollIntoViewIfNeeded();
 			await page.waitForTimeout(150);
 			const off = await page.evaluate(() => (document.getElementById('id-primary') || {}).disabled);
 			const box = await page.locator('#id-primary').boundingBox();
 			const clip = { x: Math.round(box.x + box.width / 2) - 3, y: Math.round(box.y + 4), width: 6, height: 4 };
+			const why = await paintedAt(page, clip.x + 3, clip.y + 1);
 			const dis = await pixels(page, clip);
 
 			await page.evaluate(() => {
@@ -265,8 +288,12 @@ await page.evaluate(() => { const h = document.getElementById('ring-host'); if (
 				if (r > best) best = r;
 			}
 			check(off, `${theme}: the create button is genuinely disabled before the passphrase is acknowledged`);
-			soft(`${theme}/disabled`, best, OFF,
-				`${theme}: a disabled button against its enabled self`);
+			check(why === '', `${theme}: and the button is really on screen to be photographed`
+				+ (why ? ` -- ${why}` : ''));
+			if (why === '') {
+				soft(`${theme}/disabled`, best, OFF,
+					`${theme}: a disabled button against its enabled self`);
+			}
 		}
 	}
 }

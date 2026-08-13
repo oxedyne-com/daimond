@@ -235,25 +235,49 @@ const SEAM = [
 		find: "\tvar NO_ASK       = { compose: 1, tools: 1, trash: 1 };",
 		with: "\tvar NO_ASK       = { compose: 1, tools: 1, trash: 1, improve: 1 };",
 	},
+	// Same story as the three below: the catalogue has carried these keys since
+	// 2026-08-12, so re-inserting the block gave the served `en.js` TWO of every
+	// `improve.*` key. Nothing here noticed -- a duplicate literal later in an
+	// object simply wins -- but `--break renamechip` anchors on one of them and
+	// refused to apply, because its anchor now appeared twice. A break that
+	// cannot apply is a check that proves nothing, so this one had quietly
+	// stopped being provable.
 	{
 		file: 'i18n/en.js',
 		find: "\t'panel.trash': 'Trash',",
 		with: "\t'panel.trash': 'Trash',\n" + I18N_BLOCK,
+		want: "'panel.improve':",
 	},
+	// The three index.html seams, each with a `want` naming the ONE THING it is
+	// there to ensure, for the same reason the mobile-guests seam has one.
+	//
+	// `www/index.html` gained all three on 2026-08-12, so from then on the seam
+	// should have been a no-op. It was, while the panel's markup still matched
+	// `PANEL_MARKUP` byte for byte -- and on 2026-08-14 an "i" button was added
+	// to the panel's chip row. The default `already` is the whole replacement
+	// text, so the comparison failed, the seam fired against a file that already
+	// had the panel, and THE PAGE WAS SERVED WITH TWO `#panel-improve` ELEMENTS:
+	// the count check went red, `#improve-with` matched twice and Playwright's
+	// strict mode threw. None of that was about the Improve panel, which is the
+	// definition of the wrong red. A `want` asks whether the thing is there,
+	// which stays true however the panel is later dressed.
 	{
 		file: 'index.html',
 		find: '<link rel="stylesheet" href="css/trash.css">',
 		with: '<link rel="stylesheet" href="css/trash.css">\n<link rel="stylesheet" href="css/improve.css">',
+		want: 'href="css/improve.css"',
 	},
 	{
 		file: 'index.html',
 		find: '<script src="js/trash.js"></script>',
 		with: '<script src="js/trash.js"></script>\n<script src="js/improve.js"></script>',
+		want: '<script src="js/improve.js"></script>',
 	},
 	{
 		file: 'index.html',
 		find: '\t\t\t<div class="trash-list arte-list" id="trash-list"></div>\n\t\t</aside>\n',
 		with: '\t\t\t<div class="trash-list arte-list" id="trash-list"></div>\n\t\t</aside>\n' + PANEL_MARKUP,
+		want: 'id="panel-improve"',
 	},
 ];
 
@@ -552,8 +576,13 @@ try {
 	});
 	await page.waitForTimeout(800);
 
+	// EXACTLY one. Two is its own defect and not a near miss: every `#improve-*`
+	// id is then ambiguous, Playwright's strict mode throws on the first one it
+	// reaches, and the stack that comes back says nothing about the panel. The
+	// count is printed so that a red names the shape it found.
 	const panel = page.locator('#panel-improve');
-	check('the panel is on screen', await panel.count() === 1);
+	const panels = await panel.count();
+	check('the panel is on screen, exactly once', panels === 1, `${panels} found`);
 
 	// ── 1. Writing is not sending, and neither is Keep ───────────
 	const NOTE_1 = 'The closer on the Everything row put the whole rail away. '

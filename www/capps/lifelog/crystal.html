@@ -1,0 +1,1813 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
+<title>Lifelog</title>
+<style>
+:root{--bg:transparent;--sf:rgba(128,128,128,.10);--tx:#5c5c5c;--mu:#8d8d8d;--bd:rgba(128,128,128,.32);
+--ac:#4a7fd0;--on:#fff;--fo:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+--mo:ui-monospace,SFMono-Regular,Consolas,monospace;--fs:14px;--rd:8px;--rs:6px;
+--good:#10893E;--bad:#C4314B;--warn:#B87A00}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent}
+/* No overflow on the body: `overflow-x:hidden` makes it a scroll container, and
+   then the page scrolls inside the frame instead of the frame growing to fit it.
+   Nothing here is wider than its column, and the verifier checks that. */
+body{font:400 var(--fs)/1.5 var(--fo);color:var(--tx);padding:0 0 6px;
+overflow-wrap:anywhere;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);
+border-radius:var(--rs);padding:7px 9px;width:100%;min-width:0}
+input:focus{outline:2px solid var(--ac);outline-offset:-1px;border-color:var(--ac)}
+svg{display:block}
+
+/* ── the bar across the top ──────── */
+.hd{display:flex;flex-direction:column;gap:7px;padding:0 0 9px;margin:0 0 12px;
+border-bottom:1px solid var(--bd)}
+.row{display:flex;align-items:center;gap:6px;min-width:0}
+.gap{flex:1;min-width:0}
+.chips{display:flex;gap:5px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+/* The view switch never scrolls and never shrinks: it is in a `seg` and not in a
+   `chips`, because a `chips` is a scroller and at 375px the lane names took the
+   width and left "Life" cut off inside it. */
+.seg{display:flex;gap:5px;flex:none}
+.chip{border:1px solid var(--bd);background:var(--sf);border-radius:var(--rs);color:var(--mu);
+font-size:.82em;line-height:1.5;padding:3px 9px;white-space:nowrap;flex:none;
+transition:transform .07s,background .12s,color .12s}
+.chip.on{background:var(--ac);border-color:var(--ac);color:var(--on);font-weight:600}
+.chip:active{transform:scale(.95)}
+.chip.q{padding:3px 7px;font-family:var(--mo)}
+.tag{font-size:.78em;color:var(--mu);white-space:nowrap;font-family:var(--mo)}
+.tag b{color:var(--ac);font-weight:650}
+.cf{margin:7px 0 8px}
+
+/* ── section furniture ──────── */
+.sh{font-size:.79em;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--mu);
+white-space:nowrap}
+.shrow{display:flex;align-items:center;gap:8px;margin:0 0 7px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--rd);padding:10px 12px;
+margin:0 0 10px}
+.empty{color:var(--mu);font-size:.9em;padding:10px 0;font-style:italic}
+
+/* ── the tile pad: the thing you actually press ──────── */
+.pad{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:8px;margin:0 0 12px}
+.tile{background:var(--sf);border:1px solid var(--bd);border-radius:var(--rd);padding:9px 10px;
+min-height:66px;display:flex;flex-direction:column;justify-content:space-between;gap:5px;
+transition:transform .08s,background .14s,border-color .14s}
+.tile:active{transform:scale(.955);background:var(--ac);border-color:var(--ac);color:var(--on)}
+.tile:active .ts,.tile:active .tn{color:var(--on)}
+.tn{font-weight:600;font-size:.94em;line-height:1.25;color:var(--tx)}
+.ts{font-size:.76em;color:var(--mu);font-family:var(--mo);line-height:1.3}
+.tile.acc{border-color:var(--ac)}
+.tile.acc .tn{color:var(--ac)}
+.tile.run{background:var(--ac);border-color:var(--ac)}
+.tile.run .tn,.tile.run .ts{color:var(--on)}
+.tile.wide{grid-column:1/-1;min-height:52px;flex-direction:row;align-items:center;
+justify-content:flex-start;gap:10px}
+.step{grid-column:1/-1;display:flex;align-items:center;gap:8px;background:var(--sf);
+border:1px solid var(--ac);border-radius:var(--rd);padding:8px 10px}
+.stepb{width:38px;height:38px;flex:none;border:1px solid var(--bd);border-radius:var(--rs);
+display:flex;align-items:center;justify-content:center;font-size:1.2em;background:var(--bg)}
+.stepb:active{background:var(--ac);color:var(--on);border-color:var(--ac)}
+.amt{font-family:var(--mo);font-size:1.05em;font-weight:650;color:var(--tx);min-width:62px;
+text-align:center}
+.go{background:var(--ac);color:var(--on);border-radius:var(--rs);padding:9px 14px;font-weight:650;
+font-size:.92em;white-space:nowrap;border:1px solid var(--ac)}
+.go:active{transform:scale(.97)}
+.ghost{background:var(--bg);border:1px solid var(--bd);color:var(--tx);border-radius:var(--rs);
+padding:9px 14px;font-weight:600;font-size:.92em;white-space:nowrap}
+.pickbtn{width:100%}
+.toast{display:flex;align-items:center;gap:8px;border:1px solid var(--ac);border-radius:var(--rd);
+padding:7px 10px;margin:0 0 12px;font-size:.88em;background:var(--sf)}
+.toast.err{border-color:var(--bad)}
+.toast .gap{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── numbers ──────── */
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:9px}
+.st{min-width:0}
+.sk{font-size:.75em;color:var(--mu);letter-spacing:.02em;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis}
+.sv{font-size:1.32em;font-weight:650;line-height:1.25;color:var(--tx);letter-spacing:-.01em;
+font-variant-numeric:tabular-nums}
+.sv u{font-size:.6em;font-weight:500;color:var(--mu);text-decoration:none;margin-left:2px}
+.bar{height:4px;background:var(--bd);border-radius:3px;overflow:hidden;margin:5px 0 2px}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--ac)}
+.tgt{font-size:.7em;color:var(--mu);font-family:var(--mo);display:flex;gap:4px;align-items:center}
+.tgt b{font-weight:700}
+
+/* ── rows ──────── */
+.er{display:flex;align-items:baseline;gap:8px;width:100%;padding:8px 0;
+border-top:1px solid var(--bd)}
+.er:first-child{border-top:0}
+.et{font-family:var(--mo);font-size:.76em;color:var(--mu);flex:none;width:38px}
+.en{flex:1;min-width:0;font-size:.93em;color:var(--tx)}
+.en small{display:block;color:var(--mu);font-size:.82em;font-family:var(--mo)}
+.ev{font-family:var(--mo);font-size:.83em;color:var(--mu);flex:none;text-align:right;
+white-space:nowrap;font-variant-numeric:tabular-nums}
+.src{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ac);opacity:.55;
+align-self:center}
+.chev{flex:none;color:var(--mu);font-size:.9em}
+.dayh{font-size:.75em;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+color:var(--mu);padding:10px 0 2px;border-top:1px solid var(--bd)}
+.dayh:first-child{border-top:0;padding-top:0}
+.grp{margin:0 0 4px}
+.grph{display:flex;align-items:baseline;gap:8px;padding:9px 0 3px;font-size:.85em;font-weight:650;
+color:var(--tx);border-top:1px solid var(--bd)}
+.setr{display:flex;align-items:baseline;gap:8px;width:100%;padding:4px 0 4px 10px;font-size:.88em}
+.setr .ev{font-size:.8em}
+
+/* ── charts ──────── */
+.leg{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:3px 10px;
+margin:8px 0 0}
+.lg{display:flex;align-items:center;gap:6px;font-size:.8em;min-width:0}
+.sw{width:9px;height:9px;border-radius:2px;flex:none}
+.lgn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+.lgv{font-family:var(--mo);color:var(--mu);flex:none;font-variant-numeric:tabular-nums}
+.pie{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+
+/* ── forms and pickers ──────── */
+.fr{margin:0 0 11px}
+.fl{font-size:.78em;color:var(--mu);margin:0 0 4px;letter-spacing:.02em}
+.num{display:flex;align-items:center;gap:7px}
+.num input{text-align:center;font-family:var(--mo);font-weight:600}
+.acts{display:flex;gap:8px;align-items:center;margin:14px 0 4px}
+.pickr{display:flex;align-items:baseline;gap:8px;width:100%;padding:9px 0;
+border-top:1px solid var(--bd);font-size:.92em}
+.back{display:flex;align-items:center;gap:6px;font-size:.9em;color:var(--mu);margin:0 0 10px}
+.fbox{border:1px solid var(--bd);border-radius:var(--rd);padding:9px 10px;margin:0 0 9px}
+/* Inside a field box the chips WRAP rather than scroll. Everywhere else a chip row
+   is a scroller, but here the last of the five types sat off the end of it on a
+   phone with nothing on screen to say it was there. */
+.fbox .chips{flex-wrap:wrap;overflow-x:visible}
+.frm{flex:none;color:var(--mu);font-size:1.05em;padding:0 3px}
+.hint{font-size:.82em;color:var(--mu);margin:7px 0 0}
+.hint+.fr{margin-top:13px}
+.plus{font-size:1.1em;font-weight:700;line-height:1.2;padding:2px 8px}
+.h1{font-size:1.16em;font-weight:650;color:var(--tx);line-height:1.3;margin:0 0 2px}
+.mem{margin:16px 0 0;border-top:1px solid var(--bd);padding:10px 0 0}
+.mem summary{font-size:.79em;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+color:var(--mu);cursor:pointer;list-style:none}
+.mem summary::-webkit-details-marker{display:none}
+.mem summary::before{content:"\25B8 ";color:var(--mu)}
+.mem[open] summary::before{content:"\25BE "}
+.mk{font-family:var(--mo);font-size:.76em;color:var(--mu);margin:9px 0 2px}
+.mv{font-size:.87em;white-space:pre-wrap}
+</style>
+</head><body><div id="app"></div>
+<script>
+(function () {
+'use strict';
+
+// ── The channel ────────────
+// `id` matches an answer to a question: the replies carry no `cmd`.
+var PR = 1, seq = 0, pend = {}, APP = document.getElementById('app');
+
+function post(o) { o.dc = 1; o.v = PR; parent.postMessage(o, '*'); }
+function req(cmd, x) {
+	var id = 'q' + (++seq), m = { dc: 1, v: PR, cmd: cmd, id: id }, k;
+	for (k in x) if (x.hasOwnProperty(k)) m[k] = x[k];
+	return new Promise(function (r) { pend[id] = r; parent.postMessage(m, '*'); });
+}
+function read(p) { return req('asset', { path: p }); }
+function save(p, t, mode) { return req('save', { path: p, text: t, mode: mode || 'append' }); }
+/// A JSON file, or null. There is no `list` verb, so a missing shard reads as an
+/// error and an error is simply "nothing there yet".
+function jread(p) {
+	return read(p).then(function (r) {
+		if (!r || r.error || !r.text) return null;
+		try { return JSON.parse(r.text); } catch (e) { return null; }
+	});
+}
+
+// ── Small things ────────────
+function esc(s) {
+	return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+/// A button carrying an action and its argument, which is how every tap gets
+/// back here: one delegated listener, no handler per element.
+function B(cls, a, v, inner) {
+	return '<button class="' + cls + '" data-a="' + a + '" data-v="' + esc(v) + '">' + inner + '</button>';
+}
+function C(n, a, v, on) { return B('chip' + (on ? ' on' : ''), a, v, esc(n)); }
+/// One reading: its name, its number and its unit.
+function ST(k, s, extra) {
+	return '<div class="st"><div class="sk">' + esc(k) + '</div><div class="sv">' + esc(s.v)
+		+ (s.u ? '<u>' + esc(s.u) + '</u>' : '') + '</div>' + (extra || '') + '</div>';
+}
+function p2(n) { return (n < 10 ? '0' : '') + n; }
+function num(v) { v = (v === '' || v == null) ? null : +v; return (v != null && isFinite(v)) ? v : null; }
+function fmt(n, dp) {
+	if (n == null || !isFinite(n)) return '—';
+	var a = Math.abs(n);
+	if (dp == null) dp = a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 1 : 2;
+	var s = n.toFixed(dp).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+	// Global: without it only the first group is separated and a month of volume
+	// reads "1,234567".
+	return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function dur(sec) {
+	if (sec == null || !isFinite(sec)) return '—';
+	var m = Math.round(sec / 60), h = Math.floor(m / 60);
+	return h ? (h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '')) : (m + 'm');
+}
+function ago(ms) {
+	if (ms == null) return '—';
+	var m = Math.round(ms / 60000);
+	if (m < 90) return m + 'm';
+	var h = Math.round(m / 60);
+	return h < 36 ? h + 'h' : Math.round(h / 24) + 'd';
+}
+
+// Dates. Never `toISOString`: a meal at 23:30 belongs to today, and UTC would
+// move it. Both stamps are kept — `at` exact with its offset, `day` the local
+// date the entry belongs to, which is not the same thing once a lane moves its
+// day boundary off midnight.
+function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
+function isoAt(d) {
+	var o = -d.getTimezoneOffset(), s = o < 0 ? '-' : '+', a = Math.abs(o);
+	return ymd(d) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds())
+		+ s + p2(Math.floor(a / 60)) + ':' + p2(a % 60);
+}
+function dayOf(d, start) { return ymd(new Date(d.getTime() - (start || 0) * 60000)); }
+function tms(at) { var t = Date.parse(at); return isFinite(t) ? t : 0; }
+function hhmm(at) { var d = new Date(tms(at)); return p2(d.getHours()) + ':' + p2(d.getMinutes()); }
+function dnum(s) { var a = String(s).split('-'); return Math.floor(Date.UTC(+a[0], +a[1] - 1, +a[2]) / 864e5); }
+function dstr(n) {
+	var d = new Date(n * 864e5);
+	return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate());
+}
+function dow(n) { return (n + 4) % 7; }
+var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// A bucket is a day, a week or a month, named by the day it starts on.
+function bstart(day, per) {
+	if (per === 'month') return day.slice(0, 7) + '-01';
+	if (per === 'week') {
+		var n = dnum(day), ws = (IDX && IDX.weekStart != null) ? IDX.weekStart : 1;
+		return dstr(n - ((dow(n) - ws + 7) % 7));
+	}
+	return day;
+}
+function bshift(b, per, k) {
+	if (per === 'month') {
+		var a = b.split('-'), y = +a[0], m = +a[1] - 1 + k;
+		y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+		return y + '-' + p2(m + 1) + '-01';
+	}
+	return dstr(dnum(b) + k * (per === 'week' ? 7 : 1));
+}
+function bend(b, per) { return bshift(b, per, 1); }
+function bdays(b, per) { return per === 'day' ? 1 : dnum(bend(b, per)) - dnum(b); }
+function blabel(b, per, short) {
+	var d = new Date(b + 'T12:00:00');
+	if (per === 'month') return MON[d.getMonth()] + (short ? '' : ' ' + d.getFullYear());
+	if (per === 'week') return (short ? '' : 'Week of ') + d.getDate() + ' ' + MON[d.getMonth()];
+	if (short) return String(d.getDate());
+	var t = ymd(new Date());
+	if (b === t) return 'Today';
+	if (b === dstr(dnum(t) - 1)) return 'Yesterday';
+	return DAYS[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()];
+}
+
+// ── Expressions ────────────
+// `eval` and `new Function` are blocked by the policy, so `kg*(1+reps/30)` is
+// parsed by hand: shunting-yard to RPN once per field, a stack walk per entry.
+var PREC = { '+': 1, '-': 1, '*': 2, '/': 2 };
+function lex(src) {
+	var s = String(src), t = [], i = 0, j;
+	while (i < s.length) {
+		var c = s.charAt(i);
+		if (c === ' ') { i++; continue; }
+		if (/[0-9.]/.test(c)) {
+			j = i; while (j < s.length && /[0-9.]/.test(s.charAt(j))) j++;
+			t.push({ n: parseFloat(s.slice(i, j)) }); i = j; continue;
+		}
+		if (/[A-Za-z_]/.test(c)) {
+			j = i; while (j < s.length && /[A-Za-z0-9_]/.test(s.charAt(j))) j++;
+			t.push({ v: s.slice(i, j) }); i = j; continue;
+		}
+		t.push({ o: c }); i++;
+	}
+	return t;
+}
+function rpn(src) {
+	var t = lex(src), out = [], ops = [], prev = null, i;
+	for (i = 0; i < t.length; i++) {
+		var k = t[i];
+		if (k.n != null || k.v) { out.push(k); prev = k; continue; }
+		if (k.o === '(') { ops.push(k); prev = k; continue; }
+		if (k.o === ')') {
+			while (ops.length && ops[ops.length - 1].o !== '(') out.push(ops.pop());
+			ops.pop(); prev = k; continue;
+		}
+		// A minus with no value before it negates rather than subtracts.
+		if (k.o === '-' && (!prev || prev.o === '(' || PREC[prev.o])) out.push({ n: 0 });
+		while (ops.length && PREC[ops[ops.length - 1].o] >= PREC[k.o]) out.push(ops.pop());
+		ops.push(k); prev = k;
+	}
+	while (ops.length) out.push(ops.pop());
+	return out;
+}
+function runRpn(prog, get) {
+	var st = [], i, a, b;
+	for (i = 0; i < prog.length; i++) {
+		var k = prog[i];
+		if (k.n != null) { st.push(k.n); continue; }
+		if (k.v) { var x = get(k.v); if (x == null) return null; st.push(x); continue; }
+		b = st.pop(); a = st.pop();
+		if (a == null || b == null) return null;
+		st.push(k.o === '+' ? a + b : k.o === '-' ? a - b : k.o === '*' ? a * b
+			: (b ? a / b : null));
+	}
+	var r = st.pop();
+	return (typeof r === 'number' && isFinite(r)) ? r : null;
+}
+
+// ── The store ────────────
+//   index.json               lanes present, week start
+//   lanes/<lane>.json        fields, tiles, templates, targets
+//   cat/<lane>.json          the catalogue
+//   log/<lane>/YYYY-MM.jsonl one shard per month, append-only
+//
+// Monthly shards because `save` in append mode is a read-then-write: a year in
+// one file would rewrite hundreds of kilobytes for every meal.
+var IDX = null, LANE = {}, CAT = {}, LOG = {}, GOT = {};
+
+/// Last write wins per id, and an import never replaces what a person typed.
+function ingest(ln, e) {
+	var m = LOG[ln] || (LOG[ln] = {}), p = m[e.id];
+	if (p) {
+		if (e.src === 'import' && p.src !== 'import') return;
+		if ((e.w || 0) < (p.w || 0)) return;
+	}
+	m[e.id] = e;
+}
+function ingestText(ln, txt) {
+	var ls = String(txt).split('\n'), i;
+	for (i = 0; i < ls.length; i++) {
+		var s = ls[i].trim(); if (!s) continue;
+		try { var e = JSON.parse(s); } catch (x) { continue; }
+		if (e && e.id) ingest(ln, e);
+	}
+}
+/// Every month shard touching [from, to). A shard that is not there yet is
+/// remembered as read, so a lane with no history costs one failed read and no
+/// more.
+function shards(ln, from, to) {
+	var a = from.slice(0, 7), b = to.slice(0, 7), jobs = [], guard = 0;
+	while (a <= b && guard++ < 60) {
+		var key = ln + '/' + a;
+		if (!GOT[key]) {
+			GOT[key] = 1;
+			jobs.push(read('log/' + ln + '/' + a + '.jsonl').then((function (l) {
+				return function (r) { if (r && !r.error && r.text) ingestText(l, r.text); };
+			})(ln)));
+		}
+		var y = +a.slice(0, 4), m = +a.slice(5, 7) + 1;
+		if (m > 12) { m = 1; y++; }
+		a = y + '-' + p2(m);
+	}
+	return jobs.length ? Promise.all(jobs) : null;
+}
+/// Append one or more entries, grouped into the shard each one's day belongs to.
+/// One save per shard, not one per entry: a template that expands to three meals
+/// is one line-triple in one write.
+function put(ln, es) {
+	var by = {}, i, ps = [];
+	for (i = 0; i < es.length; i++) {
+		var e = es[i];
+		e.w = Date.now();
+		ingest(ln, e);
+		var ym = e.day.slice(0, 7);
+		(by[ym] || (by[ym] = [])).push(JSON.stringify(e));
+	}
+	for (var ym2 in by) {
+		GOT[ln + '/' + ym2] = 1;
+		ps.push(save('log/' + ln + '/' + ym2 + '.jsonl', by[ym2].join('\n') + '\n', 'append'));
+	}
+	return Promise.all(ps).then(function (rs) {
+		for (var j = 0; j < rs.length; j++) {
+			if (rs[j] && rs[j].error) { toast('Not saved: ' + rs[j].error, 1); return false; }
+		}
+		return true;
+	});
+}
+function nid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ── Fields ────────────
+function fdef(l, k) {
+	var f = l.fields || [], i;
+	for (i = 0; i < f.length; i++) if (f[i].k === k) return f[i];
+	return null;
+}
+/// The lane's duration field, which is where a session keeps its own length.
+/// Found by TYPE, so a lane a daimon invents need not call it `dur`.
+function durK(l) {
+	var f = l.fields || [], i;
+	for (i = 0; i < f.length; i++) if (f[i].t === 'dur') return f[i].k;
+	return '';
+}
+function cmap(id) {
+	var c = CAT[id]; if (!c || !c.items) return {};
+	if (!c._m) { c._m = {}; for (var i = 0; i < c.items.length; i++) c._m[c.items[i].id] = c.items[i]; }
+	return c._m;
+}
+function citem(l, id) { return cmap(l.id)[id] || null; }
+function cname(l, id) { var it = citem(l, id); return it ? it.n : (id || ''); }
+
+/// A field's value on one entry: stored, scaled from the catalogue, or computed.
+///
+///   {c:'food',k:'kcal',per:100,by:'g'}  — kcal per 100 g times the grams eaten
+///   {e:'kg*reps'}                       — a product
+///   {e:'kg*(1+reps/30)'}                — Epley's 1RM
+function fval(l, e, f, depth) {
+	if (!f) return null;
+	var fs = e.f || {};
+	if (f.d && f.d.c) {
+		var it = citem(l, fs[f.d.c]); if (!it) return null;
+		var base = num(fs[f.d.by]), v = num((it.v || {})[f.d.k]);
+		if (base == null || v == null) return null;
+		return v * base / (f.d.per || 100);
+	}
+	if (f.d && f.d.e) {
+		if ((depth || 0) > 4) return null;
+		if (!f._p) f._p = rpn(f.d.e);
+		return runRpn(f._p, function (nm) {
+			var g = fdef(l, nm); return g ? fnum(l, e, g, (depth || 0) + 1) : null;
+		});
+	}
+	var raw = fs[f.k];
+	return (raw === '' || raw === undefined) ? null : raw;
+}
+function fnum(l, e, f, d) {
+	var v = fval(l, e, f, d);
+	if (typeof v === 'boolean') return v ? 1 : 0;
+	return num(v);
+}
+/// How a field reads on screen, with its unit.
+function fshow(l, e, f) {
+	var v = fval(l, e, f);
+	if (v == null) return '';
+	if (f.t === 'ref') return cname(l, v);
+	if (f.t === 'bool') return v ? 'yes' : 'no';
+	if (f.t === 'dur') return dur(num(v));
+	if (f.t === 'text' || f.t === 'enum') return String(v);
+	return fmt(num(v)) + (f.u ? ' ' + f.u : '');
+}
+
+// ── Aggregation ────────────
+function reduce(vals, how) {
+	var n = vals.length, i, s = 0;
+	if (how === 'count') return n;
+	if (!n) return null;
+	if (how === 'last') return vals[n - 1];
+	if (how === 'max') { s = vals[0]; for (i = 1; i < n; i++) if (vals[i] > s) s = vals[i]; return s; }
+	if (how === 'min') { s = vals[0]; for (i = 1; i < n; i++) if (vals[i] < s) s = vals[i]; return s; }
+	for (i = 0; i < n; i++) s += vals[i];
+	return how === 'mean' ? s / n : s;
+}
+function aggr(l, es, f, how) {
+	how = how || f.agg || 'sum';
+	var i, v;
+	if (how === 'since') {
+		var last = null;
+		for (i = 0; i < es.length; i++) { if (fval(l, es[i], f) != null) last = es[i]; }
+		return last ? (Date.now() - tms(last.at)) : null;
+	}
+	if (how === 'count') {
+		var n = 0;
+		for (i = 0; i < es.length; i++) if (fval(l, es[i], f) != null) n++;
+		return n;
+	}
+	// The last reading may be a word: the mood you were in is not a number.
+	if (how === 'last' && (f.t === 'enum' || f.t === 'text' || f.t === 'ref')) {
+		var w = null;
+		for (i = 0; i < es.length; i++) { v = fval(l, es[i], f); if (v != null) w = v; }
+		return w;
+	}
+	var vals = [];
+	for (i = 0; i < es.length; i++) { v = fnum(l, es[i], f); if (v != null) vals.push(v); }
+	return reduce(vals, how);
+}
+/// A rollup aggregates the DAYS rather than the entries, which is what lets sleep
+/// sum within a night and average across a week.
+function aggPer(l, es, f, per, how) {
+	if (how || !f.ru || per === 'day') return aggr(l, es, f, how);
+	var by = {}, ds = [], i, k;
+	for (i = 0; i < es.length; i++) (by[es[i].day] || (by[es[i].day] = [])).push(es[i]);
+	for (k in by) { var v = aggr(l, by[k], f); if (v != null) ds.push(v); }
+	return reduce(ds, f.ru);
+}
+function statText(l, f, v, how) {
+	how = how || f.agg;
+	if (v == null) return { v: '—', u: '' };
+	if (how === 'since') return { v: ago(v), u: 'ago' };
+	if (how === 'count') return { v: fmt(v, 0), u: 'x' };
+	if (f.t === 'dur') return { v: dur(v), u: '' };
+	if (f.t === 'enum' || f.t === 'text') return { v: String(v), u: '' };
+	if (f.t === 'ref') return { v: cname(l, v), u: '' };
+	return { v: fmt(v), u: f.u || '' };
+}
+
+function live(ln) {
+	var m = LOG[ln] || {}, o = [], k;
+	for (k in m) if (m.hasOwnProperty(k) && !m[k].del) o.push(m[k]);
+	o.sort(function (a, b) { return tms(a.at) - tms(b.at); });
+	return o;
+}
+function inBucket(ln, b, per) {
+	var a = live(ln), o = [], e = bend(b, per), i;
+	for (i = 0; i < a.length; i++) if (a[i].day >= b && a[i].day < e) o.push(a[i]);
+	return o;
+}
+function kids(ln, id) {
+	var a = live(ln), o = [], i;
+	for (i = 0; i < a.length; i++) if (a[i].of === id) o.push(a[i]);
+	return o;
+}
+/// Consecutive days with something in them. A day not yet logged does not break
+/// a streak; the day before it does.
+function streak(ln, l) {
+	var a = live(ln), days = {}, i;
+	for (i = 0; i < a.length; i++) days[a[i].day] = 1;
+	var n = dnum(dayOf(new Date(), l.dayStart)), c = 0;
+	if (!days[dstr(n)]) n--;
+	while (days[dstr(n)]) { c++; n--; }
+	return c;
+}
+/// The target in force for a field over the shown period. A daily target still
+/// applies over a week when the field sums — it just multiplies.
+function target(l, k, b, per) {
+	var ts = l.targets || [], i;
+	for (i = 0; i < ts.length; i++) if (ts[i].f === k && ts[i].p === per) {
+		return { v: ts[i].v, dir: ts[i].dir, n: 1, p: per };
+	}
+	if (per !== 'day') {
+		var f = fdef(l, k);
+		for (i = 0; i < ts.length; i++) if (ts[i].f === k && ts[i].p === 'day' && f
+			&& (f.agg === 'sum' || f.agg === 'count') && !f.ru) {
+			var d = bdays(b, per);
+			return { v: ts[i].v * d, dir: ts[i].dir, n: d, p: 'day' };
+		}
+	}
+	return null;
+}
+
+// ── Colour ────────────
+// The palette arrives resolved, and everything else is derived from it, so every
+// theme and both skins work without one of them being named here.
+var DARK = false;
+var PAL_L = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+var PAL_D = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+function pal(i) { return (DARK ? PAL_D : PAL_L)[i % 8]; }
+function luma(s) {
+	var m = /(-?[\d.]+)[,\s]+(-?[\d.]+)[,\s]+(-?[\d.]+)/.exec(String(s || ''));
+	if (!m) return 0.5;
+	return (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+}
+function theme(t) {
+	if (!t) return;
+	var m = {
+		bg: '--bg', surface: '--sf', text: '--tx', muted: '--mu', border: '--bd',
+		accent: '--ac', font: '--fo', mono: '--mo', size: '--fs', radius: '--rd'
+	}, s = document.documentElement.style, k;
+	for (k in m) if (t[k]) s.setProperty(m[k], t[k]);
+	// What reads on top of a filled accent. The app resolves it and sends it, so
+	// take that; the luma test is only for a build that did not.
+	if (t.accentText || t.accent) {
+		s.setProperty('--on', t.accentText || (luma(t.accent) > 0.6 ? '#141414' : '#ffffff'));
+	}
+	if (t.radius) s.setProperty('--rs', 'calc(' + t.radius + ' * 0.75)');
+	DARK = luma(t.text) > 0.55;
+}
+
+// ── Charts ────────────
+function px(n) { return Math.round(n * 10) / 10; }
+function barPath(x, y, w, h, r) {
+	r = Math.min(r, w / 2, h);
+	return 'M' + px(x) + ' ' + px(y + h) + 'V' + px(y + r)
+		+ 'a' + r + ' ' + r + ' 0 0 1 ' + r + ' ' + (-r)
+		+ 'h' + px(w - 2 * r) + 'a' + r + ' ' + r + ' 0 0 1 ' + r + ' ' + r
+		+ 'V' + px(y + h) + 'Z';
+}
+/// One series over time, so the bars wear the app's accent and need no legend.
+function chartBar(l, key, per, cur, W) {
+	var f = fdef(l, key); if (!f) return '';
+	var N = per === 'day' ? 14 : per === 'week' ? 10 : 12, bs = [], vs = [], i;
+	for (i = N - 1; i >= 0; i--) bs.push(bshift(cur, per, -i));
+	for (i = 0; i < N; i++) vs.push(aggPer(l, inBucket(l.id, bs[i], per), f, per) || 0);
+	var max = 0;
+	for (i = 0; i < N; i++) if (vs[i] > max) max = vs[i];
+	var tg = target(l, key, cur, per);
+	if (tg && tg.v > max) max = tg.v;
+	if (!max) max = 1;
+	var H = 128, top = 16, bot = H - 17, cw = W / N, bw = Math.max(4, cw - Math.max(2, cw * 0.28));
+	var o = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+	o += '<line x1="0" y1="' + bot + '" x2="' + W + '" y2="' + bot
+		+ '" stroke="var(--bd)" stroke-width="1"/>';
+	if (tg) {
+		var ty = bot - (tg.v / max) * (bot - top);
+		o += '<line x1="0" y1="' + px(ty) + '" x2="' + W + '" y2="' + px(ty)
+			+ '" stroke="var(--mu)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>';
+	}
+	for (i = 0; i < N; i++) {
+		var h = (vs[i] / max) * (bot - top), x = i * cw + (cw - bw) / 2, sel = bs[i] === cur;
+		if (h > 0.5) {
+			o += '<path d="' + barPath(x, bot - h, bw, h, 4) + '" fill="var(--ac)" opacity="'
+				+ (sel ? 1 : 0.42) + '"/>';
+		}
+		o += '<text x="' + px(x + bw / 2) + '" y="' + (H - 4) + '" text-anchor="middle"'
+			+ ' font-size="9" fill="var(--mu)"' + (sel ? ' font-weight="700"' : '') + '>'
+			+ esc(blabel(bs[i], per, 1)) + '</text>';
+	}
+	// One value label, on the bucket being read. A number on every bar is noise.
+	var sh = statText(l, f, vs[N - 1], null);
+	o += '<text x="' + W + '" y="10" text-anchor="end" font-size="10" fill="var(--mu)">'
+		+ esc('max ' + statText(l, f, max, null).v) + '</text>';
+	o += '<text x="0" y="10" font-size="10" fill="var(--tx)" font-weight="700">'
+		+ esc(sh.v + (sh.u ? ' ' + sh.u : '')) + '</text>';
+	o += '</svg>';
+	return o;
+}
+function arc(cx, cy, r, ri, a0, a1) {
+	var lg = (a1 - a0) > Math.PI ? 1 : 0;
+	return 'M' + px(cx + r * Math.cos(a0)) + ' ' + px(cy + r * Math.sin(a0))
+		+ 'A' + r + ' ' + r + ' 0 ' + lg + ' 1 ' + px(cx + r * Math.cos(a1)) + ' ' + px(cy + r * Math.sin(a1))
+		+ 'L' + px(cx + ri * Math.cos(a1)) + ' ' + px(cy + ri * Math.sin(a1))
+		+ 'A' + ri + ' ' + ri + ' 0 ' + lg + ' 0 ' + px(cx + ri * Math.cos(a0)) + ' ' + px(cy + ri * Math.sin(a0))
+		+ 'Z';
+}
+/// Group by any `ref` or `enum` field — or by an attribute of the catalogue item
+/// a `ref` points at, which is what turns one mechanism into both the food pie
+/// and per-muscle-group volume.
+function groups(l, es, key, gs) {
+	var f = fdef(l, key), gf = fdef(l, gs.k), by = {}, i;
+	if (!f || !gf) return [];
+	for (i = 0; i < es.length; i++) {
+		var v = fnum(l, es[i], f); if (v == null || v <= 0) continue;
+		var raw = (es[i].f || {})[gs.k];
+		if (raw == null || raw === '') continue;
+		var name = gf.t === 'ref' ? cname(l, raw) : String(raw);
+		if (gs.a) {
+			var it = citem(l, raw); if (!it) continue;
+			name = it[gs.a] || '—';
+		}
+		by[name] = (by[name] || 0) + v;
+	}
+	var out = [];
+	for (var k in by) out.push({ n: k, v: by[k] });
+	out.sort(function (a, b) { return b.v - a.v; });
+	// A ninth series is never a ninth hue: the tail folds into a neutral Other.
+	if (out.length > 8) {
+		var rest = out.slice(7), s = 0;
+		for (i = 0; i < rest.length; i++) s += rest[i].v;
+		out = out.slice(0, 7); out.push({ n: 'Other', v: s, o: 1 });
+	}
+	return out;
+}
+function chartPie(l, key, gs, es) {
+	var f = fdef(l, key), gg = groups(l, es, key, gs), i, tot = 0;
+	for (i = 0; i < gg.length; i++) tot += gg[i].v;
+	if (!tot) return '<div class="empty">Nothing to split up yet.</div>';
+	var R = 62, ri = 38, S = R * 2 + 4, cx = S / 2, cy = S / 2, a = -Math.PI / 2;
+	var o = '<div class="pie"><svg width="' + S + '" height="' + S + '" viewBox="0 0 ' + S + ' ' + S + '">';
+	var col = function (j) { return gg[j].o ? 'var(--mu)' : pal(j); };
+	if (gg.length === 1) {
+		o += '<circle cx="' + cx + '" cy="' + cy + '" r="' + ((R + ri) / 2) + '" fill="none" stroke="'
+			+ col(0) + '" stroke-width="' + (R - ri) + '"/>';
+	} else {
+		for (i = 0; i < gg.length; i++) {
+			var a1 = a + (gg[i].v / tot) * Math.PI * 2;
+			o += '<path d="' + arc(cx, cy, R, ri, a, a1) + '" fill="' + col(i)
+				+ '" stroke="var(--sf)" stroke-width="2"/>';
+			a = a1;
+		}
+	}
+	var sh = statText(l, f, tot, 'sum');
+	o += '<text x="' + cx + '" y="' + (cy + 1) + '" text-anchor="middle" font-size="15"'
+		+ ' font-weight="700" fill="var(--tx)">' + esc(sh.v) + '</text>';
+	o += '<text x="' + cx + '" y="' + (cy + 15) + '" text-anchor="middle" font-size="9.5"'
+		+ ' fill="var(--mu)">' + esc(sh.u || (f.u || '')) + '</text>';
+	o += '</svg><div class="leg gap">';
+	for (i = 0; i < gg.length; i++) {
+		o += '<div class="lg"><span class="sw" style="background:' + col(i) + '"></span>'
+			+ '<span class="lgn">' + esc(gg[i].n) + '</span>'
+			+ '<span class="lgv">' + esc(fmt(gg[i].v)) + ' · '
+			+ Math.round(gg[i].v / tot * 100) + '%</span></div>';
+	}
+	return o + '</div></div>';
+}
+
+// ── State ────────────
+// `view` is the axis: LOG is where you put things in, LIFE is where you read
+// them back. It is one tap either way and it survives a change of lane, because
+// a mode a person gets stuck in is worse than a page that mixes the two.
+var S = { lane: '', per: 'day', off: 0, view: 'log', scr: null, tile: -1, amt: 0, pie: null, bar: null };
+var D = {}, TOAST = null, TT = 0, BOOTED = false, STARTED = false, LASTW = 0, LASTH = -1;
+
+function lane() { return LANE[S.lane] || { id: '', fields: [], tiles: [] }; }
+function curB() { var l = lane(); return bshift(bstart(dayOf(new Date(), l.dayStart), S.per), S.per, S.off); }
+function toast(msg, err) {
+	TOAST = { m: msg, e: !!err, u: null };
+	clearTimeout(TT); TT = setTimeout(function () { TOAST = null; redraw(); }, 6000);
+}
+/// A REDRAW NOBODY ASKED FOR — a toast clearing itself six seconds after it
+/// appeared, the frame changing width, a theme arriving. What is half-typed lives
+/// in the DOM until something reads it back into state, so a redraw that skips
+/// that step types over it. Found by a verifier: a lane being described lost the
+/// field being added the moment the last toast expired, and the entry form had
+/// carried the same fault since it was written.
+function redraw() {
+	try {
+		if (S.scr && S.scr.t === 'form' && S.scr.e) readInputs();
+		else if (S.scr && S.scr.t === 'lane') readLane();
+	} catch (x) { }
+	draw();
+}
+
+// ── Drawing ────────────
+function head() {
+	var i, o = '<div class="hd"><div class="row"><div class="chips">';
+	var ls = (IDX && IDX.lanes) || [];
+	for (i = 0; i < ls.length; i++) {
+		var d = LANE[ls[i]];
+		o += C(d ? d.n : ls[i], 'lane', ls[i], ls[i] === S.lane);
+	}
+	// OUTSIDE the scroller, so the way to make a fourth lane does not scroll off
+	// the end of the three that arrived.
+	o += '</div><button class="chip q plus" data-a="lanenew" data-v="" title="New lane"'
+		+ ' aria-label="New lane">+</button>'
+		+ '<button class="chip q" data-a="laneedit" data-v="" title="Change this lane"'
+		+ ' aria-label="Change this lane">&#9998;</button>'
+		+ '<div class="gap"></div><div class="seg">'
+		+ C('Log', 'view', 'log', S.view === 'log') + C('Life', 'view', 'life', S.view === 'life')
+		+ '</div></div><div class="row">'
+		+ B('chip q', 'off', '-1', '&#8249;')
+		+ C(blabel(curB(), S.per), 'now', '', !S.off)
+		+ B('chip q', 'off', '1', '&#8250;')
+		+ '<div class="gap"></div><div class="chips">';
+	var ps = [['day', 'D'], ['week', 'W'], ['month', 'M']];
+	for (i = 0; i < 3; i++) o += B('chip q' + (S.per === ps[i][0] ? ' on' : ''), 'per', ps[i][0], ps[i][1]);
+	return o + '</div></div></div>';
+}
+
+/// The tile pad. This is the heart of the thing: what you press, first on the
+/// screen and therefore under the thumb.
+function pad() {
+	var l = lane(), ts = l.tiles || [], o = '<div class="pad">', i;
+	for (i = 0; i < ts.length; i++) {
+		var t = ts[i];
+		if (S.tile === i && t.m === 'scale') { o += stepper(l, t, i); continue; }
+		o += tile(l, t, i);
+	}
+	return o + '</div>';
+}
+function tile(l, t, i) {
+	var sub = t.s || '', cls = 'tile', run = null;
+	if (t.m === 'timer') {
+		run = running(l, t);
+		if (run) { cls += ' run'; sub = 'started ' + hhmm(run.at) + ' — tap to stop'; }
+		else sub = sub || 'tap to start';
+	} else if (t.m === 'scale' || t.m === 'preset') {
+		sub = sub || presetLine(l, t);
+	} else if (t.m === 'expand') {
+		sub = sub || ((t.e || []).length + ' entries');
+	} else if (t.m === 'form') {
+		cls += ' acc';
+		sub = sub || 'fill in';
+	}
+	return B(cls, 'tile', i, '<span class="tn">' + esc(t.n) + '</span><span class="ts">'
+		+ esc(sub) + '</span>');
+}
+/// What a preset tile will actually record, in the lane's own numbers.
+function presetLine(l, t) {
+	var bits = [], i, sh = l.show || [];
+	var e = { f: t.f || {} };
+	if (t.by && (t.f || {})[t.by] != null) {
+		var bf = fdef(l, t.by);
+		bits.push(fmt(num(t.f[t.by])) + (bf && bf.u ? ' ' + bf.u : ''));
+	}
+	for (i = 0; i < sh.length && bits.length < 2; i++) {
+		var f = fdef(l, String(sh[i]).split(':')[0]);
+		if (!f || f.d == null) continue;
+		var v = fnum(l, e, f);
+		if (v != null) bits.push(fmt(v) + (f.u ? ' ' + f.u : ''));
+	}
+	return bits.join(' · ');
+}
+function stepper(l, t, i) {
+	var f = fdef(l, t.by), st = t.step || 10;
+	var e = { f: {} }, k;
+	for (k in (t.f || {})) e.f[k] = t.f[k];
+	e.f[t.by] = S.amt;
+	return '<div class="step">' + B('stepb', 'amt', -st, '&#8722;')
+		+ '<span class="amt">' + fmt(S.amt, 0) + (f && f.u ? '<span class="ts"> ' + esc(f.u) + '</span>' : '') + '</span>'
+		+ B('stepb', 'amt', st, '+')
+		+ '<span class="gap ts">' + esc(t.n + ' · ' + presetLine(l, { f: e.f, by: t.by })) + '</span>'
+		+ B('go', 'logscale', i, 'Log') + B('ghost', 'close', '', '&#10005;') + '</div>';
+}
+/// A timer that is running is an entry already on disk with no duration on it
+/// yet, so a reload finds it still going.
+function running(l, t) {
+	var a = live(l.id), i;
+	for (i = a.length - 1; i >= 0; i--) if (a[i].run && a[i].tile === t.n) return a[i];
+	return null;
+}
+
+function stats() {
+	var l = lane(), sh = l.show || [], b = curB(), es = inBucket(l.id, b, S.per), o = '', i;
+	if (!sh.length) return '';
+	o += '<div class="card"><div class="stats">';
+	for (i = 0; i < sh.length; i++) {
+		var parts = String(sh[i]).split(':'), f = fdef(l, parts[0]), how = parts[1] || null;
+		if (!f) continue;
+		var v = aggPer(l, es, f, S.per, how), t = how ? null : target(l, f.k, b, S.per), bar = '';
+		if (t) {
+			// Never colour alone: the state is written out beside the bar.
+			var pc = t.v ? Math.max(0, Math.min(1, (v || 0) / t.v)) : 0;
+			var good = t.dir === 'max' ? (v || 0) <= t.v : (v || 0) >= t.v;
+			var col = good ? 'var(--good)' : 'var(--warn)';
+			bar = '<div class="bar"><i style="width:' + Math.round(pc * 100) + '%;background:' + col
+				+ '"></i></div><div class="tgt"><b style="color:' + col + '">'
+				+ (good ? '&#10003;' : t.dir === 'max' ? 'over' : 'under') + '</b> '
+				+ (t.dir === 'max' ? '&#8804;' : '&#8805;') + ' ' + esc(statText(l, f, t.v).v)
+				+ (t.n > 1 ? ' (' + t.n + 'd)' : '') + '</div>';
+		}
+		o += ST(how === 'since' ? f.n + ' logged' : f.n, statText(l, f, v, how), bar);
+	}
+	return o + '</div></div>';
+}
+
+function entryRow(l, e) {
+	var sh = l.show || [], bits = [], i, name = '', sub = [];
+	var pf = l.primary ? fdef(l, l.primary) : null;
+	if (pf) name = fshow(l, e, pf);
+	if (!name) {
+		// No headline field on this entry, so it is named after what it carries:
+		// a weigh-in reads "Weight · Waist" rather than "Body entry".
+		var ns = [], fl = l.fields || [];
+		for (i = 0; i < fl.length && ns.length < 2; i++) {
+			if (fl[i].d || fl[i].t === 'text') continue;
+			if (fval(l, e, fl[i]) != null) ns.push(fl[i].n);
+		}
+		name = ns.join(' · ') || e.note || 'Entry';
+	}
+	for (i = 0; i < sh.length && bits.length < 3; i++) {
+		var f = fdef(l, String(sh[i]).split(':')[0]);
+		if (!f || String(sh[i]).indexOf(':') > 0) continue;
+		var v = fshow(l, e, f);
+		if (v) bits.push(v);
+	}
+	if (l.second) {
+		var s2 = fdef(l, l.second), sv = s2 ? fshow(l, e, s2) : '';
+		if (sv) sub.push(sv);
+	}
+	var ch = l.sess && !e.of ? kids(l.id, e.id).length : 0;
+	if (ch) sub.push(ch + ' sets');
+	if (e.note) sub.push(e.note);
+	return B('er', l.sess && !e.of ? 'sess' : 'edit', e.id,
+		'<span class="et">' + hhmm(e.at) + '</span><span class="en">' + esc(name)
+		+ (sub.length ? '<small>' + esc(sub.join(' · ')) + '</small>' : '') + '</span>'
+		+ '<span class="ev">' + esc(bits.join('  ')) + '</span>'
+		// The provenance dot: a tile, a timer or an import, never a hand-typed entry.
+		+ (e.src && e.src !== 'form' ? '<span class="src" title="' + esc(e.src) + '"></span>' : '')
+		+ '<span class="chev">&#8250;</span>');
+}
+function logList() {
+	var l = lane(), b = curB(), es = inBucket(l.id, b, S.per), rows = [], i;
+	for (i = es.length - 1; i >= 0; i--) if (!es[i].of) rows.push(es[i]);
+	if (!rows.length) return '<div class="empty">Nothing logged for ' + esc(blabel(b, S.per).toLowerCase())
+		+ '. Press a tile above.</div>';
+	var o = '', day = '';
+	for (i = 0; i < rows.length; i++) {
+		if (S.per !== 'day' && rows[i].day !== day) {
+			day = rows[i].day;
+			o += '<div class="dayh">' + esc(blabel(day, 'day')) + '</div>';
+		}
+		o += entryRow(l, rows[i]);
+	}
+	return o;
+}
+
+/// The fields a chart may read: everything numeric, plus anything counted.
+function numFields(l) {
+	var o = [], f = l.fields || [], i;
+	// A yes/no counts, which is the whole chart a habit lane wants.
+	for (i = 0; i < f.length; i++) {
+		if (f[i].t === 'num' || f[i].t === 'dur' || f[i].t === 'bool') o.push(f[i]);
+	}
+	return o;
+}
+function groupOpts(l) {
+	var o = [], f = l.fields || [], i, at = (CAT[l.id] || {}).attrs || {}, k;
+	for (i = 0; i < f.length; i++) {
+		if (f[i].t === 'enum') o.push({ k: f[i].k, n: f[i].n });
+		if (f[i].t === 'ref') {
+			o.push({ k: f[i].k, n: f[i].n });
+			for (k in at) o.push({ k: f[i].k, a: k, n: at[k] });
+		}
+	}
+	return o;
+}
+function charts() {
+	var l = lane(), nf = numFields(l), go = groupOpts(l), i, o = '';
+	if (!nf.length) return '<div class="empty">This lane has no numbers to chart.</div>';
+	// The lane's own headline reading, not whichever number happens to be first.
+	var first = fdef(l, String((l.show || [])[0] || '').split(':')[0]) || nf[0];
+	var bar = S.bar && fdef(l, S.bar) ? S.bar : first.k;
+	var W = Math.max(220, (LASTW || 340) - 26);
+	o += '<div class="card"><div class="sh">Over time</div><div class="chips cf">';
+	for (i = 0; i < nf.length; i++) o += C(nf[i].n, 'bar', nf[i].k, nf[i].k === bar);
+	o += '</div>' + chartBar(l, bar, S.per, curB(), W) + '</div>';
+	if (!go.length) return o;
+	var pf = S.pie && fdef(l, S.pie.f) ? S.pie : { f: first.k, g: go[0] };
+	o += '<div class="card"><div class="sh">Where it went</div><div class="chips cf">';
+	for (i = 0; i < go.length; i++) {
+		o += C(go[i].n, 'pieg', i, go[i].k === pf.g.k && (go[i].a || '') === (pf.g.a || ''));
+	}
+	o += '</div><div class="chips cf">';
+	for (i = 0; i < nf.length; i++) o += C(nf[i].n, 'pief', nf[i].k, nf[i].k === pf.f);
+	o += '</div>' + chartPie(l, pf.f, pf.g, inBucket(l.id, curB(), S.per)) + '</div>';
+	return o;
+}
+
+function toastBar() {
+	if (!TOAST) return '';
+	return '<div class="toast' + (TOAST.e ? ' err' : '') + '"><span class="gap">'
+		+ esc(TOAST.m) + '</span>' + (TOAST.u ? C('Undo', 'undo', '', 0) : '')
+		+ B('chip q', 'dismiss', '', '&#10005;') + '</div>';
+}
+function home() { return S.view === 'life' ? lifeView() : logView(); }
+/// LOG: the tiles under the thumb and what they put down, and nothing else. A
+/// number to admire is a reason to hesitate over a button.
+function logView() {
+	var l = lane(), es = inBucket(l.id, curB(), S.per), n = 0, i;
+	for (i = 0; i < es.length; i++) if (!es[i].of) n++;
+	return pad() + toastBar()
+		+ '<div class="shrow"><span class="sh gap">Entries</span>'
+		+ (n ? '<span class="tag"><b>' + n + '</b></span>' : '')
+		+ '</div><div class="card">' + logList() + '</div>';
+}
+/// LIFE: the same entries read back — the totals against their targets, the run
+/// of days, the shape over time and where it all went.
+function lifeView() {
+	var l = lane(), st = streak(S.lane, l);
+	var o = toastBar() + '<div class="shrow"><span class="sh gap">How it is going</span>'
+		+ (st > 1 ? '<span class="tag"><b>' + st + '</b> day streak</span>' : '') + '</div>';
+	if (!live(l.id).length) {
+		return o + '<div class="empty">Nothing logged in ' + esc(l.n || 'this lane')
+			+ ' yet. Press Log, then a tile.</div>';
+	}
+	return o + stats() + charts();
+}
+
+// ── Screens ────────────
+function backBar(txt) { return B('back', 'back', '', '&#8249; ' + esc(txt)); }
+/// A session, and the three levels it is read at: the session, each lift, each
+/// set. That shape is a grouping of flat entries, never a storage nesting.
+function sessScreen() {
+	var l = lane(), e = (LOG[l.id] || {})[S.scr.id];
+	if (!e) { S.scr = null; return home(); }
+	var ks = kids(l.id, e.id), i, o = backBar(blabel(e.day, 'day'));
+	var by = {}, order = [], dk = durK(l);
+	// Its length is on the session itself, not summed from the sets: a running
+	// session has none yet and reads as the time since it opened.
+	var sdur = function () {
+		return (dk && e.f && e.f[dk] != null) ? num(e.f[dk]) : (Date.now() - tms(e.at)) / 1000;
+	};
+	o += '<div class="card"><div class="h1">' + esc((fshow(l, e, fdef(l, l.title || '')) || l.n))
+		+ ' · ' + hhmm(e.at) + '</div><div class="stats" style="margin-top:10px">';
+	var sh = l.sessShow || l.show || [];
+	for (i = 0; i < sh.length; i++) {
+		var f = fdef(l, String(sh[i]).split(':')[0]); if (!f) continue;
+		o += ST(f.n, statText(l, f, f.t === 'dur' ? sdur() : aggr(l, ks, f), null), '');
+	}
+	o += '</div></div>';
+	// The tiles that add to it: the lifts most recently used, then the rest.
+	o += '<div class="pad">';
+	var seen = {}, all = live(l.id), recent = [];
+	for (i = all.length - 1; i >= 0 && recent.length < 6; i--) {
+		var r = (all[i].f || {})[l.primary];
+		if (r && !seen[r]) { seen[r] = 1; recent.push(r); }
+	}
+	var items = ((CAT[l.id] || {}).items) || [];
+	for (i = 0; i < items.length && recent.length < 8; i++) {
+		if (!seen[items[i].id]) { seen[items[i].id] = 1; recent.push(items[i].id); }
+	}
+	for (i = 0; i < recent.length; i++) {
+		var lastSet = lastFor(l, recent[i]);
+		o += B('tile', 'addset', recent[i], '<span class="tn">' + esc(cname(l, recent[i]))
+			+ '</span><span class="ts">' + esc(lastSet ? setLine(l, lastSet) : 'first set') + '</span>');
+	}
+	o += B('tile acc wide', 'addset', '',
+		'<span class="tn">Another lift…</span><span class="ts">pick from the catalogue</span>');
+	o += B('tile wide', 'finish', e.id, '<span class="tn">'
+		+ (dk && e.f && e.f[dk] != null ? 'Reopen' : 'Finish session') + '</span><span class="ts">'
+		+ esc(dur(sdur())) + '</span>');
+	o += '</div>';
+	// Grouped by lift, in the order each first appeared.
+	o += '<div class="card">';
+	if (!ks.length) o += '<div class="empty">No sets yet.</div>';
+	for (i = 0; i < ks.length; i++) {
+		var g = (ks[i].f || {})[l.primary] || '?';
+		if (!by[g]) { by[g] = []; order.push(g); }
+		by[g].push(ks[i]);
+	}
+	// Which number heads a group and which tails a set are the lane's to name;
+	// a lane that names neither simply gets no number rather than a row of dashes.
+	var vf = fdef(l, l.setSum || 'vol'), pf2 = fdef(l, l.setPeak || 'e1rm');
+	for (i = 0; i < order.length; i++) {
+		var set = by[order[i]];
+		o += '<div class="grp"><div class="grph"><span class="gap">' + esc(cname(l, order[i]))
+			+ '</span><span class="ev">'
+			+ (vf ? esc(fmt(aggr(l, set, vf)) + (vf.u ? ' ' + vf.u : '')) : '') + '</span></div>';
+		for (var j = 0; j < set.length; j++) {
+			o += B('setr', 'edit', set[j].id, '<span class="gap">' + (j + 1) + '. '
+				+ esc(setLine(l, set[j])) + '</span><span class="ev">'
+				+ (pf2 ? esc(fmt(fnum(l, set[j], pf2)) + ' 1RM') : '')
+				+ '</span><span class="chev">&#8250;</span>');
+		}
+		o += '</div>';
+	}
+	o += '</div>';
+	return o;
+}
+/// One set, read in the lane's own set fields: the reference is the group
+/// heading above it, so it is not repeated on every row.
+function setLine(l, e) {
+	var fs = l.setFields || [], b = [], i;
+	for (i = 0; i < fs.length; i++) {
+		var f = fdef(l, fs[i]);
+		if (!f || f.t === 'ref') continue;
+		var v = fshow(l, e, f);
+		if (v) b.push(v);
+	}
+	return b.join(' × ');
+}
+function lastFor(l, ref) {
+	var a = live(l.id), i;
+	for (i = a.length - 1; i >= 0; i--) if ((a[i].f || {})[l.primary] === ref && a[i].of) return a[i];
+	return null;
+}
+
+/// One entry, in a form. The same screen edits and creates: an edit appends a new
+/// version of the same id, which is what makes yesterday's lunch fixable.
+function formScreen() {
+	var l = lane(), sc = S.scr, e = sc.e, o = backBar(sc.id ? 'Edit' : 'New entry');
+	var fs = sc.fields || (l.tiles[sc.tile] || {}).fs || defFields(l), i;
+	o += '<div class="card"><div class="h1">' + esc(sc.title || l.n) + '</div>';
+	for (i = 0; i < fs.length; i++) {
+		var f = fdef(l, fs[i]); if (!f) continue;
+		o += '<div class="fr"><div class="fl">' + esc(f.n + (f.u ? ' (' + f.u + ')' : '')) + '</div>'
+			+ fieldInput(l, f, (e.f || {})[f.k]) + '</div>';
+	}
+	o += '<div class="fr"><div class="fl">Note</div>'
+		+ '<input data-in="_note" value="' + esc(e.note || '') + '" placeholder="optional"></div>';
+	o += '<div class="acts">' + B('go', 'commit', '', sc.id ? 'Save' : 'Log it')
+		+ B('ghost', 'back', '', 'Cancel') + '<div class="gap"></div>'
+		+ (sc.id ? C('Delete', 'del', sc.id, 0) : '') + '</div>';
+	if (sc.id && e.src) {
+		o += '<div class="tgt">recorded by <b>' + esc(e.src) + '</b> at ' + esc(e.at) + '</div>';
+	}
+	return o + '</div>';
+}
+function defFields(l) {
+	var o = [], f = l.fields || [], i;
+	for (i = 0; i < f.length; i++) if (!f[i].d) o.push(f[i].k);
+	return o;
+}
+function fieldInput(l, f, v) {
+	if (f.t === 'ref') {
+		return B('ghost pickbtn', 'pick', f.k, esc(v ? cname(l, v) : 'Choose…'));
+	}
+	if (f.t === 'enum') {
+		var o = '<div class="chips">', i, os = f.o || [];
+		for (i = 0; i < os.length; i++) o += C(os[i], 'enum', f.k + '|' + os[i], os[i] === v);
+		return o + '</div>';
+	}
+	if (f.t === 'bool') return C(v ? 'Yes' : 'No', 'bool', f.k, v);
+	if (f.t === 'num' || f.t === 'dur') {
+		// A duration is typed in minutes and kept in seconds.
+		var d = f.t === 'dur', st = d ? 900 : (f.step || 1);
+		return '<div class="num">' + B('stepb', 'nudge', f.k + '|-' + st, '&#8722;')
+			+ '<input data-in="' + esc(f.k) + '"' + (d ? ' data-dur="1" placeholder="minutes"' : '')
+			+ ' inputmode="decimal" value="' + esc(v == null ? '' : d ? fmt(num(v) / 60, 0) : v) + '">'
+			+ B('stepb', 'nudge', f.k + '|' + st, '+') + '</div>';
+	}
+	return '<input data-in="' + esc(f.k) + '" value="' + esc(v == null ? '' : v) + '">';
+}
+function pickScreen() {
+	var l = lane(), items = ((CAT[l.id] || {}).items) || [], i;
+	var o = backBar('Back') + '<div class="card"><input id="q" placeholder="Search…" '
+		+ 'autocomplete="off"><div style="margin-top:6px">';
+	for (i = 0; i < items.length; i++) {
+		var it = items[i], grp = it.grp || '';
+		o += '<button class="pickr" data-a="picked" data-v="' + esc(it.id) + '" data-n="'
+			+ esc((it.n + ' ' + grp).toLowerCase()) + '"><span class="gap">' + esc(it.n)
+			+ '</span><span class="ev">' + esc(grp) + '</span></button>';
+	}
+	return o + '</div></div>';
+}
+
+// ── Lanes made from the page ────────────
+//
+// A lane is this capp's primitive — a subject with fields — and three arriving
+// furnished with no way to make a fourth is a capp its owner cannot finish. The
+// daimon still writes lane STRUCTURE, and that is unchanged: what it writes are
+// the shapes this screen has no vocabulary for — a catalogue and the `ref` field
+// that reads it, a field computed from a formula, a session lane. This screen
+// writes the ordinary shape and costs no model turn to do it, and an edit CARRIES
+// EVERYTHING IT DOES NOT UNDERSTAND THROUGH UNTOUCHED rather than flattening a
+// lane a daimon wrote.
+var FTYPES = [['num', 'Number'], ['dur', 'Time'], ['enum', 'Choice'], ['bool', 'Yes/no'], ['text', 'Note']];
+var FAGGS = [['sum', 'Total'], ['mean', 'Average'], ['last', 'Latest'], ['max', 'Highest']];
+
+/// A name as a key: what the store and the expression lexer will both accept.
+function slug(s) {
+	var t = String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '').slice(0, 24);
+	return /^[0-9]/.test(t) ? 'f' + t : t;
+}
+function uniq(base, taken) {
+	var k = base || 'x', i = 2;
+	while (taken[k]) { k = base + i; i++; }
+	return k;
+}
+function optList(s) {
+	var a = String(s == null ? '' : s).split(','), o = [], i;
+	for (i = 0; i < a.length; i++) { var t = a[i].trim(); if (t) o.push(t); }
+	return o;
+}
+function newRow() { return { n: '', t: 'num', u: '', agg: 'sum', o: '', tv: '', td: 'min' }; }
+/// The rows this screen can show for a lane that already exists. A computed field
+/// and a `ref` are not among them, and they are not lost either — `laneFrom` keeps
+/// them exactly as they were.
+function laneRows(l) {
+	var o = [], f = l.fields || [], ts = l.targets || [], i, j;
+	for (i = 0; i < f.length; i++) {
+		var d = f[i];
+		if (d.d || d.t === 'ref') continue;
+		var r = { k: d.k, n: d.n, t: d.t, u: d.u || '', agg: d.agg || 'sum',
+			o: (d.o || []).join(', '), tv: '', td: 'min' };
+		for (j = 0; j < ts.length; j++) {
+			if (ts[j].f === d.k && ts[j].p === 'day') {
+				r.tv = String(d.t === 'dur' ? ts[j].v / 60 : ts[j].v);
+				r.td = ts[j].dir === 'max' ? 'max' : 'min';
+			}
+		}
+		o.push(r);
+	}
+	return o;
+}
+/// Why this lane cannot be made yet, in the words of the thing that is missing.
+/// A lane with no fields draws nothing, and a choice with nothing to choose is a
+/// field that can never be filled in.
+function laneBad(sc) {
+	if (!slug(sc.n)) return 'Give the lane a name — "Reading", "Money", "Meditation".';
+	var n = 0, i;
+	for (i = 0; i < sc.fs.length; i++) {
+		var f = sc.fs[i], nm = String(f.n || '').trim();
+		if (!nm) continue;
+		n++;
+		if (f.t === 'enum' && !optList(f.o).length) {
+			return 'Give "' + nm + '" some choices to pick from, or make it a note.';
+		}
+	}
+	return n ? '' : 'Add at least one field. A lane with none has nothing to draw.';
+}
+function fieldBox(f, i) {
+	var j, o = '<div class="fbox"><div class="row"><input data-lin="' + i + '.n" value="'
+		+ esc(f.n || '') + '" placeholder="' + (i ? 'Another field' : 'Pages, Amount, Mood…') + '">'
+		+ B('frm', 'fdel', i, '&#10005;') + '</div><div class="chips">';
+	for (j = 0; j < FTYPES.length; j++) {
+		o += C(FTYPES[j][1], 'ftype', i + '|' + FTYPES[j][0], f.t === FTYPES[j][0]);
+	}
+	o += '</div>';
+	if (f.t === 'enum') {
+		o += '<div class="fr cf"><div class="fl">Choices, separated by commas</div>'
+			+ '<input data-lin="' + i + '.o" value="' + esc(f.o || '') + '" placeholder="Low, Fine, Good"></div>';
+	}
+	if (f.t === 'num' || f.t === 'dur') {
+		if (f.t === 'num') {
+			o += '<div class="fr cf"><div class="fl">Unit</div><input data-lin="' + i + '.u" value="'
+				+ esc(f.u || '') + '" placeholder="kg, km, pages, hours"></div>';
+		}
+		o += '<div class="fl">Over a day it reads as</div><div class="chips cf">';
+		for (j = 0; j < FAGGS.length; j++) {
+			o += C(FAGGS[j][1], 'fagg', i + '|' + FAGGS[j][0], (f.agg || 'sum') === FAGGS[j][0]);
+		}
+		o += '</div><div class="fl">Daily target, if you want one'
+			+ (f.t === 'dur' ? ' (minutes)' : '') + '</div><div class="row">'
+			+ C(f.td === 'max' ? 'at most' : 'at least', 'ftdir', i, 0)
+			+ '<input data-lin="' + i + '.tv" inputmode="decimal" value="' + esc(f.tv || '')
+			+ '" placeholder="optional"></div>';
+	}
+	return o + '</div>';
+}
+function laneScreen() {
+	var sc = S.scr, old = sc.edit ? (LANE[sc.edit] || {}) : null, i, kept = 0;
+	var o = backBar('Back') + toastBar() + '<div class="card"><div class="h1">'
+		+ (sc.edit ? esc('Change ' + (old.n || sc.edit)) : 'A new lane') + '</div>'
+		+ '<div class="hint">A lane is one subject you keep: what goes on every entry, '
+		+ 'and how each number adds up over a day.</div>'
+		+ '<div class="fr cf"><div class="fl">Name</div><input data-lin="n" value="'
+		+ esc(sc.n || '') + '" placeholder="Reading, Money, Meditation…"></div>';
+	for (i = 0; i < sc.fs.length; i++) o += fieldBox(sc.fs[i], i);
+	o += B('ghost', 'fadd', '', '+ Add a field');
+	var why = laneBad(sc);
+	o += '<div class="acts">' + B(why ? 'ghost' : 'go', 'lanesave', '',
+		sc.edit ? 'Save lane' : 'Create lane') + B('ghost', 'back', '', 'Cancel')
+		+ '<div class="gap"></div>'
+		+ (sc.edit ? C(sc.armed ? 'Tap again to remove' : 'Remove', 'lanedel', '', sc.armed) : '')
+		+ '</div>';
+	if (why) o += '<div class="hint">' + esc(why) + '</div>';
+	for (i = 0; i < ((old && old.fields) || []).length; i++) {
+		if (old.fields[i].d || old.fields[i].t === 'ref') kept++;
+	}
+	if (kept) {
+		o += '<div class="hint">' + kept + (kept > 1 ? ' fields' : ' field')
+			+ ' here came from your daimon — a catalogue or a formula — and stay as they are.</div>';
+	}
+	return o + '</div>';
+}
+function readLane() {
+	var sc = S.scr, ins = APP.querySelectorAll('[data-lin]'), i;
+	if (!sc || sc.t !== 'lane') return;
+	for (i = 0; i < ins.length; i++) {
+		var k = ins[i].getAttribute('data-lin'), v = ins[i].value;
+		if (k === 'n') { sc.n = v; continue; }
+		var p = k.split('.'), f = sc.fs[+p[0]];
+		if (f) f[p[1]] = v;
+	}
+}
+/// The lane the screen describes. On an edit this PATCHES rather than replaces: a
+/// field that is already there keeps its key, or every entry logged against it
+/// stops reading; and anything the screen cannot show is carried through.
+function laneFrom(sc) {
+	var old = sc.edit ? (LANE[sc.edit] || {}) : null, l = {}, k, i, j;
+	for (k in old) if (old.hasOwnProperty(k)) l[k] = old[k];
+	// Against the INDEX as well as what is loaded: a lane whose file failed to read
+	// is still a lane, and reusing its id would write over its log.
+	var ids = {};
+	for (k in LANE) if (LANE.hasOwnProperty(k)) ids[k] = 1;
+	for (i = 0; i < ((IDX && IDX.lanes) || []).length; i++) ids[IDX.lanes[i]] = 1;
+	l.id = sc.edit || uniq(slug(sc.n) || 'lane', ids);
+	l.n = String(sc.n || '').trim();
+	if (l.dayStart == null) l.dayStart = 0;
+	var keep = [], taken = {}, fresh = {}, fields = [], oldF = (old && old.fields) || [];
+	for (i = 0; i < oldF.length; i++) {
+		if (oldF[i].d || oldF[i].t === 'ref') { keep.push(oldF[i]); taken[oldF[i].k] = 1; }
+	}
+	for (i = 0; i < sc.fs.length; i++) {
+		var r = sc.fs[i], nm = String(r.n || '').trim();
+		if (!nm) continue;
+		if (!r.k) { r.k = uniq(slug(nm) || 'f', taken); fresh[r.k] = r.t; }
+		taken[r.k] = 1;
+		// This screen owns a field's name, type, unit, choices and aggregation.
+		// EVERYTHING ELSE ON IT IS CARRIED — the step a daimon chose, the rollup
+		// that makes sleep sum within a night and average across a week — because
+		// a screen that cannot show a property must not be the thing that deletes
+		// it.
+		var d = {}, oldFd = null;
+		for (j = 0; j < oldF.length; j++) if (oldF[j].k === r.k) oldFd = oldF[j];
+		for (k in oldFd) if (oldFd.hasOwnProperty(k)) d[k] = oldFd[k];
+		d.k = r.k; d.t = r.t; d.n = nm;
+		d.agg = (r.t === 'enum' || r.t === 'text') ? 'last'
+			: r.t === 'bool' ? 'count' : (r.agg || 'sum');
+		if (r.t === 'num' && String(r.u || '').trim()) d.u = String(r.u).trim(); else delete d.u;
+		if (r.t === 'enum') d.o = optList(r.o); else delete d.o;
+		// A reading you take rather than accumulate averages over a week; summing
+		// fourteen weigh-ins would be a number of nothing.
+		if (!oldFd && (r.t === 'num' || r.t === 'dur') && d.agg === 'last') d.ru = 'mean';
+		fields.push(d);
+	}
+	l.fields = fields.concat(keep);
+	// Targets: the screen owns the daily one on a field it shows, and nothing else.
+	var tg = [], ots = (old && old.targets) || [], rowKey = {};
+	for (i = 0; i < fields.length; i++) rowKey[fields[i].k] = 1;
+	for (i = 0; i < ots.length; i++) if (!(rowKey[ots[i].f] && ots[i].p === 'day')) tg.push(ots[i]);
+	for (i = 0; i < sc.fs.length; i++) {
+		var r2 = sc.fs[i], tv = num(r2.tv);
+		if (!r2.k || tv == null || (r2.t !== 'num' && r2.t !== 'dur')) continue;
+		tg.push({ f: r2.k, p: 'day', dir: r2.td === 'max' ? 'max' : 'min',
+			v: r2.t === 'dur' ? tv * 60 : tv });
+	}
+	l.targets = tg;
+	// What the numbers panel reads: whatever it read before that is still here,
+	// then the fields made just now. ONLY the new ones — a field the lane
+	// deliberately left out of its readings stays out of them.
+	var show = [], have = {}, os = (old && old.show) || [];
+	for (i = 0; i < os.length; i++) {
+		var sk = String(os[i]).split(':')[0];
+		if (taken[sk]) { show.push(os[i]); have[sk] = 1; }
+	}
+	for (i = 0; i < fields.length && show.length < 6; i++) {
+		if (have[fields[i].k] || fields[i].t === 'text' || !fresh[fields[i].k]) continue;
+		show.push(fields[i].k); have[fields[i].k] = 1;
+	}
+	l.show = show;
+	// A pointer at a field that has gone draws a dash for ever, so it goes too.
+	var ptr = ['second', 'title', 'setSum', 'setPeak'];
+	for (i = 0; i < ptr.length; i++) if (l[ptr[i]] && !taken[l[ptr[i]]]) delete l[ptr[i]];
+	var arrs = ['sessShow', 'setFields'];
+	for (i = 0; i < arrs.length; i++) {
+		if (!l[arrs[i]]) continue;
+		var a2 = [], src = l[arrs[i]];
+		for (j = 0; j < src.length; j++) if (taken[String(src[j]).split(':')[0]]) a2.push(src[j]);
+		l[arrs[i]] = a2;
+	}
+	if (!l.primary || !taken[l.primary]) {
+		l.primary = '';
+		for (i = 0; i < fields.length; i++) {
+			if (fields[i].t === 'enum' || fields[i].t === 'text') { l.primary = fields[i].k; break; }
+		}
+	}
+	// THE TILES, which is what makes the difference between a lane and an empty
+	// pad. The lane's own tiles stay; a new yes/no gets a tap and a new duration
+	// gets a timer; and one form tile — this screen's own, marked `gen` — always
+	// covers every field, so a field added today can be filled in today.
+	var tiles = [], ot = (old && old.tiles) || [], genI = -1;
+	for (i = 0; i < ot.length; i++) {
+		if (tileOk(ot[i], taken)) { if (ot[i].gen && ot[i].m === 'form') genI = tiles.length; tiles.push(ot[i]); }
+	}
+	for (k in fresh) {
+		if (!fresh.hasOwnProperty(k)) continue;
+		var bag = {}, fn = '';
+		for (i = 0; i < fields.length; i++) if (fields[i].k === k) fn = fields[i].n;
+		if (fresh[k] === 'bool') { bag[k] = true; tiles.push({ m: 'tap', n: fn, f: bag, gen: 1 }); }
+		if (fresh[k] === 'dur') tiles.push({ m: 'timer', n: fn, by: k, f: {}, gen: 1 });
+	}
+	var fs = [];
+	for (i = 0; i < fields.length; i++) fs.push(fields[i].k);
+	if (genI >= 0) tiles[genI] = { m: 'form', n: tiles[genI].n, fs: fs, gen: 1 };
+	else tiles.push({ m: 'form', n: 'New entry', fs: fs, gen: 1 });
+	l.tiles = tiles;
+	return l;
+}
+/// A tile whose field has gone would draw nothing and log nothing.
+function tileOk(t, taken) {
+	var bags = [t.f].concat(t.e || []), i, k;
+	if (t.by && !taken[t.by]) return false;
+	for (i = 0; i < (t.fs || []).length; i++) if (!taken[t.fs[i]]) return false;
+	for (i = 0; i < bags.length; i++) {
+		for (k in bags[i]) if (bags[i].hasOwnProperty(k) && !taken[k]) return false;
+	}
+	return true;
+}
+function laneCommit() {
+	readLane();
+	var sc = S.scr, why = laneBad(sc), i;
+	// Never a broken lane, and never in silence: the reason is the thing missing.
+	if (why) { toast(why, 1); draw(); return; }
+	var l = laneFrom(sc), isNew = !sc.edit, prev = IDX.lanes.slice();
+	LANE[l.id] = l;
+	var ps = [save('lanes/' + l.id + '.json', JSON.stringify(l), 'replace')];
+	if (IDX.lanes.indexOf(l.id) < 0) {
+		IDX.lanes.push(l.id);
+		ps.push(save('index.json', JSON.stringify(IDX), 'replace'));
+	}
+	S.scr = null; S.lane = l.id; S.tile = -1; S.view = 'log'; S.off = 0; S.bar = null; S.pie = null;
+	Promise.all(ps).then(function (rs) {
+		for (var j = 0; j < rs.length; j++) {
+			if (rs[j] && rs[j].error) {
+				// Nothing half-made: a lane that did not reach the disk leaves the
+				// index it never got into.
+				IDX.lanes = prev;
+				if (isNew) { delete LANE[l.id]; S.lane = IDX.lanes[0]; }
+				toast('Lane not saved: ' + rs[j].error, 1); draw(); return;
+			}
+		}
+		toast(isNew ? l.n + ' — press a tile to log something' : 'Lane saved');
+		loadRange().then(draw);
+	});
+	draw();
+}
+/// Taking a lane off the page is not deleting a log: the entries stay in the
+/// Diamond, and the lane comes back if it is made again under the same name.
+function laneRemove() {
+	var sc = S.scr, id = sc.edit, ls = [], i;
+	if (!sc.armed) { sc.armed = 1; draw(); return; }
+	if ((IDX.lanes || []).length < 2) {
+		toast('This is the only lane there is. Make another one first.', 1); draw(); return;
+	}
+	for (i = 0; i < IDX.lanes.length; i++) if (IDX.lanes[i] !== id) ls.push(IDX.lanes[i]);
+	var prev = IDX.lanes;
+	IDX.lanes = ls;
+	S.scr = null; S.lane = ls[0]; S.tile = -1; S.off = 0; S.bar = null; S.pie = null;
+	save('index.json', JSON.stringify(IDX), 'replace').then(function (r) {
+		if (r && r.error) { IDX.lanes = prev; toast('Not removed: ' + r.error, 1); draw(); return; }
+		toast('Removed. Its entries are still in this Diamond.');
+		loadRange().then(draw);
+	});
+	draw();
+}
+
+/// The Diamond's own memory, drawn whole. A capp that skipped a key it did not
+/// recognise would trip the coverage check, and rightly.
+function memory() {
+	var o = '', ks = [], k;
+	for (k in D) if (D.hasOwnProperty(k) && k.charAt(0) !== '_') ks.push(k);
+	if (!ks.length) return '';
+	o += '<details class="mem"><summary>Diamond memory</summary>';
+	for (var i = 0; i < ks.length; i++) {
+		var v = D[ks[i]];
+		o += '<div class="mk">' + esc(ks[i]) + '</div><div class="mv">'
+			+ esc(typeof v === 'string' ? v : JSON.stringify(v, null, 1)) + '</div>';
+	}
+	return o + '</details>';
+}
+
+function draw() {
+	if (!BOOTED) { APP.innerHTML = '<div class="empty">Opening the log…</div>'; return; }
+	var body;
+	if (S.scr && S.scr.t === 'sess') body = sessScreen();
+	else if (S.scr && S.scr.t === 'form') body = formScreen();
+	else if (S.scr && S.scr.t === 'pick') body = pickScreen();
+	else if (S.scr && S.scr.t === 'lane') body = laneScreen();
+	else body = home();
+	APP.innerHTML = head() + body + memory();
+	measure();
+}
+function measure() {
+	var h = Math.ceil(Math.max(document.body.scrollHeight,
+		APP.getBoundingClientRect().height + 10)) + 4;
+	if (Math.abs(h - LASTH) < 3) return;
+	LASTH = h; post({ cmd: 'height', px: h });
+}
+
+// ── Doing things ────────────
+function mkEntry(l, f, src, of, day) {
+	var now = new Date();
+	return {
+		id: nid(), at: isoAt(now), day: day || dayOf(now, l.dayStart),
+		of: of || undefined, src: src, f: f || {}
+	};
+}
+function logTile(l, t, i) {
+	if (t.m === 'scale') { S.tile = i; S.amt = num((t.f || {})[t.by]) || 0; draw(); return; }
+	if (t.m === 'form') {
+		S.scr = { t: 'form', e: { f: cp(t.f) }, fields: t.fs || null, title: t.n, tile: i };
+		draw(); return;
+	}
+	if (t.m === 'expand') {
+		var es = [], j;
+		for (j = 0; j < (t.e || []).length; j++) es.push(mkEntry(l, cp(t.e[j]), 'expand'));
+		commitNew(l, es, t.n + ' — ' + es.length + ' entries');
+		return;
+	}
+	if (t.m === 'timer') {
+		var r = running(l, t);
+		if (r) {
+			var e2 = cp2(r);
+			e2.f[t.by] = Math.round((Date.now() - tms(r.at)) / 1000);
+			delete e2.run;
+			put(l.id, [e2]).then(function () { toast(t.n + ' — ' + dur(e2.f[t.by])); draw(); });
+		} else {
+			var e3 = mkEntry(l, cp(t.f), 'timer');
+			e3.run = 1; e3.tile = t.n;
+			put(l.id, [e3]).then(function () { toast(t.n + ' started'); draw(); });
+		}
+		return;
+	}
+	// preset and tap: one entry, straight down.
+	var e = mkEntry(l, cp(t.f), t.m === 'tap' ? 'tap' : 'preset');
+	if (t.sess) {
+		put(l.id, [e]).then(function () { S.scr = { t: 'sess', id: e.id }; draw(); });
+		return;
+	}
+	commitNew(l, [e], t.n + ' logged');
+}
+function commitNew(l, es, msg) {
+	put(l.id, es).then(function (ok) {
+		if (ok) { TOAST = { m: msg, e: 0, u: es }; clearTimeout(TT);
+			TT = setTimeout(function () { TOAST = null; redraw(); }, 6000); }
+		draw();
+	});
+	draw();
+}
+function cp(o) { var r = {}, k; for (k in o) if (o.hasOwnProperty(k)) r[k] = o[k]; return r; }
+function cp2(e) {
+	var r = cp(e); r.f = cp(e.f || {}); return r;
+}
+function undo(es) {
+	var l = lane(), out = [], i;
+	for (i = 0; i < es.length; i++) out.push({ id: es[i].id, at: es[i].at, day: es[i].day, del: 1 });
+	put(l.id, out).then(function () { TOAST = null; draw(); });
+}
+function readInputs() {
+	var l = lane(), sc = S.scr, ins = APP.querySelectorAll('[data-in]'), i;
+	for (i = 0; i < ins.length; i++) {
+		var k = ins[i].getAttribute('data-in'), v = ins[i].value;
+		if (k === '_note') { sc.e.note = v.trim() || undefined; continue; }
+		if (v === '') { delete sc.e.f[k]; continue; }
+		sc.e.f[k] = ins[i].getAttribute('data-dur') ? Math.round(parseFloat(v) * 60) : v;
+	}
+}
+
+// ── Events ────────────
+document.addEventListener('click', function (ev) {
+	var t = ev.target;
+	while (t && t !== document.body && !t.getAttribute('data-a')) t = t.parentNode;
+	if (!t || !t.getAttribute) return;
+	var a = t.getAttribute('data-a'), v = t.getAttribute('data-v') || '';
+	if (!a) return;
+	var l = lane(), sc = S.scr;
+	if (a === 'lane') { S.lane = v; S.tile = -1; S.scr = null; S.off = 0; S.bar = null; S.pie = null; boot(); return; }
+	if (a === 'per') { S.per = v; S.off = 0; S.tile = -1; loadRange().then(draw); }
+	else if (a === 'off') { S.off = Math.min(0, S.off + (+v)); S.tile = -1; loadRange().then(draw); }
+	else if (a === 'now') { S.off = 0; loadRange().then(draw); }
+	else if (a === 'view') { S.view = v; S.tile = -1; S.scr = null; loadRange().then(draw); }
+	else if (a === 'lanenew') { S.scr = { t: 'lane', edit: '', n: '', fs: [newRow()] }; draw(); }
+	else if (a === 'laneedit') {
+		var el = LANE[S.lane];
+		if (el) { S.scr = { t: 'lane', edit: el.id, n: el.n || '', fs: laneRows(el) }; draw(); }
+	}
+	else if (a === 'fadd') { readLane(); sc.fs.push(newRow()); draw(); }
+	else if (a === 'fdel') { readLane(); sc.fs.splice(+v, 1); draw(); }
+	else if (a === 'ftype') { readLane(); var q4 = v.split('|'); sc.fs[+q4[0]].t = q4[1]; draw(); }
+	else if (a === 'fagg') { readLane(); var q5 = v.split('|'); sc.fs[+q5[0]].agg = q5[1]; draw(); }
+	else if (a === 'ftdir') {
+		readLane();
+		var r4 = sc.fs[+v]; r4.td = r4.td === 'max' ? 'min' : 'max'; draw();
+	}
+	else if (a === 'lanesave') { laneCommit(); }
+	else if (a === 'lanedel') { laneRemove(); }
+	else if (a === 'tile') { S.tile = -1; logTile(l, (l.tiles || [])[+v], +v); }
+	else if (a === 'amt') { S.amt = Math.max(0, S.amt + (+v)); draw(); }
+	else if (a === 'close') { S.tile = -1; draw(); }
+	else if (a === 'logscale') {
+		var tl = (l.tiles || [])[+v], f = cp(tl.f); f[tl.by] = S.amt;
+		S.tile = -1;
+		commitNew(l, [mkEntry(l, f, 'scale')], tl.n + ' · ' + fmt(S.amt, 0));
+	}
+	else if (a === 'undo') { if (TOAST && TOAST.u) undo(TOAST.u); }
+	else if (a === 'dismiss') { TOAST = null; draw(); }
+	else if (a === 'bar') { S.bar = v; draw(); }
+	else if (a === 'pief') { S.pie = { f: v, g: (S.pie || {}).g || groupOpts(l)[0] }; draw(); }
+	else if (a === 'pieg') { S.pie = { f: (S.pie || {}).f || numFields(l)[0].k, g: groupOpts(l)[+v] }; draw(); }
+	else if (a === 'sess') { S.scr = { t: 'sess', id: v }; draw(); }
+	else if (a === 'edit') {
+		var e = (LOG[l.id] || {})[v];
+		if (e) { S.scr = { t: 'form', e: cp2(e), id: v, back: sc, title: 'Entry' }; draw(); }
+	}
+	else if (a === 'back') { S.scr = (sc && sc.back) || null; draw(); }
+	else if (a === 'enum') {
+		var p = v.split('|');
+		readInputs(); sc.e.f[p[0]] = sc.e.f[p[0]] === p[1] ? '' : p[1]; draw();
+	}
+	else if (a === 'bool') { readInputs(); sc.e.f[v] = !sc.e.f[v]; draw(); }
+	else if (a === 'nudge') {
+		var q = v.split('|'), inp = APP.querySelector('[data-in="' + q[0] + '"]');
+		var step = +q[1], cur = parseFloat(inp.value || '0') || 0;
+		if (inp.getAttribute('data-dur')) inp.value = Math.max(0, cur + step / 60);
+		else inp.value = Math.max(0, Math.round((cur + step) * 100) / 100);
+	}
+	else if (a === 'pick') { readInputs(); S.scr = { t: 'pick', field: v, back: sc }; draw(); }
+	else if (a === 'picked') {
+		var b = sc.back; b.e.f[sc.field] = v; S.scr = b; draw();
+	}
+	else if (a === 'addset') {
+		var pe = (LOG[l.id] || {})[sc.id], base = { }, lf = lastFor(l, v);
+		base[l.primary] = v;
+		if (lf) { base.kg = lf.f.kg; base.reps = lf.f.reps; }
+		var fm = { t: 'form', e: { f: base }, fields: l.setFields, title: v ? cname(l, v) : 'New set',
+			of: sc.id, day: pe ? pe.day : null, back: sc };
+		if (!v) { S.scr = { t: 'pick', field: l.primary, back: fm }; }
+		else S.scr = fm;
+		draw();
+	}
+	else if (a === 'finish') {
+		var se = (LOG[l.id] || {})[v], dk3 = durK(l);
+		if (se && dk3) {
+			var n2 = cp2(se);
+			if (n2.f[dk3] != null) delete n2.f[dk3];
+			else n2.f[dk3] = Math.round((Date.now() - tms(se.at)) / 1000);
+			put(l.id, [n2]).then(draw);
+		}
+	}
+	else if (a === 'del') {
+		var de = (LOG[l.id] || {})[v];
+		if (de) {
+			put(l.id, [{ id: v, at: de.at, day: de.day, del: 1 }]).then(function () {
+				S.scr = (sc && sc.back) || null; toast('Deleted'); draw();
+			});
+		}
+	}
+	else if (a === 'commit') {
+		readInputs();
+		var ne = sc.e;
+		if (!ne.id) {
+			var made = mkEntry(l, ne.f, 'form', sc.of, sc.day);
+			made.note = ne.note;
+			ne = made;
+		} else { ne.w = Date.now(); }
+		S.scr = (sc && sc.back) || null;
+		put(l.id, [ne]).then(function () { toast('Saved'); draw(); });
+		draw();
+	}
+}, false);
+
+// Filtering the catalogue must not re-render, or the search box loses the caret.
+document.addEventListener('input', function (ev) {
+	if (!ev.target || ev.target.id !== 'q') return;
+	var q = ev.target.value.toLowerCase(), rows = APP.querySelectorAll('.pickr'), i;
+	for (i = 0; i < rows.length; i++) {
+		rows[i].style.display = rows[i].getAttribute('data-n').indexOf(q) >= 0 ? '' : 'none';
+	}
+});
+
+// ── Boot ────────────
+function loadRange() {
+	var l = lane(), b = curB(), N = S.per === 'day' ? 14 : S.per === 'week' ? 10 : 12;
+	var from = bshift(b, S.per, -(N - 1)), to = bend(b, S.per);
+	var p = shards(l.id, from, to);
+	return p ? p : Promise.resolve();
+}
+function boot() {
+	return loadRange().then(function () { BOOTED = true; draw(); });
+}
+/// Everything the page needs, in the order it needs it. `rendered` has already
+/// gone out by the time any of this runs — a capp that waits on a read before
+/// reporting is a capp that falls back on a slower device.
+function start() {
+	return jread('index.json').then(function (ix) {
+		if (ix && ix.lanes && ix.lanes.length) { IDX = ix; return null; }
+		return seed();
+	}).then(function () {
+		var ls = IDX.lanes, jobs = [], i;
+		for (i = 0; i < ls.length; i++) {
+			jobs.push(jread('lanes/' + ls[i] + '.json').then((function (id) {
+				return function (d) { if (d) LANE[id] = d; };
+			})(ls[i])));
+			jobs.push(jread('cat/' + ls[i] + '.json').then((function (id) {
+				return function (d) { if (d) CAT[id] = d; };
+			})(ls[i])));
+		}
+		return Promise.all(jobs);
+	}).then(function () {
+		S.lane = IDX.lanes[0];
+		return boot();
+	});
+}
+
+window.addEventListener('message', function (ev) {
+	var m = ev.data;
+	if (!m || m.dc !== 1 || m.v !== PR) return;
+	if (m.id && pend[m.id]) { pend[m.id](m); delete pend[m.id]; return; }
+	if (m.cmd !== 'data') return;
+	D = m.data || {};
+	theme(D._theme);
+	// Every top-level key with content, named, on every data message. A second
+	// `rendered` naming fewer keys tears the frame down just as a first would.
+	var ks = [], k;
+	for (k in D) if (D.hasOwnProperty(k) && k.charAt(0) !== '_') ks.push(k);
+	post({ cmd: 'rendered', keys: ks });
+	// ONCE. `data` arrives again on every theme, ink and skin change, and a
+	// second `start()` while the first is still reading would seed the store a
+	// second time.
+	if (!STARTED) {
+		STARTED = true;
+		start().catch(function (e) {
+			APP.innerHTML = '<div class="empty">' + esc('Could not open the log: ' + e) + '</div>';
+		});
+		return;
+	}
+	// A theme change mid-sentence must not take the half-typed entry — or the
+	// half-built lane — with it.
+	redraw();
+});
+if (window.ResizeObserver) {
+	new ResizeObserver(function () {
+		var w = APP.clientWidth;
+		if (Math.abs(w - LASTW) > 6) { LASTW = w; if (BOOTED) redraw(); }
+		measure();
+	}).observe(document.body);
+}
+LASTW = APP.clientWidth;
+post({ cmd: 'ready' });
+
+// ── The furniture it arrives with ────────────
+// Two working lanes and a third for readings, with real numbers in them, which
+// is the difference between an empty app and one somebody keeps. The food
+// catalogue is per 100 g.
+var FOODS = ('oats|Rolled oats|Grain|379|13.2|67.7|6.5|10.1;milk|Whole milk|Dairy|61|3.2|4.8|3.3|0;'
+	+ 'yog|Greek yoghurt|Dairy|59|10|3.6|0.4|0;ched|Cheddar|Dairy|403|25|1.3|33|0;'
+	+ 'egg|Eggs|Protein|143|12.6|0.7|9.5|0;chick|Chicken breast|Protein|165|31|0|3.6|0;'
+	+ 'salm|Salmon|Protein|208|20.4|0|13.4|0;lent|Lentils, cooked|Protein|116|9|20|0.4|7.9;'
+	+ 'rice|White rice, cooked|Grain|130|2.7|28.2|0.3|0.4;pasta|Pasta, cooked|Grain|131|5|25|1.1|1.8;'
+	+ 'bread|Wholemeal bread|Grain|247|13|41|3.4|7;pot|Potato, boiled|Veg|77|2|17.5|0.1|2.2;'
+	+ 'broc|Broccoli|Veg|34|2.8|6.6|0.4|2.6;spin|Spinach|Veg|23|2.9|3.6|0.4|2.2;'
+	+ 'ban|Banana|Fruit|89|1.1|22.8|0.3|2.6;app|Apple|Fruit|52|0.3|13.8|0.2|2.4;'
+	+ 'alm|Almonds|Fat|579|21.2|21.6|49.9|12.5;pnut|Peanut butter|Fat|588|25|20|50|6;'
+	+ 'oil|Olive oil|Fat|884|0|0|100|0;choc|Dark chocolate|Snack|546|4.9|61|31|7;'
+	+ 'coff|Black coffee|Drink|1|0.1|0|0|0;beer|Beer, 4.5%|Drink|43|0.5|3.6|0|0').split(';');
+var LIFTS = ('sq|Back squat|Legs;dl|Deadlift|Back;bp|Bench press|Chest;ohp|Overhead press|Shoulders;'
+	+ 'row|Barbell row|Back;pull|Pull-up|Back;rdl|Romanian deadlift|Legs;lp|Leg press|Legs;'
+	+ 'lat|Lat pulldown|Back;dip|Dip|Chest;curl|Dumbbell curl|Arms;push|Triceps pushdown|Arms').split(';');
+
+function seed() {
+	var i, a, foods = [], lifts = [];
+	for (i = 0; i < FOODS.length; i++) {
+		a = FOODS[i].split('|');
+		foods.push({ id: a[0], n: a[1], grp: a[2],
+			v: { kcal: +a[3], p: +a[4], c: +a[5], ft: +a[6], fib: +a[7] } });
+	}
+	for (i = 0; i < LIFTS.length; i++) {
+		a = LIFTS[i].split('|');
+		lifts.push({ id: a[0], n: a[1], grp: a[2] });
+	}
+	// A derived field that scales a catalogue number by how much was eaten.
+	function sc(k, n, u) {
+		return { k: k, t: 'num', n: n, u: u, agg: 'sum', d: { c: 'food', k: k, per: 100, by: 'g' } };
+	}
+	var diet = {
+		id: 'diet', n: 'Diet', dayStart: 0, primary: 'food', second: 'meal',
+		fields: [
+			{ k: 'food', t: 'ref', n: 'Food', agg: 'count' },
+			{ k: 'meal', t: 'enum', n: 'Meal', o: ['Breakfast', 'Lunch', 'Dinner', 'Snack'], agg: 'count' },
+			{ k: 'g', t: 'num', n: 'Amount', u: 'g', agg: 'sum', step: 10 },
+			sc('kcal', 'Energy', 'kcal'), sc('p', 'Protein', 'g'), sc('c', 'Carbs', 'g'),
+			sc('ft', 'Fat', 'g'), sc('fib', 'Fibre', 'g')
+		],
+		show: ['kcal', 'p', 'c', 'ft', 'fib'],
+		targets: [{ f: 'kcal', p: 'day', dir: 'max', v: 2400 }, { f: 'p', p: 'day', dir: 'min', v: 120 },
+			{ f: 'fib', p: 'day', dir: 'min', v: 30 }],
+		tiles: [
+			// A scale tile carries the usual amount, so the tile already reads
+			// "80 g · 303 kcal" and one tap opens it at that rather than at zero.
+			{ m: 'scale', n: 'Oats', f: { food: 'oats', g: 80, meal: 'Breakfast' }, by: 'g', step: 10 },
+			{ m: 'scale', n: 'Milk', f: { food: 'milk', g: 250, meal: 'Breakfast' }, by: 'g', step: 50 },
+			{ m: 'scale', n: 'Banana', f: { food: 'ban', g: 120, meal: 'Snack' }, by: 'g', step: 20 },
+			{ m: 'scale', n: 'Chicken', f: { food: 'chick', g: 200, meal: 'Dinner' }, by: 'g', step: 25 },
+			{ m: 'scale', n: 'Rice', f: { food: 'rice', g: 250, meal: 'Dinner' }, by: 'g', step: 50 },
+			{ m: 'scale', n: 'Eggs', f: { food: 'egg', g: 100, meal: 'Breakfast' }, by: 'g', step: 50 },
+			{ m: 'scale', n: 'Yoghurt', f: { food: 'yog', g: 170, meal: 'Snack' }, by: 'g', step: 25 },
+			{ m: 'preset', n: 'Coffee', f: { food: 'coff', g: 250, meal: 'Snack' }, by: 'g' },
+			{ m: 'expand', n: 'Porridge breakfast', e: [
+				{ food: 'oats', g: 80, meal: 'Breakfast' }, { food: 'milk', g: 250, meal: 'Breakfast' },
+				{ food: 'ban', g: 120, meal: 'Breakfast' }] },
+			{ m: 'expand', n: 'Chicken & rice', e: [
+				{ food: 'chick', g: 200, meal: 'Dinner' }, { food: 'rice', g: 250, meal: 'Dinner' },
+				{ food: 'broc', g: 150, meal: 'Dinner' }] },
+			{ m: 'form', n: 'Something else', fs: ['food', 'g', 'meal'] }
+		]
+	};
+	var gym = {
+		id: 'gym', n: 'Gym', dayStart: 0, sess: true, primary: 'lift', title: 'name',
+		setFields: ['lift', 'kg', 'reps'],
+		fields: [
+			{ k: 'name', t: 'enum', n: 'Session', o: ['Push', 'Pull', 'Legs', 'Full body'], agg: 'count' },
+			{ k: 'lift', t: 'ref', n: 'Lift', agg: 'count' },
+			{ k: 'kg', t: 'num', n: 'Weight', u: 'kg', agg: 'max', ru: 'max', step: 2.5 },
+			{ k: 'reps', t: 'num', n: 'Reps', agg: 'sum', step: 1 },
+			{ k: 'vol', t: 'num', n: 'Volume', u: 'kg', agg: 'sum', d: { e: 'kg*reps' } },
+			{ k: 'e1rm', t: 'num', n: 'Est. 1RM', u: 'kg', agg: 'max', ru: 'max', d: { e: 'kg*(1+reps/30)' } },
+			{ k: 'dur', t: 'dur', n: 'Time', agg: 'sum' }
+		],
+		show: ['vol', 'reps', 'e1rm', 'dur'],
+		sessShow: ['vol', 'reps', 'e1rm', 'dur'],
+		targets: [{ f: 'vol', p: 'week', dir: 'min', v: 24000 }],
+		tiles: [
+			{ m: 'tap', n: 'Start a session', sess: 1, f: { name: 'Full body' }, s: 'opens the session' },
+			{ m: 'timer', n: 'Cardio', by: 'dur', f: {} },
+			{ m: 'form', n: 'One set', fs: ['lift', 'kg', 'reps'] }
+		]
+	};
+	var body = {
+		// The day starts at 04:00, so sleep recorded at 02:00 belongs to the night
+		// before rather than to the morning after.
+		id: 'body', n: 'Body', dayStart: 240, primary: 'mood',
+		fields: [
+			{ k: 'kg', t: 'num', n: 'Weight', u: 'kg', agg: 'last', ru: 'mean', step: 0.1 },
+			{ k: 'waist', t: 'num', n: 'Waist', u: 'cm', agg: 'last', ru: 'mean', step: 0.5 },
+			{ k: 'hr', t: 'num', n: 'Resting HR', u: 'bpm', agg: 'mean', step: 1 },
+			{ k: 'sleep', t: 'dur', n: 'Slept', agg: 'sum', ru: 'mean' },
+			{ k: 'mood', t: 'enum', n: 'Mood', o: ['Low', 'Flat', 'Fine', 'Good', 'Great'], agg: 'last' },
+			{ k: 'fast', t: 'bool', n: 'Fasted', agg: 'count' }
+		],
+		show: ['kg', 'sleep', 'hr', 'mood', 'kg:since'],
+		targets: [{ f: 'sleep', p: 'day', dir: 'min', v: 27000 }],
+		tiles: [
+			{ m: 'form', n: 'Weigh in', fs: ['kg', 'waist'] },
+			{ m: 'form', n: 'Slept', fs: ['sleep', 'mood'] },
+			{ m: 'form', n: 'Resting HR', fs: ['hr', 'fast'] },
+			{ m: 'timer', n: 'Nap', by: 'sleep', f: {} },
+			{ m: 'tap', n: 'Feeling good', f: { mood: 'Good' } }
+		]
+	};
+	IDX = { v: 1, lanes: ['diet', 'gym', 'body'], weekStart: 1, seeded: isoAt(new Date()) };
+	return Promise.all([
+		save('index.json', JSON.stringify(IDX), 'replace'),
+		save('lanes/diet.json', JSON.stringify(diet), 'replace'),
+		save('lanes/gym.json', JSON.stringify(gym), 'replace'),
+		save('lanes/body.json', JSON.stringify(body), 'replace'),
+		save('cat/diet.json', JSON.stringify({ attrs: { grp: 'Food group' }, items: foods }), 'replace'),
+		save('cat/gym.json', JSON.stringify({ attrs: { grp: 'Muscle group' }, items: lifts }), 'replace')
+	]);
+}
+})();
+</script></body></html>

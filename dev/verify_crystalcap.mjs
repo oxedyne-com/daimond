@@ -9,10 +9,11 @@
 //
 // WHAT CHANGED ON 2026-08-09, and why this file was wrong until now: the crystal
 // became TWO files. `crystal.json` is the memory and `crystal.html` is the page
-// that renders it, and they have separate ceilings — 16 KiB and 64 KiB — because
-// a page is bigger than a summary and NEITHER IS EXEMPT. This file pinned one
-// ceiling on one file, so a page could be any size at all and nothing here would
-// have noticed: the page rides in every `versions/` snapshot where it changed and
+// that renders it, and they have SEPARATE ceilings — `CRYSTAL_CAP_DEFAULT` and
+// `CRYSTAL_PAGE_CAP_DEFAULT` in `src/tools.rs`, read from there at the top of this
+// file rather than restated — because a page is bigger than a summary and NEITHER
+// IS EXEMPT. This file pinned one ceiling on one file, so a page could be any size
+// at all and nothing here would have noticed: the page rides in every `versions/` snapshot where it changed and
 // shares SYNC_DIAMONDS_MAX (6 MB) with the memory, so exempting presentation
 // voids the cap's stated purpose. Worse, the page is written by a MODEL, which
 // is the one author in this app with no sense of how big a file is.
@@ -45,8 +46,8 @@
 //   * apply to anything but the two live files — a `versions/NNNN.json` or
 //     `versions/NNNN.html` snapshot of an oversized crystal has to keep being
 //     written, or the Diamond at the ceiling cannot be recorded at all;
-//   * be ONE ceiling wearing two names. 16 KiB and 64 KiB are different numbers
-//     for different jobs, and a 32 KiB file is over one and under the other.
+//   * be ONE ceiling wearing two names. They are different numbers for different
+//     jobs, and a file sized between them is over one and under the other.
 //
 // How each family goes red (this lane could not run a browser, so the lead's
 // batched pass is the first time they are exercised):
@@ -65,7 +66,40 @@
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no mock LLM: nothing
 // here runs a turn.
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { open, scratch } from './harness.mjs';
+
+// The two shipped ceilings, READ FROM THE ENGINE rather than restated here.
+//
+// They were `16 * 1024` and `64 * 1024` written out as literals in this file, and on
+// 2026-08-13 the page ceiling was raised to 128 KiB — so the "80 KiB is over it" check
+// went red against a build that was working exactly as intended, and the number this
+// file believed in was one nothing enforced. A restated constant can only ever be
+// right until somebody changes the real one. `dev/verify_lifelog.mjs` reads the same
+// constant the same way.
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const capOf = (name) => {
+	const src = fs.readFileSync(path.join(ROOT, 'src', 'tools.rs'), 'utf8');
+	const m = new RegExp(name + ':\\s*usize\\s*=\\s*(\\d+)\\s*\\*\\s*(\\d+)').exec(src);
+	if (!m) throw new Error('verify_crystalcap: ' + name + ' not found in src/tools.rs');
+	return Number(m[1]) * Number(m[2]);
+};
+const DATA_CAP = capOf('CRYSTAL_CAP_DEFAULT');
+const PAGE_CAP = capOf('CRYSTAL_PAGE_CAP_DEFAULT');
+
+// The whole point of the defaults block below is that these are two DIFFERENT numbers
+// with room between them. If they ever meet, there is no size that is over one and under
+// the other, and the block would pass by having nothing left to ask.
+if (!(DATA_CAP < PAGE_CAP)) {
+	console.error('verify_crystalcap: the page ceiling (' + PAGE_CAP + ') is not above the '
+		+ 'memory ceiling (' + DATA_CAP + '), so no file can be over one and under the other. '
+		+ 'These are meant to be different numbers for different jobs; see src/tools.rs.');
+	process.exit(2);
+}
+const KIB     = (n) => (n / 1024) + ' KiB';
+const MID_LEN = DATA_CAP + Math.floor((PAGE_CAP - DATA_CAP) / 2);	// over memory, under page
+const BIG_LEN = PAGE_CAP + 16 * 1024;								// over page as well
 
 const PROFILE = scratch('pw', 'crystalcap');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -89,7 +123,7 @@ const { page } = s;
 try {
 	await page.waitForTimeout(1500);
 
-	const out = await page.evaluate(async () => {
+	const out = await page.evaluate(async ({ MID_LEN, BIG_LEN }) => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		const r = { absent: [] };
@@ -134,20 +168,23 @@ try {
 
 		// ── The two ceilings are different numbers ───────────────────
 		// Measured BEFORE any setter runs, so what is under test is the shipped
-		// defaults: 16 KiB of memory, 64 KiB of page. One file of 32 KiB is over
-		// the first and under the second, so a single ceiling serving both files
-		// fails here whichever of the two numbers it happens to hold.
+		// defaults. `MID_LEN` sits between the two, so it is over the memory's
+		// ceiling and under the page's: a single ceiling serving both files fails
+		// here whichever of the two numbers it happens to hold. `BIG_LEN` is over
+		// the page's as well, which is what says the page has a ceiling at all.
+		// Both are derived from the engine's own constants, so raising either
+		// ceiling moves the fixture with it instead of turning this red.
 		{
 			const id  = await app.create_diamond('Ceilings');
 			const dir = 'diamonds/' + id;
 			// Legal JSON and legal HTML at exactly the sizes named, so a refusal
 			// can only ever be the weight and never the shape.
-			const dataMid = '{"t":"' + 'm'.repeat(32 * 1024 - 8) + '"}';	// 32 KiB
-			const pageMid = '<!--'  + 'm'.repeat(32 * 1024 - 7) + '-->';	// 32 KiB
-			const pageBig = '<!--'  + 'p'.repeat(80 * 1024 - 7) + '-->';	// 80 KiB
-			r.defData32 = await write(dir + '/crystal.json', dataMid);
-			r.defPage32 = await write(dir + '/crystal.html', pageMid);
-			r.defPage80 = await write(dir + '/crystal.html', pageBig);
+			const dataMid = '{"t":"' + 'm'.repeat(MID_LEN - 8) + '"}';
+			const pageMid = '<!--'  + 'm'.repeat(MID_LEN - 7) + '-->';
+			const pageBig = '<!--'  + 'p'.repeat(BIG_LEN - 7) + '-->';
+			r.defDataMid = await write(dir + '/crystal.json', dataMid);
+			r.defPageMid = await write(dir + '/crystal.html', pageMid);
+			r.defPageBig = await write(dir + '/crystal.html', pageBig);
 		}
 
 		// ── Each file, at each of its three doors ────────────────────
@@ -274,7 +311,7 @@ try {
 		}
 
 		return r;
-	});
+	}, { MID_LEN, BIG_LEN });
 
 	if (out.absent.length) {
 		check(false, 'the engine offers both ceilings and both store doors',
@@ -284,12 +321,16 @@ try {
 	}
 
 	// ── The shipped defaults are two different numbers ───────────
-	check(!out.defData32.ok, '32 KiB of MEMORY is over the default ceiling and is refused',
-		out.defData32.msg);
-	check(out.defPage32.ok, 'the same 32 KiB as a PAGE is under its own, larger ceiling and is written',
-		out.defPage32.msg);
-	check(!out.defPage80.ok, 'but 80 KiB of page is over that one and is refused too',
-		out.defPage80.msg);
+	check(!out.defDataMid.ok,
+		KIB(MID_LEN) + ' of MEMORY is over the default ceiling (' + KIB(DATA_CAP) + ') and is refused',
+		out.defDataMid.msg);
+	check(out.defPageMid.ok,
+		'the same ' + KIB(MID_LEN) + ' as a PAGE is under its own, larger ceiling ('
+			+ KIB(PAGE_CAP) + ') and is written',
+		out.defPageMid.msg);
+	check(!out.defPageBig.ok,
+		'but ' + KIB(BIG_LEN) + ' of page is over that one and is refused too',
+		out.defPageBig.msg);
 
 	// The wording of a refusal, per file. The user has TWO pulldowns in settings,
 	// so a message that does not say which file it is about leaves them guessing

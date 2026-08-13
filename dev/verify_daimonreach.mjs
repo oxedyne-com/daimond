@@ -258,6 +258,30 @@ try {
 		/data:image\/png;base64,iVBORw0KGgo/.test(b64out),
 		b64out.slice(0, 80).replace(/\n/g, ' '));
 
+	// 3c. THE DAIMON HOLDS THE TOOLS THAT ACT ON A MACHINE.
+	//
+	// `run`, `file_show` and `typst_compile` were withheld while the daimon was pinned to
+	// browser storage, where a command has nowhere to run. The pin went; they arrived. Asserted
+	// through what the model is actually OFFERED -- the mock logs the tool names it was sent --
+	// because a tool named in the prompt and absent from the registry is the shape that had the
+	// daimon telling its user the app could not show a file (`artefact_add`, same day).
+	const offered = (() => {
+		const lines = mockLog();
+		for (let i = lines.length - 1; i >= 0; i--) {
+			const req = lines[i] || {};
+			const msgs = req.messages || [];
+			const sys = msgs.find(m => m.role === 'system');
+			if (sys && /daimon/i.test(String(sys.content || ''))) {
+				return (req.tools || []).map(String);
+			}
+		}
+		return [];
+	})();
+	for (const want of ['run', 'file_show', 'typst_compile', 'artefact_add', 'spawn_agent']) {
+		check('the daimon is offered ' + want, offered.indexOf(want) >= 0,
+			offered.length ? offered.length + ' tools offered' : 'no daimon request in the log');
+	}
+
 	// 4. THE DAIMON IS TOLD. Through the REAL page path — the crystal composer, the
 	//    real `Files.bounds`, the real `steerCrystal` — so this is also the check
 	//    that the wiring has a production caller at all.

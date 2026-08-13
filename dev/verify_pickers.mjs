@@ -62,11 +62,23 @@ function provider(port, models, tag) {
 	return { seen, close: () => srv.close() };
 }
 
-const A = provider(9101, ['alpha-large', 'shared-model'], 'ALPHA');
-const B = provider(9102, ['beta-small',  'shared-model'], 'BETA');
+// THE PORTS FOLLOW THE WORLD, and did not until 2026-08-14.
+//
+// They were 9101 and 9102, written as literals. A world's mock provider listens on
+// `9099 + N` (dev/world.sh), so 9101 IS world 2's mock and 9102 IS world 3's — and
+// world 3 is a lane another agent is told to use. On 2026-08-13 this file died with
+// `EADDRINUSE 127.0.0.1:9102` inside the release gate while a six-hour-old world 3
+// held the port, and the bare Node stack read as a product failure. Two ports are
+// wanted, so the world claims a PAIR, in a band no world's own numbering reaches.
+const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
+const PORT_A = Number(process.env.DAIMOND_PICKER_PORT || 9160 + WORLD * 2);
+const PORT_B = PORT_A + 1;
 
-const URL_A = 'http://127.0.0.1:9101/v1/chat/completions';
-const URL_B = 'http://127.0.0.1:9102/v1/chat/completions';
+const A = provider(PORT_A, ['alpha-large', 'shared-model'], 'ALPHA');
+const B = provider(PORT_B, ['beta-small',  'shared-model'], 'BETA');
+
+const URL_A = `http://127.0.0.1:${PORT_A}/v1/chat/completions`;
+const URL_B = `http://127.0.0.1:${PORT_B}/v1/chat/completions`;
 
 const s = await open({ name: 'pickers', connect: false });
 const p = s.page;

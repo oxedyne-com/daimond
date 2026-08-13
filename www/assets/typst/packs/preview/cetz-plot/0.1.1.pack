@@ -1,0 +1,5641 @@
+DAIMOND TYPST PACK 1
+namespace preview
+name cetz-plot
+version 0.1.1
+entrypoint src/lib.typ
+file 7651 LICENSE
+file 28825 src/axes.typ
+file 110 src/cetz.typ
+file 326 src/chart.typ
+file 4997 src/chart/barchart.typ
+file 971 src/chart/barcol-common.typ
+file 3222 src/chart/boxwhisker.typ
+file 4794 src/chart/columnchart.typ
+file 19804 src/chart/piechart.typ
+file 14247 src/chart/pyramid.typ
+file 1569 src/clip.typ
+file 1032 src/grid-layout.typ
+file 104 src/lib.typ
+file 20396 src/plot.typ
+file 2268 src/plot/annotation.typ
+file 8738 src/plot/bar.typ
+file 4255 src/plot/boxwhisker.typ
+file 10558 src/plot/contour.typ
+file 3340 src/plot/errorbar.typ
+file 4640 src/plot/formats.typ
+file 8191 src/plot/legend.typ
+file 15402 src/plot/line.typ
+file 1338 src/plot/mark.typ
+file 2923 src/plot/sample.typ
+file 9742 src/plot/util.typ
+file 3934 src/plot/violin.typ
+file 455 typst.toml
+
+                   GNU LESSER GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+
+  This version of the GNU Lesser General Public License incorporates
+the terms and conditions of version 3 of the GNU General Public
+License, supplemented by the additional permissions listed below.
+
+  0. Additional Definitions.
+
+  As used herein, "this License" refers to version 3 of the GNU Lesser
+General Public License, and the "GNU GPL" refers to version 3 of the GNU
+General Public License.
+
+  "The Library" refers to a covered work governed by this License,
+other than an Application or a Combined Work as defined below.
+
+  An "Application" is any work that makes use of an interface provided
+by the Library, but which is not otherwise based on the Library.
+Defining a subclass of a class defined by the Library is deemed a mode
+of using an interface provided by the Library.
+
+  A "Combined Work" is a work produced by combining or linking an
+Application with the Library.  The particular version of the Library
+with which the Combined Work was made is also called the "Linked
+Version".
+
+  The "Minimal Corresponding Source" for a Combined Work means the
+Corresponding Source for the Combined Work, excluding any source code
+for portions of the Combined Work that, considered in isolation, are
+based on the Application, and not on the Linked Version.
+
+  The "Corresponding Application Code" for a Combined Work means the
+object code and/or source code for the Application, including any data
+and utility programs needed for reproducing the Combined Work from the
+Application, but excluding the System Libraries of the Combined Work.
+
+  1. Exception to Section 3 of the GNU GPL.
+
+  You may convey a covered work under sections 3 and 4 of this License
+without being bound by section 3 of the GNU GPL.
+
+  2. Conveying Modified Versions.
+
+  If you modify a copy of the Library, and, in your modifications, a
+facility refers to a function or data to be supplied by an Application
+that uses the facility (other than as an argument passed when the
+facility is invoked), then you may convey a copy of the modified
+version:
+
+   a) under this License, provided that you make a good faith effort to
+   ensure that, in the event an Application does not supply the
+   function or data, the facility still operates, and performs
+   whatever part of its purpose remains meaningful, or
+
+   b) under the GNU GPL, with none of the additional permissions of
+   this License applicable to that copy.
+
+  3. Object Code Incorporating Material from Library Header Files.
+
+  The object code form of an Application may incorporate material from
+a header file that is part of the Library.  You may convey such object
+code under terms of your choice, provided that, if the incorporated
+material is not limited to numerical parameters, data structure
+layouts and accessors, or small macros, inline functions and templates
+(ten or fewer lines in length), you do both of the following:
+
+   a) Give prominent notice with each copy of the object code that the
+   Library is used in it and that the Library and its use are
+   covered by this License.
+
+   b) Accompany the object code with a copy of the GNU GPL and this license
+   document.
+
+  4. Combined Works.
+
+  You may convey a Combined Work under terms of your choice that,
+taken together, effectively do not restrict modification of the
+portions of the Library contained in the Combined Work and reverse
+engineering for debugging such modifications, if you also do each of
+the following:
+
+   a) Give prominent notice with each copy of the Combined Work that
+   the Library is used in it and that the Library and its use are
+   covered by this License.
+
+   b) Accompany the Combined Work with a copy of the GNU GPL and this license
+   document.
+
+   c) For a Combined Work that displays copyright notices during
+   execution, include the copyright notice for the Library among
+   these notices, as well as a reference directing the user to the
+   copies of the GNU GPL and this license document.
+
+   d) Do one of the following:
+
+       0) Convey the Minimal Corresponding Source under the terms of this
+       License, and the Corresponding Application Code in a form
+       suitable for, and under terms that permit, the user to
+       recombine or relink the Application with a modified version of
+       the Linked Version to produce a modified Combined Work, in the
+       manner specified by section 6 of the GNU GPL for conveying
+       Corresponding Source.
+
+       1) Use a suitable shared library mechanism for linking with the
+       Library.  A suitable mechanism is one that (a) uses at run time
+       a copy of the Library already present on the user's computer
+       system, and (b) will operate properly with a modified version
+       of the Library that is interface-compatible with the Linked
+       Version.
+
+   e) Provide Installation Information, but only if you would otherwise
+   be required to provide such information under section 6 of the
+   GNU GPL, and only to the extent that such information is
+   necessary to install and execute a modified version of the
+   Combined Work produced by recombining or relinking the
+   Application with a modified version of the Linked Version. (If
+   you use option 4d0, the Installation Information must accompany
+   the Minimal Corresponding Source and Corresponding Application
+   Code. If you use option 4d1, you must provide the Installation
+   Information in the manner specified by section 6 of the GNU GPL
+   for conveying Corresponding Source.)
+
+  5. Combined Libraries.
+
+  You may place library facilities that are a work based on the
+Library side by side in a single library together with other library
+facilities that are not Applications and are not covered by this
+License, and convey such a combined library under terms of your
+choice, if you do both of the following:
+
+   a) Accompany the combined library with a copy of the same work based
+   on the Library, uncombined with any other library facilities,
+   conveyed under the terms of this License.
+
+   b) Give prominent notice with the combined library that part of it
+   is a work based on the Library, and explaining where to find the
+   accompanying uncombined form of the same work.
+
+  6. Revised Versions of the GNU Lesser General Public License.
+
+  The Free Software Foundation may publish revised and/or new versions
+of the GNU Lesser General Public License from time to time. Such new
+versions will be similar in spirit to the present version, but may
+differ in detail to address new problems or concerns.
+
+  Each version is given a distinguishing version number. If the
+Library as you received it specifies that a certain numbered version
+of the GNU Lesser General Public License "or any later version"
+applies to it, you have the option of following the terms and
+conditions either of that published version or of any later version
+published by the Free Software Foundation. If the Library as you
+received it does not specify a version number of the GNU Lesser
+General Public License, you may choose any version of the GNU Lesser
+General Public License ever published by the Free Software Foundation.
+
+  If the Library as you received it specifies that a proxy can decide
+whether future versions of the GNU Lesser General Public License shall
+apply, that proxy's public statement of acceptance of any version is
+permanent authorization for you to choose that version for the
+Library.
+#import "/src/cetz.typ": util, draw, vector, matrix, styles, process, drawable, path-util, process
+#import "/src/plot/formats.typ"
+
+/// Default axis style
+///
+/// #show-parameter-block("tick-limit", "int", default: 100, [Upper major tick limit.])
+/// #show-parameter-block("minor-tick-limit", "int", default: 1000, [Upper minor tick limit.])
+/// #show-parameter-block("auto-tick-factors", "array", [List of tick factors used for automatic tick step determination.])
+/// #show-parameter-block("auto-tick-count", "int", [Number of ticks to generate by default.])
+/// #show-parameter-block("stroke", "stroke", [Axis stroke style.])
+/// #show-parameter-block("label.offset", "number", [Distance to move axis labels away from the axis.])
+/// #show-parameter-block("label.anchor", "anchor", [Anchor of the axis label to use for it's placement.])
+/// #show-parameter-block("label.angle", "angle", [Angle of the axis label.])
+/// #show-parameter-block("axis-layer", "float", [Layer to draw axes on (see cetz' `on-layer`)])
+/// #show-parameter-block("grid-layer", "float", [Layer to draw the grid on (see cetz' `on-layer`)])
+/// #show-parameter-block("background-layer", "float", [Layer to draw the background on (see cetz' `on-layer`)])
+/// #show-parameter-block("padding", "number", [Extra distance between axes and plotting area. For schoolbook axes, this is the length of how much axes grow out of the plotting area.])
+/// #show-parameter-block("overshoot", "number", [School-book style axes only: Extra length to add to the end (right, top) of axes.])
+/// #show-parameter-block("tick.stroke", "stroke", [Major tick stroke style.])
+/// #show-parameter-block("tick.minor-stroke", "stroke", [Minor tick stroke style.])
+/// #show-parameter-block("tick.offset", ("number", "ratio"), [Major tick offset along the tick's direction, can be relative to the length.])
+/// #show-parameter-block("tick.minor-offset", ("number", "ratio"), [Minor tick offset along the tick's direction, can be relative to the length.])
+/// #show-parameter-block("tick.length", ("number"), [Major tick length.])
+/// #show-parameter-block("tick.minor-length", ("number", "ratio"), [Minor tick length, can be relative to the major tick length.])
+/// #show-parameter-block("tick.label.offset", ("number"), [Major tick label offset away from the tick.])
+/// #show-parameter-block("tick.label.angle", ("angle"), [Major tick label angle.])
+/// #show-parameter-block("tick.label.anchor", ("anchor"), [Anchor of major tick labels used for positioning.])
+/// #show-parameter-block("tick.label.show", ("auto", "bool"), default: auto, [Set visibility of tick labels. A value of `auto` shows tick labels for all but mirrored axes.])
+/// #show-parameter-block("grid.stroke", "stroke", [Major grid line stroke style.])
+/// #show-parameter-block("break-point.width", "number", [Axis break width along the axis.])
+/// #show-parameter-block("break-point.length", "number", [Axis break length.])
+/// #show-parameter-block("minor-grid.stroke", "stroke", [Minor grid line stroke style.])
+/// #show-parameter-block("shared-zero", ("bool", "content"), default: "$0$", [School-book style axes only: Content to display at the plots origin (0,0). If set to `false`, nothing is shown. Having this set, suppresses auto-generated ticks for $0$!])
+#let default-style = (
+  tick-limit: 100,
+  minor-tick-limit: 1000,
+  auto-tick-factors: (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10), // Tick factor to try
+  auto-tick-count: 11,  // Number of ticks the plot tries to place
+  fill: none,
+  stroke: auto,
+  label: (
+    offset: .2cm,       // Axis label offset
+    anchor: auto,       // Axis label anchor
+    angle:  auto,       // Axis label angle
+  ),
+  axis-layer: 0,
+  grid-layer: 0,
+  background-layer: 0,
+  padding: 0,
+  tick: (
+    fill: none,
+    stroke: black + 1pt,
+    minor-stroke: black + .5pt,
+    offset: 0,
+    minor-offset: 0,
+    length: .1cm,       // Tick length: Number
+    minor-length: 70%,  // Minor tick length: Number, Ratio
+    label: (
+      offset: .15cm,    // Tick label offset
+      angle:  0deg,     // Tick label angle
+      anchor: auto,     // Tick label anchor
+      "show": auto,     // Show tick labels for axes in use
+    )
+  ),
+  break-point: (
+    width: .75cm,
+    length: .15cm,
+  ),
+  grid: (
+    stroke: (paint: gray.lighten(50%), thickness: 1pt),
+  ),
+  minor-grid: (
+    stroke: (paint: gray.lighten(50%), thickness: .5pt),
+  ),
+)
+
+// Default Scientific Style
+#let default-style-scientific = util.merge-dictionary(default-style, (
+  left:   (tick: (label: (anchor: "east"))),
+  bottom: (tick: (label: (anchor: "north"))),
+  right:  (tick: (label: (anchor: "west"))),
+  top:    (tick: (label: (anchor: "south"))),
+  stroke: (cap: "square"),
+  padding: 0,
+))
+
+// Default Schoolbook Style
+#let default-style-schoolbook = util.merge-dictionary(default-style, (
+  x: (stroke: auto, fill: none, mark: (start: none, end: "straight"),
+    tick: (label: (anchor: "north"))),
+  y: (stroke: auto, fill: none, mark: (start: none, end: "straight"),
+    tick: (label: (anchor: "east"))),
+  label: (offset: .1cm),
+  origin: (label: (offset: .05cm)),
+  padding: .1cm,   // Axis padding on both sides outsides the plotting area
+  overshoot: .5cm, // Axis end "overshoot" out of the plotting area
+  tick: (
+    offset: -50%,
+    minor-offset: -50%,
+    length: .2cm,
+    minor-length: 70%,
+  ),
+  shared-zero: $0$, // Show zero tick label at (0, 0)
+))
+
+#let _prepare-style(ctx, style) = {
+  if type(style) != dictionary { return style }
+
+  let res = util.resolve-number.with(ctx)
+  let rel-to(v, to) = {
+    if type(v) == ratio {
+      return v * to / 100%
+    } else {
+      return res(v)
+    }
+  }
+
+  style.tick.length = res(style.tick.length)
+  style.tick.offset = rel-to(style.tick.offset, style.tick.length)
+  style.tick.minor-length = rel-to(style.tick.minor-length, style.tick.length)
+  style.tick.minor-offset = rel-to(style.tick.minor-offset, style.tick.minor-length)
+  style.tick.label.offset = res(style.tick.label.offset)
+
+  // Break points
+  style.break-point.width = res(style.break-point.width)
+  style.break-point.length = res(style.break-point.length)
+
+  // Padding
+  style.padding = res(style.padding)
+
+  if "overshoot" in style {
+    style.overshoot = res(style.overshoot)
+  }
+
+  return style
+}
+
+#let _get-axis-style(ctx, style, name) = {
+  if not name in style {
+    return style
+  }
+
+  style = styles.resolve(style, merge: style.at(name))
+  return _prepare-style(ctx, style)
+}
+
+#let _get-grid-type(axis) = {
+  let grid = axis.ticks.at("grid", default: false)
+  if grid == "major" or grid == true { return 1 }
+  if grid == "minor" { return 2 }
+  if grid == "both" { return 3 }
+  return 0
+}
+
+#let _inset-axis-points(ctx, style, axis, start, end) = {
+  if axis == none { return (start, end) }
+
+  let (low, high) = axis.inset.map(v => util.resolve-number(ctx, v))
+
+  let is-horizontal = start.at(1) == end.at(1)
+  if is-horizontal {
+    start = vector.add(start, (low, 0))
+    end = vector.sub(end, (high, 0))
+  } else {
+    start = vector.add(start, (0, low))
+    end = vector.sub(end, (0, high))
+  }
+  return (start, end)
+}
+
+#let _draw-axis-line(start, end, axis, is-horizontal, style) = {
+  let enabled = if axis != none and axis.show-break {
+    axis.min > 0 or axis.max < 0
+  } else { false }
+
+  if enabled {
+    let size = if is-horizontal {
+      (style.break-point.width, 0)
+    } else {
+      (0, style.break-point.width, 0)
+    }
+
+    let up = if is-horizontal {
+      (0, style.break-point.length)
+    } else {
+      (style.break-point.length, 0)
+    }
+
+    let add-break(is-end) = {
+      let a = ()
+      let b = (rel: vector.scale(size, .3), update: false)
+      let c = (rel: vector.add(vector.scale(size, .4), vector.scale(up, -1)), update: false)
+      let d = (rel: vector.add(vector.scale(size, .6), vector.scale(up, +1)), update: false)
+      let e = (rel: vector.scale(size, .7), update: false)
+      let f = (rel: size)
+
+      let mark = if is-end {
+        style.at("mark", default: none)
+      }
+      draw.line(a, b, c, d, e, f, stroke: style.stroke, mark: mark)
+    }
+
+    draw.merge-path({
+      draw.move-to(start)
+      if axis.min > 0 {
+        add-break(false)
+        draw.line((rel: size, to: start), end, mark: style.at("mark", default: none))
+      } else if axis.max < 0 {
+        draw.line(start, (rel: vector.scale(size, -1), to: end))
+        add-break(true)
+      }
+    }, stroke: style.stroke)
+  } else {
+    draw.line(start, end, stroke: style.stroke, mark: style.at("mark", default: none))
+  }
+}
+
+// Construct Axis Object
+//
+// - min (number): Minimum value
+// - max (number): Maximum value
+// - ticks (dictionary): Tick settings:
+//     - step (number): Major tic step
+//     - minor-step (number): Minor tic step
+//     - decimals (int): Tick float decimal length
+// - label (content): Axis label
+// - mode (string): Axis scaling function. Takes `lin` or `log`
+// - base (number): Base for tick labels when logarithmically scaled.
+#let axis(min: -1, max: 1, label: none,
+          ticks: (step: auto, minor-step: none,
+                  decimals: 2, grid: false,
+                  format: "float"
+                  ),
+          mode: auto, base: auto) = (
+  min: min, max: max, ticks: ticks, label: label, inset: (0, 0), show-break: false, mode: mode, base: base
+)
+
+// Format a tick value
+#let format-tick-value(value, tic-options) = {
+  // Without it we get negative zero in conversion
+  // to content! Typst has negative zero floats.
+  if value == 0 { value = 0 }
+
+  if type(value) != std.content {
+    let format = tic-options.at("format", default: "float")
+    if format == none {
+      value = []
+    } else if type(format) == std.content {
+      value = format
+    } else if type(format) == function {
+      value = (format)(value)
+    } else if format == "sci" {
+      value = formats.sci(value, digits: tic-options.at("decimals", default: 2))
+    } else {
+      value = formats.decimal(value, digits: tic-options.at("decimals", default: 2))
+    }
+  } else if type(value) != std.content {
+    value = str(value)
+  }
+
+  return value
+}
+
+// Get value on axis [0, 1]
+//
+// - axis (axis): Axis
+// - v (number): Value
+// -> float
+#let value-on-axis(axis, v) = {
+  if v == none { return }
+  let (min, max) = (axis.min, axis.max)
+  let dt = max - min; if dt == 0 { dt = 1 }
+
+  return (v - min) / dt
+}
+
+// Compute list of linear ticks for axis
+//
+// - axis (axis): Axis
+#let compute-linear-ticks(axis, style, add-zero: true) = {
+  let (min, max) = (axis.min, axis.max)
+  let dt = max - min; if (dt == 0) { dt = 1 }
+  let ticks = axis.ticks
+  let ferr = util.float-epsilon
+  let tick-limit = style.tick-limit
+  let minor-tick-limit = style.minor-tick-limit
+
+  let l = ()
+  if ticks != none {
+    let major-tick-values = ()
+    if "step" in ticks and ticks.step != none {
+      assert(ticks.step >= 0,
+             message: "Axis tick step must be positive and non 0.")
+      if axis.min > axis.max { ticks.step *= -1 }
+
+      let s = 1 / ticks.step
+
+      let num-ticks = int(max * s + 1.5)  - int(min * s)
+      assert(num-ticks <= tick-limit,
+             message: "Number of major ticks exceeds limit " + str(tick-limit))
+
+      let n = range(int(min * s), int(max * s + 1.5))
+      for t in n {
+        let v = (t / s - min) / dt
+        if t / s == 0 and not add-zero { continue }
+
+        if v >= 0 - ferr and v <= 1 + ferr {
+          l.push((v, format-tick-value(t / s, ticks), true))
+          major-tick-values.push(v)
+        }
+      }
+    }
+
+    if "minor-step" in ticks and ticks.minor-step != none {
+      assert(ticks.minor-step >= 0,
+             message: "Axis minor tick step must be positive")
+      if axis.min > axis.max { ticks.minor-step *= -1 }
+
+      let s = 1 / ticks.minor-step
+
+      let num-ticks = int(max * s + 1.5) - int(min * s)
+      assert(num-ticks <= minor-tick-limit,
+             message: "Number of minor ticks exceeds limit " + str(minor-tick-limit))
+
+      let n = range(int(min * s), int(max * s + 1.5))
+      for t in n {
+        let v = (t / s - min) / dt
+        if v in major-tick-values {
+          // Prefer major ticks over minor ticks
+          continue
+        }
+
+        if v != none and v >= 0 and v <= 1 + ferr {
+          l.push((v, none, false))
+        }
+      }
+    }
+
+  }
+
+  return l
+}
+
+// Compute list of linear ticks for axis
+//
+// - axis (axis): Axis
+#let compute-logarithmic-ticks(axis, style, add-zero: true) = {
+  let ferr = util.float-epsilon
+  let (min, max) = (
+    calc.log(calc.max(axis.min, ferr), base: axis.base),
+    calc.log(calc.max(axis.max, ferr), base: axis.base)
+  )
+  let dt = max - min; if (dt == 0) { dt = 1 }
+  let ticks = axis.ticks
+
+  let tick-limit = style.tick-limit
+  let minor-tick-limit = style.minor-tick-limit
+  let l = ()
+
+  if ticks != none {
+    let major-tick-values = ()
+    if "step" in ticks and ticks.step != none {
+      assert(ticks.step >= 0,
+             message: "Axis tick step must be positive and non 0.")
+      if axis.min > axis.max { ticks.step *= -1 }
+
+      let s = 1 / ticks.step
+
+      let num-ticks = int(max * s + 1.5)  - int(min * s)
+      assert(num-ticks <= tick-limit,
+             message: "Number of major ticks exceeds limit " + str(tick-limit))
+
+      let n = range(
+        int(min * s),
+        int(max * s + 1.5)
+      )
+
+      for t in n {
+        let v = (t / s - min) / dt
+        if t / s == 0 and not add-zero { continue }
+
+        if v >= 0 - ferr and v <= 1 + ferr {
+          l.push((v, format-tick-value( calc.pow(axis.base, t / s), ticks), true))
+          major-tick-values.push(v)
+        }
+      }
+    }
+
+    if "minor-step" in ticks and ticks.minor-step != none {
+      assert(ticks.minor-step >= 0,
+             message: "Axis minor tick step must be positive")
+      if axis.min > axis.max { ticks.minor-step *= -1 }
+
+      let s = 1 / ticks.step
+      let n = range(int(min * s)-1, int(max * s + 1.5)+1)
+
+      for t in n {
+        for vv in range(1, int(axis.base / ticks.minor-step)) {
+
+          let v = ( (calc.log(vv * ticks.minor-step, base: axis.base) + t)/ s - min) / dt
+          if v in major-tick-values {continue}
+
+          if v != none and v >= 0 and v <= 1 + ferr {
+            l.push((v, none, false))
+          }
+
+        }
+
+      }
+    }
+  }
+
+  return l
+}
+
+// Get list of fixed axis ticks
+//
+// - axis (axis): Axis object
+#let fixed-ticks(axis) = {
+  let l = ()
+  if "list" in axis.ticks {
+    for t in axis.ticks.list {
+      let (v, label) = (none, none)
+      if type(t) in (float, int) {
+        v = t
+        label = format-tick-value(t, axis.ticks)
+      } else {
+        (v, label) = t
+      }
+
+      v = value-on-axis(axis, v)
+      if v != none and v >= 0 and v <= 1 {
+        l.push((v, label, true))
+      }
+    }
+  }
+  return l
+}
+
+// Compute list of axis ticks
+//
+// A tick triple has the format:
+//   (rel-value: float, label: content, major: bool)
+//
+// - axis (axis): Axis object
+#let compute-ticks(axis, style, add-zero: true) = {
+  let find-max-n-ticks(axis, n: 11) = {
+    let dt = calc.abs(axis.max - axis.min)
+    let scale = calc.floor(calc.log(dt, base: 10) - 1)
+    if scale > 5 or scale < -5 {return none}
+
+    let (step, best) = (none, 0)
+    for s in style.auto-tick-factors {
+      s = s * calc.pow(10, scale)
+
+      let divs = calc.abs(dt / s)
+      if divs >= best and divs <= n {
+        step = s
+        best = divs
+      }
+    }
+    return step
+  }
+
+  if axis == none or axis.ticks == none { return () }
+  if axis.ticks.step == auto {
+    axis.ticks.step = find-max-n-ticks(axis, n: style.auto-tick-count)
+  }
+  if axis.ticks.minor-step == auto {
+    axis.ticks.minor-step = if axis.ticks.step != none {
+      axis.ticks.step / 5
+    } else {
+      none
+    }
+  }
+
+  let ticks = if axis.mode == "log" {
+    compute-logarithmic-ticks(axis, style, add-zero: add-zero)
+  } else {
+    compute-linear-ticks(axis, style, add-zero: add-zero)
+  }
+  ticks += fixed-ticks(axis)
+  return ticks
+}
+
+// Prepares the axis post creation. The given axis
+// must be completely set-up, including its interval.
+// Returns the prepared axis
+#let prepare-axis(ctx, axis, name) = {
+  let style = styles.resolve(ctx.style, root: "axes",
+                             base: default-style-scientific)
+  style = _prepare-style(ctx, style)
+  style = _get-axis-style(ctx, style, name)
+
+  if type(axis.inset) != array {
+    axis.inset = (axis.inset, axis.inset)
+  }
+
+  axis.inset = axis.inset.map(v => util.resolve-number(ctx, v))
+
+  if axis.show-break {
+    if axis.min > 0 {
+      axis.inset.at(0) += style.break-point.width
+    } else if axis.max < 0 {
+      axis.inset.at(1) += style.break-point.width
+    }
+  }
+
+  return axis
+}
+
+// Transform a single vector along a x, y and z axis
+//
+// - size (vector): Coordinate system size
+// - x-axis (axis): X axis
+// - y-axis (axis): Y axis
+// - z-axis (axis): Z axis
+// - vec (vector): Input vector to transform
+// -> vector
+#let transform-vec(size, x-axis, y-axis, z-axis, vec) = {
+  let axes = (x-axis, y-axis)
+
+  let (x, y,) = for (dim, axis) in axes.enumerate() {
+    let s = size.at(dim) - axis.inset.sum()
+    let o = axis.inset.at(0)
+
+    let transform-func(n) = if axis.mode == "log" {
+      calc.log(calc.max(n, util.float-epsilon), base: axis.base)
+    } else {
+      n
+    }
+
+    let range = transform-func(axis.max) - transform-func(axis.min)
+
+    let f = s / range
+    ((transform-func(vec.at(dim)) - transform-func(axis.min)) * f + o,)
+  }
+
+  return (x, y, 0)
+}
+
+// Draw inside viewport coordinates of two axes
+//
+// - size (vector): Axis canvas size (relative to origin)
+// - x (axis): Horizontal axis
+// - y (axis): Vertical axis
+// - z (axis): Z axis
+// - name (string,none): Group name
+#let axis-viewport(size, x, y, z, body, name: none) = {
+  draw.group(name: name, (ctx => {
+    let transform = ctx.transform
+
+    ctx.transform = matrix.ident()
+    let (ctx, drawables, bounds) = process.many(ctx, util.resolve-body(ctx, body))
+
+    ctx.transform = transform
+
+    drawables = drawables.map(d => {
+      if "segments" in d {
+        d.segments = d.segments.map(((kind, ..pts)) => {
+          (kind, ..pts.map(pt => {
+            transform-vec(size, x, y, none, pt)
+          }))
+        })
+      }
+      if "pos" in d {
+        d.pos = transform-vec(size, x, y, none, d.pos)
+      }
+      return d
+    })
+
+    return (
+      ctx: ctx,
+      drawables: drawable.apply-transform(ctx.transform, drawables)
+    )
+  },))
+}
+
+// Draw grid lines for the ticks of an axis
+//
+// - cxt (context):
+// - axis (dictionary): The axis
+// - ticks (array): The computed ticks
+// - low (vector): Start position of a grid-line at tick 0
+// - high (vector): End position of a grid-line at tick 0
+// - dir (vector): Normalized grid direction vector along the grid axis
+// - style (style): Axis style
+#let draw-grid-lines(ctx, axis, ticks, low, high, dir, style) = {
+  let offset = (0,0)
+  if axis.inset != none {
+    let (inset-low, inset-high) = axis.inset.map(v => util.resolve-number(ctx, v))
+    offset = vector.scale(vector.norm(dir), inset-low)
+    dir = vector.sub(dir, vector.scale(vector.norm(dir), inset-low + inset-high))
+  }
+
+  let kind = _get-grid-type(axis)
+  if kind > 0 {
+    for (distance, label, is-major) in ticks {
+      let offset = vector.add(vector.scale(dir, distance), offset)
+      let start = vector.add(low, offset)
+      let end = vector.add(high, offset)
+
+      // Draw a major line
+      if is-major and (kind == 1 or kind == 3) {
+        draw.line(start, end, stroke: style.grid.stroke)
+      }
+      // Draw a minor line
+      if not is-major and kind >= 2 {
+        draw.line(start, end, stroke: style.minor-grid.stroke)
+      }
+    }
+  }
+}
+
+// Place a list of tick marks and labels along a path
+#let place-ticks-on-line(ticks, start, stop, style, flip: false, is-mirror: false) = {
+  let dir = vector.sub(stop, start)
+  let norm = vector.norm((-dir.at(1), dir.at(0), dir.at(2, default: 0)))
+
+  let def(v, d) = {
+    return if v == none or v == auto {d} else {v}
+  }
+
+  let show-label = style.tick.label.show
+  if show-label == auto {
+    show-label = not is-mirror
+  }
+
+  for (distance, label, is-major) in ticks {
+    let offset = style.tick.offset
+    let length = if is-major { style.tick.length } else { style.tick.minor-length }
+    if flip {
+      offset *= -1
+      length *= -1
+    }
+
+    let pt = vector.lerp(start, stop, distance)
+    let a = vector.add(pt, vector.scale(norm, offset))
+    let b = vector.add(a, vector.scale(norm, length))
+
+    draw.line(a, b, stroke: style.tick.stroke)
+
+    if show-label and label != none {
+      let offset = style.tick.label.offset
+      if flip {
+        offset *= -1
+        length *= -1
+      }
+
+      let c = vector.sub(if length <= 0 { b } else { a },
+        vector.scale(norm, offset))
+
+      let angle = def(style.tick.label.angle, 0deg)
+      let anchor = def(style.tick.label.anchor, "center")
+
+      draw.content(c, [#label], angle: angle, anchor: anchor)
+    }
+  }
+}
+
+// Draw up to four axes in an "scientific" style at origin (0, 0)
+//
+// - size (array): Size (width, height)
+// - left (axis): Left (y) axis
+// - bottom (axis): Bottom (x) axis
+// - right (axis): Right axis
+// - top (axis): Top axis
+// - name (string): Object name
+// - draw-unset (bool): Draw axes that are set to `none`
+// - ..style (any): Style
+#let scientific(size: (1, 1),
+                left: none,
+                right: auto,
+                bottom: none,
+                top: auto,
+                draw-unset: true,
+                name: none,
+                ..style) = {
+  import draw: *
+
+  if right == auto {
+    if left != none {
+      right = left; right.is-mirror = true
+    } else {
+      right = none
+    }
+  }
+  if top == auto {
+    if bottom != none {
+      top = bottom; top.is-mirror = true
+    } else {
+      top = none
+    }
+  }
+
+  group(name: name, ctx => {
+    let (w, h) = size
+    anchor("origin", (0, 0))
+
+    let style = style.named()
+    style = styles.resolve(ctx.style, merge: style, root: "axes",
+                           base: default-style-scientific)
+    style = _prepare-style(ctx, style)
+
+    // Compute ticks
+    let x-ticks = compute-ticks(bottom, style)
+    let y-ticks = compute-ticks(left, style)
+    let x2-ticks = compute-ticks(top, style)
+    let y2-ticks = compute-ticks(right, style)
+
+    // Draw frame
+    if style.fill != none {
+      on-layer(style.background-layer, {
+        rect((0,0), (w,h), fill: style.fill, stroke: none)
+      })
+    }
+
+    // Draw grid
+    group(name: "grid", ctx => {
+      let axes = (
+        ("bottom", (0,0), (0,h), (+w,0), x-ticks,  bottom),
+        ("top",    (0,h), (0,0), (+w,0), x2-ticks, top),
+        ("left",   (0,0), (w,0), (0,+h), y-ticks,  left),
+        ("right",  (w,0), (0,0), (0,+h), y2-ticks, right),
+      )
+      for (name, start, end, direction, ticks, axis) in axes {
+        if axis == none { continue }
+
+        let style = _get-axis-style(ctx, style, name)
+        let is-mirror = axis.at("is-mirror", default: false)
+
+        if not is-mirror {
+          on-layer(style.grid-layer, {
+            draw-grid-lines(ctx, axis, ticks, start, end, direction, style)
+          })
+        }
+      }
+    })
+
+    // Draw axes
+    group(name: "axes", {
+      let axes = (
+        ("bottom", (0, 0), (w, 0), (0, -1), false, x-ticks,  bottom,),
+        ("top",    (0, h), (w, h), (0, +1), true,  x2-ticks, top,),
+        ("left",   (0, 0), (0, h), (-1, 0), true,  y-ticks,  left,),
+        ("right",  (w, 0), (w, h), (+1, 0), false, y2-ticks, right,)
+      )
+      let label-placement = (
+        bottom: ("south", "north", 0deg),
+        top:    ("north", "south", 0deg),
+        left:   ("west", "south", 90deg),
+        right:  ("east", "north", 90deg),
+      )
+
+      for (name, start, end, outsides, flip, ticks, axis) in axes {
+        let style = _get-axis-style(ctx, style, name)
+        let is-mirror = axis == none or axis.at("is-mirror", default: false)
+        let is-horizontal = name in ("bottom", "top")
+
+        if style.padding != 0 {
+          let padding = vector.scale(outsides, style.padding)
+          start = vector.add(start, padding)
+          end = vector.add(end, padding)
+        }
+
+        let (data-start, data-end) = _inset-axis-points(ctx, style, axis, start, end)
+
+        let path = _draw-axis-line(start, end, axis, is-horizontal, style)
+        on-layer(style.axis-layer, {
+          group(name: "axis", {
+            if draw-unset or axis != none {
+              path;
+              place-ticks-on-line(ticks, data-start, data-end, style, flip: flip, is-mirror: is-mirror)
+            }
+          })
+
+          if axis != none and axis.label != none and not is-mirror {
+            let offset = vector.scale(outsides, style.label.offset)
+            let (group-anchor, content-anchor, angle) = label-placement.at(name)
+
+            if style.label.anchor != auto {
+              content-anchor = style.label.anchor
+            }
+            if style.label.angle != auto {
+              angle = style.label.angle
+            }
+
+            content((rel: offset, to: "axis." + group-anchor),
+              [#axis.label],
+              angle: angle,
+              anchor: content-anchor)
+          }
+        })
+      }
+    })
+  })
+}
+
+// Draw two axes in a "school book" style
+//
+// - x-axis (axis): X axis
+// - y-axis (axis): Y axis
+// - size (array): Size (width, height)
+// - x-position (number): X Axis position
+// - y-position (number): Y Axis position
+// - name (string): Object name
+// - ..style (any): Style
+#let school-book(x-axis, y-axis,
+                 size: (1, 1),
+                 x-position: 0,
+                 y-position: 0,
+                 name: none,
+                 ..style) = {
+  import draw: *
+
+  group(name: name, ctx => {
+    let (w, h) = size
+    anchor("origin", (0, 0))
+
+    let style = style.named()
+    style = styles.resolve(
+      ctx.style,
+      merge: style,
+      root: "axes",
+      base: default-style-schoolbook)
+    style = _prepare-style(ctx, style)
+
+    let x-position = calc.min(calc.max(y-axis.min, x-position), y-axis.max)
+    let y-position = calc.min(calc.max(x-axis.min, y-position), x-axis.max)
+    let x-y = value-on-axis(y-axis, x-position) * h
+    let y-x = value-on-axis(x-axis, y-position) * w
+
+    let shared-zero = style.shared-zero != false and x-position == 0 and y-position == 0
+
+    let x-ticks = compute-ticks(x-axis, style, add-zero: not shared-zero)
+    let y-ticks = compute-ticks(y-axis, style, add-zero: not shared-zero)
+
+    // Draw grid
+    group(name: "grid", ctx => {
+      let axes = (
+        ("x", (0,0), (0,h), (+w,0), x-ticks, x-axis),
+        ("y", (0,0), (w,0), (0,+h), y-ticks, y-axis),
+      )
+
+      for (name, start, end, direction, ticks, axis) in axes {
+        if axis == none { continue }
+
+        let style = _get-axis-style(ctx, style, name)
+        on-layer(style.grid-layer, {
+          draw-grid-lines(ctx, axis, ticks, start, end, direction, style)
+        })
+      }
+    })
+
+    // Draw axes
+    group(name: "axes", {
+      let axes = (
+        ("x", (0, x-y), (w, x-y), (1, 0), false, x-ticks, x-axis),
+        ("y", (y-x, 0), (y-x, h), (0, 1), true, y-ticks, y-axis),
+      )
+      let label-pos = (
+        x: ("north", (0,-1)),
+        y: ("east", (-1,0)),
+      )
+
+      on-layer(style.axis-layer, {
+        for (name, start, end, dir, flip, ticks, axis) in axes {
+          let style = _get-axis-style(ctx, style, name)
+
+          let pad = style.padding
+          let overshoot = style.overshoot
+          let vstart = vector.sub(start, vector.scale(dir, pad))
+          let vend = vector.add(end, vector.scale(dir, pad + overshoot))
+          let is-horizontal = name == "x"
+
+          let (data-start, data-end) = _inset-axis-points(ctx, style, axis, start, end)
+          group(name: "axis", {
+            _draw-axis-line(vstart, vend, axis, is-horizontal, style)
+            place-ticks-on-line(ticks, data-start, data-end, style, flip: flip)
+          })
+
+          if axis.label != none {
+            let (content-anchor, offset-dir) = label-pos.at(name)
+
+            let angle = if style.label.angle not in (none, auto) {
+              style.label.angle
+            } else { 0deg }
+            if style.label.anchor not in (none, auto) {
+              content-anchor = style.label.anchor
+            }
+
+            let offset = vector.scale(offset-dir, style.label.offset)
+            content((rel: offset, to: vend),
+              [#axis.label],
+              angle: angle,
+              anchor: content-anchor)
+          }
+        }
+
+        if shared-zero {
+          let pt = (rel: (-style.tick.label.offset, -style.tick.label.offset),
+                     to: (y-x, x-y))
+          let zero = if type(style.shared-zero) == std.content {
+            style.shared-zero
+          } else {
+            $0$
+          }
+          content(pt, zero, anchor: "north-east")
+        }
+      })
+    })
+  })
+}
+// Import cetz into the root scope. Import cetz by importing this file only!
+#import "@preview/cetz:0.3.2": *
+#import "chart/boxwhisker.typ": boxwhisker, boxwhisker-default-style
+#import "chart/barchart.typ": barchart, barchart-default-style
+#import "chart/columnchart.typ": columnchart, columnchart-default-style
+#import "chart/piechart.typ": piechart, piechart-default-style
+#import "chart/pyramid.typ": pyramid, pyramid-default-style#import "/src/cetz.typ": draw, styles, palette
+
+#import "/src/plot.typ"
+
+#let barchart-default-style = (
+  axes: (tick: (length: 0), grid: (stroke: (dash: "dotted"))),
+  bar-width: .8,
+  cluster-gap: 0,
+  error: (
+    whisker-size: .25,
+  ),
+  y-inset: 1,
+)
+
+/// Draw a bar chart. A bar chart is a chart that represents data with
+/// rectangular bars that grow from left to right, proportional to the values
+/// they represent.
+///
+/// = Styling
+/// Can be applied with `cetz.draw.set-style(barchart: (bar-width: 1))`.
+///
+/// *Root*: `barchart`.
+/// #show-parameter-block("bar-width", "float", default: .8, [
+///   Width of a single bar (basic) or a cluster of bars (clustered) in the plot.])
+/// #show-parameter-block("y-inset", "float", default: 1, [
+///   Distance of the plot data to the plot's edges on the y-axis of the plot.])
+/// #show-parameter-block("cluster-gap", "float", default: 0, [
+///   Spacing between bars insides a cluster.])
+/// You can use any `plot` or `axes` related style keys, too.
+///
+/// The `barchart` function is a wrapper of the `plot` API. Arguments passed
+/// to `..plot-args` are passed to the `plot.plot` function.
+///
+/// - data (array): Array of data rows. A row can be of type array or
+///                 dictionary, with `label-key` and `value-key` being
+///                 the keys to access a rows label and value(s).
+///
+///                 *Example*
+///                 ```typc
+///                 (([A], 1), ([B], 2), ([C], 3),)
+///                 ```
+/// - label-key (int,string): Key to access the label of a data row.
+///                           This key is used as argument to the
+///                           rows `.at(..)` function.
+/// - value-key (int,string): Key(s) to access values of a data row.
+///                           These keys are used as argument to the
+///                           rows `.at(..)` function.
+/// - error-key (none,int,string,array): Key(s) to access error values of a data row.
+///                                These keys are used as argument to the
+///                                rows `.at(..)` function.
+/// - mode (string): Chart mode:
+///   / basic: Single bar per data row
+///   / clustered: Group of bars per data row
+///   / stacked: Stacked bars per data row
+///   / stacked100: Stacked bars per data row relative
+///     to the sum of the row
+/// - size (array): Chart size as width and height tuple in canvas unist;
+///                 width can be set to `auto`.
+/// - bar-style (style,function): Style or function (idx => style) to use for
+///                               each bar, accepts a palette function.
+/// - y-label (content,none): Y axis label
+/// - x-label (content,none): x axis label
+/// - labels (none,content): Legend labels per x value group
+/// - ..plot-args (any): Arguments to pass to `plot.plot`
+#let barchart(data,
+              label-key: 0,
+              value-key: 1,
+              error-key: none,
+              mode: "basic",
+              size: (auto, 1),
+              bar-style: palette.red,
+              x-label: none,
+              x-format: auto,
+              y-label: none,
+              labels: none,
+              ..plot-args
+              ) = {
+  assert(type(label-key) in (int, str))
+  if mode == "basic" {
+    assert(type(value-key) in (int, str))
+  } else {
+    assert(type(value-key) == array)
+  }
+
+  if type(value-key) != array {
+    value-key = (value-key,)
+  }
+
+  if error-key == none {
+    error-key = ()
+  } else if type(error-key) != array {
+    error-key = (error-key,)
+  }
+
+  if type(size) != array {
+    size = (size, auto)
+  }
+  if size.at(1) == auto {
+    size.at(1) = (data.len() + 1)
+  }
+
+  let y-tic-list = data.enumerate().map(((i, t)) => {
+    (data.len() - i - 1, t.at(label-key))
+  })
+
+  let x-format = x-format
+  if x-format == auto {
+    x-format = if mode == "stacked100" {plot.formats.decimal.with(suffix: [%])} else {auto}
+  }
+
+  data = data.enumerate().map(((i, d)) => {
+    (data.len() - i - 1, value-key.map(k => d.at(k, default: 0)).flatten(), error-key.map(k => d.at(k, default: 0)).flatten())
+  })
+
+  draw.group(ctx => {
+    let style = styles.resolve(ctx.style, merge: (:),
+      root: "barchart", base: barchart-default-style)
+    draw.set-style(..style)
+
+    let y-inset = calc.max(style.y-inset, style.bar-width / 2)
+    plot.plot(size: size,
+              axis-style: "scientific-auto",
+              x-label: x-label,
+              x-grid: true,
+              x-format: x-format,
+              y-label: y-label,
+              y-min: -y-inset,
+              y-max: data.len() + y-inset - 1,
+              y-tick-step: none,
+              y-ticks: y-tic-list,
+              plot-style: bar-style,
+              ..plot-args,
+    {
+      plot.add-bar(data,
+        x-key: 0,
+        y-key: 1,
+        error-key: if mode in ("basic", "clustered") { 2 },
+        mode: mode,
+        labels: labels,
+        bar-width: -style.bar-width,
+        cluster-gap: style.cluster-gap,
+        axes: ("y", "x"))
+    })
+  })
+}
+// Valid bar- and columnchart modes
+#let barchart-modes = (
+  "basic", "clustered", "stacked", "stacked100"
+)
+
+// Functions for max value calculation
+#let barchart-max-value-fn = (
+  basic: (data, value-key) => {
+    calc.max(0, ..data.map(t => t.at(value-key)))
+  },
+  clustered: (data, value-key) => {
+    calc.max(0, ..data.map(t => calc.max(
+      ..value-key.map(k => t.at(k)))))
+  },
+  stacked: (data, value-key) => {
+    calc.max(0, ..data.map(t => 
+      value-key.map(k => t.at(k)).sum()))
+  },
+  stacked100: (..) => {
+    100
+  }
+)
+
+// Functions for min value calculation
+#let barchart-min-value-fn = (
+  basic: (data, value-key) => {
+    calc.min(0, ..data.map(t => t.at(value-key)))
+  },
+  clustered: (data, value-key) => {
+    calc.min(0, ..data.map(t => calc.max(
+      ..value-key.map(k => t.at(k)))))
+  },
+  stacked: (data, value-key) => {
+    calc.min(0, ..data.map(t =>
+      value-key.map(k => t.at(k)).sum()))
+  },
+  stacked100: (..) => {
+    0
+  }
+)
+#import "/src/cetz.typ": draw, styles, palette, util, vector, intersection
+
+#import "/src/plot.typ"
+
+#let boxwhisker-default-style = (
+  axes: (tick: (length: 0), grid: (stroke: (dash: "dotted"))),
+  box-width: 0.75,
+  whisker-width: 0.5,
+  mark-size: 0.15,
+)
+
+/// Add one or more box or whisker plots.
+///
+/// #example(```
+/// chart.boxwhisker(size: (2,2), label-key: none,
+///   y-min: 0, y-max: 70, y-tick-step: 20,
+///   (x: 1, min: 15, max: 60,
+///    q1: 25, q2: 35, q3: 50))
+/// ```)
+///
+/// = Styling
+/// *Root* `boxwhisker`
+/// #show-parameter-block("box-width", "float", default: .75, [
+///   The width of the box. Since boxes are placed 1 unit next to each other,
+///   a width of $1$ would make neighbouring boxes touch.])
+/// #show-parameter-block("whisker-width", "float", default: .5, [
+///   The width of the whisker, that is the horizontal bar on the top and bottom
+///   of the box.])
+/// #show-parameter-block("mark-size", "float", default: .15, [
+///   The scaling of the mark for the boxes outlier values in canvas units.])
+/// You can use any `plot` or `axes` related style keys, too.
+///
+/// - data (array, dictionary): Dictionary or array of dictionaries containing the
+///   needed entries to plot box and whisker plot.
+///
+///   See `plot.add-boxwhisker` for more details.
+///
+///   *Examples:*
+///   - ```typc
+///     (x: 1                   // Location on x-axis
+///      outliers: (7, 65, 69), // Optional outliers
+///      min: 15, max: 60       // Minimum and maximum
+///      q1: 25,                // Quartiles: Lower
+///      q2: 35,                //            Median
+///      q3: 50)                //            Upper
+///   ```
+/// - size (array) : Size of chart. If the second entry is auto, it automatically scales to accommodate the number of entries plotted
+/// - label-key (integer, string): Index in the array where labels of each entry is stored
+/// - mark (string): Mark to use for plotting outliers. Set `none` to disable. Defaults to "x"
+/// - ..plot-args (any): Additional arguments are passed to `plot.plot`
+#let boxwhisker(data,
+                size: (1, auto),
+                label-key: 0,
+                mark: "*",
+                ..plot-args
+                ) = {
+  if type(data) == dictionary { data = (data,) }
+
+  if type(size) != array {
+    size = (size, auto)
+  }
+  if size.at(1) == auto {
+    size.at(1) = (data.len() + 1)
+  }
+
+  let x-tick-list = data.enumerate().map(((i, t)) => {
+    (i + 1, if label-key != none { t.at(label-key, default: i) } else { [] })
+  })
+
+  draw.group(ctx => {
+    let style = styles.resolve(ctx.style, merge: (:),
+      root: "boxwhisker", base: boxwhisker-default-style)
+    draw.set-style(..style)
+
+    plot.plot(
+      size: size,
+      axis-style: "scientific-auto",
+      x-tick-step: none,
+      x-ticks: x-tick-list,
+      y-grid: true,
+      x-label: none,
+      y-label: none,
+      ..plot-args,
+      {
+        for (i, row) in data.enumerate() {
+          plot.add-boxwhisker(
+            (x: i + 1, ..row),
+            box-width: style.box-width,
+            whisker-width: style.whisker-width,
+            style: (:),
+            mark: mark,
+            mark-size: style.mark-size
+          )
+        }
+      })
+  })
+}
+#import "/src/cetz.typ": draw, styles, palette, util, vector, intersection
+
+#import "/src/plot.typ"
+
+#let columnchart-default-style = (
+  axes: (tick: (length: 0), grid: (stroke: (dash: "dotted"))),
+  bar-width: .8,
+  cluster-gap: 0,
+  error: (
+    whisker-size: .25,
+  ),
+  x-inset: 1,
+)
+
+/// Draw a column chart. A column chart is a chart that represents data with
+/// rectangular bars that grow from bottom to top, proportional to the values
+/// they represent.
+///
+/// = Styling
+/// *Root*: `columnchart`.
+/// #show-parameter-block("bar-width", "float", default: .8, [
+///   Width of a single bar (basic) or a cluster of bars (clustered) in the plot.])
+/// #show-parameter-block("x-inset", "float", default: 1, [
+///   Distance of the plot data to the plot's edges on the x-axis of the plot.])
+/// You can use any `plot` or `axes` related style keys, too.
+///
+/// The `columnchart` function is a wrapper of the `plot` API. Arguments passed
+/// to `..plot-args` are passed to the `plot.plot` function.
+///
+/// - data (array): Array of data rows. A row can be of type array or
+///                 dictionary, with `label-key` and `value-key` being
+///                 the keys to access a rows label and value(s).
+///
+///                 *Example*
+///                 ```typc
+///                 (([A], 1), ([B], 2), ([C], 3),)
+///                 ``` 
+/// - label-key (int,string): Key to access the label of a data row.
+///                           This key is used as argument to the
+///                           rows `.at(..)` function.
+/// - value-key (int,string): Key(s) to access value(s) of data row.
+///                           These keys are used as argument to the
+///                           rows `.at(..)` function.
+/// - error-key (none,int,string,array): Key(s) to access error values of a data row.
+///     These keys are used as argument to the rows `.at(..)` function.
+/// - mode (string): Chart mode:
+///   / basic: Single bar per data row
+///   / clustered: Group of bars per data row
+///   / stacked: Stacked bars per data row
+///   / stacked100: Stacked bars per data row relative
+///     to the sum of the row
+/// - size (array): Chart size as width and height tuple in canvas unist;
+///                 width can be set to `auto`.
+/// - bar-style (style,function): Style or function (idx => style) to use for
+///   each bar, accepts a palette function.
+/// - y-label (content,none): Y axis label
+/// - x-label (content,none): x axis label
+/// - labels (none,content): Legend labels per y value group
+/// - ..plot-args (any): Arguments to pass to `plot.plot`
+#let columnchart(data,
+                 label-key: 0,
+                 value-key: 1,
+                 error-key: none,
+                 mode: "basic",
+                 size: (auto, 1),
+                 bar-style: palette.red,
+                 x-label: none,
+                 y-format: auto,
+                 y-label: none,
+                 labels: none,
+                 ..plot-args
+                 ) = {
+  assert(type(label-key) in (int, str))
+  if mode == "basic" {
+    assert(type(value-key) in (int, str))
+  }
+
+  if type(value-key) != array {
+    value-key = (value-key,)
+  }
+
+  if error-key == none {
+    error-key = ()
+  } else if type(error-key) != array {
+    error-key = (error-key,)
+  }
+
+  if type(size) != array {
+    size = (auto, size)
+  }
+  if size.at(0) == auto {
+    size.at(0) = (data.len() + 1)
+  }
+
+  let x-tic-list = data.enumerate().map(((i, t)) => {
+    (i, t.at(label-key))
+  })
+
+  let y-format = y-format
+  if y-format == auto {
+    y-format = if mode == "stacked100" {plot.formats.decimal.with(suffix: [%])} else {auto}
+  }
+
+  data = data.enumerate().map(((i, d)) => {
+    (i, value-key.map(k => d.at(k)).flatten(), error-key.map(k => d.at(k, default: 0)).flatten())
+  })
+
+  draw.group(ctx => {
+    let style = styles.resolve(ctx.style, merge: (:),
+      root: "columnchart", base: columnchart-default-style)
+    draw.set-style(..style)
+
+    let x-inset = calc.max(style.x-inset, style.bar-width / 2)
+    plot.plot(size: size,
+              axis-style: "scientific-auto",
+              y-grid: true,
+              y-label: y-label,
+              y-format: y-format,
+              x-min: -x-inset,
+              x-max: data.len() + x-inset - 1,
+              x-tick-step: none,
+              x-ticks: x-tic-list,
+              x-label: x-label,
+              plot-style: bar-style,
+              ..plot-args,
+    {
+      plot.add-bar(data,
+        x-key: 0,
+        y-key: 1,
+        error-key: if mode in ("basic", "clustered") { 2 },
+        mode: mode,
+        labels: labels,
+        bar-width: style.bar-width,
+        cluster-gap: style.cluster-gap,
+        error-style: style.error,
+        whisker-size: style.error.whisker-size,
+        axes: ("x", "y"))
+    })
+  })
+}
+#import "/src/cetz.typ": draw, styles, palette, util, vector, intersection
+#import util: circle-arclen
+
+#import "/src/plot/legend.typ"
+
+// Piechart Label Kind
+#let label-kind = (value: "VALUE", percentage: "%", label: "LABEL")
+
+// Piechart Default Style
+#let default-style = (
+  stroke: auto,
+  fill: auto,
+  /// Outer chart radius
+  radius: 1,
+  /// Inner slice radius
+  inner-radius: 0,
+  /// Gap between items. This can be a canvas length or an angle
+  gap: 0.5deg,
+  /// Outset offset, absolute or relative to radius
+  outset-offset: 10%,
+  /// Pie outset mode:
+  ///   - "OFFSET": Offset slice position by outset-offset
+  ///   - "RADIUS": Offset slice radius by outset-offset (the slice gets scaled)
+  outset-mode: "OFFSET",
+  /// Pie start angle
+  start: 90deg,
+  /// Pie stop angle
+  stop: 360deg + 90deg,
+  /// Pie rotation direction (true = clockwise, false = anti-clockwise)
+  clockwise: true,
+  outer-label: (
+    /// Label kind
+    /// If set to a function, that function gets called with (value, label) of each item
+    content: label-kind.label,
+    /// Absolute radius or percentage of radius
+    radius: 125%,
+    /// Absolute angle or auto to use secant of the slice as direction
+    angle: 0deg,
+    /// Label anchor
+    anchor: "center",
+  ),
+  inner-label: (
+    /// Label kind
+    /// If set to a function, that function gets called with (value, label) of each item
+    content: none,
+    /// Absolute radius or percentage of the mid between radius and inner-radius
+    radius: 150%,
+    /// Absolute angle or auto to use secant of the slice as direction
+    angle: 0deg,
+    /// Label anchor
+    anchor: "center",
+  ),
+  legend: (
+    ..legend.default-style,
+
+    /// Label used for the legend
+    /// The legend gets rendered as soon as at least one item with a label
+    /// exists and the `legend-label.content` is set != none. This field
+    /// accepts the same values as inner-label.content or outer-label.content.
+    label: "LABEL",
+
+    /// Anchor of the charts data bounding box to place the legend relative to
+    position: "south",
+
+    /// Anchor of the legend bounding box to use as origin
+    anchor: "north",
+
+    /// Custom preview function override
+    /// The function takes an item dictionary an is responsible for drawing
+    /// the preview icon. Stroke and fill styles are set to match the items
+    /// style.
+    preview: none,
+
+    /// See lenged.typ for the following style keys
+    orientation: ltr,
+    offset: (0,-.5em),
+    stroke: none,
+    item: (
+      spacing: .25,
+      preview: (
+        width: .3,
+        height: .3,
+      ),
+    ),
+  )
+)
+#let piechart-default-style = default-style
+
+
+/// Draw a pie- or donut-chart
+///
+/// #example(```
+/// let data = (24, 31, 18, 21, 23, 18, 27, 17, 26, 13)
+/// let colors = gradient.linear(red, blue, green, yellow)
+///
+/// chart.piechart(
+///   data,
+///   radius: 1.5,
+///   slice-style: colors,
+///   inner-radius: .5,
+///   outer-label: (content: "%",))
+/// ```)
+///
+/// = Styling
+/// *Root* `piechart` \
+/// #show-parameter-block("radius", ("number"), [
+///   Outer radius of the chart.], default: 1)
+/// #show-parameter-block("inner-radius", ("number"), [
+///   Inner radius of the chart slices. If greater than zero, the chart becomes
+///   a "donut-chart".], default: 0)
+/// #show-parameter-block("gap", ("number", "angle"), [
+///   Gap between chart slices to leave empty. This does not increase the charts
+///   radius by pushing slices outwards, but instead shrinks the slice. Big
+///   values can result in slices becoming invisible if no space is left.], default: 0.5deg)
+/// #show-parameter-block("outset-offset", ("number", "ratio"), [
+///   Absolute, or radius relative distance to push slices marked for
+///   "outsetting" outwards from the center of the chart.], default: 10%)
+/// #show-parameter-block("outset-offset", ("string"), [
+///   The mode of how to perform "outsetting" of slices:
+///   - "OFFSET": Offset slice position by `outset-offset`, increasing their gap to their siblings
+///   - "RADIUS": Offset slice radius by `outset-offset`, which scales the slice and leaves the gap unchanged], default: "OFFSET")
+/// #show-parameter-block("start", ("angle"), [
+///   The pie-charts start angle (ccw). You can use this to draw charts not forming a full circle.], default: 90deg)
+/// #show-parameter-block("stop", ("angle"), [
+///   The pie-charts stop angle (ccw).], default: 360deg + 90deg)
+/// #show-parameter-block("clockwise", ("bool"), [
+///   The pie-charts rotation direction.], default: true)
+/// #show-parameter-block("outer-label.content", ("none","string","function"), [
+///   Content to display outsides the charts slices.
+///   There are the following predefined values:
+///   / LABEL: Display the slices label (see `label-key`)
+///   / %: Display the percentage of the items value in relation to the sum of
+///     all values, rounded to the next integer
+///   / VALUE: Display the slices value
+///   If passed a `<function>` of the format `(value, label) => content`,
+///   that function gets called with each slices value and label and must return
+///   content, that gets displayed.], default: "LABEL")
+/// #show-parameter-block("outer-label.radius", ("number","ratio"), [
+///   Absolute, or radius relative distance from the charts center to position
+///   outer labels at.], default: 125%)
+/// #show-parameter-block("outer-label.angle", ("angle","auto"), [
+///   The angle of the outer label. If passed `auto`, the label gets rotated,
+///   so that the baseline is parallel to the slices secant. ], default: 0deg)
+/// #show-parameter-block("outer-label.anchor", ("string"), [
+///   The anchor of the outer label to use for positioning.], default: "center")
+/// #show-parameter-block("inner-label.content", ("none","string","function"), [
+///   Content to display insides the charts slices.
+///   See `outer-label.content` for the possible values.], default: none)
+/// #show-parameter-block("inner-label.radius", ("number","ratio"), [
+///   Distance of the inner label to the charts center. If passed a `<ratio>`,
+///   that ratio is relative to the mid between the inner and outer radius (`inner-radius` and `radius`)
+///   of the chart], default: 150%)
+/// #show-parameter-block("inner-label.angle", ("angle","auto"), [
+///   See `outer-label.angle`.], default: 0deg)
+/// #show-parameter-block("inner-label.anchor", ("string"), [
+///   See `outer-label.anchor`.], default: "center")
+/// #show-parameter-block("legend.label", ("none","string","function"), [
+///   See `outer-label.content`. The legend gets shown if this key is set != none.], default: "LABEL")
+///
+/// = Anchors
+///   The chart places one anchor per item at the radius of it's slice that
+///   gets named `"item-<index>"` (outer radius) and `"item-<index>-inner"` (inner radius),
+///   where index is the index of the sclice data in `data`.
+///
+/// - data (array): Array of data items. A data item can be:
+///   - A number: A number that is used as the fraction of the slice
+///   - An array: An array which is read depending on value-key, label-key and outset-key
+///   - A dictionary: A dictionary which is read depending on value-key, label-key and outset-key
+/// - value-key (none,int,string): Key of the "value" of a data item. If for example
+///   data items are passed as dictionaries, the value-key is the key of the dictionary to
+///   access the items chart value.
+/// - label-key (none,int,string): Same as the value-key but for getting an items label content.
+/// - outset-key (none,int,string): Same as the value-key but for getting if an item should get outset (highlighted). The
+///   outset can be a bool, float or ratio. If of type `bool`, the outset distance from the
+///   style gets used.
+/// - outset (none,int,array): A single or multiple indices of items that should get offset from the center to the outsides
+///   of the chart. Only used if outset-key is none!
+/// - slice-style (function,array,gradient): Slice style of the following types:
+///   - function: A function of the form `index => style` that must return a style dictionary.
+///     This can be a `palette` function.
+///   - array: An array of style dictionaries or fill colors of at least one item. For each slice the style at the slices
+///     index modulo the arrays length gets used.
+///   - gradient: A gradient that gets sampled for each data item using the the slices
+///     index divided by the number of slices as position on the gradient.
+///   If one of stroke or fill is not in the style dictionary, it is taken from the charts style.
+#let piechart(data,
+              value-key: none,
+              label-key: none,
+              outset-key: none,
+              outset: none,
+              slice-style: palette.red,
+              name: none,
+              ..style) = {
+  import draw: *
+
+  // Prepare data by converting it to tuples of the format
+  // (value, label, outset)
+  data = data.enumerate().map(((i, item)) => (
+    if value-key != none {
+      item.at(value-key)
+    } else {
+      item
+    },
+    if label-key != none {
+      item.at(label-key)
+    } else {
+      none
+    },
+    if outset-key != none {
+      item.at(outset-key, default: false)
+    } else if outset != none {
+      i == outset or (type(outset) == array and i in outset)
+    } else {
+      false
+    }
+  ))
+
+  let visible-data = data.filter(((value, ..)) => value != 0)
+
+  let sum = visible-data.map(((value, ..)) => value).sum()
+  if sum == 0 {
+    sum = 1
+  }
+
+  group(name: name, ctx => {
+    anchor("default", (0,0))
+
+    let style = styles.resolve(ctx,
+      merge: style.named(), root: "piechart", base: default-style)
+
+    let gap = style.gap
+    if type(gap) != angle {
+      gap = gap / (2 * calc.pi * style.radius) * 360deg
+    }
+    assert(gap < 360deg / visible-data.len(),
+      message: "Gap angle is too big for " + str(visible-data.len()) + "items. Maximum gap angle: " + repr(360deg / visible-data.len()))
+
+    let radius = style.radius
+    assert(radius > 0,
+      message: "Radius must be > 0.")
+
+    let inner-radius = style.inner-radius
+    assert(inner-radius >= 0 and inner-radius <= radius,
+      message: "Radius must be >= 0 and <= radius.")
+
+    assert(style.outset-mode in ("OFFSET", "RADIUS"),
+      message: "Outset mode must be 'OFFSET' or 'RADIUS', but is: " + str(style.outset-mode))
+
+    let style-at = if type(slice-style) == function {
+      slice-style
+    } else if type(slice-style) == array {
+      i => {
+        let s = slice-style.at(calc.rem(i, slice-style.len()))
+        if type(s) == color {
+          (fill: s)
+        } else {
+          s
+        }
+      }
+    } else if type(slice-style) == gradient {
+      i => (fill: slice-style.sample(i / visible-data.len() * 100%))
+    }
+
+    let start-angle = style.start
+    let stop-angle = style.stop
+    let f = (stop-angle - start-angle) / sum
+
+    let get-item-label(item, kind) = {
+      let (value, label, ..) = item
+      if kind == label-kind.value {
+        [#value]
+      } else if kind == label-kind.percentage {
+        [#{calc.round(value / sum * 100)}%]
+      } else if kind == label-kind.label {
+        label
+      } else if type(kind) == function {
+        (kind)(value, label)
+      }
+    }
+
+    let start = start-angle
+    let enum-items = (if style.clockwise {
+      data.enumerate().rev()
+    } else {
+      data.enumerate()
+    })
+    group(name: "chart", {
+      for (i, item) in enum-items.filter((value, ..) => value != 0) {
+        let (value, label, outset) = item
+        if value == 0 { continue }
+
+        let origin = (0,0)
+        let radius = radius
+        let inner-radius = inner-radius
+
+        // Calculate item angles
+        let delta = f * value
+        let end = start + delta
+
+        // Apply item outset
+        let outset-offset = if outset == true {
+          style.outset-offset
+        } else if outset == false {
+          0
+        } else if type(outset) in (float, ratio) {
+          outset
+        } else {
+          panic("Invalid type for outset. Expected bool, float or ratio, got: " + repr(outset))
+        }
+        if type(outset-offset) == ratio {
+          outset-offset = outset-offset * radius / 100%
+        }
+
+        if outset-offset != 0 {
+          if style.outset-mode == "OFFSET" {
+            let dir = (calc.cos((start + end) / 2), calc.sin((start + end) / 2))
+            origin = vector.add(origin, vector.scale(dir, outset-offset))
+              radius += outset-offset
+          } else {
+            radius += outset-offset
+            if inner-radius > 0 {
+              inner-radius += outset-offset
+            }
+          }
+        }
+
+        // Calculate gap angles
+        let outer-gap = gap
+        let gap-dist = outer-gap / 360deg * 2 * calc.pi * radius
+        let inner-gap = if inner-radius > 0 {
+          gap-dist / (2 * calc.pi * inner-radius) * 360deg
+        } else {
+          1 / calc.pi * 360deg
+        }
+
+        // Calculate angle deltas
+        let outer-angle = end - start - outer-gap * 2
+        let inner-angle = end - start - inner-gap * 2
+        let mid-angle = (start + end) / 2
+
+        // Skip negative values
+        if outer-angle < 0deg {
+          // TODO: Add a warning as soon as Typst is ready!
+          continue
+        }
+
+        // A sharp item is an item that should be round but is sharp due to the gap being big
+        let is-sharp = inner-radius == 0 or circle-arclen(inner-radius, angle: inner-angle) > circle-arclen(radius, angle: outer-angle)
+
+        let inner-origin = vector.add(origin, if inner-radius == 0 {
+          if gap-dist >= 0 {
+            let outer-end = vector.scale((calc.cos(end - outer-gap), calc.sin(end - outer-gap)), radius)
+            let inner-end = vector.scale((calc.cos(end - inner-gap), calc.sin(end - inner-gap)), gap-dist)
+            let outer-start = vector.scale((calc.cos(start + outer-gap), calc.sin(start + outer-gap)), radius)
+            let inner-start = vector.scale((calc.cos(start + inner-gap), calc.sin(start + inner-gap)), gap-dist)
+
+            intersection.line-line(outer-end, inner-end, outer-start, inner-start, ray: true)
+          } else {
+            (0,0)
+          }
+        } else if is-sharp {
+          let outer-end = vector.scale((calc.cos(end - outer-gap), calc.sin(end - outer-gap)), radius)
+          let inner-end = vector.scale((calc.cos(end - inner-gap), calc.sin(end - inner-gap)), inner-radius)
+          let outer-start = vector.scale((calc.cos(start + outer-gap), calc.sin(start + outer-gap)), radius)
+          let inner-start = vector.scale((calc.cos(start + inner-gap), calc.sin(start + inner-gap)), inner-radius)
+
+          intersection.line-line(outer-end, inner-end, outer-start, inner-start, ray: true)
+        } else {
+          (0,0)
+        })
+
+        // Draw one segment
+        let stroke = style-at(i).at("stroke", default: style.stroke)
+        let fill = style-at(i).at("fill", default: style.fill)
+        if visible-data.len() == 1 {
+          // If the chart has only one segment, we may have to fake a path
+          // with a hole in it by using a combination of multiple arcs.
+          if inner-radius > 0 {
+            // Split the circle/arc into two arcs
+            // and fill them
+            merge-path({
+              arc(origin, start: start-angle, stop: mid-angle, radius: radius, anchor: "origin")
+              arc(origin, stop: start-angle, start: mid-angle, radius: inner-radius, anchor: "origin")
+            }, close: false, fill:fill, stroke: none)
+            merge-path({
+              arc(origin, start: mid-angle, stop: stop-angle, radius: radius, anchor: "origin")
+              arc(origin, stop: mid-angle, start: stop-angle, radius: inner-radius, anchor: "origin")
+            }, close: false, fill:fill, stroke: none)
+
+            // Create arcs for the inner and outer border and stroke them.
+            // If the chart is not a full circle, we have to merge two arc
+            // at their ends to create closing lines
+            if stroke != none {
+              if calc.abs(stop-angle - start-angle) != 360deg {
+                merge-path({
+                  arc(origin, start: start, stop: end, radius: inner-radius, anchor: "origin")
+                  arc(origin, start: end, stop: start, radius: radius, anchor: "origin")
+                }, close: true, fill: none, stroke: stroke)
+              } else {
+                arc(origin, start: start, stop: end, radius: inner-radius, fill: none, stroke: stroke, anchor: "origin")
+                arc(origin, start: start, stop: end, radius: radius, fill: none, stroke: stroke, anchor: "origin")
+              }
+            }
+          } else {
+            arc(origin, start: start, stop: end, radius: radius, fill: fill, stroke: stroke, mode: "PIE", anchor: "origin")
+          }
+        } else {
+          // Draw a normal segment
+          if inner-origin != none {
+            merge-path({
+              arc(origin, start: start + outer-gap, stop: end - outer-gap, anchor: "origin",
+                radius: radius)
+              if inner-radius > 0 and not is-sharp {
+                if inner-angle < 0deg {
+                  arc(inner-origin, stop: end - inner-gap, delta: inner-angle, anchor: "origin",
+                    radius: inner-radius)
+                } else {
+                  arc(inner-origin, start: end - inner-gap, delta: -inner-angle, anchor: "origin",
+                    radius: inner-radius)
+                }
+              } else {
+                line((rel: (end - outer-gap, radius), to: origin),
+                    inner-origin,
+                    (rel: (start + outer-gap, radius), to: origin))
+              }
+            }, close: true, fill: fill, stroke: stroke)
+          }
+        }
+
+        // Place outer label
+        let outer-label = get-item-label(item, style.outer-label.content)
+        if outer-label != none {
+          let r = style.outer-label.radius
+          if type(r) == ratio {r = r * radius / 100%}
+
+          let dir = (r * calc.cos(mid-angle), r * calc.sin(mid-angle))
+          let pt = vector.add(origin, dir)
+
+          let angle = style.outer-label.angle
+          if angle == auto {
+            angle = vector.add(pt, (dir.at(1), -dir.at(0)))
+          }
+
+          content(pt, outer-label, angle: angle, anchor: style.outer-label.anchor)
+        }
+
+        // Place inner label
+        let inner-label = get-item-label(item, style.inner-label.content)
+        if inner-label != none {
+          let r = style.inner-label.radius
+          if type(r) == ratio {r = r * (radius + inner-radius) / 200%}
+
+          let dir = (r * calc.cos(mid-angle), r * calc.sin(mid-angle))
+          let pt = vector.add(origin, dir)
+
+          let angle = style.inner-label.angle
+          if angle == auto {
+            angle = vector.add(pt, (dir.at(1), -dir.at(0)))
+          }
+
+          content(pt, inner-label, angle: angle, anchor: style.inner-label.anchor)
+        }
+
+        // Place item anchor
+        anchor("item-" + str(i), (rel: (mid-angle, radius), to: origin))
+        anchor("item-" + str(i) + "-inner", (rel: (mid-angle, inner-radius), to: origin))
+
+        start = end
+      }
+    })
+
+    legend.legend((name: "chart", anchor: style.legend.position), {
+      let preview-fn = if style.legend.preview != none {
+        style.legend.preview
+      } else {
+        (_) => { rect((0,0), (1,1)) }
+      }
+
+      for (i, item) in enum-items.rev() {
+        let label = get-item-label(item, style.legend.label)
+        let preview = (item) => {
+          let stroke = style-at(i).at("stroke", default: style.stroke)
+          let fill = style-at(i).at("fill", default: style.fill)
+
+          set-style(stroke: stroke, fill: fill)
+          preview-fn(item)
+        }
+
+        legend.item(label, preview)
+      }
+    }, ..style.at("legend", default: (:)))
+  })
+}
+#import "/src/cetz.typ": draw, styles, palette, coordinate
+
+// Pyramid Chart Label Kind
+#let label-kind = (value: "VALUE", percentage: "%", label: "LABEL")
+
+// Pyramid Chart Default Style
+#let default-style = (
+  stroke: auto,
+  fill: auto,
+  /// Gap between levels to leave empty.
+  /// If `mode` is "AREA-HEIGHT", the value must be a ratio and will be proportional to the height of the first level
+  gap: 0,
+  /// Pyramid mode defining how to shape each level:
+  ///   - "REGULAR": All levels have the same height and make a perfectly triangular pyramid
+  ///   - "AREA-HEIGHT": The area of each level is proportional to its value. Only the height is adapted, keeping the pyramid triangular
+  ///   - "HEIGHT": The height of each level is proportional to its value. The pyramid is kept as a perfect triangle
+  ///   - "WIDTH": The height of each level is fixed, but its width is proportional to the value. The pyramid might not be perfectly triangular
+  mode: "REGULAR",
+  /// Height of each level
+  level-height: 1,
+  inner-label: (
+    /// Label kind
+    /// If set to a function, that function gets called with (value, label) of each item
+    content: "LABEL",
+    force-inside: false
+  ),
+  side-label: (
+    /// Label kind
+    /// If set to a function, that function gets called with (value, label) of each item
+    content: none,
+    side: "west"
+  )
+)
+
+#let pyramid-default-style = default-style
+
+/// Draw a pyramid chart
+///
+/// #example(```
+/// let data = (
+///   "transcendence",
+///   "self-actualization",
+///   "aesthetic",
+///   "cognitive",
+///   "esteem",
+///   "belonging and love",
+///   "safety",
+///   "physiological"
+/// )
+/// let colors = (
+///   rgb("#FFFFC5"), rgb("#FEB6A5"),
+///   rgb("#FFD89F"), rgb("#C6C6C6"),
+///   rgb("#D4D1FF"), rgb("#FFB7CD"),
+///   rgb("#F7BCFF"), rgb("#BDE0B0"),
+/// )
+///
+/// chart.pyramid(
+///   data,
+///   level-style: colors,
+///   level-height: 0.7)
+/// ```)
+///
+/// = Styling
+/// *Root* `pyramid` \
+/// #show-parameter-block("level-height", ("number"), [
+///   Minimum level height.], default: 1)
+/// #show-parameter-block("gap", ("number", "ratio"), [
+///   Gap between levels to leave empty. If `mode` is "AREA-HEIGHT", the value must be a ratio and will be proportional to the height of the first level.], default: 0)
+/// #show-parameter-block("mode", ("string"), [
+///   The mode of how to shape each level:
+///   - "REGULAR": All levels have the same height and make a perfectly triangular pyramid
+///   - "AREA-HEIGHT": The area of each level is proportional to its value. Only the height is adapted, keeping the pyramid triangular
+///   - "HEIGHT": The height of each level is proportional to its value. The pyramid is kept as a perfect triangle
+///   - "WIDTH": The height of each level is fixed, but its width is proportional to the value. The pyramid might not be perfectly triangular], default: "REGULAR")
+/// #show-parameter-block("side-label.content", ("none","string","function"), [
+///   Content to display outsides the charts levels, on the side.
+///   There are the following predefined values:
+///   / LABEL: Display the levels label (see `label-key`)
+///   / %: Display the percentage of the items value in relation to the sum of
+///     all values, rounded to the next integer
+///   / VALUE: Display the levels value
+///   If passed a `<function>` of the format `(value, label) => content`,
+///   that function gets called with each levels value and label and must return
+///   content, that gets displayed.], default: none)
+/// #show-parameter-block("side-label.side", ("string"), [
+///   The side of the chart on which to place side labels, either "west" or "east"], default: "west")
+/// #show-parameter-block("inner-label.content", ("none","string","function"), [
+///   Content to display insides the charts levels.
+///   See `side-label.content` for the possible values.], default: "LABEL")
+/// #show-parameter-block("inner-label.force-inside", ("boolean"), [
+///   If false, labels are automatically placed outside their correspoding levels if they don't fit inside. If true, they are always placed inside.], default: false)
+///
+/// = Anchors
+///   The chart places one anchor per item at the center of its level that
+///   gets named `"levels.<index>"`, one on the middle of its left side named `"levels.<index>.west"`, and one on the right side named `"levels.<index>.east"`,
+///   where index is the index of the level data in `data`.
+///
+/// - data (array): Array of data items. A data item can be:
+///   - A number: A number that is used as the fraction of the level
+///   - An array: An array which is read depending on value-key and label-key
+///   - A dictionary: A dictionary which is read depending on value-key and label-key
+/// - value-key (none,int,string): Key of the "value" of a data item. If for example
+///   data items are passed as dictionaries, the value-key is the key of the dictionary to
+///   access the items chart value.
+/// - label-key (none,int,string): Same as the value-key but for getting an items label content.
+/// - level-style (function,array,gradient): Level style of the following types:
+///   - function: A function of the form `index => style` that must return a style dictionary.
+///     This can be a `palette` function.
+///   - array: An array of style dictionaries or fill colors of at least one item. For each level the style at the levels
+///     index modulo the arrays length gets used.
+///   - gradient: A gradient that gets sampled for each data item using the the levels
+///     index divided by the number of levels as position on the gradient.
+///   If one of stroke or fill is not in the style dictionary, it is taken from the charts style.
+#let pyramid(
+  data,
+  value-key: none,
+  label-key: none,
+  level-style: palette.red,
+  name: none,
+  ..style
+) = {
+  // Prepare data by converting it to tuples of the format
+  // (value, label)
+  data = data.enumerate().map(((i, item)) => (
+    if value-key != none {
+      item.at(value-key)
+    } else {
+      none
+    },
+    if label-key != none {
+      item.at(label-key)
+    } else {
+      item
+    }
+  ))
+
+  draw.group(name: name, ctx => {
+    draw.anchor("default", (0, 0))
+
+    let style = styles.resolve(
+      ctx,
+      merge: style.named(),
+      root: "pyramid",
+      base: default-style
+    )
+
+    let mode = style.mode
+    let gap = style.gap
+    
+    assert(mode in ("REGULAR", "AREA-HEIGHT", "HEIGHT", "AREA-WIDTH", "WIDTH"),
+      message: "Mode must be 'REGULAR', 'AREA-HEIGHT', 'HEIGHT', 'AREA-WIDTH' or 'WIDTH', but is: " + str(mode))
+    
+    
+    if mode == "AREA-HEIGHT" {
+      if gap == 0 {
+        gap = 0%
+      }
+      assert(type(gap) == ratio, message: "When mode is set to 'AREA-HEIGHT', gap must be of type ratio, but is: " + str(type(gap)))
+    }
+
+    assert(style.side-label.side in ("west", "east"),
+      message: "Side label side must either be 'west' or 'east', but is: " + str(style.side-label.side))
+    
+    let style-at = if type(level-style) == function {
+      level-style
+    } else if type(level-style) == array {
+      i => {
+        let s = level-style.at(calc.rem(i, level-style.len()))
+        if type(s) == color or type(s) == gradient {
+          (fill: s)
+        } else {
+          s
+        }
+      }
+    } else if type(level-style) == gradient {
+      i => (fill: level-style.sample(i / data.len() * 100%))
+    }
+
+    let total = data.map(d => d.first()).sum()
+    let get-item-label(item, kind) = {
+      let (value, label, ..) = item
+      if kind == label-kind.value {
+        [#value]
+      } else if kind == label-kind.percentage {
+        if total == none {
+          panic("Using percentage label without values")
+        }
+        [#{calc.round(value / total * 100)}%]
+      } else if kind == label-kind.label {
+        label
+      } else if type(kind) == function {
+        (kind)(value, label)
+      }
+    }
+
+    let rect-overlaps-trapezoid(rect, trapezoid) = {
+      let r = rect
+      let t = trapezoid
+      let side-m = (t.y1 - t.y2) / (t.x1 - t.x2)
+      let side-h = t.y1 - side-m * t.x1
+
+      let x-side = (r.y - side-h) / side-m
+
+      return if r.y > t.y1 {
+        r.x < t.x1
+      } else {
+        r.x < x-side
+      }
+    }
+
+    let total-gaps = style.gap * data.len()
+    let total-height = if mode in ("REGULAR", "WIDTH") {
+      style.level-height * data.len()
+    } else if mode == "HEIGHT" {
+      
+    }
+
+    total-height += total-gaps
+
+    let base-width = if mode == "REGULAR" {
+      2 * total-height / calc.sqrt(3)
+
+    }
+
+    let enum-items = data.enumerate()
+
+    // Array of levels
+    // level = (
+    //   y,
+    //   h,
+    //   w-top,
+    //   w-bottom,
+    //   item
+    // )
+    let levels = ()
+
+    if mode == "REGULAR" {
+      levels = enum-items.map(((i, item)) => (
+        i * (style.level-height + style.gap),
+        style.level-height,
+        auto,
+        auto,
+        item
+      ))
+    } else if mode == "WIDTH" {
+      let w = 0
+      let last-val = 0
+      levels = ()
+      for (i, item) in enum-items {
+        let val = item.first()
+        let y = i * (style.level-height + style.gap)
+        let h = style.level-height
+        let y2 = y + h
+        let w1 = w
+        let w2 = if i == 0 {
+          y2 / calc.sqrt(3)
+        } else {
+          w * val / last-val
+        }
+        w = w2
+        last-val = val
+        levels.push((
+          y,
+          h,
+          w1,
+          w2,
+          item
+        ))
+      }
+    } else if mode == "HEIGHT" {
+      let smallest = calc.min(
+        ..data.map(d => d.first())
+              .filter(v => v != 0)
+      )
+
+      let get-height(value) = {
+        return value / smallest * style.level-height
+      }
+
+      let y = 0
+      for (i, item) in enum-items {
+        let h = get-height(item.first())
+        levels.push((
+          y,
+          h,
+          auto,
+          auto,
+          item
+        ))
+        y += h + style.gap
+      }
+
+    } else if mode == "AREA-HEIGHT" {
+      let y = 0
+      let get-area(y, h) = {
+        return h * (2 *y + h) / 2
+      }
+      let h-for-area(y, area) = {
+        /*
+        A = (2yh + h²)/2
+        2 * A = 2yh + h²
+        h² + 2yh - 2A = 0
+
+        h = -y +- sqrt(y² + 2A)
+        */
+
+        let delta = calc.sqrt(y * y + 2 * area)
+        return delta - y
+      }
+
+      let first-val = enum-items.first().last().first()
+      let first-area = 1 / calc.sqrt(3)
+      let thinnest = 1
+
+      for (i, item) in enum-items {
+        let h = if i == 0 {
+          1
+        } else {
+          let area = item.first() / first-val * first-area
+          h-for-area(y, area)
+        }
+
+        levels.push((
+          y,
+          h,
+          auto,
+          auto,
+          item
+        ))
+        thinnest = calc.min(thinnest, h)
+        y += h + gap / 100%
+      }
+
+      let f = style.level-height / thinnest
+
+      levels = levels.map(((y, h, w1, w2, item)) => (
+        y * f,
+        h * f,
+        w1,
+        w2,
+        item
+      ))
+    }
+
+    let anchors = ()
+    draw.group(name: "chart", {
+      draw.group(name: "levels", {
+        for (i, level) in levels.enumerate() {
+          let (
+            y,
+            h,
+            width-top,
+            width-bottom,
+            (value, label)
+          ) = level
+
+          let y2 = y + h
+          if width-top == auto {
+            width-top = y / calc.sqrt(3)
+          }
+          if width-bottom == auto {
+            width-bottom = y2 / calc.sqrt(3)
+          }
+
+          let stroke = style-at(i).at("stroke", default: style.stroke)
+          let fill = style-at(i).at("fill", default: style.fill)
+
+          let lvl-name = str(i)
+          draw.group(name: lvl-name, {
+            draw.line(
+              (-width-top, -y),
+              (width-top, -y),
+              (width-bottom, -y2),
+              (-width-bottom, -y2),
+              close: true,
+              fill: fill,
+              stroke: stroke
+            )
+            let my = -(y + y2)/2
+            draw.anchor(
+              "west",
+              (-(width-top + width-bottom)/2, my)
+            )
+            draw.anchor(
+              "east",
+              ((width-top + width-bottom)/2, my)
+            )
+            draw.anchor("center", (0, my))
+            draw.anchor("default", (0, my))
+          })
+
+          let inner-label = get-item-label(
+            (value, label),
+            style.inner-label.content
+          )
+
+          if inner-label != none {
+            let my = if width-top == 0 {
+              -y - 2*h/3
+            } else {
+              -y - h/2
+            }
+            let m = measure(inner-label)
+            let rw = m.width / ctx.length
+            let rh = m.height / ctx.length
+            let rect = (
+              x: -rw / 2,
+              y: my + rh / 2,
+              w: rw,
+              h: rh
+            )
+            let trapezoid = (
+              y1: -y,
+              y2: -y2,
+              x1: -width-top,
+              x2: -width-bottom
+            )
+
+            let mid = (0, my)
+            if not style.inner-label.force-inside and rect-overlaps-trapezoid(rect, trapezoid) {
+              let (anchor, f) = if calc.rem(i, 2) == 0 {
+                ("west", 1)
+              } else {
+                ("east", -1)
+              }
+
+              let dy = 0.1 * h
+              let pt = (
+                rel: (
+                  f * ((-my + dy) / calc.sqrt(3) + .5),
+                  dy
+                ),
+                to: mid
+              )
+
+              draw.line(mid, pt)
+              draw.content(
+                pt,
+                inner-label,
+                anchor: anchor,
+                padding: 3pt
+              )
+            } else {
+              draw.content(
+                mid,
+                inner-label
+              )
+            }
+          }
+        }
+      })
+      if style.side-label.content != none {
+        let side = style.side-label.side
+        let corner = "levels.north-" + side
+        for (i, item) in enum-items {
+          let lvl-pt = "levels." + str(i)
+          let pos = (lvl-pt, "-|", corner)
+          draw.content(
+            pos,
+            get-item-label(item, style.side-label.content),
+            anchor: ("west":"east","east":"west").at(side)
+          )
+        }
+      }
+    })
+  })
+}
+#import "/src/cetz.typ": vector
+
+/// Clip a single component of a list of vectors between [min, max]
+/// and returns a list of clipped shapes.
+#let clip-component-axis(component, min, max, points) = {
+  if points == () {
+    return ()
+  }
+
+  // List of tuples (index, ratio, inside)
+  let intersections = ()
+
+  // Collect all intersections
+  let inside = auto
+  for (i, pt) in points.enumerate() {
+    let v = pt.at(component, default: min)
+    let this-inside = min <= v and v <= max
+
+    if inside == auto {
+      inside = this-inside
+    } else if inside != this-inside {
+      inside = not inside
+      if this-inside {
+        intersections.push((i, (v - min) / (max - min), inside))
+      } else {
+        intersections.push((i, (v - min) / (max - min), inside))
+      }
+    }
+  }
+
+  // Clip intersections
+  if intersections != () {
+    let shapes = ()
+
+    let start = none
+    let start-ratio = none
+    for (i, ratio, this-inside) in intersections {
+      if this-inside {
+        start = i
+        start-ratio = ratio
+      } else {
+        let start-pt = if start == 0 or start == points.len() - 1 {
+          points.at(start)
+        } else {
+          vector.lerp(points.at(start - 1), points.at(start), start-ratio)
+        }
+
+        let end-pt = if i == points.len() - 1 {
+          points.last()
+        } else {
+          vector.lerp(points.at(i - 1), points.at(i), ratio)
+        }
+
+        shapes.push((
+          start-pt, ..points.slice(start, i), end-pt,
+        ))
+        start = none
+      }
+    }
+
+    return shapes
+  }
+
+  return (points,)
+}
+#import "/src/cetz.typ"
+
+#let grid(columns: 2, ..items) = {
+  let items = items.pos()
+  let valign = (horizon,) * columns
+
+  (ctx => {
+    let rows = ()
+    let cells = ()
+
+    for (i, item) in items.enumerate() {
+      let (bounds: bounds, drawables: drawables, ..) = cetz.process.many(ctx, item)
+
+      let width = bounds.high.at(0) - bounds.low.at(0)
+      let height = bounds.high.at(1) - bounds.low.at(1)
+      cells.push(((width, height), drawables))
+    }
+
+    let height = 0
+    for i in range(0, items.len()) {
+      let size = cells.at(i).at(0)
+      height = calc.max(size.at(1), height)
+      if calc.rem(i, columns) == 0{
+        rows.push(height)
+        height = 0
+      }
+    }
+
+    cells = cells.enumerate().map(((i, (size, cell))) => {
+      let t = cetz.matrix.ident()
+      let row = rows.at(int(i / columns))
+
+      t = cetz.matrix.transform-translate(0, -(row - size.at(1)) / 2, 0)
+
+      cetz.drawable.apply-transform(t, cell)
+    })
+
+    return (
+      ctx: ctx,
+      drawables: cells.join(),
+    )
+  },)
+}
+#let version = version(0,1,1)
+
+#import "/src/axes.typ"
+#import "/src/plot.typ"
+#import "/src/chart.typ"
+#import "/src/cetz.typ": util, draw, matrix, vector, styles, palette
+#import util: bezier
+
+#import "/src/axes.typ"
+#import "/src/plot/sample.typ": sample-fn, sample-fn2
+#import "/src/plot/line.typ": add, add-hline, add-vline, add-fill-between
+#import "/src/plot/contour.typ": add-contour
+#import "/src/plot/boxwhisker.typ": add-boxwhisker
+#import "/src/plot/util.typ" as plot-util
+#import "/src/plot/legend.typ" as plot-legend
+#import "/src/plot/annotation.typ": annotate, calc-annotation-domain
+#import "/src/plot/bar.typ": add-bar
+#import "/src/plot/errorbar.typ": add-errorbar
+#import "/src/plot/mark.typ"
+#import "/src/plot/violin.typ": add-violin
+#import "/src/plot/formats.typ"
+#import plot-legend: add-legend
+
+#let default-colors = (blue, red, green, yellow, black)
+
+#let default-plot-style(i) = {
+  let color = default-colors.at(calc.rem(i, default-colors.len()))
+  return (stroke: color,
+          fill: color.lighten(75%))
+}
+
+#let default-mark-style(i) = {
+  return default-plot-style(i)
+}
+
+/// Create a plot environment. Data to be plotted is given by passing it to the
+/// `plot.add` or other plotting functions. The plot environment supports different
+/// axis styles to draw, see its parameter `axis-style:`.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add(((0,0), (1,1), (2,.5), (4,3)))
+/// })
+/// ```)
+///
+/// To draw elements insides a plot, using the plots coordinate system, use
+/// the `plot.annotate(..)` function.
+///
+/// = parameters
+///
+/// = Options
+///
+/// You can use the following options to customize each axis of the plot. You must pass them as named arguments prefixed by the axis name followed by a dash (`-`) they should target. Example: `x-min: 0`, `y-ticks: (..)` or `x2-label: [..]`.
+///
+/// #show-parameter-block("label", ("none", "content"), default: "none", [
+///   The axis' label. If and where the label is drawn depends on the `axis-style`.])
+/// #show-parameter-block("min", ("auto", "float"), default: "auto", [
+///   Axis lower domain value. If this is set greater than than `max`, the axis' direction is swapped])
+/// #show-parameter-block("max", ("auto", "float"), default: "auto", [
+///   Axis upper domain value. If this is set to a lower value than `min`, the axis' direction is swapped])
+/// #show-parameter-block("equal", ("string"), default: "none", [
+///   Set the axis domain to keep a fixed aspect ratio by multiplying the other axis domain by the plots aspect ratio,
+///   depending on the other axis orientation (see `horizontal`).
+///   This can be useful to force one axis to grow or shrink with another one.
+///   You can only "lock" two axes of different orientations.
+///   #example(```
+///   plot.plot(size: (2,1), x-tick-step: 1, y-tick-step: 1,
+///             x-equal: "y",
+///   {
+///     plot.add(domain: (0, 2 * calc.pi),
+///       t => (calc.cos(t), calc.sin(t)))
+///   })
+///   ```)
+/// ])
+/// #show-parameter-block("horizontal", ("bool"), default: "axis name dependant", [
+///   If true, the axis is considered an axis that gets drawn horizontally, vertically otherwise.
+///   The default value depends on the axis name on axis creation. Axes which name start with `x` have this
+///   set to `true`, all others have it set to `false`. Each plot has to use one horizontal and one
+///   vertical axis for plotting, a combination of two y-axes will panic: ("y", "y2").
+/// ])
+/// #show-parameter-block("tick-step", ("none", "auto", "float"), default: "auto", [
+///   The increment between tick marks on the axis. If set to `auto`, an
+///   increment is determined. When set to `none`, incrementing tick marks are disabled.])
+/// #show-parameter-block("minor-tick-step", ("none", "float"), default: "none", [
+///   Like `tick-step`, but for minor tick marks. In contrast to ticks, minor ticks do not have labels.])
+/// #show-parameter-block("ticks", ("none", "array"), default: "none", [
+///   A List of custom tick marks to additionally draw along the axis. They can be passed as
+///   an array of `<float>` values or an array of `(<float>, <content>)` tuples for
+///   setting custom tick mark labels per mark.
+///
+///   #example(```
+///   plot.plot(x-tick-step: none, y-tick-step: none,
+///             x-min: 0, x-max: 4,
+///             x-ticks: (1, 2, 3),
+///             y-min: 1, y-max: 2,
+///             y-ticks: ((1, [One]), (2, [Two])),
+///   {
+///     plot.add(((0,0),))
+///   })
+///   ```)
+///
+///   Examples: `(1, 2, 3)` or `((1, [One]), (2, [Two]), (3, [Three]))`])
+/// #show-parameter-block("format", ("none", "string", "function"), default: "float", [
+///   How to format the tick label: You can give a function that takes a `<float>` and return
+///   `<content>` to use as the tick label. You can also give one of the predefined options:
+///   / float: Floating point formatting rounded to two digits after the point (see `decimals`)
+///   / sci: Scientific formatting with $times 10^n$ used as exponet syntax
+///
+///   #example(```
+///   let formatter(v) = if v != 0 {$ #{v/calc.pi} pi $} else {$ 0 $}
+///   plot.plot(x-tick-step: calc.pi, y-tick-step: none,
+///             x-min: 0, x-max: 2 * calc.pi,
+///             x-format: formatter,
+///   {
+///     plot.add(((0,0),))
+///   })
+///   ```)
+/// ])
+/// #show-parameter-block("decimals", ("int"), default: "2", [
+///   Number of decimals digits to display for tick labels, if the format is set
+///   to `"float"`.
+/// ])
+/// #show-parameter-block("mode", ("none", "string"), default: "none", [
+///   The scaling function of the axis. Takes `lin` (default) for linear scaling,
+///   and `log` for logarithmic scaling.])
+/// #show-parameter-block("base", ("none", "number"), default: "none", [
+///   The base to be used when labeling axis ticks in logarithmic scaling])
+/// #show-parameter-block("grid", ("bool", "string"), default: "false", [
+///   If `true` or `"major"`, show grid lines for all major ticks. If set
+///   to `"minor"`, show grid lines for minor ticks only.
+///   The value `"both"` enables grid lines for both, major- and minor ticks.
+///
+///   #example(```
+///   plot.plot(x-tick-step: 1, y-tick-step: 1,
+///             y-minor-tick-step: .2,
+///             x-min: 0, x-max: 2, x-grid: true,
+///             y-min: 0, y-max: 2, y-grid: "both", {
+///     plot.add(((0,0),))
+///   })
+///   ```)
+/// ])
+/// #show-parameter-block("break", ("bool"), default: "false", [
+///   If true, add a "sawtooth" at the start or end of the axis line, depending
+///   on the axis bounds. If the axis min. value is > 0, a sawtooth is added
+///   to the start of the axes, if the axis max. value is < 0, a sawtooth is added
+///   to its end.])
+///
+/// - body (body): Calls of `plot.add` or `plot.add-*` commands. Note that normal drawing
+///   commands like `line` or `rect` are not allowed inside the plots body, instead wrap
+///   them in `plot.annotate`, which lets you select the axes used for drawing.
+/// - size (array): Plot size tuple of `(<width>, <height>)` in canvas units.
+///   This is the plots inner plotting size without axes and labels.
+/// - axis-style (none, string): How the axes should be styled:
+///   / scientific: Frames plot area using a rectangle and draw axes `x` (bottom), `y` (left), `x2` (top), and `y2` (right) around it.
+///     If `x2` or `y2` are unset, they mirror their opposing axis.
+///   / scientific-auto: Draw set (used) axes `x` (bottom), `y` (left), `x2` (top) and `y2` (right) around
+///     the plotting area, forming a rect if all axes are in use or a L-shape if only `x` and `y` are in use.
+///   / school-book: Draw axes `x` (horizontal) and `y` (vertical) as arrows pointing to the right/top with both crossing at $(0, 0)$
+///   / left: Draw axes `x` and `y` as arrows, while the y axis stays on the left (at `x.min`)
+///               and the x axis at the bottom (at `y.min`)
+///   / `none`: Draw no axes (and no ticks).
+///
+///   #example(```
+///   let opts = (x-tick-step: none, y-tick-step: none, size: (2,1))
+///   let data = plot.add(((-1,-1), (1,1),), mark: "o")
+///
+///   for name in (none, "school-book", "left", "scientific") {
+///     plot.plot(axis-style: name, ..opts, data, name: "plot")
+///     content(((0,-1), "-|", "plot.south"), repr(name))
+///     set-origin((3.5,0))
+///   }
+///   ```, vertical: true)
+/// - plot-style (style,function): Styling to use for drawing plot graphs.
+///   This style gets inherited by all plots and supports `palette` functions.
+///   The following style keys are supported:
+///   #show-parameter-block("stroke", ("none", "stroke"), default: 1pt, [
+///     Stroke style to use for stroking the graph.
+///   ])
+///   #show-parameter-block("fill", ("none", "paint"), default: none, [
+///     Paint to use for filled graphs. Note that not all graphs may support filling and
+///     that you may have to enable filling per graph, see `plot.add(fill: ..)`.
+///   ])
+/// - mark-style (style,function): Styling to use for drawing plot marks.
+///   This style gets inherited by all plots and supports `palette` functions.
+///   The following style keys are supported:
+///   #show-parameter-block("stroke", ("none", "stroke"), default: 1pt, [
+///     Stroke style to use for stroking the mark.
+///   ])
+///   #show-parameter-block("fill", ("none", "paint"), default: none, [
+///     Paint to use for filling marks.
+///   ])
+/// - fill-below (bool): If true, the filled shape of plots is drawn _below_ axes.
+/// - name (string): The plots element name to be used when referring to anchors
+/// - legend (none, auto, coordinate): The position the legend will be drawn at. See plot-legends for information about legends. If set to `<auto>`, the legend's "default-placement" styling will be used. If set to a `<coordinate>`, it will be taken as relative to the plot's origin.
+/// - legend-anchor (auto, string): Anchor of the legend group to use as its origin.
+///   If set to `auto` and `lengend` is one of the predefined legend anchors, the
+///   opposite anchor to `legend` gets used.
+/// - legend-style (style): Style key-value overwrites for the legend style with style root `legend`.
+/// - ..options (any): Axis options, see _options_ below.
+#let plot(body,
+          size: (1, 1),
+          axis-style: "scientific",
+          name: none,
+          plot-style: default-plot-style,
+          mark-style: default-mark-style,
+          fill-below: true,
+          legend: auto,
+          legend-anchor: auto,
+          legend-style: (:),
+          ..options
+          ) = draw.group(name: name, ctx => {
+  draw.assert-version(version(0, 3, 1))
+
+  // Create plot context object
+  let make-ctx(x, y, size) = {
+    assert(x != none, message: "X axis does not exist")
+    assert(y != none, message: "Y axis does not exist")
+    assert(size.at(0) > 0 and size.at(1) > 0, message: "Plot size must be > 0")
+
+    let x-scale =  ((x.max - x.min) / size.at(0))
+    let y-scale =  ((y.max - y.min) / size.at(1))
+
+    if y.horizontal {
+      (x-scale, y-scale) = (y-scale, x-scale)
+    }
+
+    return (x: x, y: y, size: size, x-scale: x-scale, y-scale: y-scale)
+  }
+
+  // Setup data viewport
+  let data-viewport(data, x, y, size, body, name: none) = {
+    if body == none or body == () { return }
+
+    assert.ne(x.horizontal, y.horizontal,
+      message: "Data must use one horizontal and one vertical axis!")
+
+    // If y is the horizontal axis, swap x and y
+    // coordinates by swapping the transformation
+    // matrix columns.
+    if y.horizontal {
+      (x, y) = (y, x)
+      body = draw.set-ctx(ctx => {
+        ctx.transform = matrix.swap-cols(ctx.transform, 0, 1)
+        return ctx
+      }) + body
+    }
+
+    // Setup the viewport
+    axes.axis-viewport(size, x, y, none, body, name: name)
+  }
+
+  let data = ()
+  let anchors = ()
+  let annotations = ()
+  let body = if body != none { body } else { () }
+
+  for cmd in body {
+    assert(type(cmd) == dictionary and "type" in cmd,
+           message: "Expected plot sub-command in plot body")
+    if cmd.type == "anchor" {
+      anchors.push(cmd)
+    } else if cmd.type == "annotation" {
+      annotations.push(cmd)
+    } else { data.push(cmd) }
+  }
+
+  assert(axis-style in (none, "scientific", "scientific-auto", "school-book", "left"),
+    message: "Invalid plot style")
+
+  // Create axes for data & annotations
+  let axis-dict = (:)
+  for d in data + annotations {
+    if "axes" not in d { continue }
+
+    for (i, name) in d.axes.enumerate() {
+      if not name in axis-dict {
+        axis-dict.insert(name, axes.axis(
+          min: none, max: none))
+      }
+
+      let axis = axis-dict.at(name)
+      let domain = if i == 0 {
+        d.at("x-domain", default: (none, none))
+      } else {
+        d.at("y-domain", default: (none, none))
+      }
+      if domain != (none, none) {
+        axis.min = util.min(axis.min, ..domain)
+        axis.max = util.max(axis.max, ..domain)
+      }
+
+      axis-dict.at(name) = axis
+    }
+  }
+
+  // Create axes for anchors
+  for a in anchors {
+    for (i, name) in a.axes.enumerate() {
+      if not name in axis-dict {
+        axis-dict.insert(name, axes.axis(min: none, max: none))
+      }
+    }
+  }
+
+  // Adjust axis bounds for annotations
+  for a in annotations {
+    let (x, y) = a.axes.map(name => axis-dict.at(name))
+    (x, y) = calc-annotation-domain(ctx, x, y, a)
+    axis-dict.at(a.axes.at(0)) = x
+    axis-dict.at(a.axes.at(1)) = y
+  }
+
+  // Set axis options
+  axis-dict = plot-util.setup-axes(ctx, axis-dict, options.named(), size)
+
+  // Prepare styles
+  for i in range(data.len()) {
+    if "style" not in data.at(i) { continue }
+
+    let style-base = plot-style
+    if type(style-base) == function {
+      style-base = (style-base)(i)
+    }
+    assert.eq(type(style-base), dictionary,
+      message: "plot-style must be of type dictionary")
+
+    if type(data.at(i).style) == function {
+      data.at(i).style = (data.at(i).style)(i)
+    }
+    assert.eq(type(style-base), dictionary,
+      message: "data plot-style must be of type dictionary")
+
+    data.at(i).style = util.merge-dictionary(
+      style-base, data.at(i).style)
+
+    if "mark-style" in data.at(i) {
+      let mark-style-base = mark-style
+      if type(mark-style-base) == function {
+        mark-style-base = (mark-style-base)(i)
+      }
+      assert.eq(type(mark-style-base), dictionary,
+        message: "mark-style must be of type dictionary")
+
+      if type(data.at(i).mark-style) == function {
+        data.at(i).mark-style = (data.at(i).mark-style)(i)
+      }
+
+      if type(data.at(i).mark-style) == dictionary {
+        data.at(i).mark-style = util.merge-dictionary(
+          mark-style-base,
+          data.at(i).mark-style
+        )
+      }
+    }
+  }
+
+  draw.group(name: "plot", {
+    draw.anchor("origin", (0, 0))
+
+    // Prepare
+    for i in range(data.len()) {
+      if "axes" not in data.at(i) { continue }
+
+      let (x, y) = data.at(i).axes.map(name => axis-dict.at(name))
+      let plot-ctx = make-ctx(x, y, size)
+
+      if "plot-prepare" in data.at(i) {
+        data.at(i) = (data.at(i).plot-prepare)(data.at(i), plot-ctx)
+        assert(data.at(i) != none,
+          message: "Plot prepare(self, cxt) returned none!")
+      }
+    }
+
+    // Background Annotations
+    for a in annotations.filter(a => a.background) {
+      let (x, y) = a.axes.map(name => axis-dict.at(name))
+      let plot-ctx = make-ctx(x, y, size)
+
+      data-viewport(a, x, y, size, {
+        draw.anchor("default", (0, 0))
+        a.body
+      })
+    }
+
+    // Fill
+    if fill-below {
+      for d in data {
+        if "axes" not in d { continue }
+
+        let (x, y) = d.axes.map(name => axis-dict.at(name))
+        let plot-ctx = make-ctx(x, y, size)
+
+        data-viewport(d, x, y, size, {
+          draw.anchor("default", (0, 0))
+          draw.set-style(..d.style)
+
+          if "plot-fill" in d {
+            (d.plot-fill)(d, plot-ctx)
+          }
+        })
+      }
+    }
+
+    if axis-style in ("scientific", "scientific-auto") {
+      let draw-unset = if axis-style == "scientific" {
+        true
+      } else {
+        false
+      }
+
+      let mirror = if axis-style == "scientific" {
+        auto
+      } else {
+        none
+      }
+
+      axes.scientific(
+        size: size,
+        draw-unset: draw-unset,
+        bottom: axis-dict.at("x", default: none),
+        top: axis-dict.at("x2", default: mirror),
+        left: axis-dict.at("y", default: none),
+        right: axis-dict.at("y2", default: mirror),)
+    } else if axis-style == "left" {
+      axes.school-book(
+        size: size,
+        axis-dict.x,
+        axis-dict.y,
+        x-position: axis-dict.y.min,
+        y-position: axis-dict.x.min)
+    } else if axis-style == "school-book" {
+      axes.school-book(
+        size: size,
+        axis-dict.x,
+        axis-dict.y,)
+    }
+
+    // Stroke + Mark data
+    for d in data {
+      if "axes" not in d { continue }
+
+      let (x, y) = d.axes.map(name => axis-dict.at(name))
+      let plot-ctx = make-ctx(x, y, size)
+
+      data-viewport(d, x, y, size, {
+        draw.anchor("default", (0, 0))
+        draw.set-style(..d.style)
+
+        if not fill-below and "plot-fill" in d {
+          (d.plot-fill)(d, plot-ctx)
+        }
+        if "plot-stroke" in d {
+          (d.plot-stroke)(d, plot-ctx)
+        }
+      })
+
+      if "mark" in d and d.mark != none {
+        draw.scope({
+          if y.horizontal {
+            draw.set-ctx(ctx => {
+              ctx.transform = matrix.swap-cols(ctx.transform, 0, 1)
+              return ctx
+            })
+          }
+
+          draw.set-style(..d.style, ..d.mark-style)
+          mark.draw-mark(d.data, x, y, d.mark, d.mark-size, size)
+        })
+      }
+    }
+
+    // Foreground Annotations
+    for a in annotations.filter(a => not a.background) {
+      let (x, y) = a.axes.map(name => axis-dict.at(name))
+      let plot-ctx = make-ctx(x, y, size)
+
+      data-viewport(a, x, y, size, {
+        draw.anchor("default", (0, 0))
+        a.body
+      })
+    }
+
+    // Place anchors
+    for a in anchors {
+      let (x, y) = a.axes.map(name => axis-dict.at(name))
+      let plot-ctx = make-ctx(x, y, size)
+
+      let pt = a.position.enumerate().map(((i, v)) => {
+        if v == "min" { return axis-dict.at(a.axes.at(i)).min }
+        if v == "max" { return axis-dict.at(a.axes.at(i)).max }
+        return v
+      })
+      pt = axes.transform-vec(size, x, y, none, pt)
+      if pt != none {
+        draw.anchor(a.name, pt)
+      }
+    }
+  })
+
+  // Draw the legend
+  if legend != none {
+    let items = data.filter(d => "label" in d and d.label != none)
+    if items.len() > 0 {
+      let legend-style = styles.resolve(ctx.style,
+        base: plot-legend.default-style, merge: legend-style, root: "legend")
+
+      plot-legend.add-legend-anchors(legend-style, "plot", size)
+      plot-legend.legend(legend, anchor: legend-anchor, {
+        for item in items {
+          let preview = if "plot-legend-preview" in item {
+            _ => {(item.plot-legend-preview)(item) }
+          } else {
+            auto
+          }
+
+          plot-legend.item(item.label, preview,
+            mark: item.at("mark", default: none),
+            mark-size: item.at("mark-size", default: none),
+            mark-style: item.at("mark-style", default: none),
+            ..item.at("style", default: (:)))
+        }
+      }, ..legend-style)
+    }
+  }
+
+  draw.copy-anchors("plot")
+})
+
+/// Add an anchor to a plot environment
+///
+/// This function is similar to `draw.anchor` but it takes an additional
+/// axis tuple to specify which axis coordinate system to use.
+///
+/// #example(```
+/// plot.plot(size: (2,2), name: "plot",
+///           x-tick-step: none, y-tick-step: none, {
+///   plot.add(((0,0), (1,1), (2,.5), (4,3)))
+///   plot.add-anchor("pt", (1,1))
+/// })
+///
+/// line("plot.pt", ((), "|-", (0,1.5)), mark: (start: ">"), name: "line")
+/// content("line.end", [Here], anchor: "south", padding: .1)
+/// ```)
+///
+/// - name (string): Anchor name
+/// - position (tuple): Tuple of x and y values.
+///   Both values can have the special values "min" and
+///   "max", which resolve to the axis min/max value.
+///   Position is in axis space defined by the axes passed to `axes`.
+/// - axes (tuple): Name of the axes to use `("x", "y")` as coordinate
+///   system for `position`. Note that both axes must be used,
+///   as `add-anchors` does not create them on demand.
+#let add-anchor(name, position, axes: ("x", "y")) = {
+  ((
+    type: "anchor",
+    name: name,
+    position: position,
+    axes: axes,
+  ),)
+}
+#import "/src/cetz.typ"
+#import cetz: draw, process, util, matrix
+#import "util.typ"
+#import "sample.typ"
+
+/// Add an annotation to the plot
+///
+/// An annotation is a sub-canvas that uses the plots coordinates specified
+/// by its x and y axis.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add(domain: (0, 2*calc.pi), calc.sin)
+///   plot.annotate({
+///     rect((0, -1), (calc.pi, 1), fill: rgb(50,50,200,50))
+///     content((calc.pi, 0), [Here])
+///   })
+/// })
+/// ```)
+///
+/// Bounds calculation is done naively, therefore fixed size content _can_ grow
+/// out of the plot. You can adjust the padding manually to adjust for that. The
+/// feature of solving the correct bounds for fixed size elements might be added
+/// in the future.
+///
+/// - body (drawable): Elements to draw
+/// - axes (axes): X and Y axis names
+/// - resize (bool): If true, the plots axes get adjusted to contain the annotation
+/// - padding (none,number,dictionary): Annotation padding that is used for axis
+///   adjustment
+/// - background (bool): If true, the annotation is drawn behind all plots, in the background.
+///   If false, the annotation is drawn above all plots.
+#let annotate(body, axes: ("x", "y"), resize: true, padding: none, background: false) = {
+  ((
+    type: "annotation",
+    body: {
+      draw.set-style(mark: (transform-shape: false))
+      body;
+    },
+    axes: axes,
+    resize: resize,
+    background: background,
+    padding: cetz.util.as-padding-dict(padding),
+  ),)
+}
+
+// Returns the adjusted axes for the annotation object
+//
+// -> array Tuple of x and y axis
+#let calc-annotation-domain(ctx, x, y, annotation) = {
+  if not annotation.resize {
+    return (x, y)
+  }
+
+  ctx.transform = matrix.ident()
+  let (ctx: ctx, bounds: bounds, drawables: _) = process.many(ctx, annotation.body)
+  if bounds == none {
+    return (x, y)
+  }
+
+  let (x-min, y-min, ..) = bounds.low
+  let (x-max, y-max, ..) = bounds.high
+
+  x-min -= annotation.padding.left
+  x-max += annotation.padding.right
+  y-min -= annotation.padding.bottom
+  y-max += annotation.padding.top
+
+  x.min = calc.min(x.min, x-min)
+  x.max = calc.max(x.max, x-max)
+  y.min = calc.min(y.min, y-min)
+  y.max = calc.max(y.max, y-max)
+
+  return (x, y)
+}
+#import "/src/cetz.typ": draw, util
+
+#import "errorbar.typ": draw-errorbar
+
+#let _transform-row(row, x-key, y-key, error-key) = {
+  let x = row.at(x-key)
+  let y = if y-key == auto {
+    row.slice(1)
+  } else if type(y-key) == array {
+    y-key.map(k => row.at(k, default: 0))
+  } else {
+    row.at(y-key, default: 0)
+  }
+  let err = if error-key == none {
+    0
+  } else if type(error-key) == array {
+    error-key.map(k => row.at(k, default: 0))
+  } else {
+    row.at(error-key, default: 0)
+  }
+
+  if type(y) != array { y = (y,) }
+  if type(err) != array { err = (err,) }
+
+  (x, y.flatten(), err.flatten())
+}
+
+// Get a single items min and maximum y-value
+#let _minmax-value(row) = {
+  let min = none
+  let max = none
+
+  let y = row.at(1)
+  let e = row.at(2)
+  for i in range(0, y.len()) {
+    let i-min = y.at(i) - e.at(i, default: 0)
+    if min == none { min = i-min }
+    else { min = calc.min(min, i-min) }
+
+    let i-max = y.at(i) + e.at(i, default: 0)
+    if max == none { max = i-max }
+    else { max = calc.max(max, i-max) }
+  }
+
+  return (min: min, max: max)
+}
+
+// Functions for max value calculation
+#let _max-value-fn = (
+  basic: (data, min: 0) => {
+    calc.max(min, ..data.map(t => _minmax-value(t).max))
+  },
+  clustered: (data, min: 0) => {
+    calc.max(min, ..data.map(t => _minmax-value(t).max))
+  },
+  stacked: (data, min: 0) => {
+    calc.max(min, ..data.map(t => t.at(1).sum()))
+  },
+  stacked100: (.., min: 0) => {min + 100}
+)
+
+// Functions for min value calculation
+#let _min-value-fn = (
+  basic: (data, min: 0) => {
+    calc.min(min, ..data.map(t => _minmax-value(t).min))
+  },
+  clustered: (data, min: 0) => {
+    calc.min(min, ..data.map(t => _minmax-value(t).min))
+  },
+  stacked: (data, min: 0) => {
+    calc.min(min, ..data.map(t => t.at(1).sum()))
+  },
+  stacked100: (.., min: 0) => {min}
+)
+
+#let _prepare(self, ctx) = {
+  return self
+}
+
+#let _get-x-offset(position, width) = {
+  if position == "start" { 0 }
+  else if position == "end" { width }
+  else { width / 2 }
+}
+
+#let _draw-rects(filling, self, ctx, ..args) = {
+  let x-axis = ctx.x
+  let y-axis = ctx.y
+
+  let bars = ()
+  let errors = ()
+
+  let w = self.bar-width
+  for d in self.data {
+    let (x, n, len, y-min, y-max, err) = d
+
+    let w = self.bar-width
+    let gap = self.cluster-gap * if w > 0 { -1 } else { +1 }
+    w += gap * (len - 1)
+
+    let x-offset = _get-x-offset(self.bar-position, self.bar-width)
+    x-offset += gap * n
+
+    let left  = x - x-offset
+    let right = left + w
+    let width = (right - left) / len
+
+    if self.mode in ("basic", "clustered") {
+      left = left + width * n
+      right = left + width
+    }
+
+    if (left <= x-axis.max and right >= x-axis.min and
+        y-min <= y-axis.max and y-max >= y-axis.min) {
+      left = calc.max(left, x-axis.min)
+      right = calc.min(right, x-axis.max)
+      y-min = calc.max(y-min, y-axis.min)
+      y-max = calc.min(y-max, y-axis.max)
+
+      draw.rect((left, y-min), (right, y-max))
+
+      if not filling and err != 0 {
+        let y-whisker-size = self.whisker-size * ctx.x-scale
+        draw-errorbar(((left + right) / 2, y-max),
+          0, err, 0, y-whisker-size / 2, self.style + self.error-style)
+      }
+    }
+  }
+}
+
+#let _stroke(self, ctx) = {
+  _draw-rects(false, self, ctx, fill: none)
+}
+
+#let _fill(self, ctx) = {
+  _draw-rects(true, self, ctx, stroke: none)
+}
+
+/// Add a bar- or column-chart to the plot
+///
+/// A bar- or column-chart is a chart where values are drawn as rectangular boxes.
+///
+/// - data (array): Array of data items. An item is an array containing a x an one or more y values.
+///                 For example `(0, 1)` or `(0, 10, 5, 30)`. Depending on the `mode`, the data items
+///                 get drawn as either clustered or stacked rects.
+/// - x-key: (int,string): Key to use for retrieving a bars x-value from a single data entry.
+///   This value gets passed to the `.at(...)` function of a data item.
+/// - y-key: (auto,int,string,array): Key to use for retrieving a bars y-value. For clustered/stacked
+///   data, this must be set to a list of keys (e.g. `range(1, 4)`). If set to `auto`, att but the first
+///   array-values of a data item are used as y-values.
+/// - error-key: (none,int,string,array): Key(s) to use for retrieving a bars y-error.
+/// - mode (string): The mode on how to group data items into bars:
+///   / basic: Add one bar per data value. If the data contains multiple values,
+///     group those bars next to each other.
+///   / clustered: Like "basic", but take into account the maximum number of values of all items
+///     and group each cluster of bars together having the width of the widest cluster.
+///   / stacked: Stack bars of subsequent item values onto the previous bar, generating bars
+///     with the height of the sume of all an items values.
+///   / stacked100: Like "stacked", but scale each bar to height $100$, making the different
+///     bars percentages of the sum of an items values.
+/// - labels (none,content,array): A single legend label for "basic" bar-charts, or a
+///   a list of legend labels per bar category, if the mode is one of "clustered", "stacked" or "stacked100".
+/// - bar-width (float): Width of one data item on the y axis
+/// - bar-position (string): Positioning of data items relative to their x value.
+///   - "start": The lower edge of the data item is on the x value (left aligned)
+///   - "center": The data item is centered on the x value
+///   - "end": The upper edge of the data item is on the x value (right aligned)
+/// - cluster-gap (float): Spacing between bars insides a cluster.
+/// - style (dictionary): Plot style
+/// - axes (axes): Plot axes. To draw a horizontal growing bar chart, you can swap the x and y axes.
+#let add-bar(data,
+             x-key: 0,
+             y-key: auto,
+             error-key: none,
+             mode: "basic",
+             labels: none,
+             bar-width: 1,
+             bar-position: "center",
+             cluster-gap: 0,
+             whisker-size: .25,
+             error-style: (:),
+             style: (:),
+             axes: ("x", "y")) = {
+  assert(mode in ("basic", "clustered", "stacked", "stacked100"),
+    message: "Mode must be basic, clustered, stacked or stacked100, but is " + mode)
+  assert(bar-position in ("start", "center", "end"),
+    message: "Invalid bar-position '" + bar-position + "'. Allowed values are: start, center, end")
+  assert(bar-width != 0,
+    message: "Option bar-width must be != 0, but is " + str(bar-width))
+  if error-key != none {
+    assert(y-key != auto,
+      message: "Bar value-key must be set != auto if error-key is set")
+    assert(mode in ("basic", "clustered"),
+      message: "Error bars are supported for basic or clustered only, got " + mode)
+  }
+
+  // Transform data to (x, y, error) triplets
+  let data = data.map(row => _transform-row(row, x-key, y-key, error-key))
+
+  let n = util.max(..data.map(d => d.at(1).len()))
+  let x-offset = _get-x-offset(bar-position, bar-width)
+  let x-domain = (util.min(..data.map(d => d.at(0))) - x-offset,
+                  util.max(..data.map(d => d.at(0))) - x-offset + bar-width)
+  let y-domain = (_min-value-fn.at(mode)(data),
+                  _max-value-fn.at(mode)(data))
+
+  // For stacked 100%, multiply each column/bar
+  if mode == "stacked100" {
+    data = data.map(((x, y, err)) => {
+      let f = 100 / y.sum()
+      return (x, y.map(v => v * f), err)
+    })
+  }
+
+  // Transform data from (x, ..y) to (x, n, len, y-min, y-max) per y
+  let stacked = mode in ("stacked", "stacked100")
+  let clustered = mode == "clustered"
+  let bar-data = if mode == "basic" {
+    range(0, data.len()).map(_ => ())
+  } else {
+    range(0, n).map(_ => ())
+  }
+
+  let j = 0
+  for (x, y, err) in data {
+    let len = if clustered { n } else { y.len() }
+    let sum = 0
+    for (i, y) in y.enumerate() {
+      let err = err.at(i, default: 0)
+      if stacked {
+        bar-data.at(i).push((x, i, len, sum, sum + y, err))
+      } else if clustered {
+        bar-data.at(i).push((x, i, len, 0, y, err))
+      } else {
+        bar-data.at(j).push((x, i, len, 0, y, err))
+      }
+      sum += y
+    }
+    j += 1
+  }
+
+  let labels = if type(labels) == array { labels } else { (labels,) }
+  range(0, bar-data.len()).map(i => (
+    type: "bar",
+    label: labels.at(i, default: none),
+    axes: axes,
+    mode: mode,
+    data: bar-data.at(i),
+    x-domain: x-domain,
+    y-domain: y-domain,
+    style: style,
+    bar-width: bar-width,
+    bar-position: bar-position,
+    cluster-gap: cluster-gap,
+    whisker-size: whisker-size,
+    error-style: error-style,
+    plot-prepare: _prepare,
+    plot-stroke: _stroke,
+    plot-fill: _fill,
+    plot-legend-preview: self => {
+      draw.rect((0,0), (1,1), ..self.style)
+    }
+  ))
+}
+#import "/src/cetz.typ": draw, util
+
+/// Add one or more box or whisker plots
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add-boxwhisker((x: 1, // Location on x-axis
+///     outliers: (7, 65, 69),        // Optional outlier values
+///     min: 15, max: 60,             // Minimum and maximum
+///     q1: 25,                       // Quartiles: Lower
+///     q2: 35,                       //            Median
+///     q3: 50))                      //            Upper
+/// })
+/// ```)
+///
+/// - data (array, dictionary): dictionary or array of dictionaries containing the
+///   needed entries to plot box and whisker plot.
+///
+///   The following fields are supported:
+///   - `x` (number) X-axis value
+///   - `min` (number) Minimum value
+///   - `max` (number) Maximum value
+///   - `q1`, `q2`, `q3` (number) Quartiles from lower to to upper
+///   - `outliers` (array of number) Optional outliers
+///
+/// - axes (array): Name of the axes to use ("x", "y"), note that not all
+///                 plot styles are able to display a custom axis!
+/// - style (style): Style to use, can be used with a palette function
+/// - box-width (float): Width from edge-to-edge of the box of the box and whisker in plot units. Defaults to 0.75
+/// - whisker-width (float): Width from edge-to-edge of the whisker of the box and whisker in plot units. Defaults to 0.5
+/// - mark (string): Mark to use for plotting outliers. Set `none` to disable. Defaults to "x"
+/// - mark-size (float): Size of marks for plotting outliers. Defaults to 0.15
+/// - label (none,content): Legend label to show for this plot.
+#let add-boxwhisker(data,
+                    label: none,
+                    axes: ("x", "y"),
+                    style: (:),
+                    box-width: 0.75,
+                    whisker-width: 0.5,
+                    mark: "*",
+                    mark-size: 0.15) = {
+  // Add multiple boxes as multiple calls to
+  // add-boxwhisker
+  if type(data) == array {
+    for it in data {
+      add-boxwhisker(
+        it,
+        axes:axes,
+        style: style,
+        box-width: box-width,
+        whisker-width: whisker-width,
+        mark: mark,
+        mark-size: mark-size)
+    }
+    return
+  }
+
+  assert("x" in data, message: "Specify 'x', the x value at which to display the box and whisker")
+  assert("q1" in data, message: "Specify 'q1', the lower quartile")
+  assert("q2" in data, message: "Specify 'q2', the median")
+  assert("q3" in data, message: "Specify 'q3', the upper quartile")
+  assert("min" in data, message: "Specify 'min', the minimum excluding outliers")
+  assert("max" in data, message: "Specify 'max', the maximum excluding outliers")
+  assert(data.q1 <= data.q2 and data.q2 <= data.q3,
+    message: "The quartiles q1, q2 and q3 must follow q1 < q2 < q3")
+  assert(data.min <= data.q1 and data.max >= data.q2,
+    message: "The minimum and maximum must be <= q1 and >= q3")
+
+  // Y domain
+  let max-value = util.max(data.max, ..data.at("outliers", default: ()))
+  let min-value = util.min(data.min, ..data.at("outliers", default: ()))
+
+  let prepare(self, ctx) = {
+    return self
+  }
+
+  let stroke(self, ctx) = {
+    let data = self.bw-data
+
+    // Box
+    draw.rect((data.x - box-width / 2, data.q1),
+      (data.x + box-width / 2, data.q3),
+      ..self.style)
+
+    // Mean
+    draw.line((data.x - box-width / 2, data.q2),
+      (data.x + box-width / 2, data.q2),
+      ..self.style)
+
+    // whiskers
+    let whisker(x, start, end) = {
+      draw.line((x, start),(x, end),..self.style)
+      draw.line((x - whisker-width / 2, end),(x + whisker-width / 2, end), ..self.style)
+    }
+    whisker(data.x, data.q3, data.max)
+    whisker(data.x, data.q1, data.min)
+  }
+
+  ((
+    type: "boxwhisker",
+    label: label,
+    axes: axes,
+    bw-data: data,
+    style: style,
+    plot-prepare: prepare,
+    plot-stroke: stroke,
+    x-domain: (data.x - calc.max(whisker-width, box-width),
+               data.x + calc.max(whisker-width, box-width)),
+    y-domain: (min-value, max-value),
+  ) + (if "outliers" in data { (
+    type: "boxwhisker-outliers",
+    data: data.outliers.map(it => (data.x, it)),
+    axes: axes,
+    mark: mark,
+    mark-size: mark-size,
+    mark-style: (:)
+  ) }),)
+}
+#import "/src/cetz.typ": draw
+
+#import "util.typ"
+#import "sample.typ"
+
+// Find contours of a 2D array by using marching squares algorithm
+//
+// - data (array): A 2D array of floats where the first index is the row and the second index is the column
+// - offset (float): Z value threshold of a cell compare with `op` to, to count as true
+// - op (auto,string,function): Z value comparison oparator:
+//     / `">", ">=", "<", "<=", "!=", "=="`: Use the passed operator to compare z.
+//     / `auto`: Use ">=" for positive z values, "<=" for negative z values.
+//     / `<function>`: If set to a function, that function gets called
+//       with two arguments, the z value `z1` to compare against and
+//       the z value `z2` of the data and must return a boolean: `(z1, z2) => boolean`.
+// - interpolate (bool): Enable cell interpolation for smoother lines
+// - contour-limit (int): Contour limit after which the algorithm panics
+// -> array: Array of contour point arrays
+#let find-contours(data, offset, op: auto, interpolate: true, contour-limit: 50) = {
+  assert(data != none and type(data) == array,
+    message: "Data must be of type array")
+  assert(type(offset) in (int, float),
+    message: "Offset must be numeric")
+
+  let n-rows = data.len()
+  let n-cols = data.at(0).len()
+  if n-rows < 2 or n-cols < 2 {
+    return ()
+  }
+
+  assert(op == auto or type(op) in (str, function),
+    message: "Operator must be of type auto, string or function")
+  if op == auto {
+    op = if offset < 0 { "<=" } else { ">=" }
+  }
+  if type(op) == str {
+    assert(op in ("<", "<=", ">", ">=", "==", "!="),
+      message: "Operator must be one of: <, <=, >, >=, != or ==")
+  }
+
+  // Return if data is set
+  let is-set = if type(op) == function {
+    v => op(offset, v)
+  } else if op == "==" {
+    v => v == offset
+  } else if op == "!=" {
+    v => v != offset
+  } else if op == "<" {
+    v => v < offset
+  } else if op == "<=" {
+    v => v <= offset
+  } else if op == ">" {
+    v => v > offset
+  } else if op == ">=" {
+    v => v >= offset
+  }
+
+  // Build a binary map that has 0 for unset and 1 for set cells
+  let bin-data = data.map(r => r.map(is-set))
+
+  // Get binary data at x, y
+  let get-bin(x, y) = {
+    if x >= 0 and x < n-cols and y >= 0 and y < n-rows {
+      return bin-data.at(y).at(x)
+    }
+    return false
+  }
+
+  // Get data point for x, y coordinate
+  let get-data(x, y) = {
+    if x >= 0 and x < n-cols and y >= 0 and y < n-rows {
+      return float(data.at(y).at(x))
+    }
+    return none
+  }
+
+  // Get case (0 to 15)
+  let get-case(tl, tr, bl, br) = {
+    int(tl) * 8 + int(tr) * 4 + int(br) * 2 + int(bl)
+  }
+
+  let lerp(a, b) = {
+    if a == b { return a }
+    else if a == none { return 1 }
+    else if b == none { return 0 }
+    return (offset - a) / (b - a)
+  }
+
+  // List of all found contours
+  let contours = ()
+
+  let segments = ()
+  for y in range(-1, n-rows) {
+    for x in range(-1, n-cols) {
+      let tl = get-bin(x, y)
+      let tr = get-bin(x+1, y)
+      let bl = get-bin(x, y+1)
+      let br = get-bin(x+1, y+1)
+
+      // Corner data
+      // 
+      // nw-----ne
+      // |       |
+      // |       |
+      // |       |
+      // sw-----se
+      let nw = get-data(x, y)
+      let ne = get-data(x+1, y)
+      let se = get-data(x+1, y+1)
+      let sw = get-data(x, y+1)
+
+      // Interpolated edge points
+      //
+      // +-- a --+
+      // |       |
+      // d       b
+      // |       |
+      // +-- c --+
+      let a = (x + .5, y)
+      let b = (x + 1, y + .5)
+      let c = (x + .5, y + 1)
+      let d = (x, y + .5)
+      if interpolate {
+        a = (x + lerp(nw, ne), y)
+        b = (x + 1, y + lerp(ne, se))
+        c = (x + lerp(sw, se), y + 1)
+        d = (x, y + lerp(nw, sw))
+      }
+
+      let case = get-case(tl, tr, bl, br)
+      if case in (1, 14) {
+        segments.push((d, c))
+      } else if case in (2, 13) {
+        segments.push((b, c))
+      } else if case in (3, 12) {
+        segments.push((d, b))
+      } else if case in (4, 11) {
+        segments.push((a, b))
+      } else if case == 5 {
+        segments.push((d, a))
+        segments.push((c, b))
+      } else if case in (6, 9) {
+        segments.push((c, a))
+      } else if case in (7, 8) {
+        segments.push((d, a))
+      } else if case == 10 {
+        segments.push((a, b))
+        segments.push((c, d))
+      }
+    }
+  }
+
+  // Join lines to one or more contours
+  // This is done by searching for the next line
+  // that starts at the current contours head or tail
+  // point. If found, push the other coordinate to
+  // the contour. If no line could be found, push a
+  // new contour.
+  let contours = ()
+  while segments.len() > 0 {
+    if contours.len() == 0 {
+      contours.push(segments.remove(0))
+    }
+
+    let found = false
+
+    let i = 0
+    while i < segments.len() {
+      let (a, b) = segments.at(i)
+      let (h, t) = (contours.last().first(),
+                    contours.last().last())
+      if a == t {
+        contours.last().push(b)
+        segments.remove(i)
+        found = true
+      } else if b == t {
+        contours.last().push(a)
+        segments.remove(i)
+        found = true
+      } else if a == h {
+        contours.last().insert(0, b)
+        segments.remove(i)
+        found = true
+      } else if b == h {
+        contours.last().insert(0, a)
+        segments.remove(i)
+        found = true
+      } else {
+        i += 1
+      }
+    }
+
+    // Insert the next contour
+    if not found {
+      contours.push(segments.remove(0))
+    }
+
+    // Check limit
+    assert(contours.len() <= contour-limit,
+      message: "Countour limit reached! Raise contour-limit if you " +
+                "think this is not an error")
+  }
+
+  return contours
+}
+
+// Prepare line data
+#let _prepare(self, ctx) = {
+  let (x, y) = (ctx.x, ctx.y)
+
+  self.contours = self.contours.map(c => {
+    c.stroke-paths = util.compute-stroke-paths(c.line-data, x, y)
+
+    if self.fill {
+      c.fill-paths = util.compute-fill-paths(c.line-data, x, y)
+    }
+    return c
+  })
+
+  return self
+}
+
+// Stroke line data
+#let _stroke(self, ctx) = {
+  for c in self.contours {
+    for p in c.stroke-paths {
+      draw.line(..p, fill: none, close: p.first() == p.last())
+    }
+  }
+}
+
+// Fill line data
+#let _fill(self, ctx) = {
+  if not self.fill { return }
+  for c in self.contours {
+    for p in c.fill-paths {
+      draw.line(..p, stroke: none, close: p.first() == p.last())
+    }
+  }
+}
+
+/// Add a contour plot of a sampled function or a matrix.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add-contour(x-domain: (-3, 3), y-domain: (-3, 3),
+///     style: (fill: rgb(50,50,250,50)),
+///     fill: true,
+///     op: "<",        // Find contours where data < z
+///     z: (2.5, 2, 1), // Z values to find contours for
+///     (x, y) => calc.sqrt(x * x + y * y))
+/// })
+/// ```)
+///
+/// - data (array, function): A function of the signature `(x, y) => z`
+///   or an array of arrays of floats (a matrix) where the first
+///   index is the row and the second index is the column.
+/// - z (float, array): Z values to plot. Contours containing values
+///   above z (z >= 0) or below z (z < 0) get plotted.
+///   If you specify multiple z values, they get plotted in the order of specification.
+/// - x-domain (domain): X axis domain used if `data` is a function, that is the
+///   domain inside the function gets sampled.
+/// - y-domain (domain): Y axis domain used if `data` is a function, see `x-domain`.
+/// - x-samples (int): X axis domain samples (2 < n). Note that contour finding
+///   can be quite slow. Using a big sample count can improve accuracy but can
+///   also lead to bad compilation performance.
+/// - y-samples (int): Y axis domain samples (2 < n)
+/// - interpolate (bool): Use linear interpolation between sample values which can
+///   improve the resulting plot, especially if the contours are curved.
+/// - op (auto,string,function): Z value comparison oparator:
+///   / `">", ">=", "<", "<=", "!=", "=="`: Use the operator for comparison of `z` to
+///     the values from `data`.
+///   / `auto`: Use ">=" for positive z values, "<=" for negative z values.
+///   / `<function>`: Call comparison function of the format `(plot-z, data-z) => boolean`,
+///     where `plot-z` is the z-value from the plots `z` argument and `data-z`
+///     is the z-value of the data getting plotted. The function must return true
+///     if at the combinations of arguments a contour is detected.
+/// - fill (bool): Fill each contour
+/// - style (style): Style to use for plotting, can be used with a palette function. Note
+///   that all z-levels use the same style!
+/// - axes (axes): Name of the axes to use for plotting.
+/// - limit (int): Limit of contours to create per z value before the function panics
+/// - label (none,content): Plot legend label to show. The legend preview for
+///   contour plots is a little rectangle drawn with the contours style.
+#let add-contour(data,
+                 label: none,
+                 z: (1,),
+                 x-domain: (0, 1),
+                 y-domain: (0, 1),
+                 x-samples: 25,
+                 y-samples: 25,
+                 interpolate: true,
+                 op: auto,
+                 axes: ("x", "y"),
+                 style: (:),
+                 fill: false,
+                 limit: 50,
+  ) = {
+  // Sample a x/y function
+  if type(data) == function {
+    data = sample.sample-fn2(data,
+                             x-domain, y-domain,
+                             x-samples, y-samples)
+  }
+
+  // Find matrix dimensions
+  assert(type(data) == array)
+  let (x-min, x-max) = x-domain
+  let dx = (x-max - x-min) / (data.at(0).len() - 1)
+  let (y-min, y-max) = y-domain
+  let dy = (y-max - y-min) / (data.len() - 1)
+
+  let contours = ()
+  let z = if type(z) == array { z } else { (z,) }
+  for z in z {
+    for contour in find-contours(data, z, op: op, interpolate: interpolate, contour-limit: limit) {
+      let line-data = contour.map(pt => {
+        (pt.at(0) * dx + x-min,
+         pt.at(1) * dy + y-min)
+      })
+
+      contours.push((
+        z: z,
+        line-data: line-data,
+      ))
+    }
+  }
+
+  return ((
+    type: "contour",
+    label: label,
+    contours: contours,
+    axes: axes,
+    x-domain: x-domain,
+    y-domain: y-domain,
+    style: style,
+    fill: fill,
+    mark: none,
+    mark-style: none,
+    plot-prepare: _prepare,
+    plot-stroke: _stroke,
+    plot-fill: _fill,
+    plot-legend-preview: self => {
+      if not self.fill { self.style.fill = none }
+      draw.rect((0,0), (1,1), ..self.style)
+    }
+  ),)
+}
+#import "/src/cetz.typ": draw, util, vector
+
+#let _draw-whisker(pt, dir, ..style) = {
+  let a = vector.add(pt, vector.scale(dir, -1))
+  let b = vector.add(pt, vector.scale(dir, +1))
+
+  draw.line(a, b, ..style)
+}
+
+#let draw-errorbar(pt, x, y, x-whisker-size, y-whisker-size, style) = {
+  if type(x) != array { x = (-x, x) }
+  if type(y) != array { y = (-y, y) }
+
+  let (x-min, x-max) = x
+  let x-min-pt = vector.add(pt, (x-min, 0))
+  let x-max-pt = vector.add(pt, (x-max, 0))
+  if x-min != 0 or x-max != 0 {
+    draw.line(x-min-pt, x-max-pt, ..style)
+    if x-whisker-size > 0 {
+      if x-min != 0 {
+        _draw-whisker(x-min-pt, (0, x-whisker-size), ..style)
+      }
+      if x-max != 0 {
+        _draw-whisker(x-max-pt, (0, x-whisker-size), ..style)
+      }
+    }
+  }
+
+  let (y-min, y-max) = y
+  let y-min-pt = vector.add(pt, (0, y-min))
+  let y-max-pt = vector.add(pt, (0, y-max))
+  if y-min != 0 or y-max != 0 {
+    draw.line(y-min-pt, y-max-pt, ..style)
+    if y-whisker-size > 0 {
+      if y-min != 0 {
+        _draw-whisker(y-min-pt, (y-whisker-size, 0), ..style)
+      }
+      if y-max != 0 {
+        _draw-whisker(y-max-pt, (y-whisker-size, 0), ..style)
+      }
+    }
+  }
+}
+
+#let _prepare(self, ctx) = {
+  return self
+}
+
+#let _stroke(self, ctx) = {
+  let x-whisker-size = self.whisker-size * ctx.y-scale
+  let y-whisker-size = self.whisker-size * ctx.x-scale
+
+  draw-errorbar((self.x, self.y),
+    self.x-error, self.y-error,
+    x-whisker-size, y-whisker-size,
+    self.style)
+}
+
+/// Add x- and/or y-error bars
+///
+/// - pt (tuple): Error-bar center coordinate tuple: `(x, y)`
+/// - x-error: (float,tuple): Single error or tuple of errors along the x-axis
+/// - y-error: (float,tuple): Single error or tuple of errors along the y-axis
+/// - mark: (none,string): Mark symbol to show at the error position (`pt`).
+/// - mark-size: (number): Size of the mark symbol.
+/// - mark-style: (style): Extra style to apply to the mark symbol.
+/// - whisker-size (float): Width of the error bar whiskers in canvas units.
+/// - style (dictionary): Style for the error bars
+/// - label: (none,content): Label to tsh
+/// - axes (axes): Plot axes. To draw a horizontal growing bar chart, you can swap the x and y axes.
+#let add-errorbar(pt,
+                  x-error: 0,
+                  y-error: 0,
+                  label: none,
+                  mark: "o",
+                  mark-size: .2,
+                  mark-style: (:),
+                  whisker-size: .5,
+                  style: (:),
+                  axes: ("x", "y")) = {
+  assert(x-error != 0 or y-error != 0,
+    message: "Either x-error or y-error must be set.")
+
+  let (x, y) = pt
+
+  if type(x-error) != array {
+    x-error = (x-error, x-error)
+  }
+  if type(y-error) != array {
+    y-error = (y-error, y-error)
+  }
+
+  x-error.at(0) = calc.abs(x-error.at(0)) * -1
+  y-error.at(0) = calc.abs(y-error.at(0)) * -1
+
+  let x-domain = x-error.map(v => v + x)
+  let y-domain = y-error.map(v => v + y)
+
+  return ((
+    type: "errorbar",
+    label: label,
+    axes: axes,
+    data: ((x,y),),
+    x: x,
+    y: y,
+    x-error: x-error,
+    y-error: y-error,
+    x-domain: x-domain,
+    y-domain: y-domain,
+    mark: mark,
+    mark-size: mark-size,
+    mark-style: mark-style,
+    whisker-size: whisker-size,
+    style: style,
+    plot-prepare: _prepare,
+    plot-stroke: _stroke,
+  ),)
+}
+// Compare two floats
+#let _compare(a, b, eps: 1e-6) = {
+  return calc.abs(a - b) <= eps
+}
+
+// Pre-computed table of fractions
+#let _common-denoms = range(2, 11 + 1).map(d => {
+  (d, range(1, d).map(n => n/d))
+})
+
+#let _find-fraction(v, denom: auto, eps: 1e-6) = {
+  let i = calc.floor(v)
+  let f = v - i
+  if _compare(f, 0, eps: eps) {
+    return $#v$
+  }
+
+  let denom = if denom != auto {
+    for n in range(1, denom) {
+      if _compare(f, n/denom, eps: eps) {
+        denom
+      }
+    }
+  } else {
+    (() => {
+      for ((denom, tab)) in _common-denoms {
+        for vv in tab {
+          if _compare(f, vv, eps: eps) {
+            return denom
+          }
+        }
+      }
+    })()
+  }
+
+  if denom != none {
+    return if v < 0 { $-$ } else {} + $#calc.round(calc.abs(v) * denom)/#denom$
+  }
+}
+
+/// Fraction tick formatter
+///
+/// ```example
+/// plot.plot(size: (5,1),
+///           x-format: plot.formats.fraction,
+///           x-tick-step: 1/5,
+///           y-tick-step: none, {
+///   plot.add(calc.sin, domain: (-1, 1))
+/// })
+/// ```
+///
+/// - value (number): Value to format
+/// - denom (auto, int): Denominator for result fractions. If set to `auto`,
+///   a hardcoded fraction table is used for finding fractions with a
+///   denominator <= 11.
+/// - eps (number): Epsilon used for comparison
+/// -> Content if a matching fraction could be found or none
+#let fraction(value, denom: auto, eps: 1e-6) = {
+  return _find-fraction(value, denom: denom, eps: eps)
+}
+
+/// Multiple of tick formatter
+///
+/// ```example
+/// plot.plot(size: (5,1),
+///           x-format: plot.formats.multiple-of,
+///           x-tick-step: calc.pi/4,
+///           y-tick-step: none, {
+///   plot.add(calc.sin, domain: (-calc.pi, 1.5 * calc.pi))
+/// })
+/// ```
+///
+/// - value (number): Value to format
+/// - factor (number): Factor value is expected to be a multiple of.
+/// - symbol (content): Suffix symbol. For `value` = 0, the symbol is not
+///   appended.
+/// - fraction (none, true, int): If not none, try finding matching fractions
+///   using the same mechanism as `fraction`. If set to an integer, that integer
+///   is used as denominator. If set to `none` or `false`, or if no fraction
+///   could be found, a real number with `digits` digits is used.
+/// - digits (int): Number of digits to use for rounding
+/// - eps (number): Epsilon used for comparison
+/// - prefix (content): Content to prefix
+/// - suffix (content): Content to append
+/// -> Content if a matching fraction could be found or none
+#let multiple-of(value, factor: calc.pi, symbol: $pi$, fraction: true, digits: 2, eps: 1e-6, prefix: [], suffix: []) = {
+  if _compare(value, 0, eps: eps) {
+    return $0$
+  }
+
+  let a = value / factor
+  if _compare(a, 1, eps: eps) {
+    return prefix + symbol + suffix
+  } else if _compare(a, -1, eps: eps) {
+    return prefix + $-$ + symbol + suffix
+  }
+
+  if fraction != none {
+    let frac = _find-fraction(a, denom: if fraction == true { auto } else { fraction })
+    if frac != none {
+      return prefix + frac + symbol + suffix
+    }
+  }
+
+  return prefix + $#calc.round(a, digits: digits)$ + symbol + suffix
+}
+
+/// Scientific notation tick formatter
+///
+/// ```example
+/// plot.plot(size: (5,1),
+///           x-format: plot.formats.sci,
+///           x-tick-step: 1e3,
+///           y-tick-step: none, {
+///   plot.add(x => x, domain: (-2e3, 2e3))
+/// })
+/// ```
+///
+/// - value (number): Value to format
+/// - digits (int): Number of digits for rounding the factor
+/// - prefix (content): Content to prefix
+/// - suffix (content): Content to append
+/// -> Content
+#let sci(value, digits: 2, prefix: [], suffix: []) = {
+  let exponent = if value != 0 {
+    calc.floor(calc.log(calc.abs(value), base: 10))
+  } else {
+    0
+  }
+
+  let ee = calc.pow(10, calc.abs(exponent + 1))
+  if exponent > 0 {
+    value = value / ee * 10
+  } else if exponent < 0 {
+    value = value * ee * 10
+  }
+
+  value = calc.round(value, digits: digits)
+  if exponent <= -1 or exponent >= 1 {
+    return prefix + $#value times 10^#exponent$ + suffix
+  }
+
+  return prefix + $#value$ + suffix
+}
+
+/// Rounded decimal number formatter
+///
+/// ```example
+/// plot.plot(size: (5,1),
+///           x-format: plot.formats.decimal,
+///           x-tick-step: .5,
+///           y-tick-step: none, {
+///   plot.add(x => x, domain: (-1, 1))
+/// })
+/// ```
+///
+/// - value (number): Value to format
+/// - digits (int): Number of digits to round to
+/// - prefix (content): Content to prefix
+/// - suffix (content): Content to append
+/// -> Content
+#let decimal(value, digits: 2, prefix: [], suffix: []) = {
+  prefix + $#calc.round(value, digits: digits)$ + suffix
+}
+#import "/src/cetz.typ"
+#import cetz: draw, styles
+#import draw: group
+
+#import "mark.typ": draw-mark-shape
+
+#let default-style = (
+  orientation: ttb,
+  default-position: "north-east",
+  layer: 1,        // Legend layer
+  fill: rgb(255,255,255,200), // Legend background
+  stroke: black,   // Legend border
+  padding: .1,     // Legend border padding
+  offset: (0, 0),  // Legend displacement
+  spacing: .1,     // Spacing between anchor and legend
+  item: (
+    radius: 0,
+    spacing: 0,    // Extra spacing between items
+    preview: (
+      width: .75,  // Preview width
+      height: .3,  // Preview height
+      margin: .1   // Distance between preview and label
+    )
+  ),
+  radius: 0,
+  scale: 100%,
+)
+
+// Map position to legend group anchor
+#let auto-group-anchor = (
+  inner-north-west: "north-west",
+  inner-north:      "north",
+  inner-north-east: "north-east",
+  inner-south-west: "south-west",
+  inner-south:      "south",
+  inner-south-east: "south-east",
+  inner-west:       "west",
+  inner-east:       "east",
+  north-west:       "north-east",
+  north:            "south",
+  north-east:       "north-west",
+  south-west:       "south-east",
+  south:            "north",
+  south-east:       "south-west",
+  east:             "west",
+  west:             "east",
+)
+
+// Generate legend positioning anchors
+#let add-legend-anchors(style, element, size) = {
+  import draw: *
+  let (w,   h) = size
+  let (xo, yo) = {
+    let spacing = style.at("spacing", default: (0, 0))
+    if type(spacing) == array {
+      spacing
+    } else {
+      (spacing, spacing)
+    }
+  }
+
+  anchor("north",            (rel: (w / 2,  yo), to: (element + ".north", "-|", element + ".origin")))
+  anchor("south",            (rel: (w / 2, -yo), to: (element + ".south", "-|", element + ".origin")))
+  anchor("east",             (rel: (xo,  h / 2), to: (element + ".east", "|-", element + ".origin")))
+  anchor("west",             (rel: (-xo, h / 2), to: (element + ".west", "|-", element + ".origin")))
+  anchor("north-east",       (rel: (xo,  h), to: (element + ".north-east", "|-", element + ".origin")))
+  anchor("north-west",       (rel: (-xo, h), to: (element + ".north-west", "|-", element + ".origin")))
+  anchor("south-east",       (rel: (xo,  0), to: (element + ".south-east", "|-", element + ".origin")))
+  anchor("south-west",       (rel: (-xo, 0), to: (element + ".south-west", "|-", element + ".origin")))
+  anchor("inner-north",      (rel: (w / 2,  h - yo), to: element + ".origin"))
+  anchor("inner-north-east", (rel: (w - xo, h - yo), to: element + ".origin"))
+  anchor("inner-north-west", (rel: (yo,     h - yo), to: element + ".origin"))
+  anchor("inner-south",      (rel: (w / 2,  yo), to: element + ".origin"))
+  anchor("inner-south-east", (rel: (w - xo, yo), to: element + ".origin"))
+  anchor("inner-south-west", (rel: (xo,     yo), to: element + ".origin"))
+  anchor("inner-east",       (rel: (w - xo, h / 2), to: element + ".origin"))
+  anchor("inner-west",       (rel: (xo,     h / 2), to: element + ".origin"))
+}
+
+// Draw a generic item preview
+#let draw-generic-preview(item) = {
+  import draw: *
+
+  if item.at("fill", default: false) {
+    rect((0,0), (1,1), ..item.style)
+  } else {
+    line((0,.5), (1,.5), ..item.style)
+  }
+}
+
+/// Construct a legend item for use with the `legend` function
+///
+/// - label (none, auto, content): Legend label or auto to use the enumerated default label
+/// - preview (auto, function): Legend preview icon function of the format `item => elements`.
+///                             Note that the canvas bounds for drawing the preview are (0,0) to (1,1).
+/// - mark: (none,string): Legend mark symbol
+/// - mark-style: (none,dictionary): Mark style
+/// - mark-size: (number): Mark size
+/// - ..style (styles): Style keys for the single item
+#let item(label, preview, mark: none, mark-style: (:), mark-size: 1, ..style) = {
+  assert.eq(style.pos().len(), 0,
+    message: "Unexpected positional arguments")
+  return ((label: label, preview: preview,
+           mark: mark, mark-style: mark-style, mark-size: mark-size,
+           style: style.named()),)
+}
+
+/// Draw a legend
+#let legend(position, items, name: "legend", ..style) = group(name: name, ctx => {
+  draw.anchor("default", ())
+  let items = if items != none { items.filter(v => v.label != none) } else { () }
+  if items == () {
+    return
+  }
+
+  let style = styles.resolve(
+    ctx.style, merge: style.named(), base: default-style, root: "legend")
+  assert(style.orientation in (ttb, ltr),
+    message: "Unsupported legend orientation.")
+
+  // Scaling
+  draw.scale(style.scale)
+
+  // Position
+  let position = if position == auto {
+    style.default-position
+  } else {
+    position
+  }
+
+  // Adjust anchor
+  if style.anchor == auto {
+    style.anchor = if type(position) == str {
+      auto-group-anchor.at(position, default: "north-west")
+    } else {
+      "north-west"
+    }
+  }
+
+  // Apply offset
+  if style.offset not in (none, (0,0)) {
+    position = (rel: style.offset, to: position)
+  }
+
+  // Draw items
+  draw.on-layer(style.layer, {
+    draw.group(name: "items", padding: style.padding, ctx => {
+      import draw: *
+
+      set-origin(position)
+      anchor("default", (0,0))
+
+      let pt = (0, 0)
+      for (i, item) in items.enumerate() {
+        let (label, preview) = item
+        if label == none {
+          continue
+        } else if label == auto {
+          label = $ f_(#i) $
+        }
+
+        group({
+          anchor("default", (0,0))
+
+          let row-height = style.item.preview.height
+          let preview-width = style.item.preview.width
+          let preview-a = (0, -row-height / 2)
+          let preview-b = (preview-width, +row-height / 2)
+          let label-west = (preview-width + style.item.preview.margin, 0)
+
+          // Draw item preview
+          let draw-preview = if preview == auto { draw-generic-preview } else { preview }
+          scope({
+            set-viewport(preview-a, preview-b, bounds: (1, 1, 0))
+            (draw-preview)(item)
+          })
+
+          // Draw mark preview
+          let mark = item.at("mark", default: none)
+          if mark != none {
+            draw-mark-shape((preview-a, 50%, preview-b),
+              calc.min(style.item.preview.width / 2, item.mark-size),
+              mark,
+              item.mark-style)
+          }
+
+          // Draw label
+          content(label-west,
+            text(top-edge: "ascender", bottom-edge: "descender", align(left + horizon, label)),
+            name: "label", anchor: "west")
+        }, name: "item", anchor: if style.orientation == ltr { "west" } else { "north-west" })
+
+        if style.orientation == ttb {
+          set-origin((rel: (0, -style.item.spacing),
+                      to: "item.south-west"))
+        } else if style.orientation == ltr {
+          set-origin((rel: (style.item.spacing, 0),
+                      to: "item.east"))
+        }
+      }
+    }, anchor: style.anchor)
+  })
+
+  // Fill legend background
+  draw.on-layer(style.layer - .5, {
+    draw.rect("items.south-west",
+              "items.north-east", fill: style.fill, stroke: style.stroke, radius: style.radius)
+  })
+})
+
+/// Function for manually adding a legend item from within
+/// a plot environment
+///
+/// - label (content): Legend label
+/// - preview (auto,function): Legend preview function of the format `() => elements`.
+///     The preview canvas bounds are between (0,0) and (1,1).
+///     If set to `auto`, a straight line is drawn.
+///
+/// ```example
+/// plot.plot(size: (1,1), x-tick-step: none, y-tick-step: none, {
+///   plot.add(((0,0), (1,1))) // Some data
+///   plot.add-legend([Custom item], preview: () => {
+///     import cetz.draw: *
+///     circle((.5,.5), radius: .5) // Draw a custom preview
+///                                 // between (0,0) and (1,1)
+///   })
+///   plot.add-legend([Another item])
+/// })
+/// ```
+#let add-legend(label, preview: auto) = {
+  assert(preview == auto or type(preview) == function,
+    message: "Expected auto or function, got " + repr(type(preview)))
+
+  return ((
+    type: "legend-item",
+    label: label,
+    style: (:),
+    axes: ("x", "y"),
+  ) + if preview != auto {
+    (plot-legend-preview: _ => { preview() })
+  },)
+}
+#import "/src/cetz.typ": draw
+
+#import "util.typ"
+#import "sample.typ"
+
+// Transform points
+//
+// - data (array): Data points
+// - line (str,dictionary): Line line
+#let transform-lines(data, line) = {
+  let hvh-data(t) = {
+    if type(t) == ratio {
+      t = t / 1%
+    }
+    t = calc.max(0, calc.min(t, 1))
+
+    let pts = ()
+
+    let len = data.len()
+    for i in range(0, len) {
+      pts.push(data.at(i))
+
+      if i < len - 1 {
+        let (a, b) = (data.at(i), data.at(i+1))
+        if t == 0 {
+          pts.push((a.at(0), b.at(1)))
+        } else if t == 1 {
+          pts.push((b.at(0), a.at(1)))
+        } else {
+          let x = a.at(0) + (b.at(0) - a.at(0)) * t
+          pts.push((x, a.at(1)))
+          pts.push((x, b.at(1)))
+        }
+      }
+    }
+    return pts
+  }
+
+  if type(line) == str {
+    line = (type: line)
+  }
+
+  let line-type = line.at("type", default: "raw")
+  assert(line-type in ("raw", "linear", "spline", "vh", "hv", "hvh"))
+
+  // Transform data into line-data
+  let line-data = if line-type == "linear" {
+    return util.linearized-data(data, line.at("epsilon", default: 0))
+  } else if line-type == "spline" {
+    return util.sampled-spline-data(data,
+                                    line.at("tension", default: .5),
+                                    line.at("samples", default: 15))
+  } else if line-type == "vh" {
+    return hvh-data(0)
+  } else if line-type == "hv" {
+    return hvh-data(1)
+  } else if line-type == "hvh" {
+    return hvh-data(line.at("mid", default: .5))
+  } else {
+    return data
+  }
+}
+
+// Fill a plot by generating a fill path to y value `to`
+#let fill-segments-to(segments, to) = {
+  for s in segments {
+    let low  = calc.min(..s.map(v => v.at(0)))
+    let high = calc.max(..s.map(v => v.at(0)))
+
+    let origin = (low, to)
+    let target = (high, to)
+
+    draw.line(origin, ..s, target, stroke: none)
+  }
+}
+
+// Fill a shape by generating a fill path for each segment
+#let fill-shape(paths) = {
+  for p in paths {
+    draw.line(..p, stroke: none)
+  }
+}
+
+// Prepare line data
+#let _prepare(self, ctx) = {
+  let (x, y) = (ctx.x, ctx.y)
+
+  // Generate stroke paths
+  self.stroke-paths = util.compute-stroke-paths(self.line-data, x, y)
+
+  // Compute fill paths if filling is requested
+  self.hypograph = self.at("hypograph", default: false)
+  self.epigraph = self.at("epigraph", default: false)
+  self.fill = self.at("fill", default: false)
+  if self.hypograph or self.epigraph or self.fill {
+    self.fill-paths = util.compute-fill-paths(self.line-data, x, y)
+  }
+
+  return self
+}
+
+// Stroke line data
+#let _stroke(self, ctx) = {
+  let (x, y) = (ctx.x, ctx.y)
+
+  for p in self.stroke-paths {
+    draw.line(..p, fill: none)
+  }
+}
+
+// Fill line data
+#let _fill(self, ctx) = {
+  let (x, y) = (ctx.x, ctx.y)
+
+  if self.hypograph {
+    fill-segments-to(self.fill-paths, y.min)
+  }
+  if self.epigraph {
+    fill-segments-to(self.fill-paths, y.max)
+  }
+  if self.fill {
+    if self.at("fill-type", default: "axis") == "shape" {
+      fill-shape(self.fill-paths)
+    } else {
+      fill-segments-to(self.fill-paths,
+        calc.max(calc.min(y.max, 0), y.min))
+    }
+  }
+}
+
+/// Add data to a plot environment.
+///
+/// Note: You can use this for scatter plots by setting
+///       the stroke style to `none`: `add(..., style: (stroke: none))`.
+///
+/// Must be called from the body of a `plot(..)` command.
+///
+/// - domain (domain): Domain of `data`, if `data` is a function. Has no effect
+///                    if `data` is not a function.
+/// - hypograph (bool): Fill hypograph; uses the `hypograph` style key for
+///                     drawing
+/// - epigraph (bool): Fill epigraph; uses the `epigraph` style key for
+///                    drawing
+/// - fill (bool): Fill the shape of the plot
+/// - fill-type (string): Fill type:
+///   / `"axis"`: Fill the shape to y = 0
+///   / `"shape"`: Fill the complete shape
+/// - samples (int): Number of times the `data` function gets called for
+///   sampling y-values. Only used if `data` is of type function. This parameter gets
+///   passed onto `sample-fn`.
+/// - sample-at (array): Array of x-values the function gets sampled at in addition
+///   to the default sampling. This parameter gets passed to `sample-fn`.
+/// - line (string, dictionary): Line type to use. The following types are
+///   supported:
+///   / `"raw"`: Plot raw data
+///   / `"linear"`: Linearize data
+///   / `"spline"`: Calculate a Catmull-Rom curve through all points
+///   / `"vh"`: Move vertical and then horizontal
+///   / `"hv"`: Move horizontal and then vertical
+///   / `"hvh"`: Add a vertical step in the middle
+///
+///   If the value is a dictionary, the type must be
+///   supplied via the `type` key. The following extra
+///   attributes are supported:
+///   / `"samples" <int>`: Samples of splines
+///   / `"tension" <float>`: Tension of splines
+///   / `"mid" <float>`: Mid-Point of hvh lines (0 to 1)
+///   / `"epsilon" <float>`: Linearization slope epsilon for
+///      use with `"linear"`, defaults to 0.
+///
+///   #example(```
+///   let points(offset: 0) = ((0,0), (1,1), (2,0), (3,1), (4,0)).map(((x,y)) => {
+///     (x,y + offset * 1.5)
+///   })
+///   plot.plot(size: (12, 3), axis-style: none, {
+///     plot.add(points(offset: 5), line: (type: "hvh", mid: .1))
+///     plot.add(points(offset: 4), line: "hvh")
+///     plot.add(points(offset: 3), line: "hv")
+///     plot.add(points(offset: 2), line: "vh")
+///     plot.add(points(offset: 1), line: "spline")
+///     plot.add(points(offset: 0), line: "linear")
+///   })
+///   ```, vertical: true)
+///
+/// - style (style): Style to use, can be used with a `palette` function
+/// - axes (axes): Name of the axes to use for plotting. Reversing the axes
+///   means rotating the plot by 90 degrees.
+/// - mark (string): Mark symbol to place at each distinct value of the
+///   graph. Uses the `mark` style key of `style` for drawing.
+/// - mark-size (float): Mark size in cavas units
+/// - data (array,function): Array of 2D data points (numeric) or a function
+///   of the form `x => y`, where `x` is a value in `domain`
+///   and `y` must be numeric or a 2D vector (for parametric functions).
+///   #example(```
+///   plot.plot(size: (2, 2), axis-style: none, {
+///     // Using an array of points:
+///     plot.add(((0,0), (calc.pi/2,1),
+///                    (1.5*calc.pi,-1), (2*calc.pi,0)))
+///     // Sampling a function:
+///     plot.add(domain: (0, 2*calc.pi), calc.sin)
+///   })
+///   ```)
+/// - label (none,content): Legend label to show for this plot.
+#let add(domain: auto,
+         hypograph: false,
+         epigraph: false,
+         fill: false,
+         fill-type: "axis",
+         style: (:),
+         mark: none,
+         mark-size: .2,
+         mark-style: (:),
+         samples: 50,
+         sample-at: (),
+         line: "raw",
+         axes: ("x", "y"),
+         label: none,
+         data
+         ) = {
+  // If data is of type function, sample it
+  if type(data) == function {
+    data = sample.sample-fn(data, domain, samples, sample-at: sample-at)
+  }
+
+  // Transform data
+  let line-data = transform-lines(data, line)
+
+  // Get x-domain
+  let x-domain = (
+    calc.min(..line-data.map(t => t.at(0))),
+    calc.max(..line-data.map(t => t.at(0)))
+  )
+
+  // Get y-domain
+  let y-domain = if line-data != none {(
+    calc.min(..line-data.map(t => t.at(1))),
+    calc.max(..line-data.map(t => t.at(1)))
+  )}
+
+  ((
+    type: "line",
+    label: label,
+    data: data, /* Raw data */
+    line-data: line-data, /* Transformed data */
+    axes: axes,
+    x-domain: x-domain,
+    y-domain: y-domain,
+    epigraph: epigraph,
+    hypograph: hypograph,
+    fill: fill,
+    fill-type: fill-type,
+    style: style,
+    mark: mark,
+    mark-size: mark-size,
+    mark-style: mark-style,
+    plot-prepare: _prepare,
+    plot-stroke: _stroke,
+    plot-fill: _fill,
+    plot-legend-preview: self => {
+      if self.fill or self.epigraph or self.hypograph {
+        draw.rect((0,0), (1,1), ..self.style)
+      } else {
+        draw.line((0,.5), (1,.5), ..self.style)
+      }
+    }
+  ),)
+}
+
+/// Add horizontal lines at one or more y-values. Every lines start and end points
+/// are at their axis bounds.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add(domain: (0, 4*calc.pi), calc.sin)
+///   // Add 3 horizontal lines
+///   plot.add-hline(-.5, 0, .5)
+/// })
+/// ```)
+///
+/// - ..y (float): Y axis value(s) to add a line at
+/// - min (auto,float): X axis minimum value or auto to take the axis minimum
+/// - max (auto,float): X axis maximum value or auto to take the axis maximum
+/// - axes (array): Name of the axes to use for plotting
+/// - style (style): Style to use, can be used with a palette function
+/// - label (none,content): Legend label to show for this plot.
+#let add-hline(..y,
+               min: auto,
+               max: auto,
+               axes: ("x", "y"),
+               style: (:),
+               label: none,
+               ) = {
+  assert(y.pos().len() >= 1,
+         message: "Specify at least one y value")
+  assert(y.named().len() == 0)
+
+  let prepare(self, ctx) = {
+    let (x-min, x-max) = (ctx.x.min, ctx.x.max)
+    let (y-min, y-max) = (ctx.y.min, ctx.y.max)
+    let x-min = if min == auto { x-min } else { min }
+    let x-max = if max == auto { x-max } else { max }
+
+    self.lines = self.y.filter(y => y >= y-min and y <= y-max)
+      .map(y => ((x-min, y), (x-max, y)))
+    return self
+  }
+
+  let stroke(self, ctx) = {
+    for (a, b) in self.lines {
+      draw.line(a, b, fill: none)
+    }
+  }
+
+  let x-min = if min == auto { none } else { min }
+  let x-max = if max == auto { none } else { max }
+
+  ((
+    type: "hline",
+    label: label,
+    y: y.pos(),
+    x-domain: (x-min, x-max),
+    y-domain: (calc.min(..y.pos()), calc.max(..y.pos())),
+    axes: axes,
+    style: style,
+    plot-prepare: prepare,
+    plot-stroke: stroke,
+  ),)
+}
+
+/// Add vertical lines at one or more x-values. Every lines start and end points
+/// are at their axis bounds.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add(domain: (0, 2*calc.pi), calc.sin)
+///   // Add 3 vertical lines
+///   plot.add-vline(calc.pi/2, calc.pi, 3*calc.pi/2)
+/// })
+/// ```)
+///
+/// - ..x (float): X axis values to add a line at
+/// - min (auto,float): Y axis minimum value or auto to take the axis minimum
+/// - max (auto,float): Y axis maximum value or auto to take the axis maximum
+/// - axes (array): Name of the axes to use for plotting, note that not all
+///                 plot styles are able to display a custom axis!
+/// - style (style): Style to use, can be used with a palette function
+/// - label (none,content): Legend label to show for this plot.
+#let add-vline(..x,
+               min: auto,
+               max: auto,
+               axes: ("x", "y"),
+               style: (:),
+               label: none,
+               ) = {
+  assert(x.pos().len() >= 1,
+         message: "Specify at least one x value")
+  assert(x.named().len() == 0)
+
+  let prepare(self, ctx) = {
+    let (x-min, x-max) = (ctx.x.min, ctx.x.max)
+    let (y-min, y-max) = (ctx.y.min, ctx.y.max)
+    let y-min = if min == auto { y-min } else { min }
+    let y-max = if max == auto { y-max } else { max }
+
+    self.lines = self.x.filter(x => x >= x-min and x <= x-max)
+      .map(x => ((x, y-min), (x, y-max)))
+    return self
+  }
+
+  let stroke(self, ctx) = {
+    for (a, b) in self.lines {
+      draw.line(a, b, fill: none)
+    }
+  }
+
+  let y-min = if min == auto { none } else { min }
+  let y-max = if max == auto { none } else { max }
+
+  ((
+    type: "vline",
+    label: label,
+    x: x.pos(),
+    x-domain: (calc.min(..x.pos()), calc.max(..x.pos())),
+    y-domain: (y-min, y-max),
+    axes: axes,
+    style: style,
+    plot-prepare: prepare,
+    plot-stroke: stroke
+  ),)
+}
+
+/// Fill the area between two graphs. This behaves same as `add` but takes
+/// a pair of data instead of a single data array/function.
+/// The area between both function plots gets filled. For a more detailed
+/// explanation of the arguments, see @@add().
+///
+/// This can be used to display an error-band of a function.
+///
+/// #example(```
+/// plot.plot(size: (2,2), x-tick-step: none, y-tick-step: none, {
+///   plot.add-fill-between(domain: (0, 2*calc.pi),
+///     calc.sin, // First function/data
+///     calc.cos) // Second function/data
+/// })
+/// ```)
+///
+/// - domain (domain): Domain of both `data-a` and `data-b`. The domain is used for
+///   sampling functions only and has no effect on data arrays.
+/// - samples (int): Number of times the `data-a` and `data-b` function gets called for
+///   sampling y-values. Only used if `data-a` or `data-b` is of
+///   type function.
+/// - sample-at (array): Array of x-values the function(s) get sampled at in addition
+///   to the default sampling.
+/// - line (string, dictionary): Line type to use, see @@add().
+/// - style (style): Style to use, can be used with a palette function.
+/// - label (none,content): Legend label to show for this plot.
+/// - axes (array): Name of the axes to use for plotting.
+/// - data-a (array,function): Data of the first plot, see @@add().
+/// - data-b (array,function): Data of the second plot, see @@add().
+#let add-fill-between(data-a,
+                      data-b,
+                      domain: auto,
+                      samples: 50,
+                      sample-at: (),
+                      line: "raw",
+                      axes: ("x", "y"),
+                      label: none,
+                      style: (:)) = {
+  // If data is of type function, sample it
+  if type(data-a) == function {
+    data-a = sample.sample-fn(data-a, domain, samples, sample-at: sample-at)
+  }
+  if type(data-b) == function {
+    data-b = sample.sample-fn(data-b, domain, samples, sample-at: sample-at)
+  }
+
+  // Transform data
+  let line-a-data = transform-lines(data-a, line)
+  let line-b-data = transform-lines(data-b, line)
+
+  // Get x-domain
+  let x-domain = (
+    calc.min(..line-a-data.map(t => t.at(0)),
+             ..line-b-data.map(t => t.at(0))),
+    calc.max(..line-a-data.map(t => t.at(0)),
+             ..line-b-data.map(t => t.at(0)))
+  )
+
+  // Get y-domain
+  let y-domain = if line-a-data != none and line-b-data != none {(
+    calc.min(..line-a-data.map(t => t.at(1)),
+             ..line-b-data.map(t => t.at(1))),
+    calc.max(..line-a-data.map(t => t.at(1)),
+             ..line-b-data.map(t => t.at(1)))
+  )}
+
+  let prepare(self, ctx) = {
+    let (x, y) = (ctx.x, ctx.y)
+
+    // Generate stroke paths
+    self.stroke-paths = (
+      a: util.compute-stroke-paths(self.line-data.a, x, y),
+      b: util.compute-stroke-paths(self.line-data.b, x, y),
+    )
+
+    // Generate fill paths
+    self.fill-paths = util.compute-fill-paths(self.line-data.a + self.line-data.b.rev(), x, y)
+
+    return self
+  }
+
+  let stroke(self, ctx) = {
+    for p in self.stroke-paths.a {
+      draw.line(..p, fill: none)
+    }
+    for p in self.stroke-paths.b {
+      draw.line(..p, fill: none)
+    }
+  }
+
+  let fill(self, ctx) = {
+    fill-shape(self.fill-paths)
+  }
+
+  ((
+    type: "fill-between",
+    label: label,
+    axes: axes,
+    line-data: (a: line-a-data, b: line-b-data),
+    x-domain: x-domain,
+    y-domain: y-domain,
+    style: style,
+    plot-prepare: prepare,
+    plot-stroke: stroke,
+    plot-fill: fill,
+    plot-legend-preview: self => {
+      draw.rect((0,0), (1,1), ..self.style)
+    }
+  ),)
+}
+#import "/src/cetz.typ": draw
+#import "/src/axes.typ"
+
+// Draw mark at point with size
+#let draw-mark-shape(pt, size, mark, style) = {
+  let sx = size
+  let sy = size
+
+  let bl(pt) = (rel: (-sx/2, -sy/2), to: pt)
+  let br(pt) = (rel: (sx/2, -sy/2), to: pt)
+  let tl(pt) = (rel: (-sx/2, sy/2), to: pt)
+  let tr(pt) = (rel: (sx/2, sy/2), to: pt)
+  let ll(pt) = (rel: (-sx/2, 0), to: pt)
+  let rr(pt) = (rel: (sx/2, 0), to: pt)
+  let tt(pt) = (rel: (0, sy/2), to: pt)
+  let bb(pt) = (rel: (0, -sy/2), to: pt)
+
+  if mark == "o" {
+    draw.circle(pt, radius: (sx/2, sy/2), ..style)
+  } else if mark == "square" {
+    draw.rect(bl(pt), tr(pt), ..style)
+  } else if mark == "triangle" {
+    draw.line(bl(pt), br(pt), tt(pt), close: true, ..style)
+  } else if mark == "*" or mark == "x" {
+    draw.line(bl(pt), tr(pt), ..style)
+    draw.line(tl(pt), br(pt), ..style)
+  } else if mark == "+" {
+    draw.line(ll(pt), rr(pt), ..style);
+    draw.line(tt(pt), bb(pt), ..style)
+  } else if mark == "-" {
+    draw.line(ll(pt), rr(pt), ..style)
+  } else if mark == "|" {
+    draw.line(tt(pt), bb(pt), ..style)
+  }
+}
+
+#let draw-mark(pts, x, y, mark, mark-size, plot-size) = {
+  let pts = pts.map(pt => {
+    axes.transform-vec(plot-size, x, y, none, pt)
+  }).filter(pt => pt != none)
+
+  for pt in pts {
+    draw-mark-shape(pt, mark-size, mark, (:))
+  }
+}
+/// Sample the given single parameter function `samples` times, with values
+/// evenly spaced within the range given by `domain` and return each
+/// sampled `y` value in an array as `(x, y)` tuple.
+///
+/// If the functions first return value is a tuple `(x, y)`, then all return values
+/// must be a tuple.
+///
+/// - fn (function): Function to sample of the form `(x) => y` or `(t) => (x, y)`, where
+///   `x` or `t` are `float` values within the domain specified by `domain`.
+/// - domain (domain): Domain of `fn` used as bounding interval for the sampling points.
+/// - samples (int): Number of samples in domain.
+/// - sample-at (array): List of x values the function gets sampled at in addition
+///                      to the `samples` number of samples. Values outsides the
+///                      specified domain are legal.
+/// -> array: Array of (x, y) tuples
+#let sample-fn(fn, domain, samples, sample-at: ()) = {
+  assert(samples + sample-at.len() >= 2,
+    message: "You must at least sample 2 values")
+  assert(type(domain) == array and domain.len() == 2,
+    message: "Domain must be a tuple")
+
+  let (lo, hi) = domain
+
+  let y0 = (fn)(lo)
+  let is-vector = type(y0) == array
+  if not is-vector {
+    y0 = ((lo, y0), )
+  } else {
+    y0 = (y0, )
+  }
+
+  let pts = sample-at + range(0, samples).map(t => lo + t / (samples - 1) * (hi - lo))
+  pts = pts.sorted()
+
+  return pts.map(x => {
+    if is-vector {
+      (fn)(x)
+    } else {
+      (x, (fn)(x))
+    }
+  })
+}
+
+/// Samples the given two parameter function with `x-samples` and
+/// `y-samples` values evenly spaced within the range given by
+/// `x-domain` and `y-domain` and returns each sampled output in
+/// an array.
+///
+/// - fn (function): Function of the form `(x, y) => z` with all values being numbers.
+/// - x-domain (domain): Domain used as bounding interval for sampling point's x
+///                      values.
+/// - y-domain (domain): Domain used as bounding interval for sampling point's y
+///                      values.
+/// - x-samples (int): Number of samples in the x-domain.
+/// - y-samples (int): Number of samples in the y-domain.
+/// -> array: Array of z scalars
+#let sample-fn2(fn, x-domain, y-domain, x-samples, y-samples) = {
+  assert(x-samples >= 2,
+    message: "You must at least sample 2 x-values")
+  assert(y-samples >= 2,
+    message: "You must at least sample 2 y-values")
+  assert(type(x-domain) == array and x-domain.len() == 2,
+    message: "X-Domain must be a tuple")
+  assert(type(y-domain) == array and y-domain.len() == 2,
+    message: "Y-Domain must be a tuple")
+
+  let (x-min, x-max) = x-domain
+  let (y-min, y-max) = y-domain
+  let y-pts = range(0, y-samples)
+  let x-pts = range(0, x-samples)
+
+  return y-pts.map(y => {
+    let y = y / (y-samples - 1) * (y-max - y-min) + y-min
+    return x-pts.map(x => {
+      let x = x / (x-samples - 1) * (x-max - x-min) + x-min
+      return float((fn)(x, y))
+    })
+  })
+}
+#import "/src/cetz.typ"
+#import cetz.util: bezier
+
+/// Clip line-strip in rect
+///
+/// - points (array): Array of vectors representing a line-strip
+/// - low (vector): Lower clip-window coordinate
+/// - high (vector): Upper clip-window coordinate
+/// -> array List of line-strips representing the paths insides the clip-window
+#let clipped-paths(points, low, high, fill: false) = {
+  let (min-x, max-x) = (calc.min(low.at(0), high.at(0)),
+                        calc.max(low.at(0), high.at(0)))
+  let (min-y, max-y) = (calc.min(low.at(1), high.at(1)),
+                        calc.max(low.at(1), high.at(1)))
+
+  let in-rect(pt) = {
+    return (pt.at(0) >= min-x and pt.at(0) <= max-x and
+            pt.at(1) >= min-y and pt.at(1) <= max-y)
+  }
+
+  let interpolated-end(a, b) = {
+    if in-rect(a) and in-rect(b) {
+      return b
+    }
+
+    let (x1, y1, ..) = a
+    let (x2, y2, ..) = b
+
+    if x2 - x1 == 0 {
+      return (x2, calc.min(max-y, calc.max(y2, min-y)))
+    }
+
+    if y2 - y1 == 0 {
+      return (calc.min(max-x, calc.max(x2, min-x)), y2)
+    }
+
+    let m = (y2 - y1) / (x2 - x1)
+    let n = y2 - m * x2
+
+    let x = x2
+    let y = y2
+
+    y = calc.min(max-y, calc.max(y, min-y))
+    x = (y - n) / m
+
+    x = calc.min(max-x, calc.max(x, min-x))
+    y = m * x + n
+
+    return (x, y)
+  }
+
+  // Append path to paths and return paths
+  //
+  // If path starts or ends with a vector of another part, merge those
+  // paths instead appending path as a new path.
+  let append-path(paths, path) = {
+    if path.len() <= 1 {
+      return paths
+    }
+
+    let cmp(a, b) = {
+      return a.map(calc.round.with(digits: 8)) == b.map(calc.round.with(digits: 8))
+    }
+
+    let added = false
+    for i in range(0, paths.len()) {
+      let p = paths.at(i)
+      if cmp(p.first(), path.last()) {
+        paths.at(i) = path + p
+        added = true
+      } else if cmp(p.first(), path.first()) {
+        paths.at(i) = path.rev() + p
+        added = true
+      } else if cmp(p.last(), path.first()) {
+        paths.at(i) = p + path
+        added = true
+      } else if cmp(p.last(), path.last()) {
+        paths.at(i) = p + path.rev()
+        added = true
+      }
+      if added { break }
+    }
+
+    if not added {
+      paths.push(path)
+    }
+    return paths
+  }
+
+  let clamped-pt(pt) = {
+    return (calc.max(min-x, calc.min(pt.at(0), max-x)),
+            calc.max(min-y, calc.min(pt.at(1), max-y)))
+  }
+
+  let paths = ()
+
+  let path = ()
+  let prev = points.at(0)
+  let was-inside = in-rect(prev)
+  if was-inside {
+    path.push(prev)
+  } else if fill {
+    path.push(clamped-pt(prev))
+  }
+
+  for i in range(1, points.len()) {
+    let prev = points.at(i - 1)
+    let pt = points.at(i)
+
+    let is-inside = in-rect(pt)
+
+    let (x1, y1, ..) = prev
+    let (x2, y2, ..) = pt
+
+    // Ignore lines if both ends are outsides the x-window and on the
+    // same side.
+    if (x1 < min-x and x2 < min-x) or (x1 > max-x and x2 > max-x) {
+      if fill {
+        let clamped = clamped-pt(pt)
+        if path.last() != clamped {
+          path.push(clamped)
+        }
+      }
+      was-inside = false
+      continue
+    }
+
+    if is-inside {
+      if was-inside {
+        path.push(pt)
+      } else {
+        path.push(interpolated-end(pt, prev))
+        path.push(pt)
+      }
+    } else {
+      if was-inside {
+        path.push(interpolated-end(prev, pt))
+      } else {
+        let (a, b) = (interpolated-end(pt, prev),
+                      interpolated-end(prev, pt))
+        if in-rect(a) and in-rect(b) {
+          path.push(a)
+          path.push(b)
+        } else if fill {
+          let clamped = clamped-pt(pt)
+          if path.last() != clamped {
+            path.push(clamped)
+          }
+        }
+      }
+
+      if path.len() > 0 and not fill {
+        paths = append-path(paths, path)
+        path = ()
+      }
+    }
+    
+    was-inside = is-inside
+  }
+
+  // Append clamped last point if filling
+  if fill and not in-rect(points.last()) {
+    path.push(clamped-pt(points.last()))
+  }
+
+  if path.len() > 1 {
+    paths = append-path(paths, path)
+  }
+
+  return paths
+}
+
+/// Compute clipped stroke paths
+///
+/// - points (array): X/Y data points
+/// - x (axis): X-Axis
+/// - y (axis): Y-Axis
+/// -> array List of stroke paths
+#let compute-stroke-paths(points, x, y) = {
+  clipped-paths(points, (x.min, y.min), (x.max, y.max), fill: false)
+}
+
+/// Compute clipped fill path
+///
+/// - points (array): X/Y data points
+/// - x (axis): X-Axis
+/// - y (axis): Y-Axis
+/// -> array List of fill paths
+#let compute-fill-paths(points, x, y) = {
+  clipped-paths(points, (x.min, y.min), (x.max, y.max), fill: true)
+}
+
+/// Return points of a sampled catmull-rom through the
+/// input points.
+///
+/// - points (array): Array of input vectors
+/// - tension (float): Catmull-Rom tension
+/// - samples (int): Number of samples
+/// -> array Array of vectors
+#let sampled-spline-data(points, tension, samples) = {
+  assert(samples >= 1 and samples <= 100,
+    message: "Must at least use 1 sample per curve")
+  
+  let curves = bezier.catmull-to-cubic(points, tension)
+  let pts = ()
+  for c in curves {
+    for t in range(0, samples + 1) {
+      let t = t / samples
+      pts.push(bezier.cubic-point(..c, t))
+    }
+  }
+  return pts
+}
+
+/// Simplify linear data by "detecting" linear sections
+/// and skipping points until the slope changes.
+/// This can have a huge impact on the number of lines
+/// getting rendered.
+///
+/// - data (array): Data points
+/// - epsilon (float): Curvature threshold to treat data as linear
+#let linearized-data(data, epsilon) = {
+  let pts = ()
+  // Current slope, set to none if infinite
+  let dx = none
+  // Previous point, last skipped point
+  let prev = none
+  let skipped = none
+  // Current direction
+  let dir = 0
+
+  let len = data.len()
+  for i in range(0, len) {
+    let pt = data.at(i)
+    if prev != none and i < len - 1 {
+      let new-dir = pt.at(0) - prev.at(0)
+      if new-dir == 0 {
+        // Infinite slope
+        if dx != none {
+          if skipped != none {pts.push(skipped); skipped = none}
+          pts.push(pt)
+        } else {
+          skipped = pt
+        }
+        dx = none
+      } else {
+        // Push the previous and the current point
+        // if slope or direction changed
+        let new-dx = ((pt.at(1) - prev.at(1)) / new-dir)
+        if dx == none or calc.abs(new-dx - dx) > epsilon or (new-dir * dir) < 0 {
+          if skipped != none {pts.push(skipped); skipped = none}
+          pts.push(pt)
+
+          dx = new-dx
+          dir = new-dir
+        } else {
+          skipped = pt
+        }
+      }
+    } else {
+      if skipped != none {pts.push(skipped); skipped = none}
+      pts.push(pt)
+    }
+
+    prev = pt
+  }
+
+  return pts
+}
+
+// Get the default axis orientation
+// depending on the axis name
+#let get-default-axis-horizontal(name) = {
+  return lower(name).starts-with("x")
+}
+
+// Setup axes dictionary
+//
+// - axis-dict (dictionary): Existing axis dictionary
+// - options (dictionary): Named arguments
+// - plot-size (tuple): Plot width, height tuple
+#let setup-axes(ctx, axis-dict, options, plot-size) = {
+  import "/src/axes.typ"
+
+  // Get axis option for name
+  let get-axis-option(axis-name, name, default) = {
+    let v = options.at(axis-name + "-" + name, default: default)
+    if v == auto { default } else { v }
+  }
+
+  for (name, axis) in axis-dict {
+    if not "ticks" in axis { axis.ticks = () }
+    axis.label = get-axis-option(name, "label", $#name$)
+
+    // Configure axis bounds
+    axis.min = get-axis-option(name, "min", axis.min)
+    axis.max = get-axis-option(name, "max", axis.max)
+
+    assert(axis.min not in (none, auto) and
+           axis.max not in (none, auto),
+      message: "Axis min and max must be set.")
+    if axis.min == axis.max {
+      axis.min -= 1; axis.max += 1
+    }
+
+    axis.mode = get-axis-option(name, "mode", "lin")
+    axis.base = get-axis-option(name, "base", 10)
+
+    // Configure axis orientation
+    axis.horizontal = get-axis-option(name, "horizontal",
+      get-default-axis-horizontal(name))
+
+    // Configure ticks
+    axis.ticks.list = get-axis-option(name, "ticks", ())
+    axis.ticks.step = get-axis-option(name, "tick-step", axis.ticks.step)
+    axis.ticks.minor-step = get-axis-option(name, "minor-tick-step", axis.ticks.minor-step)
+    axis.ticks.decimals = get-axis-option(name, "decimals", 2)
+    axis.ticks.unit = get-axis-option(name, "unit", [])
+    axis.ticks.format = get-axis-option(name, "format", axis.ticks.format)
+
+    // Axis break
+    axis.show-break = get-axis-option(name, "break", false)
+    axis.inset = get-axis-option(name, "inset", (0, 0))
+
+    // Configure grid
+    axis.ticks.grid = get-axis-option(name, "grid", false)
+
+    axis-dict.at(name) = axis
+  }
+
+  // Set axis options round two, after setting
+  // axis bounds
+  for (name, axis) in axis-dict {
+    let changed = false
+
+    // Configure axis aspect ratio
+    let equal-to = get-axis-option(name, "equal", none)
+    if equal-to != none {
+      assert.eq(type(equal-to), str,
+        message: "Expected axis name.")
+      assert(equal-to != name,
+        message: "Axis can not be equal to itself.")
+
+      let other = axis-dict.at(equal-to, default: none)
+      assert(other != none,
+        message: "Other axis must exist.")
+      assert(other.horizontal != axis.horizontal,
+        message: "Equal axes must have opposing orientation.")
+
+      let (w, h) = plot-size
+      let ratio = if other.horizontal {
+        h / w
+      } else {
+        w / h
+      }
+      axis.min = other.min * ratio
+      axis.max = other.max * ratio
+
+      changed = true
+    }
+
+    if changed {
+      axis-dict.at(name) = axis
+    }
+  }
+
+  for (name, axis) in axis-dict {
+    axis-dict.at(name) = axes.prepare-axis(ctx, axis, name)
+  }
+
+  return axis-dict
+}
+#import "/src/cetz.typ": draw
+#import "util.typ"
+#import "sample.typ"
+
+#let kernel-normal(x, stdev: 1.5) = {
+  (1 / calc.sqrt(2 * calc.pi*calc.pow(stdev, 2))) * calc.exp(-(x*x) / (2 * calc.pow(stdev, 2)))
+}
+
+#let _violin-render(self, ctx, violin, filling: true) = {
+  let path = range(self.samples)
+    .map((t)=>violin.min + (violin.max - violin.min) * (t / self.samples ))
+    .map((u)=>(u, (violin.convolve)(u)))
+    .map(((u,v)) => {
+      (violin.x-position + v, u)
+    })
+
+  if self.side == "both"{ 
+    path += path.rev().map(((x,y))=> {(2 * violin.x-position - x,y)})
+  } else if self.side == "left"{
+    path = path.map(((x,y)) => (2 * violin.x-position - x,y))
+  }
+
+  let stroke-paths = util.compute-stroke-paths(path, ctx.x, ctx.y)
+
+  for p in stroke-paths{
+    let args = arguments(..p, closed: self.side == "both")
+    if filling {
+      args = arguments(..args, stroke: none)
+    } else {
+      args = arguments(..args, fill: none)
+    }
+    draw.line(..self.style, ..args)
+  }
+}
+
+#let _plot-prepare(self, ctx) = {
+  self.violins = self.data.map(entry=> {
+    let points = entry.at(self.y-key)
+    let (min, max) = (calc.min(..points), calc.max(..points))
+    let range = calc.abs(max - min)
+    (
+      x-position: entry.at(self.x-key),
+      points: points,
+      length: points.len(),
+      min: min - (self.extents * range),
+      max: max + (self.extents * range),
+      convolve: (t) => {
+        points.map(y => (self.kernel)((y - t) / self.bandwidth)).sum() / (points.len() * self.bandwidth)
+      }
+    )
+  })
+  return self
+}
+
+#let _plot-stroke(self, ctx) = { 
+  for violin in self.violins {
+    _violin-render(self, ctx, violin, filling: false)
+  }
+}
+
+#let _plot-fill(self, ctx) = { 
+  for violin in self.violins {
+    _violin-render(self, ctx, violin, filling: true)
+  }
+}
+
+#let _plot-legend-preview(self) = {
+  draw.rect((0,0), (1,1), ..self.style)
+}
+
+
+/// Add a violin plot
+///
+/// A violin plot is a chart that can be used to compare the distribution of continuous
+/// data between categories.
+///
+/// - data (array): Array of data items. An item is an array containing an `x` and one 
+///                 or more `y` values.
+/// - x-key (int, string): Key to use for retrieving the `x` position of the violin.
+/// - y-key (int, string): Key to use for retrieving values of points within the category.
+/// - side (string): The sides of the violin to be rendered:
+///   / left: Plot only the left side of the violin.
+///   / right: Plot only the right side of the violin.
+///   / both: Plot both sides of the violin.
+/// - kernel (function): The kernel density estimator function, which takes a single
+///                      `x` value relative to the center of a distribution (0) and
+///                      normalized by the bandwidth
+/// - bandwidth (float): The smoothing parameter of the kernel.
+/// - extents (float): The extension of the domain, expressed as a fraction of spread.
+/// - samples (int): The number of samples of the kernel to render.
+/// - style (dictionary): Style override dictionary.
+/// - mark-style (dictionary): (unused, will eventually be used to render interquartile ranges).
+/// - axes (axes): (unstable, documentation to follow once completed).
+/// - label (none, content): The name of the category to be shown in the legend.
+#let add-violin( 
+  data,
+  x-key: 0,
+  y-key: 1,
+  side: "right",
+  kernel: kernel-normal.with(stdev: 1.5),
+  bandwidth: 1,
+  extents: 0.25,
+
+  samples: 50,
+  style: (:),
+  mark-style: (:),
+  axes: ("x", "y"),
+  label: none,
+) = {
+
+  ((
+    type: "violins",
+
+    data: data,
+    x-key: x-key,
+    y-key: y-key,
+    side: side,
+    kernel: kernel,
+    bandwidth: bandwidth,
+    extents: extents,
+
+    samples: samples,
+    style: style,
+    mark-style: mark-style,
+    axes: axes,
+    label: label,
+
+    plot-prepare: _plot-prepare,
+    plot-stroke: _plot-stroke,
+    plot-fill: _plot-fill,
+    plot-legend-preview: _plot-legend-preview,
+  ),)
+
+}
+[package]
+name = "cetz-plot"
+version = "0.1.1"
+compiler = "0.12.0"
+repository = "https://github.com/cetz-package/cetz-plot"
+entrypoint = "src/lib.typ"
+authors = [
+  "Johannes Wolf <https://github.com/johannes-wolf>",
+  "fenjalien <https://github.com/fenjalien>"
+]
+categories = [ "visualization" ]
+license = "LGPL-3.0-or-later"
+description = "Plotting module for CeTZ."
+keywords = [ "plot", "chart" ]
+exclude = [ "/gallery/*", "manual.pdf", "manual.typ" ]

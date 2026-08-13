@@ -6,13 +6,14 @@
    looking at become the new ones, in place, without him asking.
 
        window.DaimondTypstWatch = {
-           began, stop, touched, rebuild, budgetMB, state,
-           pageBox, goToPage
+           began, stop, touched, rebuild, budgetMB, zoom, dark,
+           state, pageBox, goToPage
        }
 
-   Five things decide the shape of this file, and each of them is
+   Six things decide the shape of this file, and each of them is
    a measurement rather than a preference.  The measurements are
-   in `dev/TYPST_WATCH.md`; what follows is what they cost.
+   in `dev/TYPST_WATCH.md` and in `dev/probe_typstsvg.mjs`; what
+   follows is what they cost.
 
    1. THE PAGES ARE DRAWN HERE, AND ARE NOT A PDF.
       On the author's 281-page book, on one warm compiler and one
@@ -86,15 +87,42 @@
    run time and nothing leaves the origin.
 
    SECURITY.  The renderer returns markup, and markup goes into
-   this origin's DOM.  Two things follow, and neither is optional.  The
+   this origin's DOM.  Three things follow, and none is optional.  The
    `<script>` typst.ts embeds for its own hover and link behaviour
    is CUT OUT of the string before it is parsed — it is not wanted,
    and a document an agent wrote after reading a web page is not
-   something to run scripts from.  And the pages live in a SHADOW
-   ROOT, because the stylesheet typst.ts emits carries a bare
-   `svg { fill: none; }` rule that would otherwise blank every icon
-   in the app, and because the app's own CSS must not reach in and
-   change what the book looks like.
+   something to run scripts from.  The `onclick=` attributes that
+   script's helpers were the target of go with it, for the same
+   reason and because they now name a function nobody defines.  And
+   the pages live in a SHADOW ROOT, because the stylesheet typst.ts
+   emits carries a bare `svg { fill: none; }` rule that would
+   otherwise blank every icon in the app, and because the app's own
+   CSS must not reach in and change what the book looks like.
+
+   6. AND THE STYLESHEET HAS TO BE PUT BACK, because `render_in_window`
+      DOES NOT EMIT IT.  Measured, `dev/probe_typstsvg.mjs`: the whole
+      document through `svg_data` carries a 1.4 KB `<style>`; the same
+      document through `render_in_window` carries `<style></style>`,
+      empty.  Everything in that sheet that MATTERS is therefore
+      missing from every page this view has ever drawn, and three
+      reported faults are the one omission:
+
+        * typst.ts lays an INVISIBLE TEXT LAYER over the glyph
+          outlines — a `<foreignObject>` per run holding a
+          `div.tsel` at `font-size: 62px` — so a reader can select
+          and search. `.tsel { color: transparent }` is the only
+          thing making it invisible. Without it every line is drawn
+          twice: GHOSTED, DOUBLE-STRUCK TEXT.
+        * every link becomes `<rect class="pseudo-link">`, and an SVG
+          rect with no fill is BLACK. `.pseudo-link { fill:
+          transparent }` is the only thing making it not. Without it
+          a contents entry is a SOLID BLACK BAR the width of the
+          line and an inline `#link` is a FILLED BLACK BOX.
+
+      So the rules are adopted into the shadow root once, at mount,
+      where `replaceChildren` cannot take them away again.  Taken
+      from typst.ts's own sheet — `TYPST_CSS` below says which parts
+      and why the rest is left out.
    ============================================================ */
 
 const VENDOR   = new URL('../vendor/typst/', import.meta.url);
@@ -160,6 +188,15 @@ const HEADROOM_MIN = 128;
 /// held and nothing short of a reload will free it.
 const TRAPPED = /recursive use of an object|unreachable/i;
 
+/// How many rebuilds may run in a row on a change nothing could confirm before the
+/// loop stops and says so.
+///
+/// Everything a page can read back is checked against its own contents, so this is
+/// the backstop for the one case that cannot be: a file over `DIGEST_MAX` reporting
+/// that it moved, again and again. Three of those in a row is a fault to report
+/// rather than a state to sit in, because the heap ceiling is what comes next.
+const SPIN_MAX = 3;
+
 // ── Where the last good pages live, and what bounds them ────────────────────
 //
 // A failed build keeps the document that was on screen, so something has to be
@@ -191,7 +228,7 @@ let rinit = null;		// the renderer's wasm exports, for `rheap`
 const S = {
 	path:     '',		// the `.typ` being watched, or '' when idle
 	files:    [],		// every real path the last gather read
-	stamps:   [],		// what those files said last time they were asked
+	stamps:   null,		// what those files said last time, by path; null before any
 	mode:     'idle',	// idle | live | held | dead
 	builds:   0,		// rebuilds STARTED since `began`
 	drawn:    0,		// rebuilds that reached the screen
@@ -204,12 +241,19 @@ const S = {
 	seen:     false,	// the panel has been on screen at least once
 	error:    '',		// the compiler's own words, while a build is broken
 	reason:   '',		// why the loop is held or dead
+	cause:    '',		// 'write' or 'poll' or 'user': what asked for the rebuild
+	why:      '',		// and which file it named, for a report from the field
+	digests:  {},		// what each watched file said, the last time it was read
+	blind:    false,	// the rebuild running now could not be confirmed from contents
+	same:     0,		// unconfirmable rebuilds in a row, which is a spin nobody sees
 	pages:    0,
 	scale:    1,		// rendered px per pt, for putting the scroll back
 	docW:     0,		// the document's own width, in points
 	docH:     0,		// and its whole height, which the scroller is as tall as
 	tops:     [],		// each page's top, in pt
 	heights:  [],		// each page's height, in pt
+	zoom:     1,		// how much bigger than fitting the panel's width
+	dark:     false,	// the paper turned over, for reading at night
 };
 
 let timer = null;		// the debounce
@@ -242,6 +286,91 @@ async function getRenderer() {
 function rheapMB() {
 	if (!rinit || !rinit.memory) return 0;
 	return rinit.memory.buffer.byteLength / 1048576;
+}
+
+
+/// The part of typst.ts's own stylesheet a windowed render needs and does not get.
+///
+/// Verbatim from the sheet `svg_data` emits, which is a string literal in
+/// `typst_ts_renderer_bg.wasm` and can be read out of it — `dev/probe_typstsvg.mjs`
+/// prints both. Only the rules that decide what is ON THE PAGE are here, and the
+/// three that are left out are left out on purpose:
+///
+///   * `.typst-text { pointer-events: bounding-box }` and `.hover .typst-text` are
+///     for the hover highlight the embedded `<script>` drives, and that script is
+///     cut out before anything parses it.
+///   * `.outline_glyph { fill: var(--glyph_fill) }` WOULD BLANK THE BOOK. A CSS
+///     declaration beats a presentation attribute, so that rule overrides the
+///     `fill="#000"` typst.ts puts on every text group; typst.ts's own host page
+///     defines `--glyph_fill`, and an undefined `var()` on an inherited property
+///     falls back to the inherited value, which the same sheet sets to `none`.
+///     Leaving both out keeps each run the colour the compiler gave it, which is
+///     also the only way a coloured heading stays coloured.
+///   * `svg { fill: none }` goes with it, for the same reason: it is that rule the
+///     glyph rule exists to undo.
+///
+/// `.pseudo-link` is `pointer-events: none` rather than typst.ts's `all`. Its
+/// anchors are `xlink:href="#"` plus an `onclick` naming a function this page does
+/// not have, and the external ones open a window from a document a daimon may have
+/// written. Inert matches the decision that cut the script out.
+const TYPST_CSS =
+	'.tsel span,\n'
+	+ '.tsel {\n'
+	+ '  left: 0;\n'
+	+ '  position: fixed;\n'
+	+ '  text-align: justify;\n'
+	+ '  white-space: nowrap;\n'
+	+ '  width: 100%;\n'
+	+ '  height: 100%;\n'
+	+ '  text-align-last: justify;\n'
+	+ '  color: transparent;\n'
+	+ '  white-space: pre;\n'
+	+ '}\n'
+	+ '.tsel span::-moz-selection,\n'
+	+ '.tsel::-moz-selection {\n'
+	+ '  color: transparent;\n'
+	+ '  background: #7db9dea0;\n'
+	+ '}\n'
+	+ '.tsel span::selection,\n'
+	+ '.tsel::selection {\n'
+	+ '  color: transparent;\n'
+	+ '  background: #7db9dea0;\n'
+	+ '}\n'
+	+ '.pseudo-link {\n'
+	+ '  fill: transparent;\n'
+	+ '  pointer-events: none;\n'
+	+ '}\n';
+
+let sheetEl = null;		// the fallback <style>, where sheets cannot be adopted
+
+/// Put `TYPST_CSS` into `root` so that `replaceChildren` cannot remove it.
+///
+/// `adoptedStyleSheets` is not a child, so it survives the swap that puts each new
+/// band up; where it is missing the same rules go in as a `<style>` element that
+/// `paint` re-inserts alongside the pages. Either way the rules are in place BEFORE
+/// the first band is drawn, because a first frame of black bars is still a frame of
+/// black bars.
+function adopt(root) {
+	try {
+		const s = new CSSStyleSheet();
+		s.replaceSync(TYPST_CSS);
+		root.adoptedStyleSheets = [s];
+		sheetEl = null;
+		return;
+	} catch (e) { /* an engine without constructable sheets */ }
+	sheetEl = document.createElement('style');
+	sheetEl.textContent = TYPST_CSS;
+}
+
+/// Put `node` on screen as the whole of the pages, rules included.
+///
+/// The one place the shadow root's children are replaced, so the fallback sheet
+/// cannot be forgotten by a caller that swaps the pages some other way.
+function paint(node) {
+	const pages = host && host.querySelector('.tl-pages');
+	if (!pages) return;
+	if (sheetEl) pages.shadowRoot.replaceChildren(sheetEl, node);
+	else pages.shadowRoot.replaceChildren(node);
 }
 
 
@@ -281,11 +410,20 @@ function mount() {
 		+ '<span class="tl-mark" aria-hidden="true"></span>'
 		+ '<span class="tl-says" role="status" aria-live="polite"></span>'
 		+ '<button type="button" class="tl-rebuild" style="display:none"></button>'
+		+ '<span class="tl-set">'
+		+ '<input class="tl-page" type="text" inputmode="numeric" autocomplete="off" size="3">'
+		+ '<span class="tl-of"></span>'
+		+ '<button type="button" class="tl-out">\u2212</button>'
+		+ '<button type="button" class="tl-fit"></button>'
+		+ '<button type="button" class="tl-in">+</button>'
+		+ '<button type="button" class="tl-night" aria-pressed="false"></button>'
+		+ '</span>'
 		+ '</div>'
 		+ '<div class="tl-scroll"><div class="tl-pages"></div></div>'
 		+ '<pre class="tl-err" style="display:none"></pre>';
 	panel.appendChild(host);
 	host.querySelector('.tl-rebuild').addEventListener('click', function () { rebuild(); });
+	controls();
 	// Scrolling out of the drawn band draws the next one. Throttled to a frame,
 	// because a scroll fires far more often than a screen is painted and the work
 	// only has to be done once per frame to be invisible.
@@ -293,7 +431,7 @@ function mount() {
 	host.querySelector('.tl-scroll').addEventListener('scroll', function () {
 		if (pending) return;
 		pending = true;
-		requestAnimationFrame(function () { pending = false; ensureWindow(); });
+		requestAnimationFrame(function () { pending = false; ensureWindow(); sayWhere(); });
 	}, { passive: true });
 	// A resized panel is a different scale, and the scale is the only thing a resize
 	// changes: the layout is the compiler's. So it repaints rather than rebuilding,
@@ -310,9 +448,124 @@ function mount() {
 	// bare `svg { fill: none; }` that would blank every icon in the app, and the
 	// app's own CSS must not reach in and change what the book looks like.
 	const pages = host.querySelector('.tl-pages');
-	pages.attachShadow({ mode: 'open' });
+	adopt(pages.attachShadow({ mode: 'open' }));
 	return host;
 }
+
+// ── The settings the reader was not offered ─────────────────────────────────
+//
+// The live view shipped with a status bar and nothing else, which is one control
+// fewer than the `<embed>` it stands in for: Chrome's PDF viewer at least has a
+// zoom and a page box. So the same three, done properly, plus the one Chrome's
+// viewer cannot be given at all.
+//
+// THEY ARE ALL VIEWING, NOT TYPESETTING. The layout is the compiler's and does not
+// depend on any of them — the page count, the line breaks and where a footnote
+// falls are the same at 40% as at 400% — so none of these starts a compile. That is
+// why the zoom is a repaint (`resized`) and the reader's place, which is a page and
+// an offset in POINTS, survives every one of them untouched.
+//
+// DARK PAPER IS A FILTER, and deliberately not a recompile. Asking typst for a dark
+// document would change the document; inverting the drawn page changes only what
+// the reader is looking at, so what is exported, printed and read by anybody else
+// is unaffected. `hue-rotate(180deg)` after the inversion puts colours back roughly
+// where they were, so a red figure stays red rather than turning cyan.
+//
+// The `<embed>` cannot have this one: there is no CSS, no API and no message that
+// reaches inside Chrome's PDF plugin (measured — `dev/TYPST_WATCH.md` §6), which is
+// the whole reason these pages are drawn here rather than handed to it.
+
+/// The largest and smallest the pages may be drawn, as a multiple of fitting the
+/// panel's width.  Past either the reader is no longer reading a page.
+const ZOOM_MIN = 0.4, ZOOM_MAX = 4;
+
+/// Whether the language hook has been registered.  Once per page: `onChange` keeps
+/// what it is given for the life of the document, so registering it per mount would
+/// leave a hook for every document the reader has opened.
+let relabels = false;
+
+/// Put this language's words on the bar's controls.
+function labels() {
+	if (!host) return;
+	const q = (c) => host.querySelector(c);
+	const page = q('.tl-page'), out = q('.tl-out'), inn = q('.tl-in'), fit = q('.tl-fit');
+	page.setAttribute('aria-label', tOr('typst.watch.page', 'Page'));
+	out.setAttribute('title', tOr('typst.watch.zoom_out', 'Smaller'));
+	out.setAttribute('aria-label', out.getAttribute('title'));
+	inn.setAttribute('title', tOr('typst.watch.zoom_in', 'Bigger'));
+	inn.setAttribute('aria-label', inn.getAttribute('title'));
+	fit.setAttribute('title', tOr('typst.watch.fit', 'Fit the width'));
+	dark(S.dark);			// the one whose LABEL is its state
+	offerRebuild(host.querySelector('.tl-rebuild').style.display !== 'none');
+}
+
+/// Wire the bar's controls, once, at mount.
+function controls() {
+	const q = (c) => host.querySelector(c);
+	const page = q('.tl-page'), out = q('.tl-out'), inn = q('.tl-in'),
+		fit = q('.tl-fit'), night = q('.tl-night');
+	labels();
+	out.addEventListener('click', function () { zoom(S.zoom / 1.25); });
+	inn.addEventListener('click', function () { zoom(S.zoom * 1.25); });
+	fit.addEventListener('click', function () { zoom(1); });
+	night.addEventListener('click', function () { dark(!S.dark); });
+	// Enter commits; blur commits too, because a number typed and then clicked away
+	// from is a number the reader meant.
+	const go = function () {
+		const n = parseInt(page.value, 10);
+		if (Number.isFinite(n)) goToPage(n);
+		sayWhere();
+	};
+	page.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+	page.addEventListener('blur', go);
+	sayWhere();
+	// A SURFACE ALREADY ON SCREEN WHEN THE LANGUAGE CHANGES has to repaint itself:
+	// every label above was resolved once, at mount, and the reader may well have a
+	// document open while switching. `onChange` is the app's own hook for exactly
+	// that, and it only ever puts words on a view that is still standing.
+	if (!relabels && window.DaimondI18n && window.DaimondI18n.onChange) {
+		relabels = true;
+		window.DaimondI18n.onChange(function () {
+			if (host && host.isConnected) labels();
+		});
+	}
+}
+
+/// Draw the pages at `z` times the width that fits, and put the reader back.
+function zoom(z) {
+	S.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+	resized();
+	sayWhere();
+}
+
+/// Dark paper on or off.
+///
+/// The pages are inverted where they are DRAWN, so the scroller keeps the app's own
+/// ground and only the paper turns over.
+function dark(on) {
+	S.dark = !!on;
+	if (!host) return;
+	host.setAttribute('data-night', S.dark ? '1' : '0');
+	const b = host.querySelector('.tl-night');
+	b.setAttribute('aria-pressed', S.dark ? 'true' : 'false');
+	b.textContent = S.dark ? tOr('typst.watch.day', 'Light paper')
+		: tOr('typst.watch.night', 'Dark paper');
+	b.setAttribute('title', b.textContent);
+}
+
+/// Say which page the reader is on, and how big the pages are drawn.
+function sayWhere() {
+	if (!host) return;
+	const w = where();
+	const page = host.querySelector('.tl-page');
+	if (page && document.activeElement !== page) {
+		page.value = S.pages ? String((w ? w.page : 0) + 1) : '';
+	}
+	host.querySelector('.tl-of').textContent = S.pages ? '/ ' + S.pages : '';
+	host.querySelector('.tl-fit').textContent = Math.round(S.zoom * 100) + '%';
+	host.querySelector('.tl-set').style.display = S.pages ? '' : 'none';
+}
+
 
 /// Take the live view down, leaving the panel exactly as it was.
 function unmount() {
@@ -504,7 +757,15 @@ function windowNode(bytes, top, deep, scale) {
 	// and its minified `&&` is not well-formed XML either, so leaving it in makes
 	// `DOMParser` refuse the whole document and draw a parser-error banner instead
 	// of a book.  (Measured, and it looked exactly like a rendering bug.)
-	const clean = svg.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+	//
+	// The `onclick="handleTypstLocation(…)"` on every internal link goes with it:
+	// that function was DEFINED in the script just removed, so what is left is a
+	// handler naming nothing, on an `<a xlink:href="#">` that would move the app's
+	// own URL if it were ever reached.  Removed rather than relied upon to be
+	// blocked, because "the policy will stop it" is not a reason to ship it.
+	const clean = svg
+		.replace(/<script\b[\s\S]*?<\/script>/gi, '')
+		.replace(/\sonclick="[^"]*"/gi, '');
 	const doc = new DOMParser().parseFromString(clean, 'image/svg+xml');
 	const el = doc.documentElement;
 	if (!el || el.nodeName === 'parsererror' || el.querySelector('parsererror')) {
@@ -529,12 +790,16 @@ function windowNode(bytes, top, deep, scale) {
 
 /// How wide the pages are drawn, and therefore how big everything is.
 ///
-/// Read off the container rather than assumed, because the panel is resizable and
-/// its width is the app's business.
+/// Read off the SCROLLER's content box rather than off the pages themselves, because
+/// the pages now carry a width of their own: measuring the thing this sets would
+/// compound, and one zoom in would become a zoom in per repaint.  The panel is
+/// resizable and its width is the app's business; `S.zoom` is the reader's.
 function scaleFor(docW) {
-	const pages = host && host.querySelector('.tl-pages');
-	const w = pages ? pages.clientWidth : 0;
-	return (w && docW) ? (w / docW) : (S.scale || 1);
+	const sc = scroller();
+	if (!sc || !docW) return S.scale || 1;
+	const cs = getComputedStyle(sc);
+	const w = sc.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+	return w > 0 ? (w / docW) * S.zoom : (S.scale || 1);
 }
 
 /// Redraw the window if the reader has scrolled out of the one that is drawn.
@@ -552,8 +817,7 @@ function ensureWindow() {
 	const want = { lo: Math.max(0, top), hi: Math.min(S.docH, top + deep) };
 	if (want.lo >= band.lo && want.hi <= band.hi) return;
 	try {
-		const pages = host.querySelector('.tl-pages');
-		pages.shadowRoot.replaceChildren(windowNode(vec, top, deep, scale));
+		paint(windowNode(vec, top, deep, scale));
 	} catch (e) { /* the pages that are up stay up */ }
 }
 
@@ -567,6 +831,7 @@ function resized() {
 	const was = where();
 	S.scale = scaleFor(S.docW);
 	const pages = host.querySelector('.tl-pages');
+	pages.style.width  = (S.docW * S.scale) + 'px';
 	pages.style.height = (S.docH * S.scale) + 'px';
 	band = null;
 	const sc = scroller();
@@ -574,9 +839,10 @@ function resized() {
 		: (sc ? sc.scrollTop / S.scale : 0);
 	const deep = sc ? sc.clientHeight / S.scale : S.docH;
 	try {
-		pages.shadowRoot.replaceChildren(windowNode(vec, top, deep, S.scale));
+		paint(windowNode(vec, top, deep, S.scale));
 	} catch (e) { return; }
 	if (was) goTo(was);
+	sayWhere();
 }
 
 /// Draw `bytes` — one `vector` artifact — into the live view.
@@ -642,13 +908,15 @@ async function draw(bytes) {
 	// the book; the SVG inside it carries only the band. Both are set in the same
 	// turn as the swap, so there is no frame where the two disagree and the reader
 	// is bounced by a scroller that briefly forgot how long the document was.
+	pages.style.width  = (docW * scale) + 'px';
 	pages.style.height = (docH * scale) + 'px';
-	pages.shadowRoot.replaceChildren(node);
+	paint(node);
 	S.scale   = scale;
 	S.pages   = n;
 	S.tops    = tops;
 	S.heights = heights;
 	if (was) goTo(was); else if (sc) sc.scrollTop = 0;
+	sayWhere();
 
 	// THE LAST GOOD PAGES ARE THESE BYTES AND THE MARKS ON SCREEN, AND NOTHING ELSE.
 	// No render session is held between draws — each one is built, used and freed —
@@ -665,6 +933,74 @@ async function draw(bytes) {
 
 
 // ── The loop ────────────────────────────────────────────────────────────────
+
+// ── A stamp that moved is not yet a change ──────────────────────────────────
+//
+// A file says it was written; that is not the same as saying it says something
+// different. The author watched the bar cycle `Live` / `Rebuilding` every one to
+// two seconds with nothing edited, and by the end of it the compiler was holding
+// 2427 MB of the 2500 it is allowed. A rebuild on bytes that have not changed is
+// FREE — comemo hashes the text and hands back the layout it already has, measured
+// at 0 MB on the author's 281-page book — so a spin costs nothing until the moment
+// something really does differ, and then about 10 MB a time. Two hundred of those
+// is the wall. `dev/probe_typstloop.mjs` has both figures.
+//
+// So a moved stamp is CONFIRMED against the file's contents before it counts. That
+// is one small read of one file, and only of the file that moved.
+//
+// THE OUTPUT CANNOT BE USED FOR THIS, which was tried first and is worth writing
+// down: compiling the same three-line document three times gives three vector
+// artifacts of identical length in which 5,624 of 7,816 bytes differ, and the SVG
+// rendered from them differs too. typst.ts's format carries per-item fingerprints
+// that are not stable between compiles, so "the pages came out the same" is not a
+// question this side can ask. The INPUT is, and it is the honest question anyway.
+
+/// The largest file whose contents are read back to confirm a change.
+///
+/// Sources are kilobytes and get checked. A font is eleven megabytes and does not
+/// rewrite itself, so above this a moved stamp is taken at its word rather than
+/// paying to read a typeface on every poll.
+const DIGEST_MAX = 1048576;
+
+/// A cheap digest of a file's BYTES, for telling a rewrite from a rewording.
+///
+/// Bytes and not text, through `read_bytes` rather than `read_file`: the latter ends
+/// in `from_utf8_lossy`, so every byte of a picture that is not valid UTF-8 becomes
+/// the same replacement character and two different pictures can digest alike. A
+/// watcher that stopped following a figure because two versions of it decoded to the
+/// same mush would be a very hard afternoon.
+function digest(bytes) {
+	let h = bytes.length >>> 0;
+	for (let i = 0; i < bytes.length; i++) h = (h * 31 + bytes[i]) >>> 0;
+	return String(h) + ':' + bytes.length;
+}
+
+/// Whether `path` still says exactly what it said when it was last read.
+///
+/// `false` whenever the answer is not known — the file is too big to check, it
+/// could not be read, it is gone, or this is the first time it has been asked. An
+/// unknown is a change, because the alternative is a preview that quietly stops
+/// following a file.
+///
+/// # Arguments
+/// * `path`  - The workspace-relative path whose stamp moved.
+/// * `stamp` - What it just said about itself, `"<lastModified>:<size>"`.
+async function confirmed(path, stamp) {
+	const size = Number(String(stamp).split(':')[1]);
+	if (!(size >= 0) || size > DIGEST_MAX) return false;
+	let bytes;
+	try {
+		const m = await wasm();
+		bytes = await m.read_bytes(path, 0, size);
+	} catch (e) {
+		return false;
+	}
+	if (!bytes || bytes.length !== size) return false;
+	const d = digest(bytes);
+	const was = S.digests[path];
+	S.digests[path] = d;
+	return was !== undefined && was === d;
+}
 
 /// Whether the heap has room for another rebuild, and the sentence if it has not.
 ///
@@ -740,7 +1076,16 @@ async function build(force) {
 	// reading and rebuilds again — one keystroke, two compiles, and a burst that
 	// coalesced correctly still ran twice. Taken BEFORE rather than after, so a write
 	// landing mid-compile is a change the next poll still sees.
-	S.stamps = await stamps();
+	//
+	// KEYED BY PATH, NOT BY POSITION. The list itself moves — an edit that adds an
+	// `#import` brings a file in, one that removes it takes a file out — and a
+	// comparison by index reads every entry after the change as changed, rebuilds,
+	// records the new list against the OLD list's readings, and finds them all
+	// changed again. That is a rebuild loop with nothing edited, and it costs about
+	// 10 MB of wasm heap every time the bytes really do differ (measured, on the
+	// author's 281-page book, in `dev/probe_typstloop.mjs`), so a spin nobody
+	// notices walks the compiler into the ceiling in a few hundred rebuilds.
+	S.stamps = (await stamps()) || S.stamps;
 	const heapBefore = (window.DaimondTypst && window.DaimondTypst.heapMB)
 		? window.DaimondTypst.heapMB() : 0;
 	const t0 = Date.now();
@@ -764,6 +1109,12 @@ async function build(force) {
 	}
 
 	if (out && out.vector && out.vector.length) {
+		// A REBUILD NOBODY COULD CONFIRM is counted, because it is the only kind left
+		// that can spin. Everything small enough to read back is checked against its
+		// own contents and never gets here twice for nothing; what remains is a file
+		// too big to check saying it moved, over and over, which is a loop with no
+		// evidence behind it and the heap ceiling at the end of it.
+		S.same = S.blind ? S.same + 1 : 0;
 		try {
 			await draw(out.vector);
 			// A good build after a bad one clears the error SILENTLY. Nothing
@@ -805,6 +1156,17 @@ async function build(force) {
 	// written rather than whatever was guessed when this was written.
 	S.debounce = Math.max(DEBOUNCE_MIN, Math.min(DEBOUNCE_MAX, took));
 	S.building = false;
+	if (S.mode === 'live' && S.same >= SPIN_MAX) {
+		S.same = 0;
+		hold(tOr('typst.watch.spin',
+			'A watched file keeps reporting that it has changed, and it is too large '
+			+ 'to read back and check: the pages have been laid out {n} times in a row '
+			+ 'for it. Rebuilding on every save has stopped, so that it cannot fill '
+			+ 'the compiler\u2019s memory. Press Rebuild when you want the pages '
+			+ 'again. The file was {what}.',
+			{ n: SPIN_MAX + 1, what: S.why.replace(/^(poll|write): /, '').split(' ')[0] }));
+		return;
+	}
 	if (S.mode === 'live') {
 		says(S.error
 			? tOr('typst.watch.stale', 'Showing the last build that worked')
@@ -814,23 +1176,42 @@ async function build(force) {
 }
 
 /// Something was written; rebuild when the writing stops.
-function nudge() {
+///
+/// WHAT ASKED FOR THE REBUILD IS RECORDED, and comes back out through `state()`.
+/// A loop that rebuilds when nothing has been edited is the one fault a reader
+/// cannot diagnose from the screen — the bar says `Rebuilding…` and that is all —
+/// so the answer to "what did it think had changed" is kept where it can be read
+/// back and reported, instead of being worked out again from scratch each time.
+///
+/// # Arguments
+/// * `cause`  - `'write'` or `'poll'`: how the change was noticed.
+/// * `detail` - The path, and for a poll the two readings that differ.
+function nudge(cause, detail) {
 	if (S.mode !== 'live') return;
+	S.cause = cause || '';
+	S.why   = (cause || '') + ': ' + (detail || '');
 	if (timer) clearTimeout(timer);
 	timer = setTimeout(function () { timer = null; build(false); }, S.debounce);
 }
 
-/// What every watched file says about itself right now.
+/// What every watched file says about itself right now, as `{ path: stamp }`.
 ///
 /// One question, asked from two places — the poll, and the moment before a rebuild
 /// — so the loop cannot end up with two ideas of what it has already seen.
+///
+/// BY PATH, because the list is not stable and the answer has to survive it moving.
+/// `null` when the question could not be asked, which is not the same as "nothing
+/// changed" and must not be recorded as a reading.
 async function stamps() {
-	if (!S.files.length) return [];
+	if (!S.files.length) return null;
 	try {
 		const m = await wasm();
-		return Array.from(await m.typst_watch_stamps(S.files)).map(String);
+		const got = Array.from(await m.typst_watch_stamps(S.files)).map(String);
+		const out = {};
+		for (let i = 0; i < S.files.length && i < got.length; i++) out[S.files[i]] = got[i];
+		return out;
 	} catch (e) {
-		return S.stamps;		// a question that could not be asked is not an answer
+		return null;			// a question that could not be asked is not an answer
 	}
 }
 
@@ -854,11 +1235,23 @@ async function poll() {
 	if (!shown) return;
 	const before = S.stamps;
 	const now = await stamps();
-	if (now === before) return;		// the question could not be asked
+	if (!now) return;			// the question could not be asked
 	S.stamps = now;
-	if (!before.length || before.length !== S.stamps.length) return;
-	for (let i = 0; i < S.stamps.length; i++) {
-		if (S.stamps[i] !== before[i]) { nudge(); return; }
+	if (!before) return;			// nothing to compare a first reading against
+	// A path in ONE of the two readings is not a change. A file the last compile
+	// brought into the project has never been read before, and one it dropped is no
+	// longer part of the document; either would be reported as a change by a
+	// comparison that walked positions, and neither is one. A watched file DELETED
+	// from disk still answers, as `0:-1`, so a chapter removed under the reader is
+	// still a rebuild — which is the case the old comparison was written for.
+	for (const p in now) {
+		if (!(p in before) || now[p] === before[p]) continue;
+		// It said it was written. Whether it says anything DIFFERENT is another
+		// question, and the one that decides whether there is anything to lay out.
+		if (await confirmed(p, now[p])) continue;
+		S.blind = (Number(String(now[p]).split(':')[1]) > DIGEST_MAX);
+		nudge('poll', p + ' ' + before[p] + ' \u2192 ' + now[p]);
+		return;
 	}
 }
 
@@ -895,7 +1288,12 @@ function began(path, watch) {
 	stop();
 	S.path     = p;
 	S.files    = files;
-	S.stamps   = [];
+	S.stamps   = null;
+	S.cause    = 'began';
+	S.why      = 'began: ' + p;
+	S.digests  = {};
+	S.blind    = false;
+	S.same     = 0;
 	S.mode     = 'live';
 	S.builds   = 0;
 	S.drawn    = 0;
@@ -926,12 +1324,17 @@ function stop() {
 	unmount();
 	S.path   = '';
 	S.files  = [];
-	S.stamps = [];
+	S.stamps = null;
 	S.mode   = 'idle';
 	S.queued = false;
 	S.seen   = false;
 	S.error  = '';
 	S.reason = '';
+	S.cause  = '';
+	S.why    = '';
+	S.digests = {};
+	S.blind  = false;
+	S.same   = 0;
 }
 
 /// A writer that KNOWS it wrote says so, rather than waiting to be polled.
@@ -945,12 +1348,22 @@ function stop() {
 ///
 /// # Arguments
 /// * `path` - The workspace-relative path just written.
-function touched(path) {
+async function touched(path) {
 	if (S.mode !== 'live') return;
 	const p = String(path || '');
 	if (!p) return;
 	if (p !== S.path && S.files.indexOf(p) < 0) return;
-	nudge();
+	// Told rather than polled, but the question is the same one: a Save that wrote
+	// back exactly what was there is a write, not an edit, and laying the book out
+	// again for it would cost the reader a rebuild to see what is already up.
+	let stamp = '';
+	try {
+		const m = await wasm();
+		stamp = String((await m.typst_watch_stamps([p]))[0] || '');
+	} catch (e) { /* ask the file's contents anyway */ }
+	if (stamp && await confirmed(p, stamp)) return;
+	S.blind = !!stamp && Number(String(stamp).split(':')[1]) > DIGEST_MAX;
+	nudge('write', p);
 }
 
 /// Rebuild now, because the user asked.
@@ -960,6 +1373,11 @@ function touched(path) {
 function rebuild() {
 	if (S.mode === 'dead' || !S.path) return;
 	if (timer) { clearTimeout(timer); timer = null; }
+	// The user asking is not the loop spinning, whatever the last few builds did.
+	S.cause = 'user';
+	S.why   = 'user: Rebuild';
+	S.blind = false;
+	S.same  = 0;
 	build(true);
 }
 
@@ -1028,11 +1446,15 @@ function state() {
 		building: S.building,
 		error:    S.error,
 		reason:   S.reason,
+		why:      S.why,
+		same:     S.same,
 		heap:     (window.DaimondTypst && window.DaimondTypst.heapMB)
 			? window.DaimondTypst.heapMB() : 0,
 		rheap:    rheapMB(),
 		scroll:   scroller() ? scroller().scrollTop : 0,
 		at:       where(),
+		zoom:     S.zoom,
+		dark:     S.dark,
 	};
 }
 
@@ -1052,10 +1474,12 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		touched:  touched,
 		rebuild:  rebuild,
 		budgetMB: budgetMB,
+		zoom:     zoom,
+		dark:     dark,
 		state:    state,
 		pageBox:  pageBox,
 		goToPage: goToPage,
 	};
 }
 
-export { began, stop, touched, rebuild, budgetMB, state, pageBox, goToPage };
+export { began, stop, touched, rebuild, budgetMB, zoom, dark, state, pageBox, goToPage };

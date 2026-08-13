@@ -590,6 +590,8 @@
 	'beta.lead_unavailable':   'This server could not say whether it is open to new accounts, so it made none. Nothing is wrong with your device, and Daimond works on your own provider key meanwhile. Try again in a moment.',
 	'beta.lead_no_reason':     'This device has no Daimond account yet.',
 	'beta.have_code':          'If Oxedyne sent you a beta passcode, put it in here. It works once, on this device.',
+	'beta.no_code':            'No passcode? Places in each wave of the test are given out by application.',
+	'beta.apply':              'Apply to test Daimond',
 	'beta.code':               'Passcode',
 	'beta.code_ph':            'abcd-efgh-ijkl',
 	'beta.redeem':             'Redeem',
@@ -611,6 +613,23 @@
 	'beta.done_plain':         'This device has a Daimond account.',
 	'beta.done_handle':        'Other people see this account as {handle}.',
 	'beta.done_not_signed_in': 'The passcode was spent and the account exists, but this device could not finish signing in just now. It will try again on its own.',
+
+	// ── The front door ─────────────────────────────────────────
+	// The strip above the passphrase form, for a browser that has never held an
+	// account. Three routes, named as the reader would name them: two of them
+	// are forms to fill in and the third is a code they already hold. The names
+	// are short because they sit side by side on a 366px card — a name that
+	// wraps to three lines is a route that reads as an obstacle.
+	'door.head':       'New to Daimond?',
+	'door.lead':       'It is in closed testing, so accounts are given out by passcode.',
+	'door.test':       'Apply to test',
+	'door.waitlist':   'Join the waitlist',
+	'door.code':       'I have a passcode',
+	// Said when the code button is pressed before there is a key to redeem onto.
+	// It names the order and promises the next step, because the alternative —
+	// a code box that refuses the moment it is used — is the thing this app
+	// keeps being caught doing.
+	'door.code_later': 'Make your passphrase first: a passcode is redeemed onto this device’s own key. The code box opens by itself as soon as it can.',
 
 	// ── Auto-reload ────────────────────────────────────────────
 	// Every amount here is charged to a card, so the copy stays plain.
@@ -1585,8 +1604,27 @@
 	'crystal.view_switch':    'Which face of this Diamond',
 	'crystal.view_crystal':   'Crystal',
 	'crystal.view_chat':      'Chat',
+	// Full screen, on the crystal face. The label names the DESTINATION rather
+	// than the state, because while the mode is on this control is the way out
+	// and the only chrome left on screen.
+	'crystal.full':           'Full screen',
+	'crystal.full_help':      'Fill the screen with this page',
+	'crystal.full_exit':      'Exit full screen',
+	'crystal.full_exit_help': 'Put the rail and the top bar back',
 	'crystal.chat_empty':     'Nothing said yet. The crystal is what this Diamond knows; this is how it came to know it.',
 	'crystal.dispatch_after_error': 'The turn ended badly, so the agents it asked for were not started.',
+
+	// ── A capp, delivered from the guide ───────────────────────
+	// One template ships, and `{name}` is its name rather than a word in the
+	// English: a second template must not need a second set of these.
+	'capp.title':        '{name}',
+	'capp.make_body':    'This makes a Diamond called “{name}” and puts the {name} page inside it. What you record stays in that Diamond, on this device.',
+	'capp.make_ok':      'Make it',
+	// A second one is not a second log, it is a lost one.
+	'capp.exists_body':  'You already have a Diamond called “{name}”, and what you have logged is in it. Making a second one would leave those entries behind.',
+	'capp.exists_ok':    'Open it',
+	'capp.missing_body': 'This build of Daimond does not carry the {name} template, so there is nothing to put in a Diamond. Nothing has been made. Ask your daimon for a page instead, or update Daimond and try again.',
+	'capp.page_failed':  'The Diamond was made, but its page could not be written: {why}',
 	'crystal.steering':       'Steering…',
 	'crystal.no_key_steer':   'This Diamond’s provider has no readable key. Unlock, or add one, to steer it.',
 	'crystal.page_failed':    'This Diamond’s page did not load, so its data is shown instead.',
@@ -2282,6 +2320,13 @@
 	'typst.watch.rebuild':  'Rebuild',
 	'typst.watch.nothing':  'The compiler produced nothing and gave no reason.',
 	'typst.watch.heap':     'The compiler is holding {heap} MB and another rebuild could need {more} MB more, which is past the {budget} MB it is allowed on this page. Rebuilding on every save has stopped, and the pages below are the last ones that built. The compiler cannot give that memory back — reload the page to start it fresh, or press Rebuild to try once anyway.',
+	'typst.watch.spin': 'A watched file keeps reporting that it has changed, and it is too large to read back and check: the pages have been laid out {n} times in a row for it. Rebuilding on every save has stopped, so that it cannot fill the compiler’s memory. Press Rebuild when you want the pages again. The file was {what}.',
+	'typst.watch.page': 'Page',
+	'typst.watch.zoom_out': 'Smaller',
+	'typst.watch.zoom_in': 'Bigger',
+	'typst.watch.fit': 'Fit the width',
+	'typst.watch.night': 'Dark paper',
+	'typst.watch.day': 'Light paper',
 	'typst.watch.dead_why': 'The compiler ran out of memory on this document and cannot be restarted without reloading the page. The pages below are the last ones that built. Reload, and open the same file again.',
 
 	// ── Toasts ─────────────────────────────────────────────────
@@ -2431,6 +2476,7 @@
 	'panel.improve':        'Improve',
 	'improve.notes':        'Notes',
 	'improve.proposals':    'Proposals',
+	'improve.info':      'What this panel is, in the guide',
 	'improve.box_label':    'Write a note about Daimond',
 	'improve.box_ph':       'Where it is, what you expected, and what happened instead.',
 	'improve.with':         'What goes with it',

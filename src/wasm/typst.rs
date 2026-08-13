@@ -86,6 +86,69 @@
 //!   it is placed in the shadow filesystem at the position the source named it by
 //!   -- `"/assets/x.svg"` goes to `/assets/x.svg` -- and not at where it was found.
 //!   The shadow filesystem is ours to lay out; it owes nothing to the disk.
+//!
+//! # A package is not a download
+//!
+//! `#import "@preview/cetz:0.3.4"` names a package in Typst Universe.  The
+//! command-line compiler fetches it over the network and caches it; this one has no
+//! network, so for a long time every document with a live cetz diagram was refused
+//! outright -- including the author's own 281-page book, whose template opens with
+//! that exact line.  It was the largest single thing standing between this compiler
+//! and real work.
+//!
+//! Five packages now travel INSIDE the bundle, as sealed files under
+//! `www/assets/typst/packs/`, and [`packages`] hands their sources to the compiler
+//! the same way the project's own sources are handed over: as contents, at positions
+//! in the shadow filesystem.  Nothing is fetched from a registry, so "this compiler
+//! runs inside the page with no network at all" stays literally true, and what
+//! compiled the book is inside `www/manifest.json` and the transparency chain --
+//! provably what shipped.  `www/assets/typst/VENDORED.md` is the whole account.
+//!
+//! ## The closure, and why it is walked rather than listed
+//!
+//! cetz 0.3.4's `src/deps.typ` is one line: `#import "@preview/oxifmt:0.2.1"`.  Ship
+//! cetz without oxifmt and the import resolves and then fails -- and **a package that
+//! resolves while its dependency does not is indistinguishable from one that never
+//! resolved**.  That is not a hypothetical: it stopped the first run of
+//! `dev/probe_typstpkg.mjs` dead.
+//!
+//! So the set in `refresh.sh` is a WISH LIST, and the closure is derived here, from
+//! the package sources themselves: every pack that arrives is read for the `@…`
+//! imports it names, and each of those is followed in turn.  Nothing consults a
+//! hand-written list of dependencies, so a dependency cannot be quietly absent, and
+//! one that is missing gets its own refusal saying the document is not at fault.
+//!
+//! cetz-plot is why this matters in practice: it imports `@preview/cetz:0.3.2`, not
+//! the 0.3.4 the book uses, so cetz is vendored twice.  Nothing about the package's
+//! name or version would have told anybody that.
+//!
+//! ## The import is re-pointed, and the registry hook is not used
+//!
+//! `TypstCompilerBuilder` does expose `set_package_registry`, and a probe proved it
+//! works.  It is deliberately not what this does, because it only works alongside
+//! `set_access_model` -- which would replace the DUMMY access model the driver
+//! installs, and the dummy model's wording (`failed to load file (access denied)`) is
+//! what `www/js/typst.js` matches on to compose the careful message about a file that
+//! was never gathered.  Buying packages at the price of that message would be trading
+//! one wrong diagnosis for another, which is the fault this whole module exists to
+//! answer.
+//!
+//! Instead the package becomes ORDINARY FILES.  Its contents go into the shadow
+//! filesystem under `/_pkg/<namespace>/<name>/<version>/pkg/`, a one-line module is
+//! placed beside them at `…/<name>.typ`, and the literal in the import is re-pointed
+//! at that module.  The binding is unchanged -- a path import takes its name from the
+//! file stem, and the stem is the package's own name -- so `#import "@preview/cetz:0.3.4"`
+//! still binds `cetz`, and every other form of the statement (`: *`, an item list,
+//! `as`) survives untouched because only the quoted string is replaced.
+//!
+//! Two consequences, stated because they are real:
+//!
+//! - Columns AFTER the import on that one line shift by the difference in length.
+//!   Line numbers do not move, and no other line is touched.
+//! - Inside a package, a leading `/` means the PACKAGE root, not the project's, so
+//!   those references are re-pointed too -- but only when they name a file the pack
+//!   actually holds, so a string of prose beginning with a slash is left alone.
+//!   cetz-plot's `src/lib.typ` is the case that proves this is not optional.
 
 use crate::tools::{FileRoot, ToolContext};
 use crate::wasm::{js_str, opfs};
@@ -93,6 +156,7 @@ use crate::wasm::{js_str, opfs};
 use oxedyne_fe2o3_core::prelude::*;
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
@@ -183,6 +247,40 @@ const FONT_DIRS: &[&str] = &["assets/fonts", "fonts"];
 
 /// Typst's own project manifest, which a self-declaring project puts at its root.
 const MANIFEST: &str = "typst.toml";
+
+/// Where a vendored package's files are placed in the shadow filesystem.
+///
+/// One directory that no real project would name, because the shadow filesystem is
+/// shared with the project's own files and a book with a `_pkg` folder of its own
+/// would otherwise collide with a package.
+const PKG_ROOT: &str = "/_pkg";
+
+/// What this build carries, as `www/assets/typst/refresh.sh` wrote it.
+///
+/// Compiled in rather than fetched, deliberately.  The sentence "this build carries
+/// cetz 0.3.4 and four others" has to be true of THIS build, and a build that reads
+/// its own inventory over the network can be handed a stale one by a cache.  The
+/// packs themselves are fetched; the list of them is not.
+const PKG_INDEX: &str = include_str!("../../www/assets/typst/packs/INDEX");
+
+/// Where a pack is served from, relative to the page.
+///
+/// Relative, so it resolves against the document's base and a deployment under a
+/// sub-path needs no setting.  Under `assets/`, NOT under `vendor/`: `vendor/` is
+/// gitignored, excluded from the public mirror by `dev/publish.mjs` and excluded
+/// from the bundle fingerprint by `verify/lib.mjs`, so a package shipped there would
+/// be outside the seal and, worse, would not be deployed at all.
+const PKG_URL: &str = "assets/typst/packs";
+
+/// The most files the vendored packages may come to.
+///
+/// A tripwire rather than a limit: the closure is bounded by what the bundle carries,
+/// which is 119 files today.  It exists so that a future vendor set that grew by
+/// accident is refused loudly rather than pushed through the boundary a page at a time.
+const MAX_PKG_FILES: usize = 400;
+
+/// The most bytes they may come to.
+const MAX_PKG_BYTES: usize = 8 * 1024 * 1024;
 
 
 // ── Fonts do not change between rebuilds ────────────────────────────────────
@@ -373,13 +471,17 @@ fn shadow_join(from_shadow: &str, rel: &str) -> Option<String> {
 
 // ── Reading a source for what it names ──────────────────────────────────────
 
-/// Every double-quoted literal in `src`, with the byte offset it begins at.
+/// Every double-quoted literal in `src`, as `(start, end, raw text)` byte spans.
 ///
-/// Typst strings are double-quoted with backslash escapes, and a line comment
-/// or a raw block may hold something that looks like one.  Over-reading is safe
-/// here: a literal that names nothing resolves to no file and is dropped, and
-/// the only cost of a false one is a lookup that finds nothing.
-fn literals(src: &str) -> Vec<(usize, String)> {
+/// `start` is the opening quote and `end` is one past the closing one, so a caller
+/// that means to REPLACE a literal has the whole of it.  The text is raw: escapes
+/// are left as written, because the only caller that cares decodes them itself.
+///
+/// Typst strings are double-quoted with backslash escapes, and a line comment or a
+/// raw block may hold something that looks like one.  Over-reading is safe here: a
+/// literal that names nothing resolves to no file and is dropped, and the only cost
+/// of a false one is a lookup that finds nothing.
+fn quoted(src: &str) -> Vec<(usize, usize, &str)> {
     let b = src.as_bytes();
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -387,27 +489,698 @@ fn literals(src: &str) -> Vec<(usize, String)> {
         if b[i] != b'"' { i += 1; continue; }
         let start = i;
         i += 1;
-        let mut val = String::new();
-        while i < b.len() && b[i] != b'"' {
-            if b[i] == b'\\' && i + 1 < b.len() {
-                // Only the separator matters for a path, so an escape is taken
-                // literally rather than decoded.
-                val.push(b[i + 1] as char);
-                i += 2;
-                continue;
-            }
+        let from = i;
+        let mut closed = false;
+        while i < b.len() {
+            if b[i] == b'"' { closed = true; break; }
+            if b[i] == b'\\' && i + 1 < b.len() { i += 2; continue; }
             if b[i] == b'\n' { break; }
-            val.push(b[i] as char);
             i += 1;
         }
-        if i < b.len() && b[i] == b'"' {
-            out.push((start, val));
+        if closed {
+            out.push((start, i + 1, &src[from..i]));
             i += 1;
         } else {
             i = start + 1;
         }
     }
     out
+}
+
+/// A quoted literal's text, with backslash escapes taken literally.
+///
+/// Only the separator matters for a path, so an escape is passed through rather
+/// than decoded.
+fn unescape(raw: &str) -> String {
+    let b = raw.as_bytes();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() {
+            out.push(b[i + 1] as char);
+            i += 2;
+            continue;
+        }
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Every double-quoted literal in `src`, with the byte offset it begins at.
+fn literals(src: &str) -> Vec<(usize, String)> {
+    quoted(src).into_iter().map(|(start, _, raw)| (start, unescape(raw))).collect()
+}
+
+/// Every raw block and raw span in `src`, as byte spans.
+///
+/// A run of N backticks opens a raw region that the next run of exactly N closes,
+/// which is typst's own rule and the whole of what is needed here.  A run with no
+/// matching close opens nothing: a stray backtick in a comment must not make the
+/// rest of the file invisible, and typst refuses an unterminated raw in any case.
+fn raw_spans(src: &str) -> Vec<(usize, usize)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != b'`' { i += 1; continue; }
+        let open = i;
+        let mut n = 0usize;
+        while i < b.len() && b[i] == b'`' { n += 1; i += 1; }
+        let mut j = i;
+        let mut end = None;
+        while j < b.len() {
+            if b[j] != b'`' { j += 1; continue; }
+            let mut m = 0usize;
+            while j < b.len() && b[j] == b'`' { m += 1; j += 1; }
+            if m == n { end = Some(j); break; }
+        }
+        match end {
+            Some(e) => { out.push((open, e)); i = e; },
+            None    => break,
+        }
+    }
+    out
+}
+
+/// Whether byte `at` falls inside one of `spans`.
+fn within(spans: &[(usize, usize)], at: usize) -> bool {
+    spans.iter().any(|(a, b)| at >= *a && at < *b)
+}
+
+/// Whether the literal beginning at byte `at` is what an `#import` or `#include`
+/// is being given.
+///
+/// A book about Typst may quote `"@preview/cetz:0.3.4"` in its prose, and a
+/// quotation must not become an import.  The token immediately before the literal
+/// is the whole of the syntax that decides it.
+fn is_import_operand(src: &str, at: usize) -> bool {
+    let b = src.as_bytes();
+    let mut i = at;
+    while i > 0 && (b[i - 1] as char).is_ascii_whitespace() { i -= 1; }
+    for kw in ["import", "include"] {
+        let n = kw.len();
+        if i < n || &b[i - n..i] != kw.as_bytes() { continue; }
+        if i == n { return true; }
+        // A longer identifier that merely ENDS in "import" is not the keyword.
+        let p = b[i - n - 1];
+        if !(p as char).is_ascii_alphanumeric() && p != b'_' && p != b'-' { return true; }
+    }
+    false
+}
+
+
+// ── Packages are carried, not fetched ───────────────────────────────────────
+//
+// The module header sets out why the packages travel inside the bundle and why the
+// import is re-pointed rather than resolved through the registry hook.  What follows
+// is the machinery: read the spec, find it in the compiled-in inventory, fetch the
+// pack from this origin, and follow what IT imports.
+//
+// Nothing here consults `Reach`.  A pack is part of the application, like the five
+// bundled fonts, and is no more the user's file than the compiler wasm is -- so a
+// turn confined to one folder can still draw a diagram, and the path jail is not
+// asked a question about a file that was never on disk.
+
+/// A package as a source names it: `@preview/cetz:0.3.4`.
+#[derive(Clone, PartialEq, Eq)]
+struct Spec {
+    /// The registry namespace, which for everything carried here is `preview`.
+    ns:      String,
+    /// The package name.
+    name:    String,
+    /// The exact version.  Typst has no version ranges: 0.3.2 and 0.3.4 are
+    /// different packages as far as an import is concerned.
+    version: String,
+}
+
+impl Spec {
+
+    /// Read a spec from a quoted literal, or `None` when it is not one.
+    fn parse(lit: &str) -> Option<Self> {
+        if !lit.starts_with('@') { return None; }
+        let rest = &lit[1..];
+        let slash = match rest.find('/') { Some(i) => i, None => return None };
+        let (ns, tail) = (&rest[..slash], &rest[slash + 1..]);
+        let colon = match tail.find(':') { Some(i) => i, None => return None };
+        let (name, version) = (&tail[..colon], &tail[colon + 1..]);
+        if !Self::word(ns) || !Self::word(name) || !Self::semver(version) { return None; }
+        Some(Self {
+            ns:      ns.to_string(),
+            name:    name.to_string(),
+            version: version.to_string(),
+        })
+    }
+
+    /// Whether `s` is a namespace or a package name.
+    fn word(s: &str) -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    }
+
+    /// Whether `s` is a `major.minor.patch` version.
+    fn semver(s: &str) -> bool {
+        let parts: Vec<&str> = s.split('.').collect();
+        parts.len() == 3
+            && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    }
+
+    /// The spec as a source spells it.
+    fn text(&self) -> String {
+        fmt!("@{}/{}:{}", self.ns, self.name, self.version)
+    }
+
+    /// The spec as a person reads it.
+    fn plain(&self) -> String {
+        fmt!("{} {}", self.name, self.version)
+    }
+
+    /// The shadow directory this package occupies.
+    fn dir(&self) -> String {
+        fmt!("{}/{}/{}/{}", PKG_ROOT, self.ns, self.name, self.version)
+    }
+
+    /// The one-line module an import of this package is re-pointed at.
+    ///
+    /// Named for the PACKAGE, because a path import takes its binding from the file
+    /// stem -- so `#import "@preview/cetz:0.3.4"` goes on binding `cetz`, which is
+    /// what the document then writes.  It sits beside the package rather than in it,
+    /// so it can never collide with a file the package itself ships.
+    fn shim(&self) -> String {
+        fmt!("{}/{}.typ", self.dir(), self.name)
+    }
+}
+
+/// One line of the compiled-in inventory: a pack this build carries.
+struct Vendored {
+    /// Which package, exactly.
+    spec:  Spec,
+    /// How many files the pack holds.
+    files: usize,
+    /// How many bytes the pack itself is.
+    bytes: usize,
+}
+
+/// Every package this build carries, in the order the inventory lists them.
+fn vendored() -> Vec<Vendored> {
+    let mut out = Vec::new();
+    for line in PKG_INDEX.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() != 6 || f[0] != "pack" { continue; }
+        let files = match f[4].parse::<usize>() { Ok(n) => n, Err(_) => continue };
+        let bytes = match f[5].parse::<usize>() { Ok(n) => n, Err(_) => continue };
+        out.push(Vendored {
+            spec: Spec {
+                ns:      f[1].to_string(),
+                name:    f[2].to_string(),
+                version: f[3].to_string(),
+            },
+            files,
+            bytes,
+        });
+    }
+    out
+}
+
+/// What this build carries, as a refusal reads it out.
+fn carried() -> String {
+    let all = vendored();
+    if all.is_empty() { return "no packages at all".to_string(); }
+    all.iter().map(|v| v.spec.plain()).collect::<Vec<String>>().join(", ")
+}
+
+/// Which versions of `name` this build carries, in inventory order.
+fn versions_of(name: &str) -> Vec<String> {
+    vendored().into_iter()
+        .filter(|v| v.spec.name == name)
+        .map(|v| v.spec.version)
+        .collect()
+}
+
+/// Every package `src` imports, with the byte offset of the literal naming each.
+///
+/// **The one place a source is read for packages**, so the walk that gathers them,
+/// the scan that follows a package's own dependencies, and the rewrite that
+/// re-points the import cannot disagree about what an import is.  Three scanners
+/// agreeing today would be three scanners disagreeing later -- and disagreeing here
+/// means a package gathered and not re-pointed, or re-pointed and not gathered.
+///
+/// A literal inside a raw block or a raw span is not an import.  A document that
+/// SHOWS `#import "@preview/cetz:0.3.4"` in a code example is describing one, not
+/// making one, and refusing to compile a book because it quotes an import would be
+/// the wrong message buying the wrong diagnosis all over again.
+fn imports(src: &str) -> Vec<(usize, Spec)> {
+    if !src.contains('@') { return Vec::new(); }
+    let raws = raw_spans(src);
+    let mut out = Vec::new();
+    for (start, _, raw) in quoted(src) {
+        let spec = match Spec::parse(raw) { Some(s) => s, None => continue };
+        if !is_import_operand(src, start) { continue; }
+        if within(&raws, start) { continue; }
+        out.push((start, spec));
+    }
+    out
+}
+
+/// A pack as it arrives off the wire.
+struct Pack {
+    /// The file the package declares as its entry, package-relative.
+    entry: String,
+    /// Every file it holds, as `(package-relative path, bytes)`.
+    files: Vec<(String, Vec<u8>)>,
+}
+
+/// A package, laid out for the compiler and read for what it imports in turn.
+struct Ready {
+    /// Shadow sources: the package's `.typ` files, re-pointed, plus the one-line
+    /// module that carries the binding.
+    sources: Vec<(String, String)>,
+    /// Shadow files that are not sources -- the manifest, the licence, and anything
+    /// a package might `read`.
+    assets:  Vec<(String, Vec<u8>)>,
+    /// What this package imports, with the file of its own that names each.  THE
+    /// CLOSURE COMES FROM HERE and from nowhere else.
+    deps:    Vec<(Spec, String)>,
+}
+
+thread_local! {
+    /// The packages read in this page so far.
+    ///
+    /// A pack is a sealed file of the build and cannot change under a running page,
+    /// so this is a cache with no invalidation and needs none.  It matters for the
+    /// watch loop: without it every rebuild would re-fetch and re-scan 900 KB of
+    /// package source that is byte-for-byte what it was a second earlier.
+    static PACKS: RefCell<Vec<(Spec, Rc<Ready>)>> = const { RefCell::new(Vec::new()) };
+}
+
+// ── Why these three answer in a String and not an `Outcome` ─────────────────
+//
+// Everything that can go wrong reading a pack ends up in the middle of a sentence a
+// PERSON reads -- "…but its files could not be read from this device: <this bit>".
+// A fe2o3 error rendered with `fmt!("{}", e)` is `LocalErr{[Invalid Data] "…"}`, ANSI
+// colour codes and the source position of the Rust line that raised it and all, and
+// dropping that into a sentence is precisely the failure `driver_error` further down
+// this file was written to stop: a message about the machinery in place of a message
+// about the problem.  So the reason travels as the clause it is going to become.
+
+/// Fetch a pack from this origin, or say why it could not be.
+///
+/// The URL is built from the compiled-in inventory and never from the document, so
+/// there is no literal a source could write that would make this reach anywhere
+/// else; and it is relative, so it resolves against the page's own base.
+async fn fetch_pack(v: &Vendored) -> Result<Vec<u8>, String> {
+    use web_sys::{Request, RequestInit, RequestMode, Response};
+
+    let url = fmt!("{}/{}/{}/{}.pack", PKG_URL, v.spec.ns, v.spec.name, v.spec.version);
+    let opts = RequestInit::new();
+    opts.set_method("GET");
+    opts.set_mode(RequestMode::SameOrigin);
+    let req = match Request::new_with_str_and_init(&url, &opts) {
+        Ok(r)  => r,
+        Err(e) => return Err(fmt!("asking for {} failed, {}", url, js_str(&e))),
+    };
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None    => return Err("there is no browser window to read it with".to_string()),
+    };
+    let val = match JsFuture::from(win.fetch_with_request(&req)).await {
+        Ok(v)  => v,
+        Err(e) => return Err(fmt!("{} could not be reached, {}", url, js_str(&e))),
+    };
+    let resp: Response = match val.dyn_into() {
+        Ok(r)  => r,
+        Err(_) => return Err(fmt!("asking for {} did not answer with a response", url)),
+    };
+    if !resp.ok() {
+        return Err(fmt!("{} answered {}", url, resp.status()));
+    }
+    let promise = match resp.array_buffer() {
+        Ok(p)  => p,
+        Err(e) => return Err(fmt!("reading {} failed, {}", url, js_str(&e))),
+    };
+    match JsFuture::from(promise).await {
+        Ok(b)  => Ok(js_sys::Uint8Array::new(&b).to_vec()),
+        Err(e) => Err(fmt!("reading {} failed, {}", url, js_str(&e))),
+    }
+}
+
+/// Read a pack: an ASCII header, one blank line, then the file bodies concatenated
+/// in the order the header lists them.
+///
+/// Everything is checked against the inventory line that asked for it -- the name,
+/// the version, the file count and the byte length -- because a pack that does not
+/// match the build's own record of it is a broken deployment, and that is a
+/// different thing from a package nobody vendored.
+///
+/// # Arguments
+/// * `bytes` - The pack as fetched.
+/// * `v` - The inventory line this was fetched for.
+fn parse_pack(bytes: &[u8], v: &Vendored) -> Result<Pack, String> {
+    if bytes.len() != v.bytes {
+        return Err(fmt!(
+            "it is {} bytes and this build was sealed with {}", bytes.len(), v.bytes));
+    }
+    let mut split = None;
+    for i in 0..bytes.len().saturating_sub(1) {
+        if bytes[i] == b'\n' && bytes[i + 1] == b'\n' { split = Some(i); break; }
+    }
+    let split = match split { Some(i) => i, None => return Err("it has no header".to_string()) };
+    let head = String::from_utf8_lossy(&bytes[..split]).to_string();
+    let mut lines = head.lines();
+    match lines.next() {
+        Some("DAIMOND TYPST PACK 1") => {},
+        _ => return Err("it is not a pack this build knows how to read".to_string()),
+    }
+    let mut entry = String::new();
+    let mut names: Vec<(String, usize)> = Vec::new();
+    let mut got = Spec { ns: String::new(), name: String::new(), version: String::new() };
+    for line in lines {
+        let (key, rest) = match line.find(' ') {
+            Some(i) => (&line[..i], line[i + 1..].trim()),
+            None    => continue,
+        };
+        match key {
+            "namespace"  => got.ns = rest.to_string(),
+            "name"       => got.name = rest.to_string(),
+            "version"    => got.version = rest.to_string(),
+            "entrypoint" => entry = rest.trim_start_matches('/').to_string(),
+            "file"       => {
+                let (len, path) = match rest.find(' ') {
+                    Some(i) => (&rest[..i], rest[i + 1..].to_string()),
+                    None    => continue,
+                };
+                let len = match len.parse::<usize>() { Ok(n) => n, Err(_) => continue };
+                names.push((path, len));
+            },
+            _ => {},
+        }
+    }
+    if got != v.spec {
+        return Err(fmt!(
+            "it holds {} and this build asked for {}", got.plain(), v.spec.plain()));
+    }
+    if entry.is_empty() {
+        return Err("it names no entrypoint".to_string());
+    }
+    if names.len() != v.files {
+        return Err(fmt!(
+            "it holds {} files and this build was sealed with {}", names.len(), v.files));
+    }
+    let body = &bytes[split + 2..];
+    let total: usize = names.iter().map(|(_, n)| *n).sum();
+    if total != body.len() {
+        return Err(fmt!(
+            "its header accounts for {} bytes and it carries {}", total, body.len()));
+    }
+    let mut files = Vec::with_capacity(names.len());
+    let mut at = 0usize;
+    for (path, len) in names.into_iter() {
+        files.push((path, body[at..at + len].to_vec()));
+        at += len;
+    }
+    if !files.iter().any(|(p, _)| *p == entry) {
+        return Err(fmt!("its entrypoint {} is not among its files", entry));
+    }
+    Ok(Pack { entry, files })
+}
+
+/// Re-point every package and package-root reference in `text`.
+///
+/// # Arguments
+/// * `text` - The source as it was written.
+/// * `inside` - When this source is a package's own file: the shadow directory that
+///   package sits at, and every path it holds.  `None` for a project's own source.
+fn repoint(text: &str, inside: Option<(&str, &[String])>) -> String {
+    // The imports come from the one scanner, so what is re-pointed here is exactly
+    // what was gathered; the raw spans are re-taken for the second rule below.
+    let imps = imports(text);
+    let raws = raw_spans(text);
+    let mut out = String::new();
+    let mut last = 0usize;
+    for (start, end, raw) in quoted(text) {
+        // Re-pointed whether or not the package turned out to be carried, because a
+        // gather that found one missing refuses before anything is compiled.
+        let rep = match imps.iter().find(|(o, _)| *o == start) {
+            Some((_, spec)) => Some(spec.shim()),
+            None => match inside {
+                // Inside a package a leading "/" means the PACKAGE root, not the
+                // project's.  Re-pointed only when it really names a file the pack
+                // holds, so a string of prose beginning with a slash is left alone --
+                // fletcher's `"/"` is a mark name, not a path.
+                Some((dir, names)) if raw.starts_with('/') && !within(&raws, start) => {
+                    match norm(raw) {
+                        Some(p) if names.iter().any(|n| *n == p) => {
+                            Some(fmt!("{}/pkg/{}", dir, p))
+                        },
+                        _ => None,
+                    }
+                },
+                _ => None,
+            },
+        };
+        if let Some(r) = rep {
+            out.push_str(&text[last..start]);
+            out.push('"');
+            out.push_str(&r);
+            out.push('"');
+            last = end;
+        }
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// Lay a pack out for the compiler and read it for what it imports in turn.
+fn prepare(spec: &Spec, pack: &Pack) -> Ready {
+    let dir = spec.dir();
+    let names: Vec<String> = pack.files.iter().map(|(p, _)| p.clone()).collect();
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut assets:  Vec<(String, Vec<u8>)> = Vec::new();
+    let mut deps:    Vec<(Spec, String)> = Vec::new();
+    for (rel, data) in pack.files.iter() {
+        let shadow = fmt!("{}/pkg/{}", dir, rel);
+        if ext(rel) != "typ" {
+            assets.push((shadow, data.clone()));
+            continue;
+        }
+        let text = String::from_utf8_lossy(data).to_string();
+        for (_, dep) in imports(&text) {
+            if dep == *spec || deps.iter().any(|(d, _)| *d == dep) { continue; }
+            deps.push((dep, rel.clone()));
+        }
+        sources.push((shadow, repoint(&text, Some((dir.as_str(), names.as_slice())))));
+    }
+    // The binding, and the only file here that was not written by the package's
+    // authors.  A star import re-exports: the shim's own scope becomes whatever the
+    // entrypoint exports, which is what the document then reaches through.
+    sources.push((spec.shim(), fmt!("#import \"pkg/{}\": *\n", pack.entry)));
+    Ready { sources, assets, deps }
+}
+
+/// The package `v` names, fetched and laid out, or the clause saying why not.
+async fn package(v: &Vendored) -> Result<Rc<Ready>, String> {
+    let hit = PACKS.with(|c| c.borrow().iter()
+        .find(|(s, _)| *s == v.spec)
+        .map(|(_, r)| r.clone()));
+    if let Some(r) = hit { return Ok(r); }
+    let bytes = ok!(fetch_pack(v).await);
+    let pack = ok!(parse_pack(&bytes, v));
+    let ready = Rc::new(prepare(&v.spec, &pack));
+    PACKS.with(|c| c.borrow_mut().push((v.spec.clone(), ready.clone())));
+    Ok(ready)
+}
+
+/// Why a package the document reaches for is not available, said differently
+/// depending on WHOSE gap it is.
+///
+/// Three cases, and keeping them apart is the whole point of this function.  A
+/// document asking for something nobody vendored is the author's decision to work
+/// around; a document asking for a version next to one that IS here is a one-word
+/// edit; and a package that was found, loaded, and then wanted something else is not
+/// the author's fault at all -- and looks identical to the first case unless it is
+/// said not to be.
+///
+/// # Arguments
+/// * `spec` - What could not be supplied.
+/// * `via` - The packages between the document and `spec`, nearest the DOCUMENT first,
+///   each with the file of its own that names the next link.  Empty when the document
+///   asked for `spec` itself.
+/// * `from` - The workspace file the whole chain started in.
+fn unavailable(spec: &Spec, via: &[(Spec, String)], from: &str) -> String {
+    if let Some((first, _)) = via.first() {
+        // Read the chain out link by link, because "cetz is here but its dependency
+        // is not" is only convincing if the reader can see which dependency of what.
+        let mut chain = String::new();
+        for (i, (pkg, file)) in via.iter().enumerate() {
+            let next = match via.get(i + 1) {
+                Some((n, _)) => n.plain(),
+                None         => spec.plain(),
+            };
+            if i == 0 {
+                chain.push_str(&fmt!("{}'s {} imports {}", pkg.plain(), file, next));
+            } else {
+                chain.push_str(&fmt!(", whose {} imports {}", file, next));
+            }
+        }
+        let head = match via.last() { Some((p, _)) => p.plain(), None => first.plain() };
+        // The near miss inside a near miss: the right package at the wrong version,
+        // reached through another package. cetz is carried twice for exactly this
+        // reason, and saying only "not carried" would send somebody looking for a
+        // package that is sitting right there under a different number.
+        let others = versions_of(&spec.name);
+        let near = if others.is_empty() {
+            String::new()
+        } else {
+            fmt!(" This build does carry {} at {} -- a different package, as far as an import is \
+                concerned, and not one {} would accept.",
+                spec.name, others.join(" and "), head)
+        };
+        return fmt!(
+            "'{}' imports {}, and this build carries it. {} -- and {} is NOT carried, so {} \
+            cannot be loaded either. Nothing was compiled.\n\n\
+            THIS IS NOT A PROBLEM WITH YOUR DOCUMENT. {} was found and read; what is missing is \
+            the package IT names in turn. A package that resolves while its own dependency does \
+            not looks exactly like a package that was never there, which is why this is said in \
+            different words: there is nothing to change in your source, no folder to attach and \
+            no path to correct.{} This build carries {}. The fix is to vendor {} beside {} -- see \
+            www/assets/typst/refresh.sh -- or to compile this document with the command-line \
+            typst, which can fetch it.",
+            from, first.plain(), chain, spec.plain(), head,
+            head, near, carried(), spec.plain(), head);
+    }
+    let others = versions_of(&spec.name);
+    if !others.is_empty() {
+        return fmt!(
+            "'{}' imports '{}'. This build carries {} at {}, but not at {}. Nothing was compiled.\n\n\
+            A Typst package version is exact -- {} and {} are different packages as far as an \
+            import is concerned -- so this is not a near miss that would have worked anyway. \
+            Either import a version carried here, or compile this document with the command-line \
+            typst, which can fetch the one you asked for. Daimond carries {}.",
+            from, spec.text(), spec.name, others.join(" and "), spec.version,
+            others[0], spec.version, carried());
+    }
+    fmt!(
+        "'{}' imports '{}'. Names beginning '@' come from Typst Universe, a registry the \
+        command-line compiler downloads from and caches; this compiler runs inside the page with \
+        no network at all, so the only packages it has are the ones Daimond carries in its own \
+        bundle. This build carries {}, and {} is not among them. Nothing was compiled.\n\n\
+        So this is not a missing file, not a path problem and not a root problem, and no amount \
+        of moving files or attaching folders will fix it: do not go looking, and do not rewrite \
+        the source to work around it. Compile this document with the command-line typst, which \
+        can fetch the package -- or copy what it provides into the project as ordinary files and \
+        import it by path. Vendoring it into Daimond is the third way: \
+        www/assets/typst/refresh.sh says how.",
+        from, spec.text(), carried(), spec.name)
+}
+
+/// A package this build does carry, whose files could not be read from this device.
+///
+/// Its own sentence, because it is the only one of these that is nobody's decision:
+/// the bundle says the package is here and the bundle is wrong about itself.
+///
+/// # Arguments
+/// * `spec` - The package whose pack would not read.
+/// * `via` - The packages between the document and `spec`, as [`unavailable`] takes them.
+/// * `from` - The workspace file the chain started in.
+/// * `why` - What went wrong reading it, in the words the read itself used.
+fn pack_broken(spec: &Spec, via: &[(Spec, String)], from: &str, why: &str) -> String {
+    let reached = match via.first() {
+        Some((f, _)) => fmt!("imports {}, which needs '{}'", f.plain(), spec.text()),
+        None         => fmt!("imports '{}'", spec.text()),
+    };
+    fmt!(
+        "'{}' {} -- and this build does carry it, but its files could not be read from this \
+        device: {}. Nothing was compiled.\n\n\
+        That is a broken installation rather than anything about the document. The packages ship \
+        as sealed files under assets/typst/packs/ and are covered by the bundle manifest, so \
+        /verify.html will have more to say about it. Reload the page; if it happens again, the \
+        deployment is missing files it was sealed with.",
+        from, reached, why)
+}
+
+/// What a project's packages came to, once the closure was walked.
+struct Packages {
+    /// Shadow sources to hand over alongside the project's own.
+    sources: Vec<(String, String)>,
+    /// Shadow files that are not sources.
+    assets:  Vec<(String, Vec<u8>)>,
+}
+
+/// What the package walk produced.
+enum Closure {
+    /// The closure, gathered whole.
+    Ready(Packages),
+    /// Nothing was gathered, and this is why.
+    Refused(String),
+}
+
+/// Gather the transitive closure of the packages `srcs` import.
+///
+/// The document's own imports are taken in the order it makes them, and each pack
+/// that arrives is read for the imports IT makes, which go on the end of the same
+/// queue.  So the first thing a refusal is about is the first thing the document
+/// asked for, and a dependency is never assumed from a list somebody wrote down.
+///
+/// **Nothing is partial.**  The first package that cannot be supplied stops the walk
+/// and returns a refusal, because a closure gathered up to a hole and then compiled
+/// would fail somewhere else entirely, with a message about whatever the hole made
+/// undefined.
+///
+/// # Arguments
+/// * `srcs` - The project's own sources, already gathered.
+async fn packages(srcs: &[Src]) -> Closure {
+    // `want` is the queue AND the record of what has been queued, so a package
+    // reached twice by two routes is read once and keeps the route it was first
+    // reached by -- which is the shorter one, and the one a refusal should describe.
+    let mut want: Vec<(Spec, Vec<(Spec, String)>, String)> = Vec::new();
+    for s in srcs.iter() {
+        for (_, spec) in imports(&s.text) {
+            if want.iter().any(|(sp, _, _)| *sp == spec) { continue; }
+            want.push((spec, Vec::new(), s.real.clone()));
+        }
+    }
+    if want.is_empty() {
+        return Closure::Ready(Packages { sources: Vec::new(), assets: Vec::new() });
+    }
+    let inventory = vendored();
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut assets:  Vec<(String, Vec<u8>)> = Vec::new();
+    let mut bytes = 0usize;
+    let mut at = 0usize;
+    while at < want.len() {
+        let (spec, via, from) = want[at].clone();
+        at += 1;
+        let v = match inventory.iter().find(|v| v.spec == spec) {
+            Some(v) => v,
+            None    => return Closure::Refused(unavailable(&spec, &via, &from)),
+        };
+        let ready = match package(v).await {
+            Ok(r)  => r,
+            Err(w) => return Closure::Refused(pack_broken(&spec, &via, &from, &w)),
+        };
+        for (dep, named_by) in ready.deps.iter() {
+            if want.iter().any(|(sp, _, _)| *sp == *dep) { continue; }
+            let mut chain = via.clone();
+            chain.push((spec.clone(), named_by.clone()));
+            want.push((dep.clone(), chain, from.clone()));
+        }
+        for (path, text) in ready.sources.iter() {
+            bytes += text.len();
+            sources.push((path.clone(), text.clone()));
+        }
+        for (path, data) in ready.assets.iter() {
+            bytes += data.len();
+            assets.push((path.clone(), data.clone()));
+        }
+        if sources.len() + assets.len() > MAX_PKG_FILES || bytes > MAX_PKG_BYTES {
+            return Closure::Refused(fmt!(
+                "The packages this document imports come to more than {} files or more than {} MB, \
+                which is past what this compiler carries. Nothing was compiled. That is a limit on \
+                DAIMOND'S OWN bundle rather than on the document, so it means the vendored set has \
+                grown past what was intended -- see www/assets/typst/refresh.sh.",
+                MAX_PKG_FILES, MAX_PKG_BYTES / (1024 * 1024)));
+        }
+    }
+    Closure::Ready(Packages { sources, assets })
 }
 
 
@@ -493,9 +1266,12 @@ struct Project {
     root:      String,
     /// The file to compile, as a shadow path under that root.
     main:      String,
-    /// `.typ` files, as (shadow path, text).
+    /// `.typ` files, as (shadow path, text).  The project's own first, then the
+    /// vendored packages it imports, which the compiler cannot tell apart from any
+    /// other source and has no reason to.
     sources:   Vec<(String, String)>,
-    /// Everything else the sources name, as (shadow path, bytes).
+    /// Everything else the sources name, as (shadow path, bytes), plus the non-source
+    /// files of those packages.
     assets:    Vec<(String, Vec<u8>)>,
     /// Font files, as (workspace path, bytes).  Fonts live in the compiler's
     /// font book, not its filesystem, so they carry no shadow path.
@@ -649,10 +1425,9 @@ async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Ga
         let text = srcs[idx].text.clone();
         let dir = parent(&from);
         for (_, lit) in literals(&text) {
-            // A package import (`@preview/cetz:0.3.4`) names nothing on disk, and this
-            // build has no registry to resolve it with.  It is left alone here and
-            // explained by the driver from typst's own diagnostic, which names the file
-            // and the line -- better than a list gathered up front could.
+            // A package import (`@preview/cetz:0.3.4`) names nothing on disk, so it is
+            // not part of THIS walk. It is answered in phase 1b, out of the packages
+            // the bundle carries, once the sources that name them are all in hand.
             if lit.starts_with('@') { continue; }
             if ext(&lit) != "typ" { continue; }
             let (path, anchor) = if lit.starts_with('/') {
@@ -776,6 +1551,18 @@ async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Ga
             command-line compiler refuses the same import for the same reason. Import it by a \
             path that stays inside the project.", from, lit)));
     }
+
+    // ── Phase 1b: the packages those sources name ────────────────────────
+    //
+    // Before the root, the assets and the fonts, because a document that asks for a
+    // package this build does not carry is refused whatever else is true of it -- and
+    // refusing here means not first pulling eleven megabytes of fonts through the edge
+    // to find out. A document that imports no package pays nothing: the scan stops at
+    // the first source with no '@' in it.
+    let pkgs = match packages(&srcs).await {
+        Closure::Ready(p)   => p,
+        Closure::Refused(w) => return Ok(refuse(w)),
+    };
 
     // ── Phase 2: the root, inferred ──────────────────────────────────────
     //
@@ -1008,7 +1795,14 @@ async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Ga
     let mut watch: Vec<String> = Vec::new();
     for (i, s) in srcs.into_iter().enumerate() {
         if !watch.contains(&s.real) { watch.push(s.real); }
-        shadow_srcs.push((shadows[i].clone(), s.text));
+        // The package imports are re-pointed HERE, at the last moment, and not
+        // earlier: phases 2 and 3 read these same literals to infer the root and find
+        // the pictures, and a source already carrying `/_pkg/...` paths would have
+        // sent both of them hunting for a directory that exists only inside the
+        // compiler. The guard is the cheap one -- a source with no '@' in it cannot
+        // name a package -- so a book that imports nothing pays one scan of a byte.
+        let text = if s.text.contains('@') { repoint(&s.text, None) } else { s.text };
+        shadow_srcs.push((shadows[i].clone(), text));
     }
     for p in asset_reals.into_iter() {
         if !watch.contains(&p) { watch.push(p); }
@@ -1016,6 +1810,12 @@ async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Ga
     for (p, _, _) in found.iter() {
         if !watch.contains(p) { watch.push(p.clone()); }
     }
+    // The packages go on the end, and NOT into `watch`: they are files of the build,
+    // sealed and unchanging, so a watcher that polled them would poll something that
+    // cannot move. They do count toward what the compiler was handed, which is why
+    // they join the same two lists rather than travelling beside them.
+    shadow_srcs.extend(pkgs.sources.into_iter());
+    assets.extend(pkgs.assets.into_iter());
 
     Ok(Gathered::Ready(Project {
         root: proj_root,

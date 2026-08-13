@@ -224,6 +224,42 @@
 					try { input.focus(); input.select(); } catch (e2) { /* gone */ }
 				}
 			}
+			// ── And the way to ASK for one ─────────────────────────
+			//
+			// This card told people to have a passcode and gave them no way to get
+			// one, which was merely unhelpful while there was nowhere to send them
+			// and is a dead end now that `/apply.html` exists. A route in
+			// production that nothing reaches is the defect this codebase keeps
+			// finding, and it is found from the outside every time.
+			//
+			// `?for=test` is not decoration: the form reads the query to choose
+			// between applying to the test and joining the waitlist, and somebody
+			// arriving from a REFUSAL is asking for the first. A bare path would
+			// land them on whichever half the form defaults to.
+			//
+			// LAST IN THE CARD, deliberately. The dialog opens with the keyboard on
+			// the first control that is not the closer; a link above the field
+			// would take that focus, and the field is what somebody holding a code
+			// came here for. It also reads in the right order: put the code in, and
+			// if you have none, here is how to ask.
+			//
+			// A new tab rather than a navigation. Leaving the page would take the
+			// app down with it -- a refused device still has Diamonds, a provider
+			// key and possibly a turn running -- to show a form.
+			// `beta-ask` and not `beta-note`: the note class dims its whole subtree
+			// with `opacity`, and opacity cannot be undone by a child -- the link
+			// would be dimmed with the sentence around it.
+			var ask = el('p', 'beta-ask', t('beta.no_code') + ' ');
+			var a = el('a', 'beta-apply', t('beta.apply'));
+			// Root-absolute, as `/console/` is: the app is one document at the site
+			// root and this is its sibling, so a relative path would only differ
+			// from this by being wrong the first time anything is served deeper.
+			a.href = '/apply.html?for=test';
+			a.target = '_blank';
+			a.rel = 'noopener';
+			ask.appendChild(a);
+			box.appendChild(ask);
+
 			go.addEventListener('click', submit);
 			input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
 		});
@@ -321,6 +357,58 @@
 	/// has forgotten. The drawer's block carries it in between.
 	var SAID = 'daimond-beta-said';
 
+	// ── Asked for at the front door ────────────────────────────
+	//
+	// The identity screen offers three ways in to a browser that has never held
+	// an account (`syncDoors`, js/daimond.js). Two are links to /apply.html. The
+	// third is this dialog -- and it cannot open there, because a redemption is
+	// SIGNED by the device key and a stranger at that screen has none. The order
+	// is forced: passphrase first, code second.
+	//
+	// So the button records that a code is waiting, and `resume()` opens the
+	// dialog at the first moment it could work. The flag is sessionStorage and
+	// not a variable: creating an identity can end in a reload on some paths,
+	// and an intent that a reload forgets is a route that works when tested by
+	// hand and not when used.
+	var WANT = 'daimond-beta-wanted';
+
+	function wanted() {
+		try { return sessionStorage.getItem(WANT) === '1'; }
+		catch (e) { return false; }
+	}
+	function noteWanted(on) {
+		try {
+			if (on) sessionStorage.setItem(WANT, '1');
+			else sessionStorage.removeItem(WANT);
+		} catch (e) { /* private mode: the refusal path still gets there */ }
+	}
+
+	/// The front door's "I have a passcode".
+	///
+	/// Returns true when the dialog is up and false when it could not be -- the
+	/// caller says what happens next, because what to say depends on the screen
+	/// it is said on.
+	function front() {
+		if (canSign()) { noteWanted(false); show(); return true; }
+		noteWanted(true);
+		return false;
+	}
+
+	/// Open the dialog if one was asked for before it could be opened.
+	///
+	/// Called once the gate is down and there is a key to sign with. Silent when
+	/// nothing was asked for, when the account already exists (there is nothing
+	/// left to redeem for), or when the dialog is already on screen.
+	function resume() {
+		if (!wanted()) return;
+		if (!canSign()) return;
+		if (acct().authed) { noteWanted(false); return; }
+		noteWanted(false);
+		// The same delay the refusal path uses, and for the same reason: the
+		// identity modal is still fading out of the frame this runs on.
+		setTimeout(function () { show(); }, 600);
+	}
+
 	function alreadySaid(reason) {
 		try { return sessionStorage.getItem(SAID) === reason; }
 		catch (e) { return false; }				// private mode: say it, rather than never.
@@ -364,6 +452,11 @@
 		show:    show,
 		/// Draw the Credits drawer's block from the state as it stands now.
 		render:  render,
+		/// The identity screen's "I have a passcode". True when the dialog is up,
+		/// false when the intent was recorded for `resume()` instead.
+		front:   front,
+		/// Open a dialog `front()` could not, now that there is a key to sign with.
+		resume:  resume,
 	};
 
 	// THE MOUNT POINT. daimond.js's `drawCredits` calls `DaimondCredits.render()`

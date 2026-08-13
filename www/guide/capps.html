@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en" data-guide-locale="en" data-guide-locales="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Capps — Daimond guide</title>
+<link rel="icon" type="image/svg+xml" href="../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../css/variables.css">
+<link rel="stylesheet" href="../css/guide.css">
+<script src="frame.js"></script>
+<script src="capp.js"></script>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond guide, home">
+			<img class="wordmark wm-dark" src="../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Guide pages">
+			<a href="index.html">Getting started</a>
+			<a href="interface.html">The interface</a>
+			<a href="models.html">Models &amp; credits</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="capps.html" aria-current="page">Capps</a>
+			<a href="email-web-files.html">Email, Web &amp; files</a>
+			<a href="accounts.html">Accounts</a>
+			<a href="sync.html">Cross-device sync</a>
+			<a href="spending.html">Spending</a>
+			<a href="machine-operations.html">Machine Operations</a>
+			<a href="improve.html">Improving Daimond</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Capps</h1>
+	<p class="lede">Every Diamond is drawn by a page of its own. A <strong>capp</strong> is that page written as an application: something you tap, which records what you tapped into a file beside it. Ask your daimon for a food log, a practice tally or a set of readings, and what comes back is a small app that lives inside the Diamond and keeps what you put in it.</p>
+
+	<p>The page is a real file, <strong translate="no">crystal.html</strong>, in the Diamond's own folder. Every Diamond has one from the day it is made: the standard page renders the crystal as a document. A capp is the same file doing more, and the same rules cover both.</p>
+
+	<h2 id="s1">What a capp can do</h2>
+	<ul>
+		<li><strong>Draw the crystal.</strong> Everything the Diamond knows is handed to the page when it loads, and again whenever you change how Daimond looks, so the page can dress itself to match.</li>
+		<li><strong>Read the files in its own Diamond.</strong> A table it draws a chart from, an index it maintains, its own log from yesterday.</li>
+		<li><strong>Write files there too.</strong> This is the part that makes it an application rather than a rendering. A tap can be recorded, and it is still there tomorrow.</li>
+		<li><strong>Ask Daimond to open a link</strong>, which goes through the same gate every other outward request does and may still be refused.</li>
+	</ul>
+
+	<p>Writing is how a capp remembers, and it appends by default: a new line goes after what was there. Two taps in the same instant both survive, which a logger that loses one under a double tap would not.</p>
+
+	<p>One write is capped at <strong>half a megabyte</strong>, which is thousands of entries at once and far more than a tap ever records. The file itself has no such ceiling: a log grows past it a line at a time, for as long as you keep one.</p>
+
+	<h2 id="s2">What a capp cannot do</h2>
+	<p>A capp runs in a sealed frame. None of the following is a setting to be turned on: they are the design, because the page was written by a model, it is not part of what the Diamond knows and so is never folded or reviewed the way a crystal is, and it syncs to every device you own.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3 id="s3">No network</h3>
+			<p>No fetch, no request of any kind, no image loaded from a server. A capp cannot call an API, and it cannot send anywhere what you have put in it. Everything it knows arrives from Daimond.</p>
+		</div>
+		<div class="card">
+			<h3 id="s4">No libraries</h3>
+			<p>Nothing is loaded from outside: no framework, no chart library, no web font. A capp is one self-contained file, so its pictures are drawn or inlined and its code is its own. Nor can it build fresh code out of text while it runs, so what the page does is what is written in it.</p>
+		</div>
+		<div class="card">
+			<h3 id="s5">128 KB</h3>
+			<p>The whole page, code and style together. Generous for a page written economically and tight for one used as a store, which is deliberate. <span class="ui">Page size limit</span> in Settings raises it if you need to.</p>
+		</div>
+		<div class="card">
+			<h3 id="s6">No storage of its own</h3>
+			<p>It cannot use the browser's storage, and it has no memory between loads except the files it asks Daimond to write. Those files are in the Diamond, where you can read them.</p>
+		</div>
+		<div class="card">
+			<h3 id="s7">It cannot rewrite itself</h3>
+			<p>A capp may not write over <strong translate="no">crystal.html</strong> or <strong translate="no">crystal.json</strong> (nor <strong translate="no">crystal.md</strong>, where an older Diamond still keeps one), the version history, or the Diamond's own records. A page that could change its own code between one look and the next would mean nothing you read stayed read.</p>
+		</div>
+		<div class="card">
+			<h3 id="s8">It cannot leave its Diamond</h3>
+			<p>Every path it asks for is resolved inside that one folder, and anything climbing out of it is refused. One capp cannot read another Diamond's files, and none of them can reach your workspace.</p>
+		</div>
+	</div>
+
+	<div class="note"><strong>The trade is the point.</strong> A capp is smaller and plainer than the little apps other tools will write for you, and there is no way yet to share one with anybody else. What you get for that is an app nobody else can read the contents of, that works with no connection, and that carries no subscription to keep it alive.</div>
+
+	<h2 id="s9">Where what you record goes</h2>
+	<p>Into the Diamond, beside the page, on this device. A Diamond is kept in the browser's own storage: it is on your machine, but it is not a folder you can open in a file manager, and it is <strong>not</strong> in the folder you have open as your workspace, even though the Diamond's directory is listed there. Daimond keeps its own things apart from your work on purpose, so a page's log can never be written into somebody's project. The Workspace panel is where you read it. Nothing about it is sent to us, and <a href="accounts.html">what does leave the browser</a> is set out in full on the Accounts page. Deleting the page does not delete what it recorded: the files stay where they are, and a new page can read them.</p>
+
+	<p>Because the files are in the Diamond, they travel with the Diamond. <a href="sync.html">Cross-device sync</a> carries the whole folder to your other devices, so a log kept on your phone is on your laptop, and the gateway holds a parcel it cannot open. Two things follow that are worth knowing before you fill one up:</p>
+	<ul>
+		<li><strong>A Diamond travels whole, from whichever device touched it last.</strong> Log on your phone and on your laptop between two syncs and you do not get both sets of entries: the side that synced later is the one that survives. Logging in one place at a time is what a log is usually like, and this is the case where it matters.</li>
+		<li><strong>Bulk data competes with everything else.</strong> Diamonds share a few megabytes in a parcel, and one that grows past what is left is left out of the sync entirely rather than trimmed. A log of what you did stays small for years; a reference table of tens of megabytes is a different thing and belongs in the workspace.</li>
+	</ul>
+
+	<h2 id="s10">Asking a daimon for one</h2>
+	<p>Open the Diamond you want the app to live in and choose <span class="ui">✎ Page</span> in the row above the crystal. That fills the message box with a note saying which of the Diamond's two files you mean, since <span class="ui">✎ Edit</span> beside it changes what the crystal <em>says</em> and this changes how it <em>looks</em>. Finish the sentence with what you want and send it.</p>
+
+	<p>Say what you tap and what it should record. "A page with a tile for each of the foods I eat: tapping one records it with today's date, and the day's total is at the top." A daimon that knows the shape of the thing writes the file in one turn. What it cannot do is guess whether an entry is a count, a weight or a time, so say which.</p>
+
+	<p>You can ask for changes afterwards in the same way, and every version of the page is kept: <span class="ui">↺ History</span> shows them, and any of them can be restored. A page that will not load is not a dead end either. Daimond puts its own rendering up in place of the capp, says which way it failed, and offers to put the standard page back.</p>
+
+	<h2 id="s11">Using one on a phone</h2>
+	<p>At the right-hand end of the row across the top of the centre panel, on a Diamond's crystal, sits a button drawn as four corners. Its name, <span class="ui">Full screen</span>, is in the tooltip rather than beside it, because in the ordinary view there is no room for the word. Pressing it takes away the rail, the top bar, the dock, the bottom bar, the message box and the crystal's own row of buttons, and gives the whole screen to the page, which is what a capp is worth having on a phone.</p>
+
+	<p>The same button, now wearing the words <span class="ui">Exit full screen</span>, brings it all back. <kbd>Esc</kbd> does too, so long as Daimond has the keyboard: while you are typing inside the page itself the keystrokes belong to the page, which is why the way out is a button and not only a key. It is never entered on your behalf, and it is not remembered: reopening Daimond puts you back in the ordinary view.</p>
+
+	<h2 id="s12">A worked example: the Life log</h2>
+	<p>A capp ships with Daimond as an example, and you can have it as a working Diamond rather than reading about it. The button below makes a Diamond called <strong>Life log</strong> and puts the page inside it, furnished and ready to record. Daimond asks first, and if you already have one it offers to open that instead of making a second.</p>
+
+	<div class="do" id="lifelog">
+		<button class="do-btn" id="make-lifelog" type="button">Make me a Life log</button>
+		<p class="do-say" id="lifelog-say" role="status" aria-live="polite"></p>
+		<p class="do-note">Nothing is sent anywhere. It makes one Diamond on this device and copies the page into it.</p>
+	</div>
+
+	<p>Once it is made, the page is a file in that Diamond like any other, and the Diamond's own daimon can read it. So the place to ask for a variation is inside the Life log itself: <span class="ui">✎ Page</span> there, and "the same, but for practice sessions instead of meals", gives the daimon a worked example in front of it rather than a description of one. A daimon in some other Diamond cannot see this page, and will write you a new one from scratch.</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">Next: Email, Web &amp; files &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond runs in your browser. Nothing here is sent to us.</span>
+	<nav aria-label="Guide pages">
+		<a href="index.html">Getting started</a>
+		<a href="interface.html">Interface</a>
+		<a href="models.html">Models</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="capps.html">Capps</a>
+		<a href="email-web-files.html">Email, Web &amp; files</a>
+		<a href="accounts.html">Accounts</a>
+		<a href="sync.html">Cross-device sync</a>
+		<a href="spending.html">Spending</a>
+		<a href="machine-operations.html">Machine Operations</a>
+		<a href="improve.html">Improving Daimond</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en-GB" data-theme="dark" data-tone="dark" data-ink="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Apply to test Daimond</title>
+<meta name="description" content="Ask for a Daimond beta passcode, or leave your address for the day the beta opens.">
+
+<!-- WHY THERE IS A FORM AT ALL. The landing page's beta buttons used to be
+     `mailto:` links, which means a literal address in the markup of a public
+     page. That is scraped within days and cannot be unpublished. The buttons
+     lead here instead, and an applicant lands as a row in the operator console
+     rather than in a mailbox the gateway cannot see.
+
+     WHY IT IS ON THIS ORIGIN AND NOT THE LANDING'S. The call here is
+     same-origin: Steel front-proxies /api/* to the gateway on loopback, exactly
+     as the passcode redemption in js/passcode.js already relies on. So there is
+     no preflight, and nothing about this page depends on configuration.
+
+     The endpoint does now allow one cross-origin caller -- `allow_origin` on
+     the /api/beta/apply route in gateway/app.jdat -- so a form on daimond.app
+     could be made to work. It would depend on that line being present in the
+     app.jdat THE SERVER IS ACTUALLY RUNNING, which is not the same file as the
+     one in this repository and has drifted from it before. A form that fails
+     silently because a config key is missing on one host is exactly the failure
+     a person filling it in cannot see. This one has nothing to drift. -->
+
+<!-- Not indexed. This is a step in a flow rather than a destination: somebody
+     who lands on it straight from a search engine has none of the landing's
+     context about what the beta is or what a passcode does. `follow` so the
+     links out of it still count. -->
+<meta name="robots" content="noindex, follow">
+
+<!-- The palette, before the first paint.
+     Deliberately NOT the app's eleven-palette table. index.html carries a copy
+     of that table and dev/verify_theme.mjs holds the copy to the original; a
+     third copy would be a third thing to keep in step, for a page that is read
+     once. The two ends of the range are enough here, and the operating
+     system's own preference is the right signal for a page reached from a
+     public site by somebody who may never have opened the app. -->
+<script>
+(function () {
+	try {
+		var light = window.matchMedia
+			&& window.matchMedia('(prefers-color-scheme: light)').matches;
+		if (!light) return;			// the markup already says dark
+		var root = document.documentElement;
+		root.setAttribute('data-theme', 'light');
+		root.setAttribute('data-tone', 'light');
+		root.setAttribute('data-ink',  'dark');
+	} catch (e) { /* the dark default stands */ }
+})();
+</script>
+
+<link rel="icon" type="image/svg+xml" href="assets/daimond_mark.svg">
+<!-- The app's own palette and the guide's document styling, so this page reads
+     as part of Daimond without restating a single colour. Only the form itself
+     is new, and it is below rather than in a new stylesheet: one page, one
+     file, nothing else to deploy. -->
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/guide.css">
+<style>
+	/* ── The form ─────────────────────────────────────────────────────────── */
+
+	.ap-form { margin: 1.5rem 0 0; }
+
+	.ap-field { margin: 1.25rem 0; }
+
+	.ap-label {
+		display: block;
+		font-weight: 650;
+		color: var(--text-primary);
+		margin: 0 0 0.35rem;
+	}
+
+	.ap-in, .ap-ta {
+		width: 100%;
+		box-sizing: border-box;
+		font: inherit;
+		/* A 16px floor. iOS Safari zooms the whole page whenever it focuses a
+		   field with smaller text, and a page that jumps as the keyboard opens
+		   is a page a phone user has to pinch back before they can read what
+		   they typed. `max` so a reader who has enlarged the type keeps it. */
+		font-size: max(1rem, 16px);
+		line-height: 1.45;
+		padding: 0.6rem 0.7rem;
+		color: var(--text-primary);
+		background: var(--bg-primary);
+		/* --border-strong, not --border: on a field the line IS the control's
+		   edge rather than a divider between two visible things. The comment in
+		   variables.css sets out why the app carries a second token for it. */
+		border: 1px solid var(--border-strong);
+		border-radius: var(--radius-sm);
+	}
+	.ap-ta { min-height: 5.5rem; resize: vertical; }
+	.ap-in::placeholder, .ap-ta::placeholder { color: var(--text-muted); }
+	.ap-in:focus, .ap-ta:focus {
+		outline: 2px solid var(--accent);
+		outline-offset: 1px;
+		border-color: var(--accent);
+	}
+	.ap-in[aria-invalid="true"] { border-color: var(--danger); }
+
+	.ap-hint {
+		margin: 0.35rem 0 0;
+		font-size: 0.88rem;
+		color: var(--text-muted);
+	}
+	.ap-fielderr {
+		margin: 0.35rem 0 0;
+		font-size: 0.9rem;
+		color: var(--danger);
+	}
+	.ap-fielderr:empty { display: none; }
+
+	/* ── The two intents ──────────────────────────────────────────────────── */
+
+	.ap-choice {
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	.ap-choice legend {
+		padding: 0;
+		font-weight: 650;
+		color: var(--text-primary);
+	}
+	.ap-opt {
+		display: flex;
+		gap: 0.65rem;
+		align-items: flex-start;
+		margin: 0.5rem 0;
+		padding: 0.7rem 0.85rem;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+	/* The chosen one, said with colour AND a heavier edge, because a fill alone
+	   is the one cue a person who cannot separate those hues does not get. */
+	.ap-opt:has(input:checked) {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+	}
+	.ap-opt:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+	.ap-opt input { margin: 0.25rem 0 0; flex: none; accent-color: var(--accent); }
+	.ap-opt b { display: block; }
+	.ap-opt span { color: var(--text-secondary); }
+
+	/* ── The button ───────────────────────────────────────────────────────── */
+
+	.ap-btn {
+		font: inherit;
+		font-size: max(1rem, 16px);
+		font-weight: 700;
+		color: var(--on-fill, #fff);
+		background: var(--accent);
+		border: 1px solid var(--accent);
+		border-radius: var(--radius-sm);
+		padding: 0.7rem 1.4rem;
+		/* The thumb's floor. Most of the people answering this are on a phone. */
+		min-height: 48px;
+		cursor: pointer;
+	}
+	.ap-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+	.ap-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	/* Waiting, not broken. */
+	.ap-btn[disabled] { opacity: 0.55; cursor: default; background: var(--accent); }
+	@media (max-width: 560px) { .ap-btn { width: 100%; } }
+
+	/* ── What came back ───────────────────────────────────────────────────── */
+
+	/* One region for every answer, so a reader never has to look in two places
+	   to find out what happened. It is a live region: the outcome of a submit
+	   is the whole point of the page and a screen reader must hear it. */
+	.ap-say {
+		margin: 1.25rem 0 0;
+		padding: 0.8rem 1rem;
+		border: 1px solid var(--border);
+		border-left: 3px solid var(--text-muted);
+		border-radius: var(--radius-sm);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+	}
+	.ap-say:empty { display: none; }
+	/* The header is sticky, so anything scrolled to the very top of the
+	   scrollport lands underneath it. Two of these are scrolled to by name:
+	   the answer, and a field being sent back for correction. */
+	.ap-say, .ap-field { scroll-margin-top: 6rem; }
+	.ap-say :first-child { margin-top: 0; }
+	.ap-say :last-child { margin-bottom: 0; }
+	.ap-say strong { color: var(--text-primary); }
+	.ap-say.ok  { border-left-color: var(--ok); }
+	.ap-say.bad { border-left-color: var(--danger); }
+	.ap-say:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+	/* The word "(optional)" sitting inside a field's own label. */
+	.ap-optional {
+		font-weight: 400;
+		font-size: 0.88rem;
+		color: var(--text-muted);
+	}
+
+	/* A quiet line above the form for somebody who has been here before. */
+	.ap-before {
+		margin: 1rem 0 0;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+	}
+	.ap-before:empty { display: none; }
+
+	[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<!-- Back where they came from. The brand on the guide goes to the guide's
+		     own index; here the reader arrived from the public site and that is
+		     the only other page they know about. -->
+		<a class="brand" href="https://daimond.app/" aria-label="Daimond, back to daimond.app">
+			<img class="wordmark wm-dark" src="assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Beta</span>
+		</a>
+	</div>
+</header>
+
+<main>
+
+	<!-- Two headings and two ledes, both in the markup rather than written in by
+	     script. The copy on this page is copy, and it belongs where the rest of
+	     the site's copy is; the script only chooses which of the two is showing.
+	     The "apply" pair ships visible because that is the default intent. -->
+	<div data-for="test">
+		<h1>Apply to test Daimond</h1>
+		<p class="lede">Daimond is in closed beta. Accounts are opened by passcode, so you cannot sign up on your own yet. Leave your address and we will send you one if there is room.</p>
+	</div>
+	<div data-for="waitlist" hidden>
+		<h1>Join the Daimond waitlist</h1>
+		<p class="lede">Daimond is in closed beta and not open for sign-up. Leave your address and we will write to you on the day that changes.</p>
+	</div>
+
+	<p class="ap-before" id="ap-before"></p>
+
+	<form class="ap-form" id="ap-form" novalidate>
+
+		<fieldset class="ap-choice">
+			<legend>What are you asking for?</legend>
+			<label class="ap-opt">
+				<input type="radio" name="kind" value="test" checked>
+				<span><b>A passcode now.</b> You want to use Daimond while the beta is closed.</span>
+			</label>
+			<label class="ap-opt">
+				<input type="radio" name="kind" value="waitlist">
+				<span><b>Word when it opens.</b> You would rather wait until anyone can sign up.</span>
+			</label>
+		</fieldset>
+
+		<div class="ap-field">
+			<label class="ap-label" for="ap-name">
+				Your name
+				<span class="ap-optional">(optional)</span>
+			</label>
+			<!-- Not decoration. The gateway carries this through to the passcode
+			     it mints for an accepted applicant, as that code's label, which
+			     is what the operator sees beside it afterwards. 80 characters is
+			     BAPP_NAME_MAX, which is the label's own width. -->
+			<input class="ap-in" id="ap-name" name="name" type="text"
+				autocomplete="name" maxlength="80"
+				aria-describedby="ap-name-hint">
+			<p class="ap-hint" id="ap-name-hint">What to call you in a reply. Whatever you go by is fine.</p>
+		</div>
+
+		<div class="ap-field">
+			<label class="ap-label" for="ap-email">Your email address</label>
+			<!-- `type="email"` for the keyboard it summons on a phone, and
+			     `novalidate` on the form so the browser's own bubble does not
+			     pre-empt the message this page writes. -->
+			<input class="ap-in" id="ap-email" name="email" type="email"
+				inputmode="email" autocomplete="email" enterkeyhint="send"
+				autocapitalize="off" spellcheck="false" required
+				maxlength="254" placeholder="you@example.com"
+				aria-describedby="ap-email-hint">
+			<p class="ap-fielderr" id="ap-email-err" role="alert"></p>
+			<p class="ap-hint" id="ap-email-hint">The only thing we need. It is used to write to you about the beta, and for nothing else.</p>
+		</div>
+
+		<div class="ap-field">
+			<label class="ap-label" for="ap-note">
+				<span data-for="test">What would you use Daimond for?</span>
+				<span data-for="waitlist" hidden>Anything you would like to tell us</span>
+				<span class="ap-optional">(optional)</span>
+			</label>
+			<!-- 600 is BAPP_NOTE_MAX. Held here as well as there, because a
+			     paragraph refused after it was typed is a paragraph lost. -->
+			<textarea class="ap-ta" id="ap-note" name="note" rows="4" maxlength="600"
+				aria-describedby="ap-note-hint"></textarea>
+			<p class="ap-hint" id="ap-note-hint">
+				<span data-for="test">A sentence is plenty. Places in each wave are limited, and this is what we read when we choose.</span>
+				<span data-for="waitlist" hidden>Nothing here is required. It is read, not filed against you.</span>
+			</p>
+		</div>
+
+		<button class="ap-btn" id="ap-send" type="submit">
+			<span data-for="test">Send my application</span>
+			<span data-for="waitlist" hidden>Add me to the waitlist</span>
+		</button>
+
+	</form>
+
+	<!-- Everything the page has to say about what just happened, in one place.
+	     `tabindex="-1"` so focus can be moved here: a keyboard or screen-reader
+	     user who presses the button must end up at the answer rather than back
+	     at the top of the document. -->
+	<div class="ap-say" id="ap-say" role="status" aria-live="polite" tabindex="-1"></div>
+
+	<noscript>
+		<div class="note stop">
+			<p><strong>This form needs JavaScript.</strong> It posts what you type straight to Daimond's server, and there is nothing on this page that can do that without it. Switch it on for this site and reload, and the form will work.</p>
+		</div>
+	</noscript>
+
+	<h2>What happens next</h2>
+
+	<ol class="steps" data-for="test">
+		<li>Your address arrives in the operator console at Oxedyne, where a person reads it. It goes nowhere else.</li>
+		<li>If there is room in the current wave, we email you a passcode: twelve characters, in three groups.</li>
+		<li>You open Daimond, put the passcode in, and the account is made on that device. Each passcode works once, on one device.</li>
+	</ol>
+
+	<ol class="steps" data-for="waitlist" hidden>
+		<li>Your address arrives in the operator console at Oxedyne, where a person reads it. It goes nowhere else.</li>
+		<li>We write to you once, on the day Daimond opens for sign-up.</li>
+		<li>That is all. There is no newsletter and no second message.</li>
+	</ol>
+
+	<div class="note" data-for="test">
+		<p>We cannot promise a place. The waves are small, and an application we cannot take this time is held for the next one rather than thrown away.</p>
+	</div>
+
+	<div class="note">
+		<p><strong>What is kept:</strong> the address you type, the note if you write one, and the date. It sits on Oxedyne's own server. It is not sold and not passed to anyone. Ask, in a reply to anything we send you, and the record is deleted.</p>
+	</div>
+
+	<p>Already have a passcode? <a href="./">Open Daimond</a> and put it in. Not sure what any of this is? <a href="https://daimond.app/">Read the site</a> first.</p>
+
+</main>
+
+<footer class="site-foot">
+	<nav aria-label="Elsewhere">
+		<a href="https://daimond.app/">daimond.app</a>
+		<a href="./">Open Daimond</a>
+		<a href="guide/">Guide</a>
+	</nav>
+	<span>© Complement Pty Ltd, trading as Oxedyne.</span>
+</footer>
+
+<script>
+(function () {
+	'use strict';
+
+	/* ── The gateway call ─────────────────────────────────────────────────────
+	   THE ONE PLACE THE REQUEST IS BUILT. Path, method, headers and body, all
+	   here and nowhere else, so a change to the contract is one edit rather than
+	   a search.
+
+	   The other end is gateway/src/handlers/beta.rs, whose header states it:
+	   request `{email, name?, note?, intent?}`, reply `{ok:true,
+	   status:"received"}`. `intent` is exactly `test` or `waitlist`; anything
+	   else is a 400, and an absent one means `test`. The three field caps below
+	   are that file's BAPP_EMAIL_MAX, BAPP_NAME_MAX and BAPP_NOTE_MAX, so the
+	   browser refuses what the gateway would refuse, in the field rather than
+	   after a round trip.
+
+	   Same-origin, so `/api/beta/apply` is Steel's proxy to the gateway on
+	   loopback: no preflight, and none of that route's CORS configuration is in
+	   play. No `x-daimond-api` header either -- common.rs treats a client that
+	   names no version as current, and copying the app's version constant into
+	   a second file is exactly the pair of numbers that eventually disagree. */
+	var ENDPOINT = '/api/beta/apply';
+
+	function send(intent, email, name, note) {
+		return fetch(ENDPOINT, {
+			method:      'POST',
+			credentials: 'same-origin',
+			headers:     { 'content-type': 'application/json' },
+			body:        JSON.stringify({
+				intent: intent,
+				email:  email,
+				name:   name,
+				note:   note,
+			}),
+		});
+	}
+
+	/* ── The page ─────────────────────────────────────────────────────────── */
+
+	var form   = document.getElementById('ap-form');
+	var nameIn = document.getElementById('ap-name');
+	var email  = document.getElementById('ap-email');
+	var note   = document.getElementById('ap-note');
+	var btn    = document.getElementById('ap-send');
+	var say    = document.getElementById('ap-say');
+	var mailEr = document.getElementById('ap-email-err');
+	var before = document.getElementById('ap-before');
+
+	/// What this browser last sent, so a return visit is not a blank form
+	/// pretending nothing ever happened. The DATE and the INTENT only -- never
+	/// the address. A shared or borrowed machine must not carry somebody's email
+	/// around in localStorage for the sake of a nicety.
+	var SENT = 'daimond-applied';
+
+	/// Which of the two the page is set to. `test` unless the query says
+	/// otherwise, because the landing's larger, primary button is the apply one.
+	function wanted() {
+		var q = '';
+		try { q = new URLSearchParams(location.search).get('for') || ''; } catch (e) { q = ''; }
+		return q === 'waitlist' ? 'waitlist' : 'test';
+	}
+
+	/// The intent the form is currently set to.
+	function kind() {
+		var on = form.querySelector('input[name="kind"]:checked');
+		return on && on.value === 'waitlist' ? 'waitlist' : 'test';
+	}
+
+	/// Show the half of the copy that belongs to this intent, and hide the other.
+	///
+	/// Everything keyed `data-for` is a pair: one for the passcode and one for
+	/// the waitlist. Nothing is written from here -- the words are all in the
+	/// markup above -- so a change of copy is a change to the HTML alone.
+	function dress(k) {
+		var all = document.querySelectorAll('[data-for]');
+		for (var i = 0; i < all.length; i++) {
+			all[i].hidden = all[i].getAttribute('data-for') !== k;
+		}
+		document.title = k === 'waitlist'
+			? 'Join the Daimond waitlist'
+			: 'Apply to test Daimond';
+		// Keep the address bar honest, so a link copied off this page opens on
+		// the same half of it. `replaceState` rather than a push: switching the
+		// radio is not somewhere the Back button should have to return through.
+		try {
+			var u = new URL(location.href);
+			u.searchParams.set('for', k);
+			history.replaceState(null, '', u.toString());
+		} catch (e) { /* an engine without it simply keeps the old query */ }
+	}
+
+	/// Does this look like an address at all?
+	///
+	/// Deliberately loose. The gateway decides what it will accept and this is
+	/// only here to catch the empty box and the missing `@` before a person
+	/// waits on a round trip to be told. A strict pattern here would refuse
+	/// perfectly legal addresses that the server would have taken.
+	function plausible(s) {
+		return /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(s);
+	}
+
+	/// Put a message in the one region, in the given state, and -- for an answer
+	/// rather than a progress note -- take the reader to it. `html` is written by
+	/// this file only; nothing a user typed and nothing the server said is ever
+	/// passed through it as markup.
+	///
+	/// `land` is false while the request is in flight. Moving focus off the
+	/// button to say "Sending…" would take the keyboard away from the control
+	/// the reader is standing on and then take it somewhere else again a moment
+	/// later; the live region announces the progress without any of that.
+	function tell(state, html, land) {
+		say.className = 'ap-say' + (state ? ' ' + state : '');
+		say.innerHTML = html;
+		if (land === false) return;
+		try { say.focus(); } catch (e) { /* not focusable in this engine */ }
+	}
+
+	/// The gateway's own sentence, when it sent one worth reading.
+	///
+	/// The house shape for a refusal is `{ok:false, reason, error}` -- see
+	/// gateway/src/handlers/passcode.rs, which this endpoint sits beside. The
+	/// `error` field is English written for a person, so it is preferred over
+	/// anything invented here; `reason` is the machine word and is never shown.
+	function said(j) {
+		var s = j && typeof j.error === 'string' ? j.error.trim() : '';
+		return s ? esc(s) : '';
+	}
+
+	/// Text from the server, made safe to place in the page.
+	function esc(s) {
+		return String(s)
+			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
+	/// Nothing was recorded. Said in the same words every time, because the one
+	/// thing a person needs after a failure is to know whether to do it again.
+	var NOTHING = 'Nothing was recorded, so try again in a few minutes. '
+		+ 'What you typed is still here.';
+
+	/// The page has done its job; put the form away and say what will happen.
+	///
+	/// THERE IS NO "you have already applied" HERE, and there must not be. The
+	/// gateway answers a fresh application, a repeat and one inside its cooldown
+	/// with the same `{ok:true}` on purpose (see the module header of
+	/// gateway/src/handlers/beta.rs): an endpoint that told them apart would
+	/// answer "is this address known to Daimond" for any address anybody cared
+	/// to type. So this page cannot know, does not guess, and says the same
+	/// thing the server did.
+	function done(k) {
+		form.hidden = true;
+		before.textContent = '';
+		// The lede is an instruction -- "leave your address" -- and it has been
+		// followed. Leaving it above the confirmation would tell somebody to do
+		// the thing they have just done.
+		var lede = document.querySelectorAll('.lede');
+		for (var i = 0; i < lede.length; i++) lede[i].hidden = true;
+		var toApp = ' <a href="./">Open Daimond</a> when your passcode arrives.';
+		if (k === 'waitlist') {
+			tell('ok', '<p><strong>You are on the list.</strong> We will write to you '
+				+ 'once, on the day Daimond opens for sign-up. Nothing else happens '
+				+ 'on this page, and you can close it.</p>');
+		} else {
+			tell('ok', '<p><strong>Your application is in.</strong> A person at Oxedyne '
+				+ 'reads it. If there is room in the current wave you will get a '
+				+ 'passcode by email; if there is not, the application is held for the '
+				+ 'next one.' + toApp + '</p>');
+		}
+		try {
+			localStorage.setItem(SENT, JSON.stringify({ intent: k, at: Date.now() }));
+		} catch (e) { /* private mode: the confirmation above is the whole record */ }
+	}
+
+	/// A line for somebody who has been here before, from this browser.
+	function recall() {
+		var raw = null;
+		try { raw = localStorage.getItem(SENT); } catch (e) { return; }
+		if (!raw) return;
+		var rec = null;
+		try { rec = JSON.parse(raw); } catch (e) { return; }
+		if (!rec || !rec.at) return;
+		var when = new Date(rec.at).toLocaleDateString('en-GB',
+			{ day: 'numeric', month: 'long', year: 'numeric' });
+		before.textContent = 'You sent something from this browser on ' + when
+			+ '. Sending another does no harm, and does not move you up any list.';
+	}
+
+	/// Hold the intent still while a request is in flight, or let it go again.
+	function lock(on) {
+		var radios = form.querySelectorAll('input[name="kind"]');
+		for (var i = 0; i < radios.length; i++) radios[i].disabled = !!on;
+	}
+
+	/// Put the form back the way it was, ready to be sent again. Called from
+	/// every failure arm, so no arm can forget half of it and leave a disabled
+	/// button over a message telling somebody to try again.
+	function revert(label) {
+		btn.disabled = false;
+		btn.innerHTML = label;
+		lock(false);
+	}
+
+	// ── Wiring ────────────────────────────────────────────────────────────────
+
+	form.addEventListener('change', function (e) {
+		if (e.target && e.target.name === 'kind') dress(kind());
+	});
+
+	form.addEventListener('submit', function (e) {
+		e.preventDefault();
+		go();
+	});
+
+	async function go() {
+		var addr = (email.value || '').trim();
+		var who  = (nameIn.value || '').trim();
+		var body = (note.value || '').trim();
+		var k    = kind();
+
+		mailEr.textContent = '';
+		email.removeAttribute('aria-invalid');
+
+		if (!addr) {
+			mailEr.textContent = 'Type the address we should write to.';
+			email.setAttribute('aria-invalid', 'true');
+			email.focus();
+			return;
+		}
+		if (!plausible(addr)) {
+			mailEr.textContent = 'That does not look like an email address. '
+				+ 'Check it and try again.';
+			email.setAttribute('aria-invalid', 'true');
+			email.focus();
+			return;
+		}
+
+		// The button carries both labels and only shows one; "Sending…" replaces
+		// them for the duration, so the markup is put back rather than rebuilt.
+		// The intent is frozen with it: the two labels the restore brings back
+		// are the ones that were right when the request went out, and a radio
+		// changed mid-flight would leave them describing the other half.
+		var was = btn.innerHTML;
+		btn.disabled = true;
+		btn.textContent = 'Sending…';
+		lock(true);
+		tell('', '<p>Sending…</p>', false);
+
+		var r;
+		try {
+			r = await send(k, addr, who, body);
+		} catch (err) {
+			// The request never left this device. That is a different fact from a
+			// refusal, and it is the one that decides whether trying again is
+			// worth anything -- so it is never reported as the server saying no.
+			revert(was);
+			tell('bad', '<p><strong>That did not get out.</strong> Daimond\'s server '
+				+ 'could not be reached from this device, so nothing arrived and '
+				+ 'nothing was recorded. Check your connection and try again.</p>');
+			return;
+		}
+
+		var j = null;
+		try { j = await r.json(); } catch (e2) { j = null; }
+
+		// Taken. `ok:true` is the contract; a 2xx with a body this page cannot
+		// parse is NOT treated as success, because the one thing worse than a
+		// failure here is telling somebody they are on a list they are not on.
+		if (r.ok && j && j.ok === true) { done(k); return; }
+
+		revert(was);
+
+		var msg = said(j);
+
+		// A refusal this page knows the shape of is said in this page's own
+		// words, and the server's sentence is dropped -- the two say the same
+		// thing, and printing both reads as a stutter. The server's sentence is
+		// kept for the refusals below, where it is the only thing that knows
+		// WHICH field was wrong, and for anything unrecognised.
+		if (r.status === 429) {
+			tell('bad', '<p><strong>Too many attempts from this connection.</strong> '
+				+ 'Wait a few minutes and try again. Nothing was recorded.</p>');
+			return;
+		}
+		// 413 sits with the 400s rather than with the retries: the body was too
+		// big, and pressing the button again with the same words in the box
+		// sends the same body. The gateway's sentence names what was too long.
+		if (r.status === 400 || r.status === 413 || r.status === 422) {
+			tell('bad', '<p><strong>The server would not take that.</strong> '
+				+ (msg || 'Check what you typed and try again.') + ' '
+				+ 'Nothing was recorded.</p>');
+			return;
+		}
+		// The form is shut, or its store is at its ceiling. Not a fault the
+		// reader can wait out over a coffee, so it does not tell them to: the
+		// gateway's own sentence says what is going on, and the advice is to
+		// come back rather than to press the button again.
+		if (r.status === 503) {
+			tell('bad', '<p><strong>'
+				+ (msg || 'Daimond is not taking applications just now.')
+				+ '</strong> Nothing was recorded. Try again another day, or watch '
+				+ '<a href="https://daimond.app/">daimond.app</a> for the beta '
+				+ 'opening.</p>');
+			return;
+		}
+		// Not deployed here, or not deployed yet. Worth its own sentence: it is
+		// the one failure a person can do absolutely nothing about, and it must
+		// not read as though they typed something wrong.
+		if (r.status === 404 || r.status === 405 || r.status === 501) {
+			tell('bad', '<p><strong>This server is not taking applications.</strong> '
+				+ 'The form reached it and it had nowhere to put this, which is our '
+				+ 'fault and not yours. ' + NOTHING + '</p>');
+			return;
+		}
+		// A 2xx that did not say `ok:true`. If it named a reason, it refused; if
+		// it did not, this page genuinely does not know whether the application
+		// landed, and saying either "sent" or "refused" would be a guess about
+		// the one thing the reader came here to find out.
+		if (r.ok) {
+			tell('bad', msg
+				? '<p><strong>The server refused that.</strong> ' + msg + ' ' + NOTHING + '</p>'
+				: '<p><strong>The server answered, but not in a way this page '
+					+ 'understands.</strong> So it cannot tell you whether your '
+					+ 'application was recorded or not. Try again in a few minutes; '
+					+ 'if the first one did land, a second changes nothing.</p>');
+			return;
+		}
+		tell('bad', '<p><strong>The server refused that.</strong> '
+			+ (msg || ('It answered HTTP ' + r.status + '.')) + ' ' + NOTHING + '</p>');
+	}
+
+	// The intent the link carried, then the line for a returning visitor.
+	(function start() {
+		var k = wanted();
+		var on = form.querySelector('input[name="kind"][value="' + k + '"]');
+		if (on) on.checked = true;
+		dress(k);
+		recall();
+	})();
+
+})();
+</script>
+
+</body>
+</html>

@@ -26,32 +26,32 @@ crate-type = ["cdylib", "rlib"]
 # development tree overwrote this block.  The revision below is the fe2o3 commit
 # these sources were built and sealed against.
 [dependencies]
-oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
+oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
 # The regex engine and the glob matcher the file tools search with (`fe2o3_text::regex`,
 # `fe2o3_text::glob`).  Portable, so the browser build searches by the same rules the native
 # build does -- two matchers would eventually disagree about what a pattern means.
-oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
+oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
 # `fe2o3_stds::media` -- what a file IS, from its own bytes, so the viewer offers a
 # picture a picture and a document a document.  PORTABLE, and it was native-only
 # below until the browser began asking the same question: the wasm build then would
 # not compile at all, which the reproducible build caught and the development tree
 # could not, since a path dependency there is portable by default.
-oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
+oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
 
 # Native-only dependencies.  The Steel WebSocket handler, the O3db
 # session backend, and the hand-rolled TLS transport are all native
 # concerns; none of these crates target wasm32.  Target-gated so Cargo
 # feature unification never touches the wasm build (F6).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
-oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "8753937011e90bc00f772c3110fb1fa3f1598b7e" }
+oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
+oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "7a62d2a58c6f8edcbc7ed30a74c743dc6185612b" }
 
 tokio = { version = "1.35", features = ["full"] }
 tokio-rustls = "0.26"

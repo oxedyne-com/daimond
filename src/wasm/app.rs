@@ -1684,6 +1684,26 @@ impl DaimondApp {
                 Tool::FileDelete,
                 Tool::FileMove,
                 Tool::DirCreate,
+                // The three a daimon went without, and the reason they were withheld expired
+                // rather than being overruled.
+                //
+                // `Tool::Run` was refused on the ground that a turn pinned to `diamonds/<id>` on
+                // the OPFS root has nowhere on the machine to run anything, so offering it would
+                // produce only refusals. That was true and is not any more: the pin went when a
+                // daimon proved unable to read the book attached to its own Diamond, and what
+                // replaced it is `diamond_bounds` and a `start_dir` that names the first folder
+                // the user marked in. A daimon asked to set up an editing loop over that book
+                // could not open a terminal, could not put a file on the Doc panel, and could not
+                // compile it -- three refusals in one turn, all of them structural.
+                //
+                // Each is fenced by something that already exists: `run` by `fence_spec` from the
+                // same bounds a worker gets, and `typst_compile` by pack `drop01`, which refuses
+                // on an account that has not bought it and says so. `file_show` is the one whose
+                // absence was worst, and the catalogue says why -- a model with no way to show a
+                // file does not merely fail to show one, it tells the user the app cannot.
+                Tool::Run,
+                Tool::FileShow,
+                Tool::TypstCompile,
                 // Counting a file as this Diamond's, which `DEFAULT_DAIMON` has instructed the
                 // daimon to do since the tool was written -- while no registry anywhere offered
                 // it.  A prompt naming a tool that is not there does not fail loudly: the model

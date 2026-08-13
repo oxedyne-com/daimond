@@ -309,17 +309,25 @@ check('the single-file door refuses a font it could never have',
 // The four ways a compile can fail need four different actions from whoever reads the
 // message, and telling them apart is the whole point of composing it here.  A missing
 // file wants finding; a path above the root wants a different folder attached; a font
-// wants a font file; and a `@preview/…` package wants NONE OF THOSE -- it is fetched
-// from Typst Universe over a network this compiler does not have, and no rearrangement
-// of files will ever satisfy it.  In the session that prompted this work the daimon
-// spent several turns hunting assets and then rewrote the author's book source to work
-// around a message that never said which of the four it was.
+// wants a font file; and a `@preview/…` package the bundle does not carry wants NONE OF
+// THOSE -- it comes from Typst Universe over a network this compiler does not have, and
+// no rearrangement of files will ever satisfy it.  In the session that prompted this work
+// the daimon spent several turns hunting assets and then rewrote the author's book source
+// to work around a message that never said which of the four it was.
+//
+// THE FIXTURE MUST NAME A PACKAGE THIS BUILD DOES NOT CARRY.  It used to be
+// `@preview/cetz:0.3.4`, which was the right choice while every `@` import was refused;
+// five packs now travel inside the bundle (`www/assets/typst/packs/`) and cetz is one of
+// them, so that document COMPILES and the check was measuring the vendoring rather than
+// the refusal.  `@preview/nonesuch:1.0.0` exists in no registry and in no pack, which is
+// the condition the message is for.  `verify_typstpack` is what covers the carried side.
+const MISSING_PKG = '@preview/nonesuch:1.0.0';
 const pkg = await compileIn('pkg',
-	[['pkgproj/main.typ', '#import "@preview/cetz:0.3.4"\n\n= Drawing\n']],
+	[['pkgproj/main.typ', `#import "${MISSING_PKG}"\n\n= Drawing\n`]],
 	'pkgproj/main.typ', BROKEN);
-check('a registry package is refused as a package, not as a missing file',
+check('a registry package this build does not carry is refused as a package, not as a missing file',
 	whole.error === '' && pkg.bytes === 0
-		&& pkg.error.indexOf('@preview/cetz:0.3.4') >= 0
+		&& pkg.error.indexOf(MISSING_PKG) >= 0
 		&& /registry/i.test(pkg.error) && /network/i.test(pkg.error),
 	pkg.bytes ? `it compiled anyway (${pkg.bytes} bytes)` : pkg.error.slice(0, 240));
 check('  and says plainly that moving files will not fix it',
@@ -477,22 +485,17 @@ if (!existsSync(pjoin(BOOK, BOOK_MAIN))) {
 		}
 	})('assets/fonts');
 
-	// The book's sources, verbatim except for two lines that no rearrangement of files
-	// could ever satisfy: `book_template.typ` imports `@preview/cetz` and
-	// `@preview/cetz-plot` and uses neither, and the chapter-two figures are drawn with
-	// cetz.  Those are a REGISTRY problem, refused correctly and separately (§5b), and
-	// they would otherwise stop this compile before it reached a single question about
-	// roots, pictures or fonts.  Everything else -- 63 files, a glossary, an index, 17
-	// chapters -- is the author's own.
-	const STUB = '// Registry figures stubbed for this check; see verify_typstproject.mjs §10.\n'
-		+ '#let fig-ceilings = rect(width: 100%, height: 4cm)[]\n'
-		+ '#let fig-thinking-time = rect(width: 100%, height: 4cm)[]\n';
-	const bookSrc = [...seen].map((rel) => {
-		let text = readFileSync(pjoin(BOOK, rel), 'utf8');
-		if (rel.endsWith('thinking_chap_02_figures.typ')) text = STUB;
-		else text = text.split('\n').filter(l => !/^#import\s+"@preview\//.test(l)).join('\n');
-		return [rel, text];
-	});
+	// The book's sources, VERBATIM -- all 63 files, a glossary, an index, 17 chapters.
+	//
+	// Until the packs were vendored this could not be true: `book_template.typ` imports
+	// `@preview/cetz` and `@preview/cetz-plot`, and chapter two's figures are drawn with
+	// cetz, so every `@preview/…` line was stripped and the figures replaced by grey
+	// rectangles -- which meant this check compiled a book nobody wrote.  cetz, cetz-plot
+	// and their closure now travel inside the bundle, so the author's own source is what
+	// goes in, drawings included.  Reinstating a stub or an import filter here would put
+	// the fiction back; if a `@preview/…` import stops this compile, the answer is to
+	// vendor the pack (www/assets/typst/refresh.sh), not to edit it out.
+	const bookSrc = [...seen].map(rel => [rel, readFileSync(pjoin(BOOK, rel), 'utf8')]);
 	const bookBin = [...pics, ...fontFiles].map(rel => [rel, Array.from(readFileSync(pjoin(BOOK, rel)))]);
 	console.log(`  ..   the real book: ${bookSrc.length} sources, ${pics.size} pictures, ${fontFiles.length} fonts`);
 

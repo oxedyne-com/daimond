@@ -3746,6 +3746,13 @@ import init, {
 			// attached to what is in focus, so it cannot wait to be rebuilt.
 			try { renderChatAttachments(); } catch (e) { /* nothing is attached */ }
 			try { renderArtefacts(); } catch (e) { /* no Diamond is open */ }
+			// The full-screen control on the crystal face. Its words are WRITTEN
+			// rather than bound -- they change with the state, and the visible one
+			// appears only while the mode is on -- so `apply()` walking `data-i18n`
+			// cannot reach it, and nothing else repaints a control that is already
+			// standing. Missing this is the setLocale-blind shape of bug: the app
+			// changes language and one button quietly does not.
+			try { syncCrystalFullBtn(); } catch (e) { /* the crystal face is not up */ }
 		});
 
 		// And the surfaces that come and go. Each hands over the node that shows
@@ -3883,6 +3890,12 @@ import init, {
 		improve: 1,
 	};
 	function mshow(name) {
+		// A phone showing something other than the conversation is a phone that is
+		// not showing the crystal, and full screen must not outlive it -- the
+		// control that ends the mode is in the AI panel's own header. Anything
+		// that rises as a SHEET leaves the conversation underneath, so those are
+		// left alone.
+		if (crystalFull && name !== 'ai' && !MOBILE_GUESTS[name]) setCrystalFull(false);
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
 		if (MOBILE_GUESTS[name] && window.DaimondSheet) {
 			document.body.dataset.mpanel = 'ai';
@@ -4648,6 +4661,50 @@ import init, {
 			});
 		}
 
+		/// Seat `seq` inside `parent`, in that order, moving as few nodes as it can.
+		///
+		/// `appendChild` on a node that is ALREADY in the parent is a removal and a
+		/// re-insertion, and an iframe taken out of the document loses its content
+		/// window: it is navigated to its `src` afresh when it goes back in. The
+		/// stage is full of frames -- the crystal's page, the Web panel's browser,
+		/// the Preview panel's `<embed>` -- so a reflow that re-seated everything
+		/// unconditionally restarted all of them every time ANY panel opened or
+		/// closed, in the dock as much as in the stage. For the crystal that is not
+		/// merely a reload: `crystal.js` revokes the blob URL once the page is
+		/// fetched and reads a second `load` as the page navigating itself, so the
+		/// frame came down and the built-in view went up saying the page did not
+		/// show everything the Diamond holds. `setCrystalFull` already had to drop
+		/// its `reflow()` call for exactly this; the seating itself is where the
+		/// cost really lived.
+		///
+		/// Only the order of `seq` AMONG ITSELF is anybody's business. A closed
+		/// panel or a retired divider may sit anywhere between two seats, since one
+		/// is `display:none` and the other is 10px of nothing. So a node is left
+		/// exactly where it is while it is in the right parent and already follows
+		/// the node before it, and the first one is never moved at all -- which is
+		/// what keeps the conversation, and with it the crystal, still standing
+		/// when a guest arrives beside it (`normaliseStage` puts `ai` first).
+		///
+		/// # Arguments
+		/// * `parent` - The container the sequence belongs in.
+		/// * `seq` - The nodes, in the order they should be drawn.
+		function place(parent, seq) {
+			var prev = null;
+			for (var i = 0; i < seq.length; i++) {
+				var node = seq[i];
+				if (!node) continue;
+				var settled = node.parentNode === parent && (!prev
+					|| (prev.compareDocumentPosition(node)
+						& Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+				if (!settled) {
+					// After `prev`, wherever `prev` happens to be: what is between
+					// them is not drawn, so it does not matter that it is there.
+					parent.insertBefore(node, prev ? prev.nextSibling : parent.firstChild);
+				}
+				prev = node;
+			}
+		}
+
 		function apply() {
 			normaliseStage();
 			hideClosed();
@@ -4697,15 +4754,20 @@ import init, {
 				// element in a column at this point, and asking the browser what is
 				// drawn there would count it.
 				dockSeats = cols.map(function (c) { return { el: c, ids: [] }; });
+				var colSeq = cols.map(function () { return []; });
 				dock.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
 					el.style.width = '';                           // a stacked panel fills its column
 					// Round robin rather than filling each column in turn, so four
 					// panels across two columns come out two and two.
-					cols[i % cols.length].appendChild(el);
+					colSeq[i % cols.length].push(el);
 					dockSeats[i % cols.length].ids.push(id);
 				});
+				// Seated rather than re-appended: a panel already in the right column
+				// in the right order stays put, and whatever it is holding stays with
+				// it. See `place`.
+				cols.forEach(function (c, i) { place(c, colSeq[i]); });
 				// A column the grid has finished with gives up what it is holding and
 				// is retired outright, rather than left to `.pcol:empty` to notice.
 				//
@@ -4737,21 +4799,25 @@ import init, {
 				// main, `stageMax` answered 2, and two panels the user had open were
 				// closed for good by a measurement taken one statement too early.
 				fitStage();
-				// Every divider comes out first, wherever it ended up, and only the
-				// ones with a boundary to move go back. A handle left standing for a
-				// seat that has closed is a 10px strip at the end of the stage that
-				// moves nothing.
-				Object.keys(seatEls).forEach(function (k) {
-					var h = seatEls[k];
-					if (h.parentNode) h.parentNode.removeChild(h);
-				});
+				// The seating as one sequence: each seat with its own divider before
+				// it. A divider with no boundary left to move comes out -- one left
+				// standing is a 10px strip at the end of the stage that moves
+				// nothing -- and the rest are placed with the panels rather than
+				// swept out and re-appended, because taking a node out of the
+				// document is the expensive half.
+				var seq = [];
 				stage.forEach(function (id, i) {
 					var el = elOf(id);
 					if (!el) return;
 					el.style.display = '';
-					if (i > 0) stageEl.appendChild(seatHandle(i - 1));
-					stageEl.appendChild(el);                       // re-appending reorders in place
+					if (i > 0) seq.push(seatHandle(i - 1));
+					seq.push(el);
 				});
+				Object.keys(seatEls).forEach(function (k) {
+					var h = seatEls[k];
+					if (h.parentNode && seq.indexOf(h) < 0) h.parentNode.removeChild(h);
+				});
+				place(stageEl, seq);
 			}
 
 			// Anything closed is hidden, and shows up as a tag instead. A guest
@@ -20723,6 +20789,17 @@ import init, {
 		// to the daimon either way -- `sendUserMessage` already routes a Diamond's
 		// message through `doSteer`.
 		chatInputBar.style.display = (crystalOn && !onDiamond) ? 'none' : '';
+		// FULL SCREEN BELONGS TO THE CRYSTAL FACE AND TO NOTHING ELSE. The mode
+		// covers the app in order to show one page; with that page gone it would be
+		// a covered app with no subject, and the control that ends it would have
+		// gone with the face it lives on. So the face switch, and every path that
+		// reaches it -- another Diamond, a chat, the rail -- puts it down.
+		if (!crystalOn && crystalFull) setCrystalFull(false);
+		var fullBtn = document.getElementById('crystal-full-btn');
+		if (fullBtn) {
+			fullBtn.style.display = crystalOn ? '' : 'none';
+			syncCrystalFullBtn();
+		}
 		// Which face is up, said in the panel's own shape: the crystal wears the
 		// mark and squares its corners against the rounded chrome everywhere else.
 		// A daimon's chat is a conversation, so it wears neither.
@@ -21502,6 +21579,118 @@ import init, {
 		crystalBody.innerHTML = '';
 	}
 
+	// ── Full screen: the crystal, alone ──────────────────────────────
+	//
+	// A crystal page can be an APPLICATION now -- it reads and writes files in
+	// its own Diamond -- and an application inside a panel inside an app reads
+	// on a phone as an app inside an app. This mode takes the chrome away: the
+	// rail, the top bar, the dock, the bottom bar, the composer and the
+	// crystal's own row of buttons. What is left is the page and one control.
+	//
+	// Four rules hold it, and each of them is a thing that could have gone
+	// wrong:
+	//
+	//   * NOTHING BUT A USER ENTERS OR LEAVES IT. There is no auto-enter on a
+	//     narrow screen and no verb for it in the crystal protocol -- the frame
+	//     is `sandbox="allow-scripts"` with no `allowfullscreen`, so the PAGE
+	//     cannot ask for the browser's fullscreen either, and nothing here
+	//     changes the channel. The app leaves the mode by itself in exactly one
+	//     case: when the thing it was covering the app for is no longer on
+	//     screen (`showCentre`, `mshow`), which is not a mode outliving its
+	//     subject but the end of the subject.
+	//   * THERE IS ALWAYS A WAY OUT, AND IT IS VISIBLE. The button stays in the
+	//     panel's header, inside `#app`'s own safe-area padding, and wears a
+	//     word beside its glyph while the mode is on.
+	//   * ESCAPE WORKS, wherever the app holds the focus -- and it deliberately
+	//     stands aside for anything drawn over the top, because a dialog opened
+	//     from full screen must answer Escape before the mode does. It cannot
+	//     work while the focus is INSIDE the frame: that page is in an opaque
+	//     origin and its keystrokes are its own, which is the whole reason the
+	//     way out is a control and not only a key.
+	//   * IT DOES NOT SURVIVE A RELOAD. Held in this variable and written
+	//     nowhere, so re-opening Daimond can never put somebody back inside a
+	//     mode they have forgotten they left on. It DOES survive a re-render of
+	//     the crystal, because the control and the state both live outside
+	//     `#crystal-body`, which is the part `renderCrystal` rebuilds.
+
+	/// Whether the crystal is filling the app. Session-only, by design; see above.
+	var crystalFull = false;
+
+	/// Enter or leave full screen.
+	///
+	/// The layout is CSS's: `[data-cfull]` on the root element (app.css,
+	/// responsive.css). This sets the attribute, dresses the control, and tells
+	/// the layout engine that the panels it measures have changed size.
+	///
+	/// # Arguments
+	/// * `on` - Whether the crystal should fill the app.
+	function setCrystalFull(on) {
+		on = !!on;
+		if (on === crystalFull) { syncCrystalFullBtn(); return; }
+		crystalFull = on;
+		if (on) document.documentElement.setAttribute('data-cfull', '1');
+		else document.documentElement.removeAttribute('data-cfull');
+		syncCrystalFullBtn();
+		// AND NOTHING ELSE. `DaimondPanels.reflow()` was called here, to tell the
+		// layout engine that the panels either side of this one had gone -- and it
+		// TORE THE CRYSTAL PAGE DOWN. Reflow re-parents panels between the stage
+		// and the dock's columns, an iframe that is moved in the DOM reloads, and a
+		// second `load` on a crystal frame is read as the page navigating itself:
+		// `fell('partial')`, the frame gone, the built-in view in its place with a
+		// note saying the page did not draw everything. Seen at 1280 -- where the
+		// panel really does change column -- and not at 375, where the mobile rules
+		// move nothing, which is exactly the shape of bug that ships.
+		//
+		// Nothing needs re-measuring anyway. No panel opened or closed, so the
+		// engine's model is unchanged; what changed is CSS, and the widths it wrote
+		// inline are still on the elements, so taking the attribute off restores
+		// them without being asked.
+	}
+
+	/// Say on the control which state it is in, and what pressing it will do.
+	///
+	/// `aria-pressed` carries the state for a screen reader; the visible word is
+	/// what a person who cannot read the glyph goes by. Both are the WAY OUT
+	/// while the mode is on, so the label names the destination rather than the
+	/// mode: "Exit full screen", not "Full screen (on)".
+	function syncCrystalFullBtn() {
+		var b = document.getElementById('crystal-full-btn');
+		if (!b) return;
+		var txt = document.getElementById('crystal-full-txt');
+		var label = crystalFull
+			? tOr('crystal.full_exit', 'Exit full screen')
+			: tOr('crystal.full', 'Full screen');
+		b.setAttribute('aria-pressed', crystalFull ? 'true' : 'false');
+		b.setAttribute('aria-label', label);
+		b.title = crystalFull
+			? tOr('crystal.full_exit_help', 'Put the rail and the top bar back')
+			: tOr('crystal.full_help', 'Fill the screen with this page');
+		if (txt) txt.textContent = crystalFull ? label : '';
+	}
+
+	/// Is anything drawn over the app right now?
+	///
+	/// Escape belongs to the topmost thing on screen. Every dialog here already
+	/// answers it (`verify_escapable` is about nothing else), and most of them
+	/// call `preventDefault` -- but the appearance menu, the panel gallery and
+	/// the command palette close on Escape WITHOUT marking the event, so
+	/// `defaultPrevented` alone would let one keystroke both close the menu and
+	/// leave full screen. Asking what is on screen catches those three as well.
+	///
+	/// On screen, not merely present: `#identity-modal` and the popovers all live
+	/// in the document from first paint.
+	function overlayUp() {
+		var sel = '.modal, .pop:not([hidden]), .pal-scrim:not([hidden]), .pair-scrim,'
+			+ ' .tile-dlg-card, .about-card, #cp-modal';
+		var els = document.querySelectorAll(sel);
+		for (var i = 0; i < els.length; i++) {
+			if (els[i].getClientRects().length && getComputedStyle(els[i]).visibility !== 'hidden') {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/// The bar above the crystal: edit it, see where it has been, file it.
 	///
 	/// It sits above every view the crystal face can show -- the page, the form, the history,
@@ -21727,11 +21916,13 @@ import init, {
 		if (!input) return;
 		var note = tOr('crystal.page_note',
 			'Change this Diamond\'s PAGE (crystal.html), not its memory (crystal.json). '
-			+ 'Read crystal.html first, then edit it, and leave crystal.json alone. Keep it '
-			+ 'self-contained: all CSS and JavaScript inline, images only as data: URIs, no '
-			+ 'fetch, no external files, no eval. Keep its ready, rendered and height '
-			+ 'messages, and let rendered name every top-level key of the data that has '
-			+ 'content. What I want: ');
+				+ 'Read crystal.html first, then edit it, and leave crystal.json alone. Keep '
+				+ 'it self-contained: all CSS and JavaScript inline, images only as data: '
+				+ 'URIs, no fetch, no external files, no eval. Keep its ready, rendered and '
+				+ 'height messages, and let rendered name every top-level key of the data that '
+				+ 'has content. A page may also save files into this Diamond with the save '
+				+ 'message and read them back with asset, so an interactive page can keep what '
+				+ 'the user does. What I want: ');
 		var had = input.value.trim();
 		input.value = note + (had ? had : '');
 		input.focus();
@@ -21842,6 +22033,300 @@ import init, {
 
 	/// The tail of the page-write chain, so appends serialise. See `writeCrystalAsset`.
 	var _cappWrite = Promise.resolve();
+
+	// ── A capp, delivered ────────────────────────────────────────────
+	//
+	// Asking a daimon for a capp is the ordinary way to get one. The first one
+	// somebody meets should not have to be asked for at all, so the guide offers
+	// to make it and it arrives FURNISHED, from a template that ships in the
+	// bundle. The template is in every install whether or not anybody presses
+	// the button, because a daimon asked for something like it reads that file
+	// as a worked example.
+	//
+	// Three rules, each of them a way this could have gone wrong:
+	//
+	//   * THE FILES GO IN THROUGH THE APP'S OWN WRITERS. `crystal.html` through
+	//     `write_crystal_page` and `crystal.json` through `write_crystal_data`,
+	//     so the two ceilings, the version snapshot and the log apply exactly as
+	//     they do to a daimon's own edit -- a template over the page cap is
+	//     refused here rather than discovered later. Anything else goes through
+	//     `Wasm.store_write` and never `write_file`, for the reason
+	//     `writeCrystalAsset` gives: a Diamond lives in OPFS and the file tools
+	//     resolve against the WORKSPACE, which is somebody's real folder.
+	//   * ONCE. A second "Life log" is not a second log, it is a lost one: the
+	//     entries are in the first. An existing one is opened, and the user is
+	//     told which of the two happened rather than left to guess from a rail
+	//     that looks the same either way.
+	//   * NOTHING HALF-MADE. Every file is fetched BEFORE the Diamond is
+	//     created, so a build without the template says so instead of leaving an
+	//     empty Diamond named after a feature that did not arrive.
+
+	/// The capps that ship with the app, by key.
+	var CAPP_TEMPLATES = {
+		lifelog: {
+			dir:  'capps/lifelog/',
+			name: 'Life log',
+			// Without the page there is nothing to deliver.
+			need: ['crystal.html'],
+			// What the template may carry besides its page. A file this build does
+			// not have is skipped, so the list may name more than one carries.
+			// The paths after `crystal.json` are the ones the shipped page names
+			// in its own store comment; `capp.json` is how a template adds to them
+			// without this file being edited.
+			also: [
+				'crystal.json',
+				'index.json',
+				'lanes/diet.json', 'lanes/gym.json', 'lanes/body.json',
+				// No `cat/body.json`: the body lane has no `ref` field, so it has
+				// no catalogue to carry. `crystal.json` stays and its miss is
+				// load-bearing -- `spec.seed` is written only when the template
+				// carries none, per the note above.
+				'cat/diet.json', 'cat/gym.json',
+			],
+			// THE CRYSTAL A DIAMOND CANNOT OPEN WITHOUT. `renderCrystal` shows the
+			// "nothing here yet" line INSTEAD OF MOUNTING THE PAGE when the crystal
+			// has no content -- so a Diamond furnished with a capp and an empty
+			// crystal is a Diamond whose capp never appears. Found by delivering
+			// against a template that ships no `crystal.json`, which is what the
+			// first one to land actually did.
+			//
+			// Written only when the template carries none of its own, and phrased
+			// as what the Diamond is FOR: it is the daimon's standing context from
+			// the first turn, and it is the first thing the user reads if the page
+			// ever falls back.
+			seed: {
+				title:   'Life log',
+				summary: 'What I eat, what I do and how I feel, kept by the page on this '
+					+ 'Diamond. Tap a tile to record something; the entries are files in '
+					+ 'this Diamond, on this device.',
+			},
+		},
+	};
+
+	/// Which files to copy out of a template.
+	///
+	/// The built-in list, plus anything named in the template's own `capp.json`
+	/// -- `{"files": ["crystal.html", "data/foods.json", …]}`. A capp that keeps
+	/// reference data in folders of its own cannot be discovered from here: the
+	/// app is served as flat files and an HTTP origin does not answer the
+	/// question "what is in this directory".
+	///
+	/// **The manifest is a SEAM.** The lane that writes a template and this one
+	/// have to agree on the name, and this end tolerates its absence entirely so
+	/// that neither blocks the other: no `capp.json`, and the built-in list
+	/// stands.
+	///
+	/// # Arguments
+	/// * `spec` - One entry of `CAPP_TEMPLATES`.
+	async function cappFiles(spec) {
+		var files = spec.need.concat(spec.also);
+		var txt = '';
+		try {
+			var r = await fetch(spec.dir + 'capp.json', { cache: 'no-store' });
+			if (r.ok) txt = await r.text();
+		} catch (e) { /* no manifest: the built-in list stands */ }
+		if (txt) {
+			try {
+				var m = JSON.parse(txt);
+				(Array.isArray(m && m.files) ? m.files : []).forEach(function (f) {
+					if (typeof f === 'string' && cappPathOk(f) && files.indexOf(f) < 0) files.push(f);
+				});
+			} catch (e) { /* a manifest that will not parse is one we do not have */ }
+		}
+		return files;
+	}
+
+	/// Is this a path a template may be laid down at, inside a Diamond?
+	///
+	/// The same shape as `safePath` in crystal.js, and here for the same reason
+	/// the second check in `writeCrystalAsset` is there: the list being checked
+	/// is our own, so this cannot fail on a correct one -- and everything it
+	/// would catch fails in the direction of more reach. A manifest is a file in
+	/// the bundle, but it is the one input here that a later lane writes.
+	///
+	/// # Arguments
+	/// * `rel` - The path relative to the Diamond's own folder.
+	function cappPathOk(rel) {
+		var p = String(rel == null ? '' : rel);
+		if (!p || p.length > 512) return false;
+		// Backslash and NUL, exactly as `safePath` refuses them. A SPACE is not:
+		// it is legal in a filename, and refusing it here would drop a template's
+		// file without saying so.
+		if (/[\\\u0000]/.test(p)) return false;
+		if (p.charAt(0) === '/') return false;
+		if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(p)) return false;
+		var segs = p.split('/');
+		for (var i = 0; i < segs.length; i++) if (segs[i] === '..') return false;
+		return true;
+	}
+
+	/// Make the Diamond a template describes, furnish it from the bundle, and
+	/// show it.
+	///
+	/// Answers with a WORD -- `'made'`, `'opened'`, `'cancelled'`, `'missing'`,
+	/// `'failed'` -- rather than a boolean, because the caller has to be able to
+	/// say which of several very different nothings happened.
+	///
+	/// # Arguments
+	/// * `key` - A key of `CAPP_TEMPLATES`.
+	async function makeCappDiamond(key) {
+		var spec = CAPP_TEMPLATES[key];
+		if (!spec) return 'failed';
+		var title = tOr('capp.title', '{name}', { name: spec.name });
+
+		// ── Already there? Asked of the store, not of the rail's last paint: the
+		//    rail may be filtered to nothing, or a search old.
+		await loadDiamonds();
+		var had = null;
+		(diamonds || []).forEach(function (d) { if (!had && d.name === spec.name) had = d; });
+		if (had) {
+			var open = await confirmDialog(
+				tOr('capp.exists_body',
+					'You already have a Diamond called “{name}”, and what you have logged is in '
+					+ 'it. Making a second one would leave those entries behind.', { name: spec.name }),
+				tOr('capp.exists_ok', 'Open it'),
+				{ title: title, danger: false });
+			if (!open) return 'cancelled';
+			clearDiamondFilters();
+			await selectDiamond(had);
+			if (isMobile()) mshow('ai');
+			return 'opened';
+		}
+
+		// ── Everything it is made of, BEFORE anything is made.
+		var files = await cappFiles(spec);
+		var body = {};
+		for (var i = 0; i < files.length; i++) {
+			var rel = files[i], text = null;
+			try {
+				var res = await fetch(spec.dir + rel, { cache: 'no-store' });
+				if (res && res.ok) text = await res.text();
+			} catch (e) { text = null; }
+			if (text == null) {
+				if (spec.need.indexOf(rel) < 0) continue;      // an optional file this build lacks
+				await noticeDialog(title, tOr('capp.missing_body',
+					'This build of Daimond does not carry the {name} template, so there is nothing '
+					+ 'to put in a Diamond. Nothing has been made. Ask your daimon for a page '
+					+ 'instead, or update Daimond and try again.', { name: spec.name }));
+				return 'missing';
+			}
+			body[rel] = text;
+		}
+
+		// ── The one question. A click inside the guide is a click in a frame the
+		//    app cannot verify the activation of -- see the listener below -- so
+		//    the decision is taken here, in app chrome, where it is provably a
+		//    person's. It also says plainly what is about to appear in the rail.
+		var go = await confirmDialog(
+			tOr('capp.make_body',
+				'This makes a Diamond called “{name}” and puts the {name} page inside it. '
+				+ 'What you record stays in that Diamond, on this device.', { name: spec.name }),
+			tOr('capp.make_ok', 'Make it'),
+			{ title: title, danger: false });
+		if (!go) return 'cancelled';
+
+		var id;
+		try { id = await diamondApp().create_diamond(spec.name); }
+		catch (e) { await noticeDialog(t('rail.create_failed'), friendlyError(e)); return 'failed'; }
+
+		// The Diamond's own model, where there is one to give it. A capp draws and
+		// records without a model at all, so a machine with no key still gets a
+		// working Life log -- it simply has no daimon to ask about it yet.
+		try {
+			var d = window.DaimondModels ? DaimondModels.getDefault() : null;
+			if (d && d.model && DaimondModels.resolve(d.provider, d.model)) {
+				setDiamondModel(id, {
+					provider: d.provider, model: d.model,
+					workerProvider: d.provider, workerModel: d.model,
+				});
+			}
+		} catch (e) { /* no models module: the Diamond is still a Diamond */ }
+
+		// ── A crystal, if the template did not bring one. See `seed`: without
+		//    content in `crystal.json` the crystal face draws its empty line and
+		//    never mounts the page at all, so this is not decoration.
+		if (spec.seed && !('crystal.json' in body)) {
+			body['crystal.json'] = JSON.stringify(spec.seed, null, 2);
+			if (files.indexOf('crystal.json') < 0) files.push('crystal.json');
+		}
+
+		// ── The furniture.
+		var failed = '';
+		for (var j = 0; j < files.length; j++) {
+			var f = files[j];
+			if (!(f in body)) continue;
+			try {
+				if (f === 'crystal.html')      await diamondApp().write_crystal_page(id, body[f]);
+				else if (f === 'crystal.json') await diamondApp().write_crystal_data(id, body[f]);
+				else await Wasm.store_write('diamonds/' + id + '/' + f, body[f]);
+			} catch (e) {
+				// The page is the capp. Anything else missing leaves a capp that has
+				// to make its own file on first use, which is what it does anyway.
+				if (spec.need.indexOf(f) >= 0) failed = friendlyError(e);
+			}
+		}
+
+		// Every other path that makes a Diamond says so out loud, and this one did
+		// not: `bumpDiamonds` writes the cross-tab nonce and nudges the push. A
+		// Diamond made without it exists on this tab alone until something
+		// unrelated happens to schedule a sync -- so the first capp somebody is
+		// given would be the one Diamond that did not reach their other device.
+		bumpDiamonds();
+		clearDiamondFilters();
+		await loadDiamonds();
+		var made = null;
+		(diamonds || []).forEach(function (x) { if (x.id === id) made = x; });
+		if (made) await selectDiamond(made);
+		if (isMobile()) mshow('ai');
+		if (failed) {
+			await noticeDialog(title, tOr('capp.page_failed',
+				'The Diamond was made, but its page could not be written: {why}', { why: failed }));
+			return 'failed';
+		}
+		return 'made';
+	}
+
+	// ── The guide asks for one ───────────────────────────────────────
+	//
+	// The guide is our own static site and it is framed WITHOUT
+	// `allow-same-origin` (see `guide/frame.js`), so a control on a guide page
+	// cannot call into the app: `postMessage` is the only channel it has left.
+	// What comes up that channel is a REQUEST and never an instruction, and
+	// three things keep it that way:
+	//
+	//   * IT IS ONLY HEARD FROM THE WEB PANEL'S OWN FRAME, and only while that
+	//     frame is showing the guide. The same element holds a stranger's page
+	//     the rest of the time, and a page a model found is the least
+	//     trustworthy document in the app.
+	//   * IT IS ANSWERED WITH A DIALOG, in app chrome. A parent cannot verify
+	//     user activation across a frame boundary -- a timer and a tap look the
+	//     same from here -- which is exactly why the crystal channel has no
+	//     `ask` verb, and the same reasoning applies to a page in the Web panel.
+	//   * WHAT IT CAN ASK FOR IS IDEMPOTENT. The second request opens the
+	//     Diamond the first one made. So the worst a page that should not have
+	//     sent this can achieve is one dialog, which the user says no to.
+	window.addEventListener('message', function (e) {
+		var d = e && e.data;
+		if (!d || d.daimondGuide !== 'make') return;
+		var f = document.getElementById('web-frame');
+		if (!f || !e.source || e.source !== f.contentWindow) return;
+		// Our own guide, not a page the panel happens to be showing. Asked of the
+		// driver rather than of the frame's document, which is opaque to us.
+		var st = null;
+		try { st = window.DaimondWeb && DaimondWeb.status ? DaimondWeb.status() : null; }
+		catch (err) { st = null; }
+		if (!st || st.driver !== 'guide') return;
+		var key = String(d.what || '');
+		if (!CAPP_TEMPLATES[key]) return;            // a guide page from a later build
+		var src = e.source;
+		makeCappDiamond(key).then(function (status) {
+			// The guide says what happened, in the place the reader is looking. It
+			// is told the outcome only -- there is nothing here it does not already
+			// know, and a status word cannot be turned into a read of anything.
+			try { src.postMessage({ daimondGuide: 'made', what: key, status: status }, '*'); }
+			catch (err) { /* the reader has navigated away; nothing to tell */ }
+		});
+	});
 
 	/// Hand-edit the crystal: a FORM over the core keys, with the raw JSON behind a second
 	/// click.
@@ -24668,7 +25153,20 @@ import init, {
 		// `syncComposer` raises the dots as well as putting Stop on the button, so
 		// what this turn is doing has to be on the record before it is called.
 		rec._busy = tOr('chat.busy', 'Thinking…');
-		if (onScreen()) syncComposer();
+		// UNGUARDED, for the reason both exits below already give -- and this was
+		// the one call left carrying the guard. `onScreen()` is true only on the
+		// CHAT face, and a Diamond opens on the CRYSTAL face with the same composer
+		// under it: so a turn steered from the face a Diamond opens on left the
+		// button an arrow for its whole length, and `stopGeneration` -- which works,
+		// and which `rec.app` above exists to make reach this turn -- had nothing to
+		// press. Reported as "I could not stop the LLM, I had to refresh". A turn
+		// that cannot be stopped is a turn spending the user's money.
+		//
+		// Safe from anywhere, because `syncComposer` decides everything it does
+		// from `current` rather than from `rec`: a gather round or a trigger firing
+		// behind another chat re-decides that chat's own dots and button, which is
+		// what they should say either way.
+		syncComposer();
 		if (onCrystal) showCrystalSpinner();
 
 		// Both faces now keep their dots up for the whole turn, which is what
@@ -25730,6 +26228,7 @@ import init, {
 		showTrailIfLooping();
 		renderAccountPicker(unlock);
 		renderPasskeyOption(unlock);
+		syncDoors(unlock);
 		// A device that just redeemed a pairing code reloads into unlock mode. The
 		// passphrase box then reappears with the linked account's name, and it must
 		// be unmistakable that the passphrase to type is the one from the OTHER
@@ -25822,6 +26321,18 @@ import init, {
 				.filter(function (el) { return el && el.getClientRects().length; })[0];
 			if (next) { try { next.focus(); } catch (e) { /* gone */ } }
 		}, 60);
+		// The front door's "I have a passcode", carried across the one step that
+		// had to come first. `DaimondPasscode.front()` recorded the intent because
+		// there was no device key to redeem onto; there is one now.
+		//
+		// Belt AND braces on purpose. A device in the closed beta is refused by
+		// the gateway a moment from now and js/passcode.js raises the same dialog
+		// off `daimond:refused` -- but that path depends on a server answering,
+		// and the person who pressed that button is holding a code either way.
+		// `resume()` is a no-op when the dialog is already up.
+		try {
+			if (window.DaimondPasscode && DaimondPasscode.resume) DaimondPasscode.resume();
+		} catch (e) { /* stripped build */ }
 	}
 
 	// After a successful create/unlock: decrypt the stored key into memory and
@@ -25994,11 +26505,97 @@ import init, {
 			+ '<circle cx="8" cy="10" r="4"/><path d="M11 11l8 8M16 16l2-2M19 19l2-2"/></svg>'
 			+ '<span>Use a passkey</span>';
 		btn.addEventListener('click', passkeyUnlock);
-		primary.parentNode.insertBefore(btn, primary.nextSibling);
+		// After the FOOT, not after the button inside it. The primary sits in a
+		// sticky `.id-foot` (css/app.css) so it survives the card scrolling;
+		// inserted inside that foot, the passkey button and its note would be
+		// stuck to the bottom of the card as well and would cover the form they
+		// are an alternative to. The place on screen is the same either way.
+		var host = primary.closest('.id-foot') || primary;
+		host.parentNode.insertBefore(btn, host.nextSibling);
 		var note = document.createElement('div');
 		note.id = 'id-passkey-note';
 		note.className = 'id-passkey-note';
 		btn.parentNode.insertBefore(note, btn.nextSibling);
+	}
+
+	/// Has this browser ever held a Daimond identity, under any of its accounts?
+	///
+	/// The question the front door turns on, and it is deliberately not "is
+	/// there an identity in the account I am looking at". A person adding a
+	/// second account to their own browser is on the CREATE screen too, and they
+	/// are not a stranger; `fp` is stamped into the account registry by
+	/// `syncAccountFromIdentity` the first time an identity is unlocked, so a
+	/// registry with no fingerprint anywhere in it is a browser nobody has ever
+	/// made an account on.
+	///
+	/// Unsure counts as NOT a stranger: the strip is an offer, and showing it to
+	/// somebody who has been here for months is worse than not showing it to a
+	/// browser whose registry could not be read.
+	function neverHeldAnIdentity() {
+		try {
+			if (window.DaimondIdentity && DaimondIdentity.exists()) return false;
+			if (!window.DaimondAccounts) return false;
+			var a = DaimondAccounts.list();
+			for (var i = 0; i < a.length; i++) { if (a[i] && a[i].fp) return false; }
+			return true;
+		} catch (e) { return false; }
+	}
+
+	/// Draw the three ways in, for a stranger and for nobody else.
+	///
+	/// The routes themselves are not new. `/apply.html` takes applications and
+	/// reads `?for=` to choose between the test and the waitlist, and
+	/// js/passcode.js has held the passcode dialog since the gateway started
+	/// refusing strangers. What was missing was any of it being reachable from
+	/// the screen "Launch app" actually lands on.
+	function syncDoors(unlock) {
+		var box = document.getElementById('id-doors');
+		if (!box) return;
+		var note = document.getElementById('id-doors-note');
+		if (note) { note.textContent = ''; note.style.display = 'none'; }
+		var code = document.getElementById('id-door-code');
+		if (code) code.setAttribute('aria-expanded', 'false');
+		var show = !unlock && neverHeldAnIdentity();
+		box.style.display = show ? '' : 'none';
+		if (box.dataset.wired) return;
+		box.dataset.wired = '1';
+		if (!code) return;
+		code.addEventListener('click', function () {
+			// A passcode is redeemed onto THIS DEVICE'S KEY -- `redeemPasscode`
+			// signs the redemption with it -- and a browser at this screen has no
+			// key yet. Raising the code field here would be a box that refuses the
+			// moment it is used, which is the trap js/passcode.js documents itself
+			// as refusing to fall into. So the button says the order instead, puts
+			// the keyboard on the first step, and records that a code is waiting:
+			// `hideIdentity` hands it back to passcode.js the moment there is
+			// something to sign with.
+			var n = document.getElementById('id-doors-note');
+			// A SECOND PRESS PUTS IT AWAY. Said once and left on screen, this was
+			// the only control on the create screen with no way back, which is the
+			// shape `verify_reversible` exists to find. The note is what the button
+			// opens, so the button is what closes it.
+			//
+			// Closing does NOT withdraw the intent recorded below, and that is
+			// deliberate: "I have a passcode" is still true, the dialog is still
+			// wanted the moment there is a key to sign with, and it arrives with a
+			// closer of its own. What the second press retracts is the sentence
+			// taking up the screen, not the answer to the question.
+			if (n && n.style.display !== 'none' && code.getAttribute('aria-expanded') === 'true') {
+				n.textContent = '';
+				n.style.display = 'none';
+				code.setAttribute('aria-expanded', 'false');
+				return;
+			}
+			var opened = false;
+			try {
+				opened = !!(window.DaimondPasscode && DaimondPasscode.front && DaimondPasscode.front());
+			} catch (e) { opened = false; }
+			if (opened) return;
+			if (n) { n.textContent = t('door.code_later'); n.style.display = ''; }
+			code.setAttribute('aria-expanded', 'true');
+			var nm = document.getElementById('id-name');
+			if (nm) { try { nm.focus(); } catch (e) { /* not on screen */ } }
+		});
 	}
 
 	/// Show or hide the passkey button for the current identity-modal mode.
@@ -28213,6 +28810,17 @@ import init, {
 		else window.open('guide/', '_blank');       // no web module: the guide still stands alone
 	});
 
+	// The Improve panel's circled "i", on the same route and with the same
+	// fallback -- one page of the guide rather than its front. Wired here, beside
+	// the header's own guide button, because this is where the app's routes into
+	// the guide are kept; js/improve.js owns what the panel DOES and this button
+	// does nothing to a note.
+	var impInfo = document.getElementById('improve-info');
+	if (impInfo) impInfo.addEventListener('click', function () {
+		if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('interface.html');
+		else window.open('guide/interface.html', '_blank');
+	});
+
 	// About: what this is, which build you are running, and who made it. It sits
 	// beside the guide because the two are the same kind of question.
 	var aboutBtn = document.getElementById('about-btn');
@@ -28375,6 +28983,30 @@ import init, {
 			if (!currentDiamond) return;
 			selectDiamond(currentDiamond, which);
 		});
+	});
+	// Full screen for the crystal face. A press, and nothing else -- see
+	// `setCrystalFull` for why that sentence is load-bearing.
+	var crystalFullBtn = document.getElementById('crystal-full-btn');
+	if (crystalFullBtn) crystalFullBtn.addEventListener('click', function () {
+		setCrystalFull(!crystalFull);
+		// The focus stays on the control, which is now the way back: a keyboard
+		// user who has just covered the app has Escape AND Enter without moving.
+		try { crystalFullBtn.focus(); } catch (e) { /* gone from the page */ }
+	});
+	// ESCAPE LEAVES IT, from wherever the app holds the focus -- and NOT in the
+	// bubble of something else's Escape. This listener is deliberately not in the
+	// capture phase: every dialog in the app installs a capture handler when it
+	// opens, and a capture listener registered here at start-up would run before
+	// all of them and pull the mode out from under a dialog the user was
+	// answering. Bubbling, plus `defaultPrevented`, plus `overlayUp` for the three
+	// popovers that close on Escape without marking the event, is the whole rule.
+	document.addEventListener('keydown', function (e) {
+		if (e.key !== 'Escape' || !crystalFull) return;
+		if (e.defaultPrevented || overlayUp()) return;
+		e.preventDefault();
+		setCrystalFull(false);
+		var b = document.getElementById('crystal-full-btn');
+		if (b) { try { b.focus(); } catch (err) { /* gone from the page */ } }
 	});
 	var linkGraphBtn = document.getElementById('link-graph-btn');
 	if (linkGraphBtn) linkGraphBtn.addEventListener('click', function () {
