@@ -1559,7 +1559,7 @@
 	// ── The crystal ────────────────────────────────────────────
 	'crystal.page':           'Page',
 	'crystal.page_help':      'Ask the daimon to change how this crystal looks, not what it says',
-	'crystal.page_note':      'Change this Diamond\'s PAGE (crystal.html), not its memory (crystal.json). Read crystal.html first, then edit it, and leave crystal.json alone. Keep it self-contained: all CSS and JavaScript inline, images only as data: URIs, no fetch, no external files, no eval. Keep its ready, rendered and height messages, and let rendered name every top-level key of the data that has content. What I want: ',
+	'crystal.page_note':      'Change this Diamond\'s PAGE (crystal.html), not its memory (crystal.json). Read crystal.html first, then edit it, and leave crystal.json alone. Keep it self-contained: all CSS and JavaScript inline, images only as data: URIs, no fetch, no external files, no eval. Keep its ready, rendered and height messages, and let rendered name every top-level key of the data that has content. A page may also save files into this Diamond with the save message and read them back with asset, so an interactive page can keep what the user does. What I want: ',
 	'crystal.history':        'History',
 	'crystal.tags':           'Tags',
 	'crystal.tags_help':      'File this Diamond in the rail',

@@ -1371,7 +1371,7 @@
 	// ── The crystal ────────────────────────────────────────────
 	'crystal.page':           'Seite',
 	'crystal.page_help':      'Den Daimon bitten, das Aussehen dieses Kristalls zu ändern, nicht seinen Inhalt',
-	'crystal.page_note':      'Ändere die SEITE dieses Diamanten (crystal.html), nicht sein Gedächtnis (crystal.json). Lies zuerst crystal.html, bearbeite es dann, und lass crystal.json unangetastet. Halte sie eigenständig: alles CSS und JavaScript inline, Bilder nur als data: URIs, kein fetch, keine externen Dateien, kein eval. Behalte ihre ready-, rendered- und height-Nachrichten, und lass rendered jeden Schlüssel der obersten Ebene nennen, der Inhalt hat. Was ich möchte: ',
+	'crystal.page_note':      'Ändere die SEITE dieses Diamanten (crystal.html), nicht sein Gedächtnis (crystal.json). Lies zuerst crystal.html, bearbeite es dann, und lass crystal.json unangetastet. Halte sie eigenständig: alles CSS und JavaScript inline, Bilder nur als data: URIs, kein fetch, keine externen Dateien, kein eval. Behalte ihre ready-, rendered- und height-Nachrichten, und lass rendered jeden Schlüssel der obersten Ebene nennen, der Inhalt hat. Eine Seite darf mit der Nachricht save auch Dateien in diesen Diamanten schreiben und sie mit asset wieder lesen, damit eine interaktive Seite behalten kann, was der Nutzer tut. Was ich möchte: ',
 	'crystal.history': 'Historie',
 	'crystal.tags': 'Tags',
 	'crystal.tags_help': 'Dieses Diamond in der Seitenleiste einordnen',

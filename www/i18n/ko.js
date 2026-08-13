@@ -1404,7 +1404,7 @@
 	// ── 결정체 ─────────────────────────────────────────────────
 	'crystal.page':           '페이지',
 	'crystal.page_help':      '이 크리스털의 내용이 아니라 모양을 바꾸도록 데이몬에게 요청합니다',
-	'crystal.page_note':      '이 Diamond의 페이지(crystal.html)를 바꾸세요. 기억(crystal.json)이 아닙니다. crystal.html을 먼저 읽고 나서 편집하고, crystal.json은 그대로 두세요. 자체 완결로 유지하세요: CSS와 JavaScript는 모두 인라인, 이미지는 data: URI만, fetch 없음, 외부 파일 없음, eval 없음. ready, rendered, height 메시지를 유지하고, rendered가 내용이 있는 데이터의 모든 최상위 키를 지목하게 하세요. 제가 원하는 것: ',
+	'crystal.page_note':      '이 Diamond의 페이지(crystal.html)를 바꾸세요. 기억(crystal.json)이 아닙니다. crystal.html을 먼저 읽고 나서 편집하고, crystal.json은 그대로 두세요. 자체 완결로 유지하세요: CSS와 JavaScript는 모두 인라인, 이미지는 data: URI만, fetch 없음, 외부 파일 없음, eval 없음. ready, rendered, height 메시지를 유지하고, rendered가 내용이 있는 데이터의 모든 최상위 키를 지목하게 하세요. 페이지는 save 메시지로 이 Diamond에 파일을 저장하고 asset으로 다시 읽을 수 있으므로, 상호작용하는 페이지는 사용자가 한 일을 보존할 수 있습니다. 제가 원하는 것: ',
 	'crystal.history':        '이력',
 	'crystal.tags':           '태그',
 	'crystal.tags_help':      '이 Diamond을 레일에서 갈래지어 둬요',

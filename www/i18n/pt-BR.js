@@ -1367,7 +1367,7 @@
 	// ── The crystal ────────────────────────────────────────────
 	'crystal.page':           'Página',
 	'crystal.page_help':      'Peça ao daimon para mudar a aparência deste cristal, não o que ele diz',
-	'crystal.page_note':      'Mude a PÁGINA deste Diamante (crystal.html), não a sua memória (crystal.json). Leia crystal.html primeiro, depois edite-o, e deixe crystal.json em paz. Mantenha-a autocontida: todo o CSS e JavaScript inline, imagens apenas como data: URIs, sem fetch, sem arquivos externos, sem eval. Preserve as mensagens ready, rendered e height, e faça rendered nomear cada chave de nível superior dos dados que tenha conteúdo. O que eu quero: ',
+	'crystal.page_note':      'Mude a PÁGINA deste Diamante (crystal.html), não a sua memória (crystal.json). Leia crystal.html primeiro, depois edite-o, e deixe crystal.json em paz. Mantenha-a autocontida: todo o CSS e JavaScript inline, imagens apenas como data: URIs, sem fetch, sem arquivos externos, sem eval. Preserve as mensagens ready, rendered e height, e faça rendered nomear cada chave de nível superior dos dados que tenha conteúdo. Uma página também pode salvar arquivos neste Diamante com a mensagem save e lê-los de volta com asset, para que uma página interativa preserve o que o usuário faz. O que eu quero: ',
 	'crystal.history': 'Histórico',
 	'crystal.tags': 'Etiquetas',
 	'crystal.tags_help': 'Arquivar este Diamond na barra lateral',

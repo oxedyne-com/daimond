@@ -21668,6 +21668,11 @@ import init, {
 			// is a classic script with no wasm to read a file with, which is the whole reason
 			// the verb goes through the app at all.
 			onAsset: function (fullPath, rel) { return readCrystalAsset(id, fullPath, rel); },
+			// The write-back half. A page that can read its own folder and not write it can
+			// draw anything and remember nothing.
+			onSave: function (fullPath, rel, text, mode) {
+				return writeCrystalAsset(id, fullPath, rel, text, mode);
+			},
 			// Without this the fallback note draws no reset button, so the way back from a
 			// broken page would silently not exist.
 			onReset: function () { return resetCrystalPage(id); },
@@ -21772,6 +21777,71 @@ import init, {
 		}
 		return await Wasm.store_read(path);
 	}
+
+	/// Answer the page's `save` verb: write one text file into THIS Diamond's directory.
+	///
+	/// The mirror of `readCrystalAsset`, and the check is re-made here for the same reason it is
+	/// re-made there: `crystal.js` has already fenced the path, and this is the second of the two
+	/// comparisons that make the promise a held one rather than an assumed one. It costs nothing
+	/// on a correct caller and everything it would catch fails in the direction of more reach.
+	///
+	/// Through `Wasm.store_write`, never `Wasm.write_file`: a Diamond lives in OPFS, and
+	/// `write_file` resolves against the workspace — so with a real folder open, a page's log
+	/// would be written into somebody's project.
+	///
+	/// **Append is a read-then-write, and that is a deliberate choice rather than a missing
+	/// feature.** OPFS can append natively, but the store edge exposes whole-file reads and
+	/// writes, and a logger writing a few hundred bytes a few times a day does not need the
+	/// third path. What it does need is for two appends in the same tick not to lose one, which
+	/// is why they are serialised through `_cappWrite` below.
+	///
+	/// **What append does NOT buy is a merge across devices, and saying otherwise was wrong.**
+	/// `applyDiamonds` replaces a Diamond WHOLESALE from whichever copy is fresher by `touched`;
+	/// only tags and links union, and only at equal stamps. So two devices that both logged
+	/// between syncs do not get both sets of lines -- the older side's go with the rest of its
+	/// copy. What append actually buys is that the winning copy is a whole log rather than one
+	/// record, and that a second tap on the same device cannot lose the first. A real
+	/// cross-device merge would need the log to be its own synced object with a union rule, in
+	/// the shape `unionDiamondLinks` already has, and that is not built.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond whose page is asking.
+	/// * `fullPath` - `diamonds/<id>/<rel>`, built by the frame lane.
+	/// * `rel` - What the page actually asked for, for the check below.
+	/// * `text` - What to write.
+	/// * `mode` - `append` or `replace`.
+	async function writeCrystalAsset(id, fullPath, rel, text, mode) {
+		var path = String(fullPath == null ? '' : fullPath);
+		var home = 'diamonds/' + id + '/';
+		if (path.indexOf(home) !== 0 || path.indexOf('..') >= 0) {
+			throw new Error('Not a path in this Diamond: ' + String(rel == null ? path : rel));
+		}
+		// One write at a time, per page. Two appends that both read the old file before either
+		// wrote would each write old + their own line, and the first line would be gone -- the
+		// exact shape of the tag-loss incident, arriving through a different door.
+		_cappWrite = _cappWrite.then(async function () {
+			var body = String(text == null ? '' : text);
+			if (mode === 'append') {
+				var had = '';
+				try { had = await Wasm.store_read(path); } catch (e) { had = ''; }
+				if (had && had.slice(-1) !== '\n') had += '\n';
+				body = had + body;
+			}
+			await Wasm.store_write(path, body);
+			// AND STAMP THE DIAMOND. `store_write` is a raw OPFS write and moves nothing, but
+			// `touched` is what decides whose copy the other device takes: a phone where the
+			// user only ever logged into a capp would stay the STALE side, and the desktop's
+			// copy would replace it wholesale and take the log with it. That is the tag-loss
+			// shape of 2026-08-11 arriving through a new door. It is inside the chain and
+			// after the write, so a failure to stamp cannot lose the bytes -- it can only
+			// delay them travelling, which is recoverable and silent loss is not.
+			try { await Wasm.touch_diamond(id); } catch (e) { /* the bytes are down; say nothing */ }
+		}, function () { /* a failed write must not stop the next one */ });
+		return await _cappWrite;
+	}
+
+	/// The tail of the page-write chain, so appends serialise. See `writeCrystalAsset`.
+	var _cappWrite = Promise.resolve();
 
 	/// Hand-edit the crystal: a FORM over the core keys, with the raw JSON behind a second
 	/// click.

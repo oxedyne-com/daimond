@@ -1405,7 +1405,7 @@
 	// ── 結晶 ───────────────────────────────────────────────────
 	'crystal.page':           'ページ',
 	'crystal.page_help':      'この結晶の見た目を変えるよう daimon に頼みます。内容ではありません。',
-	'crystal.page_note':      'この Diamond のページ（crystal.html）を変えてください。記憶（crystal.json）ではありません。まず crystal.html を読み、それから編集し、crystal.json には触れないでください。自己完結を保つこと：CSS と JavaScript はすべてインライン、画像は data: URI のみ、fetch なし、外部ファイルなし、eval なし。ready、rendered、height のメッセージを保ち、rendered には内容のあるデータのトップレベルのキーをすべて挙げさせてください。ほしいものは：',
+	'crystal.page_note':      'この Diamond のページ（crystal.html）を変えてください。記憶（crystal.json）ではありません。まず crystal.html を読み、それから編集し、crystal.json には触れないでください。自己完結を保つこと：CSS と JavaScript はすべてインライン、画像は data: URI のみ、fetch なし、外部ファイルなし、eval なし。ready、rendered、height のメッセージを保ち、rendered には内容のあるデータのトップレベルのキーをすべて挙げさせてください。ページは save メッセージでこの Diamond にファイルを保存し、asset で読み戻せるので、対話的なページはユーザーの操作を保持できます。ほしいものは：',
 	'crystal.history':        '履歴',
 	'crystal.tags':           'タグ',
 	'crystal.tags_help':      'この Diamond をレールで整理します',

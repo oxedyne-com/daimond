@@ -693,7 +693,7 @@ async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
 /// `updated` is left alone here, deliberately.  It means *worked on* and orders
 /// the rail; the callers that mean that (see [`rename`], [`snapshot`]) move it
 /// themselves.
-async fn touch(id: &str) -> Outcome<()> {
+pub async fn touch(id: &str) -> Outcome<()> {
     let mut meta = res!(read_meta(id).await);
     meta.touched = now_ms() as u64;
     write_meta(id, &meta).await

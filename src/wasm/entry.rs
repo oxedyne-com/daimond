@@ -18,7 +18,7 @@
 
 use crate::llm::LlmClient;
 use crate::tools::FileRoot;
-use crate::wasm::{opfs, to_js_err};
+use crate::wasm::{diamond, opfs, to_js_err};
 
 use oxedyne_fe2o3_graphics::qr::{
     encode,
@@ -434,6 +434,23 @@ pub async fn store_read(path: String) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub async fn store_write(path: String, content: String) -> Result<(), JsValue> {
     opfs::write_file(FileRoot::Opfs, &path, content.as_bytes()).await.map_err(to_js_err)
+}
+
+/// Stamp a Diamond as changed, so what was written inside it travels to the other devices.
+///
+/// **A crystal page writing its own log is a mutation like any other, and `touched` is what
+/// decides whose copy the other device takes.**  `store_write` is a raw OPFS write and moves
+/// nothing, so a capp that logged a meal on a phone left that phone looking STALE: the desktop's
+/// copy was strictly fresher, `applyDiamonds` replaces a Diamond wholesale from the fresher side,
+/// and the meal went with the copy it replaced.  That is the tag-loss failure of 2026-08-11
+/// arriving through a new door, and it is why this is exported rather than left to the caller to
+/// remember.
+///
+/// # Arguments
+/// * `id` - The Diamond that was written into.
+#[wasm_bindgen]
+pub async fn touch_diamond(id: String) -> Result<(), JsValue> {
+    diamond::touch(&id).await.map_err(to_js_err)
 }
 
 /// Point the file tools / Workspace at a real local folder (FSA mode).

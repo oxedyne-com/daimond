@@ -30,15 +30,24 @@
  * that is self-contained, with its CSS and its script inline and its images as
  * data URIs, has nothing to fetch. See `armour` below.
  *
- * THE VERB LIST IS FROZEN. `ready`, `asset`, `rendered`, `height`, `open`, and
- * that is all of it. Daimond has migrated crystal formats four times; none of
- * those tools work on a page, so a migration can rename a file but cannot
- * rewrite a model-authored page, and a sixth verb added later would be a verb
- * every existing page does not speak. There is deliberately no `ask` and no
- * write: a parent cannot verify user activation across the boundary, so a timer
- * in the page is indistinguishable from a click, and the ask-the-daimon box
- * therefore lives in app chrome BELOW the frame where a click is provably a
- * person.
+ * THE VERB LIST GREW ONCE, on 2026-08-13, and the paragraph it replaced said it
+ * never would. That paragraph was right about `ask` and wrong to bundle `save`
+ * in with it, so the argument is worth restating rather than deleting.
+ *
+ * A parent cannot verify user activation across this boundary: a timer in the
+ * page is indistinguishable from a click. For `ask` that is decisive, because
+ * asking spends the user's money, and a page that could ask in a loop could
+ * spend it in a loop -- which is why the ask-the-daimon box lives in app chrome
+ * BELOW the frame, where a click is provably a person. For `save` the same
+ * argument gives a much smaller answer: a runaway page can write only inside its
+ * own Diamond, only text it composed itself, and only what the budget below
+ * allows. So the verb exists and the loop is bounded instead of forbidden.
+ *
+ * The cost of growing the list is real and is paid by OLD pages, not new ones: a
+ * page written before today does not speak `save`, and nothing can teach it --
+ * a migration can rename a file but cannot rewrite a model-authored page. So a
+ * verb may be ADDED and may never change meaning, and a page that does not use
+ * one is unaffected. `ready`, `asset`, `save`, `rendered`, `height`, `open`.
  *
  * FAILING IS VISIBLE. A page that never says `ready`, or that reports rendering
  * less than the data holds, is replaced by the built-in view with a note saying
@@ -657,6 +666,7 @@
 		switch (m.cmd) {
 			case 'ready':    onReady(); break;
 			case 'asset':    onAsset(m); break;
+			case 'save':     onSave(m); break;
 			case 'rendered': onRendered(m); break;
 			case 'height':   onHeight(m); break;
 			case 'open':     onOpen(m); break;
@@ -714,6 +724,83 @@
 		}).then(function (text) {
 			if (live !== mine || live.done) return;
 			toFrame({ id: id, text: str(text) });
+		}, function (err) {
+			if (live !== mine || live.done) return;
+			toFrame({ id: id, error: String((err && err.message) || err) });
+		});
+	}
+
+	/// The files a page may never write, whatever it asks.
+	///
+	/// **A page must not be able to rewrite itself.** `crystal.html` IS the page and
+	/// `crystal.json` is what it renders; a page that could write either could change its own
+	/// code between one render and the next, and nothing a person reviewed would stay reviewed.
+	/// That is the difference between a page that keeps a log and a page that rewrites the app,
+	/// and it is one line of guard.
+	///
+	/// `versions/` is the crystal's own history and `.daimond/` holds the rules about what agents
+	/// may do — neither is a page's business either. Everything else under the Diamond is fair
+	/// game, which is the whole point: a capp keeps its data beside itself.
+	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/)/;
+
+	/// The most a page may write in one call.
+	///
+	/// A log line is a few hundred bytes and a curated table is tens of kilobytes; a megabyte is
+	/// a page that has misunderstood what it is doing. It is a cap on ONE write, not on the file:
+	/// an append-driven log grows past this a line at a time, which is exactly right.
+	///
+	/// Measured in UTF-16 code units, because that is what `String.length` counts -- so a log in
+	/// a script outside Latin-1 meets this at roughly half the byte figure. Stated rather than
+	/// corrected: the cap is a guard against a page that has gone wrong, not an accounting
+	/// boundary, and a limit that reads the same in every script is worth more than one that is
+	/// exact in one.
+	var SAVE_MAX = 512 * 1024;
+
+	/// How many times one mounting of a page may save.
+	///
+	/// The bound that lets `save` exist at all, given that a click and a timer look the same from
+	/// out here (see the head of this file). A person logging meals taps a few dozen times in a
+	/// sitting; a page whose generated code has a loop in it reaches this in a second and is then
+	/// refused, with the frame still up and the app still answering. Per MOUNT, not per session:
+	/// leaving the Diamond and coming back is a person deciding to, and it is the cheapest
+	/// possible way out of a page that has run away with itself.
+	var SAVE_BUDGET = 400;
+
+	/// Answer the page's `save` verb: write one text file into THIS Diamond's directory.
+	///
+	/// The mirror of [`onAsset`], deliberately: same fence, same reply shape, same Diamond. A
+	/// crystal page has no storage of its own — the frame is `sandbox="allow-scripts"`, so its
+	/// origin is opaque and `localStorage` throws — and no network, because its policy is
+	/// `default-src 'none'`. So without this a page can draw anything and remember nothing, and
+	/// every interactive crystal is a toy that forgets on reload.
+	///
+	/// `postMessage` works inside that sandbox, which is why this needs no relaxation of it. The
+	/// page asks; the app writes. That is better than granting the frame storage, because the app
+	/// decides what a page may touch and can say no — as it does above.
+	///
+	/// `mode` is `append` (the default for a log) or `replace`. Append keeps a logger honest
+	/// WITHIN a device: two taps in the same tick both survive, where two replaces lose one.
+	/// It does NOT merge across devices -- sync replaces a Diamond wholesale from the fresher
+	/// copy -- and the first version of this comment claimed it did. See `writeCrystalAsset`.
+	function onSave(m) {
+		var id = m.id;
+		var rel = safePath(m.path);
+		if (!rel) { toFrame({ id: id, error: 'path' }); return; }
+		if (PAGE_NEVER_WRITES.test(rel)) { toFrame({ id: id, error: 'protected' }); return; }
+		var text = str(m.text);
+		if (text.length > SAVE_MAX) { toFrame({ id: id, error: 'too big' }); return; }
+		live.saves = (live.saves || 0) + 1;
+		if (live.saves > SAVE_BUDGET) { toFrame({ id: id, error: 'too many' }); return; }
+		var writer = (live.opts && typeof live.opts.onSave === 'function')
+			? live.opts.onSave : null;
+		if (!writer) { toFrame({ id: id, error: 'unavailable' }); return; }
+		var full = 'diamonds/' + str(live.opts.id) + '/' + rel;
+		var mine = live;
+		Promise.resolve().then(function () {
+			return writer(full, rel, text, m.mode === 'replace' ? 'replace' : 'append');
+		}).then(function () {
+			if (live !== mine || live.done) return;
+			toFrame({ id: id, ok: true });
 		}, function (err) {
 			if (live !== mine || live.done) return;
 			toFrame({ id: id, error: String((err && err.message) || err) });
