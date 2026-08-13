@@ -712,7 +712,7 @@
 	'err.unreachable': 'No se ha podido contactar con ese endpoint. Comprueba la URL base en Ajustes, y tu conexión.',
 	'err.rejected_401': 'Tu clave de API ha sido rechazada (401). Abre Ajustes y compruébala.',
 	'err.denied_403': 'El proveedor ha denegado el acceso (403). Comprueba tu clave y tu plan.',
-	'err.notfound_404': 'No se ha encontrado ese endpoint (404). Comprueba la URL base en Ajustes.',
+	'err.notfound_404': 'El proveedor respondió 404. Si los pasos anteriores de este turno funcionaron, la URL base está bien y el modelo no pudo atender esta petición en concreto — casi siempre una que lleva una imagen. Si no, revisa la URL base en Ajustes.',
 	'err.ratelimit_429': 'El proveedor te está limitando la frecuencia (429). Espera un momento y reinténtalo.',
 	'err.server_5xx': 'El proveedor ha tenido un error de servidor. Inténtalo de nuevo en breve.',
 	'err.generic': 'Algo ha ido mal. Inténtalo de nuevo.',

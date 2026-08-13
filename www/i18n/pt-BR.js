@@ -711,7 +711,7 @@
 	'err.unreachable': 'Não foi possível alcançar esse endpoint. Verifique a URL base nas Configurações e sua conexão.',
 	'err.rejected_401': 'Sua chave de API foi rejeitada (401). Abra as Configurações e verifique-a.',
 	'err.denied_403': 'O provedor negou o acesso (403). Verifique sua chave e seu plano.',
-	'err.notfound_404': 'Esse endpoint não foi encontrado (404). Verifique a URL base nas Configurações.',
+	'err.notfound_404': 'O provedor respondeu 404. Se os passos anteriores deste turno funcionaram, a URL base está certa e o modelo não conseguiu atender esta requisição específica — quase sempre uma que leva uma imagem. Caso contrário, confira a URL base nas Configurações.',
 	'err.ratelimit_429': 'O provedor está limitando sua taxa de uso (429). Espere um momento e tente de novo.',
 	'err.server_5xx': 'O provedor teve um erro de servidor. Tente de novo em instantes.',
 	'err.generic': 'Algo deu errado. Tente de novo.',

@@ -714,7 +714,7 @@
 	'err.unreachable': 'Dieser Endpunkt war nicht erreichbar. Prüfe die Basis-URL in den Einstellungen und deine Verbindung.',
 	'err.rejected_401': 'Dein API-Schlüssel wurde abgelehnt (401). Öffne die Einstellungen und prüfe ihn.',
 	'err.denied_403': 'Der Anbieter hat den Zugriff verweigert (403). Prüfe Schlüssel und Tarif.',
-	'err.notfound_404': 'Dieser Endpunkt wurde nicht gefunden (404). Prüfe die Basis-URL in den Einstellungen.',
+	'err.notfound_404': 'Der Anbieter antwortete mit 404. Wenn frühere Schritte in diesem Zug funktioniert haben, ist die Basis-URL in Ordnung und das Modell konnte genau diese Anfrage nicht bedienen — meist eine mit einem Bild. Sonst prüfe die Basis-URL in den Einstellungen.',
 	'err.ratelimit_429': 'Der Anbieter drosselt dich (429). Warte einen Moment und versuche es erneut.',
 	'err.server_5xx': 'Beim Anbieter gab es einen Serverfehler. Versuch es gleich noch einmal.',
 	'err.generic': 'Etwas ist schiefgelaufen. Versuch es erneut.',

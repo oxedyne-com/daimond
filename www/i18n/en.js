@@ -2103,7 +2103,7 @@
 	'err.unreachable':  'Could not reach that endpoint. Check the base URL in Settings, and your connection.',
 	'err.rejected_401': 'Your API key was rejected (401). Open Settings and check it.',
 	'err.denied_403':   'The provider denied access (403). Check your key and plan.',
-	'err.notfound_404': 'That endpoint was not found (404). Check the base URL in Settings.',
+	'err.notfound_404': 'The provider answered 404. If earlier steps in this turn worked, the base URL is fine and the model could not serve this particular request — most often one carrying an image. Otherwise check the base URL in Settings.',
 	'err.ratelimit_429': 'The provider is rate-limiting you (429). Wait a moment and retry.',
 	'err.server_5xx':   'The provider had a server error. Try again shortly.',
 	'err.generic':      'Something went wrong. Try again.',

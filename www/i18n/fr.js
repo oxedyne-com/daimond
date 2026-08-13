@@ -715,7 +715,7 @@
 	'err.unreachable': 'Impossible de joindre ce point d’accès. Vérifiez l’URL de base dans les Réglages, et votre connexion.',
 	'err.rejected_401': 'Votre clé d’API a été refusée (401). Ouvrez les Réglages et vérifiez-la.',
 	'err.denied_403': 'Le fournisseur a refusé l’accès (403). Vérifiez votre clé et votre offre.',
-	'err.notfound_404': 'Ce point d’accès est introuvable (404). Vérifiez l’URL de base dans les Réglages.',
+	'err.notfound_404': 'Le fournisseur a répondu 404. Si les étapes précédentes de ce tour ont fonctionné, l’URL de base est correcte et le modèle n’a pas pu traiter cette requête précise — le plus souvent une requête contenant une image. Sinon, vérifiez l’URL de base dans les Réglages.',
 	'err.ratelimit_429': 'Le fournisseur vous limite (429). Attendez un instant et réessayez.',
 	'err.server_5xx': 'Le fournisseur a eu une erreur serveur. Réessayez dans un instant.',
 	'err.generic': 'Quelque chose s’est mal passé. Réessayez.',
