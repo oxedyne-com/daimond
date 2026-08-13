@@ -233,6 +233,31 @@ try {
 	check('ITS OWN CRYSTAL IS STILL ITS OWN', /the-crystal-marker/.test(got3),
 		got3.slice(0, 70).replace(/\n/g, ' '));
 
+	// 3b. A PICTURE IS NOT SHOWN BY READING IT, and can be had as bytes for a page.
+	//
+	// The wasm arm of `file_read` is a different function from the native one the Rust tests
+	// cover, and this is the arm the app actually runs. A one-pixel PNG, written as bytes so
+	// the sniff sees a real header.
+	await page.evaluate(async () => {
+		const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nG'
+			+ 'P4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+		const bin = atob(b64);
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		await window.__free.write_bytes('books/CheapThinking/cover.png', bytes);
+	});
+	const rDesc = await steer('@tool file_read {"path":"books/CheapThinking/cover.png"}', marks, []);
+	const desc = resultOf(rDesc, 'file_read');
+	check('READING A PICTURE DESCRIBES IT AND DOES NOT SHOW IT',
+		/is an image/.test(desc) && /NOT attached/.test(desc) && /image\/png/.test(desc),
+		desc.slice(0, 80).replace(/\n/g, ' '));
+	const rB64 = await steer(
+		'@tool file_read {"path":"books/CheapThinking/cover.png","as":"base64"}', marks, []);
+	const b64out = resultOf(rB64, 'file_read');
+	check('AND ITS BYTES COME BACK AS A data: URI, which is all a crystal page may load',
+		/data:image\/png;base64,iVBORw0KGgo/.test(b64out),
+		b64out.slice(0, 80).replace(/\n/g, ' '));
+
 	// 4. THE DAIMON IS TOLD. Through the REAL page path — the crystal composer, the
 	//    real `Files.bounds`, the real `steerCrystal` — so this is also the check
 	//    that the wiring has a production caller at all.

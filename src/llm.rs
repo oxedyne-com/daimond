@@ -18,7 +18,7 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::rand::Rand;
 use oxedyne_fe2o3_jdat::prelude::*;
 
-use crate::protocol::{ChatMessage, ContentPart, ImagePart, MessageContent, ToolCall};
+use crate::protocol::{ChatMessage, ContentPart, Dropped, ImagePart, MessageContent, ToolCall};
 
 // Native transport imports — the hand-rolled TLS client lives behind
 // tokio + rustls, which do not target wasm32.
@@ -131,6 +131,29 @@ type Carry = std::sync::Arc<std::sync::Mutex<ThinkCarry>>;
 #[cfg(target_arch = "wasm32")]
 type Carry = std::rc::Rc<std::cell::RefCell<ThinkCarry>>;
 
+/// Whether an endpoint has been caught refusing pictures, shared across clones of a client.
+///
+/// Learned rather than declared. [`model_can_see`] is a list of eight model ids known to be
+/// blind, so every model it has not heard of is assumed sighted -- which is the right default
+/// (a new sighted model works at once) and is wrong for exactly as long as it takes one turn
+/// to fail. This is the other half: once a request carrying pictures comes back refused and the
+/// same request without them succeeds, the endpoint is marked and no later turn pays for the
+/// discovery twice.
+#[cfg(not(target_arch = "wasm32"))]
+type Blind = std::sync::Arc<std::sync::atomic::AtomicBool>;
+
+/// Whether an endpoint has been caught refusing pictures, shared across clones of a client.
+#[cfg(target_arch = "wasm32")]
+type Blind = std::rc::Rc<std::cell::Cell<bool>>;
+
+/// A fresh flag, unset: nothing has been refused yet.
+fn new_blind() -> Blind {
+    #[cfg(not(target_arch = "wasm32"))]
+    { std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) }
+    #[cfg(target_arch = "wasm32")]
+    { std::rc::Rc::new(std::cell::Cell::new(false)) }
+}
+
 /// A fresh, empty carry.
 fn new_carry() -> Carry {
     #[cfg(not(target_arch = "wasm32"))]
@@ -170,6 +193,10 @@ pub struct LlmClient {
     /// across clones, because a sub-agent built from a cloned client is
     /// continuing the same turn.  See [`ThinkCarry`].
     think:          Carry,
+    /// Set once this endpoint has been caught refusing a request that carried pictures.
+    /// See [`Blind`]; read by [`LlmClient::vision_guard`] and set by the strip-and-retry in
+    /// [`LlmClient::stream_turn`] and [`LlmClient::chat_once`].
+    blind:          Blind,
     /// Root-trust TLS configuration for the native transport.  The wasm
     /// transport delegates trust to the browser's `fetch`, so this field
     /// is native-only.
@@ -521,6 +548,7 @@ impl LlmClient {
             max_tokens,
             retry:      RetryPolicy::default(),
             think:      new_carry(),
+            blind:      new_blind(),
             tls_config,
         }
     }
@@ -567,6 +595,7 @@ impl LlmClient {
             max_tokens,
             retry:      RetryPolicy::default(),
             think:      new_carry(),
+            blind:      new_blind(),
             secure,
             abort:      std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
@@ -647,7 +676,11 @@ impl LlmClient {
         notify:     bool,
     ) -> Outcome<ChatOnceResponse> {
         let images = res!(self.vision_guard(messages));
-        let body = self.build_body(messages, tools, true);
+        let stripped = self.sighted(messages, images);
+        let mut body = self.build_body(stripped.as_deref().unwrap_or(messages), tools, true);
+        // Set once the pictures have been taken out and the turn tried again, so the retry
+        // happens at most once and a second failure is reported as itself.
+        let mut retried_blind = stripped.is_some();
         let mut waited = 0u64;
         let mut retries = 0u32;
         loop {
@@ -688,6 +721,29 @@ impl LlmClient {
                     // tool-call fragment that will become one -- makes this turn
                     // unrepeatable.
                     let started = emitted || acc.has_output();
+                    // A REFUSED PICTURE IS NOT A DEAD TURN. The provider would not take this
+                    // request and it carried images, so the likeliest reason is the one thing
+                    // in it a text model cannot read. Take them out, say so in their place, and
+                    // send it again -- once. Only where nothing has been emitted: a turn the
+                    // user has already seen tokens from cannot be started over.
+                    if !started && !retried_blind && images > 0 {
+                        retried_blind = true;
+                        self.mark_blind();
+                        let text_only: Vec<ChatMessage> =
+                            messages.iter()
+                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .collect();
+                        body = self.build_body(&text_only, tools, true);
+                        if notify {
+                            on_token(&fmt!(
+                                "\n[daimond: the model would not take {} image{}; asking again \
+                                 without {} -- it cannot see]\n",
+                                images,
+                                if images == 1 { "" } else { "s" },
+                                if images == 1 { "it" } else { "them" }));
+                        }
+                        continue;
+                    }
                     if started || !e.retryable {
                         return Err(self.vision_error(e.err, images));
                     }
@@ -723,7 +779,9 @@ impl LlmClient {
         tools:      Option<&str>,
     ) -> Outcome<ChatOnceResponse> {
         let images = res!(self.vision_guard(messages));
-        let body = self.build_body(messages, tools, false);
+        let stripped = self.sighted(messages, images);
+        let mut body = self.build_body(stripped.as_deref().unwrap_or(messages), tools, false);
+        let mut retried_blind = stripped.is_some();
         let mut waited = 0u64;
         let mut retries = 0u32;
         let raw = loop {
@@ -732,6 +790,19 @@ impl LlmClient {
                 Err(e) => {
                     // Nothing streams on this path, so there is never a partial
                     // to protect -- only the classification matters.
+                    // The picture retry, exactly as `stream_turn` does it and for the same
+                    // reason; there is no emitted-tokens condition here because nothing has
+                    // been shown to anybody yet.
+                    if !retried_blind && images > 0 {
+                        retried_blind = true;
+                        self.mark_blind();
+                        let text_only: Vec<ChatMessage> =
+                            messages.iter()
+                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .collect();
+                        body = self.build_body(&text_only, tools, false);
+                        continue;
+                    }
                     if !e.retryable {
                         return Err(self.vision_error(e.err, images));
                     }
@@ -791,9 +862,45 @@ impl LlmClient {
     ///
     /// # Arguments
     /// * `messages` - The conversation about to be sent.
+    /// Whether this endpoint has already been caught refusing pictures.
+    fn is_blind(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        { self.blind.load(std::sync::atomic::Ordering::Relaxed) }
+        #[cfg(target_arch = "wasm32")]
+        { self.blind.get() }
+    }
+
+    /// Record that it does, so no later turn pays to find out again.
+    fn mark_blind(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        { self.blind.store(true, std::sync::atomic::Ordering::Relaxed) }
+        #[cfg(target_arch = "wasm32")]
+        { self.blind.set(true) }
+    }
+
+    /// The conversation as it must be sent: whole, or with the pictures turned into words when
+    /// this endpoint has been caught refusing them.
+    ///
+    /// Returns `None` when nothing needs changing, so the ordinary turn copies no messages.
+    fn sighted<'m>(&self, messages: &'m [ChatMessage], images: usize)
+        -> Option<Vec<ChatMessage>>
+    {
+        if images == 0 || !self.is_blind() {
+            return None;
+        }
+        let _ = messages.len();
+        Some(messages.iter()
+                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .collect())
+    }
+
     fn vision_guard(&self, messages: &[ChatMessage]) -> Outcome<usize> {
         let images: usize = messages.iter().map(|m| m.content().images().count()).sum();
-        if images == 0 || model_can_see(&self.model) {
+        // A refusal already seen is not an error any more: the pictures come out and the turn
+        // goes ahead. Refusing here instead would leave a conversation that carries one image
+        // permanently unable to take a turn -- which is what happened to a real Diamond on
+        // 2026-08-13, where a cover read into the daimon's history bricked every later steer.
+        if images == 0 || model_can_see(&self.model) || self.is_blind() {
             return Ok(images);
         }
         Err(err!(
@@ -4599,6 +4706,16 @@ pub mod tests {
             }
         }
 
+        /// A 404 with a body that says nothing about images -- which is the case that mattered:
+        /// `vision_error` can only rewrite a refusal whose words mention pictures, and a bare
+        /// 404 gives it nothing to work with.
+        fn not_found() -> Self {
+            Self::Http {
+                status: 404, reason: "Not Found", headers: Vec::new(),
+                body: "{\"error\":{\"message\":\"No endpoint found\"}}".to_string(),
+            }
+        }
+
         /// A whole answer, streamed as two deltas and a usage chunk.
         fn answer() -> Self {
             Self::Sse {
@@ -4913,6 +5030,86 @@ pub mod tests {
             Ok(g)  => g.bodies.len(),
             Err(e) => panic!("stub bookkeeping poisoned: {}", e),
         }
+    }
+
+    /// A picture the endpoint will not take costs the pictures, not the turn.
+    ///
+    /// THE DEFECT. A daimon read a book's cover, the request went to a text-only model, and the
+    /// provider answered a bare 404. The turn died -- and the picture stayed in the daimon's
+    /// stored conversation, so every later turn re-sent it and died the same way. The Diamond's
+    /// daimon was unusable until its whole conversation was thrown away.
+    ///
+    /// Neither existing guard could have caught it. `model_can_see` is a list of eight ids known
+    /// to be blind, so an unheard-of model is assumed sighted; `vision_error` only rewrites a
+    /// refusal whose text mentions images, and this one said "No endpoint found".
+    #[tokio::test]
+    async fn test_a_refused_picture_costs_the_pictures_and_not_the_turn() {
+        let (port, seen) = start_stub(vec![
+            Reply::not_found(),
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text("what is on this cover".to_string()),
+            ContentPart::Image(doc_image("cover.png")),
+        ]))];
+        let mut tokens = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut |t| {
+            tokens.push(t.to_string());
+        }).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a refused picture must not kill the turn: {}", e),
+        };
+
+        assert_eq!(connections(&seen), 2, "the turn was not tried again without the picture");
+        assert_eq!(resp.content, "Hello world", "the second attempt did not produce the answer");
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("stub bookkeeping poisoned: {}", e),
+        };
+        // The first attempt carried it, so the failure being recovered from is the real one.
+        assert!(bodies[0].contains(DOC_PNG_B64), "the first request did not carry the picture");
+        // The second did not, and says why in its place -- a silently dropped image would leave
+        // the model describing a cover nobody showed it.
+        assert!(!bodies[1].contains(DOC_PNG_B64), "the picture was sent a second time");
+        assert!(bodies[1].contains("cannot be shown"),
+            "the model was not told the picture was left out: {}", bodies[1]);
+        assert!(bodies[1].contains("cover.png"), "the file was not named in its place");
+        assert!(bodies[1].contains("what is on this cover"), "the prose beside it was lost");
+        // And the user is told, because a turn that quietly stops seeing is its own defect.
+        assert!(tokens.iter().any(|t| t.contains("cannot see")),
+            "nothing said the model had turned out to be blind: {:?}", tokens);
+    }
+
+    /// And once it is known, no later turn pays to discover it again.
+    #[tokio::test]
+    async fn test_an_endpoint_caught_refusing_pictures_is_not_asked_twice() {
+        let (port, seen) = start_stub(vec![
+            Reply::not_found(),
+            Reply::answer(),
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text("and this one".to_string()),
+            ContentPart::Image(doc_image("cover.png")),
+        ]))];
+        let mut sink = |_: &str| {};
+        let _ = client.chat_stream_tools(&msgs, None, &mut sink).await
+            .expect("the first turn recovers");
+        let _ = client.chat_stream_tools(&msgs, None, &mut sink).await
+            .expect("the second turn goes straight through");
+
+        // Three replies were queued and only three connections may have been made: two for the
+        // first turn, ONE for the second. A fourth would mean the client had forgotten.
+        assert_eq!(connections(&seen), 3, "the second turn re-sent a picture already refused");
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("stub bookkeeping poisoned: {}", e),
+        };
+        assert!(!bodies[2].contains(DOC_PNG_B64),
+            "the second turn sent the picture the endpoint had already refused");
     }
 
     #[tokio::test]

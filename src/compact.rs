@@ -900,7 +900,7 @@ pub fn elide_bulk(
 			continue;
 		}
 		let before = msg_bytes(&msgs[i]);
-		msgs[i] = msgs[i].with_content(msgs[i].content().without_images());
+		msgs[i] = msgs[i].with_content(msgs[i].content().without_images(crate::protocol::Dropped::ToFit));
 		total = total.saturating_sub(before.saturating_sub(msg_bytes(&msgs[i])));
 		n += 1;
 	}

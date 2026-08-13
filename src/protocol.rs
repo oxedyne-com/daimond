@@ -217,10 +217,34 @@ impl ImagePart {
     }
 
     /// The one line an elided image leaves behind, naming the file so it can be read again.
-    pub fn elision(&self) -> String {
-        fmt!("[image {} ({}, {} bytes) was dropped to fit the context window; read it again if \
-             you need to look at it]", self.source, self.media.mime(), self.data.len())
+    pub fn elision(&self, why: Dropped) -> String {
+        match why {
+            Dropped::ToFit => fmt!(
+                "[image {} ({}, {} bytes) was dropped to fit the context window; read it again if \
+                 you need to look at it]", self.source, self.media.mime(), self.data.len()),
+            // Deliberately NOT "read it again": on this endpoint that is a loop, and the whole
+            // point is that this model will never see the picture however often it is fetched.
+            // It is told not to describe it, because the failure a missing image invites is a
+            // confident description of something nobody showed it.
+            Dropped::Unseeable => fmt!(
+                "[image {} ({}, {} bytes) was left out because this model cannot be shown \
+                 pictures. Do not describe what it looks like -- you have not seen it. Say so, \
+                 and read it with \"as\":\"base64\" if you need its bytes to embed it]",
+                self.source, self.media.mime(), self.data.len()),
+        }
     }
+}
+
+/// Why a picture came out of a message.
+///
+/// The two reasons want different words and the difference is load-bearing, so they are a type
+/// rather than a boolean: one says "ask again", the other says "asking again will not help".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Dropped {
+    /// Elided to fit the context window. The picture is still there to be fetched.
+    ToFit,
+    /// The endpoint will not take pictures at all, so fetching it again changes nothing.
+    Unseeable,
 }
 
 /// One piece of a message's content.
@@ -370,12 +394,12 @@ impl MessageContent {
     ///
     /// What elision does to an image, and why elision is not a loss: the file is still named, and
     /// `file_read` will fetch it again.  See `crate::compact::elide_bulk`.
-    pub fn without_images(&self) -> Self {
+    pub fn without_images(&self, why: Dropped) -> Self {
         match self {
             Self::Text(_) => self.clone(),
             Self::Parts(parts) => Self::parts(parts.iter().map(|p| match p {
                 ContentPart::Text(t)  => ContentPart::Text(t.clone()),
-                ContentPart::Image(i) => ContentPart::Text(i.elision()),
+                ContentPart::Image(i) => ContentPart::Text(i.elision(why)),
             }).collect()),
         }
     }
@@ -1033,12 +1057,24 @@ mod content_tests {
             ContentPart::Image(ImagePart::new(
                 ImageMedia::Png, doc_png(), "shots/a.png".to_string())),
         ]);
-        let out = c.without_images();
+        let out = c.without_images(Dropped::ToFit);
         assert!(!out.has_image());
         let t = out.as_text();
         assert!(t.contains("here it is"), "the prose was lost: {}", t);
         assert!(t.contains("shots/a.png"), "the file was not named: {}", t);
         assert!(t.contains("read it again"), "the model was not told what to do: {}", t);
+
+        // The other reason, which must NOT say that -- on an endpoint that will not take
+        // pictures, "read it again" is a loop, and the two reasons are a type precisely so
+        // that one cannot be told to do the thing that cannot help.
+        let blind = c.without_images(Dropped::Unseeable);
+        let b = blind.as_text();
+        assert!(b.contains("here it is"), "the prose was lost: {}", b);
+        assert!(b.contains("shots/a.png"), "the file was not named: {}", b);
+        assert!(!b.contains("read it again"), "it was told to retry a read that cannot help: {}", b);
+        assert!(b.contains("cannot be shown"), "it was not told why: {}", b);
+        assert!(b.contains("Do not describe"),
+            "nothing stopped it describing a picture it never saw: {}", b);
     }
 
     /// A message carrying an image survives storage byte for byte.

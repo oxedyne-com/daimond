@@ -169,13 +169,123 @@ fn image_too_big(path: &str, len: usize) -> Error<ErrTag> {
 /// * `path` - The file, as the model asked for it.
 /// * `media` - The format, sniffed from the bytes.
 /// * `bytes` - The file's contents.
-fn image_result(ctx: &ToolContext, path: &str, media: ImageMedia, bytes: Vec<u8>)
+/// What a caller wants done with a binary file, from the tool's `as` argument.
+///
+/// **The default is not to attach the picture, and that is the change of 2026-08-13.**  Reading a
+/// `.jpg` used to hand the model a picture whether or not it had asked to see one -- and whether
+/// or not the endpoint would take one.  A daimon reading a book's folder opened the cover to see
+/// what it was, the request went to a text-only model, and the provider answered 404: the turn
+/// died, and because the picture stayed in the conversation, every later turn died with it.  The
+/// model had not asked to look at anything; it had asked to read a file, and the file extension
+/// decided the modality on its behalf.
+///
+/// So the modality is now the CALLER'S to name.  Reading an image describes it; looking at one is
+/// a second call that says so.  That costs a sighted model one extra round trip and it buys two
+/// things: a blind model can never be handed a picture by accident, and a model that does look
+/// has said out loud that looking was the point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Want {
+    /// Name it, size it, and offer the other two. The default for an image.
+    Describe,
+    /// Attach the picture, because the caller asked to see it.
+    Look,
+    /// Hand back the bytes as base64, for embedding in a page.
+    Base64,
+}
+
+impl Want {
+    /// What the `as` argument asked for, defaulting to [`Want::Describe`].
+    fn read(args_json: &str) -> Self {
+        match extract_json_string(args_json, "as").unwrap_or_default().trim().to_lowercase().as_str() {
+            "image" | "look" | "view" => Self::Look,
+            "base64" | "bytes"        => Self::Base64,
+            _                         => Self::Describe,
+        }
+    }
+}
+
+/// The largest binary that may be turned into base64 and put in the prompt.
+///
+/// Far below [`IMAGE_READ_MAX`], and the reason is that these are different costs.  A picture the
+/// provider resizes is charged as a fixed handful of tokens; base64 is TEXT, so a 2 MB file would
+/// be 2.7 MB of context and several hundred thousand tokens, most of the way through a window and
+/// a real amount of somebody's money.  256 KB is about 350 KB encoded -- enough for a cover
+/// thumbnail or an icon, which is what embedding is for, and small enough that a caller who meant
+/// to embed a whole photograph is told so instead of being charged for it.
+pub const BASE64_READ_MAX: usize = 256_000;
+
+/// A file's bytes as base64, for a caller that means to EMBED it rather than look at it.
+///
+/// This is the only way a picture reaches a crystal page, and the reason is the page's own
+/// content-security policy: `img-src data:` and nothing else (`www/js/crystal.js`).  A crystal
+/// travels -- it is exported, synced and shared -- so a remote image URL would be a picture that
+/// breaks the moment it moves and a tracking pixel in somebody's private notes.  A workspace file
+/// has no URL to give it either, and the frame is `sandbox="allow-scripts"` with an opaque origin,
+/// so it could not load a `blob:` from this origin even if the policy allowed one.  A `data:` URI
+/// is what is left, and a `data:` URI is base64.
+///
+/// The media type is returned beside the text so the caller can build the URI without guessing at
+/// it from the extension -- the extension is whatever the user typed, and a `.png` full of JPEG is
+/// a picture that silently does not render.
+///
+/// # Arguments
+/// * `ctx` - The calling turn, so an untrusted read is recorded on it.
+/// * `path` - The file, as the model asked for it.
+/// * `mime` - The media type, sniffed from the bytes.
+/// * `bytes` - The file's contents.
+fn base64_result(ctx: &ToolContext, path: &str, mime: &str, bytes: Vec<u8>)
     -> Outcome<MessageContent>
 {
+    if bytes.len() > BASE64_READ_MAX {
+        return Err(err!(
+            "file_read: '{}' is {} bytes and base64 is capped at {}. Encoded bytes are TEXT in \
+             the prompt, so a large file here costs a large part of the context window and real \
+             money. Use a smaller version of the file -- a thumbnail is what a page wants -- or \
+             leave it out.",
+            path, bytes.len(), BASE64_READ_MAX;
+            Invalid, Input, TooBig));
+    }
+    let b64 = oxedyne_fe2o3_text::base64::encode(&bytes);
+    let line = fmt!(
+        "{} as base64 ({}, {} bytes raw, {} encoded). Use it as a data: URI, which is the only \
+         image source a crystal page's policy allows:\n\ndata:{};base64,{}",
+        path, mime, bytes.len(), b64.len(), mime, b64);
+    Ok(MessageContent::text(if is_untrusted_path(path) {
+        ctx.wrap_untrusted(path, &line)
+    } else {
+        line
+    }))
+}
+
+fn image_result(ctx: &ToolContext, path: &str, media: ImageMedia, bytes: Vec<u8>, want: Want)
+    -> Outcome<MessageContent>
+{
+    if let Want::Base64 = want {
+        return base64_result(ctx, path, media.mime(), bytes);
+    }
     if bytes.len() > IMAGE_READ_MAX {
         return Err(image_too_big(path, bytes.len()));
     }
     let img = ImagePart::new(media, bytes, path.to_string());
+    if let Want::Describe = want {
+        let size = match img.dims() {
+            Some((w, h)) => fmt!("{}x{} pixels, ", w, h),
+            None         => String::new(),
+        };
+        let line = fmt!(
+            "{} is an image ({}, {}{} bytes). It is NOT attached: reading a file does not show it \
+             to you, because a model that cannot see pictures would be sent one and the request \
+             would fail. To look at it, call file_read again with \"as\":\"image\" -- do that only \
+             if you can see. To put it in a page, call file_read with \"as\":\"base64\" and use the \
+             text it returns as a data: URI.",
+            path, media.mime(), size, img.data.len());
+        let line = if is_untrusted_path(path) {
+            ctx.wrap_untrusted(path, &line)
+        } else {
+            line
+        };
+        return Ok(MessageContent::text(line));
+    }
     let size = match img.dims() {
         Some((w, h)) => fmt!("{}x{} pixels, ", w, h),
         None         => String::new(),
@@ -5442,7 +5552,7 @@ impl Tool {
     /// One-line description for the LLM.
     pub fn description(&self) -> &'static str {
         match self {
-            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here, and in every other file tool, are relative to the workspace: 'src/main.rs', not '/home/you/project/src/main.rs' -- the workspace is not the machine's filesystem, so an absolute path is refused rather than followed. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it.",
+            Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here, and in every other file tool, are relative to the workspace: 'src/main.rs', not '/home/you/project/src/main.rs' -- the workspace is not the machine's filesystem, so an absolute path is refused rather than followed. Every line comes back prefixed with its number and a TAB. That prefix is this tool's, NOT part of the file: strip it before you quote a line into file_edit's old_string, or the edit will not match. A file too long to return at once is returned in pages -- 'offset' is the 1-based line to start at and 'limit' how many lines to take -- and whenever a page is not the whole file the result says which lines it holds, how many the file has, and the exact call that fetches the next page. Believe that notice: a file you have half read is a file you do not know. Read a file before you edit it. A PICTURE IS NOT SHOWN TO YOU BY READING IT: reading an image tells you what it is -- its type, its size in pixels, its weight -- and nothing more, because being handed a picture you cannot see is a request the provider refuses and a turn that dies. Add \"as\":\"image\" to look at one, and only do that if you can see pictures. Add \"as\":\"base64\" to get the bytes encoded, which is how an image gets INTO a page: a crystal's policy allows a data: URI and nothing else -- no remote URL, no local file -- so an embedded picture is always 'data:<type>;base64,<what this returns>'.",
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace an exact, unique substring in a workspace file. 'old_string' must be the file's own bytes: file_read prefixes each line with its number and a TAB, and those characters are not in the file, so strip them from anything you copy out of a read. Give enough surrounding text to be unique -- the edit is refused, not guessed at, when the string appears twice or not at all.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
@@ -5514,7 +5624,7 @@ impl Tool {
     /// The tool's JSON-Schema `parameters` object.
     fn parameters(&self) -> &'static str {
         match self {
-            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."}},"required":["path"]}"#,
+            Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"offset":{"type":"integer","description":"1-based line number to start at (default 1). Use the offset the previous page's notice gave you."},"limit":{"type":"integer","description":"How many lines to return (default 2000, maximum 10000). Fewer are returned when the output budget runs out first, and the result says so."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary. Omit to be told what the file is without being shown it. 'image' attaches the picture to look at, and only works if you can see. 'base64' returns the bytes encoded, for embedding as a data: URI."}},"required":["path"]}"#,
             Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string","description":"Exact substring to replace (must be unique)"},"new_string":{"type":"string","description":"Replacement text"}},"required":["path","old_string","new_string"]}"#,
             Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
@@ -5783,11 +5893,18 @@ impl Tool {
                 // Before the binary test, so a PNG becomes an image and an MP3 still becomes the
                 // refusal. The path recorded on the part is the one the model wrote, because that
                 // is the one it must use to read the file again after an elision.
+                let want = Want::read(args_json);
                 if let Some(media) = ImageMedia::sniff(&bytes) {
-                    return image_result(ctx, &raw, media, bytes);
+                    return image_result(ctx, &raw, media, bytes, want);
                 }
                 // Checked after the cloud case, which has no bytes to test.
                 if is_binary(&bytes) {
+                    // A caller that asked for base64 asked for BYTES, and a font, an icon or a
+                    // sound is as embeddable as a picture. The refusal is for a caller that
+                    // expected text and would be handed mojibake.
+                    if let Want::Base64 = want {
+                        return base64_result(ctx, &raw, "application/octet-stream", bytes);
+                    }
                     return Err(binary_refusal(&path, bytes.len()));
                 }
                 let s = String::from_utf8_lossy(&bytes).to_string();
@@ -6710,10 +6827,14 @@ impl Tool {
         let abs = res!(ctx.workspace.resolve(&path));
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "file_read: cannot read '{}'.", path; IO, File, Read)));
+        let want = Want::read(args);
         if let Some(media) = ImageMedia::sniff(&data) {
-            return image_result(ctx, &path, media, data);
+            return image_result(ctx, &path, media, data, want);
         }
         if is_binary(&data) {
+            if let Want::Base64 = want {
+                return base64_result(ctx, &path, "application/octet-stream", data);
+            }
             return Err(binary_refusal(&path, data.len()));
         }
         let s = String::from_utf8_lossy(&data).to_string();
@@ -9302,6 +9423,54 @@ mod tests {
         assert!(out.contains("body"), "the content must survive: {}", out);
     }
 
+    /// Reading an image DESCRIBES it. Asking to look is a separate, deliberate act.
+    ///
+    /// The defect: a daimon opened a book's cover to see what it was, the picture went to a
+    /// text-only model, the provider refused the request, and because the picture stayed in the
+    /// conversation every later turn was refused too. The model never asked to look at anything
+    /// -- it asked to read a file, and the extension chose the modality for it.
+    #[test]
+    fn test_reading_an_image_does_not_show_it_unless_looking_was_asked_for() {
+        let c = ctx();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("shots").join("mobile-desktop-after.png");
+        let bytes = std::fs::read(&src).expect("the fixture screenshot must be readable");
+        let abs = c.workspace.resolve("shot.png").expect("resolve");
+        std::fs::write(&abs, &bytes).expect("write");
+
+        let plain = Tool::FileRead.execute_sync_guarded(r#"{"path":"shot.png"}"#, &c)
+            .expect("an image must be read, not refused");
+        assert!(plain.images().next().is_none(),
+            "a bare read attached a picture: {}", plain.as_text());
+        let said = plain.as_text();
+        // Described, and the description is worth having: a model that cannot see still learns
+        // what the file is, which is what it was reading the folder to find out.
+        assert!(said.contains("shot.png"), "the file was not named: {}", said);
+        assert!(said.contains("1500x950"), "the size should be stated: {}", said);
+        assert!(said.contains("image/png"), "the type should be stated: {}", said);
+        assert!(said.contains("as\":\"image"), "it was not told how to look: {}", said);
+        assert!(said.contains("as\":\"base64"), "it was not told how to embed: {}", said);
+
+        // And the bytes, for a page. The cap is what stops this being the expensive default.
+        let b64 = Tool::FileRead
+            .execute_sync_guarded(r#"{"path":"shot.png","as":"base64"}"#, &c);
+        match b64 {
+            Ok(out) => {
+                let t = out.as_text();
+                assert!(t.contains("data:image/png;base64,"),
+                    "base64 must come back ready to paste into a page: {}", t);
+                assert!(out.images().next().is_none(), "base64 must not also attach the picture");
+            }
+            Err(e) => {
+                // The fixture is over the cap, which is itself the property: the refusal has to
+                // say the number rather than fail vaguely.
+                let m = fmt!("{}", e);
+                assert!(m.contains(&fmt!("{}", BASE64_READ_MAX)), "the cap was not named: {}", m);
+            }
+        }
+    }
+
+    /// And when looking IS asked for, the picture is attached exactly as it always was.
     #[test]
     fn test_read_returns_an_image_as_an_image() {
         let c = ctx();
@@ -9311,7 +9480,7 @@ mod tests {
         let abs = c.workspace.resolve("shot.png").expect("resolve");
         std::fs::write(&abs, &bytes).expect("write");
 
-        let out = Tool::FileRead.execute_sync_guarded(r#"{"path":"shot.png"}"#, &c)
+        let out = Tool::FileRead.execute_sync_guarded(r#"{"path":"shot.png","as":"image"}"#, &c)
             .expect("an image must be read, not refused");
         let img = out.images().next().expect("the result carries no image").clone();
         assert_eq!(bytes, img.data, "the bytes were altered on the way through");
@@ -9362,8 +9531,20 @@ mod tests {
             .join("shots").join("mobile-sheet-web.png");
         std::fs::write(dir.join("att.png"), std::fs::read(&src).expect("fixture")).expect("write");
 
-        let out = Tool::FileRead.execute_sync_guarded(
+        // Described rather than shown, and still a stranger's file: the envelope and the taint
+        // are about where the bytes CAME FROM, so they cannot depend on whether the picture was
+        // attached. Only the sentence about writing inside the picture goes, and it goes because
+        // nothing was shown -- there is no writing in a description to be influenced by.
+        let described = Tool::FileRead.execute_sync_guarded(
             r#"{"path":"mail/a@b.test/INBOX/cur/att.png"}"#, &c).expect("read");
+        let said = described.as_text();
+        assert!(said.contains(UNTRUSTED_CLOSE), "an image from the mail tree was not marked: {}",
+            said);
+        assert!(described.images().next().is_none(), "a bare read must not attach it");
+        assert!(lock_cache(&c.read_seen).tainted, "reading a stranger's file must taint the turn");
+
+        let out = Tool::FileRead.execute_sync_guarded(
+            r#"{"path":"mail/a@b.test/INBOX/cur/att.png","as":"image"}"#, &c).expect("read");
         let said = out.as_text();
         assert!(said.contains(UNTRUSTED_CLOSE), "an image from the mail tree was not marked: {}",
             said);
