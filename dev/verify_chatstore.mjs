@@ -195,9 +195,20 @@ await p.evaluate((id) => {
 	if (b) b.click();
 }, workingChatId);
 await p.waitForTimeout(400);
+// THE CHAT'S OWN SCRATCH, not the workspace root, and it has to stay that way.
+// This wrote `big.txt` at the root until 2026-08-14; since the chat fence landed on
+// 2026-08-12 a chat is confined to `chats/<id>/work` (`scopeChatTo`,
+// www/js/daimond.js) and `Tool::guard` (src/tools.rs:5490) refuses a root path before
+// the write. The refusal arrives as an ordinary tool result — a SHORT one — so
+// nothing was written, the read that follows found nothing, and the 20 KB tool
+// result these three checks are about never existed.
+const BIGPATH = await p.evaluate((id) => window.DaimondAttach.chatScratch(id), workingChatId) + '/big.txt';
 const BIG = 'Z'.repeat(20000);
-await chat(s, '@tool file_write {"path":"big.txt","content":"' + BIG + '"}');
-await chat(s, '@tool file_read {"path":"big.txt"}');
+const bigWrite = await chat(s, '@tool file_write {"path":"' + BIGPATH + '","content":"' + BIG + '"}');
+check('the big file was really written — a refused write leaves no large result to shorten',
+	!/Refused/.test(bigWrite) && /Wrote \d+ bytes/.test(bigWrite),
+	bigWrite.slice(-140).replace(/\n/g, ' | '));
+await chat(s, '@tool file_read {"path":"' + BIGPATH + '"}');
 
 const withTool = await readStore(s);
 const toolRows = [];

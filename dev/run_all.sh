@@ -149,6 +149,29 @@ slow_for() {
 	esac
 }
 
+# Can this verifier report a failure AT ALL?
+#
+# The gate decided PASS on the exit code and nothing else, and six verifiers had no
+# way of setting one: verify_backup, verify_writeguard, verify_viewer,
+# verify_localpage, verify_normalwrite and verify_toolmemory each printed
+# `SOMETHING: false` and exited 0. The summary quotes the LAST line of output, and
+# for three of them that line was `errors: [...]`, so the printed red never even
+# reached the summary. A PRINTED RED WAS A GATE GREEN, for months, over the
+# stale-write guard and over whether a backup restores a user's files.
+#
+# Asked of the SOURCE, because it is the only question with a certain answer: a file
+# containing no `process.exit`, no `throw` and no assertion cannot fail whatever it
+# prints, and no amount of reading its output will tell you that. It is a floor and
+# not a ceiling -- a file that counts reds and then exits 0 anyway still gets past
+# this -- but it is exact in the direction that matters: nothing healthy is ever
+# flagged, because a healthy verifier has to be able to say no somehow.
+#
+# The verifier is still RUN and its output still kept: the reason for the red is that
+# it asserts nothing, and that reason is worth reading beside whatever it printed.
+can_fail() {                    # name -> 0 if it can express a failure
+	grep -qE 'process\.exit|process\.exitCode|throw new |\bassert[.(]' "dev/$1.mjs" 2>/dev/null
+}
+
 pass=0; fail=0; skip=0; failed=""; skipped=""
 : > "$LOG"
 # Truncated ONCE here, appended to thereafter: phase 2 stops and restarts the
@@ -203,6 +226,14 @@ run_one() {
 	if echo "$out" | grep -qE '^SKIPPED:|^SKIP '; then
 		skip=$((skip+1)); skipped="$skipped $name"
 		say "SKIP  $name  — $(echo "$out" | grep -E '^SKIPPED:|^SKIP ' | head -1)"
+	elif [ $code -eq 0 ] && ! can_fail "$name"; then
+		# Green, and worth nothing: see `can_fail`. Counted as a failure because a
+		# file that cannot say no is not evidence of anything, and a suite that
+		# reports it as a pass is making a claim on its behalf that it never made.
+		fail=$((fail+1)); failed="$failed $name"
+		say "FAIL  $name (asserts nothing)  — no process.exit, no throw, no assertion: it exits 0"
+		say "      whatever it prints, so its green line means only that it ran. Last line was: $tail"
+		say "      full output: $SCRATCH/out/$name.log"
 	elif [ $code -eq 0 ]; then
 		pass=$((pass+1)); say "PASS  $name  — $tail"
 	else

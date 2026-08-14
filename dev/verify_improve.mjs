@@ -39,6 +39,28 @@
 //      silence passes with the feature entirely absent. So Send is pressed
 //      afterwards and the request DOES leave.
 //
+//   1b. WHAT PRESSING SEND MEANS IS SAID BEFORE IT IS PRESSED. The forge
+//      refuses on a repository's `public` flag before it examines any
+//      credential and draws public repositories only, so this panel can read
+//      anything at all only while `oxedyne/daimond` is public — and a proposal
+//      there is readable by anybody, with no credential, under the name of the
+//      voice that wrote it. So the compose box carries that ABOVE Send, naming
+//      the forge by HOST, because "published online" is a claim nobody can go
+//      and check. Three things are asked of it: that it is there and names the
+//      host, that it sits above the button rather than under it, and that it is
+//      NOT THERE when Send is not — a tester with no voice cannot send, and
+//      telling them their notes will be published would be false. And it is
+//      asked in all eight languages, in the browser, because a disclosure that
+//      exists in English only is a disclosure seven readers never get.
+//
+//   1f. AND THE STRINGS BESIDE IT ARE IN ALL EIGHT CATALOGUES TOO. `tOr(key,
+//      english)` draws correct English when a key is in no table, so a missing
+//      translation looks exactly like a finished one and nothing reports it —
+//      which is how fifteen keys reached `en.js` alone last release and how a
+//      whole `voice.*` family came to exist in no table at all. Read off disk,
+//      and honest about being weaker than 1e: it proves the ENTRY, not the
+//      screen. The surfaces those strings appear on belong to another lane.
+//
 //   2. WHAT LEFT IS WHAT YOU READ. A note is now a PROPOSAL, so the request has
 //      a title field and a body field rather than being the note's own bytes —
 //      and the property that the old shape carried for free has to be bought
@@ -107,6 +129,11 @@
 // A break that does not apply cleanly aborts rather than passing quietly.
 //
 //   node dev/verify_improve.mjs --break keepsends      # 1  Keep sends
+//   node dev/verify_improve.mjs --break nopublic       # 1b where it goes, unsaid
+//   node dev/verify_improve.mjs --break publicalways   # 1c said to somebody who cannot send
+//   node dev/verify_improve.mjs --break underneath     # 1d said after the button, not before it
+//   node dev/verify_improve.mjs --break i18ngap        # 1e said in English only
+//   node dev/verify_improve.mjs --break cappgap        # 1f a neighbour's string in seven of eight
 //   node dev/verify_improve.mjs --break hidden         # 2a a line nobody saw
 //   node dev/verify_improve.mjs --break smuggle        # 2b a fifth field
 //   node dev/verify_improve.mjs --break stickycontext  # 3a closed, and still sent
@@ -154,6 +181,12 @@
 //                about the same body made twice on purpose: a client that got
 //                the first right and the second wrong would be worse than one
 //                that got both wrong.
+//   `nopublic`   2 — the disclosure's words, and the same words asked for in
+//                seven other languages. The second is downstream of the first: a
+//                sentence that is not drawn at all is not drawn in German
+//                either. `i18ngap` is what establishes that the language check
+//                is not merely echoing the wording check — it leaves the English
+//                exactly right and takes one language away.
 //   `minesame`   2 — the record and the drawing. The drawing is downstream of
 //                the record, which is why `minedraw` exists: it leaves the
 //                record right and breaks only what is drawn, so the drawing
@@ -388,6 +421,48 @@ const BREAKS = {
 		file: 'js/improve.js',
 		find: '\t\tvar rec = store(text, 0);\n\t\tclearBox();\n\t\trender();\n\t\treturn rec;\n\t}',
 		with: '\t\tvar rec = store(text, 0);\n\t\tclearBox();\n\t\trender();\n\t\tpost(split(text));\n\t\treturn rec;\n\t}',
+	}],
+	// The sentence saying where a sent note goes is not said. The element is
+	// still there and still in the right place, so the two checks either side of
+	// it stay green and only the one about the WORDS moves.
+	nopublic: [{
+		file: 'js/improve.js',
+		find: "\t\tline.textContent = tOr('improve.public_note',",
+		with: "\t\tline.textContent = '';\n\t\tif (0) line.textContent = tOr('improve.public_note',",
+	}],
+	// Said to somebody who cannot send it. A tester with no voice is told their
+	// notes will be published, which is false — and a sentence that is false in
+	// one state is not believed in the other.
+	publicalways: [{
+		file: 'js/improve.js',
+		find: '\t\tline.hidden = !(send && !send.hidden);',
+		with: '\t\tline.hidden = false;',
+	}],
+	// Said UNDER the button instead of above it, where a hand on its way to Send
+	// passes it. Every word of it is still right, which is the point: this is the
+	// break that tells the placement check from the wording check.
+	underneath: [{
+		file: 'js/improve.js',
+		find: '\t\t\twrite.insertBefore(line, acts);\t\t// above the buttons, under the box',
+		with: '\t\t\tacts.parentNode.insertBefore(line, acts.nextSibling);',
+	}],
+	// One language short. English falls through correctly, so the panel looks
+	// right in German and says the English sentence — which is exactly how the
+	// last release put fifteen keys in `en.js` and nowhere else with nothing
+	// reporting it. Matched by SHAPE, so a later rewording of the German does not
+	// turn this break into a false abort.
+	i18ngap: [{
+		file: 'i18n/de.js',
+		re:   /\n\t'improve\.public_note': '[^']*',/,
+		with: '',
+	}],
+	// One of the capp strings in seven catalogues and not the eighth. English
+	// falls through, so the dialog reads correctly in Spanish and nothing reports
+	// it — which is the whole failure mode, and why it is checked at all.
+	cappgap: [{
+		file: 'i18n/es.js',
+		re:   /\n\t'capp\.update_kept': '[^']*',/,
+		with: '',
 	}],
 	// One line appended that was never on the screen. The note is all there, so
 	// a check that asked whether the body CONTAINS the note would pass.
@@ -855,6 +930,15 @@ try {
 	check('with no voice, Send is not offered at all',
 		await page.locator('#improve-acts .imp-send').isHidden());
 
+	// And nobody who cannot send is told that their notes are published, because
+	// they are not. COUNTED as well as asked whether it is hidden, for the same
+	// reason the button above is: an absent locator reports itself hidden, so "it
+	// is not shown here" and "it was never built" look identical from here.
+	check('the disclosure exists, to be hidden in the first place',
+		await page.locator('#improve-public').count() === 1);
+	check('and with no voice and no Send, nobody is told their notes are published',
+		await page.locator('#improve-public').isHidden());
+
 	await page.fill('#improve-box', NOTE_1);
 	await page.waitForTimeout(700);
 	check('writing a note sends nothing', opens().length === 0,
@@ -883,6 +967,52 @@ try {
 		}));
 	check('and Send is offered once there is a voice',
 		await page.locator('#improve-acts .imp-send').isVisible());
+
+	// ── 1b. What Send does is said before it is pressed ──────────
+	//
+	// Read off the page in one go, so that what is asserted about the sentence and
+	// what is asserted about where it sits are the same sentence in the same
+	// moment. `isVisible()` as well, because an element drawn with nothing in it
+	// has no box: a disclosure that says nothing is not a disclosure that is
+	// merely quiet.
+	const disclosed = await page.evaluate(() => {
+		const p    = document.getElementById('improve-public');
+		const send = document.querySelector('#panel-improve #improve-acts .imp-send');
+		const box  = document.getElementById('improve-box');
+		if (!p || !send || !box) return null;
+		const a = p.getBoundingClientRect(), b = send.getBoundingClientRect(),
+			c = box.getBoundingClientRect();
+		return {
+			text:      (p.textContent || '').replace(/\s+/g, ' ').trim(),
+			inBox:     !!p.closest('#panel-improve .imp-write'),
+			aboveSend: a.bottom <= b.top,
+			belowNote: a.top >= c.bottom,
+		};
+	});
+	const shown = await page.locator('#improve-public').isVisible();
+
+	// The three facts the forge's own page and this one have to agree on, plus the
+	// host. Every one of them is something a person would be surprised by
+	// afterwards, which is the whole test of whether it belongs beside the button:
+	// ANYONE, with NO account, and the voice name goes with it.
+	const HOST = 'oregami.oxegen.io';
+	const SAYS = [
+		['names the forge by host',         /oregami\.oxegen\.io/],
+		['says anyone can read it',         /\banyone\b/i],
+		['says no account is needed',       /\b(?:without an account|no account)\b/i],
+		['says the voice name goes too',    /voice name/i],
+		['and that a kept note stays here', /this device/i],
+	];
+	const unsaid = disclosed ? SAYS.filter(([, re]) => !re.test(disclosed.text)).map(([what]) => what) : ['nothing is drawn'];
+	check('once Send is offered, the box says what Send does, in full',
+		shown && unsaid.length === 0,
+		(shown ? '' : 'not on the screen; ') + (unsaid.join(', ') || JSON.stringify(disclosed && disclosed.text)));
+
+	// Above Send and under the note, which is where a hand on its way to the
+	// button passes it. Under the button it would be read, at best, afterwards.
+	check('and it is in the box, under the note and above Send',
+		!!disclosed && disclosed.inBox && disclosed.aboveSend && disclosed.belowNote,
+		JSON.stringify(disclosed));
 
 	// ── 2. What left is what you read ────────────────────────────
 	const NOTE_2 = 'The Diamonds chip does not fill when the panel opens\n'
@@ -1345,6 +1475,73 @@ try {
 
 	check('the panel does not call its box the composer',
 		panelWords.toLowerCase().indexOf('composer') === -1);
+
+	// ── 1e. And the disclosure is said in all eight languages ────
+	//
+	// Asked of the RUNNING panel in each language rather than of the catalogues on
+	// disk, because a key in a table nothing reads is not a sentence anybody sees:
+	// this panel draws every one of its own words, so a language change reaches
+	// them only through the surface it registers with i18n.js.
+	//
+	// A missing key falls through to the English, which still names the host — so
+	// the host alone would pass over exactly the gap being looked for. What is
+	// asserted is BOTH: the host is there, and the sentence is not the English one
+	// wearing another language's flag.
+	const englishSaid = disclosed ? disclosed.text : '';
+	const inEach = [];
+	for (const code of ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
+		await page.evaluate(c => window.DaimondI18n.setLocale(c), code);
+		await page.waitForTimeout(350);
+		inEach.push([code, await page.evaluate(() => {
+			const p = document.getElementById('improve-public');
+			return p ? (p.textContent || '').replace(/\s+/g, ' ').trim() : '';
+		})]);
+	}
+	await page.evaluate(() => window.DaimondI18n.setLocale('en'));
+	await page.waitForTimeout(350);
+
+	const untranslated = inEach.filter(([, s]) => !s || s === englishSaid || s.indexOf(HOST) === -1)
+		.map(([c, s]) => c + ': ' + (s ? JSON.stringify(s.slice(0, 40)) : 'nothing'));
+	check(`the disclosure is said in all eight languages, host and all (${inEach.length + 1} checked)`,
+		untranslated.length === 0, untranslated.join(' | '));
+	// And the strings this lane put in the catalogues alongside it are in all
+	// eight too. READ OFF DISK and not off the screen, and the difference is
+	// stated rather than glossed: this proves the ENTRY EXISTS and keeps its
+	// placeholder, not that the sentence reaches anybody — the sweep above is the
+	// one that proves reaching, and it can only do it for the surface this file
+	// drives. The capp dialogs belong to another lane's verifier.
+	//
+	// It is here at all because the fallback that draws them, `tOr(key, english)`,
+	// is silent by design: a key in no table paints correct English and nothing
+	// anywhere reports it. Fifteen keys reached `en.js` only in the last release
+	// and a whole `voice.*` family is in no table at all, both found by reading
+	// rather than by any check.
+	const CATALOGUE = [
+		['improve.public_note',      '{host}'],
+		['capp.legacy_body',         '{name}'],
+		['capp.legacy_ok',           ''],
+		['capp.update_kept',         '{files}'],
+		['capp.update_failed',       '{why}'],
+		['capp.page_reset_confirm',  '{name}'],
+	];
+	const gaps = [];
+	for (const code of ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
+		const p   = 'i18n/' + code + '.js';
+		const src = FILES.get(p) ?? fs.readFileSync(path.join(WWW, p), 'utf8');
+		for (const [key, ph] of CATALOGUE) {
+			const m = src.match(new RegExp("'" + key.replace('.', '\\.') + "':\\s*'((?:[^'\\\\]|\\\\.)*)'"));
+			if (!m) gaps.push(code + ' has no ' + key);
+			else if (ph && !m[1].includes(ph)) gaps.push(code + ' dropped ' + ph + ' from ' + key);
+		}
+	}
+	check(`every string this lane added is in all eight catalogues, placeholders and all (${CATALOGUE.length * 8} checked)`,
+		gaps.length === 0, gaps.join(' | '));
+
+	check('and English came back afterwards, so nothing below is read in another language',
+		(await page.evaluate(() => {
+			const p = document.getElementById('improve-public');
+			return p ? (p.textContent || '').replace(/\s+/g, ' ').trim() : '';
+		})) === englishSaid);
 
 	// ── 10. And it exists on a phone ─────────────────────────────
 	await page.setViewportSize({ width: 390, height: 844 });

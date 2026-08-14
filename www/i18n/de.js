@@ -2003,6 +2003,16 @@
 	'capp.exists_ok': 'Öffnen',
 	'capp.missing_body': 'Diese Daimond-Version enthält die {name}-Vorlage nicht, es gibt also nichts, was in ein Diamond gelegt werden könnte. Es wurde nichts angelegt. Bitte deinen Daimon stattdessen um eine Seite, oder aktualisiere Daimond und versuche es erneut.',
 	'capp.page_failed': 'Das Diamond wurde angelegt, aber seine Seite konnte nicht geschrieben werden: {why}',
+	// Die Seite einer Capp aktuell halten. Es wird GEFRAGT, nicht ersetzt: ein
+	// Angebot, keine Warnung. „lanes" bleibt englisch, weil die Seite selbst
+	// englisch ist — wie Diamond.
+	'capp.legacy_body': 'Dieses {name} wurde angelegt, bevor Capps eine Version trugen, deshalb kann Daimond nicht erkennen, welche Teile seiner Seite die mitgelieferten sind. Seine Seite auf den aktuellen Stand bringen? Deine lanes und deine Einträge bleiben unangetastet.',
+	'capp.legacy_ok': 'Seite aktualisieren',
+	'capp.update_kept': 'Die Seite ist jetzt auf dem aktuellen Stand. Diese Dateien sind deine und wurden so gelassen, wie sie sind: {files}.',
+	'capp.update_failed': 'Die Seite konnte nicht ersetzt werden: {why}',
+	// Zurückgesetzt wird auf die EIGENE Vorlage der Capp, nicht auf eine leere
+	// oder die Standardseite.
+	'capp.page_reset_confirm': 'Die Seite dieses Diamonds durch die aktuelle {name}-Seite ersetzen? Was du aufgezeichnet hast, bleibt unberührt.',
 	'crystal.chat_empty': 'Noch nichts gesagt. Der Kristall ist, was dieser Diamond weiß; dies ist, wie er dazu kam.',
 	'crystal.dispatch_after_error': 'Der Zug endete schlecht, also wurden die angeforderten Agenten nicht gestartet.',
 	'instructions.chip_two': 'Zwei Ebenen gelten: deine und die dieses Projekts. Klicke, um deine zu öffnen.',
@@ -2102,6 +2112,11 @@
 	// kein Name geht mit, also darf hier nichts die Person benennen.
 	'improve.as_voice': 'Geht unter deiner Stimme an die Schmiede, wo jeder mit dem Repository sie lesen kann.',
 	'improve.as_novoice': 'Du hast keine Stimme, also kann eine Notiz nur hier bleiben.',
+	// Über dem Senden-Knopf, und genau dann zu sehen, wenn er zu sehen ist. Das
+	// Repository ist öffentlich, also kann eine gesendete Notiz von JEDEM ohne
+	// KONTO gelesen werden, unter dem NAMEN der Stimme. Alle drei müssen bleiben.
+	// `{host}` wird von js/improve.js eingesetzt: so stehen lassen.
+	'improve.public_note': 'Beim Senden wird diese Notiz auf {host} veröffentlicht, mit dem Namen deiner Stimme daran. Dort kann sie jeder ohne Konto lesen. Eine Notiz, die du behältst, bleibt auf diesem Gerät.',
 	'improve.title_hint': 'Die erste Zeile ist der Titel des Vorschlags. Was passiert ist, kommt darunter.',
 	'improve.no_title': 'Die erste Zeile ist der Titel. Schreib eine, und darunter, was passiert ist.',
 	'improve.nothing': 'Schreib zuerst etwas.',

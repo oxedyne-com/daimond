@@ -307,13 +307,28 @@ const s = await open({ name: 'waiting' });
 const p = s.page;
 await newChat(s);
 
+// WHERE THE CHAIN'S FIRST TOOL WRITES, and it has to be somewhere it may.
+//
+// This said `waiting.txt` — a workspace-ROOT path — until 2026-08-14. Since the
+// chat fence landed on 2026-08-12 a chat is confined to `chats/<id>/work`
+// (`scopeChatTo`, www/js/daimond.js) and `Tool::guard` (src/tools.rs:5490) refuses a
+// root path before the write ever happens. A refusal is instant, and instant is the
+// problem here: the caption "Running file_write, step 1…" was replaced by the next
+// one inside a single microtask checkpoint, so the observer below never saw it and
+// two checks about WHAT THE INDICATOR SAID went red about a fence.
+const SCRATCH = await p.evaluate(() => {
+	const f = window.DaimondAttach.focus();
+	return f && f.id ? window.DaimondAttach.chatScratch(f.id) : '';
+});
+check('the chat has a scratch folder, so its tools have real work to do', !!SCRATCH, SCRATCH);
+
 // ── A turn of several tool calls, with the steps SHOWN ──────────────
 //
 // `@chain` is two rounds of one tool call each and then a text reply — the shape
 // of a real agentic turn, and the shape the old code went dark for.
 
 await watch(p);
-await send(p, '@chain file_write {"path":"waiting.txt","content":"hello"}');
+await send(p, `@chain file_write {"path":"${SCRATCH}/waiting.txt","content":"hello"}`);
 check('the multi-call turn ran to the end', await settle(p));
 const shown = await reap(p);
 
@@ -329,9 +344,16 @@ check('it never sat there saying nothing',
 check('it named the tool that was actually running, and then the next one',
 	shown.saidIn.some(w => /file_write/.test(w)) && shown.saidIn.some(w => /file_list/.test(w)),
 	shown.saidIn.join(' | '));
+// BOTH HAVE TO BE THERE, and this is why. Written as a bare
+// `findIndex(file_write) < findIndex(file_list)`, an ABSENT first caption scores -1
+// and -1 is less than any index, so the check passed BECAUSE its subject was
+// missing — green, beside a sibling going red about the very same absence. An
+// ordering assertion over a set that may not hold either member has to say so.
+const iWrote = shown.saidIn.findIndex(w => /file_write/.test(w));
+const iList  = shown.saidIn.findIndex(w => /file_list/.test(w));
 check('the tool it named first is the tool that ran first',
-	shown.saidIn.findIndex(w => /file_write/.test(w)) < shown.saidIn.findIndex(w => /file_list/.test(w)),
-	shown.saidIn.join(' | '));
+	iWrote >= 0 && iList >= 0 && iWrote < iList,
+	`file_write at ${iWrote}, file_list at ${iList} — ` + shown.saidIn.join(' | '));
 check('and the line changed as the turn went on, rather than standing still',
 	shown.saidIn.length > 1, shown.saidIn.join(' | '));
 // Nothing about how long the user has been waiting: the app may notice, and must
@@ -356,7 +378,7 @@ await p.evaluate(() => document.getElementById('steps-toggle-btn').click());
 await p.waitForTimeout(200);
 
 await watch(p);
-await send(p, '@chain file_write {"path":"waiting2.txt","content":"again"}');
+await send(p, `@chain file_write {"path":"${SCRATCH}/waiting2.txt","content":"again"}`);
 check('the hidden-steps turn ran to the end', await settle(p));
 const hidden = await reap(p);
 

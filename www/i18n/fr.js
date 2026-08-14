@@ -2010,6 +2010,16 @@
 	'capp.exists_ok': 'L’ouvrir',
 	'capp.missing_body': 'Cette version de Daimond ne contient pas le modèle {name} : il n’y a donc rien à mettre dans un Diamond. Rien n’a été créé. Demandez une page à votre daimon, ou mettez Daimond à jour et réessayez.',
 	'capp.page_failed': 'Le Diamond a été créé, mais sa page n’a pas pu être écrite : {why}',
+	// Tenir à jour la page d’une capp. On DEMANDE, on ne remplace pas d’office :
+	// c’est une proposition, pas un avertissement. « lanes » reste en anglais,
+	// comme Diamond, parce que la page elle-même est en anglais.
+	'capp.legacy_body': 'Ce {name} a été créé avant que les capps ne portent une version : Daimond ne peut donc pas savoir quelles parties de sa page sont celles qui lui ont été données. Mettre sa page à jour vers la page actuelle ? Vos lanes et vos entrées restent intactes.',
+	'capp.legacy_ok': 'Mettre la page à jour',
+	'capp.update_kept': 'La page a été mise à jour. Ces fichiers sont les vôtres et ont été laissés tels quels : {files}.',
+	'capp.update_failed': 'La page n’a pas pu être remplacée : {why}',
+	// Le retour se fait vers le modèle PROPRE à la capp, pas vers une page vide
+	// ni vers la page standard.
+	'capp.page_reset_confirm': 'Remplacer la page de ce Diamond par la page {name} actuelle ? Ce que vous avez consigné n’est pas touché.',
 	'crystal.chat_empty': 'Rien n’a encore été dit. Le cristal est ce que ce Diamond sait ; ceci est comment il l’a appris.',
 	'crystal.dispatch_after_error': 'Le tour s’est mal terminé : les agents qu’il demandait n’ont pas été lancés.',
 	'instructions.chip_two': 'Deux couches sont en vigueur : la vôtre et celle de ce projet. Cliquez pour ouvrir la vôtre.',
@@ -2109,6 +2119,11 @@
 	// ne voyage, donc rien ici ne doit nommer cette personne.
 	'improve.as_voice': 'Part vers la forge sous votre voix, où quiconque a le dépôt peut la lire.',
 	'improve.as_novoice': 'Vous n’avez pas de voix, donc une note ne peut que rester ici.',
+	// Au-dessus d’Envoyer, et à l’écran exactement quand Envoyer y est. Le dépôt
+	// est public : une note envoyée est lisible par N’IMPORTE QUI, SANS COMPTE, et
+	// sous le NOM de votre voix. Ces trois faits doivent survivre à la traduction.
+	// `{host}` est rempli par js/improve.js : à laisser tel quel.
+	'improve.public_note': 'Envoyer publie cette note sur {host}, avec le nom de votre voix. N’importe qui peut l’y lire sans compte. Une note que vous gardez reste sur cet appareil.',
 	'improve.title_hint': 'La première ligne est le titre de la proposition. Ce qui s’est passé vient en dessous.',
 	'improve.no_title': 'La première ligne est le titre. Écrivez-en un, puis ce qui s’est passé en dessous.',
 	'improve.nothing': 'Écrivez d’abord quelque chose.',

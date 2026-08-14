@@ -10,7 +10,7 @@
            state, pageBox, goToPage, rail, sections, fitPage
        }
 
-   Six things decide the shape of this file, and each of them is
+   Nine things decide the shape of this file, and each of them is
    a measurement rather than a preference.  The measurements are
    in `dev/TYPST_WATCH.md` and in `dev/probe_typstsvg.mjs`; what
    follows is what they cost.
@@ -166,6 +166,21 @@
       runs only while the rail is open, it renders and never
       compiles, and it yields every `SCAN_CHUNK` pages so a long
       book fills the rail in rather than freezing it.
+
+   9. THE RENDERER'S COORDINATES ARE NOT OURS, AND THE DIFFERENCE
+      ACCUMULATES.  `S.tops` is the exact running sum of the page
+      heights the compiler reports; typst.ts places each page at a
+      running sum of those heights ROUNDED TO A WHOLE POINT.  On a
+      160 mm page — 453.5433 pt — that is 0.4567 pt a page and it
+      never comes back: 11 pt by page 26, 45 pt by page 100, 105 pt
+      by page 230.  Cropping a sheet at `tops` therefore left the
+      paper exactly where it belonged and slid the INK down inside
+      it, which is what the author reported as a gradual violation
+      of the margins.  Every page's own origin comes back in its
+      group's `transform`, so `S.rtops` keeps what the renderer
+      said and the sheets are cropped, and the windows asked, in
+      the renderer's own numbers.  THE SEQUENCE NAMES THE PAGE AND
+      THE TRANSFORM PLACES IT — never the other way round.
    ============================================================ */
 
 const VENDOR   = new URL('../vendor/typst/', import.meta.url);
@@ -251,10 +266,31 @@ const PAGE_GAP = 12;
 
 /// How many pages either side of the visible ones are drawn.
 ///
-/// One page's worth of margin, so a flick of the wheel lands on a sheet that is
-/// already there.  The band was measured in SCREENS before the pages were separated;
-/// pages are the honest unit now that each one is its own SVG.
-const MARGIN_PAGES = 1;
+/// FOUR, BECAUSE THE COST OF A BAND IS THE SESSION AND NOT THE PAGES IN IT. A render
+/// builds a fresh session from the whole artifact — 27-32 ms on the author's 281-page
+/// book — and then answers a page in well under a millisecond, so nine pages cost
+/// about what three did. What one margin page bought was a redraw every second page
+/// of scrolling, and every one of those redraws was the whole 30 ms; four buys a
+/// redraw every fifth page, which an ordinary reader crossing a page never reaches at
+/// all.
+///
+/// It is not raised further because the band is also what is held in the DOM, and a
+/// document is read a page at a time: past a few pages either side the sheets are
+/// memory nobody is looking at.
+const MARGIN_PAGES = 4;
+
+/// How long the scroll must be still before the band under it is redrawn, in ms.
+///
+/// A BAND IS NEVER BUILT INSIDE THE SCROLL FRAME. It used to be, and that is what the
+/// author felt as "very slow and laboured": a dragged scrollbar fails the band's own
+/// guard on EVERY frame, so every frame built a session, rendered, parsed and swapped
+/// the whole band — and then threw those sheets away when the next frame did it
+/// again. A sheet that arrives a tenth of a second late is not noticeable; a frame
+/// that is blocked for thirty milliseconds is the only thing that is.
+///
+/// Long enough that a fling costs one render rather than one per frame, and shorter
+/// than the eye takes to settle on a page it has landed on.
+const SETTLE_MS = 120;
 
 /// How far inside its own edges a page is asked for, in points.
 ///
@@ -271,11 +307,25 @@ const PAGE_INSET = 0.05;
 
 /// How many pages the outline scan lays out before it hands the frame back.
 ///
-/// A page answers in well under a millisecond once the first one has emitted the
-/// glyphs, so eight is a few milliseconds of work between two paints — invisible on
-/// a short document and, on a 281-page one, a rail that fills in rather than a tab
-/// that stops.
-const SCAN_CHUNK = 8;
+/// THIRTY-TWO, BECAUSE THE CHUNK IS A SESSION AND THE SESSION IS THE COST. A page
+/// answers in well under a millisecond once the first one has emitted the glyphs, but
+/// the session in front of it costs 27-32 ms on the author's 281-page book — so eight
+/// pages a chunk spent thirty-six sessions and better than a second of session
+/// building on that book, in a task of at least thirty milliseconds in EVERY frame
+/// while the rail was open. Thirty-two pages is nine sessions for the same book, and
+/// what the chunk holds is still under about three megabytes of markup where the
+/// whole document is 23.7 MB.
+const SCAN_CHUNK = 32;
+
+/// How long the build loop must be quiet before the outline scan starts, in ms.
+///
+/// The scan reads every page of the document, and every good build makes the pages it
+/// read the wrong ones — `refreshToc` asks for it again, and on a book being typed in
+/// that is a walk of the whole document abandoned and restarted for every keystroke
+/// that compiles. So it waits for the typing to stop, which is the same reason the
+/// rebuild itself is debounced, and a rail entry that fills in a moment after the
+/// pages costs the reader nothing.
+const SCAN_IDLE = 800;
 
 // ── Where the last good pages live, and what bounds them ────────────────────
 //
@@ -326,11 +376,14 @@ const S = {
 	digests:  {},		// what each watched file said, the last time it was read
 	blind:    false,	// the rebuild running now could not be confirmed from contents
 	same:     0,		// unconfirmable rebuilds in a row, which is a spin nobody sees
+	bandErr:  '',		// why the last band render threw, so a swallowed one is visible
 	pages:    0,
 	scale:    1,		// rendered px per pt, for putting the scroll back
 	docW:     0,		// the document's own width, in points
 	docH:     0,		// and its whole height, which the scroller is as tall as
-	tops:     [],		// each page's top IN THE DOCUMENT, in pt
+	tops:     [],		// each page's top IN THE DOCUMENT, in pt: the exact sum
+	rtops:    [],		// and where the RENDERER puts it, which is not the same number
+	drift:    0,		// the renderer's own total height less the exact sum, in pt
 	heights:  [],		// each page's height, in pt
 	lays:     [],		// each page's top ON SCREEN, in pt, gaps included
 	laid:     0,		// the whole stack's height on screen, in pt
@@ -540,6 +593,12 @@ function mount() {
 	// Scrolling out of the drawn band draws the next one. Throttled to a frame,
 	// because a scroll fires far more often than a screen is painted and the work
 	// only has to be done once per frame to be invisible.
+	//
+	// AND WHAT RUNS IN THAT FRAME IS ONLY THE CHEAP HALF. `sayWhere` is arithmetic and
+	// a few writes that are skipped when nothing changed; `ensureWindow` decides
+	// whether a band is wanted and, if one is, waits for the scroll to settle before
+	// building it. The band used to be built here, and a dragged scrollbar therefore
+	// built one per frame and threw each away — see `SETTLE_MS`.
 	let pending = false;
 	host.querySelector('.tl-scroll').addEventListener('scroll', function () {
 		if (pending) return;
@@ -723,17 +782,35 @@ function dark(on) {
 }
 
 /// Say which page the reader is on, and how big the pages are drawn.
+///
+/// NOTHING IS WRITTEN THAT DOES NOT DIFFER FROM WHAT IS THERE, and on a scroll almost
+/// nothing does: the zoom cannot change by scrolling, the page count cannot, and the
+/// page number changes once a page rather than once a frame. This is called from
+/// every scroll frame, and a write into the bar followed by `markHere` reading
+/// `scrollTop` again is a layout the browser is forced to do twice in one frame,
+/// sixty times a second, for a percentage that says the same thing every time.
+///
+/// The comparison is against THE ELEMENT rather than against a remembered value, so
+/// there is no second copy to drift from the bar — and reading `value`, `textContent`
+/// or an inline `display` costs no layout, which is the whole point. The reader's
+/// place is worked out once here and handed to `markHere`, so the frame reads
+/// `scrollTop` once.
 function sayWhere() {
 	if (!host) return;
 	const w = where();
 	const page = host.querySelector('.tl-page');
-	if (page && document.activeElement !== page) {
-		page.value = S.pages ? String((w ? w.page : 0) + 1) : '';
-	}
-	host.querySelector('.tl-of').textContent = S.pages ? '/ ' + S.pages : '';
-	host.querySelector('.tl-fit').textContent = Math.round(S.zoom * 100) + '%';
-	host.querySelector('.tl-set').style.display = S.pages ? '' : 'none';
-	markHere();
+	const at = S.pages ? String((w ? w.page : 0) + 1) : '';
+	if (page && document.activeElement !== page && page.value !== at) page.value = at;
+	const tot = S.pages ? '/ ' + S.pages : '';	// how many there are, beside it
+	const of = host.querySelector('.tl-of');
+	if (of.textContent !== tot) of.textContent = tot;
+	const pc = Math.round(S.zoom * 100) + '%';
+	const fit = host.querySelector('.tl-fit');
+	if (fit.textContent !== pc) fit.textContent = pc;
+	const set = host.querySelector('.tl-set');
+	const show = S.pages ? '' : 'none';
+	if (set.style.display !== show) set.style.display = show;
+	markHere(w);
 }
 
 
@@ -961,9 +1038,34 @@ function pageAt(y) {
 /// drawn again, wherever it is. So the band is one call, and the pages are separated
 /// afterwards out of the one answer — which is also the cheapest of the three, since
 /// a session costs 27-32 ms on the author's 281-page book and this builds one.
+///
+/// AND IT IS ASKED IN THE RENDERER'S OWN COORDINATES, which are not the exact sum of
+/// the page heights. The renderer rounds each height to a whole point before it
+/// accumulates, so on a 453.543 pt page it is 0.457 pt further down every page: by
+/// page 26 the window asked for begins a tenth of a page above where the renderer
+/// thinks page 26 begins, so the band drew a page more than it kept, and by the point
+/// where the drift passes a whole page height — about page 992 for this page size —
+/// the window stopped reaching page `p1` at all and the last sheet of every band came
+/// back blank. `S.rtops` is what the renderer said, learned from any band already
+/// drawn; `S.tops` is the exact sum, and is the best that can be done before one has.
+///
+/// WHICH LEAVES EXACTLY ONE BAND ASKED WITHOUT THEM: the first of a new document,
+/// drawn before anything has said where its pages are. That one is asked for a window
+/// widened by the whole document's `drift` at both ends — the free measurement taken
+/// in `draw`, which is the largest the accumulation can have reached anywhere in the
+/// book — so it cannot fall short of page `p1` however deep in the document it is.
+/// The pages that widening pulls in are dropped a few lines below, as the pages
+/// outside the window always were, and the band it draws fills `rtops` in for every
+/// page of the document, so no band after it is asking with the wrong number.
+///
+/// It is not simply re-asked once the origins are known, because a second session on
+/// every rebuild is 30 ms of every rebuild spent redrawing sheets that are right.
 function windowOf(ses, p0, p1) {
-	return ses.render_in_window(0, S.tops[p0] + PAGE_INSET, S.docW,
-		S.tops[p1] + S.heights[p1] - PAGE_INSET);
+	const pad = (S.rtops[p0] != null && S.rtops[p1] != null) ? 0 : Math.abs(S.drift);
+	const lo = ((S.rtops[p0] != null) ? S.rtops[p0] : S.tops[p0]) - pad;
+	const hi = ((S.rtops[p1] != null) ? S.rtops[p1] : S.tops[p1]) + S.heights[p1] + pad;
+	return ses.render_in_window(0, Math.max(0, lo) + PAGE_INSET, S.docW,
+		hi - PAGE_INSET);
 }
 
 /// The renderer's answer, parsed, with what must not run taken out of it first.
@@ -1029,7 +1131,19 @@ function bandNode(bytes, top, deep, scale) {
 	for (let k = 0; k < groups.length; k++) {
 		const m = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/
 			.exec(groups[k].getAttribute('transform') || '');
-		const i = pageOfGroup(m ? parseFloat(m[1]) : 0, k, groups.length, p0, p1);
+		// THE SEQUENCE NAMES THE PAGE; THE TRANSFORM IS WHERE ITS INK IS. Two questions
+		// that look like one, and answering the second with the first is the defect this
+		// paragraph exists for. Which page a group is, is its position in the answer —
+		// `pageOfGroup` says why, and why the y cannot be trusted for it. Where that
+		// page's ink was PUT is the group's own `translate`, and nothing else knows.
+		const gy = m ? parseFloat(m[1]) : NaN;
+		const i = pageOfGroup(Number.isFinite(gy) ? gy : 0, k, groups.length, p0, p1);
+		// AND WHAT IT SAYS IS KEPT FOR THE WHOLE DOCUMENT, WHICH IS WHY THIS IS ABOVE THE
+		// LINE THAT DROPS THE REST. A window emits a group for EVERY page of the
+		// document, not for the pages in it — the ones outside it come back empty, but
+		// they still say where they are — so one band's answer names every page's origin
+		// in the book and no later band, window or scan has to ask again.
+		if (Number.isFinite(gy) && i >= 0 && i <= last) S.rtops[i] = gy;
 		// The groups outside the window came back empty, and an empty sheet is a hole
 		// in the document. They are dropped rather than drawn.
 		if (i < p0 || i > p1 || i > last) continue;
@@ -1037,8 +1151,20 @@ function bandNode(bytes, top, deep, scale) {
 		// viewBox is what crops it to this page and nothing else — no transform, no
 		// second coordinate system to get wrong, and no element taller than a page for
 		// Chrome to rasterise badly.
+		//
+		// CROPPED WHERE THE RENDERER PUT THE PAGE, NOT AT THE EXACT SUM OF THE HEIGHTS
+		// ABOVE IT, and the two are not the same number. `S.tops` accumulates the page
+		// heights as they are — 453.5433 pt on a 160 mm page — and typst.ts rounds each
+		// one to a whole point and accumulates THAT, so the two separate by 0.4567 pt a
+		// page and never meet again: 11 pt by page 26, 45 pt by page 100, 105 pt by page
+		// 230. The sheet is placed and sized correctly either way, so the PAPER stays
+		// right and the INK slides down inside it — a widening white band at the head and
+		// the foot of the type walking off the bottom, which is the "gradual violation of
+		// the margins" the author reported and which page one, where the drift is zero by
+		// construction, cannot show.
 		const svg = root.cloneNode(false);
-		svg.setAttribute('viewBox', '0 ' + S.tops[i] + ' ' + S.docW + ' ' + S.heights[i]);
+		const y = Number.isFinite(gy) ? gy : S.tops[i];
+		svg.setAttribute('viewBox', '0 ' + y + ' ' + S.docW + ' ' + S.heights[i]);
 		svg.setAttribute('width', String(S.docW * scale));
 		svg.setAttribute('height', String(S.heights[i] * scale));
 		svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
@@ -1074,12 +1200,25 @@ function scaleFor(docW) {
 	return w > 0 ? (w / docW) * S.zoom : (S.scale || 1);
 }
 
+let settling = null;		// the timer that draws the band once the scroll has stopped
+let sick = null;		// the visible window whose render threw, until it is left
+
 /// Redraw the window if the reader has scrolled out of the one that is drawn.
 ///
-/// Cheap enough to run inside a scroll handler — a few milliseconds — which is why
-/// it runs there rather than on a timer. A repaint replaces the SVG in one
-/// operation, so there is no frame with nothing in it.
-function ensureWindow() {
+/// IT IS NOT CHEAP AND IT DOES NOT RUN IN THE SCROLL FRAME. The note that used to be
+/// here said it was a few milliseconds; a band is a fresh session out of the whole
+/// artifact (27-32 ms on the author's 281-page book), a render, two regular
+/// expressions over the markup, a `DOMParser`, a deep `importNode` and one group
+/// examined per page OF THE WHOLE DOCUMENT. Deciding whether a band is wanted IS
+/// cheap — it is arithmetic on `lays` — so that part stays here and the band itself
+/// waits `SETTLE_MS` for the scroll to stop. A dragged scrollbar failed the guard
+/// below on every frame, and every frame paid the whole of that and then threw the
+/// sheets away.
+///
+/// # Arguments
+/// * `now` - Draw it in this turn rather than when the scroll settles. For a jump the
+///           reader asked for, where the wait would be a wait for nothing.
+function ensureWindow(now) {
 	const sc = scroller();
 	if (!sc || !vec || !band || !renderer) return;
 	const scale = S.scale || 1;
@@ -1089,9 +1228,41 @@ function ensureWindow() {
 	// every frame for ever.
 	const a = pageAt(Math.max(0, top)), b = pageAt(Math.max(0, top + deep));
 	if (a >= band.p0 && b <= band.p1) return;
+	// A WINDOW WHOSE RENDER THREW IS NOT ASKED AGAIN UNTIL THE READER LEAVES IT. The
+	// guard above is only satisfied by a band that was drawn, so a render that failed
+	// left it false for ever: every later scroll frame built another session, threw,
+	// and swallowed it — the failure was invisible and it was paid for sixty times a
+	// second. `S.bandErr` keeps the reason where `state()` will show it.
+	if (sick && a >= sick.p0 && b <= sick.p1) return;
+	if (now) { drawBand(top, deep, scale, a, b); return; }
+	if (settling) clearTimeout(settling);
+	settling = setTimeout(function () {
+		settling = null;
+		ensureWindow(true);
+	}, SETTLE_MS);
+}
+
+/// Draw the band around `top`, remembering a failure rather than repeating it.
+///
+/// # Arguments
+/// * `a`, `b` - The first and last page actually in view, which is the window that is
+///              marked as bad if this throws. Not the band: the band reaches further
+///              either side, and a reader who has left the pages that failed should be
+///              tried again.
+function drawBand(top, deep, scale, a, b) {
 	try {
 		paint(bandNode(vec, top, deep, scale));
-	} catch (e) { /* the pages that are up stay up */ }
+		sick = null;
+		S.bandErr = '';
+	} catch (e) {
+		// The pages that are up stay up, and the reason is kept rather than swallowed.
+		// Not `showError`: that strip is the COMPILER's words, and a render fault
+		// underneath a document that compiled cleanly would be a lie about the source.
+		sick = { p0: a, p1: b };
+		S.bandErr = (e && e.message) ? e.message : String(e);
+		console.warn('typstwatch: pages ' + (a + 1) + '-' + (b + 1)
+			+ ' could not be drawn: ' + S.bandErr);
+	}
 }
 
 /// Redraw at a new size, because the panel was resized.
@@ -1107,6 +1278,9 @@ function resized() {
 	pages.style.width  = (S.docW * S.scale) + 'px';
 	pages.style.height = (S.laid * S.scale) + 'px';
 	band = null;
+	// A new size is a new attempt: a band that could not be drawn at the old one is
+	// asked for again rather than being held against the reader for ever.
+	sick = null;
 	const sc = scroller();
 	const top = was ? (S.lays[Math.min(was.page, S.lays.length - 1)] + was.into)
 		: (sc ? sc.scrollTop / S.scale : 0);
@@ -1156,11 +1330,29 @@ async function draw(bytes) {
 	// placed from `lays` and the pages are rendered from `tops`, and a band built
 	// with one of them stale would draw the right pages in the wrong places.
 	const wasDoc = { w: S.docW, h: S.docH, s: S.scale, t: S.tops, hh: S.heights,
-		l: S.lays, ld: S.laid, p: S.pages };
+		l: S.lays, ld: S.laid, p: S.pages, rt: S.rtops, d: S.drift };
 	S.docW    = docW;
 	S.docH    = docH;
 	S.tops    = tops;
+	// EMPTIED WITH THE REST OF THE GEOMETRY, and this is not tidiness. `rtops` is where
+	// THE DOCUMENT ON SCREEN was put; an entry left over from the one before it would
+	// crop this document's page at a position belonging to another book, which is worse
+	// than the drift it exists to correct. The first band of this document fills it in
+	// again for every page, in one answer.
+	S.rtops   = [];
+	// And a band that could not be drawn out of the LAST document says nothing about
+	// this one, so the window that failed is offered again and its reason goes with it.
+	sick      = null;
+	S.bandErr = '';
 	S.heights = heights;
+	// THE DRIFT, FOR NOTHING, BEFORE A SINGLE PAGE IS DRAWN. `info.height()` is the
+	// renderer's own total; `tops[n-1] + heights[n-1]` is the exact sum of the same
+	// pages. Where the renderer accumulates whole points the two disagree by the whole
+	// of the accumulated rounding — 105 pt on a 231-page book of 453.543 pt pages —
+	// which is exactly the distance a page's ink was cropped adrift by. It costs two
+	// subtractions and it is the cheapest thing in this file that says the crop is
+	// following the right coordinates.
+	S.drift   = n ? (docH - (tops[n - 1] + heights[n - 1])) : 0;
 	layOut();
 	const scale = scaleFor(docW);
 	// The band to draw is the one the reader is about to be put back at, not the one
@@ -1182,6 +1374,7 @@ async function draw(bytes) {
 		S.docW = wasDoc.w; S.docH = wasDoc.h;
 		S.tops = wasDoc.t; S.heights = wasDoc.hh;
 		S.lays = wasDoc.l; S.laid = wasDoc.ld;
+		S.rtops = wasDoc.rt; S.drift = wasDoc.d;
 		throw e;
 	}
 
@@ -1207,8 +1400,10 @@ async function draw(bytes) {
 	vec = bytes;
 	S.drawn++;
 	// The scale may have moved a hair between builds, so the band is confirmed
-	// against where the reader actually landed rather than where we aimed.
-	ensureWindow();
+	// against where the reader actually landed rather than where we aimed. In this
+	// turn: the pages have just been replaced, and a band left for the scroll to
+	// settle would be a band nobody is scrolling.
+	ensureWindow(true);
 }
 
 
@@ -1303,12 +1498,20 @@ function pagesOfMarkup(markup, p0, p1) {
 /// So the answer is the position in the sequence, which is exact for either count the
 /// renderer might answer with; the y is used only to make the best of it when the
 /// count says something has changed underfoot.
+///
+/// AND WHEN IT COMES TO THAT, THE COMPARISON IS AGAINST WHAT THE RENDERER SAID, not
+/// against the exact sum: `S.rtops` holds the origin the renderer gave each page the
+/// last time a band was drawn, and comparing one of the renderer's own numbers with
+/// another of them is the only comparison that is not off by the accumulation
+/// described above. Before any band has said — the first draw of a document — the
+/// exact sum is all there is, and near the front of a book the two agree anyway.
 function pageOfGroup(y, k, n, p0, p1) {
 	if (n === S.tops.length) return k;			// every page, which is what it does
 	if (n === p1 - p0 + 1) return p0 + k;			// or just the window, one day
 	let best = -1, off = Infinity;
 	for (let i = 0; i < S.tops.length; i++) {
-		const e = Math.abs(S.tops[i] - y);
+		const at = (S.rtops[i] != null) ? S.rtops[i] : S.tops[i];
+		const e = Math.abs(at - y);
 		if (e < off) { off = e; best = i; }
 	}
 	return best;
@@ -1386,7 +1589,23 @@ async function refreshToc() {
 ///
 /// It abandons itself the moment another build lands — `S.drawn` moves — because the
 /// pages it is halfway through reading are no longer the pages on screen.
-async function locate() {
+///
+/// AND IT WAITS FOR THE TYPING TO STOP FIRST. Every good build calls this again, and
+/// every call throws away the walk in progress, so a book being edited with the rail
+/// open scanned the whole document over and over and finished none of them — all of
+/// it in `SCAN_CHUNK`-sized tasks in the animation frames the reader is scrolling
+/// with. Re-arming a timer is what "the last one wins" costs here, and it is the same
+/// shape as the rebuild's own debounce.
+function locate() {
+	if (waiting) clearTimeout(waiting);
+	waiting = setTimeout(function () {
+		waiting = null;
+		startScan();
+	}, SCAN_IDLE);
+}
+
+/// Begin the walk, if there is one to begin.
+async function startScan() {
 	// ONE SCAN AT A TIME. `S.scanned` only says a scan has FINISHED, so without this
 	// a reader who shuts the rail and opens it again starts a second walk of the book
 	// beside the first — twice the renderer's work for one answer, and on a 281-page
@@ -1401,9 +1620,11 @@ async function locate() {
 	}
 }
 
+let waiting = null;		// the timer that starts the scan once the builds stop
 let scanning = false;		// a page scan is walking the document right now
 
-/// The walk itself. `locate` owns the guard; this owns the answer.
+/// The walk itself. `locate` owns the wait, `startScan` the guard; this owns the
+/// answer.
 async function scan() {
 	const serial = S.drawn;
 	await getRenderer();
@@ -1415,8 +1636,8 @@ async function scan() {
 	// A CHUNK AT A TIME, ONE SESSION AND ONE CALL EACH. One call, because a session
 	// asked twice answers with a diff and a repeated paragraph comes back empty; a
 	// chunk rather than the whole book, because the whole of the author's 281-page
-	// document is 23.7 MB of markup to hold at once and eight pages is under a
-	// megabyte.
+	// document is 23.7 MB of markup to hold at once and `SCAN_CHUNK` pages of it is
+	// about three.
 	try {
 		for (let a = 0; a < S.pages; a += SCAN_CHUNK) {
 			const b = Math.min(S.pages - 1, a + SCAN_CHUNK - 1);
@@ -1543,9 +1764,14 @@ let hereNow = -2;		// the rail entry last marked, so a scroll costs nothing
 /// Called from every scroll, so it does the least work that says the truth: the
 /// entry is the last one that STARTS at or before the page in view, and an entry
 /// whose page is not known yet cannot be it.
-function markHere() {
+///
+/// # Arguments
+/// * `w` - The reader's place, when the caller has already worked it out. Asking for
+///         it again is a `scrollTop` read after the bar has been written, which makes
+///         the browser lay the panel out a second time in the same frame.
+function markHere(w) {
 	if (!host || !S.rail) return;
-	const at = where();
+	const at = (w === undefined) ? where() : w;
 	const page = at ? at.page + 1 : 1;
 	let cur = -1;
 	for (let i = 0; i < S.toc.length; i++) if (S.toc[i].page && S.toc[i].page <= page) cur = i;
@@ -1959,6 +2185,11 @@ function began(path, watch) {
 function stop() {
 	if (timer) { clearTimeout(timer); timer = null; }
 	if (poller) { clearInterval(poller); poller = null; }
+	// The two timers the VIEW owns go with them: a band waiting for the scroll to
+	// settle and a scan waiting for the builds to stop are both work for a document
+	// nobody is looking at any more.
+	if (settling) { clearTimeout(settling); settling = null; }
+	if (waiting) { clearTimeout(waiting); waiting = null; }
 	unmount();
 	S.path   = '';
 	S.files  = [];
@@ -1976,10 +2207,16 @@ function stop() {
 	S.toc    = [];
 	S.scanned = 0;
 	S.tops   = [];
+	// WITH `tops`, ALWAYS. An origin left behind by the document that was open is an
+	// origin from another book, and the next document's pages would be cropped at it.
+	S.rtops  = [];
+	S.drift  = 0;
 	S.heights = [];
 	S.lays   = [];
 	S.laid   = 0;
 	S.pages  = 0;
+	S.bandErr = '';
+	sick     = null;
 	hereNow  = -2;
 }
 
@@ -2065,12 +2302,16 @@ function pageBox(n) {
 }
 
 /// Scroll so that page `n` is at the top of the view, and draw it.
+///
+/// DRAWN IN THIS TURN, not when the scroll settles: the reader asked for this page by
+/// name, and the wait a fling is worth waiting is a wait for nothing here — there is
+/// no second jump coming to make this one's work wasted.
 function goToPage(n) {
 	const sc = scroller();
 	const b = pageBox(n);
 	if (!sc || !b) return;
 	sc.scrollTop = Math.min(sc.scrollHeight - sc.clientHeight, b.top);
-	ensureWindow();
+	ensureWindow(true);
 }
 
 /// What the loop is doing, for the panel and for a verifier alike.
@@ -2106,6 +2347,16 @@ function state() {
 		gap:      PAGE_GAP,
 		sheets:   band ? (band.p1 - band.p0 + 1) : 0,
 		band:     band ? { p0: band.p0, p1: band.p1 } : null,
+		bandErr:  S.bandErr,
+		// THE TWO WAYS THE RENDERER'S ROUNDING SHOWS, both in points, so a check can
+		// hold one against the other. `drift` is the renderer's own total height less
+		// the exact sum of the page heights, taken in `draw` before anything is drawn;
+		// `rdrift` is how far the origin it gave the LAST page has walked from the exact
+		// sum above it, which is the same accumulation counted a second time and by a
+		// different route. They can only disagree by the last page's own rounding.
+		drift:    S.drift,
+		rdrift:   (S.pages && S.rtops[S.pages - 1] != null && S.tops[S.pages - 1] != null)
+			? S.rtops[S.pages - 1] - S.tops[S.pages - 1] : 0,
 		toc:      S.toc.map(function (e) {
 			return { text: e.text, level: e.level, page: e.page };
 		}),

@@ -58,6 +58,20 @@
    to be exactly `title`, `body` and at most `build`, so a fifth
    field has to defeat a check rather than merely be forgotten.
 
+   ── AND WHAT PRESSING SEND MEANS IS SAID BEFORE IT ──────────
+
+   The forge refuses on a repository's `public` flag before it
+   examines any credential, and renders public repositories only,
+   so this panel can read nothing at all unless `oxedyne/daimond`
+   is public. It is. A proposal there is therefore readable by
+   ANYBODY, with NO credential, the voice name it was written
+   under included. The rule above is unchanged by that -- a note
+   still leaves only on a press -- but the press now means more
+   than it did, so `drawPublic()` puts that in the box, above the
+   button, where the person acts. It is on the screen exactly when
+   Send is, and a person with no voice is told nothing of the kind,
+   because they cannot send and it would not be true.
+
    And a note that cannot be sent STAYS HERE AND SAYS SO. There is
    no retry: a queue of text outlives the consent that filled it,
    which is the failure telemetry.js refuses by not remembering
@@ -460,31 +474,98 @@
 		return true;
 	}
 
+	/// The Send button, asked for the way the markup really carries it.
+	///
+	/// `#improve-acts .imp-send` AND NOT `#improve-send`, which does not exist: the
+	/// markup gives that button a class and no id. This file asked for it by id,
+	/// got null, and the guard that hides it silently did nothing -- so Send was
+	/// offered on every build to every user with nothing to send as, from the day
+	/// the panel was written. A verifier that asked for the same missing id would
+	/// have agreed with it: an absent locator reports itself hidden.
+	///
+	/// One function, because two things now hang off this element -- whether Send
+	/// is offered, and whether the sentence saying what Send does is on the screen.
+	/// Two copies of a locator are two things to get separately wrong.
+	function sendBtn() {
+		return document.querySelector('#panel-improve #improve-acts .imp-send');
+	}
+
+	/// Where the forge this panel writes to is read, in public.
+	///
+	/// The panel talks to `/api/improve` and the gateway forwards from there, so
+	/// the browser is never told this address and cannot ask for it: it is a
+	/// deployment fact, written here once. If the gateway is ever pointed at a
+	/// different forge, THIS LINE IS A LIE UNTIL IT IS CHANGED, which is the price
+	/// of naming a host at all -- and naming it is the point, because "published
+	/// online" is a claim nobody can go and check.
+	var FORGE_HOST = 'oregami.oxegen.io';
+
 	/// The line beside Send, saying what a note goes as.
 	///
 	/// A user must never find out AFTERWARDS that something about them went too,
 	/// so this is beside the button and not in a help text. It no longer names a
 	/// handle: what the forge attributes a proposal to is the VOICE, and the
 	/// browser never learns that voice's name -- there is no name on the wire.
+	///
+	/// WITH a voice, this line says nothing: `drawPublic()` says all of it and
+	/// more, above the button rather than under it. The two sentences said the
+	/// same thing in different words, and four grey sentences stacked under one
+	/// box is how a panel starts reading as a warning against using it.
 	function drawAs() {
-		// `#improve-acts .imp-send` AND NOT `#improve-send`, which does not exist:
-		// the markup gives that button a class and no id. This file asked for it
-		// by id, got null, and the guard below silently did nothing -- so Send has
-		// been offered on every build to every user with nothing to send as, since
-		// the panel was written. A verifier that asked for the same missing id
-		// would have agreed with it: an absent locator reports itself hidden.
 		var as = el('improve-as');
-		var send = document.querySelector('#panel-improve #improve-acts .imp-send');
+		var send = sendBtn();
 		if (as) {
-			as.textContent = hasVoice()
-				? tOr('improve.as_voice', 'Goes to the forge under your voice, where anyone with the repository can read it.')
+			as.hidden = hasVoice();
+			as.textContent = hasVoice() ? ''
 				: tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.');
 		}
 		// Without a voice there is nothing to send AS, and the forge would refuse
 		// it. The button is hidden rather than shown-and-inert: a control that
 		// does nothing when pressed teaches people to distrust every control.
 		if (send) send.hidden = !hasVoice();
+		drawPublic(send);
 		drawHint();
+	}
+
+	/// What pressing Send does to a note, said ABOVE Send.
+	///
+	/// The forge refuses on a repository's `public` flag before it looks at any
+	/// credential and draws only public repositories, so this panel can only read
+	/// anything at all while `oxedyne/daimond` is public -- and a proposal on a
+	/// public repository is readable by ANYBODY, with NO credential of any kind,
+	/// the voice name it was written under included. That is now part of what
+	/// pressing Send means, so it belongs where the press happens: in the box,
+	/// above the button, in front of the hand on its way there. Not a help page,
+	/// not an info mark, and not a dialogue -- a dialogue is dismissed once and
+	/// then never seen by the person who most needed it.
+	///
+	/// It is drawn here rather than written into the markup for the reason
+	/// `drawHint()` and `drawVoice()` are: `www/index.html` is another lane's file
+	/// and every other word in this box is already drawn from this one.
+	///
+	/// IT IS ON THE SCREEN EXACTLY WHEN SEND IS. A tester with no voice cannot
+	/// send, so telling them their notes will be published would be simply false;
+	/// and it is keyed off the BUTTON rather than off `hasVoice()` read a second
+	/// time, so the sentence cannot drift away from the control it describes.
+	function drawPublic(send) {
+		var write = document.querySelector('#panel-improve .imp-write');
+		var acts  = el('improve-acts');
+		if (!write || !acts) return;
+		var line = el('improve-public');
+		if (!line) {
+			line = document.createElement('p');
+			line.className = 'imp-public';
+			line.id = 'improve-public';
+			write.insertBefore(line, acts);		// above the buttons, under the box
+		}
+		// The host rides as a placeholder so that eight translations carry the
+		// address without any of them retyping it.
+		line.textContent = tOr('improve.public_note',
+			'Sending publishes this note at {host}, with your voice name on it. '
+			+ 'Anyone can read it there without an account. '
+			+ 'A note you keep stays on this device.',
+			{ host: FORGE_HOST });
+		line.hidden = !(send && !send.hidden);
 	}
 
 	/// The one sentence a person needs before they press Send: the first line is

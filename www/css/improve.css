@@ -73,6 +73,21 @@
 .imp-with-text { font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
 	line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
 
+/* What pressing Send does, said above Send. It is read on the way to the
+   button, so it sits between the note and the buttons rather than under them —
+   and it is a fact the user is meant to act on, so by this file's own rule it
+   wraps and is read in full at any dock width rather than being ellipsised. The
+   colour is `--text-secondary` and not `--text-muted`: this is one step louder
+   than the notes around it and no more, because a panel that shouts at somebody
+   for reporting a fault gets fewer reports. */
+.imp-public {
+	margin: 7px 0 0; font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
+	line-height: 1.45; overflow-wrap: anywhere;
+}
+/* Not offered where Send is not offered: a person with no voice cannot send,
+   and telling them their notes will be published would be false. */
+.imp-public[hidden] { display: none; }
+
 .imp-acts { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 .imp-keep, .imp-send {
 	background: none; border: 1px solid var(--border-strong); border-radius: 999px;
@@ -88,6 +103,10 @@
 /* Who it goes as. Beside the button and not in a tooltip: a person must never
    find out afterwards that their name went too. */
 .imp-as { flex-basis: 100%; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+/* Said only when there is no voice: with one, `.imp-public` above the buttons
+   says it and says more. Stated rather than left to the browser, because an
+   empty flex item with a 100% basis still takes a row of the wrap. */
+.imp-as[hidden] { display: none; }
 .imp-say { min-height: 1.2em; margin-top: 5px; font-size: var(--fs-3xs-2xs); color: var(--accent-text); }
 
 /* ── Your own notes ─────────────────────────────────────────── */

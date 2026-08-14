@@ -1630,6 +1630,27 @@
 	'capp.exists_ok':    'Open it',
 	'capp.missing_body': 'This build of Daimond does not carry the {name} template, so there is nothing to put in a Diamond. Nothing has been made. Ask your daimon for a page instead, or update Daimond and try again.',
 	'capp.page_failed':  'The Diamond was made, but its page could not be written: {why}',
+	// Keeping a capp's page up to date. A capp made before capps carried a
+	// version cannot be told apart from one the user has edited, so it is ASKED
+	// rather than replaced — an offer, not a warning. `{name}` is the capp's own
+	// name, `{files}` the list of files left alone, `{why}` a reason already in
+	// the reader's language.
+	//
+	// "lanes" is the Life log page's own word for its columns, and that page is
+	// in English whatever the app is set to. It is left in English here for the
+	// same reason Diamond is: a translated word for a thing labelled otherwise
+	// on the screen sends the reader looking for something that is not there.
+	'capp.legacy_body':  'This {name} was made before capps carried a version, so Daimond cannot tell which parts of its page are the ones it was given. Bring its page up to the current one? Your lanes and your entries are left alone.',
+	// Says WHAT it updates. The Reset control beside it does something quite
+	// different, and a bare "Update" invites the two to be confused.
+	'capp.legacy_ok':    'Update the page',
+	'capp.update_kept':  'The page has been brought up to date. These files are yours and were left as they are: {files}.',
+	'capp.update_failed': 'The page could not be replaced: {why}',
+	// A capp's page resets to ITS OWN template, not to a blank or standard page:
+	// `crystal.page_reset_confirm` is the one that says "the standard one" and it
+	// is a different sentence for a different case. Nothing here may imply the
+	// page comes back empty.
+	'capp.page_reset_confirm': 'Replace this Diamond’s page with the current {name} page? What you have logged is not touched.',
 	'crystal.steering':       'Steering…',
 	'crystal.no_key_steer':   'This Diamond’s provider has no readable key. Unlock, or add one, to steer it.',
 	'crystal.page_failed':    'This Diamond’s page did not load, so its data is shown instead.',
@@ -2520,6 +2541,14 @@
 	// it, so nothing here may name the writer.
 	'improve.as_voice':     'Goes to the forge under your voice, where anyone with the repository can read it.',
 	'improve.as_novoice':   'You have no voice, so a note can only be kept here.',
+	// Above Send, and on the screen exactly when Send is. The repository this
+	// panel reads is public — the forge draws no other kind — so a note that is
+	// sent is readable by ANYBODY, with NO account, under the name of the voice
+	// it was written with. All three of those facts must survive translation.
+	// `{host}` is the forge's address, filled in by js/improve.js: keep it as it
+	// is rather than typing the address out, and do not name the repository,
+	// which is a constant in the code and would strand eight files if it moved.
+	'improve.public_note':  'Sending publishes this note at {host}, with your voice name on it. Anyone can read it there without an account. A note you keep stays on this device.',
 	'improve.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
 	'improve.no_title':     'The first line is the title. Write one, then what happened underneath.',
 	'improve.nothing':      'Write something first.',

@@ -6,11 +6,33 @@
 // back a page you can drive.  Console errors and page crashes are collected
 // throughout, because a flow that "works" while throwing is not working.
 //
-//   import { open, chat, shot, errors } from './harness.mjs';
+//   import { open, chat, newChat, shot, errors } from './harness.mjs';
 //   const s = await open();                       // signed in, model connected
-//   await chat(s, '@tool file_write {"path":"a.txt","content":"hi"}');
+//   await newChat(s);                             // …and now in a chat of its own
+//   const dir = await s.page.evaluate(() => {
+//       const f = window.DaimondAttach.focus();
+//       return window.DaimondAttach.chatScratch(f.id);   // chats/<id>/work
+//   });
+//   await chat(s, `@tool file_write {"path":"${dir}/a.txt","content":"hi"}`);
 //   await shot(s, 'after-write');
 //   await s.close();
+//
+// A WORKSPACE-ROOT PATH DOES NOT WORK, and it fails silently, which is why the
+// example above is longer than it used to be.  This said `{"path":"a.txt"}` until
+// 2026-08-14.  Since the chat fence landed on 2026-08-12 every chat is confined to
+// `chats/<id>/work` (`scopeChatTo`, www/js/daimond.js), and `Tool::guard`
+// (src/tools.rs) refuses anything outside it BEFORE the tool runs.  The refusal comes
+// back as an ordinary tool result: nothing is written, nothing throws, and the turn
+// finishes normally — so a fixture built on a root path leaves the test measuring an
+// apology.  Six verifiers were seeding that way, and two of them were reporting a
+// user's data safe without ever touching a file.
+//
+// `chatScratch` is where the chat may ALWAYS write.  For a path elsewhere in the
+// workspace, mark a folder in the way a user does — `DaimondAttach.chatToggle` then
+// `DaimondAttach.chatWs`, the mark being the permission (see dev/verify_viewer.mjs).
+// For a fixture that is not ABOUT a turn, write it through the engine's own door
+// instead: `(await import('/pkg/oxedyne_daimond.js')).write_file(path, body)`, which
+// is not fenced because it is not a chat (see dev/verify_backup.mjs).
 //
 // Headless by default.  Pass { headed: true } for the extension flows, which
 // need real rendering — and run those under xvfb, never on the user's display.

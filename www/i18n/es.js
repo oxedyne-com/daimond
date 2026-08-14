@@ -1998,6 +1998,16 @@
 	'capp.exists_ok': 'Abrirlo',
 	'capp.missing_body': 'Esta versión de Daimond no lleva la plantilla {name}, así que no hay nada que poner en un Diamond. No se ha creado nada. Pídele una página a tu daimon, o actualiza Daimond e inténtalo de nuevo.',
 	'capp.page_failed': 'El Diamond se creó, pero no se pudo escribir su página: {why}',
+	// Mantener al día la página de una capp. Se PREGUNTA, no se sustituye sin
+	// más: es un ofrecimiento, no un aviso. «lanes» se queda en inglés porque la
+	// propia página está en inglés, igual que Diamond.
+	'capp.legacy_body': 'Este {name} se creó antes de que las capps llevaran versión, así que Daimond no puede saber qué partes de su página son las que se le dieron. ¿Poner su página al día? Tus lanes y tus entradas se quedan como están.',
+	'capp.legacy_ok': 'Actualizar la página',
+	'capp.update_kept': 'La página se ha puesto al día. Estos archivos son tuyos y se han dejado como están: {files}.',
+	'capp.update_failed': 'No se pudo sustituir la página: {why}',
+	// Vuelve a la plantilla PROPIA de la capp, no a una página en blanco ni a la
+	// estándar.
+	'capp.page_reset_confirm': '¿Sustituir la página de este Diamond por la página {name} actual? Lo que has registrado no se toca.',
 	'crystal.chat_empty': 'Aún no se ha dicho nada. El cristal es lo que este Diamond sabe; esto es cómo llegó a saberlo.',
 	'crystal.dispatch_after_error': 'El turno acabó mal, así que los agentes que pidió no se iniciaron.',
 	'instructions.chip_two': 'Hay dos capas en vigor: la tuya y la de este proyecto. Pulsa para abrir la tuya.',
@@ -2097,6 +2107,11 @@
 	// nombre, así que nada de aquí puede nombrar a esa persona.
 	'improve.as_voice': 'Va a la forja bajo tu voz, donde puede leerla cualquiera que tenga el repositorio.',
 	'improve.as_novoice': 'No tienes voz, así que una nota solo puede quedarse aquí.',
+	// Encima de Enviar, y en pantalla justo cuando Enviar lo está. El repositorio
+	// es público, así que una nota enviada la puede leer CUALQUIERA, SIN CUENTA, y
+	// con el NOMBRE de tu voz. Los tres hechos tienen que sobrevivir a la
+	// traducción. `{host}` lo rellena js/improve.js: déjalo tal cual.
+	'improve.public_note': 'Al enviarla, esta nota se publica en {host}, con el nombre de tu voz. Allí cualquiera puede leerla sin tener cuenta. Una nota que guardas se queda en este dispositivo.',
 	'improve.title_hint': 'La primera línea es el título de la propuesta. Lo que ocurrió va debajo.',
 	'improve.no_title': 'La primera línea es el título. Escribe una y, debajo, lo que ocurrió.',
 	'improve.nothing': 'Escribe algo primero.',

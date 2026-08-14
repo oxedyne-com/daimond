@@ -1997,6 +1997,16 @@
 	'capp.exists_ok': 'Abrir',
 	'capp.missing_body': 'Esta versão do Daimond não traz o modelo {name}, então não há nada para colocar em um Diamond. Nada foi criado. Peça uma página ao seu daimon, ou atualize o Daimond e tente de novo.',
 	'capp.page_failed': 'O Diamond foi criado, mas a página dele não pôde ser escrita: {why}',
+	// Manter a página de uma capp em dia. É PERGUNTADO, não substituído: é uma
+	// oferta, não um aviso. “lanes” fica em inglês porque a própria página está
+	// em inglês, assim como Diamond.
+	'capp.legacy_body': 'Este {name} foi criado antes de as capps terem versão, então o Daimond não sabe quais partes da página dele são as que vieram prontas. Trazer a página dele para a atual? Suas lanes e seus registros ficam como estão.',
+	'capp.legacy_ok': 'Atualizar a página',
+	'capp.update_kept': 'A página foi atualizada. Estes arquivos são seus e ficaram como estão: {files}.',
+	'capp.update_failed': 'A página não pôde ser substituída: {why}',
+	// Volta para o modelo DA PRÓPRIA capp, não para uma página em branco nem para
+	// a padrão.
+	'capp.page_reset_confirm': 'Substituir a página deste Diamond pela página {name} atual? O que você registrou não é tocado.',
 	'crystal.chat_empty': 'Nada foi dito ainda. O cristal é o que este Diamond sabe; isto é como ele veio a saber.',
 	'crystal.dispatch_after_error': 'O turno terminou mal, então os agentes que ele pediu não foram iniciados.',
 	'instructions.chip_two': 'Duas camadas em vigor: a sua e a deste projeto. Clique para abrir a sua.',
@@ -2096,6 +2106,11 @@
 	// então nada aqui pode nomear essa pessoa.
 	'improve.as_voice': 'Vai para a forja sob a sua voz, onde qualquer pessoa com o repositório pode ler.',
 	'improve.as_novoice': 'Você não tem voz, então uma nota só pode ficar aqui.',
+	// Acima de Enviar, e na tela exatamente quando Enviar está. O repositório é
+	// público, então uma nota enviada pode ser lida por QUALQUER PESSOA, SEM
+	// CONTA, e com o NOME da sua voz. Os três fatos precisam sobreviver à
+	// tradução. `{host}` é preenchido por js/improve.js: deixe como está.
+	'improve.public_note': 'Ao enviar, esta nota é publicada em {host}, com o nome da sua voz. Lá qualquer pessoa pode lê-la sem ter conta. Uma nota que você guarda fica neste dispositivo.',
 	'improve.title_hint': 'A primeira linha é o título da proposta. O que aconteceu vai embaixo dela.',
 	'improve.no_title': 'A primeira linha é o título. Escreva um e, embaixo, o que aconteceu.',
 	'improve.nothing': 'Escreva algo primeiro.',

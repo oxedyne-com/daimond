@@ -709,6 +709,14 @@ import init, {
 	var DIAMOND_TOMBS_KEY = 'daimond-diamond-tombs';
 	var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
 
+	/// A message id minted by the scheme that named a message by its POSITION ALONE.
+	///
+	/// `legacy-0000` is message one of EVERY chat stored before mids existed, and the
+	/// tombstone map it is written into is global and travels in the sync parcel. So
+	/// clearing one daimon's transcript deleted the opening messages of every other
+	/// pre-mid conversation, on every device, silently. Seen here it is not honoured.
+	var OLD_LEGACY = /^legacy-\d+$/;
+
 	/// How long a deletion is remembered.
 	///
 	/// THIS WAS SEVEN DAYS AND IT WAS TOO SHORT BY THE WIDTH OF THE RETENTION.
@@ -742,7 +750,16 @@ import init, {
 	/// continued interrupted turn is replaced, so it does not resurrect on the next reload.
 	function loadMsgTombs() {
 		var t = readJson(MSG_TOMBS_KEY, {}), now = Date.now(), out = {}, ttl = tombTtl();
-		Object.keys(t).forEach(function (id) { if (now - t[id] < ttl) out[id] = t[id]; });
+		Object.keys(t).forEach(function (id) {
+			// An unscoped legacy tombstone names message N of every pre-mid chat at once, and
+			// which chat it was meant for cannot be recovered. It is dropped rather than
+			// honoured: resurrecting a transcript somebody cleared is visible and can be done
+			// again, whereas deleting another conversation's opening messages is neither. A
+			// device still on the old build keeps sending them, so this is a filter on every
+			// read and not a migration that runs once.
+			if (OLD_LEGACY.test(id)) return;
+			if (now - t[id] < ttl) out[id] = t[id];
+		});
 		return out;
 	}
 	function msgTombstone(mids) {
@@ -759,9 +776,20 @@ import init, {
 		midSeq += 1;
 		return Date.now().toString(36) + '-' + midSeq.toString(36) + '-' + Math.random().toString(36).slice(2, 7);
 	}
-	function stampMessages(msgs) {
+	/// Give every stored message an id, minting one from its POSITION WITHIN ITS OWN CHAT
+	/// for anything written before mids existed. The position is stable across loads, so
+	/// the same record stamps identically every time and the append-only union does not
+	/// duplicate it.
+	///
+	/// `scope` is the chat's id, and it is what makes the id an identity. Without it the
+	/// stamp was `legacy-0000` in every chat alike -- see `OLD_LEGACY`. An id already in
+	/// that shape is rewritten in place, or a conversation cleared before the fix would
+	/// never stay cleared once its tombstones stop being honoured.
+	function stampMessages(msgs, scope) {
+		var at = scope || 'nochat';	// Absent only for a record with no id, which is never stored
 		(msgs || []).forEach(function (m, i) {
-			if (!m.mid) m.mid = 'legacy-' + ('0000' + i).slice(-4);
+			if (!m.mid)                  m.mid = 'legacy-' + at + '-' + ('0000' + i).slice(-4);
+			else if (OLD_LEGACY.test(m.mid)) m.mid = 'legacy-' + at + '-' + m.mid.slice(7);
 			if (!m.ts) m.ts = 0;
 		});
 		return msgs || [];
@@ -773,9 +801,9 @@ import init, {
 	/// its way into storage (`slimMessages`), so without that rule a merge against the store would
 	/// hand this tab's whole result back to it truncated — the store's copy is written first, and
 	/// first used to win.
-	function mergeMessages(a, b) {
+	function mergeMessages(a, b, scope) {
 		var at = {}, out = [], tombs = loadMsgTombs();
-		stampMessages(a).concat(stampMessages(b)).forEach(function (m) {
+		stampMessages(a, scope).concat(stampMessages(b, scope)).forEach(function (m) {
 			if (tombs[m.mid]) return;
 			var had = at[m.mid];
 			if (had === undefined) { at[m.mid] = out.length; out.push(m); return; }
@@ -1502,7 +1530,7 @@ import init, {
 				var st = byId[c.id];
 				if (!st) { byId[c.id] = c; return; }
 				var merged = slimChat((c.updatedAt || 0) > (st.updatedAt || 0) ? c : st);
-				merged.messages = slimMessages(mergeMessages(st.messages, c.messages));
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id));
 				if (!merged.session && st.session) merged.session = st.session;
 				byId[c.id] = merged;
 			});
@@ -1739,7 +1767,7 @@ import init, {
 				// The transcript is append-only: union it. Everything else is a
 				// scalar, so the fresher tab's value wins.
 				var merged = slimChat((c.updatedAt || 0) >= (st.updatedAt || 0) ? c : st);
-				merged.messages = slimMessages(mergeMessages(st.messages, c.messages));
+				merged.messages = slimMessages(mergeMessages(st.messages, c.messages, c.id));
 				// The model's own conversation is this device's state, not something two
 				// tabs union: keep whichever copy has one when the other does not, or a
 				// save from an idle tab would drop the tool history the working tab holds.
@@ -1760,7 +1788,7 @@ import init, {
 		}
 	}
 	function hydrateChat(c) {
-		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : []), model: c.model,
+		return { id: c.id, name: c.name, app: null, messages: stampMessages(Array.isArray(c.messages) ? c.messages : [], c.id), model: c.model,
 			provider: c.provider || '',
 			// Which Diamond's daimon this conversation belongs to, or '' for an
 			// ordinary chat. It has to come back: a record that lost it becomes a chat
@@ -1830,7 +1858,7 @@ import init, {
 			// orphan `current` and any turn in flight that closed over it — the
 			// turn would then look like it belonged to a deleted chat and its
 			// reply would be thrown away.
-			c.messages = mergeMessages(s.messages, c.messages);
+			c.messages = mergeMessages(s.messages, c.messages, s.id);
 			if ((s.updatedAt || 0) > (c.updatedAt || 0) && !c._generating) {
 				c.name             = s.name;
 				c.model            = s.model;
@@ -3097,7 +3125,7 @@ import init, {
 			var st = byId[r.id];
 			if (!st) { byId[r.id] = r; return; }
 			var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-			merged.messages = slimMessages(mergeMessages(st.messages, r.messages));
+			merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id));
 			// A parcel carries no session (collectSync strips it), so the freshest-wins
 			// rule above would trade this device's model memory for the remote's nothing.
 			if (!merged.session && st.session) merged.session = st.session;
@@ -8691,7 +8719,7 @@ import init, {
 			chat.messages.push({ role: 'assistant', content: t.text || '', mid: newMid(),
 				interrupted: true, iturn: iturn, itext: t.userText || '', ts: nowTs() });
 
-			stampMessages(chat.messages);
+			stampMessages(chat.messages, chat.id);
 			DaimondJournal.clearTurn(iturn);      // now durable in the snapshot
 			touchedAny = true;
 			if (current && current.id === cid) touchedCurrent = true;
@@ -13340,7 +13368,7 @@ import init, {
 				}
 				if (chats.indexOf(chat) === -1) { if (J) J.clearTurn(umid); return; }
 				if (turnText) chat.messages.push({ role: 'assistant', content: turnText, mid: amid, ts: Date.now() });
-				stampMessages(chat.messages);
+				stampMessages(chat.messages, chat.id);
 				if (owns()) finalizeAssistant();
 				else { curAsstDiv = null; curAsstText = ''; }
 				// Four cumulative counters now, not two. The two new ones are the reason a
@@ -21908,7 +21936,25 @@ import init, {
 		var text = '', page = '';
 		try { text = await diamondApp().read_crystal_data(id); } catch (e) { text = ''; }
 		try { page = await diamondApp().read_crystal_page(id); } catch (e) { page = ''; }
-		if (C && !String(page || '').trim()) {
+
+		// ── A capp is CODE, and code gets fixes. Before anything else touches the
+		//    page: if this Diamond holds a capp instance and the bundle serves a
+		//    newer version of its template, every file whose bytes are still the
+		//    ones we delivered is replaced, and every file that has moved is left
+		//    alone. See `cappUpdateInstance`. It runs BEFORE the upgrade below so
+		//    the hashes are compared against the delivered bytes rather than
+		//    against a rewritten copy of them, and the upgrade is skipped when the
+		//    page has just been re-delivered -- a template served today cannot be a
+		//    page written before 2026-08-11.
+		var kept = [];
+		var fresh = false;
+		try {
+			var upd = await cappUpdateInstance(id, page);
+			page = upd.page; kept = upd.kept; fresh = upd.replaced;
+		} catch (e) { /* an update that fails leaves the stored page, which still works */ }
+
+		if (fresh) { /* just delivered: neither default nor upgrade applies */ }
+		else if (C && !String(page || '').trim()) {
 			page = C.DEFAULT_PAGE;
 			// A store that refuses the write still gets the page on screen; the next render
 			// tries again. Drawing it meanwhile costs nothing and loses nothing.
@@ -21939,6 +21985,16 @@ import init, {
 		var data = crystalData(text);
 		clearCrystalBody();
 		crystalBody.appendChild(crystalBar(data || {}));
+
+		// An instance with NO delivery record cannot be judged and must not be
+		// rewritten behind anybody's back, so it is asked about instead. Not awaited:
+		// the dialog is a person's to answer in their own time and the Diamond should
+		// be on screen underneath it meanwhile. It asks at most once per version, and
+		// the render it asks for terminates because the record it writes puts the
+		// instance on the automatic path.
+		cappOfferLegacy(id, currentDiamond ? currentDiamond.name : '').then(function (changed) {
+			if (changed && currentDiamond && currentDiamond.id === id) renderCrystal();
+		}, function () { /* an offer that throws is one nobody was shown */ });
 
 		if (!C) {
 			// `crystal.js` did not load. This is a broken build, and a broken build must not
@@ -22019,6 +22075,8 @@ import init, {
 			t: t,
 		});
 		park();
+		// ONCE, and quietly, and only when there was something to say.
+		if (kept.length) crystalBody.appendChild(cappKeptNote(kept));
 		renderCrystalControls();
 		renderArtefacts();          // fills the strip, or leaves it hidden at zero
 	}
@@ -22029,18 +22087,51 @@ import init, {
 	/// is not touched and the dialog says so: a page that will not load is frightening enough
 	/// without the reader having to work out whether the memory goes with it.
 	///
+	/// **A CAPP RESETS TO ITS OWN TEMPLATE, not to the generic renderer.** Reset used
+	/// to write `DEFAULT_PAGE` unconditionally, so a person pressing it on a Life log
+	/// lost the Life log and got a crystal viewer -- silently, with no way back but a
+	/// version restore. The delivery record makes the right page cheap to find.
+	///
+	/// The exception is the case reset exists for: when the stored page is ALREADY the
+	/// served template byte for byte, the capp's own page is what just failed to load,
+	/// and handing it back would be a loop with a button on it. Then the standard page
+	/// is the way out, which is what it was always for.
+	///
 	/// # Arguments
 	/// * `id` - The Diamond whose page is being replaced.
 	async function resetCrystalPage(id) {
 		var C = crystalLib();
 		if (!C) return;
-		var ok = await confirmDialog(
-			tOr('crystal.page_reset_confirm',
-				'Replace this Diamond’s page with the standard one? Its data is not touched.'),
-			null, { danger: false });
+		var put = C.DEFAULT_PAGE, msg = tOr('crystal.page_reset_confirm',
+			'Replace this Diamond’s page with the standard one? Its data is not touched.');
+		var rec = await readCappRecord(id);
+		var spec = rec ? CAPP_TEMPLATES[String(rec.capp || '')] : null;
+		if (spec) {
+			var tpl = await cappFetchFile(spec, 'crystal.html');
+			var now = await cappReadFile(id, 'crystal.html');
+			if (tpl != null && String(now == null ? '' : now) !== tpl) {
+				put = tpl;
+				msg = tOr('capp.page_reset_confirm',
+					'Replace this Diamond’s page with the current {name} page? What you have '
+					+ 'logged is not touched.', { name: spec.name });
+			}
+		}
+		var ok = await confirmDialog(msg, null, { danger: false });
 		if (!ok) return;
-		try { await diamondApp().write_crystal_page(id, C.DEFAULT_PAGE); }
+		try { await diamondApp().write_crystal_page(id, put); }
 		catch (e) { noticeDialog(t('crystal.save_failed'), friendlyError(e)); return; }
+		// The record follows the bytes. Putting the template back and leaving the record
+		// saying something else would make the next version judge this page to be the
+		// user's own and withhold the fix.
+		if (spec && put !== C.DEFAULT_PAGE) {
+			var man = await cappManifest(String(rec.capp));
+			var h = await cappHash(put);
+			var files = (rec.files && typeof rec.files === 'object') ? rec.files : {};
+			if (h) files['crystal.html'] = h;
+			await writeCappRecord(id, {
+				capp: String(rec.capp), v: (man && man.v) ? man.v : (rec.v || 0), files: files,
+			});
+		}
 		// The app re-mounts after a write. There is no event for this and there must not be:
 		// there is exactly one caller, and two lanes each inventing a name for a repaint
 		// signal is how last session shipped a graph that never repainted.
@@ -22254,23 +22345,41 @@ import init, {
 		},
 	};
 
-	/// Which files to copy out of a template.
+	/// What the SERVED template is: which version, and which files it delivers.
 	///
-	/// The built-in list, plus anything named in the template's own `capp.json`
-	/// -- `{"files": ["crystal.html", "data/foods.json", …]}`. A capp that keeps
-	/// reference data in folders of its own cannot be discovered from here: the
-	/// app is served as flat files and an HTTP origin does not answer the
+	/// One fetch answers both, because they are one file --
+	/// `{"v": 2, "files": ["crystal.html", "data/foods.json", …]}`. The list is
+	/// the built-in one plus anything the manifest names; a capp that keeps
+	/// reference data in folders of its own cannot be discovered otherwise, since
+	/// the app is served as flat files and an HTTP origin does not answer the
 	/// question "what is in this directory".
+	///
+	/// **`v` IS THE WHOLE UPDATE MECHANISM.** An instance records the version it
+	/// was given (`cappRecord`), and a served number higher than that is the only
+	/// signal that a fix exists. `index.json` has carried a `v` since the first
+	/// Life log and nothing anywhere read it -- a version nobody compares to
+	/// anything is a comment. A manifest with no usable `v` answers `0`, and
+	/// `0` means "do not update", not "update from zero": a template that has
+	/// stopped saying what version it is must not be able to overwrite an
+	/// instance.
+	///
+	/// **NOT CACHED.** The served bundle cannot change under a running page, so a
+	/// cache would be correct -- and would also be the thing that made this
+	/// unverifiable from outside, because a verifier bumps the served version and
+	/// reopens exactly as a person meets a new build. It is a few hundred bytes on
+	/// our own origin.
 	///
 	/// **The manifest is a SEAM.** The lane that writes a template and this one
 	/// have to agree on the name, and this end tolerates its absence entirely so
-	/// that neither blocks the other: no `capp.json`, and the built-in list
-	/// stands.
+	/// that neither blocks the other: no `capp.json`, and the built-in list stands
+	/// at version `0`.
 	///
 	/// # Arguments
-	/// * `spec` - One entry of `CAPP_TEMPLATES`.
-	async function cappFiles(spec) {
-		var files = spec.need.concat(spec.also);
+	/// * `key` - A key of `CAPP_TEMPLATES`.
+	async function cappManifest(key) {
+		var spec = CAPP_TEMPLATES[key];
+		if (!spec) return null;
+		var files = spec.need.concat(spec.also), v = 0;
 		var txt = '';
 		try {
 			var r = await fetch(spec.dir + 'capp.json', { cache: 'no-store' });
@@ -22279,12 +22388,35 @@ import init, {
 		if (txt) {
 			try {
 				var m = JSON.parse(txt);
+				if (typeof m.v === 'number' && isFinite(m.v) && m.v > 0) v = Math.floor(m.v);
 				(Array.isArray(m && m.files) ? m.files : []).forEach(function (f) {
-					if (typeof f === 'string' && cappPathOk(f) && files.indexOf(f) < 0) files.push(f);
+					if (typeof f !== 'string' || !cappPathOk(f)) return;
+					if (cappNeverDelivered(f)) return;
+					if (files.indexOf(f) < 0) files.push(f);
 				});
 			} catch (e) { /* a manifest that will not parse is one we do not have */ }
 		}
-		return files;
+		return { v: v, files: files.filter(function (f) { return !cappNeverDelivered(f); }) };
+	}
+
+	/// Paths a template may never lay down over an instance, whatever it lists.
+	///
+	/// Two of them, and each is somebody's own writing:
+	///
+	///   * `log/` IS THE USER'S ENTRIES. It is the one thing in a Life log that
+	///     cannot be re-derived from anything, and a template that could write
+	///     there could erase a year of it in one version bump. No rule about
+	///     hashes or divergence is consulted first -- the path is refused before
+	///     any of that is asked.
+	///   * `capp.json` inside a Diamond is the DELIVERY RECORD, which happens to
+	///     share a name with the template's manifest. A manifest that listed
+	///     itself would clobber the record that decides what may be replaced.
+	///
+	/// # Arguments
+	/// * `rel` - The path relative to the Diamond's own folder.
+	function cappNeverDelivered(rel) {
+		var p = String(rel == null ? '' : rel);
+		return p === 'capp.json' || /^log(\/|$)/.test(p);
 	}
 
 	/// Is this a path a template may be laid down at, inside a Diamond?
@@ -22345,7 +22477,8 @@ import init, {
 		}
 
 		// ── Everything it is made of, BEFORE anything is made.
-		var files = await cappFiles(spec);
+		var man = await cappManifest(key);
+		var files = man ? man.files : spec.need.concat(spec.also);
 		var body = {};
 		for (var i = 0; i < files.length; i++) {
 			var rel = files[i], text = null;
@@ -22396,13 +22529,23 @@ import init, {
 		// ── A crystal, if the template did not bring one. See `seed`: without
 		//    content in `crystal.json` the crystal face draws its empty line and
 		//    never mounts the page at all, so this is not decoration.
+		var seeded = false;
 		if (spec.seed && !('crystal.json' in body)) {
 			body['crystal.json'] = JSON.stringify(spec.seed, null, 2);
 			if (files.indexOf('crystal.json') < 0) files.push('crystal.json');
+			seeded = true;
 		}
 
-		// ── The furniture.
+		// ── The furniture, and a record of exactly what went in.
+		//
+		// The record is what makes a fix reachable later: see `cappRecord`. It is
+		// built from the bytes as they are written, one file at a time, so a file
+		// the store refused is absent from it and is therefore never judged to be
+		// ours. The SEEDED crystal is left out deliberately -- it came from
+		// `spec.seed` and not from the template, so no served file corresponds to
+		// it and claiming one would be a lie the update path would act on.
 		var failed = '';
+		var hashes = {};
 		for (var j = 0; j < files.length; j++) {
 			var f = files[j];
 			if (!(f in body)) continue;
@@ -22410,12 +22553,17 @@ import init, {
 				if (f === 'crystal.html')      await diamondApp().write_crystal_page(id, body[f]);
 				else if (f === 'crystal.json') await diamondApp().write_crystal_data(id, body[f]);
 				else await Wasm.store_write('diamonds/' + id + '/' + f, body[f]);
+				if (!(seeded && f === 'crystal.json')) {
+					var h = await cappHash(body[f]);
+					if (h) hashes[f] = h;
+				}
 			} catch (e) {
 				// The page is the capp. Anything else missing leaves a capp that has
 				// to make its own file on first use, which is what it does anyway.
 				if (spec.need.indexOf(f) >= 0) failed = friendlyError(e);
 			}
 		}
+		await writeCappRecord(id, { capp: key, v: man ? man.v : 0, files: hashes });
 
 		// Every other path that makes a Diamond says so out loud, and this one did
 		// not: `bumpDiamonds` writes the cross-tab nonce and nudges the push. A
@@ -22435,6 +22583,358 @@ import init, {
 			return 'failed';
 		}
 		return 'made';
+	}
+
+	// ── A capp, kept current ─────────────────────────────────────────
+	//
+	// THE TEMPLATE IS CODE, NOT DATA, and until now an instance owned a private
+	// copy of it and could never receive a fix. `makeCappDiamond` fetched the
+	// template once, wrote it into the Diamond, and nothing ever looked at the
+	// served files again; creation is idempotent on the NAME, so pressing the
+	// guide's button a second time opened the old bytes. A contrast fix and five
+	// gym-ontology additions sat in the bundle unable to reach the one person
+	// running the capp.
+	//
+	// So, on open:
+	//
+	//     stored version < served version?
+	//       and NOT forked  -> re-fetch the template, mount fresh
+	//       and forked      -> mount the fork, say so once
+	//     else mount stored
+	//
+	// FORKED IS MEASURED, NOT REMEMBERED. At delivery a record goes in beside the
+	// instance holding a SHA-256 per file as delivered; on open, a stored file
+	// whose hash still matches is one nobody has touched and may be replaced, and
+	// one whose hash has moved is the user's and is left alone. A flag would have
+	// been a promise some later code path had to keep, and this codebase already
+	// holds three broken promises of exactly that shape: `index.json`'s `v`, which
+	// nothing read; an `#improve-send` guard on an element that never existed; a
+	// rate limiter that recorded nothing. A hash cannot be forgotten -- the daimon
+	// rewriting a capp's page marks it forked without any code knowing it should.
+	//
+	// The per-file rule is what makes ONE rule cover two different kinds of file.
+	// `crystal.html` is code and wants the fix. `lanes/*.json`, `cat/*.json` and
+	// `index.json` are SEEDED DATA that the page then rewrites through
+	// `save('lanes/…','replace')` -- so they diverge the first time the user edits
+	// a lane, and from then on they are the user's. Neither had to be classified.
+	//
+	// And `log/` is refused before any of it is consulted. See `cappNeverDelivered`.
+
+	/// Where an instance's delivery record lives.
+	///
+	/// **Not to be confused with the template's `capp.json`**, which is the served
+	/// MANIFEST and is a different shape. They share a name because each is "what
+	/// this capp is", asked at the two ends: the manifest says what the bundle
+	/// offers, the record says what this Diamond was given.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond.
+	function cappRecordPath(id) { return 'diamonds/' + id + '/capp.json'; }
+
+	/// The record of what was delivered here, or `null` if nothing knows.
+	///
+	/// `null` is the OWNER'S OWN CASE and the important one: every Life log made
+	/// before this existed has no record, so nothing is known about what was put
+	/// in it and no file can be judged unforked. That is not a licence to guess --
+	/// see `cappOfferLegacy`, which asks.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond.
+	async function readCappRecord(id) {
+		var txt = '';
+		try { txt = await Wasm.store_read(cappRecordPath(id)); } catch (e) { return null; }
+		if (!txt) return null;
+		try {
+			var r = JSON.parse(txt);
+			return (r && typeof r === 'object') ? r : null;
+		} catch (e) { return null; }   // a record that will not parse is one we do not have
+	}
+
+	/// Write the delivery record, and stamp the Diamond.
+	///
+	/// The stamp is the same reason `writeCrystalAsset` carries one: `store_write`
+	/// is a raw OPFS write and moves nothing, while `touched` is what decides whose
+	/// copy the other device takes. A record that did not travel would have the far
+	/// device offering the legacy question again on a Diamond already brought up to
+	/// date.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond.
+	/// * `rec` - `{capp, v, files}` after a delivery or an update, or
+	///   `{capp, offered}` when the legacy offer was declined.
+	async function writeCappRecord(id, rec) {
+		try { await Wasm.store_write(cappRecordPath(id), JSON.stringify(rec)); }
+		catch (e) { return false; }
+		try { await Wasm.touch_diamond(id); } catch (e) { /* the record is down; say nothing */ }
+		return true;
+	}
+
+	/// A SHA-256 of one file's text, hex, through the app's one digest.
+	///
+	/// `DaimondCloud.sha256` and NOT a second implementation: two hash helpers is
+	/// two answers to "are these bytes the ones we delivered", and the wrong answer
+	/// in one direction overwrites somebody's edits.
+	///
+	/// Answers `''` when there is no digest to be had, and every caller treats that
+	/// as "cannot judge" -- which fails towards leaving the user's file alone.
+	///
+	/// # Arguments
+	/// * `text` - The file's contents.
+	async function cappHash(text) {
+		if (!window.DaimondCloud || !DaimondCloud.sha256) return '';
+		try { return await DaimondCloud.sha256(String(text == null ? '' : text)); }
+		catch (e) { return ''; }
+	}
+
+	/// Read one of an instance's template files, whichever door it lives behind.
+	///
+	/// `null` for a file that is not there, which is a real and ordinary answer: a
+	/// template that grew a file after this instance was made has one the instance
+	/// never received.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond.
+	/// * `rel` - The path relative to the Diamond's own folder.
+	async function cappReadFile(id, rel) {
+		try {
+			if (rel === 'crystal.html') return await diamondApp().read_crystal_page(id);
+			if (rel === 'crystal.json') return await diamondApp().read_crystal_data(id);
+			var s = await Wasm.store_read('diamonds/' + id + '/' + rel);
+			return s == null ? null : String(s);
+		} catch (e) { return null; }
+	}
+
+	/// Write one, through the same door the delivery used.
+	///
+	/// `crystal.html` through `write_crystal_page` and `crystal.json` through
+	/// `write_crystal_data`, so the two ceilings, the version snapshot and the log
+	/// apply exactly as they do to a daimon's own edit. That snapshot is what makes
+	/// an update RECOVERABLE: the page that was there before an update is in
+	/// `versions/`, so a fix that turns out to be worse is one restore away.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond.
+	/// * `rel` - The path relative to the Diamond's own folder.
+	/// * `text` - The served bytes.
+	async function cappWriteFile(id, rel, text) {
+		if (cappNeverDelivered(rel)) throw new Error('Not a path a template may write: ' + rel);
+		if (rel === 'crystal.html')      await diamondApp().write_crystal_page(id, text);
+		else if (rel === 'crystal.json') await diamondApp().write_crystal_data(id, text);
+		else await Wasm.store_write('diamonds/' + id + '/' + rel, text);
+	}
+
+	/// One file of the served template, or `null` if this build does not carry it.
+	///
+	/// # Arguments
+	/// * `spec` - One entry of `CAPP_TEMPLATES`.
+	/// * `rel` - The path within the template directory.
+	async function cappFetchFile(spec, rel) {
+		try {
+			var r = await fetch(spec.dir + rel, { cache: 'no-store' });
+			if (!r || !r.ok) return null;
+			return await r.text();
+		} catch (e) { return null; }
+	}
+
+	/// Bring an instance up to the served template, file by file.
+	///
+	/// Answers `{page, replaced, kept}`: the page to mount, whether it changed, and
+	/// the names of the files left as the user has them. It does NOTHING at all for
+	/// a Diamond with no delivery record -- that is `cappOfferLegacy`'s question and
+	/// it is asked out loud.
+	///
+	/// The version is written back whether or not any file moved, because "which
+	/// version was this instance offered" is a different fact from "which files came
+	/// from it", and leaving the version behind would re-ask the same comparison for
+	/// ever.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond being opened.
+	/// * `page` - The stored `crystal.html`, already read by the caller.
+	async function cappUpdateInstance(id, page) {
+		var out = { page: page, replaced: false, kept: [] };
+		var rec = await readCappRecord(id);
+		if (!rec || !rec.files || typeof rec.files !== 'object') return out;
+		var key = String(rec.capp || '');
+		var spec = CAPP_TEMPLATES[key];
+		if (!spec) return out;                       // an instance from a later build
+		var man = await cappManifest(key);
+		if (!man || !man.v) return out;              // nothing served says what version it is
+		var have = (typeof rec.v === 'number' && isFinite(rec.v)) ? rec.v : 0;
+		if (have >= man.v) return out;               // current
+
+		var files = rec.files, moved = false;
+		for (var i = 0; i < man.files.length; i++) {
+			var rel = man.files[i];
+			if (!cappPathOk(rel) || cappNeverDelivered(rel)) continue;
+			var fresh = await cappFetchFile(spec, rel);
+			if (fresh == null) continue;             // this build does not carry it
+			var was = (rel === 'crystal.html') ? out.page : await cappReadFile(id, rel);
+			if (was != null && String(was) === fresh) {
+				// Already these bytes, whatever the record says. Record it and move on:
+				// the hash is a measurement and this is the same measurement.
+				var same = await cappHash(fresh);
+				if (same) files[rel] = same;
+				continue;
+			}
+			if (was == null) {
+				// A file this instance never had. Writing it cannot lose anything, and
+				// withholding it would leave a template that grew a lane unable to
+				// deliver it to anybody who was already running the capp.
+			} else {
+				var had = await cappHash(was);
+				// NO RECORDED HASH IS NOT A MATCH. It means we never delivered this file
+				// -- a legacy instance, or one where the write was refused -- and the
+				// safe reading of "we cannot judge it" is "it is the user's".
+				if (!had || !files[rel] || had !== files[rel]) {
+					if (out.kept.indexOf(rel) < 0) out.kept.push(rel);
+					continue;
+				}
+			}
+			try { await cappWriteFile(id, rel, fresh); }
+			catch (e) {
+				// A refused write must not be recorded as delivered, or the next
+				// version would judge the old bytes to be the user's own.
+				if (out.kept.indexOf(rel) < 0) out.kept.push(rel);
+				continue;
+			}
+			var now = await cappHash(fresh);
+			if (now) files[rel] = now; else delete files[rel];
+			moved = true;
+			if (rel === 'crystal.html') { out.page = fresh; out.replaced = true; }
+		}
+		await writeCappRecord(id, { capp: key, v: man.v, files: files });
+		if (moved || out.kept.length) {
+			try {
+				window.DaimondTrail.note('capp', key + ' → v' + man.v
+					+ (out.kept.length ? ', kept ' + out.kept.join(', ') : ''));
+			} catch (e) { /* no trail is not an error */ }
+		}
+		return out;
+	}
+
+	/// The Diamonds currently being asked the legacy question, so it is asked once.
+	var _cappOffering = {};
+
+	/// An instance made before capps carried a version: ask, do not guess.
+	///
+	/// The owner's own Life log is this case, and it is the one where a hash proves
+	/// nothing -- there is no record, so no file can be shown to be the delivered
+	/// bytes and none may be silently replaced. What CAN be done is to say so and
+	/// let the person take it, and then to write a record so every update after this
+	/// one is automatic.
+	///
+	/// `crystal.html` ONLY. The lanes and the catalogues are seeded data the page has
+	/// been rewriting since the day it was made; replacing those on a Diamond we know
+	/// nothing about is exactly the silent overwrite this whole design exists to
+	/// avoid. And `log/` is not reachable from here at all.
+	///
+	/// The decline is DURABLE, recorded as the version it was offered at, so the
+	/// question does not come back on every open -- and does come back when there is
+	/// something newer to offer.
+	///
+	/// Answers `true` when the page changed, so the caller can draw it again.
+	///
+	/// # Arguments
+	/// * `id` - The Diamond being opened.
+	/// * `name` - Its name, which is how a record-less instance is recognised.
+	async function cappOfferLegacy(id, name) {
+		if (_cappOffering[id]) return false;
+		var rec = await readCappRecord(id);
+		if (rec && rec.files) return false;           // it has a record; not this path
+		var key = '';
+		if (rec && CAPP_TEMPLATES[String(rec.capp || '')]) key = String(rec.capp);
+		else {
+			// BY NAME, which is the identity the delivery path already uses: "ONCE"
+			// is decided on the Diamond's name and nothing else, so an instance is
+			// recognised the same way here rather than by a second rule.
+			Object.keys(CAPP_TEMPLATES).forEach(function (k) {
+				if (!key && CAPP_TEMPLATES[k].name === name) key = k;
+			});
+		}
+		if (!key) return false;
+		var spec = CAPP_TEMPLATES[key];
+		var man = await cappManifest(key);
+		if (!man || !man.v) return false;
+		var offered = (rec && typeof rec.offered === 'number' && isFinite(rec.offered))
+			? rec.offered : 0;
+		if (offered >= man.v) return false;           // asked already, at this version
+		var fresh = await cappFetchFile(spec, 'crystal.html');
+		if (fresh == null) return false;              // no template to offer
+		var stored = await cappReadFile(id, 'crystal.html');
+
+		// NOT A CAPP AT ALL. A person may simply have named a Diamond "Life log",
+		// and the name is all this path has to go on; a Diamond still on the shipped
+		// renderer has never held a capp, so offering to replace its page would be
+		// this feature reaching into a Diamond that has nothing to do with it. A
+		// measurement again, and the cheapest one available.
+		var C = crystalLib();
+		if (C && stored != null && String(stored) === C.DEFAULT_PAGE) return false;
+
+		// Already the served bytes: nothing to ask about. This is a measurement and
+		// not a guess, so the record can be written straight out and the instance
+		// joins the automatic path without troubling anybody.
+		if (stored != null && String(stored) === fresh) {
+			var h = await cappHash(fresh);
+			if (h) await writeCappRecord(id, { capp: key, v: man.v, files: { 'crystal.html': h } });
+			return false;
+		}
+
+		_cappOffering[id] = true;
+		try {
+			var go = await confirmDialog(
+				tOr('capp.legacy_body',
+					'This {name} was made before capps carried a version, so Daimond cannot tell '
+					+ 'which parts of its page are the ones it was given. Bring its page up to the '
+					+ 'current one? Your lanes and your entries are left alone.', { name: spec.name }),
+				tOr('capp.legacy_ok', 'Update the page'),
+				{ title: tOr('capp.title', '{name}', { name: spec.name }), danger: false });
+			// Several awaits, and a dialog the user may have sat on. Acting on a
+			// Diamond that is no longer the one on screen would write the fix into
+			// whichever one they moved to -- see the same guard in `renderCrystal`.
+			if (!currentDiamond || currentDiamond.id !== id) return false;
+			if (!go) { await writeCappRecord(id, { capp: key, offered: man.v }); return false; }
+			try { await cappWriteFile(id, 'crystal.html', fresh); }
+			catch (e) {
+				await noticeDialog(tOr('capp.title', '{name}', { name: spec.name }),
+					tOr('capp.update_failed', 'The page could not be replaced: {why}',
+						{ why: friendlyError(e) }));
+				return false;
+			}
+			var hash = await cappHash(fresh);
+			await writeCappRecord(id, {
+				capp:  key,
+				v:     man.v,
+				// ONLY the page. Every other file is one this instance has been
+				// writing for itself, and claiming it as delivered would licence a
+				// later version to overwrite it.
+				files: hash ? { 'crystal.html': hash } : {},
+			});
+			return true;
+		} finally { delete _cappOffering[id]; }
+	}
+
+	/// The one quiet line that says which files were left as the user has them.
+	///
+	/// ONE element and one sentence however many files diverged, in the capp's own
+	/// surface rather than in a modal: nothing here needs answering, and a dialog
+	/// over a page the person just opened to log their breakfast is a dialog they
+	/// learn to dismiss unread.
+	///
+	/// # Arguments
+	/// * `kept` - The paths that were not replaced.
+	function cappKeptNote(kept) {
+		var el = document.createElement('div');
+		el.id = 'capp-note';
+		el.className = 'capp-note';
+		// Inline, because this is the only thing in the app that draws it and a
+		// stylesheet rule for one element in one state is a rule nobody finds again.
+		el.style.cssText = 'margin:10px 0 0;color:var(--text-muted);font-size:var(--fs-xs);'
+			+ 'line-height:1.5;';
+		el.textContent = tOr('capp.update_kept',
+			'The page has been brought up to date. These files are yours and were left as '
+			+ 'they are: {files}.', { files: kept.join(', ') });
+		return el;
 	}
 
 	// ── The guide asks for one ───────────────────────────────────────
@@ -27754,7 +28254,7 @@ import init, {
 					var st = byId[r.id];
 					if (!st) { byId[r.id] = r; return; }
 					var merged = slimChat((r.updatedAt || 0) >= (st.updatedAt || 0) ? r : st);
-					merged.messages = slimMessages(mergeMessages(st.messages, r.messages));
+					merged.messages = slimMessages(mergeMessages(st.messages, r.messages, r.id));
 					if (!merged.session && st.session) merged.session = st.session;
 					byId[r.id] = merged;
 				});

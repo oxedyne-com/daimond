@@ -32,8 +32,34 @@
 //   node dev/verify_sweep_mobile.mjs              # the sweep
 //   node dev/verify_sweep_mobile.mjs --quick      # three palettes, no shots
 //   node dev/verify_sweep_mobile.mjs --selftest   # prove the checks can go red
+//   node dev/verify_sweep_mobile.mjs --break drawer   # expected to FAIL
 //
 // Needs `node dev/serve.mjs` and `node dev/mockllm.mjs` already running.
+//
+// ── WHAT MAKES THIS FILE FAIL, AND WHAT DOES NOT ────────────────────────────
+//
+// This is a REPORT GENERATOR, and the findings it collects are a backlog rather
+// than a verdict: at the time of writing it names nine controls under the WCAG
+// 2.5.8 floor, and a file that exited 1 on those would be red every run until
+// somebody resized nine buttons. Inventing a threshold on the contents of a
+// report to make it look like a test would be worse than leaving it green.
+//
+// So what it exits on is the INSTRUMENT, not the findings:
+//
+//   * every width × spacing × state × palette in the matrix was probed;
+//   * every state it names was actually REACHED -- the drawer really opened, the
+//     sheet really came up, the bottom bar really changed destination. A state
+//     that silently failed to open still produced a full set of clean
+//     measurements, of the chat floor, under another state's name;
+//   * the evidence files were written;
+//   * nothing threw in the page while it swept (the errors were collected all
+//     along and then dropped on the floor);
+//   * and under `--selftest`, every check proved it can go red.
+//
+// The findings themselves are printed and written to dev/results/. If the
+// backlog is ever meant to gate, the figure to gate on is zero STRUCTURAL
+// findings (h-scroll, off-right, off-top, overlap, squeezed, obscured, shell),
+// and that is a decision for whoever owns the backlog, not for this file.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -53,22 +79,49 @@ const QUICK    = process.argv.includes('--quick');
 const SELFTEST = process.argv.includes('--selftest');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+const ok = [], bad = [];
+const check = (name, pass, detail) => {
+	(pass ? ok : bad).push(name + (detail ? ' — ' + detail : ''));
+	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
+};
+
+// `drawer` makes setState stop opening the drawer, which is what a moved button
+// or a renamed method looks like from here: every measurement still arrives, and
+// every one of them is of the chat floor under the drawer's name.
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+if (BREAK && BREAK !== 'drawer') {
+	console.error(`unknown break '${BREAK}'; known: drawer`);
+	process.exit(2);
+}
+
 // ── The matrix ───────────────────────────────────────────────────────────────
 // 760px is the one structural cliff (responsive.css:11, mobile.css:24), so the
 // pair either side of it is in the list: layout bugs live exactly there.
-const BREAK = 760;
+const BREAKPOINT = 760;
 const SIZES = [
 	{ w: 320, h: 568,  tag: '320x568',  note: 'smallest phone still in use (iPhone SE)' },
 	{ w: 390, h: 844,  tag: '390x844',  note: 'iPhone 12/13/14' },
 	{ w: 414, h: 896,  tag: '414x896',  note: 'iPhone 11 / XR' },
 	{ w: 740, h: 360,  tag: '740x360',  note: 'phone landscape (exercises the 560+landscape rule)' },
-	{ w: BREAK - 1, h: 1024, tag: '759x1024', note: 'breakpoint − 1 (last phone width)' },
-	{ w: BREAK + 1, h: 1024, tag: '761x1024', note: 'breakpoint + 1 (first desktop width)' },
+	{ w: BREAKPOINT - 1, h: 1024, tag: '759x1024', note: 'breakpoint − 1 (last phone width)' },
+	{ w: BREAKPOINT + 1, h: 1024, tag: '761x1024', note: 'breakpoint + 1 (first desktop width)' },
 	{ w: 768, h: 1024, tag: '768x1024', note: 'tablet portrait — desktop layout, coarse pointer' },
 ];
 const PALETTES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum'];
 const SAMPLE   = ['light', 'dark', 'lollypop'];		// one light, one dark, one loud
 const SKINS    = [['sharp', 'Compact'], ['warm', 'Breathe']];
+// The states each side of the breakpoint, named once: the sweep walks these and
+// the coverage check counts them, and two lists would drift into a false red.
+const PHONE_STATES = ['chat', 'drawer-folded', 'drawer', 'sheet-half', 'sheet-full', 'files', 'mail', 'agents'];
+const WIDE_STATES  = ['desktop'];
+
+/// Which palettes a width is swept in: the two smallest get every one, the rest
+/// get the sample.  The colour work is the expensive half of a probe and does not
+/// change with the width once the layout has been measured at 320 and 390.
+const palsFor = (size) => (size.w === 390 || size.w === 320) ? palettes : SAMPLE;
 
 // ── Findings ────────────────────────────────────────────────────────────────
 // One row per (check, selector, width, skin, state); the palettes that showed
@@ -543,7 +596,9 @@ async function setState(page, state) {
 			await page.evaluate(() => { const b = document.querySelector('#mnav button[data-mp="ai"]'); if (b) b.click(); });
 			break;
 		case 'drawer':
-			await page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b) b.click(); else DaimondShell.openDrawer(); });
+			if (BREAK !== 'drawer') {
+				await page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b) b.click(); else DaimondShell.openDrawer(); });
+			}
 			await sleep(250);
 			// Open the tag pool, which is where the small controls live.
 			await page.evaluate(() => {
@@ -747,7 +802,7 @@ function judge(r, ctx) {
 // resolves them to — and the geometry is measured again.
 const INSET = 34;			// iPhone portrait home-indicator inset
 const INSET_CSS = `
-@media (max-width: ${BREAK}px) {
+@media (max-width: ${BREAKPOINT}px) {
 	.mnav { padding-bottom: calc(6px + ${INSET}px) !important; }
 	#msheet { bottom: calc(58px + ${INSET}px) !important; }
 	.msheet-ask { padding-bottom: calc(8px + ${INSET}px) !important; }
@@ -819,7 +874,7 @@ async function selftest(page) {
 		found.clear();
 		await breakIt();
 		await sleep(250);
-		const r = await page.evaluate(PROBE, { overlays: asOverlays, breakpoint: BREAK, deep: true });
+		const r = await page.evaluate(PROBE, { overlays: asOverlays, breakpoint: BREAKPOINT, deep: true });
 		judge(r, { width: 'selftest', palette: 'dark', skin: 'sharp', state: asState });
 		const hits = [...found.values()].filter(f => f.check === wanted.check
 			&& (!wanted.sel || f.sel.includes(wanted.sel))
@@ -918,6 +973,10 @@ const palettes = QUICK ? SAMPLE : PALETTES;
 const shots = [];
 const safeArea = [];
 const notch = new Map();
+// One probe per (width, skin, state, palette), and the page's own state at the
+// first probe of each (width, skin, state).
+let swept = 0;
+const reached = [];
 const cssSafe = await staticAudit(page);
 
 console.log('\nSWEEP\n');
@@ -925,22 +984,26 @@ for (const size of SIZES) {
 	await page.setViewportSize({ width: size.w, height: size.h });
 	await page.evaluate(() => window.dispatchEvent(new Event('resize')));
 	await sleep(500);
-	const phone = size.w <= BREAK;
-	const states = phone
-		? ['chat', 'drawer-folded', 'drawer', 'sheet-half', 'sheet-full', 'files', 'mail', 'agents']
-		: ['desktop'];
+	const phone = size.w <= BREAKPOINT;
+	const states = phone ? PHONE_STATES : WIDE_STATES;
 
 	for (const [skin, skinName] of SKINS) {
 		await page.evaluate(k => window.DaimondSkin.set(k), skin);
 		await sleep(200);
 		for (const state of states) {
 			const overlays = await setState(page, state);
-			for (const palette of (size.w === 390 || size.w === 320 ? palettes : (QUICK ? SAMPLE : SAMPLE))) {
+			let first = true;
+			for (const palette of palsFor(size)) {
 				await page.evaluate(p => window.DaimondTheme.set(p), palette);
 				await sleep(90);
 				const deep = palette === (QUICK ? SAMPLE : PALETTES)[0];
-				const r = await page.evaluate(PROBE, { overlays, breakpoint: BREAK, deep });
+				const r = await page.evaluate(PROBE, { overlays, breakpoint: BREAKPOINT, deep });
 				judge(r, { width: size.tag, palette, skin, state });
+				swept++;
+				// What the page was actually in when the first measurement of this
+				// state was taken. A state that never opened is measured just as
+				// happily as one that did, and reads as clean.
+				if (first) { first = false; reached.push({ width: size.tag, skin, state, geo: r.geo }); }
 				for (const n of (r.inNotch || [])) notch.set(size.tag + '|' + state + '|' + n.side + '|' + n.sel, n);
 			}
 			// One screenshot per (width, skin, state) in a dark and a light palette.
@@ -1125,5 +1188,61 @@ fs.writeFileSync(path.join(HERE, 'results', 'sweep_mobile.json'),
 
 console.log(`\n${hard.length} findings + ${soft.length} advisory, over ${probes} probes; ${shots.length} screenshots.`);
 for (const r of hard) console.log(`  ${r.check.padEnd(11)} ${r.sel}  [${[...r.widths].join(' ')}]`);
-console.log(`\nevidence: ${path.join(HERE, 'results', 'sweep_mobile_raw.md')}`);
+console.log(`\nevidence: ${path.join(HERE, 'results', 'sweep_mobile_raw.md')}\n`);
+
+// ── The instrument, judged ──────────────────────────────────────────────────
+// None of this is a threshold on the findings: see the header. It is the set of
+// ways this file can produce a clean-looking report of nothing.
+
+// 1. The matrix was walked. Computed the same way the loop walks it, so a size
+//    or a state quietly dropped from either list shows up as a shortfall here.
+const want = SIZES.reduce((n, size) => {
+	const states = (size.w <= BREAKPOINT ? PHONE_STATES : WIDE_STATES).length;
+	return n + SKINS.length * states * palsFor(size).length;
+}, 0);
+check(`THE WHOLE MATRIX WAS PROBED — ${SIZES.length} widths × ${SKINS.length} spacings × states × palettes`,
+	swept === want, `${swept} probes, ${want} expected`);
+
+// 2. Every state was really entered. A drawer that did not open is measured as
+//    happily as one that did, and every measurement is then of the chat floor.
+const IS = {
+	'chat':          (g) => g.mpanel === 'ai',
+	'drawer':        (g) => g.drawerOpen === true,
+	'drawer-folded': (g) => g.drawerOpen === true,
+	'sheet-half':    (g) => g.sheetOpen === true,
+	'sheet-full':    (g) => g.sheetOpen === true,
+	'files':         (g) => g.mpanel === 'work',
+	'mail':          (g) => g.mpanel === 'mail',
+	'agents':        (g) => g.mpanel === 'agents',
+	'desktop':       () => true,
+};
+const unreached = reached.filter(x => !IS[x.state](x.geo))
+	.map(x => `${x.width} ${x.skin} ${x.state} (mpanel=${x.geo.mpanel}, drawerOpen=${x.geo.drawerOpen}, sheetOpen=${x.geo.sheetOpen})`);
+check('EVERY SURFACE IT WAS ASKED FOR WAS REACHED',
+	unreached.length === 0 && reached.length > 0,
+	unreached.length ? `${unreached.length} of ${reached.length} never opened: ${unreached.slice(0, 4).join('; ')}`
+		: `${reached.length} (width, spacing, state) cells, all open`);
+
+// 3. The evidence exists to be read.
+const RAW = path.join(HERE, 'results', 'sweep_mobile_raw.md');
+const bytes = (p) => { try { return fs.statSync(p).size; } catch (e) { return 0; } };
+const JSN = path.join(HERE, 'results', 'sweep_mobile.json');
+check('the evidence was written', bytes(RAW) > 500 && bytes(JSN) > 200,
+	`${bytes(RAW)} bytes of markdown, ${bytes(JSN)} of JSON`);
+
+// 4. Nothing threw. These were collected from the first line of boot() and then
+//    dropped on the floor; 502 is a world with no gateway behind it.
+const errs = s.errs.filter(e => !/favicon|502|Bad Gateway/i.test(e));
+check('nothing threw in the page while it swept', errs.length === 0,
+	`${errs.length}: ${errs.slice(0, 2).join(' | ')}`);
+
+// 5. And, when asked, that the checks above the report can go red at all.
+if (SELFTEST) {
+	const blind = selftestRows.filter(t => !t.red).map(t => t.name);
+	check('every check proved it can go red', blind.length === 0,
+		blind.length ? `blind: ${blind.join('; ')}` : `${selftestRows.length} proved`);
+}
+
 await s.browser.close();
+console.log(`\n${ok.length} passed, ${bad.length} failed`);
+if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

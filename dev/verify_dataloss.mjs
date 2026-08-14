@@ -1,4 +1,4 @@
-// verify_dataloss.mjs — the three ways a sync round used to destroy a user's
+// verify_dataloss.mjs — the four ways a sync round used to destroy a user's
 // work, each asserted where it was destroyed.
 //
 //  1. WORKSPACE FILES DELETED BY ABSENCE. Every other store here deletes on a
@@ -15,14 +15,31 @@
 //     credits were recoverable from a backup; the backup carried no key, so the
 //     balance and the Pro licence went with the identity. The export carries the
 //     wrapped identity now, and the string says what it can and cannot do.
+//  4. ONE CONVERSATION CLEARED, EVERY OTHER ONE SHORTENED. Clearing a daimon
+//     tombstones the messages it discards, by id, in a map that is global and
+//     travels in the parcel. A message stored before message-ids existed is
+//     given one on the way in -- and that id was minted from its POSITION
+//     ALONE, so message one of every old conversation carried the same id.
+//     Clearing one therefore deleted the opening messages of all of them, on
+//     every device, with nothing said. Shipped 2026-08-14.
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099). No gateway: the sync engine is driven against a
 // stubbed mailbox, which is what makes the commit gate observable at all.
+//
+// CHECK 4 IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
+// deliberately damaged copy of js/daimond.js to the real page (through
+// `page.route`, so the browser loads it as it loads any other script) and the run
+// is expected to FAIL. An anchor that does not appear exactly once aborts the run
+// rather than passing quietly.
+//
+//   node dev/verify_dataloss.mjs --break shipped     # 4b+4d fail: the defect as it shipped
+//   node dev/verify_dataloss.mjs --break stamp-only  # 4c+4e fail: the clear stops sticking
+//   node dev/verify_dataloss.mjs                     # and then, clean
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, chat, errors, scratch } from './harness.mjs';
+import { open, errors, scratch, signInAs, storedChats } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -31,13 +48,105 @@ const check = (name, pass, detail) => {
 };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const s = await open({ name: 'dataloss' });
+const WWW  = path.join(HERE, '..', 'www');
+const SRC  = 'js/daimond.js';
+
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+
+// ── The breaks ──────────────────────────────────────────────────────────
+//
+// A break names every site it damages, and every one of them has to land: an
+// anchor that has drifted is a break that quietly stopped applying, and a green
+// run under it proves nothing.
+const STAMP = "\t\tvar at = scope || 'nochat';\t// Absent only for a record with no id, which is never stored\n"
+	+ "\t\t(msgs || []).forEach(function (m, i) {\n"
+	+ "\t\t\tif (!m.mid)                  m.mid = 'legacy-' + at + '-' + ('0000' + i).slice(-4);\n"
+	+ "\t\t\telse if (OLD_LEGACY.test(m.mid)) m.mid = 'legacy-' + at + '-' + m.mid.slice(7);";
+// The stamp as it shipped: the position, and nothing that says WHICH conversation.
+const UNSCOPED = "\t\t(msgs || []).forEach(function (m, i) {\n"
+	+ "\t\t\tif (!m.mid) m.mid = 'legacy-' + ('0000' + i).slice(-4);";
+const DROP_OLD = "\t\t\tif (OLD_LEGACY.test(id)) return;\n";
+
+const BREAKS = {
+	// The defect exactly as it shipped, and it takes BOTH sites — which is worth
+	// saying, because a break at the stamp alone does not reproduce it. The read
+	// filter that now drops an unscoped tombstone would catch the colliding ids on
+	// their way back out and quietly protect the very chat this check is about, so
+	// a stamp-only break goes green here for the wrong reason. See `stamp-only`.
+	shipped: [
+		{ file: SRC, find: STAMP,    with: UNSCOPED },
+		{ file: SRC, find: DROP_OLD, with: '' },
+	],
+	// Only the stamp. The colliding ids come back, the filter still refuses to
+	// honour them, and so nothing is deleted from anybody else's conversation —
+	// but nothing is deleted from the cleared one either, and it comes straight
+	// back. This is why 4c and 4e are here: without them the whole property could
+	// be satisfied by never tombstoning anything at all.
+	'stamp-only': [
+		{ file: SRC, find: STAMP, with: UNSCOPED },
+	],
+};
+
+if (BREAK && !BREAKS[BREAK]) {
+	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
+	process.exit(2);
+}
+
+/// The damaged source, or a hard stop. Nothing is served that was not verified to
+/// differ from the file on disk.
+function damaged(spec) {
+	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const n = src.split(spec.find).length - 1;
+	if (n !== 1) {
+		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
+			+ 'so nothing was broken and the run below would prove nothing.');
+		process.exit(2);
+	}
+	return src.replace(spec.find, spec.with);
+}
+
+/// Serve the damaged file to the page, before anything navigates.
+async function breakInto(page) {
+	const bodies = {};
+	for (const spec of BREAKS[BREAK]) {
+		bodies[spec.file] = bodies[spec.file] || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		// Each spec is checked against the file ON DISK, so two edits to one file
+		// cannot mask each other's anchor.
+		damaged(spec);
+		bodies[spec.file] = bodies[spec.file].replace(spec.find, spec.with);
+	}
+	for (const file of Object.keys(bodies)) {
+		await page.route('**/' + file, (r) => r.fulfill({
+			status: 200, contentType: 'application/javascript', body: bodies[file],
+		}));
+	}
+}
+
+const s = await open({ name: 'dataloss', route: BREAK ? breakInto : null });
 const p = s.page;
+if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: failures below are the point ***\n`);
 
 // ── 1a. The receiving side: what may delete, and what may not ────────────
 
-await chat(s, '@tool file_write {"path":"keep-a.md","content":"alpha"}');
-await chat(s, '@tool file_write {"path":"keep-b.md","content":"beta"}');
+// Seeded through the engine's own door and NOT through a turn, which is the
+// repair and not a shortcut. These two lines were `@tool file_write` of a
+// workspace-root path, and since 2026-08-11 every chat is fenced to
+// `chats/<id>/work` (`scopeChatTo`, www/js/daimond.js) -- so the engine refused
+// both writes, said so in the tool result, and the turn finished normally. The
+// census below then measured the system-seeded docs and nothing else, and three
+// checks went red for a reason that had nothing to do with sync.
+//
+// What this section is about is the deletion guard, so the files go where the
+// census will meet them by the shortest route that puts them there. `write_file`
+// resolves against the active Workspace root, which here is the OPFS sandbox.
+await p.evaluate(async () => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	await mod.write_file('keep-a.md', 'alpha');
+	await mod.write_file('keep-b.md', 'beta');
+});
 
 /// The workspace as the sync census sees it.
 const census = () => p.evaluate(async () => {
@@ -247,6 +356,209 @@ await p.waitForTimeout(900);
 const afterFolderParcel = await applyAndList({ v: 2, chats: [], files: {}, filesComplete: mode.complete });
 check('and merging that very parcel leaves the other device\'s workspace intact',
 	afterFolderParcel.paths.includes('keep-a.md'), afterFolderParcel.paths.slice(0, 3).join(' '));
+
+// ── 4. Clearing one conversation must not shorten another ───────────────
+//
+// THE PROPERTY, and it is written without reference to how a message is named:
+// CLEARING ONE CONVERSATION MUST NEVER REMOVE A MESSAGE FROM A DIFFERENT ONE.
+// Nothing below asserts an id, a shape, or the presence of any constant. The
+// shipped defect was in the ids, but the next one need not be, and a check
+// written against the repair would have gone green the day the repair moved.
+//
+// WHAT FOOLED THE LAST PERSON. Every check that watched this control watched the
+// CONVERSATION IT WAS PRESSED ON — the thread emptied, the store agreed, it
+// survived a reload — and all of that was true. The harm was in the conversations
+// nobody was looking at, and no test had two of them. So the fixture here is two
+// chats and the assertion is on the one that was never touched.
+//
+// The seeded transcripts carry NO `mid` FIELD AT ALL. That is the whole of what
+// "predates message-ids" means, and it is the only way to reach the stamping path
+// where the collision was: a chat whose messages already have ids never goes near
+// it, which is why a fixture built by sending real turns cannot see this at all.
+// (Seeded straight into the store rather than through `chat()`, which is how the
+// chat fixtures elsewhere in this suite are built. The workspace seeding at the
+// top of this file goes through `chat()` and cannot: a real turn mints real ids.)
+
+const KEEP_ID   = 'dl-keep';
+const DAIMON_ID = 'dl-daimon';
+const KEEP = [
+	'the pump seal on the boat',
+	'Fit a new one before the season.',
+	'and the bilge switch',
+	'That is a separate part, and it is cheap.',
+];
+const DAIMON = [
+	'the mooring line has chafed through',
+	'Replace it this weekend.',
+];
+
+/// A Diamond to hang the daimon's conversation on. The rail's first will do — the
+/// app seeds two on a first boot — and one is made if the rail is empty.
+async function aDiamond() {
+	const ids = () => p.$$eval('.diamond-box', (els) => els.map((e) => e.dataset.id || '').filter(Boolean));
+	const have = await ids();
+	if (have.length) return have[0];
+	await p.click('#new-diamond-btn', { force: true });
+	await p.waitForSelector('.dlg-input', { timeout: 10000 });
+	await p.fill('.dlg-input', 'Dataloss');
+	await p.click('.dlg-ok', { force: true });
+	await p.waitForTimeout(1800);
+	return (await ids())[0] || '';
+}
+
+/// Two conversations written straight into the store, neither of them carrying a
+/// single message id. `updatedAt` is now, so nothing here is old enough for the
+/// expiry sweep to have an opinion about it.
+function record(id, diamondId, lines) {
+	const now = Date.now();
+	return {
+		id, name: '', diamondId,
+		messages: lines.map((content, i) => ({
+			role: i % 2 ? 'assistant' : 'user',
+			content,
+			ts: now - (lines.length - i) * 1000,
+			// NO `mid`. See above.
+		})),
+		model: 'mock/fast', provider: 'mock', status: 'active',
+		promptTokens: 0, completionTokens: 0, cachedTokens: 0, costUsd: 0,
+		prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0, lastPrompt: 0,
+		updatedAt: now,
+	};
+}
+
+const seedChats = (recs) => p.evaluate((rs) => new Promise((resolve, reject) => {
+	const req = indexedDB.open('daimond-chats', 1);
+	req.onupgradeneeded = () => {
+		const d = req.result;
+		if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'id' });
+	};
+	req.onsuccess = () => {
+		const t = req.result.transaction('chats', 'readwrite');
+		const store = t.objectStore('chats');
+		rs.forEach((r) => store.put(r));
+		t.oncomplete = () => resolve(true);
+		t.onerror    = () => reject(t.error);
+	};
+	req.onerror = () => reject(req.error);
+}), recs);
+
+/// What a stored conversation actually holds, as text, in order.
+const held = (all, id) => ((all.find((c) => c.id === id) || {}).messages || [])
+	.map((m) => String(m.content == null ? '' : m.content));
+
+/// The same conversation, word for word and in the same order.
+///
+/// NOT A COUNT. A count is green on a transcript that lost its opening message
+/// and gained another in its place, which is the shape a merge fails in — and it
+/// is the shape this defect had: the messages that went were the FIRST ones.
+const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+const dId = await aDiamond();
+check('there is a Diamond to hold a daimon\'s conversation', !!dId, dId || '(none on the rail)');
+await seedChats([record(DAIMON_ID, dId, DAIMON), record(KEEP_ID, '', KEEP)]);
+
+// Read back through the app, which is what makes these two PRE-MID chats and not
+// merely two rows: the boot is where a message without an id is given one.
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'dataloss');
+await p.waitForSelector('.diamond-box', { timeout: 20000 });
+await p.waitForTimeout(1500);
+
+const before = await storedChats(s);
+check('4a. the fixture is two conversations, neither of which the other wrote',
+	held(before, DAIMON_ID).length === DAIMON.length && held(before, KEEP_ID).length === KEEP.length,
+	`daimon:${held(before, DAIMON_ID).length} other:${held(before, KEEP_ID).length}`);
+
+// THE REAL ROUTE, and it has to be: the harm is in what the control and the merge
+// do TOGETHER, so calling the clear directly would test half of it. This is the
+// Diamond's cog dialog and the "Fresh daimon" button inside it, pressed and
+// confirmed the way a reader presses and confirms.
+//
+// Tried more than once on purpose: the control is only mounted where the daimon
+// HAS a conversation, and the conversation is read out of the store at boot. A
+// single attempt would be a race with that read, and the way it would fail is a
+// green run on a clear that never happened.
+let pressed = false;
+for (let i = 0; i < 6 && !pressed; i++) {
+	await p.evaluate((id) => {
+		const box = document.querySelector('.diamond-box[data-id="' + id + '"]');
+		const cog = box && box.querySelector('.tile-cog');
+		if (cog) cog.click();
+	}, dId);
+	await p.waitForTimeout(900);
+	pressed = await p.evaluate(() => {
+		const b = [...document.querySelectorAll('.tile-dlg-clear')]
+			.find((e) => /fresh daimon/i.test(e.textContent || ''));
+		if (!b) return false;
+		b.click();
+		return true;
+	});
+	if (!pressed) {
+		await p.evaluate(() => {
+			const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
+			if (x) x.click();
+		});
+		await p.waitForTimeout(800);
+	}
+}
+check('the daimon offers to start fresh, which is the control this is about', pressed);
+await p.waitForTimeout(800);
+// The confirm's OK is scoped AWAY from the tile dialog: the tile's own foot
+// carries a `.dlg-ok` that deletes the Diamond, and it sits earlier in the
+// document. An unscoped click there deletes the Diamond instead, which reads
+// exactly like a thread that cleared itself.
+const confirmed = await p.evaluate(() => {
+	const b = document.querySelector('.dlg-card:not(.tile-dlg-card) .dlg-ok');
+	if (!b) return false;
+	b.click();
+	return true;
+});
+check('and asks before it discards anything', confirmed);
+await p.waitForTimeout(1500);
+await p.evaluate(() => {
+	const x = document.querySelector('.tile-dlg-card .tile-dlg-done');
+	if (x) x.click();
+});
+await p.waitForTimeout(600);
+
+// The trigger is A RELOAD: the merge that does the damage is the save the clear
+// itself performs, and a reload is how the owner meets the result of it — he
+// comes back the next morning and reads a conversation he never touched.
+await p.reload({ waitUntil: 'domcontentloaded' });
+await signInAs(s, 'dataloss');
+await p.waitForSelector('.diamond-box', { timeout: 20000 });
+await p.waitForTimeout(1500);
+
+const after = await storedChats(s);
+const kept  = held(after, KEEP_ID);
+check('4b. CLEARING ONE CONVERSATION LEAVES ANOTHER WHOLE — every message, by content (after a reload)',
+	same(kept, KEEP),
+	`${kept.length}/${KEEP.length} held, opens with "${(kept[0] || '(nothing)').slice(0, 40)}"`);
+check('4c. and the conversation that WAS cleared is still cleared',
+	held(after, DAIMON_ID).length === 0,
+	`${held(after, DAIMON_ID).length} messages, "${(held(after, DAIMON_ID)[0] || '').slice(0, 40)}"`);
+
+// The other half of the harm, and the half that reached the other devices: the
+// tombstones travel in the parcel, so a peer that still holds both transcripts
+// whole hands them back into the same merge. It must restore neither the
+// conversation that was cleared nor a hole in the one that was not.
+const peer = {
+	v: 2, files: {}, filesComplete: false,
+	chats: [
+		{ ...record(DAIMON_ID, dId, DAIMON), updatedAt: Date.now() - 60000 },
+		{ ...record(KEEP_ID,   '',  KEEP),   updatedAt: Date.now() - 60000 },
+	],
+};
+const merged = await p.evaluate(async (parcel) => (await window.DaimondCore.applySync(parcel)).failed, peer);
+await p.waitForTimeout(1200);
+const synced = await storedChats(s);
+const keptS  = held(synced, KEEP_ID);
+check('4d. AND A SYNC MERGE FROM A PEER THAT HOLDS BOTH WHOLE DOES NOT SHORTEN THE OTHER ONE',
+	same(keptS, KEEP),
+	`${keptS.length}/${KEEP.length} held, sections that failed: ${merged.join(',') || 'none'}`);
+check('4e. while the cleared conversation stays cleared THROUGH that same merge',
+	held(synced, DAIMON_ID).length === 0,
+	`${held(synced, DAIMON_ID).length} messages back from the peer`);
 
 const errs = errors(s).filter(e => !/502|Bad Gateway|api\/sync/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));

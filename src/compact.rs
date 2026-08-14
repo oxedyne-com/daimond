@@ -13,10 +13,12 @@
 //! as it was.  The replacement carries two things, produced two different ways:
 //!
 //! * **A ledger**, read from the tool calls themselves by [`ledger_of`].  Which files were
-//!   read, which were written, which commands ran, and -- separately -- which of those
-//!   FAILED.  This is arithmetic, not judgement: no model is asked, so none can lose it or
-//!   invent it.  A fold that drops which files were written leaves the model claiming work
-//!   it can no longer verify, which is worse than the overflow it was avoiding.
+//!   read, which were written, which commands ran, and -- separately -- which of those were
+//!   REFUSED or FAILED.  This is arithmetic, not judgement: no model is asked, so none can
+//!   lose it or invent it.  A fold that drops which files were written leaves the model
+//!   claiming work it can no longer verify, which is worse than the overflow it was avoiding
+//!   -- and a fold that lists a REFUSED write as a write is that same claim, made by the app
+//!   itself, in the one part of the note the model is told to trust.
 //! * **A summary**, written by a model from a bounded rendering of the folded part (see
 //!   [`render_for_fold`]).  Goal, decisions, findings, open threads -- the part that needs
 //!   judgement.
@@ -47,6 +49,7 @@
 
 use crate::llm::{extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
+use crate::tools::{CallOutcome, call_outcome};
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::Dat;
@@ -533,6 +536,10 @@ pub struct Ledger {
 	pub fetched: Vec<String>,
 	/// Agents dispatched, by name.
 	pub spawned: Vec<String>,
+	/// Calls a door refused, as `tool path`.  Kept apart from [`Ledger::failed`] because they
+	/// are different news for the model: a refusal is a rule it met and can work around, an
+	/// error is a tool that broke.  Told the wrong one, it retries the wrong thing.
+	pub refused: Vec<String>,
 	/// Calls that came back an error, as `tool path`.  Kept apart from the rest so a fold
 	/// never reports an attempted write as a write.
 	pub failed:  Vec<String>,
@@ -543,7 +550,8 @@ impl Ledger {
 	/// Whether nothing at all was recorded.
 	pub fn is_empty(&self) -> bool {
 		self.read.is_empty() && self.wrote.is_empty() && self.ran.is_empty()
-			&& self.fetched.is_empty() && self.spawned.is_empty() && self.failed.is_empty()
+			&& self.fetched.is_empty() && self.spawned.is_empty() && self.refused.is_empty()
+			&& self.failed.is_empty()
 	}
 
 	/// The ledger as lines for the fold notice, each capped so one pathological session
@@ -566,6 +574,9 @@ impl Ledger {
 		put("Commands run", &self.ran);
 		put("Pages fetched", &self.fetched);
 		put("Agents dispatched", &self.spawned);
+		// Said in full rather than as one word: "REFUSED" alone invites the model to read a
+		// closed door as a broken tool and try it again.
+		put("REFUSED, so nothing was touched", &self.refused);
 		put("FAILED", &self.failed);
 		out
 	}
@@ -582,9 +593,17 @@ impl Ledger {
 
 /// Read the ledger out of a conversation's tool calls.
 ///
-/// A call whose reply begins `Error` is recorded as failed and nowhere else.  Daimond's own
-/// dispatcher returns every tool failure in that shape, so the test is the dispatcher's own
-/// convention rather than a guess about wording.
+/// **What a reply MEANS is the tool layer's to say, and [`call_outcome`] is where it says it.**
+/// This module used to decide for itself, with `!reply.trim_start().starts_with("Error")` -- and
+/// every refusal in the build is returned as an `Ok` sentence that opens "Refused", so a write the
+/// scope fence had just stopped was booked as a write.  A live run refused two writes by the chat
+/// fence and the fold then told the model `Files written: alpha.txt, beta.txt`, directly above the
+/// line instructing it to claim nothing that is not listed.  The ledger is the half of a fold that
+/// is supposed to be arithmetic rather than judgement, and it was inventing files.
+///
+/// Adding "Refused" to the sniff would have been the same defect one layer along: a list of
+/// openings held in this file, against wording held in another, kept in step by nobody.  So the
+/// question is asked of the layer that composes the wording, and answered there.
 pub fn ledger_of(msgs: &[ChatMessage]) -> Ledger {
 	let mut l = Ledger::default();
 	let mut i = 0;
@@ -598,8 +617,7 @@ pub fn ledger_of(msgs: &[ChatMessage]) -> Ledger {
 				Some(ChatMessage::Tool { content, .. }) => content.as_text(),
 				_ => std::borrow::Cow::Borrowed(""),
 			};
-			let ok = !reply.trim_start().starts_with("Error");
-			record(&mut l, tc, ok);
+			record(&mut l, tc, call_outcome(&reply));
 		}
 		i += 1 + calls.len();
 	}
@@ -608,20 +626,36 @@ pub fn ledger_of(msgs: &[ChatMessage]) -> Ledger {
 
 /// Put one call in the right column of the ledger.
 ///
-/// The classification duplicates what `Tool::write_targets` and `Tool::read_target` already
-/// know, because both are private to `tools`; see the report accompanying this module for
-/// the two-word visibility change that would let this call them instead.
+/// Whether it did anything is NOT decided here: [`crate::tools::call_outcome`] decides it, beside
+/// the two constructors that compose every refusal and every error, and the answer arrives as
+/// `outcome`.
+///
+/// Which column a call that DID happen belongs in is still worked out from its name.  That
+/// duplicates what `Tool::write_targets` knows, and the standing note here said a visibility
+/// change would let this call it instead -- it would not: `write_targets` needs a `ToolContext`,
+/// which is the turn's, and a fold reads a conversation long after the turn that made it is gone.
+/// The mapping below is over tool NAMES, which is the stable wire contract; a tool added without
+/// a line here is listed in no column, which is a fold that says less than it could and never one
+/// that says something untrue.
 ///
 /// # Arguments
 /// * `l` - The ledger being built.
 /// * `tc` - The call the model made.
-/// * `ok` - Whether its reply was not an error.
-fn record(l: &mut Ledger, tc: &ToolCall, ok: bool) {
+/// * `outcome` - What the tool layer says became of it.
+fn record(l: &mut Ledger, tc: &ToolCall, outcome: CallOutcome) {
 	let arg = |k: &str| extract_json_string(&tc.arguments, k).unwrap_or_default();
 	let path = arg("path");
-	if !ok {
-		let what = if path.is_empty() { arg("url") } else { path.clone() };
-		Ledger::push(&mut l.failed, fmt!("{} {}", tc.name, what).trim().to_string());
+	// A call that did not happen is recorded as what it was and in no other column.  A refusal
+	// and an error are held apart because they are different news: one is a rule the model met,
+	// the other is a tool that broke.
+	if !matches!(outcome, CallOutcome::Done) {
+		let what  = if path.is_empty() { arg("url") } else { path.clone() };
+		let entry = fmt!("{} {}", tc.name, what).trim().to_string();
+		match outcome {
+			CallOutcome::Refused	=> Ledger::push(&mut l.refused, entry),
+			CallOutcome::Failed		=> Ledger::push(&mut l.failed, entry),
+			CallOutcome::Done		=> {},	// answered above
+		}
 		return;
 	}
 	match tc.name.as_str() {
@@ -1301,6 +1335,22 @@ pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
 mod tests {
 	use super::*;
 
+	// The tool layer as the app runs it.  The ledger's tests take their tool replies from the
+	// dispatcher rather than composing any, so what they assert about is what a user's
+	// conversation would actually contain.
+	use crate::executor::Executor;
+	use crate::tools::{
+		FileRoot,
+		PACK_DROP01,
+		Tool,
+		ToolContext,
+		ToolRegistry,
+		chat_bounds,
+		new_read_cache,
+		set_locked_packs,
+	};
+	use crate::workspace::Workspace;
+
 	/// An assistant turn asking for one tool call.
 	fn asks(id: &str, name: &str, args: &str) -> ChatMessage {
 		ChatMessage::Assistant {
@@ -1774,19 +1824,155 @@ mod tests {
 		assert!(l.failed.is_empty());
 	}
 
-	#[test]
-	fn test_a_write_that_failed_is_never_reported_as_a_write_00() {
-		// The failure that matters most: a fold claiming a file was written, when the write
-		// was refused, leaves the model describing work it cannot verify.
-		let v = vec![
-			user("go"),
-			asks("a", "file_write", r#"{"path":"/etc/passwd","content":"x"}"#),
-			replies("a", "Error: path is outside the workspace."),
+	// ── A call that did not happen ───────────────────────────────────────────
+	//
+	// Every reply below is taken from `ToolRegistry::dispatch`, which is the only route by which
+	// a tool result reaches a conversation.  Nothing here writes a refusal by hand, and that is
+	// the whole lesson of the defect these replace: the test that shipped fed the ledger the
+	// sentence "Error: path is outside the workspace.", which no part of the product has ever
+	// emitted.  It agreed with itself, stayed green from the day it was written, and every
+	// refused write in the build was folded in as a write underneath it.
+
+	/// A scratch workspace bounded as a chat's is: `notes` to work in, `book` to consult.
+	///
+	/// A REAL directory, because one case below has to be a write that actually lands.  A fixture
+	/// in which nothing can succeed would be satisfied by a classifier that called every call
+	/// refused, which would empty the ledger of the one thing it exists to carry.
+	fn chat_ctx() -> ToolContext {
+		let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_compact_test") {
+			Ok(d)  => d,
+			Err(e) => panic!("a scratch directory: {}", e),
+		};
+		let ws = match Workspace::new(dir) {
+			Ok(w)  => w,
+			Err(e) => panic!("a workspace: {}", e),
+		};
+		ToolContext {
+			workspace:   ws,
+			executor:    Executor::local_default(),
+			cwd:         String::new(),
+			path_prefix: String::new(),
+			root:        FileRoot::Workspace,
+			read_seen:   new_read_cache(),
+			no_write:    chat_bounds("chats/c1", &[fmt!("notes")], &[fmt!("book")]),
+			daimon_of:   String::new(),
+		}
+	}
+
+	/// What the app itself puts in the conversation for one call.
+	async fn dispatched(tool: Tool, args: &str, ctx: &ToolContext) -> String {
+		let reg = ToolRegistry::new(vec![tool], ctx.clone());
+		let out = reg.dispatch(tool.name(), args).await;
+		out.as_text().to_string()
+	}
+
+	/// A conversation of one call and the reply the product gave it.
+	fn one_call(tool: Tool, args: &str, reply: &str) -> Vec<ChatMessage> {
+		vec![user("go"), asks("a", tool.name(), args), replies("a", reply)]
+	}
+
+	#[tokio::test]
+	async fn test_a_refused_write_is_never_reported_as_a_write_00() {
+		// The failure that matters most: a fold claiming a file was written, when the write was
+		// refused, leaves the model describing work that was never done -- and the notice ends by
+		// telling it to trust exactly that list.
+		let ctx = chat_ctx();
+		// One case per door a write meets, each phrased by a different function in `tools`, and
+		// not one of them phrased here.
+		let cases: Vec<(&str, &str)> = vec![
+			("the scope fence",		r#"{"path":"secrets/keys.txt","content":"x"}"#),
+			("the read-only mark",	r#"{"path":"book/ch1.md","content":"x"}"#),
+			("an absolute path",	r#"{"path":"/etc/passwd","content":"x"}"#),
 		];
-		let l = ledger_of(&v);
-		assert!(l.wrote.is_empty(), "a refused write must not appear as a write: {:?}", l.wrote);
-		assert_eq!(l.failed.len(), 1);
-		assert!(l.failed[0].contains("/etc/passwd"));
+		for (door, args) in cases {
+			let reply = dispatched(Tool::FileWrite, args, &ctx).await;
+			let l     = ledger_of(&one_call(Tool::FileWrite, args, &reply));
+			assert!(l.wrote.is_empty(),
+				"{} booked a refused write as a write: {:?} -- the reply was: {}",
+				door, l.wrote, reply);
+			assert_eq!(l.refused.len(), 1,
+				"{} was not recorded as a refusal: {:?} -- the reply was: {}", door, l, reply);
+			assert!(l.failed.is_empty(),
+				"{} was recorded as a broken tool rather than a closed door: {:?}", door, l);
+			// And the notice must not name the file under what was written, which is the part of
+			// it the model is instructed to trust.
+			let n = notice(9, "", &l, None);
+			assert!(!n.contains("Files written"), "{}: {}", door, n);
+		}
+	}
+
+	#[tokio::test]
+	async fn test_a_refusal_that_opens_with_the_tools_own_name_is_still_a_refusal_00() {
+		// The locked-pack refusal is the case a list of openings kept in this module would have
+		// missed: its author wrote it opening with the tool's name and no marker at all.  It is
+		// recognisable because `Tool::guard` composes every answer it gives with
+		// `tools::refusal_line` -- which is the fix, stated as a test.
+		let ctx  = chat_ctx();
+		let args = r#"{"path":"paper.typ"}"#;
+		set_locked_packs(PACK_DROP01);
+		let reply = dispatched(Tool::TypstCompile, args, &ctx).await;
+		set_locked_packs("");	// A global left changed decides whether the next test passes.
+		assert!(reply.contains(PACK_DROP01), "not the pack refusal: {}", reply);
+
+		let l = ledger_of(&one_call(Tool::TypstCompile, args, &reply));
+		assert!(l.wrote.is_empty(),
+			"a compile that never ran was booked as a write: {:?} -- the reply was: {}",
+			l.wrote, reply);
+		assert_eq!(l.refused.len(), 1, "{:?} -- the reply was: {}", l, reply);
+	}
+
+	#[tokio::test]
+	async fn test_a_tool_that_broke_is_held_apart_from_one_that_was_refused_00() {
+		// A GENUINE error, wrapped by the dispatcher exactly as it wraps every other: `run`
+		// reaches the machine hand, which the native build does not have.  The two must not be
+		// merged -- a model told a closed door is a broken tool retries it, and a model told a
+		// broken tool is a closed door goes looking for permission it already has.
+		let ctx   = chat_ctx();
+		let args  = r#"{"argv":["cargo","test"]}"#;
+		let reply = dispatched(Tool::Run, args, &ctx).await;
+		let l     = ledger_of(&one_call(Tool::Run, args, &reply));
+		assert!(l.ran.is_empty(),
+			"a command that never ran was booked as run: {:?} -- the reply was: {}", l.ran, reply);
+		assert!(l.refused.is_empty(),
+			"an error was booked as a refusal: {:?} -- the reply was: {}", l.refused, reply);
+		assert_eq!(l.failed.len(), 1, "{:?} -- the reply was: {}", l, reply);
+	}
+
+	#[tokio::test]
+	async fn test_a_write_that_landed_is_still_reported_as_a_write_00() {
+		// The control every test above needs.  Three refusals proved nothing on their own: a
+		// classifier that answered "refused" to everything would satisfy all three, and would
+		// hand the model a fold that mentions none of the work it actually did.
+		let ctx   = chat_ctx();
+		let args  = r#"{"path":"notes/new.rs","content":"x"}"#;
+		let reply = dispatched(Tool::FileWrite, args, &ctx).await;
+		let l     = ledger_of(&one_call(Tool::FileWrite, args, &reply));
+		assert_eq!(l.wrote, vec![fmt!("notes/new.rs")], "the reply was: {}", reply);
+		assert!(l.refused.is_empty() && l.failed.is_empty(),
+			"a write that landed was booked as something else: {:?}", l);
+	}
+
+	#[tokio::test]
+	async fn test_a_refused_call_is_named_in_the_notice_as_one_that_did_nothing_00() {
+		// What the model is finally shown.  The columns are not interchangeable: the line has to
+		// say the call touched nothing, or a fold reporting a refusal is a fold reporting work.
+		//
+		// THIS TEST BUILT ITS LEDGER BY HAND AND THEREFORE PROVED ONLY THE RENDERING.  Restoring
+		// the shipped defect -- judging a call by whether its reply opens with "Error" -- left it
+		// green, because a hand-made ledger never meets the classifier at all.  Its name promises
+		// something about a refused CALL, so it now starts from one: a real refusal, from the
+		// dispatcher, through `ledger_of`, and only then to the notice.  Classification and
+		// rendering are one claim here, and a break in either must reach it.
+		let ctx   = chat_ctx();
+		let args  = r#"{"path":"secrets/keys.txt","content":"x"}"#;
+		let reply = dispatched(Tool::FileWrite, args, &ctx).await;
+		let l     = ledger_of(&one_call(Tool::FileWrite, args, &reply));
+		let n     = notice(9, "", &l, None);
+		assert!(n.contains("secrets/keys.txt"), "the refusal was not named at all: {}", n);
+		assert!(!n.contains("Files written"),
+			"a refusal must not be listed as a write: {} -- the reply was: {}", n, reply);
+		assert!(n.contains("nothing was touched"),
+			"the notice did not say the call touched nothing: {}", n);
 	}
 
 	#[test]

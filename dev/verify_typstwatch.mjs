@@ -85,6 +85,9 @@
 //   node dev/verify_typstwatch.mjs --break oldwords    # 15 fails: the bar's old words
 //   node dev/verify_typstwatch.mjs --break pagebox     # 16 fails: the page number is
 //                                                     #    clipped out of its own box
+//   node dev/verify_typstwatch.mjs --break driftpages  # 17 fails: the ink slides down
+//                                                     #    its own paper, a little
+//                                                     #    further on every page
 //   node dev/verify_typstwatch.mjs                      # and then, clean
 //
 //   eval "$(bash dev/world.sh 13 --up)"
@@ -195,10 +198,33 @@ const BREAKS = {
 	}],
 	// The pages are drawn at the wrong scale. Nothing reflows and every glyph is
 	// still there, so a check counting elements passes — only the INK says so.
+	//
+	// BY A CONSTANT, AND THAT IS THE HALF IT PROVES. Fourteen points off every page is
+	// fourteen points off PAGE ONE, which is the page the ink comparison photographs.
+	// An error that starts at nothing and grows walks straight past it — see
+	// `driftpages`, which is the same line moved by an amount that depends on the page.
 	skewpages: [{
 		file: 'js/typstwatch.js',
-		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + S.tops[i] + \' \' + S.docW + \' \' + S.heights[i]);',
-		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + (S.tops[i] - 14) + \' \' + S.docW + \' \' + S.heights[i]);',
+		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + y + \' \' + S.docW + \' \' + S.heights[i]);',
+		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + (y - 14) + \' \' + S.docW + \' \' + S.heights[i]);',
+	}],
+	// THE DEFECT AS IT SHIPPED, in the shape it actually had. The crop was taken at the
+	// EXACT running sum of the page heights while the renderer places each page at a
+	// running sum of WHOLE-POINT heights, so the two separated by 0.46 pt a page on the
+	// 453.543 pt fixture and never met again: 11 pt by page 26, 45 pt by page 100,
+	// 105 pt by page 230. The paper stayed exactly where it belonged and the INK inside
+	// it slid down — a white band opening at the head of every page and the last lines
+	// pushed off the foot — which the author reported as a gradual violation of the
+	// margins, and which every one of the checks in this file was blind to.
+	//
+	// IT MUST BE AN ACCUMULATING ERROR AND NOT A CONSTANT ONE. `skewpages` above is
+	// caught by the ink comparison because a constant reaches page one; this reaches
+	// page one by nothing at all, and only a check that looks at a page deep in the book
+	// AND at where its ink sits — not how much of it there is — goes red.
+	driftpages: [{
+		file: 'js/typstwatch.js',
+		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + y + \' \' + S.docW + \' \' + S.heights[i]);',
+		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + (y - 0.46 * i) + \' \' + S.docW + \' \' + S.heights[i]);',
 	}],
 	// The SVG is made as tall as the whole book again, with only the visible band
 	// drawn in it — which is the obvious way to do this and the way that fails. Every
@@ -219,14 +245,14 @@ const BREAKS = {
 	// which is the mechanism the pixels were a symptom of.
 	tallsvg: [{
 		file: 'js/typstwatch.js',
-		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + S.tops[i] + \' \' + S.docW + \' \' + S.heights[i]);\n'
+		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + y + \' \' + S.docW + \' \' + S.heights[i]);\n'
 			+ '\t\tsvg.setAttribute(\'width\', String(S.docW * scale));\n'
 			+ '\t\tsvg.setAttribute(\'height\', String(S.heights[i] * scale));',
 		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 0 \' + S.docW + \' \' + S.docH);\n'
 			+ '\t\tsvg.setAttribute(\'width\', String(S.docW * scale));\n'
 			+ '\t\tsvg.setAttribute(\'height\', String(S.docH * scale));\n'
 			+ '\t\tsvg.style.position = \'absolute\';\n'
-			+ '\t\tsvg.style.top = (-S.tops[i] * scale) + \'px\';',
+			+ '\t\tsvg.style.top = (-y * scale) + \'px\';',
 	}],
 	// A VIEW CHANGE STARTS A COMPILE. The rail is a control like the zoom and the
 	// paper: it shows what the last build already answered. A control that reached
@@ -997,6 +1023,79 @@ try {
 		first.missing || far.missing ? 'there was no live view to photograph'
 			: `page 1 ${(first.ratio * 100).toFixed(2)}% ink, page `
 				+ `${DEEP} ${(far.ratio * 100).toFixed(2)}% ink`);
+
+	// AND ITS INK IS ON ITS OWN PAPER, WHICH IS THE PROPERTY NOTHING HERE ASSERTED.
+	//
+	// THE GAP BETWEEN TWO SOUND CHECKS, and a shipped defect lived in it for the life of
+	// this file. The ink comparison against poppler is the strictest check here — it
+	// puts every line within a pixel of where the PDF puts it — and it photographs THE
+	// FIRST SHEET and rasterises PDF PAGE ONE, where the error this misses is zero by
+	// construction. The only check that looks this far down is the one directly above,
+	// and it asserts HOW MUCH ink page 230 carries, to a quarter, and never WHERE it is:
+	// it passed with room to spare on a page whose type block had slid 37 mm down its
+	// own paper. Between them: every page after the first, in position.
+	//
+	// The sheet's `viewBox` says where the page is cropped from; the group inside it
+	// carries the renderer's own `translate(x, y)` for that same page. If they are not
+	// the same number the crop is not over the ink — the paper is still exactly where it
+	// belongs, so a white band opens at the head of the page and the last lines are
+	// pushed off the foot, which is what the author saw and called a gradual violation
+	// of the margins. The slack is `PAGE_INSET`, the twentieth of a point the window
+	// itself is asked with; under the defect it is 0 pt on page 1 and about 105 pt here.
+	const CROP_SLACK = 0.05;
+	const crops = await page.evaluate(() => {
+		const h = document.querySelector('#typst-live .tl-pages');
+		if (!h || !h.shadowRoot) return null;
+		const out = [];
+		for (const sh of h.shadowRoot.querySelectorAll('.tl-sheet')) {
+			const svg = sh.querySelector('svg');
+			// A DIRECT CHILD: the shared glyph outlines ride in the first sheet made, and
+			// the page group is the one the sheet itself holds.
+			const g = svg && svg.querySelector(':scope > g[class*="typst-page"]');
+			if (!svg || !g) continue;
+			const vb = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+			const m = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/
+				.exec(g.getAttribute('transform') || '');
+			out.push({ page: Number(sh.getAttribute('data-page')),
+				crop: vb[1], ink: m ? parseFloat(m[1]) : NaN });
+		}
+		return out;
+	});
+	let worstCrop = null;
+	for (const c of (crops || [])) {
+		const off = Math.abs(c.crop - c.ink);
+		if (!worstCrop || !(off <= worstCrop.off)) {
+			worstCrop = { page: c.page, off, crop: c.crop, ink: c.ink };
+		}
+	}
+	check('EVERY SHEET IS CROPPED WHERE ITS OWN PAGE\'S INK IS, this far down as on page one',
+		!!crops && crops.length >= 2 && !!worstCrop && worstCrop.off <= CROP_SLACK,
+		worstCrop ? `${crops.length} sheet(s); worst is page ${worstCrop.page}, cropped at `
+			+ `${worstCrop.crop.toFixed(2)}pt with its ink at ${worstCrop.ink.toFixed(2)}pt — `
+			+ `${worstCrop.off.toFixed(2)}pt apart`
+			: 'there was no live view with sheets in it to measure');
+
+	// AND THE ROUNDING BEHIND ALL OF THAT IS A MEASURED NUMBER RATHER THAN A SURPRISE.
+	// Two routes to the same quantity, and they are independent. `drift` is the
+	// renderer's own total height less the exact sum of the page heights, taken in
+	// `draw` for the cost of two subtractions and available before a single page is
+	// drawn; `rdrift` is how far the origin the renderer GAVE the last page has walked
+	// from the exact sum above it, read out of a group in a band. Where the renderer's
+	// total is the rounded accumulation the two can differ only by the last page's own
+	// rounding, which is under a point. Where it is the exact sum, `drift` is zero and
+	// there is nothing to hold `rdrift` against — that case is named here rather than
+	// asserted, and both numbers are printed either way.
+	const dr = await st();
+	check('THE RENDERER\'S ROUNDING IS MEASURED TWICE, BEFORE AND AFTER THE DRAW, AND AGREES',
+		Number.isFinite(dr.drift) && Number.isFinite(dr.rdrift)
+			&& (Math.abs(dr.drift) < 0.5 || Math.abs(dr.drift - dr.rdrift) <= 1),
+		`the renderer's own total less the exact sum ${Number(dr.drift).toFixed(2)}pt; `
+		+ `the last page's own origin less its exact top ${Number(dr.rdrift).toFixed(2)}pt`
+		+ (Math.abs(dr.drift) < 0.5
+			? ' — the total IS the exact sum here, so this one is a report, not a proof'
+			: ''));
+	check('and no band was quietly given up on along the way',
+		!dr.bandErr, dr.bandErr);
 
 	const errs = errors(s).filter(e =>
 		!/Failed to load resource/.test(e) && !/502/.test(e) && !/Bad Gateway/.test(e));

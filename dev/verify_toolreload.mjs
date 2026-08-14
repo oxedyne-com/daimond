@@ -25,7 +25,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099).
-import { open, chat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
+import { open, chat, newChat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -89,9 +89,24 @@ const NAME = 'toolreload';
 const s = await open({ name: NAME });
 
 // ── Turn one: read a file and write a file ─────────────────────────────────
+//
+// IN THE CHAT'S OWN SCRATCH. Until 2026-08-14 this named `reload-note.txt` at the
+// workspace ROOT; since the chat fence landed on 2026-08-12 a chat is confined to
+// `chats/<id>/work` (`scopeChatTo`, www/js/daimond.js) and `Tool::guard`
+// (src/tools.rs:5490) refuses a root path before the write. Both turns then carried
+// a refusal instead of a write and a read, and what the reload was asked to
+// remember was an apology.
 clearMockLog();
-await chat(s, '@tool file_write {"path":"reload-note.txt","content":"the number is 4711"}');
-await chat(s, '@tool file_read {"path":"reload-note.txt"}');
+await newChat(s);
+const NOTE = await s.page.evaluate(() => {
+	const f = window.DaimondAttach.focus();
+	return f && f.id ? window.DaimondAttach.chatScratch(f.id) + '/reload-note.txt' : '';
+});
+check('the chat has a scratch folder to work in', !!NOTE, NOTE || '(no chat in focus)');
+const wrote = await chat(s, `@tool file_write {"path":"${NOTE}","content":"the number is 4711"}`);
+check('the file was really written, so there is a tool call worth remembering',
+	!/Refused/.test(wrote) && /Wrote \d+ bytes/.test(wrote), wrote.slice(-140).replace(/\n/g, ' | '));
+await chat(s, `@tool file_read {"path":"${NOTE}"}`);
 
 const before = mockLog();
 const beforeLast = before[before.length - 1] || { messages: [] };

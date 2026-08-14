@@ -121,9 +121,42 @@ log('connected:', JSON.stringify(cfg));
 await newChat(s);
 
 line('1. do some work worth remembering');
-await say(s, '@tool file_write {"path":"alpha.txt","content":"the first file"}', 7000);
-await say(s, '@tool file_write {"path":"beta.txt","content":"the second file"}', 7000);
+// TWO WRITES THAT END DIFFERENTLY, and that is the fixture, not an accident.
+//
+// ALPHA goes in the chat's own scratch and really lands. BETA names a workspace-ROOT
+// path and is REFUSED: since the chat fence landed on 2026-08-12 a chat is confined to
+// `chats/<id>/work` (`scopeChatTo`, www/js/daimond.js) and `Tool::guard`
+// (src/tools.rs:5490) turns a root path back before the write, returning the refusal
+// as an ordinary tool result -- nothing written, nothing thrown.
+//
+// Both used to be root paths, so by the time the fence arrived NEITHER file existed
+// and the check below still passed on a fold notice naming both. That is the shape
+// of the product defect this is re-aimed at: a fold that lists files that were never
+// created, under a closing line telling the model to trust the list.
+const SCRATCH = await s.page.evaluate(() => {
+	const f = window.DaimondAttach.focus();
+	return f && f.id ? window.DaimondAttach.chatScratch(f.id) : '';
+});
+check(!!SCRATCH, 'the chat has a scratch folder, so one of the two writes can succeed', SCRATCH);
+const ALPHA = SCRATCH + '/alpha.txt';       // written
+const BETA  = 'beta.txt';                   // refused: outside the fence
+await say(s, `@tool file_write {"path":"${ALPHA}","content":"the first file"}`, 7000);
+await say(s, `@tool file_write {"path":"${BETA}","content":"the second file"}`, 7000);
 log('after two writes:', (await transcript(s)).slice(-120).replace(/\n/g, ' | '));
+
+/// Is this path really on disk? Asked of OPFS, outside the app, so what the fold
+/// CLAIMS is measured against the store and not against another claim.
+const onDisk = (p) => s.page.evaluate(async (p) => {
+	const parts = p.split('/');
+	let d = await navigator.storage.getDirectory();
+	for (const seg of parts.slice(0, -1)) d = await d.getDirectoryHandle(seg);
+	await d.getFileHandle(parts[parts.length - 1]);
+	return true;
+}, p).catch(() => false);
+const alphaThere = await onDisk(ALPHA);
+const betaThere  = await onDisk(BETA);
+check(alphaThere, 'the fixture: one write really landed', ALPHA);
+check(!betaThere, 'and the other really did not', BETA + ' is ' + (betaThere ? 'on disk' : 'absent, as the fence intends'));
 
 line('2. fill the window');
 // Each of these is about 20 KB of assistant text, so the conversation crosses the
@@ -180,9 +213,27 @@ if (folded) {
 	const note = folded.messages.find(m => /Daimond folded/.test(String(m.content || '')));
 	check(note.role === 'user',
 		'the fold notice is not in the assistant\'s own voice', `role=${note.role}`);
-	check(/alpha\.txt/.test(note.content) && /beta\.txt/.test(note.content),
-		'the fold still knows which files were written',
+	// THE LEDGER MUST MATCH THE DISK, IN BOTH DIRECTIONS. A fold's "Files written"
+	// is the only record of the work that survives the fold, and the model is told
+	// to trust it -- so it has to name every file that WAS written and no file that
+	// was not. One direction alone is satisfiable by a ledger that lists every
+	// attempt (naming the refused one too) or by one that lists nothing at all.
+	const namesAlpha = /alpha\.txt/.test(note.content);
+	const namesBeta  = /beta\.txt/.test(note.content);
+	check(alphaThere === namesAlpha && namesAlpha,
+		'the fold names the file that WAS written',
 		note.content.replace(/\n/g, ' | ').slice(0, 200));
+	check(betaThere === namesBeta && !namesBeta,
+		'and does NOT name the write the fence refused — nothing was created, so nothing may be claimed',
+		note.content.replace(/\n/g, ' | ').slice(0, 240));
+	if (namesBeta) {
+		log('  NOTE  that last red is the browser half of a defect being repaired in');
+		log('        src/compact.rs: `record` books a call by its OUTCOME (`call_outcome`,');
+		log('        src/tools.rs) rather than by the fact that it was made. The Rust is in');
+		log('        the tree; www/pkg/ is the build the browser runs, and it is older. This');
+		log('        check is written to be true once that build lands, and is left red');
+		log('        rather than weakened until it does.');
+	}
 	check(/SUMMARY-FROM-MODEL/.test(note.content),
 		'the summarising call\'s answer is in the notice');
 }

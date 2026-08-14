@@ -2033,6 +2033,14 @@
 	'capp.exists_ok': '打开',
 	'capp.missing_body': '这个 Daimond 版本没有带 {name} 模板，所以没有可以放进 Diamond 的东西。什么也没有新建。可以让你的 daimon 做一个页面，或者更新 Daimond 之后再试。',
 	'capp.page_failed': 'Diamond 已新建，但它的页面写不进去：{why}',
+	// 让 capp 的页面保持最新。会先问，不会直接替换：这是一个提议，不是警告。
+	// “lanes” 保留英文，因为 Life log 页面本身就是英文的，和 Diamond 一样。
+	'capp.legacy_body': '这个 {name} 是在 capp 还没有版本号之前建的，所以 Daimond 分辨不出它的页面里哪些部分是当初给它的。要把它的页面更新到当前版本吗？你的 lanes 和你的记录都不会动。',
+	'capp.legacy_ok': '更新页面',
+	'capp.update_kept': '页面已经更新到最新。下面这些文件是你的，保持原样：{files}。',
+	'capp.update_failed': '无法替换页面：{why}',
+	// 恢复到的是 capp 自己的模板，不是空白页，也不是默认页面。
+	'capp.page_reset_confirm': '把这个 Diamond 的页面换成当前的 {name} 页面？你记录的内容不会有任何改动。',
 	'crystal.chat_empty': '还没有说过什么。晶体是这个 Diamond 所知道的，这里是它如何知道的。',
 	'crystal.dispatch_after_error': '这一轮结束得不顺利，所以它请求的代理没有启动。',
 	'instructions.chip_two': '有两层在起作用：你的和这个项目的。点击可打开你的。',
@@ -2133,6 +2141,10 @@
 	// 一句都不能指名书写的人。
 	'improve.as_voice': '以你的声音发往锻造台，凡是能看到这个仓库的人都能读到。',
 	'improve.as_novoice': '你还没有声音，所以笔记只能留在这里。',
+	// 在发送按钮上方，只在发送出现时一起出现。仓库是公开的，所以发出去的笔记
+	// 任何人都能读到，不需要账号，还会带上声音的名称。这三点翻译时都不能丢。
+	// `{host}` 由 js/improve.js 填入，原样保留。
+	'improve.public_note': '发送会把这条笔记发布到 {host}，并带上你的声音名称。任何人都可以在那里读到它，不需要账号。你留下的笔记只留在这台设备上。',
 	'improve.title_hint': '第一行是提案的标题。发生了什么写在它下面。',
 	'improve.no_title': '第一行是标题。先写一行标题，再在下面写发生了什么。',
 	'improve.nothing': '先写点什么。',
