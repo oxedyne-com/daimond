@@ -1023,7 +1023,7 @@
 	'typst.pack_locked':   '조판은 이 계정이 구매하지 않은 도구 팩에 들어 있어요. 이름과 가격은 도구 패널에 나와요. 한 번 사면 계속 쓸 수 있고, 크레딧이 아니라 돈으로 결제해요.',
 	'typst.watch.starting': '페이지를 조판하고 있어요…',
 	'typst.watch.building': '다시 빌드하는 중…',
-	'typst.watch.live':     '실시간',
+	'typst.watch.live_preview': '실시간 미리보기',
 	'typst.watch.stale':    '마지막으로 성공한 빌드를 보여 주고 있어요',
 	'typst.watch.held':     '다시 빌드를 멈췄어요',
 	'typst.watch.dead':     '컴파일러가 멈췄어요',
@@ -1034,9 +1034,15 @@
 	'typst.watch.page': '쪽',
 	'typst.watch.zoom_out': '작게',
 	'typst.watch.zoom_in': '크게',
-	'typst.watch.fit': '너비에 맞추기',
-	'typst.watch.night': '어두운 종이',
-	'typst.watch.day': '밝은 종이',
+	// 버튼에는 한 단어만 두고, 긴 설명은 가리켰을 때의 제목으로 보냈어요.
+	'typst.watch.fit_width': '너비에 맞추기',
+	'typst.watch.fit_page': '페이지 전체에 맞추기',
+	'typst.watch.paper_dark': '어둡게',
+	'typst.watch.paper_light': '밝게',
+	'typst.watch.paper_dark_why': '어두운 종이, 밤에 읽기 좋아요',
+	'typst.watch.paper_light_why': '밝은 종이',
+	'typst.watch.sections': '섹션',
+	'typst.watch.sections_none': '이 문서에는 나열할 제목이 없어요.',
 	'typst.watch.dead_why': '이 문서에서 컴파일러의 메모리가 바닥났고, 페이지를 새로 고치지 않으면 다시 시작할 수 없어요. 아래 페이지는 마지막으로 빌드된 것이에요. 새로 고친 다음 같은 파일을 다시 여세요.',
 
 	// ── 알림 ───────────────────────────────────────────────────
@@ -2111,6 +2117,11 @@
 	'settings.trail_empty': '아직 기록된 것이 없습니다.',
 	// ── The Trash ──────────────────────────────────────────────
 	'panel.trash': '휴지통',
+
+	// ── 개선 패널 ──────────────────────────────────────────────
+	// Daimond에 대한 메모를 쓰고 제안을 읽는 곳이에요. 두 쪽 모두 이제
+	// Oregami의 포지(제안을 보관하는 서버)를 거쳐요. '포지'와 '목소리'는 이
+	// 앱의 표현이고, 원어민 검토에서 다른 말로 바꿔도 괜찮아요.
 	'panel.improve': '개선',
 	'improve.notes': '메모',
 	'improve.proposals': '제안',
@@ -2123,13 +2134,21 @@
 	'improve.keep_help': '이 메모를 이 기기에 저장해요. 아무것도 보내지 않아요.',
 	'improve.send': '보내기',
 	'improve.send_help': '위에 있는 그대로를 Oxedyne에 보내요. 다른 것은 함께 가지 않아요.',
-	'improve.as': '@{handle}(으)로 갑니다',
-	'improve.as_none': '계정이 없어서 메모는 여기에만 둘 수 있어요.',
+	// 메모는 쓴 사람의 '목소리'로 가요. 아이디도 이름도 함께 가지 않으니,
+	// 여기 어떤 문장도 쓴 사람을 가리켜서는 안 돼요.
+	'improve.as_voice': '당신의 목소리로 포지에 가요. 그 저장소를 볼 수 있는 사람은 누구나 읽을 수 있어요.',
+	'improve.as_novoice': '목소리가 없어서 메모는 여기에만 둘 수 있어요.',
+	'improve.title_hint': '첫 줄이 제안의 제목이에요. 무슨 일이 있었는지는 그 아래에 써요.',
+	'improve.no_title': '첫 줄이 제목이에요. 제목을 쓰고, 그 아래에 무슨 일이 있었는지 써 주세요.',
 	'improve.nothing': '먼저 뭔가 써 주세요.',
-	'improve.not_sent': '보낼 수 없어서 여기에 남겨 뒀어요. 아무 데도 가지 않았어요.',
+	// 거절당한 뒤에 나와요. 대기열도 재시도도 없으니, 번역이 다시 시도한다고
+	// 약속하면 안 돼요.
+	'improve.kept_here': '메모는 여기에 남아 있고, 다시 시도한 것은 없어요.',
 	'improve.copied': '복사했어요.',
 	'improve.state_kept': '여기에만',
 	'improve.state_sent': '{date}에 보냄',
+	// {n} 뒤의 조사가 숫자에 따라 흔들리지 않도록 '번'을 붙여 두었어요.
+	'improve.state_sent_n': '{date}에 보냈고, 제안 {n}번이에요',
 	'improve.drop': '이 메모 삭제',
 	'improve.drop_ask': '이 메모를 삭제할까요? 이 기기에만 있어서 다른 사본은 없어요.',
 	'improve.drop_ok': '삭제',
@@ -2139,20 +2158,77 @@
 	'improve.ctx_pointer': '포인터',
 	'improve.ctx_palette': '팔레트 {name}',
 	'improve.ctx_panels': '열린 패널: {list}',
-	'improve.no_props': '아직 제안이 없어요. 제안은 메모에서 만들어지고, 새 빌드와 함께 도착해요.',
-	'improve.as_at': '빌드 {build} 기준 집계예요. Daimond이 업데이트되면 움직여요.',
-	'improve.as_at_none': '집계는 Daimond이 업데이트되면 움직여요.',
+
+	// 목소리는 포지가 쓴 사람을 알아보는 개인용 비밀이에요. 여기에는 암호문구로
+	// 암호화해 보관하고, 주소에는 절대 들어가지 않아요.
+	'improve.voice_held': '이 기기에 목소리가 있어요. 당신의 암호문구로 암호화되어 있어요.',
+	'improve.voice_none': '여기에는 목소리가 없어서 메모는 보관만 할 수 있어요.',
+	'improve.voice_set': '목소리 설정',
+	'improve.voice_replace': '목소리 바꾸기',
+	'improve.voice_help': '포지가 당신에게 찍어 준 줄이에요. 여기에 암호화해 보관하고 주소에는 넣지 않아요.',
+	'improve.voice_ph': '포지가 찍어 준 줄을 붙여 넣으세요',
+	'improve.voice_save': '목소리 저장',
+	'improve.voice_saved': '당신의 목소리를 암호화해서 여기에 보관했어요.',
+	'improve.voice_failed': '그 목소리는 저장할 수 없었어요.',
+	'improve.voice_forget': '잊기',
+	'improve.voice_forget_help': '이 기기의 사본을 지워요.',
+	'improve.voice_forgotten': '이 기기의 사본은 사라졌어요.',
+	'improve.voice_ask_forget': '이 기기의 목소리를 잊을까요? 포지는 한 번만 보여 줬고 다시 보여 줄 수 없어요.',
+
+	// 제안은 보는 그때 포지에서 읽어 와요. 답이 달렸는지 알려 주는 것은 없으니,
+	// 여기 어떤 문장도 알려 준다고 비치면 안 돼요.
+	'improve.live_note': '이건 당신이 보는 그때 포지에서 읽어 와요. 제안에 답이 달려도 알려 주지 않아요. 다시 열어 확인해 주세요.',
+	'improve.loading': '제안을 읽는 중…',
+	'improve.none_shown': '지금은 아무것도 읽지 못했어요.',
+	'improve.none_yet': '여기에는 아직 제안이 없어요. 당신 것이 처음이 될 거예요.',
+	'improve.reading': '읽는 중…',
+	'improve.more': '이전 것 보기',
+	'improve.count.one': '제안 {n}건',
+	'improve.count.other': '제안 {n}건',
+	'improve.by': '{who}에게서',
+	'improve.said_n.one': '답글 {n}개',
+	'improve.said_n.other': '답글 {n}개',
+	'improve.built_on': '빌드 {build}에서 씀',
+	'improve.closed_by': '마크 {mark}로 닫힘',
+	'improve.move_floor': '메모가 파일 경계를 넘어 내용을 따라가는 것은 그 변경이 이동으로 인정될 때뿐이고, 그 하한은 64바이트예요. 그보다 적은 양을 한 파일에서 다른 파일로 잘라 옮기면 이력에는 삭제와 삽입이 남아요. 그래서 거기에 걸어 둔 메모는 내용이 삭제되었다고 정직하게 알려요. 메모도 맞고 이력도 맞아요.',
 	'improve.state_open': '열림',
 	'improve.state_taken': '진행 중',
 	'improve.state_done': '완료',
 	'improve.state_declined': '반려',
-	'improve.shipped_in': '빌드 {build}에 반영',
-	'improve.from_notes.one': '메모 {n}건에서',
-	'improve.from_notes.other': '메모 {n}건에서',
 	'improve.tally': '찬성 {yes}, 반대 {no}',
 	'improve.do': '이거 하기',
 	'improve.not': '이건 아님',
-	'improve.vote_held': '당신의 표는 여기에 있고 아직 집계되지 않았어요.',
+	'improve.vote_novoice': '여기에 투표하려면 목소리를 설정하세요.',
+	'improve.vote_off': '한 번 더 누르면 표를 도로 뺄 수 있어요.',
+	'improve.reply': '보내기',
+	'improve.reply_ph': '이 제안에 대해 한마디 남겨 주세요.',
+	'improve.reply_help': '이 칸에 있는 그대로를 보내요. 다른 것은 함께 가지 않아요.',
+
+	// 포지가 왜 거절했는지를 말로 옮긴 것들이에요. 어느 한도가 찼는지는 어디에도
+	// 쓰지 않아요. 자기 상태를 알려 주는 한도는 남이 재어 볼 수 있는 한도예요.
+	//
+	// 번역자에게 — `improve.err_absent`는 표현 취향이 아니라 프라이버시 규칙이에요.
+	// 포지는 '그런 저장소가 없다'와 '그 저장소는 비공개다'에 대해 일부러, 그리고
+	// 영구히 똑같이 `absent`로 답해요. 둘을 갈라 주는 표시가 있으면 비공개 저장소가
+	// 감추고 있는 사실을 그대로 다시 알리는 셈이 되니까요. 그래서 이 문장은 두 경우
+	// 모두에서 참이어야 해요. '없어요'는 비공개일 때 거짓이고, '비공개예요'는
+	// 새어 나가요. 당신에게 열려 있지 않다고만 말해 주세요.
+	// dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1) 참고.
+	'improve.err_absent': '이 저장소는 당신에게 열려 있지 않아요.',
+	'improve.err_unvoiced': '포지에 목소리가 전달되지 않아서 거절했어요.',
+	'improve.err_unknown': '포지가 당신의 목소리를 알아보지 못해요. 포지가 찍어 준 줄로 다시 설정해 주세요.',
+	'improve.err_unpermitted': '당신의 목소리로는 여기서 그걸 할 수 없어요.',
+	'improve.err_throttled': '지금은 요청이 너무 많아요. 조금 기다렸다가 다시 해 주세요.',
+	'improve.err_throttled_address': '지금은 이 주소에서 온 요청이 너무 많아요. 조금 기다렸다가 다시 해 주세요.',
+	'improve.err_throttled_failing': '지금은 실패한 요청이 너무 많아요. 조금 기다렸다가 다시 해 주세요.',
+	'improve.err_malformed': '포지가 Daimond의 요청을 읽지 못했어요. 이건 Daimond의 잘못이고, 당신이 쓴 내용 탓이 아니에요.',
+	'improve.err_no_proposal': '그런 제안은 여기에 없어요.',
+	'improve.err_unsupported': '포지는 그것에 답하지 않아요.',
+	'improve.err_internal': '포지 쪽에서 문제가 생겼어요. 당신 잘못이 아니에요.',
+	'improve.err_gateway': '지금은 Daimond이 포지에 닿지 못했어요.',
+	'improve.err_session': '지금 Daimond이 로그인되어 있지 않아서 포지에 닿지 못했어요.',
+	'improve.err_toolong': '포지가 받는 길이보다 길어요. 줄이거나 두 번에 나눠 보내 주세요.',
+	'improve.err_offline': '지금은 아무것도 보내지 못했어요.',
 	'trash.nothing': '지운 것이 없어요.',
 	'trash.kept_days': '{days}일 동안 보관한 뒤 완전히 지워요.',
 	'trash.holding.one': '{n}개, {bytes}',

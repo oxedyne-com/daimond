@@ -560,6 +560,10 @@ async function compileProjectAs(p, fmt) {
 			}
 		}
 		const count = p.sources.length + (p.assets || []).length;
+		// What a later `queryProject` will ask about. Recorded BEFORE the compile
+		// rather than after it, so a compile that fails still leaves the compiler's
+		// shadow filesystem and this name describing the same project.
+		_lastMain = String(p.main);
 		const ret = compiler.compile(String(p.main), undefined, fmt, DIAG_FULL);
 		const out = extractPdf(ret);
 		if (out && out.length > 4) {
@@ -595,6 +599,49 @@ export async function compileProjectPdf(p) {
 //
 // PDF stays the publishing path and is untouched: the Compile button still writes one,
 // `file_show` still opens one, and export is unaffected.
+
+// ── Asking the compiler ABOUT the document it has just laid out ─────────────
+//
+// The live view's section rail wants the document's headings, in order, with their
+// levels. `TypstCompiler.query` answers exactly that and costs 6 ms on a small
+// document and 9-14 ms on the author's 281-page book, because it runs against the
+// layout comemo has already memoised rather than laying it out again.
+//
+// IT NEEDS NOTHING BUT THE MAIN PATH. The shadow filesystem is populated by
+// `compileProjectAs` and is not cleared afterwards -- `reset_shadow` runs at the
+// START of a compile -- so the last project compiled is still in there. Which is why
+// `_lastMain` is kept: it is the only piece of the gathered project a query needs,
+// and keeping the project itself would be holding a copy of the book on this heap for
+// no reason.
+//
+// A QUERY IS NOT A COMPILE AND MUST NOT BECOME ONE. It is called from the watch loop
+// in the same turn as the compile that produced the pages, never from a control the
+// reader touched.
+
+let _lastMain = '';            // the main path of the last project compiled
+
+/// Ask the compiler about the document it last laid out.
+///
+/// Returns the parsed answer -- an array of elements as typst serialises them -- or
+/// `null` when there is nothing to ask about, the selector is refused, or the answer
+/// is not JSON. A refusal is not an error here: a rail that cannot be built is a rail
+/// that is not shown, and nothing else in the view depends on it.
+///
+/// # Arguments
+/// * `selector` - A typst selector, as `typst query` takes it: `heading`, `<label>`.
+/// * `field`    - One field of each element, or nothing for all of them.
+export async function queryProject(selector, field) {
+	if (!_lastMain || !_compilerPromise) return null;
+	try {
+		const compiler = await getCompiler();
+		const json = compiler.query(_lastMain, undefined, String(selector),
+			field == null ? undefined : String(field));
+		const out = JSON.parse(String(json));
+		return Array.isArray(out) ? out : null;
+	} catch (e) {
+		return null;
+	}
+}
 
 /// Compile a gathered project to typst.ts's vector format, for the live view.
 ///
@@ -649,6 +696,10 @@ if (typeof window !== 'undefined' && !window.DaimondTypst) {
 		/// The same project, laid out but not written out: `{ vector }` or
 		/// `{ error }`. What the live view draws, and what makes it affordable.
 		compileProjectVector: function (project) { return compileProjectVector(project); },
+		/// What the compiler will say ABOUT the document it last laid out -- the
+		/// headings the live view's section rail is made of. It lays nothing out
+		/// again: comemo hands back the layout it already has.
+		queryProject: function (selector, field) { return queryProject(selector, field); },
 		/// The compiler's wasm heap in MB, which never shrinks. The watch loop's
 		/// budget is measured against this.
 		heapMB: heapMB,

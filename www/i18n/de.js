@@ -990,7 +990,7 @@
 	'typst.pack_locked': 'Das Setzen gehört zu einem Werkzeugpaket, das dieses Konto nicht gekauft hat. Im Bereich „Werkzeuge“ stehen Name und Preis: einmal gekauft, dauerhaft behalten und mit Geld bezahlt statt aus Ihrem Guthaben.',
 	'typst.watch.starting': 'Die Seiten werden gesetzt…',
 	'typst.watch.building': 'Wird neu gebaut…',
-	'typst.watch.live': 'Live',
+	'typst.watch.live_preview': 'Live-Vorschau',
 	'typst.watch.stale': 'Angezeigt wird der letzte Build, der funktioniert hat',
 	'typst.watch.held': 'Neubauen gestoppt',
 	'typst.watch.dead': 'Der Compiler ist stehen geblieben',
@@ -1001,9 +1001,15 @@
 	'typst.watch.page': 'Seite',
 	'typst.watch.zoom_out': 'Kleiner',
 	'typst.watch.zoom_in': 'Größer',
-	'typst.watch.fit': 'Auf Breite einpassen',
-	'typst.watch.night': 'Dunkles Papier',
-	'typst.watch.day': 'Helles Papier',
+	// Ein Wort auf der Schaltfläche, die längere Form im Titel beim Überfahren.
+	'typst.watch.fit_width': 'Auf Breite einpassen',
+	'typst.watch.fit_page': 'Ganze Seite einpassen',
+	'typst.watch.paper_dark': 'Dunkel',
+	'typst.watch.paper_light': 'Hell',
+	'typst.watch.paper_dark_why': 'Dunkles Papier, zum Lesen bei Nacht',
+	'typst.watch.paper_light_why': 'Helles Papier',
+	'typst.watch.sections': 'Abschnitte',
+	'typst.watch.sections_none': 'Dieses Dokument hat keine Überschriften zum Auflisten.',
 	'typst.watch.dead_why': 'Dem Compiler ist bei diesem Dokument der Speicher ausgegangen, und ohne Neuladen der Seite lässt er sich nicht neu starten. Die Seiten unten sind die letzten, die gebaut wurden. Laden Sie neu und öffnen Sie dieselbe Datei wieder.',
 
 
@@ -2076,6 +2082,10 @@
 	'settings.trail_empty': 'Noch nichts aufgezeichnet.',
 	// ── The Trash ──────────────────────────────────────────────
 	'panel.trash': 'Papierkorb',
+
+	// ── Das Panel „Verbessern“ ─────────────────────────────────
+	// Wo eine Notiz zu Daimond geschrieben wird und wo die Vorschläge gelesen
+	// werden. Beide Hälften gehen jetzt über die Oregami-Schmiede.
 	'panel.improve': 'Verbessern',
 	'improve.notes': 'Notizen',
 	'improve.proposals': 'Vorschläge',
@@ -2088,13 +2098,20 @@
 	'improve.keep_help': 'Diese Notiz auf diesem Gerät speichern. Es wird nichts gesendet.',
 	'improve.send': 'Senden',
 	'improve.send_help': 'Genau das oben an Oxedyne senden. Sonst geht nichts mit.',
-	'improve.as': 'Geht als @{handle}',
-	'improve.as_none': 'Du hast kein Konto, also kann eine Notiz nur hier bleiben.',
+	// Eine Notiz geht unter der STIMME der schreibenden Person. Kein Handle und
+	// kein Name geht mit, also darf hier nichts die Person benennen.
+	'improve.as_voice': 'Geht unter deiner Stimme an die Schmiede, wo jeder mit dem Repository sie lesen kann.',
+	'improve.as_novoice': 'Du hast keine Stimme, also kann eine Notiz nur hier bleiben.',
+	'improve.title_hint': 'Die erste Zeile ist der Titel des Vorschlags. Was passiert ist, kommt darunter.',
+	'improve.no_title': 'Die erste Zeile ist der Titel. Schreib eine, und darunter, was passiert ist.',
 	'improve.nothing': 'Schreib zuerst etwas.',
-	'improve.not_sent': 'Es ließ sich nicht senden, also bleibt es hier. Es ist nichts irgendwohin gegangen.',
+	// Nach einer Ablehnung. Es wird nichts eingereiht und nichts wiederholt, also
+	// darf die Übersetzung keinen neuen Versuch versprechen.
+	'improve.kept_here': 'Deine Notiz bleibt hier, und es wurde nichts noch einmal versucht.',
 	'improve.copied': 'Kopiert.',
 	'improve.state_kept': 'Nur hier',
 	'improve.state_sent': 'Gesendet {date}',
+	'improve.state_sent_n': 'Gesendet {date}, und ist Vorschlag {n}',
 	'improve.drop': 'Diese Notiz löschen',
 	'improve.drop_ask': 'Diese Notiz löschen? Sie ist nur auf diesem Gerät, es gibt also keine zweite Kopie.',
 	'improve.drop_ok': 'Löschen',
@@ -2104,20 +2121,80 @@
 	'improve.ctx_pointer': 'Zeiger',
 	'improve.ctx_palette': 'Palette {name}',
 	'improve.ctx_panels': 'offene Panels: {list}',
-	'improve.no_props': 'Noch keine Vorschläge. Sie entstehen aus Notizen und kommen mit einem neuen Build.',
-	'improve.as_at': 'Stand Build {build}. Die Zahlen bewegen sich, wenn Daimond aktualisiert wird.',
-	'improve.as_at_none': 'Die Zahlen bewegen sich, wenn Daimond aktualisiert wird.',
+
+	// Die Stimme: ein persönliches Geheimnis, an dem die Schmiede erkennt, wer
+	// schreibt. Sie liegt hier unter der Passphrase verschlüsselt und kommt nie
+	// in eine Adresse.
+	'improve.voice_held': 'Auf diesem Gerät liegt eine Stimme, verschlüsselt unter deiner Passphrase.',
+	'improve.voice_none': 'Hier liegt keine Stimme, also kann eine Notiz nur behalten werden.',
+	'improve.voice_set': 'Eine Stimme setzen',
+	'improve.voice_replace': 'Die Stimme ersetzen',
+	'improve.voice_help': 'Die Zeile, die die Schmiede für dich ausgegeben hat. Sie bleibt hier verschlüsselt und kommt nie in eine Adresse.',
+	'improve.voice_ph': 'Füg die Zeile ein, die die Schmiede für dich ausgegeben hat',
+	'improve.voice_save': 'Stimme speichern',
+	'improve.voice_saved': 'Deine Stimme liegt hier, verschlüsselt.',
+	'improve.voice_failed': 'Diese Stimme konnte nicht gespeichert werden.',
+	'improve.voice_forget': 'Vergessen',
+	'improve.voice_forget_help': 'Die Kopie auf diesem Gerät entfernen.',
+	'improve.voice_forgotten': 'Die Kopie auf diesem Gerät ist weg.',
+	'improve.voice_ask_forget': 'Deine Stimme auf diesem Gerät vergessen? Die Schmiede hat sie einmal gezeigt und kann sie nicht noch einmal zeigen.',
+
+	// Vorschläge werden aus der Schmiede gelesen, während man hinsieht. Nichts
+	// meldet, wann einer beantwortet wurde, und kein Satz hier darf das andeuten.
+	'improve.live_note': 'Diese werden aus der Schmiede gelesen, während du hinsiehst. Nichts sagt dir, wann ein Vorschlag beantwortet ist; sieh noch einmal nach.',
+	'improve.loading': 'Die Vorschläge werden gelesen…',
+	'improve.none_shown': 'Gerade konnte nichts gelesen werden.',
+	'improve.none_yet': 'Hier gibt es noch keine Vorschläge. Deiner wäre der erste.',
+	'improve.reading': 'Wird gelesen…',
+	'improve.more': 'Ältere zeigen',
+	'improve.count.one': '{n} Vorschlag',
+	'improve.count.other': '{n} Vorschläge',
+	'improve.by': 'von {who}',
+	'improve.said_n.one': '{n} Antwort',
+	'improve.said_n.other': '{n} Antworten',
+	'improve.built_on': 'geschrieben auf Build {build}',
+	'improve.closed_by': 'geschlossen durch Marke {mark}',
+	'improve.move_floor': 'Eine Notiz folgt ihrem Inhalt nur dann über eine Dateigrenze, wenn die Änderung als Verschiebung erkannt wird, und die Untergrenze dafür sind 64 Bytes. Schneidest du weniger als das aus einer Datei in eine andere, hält die Historie eine Löschung und eine Einfügung, und eine dort verankerte Notiz meldet ihren Inhalt ehrlich als gelöscht. Die Notiz hat recht, und die Historie hat recht.',
 	'improve.state_open': 'Offen',
 	'improve.state_taken': 'Wird gemacht',
 	'improve.state_done': 'Erledigt',
 	'improve.state_declined': 'Abgelehnt',
-	'improve.shipped_in': 'Ausgeliefert in Build {build}',
-	'improve.from_notes.one': 'Aus {n} Notiz',
-	'improve.from_notes.other': 'Aus {n} Notizen',
 	'improve.tally': '{yes} dafür, {no} dagegen',
 	'improve.do': 'Machen',
 	'improve.not': 'Nicht machen',
-	'improve.vote_held': 'Deine Stimme ist hier und wurde noch nicht gezählt.',
+	'improve.vote_novoice': 'Setz eine Stimme, um hier abzustimmen.',
+	'improve.vote_off': 'Noch einmal drücken, um deine Stimme wieder zurückzunehmen.',
+	'improve.reply': 'Sagen',
+	'improve.reply_ph': 'Sag etwas zu diesem Vorschlag.',
+	'improve.reply_help': 'Genau das aus diesem Feld senden. Sonst geht nichts mit.',
+
+	// Was die Schmiede abgelehnt hat, in Worten. Keiner dieser Sätze nennt, welches
+	// Kontingent aufgebraucht ist: eine Grenze, die ihren Stand meldet, ist eine,
+	// die sich austaxieren lässt.
+	//
+	// ÜBERSETZUNG — `improve.err_absent` ist eine Datenschutzregel, keine
+	// Geschmacksfrage. Die Schmiede antwortet `absent` sowohl für „kein solches
+	// Repository“ als auch für „dieses Repository ist privat“, absichtlich und
+	// dauerhaft: alles, was die beiden Fälle unterscheidbar machte, gäbe genau
+	// das preis, was ein privates Repository zurückhält. Der Satz muss deshalb in
+	// beiden Fällen wahr sein — „existiert nicht“ ist falsch, wenn es privat ist,
+	// und „ist privat“ verrät es. Sag nur, dass es für dich nicht verfügbar ist.
+	// Siehe dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1).
+	'improve.err_absent': 'Dieses Repository ist für dich nicht verfügbar.',
+	'improve.err_unvoiced': 'Der Schmiede wurde keine Stimme gegeben, also hat sie abgelehnt.',
+	'improve.err_unknown': 'Die Schmiede erkennt deine Stimme nicht. Setz sie noch einmal aus der Zeile, die die Schmiede für dich ausgegeben hat.',
+	'improve.err_unpermitted': 'Deine Stimme darf das hier nicht.',
+	'improve.err_throttled': 'Gerade zu viele Anfragen. Warte kurz und versuch es noch einmal.',
+	'improve.err_throttled_address': 'Gerade zu viele Anfragen von dieser Adresse. Warte kurz und versuch es noch einmal.',
+	'improve.err_throttled_failing': 'Gerade zu viele fehlgeschlagene Anfragen. Warte kurz und versuch es noch einmal.',
+	'improve.err_malformed': 'Die Schmiede konnte nicht lesen, was Daimond sie gefragt hat. Das ist ein Fehler in Daimond, nicht in dem, was du geschrieben hast.',
+	'improve.err_no_proposal': 'So einen Vorschlag gibt es hier nicht.',
+	'improve.err_unsupported': 'Darauf antwortet die Schmiede nicht.',
+	'improve.err_internal': 'In der Schmiede ist etwas schiefgegangen. Das liegt nicht an dir.',
+	'improve.err_gateway': 'Daimond konnte die Schmiede gerade nicht erreichen.',
+	'improve.err_session': 'Daimond ist gerade nicht angemeldet und konnte die Schmiede deshalb nicht erreichen.',
+	'improve.err_toolong': 'Das ist länger, als die Schmiede annimmt. Kürze es, oder sende es in zwei Teilen.',
+	'improve.err_offline': 'Gerade konnte nichts gesendet werden.',
 	'trash.nothing': 'Nichts gelöscht.',
 	'trash.kept_days': 'Wird {days} Tage aufbewahrt und dann endgültig gelöscht.',
 	'trash.holding.one': '{n} Sache, {bytes}',

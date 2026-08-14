@@ -218,6 +218,59 @@
 		return true;
 	}
 
+	/// Re-seal every stored search key under the passphrase that has just replaced
+	/// the old one.
+	///
+	/// **This was missing until 2026-08-14 and the failure was silent and total**:
+	/// `setKey` seals with `DaimondIdentity.wrap`, nothing re-wrapped it, and a
+	/// passphrase change therefore left every search key unopenable — `unseal`
+	/// turning the failed unwrap into an empty string, so the engine simply
+	/// reported that it had no key. This file is `models.js` in miniature and it
+	/// inherited that file's hole along with its shape.
+	///
+	/// No read-out phase: like `models.js`, the plaintext is already in `plain` for
+	/// the length of an unlocked session, so only the wrapping has to be redone.
+	///
+	/// A key that was ALREADY unreadable before the change is told apart from an
+	/// engine with no key by the ciphertext still being there, and is REPORTED.
+	/// Without that, `unseal`'s empty string makes a dead key indistinguishable
+	/// from no key at all, and it gets skipped in silence — which is how one stays
+	/// dead for ever.
+	async function resealAfterRekey() {
+		var failed = [], unread = [];
+		for (var id in store.keys) {
+			var row = store.keys[id];
+			if (!row) continue;
+			var k = plain[id];
+			if (!k) {
+				if (row.keyEnc) unread.push(engineName(id));
+				continue;
+			}
+			try {
+				row.keyEnc = await DaimondIdentity.wrap(k);
+				row.key    = '';				// never leave a plaintext copy behind
+			} catch (e) { failed.push(engineName(id)); }
+		}
+		save();
+		return { ok: !failed.length && !unread.length, failed: failed, unread: unread };
+	}
+
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'search',
+			reseal: resealAfterRekey,
+			sentence: function (kind, list) {
+				return kind === 'unread'
+					? tOr('changepass.search_not_unsealed',
+						'These search services already had unreadable keys before the change, '
+						+ 'and still need their keys set again: {list}.', { list: list.join(', ') })
+					: tOr('changepass.search_not_resealed',
+						'These search services could not be re-encrypted under the new '
+						+ 'passphrase and need their keys again: {list}.', { list: list.join(', ') });
+			},
+		});
+	}
+
 	/// The plaintext key for an engine, or '' when there is none or the app is locked.
 	function key(id) {
 		if (plain[id]) return plain[id];
@@ -452,6 +505,9 @@
 		// What the app's own picker and the unlock/lock path need beyond them.
 		init:      init,
 		unseal:    unseal,
+		/// Re-seal after a passphrase change. Public so a test can drive it; the
+		/// app itself reaches it only through `DaimondRekey`.
+		resealAfterRekey: resealAfterRekey,
 		lock:      lock,
 		hasKey:    hasKey,
 		isSealed:  isSealed,

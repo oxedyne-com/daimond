@@ -57,13 +57,18 @@ margin:0 0 10px}
 min-height:66px;display:flex;flex-direction:column;justify-content:space-between;gap:5px;
 transition:transform .08s,background .14s,border-color .14s}
 .tile:active{transform:scale(.955);background:var(--ac);border-color:var(--ac);color:var(--on)}
-.tile:active .ts,.tile:active .tn{color:var(--on)}
 .tn{font-weight:600;font-size:.94em;line-height:1.25;color:var(--tx)}
 .ts{font-size:.76em;color:var(--mu);font-family:var(--mo);line-height:1.3}
 .tile.acc{border-color:var(--ac)}
 .tile.acc .tn{color:var(--ac)}
 .tile.run{background:var(--ac);border-color:var(--ac)}
 .tile.run .tn,.tile.run .ts{color:var(--on)}
+/* THE INK INVERTS WITH THE GROUND, and this rule sits HERE — after `.tile.acc .tn`
+   — deliberately. Both selectors weigh (0,2,1), so the later one wins, and with
+   them the other way round a pressed accent tile drew accent ink on an accent
+   ground: contrast 1.00, the tile's own name unreadable under the thumb that was
+   pressing it. The verifier measures the ratio on every filled surface. */
+.tile:active .ts,.tile:active .tn{color:var(--on)}
 .tile.wide{grid-column:1/-1;min-height:52px;flex-direction:row;align-items:center;
 justify-content:flex-start;gap:10px}
 .step{grid-column:1/-1;display:flex;align-items:center;gap:8px;background:var(--sf);
@@ -113,10 +118,32 @@ align-self:center}
 color:var(--mu);padding:10px 0 2px;border-top:1px solid var(--bd)}
 .dayh:first-child{border-top:0;padding-top:0}
 .grp{margin:0 0 4px}
-.grph{display:flex;align-items:baseline;gap:8px;padding:9px 0 3px;font-size:.85em;font-weight:650;
+.grph{display:flex;align-items:center;gap:8px;padding:9px 0 3px;font-size:.85em;font-weight:650;
 color:var(--tx);border-top:1px solid var(--bd)}
-.setr{display:flex;align-items:baseline;gap:8px;width:100%;padding:4px 0 4px 10px;font-size:.88em}
+.setr{display:flex;align-items:center;gap:8px;width:100%;padding:4px 0;font-size:.88em}
 .setr .ev{font-size:.8em}
+.setr .gap{overflow:hidden}
+
+/* ── a scope, and the rows inside it that are not yet true ──────── */
+.scope{display:flex;align-items:center;gap:9px;background:var(--sf);border:1px solid var(--ac);
+border-radius:var(--rd);padding:8px 11px;margin:0 0 10px}
+.scope .h1{margin:0}
+.rest{display:flex;align-items:center;gap:7px;border:1px solid var(--ac);border-radius:var(--rd);
+padding:6px 9px;margin:0 0 10px;background:var(--sf)}
+.rest.done{border-color:var(--bd)}
+.rt{font-family:var(--mo);font-size:1.15em;font-weight:700;color:var(--ac);min-width:54px;
+font-variant-numeric:tabular-nums}
+.rest.done .rt{color:var(--mu)}
+/* Greyed until the set is true, then green. The tick is the commit. */
+.tick{width:30px;height:30px;flex:none;border:1px solid var(--bd);border-radius:var(--rs);
+display:flex;align-items:center;justify-content:center;color:var(--mu);background:var(--bg)}
+.tick.on{background:var(--good);border-color:var(--good);color:#fff}
+.setin{width:56px;text-align:center;font-family:var(--mo);font-weight:600;padding:4px 5px;flex:none}
+.pickr.on{background:var(--ac);border-color:var(--ac);color:var(--on);border-radius:var(--rs)}
+.pickr.on .gap,.pickr.on .ev{color:var(--on)}
+/* A plan reads quieter than a record, so a day already logged is not confused with
+   a day merely intended. */
+.er.pend .en{color:var(--mu)}
 
 /* ── charts ──────── */
 .leg{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:3px 10px;
@@ -133,7 +160,9 @@ margin:8px 0 0}
 .num{display:flex;align-items:center;gap:7px}
 .num input{text-align:center;font-family:var(--mo);font-weight:600}
 .acts{display:flex;gap:8px;align-items:center;margin:14px 0 4px}
-.pickr{display:flex;align-items:baseline;gap:8px;width:100%;padding:9px 0;
+/* Inset, so a chosen row's filled band has a margin round its words rather than
+   ending flush against them. */
+.pickr{display:flex;align-items:baseline;gap:8px;width:100%;padding:9px 8px;
 border-top:1px solid var(--bd);font-size:.92em}
 .back{display:flex;align-items:center;gap:6px;font-size:.9em;color:var(--mu);margin:0 0 10px}
 .fbox{border:1px solid var(--bd);border-radius:var(--rd);padding:9px 10px;margin:0 0 9px}
@@ -397,19 +426,20 @@ function put(ln, es) {
 	});
 }
 function nid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+/// A lane as it goes to disk. The page hangs working state on its own structures —
+/// `_p`, a formula parsed once per field; `_m`, the catalogue's index — and a plain
+/// `JSON.stringify` writes those into the lane file, where they are noise that grows
+/// every time the lane is saved. A leading underscore is reserved on the wire for
+/// the same reason it is reserved here.
+function laneJson(l) {
+	return JSON.stringify(l, function (k, v) { return k.charAt(0) === '_' ? undefined : v; });
+}
 
 // ── Fields ────────────
 function fdef(l, k) {
 	var f = l.fields || [], i;
 	for (i = 0; i < f.length; i++) if (f[i].k === k) return f[i];
 	return null;
-}
-/// The lane's duration field, which is where a session keeps its own length.
-/// Found by TYPE, so a lane a daimon invents need not call it `dur`.
-function durK(l) {
-	var f = l.fields || [], i;
-	for (i = 0; i < f.length; i++) if (f[i].t === 'dur') return f[i].k;
-	return '';
 }
 function cmap(id) {
 	var c = CAT[id]; if (!c || !c.items) return {};
@@ -441,6 +471,14 @@ function fval(l, e, f, depth) {
 		});
 	}
 	var raw = fs[f.k];
+	// A LENGTH FALLS OUT OF TWO STAMPS. An entry that has been closed — `end` beside
+	// its `at` — reads its duration from the pair rather than from a number somebody
+	// typed, so a session's length is measured and not estimated. A duration that IS
+	// stored still wins, which is how a timed nap and a timed session live in one
+	// lane.
+	if ((raw === '' || raw === undefined) && f.t === 'dur' && e.end) {
+		return Math.round(spanOf(e));
+	}
 	return (raw === '' || raw === undefined) ? null : raw;
 }
 function fnum(l, e, f, d) {
@@ -459,6 +497,31 @@ function fshow(l, e, f) {
 	return fmt(num(v)) + (f.u ? ' ' + f.u : '');
 }
 
+// ── Open and pending ────────────
+//
+// Two properties an entry can carry, and between them they turn a log into a plan
+// and a record kept in one place.
+//
+// `end` is the second stamp. An entry with an `at` and no `end` is STILL RUNNING —
+// that is the whole definition of an open session, and its length is the distance
+// between the two rather than a number anybody types.
+//
+// `p` is PENDING: something meant, not something done. It is drawn, it can be
+// edited, and it is invisible to every number on the page — a meal planned for
+// tonight is not eaten, a set written down is not lifted. `solid` is the one gate
+// that makes that true, and every path that adds anything up goes through it.
+
+/// Seconds between the two stamps, or since the first if there is no second.
+function spanOf(e) { return ((e.end ? tms(e.end) : Date.now()) - tms(e.at)) / 1000; }
+/// It has begun and it has not finished.
+function sessOpen(e) { return !!e && !e.end; }
+/// The entries that count: everything that is not a plan.
+function solid(es) {
+	var o = [], i;
+	for (i = 0; i < es.length; i++) if (!es[i].p) o.push(es[i]);
+	return o;
+}
+
 // ── Aggregation ────────────
 function reduce(vals, how) {
 	var n = vals.length, i, s = 0;
@@ -470,8 +533,13 @@ function reduce(vals, how) {
 	for (i = 0; i < n; i++) s += vals[i];
 	return how === 'mean' ? s / n : s;
 }
+/// EVERY number on the page comes through here or through `groups`, which is why
+/// the pending gate is on these two and not scattered over the callers: the stats
+/// panel, the targets, the bars, the session totals and the group headings are all
+/// `aggr`, and the pie is `groups`.
 function aggr(l, es, f, how) {
 	how = how || f.agg || 'sum';
+	es = solid(es);
 	var i, v;
 	if (how === 'since') {
 		var last = null;
@@ -497,6 +565,9 @@ function aggr(l, es, f, how) {
 /// sum within a night and average across a week.
 function aggPer(l, es, f, per, how) {
 	if (how || !f.ru || per === 'day') return aggr(l, es, f, how);
+	// A rollup buckets by day BEFORE it aggregates, so the gate goes on here as well:
+	// a day holding nothing but a plan must not become a day with a reading in it.
+	es = solid(es);
 	var by = {}, ds = [], i, k;
 	for (i = 0; i < es.length; i++) (by[es[i].day] || (by[es[i].day] = [])).push(es[i]);
 	for (k in by) { var v = aggr(l, by[k], f); if (v != null) ds.push(v); }
@@ -532,7 +603,7 @@ function kids(ln, id) {
 /// Consecutive days with something in them. A day not yet logged does not break
 /// a streak; the day before it does.
 function streak(ln, l) {
-	var a = live(ln), days = {}, i;
+	var a = solid(live(ln)), days = {}, i;
 	for (i = 0; i < a.length; i++) days[a[i].day] = 1;
 	var n = dnum(dayOf(new Date(), l.dayStart)), c = 0;
 	if (!days[dstr(n)]) n--;
@@ -564,11 +635,34 @@ var DARK = false;
 var PAL_L = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 var PAL_D = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 function pal(i) { return (DARK ? PAL_D : PAL_L)[i % 8]; }
+/// The relative luminance of a colour the app resolved — `#rgb`, `#rrggbb` or an
+/// `rgb()` triple, and gamma-corrected so it can be divided into a contrast ratio.
+///
+/// It read the TRIPLE ALONE, and this build's palette is hexadecimal: every colour
+/// therefore scored a flat 0.5. Two things silently stopped working. The dark-mode
+/// chart hues were never chosen, because `DARK` was decided by a number that never
+/// moved. And the ink that reads on a filled accent was never checked at all.
 function luma(s) {
-	var m = /(-?[\d.]+)[,\s]+(-?[\d.]+)[,\s]+(-?[\d.]+)/.exec(String(s || ''));
-	if (!m) return 0.5;
-	return (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+	var t = String(s || '').trim(), m, r, g, b, f;
+	if (t.charAt(0) === '#') {
+		t = t.slice(1);
+		if (t.length === 3) {
+			t = t.charAt(0) + t.charAt(0) + t.charAt(1) + t.charAt(1) + t.charAt(2) + t.charAt(2);
+		}
+		if (t.length < 6) return 0.5;
+		r = parseInt(t.slice(0, 2), 16); g = parseInt(t.slice(2, 4), 16); b = parseInt(t.slice(4, 6), 16);
+	} else {
+		m = /(-?[\d.]+)[,\s]+(-?[\d.]+)[,\s]+(-?[\d.]+)/.exec(t);
+		if (!m) return 0.5;
+		r = +m[1]; g = +m[2]; b = +m[3];
+	}
+	f = function (v) {
+		v = v / 255;
+		return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+	};
+	return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
 }
+function ratio(a, b) { return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); }
 function theme(t) {
 	if (!t) return;
 	var m = {
@@ -576,13 +670,22 @@ function theme(t) {
 		accent: '--ac', font: '--fo', mono: '--mo', size: '--fs', radius: '--rd'
 	}, s = document.documentElement.style, k;
 	for (k in m) if (t[k]) s.setProperty(m[k], t[k]);
-	// What reads on top of a filled accent. The app resolves it and sends it, so
-	// take that; the luma test is only for a build that did not.
-	if (t.accentText || t.accent) {
-		s.setProperty('--on', t.accentText || (luma(t.accent) > 0.6 ? '#141414' : '#ffffff'));
+	// WHAT READS ON TOP OF A FILLED ACCENT, and it is NOT simply what the app sent.
+	//
+	// This page used to take `accentText` on trust. That value is a light TINT of the
+	// accent — ink for accent-coloured text on the page's own ground — and it is not
+	// ink for text ON the accent: `#E9A392` on `#D2604F` is 1.83:1. Every selected
+	// chip, every chosen row and every filled button was therefore drawn in a colour
+	// that could not be read off the darker ground it had just been given, which is
+	// exactly the fault reported. So the value is TESTED against the accent it would
+	// sit on, and black or white — whichever carries further — is used when it fails.
+	if (t.accent || t.accentText) {
+		var la = luma(t.accent || '#000000'), on = t.accentText;
+		if (!on || ratio(luma(on), la) < 3) on = ratio(0, la) >= ratio(1, la) ? '#141414' : '#ffffff';
+		s.setProperty('--on', on);
 	}
 	if (t.radius) s.setProperty('--rs', 'calc(' + t.radius + ' * 0.75)');
-	DARK = luma(t.text) > 0.55;
+	DARK = luma(t.text) > 0.4;
 }
 
 // ── Charts ────────────
@@ -647,6 +750,7 @@ function arc(cx, cy, r, ri, a0, a1) {
 function groups(l, es, key, gs) {
 	var f = fdef(l, key), gf = fdef(l, gs.k), by = {}, i;
 	if (!f || !gf) return [];
+	es = solid(es);
 	for (i = 0; i < es.length; i++) {
 		var v = fnum(l, es[i], f); if (v == null || v <= 0) continue;
 		var raw = (es[i].f || {})[gs.k];
@@ -706,7 +810,12 @@ function chartPie(l, key, gs, es) {
 // `view` is the axis: LOG is where you put things in, LIFE is where you read
 // them back. It is one tap either way and it survives a change of lane, because
 // a mode a person gets stuck in is worse than a page that mixes the two.
-var S = { lane: '', per: 'day', off: 0, view: 'log', scr: null, tile: -1, amt: 0, pie: null, bar: null };
+// `sess` is the SCOPE: the id of the session the log is narrowed to, or nothing.
+// It is not a screen. The live workout is the Log view with a scope, a grouping and
+// rows that can be committed in place, and a second rendering path for it would be
+// two engines where the page can afford one.
+var S = { lane: '', per: 'day', off: 0, view: 'log', scr: null, sess: '', tile: -1, amt: 0,
+	pie: null, bar: null };
 var D = {}, TOAST = null, TT = 0, BOOTED = false, STARTED = false, LASTW = 0, LASTH = -1;
 
 function lane() { return LANE[S.lane] || { id: '', fields: [], tiles: [] }; }
@@ -725,6 +834,7 @@ function redraw() {
 	try {
 		if (S.scr && S.scr.t === 'form' && S.scr.e) readInputs();
 		else if (S.scr && S.scr.t === 'lane') readLane();
+		else if (!S.scr) readSets();
 	} catch (x) { }
 	draw();
 }
@@ -745,7 +855,11 @@ function head() {
 		+ ' aria-label="Change this lane">&#9998;</button>'
 		+ '<div class="gap"></div><div class="seg">'
 		+ C('Log', 'view', 'log', S.view === 'log') + C('Life', 'view', 'life', S.view === 'life')
-		+ '</div></div><div class="row">'
+		+ '</div></div>';
+	// While the log is scoped to one session the bucket is not what is being read, so
+	// the date row goes and the scope bar under it says what is.
+	if (S.sess && S.view === 'log') return o + '</div>';
+	o += '<div class="row">'
 		+ B('chip q', 'off', '-1', '&#8249;')
 		+ C(blabel(curB(), S.per), 'now', '', !S.off)
 		+ B('chip q', 'off', '1', '&#8250;')
@@ -758,16 +872,23 @@ function head() {
 /// The tile pad. This is the heart of the thing: what you press, first on the
 /// screen and therefore under the thumb.
 function pad() {
-	var l = lane(), ts = l.tiles || [], o = '<div class="pad">', i;
+	var l = lane(), ts = l.tiles || [], o = '<div class="pad">', i, sc = !!S.sess;
 	for (i = 0; i < ts.length; i++) {
-		var t = ts[i];
+		var t = ts[i], w = t.when || 'open';
+		// WHERE a tile belongs. `sess` is a tile for the middle of a session, `open`
+		// (the default) one for the pad you start from, `any` one for both. Without
+		// this the way to add an exercise would sit on the pad beside the way to start
+		// a workout, which is a button that cannot work half the time.
+		if (w !== 'any' && (w === 'sess') !== sc) continue;
 		if (S.tile === i && t.m === 'scale') { o += stepper(l, t, i); continue; }
 		o += tile(l, t, i);
 	}
 	return o + '</div>';
 }
 function tile(l, t, i) {
-	var sub = t.s || '', cls = 'tile', run = null;
+	// A tile can ask for the whole row. A pad of two is two thin columns and a lot of
+	// wrapped words otherwise.
+	var sub = t.s || '', cls = 'tile' + (t.wide ? ' wide' : ''), run = null;
 	if (t.m === 'timer') {
 		run = running(l, t);
 		if (run) { cls += ' run'; sub = 'started ' + hhmm(run.at) + ' — tap to stop'; }
@@ -775,7 +896,8 @@ function tile(l, t, i) {
 	} else if (t.m === 'scale' || t.m === 'preset') {
 		sub = sub || presetLine(l, t);
 	} else if (t.m === 'expand') {
-		sub = sub || ((t.e || []).length + ' entries');
+		sub = sub || (t.pick ? 'choose several' : (t.e || []).length + ' entries');
+		if (t.pick) cls += ' acc';
 	} else if (t.m === 'form') {
 		cls += ' acc';
 		sub = sub || 'fill in';
@@ -844,7 +966,10 @@ function stats() {
 
 function entryRow(l, e) {
 	var sh = l.show || [], bits = [], i, name = '', sub = [];
-	var pf = l.primary ? fdef(l, l.primary) : null;
+	// A session is named by the lane's TITLE field and an ordinary entry by its
+	// primary, because a session carries none of the thing the lane is a log of: a
+	// workout has no lift on it, its sets do.
+	var pf = fdef(l, (e.sess && l.title) || l.primary || '');
 	if (pf) name = fshow(l, e, pf);
 	if (!name) {
 		// No headline field on this entry, so it is named after what it carries:
@@ -866,10 +991,17 @@ function entryRow(l, e) {
 		var s2 = fdef(l, l.second), sv = s2 ? fshow(l, e, s2) : '';
 		if (sv) sub.push(sv);
 	}
-	var ch = l.sess && !e.of ? kids(l.id, e.id).length : 0;
-	if (ch) sub.push(ch + ' sets');
+	if (e.sess) {
+		// Done, then still to do: a session part way through says both, and a plan is
+		// never counted among what happened.
+		var ks = kids(l.id, e.id), done = solid(ks).length;
+		if (done) sub.push(done + ' logged');
+		if (ks.length > done) sub.push((ks.length - done) + ' to do');
+		if (sessOpen(e)) sub.push('running');
+	}
+	if (e.p) sub.push('planned');
 	if (e.note) sub.push(e.note);
-	return B('er', l.sess && !e.of ? 'sess' : 'edit', e.id,
+	return B('er' + (e.p ? ' pend' : ''), e.sess ? 'sess' : 'edit', e.id,
 		'<span class="et">' + hhmm(e.at) + '</span><span class="en">' + esc(name)
 		+ (sub.length ? '<small>' + esc(sub.join(' · ')) + '</small>' : '') + '</span>'
 		+ '<span class="ev">' + esc(bits.join('  ')) + '</span>'
@@ -877,8 +1009,16 @@ function entryRow(l, e) {
 		+ (e.src && e.src !== 'form' ? '<span class="src" title="' + esc(e.src) + '"></span>' : '')
 		+ '<span class="chev">&#8250;</span>');
 }
-function logList() {
-	var l = lane(), b = curB(), es = inBucket(l.id, b, S.per), rows = [], i;
+/// WHAT THE LOG IS SHOWING: a whole bucket, or one session's own entries. This one
+/// function is the scope, and every check on the scope points at it.
+function scoped(l, sc) { return sc ? kids(l.id, sc.id) : inBucket(l.id, curB(), S.per); }
+/// The entries, in the shape the scope asks for. Unscoped that is a flat list under
+/// day headings; scoped it is grouped by the lane's `primary`, because the question
+/// in the middle of a session is how one exercise is going, not what happened at
+/// 18:04.
+function logList(sc) {
+	var l = lane(), b = curB(), es = scoped(l, sc), rows = [], i;
+	if (sc) return grpList(l, es);
 	for (i = es.length - 1; i >= 0; i--) if (!es[i].of) rows.push(es[i]);
 	if (!rows.length) return '<div class="empty">Nothing logged for ' + esc(blabel(b, S.per).toLowerCase())
 		+ '. Press a tile above.</div>';
@@ -891,6 +1031,62 @@ function logList() {
 		o += entryRow(l, rows[i]);
 	}
 	return o;
+}
+/// The grouping: one block per value of the lane's `primary`, in the order each
+/// first appeared, headed by the lane's own summing field. The same three levels a
+/// session was always read at — the session, each lift, each set — except that they
+/// are now a property of the list rather than a screen of their own.
+function grpList(l, ks) {
+	var by = {}, order = [], i, j, o = '';
+	if (!ks.length) {
+		return '<div class="empty">Nothing here yet. Press a tile above to add some.</div>';
+	}
+	for (i = 0; i < ks.length; i++) {
+		var g = (ks[i].f || {})[l.primary] || '?';
+		if (!by[g]) { by[g] = []; order.push(g); }
+		by[g].push(ks[i]);
+	}
+	// Which number heads a group and which tails a row are the lane's to name; a lane
+	// that names neither gets no number rather than a row of dashes.
+	var vf = fdef(l, l.setSum || ''), pf2 = fdef(l, l.setPeak || '');
+	for (i = 0; i < order.length; i++) {
+		var set = by[order[i]], gv = vf ? aggr(l, set, vf) : null;
+		// A group with nothing done in it yet gets no number rather than a dash: the
+		// exercise has not gone badly, it has not started.
+		o += '<div class="grp"><div class="grph"><span class="gap">' + esc(cname(l, order[i]))
+			+ '</span><span class="ev">'
+			+ (gv == null ? '' : esc(fmt(gv) + (vf.u ? ' ' + vf.u : ''))) + '</span>'
+			+ B('chip q plus', 'addset', order[i], '+') + '</div>';
+		for (j = 0; j < set.length; j++) o += setRow(l, set[j], j + 1, pf2);
+		o += '</div>';
+	}
+	return o;
+}
+/// One row of the grouping. A PENDING one is editable where it sits and carries the
+/// tick that makes it true; a committed one is the same row with the tick filled in
+/// and its numbers read back rather than typed. One shape, two states — a second
+/// row for the live case is how a page ends up with two of everything.
+function setRow(l, e, n, pf2) {
+	var fs = l.setFields || [], i, o = '', ed = !!e.p;
+	for (i = 0; i < fs.length; i++) {
+		var f = fdef(l, fs[i]);
+		if (!f || f.t === 'ref') continue;
+		if (ed && (f.t === 'num' || f.t === 'dur')) {
+			o += (o ? '<span class="frm">&#215;</span>' : '')
+				+ '<input class="setin" data-set="' + esc(e.id + '|' + f.k) + '" inputmode="decimal"'
+				+ ' aria-label="' + esc(f.n) + '" value="'
+				+ esc((e.f || {})[f.k] == null ? '' : e.f[f.k]) + '">';
+		} else {
+			var v = fshow(l, e, f);
+			if (v) o += (o ? ' × ' : '') + esc(v);
+		}
+	}
+	return '<div class="setr' + (ed ? ' pend' : '') + '">'
+		+ B('tick' + (ed ? '' : ' on'), ed ? 'tick' : 'edit', e.id, '&#10003;')
+		+ '<span class="et">' + n + '.</span><span class="gap">' + o + '</span>'
+		+ (ed ? B('frm', 'del', e.id, '&#10005;')
+			: B('ev', 'edit', e.id, pf2 ? esc(fmt(fnum(l, e, pf2)) + ' 1RM') : '&#8250;'))
+		+ '</div>';
 }
 
 /// The fields a chart may read: everything numeric, plus anything counted.
@@ -945,12 +1141,32 @@ function home() { return S.view === 'life' ? lifeView() : logView(); }
 /// LOG: the tiles under the thumb and what they put down, and nothing else. A
 /// number to admire is a reason to hesitate over a button.
 function logView() {
-	var l = lane(), es = inBucket(l.id, curB(), S.per), n = 0, i;
-	for (i = 0; i < es.length; i++) if (!es[i].of) n++;
-	return pad() + toastBar()
+	var l = lane(), sc = S.sess ? (LOG[l.id] || {})[S.sess] : null;
+	if (S.sess && !sc) S.sess = '';
+	var es = scoped(l, sc), n = 0, i;
+	for (i = 0; i < es.length; i++) if (sc || !es[i].of) n++;
+	return (sc ? scopeBar(l, sc) : '') + pad() + restBar(l) + toastBar()
 		+ '<div class="shrow"><span class="sh gap">Entries</span>'
 		+ (n ? '<span class="tag"><b>' + n + '</b></span>' : '')
-		+ '</div><div class="card">' + logList() + '</div>';
+		+ '</div><div class="card">' + logList(sc) + '</div>';
+}
+/// THE SCOPE, and the way out of it. A session is the only thing that narrows the
+/// log today, and while one is open this is the screen: its name, its running
+/// totals, and the button that ends it. The title is a button because the metadata
+/// is editable later — it opens the session's own entry in a form.
+function scopeBar(l, e) {
+	var sh = l.sessShow || l.show || [], ks = kids(l.id, e.id), bits = [], i;
+	for (i = 0; i < sh.length; i++) {
+		var f = fdef(l, String(sh[i]).split(':')[0]); if (!f) continue;
+		var s2 = statText(l, f, f.t === 'dur' ? spanOf(e) : aggr(l, ks, f), null);
+		if (s2.v !== '—') bits.push(s2.v + (s2.u ? ' ' + s2.u : ''));
+	}
+	return '<div class="scope">' + B('chip q', 'unscope', '', '&#8249;')
+		+ B('gap', 'edit', e.id, '<div class="h1">'
+			+ esc(fshow(l, e, fdef(l, l.title || '')) || l.n) + '</div><div class="ts">'
+			+ esc(hhmm(e.at) + (bits.length ? ' · ' + bits.join(' · ') : '')) + '</div>')
+		+ B(sessOpen(e) ? 'go' : 'ghost', 'finish', e.id, sessOpen(e) ? 'Finish' : 'Reopen')
+		+ '</div>';
 }
 /// LIFE: the same entries read back — the totals against their targets, the run
 /// of days, the shape over time and where it all went.
@@ -958,7 +1174,7 @@ function lifeView() {
 	var l = lane(), st = streak(S.lane, l);
 	var o = toastBar() + '<div class="shrow"><span class="sh gap">How it is going</span>'
 		+ (st > 1 ? '<span class="tag"><b>' + st + '</b> day streak</span>' : '') + '</div>';
-	if (!live(l.id).length) {
+	if (!solid(live(l.id)).length) {
 		return o + '<div class="empty">Nothing logged in ' + esc(l.n || 'this lane')
 			+ ' yet. Press Log, then a tile.</div>';
 	}
@@ -967,91 +1183,157 @@ function lifeView() {
 
 // ── Screens ────────────
 function backBar(txt) { return B('back', 'back', '', '&#8249; ' + esc(txt)); }
-/// A session, and the three levels it is read at: the session, each lift, each
-/// set. That shape is a grouping of flat entries, never a storage nesting.
-function sessScreen() {
-	var l = lane(), e = (LOG[l.id] || {})[S.scr.id];
-	if (!e) { S.scr = null; return home(); }
-	var ks = kids(l.id, e.id), i, o = backBar(blabel(e.day, 'day'));
-	var by = {}, order = [], dk = durK(l);
-	// Its length is on the session itself, not summed from the sets: a running
-	// session has none yet and reads as the time since it opened.
-	var sdur = function () {
-		return (dk && e.f && e.f[dk] != null) ? num(e.f[dk]) : (Date.now() - tms(e.at)) / 1000;
-	};
-	o += '<div class="card"><div class="h1">' + esc((fshow(l, e, fdef(l, l.title || '')) || l.n))
-		+ ' · ' + hhmm(e.at) + '</div><div class="stats" style="margin-top:10px">';
-	var sh = l.sessShow || l.show || [];
-	for (i = 0; i < sh.length; i++) {
-		var f = fdef(l, String(sh[i]).split(':')[0]); if (!f) continue;
-		o += ST(f.n, statText(l, f, f.t === 'dur' ? sdur() : aggr(l, ks, f), null), '');
+
+// ── Prefill ────────────
+//
+// The second set of an exercise should open on the first set's numbers, and the
+// first on last week's. That is not a gym idea: the amount of a food is the amount
+// you usually have of it, and a dose is the dose you took last time. So it is a
+// FIELD property — `prefill:'last'` — and the lane says which of its fields wants
+// it.
+
+/// The entry to copy from: the most recent NON-PENDING one sharing this entry's
+/// `primary` value. A plan is not a record, so a row that has been written down and
+/// not yet ticked cannot be the thing the next row is filled from — otherwise one
+/// mistyped number propagates down the whole exercise. Within an open scope the row
+/// above wins, which is what makes the second set follow the first rather than last
+/// week's.
+function lastFor(l, ref, of) {
+	var a = live(l.id), any = null, i;
+	if (!ref) return null;
+	for (i = a.length - 1; i >= 0; i--) {
+		var e = a[i];
+		if (e.p || (e.f || {})[l.primary] !== ref) continue;
+		if (of && e.of === of) return e;
+		if (!any) any = e;
 	}
-	o += '</div></div>';
-	// The tiles that add to it: the lifts most recently used, then the rest.
-	o += '<div class="pad">';
-	var seen = {}, all = live(l.id), recent = [];
-	for (i = all.length - 1; i >= 0 && recent.length < 6; i--) {
-		var r = (all[i].f || {})[l.primary];
-		if (r && !seen[r]) { seen[r] = 1; recent.push(r); }
-	}
-	var items = ((CAT[l.id] || {}).items) || [];
-	for (i = 0; i < items.length && recent.length < 8; i++) {
-		if (!seen[items[i].id]) { seen[items[i].id] = 1; recent.push(items[i].id); }
-	}
-	for (i = 0; i < recent.length; i++) {
-		var lastSet = lastFor(l, recent[i]);
-		o += B('tile', 'addset', recent[i], '<span class="tn">' + esc(cname(l, recent[i]))
-			+ '</span><span class="ts">' + esc(lastSet ? setLine(l, lastSet) : 'first set') + '</span>');
-	}
-	o += B('tile acc wide', 'addset', '',
-		'<span class="tn">Another lift…</span><span class="ts">pick from the catalogue</span>');
-	o += B('tile wide', 'finish', e.id, '<span class="tn">'
-		+ (dk && e.f && e.f[dk] != null ? 'Reopen' : 'Finish session') + '</span><span class="ts">'
-		+ esc(dur(sdur())) + '</span>');
-	o += '</div>';
-	// Grouped by lift, in the order each first appeared.
-	o += '<div class="card">';
-	if (!ks.length) o += '<div class="empty">No sets yet.</div>';
-	for (i = 0; i < ks.length; i++) {
-		var g = (ks[i].f || {})[l.primary] || '?';
-		if (!by[g]) { by[g] = []; order.push(g); }
-		by[g].push(ks[i]);
-	}
-	// Which number heads a group and which tails a set are the lane's to name;
-	// a lane that names neither simply gets no number rather than a row of dashes.
-	var vf = fdef(l, l.setSum || 'vol'), pf2 = fdef(l, l.setPeak || 'e1rm');
-	for (i = 0; i < order.length; i++) {
-		var set = by[order[i]];
-		o += '<div class="grp"><div class="grph"><span class="gap">' + esc(cname(l, order[i]))
-			+ '</span><span class="ev">'
-			+ (vf ? esc(fmt(aggr(l, set, vf)) + (vf.u ? ' ' + vf.u : '')) : '') + '</span></div>';
-		for (var j = 0; j < set.length; j++) {
-			o += B('setr', 'edit', set[j].id, '<span class="gap">' + (j + 1) + '. '
-				+ esc(setLine(l, set[j])) + '</span><span class="ev">'
-				+ (pf2 ? esc(fmt(fnum(l, set[j], pf2)) + ' 1RM') : '')
-				+ '</span><span class="chev">&#8250;</span>');
-		}
-		o += '</div>';
-	}
-	o += '</div>';
-	return o;
+	return any;
 }
-/// One set, read in the lane's own set fields: the reference is the group
-/// heading above it, so it is not repeated on every row.
-function setLine(l, e) {
-	var fs = l.setFields || [], b = [], i;
-	for (i = 0; i < fs.length; i++) {
+/// Fill the blanks of a bag from that entry, for every field the lane marks. What is
+/// already in the bag is never overwritten: a value the person chose beats a value
+/// they had last time.
+function prefill(l, bag, fs, of) {
+	var src = lastFor(l, bag[l.primary], of), i;
+	if (!src) return bag;
+	for (i = 0; i < (fs || []).length; i++) {
 		var f = fdef(l, fs[i]);
-		if (!f || f.t === 'ref') continue;
-		var v = fshow(l, e, f);
-		if (v) b.push(v);
+		if (!f || f.prefill !== 'last' || bag[f.k] != null) continue;
+		var v = (src.f || {})[f.k];
+		if (v != null && v !== '') bag[f.k] = v;
 	}
-	return b.join(' × ');
+	return bag;
 }
-function lastFor(l, ref) {
-	var a = live(l.id), i;
-	for (i = a.length - 1; i >= 0; i--) if ((a[i].f || {})[l.primary] === ref && a[i].of) return a[i];
+/// The session the lane is in the middle of, if it is in one. This is what makes a
+/// workout the main screen: the page opens on the session rather than on the pad,
+/// through a reload and through a change of lane and back.
+function openSess(l) {
+	var a = l.sess ? live(l.id) : [], i;
+	for (i = a.length - 1; i >= 0; i--) {
+		var e = a[i];
+		if (!e.sess || !sessOpen(e)) continue;
+		// One left open overnight is not one still running, and scoping the page into
+		// yesterday would be worse than showing the pad.
+		return e.day === dayOf(new Date(), l.dayStart) ? e : null;
+	}
 	return null;
+}
+
+// ── The rest clock ────────────
+//
+// A LANE property — `rest:{secs:120}` — and not a tile, because nothing is recorded
+// by it. After any commit in the lane the clock starts again, and when it runs out
+// it makes a noise. A lane that wants an entry out of a stretch of time still uses a
+// `timer` tile; this is the other thing, and the difference between them is exactly
+// that one writes and one does not.
+//
+// TWO CONSTRAINTS SHAPE THE IMPLEMENTATION, and both are the policy the page runs
+// under rather than a preference.
+//
+// THE DING CANNOT BE A FILE. `media-src` falls back to `default-src 'none'`, so
+// there is no `<audio>` — and `data:` is granted to images and fonts alone, so not
+// even an inlined one. The tone is synthesised. The context is opened on the TICK,
+// which is a real press, so that it is unlocked two minutes later when it is wanted;
+// one opened at the moment of ringing could not play at all.
+//
+// THE COUNTDOWN IS COMPUTED FROM A STAMP AND NEVER COUNTED DOWN. A backgrounded tab
+// throttles `setInterval` to about once a minute, and there are no workers here
+// either (`worker-src` falls back to `script-src`, which lists `'unsafe-inline'` and
+// therefore matches no URL). So the number is `until - now` at every paint, and the
+// tone is SCHEDULED on the audio clock rather than fired by the interval — which is
+// what carries it through the throttling. A tab the phone has suspended outright
+// will still not ring, and the bar says so rather than promising.
+var REST = { until: 0, secs: 0 }, RIV = 0, AC = null, ANODES = null;
+
+/// The audio context, opened on the press that wants it.
+function restCtx() {
+	var K = window.AudioContext || window.webkitAudioContext;
+	if (!AC && K) AC = new K();
+	if (AC && AC.state === 'suspended' && AC.resume) AC.resume();
+	return AC;
+}
+/// Anything already scheduled, cancelled. Adjusting the clock must not leave the
+/// previous ding queued behind the new one.
+function restQuiet() {
+	var i;
+	for (i = 0; ANODES && i < ANODES.length; i++) { try { ANODES[i].stop(0); } catch (x) { } }
+	ANODES = null;
+}
+/// Two short tones, `secs` from now on the audio clock. The envelope is there
+/// because a bare square start is a click rather than a ding.
+function restTone(secs) {
+	var c = restCtx(), i, t0, o, g;
+	restQuiet();
+	if (!c) return;
+	ANODES = [];
+	for (i = 0; i < 2; i++) {
+		t0 = c.currentTime + secs + i * 0.3;
+		o = c.createOscillator(); g = c.createGain();
+		o.type = 'sine'; o.frequency.value = i ? 1320 : 880;
+		g.gain.setValueAtTime(0.0001, t0);
+		g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
+		g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24);
+		o.connect(g); g.connect(c.destination);
+		o.start(t0); o.stop(t0 + 0.28);
+		ANODES.push(o);
+	}
+}
+function restLeft() { return Math.max(0, Math.ceil((REST.until - Date.now()) / 1000)); }
+function restClock() { var n = restLeft(); return p2(Math.floor(n / 60)) + ':' + p2(n % 60); }
+/// Start it, or start it AGAIN — which is the whole behaviour. A set finished in any
+/// exercise at all puts the clock back to the top, because the rest is between one
+/// effort and the next and not between one exercise and the next.
+function restBump(l) {
+	if (!l.rest || !l.rest.secs) return;
+	if (!REST.secs) REST.secs = l.rest.secs;
+	REST.until = Date.now() + REST.secs * 1000;
+	restTone(REST.secs);
+	restRun();
+}
+/// The interval exists to move ONE number. A full redraw once a second would take
+/// the caret out of whatever set was being typed into, which is the one thing a
+/// person does while they are resting.
+function restPaint() {
+	var el = document.getElementById('rest'), n = restLeft();
+	if (el) {
+		el.textContent = restClock();
+		if (!n) el.parentNode.className = 'rest done';
+	}
+	if (!n) restRun();
+}
+function restRun() {
+	var want = REST.until > Date.now();
+	if (want && !RIV) RIV = setInterval(restPaint, 1000);
+	if (!want && RIV) { clearInterval(RIV); RIV = 0; }
+}
+function restBar(l) {
+	if (!l.rest || !REST.until) return '';
+	var n = restLeft();
+	return '<div class="rest' + (n ? '' : ' done') + '"><span class="rt" id="rest">'
+		+ restClock() + '</span>'
+		+ B('chip q', 'rest', '-30', '&#8722;30') + B('chip q', 'rest', '30', '+30')
+		+ '<span class="gap ts">' + (n ? 'rest' : 'rest over')
+		+ ' — a tab you have left may not ring</span>'
+		+ B('chip q', 'restoff', '', '&#10005;') + '</div>';
 }
 
 /// One entry, in a form. The same screen edits and creates: an edit appends a new
@@ -1067,7 +1349,10 @@ function formScreen() {
 	}
 	o += '<div class="fr"><div class="fl">Note</div>'
 		+ '<input data-in="_note" value="' + esc(e.note || '') + '" placeholder="optional"></div>';
-	o += '<div class="acts">' + B('go', 'commit', '', sc.id ? 'Save' : 'Log it')
+	// A PENDING entry opened in the form commits from here: the same act as the tick
+	// beside its row, so a plan can be made true from either end.
+	o += '<div class="acts">'
+		+ B('go', 'commit', '', e.p ? 'Log it' : sc.id ? 'Save' : 'Log it')
 		+ B('ghost', 'back', '', 'Cancel') + '<div class="gap"></div>'
 		+ (sc.id ? C('Delete', 'del', sc.id, 0) : '') + '</div>';
 	if (sc.id && e.src) {
@@ -1100,15 +1385,25 @@ function fieldInput(l, f, v) {
 	}
 	return '<input data-in="' + esc(f.k) + '" value="' + esc(v == null ? '' : v) + '">';
 }
+/// The catalogue. In `multi` it takes several at once and adds them together, which
+/// is `expand` with the choices still to make rather than already made.
 function pickScreen() {
-	var l = lane(), items = ((CAT[l.id] || {}).items) || [], i;
+	var l = lane(), sc = S.scr, items = ((CAT[l.id] || {}).items) || [], i, k, n = 0;
+	var on = sc.on || (sc.on = {});
 	var o = backBar('Back') + '<div class="card"><input id="q" placeholder="Search…" '
 		+ 'autocomplete="off"><div style="margin-top:6px">';
 	for (i = 0; i < items.length; i++) {
 		var it = items[i], grp = it.grp || '';
-		o += '<button class="pickr" data-a="picked" data-v="' + esc(it.id) + '" data-n="'
+		o += '<button class="pickr' + (on[it.id] ? ' on' : '') + '" data-a="'
+			+ (sc.multi ? 'ptoggle' : 'picked') + '" data-v="' + esc(it.id) + '" data-n="'
 			+ esc((it.n + ' ' + grp).toLowerCase()) + '"><span class="gap">' + esc(it.n)
 			+ '</span><span class="ev">' + esc(grp) + '</span></button>';
+	}
+	o += '</div>';
+	if (sc.multi) {
+		for (k in on) if (on[k]) n++;
+		o += '<div class="acts">' + B(n ? 'go' : 'ghost', 'padd', '', n ? 'Add ' + n : 'Add')
+			+ B('ghost', 'back', '', 'Cancel') + '</div>';
 	}
 	return o + '</div></div>';
 }
@@ -1365,7 +1660,7 @@ function laneCommit() {
 	if (why) { toast(why, 1); draw(); return; }
 	var l = laneFrom(sc), isNew = !sc.edit, prev = IDX.lanes.slice();
 	LANE[l.id] = l;
-	var ps = [save('lanes/' + l.id + '.json', JSON.stringify(l), 'replace')];
+	var ps = [save('lanes/' + l.id + '.json', laneJson(l), 'replace')];
 	if (IDX.lanes.indexOf(l.id) < 0) {
 		IDX.lanes.push(l.id);
 		ps.push(save('index.json', JSON.stringify(IDX), 'replace'));
@@ -1424,8 +1719,7 @@ function memory() {
 function draw() {
 	if (!BOOTED) { APP.innerHTML = '<div class="empty">Opening the log…</div>'; return; }
 	var body;
-	if (S.scr && S.scr.t === 'sess') body = sessScreen();
-	else if (S.scr && S.scr.t === 'form') body = formScreen();
+	if (S.scr && S.scr.t === 'form') body = formScreen();
 	else if (S.scr && S.scr.t === 'pick') body = pickScreen();
 	else if (S.scr && S.scr.t === 'lane') body = laneScreen();
 	else body = home();
@@ -1454,8 +1748,20 @@ function logTile(l, t, i) {
 		draw(); return;
 	}
 	if (t.m === 'expand') {
+		// `pick` is the same tile with the choices still to make: several entries in one
+		// act, either from a list the tile carries or from a list the person chooses.
+		if (t.pick) {
+			var se = (LOG[l.id] || {})[S.sess];
+			S.scr = { t: 'pick', multi: 1, on: {}, fs: t.fs || l.setFields, p: t.p,
+				of: S.sess || undefined, day: se ? se.day : null, back: null };
+			draw(); return;
+		}
 		var es = [], j;
-		for (j = 0; j < (t.e || []).length; j++) es.push(mkEntry(l, cp(t.e[j]), 'expand'));
+		for (j = 0; j < (t.e || []).length; j++) {
+			var pe = mkEntry(l, cp(t.e[j]), 'expand');
+			if (t.p) pe.p = 1;
+			es.push(pe);
+		}
 		commitNew(l, es, t.n + ' — ' + es.length + ' entries');
 		return;
 	}
@@ -1476,15 +1782,25 @@ function logTile(l, t, i) {
 	// preset and tap: one entry, straight down.
 	var e = mkEntry(l, cp(t.f), t.m === 'tap' ? 'tap' : 'preset');
 	if (t.sess) {
-		put(l.id, [e]).then(function () { S.scr = { t: 'sess', id: e.id }; draw(); });
+		// It opens with a start and no end, and the log scopes to it: from here on this
+		// IS the screen, until it is finished or stepped out of.
+		e.sess = 1;
+		put(l.id, [e]).then(function () { S.sess = e.id; S.scr = null; draw(); });
 		return;
 	}
 	commitNew(l, [e], t.n + ' logged');
 }
 function commitNew(l, es, msg) {
+	// ANY commit in a lane that rests starts the clock — a tile that logs a set is the
+	// same act as a tick, and only a PLAN is not. The context is opened here, still
+	// inside the press, because one opened when the clock runs out cannot play.
+	var real = false, i;
+	for (i = 0; i < es.length; i++) if (!es[i].p) real = true;
+	if (real && l.rest) restCtx();
 	put(l.id, es).then(function (ok) {
 		if (ok) { TOAST = { m: msg, e: 0, u: es }; clearTimeout(TT);
 			TT = setTimeout(function () { TOAST = null; redraw(); }, 6000); }
+		if (real) restBump(l);
 		draw();
 	});
 	draw();
@@ -1497,6 +1813,20 @@ function undo(es) {
 	var l = lane(), out = [], i;
 	for (i = 0; i < es.length; i++) out.push({ id: es[i].id, at: es[i].at, day: es[i].day, del: 1 });
 	put(l.id, out).then(function () { TOAST = null; draw(); });
+}
+/// What has been typed into the rows of the live list but not yet committed. The
+/// pending entry is already on disk, so this only moves the typing into the copy in
+/// memory; the tick is what writes it. A redraw that skipped this step would type
+/// over the row being filled in, which is the fault the entry form and the lane
+/// builder each carried once.
+function readSets() {
+	var l = lane(), ins = APP.querySelectorAll('[data-set]'), m = LOG[l.id] || {}, i;
+	for (i = 0; i < ins.length; i++) {
+		var p = ins[i].getAttribute('data-set').split('|'), e = m[p[0]];
+		if (!e) continue;
+		e.f = e.f || {};
+		if (ins[i].value === '') delete e.f[p[1]]; else e.f[p[1]] = ins[i].value;
+	}
 }
 function readInputs() {
 	var l = lane(), sc = S.scr, ins = APP.querySelectorAll('[data-in]'), i;
@@ -1516,7 +1846,14 @@ document.addEventListener('click', function (ev) {
 	var a = t.getAttribute('data-a'), v = t.getAttribute('data-v') || '';
 	if (!a) return;
 	var l = lane(), sc = S.scr;
-	if (a === 'lane') { S.lane = v; S.tile = -1; S.scr = null; S.off = 0; S.bar = null; S.pie = null; boot(); return; }
+	// Anything at all that redraws the home view would otherwise wipe a half-typed
+	// set, so the rows are read back BEFORE the action rather than inside the two or
+	// three actions that happen to remember.
+	if (!sc) { try { readSets(); } catch (x) { } }
+	if (a === 'lane') {
+		S.lane = v; S.tile = -1; S.scr = null; S.sess = ''; S.off = 0; S.bar = null; S.pie = null;
+		boot(); return;
+	}
 	if (a === 'per') { S.per = v; S.off = 0; S.tile = -1; loadRange().then(draw); }
 	else if (a === 'off') { S.off = Math.min(0, S.off + (+v)); S.tile = -1; loadRange().then(draw); }
 	else if (a === 'now') { S.off = 0; loadRange().then(draw); }
@@ -1549,7 +1886,19 @@ document.addEventListener('click', function (ev) {
 	else if (a === 'bar') { S.bar = v; draw(); }
 	else if (a === 'pief') { S.pie = { f: v, g: (S.pie || {}).g || groupOpts(l)[0] }; draw(); }
 	else if (a === 'pieg') { S.pie = { f: (S.pie || {}).f || numFields(l)[0].k, g: groupOpts(l)[+v] }; draw(); }
-	else if (a === 'sess') { S.scr = { t: 'sess', id: v }; draw(); }
+	else if (a === 'sess') { S.sess = v; S.scr = null; draw(); }
+	else if (a === 'unscope') { S.sess = ''; draw(); }
+	else if (a === 'rest') {
+		// The adjustment moves BOTH: the length this lane rests for from now on, and
+		// what is left of the rest already running.
+		REST.secs = Math.max(15, (REST.secs || 120) + (+v));
+		REST.until = Math.max(Date.now(), REST.until + (+v) * 1000);
+		restTone(Math.max(0, (REST.until - Date.now()) / 1000));
+		restRun();
+		if (l.rest) { l.rest.secs = REST.secs; save('lanes/' + l.id + '.json', laneJson(l), 'replace'); }
+		draw();
+	}
+	else if (a === 'restoff') { REST.until = 0; restQuiet(); restRun(); draw(); }
 	else if (a === 'edit') {
 		var e = (LOG[l.id] || {})[v];
 		if (e) { S.scr = { t: 'form', e: cp2(e), id: v, back: sc, title: 'Entry' }; draw(); }
@@ -1568,25 +1917,68 @@ document.addEventListener('click', function (ev) {
 	}
 	else if (a === 'pick') { readInputs(); S.scr = { t: 'pick', field: v, back: sc }; draw(); }
 	else if (a === 'picked') {
-		var b = sc.back; b.e.f[sc.field] = v; S.scr = b; draw();
+		var b = sc.back;
+		b.e.f[sc.field] = v;
+		// Choosing what the entry is about is what makes the rest of it predictable, so
+		// the blanks fill from the last time you had this thing.
+		if (sc.field === l.primary) prefill(l, b.e.f, b.fields || defFields(l), b.of);
+		S.scr = b; draw();
 	}
+	// A choice taken WITHOUT a redraw: the search box holds a filter and a caret, and
+	// both are gone the moment the screen is rebuilt under them.
+	else if (a === 'ptoggle') {
+		var on = sc.on || (sc.on = {}), nb = APP.querySelector('[data-a="padd"]'), n5 = 0, k5;
+		on[v] = !on[v];
+		t.className = 'pickr' + (on[v] ? ' on' : '');
+		for (k5 in on) if (on[k5]) n5++;
+		if (nb) { nb.className = n5 ? 'go' : 'ghost'; nb.textContent = n5 ? 'Add ' + n5 : 'Add'; }
+	}
+	// One entry per choice, prefilled, under whatever the picker was opened from.
+	else if (a === 'padd') {
+		var es3 = [], k6, on6 = sc.on || {};
+		for (k6 in on6) {
+			if (!on6[k6]) continue;
+			var bag = {};
+			bag[l.primary] = k6;
+			prefill(l, bag, sc.fs, sc.of);
+			var ne3 = mkEntry(l, bag, 'pick', sc.of, sc.day);
+			if (sc.p) ne3.p = 1;
+			es3.push(ne3);
+		}
+		S.scr = sc.back || null;
+		if (es3.length) commitNew(l, es3, es3.length + ' added');
+		else draw();
+	}
+	// One more of the same thing, filled from the row above it.
 	else if (a === 'addset') {
-		var pe = (LOG[l.id] || {})[sc.id], base = { }, lf = lastFor(l, v);
-		base[l.primary] = v;
-		if (lf) { base.kg = lf.f.kg; base.reps = lf.f.reps; }
-		var fm = { t: 'form', e: { f: base }, fields: l.setFields, title: v ? cname(l, v) : 'New set',
-			of: sc.id, day: pe ? pe.day : null, back: sc };
-		if (!v) { S.scr = { t: 'pick', field: l.primary, back: fm }; }
-		else S.scr = fm;
-		draw();
+		var se4 = (LOG[l.id] || {})[S.sess], bag4 = {};
+		bag4[l.primary] = v;
+		prefill(l, bag4, l.setFields, S.sess);
+		var ne4 = mkEntry(l, bag4, 'pick', S.sess || undefined, se4 ? se4.day : null);
+		ne4.p = 1;
+		commitNew(l, [ne4], cname(l, v) + ' — one more');
+	}
+	// THE TICK. It commits the row, and it is also where the audio context is opened,
+	// because this press is the user gesture that unlocks it for the ding two minutes
+	// from now.
+	else if (a === 'tick') {
+		var pe5 = (LOG[l.id] || {})[v];
+		if (pe5) {
+			restCtx();
+			var c5 = cp2(pe5);
+			delete c5.p;
+			c5.at = isoAt(new Date());
+			c5.src = 'tick';
+			put(l.id, [c5]).then(function () { restBump(l); draw(); });
+			draw();
+		}
 	}
 	else if (a === 'finish') {
-		var se = (LOG[l.id] || {})[v], dk3 = durK(l);
-		if (se && dk3) {
-			var n2 = cp2(se);
-			if (n2.f[dk3] != null) delete n2.f[dk3];
-			else n2.f[dk3] = Math.round((Date.now() - tms(se.at)) / 1000);
-			put(l.id, [n2]).then(draw);
+		var se5 = (LOG[l.id] || {})[v];
+		if (se5) {
+			var n2 = cp2(se5);
+			if (n2.end) delete n2.end; else n2.end = isoAt(new Date());
+			put(l.id, [n2]).then(function () { if (n2.end) S.sess = ''; draw(); });
 		}
 	}
 	else if (a === 'del') {
@@ -1605,8 +1997,14 @@ document.addEventListener('click', function (ev) {
 			made.note = ne.note;
 			ne = made;
 		} else { ne.w = Date.now(); }
+		// Saving a plan is what makes it true, and it rests the same as a tick does. So
+		// does a set typed straight in. Correcting an old entry does not: nothing has
+		// just been done.
+		var was = !!ne.p, fresh = was || !sc.id;
+		if (was) { delete ne.p; ne.at = isoAt(new Date()); }
+		if (fresh && l.rest) restCtx();
 		S.scr = (sc && sc.back) || null;
-		put(l.id, [ne]).then(function () { toast('Saved'); draw(); });
+		put(l.id, [ne]).then(function () { if (fresh) restBump(l); toast('Saved'); draw(); });
 		draw();
 	}
 }, false);
@@ -1627,8 +2025,15 @@ function loadRange() {
 	var p = shards(l.id, from, to);
 	return p ? p : Promise.resolve();
 }
+/// A workout survives a reload and a walk through the other lanes: if the lane is in
+/// the middle of a session, the log opens scoped to it rather than on the pad.
 function boot() {
-	return loadRange().then(function () { BOOTED = true; draw(); });
+	return loadRange().then(function () {
+		BOOTED = true;
+		var o = openSess(lane());
+		if (o) S.sess = o.id;
+		draw();
+	});
 }
 /// Everything the page needs, in the order it needs it. `rendered` has already
 /// gone out by the time any of this runs — a capp that waits on a read before
@@ -1729,7 +2134,8 @@ function seed() {
 		fields: [
 			{ k: 'food', t: 'ref', n: 'Food', agg: 'count' },
 			{ k: 'meal', t: 'enum', n: 'Meal', o: ['Breakfast', 'Lunch', 'Dinner', 'Snack'], agg: 'count' },
-			{ k: 'g', t: 'num', n: 'Amount', u: 'g', agg: 'sum', step: 10 },
+			// The amount you usually have of a thing is the amount you had last time.
+			{ k: 'g', t: 'num', n: 'Amount', u: 'g', agg: 'sum', step: 10, prefill: 'last' },
 			sc('kcal', 'Energy', 'kcal'), sc('p', 'Protein', 'g'), sc('c', 'Carbs', 'g'),
 			sc('ft', 'Fat', 'g'), sc('fib', 'Fibre', 'g')
 		],
@@ -1756,14 +2162,19 @@ function seed() {
 			{ m: 'form', n: 'Something else', fs: ['food', 'g', 'meal'] }
 		]
 	};
+	// The gym lane is the ontology's hardest case and none of it is gym-only: a
+	// session with two stamps, a picker that takes several at once, rows that are
+	// written down before they are true, fields that fill from the last time, and a
+	// rest between one effort and the next.
 	var gym = {
 		id: 'gym', n: 'Gym', dayStart: 0, sess: true, primary: 'lift', title: 'name',
-		setFields: ['lift', 'kg', 'reps'],
+		setFields: ['lift', 'kg', 'reps'], setSum: 'vol', setPeak: 'e1rm',
+		rest: { secs: 120 },
 		fields: [
-			{ k: 'name', t: 'enum', n: 'Session', o: ['Push', 'Pull', 'Legs', 'Full body'], agg: 'count' },
+			{ k: 'name', t: 'text', n: 'Session', agg: 'last' },
 			{ k: 'lift', t: 'ref', n: 'Lift', agg: 'count' },
-			{ k: 'kg', t: 'num', n: 'Weight', u: 'kg', agg: 'max', ru: 'max', step: 2.5 },
-			{ k: 'reps', t: 'num', n: 'Reps', agg: 'sum', step: 1 },
+			{ k: 'kg', t: 'num', n: 'Weight', u: 'kg', agg: 'max', ru: 'max', step: 2.5, prefill: 'last' },
+			{ k: 'reps', t: 'num', n: 'Reps', agg: 'sum', step: 1, prefill: 'last' },
 			{ k: 'vol', t: 'num', n: 'Volume', u: 'kg', agg: 'sum', d: { e: 'kg*reps' } },
 			{ k: 'e1rm', t: 'num', n: 'Est. 1RM', u: 'kg', agg: 'max', ru: 'max', d: { e: 'kg*(1+reps/30)' } },
 			{ k: 'dur', t: 'dur', n: 'Time', agg: 'sum' }
@@ -1772,9 +2183,12 @@ function seed() {
 		sessShow: ['vol', 'reps', 'e1rm', 'dur'],
 		targets: [{ f: 'vol', p: 'week', dir: 'min', v: 24000 }],
 		tiles: [
-			{ m: 'tap', n: 'Start a session', sess: 1, f: { name: 'Full body' }, s: 'opens the session' },
+			{ m: 'tap', n: 'Start a workout', sess: 1, f: { name: 'Morning' },
+				s: 'and it becomes the screen' },
 			{ m: 'timer', n: 'Cardio', by: 'dur', f: {} },
-			{ m: 'form', n: 'One set', fs: ['lift', 'kg', 'reps'] }
+			{ m: 'expand', n: 'Add exercises', pick: 1, p: 1, when: 'sess', wide: 1,
+				s: 'choose several at once' },
+			{ m: 'form', n: 'One set', fs: ['lift', 'kg', 'reps'], when: 'any' }
 		]
 	};
 	var body = {

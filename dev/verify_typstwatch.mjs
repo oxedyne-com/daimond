@@ -34,6 +34,24 @@
 //      budgets the heap and stops before the wall, and that is checked at the
 //      limit rather than assumed from the code.
 //
+//   6. IT MUST LOOK LIKE A DOCUMENT. A stack of sheets with space between them, not
+//      one continuous page — which is what the author saw and said so about. Checked
+//      as geometry AND as pixels: separate elements with a gap prove nothing on their
+//      own if what fills the gap is more paper.
+//
+//   7. AND IT MUST OFFER WHAT A DOCUMENT VIEWER OFFERS. A rail of the document's own
+//      sections, hyperlinked. The entries come from the compiler; the page each one
+//      is on cannot (measured — `query('heading', 'location')` answers `[]`), so it
+//      comes from the laid-out pages. The check is against a fixture whose pages are
+//      decided by `#pagebreak()`, and which carries a CONTENTS: every heading's words
+//      appear on page one, so a rail that matched on words alone would put the whole
+//      document there.
+//
+//   8. AND NONE OF IT MAY REACH THE COMPILER. The rail, the zoom, the fit and the
+//      paper are all VIEW: the layout does not depend on any of them. A control that
+//      compiled is how the loop that filled 2427 MB in front of the author gets built
+//      again.
+//
 // AND THE CLAIM THE WHOLE RENDERING RESTS ON, CHECKED AGAINST AN OUTSIDE TOOL.
 // The live view is NOT a PDF — writing the PDF costs about eight times what laying
 // the pages out does, and Chrome's PDF viewer will not say where the reader is. The
@@ -60,6 +78,13 @@
 //   node dev/verify_typstwatch.mjs --break tallsvg     # 10 fails: a page deep in the book
 //                                                     #    is a pale wash
 //   node dev/verify_typstwatch.mjs --break versionskew # 11 fails: the two wasms disagree
+//   node dev/verify_typstwatch.mjs --break viewcompiles# 12 fails: a control reaches the compiler
+//   node dev/verify_typstwatch.mjs --break runtogether # 13 fails: the pages run together
+//   node dev/verify_typstwatch.mjs --break railwrongpage # 14 fails: a section names the
+//                                                     #    wrong page
+//   node dev/verify_typstwatch.mjs --break oldwords    # 15 fails: the bar's old words
+//   node dev/verify_typstwatch.mjs --break pagebox     # 16 fails: the page number is
+//                                                     #    clipped out of its own box
 //   node dev/verify_typstwatch.mjs                      # and then, clean
 //
 //   eval "$(bash dev/world.sh 13 --up)"
@@ -116,12 +141,12 @@ const BREAKS = {
 	blank: [{
 		file: 'js/typstwatch.js',
 		find: '\tconst pages = host.querySelector(\'.tl-pages\');\n'
-			+ '\t// The geometry has to be in place before a window can be asked for, since',
+			+ '\t// The geometry has to be in place before a band can be asked for, since',
 		with: '\tconst pages = host.querySelector(\'.tl-pages\');\n'
 			+ '\tpages.shadowRoot.replaceChildren();\n'
 			+ '\tawait new Promise(function (res) { requestAnimationFrame(function () { '
 			+ 'requestAnimationFrame(res); }); });\n'
-			+ '\t// The geometry has to be in place before a window can be asked for, since',
+			+ '\t// The geometry has to be in place before a band can be asked for, since',
 	}],
 	// A failed build takes the document with it. The reader loses the page they were
 	// reading every time a brace is mistyped.
@@ -172,25 +197,86 @@ const BREAKS = {
 	// still there, so a check counting elements passes — only the INK says so.
 	skewpages: [{
 		file: 'js/typstwatch.js',
-		find: '\tel.setAttribute(\'viewBox\', \'0 \' + lo + \' \' + docW + \' \' + (hi - lo));',
-		with: '\tel.setAttribute(\'viewBox\', \'0 \' + (lo - 14) + \' \' + docW + \' \' + (hi - lo));',
+		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + S.tops[i] + \' \' + S.docW + \' \' + S.heights[i]);',
+		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + (S.tops[i] - 14) + \' \' + S.docW + \' \' + S.heights[i]);',
 	}],
 	// The SVG is made as tall as the whole book again, with only the visible band
 	// drawn in it — which is the obvious way to do this and the way that fails. Every
 	// mark is still in the DOM and the page count is still right; the pixels are what
 	// go wrong, and only past about thirty thousand of them down.
+	//
+	// The element the browser is asked to rasterise is the height of the WHOLE BOOK
+	// again, with the page pulled into place inside it — which is the obvious way to
+	// draw this and the way that failed. The sheets stay where they are and the reader
+	// still sees the right page, so this goes red for the SIZE OF THE ELEMENT and for
+	// nothing else.
+	//
+	// WHAT IT NO LONGER PROVES, AND THIS IS WORTH KNOWING. The pale wash itself did
+	// not come back: on a 251-page document, an SVG 64,000 px tall inside a sheet that
+	// CLIPS IT TO ONE PAGE rasterised perfectly all the way down. The clip is what
+	// saves it. So the pixel check below stands as the guarantee, and the assertion
+	// this break reddens is the structural one — nothing drawn is taller than a page —
+	// which is the mechanism the pixels were a symptom of.
 	tallsvg: [{
 		file: 'js/typstwatch.js',
-		find: '\tel.setAttribute(\'viewBox\', \'0 \' + lo + \' \' + docW + \' \' + (hi - lo));\n'
-			+ '\tel.setAttribute(\'width\', String(docW * scale));\n'
-			+ '\tel.setAttribute(\'height\', String((hi - lo) * scale));',
-		with: '\tel.setAttribute(\'viewBox\', \'0 0 \' + docW + \' \' + docH);\n'
-			+ '\tel.setAttribute(\'width\', String(docW * scale));\n'
-			+ '\tel.setAttribute(\'height\', String(docH * scale));',
+		find: '\t\tsvg.setAttribute(\'viewBox\', \'0 \' + S.tops[i] + \' \' + S.docW + \' \' + S.heights[i]);\n'
+			+ '\t\tsvg.setAttribute(\'width\', String(S.docW * scale));\n'
+			+ '\t\tsvg.setAttribute(\'height\', String(S.heights[i] * scale));',
+		with: '\t\tsvg.setAttribute(\'viewBox\', \'0 0 \' + S.docW + \' \' + S.docH);\n'
+			+ '\t\tsvg.setAttribute(\'width\', String(S.docW * scale));\n'
+			+ '\t\tsvg.setAttribute(\'height\', String(S.docH * scale));\n'
+			+ '\t\tsvg.style.position = \'absolute\';\n'
+			+ '\t\tsvg.style.top = (-S.tops[i] * scale) + \'px\';',
+	}],
+	// A VIEW CHANGE STARTS A COMPILE. The rail is a control like the zoom and the
+	// paper: it shows what the last build already answered. A control that reached
+	// for the compiler is how the loop that filled 2427 MB of heap in front of the
+	// author gets built a second time.
+	viewcompiles: [{
+		file: 'js/typstwatch.js',
+		find: '\tif (S.rail) locate();',
+		with: '\tif (S.rail) { locate(); build(false); }',
+	}],
+	// The sheets touch again, so the document reads as one continuous page — which is
+	// what the author saw and said so about.
+	runtogether: [{
+		file: 'js/typstwatch.js',
+		find: '\t\tacc += S.heights[i] + PAGE_GAP;',
+		with: '\t\tacc += S.heights[i];',
+	}],
+	// A rail entry points at the wrong page: the FIRST place the words appear wins
+	// rather than the largest setting of them, so every entry in a document with a
+	// contents points at the contents. Each entry is still on a real page, and they
+	// are still in order — which is exactly why "each entry is valid" and "the
+	// entries are in order" are not between them enough to catch it.
+	railwrongpage: [{
+		file: 'js/typstwatch.js',
+		find: '\t\t\tif (!best || c.size > best.size + 0.05) best = c;',
+		with: '\t\t\tif (!best) best = c;',
+	}],
+	// The page box loses the rule that keeps it a toolbar control, and the skin's
+	// generous `input[type="text"]` padding takes it back: a box whose content is
+	// nought pixels wide, with the page number clipped away inside it. This is the
+	// break for a defect that was FOUND rather than invented — the box had been empty
+	// since the day it shipped and nothing said so, because a check on the VALUE
+	// passes on a number the reader cannot see.
+	pagebox: [{
+		file: 'css/viewer.css',
+		find: '#typst-live .tl-page {\n\tpadding: 1px 4px;\n\theight: auto;\n'
+			+ '\tmin-height: 0;\n\tborder-radius: var(--radius-sm);\n}',
+		with: '#typst-live .tl-page-disabled-for-this-run { padding: 1px 4px; }',
+	}],
+	// The words the author asked to have changed, back as they were.
+	oldwords: [{
+		file: 'js/typstwatch.js',
+		find: '\t\t\t: tOr(\'typst.watch.live_preview\', \'Live preview\'), S.error ? \'stale\' : \'live\');',
+		with: '\t\t\t: tOr(\'typst.watch.live\', \'Live\'), S.error ? \'stale\' : \'live\');',
 	}, {
 		file: 'js/typstwatch.js',
-		find: '\tnode.style.top = (lo * scale) + \'px\';',
-		with: '\tnode.style.top = \'0px\';',
+		find: '\tb.textContent = S.dark ? tOr(\'typst.watch.paper_light\', \'Light\')\n'
+			+ '\t\t: tOr(\'typst.watch.paper_dark\', \'Dark\');',
+		with: '\tb.textContent = S.dark ? tOr(\'typst.watch.day\', \'Light paper\')\n'
+			+ '\t\t: tOr(\'typst.watch.night\', \'Dark paper\');',
 	}],
 	// Not a page break at all: the version check is asked about the wrong pair of
 	// files, which is the shape of somebody upgrading one wasm and not the other.
@@ -202,10 +288,9 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 
-/// The damaged source, or a hard stop. Nothing is served that was not verified to
-/// differ from the file on disk.
-function damaged(spec) {
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+/// `src` with `spec` applied, or a hard stop. Nothing is served that was not verified
+/// to differ from what it was given.
+function damaged(src, spec) {
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -215,12 +300,28 @@ function damaged(spec) {
 	return src.replace(spec.find, spec.with);
 }
 
+/// Serve every break's damage, ONE BODY PER FILE.
+///
+/// A break with two edits to one file used to register two routes for the same URL,
+/// each built from the file ON DISK — and Playwright serves the LAST route registered,
+/// so only the second edit ever reached the browser. `tallsvg` and `oldwords` are both
+/// two-edit breaks, and both were half-served: `oldwords` proved the paper button and
+/// silently said nothing about the bar. A break that is only half applied is a break
+/// that proves half of what the summary claims.
 async function routes(page) {
 	if (!BREAK) return;
+	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
-		const body = damaged(spec);
-		await page.route('**/' + spec.file, r => r.fulfill({
-			status: 200, contentType: 'application/javascript', body,
+		const src = byFile.has(spec.file) ? byFile.get(spec.file)
+			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		byFile.set(spec.file, damaged(src, spec));
+	}
+	for (const [file, body] of byFile) {
+		// The type from the NAME, because a stylesheet served as JavaScript is not
+		// applied at all and the break would look like the check being wrong.
+		const type = /\.css$/.test(file) ? 'text/css' : 'application/javascript';
+		await page.route('**/' + file, r => r.fulfill({
+			status: 200, contentType: type, body,
 		}));
 	}
 }
@@ -362,6 +463,42 @@ try {
 		`${s0.pages} page(s)`);
 	check('and the watch is following every file the compile read',
 		s0.files >= 3, `${s0.files} file(s)`);
+
+	// ── The words on the bar ─────────────────────────────────────
+	// Asked for by the author in as many words: "Live" was the state of a loop and
+	// not the name of the thing he was looking at, and "Dark paper" was two words
+	// where the button sits beside a page and nothing else in the view is light or
+	// dark. Asserted as EXACT text: "Live" is a substring of "Live preview", so
+	// anything looser passes on the very wording it is meant to catch.
+	const bar0 = await page.$eval('#typst-live .tl-says', e => e.textContent.trim());
+	check('THE BAR NAMES THE THING, NOT THE LOOP — "Live preview"',
+		bar0 === 'Live preview', JSON.stringify(bar0));
+	const paper0 = await page.$eval('#typst-live .tl-night', e => e.textContent.trim());
+	await page.evaluate(() => window.DaimondTypstWatch.dark(true));
+	const paper1 = await page.$eval('#typst-live .tl-night', e => e.textContent.trim());
+	await page.evaluate(() => window.DaimondTypstWatch.dark(false));
+	check('and the paper is one word each way — "Dark", then "Light"',
+		paper0 === 'Dark' && paper1 === 'Light',
+		`${JSON.stringify(paper0)} then ${JSON.stringify(paper1)}`);
+
+	// AND THE PAGE NUMBER IS IN THE BOX, WHERE IT CAN BE READ. Asserting the VALUE
+	// alone is what let this go: the box said `1` to `page.$eval` and showed nothing
+	// at all, because the warm skin's `input[type="text"]` padding left it no content
+	// width and `overflow: clip` did the rest. So the width the digit has to live in
+	// is measured, and against the type it is set in rather than against a number
+	// chosen here.
+	const box = await page.evaluate(() => {
+		const i = document.querySelector('#typst-live .tl-page');
+		const c = getComputedStyle(i);
+		const r = i.getBoundingClientRect();
+		const inner = i.clientWidth - (parseFloat(c.paddingLeft) || 0) - (parseFloat(c.paddingRight) || 0);
+		return { value: i.value, inner, h: r.h || r.height, fs: parseFloat(c.fontSize) || 0,
+			pad: c.paddingLeft + ' ' + c.paddingTop };
+	});
+	check('AND THE PAGE NUMBER IS IN THE BOX — room for the digits, not only a value',
+		box.value === '1' && box.inner >= box.fs * 1.5 && box.h < box.fs * 2.6,
+		`value ${JSON.stringify(box.value)}, ${box.inner.toFixed(1)}px of room for `
+		+ `${box.fs}px type in a box ${box.h.toFixed(1)}px tall, padding ${box.pad}`);
 
 	// ── 1. It follows the file, without anybody acting ───────────
 	// A daimon's write. The panel is not touched, no button is pressed, and the
@@ -595,6 +732,184 @@ try {
 	check('and the PDF the Compile button wrote is showing again, exactly as it was',
 		back.embed === '' && back.view === 'none', JSON.stringify(back));
 
+	// ── 11. Sheets, and a rail of the document's own sections ────
+	//
+	// A second fixture, because these answers need a shape the first one does not
+	// have. It carries a CONTENTS, which prints every heading's words on page one and
+	// is precisely what a naive "which page is this heading on" gets wrong; and a
+	// `#pagebreak()` before every chapter, so WHICH PAGE EACH HEADING IS ON IS DECIDED
+	// BY THE FIXTURE rather than read back out of the thing under test.
+	const RAIL = `#set page(width: 120mm, height: 160mm, margin: 12mm)
+#set text(size: 10pt)
+#set par(justify: true)
+#outline()
+#pagebreak()
+= Alpha chapter
+#lorem(60)
+#pagebreak()
+= Bravo chapter
+== Bravo first part
+#lorem(60)
+#pagebreak()
+= Charlie chapter
+#lorem(60)
+`;
+	// What the fixture says, page by page. `Contents` is typst's own title for
+	// `#outline()`, and it is a heading like any other, so the rail lists it.
+	const WANT = [
+		{ text: 'Contents',         level: 1, page: 1 },
+		{ text: 'Alpha chapter',    level: 1, page: 2 },
+		{ text: 'Bravo chapter',    level: 1, page: 3 },
+		{ text: 'Bravo first part', level: 2, page: 3 },
+		{ text: 'Charlie chapter',  level: 1, page: 4 },
+	];
+	await put('rail/main.typ', RAIL);
+	await page.evaluate(() => window.DaimondDoc.show('rail/main.typ'));
+	await sleep(1200);
+	await page.click('[data-act="compile"]', { force: true });
+	for (let i = 0; i < 120; i++) {
+		const w = await st();
+		if (w.path === 'rail/main.typ' && w.drawn && w.pages >= 4) break;
+		await sleep(500);
+	}
+	const r0 = await st();
+	check('the contents fixture laid out as it was designed to',
+		r0.pages === 4, `${r0.pages} page(s)`);
+
+	// A DOCUMENT IS A STACK OF SHEETS. Reported as "shows as a continuous page, not
+	// distinct pages", and answered in two parts: the pages are separate elements
+	// with space between them, and what shows in that space is the panel and not more
+	// paper. The second half is what makes it visible; the first alone would pass on a
+	// gap nobody could see.
+	const sheets = await page.evaluate(() => {
+		const h = document.querySelector('#typst-live .tl-pages');
+		document.querySelector('#typst-live .tl-scroll').scrollTop = 0;
+		return [...h.shadowRoot.querySelectorAll('.tl-sheet')].map((e) => {
+			const r = e.getBoundingClientRect();
+			return { page: Number(e.getAttribute('data-page')), x: r.left, y: r.top,
+				w: r.width, h: r.height, marks: e.querySelectorAll('use, path').length };
+		});
+	});
+	const inOrder = sheets.every((s, i) => s.page === sheets[0].page + i);
+	const allDrawn = sheets.every(s => s.marks > 20);
+	check('EVERY PAGE IN VIEW IS ITS OWN SHEET, and every sheet has its own page on it',
+		sheets.length >= 2 && inOrder && allDrawn,
+		sheets.map(s => `p${s.page}:${s.marks}`).join(' '));
+	const gapPx = sheets.length >= 2
+		? Math.round(sheets[1].y - (sheets[0].y + sheets[0].h)) : 0;
+	check('AND THE SHEETS DO NOT TOUCH — there is a gap between two pages',
+		gapPx >= 3, `${gapPx}px between page ${sheets[0] && sheets[0].page} and the next`);
+	if (POPPLER && sheets.length >= 2) {
+		// A strip across the seam: six rows of paper, the gap, six rows of paper. If
+		// the pages run together the whole strip is paper and the middle is as light
+		// as the ends.
+		const seam = path.join(WORK, 'seam.png');
+		const y0 = Math.floor(sheets[0].y + sheets[0].h) - 6;
+		const y1 = Math.ceil(sheets[1].y) + 6;
+		await page.screenshot({ path: seam, clip: {
+			x: Math.floor(sheets[0].x) + 4, y: y0,
+			width: Math.max(8, Math.floor(sheets[0].w) - 8), height: Math.max(4, y1 - y0),
+		} });
+		const g = inkOf(seam);
+		const rowMean = (y) => {
+			let s = 0;
+			for (let x = 0; x < g.w; x++) s += g.gray[y * g.w + x];
+			return s / g.w;
+		};
+		const paper = (rowMean(0) + rowMean(g.h - 1)) / 2;
+		let darkest = 255;
+		for (let y = 0; y < g.h; y++) darkest = Math.min(darkest, rowMean(y));
+		check('and what shows between them is the panel, not more paper',
+			paper - darkest > 30,
+			`paper ${paper.toFixed(0)}/255 at the edges of the seam, `
+			+ `${darkest.toFixed(0)} at its darkest (${seam})`);
+	} else {
+		check('and what shows between them is the panel, not more paper', false,
+			'the imaging tools this needs are not installed');
+	}
+
+	// A VIEW CHANGE NEVER STARTS A COMPILE. The page box, the zoom and the paper were
+	// built this way on purpose and the rail is no different: the layout is the
+	// compiler's and does not depend on any of them. The loop that cycled `Live` /
+	// `Rebuilding` in front of the author is what a control reaching for the compiler
+	// builds a second time.
+	const beforeV = await st();
+	await page.evaluate(() => {
+		const w = window.DaimondTypstWatch;
+		w.rail(true);
+		w.zoom(1.5);
+		w.fitPage(true);
+		w.dark(true);
+		w.dark(false);
+		w.rail(false);
+		w.rail(true);
+		w.fitPage(false);
+	});
+	await sleep(2500);
+	const afterV = await st();
+	check('A VIEW CHANGE NEVER STARTS A COMPILE — rail, zoom, fit and paper are all view',
+		afterV.builds === beforeV.builds && afterV.drawn === beforeV.drawn,
+		`${afterV.builds - beforeV.builds} rebuild(s), `
+		+ `${afterV.drawn - beforeV.drawn} redraw(s) for eight view changes`);
+	check('and the rail is open, showing something, after all that',
+		afterV.rail && afterV.toc.length === WANT.length,
+		`rail ${afterV.rail}, ${afterV.toc.length} section(s)`);
+
+	for (let i = 0; i < 40 && !(await st()).located; i++) await sleep(250);
+	const toc = await page.evaluate(() => window.DaimondTypstWatch.sections());
+	check('THE RAIL IS THE COMPILED DOCUMENT\'S OWN HEADINGS, in order, with their levels',
+		JSON.stringify(toc.map(e => [e.text, e.level]))
+			=== JSON.stringify(WANT.map(e => [e.text, e.level])),
+		JSON.stringify(toc.map(e => e.text + '/' + e.level)));
+	// EXACT PAGES, AND THAT IS THE POINT. "Every entry is on a page that really
+	// exists" and "the entries are in non-decreasing order" are each true and, taken
+	// together, still let the whole rail sit on the contents page — which is the one
+	// wrong answer this document was built to produce. The fixture decides the pages;
+	// the rail has to agree with it.
+	check('AND EACH ONE NAMES THE PAGE THE DOCUMENT PUTS IT ON, not the contents page',
+		toc.length === WANT.length && toc.every((e, i) => e.page === WANT[i].page),
+		toc.map(e => `${e.text}→p${e.page}`).join(', '));
+	// And it is wired to the pages: the entry is a control, not a caption.
+	//
+	// Zoomed in first, and NOT the last entry, and both for the same reason: a
+	// scroller cannot put its final page at its own top, so a jump to the end of a
+	// short document lands wherever the scroll runs out and proves nothing either way.
+	// At 200% the stack is twice the panel and `Bravo chapter` is a real journey.
+	await page.evaluate(() => {
+		window.DaimondTypstWatch.zoom(3);
+		document.querySelector('#typst-live .tl-scroll').scrollTop = 0;
+	});
+	await sleep(500);
+	const K = 2;			// `Bravo chapter`, page 3
+	const beforeJ = await st();
+	await page.evaluate((k) => {
+		document.querySelectorAll('#typst-live .tl-toclist .tl-tocgo')[k].click();
+	}, K);
+	await sleep(600);
+	const jumped = await st();
+	const jgeom = await page.evaluate((n) => {
+		const sc = document.querySelector('#typst-live .tl-scroll');
+		const b = window.DaimondTypstWatch.pageBox(n);
+		return { at: sc.scrollTop, max: sc.scrollHeight - sc.clientHeight, want: b.top };
+	}, WANT[K].page);
+	// `want <= max` is asserted too, and on purpose: if the page could not be reached
+	// anyway the rest of this check would pass on a scroller that ran out rather than
+	// on a jump that worked.
+	check('and clicking a section goes to it',
+		beforeJ.at && beforeJ.at.page === 0
+			&& jgeom.want <= jgeom.max
+			&& Math.abs(jgeom.at - jgeom.want) < 2
+			&& jumped.at && jumped.at.page === WANT[K].page - 1,
+		`from page ${beforeJ.at ? beforeJ.at.page + 1 : '?'} to page `
+		+ `${jumped.at ? jumped.at.page + 1 : '?'} (wanted ${WANT[K].page}); scrolled to `
+		+ `${Math.round(jgeom.at)} of a possible ${Math.round(jgeom.max)}, page top `
+		+ `${Math.round(jgeom.want)}`);
+	await page.evaluate(() => window.DaimondTypstWatch.zoom(1));
+	await shot(s, 'typstwatch-rail' + (BREAK ? '-' + BREAK : ''));
+	// Closed again, so the long book below is not scanned for sections it is not
+	// being asked about.
+	await page.evaluate(() => window.DaimondTypstWatch.rail(false));
+
 	// ── 10. A long book is drawn all the way down ────────────────
 	//
 	// The check that would have caught the defect this design was rewritten around,
@@ -607,9 +922,13 @@ try {
 	//
 	// So it is asserted in PIXELS, on a page deep enough to be past where Chrome
 	// stops drawing properly, against page one of the same document.
+	// LONG ENOUGH TO BE PAST WHERE CHROME STOPS DRAWING PROPERLY, which is a property
+	// of how tall the ELEMENT is and not of how far down the page is. The defect was
+	// found on a 251-page document — an SVG 192,000 px tall — so the fixture is that
+	// long, and it is why this block is the slow one.
 	await put('deep/main.typ',
 		'#set page(width: 120mm, height: 160mm, margin: 12mm)\n'
-		+ '#set text(size: 10pt)\n#set par(justify: true)\n#lorem(13000)\n');
+		+ '#set text(size: 10pt)\n#set par(justify: true)\n#lorem(70000)\n');
 	await page.evaluate(() => window.DaimondDoc.show('deep/main.typ'));
 	await sleep(1200);
 	await page.click('[data-act="compile"]', { force: true });
@@ -637,7 +956,7 @@ try {
 				sy: sr.y, sh: sr.height };
 		}, n);
 		if (!g) return { ratio: 0, missing: true };
-		await sleep(700);		// Chrome rasterises a jump of thirty thousand pixels
+		await sleep(1200);		// Chrome rasterises a jump of sixty thousand pixels
 		const y = Math.max(g.top, g.sy);
 		const p = path.join(WORK, name);
 		await page.screenshot({ path: p, clip: {
@@ -647,15 +966,37 @@ try {
 		return inkOf(p);
 	};
 	check('a long document is many pages, and deep enough to be worth asking about',
-		deep.pages > 40, `${deep.pages} page(s)`);
+		deep.pages > 200, `${deep.pages} page(s)`);
 	const first = await shotPage(1, 'deep-1.png');
-	const far   = await shotPage(Math.min(45, deep.pages), 'deep-45.png');
+	const DEEP  = Math.min(230, deep.pages);
+	const far   = await shotPage(DEEP, 'deep-far.png');
+	// AND THE MECHANISM, NOT ONLY THE SYMPTOM. The pixels above are the guarantee; this
+	// is the thing they are a symptom of, and it is the half that can still be proved
+	// against broken code. On a 251-page document nothing the browser is asked to
+	// rasterise may be taller than one page — the stack is, and it must not be an
+	// element.
+	const tall = await page.evaluate(() => {
+		const h = document.querySelector('#typst-live .tl-pages');
+		if (!h || !h.shadowRoot) return null;
+		let worst = 0;
+		for (const svg of h.shadowRoot.querySelectorAll('svg')) {
+			worst = Math.max(worst, svg.getBoundingClientRect().height);
+		}
+		const sheet = h.shadowRoot.querySelector('.tl-sheet');
+		return { worst, sheet: sheet ? sheet.getBoundingClientRect().height : 0,
+			stack: h.getBoundingClientRect().height };
+	});
+	check('NOTHING DRAWN IS TALLER THAN A PAGE — the stack is tall, the elements are not',
+		!!tall && tall.sheet > 0 && tall.worst > 0
+			&& tall.worst <= tall.sheet + 2 && tall.stack > tall.sheet * 50,
+		tall ? `tallest element ${Math.round(tall.worst)}px, one page ${Math.round(tall.sheet)}px, `
+			+ `the whole stack ${Math.round(tall.stack)}px` : 'there was no live view to measure');
 	check('A PAGE DEEP IN A LONG BOOK IS DRAWN AS DARKLY AS THE FIRST ONE',
 		!first.missing && !far.missing && first.ratio > 0.005
 			&& far.ratio > first.ratio * 0.75,
 		first.missing || far.missing ? 'there was no live view to photograph'
 			: `page 1 ${(first.ratio * 100).toFixed(2)}% ink, page `
-				+ `${Math.min(45, deep.pages)} ${(far.ratio * 100).toFixed(2)}% ink`);
+				+ `${DEEP} ${(far.ratio * 100).toFixed(2)}% ink`);
 
 	const errs = errors(s).filter(e =>
 		!/Failed to load resource/.test(e) && !/502/.test(e) && !/Bad Gateway/.test(e));
@@ -804,15 +1145,16 @@ async function inkCompare(page, main) {
 	// literally what the reader sees.
 	const live = path.join(WORK, 'live1.png');
 	const box = await page.evaluate(() => {
-		const st = window.DaimondTypstWatch.state();
 		const h = document.querySelector('#typst-live .tl-pages');
 		document.querySelector('#typst-live .tl-scroll').scrollTop = 0;
-		const svg = h.shadowRoot.querySelector('svg');
-		const r = svg.getBoundingClientRect();
-		// The first page's height in rendered pixels, from the page geometry rather
-		// than from dividing the stack — pages need not all be the same height.
-		const pageH = st.pages > 1 ? (r.height / st.pages) : r.height;
-		return { x: r.left, y: r.top, w: r.width, h: pageH };
+		// THE FIRST SHEET, which is exactly one page: the pages are separate elements
+		// now, so the first page's rectangle is an element's rectangle and no longer
+		// has to be worked out by dividing the stack. The SHEET and not the svg inside
+		// it, because the sheet is the page — an svg that had grown taller than its
+		// page would make this photograph the whole book and fail the ink comparison
+		// for a reason that has nothing to do with the ink.
+		const r = h.shadowRoot.querySelector('.tl-sheet').getBoundingClientRect();
+		return { x: r.left, y: r.top, w: r.width, h: r.height };
 	});
 	await page.screenshot({
 		path: live,

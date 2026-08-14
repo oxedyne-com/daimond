@@ -193,6 +193,73 @@
 		try { localStorage.setItem(MAP_KEY, JSON.stringify(m)); } catch (e) { /* quota: rebuilt next time */ }
 	}
 
+	// ── Surviving a passphrase change ──────────────────────────
+	//
+	// THIS FILE SEALS AT REST, NOT IN FLIGHT, so it takes part. `offloadFile`
+	// wraps each chunk with `DaimondIdentity.wrapBytes` and the ciphertext then
+	// LIVES ON THE GATEWAY, addressed by its own hash, for as long as the file is
+	// in the cloud store. A passphrase change re-derives the key, and every chunk
+	// already up there is sealed under the old one for ever.
+	//
+	// What this participant can do, and what it cannot, stated plainly because the
+	// gap is the interesting part:
+	//
+	//   - IT CANNOT RE-WRAP THEM. That would mean downloading, decrypting and
+	//     re-uploading the whole corpus, which can be gigabytes, over a dialog the
+	//     user is waiting on — and it could not finish the job anyway, since a
+	//     file this device does not hold locally cannot be re-sealed from here at
+	//     all.
+	//   - IT MUST NOT LET THE OLD CIPHERTEXT BE REUSED. The map from plaintext
+	//     chunk hash to stored address is what makes an unchanged chunk keep its
+	//     address, and the gateway still holds every one of them — so without this,
+	//     a re-offload would cheerfully point the new manifest at chunks nothing
+	//     can open, and the file would stay unreadable no matter how many times it
+	//     was synced. The map goes.
+	//   - AND THE FILES MUST ACTUALLY BE OFFLOADED AGAIN, or dropping the map
+	//     changes nothing: `collectChunked` in daimond.js skips a file whose
+	//     manifest matches its size and mtime, which is every file that has not
+	//     been edited. So the drop is recorded, and that one skip is suspended for
+	//     the next sync round only. The price of a passphrase change is one
+	//     re-upload of the large files this device holds. It is paid once.
+	//
+	// What remains lost is honest to say: a large file that no device still holds
+	// locally cannot be recovered after a passphrase change, because the only copy
+	// is sealed under a key nobody has any more.
+
+	/// Set for as long as a re-offload is owed. In localStorage, not a variable,
+	/// because the change and the sync that answers it are usually separated by a
+	/// reload.
+	var STALE_KEY = 'daimond-chunk-stale';
+
+	/// Is a re-offload owed after a passphrase change?
+	function staleSinceRekey() {
+		try { return localStorage.getItem(STALE_KEY) === '1'; } catch (e) { return false; }
+	}
+
+	/// The re-offload has been made. Called by the round that made it, never by
+	/// the round that owed it.
+	function clearStale() {
+		try { localStorage.removeItem(STALE_KEY); } catch (e) { /* private mode */ }
+	}
+
+	/// Forget every address sealed under the passphrase that has just gone.
+	///
+	/// Nothing is read out beforehand: the map holds no secret, only hashes, and
+	/// the plaintext is the file on disk.
+	function forgetMapAfterRekey() {
+		try { localStorage.removeItem(MAP_KEY); } catch (e) { /* private mode: nothing was cached */ }
+		try { localStorage.setItem(STALE_KEY, '1'); } catch (e) { /* quota: one skipped re-offload */ }
+		log('passphrase changed: chunk map dropped, large files will be offloaded again');
+		return { failed: [] };
+	}
+
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'chunks',
+			reseal: forgetMapAfterRekey,
+		});
+	}
+
 	// ── Offload ────────────────────────────────────────────────
 
 	/// The chunk size for a file of `size` bytes.
@@ -601,6 +668,12 @@
 		/// console, and a panel that offers it has somewhere to hang.
 		confirmHeldSweep:  confirmHeldSweep,
 		state:             state,
+		/// Is a re-offload owed because the passphrase changed? Read by
+		/// `collectChunked` in daimond.js, which suspends its unchanged-file skip
+		/// for exactly one round when it is set, and clears it when that round is
+		/// done. See "Surviving a passphrase change" above.
+		staleSinceRekey:   staleSinceRekey,
+		clearStale:        clearStale,
 		// exposed for tests/tools:
 		_b64urlEncode: b64urlEncode,
 		_b64urlDecode: b64urlDecode,

@@ -7,7 +7,7 @@
 
        window.DaimondTypstWatch = {
            began, stop, touched, rebuild, budgetMB, zoom, dark,
-           state, pageBox, goToPage
+           state, pageBox, goToPage, rail, sections, fitPage
        }
 
    Six things decide the shape of this file, and each of them is
@@ -123,6 +123,49 @@
       where `replaceChildren` cannot take them away again.  Taken
       from typst.ts's own sheet — `TYPST_CSS` below says which parts
       and why the rest is left out.
+
+   7. A DOCUMENT IS A STACK OF SHEETS, NOT A SCROLL.  The first
+      version drew the visible band as ONE SVG, so a page ran into
+      the next with nothing between them and the author said so:
+      "shows as a continuous page, not distinct pages".  Each page
+      is now its own sheet — its own SVG, its own white paper, its
+      own shadow — with `PAGE_GAP` points of the panel's ground
+      between them, which is what Chrome's PDF viewer does and what
+      a reader expects of a document.
+
+      It costs LESS than what it replaced, because the band is
+      still ONE session and ONE call — the sheets are cut out of the
+      one answer afterwards, since the renderer hands back a
+      `<g class="typst-page">` per page and says in its transform
+      where each sits.  A call PER PAGE was tried first and is the
+      trap: the session's diff is by CONTENT, not by window, so four
+      pages carrying the same `#lorem(60)` came back as 428, 5, 7
+      and 5 marks and three quarters of the document was simply
+      missing.  `dev/TYPST_WATCH.md` §12 has that table and the two
+      other things the renderer does not say.
+
+      The glyph outlines are emitted once, into the first sheet, and
+      the later sheets `<use>` them — which works because every
+      sheet of one band goes into the one shadow root in the one
+      `replaceChildren`, so an `href="#g…"` never points outside the
+      tree it is in.  The band is replaced whole or not at all, so a
+      def can never outlive its user.
+
+   8. THE SECTION RAIL IS THE COMPILER'S ANSWER, THE PAGE IS THE
+      RENDERER'S.  The entries — the words, the level and the order
+      — come from `query('heading')` on the compiled document, which
+      is exact and costs 6 ms on the fixture here and 9-14 ms on the
+      author's 281-page book.  THE PAGE CANNOT COME FROM THERE.
+      Measured on this vendored 0.14.2: `query('heading', 'location')`
+      and `query('heading', 'page')` both answer `[]`, and so does
+      the CLI (`dev/TYPST_WATCH.md` §6 tried it first).  Typst does
+      not put an element's location among its fields.
+
+      So each heading is found in the LAID-OUT pages instead, by its
+      own words, page by page, in document order — see `locate`.  It
+      runs only while the rail is open, it renders and never
+      compiles, and it yields every `SCAN_CHUNK` pages so a long
+      book fills the rail in rather than freezing it.
    ============================================================ */
 
 const VENDOR   = new URL('../vendor/typst/', import.meta.url);
@@ -197,6 +240,43 @@ const TRAPPED = /recursive use of an object|unreachable/i;
 /// rather than a state to sit in, because the heap ceiling is what comes next.
 const SPIN_MAX = 3;
 
+/// The space left between two sheets of paper, in DOCUMENT POINTS.
+///
+/// In points rather than pixels so that it is part of the same geometry as
+/// everything else: the reader's place is a page and an offset in points, and a gap
+/// measured in pixels would make that arithmetic depend on the zoom.  Twelve points
+/// is about four millimetres at 100% — enough that the eye reads two sheets rather
+/// than one long one, and little enough that a page turn is not a journey.
+const PAGE_GAP = 12;
+
+/// How many pages either side of the visible ones are drawn.
+///
+/// One page's worth of margin, so a flick of the wheel lands on a sheet that is
+/// already there.  The band was measured in SCREENS before the pages were separated;
+/// pages are the honest unit now that each one is its own SVG.
+const MARGIN_PAGES = 1;
+
+/// How far inside its own edges a page is asked for, in points.
+///
+/// `render_in_window` TAKES A CLOSED RECTANGLE, which cost an afternoon: asking for
+/// exactly `[top, top + height]` returns the page whose top is exactly at `hi` as
+/// well, and since the session answers with a DIFF, the next page's call then had
+/// nothing left to give. Every sheet drew the page after it and the last one drew
+/// nothing — a whole document off by one, with a blank sheet at the end.
+///
+/// A twentieth of a point is a fiftieth of a millimetre, which is smaller than the
+/// resolution of anything that will ever be printed, and it is comfortably above the
+/// f32 rounding at the foot of a 281-page book.
+const PAGE_INSET = 0.05;
+
+/// How many pages the outline scan lays out before it hands the frame back.
+///
+/// A page answers in well under a millisecond once the first one has emitted the
+/// glyphs, so eight is a few milliseconds of work between two paints — invisible on
+/// a short document and, on a 281-page one, a rail that fills in rather than a tab
+/// that stops.
+const SCAN_CHUNK = 8;
+
 // ── Where the last good pages live, and what bounds them ────────────────────
 //
 // A failed build keeps the document that was on screen, so something has to be
@@ -250,10 +330,16 @@ const S = {
 	scale:    1,		// rendered px per pt, for putting the scroll back
 	docW:     0,		// the document's own width, in points
 	docH:     0,		// and its whole height, which the scroller is as tall as
-	tops:     [],		// each page's top, in pt
+	tops:     [],		// each page's top IN THE DOCUMENT, in pt
 	heights:  [],		// each page's height, in pt
+	lays:     [],		// each page's top ON SCREEN, in pt, gaps included
+	laid:     0,		// the whole stack's height on screen, in pt
 	zoom:     1,		// how much bigger than fitting the panel's width
+	fit:      'width',	// 'width' or 'page': what the fit button last did
 	dark:     false,	// the paper turned over, for reading at night
+	rail:     false,	// the section rail is open
+	toc:      [],		// { text, level, page } per heading; page 0 = not found yet
+	scanned:  0,		// the build serial the pages in `toc` were found in
 };
 
 let timer = null;		// the debounce
@@ -341,6 +427,27 @@ const TYPST_CSS =
 	+ '  pointer-events: none;\n'
 	+ '}\n';
 
+/// What makes a page look like a sheet of paper, inside the shadow root.
+///
+/// It lives HERE and not in `www/css/viewer.css` for the same reason the rules above
+/// do: the pages are in a shadow root, and the app's own stylesheet does not reach
+/// into one.  The rest of the live view — the bar, the rail, the scroller — is in
+/// `viewer.css` where it belongs.
+///
+/// The sheet carries the paper and the shadow; the SVG inside it carries only the
+/// marks.  Keeping the white on the CONTAINER rather than on the SVG is what makes a
+/// page that failed to draw look like a blank sheet instead of a hole.
+const SHEET_CSS =
+	'.tl-band { position: absolute; inset: 0; }\n'
+	+ '.tl-sheet {\n'
+	+ '  position: absolute;\n'
+	+ '  left: 0;\n'
+	+ '  background: #fff;\n'
+	+ '  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);\n'
+	+ '  overflow: hidden;\n'
+	+ '}\n'
+	+ '.tl-sheet > svg { display: block; }\n';
+
 let sheetEl = null;		// the fallback <style>, where sheets cannot be adopted
 
 /// Put `TYPST_CSS` into `root` so that `replaceChildren` cannot remove it.
@@ -353,13 +460,13 @@ let sheetEl = null;		// the fallback <style>, where sheets cannot be adopted
 function adopt(root) {
 	try {
 		const s = new CSSStyleSheet();
-		s.replaceSync(TYPST_CSS);
+		s.replaceSync(TYPST_CSS + SHEET_CSS);
 		root.adoptedStyleSheets = [s];
 		sheetEl = null;
 		return;
 	} catch (e) { /* an engine without constructable sheets */ }
 	sheetEl = document.createElement('style');
-	sheetEl.textContent = TYPST_CSS;
+	sheetEl.textContent = TYPST_CSS + SHEET_CSS;
 }
 
 /// Put `node` on screen as the whole of the pages, rules included.
@@ -407,6 +514,8 @@ function mount() {
 	host.id = 'typst-live';
 	host.innerHTML =
 		'<div class="tl-bar">'
+		+ '<button type="button" class="tl-toc" aria-pressed="false" aria-controls="tl-rail">'
+		+ '\u2261</button>'
 		+ '<span class="tl-mark" aria-hidden="true"></span>'
 		+ '<span class="tl-says" role="status" aria-live="polite"></span>'
 		+ '<button type="button" class="tl-rebuild" style="display:none"></button>'
@@ -419,7 +528,11 @@ function mount() {
 		+ '<button type="button" class="tl-night" aria-pressed="false"></button>'
 		+ '</span>'
 		+ '</div>'
+		+ '<div class="tl-body">'
+		+ '<nav class="tl-rail" id="tl-rail" hidden><ol class="tl-toclist"></ol>'
+		+ '<p class="tl-tocnone"></p></nav>'
 		+ '<div class="tl-scroll"><div class="tl-pages"></div></div>'
+		+ '</div>'
 		+ '<pre class="tl-err" style="display:none"></pre>';
 	panel.appendChild(host);
 	host.querySelector('.tl-rebuild').addEventListener('click', function () { rebuild(); });
@@ -488,15 +601,21 @@ let relabels = false;
 function labels() {
 	if (!host) return;
 	const q = (c) => host.querySelector(c);
-	const page = q('.tl-page'), out = q('.tl-out'), inn = q('.tl-in'), fit = q('.tl-fit');
+	const page = q('.tl-page'), out = q('.tl-out'), inn = q('.tl-in');
 	page.setAttribute('aria-label', tOr('typst.watch.page', 'Page'));
 	out.setAttribute('title', tOr('typst.watch.zoom_out', 'Smaller'));
 	out.setAttribute('aria-label', out.getAttribute('title'));
 	inn.setAttribute('title', tOr('typst.watch.zoom_in', 'Bigger'));
 	inn.setAttribute('aria-label', inn.getAttribute('title'));
-	fit.setAttribute('title', tOr('typst.watch.fit', 'Fit the width'));
+	fitLabel();
+	const toc = q('.tl-toc');
+	toc.setAttribute('title', tOr('typst.watch.sections', 'Sections'));
+	toc.setAttribute('aria-label', toc.getAttribute('title'));
+	q('.tl-tocnone').textContent = tOr('typst.watch.sections_none',
+		'This document has no headings to list.');
 	dark(S.dark);			// the one whose LABEL is its state
 	offerRebuild(host.querySelector('.tl-rebuild').style.display !== 'none');
+	drawRail();
 }
 
 /// Wire the bar's controls, once, at mount.
@@ -505,10 +624,14 @@ function controls() {
 	const page = q('.tl-page'), out = q('.tl-out'), inn = q('.tl-in'),
 		fit = q('.tl-fit'), night = q('.tl-night');
 	labels();
-	out.addEventListener('click', function () { zoom(S.zoom / 1.25); });
-	inn.addEventListener('click', function () { zoom(S.zoom * 1.25); });
-	fit.addEventListener('click', function () { zoom(1); });
+	out.addEventListener('click', function () { S.fit = 'width'; zoom(S.zoom / 1.25); });
+	inn.addEventListener('click', function () { S.fit = 'width'; zoom(S.zoom * 1.25); });
+	// One button for both fits, because they are one question — how much of the page
+	// do I want — and Chrome's PDF viewer asks it with one control too. It shows the
+	// percentage, so the title is what says which way it will go next.
+	fit.addEventListener('click', function () { fitPage(S.fit !== 'page'); });
 	night.addEventListener('click', function () { dark(!S.dark); });
+	q('.tl-toc').addEventListener('click', function () { rail(!S.rail); });
 	// Enter commits; blur commits too, because a number typed and then clicked away
 	// from is a number the reader meant.
 	const go = function () {
@@ -535,7 +658,48 @@ function controls() {
 function zoom(z) {
 	S.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
 	resized();
+	fitLabel();
 	sayWhere();
+}
+
+/// Say which way the one fit button will go next.
+function fitLabel() {
+	if (!host) return;
+	const fit = host.querySelector('.tl-fit');
+	fit.setAttribute('title', S.fit === 'page'
+		? tOr('typst.watch.fit_width', 'Fit the width')
+		: tOr('typst.watch.fit_page', 'Fit the whole page'));
+	fit.setAttribute('aria-label', fit.getAttribute('title'));
+}
+
+/// Fit a whole page in the view, or go back to fitting its width.
+///
+/// The zoom is already a multiple of "as wide as the panel", so fitting the page is
+/// arithmetic on the page the reader is looking at and nothing else — pages need not
+/// all be the same shape, and a landscape plate in a portrait book should fit as
+/// itself.  Like every other control here it is a REPAINT: the layout is the
+/// compiler's and does not depend on how much of a page is on screen.
+function fitPage(on) {
+	S.fit = on ? 'page' : 'width';
+	const sc = scroller();
+	const w = where();
+	const i = w ? Math.min(w.page, S.heights.length - 1) : 0;
+	const h = S.heights[i] || 0;
+	if (!on || !sc || !h || !S.docW) {
+		zoom(1);
+		return;
+	}
+	const cs = getComputedStyle(sc);
+	const inner = sc.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+	const deep = sc.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+	// `scale` is `(inner / docW) * zoom`, so the zoom that puts `h` points into `deep`
+	// pixels is this and no search is needed.
+	//
+	// AND NEVER PAST FITTING THE WIDTH, which is what `1` is. A page has two
+	// dimensions and the whole of it fits only at the SMALLER of the two fits; taking
+	// the height alone in a panel that is tall and narrow gave 330% and cut the page
+	// off down both sides, which is not a fit by any reading of the word.
+	zoom(inner > 0 ? Math.min(1, (deep * S.docW) / (h * inner)) : 1);
 }
 
 /// Dark paper on or off.
@@ -548,9 +712,14 @@ function dark(on) {
 	host.setAttribute('data-night', S.dark ? '1' : '0');
 	const b = host.querySelector('.tl-night');
 	b.setAttribute('aria-pressed', S.dark ? 'true' : 'false');
-	b.textContent = S.dark ? tOr('typst.watch.day', 'Light paper')
-		: tOr('typst.watch.night', 'Dark paper');
-	b.setAttribute('title', b.textContent);
+	// ONE WORD, because the bar is a strip and the word "paper" was doing no work in
+	// it: the button sits beside a page, and nothing else in the view is light or
+	// dark. The title still says what it turns over, for anybody who hovers.
+	b.textContent = S.dark ? tOr('typst.watch.paper_light', 'Light')
+		: tOr('typst.watch.paper_dark', 'Dark');
+	b.setAttribute('title', S.dark ? tOr('typst.watch.paper_light_why', 'Light paper')
+		: tOr('typst.watch.paper_dark_why', 'Dark paper, for reading at night'));
+	b.setAttribute('aria-label', b.getAttribute('title'));
 }
 
 /// Say which page the reader is on, and how big the pages are drawn.
@@ -564,6 +733,7 @@ function sayWhere() {
 	host.querySelector('.tl-of').textContent = S.pages ? '/ ' + S.pages : '';
 	host.querySelector('.tl-fit').textContent = Math.round(S.zoom * 100) + '%';
 	host.querySelector('.tl-set').style.display = S.pages ? '' : 'none';
+	markHere();
 }
 
 
@@ -645,13 +815,38 @@ function showError(text) {
 /// fraction of a longer book is a different page.  A page and an offset within it
 /// survives the document growing above the reader, which is the case that actually
 /// happens while somebody is writing.
+/// TWO COORDINATE SYSTEMS, AND KEEPING THEM APART IS THE WHOLE OF THIS SECTION.
+/// `tops` is where a page sits IN THE DOCUMENT and is what the renderer is asked
+/// about; `lays` is where its sheet sits ON SCREEN, which is the same thing plus the
+/// gaps above it.  The reader's place is a page and an offset in points, so it is the
+/// one quantity that means the same in both.
 function where() {
 	const sc = scroller();
-	if (!sc || !S.tops.length) return null;
+	if (!sc || !S.lays.length) return null;
 	const y = sc.scrollTop / (S.scale || 1);		// px back into pt
+	// A HAIR OF SLACK AT THE PAGE EDGE, and it is not cosmetic. `goToPage` sets the
+	// scroll to a page's own top; the browser hands that number back rounded to a
+	// fraction of a pixel, which divided by the scale is a whisper BELOW the top —
+	// and without the slack the reader is told they are on the page before the one
+	// they were just taken to. A twentieth of a point is a fiftieth of a millimetre.
+	const EDGE = 0.05;
 	let i = 0;
-	while (i + 1 < S.tops.length && S.tops[i + 1] <= y) i++;
-	return { page: i, into: y - S.tops[i] };
+	while (i + 1 < S.lays.length && S.lays[i + 1] <= y + EDGE) i++;
+	return { page: i, into: Math.max(0, y - S.lays[i]) };
+}
+
+/// Where each sheet sits on screen, in points, and how tall the stack is.
+///
+/// Recomputed from `tops` and `heights` rather than carried alongside them, so the
+/// gap cannot end up counted twice or not at all.
+function layOut() {
+	S.lays = [];
+	let acc = 0;
+	for (let i = 0; i < S.heights.length; i++) {
+		S.lays.push(acc);
+		acc += S.heights[i] + PAGE_GAP;
+	}
+	S.laid = S.heights.length ? acc - PAGE_GAP : 0;
 }
 
 /// Put the reader back where `w` says, in the document now on screen.
@@ -660,10 +855,10 @@ function where() {
 /// clamps to the last one there is, rather than snapping to the top.
 function goTo(w) {
 	const sc = scroller();
-	if (!sc || !w || !S.tops.length) return;
-	const i = Math.min(w.page, S.tops.length - 1);
+	if (!sc || !w || !S.lays.length) return;
+	const i = Math.min(w.page, S.lays.length - 1);
 	const into = Math.min(w.into, S.heights[i] || 0);
-	sc.scrollTop = (S.tops[i] + into) * (S.scale || 1);
+	sc.scrollTop = (S.lays[i] + into) * (S.scale || 1);
 }
 
 
@@ -696,11 +891,28 @@ function goTo(w) {
 // 0.00%, with the words still legible in outline. It looks exactly like a font or a
 // colour bug and is neither.
 //
-// So the container carries the height and the SVG carries only the band: a plain
-// div as tall as the whole document, with an absolutely-positioned SVG inside it,
-// cropped to the band by its own viewBox and about three screens tall. The
-// scrollbar still measures the book, the reader's place still means a page and an
-// offset, and nothing is ever asked to rasterise more than a few screens.
+// So the container carries the height and the SVGs carry only the band: a plain
+// div as tall as the whole stack, with an absolutely-positioned SHEET per page in
+// it, each cropped to its own page by its own viewBox. The scrollbar still measures
+// the book, the reader's place still means a page and an offset, and nothing is ever
+// asked to rasterise more than one page at a time.
+//
+// ONE SHEET PER PAGE RATHER THAN ONE SVG PER BAND, because a document is a stack of
+// sheets and the author reported the previous drawing as "a continuous page". A
+// SESSION MAY BE ASKED MORE THAN ONCE: measured on a six-page fixture, one session,
+// one call per page —
+//
+//     page 1   6.0 ms   80 KB   55 glyph outlines   ← the defs, once
+//     page 2   1.5 ms   27 KB    0
+//     page 3   0.7 ms   26 KB    0
+//     page 4   0.3 ms   27 KB    0
+//
+// — so the whole band costs about what one call for the same range cost, and the
+// glyph outlines are emitted into whichever sheet needed them first. The later
+// sheets `<use href="#g…">` them across the SVG boundary, which resolves because
+// every sheet of one band goes into the ONE shadow root in the ONE `replaceChildren`
+// and an id lookup is per tree, not per element. The band is replaced whole or not at
+// all, so a def can never be taken away from a sheet still using it.
 
 // AND `render_in_window` IS A DIFF, WHICH IS THE THIRD THING THIS COST TO LEARN.
 // It answers with what has changed since THAT SESSION last drew, not with what is in
@@ -724,35 +936,38 @@ function goTo(w) {
 // typst.ts's incremental DOM protocol to save thirty milliseconds nobody can feel.
 // (`render_svg_diff` and `mount_dom` are that protocol, if it is ever worth it.)
 
-/// How much beyond the visible band is drawn, as a multiple of the viewport.
-///
-/// One screen either way: enough that a flick of the wheel lands inside what is
-/// already drawn, and small enough that a window stays a few hundred kilobytes and
-/// three screens tall.
-const WINDOW_MARGIN = 1;
+let band = null;		// the pages currently drawn, as `{ p0, p1 }` inclusive
 
-let band = null;		// the document band currently drawn, in points
+/// Which sheet the point `y` — in LAID-OUT points — falls on or nearest to.
+function pageAt(y) {
+	if (!S.lays.length) return 0;
+	let i = 0;
+	while (i + 1 < S.lays.length && S.lays[i + 1] <= y) i++;
+	return i;
+}
 
-/// The SVG for the band of document around `top`, as a node ready to insert.
+/// The markup for pages `p0` to `p1` inclusive, out of a session of its own.
 ///
-/// # Arguments
-/// * `bytes` - The `vector` artifact this document was laid out to.
-/// * `top`   - The top of the visible area, in document points.
-/// * `deep`  - How tall the visible area is, in document points.
-/// * `scale` - Rendered pixels per document point.
-function windowNode(bytes, top, deep, scale) {
-	const docH = S.docH, docW = S.docW;
-	const lo = Math.max(0, Math.min(docH, top - deep * WINDOW_MARGIN));
-	const hi = Math.max(lo, Math.min(docH, top + deep * (1 + WINDOW_MARGIN)));
-	// A session of its own, so what comes back is the WINDOW and not a diff against
-	// whatever was drawn last. Freed before this returns, whatever happens.
-	const ses = renderer.session_from_artifact(bytes, 'vector');
-	let svg;
-	try {
-		svg = ses.render_in_window(0, lo, docW, hi);
-	} finally {
-		try { ses.free(); } catch (e) { /* already gone */ }
-	}
+/// ONE CALL PER SESSION AND NEVER TWO, which cost the afternoon that the inset above
+/// only half explains. Asking one session for page after page LOOKED right — each
+/// call did answer with its own page — until a document repeated itself. Measured on
+/// four pages each holding the same `#lorem(60)`:
+///
+///     one session, a call per page      428, 5, 7, 5 `<use>`   ← the body vanished
+///     a session per page                428, 428, 430, 428
+///     one session, ONE call for all     428, 428, 430, 428     ← and 7 ms for four
+///
+/// The diff is by CONTENT, not by page: a group the session has already drawn is not
+/// drawn again, wherever it is. So the band is one call, and the pages are separated
+/// afterwards out of the one answer — which is also the cheapest of the three, since
+/// a session costs 27-32 ms on the author's 281-page book and this builds one.
+function windowOf(ses, p0, p1) {
+	return ses.render_in_window(0, S.tops[p0] + PAGE_INSET, S.docW,
+		S.tops[p1] + S.heights[p1] - PAGE_INSET);
+}
+
+/// The renderer's answer, parsed, with what must not run taken out of it first.
+function parseSvg(svg) {
 	// The script typst.ts embeds goes before anything parses it — it is not wanted,
 	// and its minified `&&` is not well-formed XML either, so leaving it in makes
 	// `DOMParser` refuse the whole document and draw a parser-error banner instead
@@ -772,20 +987,77 @@ function windowNode(bytes, top, deep, scale) {
 		throw new Error('The laid-out pages did not parse: '
 			+ String(el && el.textContent).slice(0, 200));
 	}
-	// The band, and only the band. `render_in_window` draws at the document's own
-	// coordinates, so cropping to it is a viewBox and nothing else — no transform,
-	// no second coordinate system to get wrong.
-	el.setAttribute('viewBox', '0 ' + lo + ' ' + docW + ' ' + (hi - lo));
-	el.setAttribute('width', String(docW * scale));
-	el.setAttribute('height', String((hi - lo) * scale));
-	el.setAttribute('preserveAspectRatio', 'xMidYMin meet');
 	el.removeAttribute('style');
-	const node = document.importNode(el, true);
-	node.style.position = 'absolute';
-	node.style.left = '0';
-	node.style.top = (lo * scale) + 'px';
-	band = { lo, hi };
-	return node;
+	return document.importNode(el, true);
+}
+
+/// The sheets for the pages around the reader, as one node ready to insert.
+///
+/// # Arguments
+/// * `bytes` - The `vector` artifact this document was laid out to.
+/// * `top`   - The top of the visible area, in LAID-OUT points.
+/// * `deep`  - How tall the visible area is, in points.
+/// * `scale` - Rendered pixels per document point.
+function bandNode(bytes, top, deep, scale) {
+	const last = S.heights.length - 1;
+	if (last < 0) throw new Error('There are no pages to draw.');
+	const p0 = Math.max(0, pageAt(Math.max(0, top)) - MARGIN_PAGES);
+	const p1 = Math.min(last, pageAt(Math.max(0, top + deep)) + MARGIN_PAGES);
+	// A session of its own, so what comes back is the WINDOW and not a diff against
+	// whatever was drawn last. Freed before anything is parsed, whatever happens.
+	const ses = renderer.session_from_artifact(bytes, 'vector');
+	let markup;
+	try {
+		markup = windowOf(ses, p0, p1);
+	} finally {
+		try { ses.free(); } catch (e) { /* already gone */ }
+	}
+	const root = parseSvg(markup);
+	// The answer is `<defs class="glyph">`, `<defs class="clip-path">`, `<style>` and
+	// then one `<g class="typst-page">` per page. The pages become sheets; everything
+	// else is SHARED and rides in the first of them, where an `href="#g…"` from any
+	// other sheet still finds it — an id is looked up per TREE, and every sheet of one
+	// band goes into the one shadow root in the one `replaceChildren`.
+	const shared = [], groups = [];
+	for (const el of Array.from(root.children)) {
+		const c = el.getAttribute('class') || '';
+		if (el.nodeName === 'g' && c.indexOf('typst-page') >= 0) groups.push(el);
+		else shared.push(el);
+	}
+	const wrap = document.createElement('div');
+	wrap.className = 'tl-band';
+	for (let k = 0; k < groups.length; k++) {
+		const m = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/
+			.exec(groups[k].getAttribute('transform') || '');
+		const i = pageOfGroup(m ? parseFloat(m[1]) : 0, k, groups.length, p0, p1);
+		// The groups outside the window came back empty, and an empty sheet is a hole
+		// in the document. They are dropped rather than drawn.
+		if (i < p0 || i > p1 || i > last) continue;
+		// A shallow clone of the root keeps its namespaces and its own class; the
+		// viewBox is what crops it to this page and nothing else — no transform, no
+		// second coordinate system to get wrong, and no element taller than a page for
+		// Chrome to rasterise badly.
+		const svg = root.cloneNode(false);
+		svg.setAttribute('viewBox', '0 ' + S.tops[i] + ' ' + S.docW + ' ' + S.heights[i]);
+		svg.setAttribute('width', String(S.docW * scale));
+		svg.setAttribute('height', String(S.heights[i] * scale));
+		svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
+		// The shared parts ride in THE FIRST SHEET MADE, which is not the first group
+		// answered: the groups outside the window were dropped just above, and hanging
+		// the glyph outlines on one of those would have thrown them away with it.
+		if (!wrap.childElementCount) for (const sh of shared) svg.appendChild(sh);
+		svg.appendChild(groups[k]);
+		const sheet = document.createElement('div');
+		sheet.className = 'tl-sheet';
+		sheet.setAttribute('data-page', String(i + 1));
+		sheet.style.top    = (S.lays[i] * scale) + 'px';
+		sheet.style.width  = (S.docW * scale) + 'px';
+		sheet.style.height = (S.heights[i] * scale) + 'px';
+		sheet.appendChild(svg);
+		wrap.appendChild(sheet);
+	}
+	band = { p0, p1 };
+	return wrap;
 }
 
 /// How wide the pages are drawn, and therefore how big everything is.
@@ -812,12 +1084,13 @@ function ensureWindow() {
 	if (!sc || !vec || !band || !renderer) return;
 	const scale = S.scale || 1;
 	const top = sc.scrollTop / scale, deep = sc.clientHeight / scale;
-	// Clamped to the document, because a viewport taller than the book would
-	// otherwise never be "inside" the band and would repaint on every frame.
-	const want = { lo: Math.max(0, top), hi: Math.min(S.docH, top + deep) };
-	if (want.lo >= band.lo && want.hi <= band.hi) return;
+	// In PAGES, because a sheet is what gets drawn. Clamped to the stack, so a
+	// viewport taller than the book cannot ask for a page past the end and repaint on
+	// every frame for ever.
+	const a = pageAt(Math.max(0, top)), b = pageAt(Math.max(0, top + deep));
+	if (a >= band.p0 && b <= band.p1) return;
 	try {
-		paint(windowNode(vec, top, deep, scale));
+		paint(bandNode(vec, top, deep, scale));
 	} catch (e) { /* the pages that are up stay up */ }
 }
 
@@ -832,14 +1105,14 @@ function resized() {
 	S.scale = scaleFor(S.docW);
 	const pages = host.querySelector('.tl-pages');
 	pages.style.width  = (S.docW * S.scale) + 'px';
-	pages.style.height = (S.docH * S.scale) + 'px';
+	pages.style.height = (S.laid * S.scale) + 'px';
 	band = null;
 	const sc = scroller();
-	const top = was ? (S.tops[Math.min(was.page, S.tops.length - 1)] + was.into)
+	const top = was ? (S.lays[Math.min(was.page, S.lays.length - 1)] + was.into)
 		: (sc ? sc.scrollTop / S.scale : 0);
-	const deep = sc ? sc.clientHeight / S.scale : S.docH;
+	const deep = sc ? sc.clientHeight / S.scale : S.laid;
 	try {
-		paint(windowNode(vec, top, deep, S.scale));
+		paint(bandNode(vec, top, deep, S.scale));
 	} catch (e) { return; }
 	if (was) goTo(was);
 	sayWhere();
@@ -878,11 +1151,17 @@ async function draw(bytes) {
 	const sc = scroller();
 	const was = where();
 	const pages = host.querySelector('.tl-pages');
-	// The geometry has to be in place before a window can be asked for, since
-	// `windowNode` measures against it.
-	const wasDoc = { w: S.docW, h: S.docH, s: S.scale, t: S.tops, hh: S.heights, p: S.pages };
-	S.docW = docW;
-	S.docH = docH;
+	// The geometry has to be in place before a band can be asked for, since
+	// `bandNode` measures against it. ALL OF IT, `lays` included: the sheets are
+	// placed from `lays` and the pages are rendered from `tops`, and a band built
+	// with one of them stale would draw the right pages in the wrong places.
+	const wasDoc = { w: S.docW, h: S.docH, s: S.scale, t: S.tops, hh: S.heights,
+		l: S.lays, ld: S.laid, p: S.pages };
+	S.docW    = docW;
+	S.docH    = docH;
+	S.tops    = tops;
+	S.heights = heights;
+	layOut();
 	const scale = scaleFor(docW);
 	// The band to draw is the one the reader is about to be put back at, not the one
 	// they are looking at now: the document may have grown above them, and drawing
@@ -890,31 +1169,32 @@ async function draw(bytes) {
 	// until the repaint caught up.
 	let top = sc ? sc.scrollTop / (wasDoc.s || scale) : 0;
 	if (was) {
-		const i = Math.min(was.page, tops.length - 1);
-		top = tops[i] + Math.min(was.into, heights[i] || 0);
+		const i = Math.min(was.page, S.lays.length - 1);
+		top = S.lays[i] + Math.min(was.into, heights[i] || 0);
 	}
-	const deep = sc ? sc.clientHeight / scale : (docH || 1);
+	const deep = sc ? sc.clientHeight / scale : (S.laid || 1);
 	let node;
 	try {
-		node = windowNode(bytes, top, deep, scale);
+		node = bandNode(bytes, top, deep, scale);
 	} catch (e) {
 		// Nothing has been touched on screen yet, so putting the geometry back
 		// leaves the pages that are up exactly as they were.
 		S.docW = wasDoc.w; S.docH = wasDoc.h;
+		S.tops = wasDoc.t; S.heights = wasDoc.hh;
+		S.lays = wasDoc.l; S.laid = wasDoc.ld;
 		throw e;
 	}
 
-	// The container carries the whole document's height so the scrollbar measures
-	// the book; the SVG inside it carries only the band. Both are set in the same
-	// turn as the swap, so there is no frame where the two disagree and the reader
-	// is bounced by a scroller that briefly forgot how long the document was.
+	// The container carries the whole STACK's height so the scrollbar measures the
+	// book and the gaps between its sheets; each sheet inside it carries one page.
+	// Both are set in the same turn as the swap, so there is no frame where the two
+	// disagree and the reader is bounced by a scroller that briefly forgot how long
+	// the document was.
 	pages.style.width  = (docW * scale) + 'px';
-	pages.style.height = (docH * scale) + 'px';
+	pages.style.height = (S.laid * scale) + 'px';
 	paint(node);
 	S.scale   = scale;
 	S.pages   = n;
-	S.tops    = tops;
-	S.heights = heights;
 	if (was) goTo(was); else if (sc) sc.scrollTop = 0;
 	sayWhere();
 
@@ -929,6 +1209,357 @@ async function draw(bytes) {
 	// The scale may have moved a hair between builds, so the band is confirmed
 	// against where the reader actually landed rather than where we aimed.
 	ensureWindow();
+}
+
+
+// ── The sections, and which page each one is on ─────────────────────────────
+//
+// WHAT THE COMPILER WILL ANSWER, AND WHAT IT WILL NOT. `query('heading')` hands back
+// every heading in document order with its level and its words, in 6 ms on the
+// fixture and 9-14 ms on the author's 281-page book. That is the rail's contents, and
+// it is exact: it is the compiled document's own answer, not a reading of the source
+// and not a guess off the drawn page.
+//
+// IT WILL NOT ANSWER WHICH PAGE. Measured on this vendored typst 0.14.2 through
+// `dev/probe_typstoutline.mjs`:
+//
+//     query('heading')              6 headings, level and body, 5.8 ms
+//     query('heading', 'body')      the words alone, 0.2 ms
+//     query('heading', 'location')  []
+//     query('heading', 'page')      []
+//
+// Typst does not put an element's location among its fields, so there is nothing to
+// ask for. `dev/TYPST_WATCH.md` §6 reached the same wall from the CLI and concluded
+// that a marker in the book was the way out; a rail that only worked for books that
+// had been altered to carry markers is not a rail.
+//
+// So the page comes from the LAID-OUT PAGES instead, which is the other half of the
+// same compile: each page is rendered on its own and its text read back, and each
+// heading is matched to its own words, in order, going forward and never back.
+//
+// TWO THINGS MAKE THAT HONEST RATHER THAN A GUESS.
+//
+//   * IN ORDER. A heading is looked for at or after where the previous one was found,
+//     so the rail cannot come out shuffled even when two chapters share a title.
+//   * BY SIZE. A document with an `#outline()` prints every heading's words on its
+//     first pages, and the naive match puts the whole rail on page 2. So each run
+//     carries the size it was set at — typst.ts writes it as the group's own
+//     `scale(0.0126,-0.0126)`, which is 12.6 pt — and where a heading's words appear
+//     more than once, THE LARGEST SETTING WINS. A contents entry is set at body size
+//     and the heading it points at is not.
+//
+// The one case this cannot separate is a heading set at exactly body size in a
+// document that also lists it in a contents; that rail entry lands on the contents
+// page. It is named here rather than hidden, and `dev/verify_typstwatch.mjs` proves
+// the ordinary case against a fixture that has a contents in it.
+
+/// The text runs of one rendered page, as `{ text, size }` in the order drawn.
+///
+/// Read out of the markup with a regular expression rather than parsed: this is
+/// called once per page of the document and a `DOMParser` per page is the cost that
+/// made the whole-book draw untenable. The two things wanted are adjacent in the
+/// markup — the group's `scale(…)` is the type size in thousandths, and the `div.tsel`
+/// inside it is the run's words.
+function runsOf(svg) {
+	const out = [];
+	const re = /class="typst-text"[^>]*transform="scale\(([-\d.]+)[^"]*"[\s\S]*?class="tsel"[^>]*>([^<]*)</g;
+	let m;
+	while ((m = re.exec(svg)) !== null) {
+		out.push({ size: Math.abs(parseFloat(m[1]) || 0) * 1000, text: unxml(m[2]) });
+	}
+	return out;
+}
+
+/// The rendered markup, cut into pages: `[{ page, runs }]` in the order drawn.
+function pagesOfMarkup(markup, p0, p1) {
+	const re = /<g[^>]*class="typst-page"[^>]*transform="translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/g;
+	const at = [];
+	let m;
+	while ((m = re.exec(markup)) !== null) at.push({ y: parseFloat(m[1]), from: m.index });
+	const out = [];
+	for (let k = 0; k < at.length; k++) {
+		const to = (k + 1 < at.length) ? at[k + 1].from : markup.length;
+		const page = pageOfGroup(at[k].y, k, at.length, p0, p1);
+		if (page >= 0) out.push({ page: page, runs: runsOf(markup.slice(at[k].from, to)) });
+	}
+	return out;
+}
+
+/// Which page the `k`th of `n` groups returned for the window `p0`-`p1` is.
+///
+/// BY ORDER, AND ONLY BY POSITION WHEN THE ORDER CANNOT BE TRUSTED.
+///
+/// Two things about the renderer's answer have to be known here and neither is
+/// obvious. A WINDOW EMITS A GROUP FOR EVERY PAGE OF THE DOCUMENT, not for the pages
+/// in it — the ones outside simply come back empty — so the count to expect is the
+/// whole page count and a band of three pages arrives as two hundred and eighty-one
+/// groups. And READING THE GROUP'S OWN `translate(0, y)` IS WRONG: the renderer
+/// rounds that number to a whole point and then accumulates it, so on a page 453.543
+/// pt tall the groups come back at 0, 454, 908, 1362 against tops of 0, 453.54,
+/// 907.09, 1360.63 — adrift by 0.46 pt a page, which by page two hundred names a page
+/// a fifth of a page away from the right one. That cost a rail every entry of which
+/// pointed at the contents.
+///
+/// So the answer is the position in the sequence, which is exact for either count the
+/// renderer might answer with; the y is used only to make the best of it when the
+/// count says something has changed underfoot.
+function pageOfGroup(y, k, n, p0, p1) {
+	if (n === S.tops.length) return k;			// every page, which is what it does
+	if (n === p1 - p0 + 1) return p0 + k;			// or just the window, one day
+	let best = -1, off = Infinity;
+	for (let i = 0; i < S.tops.length; i++) {
+		const e = Math.abs(S.tops[i] - y);
+		if (e < off) { off = e; best = i; }
+	}
+	return best;
+}
+
+/// The five XML entities typst.ts's markup can carry, back as themselves.
+function unxml(s) {
+	return String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"').replace(/&apos;/g, '\'').replace(/&amp;/g, '&');
+}
+
+/// One string, for comparing what was typeset with what was asked for.
+///
+/// Typst breaks a heading across lines wherever the measure runs out, and hyphenates
+/// while it is at it, so the words come back in pieces that do not line up with the
+/// source. Spaces go, and so does everything that is not a letter or a digit: what is
+/// left is the same for `Chapter one` and for `Chap- ter one` on two lines.
+function fold(s) {
+	return String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/// Pull the words out of whatever `query` answered for one heading.
+///
+/// A heading's `body` is content, not a string: `= *Bold* title` comes back as a tree
+/// of `text` nodes. Everything with a `text` is taken, in order, and everything else
+/// is walked through — which is the same answer typst would print and needs no
+/// knowledge of which element types exist.
+function wordsOf(v) {
+	if (v == null) return '';
+	if (typeof v === 'string') return v;
+	if (Array.isArray(v)) return v.map(wordsOf).join('');
+	if (typeof v === 'object') {
+		if (typeof v.text === 'string') return v.text;
+		let out = '';
+		for (const k of ['body', 'children', 'child']) if (k in v) out += wordsOf(v[k]);
+		return out;
+	}
+	return '';
+}
+
+/// Ask the compiler what this document's headings are, and start finding their pages.
+///
+/// Called from `build`, in the same turn as the compile that produced these pages, so
+/// the compiler still holds this project and answers out of the layout it has just
+/// memoised. IT IS NOT CALLED FROM THE VIEW: nothing a reader does to the rail, the
+/// zoom or the paper reaches the compiler, which is the rule the whole panel is built
+/// on.
+async function refreshToc() {
+	const q = window.DaimondTypst && window.DaimondTypst.queryProject;
+	if (!q) { S.toc = []; drawRail(); return; }		// an older driver in this page
+	let list = null;
+	try {
+		list = await q('heading');
+	} catch (e) {
+		list = null;
+	}
+	S.toc = Array.isArray(list) ? list.map(function (h) {
+		return {
+			text:  wordsOf(h && h.body).replace(/\s+/g, ' ').trim(),
+			level: Math.max(1, Math.min(6, Number(h && (h.level || h.depth)) || 1)),
+			page:  0,
+		};
+	}).filter(function (e) { return e.text; }) : [];
+	S.scanned = 0;
+	drawRail();
+	locate();
+}
+
+/// Find the page each heading is on, a chunk of pages at a time.
+///
+/// ONLY WHILE THE RAIL IS OPEN, because it is the rail that wants the answer and a
+/// reader who never opens it should not pay for one. It renders and never compiles:
+/// on the compiler's side nothing happens at all, and on the renderer's side one
+/// session is built, asked for each page in turn, and freed.
+///
+/// It abandons itself the moment another build lands — `S.drawn` moves — because the
+/// pages it is halfway through reading are no longer the pages on screen.
+async function locate() {
+	// ONE SCAN AT A TIME. `S.scanned` only says a scan has FINISHED, so without this
+	// a reader who shuts the rail and opens it again starts a second walk of the book
+	// beside the first — twice the renderer's work for one answer, and on a 281-page
+	// document that is the difference between a rail that fills in and a tab that
+	// stutters.
+	if (scanning || !S.rail || !vec || !S.toc.length || S.scanned === S.drawn) return;
+	scanning = true;
+	try {
+		await scan();
+	} finally {
+		scanning = false;
+	}
+}
+
+let scanning = false;		// a page scan is walking the document right now
+
+/// The walk itself. `locate` owns the guard; this owns the answer.
+async function scan() {
+	const serial = S.drawn;
+	await getRenderer();
+	if (S.drawn !== serial || !vec) return;
+	// Every occurrence of every heading's words, with the size it was set at, so the
+	// contents entry and the heading itself can be told apart afterwards.
+	const want = S.toc.map(function (e) { return fold(e.text); });
+	const seen = S.toc.map(function () { return []; });		// [{ page, size }]
+	// A CHUNK AT A TIME, ONE SESSION AND ONE CALL EACH. One call, because a session
+	// asked twice answers with a diff and a repeated paragraph comes back empty; a
+	// chunk rather than the whole book, because the whole of the author's 281-page
+	// document is 23.7 MB of markup to hold at once and eight pages is under a
+	// megabyte.
+	try {
+		for (let a = 0; a < S.pages; a += SCAN_CHUNK) {
+			const b = Math.min(S.pages - 1, a + SCAN_CHUNK - 1);
+			const ses = renderer.session_from_artifact(vec, 'vector');
+			let markup;
+			try {
+				markup = windowOf(ses, a, b);
+			} finally {
+				try { ses.free(); } catch (e) { /* already gone */ }
+			}
+			for (const pg of pagesOfMarkup(markup, a, b)) {
+				// A heading that broke across lines is several runs, so a page is
+				// folded into one string PER SIZE and each heading looked for in each.
+				const bySize = new Map();
+				for (const r of pg.runs) {
+					const k = Math.round(r.size * 10);
+					bySize.set(k, (bySize.get(k) || '') + fold(r.text));
+				}
+				for (const [k, text] of bySize) {
+					for (let j = 0; j < want.length; j++) {
+						if (want[j] && text.indexOf(want[j]) >= 0) {
+							seen[j].push({ page: pg.page + 1, size: k / 10 });
+						}
+					}
+				}
+			}
+			await frame();
+			if (S.drawn !== serial || !vec || !S.rail) return;
+		}
+	} catch (e) {
+		return;			// the rail keeps whatever it had; nothing on screen moved
+	}
+	if (S.drawn !== serial) return;
+	// THE LARGEST SETTING WINS, AND NEVER BEFORE THE ONE ABOVE IT. The first rule
+	// separates a heading from its own contents entry; the second keeps the rail in
+	// the document's order when two chapters share a title.
+	let floor = 0;
+	for (let j = 0; j < S.toc.length; j++) {
+		const forward = seen[j].filter(function (c) { return c.page >= floor; });
+		const pool = forward.length ? forward : seen[j];
+		let best = null;
+		for (const c of pool) {
+			if (!best || c.size > best.size + 0.05) best = c;
+		}
+		S.toc[j].page = best ? best.page : 0;
+		if (best) floor = best.page;
+	}
+	S.scanned = serial;
+	drawRail();
+}
+
+/// The next animation frame, so a long scan gives the page back between chunks.
+function frame() {
+	return new Promise(function (res) {
+		if (typeof requestAnimationFrame === 'function') requestAnimationFrame(function () { res(); });
+		else setTimeout(res, 0);
+	});
+}
+
+/// Open or close the section rail.
+///
+/// A VIEW CHANGE AND NOTHING ELSE. It shows what the last build already answered; the
+/// only work it can start is the page scan, which is the renderer's and never the
+/// compiler's.
+function rail(on) {
+	S.rail = !!on;
+	if (!host) return S.rail;
+	const nav = host.querySelector('.tl-rail');
+	const b = host.querySelector('.tl-toc');
+	nav.hidden = !S.rail;
+	b.setAttribute('aria-pressed', S.rail ? 'true' : 'false');
+	b.setAttribute('aria-expanded', S.rail ? 'true' : 'false');
+	host.setAttribute('data-rail', S.rail ? '1' : '0');
+	if (S.rail) locate();
+	// The pages are drawn to the scroller's width, and the rail just took some of it.
+	resized();
+	return S.rail;
+}
+
+/// Put the sections in the rail, and mark the one the reader is in.
+function drawRail() {
+	if (!host) return;
+	const ol = host.querySelector('.tl-toclist');
+	const none = host.querySelector('.tl-tocnone');
+	none.style.display = S.toc.length ? 'none' : '';
+	if (ol.childElementCount !== S.toc.length) {
+		const frag = document.createDocumentFragment();
+		for (let i = 0; i < S.toc.length; i++) {
+			const li = document.createElement('li');
+			const a = document.createElement('button');
+			a.type = 'button';
+			a.className = 'tl-tocgo';
+			a.appendChild(document.createTextNode(''));
+			const n = document.createElement('span');
+			n.className = 'tl-tocpage';
+			a.appendChild(n);
+			li.appendChild(a);
+			frag.appendChild(li);
+			a.addEventListener('click', function () {
+				const e = S.toc[i];
+				if (e && e.page) goToPage(e.page);
+			});
+		}
+		ol.replaceChildren(frag);
+	}
+	const kids = ol.children;
+	for (let i = 0; i < S.toc.length; i++) {
+		const e = S.toc[i];
+		const li = kids[i];
+		const a = li.firstElementChild;
+		li.setAttribute('data-level', String(e.level));
+		a.firstChild.nodeValue = e.text;
+		a.lastElementChild.textContent = e.page ? String(e.page) : '';
+		a.disabled = !e.page;
+	}
+	hereNow = -2;			// whatever was marked, the list under it is new
+	markHere();
+}
+
+let hereNow = -2;		// the rail entry last marked, so a scroll costs nothing
+
+/// Mark the section the reader is inside, and only when it changes.
+///
+/// Called from every scroll, so it does the least work that says the truth: the
+/// entry is the last one that STARTS at or before the page in view, and an entry
+/// whose page is not known yet cannot be it.
+function markHere() {
+	if (!host || !S.rail) return;
+	const at = where();
+	const page = at ? at.page + 1 : 1;
+	let cur = -1;
+	for (let i = 0; i < S.toc.length; i++) if (S.toc[i].page && S.toc[i].page <= page) cur = i;
+	if (cur === hereNow) return;
+	const kids = host.querySelector('.tl-toclist').children;
+	if (hereNow >= 0 && kids[hereNow]) {
+		kids[hereNow].setAttribute('data-here', '0');
+		kids[hereNow].firstElementChild.removeAttribute('aria-current');
+	}
+	if (cur >= 0 && kids[cur]) {
+		kids[cur].setAttribute('data-here', '1');
+		kids[cur].firstElementChild.setAttribute('aria-current', 'true');
+	}
+	hereNow = cur;
 }
 
 
@@ -1117,6 +1748,11 @@ async function build(force) {
 		S.same = S.blind ? S.same + 1 : 0;
 		try {
 			await draw(out.vector);
+			// The sections, asked of the compiler in the same turn as the compile that
+			// produced these pages — see `refreshToc`. Not awaited on purpose: the
+			// pages are up and the rail filling in a moment later costs the reader
+			// nothing, whereas a rail that held the loop would.
+			refreshToc();
 			// A good build after a bad one clears the error SILENTLY. Nothing
 			// announces the fix: the reader is looking at the page they were
 			// trying to get back, and a banner saying so is in the way.
@@ -1170,7 +1806,7 @@ async function build(force) {
 	if (S.mode === 'live') {
 		says(S.error
 			? tOr('typst.watch.stale', 'Showing the last build that worked')
-			: tOr('typst.watch.live', 'Live'), S.error ? 'stale' : 'live');
+			: tOr('typst.watch.live_preview', 'Live preview'), S.error ? 'stale' : 'live');
 	}
 	if (S.queued) { S.queued = false; if (S.mode === 'live') build(false); }
 }
@@ -1301,6 +1937,8 @@ function began(path, watch) {
 	S.debounce = DEBOUNCE_MIN;
 	S.headroom = HEADROOM_MIN;
 	S.seen     = false;
+	S.toc      = [];
+	S.scanned  = 0;
 	if (!mount()) { S.mode = 'idle'; S.path = ''; return; }
 	says(tOr('typst.watch.starting', 'Laying out the pages…'), 'building');
 	// The first live view is drawn BEFORE anything is hidden, so the PDF the button
@@ -1335,6 +1973,14 @@ function stop() {
 	S.digests = {};
 	S.blind  = false;
 	S.same   = 0;
+	S.toc    = [];
+	S.scanned = 0;
+	S.tops   = [];
+	S.heights = [];
+	S.lays   = [];
+	S.laid   = 0;
+	S.pages  = 0;
+	hereNow  = -2;
 }
 
 /// A writer that KNOWS it wrote says so, rather than waiting to be polled.
@@ -1398,7 +2044,7 @@ function budgetMB(n) {
 		S.reason = '';
 		showError('');
 		offerRebuild(false);
-		says(tOr('typst.watch.live', 'Live'), 'live');
+		says(tOr('typst.watch.live_preview', 'Live preview'), 'live');
 	}
 	return S.budget;
 }
@@ -1413,9 +2059,9 @@ function budgetMB(n) {
 /// # Arguments
 /// * `n` - The 1-based page number.
 function pageBox(n) {
-	const i = Math.max(0, Math.min(Math.floor(n) - 1, S.tops.length - 1));
-	if (!S.tops.length) return null;
-	return { top: S.tops[i] * S.scale, height: S.heights[i] * S.scale };
+	const i = Math.max(0, Math.min(Math.floor(n) - 1, S.lays.length - 1));
+	if (!S.lays.length) return null;
+	return { top: S.lays[i] * S.scale, height: S.heights[i] * S.scale };
 }
 
 /// Scroll so that page `n` is at the top of the view, and draw it.
@@ -1454,8 +2100,22 @@ function state() {
 		scroll:   scroller() ? scroller().scrollTop : 0,
 		at:       where(),
 		zoom:     S.zoom,
+		fit:      S.fit,
 		dark:     S.dark,
+		rail:     S.rail,
+		gap:      PAGE_GAP,
+		sheets:   band ? (band.p1 - band.p0 + 1) : 0,
+		band:     band ? { p0: band.p0, p1: band.p1 } : null,
+		toc:      S.toc.map(function (e) {
+			return { text: e.text, level: e.level, page: e.page };
+		}),
+		located:  S.scanned === S.drawn && S.drawn > 0,
 	};
+}
+
+/// The sections as the rail has them: `{ text, level, page }`, in document order.
+function sections() {
+	return state().toc;
 }
 
 if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
@@ -1479,7 +2139,11 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		state:    state,
 		pageBox:  pageBox,
 		goToPage: goToPage,
+		rail:     rail,
+		sections: sections,
+		fitPage:  fitPage,
 	};
 }
 
-export { began, stop, touched, rebuild, budgetMB, zoom, dark, state, pageBox, goToPage };
+export { began, stop, touched, rebuild, budgetMB, zoom, dark, state, pageBox, goToPage,
+	rail, sections, fitPage };

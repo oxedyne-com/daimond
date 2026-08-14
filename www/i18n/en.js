@@ -220,6 +220,9 @@
 	'push.err_host':     'Enter the host the push goes to, as in github.com, or empty the token box to remove the credential.',
 	'push.err_not_held': 'That was not accepted, so no push credential is held. Check the host and the token.',
 	'push.not_resealed': 'Your passphrase changed, but the push token could not be re-encrypted under it. Pushing works until you reload. Set the token again to keep it.',
+	// What the token is CALLED, for a list of what did not survive a passphrase
+	// change. Never shown on its own; the sentence above is what a person reads.
+	'push.the_token':    'your push token',
 
 	// ── The devices that sync this account ─────────────────────
 	// The list is what it says it is: devices that have SYNCED. A linked device
@@ -363,6 +366,8 @@
 	'tile.daimon_reset_body': 'This daimon’s conversation ({n} messages) is discarded, and the next instruction starts a new one. Nothing goes into the crystal — fold it first if any of it is worth keeping. The crystal, the files and the links are untouched.',
 	'tile.daimon_reset_ok':   'Discard the conversation',
 	'tile.daimon_reset_done': 'A fresh daimon. The crystal is untouched.',
+	'tile.daimon_reset_busy_title': 'The daimon is still working',
+	'tile.daimon_reset_busy': 'This daimon is in the middle of a turn. Its answer would land in the conversation you are about to discard, and so would the conversation the model is holding — so nothing is discarded yet. Stop the turn first: while it runs, the composer’s button is Stop.',
 	'tile.model_workers': 'Workers',
 	'tile.model_vision': 'Workers, images',
 	'tile.model_vision_help': 'The model a worker runs on when its task names an image. Daimond cannot check that a model can see, so the choice is yours.',
@@ -2042,11 +2047,29 @@
 	'changepass.err_short':       'Use at least 8 characters.',
 	'changepass.err_same':        'That is your current passphrase. Choose a different one.',
 	'changepass.failed':          'That did not work',
-	'changepass.failed_body':     'Your current passphrase did not match. Nothing was changed.',
+	'changepass.failed_body':     'Nothing was changed, and your current passphrase still works — carry on using it. This device could not rewrite its stored keys, which is not something you did wrong. Try again in a moment.',
 	'changepass.careful':         'Careful',
 	'changepass.key_not_resealed': 'The passphrase changed, but your API key could not be re-encrypted. Re-enter it in Settings.',
+	'changepass.mail_not_resealed': 'These mailboxes could not be re-encrypted under the new passphrase and need their passwords again: {list}.',
+	'changepass.mail_not_unsealed': 'These mailboxes could not be read under the old passphrase, so they still need their passwords set again: {list}.',
+	'changepass.models_not_resealed': 'These providers could not be re-encrypted under the new passphrase and need their keys again: {list}.',
+	'changepass.models_not_unsealed': 'These providers already had unreadable keys before the change, and still need their keys set again: {list}.',
+	'changepass.all_of_them': 'all of them',
+	// The name of the API key in a list of what did not survive. The sentence a
+	// person reads is `changepass.key_not_resealed` above.
+	'changepass.the_api_key': 'your API key',
+	'changepass.search_not_resealed': 'These search services could not be re-encrypted under the new passphrase and need their keys again: {list}.',
+	'changepass.search_not_unsealed': 'These search services already had unreadable keys before the change, and still need their keys set again: {list}.',
+	'changepass.voice_not_resealed': 'Your forge voice could not be re-encrypted under the new passphrase. Set it again from the line the forge printed for you.',
+	'changepass.voice_not_unsealed': 'Your forge voice could not be read under the old passphrase, so it still needs setting again from the line the forge printed for you.',
+	// A module that seals something failed in a way it had no words of its own
+	// for. Generic on purpose and rare by design: every participant in
+	// js/rekey.js carries its own sentence, and this is what is left if one does
+	// not — a failure named badly still being better than a failure unmentioned.
+	'changepass.rekey_generic': '{who}: {list}.',
+	'changepass.rekey_failed':  'Some of what is stored here could not be re-encrypted under the new passphrase. Check your keys and mailbox passwords in Settings.',
 	'changepass.changed':         'Passphrase changed',
-	'changepass.changed_body':    'Your new passphrase is active. Your saved API key was re-encrypted under it.',
+	'changepass.changed_body':    'Your new passphrase is active.',
 	'changepass.passkey_stale':   'Your passkey could not be updated, so it will ask for the new passphrase. Re-add it from Settings.',
 
 	// ── Backups ────────────────────────────────────────────────
@@ -2313,7 +2336,7 @@
 	// reader is told why a loop stopped, so they say what to do about it.
 	'typst.watch.starting': 'Laying out the pages…',
 	'typst.watch.building': 'Rebuilding…',
-	'typst.watch.live':     'Live',
+	'typst.watch.live_preview': 'Live preview',
 	'typst.watch.stale':    'Showing the last build that worked',
 	'typst.watch.held':     'Rebuilding stopped',
 	'typst.watch.dead':     'The compiler has stopped',
@@ -2324,9 +2347,16 @@
 	'typst.watch.page': 'Page',
 	'typst.watch.zoom_out': 'Smaller',
 	'typst.watch.zoom_in': 'Bigger',
-	'typst.watch.fit': 'Fit the width',
-	'typst.watch.night': 'Dark paper',
-	'typst.watch.day': 'Light paper',
+	// The two toggles in the bar say one word each, and their hover titles carry
+	// the longer form: bar width is the scarce thing, not explanation.
+	'typst.watch.fit_width': 'Fit the width',
+	'typst.watch.fit_page': 'Fit the whole page',
+	'typst.watch.paper_dark': 'Dark',
+	'typst.watch.paper_light': 'Light',
+	'typst.watch.paper_dark_why': 'Dark paper, for reading at night',
+	'typst.watch.paper_light_why': 'Light paper',
+	'typst.watch.sections': 'Sections',
+	'typst.watch.sections_none': 'This document has no headings to list.',
 	'typst.watch.dead_why': 'The compiler ran out of memory on this document and cannot be restarted without reloading the page. The pages below are the last ones that built. Reload, and open the same file again.',
 
 	// ── Toasts ─────────────────────────────────────────────────
@@ -2472,11 +2502,12 @@
 
 	// ── The Improve panel ──────────────────────────────────────
 	// Where a note about Daimond is written, and where the proposals made from
-	// notes are read and voted on. See js/improve.js and dev/IMPROVE_CONTRACT.md.
+	// notes are read and voted on. Both halves now go through the Oregami forge.
+	// See js/improve.js and dev/IMPROVE_CONTRACT.md.
 	'panel.improve':        'Improve',
 	'improve.notes':        'Notes',
 	'improve.proposals':    'Proposals',
-	'improve.info':      'What this panel is, in the guide',
+	'improve.info':         'What this panel is, in the guide',
 	'improve.box_label':    'Write a note about Daimond',
 	'improve.box_ph':       'Where it is, what you expected, and what happened instead.',
 	'improve.with':         'What goes with it',
@@ -2485,13 +2516,20 @@
 	'improve.keep_help':    'Store this note on this device. Nothing is sent.',
 	'improve.send':         'Send',
 	'improve.send_help':    'Send exactly what is above to Oxedyne. Nothing else goes with it.',
-	'improve.as':           'Goes as @{handle}',
-	'improve.as_none':      'You have no account, so a note can only be kept here.',
+	// A note goes under the writer's VOICE. No handle and no name travels with
+	// it, so nothing here may name the writer.
+	'improve.as_voice':     'Goes to the forge under your voice, where anyone with the repository can read it.',
+	'improve.as_novoice':   'You have no voice, so a note can only be kept here.',
+	'improve.title_hint':   'The first line is the title of the proposal. What happened goes underneath it.',
+	'improve.no_title':     'The first line is the title. Write one, then what happened underneath.',
 	'improve.nothing':      'Write something first.',
-	'improve.not_sent':     'It could not be sent, so it is kept here. Nothing has gone anywhere.',
+	// Said after a refusal. Nothing is queued and nothing is tried again, so a
+	// translation must not promise a retry.
+	'improve.kept_here':    'Your note is kept here and nothing tried again.',
 	'improve.copied':       'Copied.',
 	'improve.state_kept':   'Kept here',
 	'improve.state_sent':   'Sent {date}',
+	'improve.state_sent_n': 'Sent {date}, and is proposal {n}',
 	'improve.drop':         'Delete this note',
 	'improve.drop_ask':     'Delete this note? It is only on this device, so there is no other copy.',
 	'improve.drop_ok':      'Delete',
@@ -2502,20 +2540,81 @@
 	'improve.ctx_pointer':  'pointer',
 	'improve.ctx_palette':  'palette {name}',
 	'improve.ctx_panels':   'panels open: {list}',
-	'improve.no_props':     'No proposals yet. They are made from notes, and they arrive with a new build.',
-	'improve.as_at':        'Counts as at build {build}. They move when Daimond updates.',
-	'improve.as_at_none':   'Counts move when Daimond updates.',
+
+	// The voice: a per-person secret the forge looks the writer up by. It is
+	// held here encrypted under the passphrase, and it never goes in an address.
+	'improve.voice_held':        'A voice is held on this device, encrypted under your passphrase.',
+	'improve.voice_none':        'No voice is held here, so a note can only be kept.',
+	'improve.voice_set':         'Set a voice',
+	'improve.voice_replace':     'Replace the voice',
+	'improve.voice_help':        'The line the forge printed for you. It is kept encrypted here and never put in an address.',
+	'improve.voice_ph':          'Paste the line the forge printed for you',
+	'improve.voice_save':        'Save the voice',
+	'improve.voice_saved':       'Your voice is held here, encrypted.',
+	'improve.voice_failed':      'That voice could not be stored.',
+	'improve.voice_forget':      'Forget it',
+	'improve.voice_forget_help': 'Remove the copy on this device.',
+	'improve.voice_forgotten':   'The copy on this device is gone.',
+	'improve.voice_ask_forget':  'Forget your voice on this device? The forge showed it once and cannot show it again.',
+
+	// Proposals, read from the forge as the panel is looked at. Nothing tells a
+	// reader when one is answered, and no string here may suggest otherwise.
+	'improve.live_note':    'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.',
+	'improve.loading':      'Reading the proposals…',
+	'improve.none_shown':   'Nothing could be read just now.',
+	'improve.none_yet':     'No proposals here yet. Yours would be the first.',
+	'improve.reading':      'Reading it…',
+	'improve.more':         'Show older',
+	'improve.count.one':    '{n} proposal',
+	'improve.count.other':  '{n} proposals',
+	'improve.by':           'from {who}',
+	'improve.said_n.one':   '{n} reply',
+	'improve.said_n.other': '{n} replies',
+	'improve.built_on':     'written on build {build}',
+	'improve.closed_by':    'closed by mark {mark}',
+	'improve.move_floor':   'A note follows its content across a file boundary only when the change is recognised as a move, and the floor for that is 64 bytes. Cut less than that from one file into another and the history holds a deletion and an insertion, so a note anchored there honestly reports its content deleted. The note is right and the history is right.',
 	'improve.state_open':   'Open',
+	// The forge calls this state `accepted`; the panel has always called it
+	// Being done, and the eight locales already hold that phrase.
 	'improve.state_taken':  'Being done',
 	'improve.state_done':   'Done',
 	'improve.state_declined': 'Declined',
-	'improve.shipped_in':   'Shipped in build {build}',
-	'improve.from_notes.one':   'From {n} note',
-	'improve.from_notes.other': 'From {n} notes',
 	'improve.tally':        '{yes} for, {no} against',
 	'improve.do':           'Do this',
 	'improve.not':          'Not this',
-	'improve.vote_held':    'Your vote is here and has not been counted yet.',
+	'improve.vote_novoice': 'Set a voice to vote on this.',
+	'improve.vote_off':     'Press again to take your vote back off.',
+	'improve.reply':        'Say it',
+	'improve.reply_ph':     'Say something about this proposal.',
+	'improve.reply_help':   'Send exactly what is in this box. Nothing else goes with it.',
+
+	// What the forge refused, said in words. None of them names which allowance
+	// ran out: a limit that reports its own state is one somebody can pace
+	// against, and a vote and a proposal draw on different budgets.
+	//
+	// TRANSLATORS — `improve.err_absent` is a privacy rule, not a wording
+	// preference. The forge answers `absent` for BOTH "no such repository" and
+	// "this repository is private", deliberately and permanently, because any
+	// token, status or timing that separated them would republish exactly what a
+	// private repository is withholding. The sentence must therefore be true in
+	// both cases: "there is no such repository" is false when it is private, and
+	// "this repository is private" leaks. Say only that it is not available to
+	// you. See dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1).
+	'improve.err_absent':    'This repository is not available to you.',
+	'improve.err_unvoiced':  'The forge was given no voice, so it refused.',
+	'improve.err_unknown':   'The forge does not recognise your voice. Set it again from the line the forge printed for you.',
+	'improve.err_unpermitted': 'Your voice may not do that here.',
+	'improve.err_throttled': 'Too many requests just now. Wait a little, then try again.',
+	'improve.err_throttled_address': 'Too many requests from this address just now. Wait a little, then try again.',
+	'improve.err_throttled_failing': 'Too many failing requests just now. Wait a little, then try again.',
+	'improve.err_malformed': 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.',
+	'improve.err_no_proposal': 'There is no such proposal here.',
+	'improve.err_unsupported': 'The forge does not answer that.',
+	'improve.err_internal':  'Something went wrong at the forge. This is not your fault.',
+	'improve.err_gateway':   'Daimond could not reach the forge just now.',
+	'improve.err_session':   'Daimond is not signed in just now, so it could not reach the forge.',
+	'improve.err_toolong':   'That is longer than the forge accepts. Shorten it, or send it in two.',
+	'improve.err_offline':   'Nothing could be sent just now.',
 
 	'trash.nothing': 'Nothing has been deleted.',
 	'trash.kept_days': 'Kept for {days} days, then destroyed.',

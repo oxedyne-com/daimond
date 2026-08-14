@@ -311,6 +311,79 @@
 		refreshCredits();
 	}
 
+	/// Re-seal every provider key under the passphrase that has just replaced the old one.
+	///
+	/// Called AFTER `DaimondIdentity.changePassphrase`. No read-out phase is needed, unlike
+	/// mail's: a key is already decrypted in `plain` for the length of an unlocked session, so
+	/// only the wrapping has to be redone.
+	///
+	/// **This was missing until 2026-08-14 and the failure was silent and total**: nothing
+	/// re-wrapped `keyEnc`, so after a passphrase change every provider key was unreadable,
+	/// `ready()` went false and the app lost its model connection — while the notice on screen
+	/// said the saved key HAD been re-encrypted. A message that says the opposite of what
+	/// happened is worse than no message.
+	///
+	/// A provider whose key cannot be re-sealed is NAMED, because "OpenRouter needs its key
+	/// again" can be acted on and "something went wrong" cannot.
+	/// A provider named so the user can tell two of them apart.
+	///
+	/// `p.name` alone is not enough: `addProvider` defaults it to "Custom provider"
+	/// for any unknown id, so somebody with two custom endpoints would be told
+	/// "Custom provider needs its key again" and have no way to know which. The URL
+	/// is what actually distinguishes them, so it is appended whenever the name is
+	/// not unique across the store.
+	function labelOf(id) {
+		var p = store.providers[id];
+		if (!p) return id;
+		var nm = p.name || id, seen = 0;
+		for (var other in store.providers) {
+			if ((store.providers[other].name || other) === nm) seen++;
+		}
+		return seen > 1 && p.url ? nm + ' (' + p.url + ')' : nm;
+	}
+
+	async function resealAfterRekey() {
+		var failed = [], unread = [];
+		for (var id in store.providers) {
+			var p = store.providers[id];
+			var key = plain[id];
+			if (!key) {
+				// Sealed, and `unseal` could not open it — it turns a failed unwrap
+				// into an empty string, so a key that was ALREADY unreadable arrives
+				// here indistinguishable from a provider with no key at all. Told
+				// apart by the ciphertext still being there, and reported: this is
+				// the one moment the app holds both the fact and the user's
+				// attention, and saying nothing is how a dead key stays dead.
+				if (p.keyEnc) unread.push(labelOf(id));
+				continue;
+			}
+			try {
+				p.keyEnc = await DaimondIdentity.wrap(key);
+				p.key    = '';					// never leave a plaintext copy behind
+			} catch (e) { failed.push(labelOf(id)); }
+		}
+		save();
+		return { ok: !failed.length && !unread.length, failed: failed, unread: unread };
+	}
+
+	/// Take part in a passphrase change, registered HERE beside the seal.
+	///
+	/// NO READ-OUT PHASE, deliberately: a key is already decrypted in `plain` for
+	/// the length of an unlocked session, so there is nothing to read out under
+	/// the old key and nothing held afterwards that was not held before. `mail.js`
+	/// is the other shape and needs both phases; the registry expresses both
+	/// rather than bending either.
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'models',
+			reseal: resealAfterRekey,
+			sentence: function (kind, list) {
+				return t(kind === 'unread' ? 'changepass.models_not_unsealed'
+					: 'changepass.models_not_resealed', { list: list.join(', ') });
+			},
+		});
+	}
+
 	/// Store a key for a provider, sealed under the passphrase where there is one.
 	async function setKey(id, key) {
 		var p = store.providers[id];
@@ -2157,6 +2230,8 @@
 		pick:           pick,
 		init:           init,
 		unseal:         unseal,
+		/// Re-wrap every key after a passphrase change. The keys never leave this module.
+		resealAfterRekey: resealAfterRekey,
 		lock:           lock,
 		known:          function () { return KNOWN; },
 		// Which wire dialect an endpoint speaks, and the headers it wants. Exported because

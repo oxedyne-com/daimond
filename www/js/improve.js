@@ -8,15 +8,36 @@
    that page already calls it: a head, two chips, a closer, rows,
    and the note box.
 
+   ── A NOTE IS A PROPOSAL NOW ────────────────────────────────
+
+   This panel used to post a note to `/api/note` and read its
+   proposals out of a file that shipped with the build. There has
+   never been a `/api/note` handler in the gateway, so every note a
+   tester pressed Send on was answered 404 and kept; and
+   `assets/proposals.json` shipped permanently empty, so the
+   proposals half drew nothing. Two carefully reasoned halves of one
+   feature that had never met.
+
+   Both now go through the one door the gateway actually has:
+
+       GET  /api/improve?account=&repo=[&state=][&from=][&limit=]
+       GET  /api/improve?account=&repo=&n=<number>
+       POST /api/improve?account=&repo=                 open one
+       POST /api/improve?account=&repo=&n=<number>      comment
+       POST /api/improve?account=&repo=&n=&vote=1       vote
+
+   which the gateway forwards over loopback to the Oregami forge.
+   The compose box OPENS A PROPOSAL: the first line is its title and
+   the rest is its body. Keep still keeps, and a note that could not
+   be sent is still kept here and says so.
+
    ── THE ONE RULE THIS FILE EXISTS TO KEEP ───────────────────
 
    A NOTE LEAVES THIS DEVICE ONLY WHEN A PERSON PRESSES SEND ON
    THAT ONE NOTE, AND WHAT LEAVES IS EXACTLY THE CHARACTERS ON
    THE SCREEN AT THAT MOMENT.
 
-   Nothing about a note is queued, retried, batched or synced. A
-   VOTE is two integers and may queue, because two integers cannot
-   carry anything. Numbers may wait; words may not.
+   Nothing about a note is queued, retried, batched or synced.
 
    `telemetry.js` keeps the same promise from the other side and
    the contrast is worth stating, because the two files look like
@@ -24,11 +45,18 @@
    SHAPE: its payload can only ever be integers, so no edit to it
    can carry a sentence. Free text has no shape to hide behind, so
    this file makes leaking impossible by ACT: there is no sender
-   until the press, `send()` builds its body from the box and the
-   one visible row and from nothing else, and the body IS the note
-   -- no JSON envelope, because an envelope is somewhere a field
-   can hide. What left is what you read, and dev/verify_improve.mjs
-   asserts that by comparing the request against the screen.
+   until the press, `outgoing()` reads the screen and `split()` CUTS
+   what it read into the two fields a proposal is -- a cut, never an
+   addition, so putting the two back together with one newline gives
+   the characters that were on the screen, and dev/verify_improve.mjs
+   settles that by comparing two strings.
+
+   The old form had no envelope at all, and said so: an envelope is
+   somewhere a field can hide. A proposal has a title and a body, so
+   an envelope there must be, and what replaces the argument is a
+   check rather than a shape -- the request's FIELD SET is asserted
+   to be exactly `title`, `body` and at most `build`, so a fifth
+   field has to defeat a check rather than merely be forgotten.
 
    And a note that cannot be sent STAYS HERE AND SAYS SO. There is
    no retry: a queue of text outlives the consent that filled it,
@@ -40,8 +68,19 @@
    whether they were on a phone, which palette they were wearing.
    That is gathered for them and shown as one line, in the exact
    characters that will be appended, in a row with a CLOSER on it.
-   Closing the row takes the line off the screen and off the wire.
-   There is no third state and nothing is gathered silently.
+   Closing the row takes the line off the screen and off the wire --
+   and off the `build` field with it, since that field carries the
+   same characters the row's first item shows. There is no third
+   state and nothing is gathered silently.
+
+   ── VOTES ARE BUILT DARK ────────────────────────────────────
+   Contract §9 puts voting on the forge, and the forge's vote route
+   is not built yet. So the control is here and DRAWS ONLY WHEN THE
+   ANSWER CARRIES `votes`. A visible control that reaches nothing is
+   the defect this file was rewritten to remove; adding a second one
+   while removing the first would be a poor trade. When the forge
+   starts answering `votes`, the control appears on its own with no
+   edit here.
 
    Attaches one global, `window.DaimondImprove`.
    ============================================================ */
@@ -84,12 +123,33 @@
 
 	function el(id) { return document.getElementById(id); }
 
+	// ── The repository this panel reads ────────────────────────
+	//
+	// One account, one repository, one panel: the contract has no
+	// cross-repository listing and this is not a setting. It names Daimond's own
+	// forge repository, which is the same for every tester, so a knob for it
+	// would be a knob whose only correct value is this one.
+
+	var ACCOUNT = 'oxedyne';
+	var REPO    = 'daimond';
+
+	/// How many proposals one page carries. Well inside the contract's 1..200,
+	/// and small enough that opening the panel on a large repository draws
+	/// something immediately rather than after two hundred records.
+	var PAGE = 25;
+
 	// ── The store ──────────────────────────────────────────────
 	//
 	// One key, namespaced per account by accounts.js like every other
 	// `daimond-*`. Notes are NOT in the sync parcel and are not coming: a note is
 	// a report of a moment on the device it happened on, and making them travel
 	// needs a merge rule this contract does not have.
+	//
+	// VOTES ARE NOT HERE ANY MORE. They used to be, with a queue that carried one
+	// made offline. Contract §9 puts the tally on the forge, and a copy here
+	// would be a second store of truth about one proposal -- which is exactly
+	// what §9 rejected both alternatives for. What the forge says is what is
+	// drawn.
 
 	var KEY = 'daimond-improve';
 	var MAX_NOTES = 200;			// past this the oldest KEPT note goes; sent ones stay
@@ -102,6 +162,11 @@
 		return (typeof v === 'number' && isFinite(v) && v > 0) ? Math.floor(v) : 0;
 	}
 
+	/// A whole number, or 0.
+	function whole(v) {
+		return (typeof v === 'number' && isFinite(v)) ? Math.floor(v) : 0;
+	}
+
 	/// One stored note, defended against whatever was in storage.
 	function cleanNote(r) {
 		if (!r || typeof r !== 'object') return null;
@@ -112,33 +177,23 @@
 			at:   ms(r.at) || Date.now(),
 			text: text.slice(0, MAX_CHARS),
 			sent: ms(r.sent),
+			/// The proposal this note became, or 0. Kept so a row can name it: a
+			/// tester who sent something and was told only "Sent" has no way back
+			/// to what happened to it.
+			n:    Math.max(0, whole(r.n)),
 		};
-	}
-
-	/// One stored vote. `d` is 1 for "do this" and 2 for "not this"; anything
-	/// else is not a vote and is dropped rather than guessed at.
-	function cleanVote(r) {
-		if (!r || typeof r !== 'object') return null;
-		var d = (r.d === 1 || r.d === 2) ? r.d : 0;
-		if (!d) return null;
-		return { d: d, at: ms(r.at) || Date.now(), sent: r.sent ? 1 : 0 };
 	}
 
 	function load() {
 		if (_st) return _st;
-		_st = { notes: [], votes: {} };
+		_st = { notes: [] };
 		try {
 			var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
 			(Array.isArray(raw.notes) ? raw.notes : []).forEach(function (n) {
 				var c = cleanNote(n);
 				if (c) _st.notes.push(c);
 			});
-			var votes = raw.votes || {};
-			Object.keys(votes).forEach(function (id) {
-				var c = cleanVote(votes[id]);
-				if (c) _st.votes[String(id)] = c;
-			});
-		} catch (e) { _st = { notes: [], votes: {} }; }
+		} catch (e) { _st = { notes: [] }; }
 		return _st;
 	}
 
@@ -161,7 +216,7 @@
 			}
 			if (over > 0) s.notes.length = MAX_NOTES;
 		}
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, notes: s.notes, votes: s.votes })); }
+		try { localStorage.setItem(KEY, JSON.stringify({ v: 2, notes: s.notes })); }
 		catch (e) { log('could not write the notes', e); }
 	}
 
@@ -237,7 +292,7 @@
 	/// THE ONE FUNCTION THAT DECIDES WHAT LEAVES. The box's value and, when the
 	/// row is still on screen, the text that row is showing -- read off the node,
 	/// not rebuilt, so a line the user cannot see cannot be in it. `send()` calls
-	/// this and posts the result; nothing else contributes.
+	/// this, `split()` cuts the result in two, and nothing else contributes.
 	function outgoing() {
 		var box = el('improve-box');
 		var body = box ? String(box.value || '').trim() : '';
@@ -246,6 +301,27 @@
 		var line = el('improve-with-text');
 		var ctx  = line ? String(line.textContent || '').trim() : '';
 		return ctx ? (body + '\n\n' + ctx) : body;
+	}
+
+	/// The note, cut into the fields a proposal is made of, or null when there is
+	/// no title to make one with.
+	///
+	/// A CUT AND NEVER AN ADDITION. `title` is the characters before the first
+	/// newline and `body` is the characters after it, both verbatim, so
+	/// `title + '\n' + body` is exactly what `outgoing()` read off the screen --
+	/// which is the property the verifier settles by comparing two strings. A
+	/// note with no newline in it is all title and an empty body.
+	///
+	/// `build` is the sealed build identifier contract §6 asks a panel to write,
+	/// and it travels ONLY while the "What goes with it" row is on screen: those
+	/// are the same characters that row's first item shows, so closing the row
+	/// takes them off the wire here as well as out of the body.
+	function split(text) {
+		var i     = text.indexOf('\n');
+		var title = (i < 0) ? text : text.slice(0, i);
+		var body  = (i < 0) ? ''   : text.slice(i + 1);
+		if (!title.trim()) return null;
+		return { title: title, body: body, build: contextOff() ? '' : _build };
 	}
 
 	/// Redraw the row that says what goes with the note. Left closed if the user
@@ -260,27 +336,172 @@
 		row.hidden = !ctx;
 	}
 
-	/// Who a sent note goes as. An account's public handle, minted by the
-	/// gateway; identity.js only ever copies it.
-	///
-	/// A user must never find out AFTERWARDS that their name went too, so this
-	/// is beside the Send button and not in a help text.
-	function handle() {
-		try { return (window.DaimondIdentity && DaimondIdentity.handle()) || ''; }
-		catch (e) { return ''; }
+	// ── The voice a proposal is written with ───────────────────
+	//
+	// `voice.js` holds it, encrypted under the user's passphrase, and this panel
+	// is the only surface that has ever needed one. Without a place to SET it the
+	// whole write half would be unreachable, which is the defect this file was
+	// rewritten to remove -- so the place is here, beside the button that needs
+	// it, rather than in a settings screen a tester would have to be told about.
+	//
+	// The secret never leaves this function's arguments: it is read off the input,
+	// handed to `DaimondVoice.set`, and the input is emptied. Nothing here logs
+	// it, draws it, or puts it anywhere a later reader could find it.
+
+	function voice() { return window.DaimondVoice || null; }
+
+	/// Is a voice held on this device? Presence only -- reading it needs the
+	/// passphrase, and that question is asked at the moment of a request.
+	function hasVoice() {
+		var v = voice();
+		try { return !!(v && v.has()); } catch (e) { return false; }
 	}
 
+	var _voiceOpen = false;			// whether the "set a voice" form is showing
+
+	/// The row under the buttons: whether a voice is held, and how to change it.
+	/// Built here rather than in the markup because the markup is another lane's
+	/// file and every part of it is drawn from this one anyway.
+	function drawVoice() {
+		var write = document.querySelector('#panel-improve .imp-write');
+		var say   = el('improve-say');
+		if (!write) return;
+		var host = el('improve-voice');
+		if (!host) {
+			host = document.createElement('div');
+			// `.imp-acts` as well as `.imp-voice`: the first is an existing rule
+			// that lays a row of buttons out with a sentence above them, which is
+			// exactly this row's shape. Reusing it means this panel needs no new
+			// stylesheet rule to be legible, the same trick `#improve-hint` plays
+			// with `.imp-as`. Without it the sentence and the buttons run together
+			// on one line, which is what the first draft did.
+			host.className = 'imp-acts imp-voice';
+			host.id = 'improve-voice';
+			if (say) write.insertBefore(host, say);
+			else write.appendChild(host);
+		}
+		host.innerHTML = '';
+		if (!voice()) return;			// no voice.js in this build
+
+		var line = document.createElement('span');
+		line.className = 'imp-as';
+		line.id = 'improve-voice-say';
+		line.textContent = hasVoice()
+			? tOr('improve.voice_held', 'A voice is held on this device, encrypted under your passphrase.')
+			: tOr('improve.voice_none', 'No voice is held here, so a note can only be kept.');
+		host.appendChild(line);
+
+		if (!_voiceOpen) {
+			host.appendChild(button('imp-note-copy', 'improve-voice-open',
+				hasVoice() ? tOr('improve.voice_replace', 'Replace the voice')
+					: tOr('improve.voice_set', 'Set a voice'),
+				tOr('improve.voice_help', 'The line the forge printed for you. It is kept encrypted here and never put in an address.')));
+			if (hasVoice()) {
+				host.appendChild(button('imp-note-copy', 'improve-voice-forget',
+					tOr('improve.voice_forget', 'Forget it'),
+					tOr('improve.voice_forget_help', 'Remove the copy on this device.')));
+			}
+			return;
+		}
+
+		var input = document.createElement('input');
+		input.type = 'password';
+		input.className = 'imp-box';
+		input.id = 'improve-voice-in';
+		input.autocomplete = 'off';
+		input.spellcheck = false;
+		input.placeholder = tOr('improve.voice_ph', 'Paste the line the forge printed for you');
+		input.setAttribute('aria-label', tOr('improve.voice_ph', 'Paste the line the forge printed for you'));
+		host.appendChild(input);
+		host.appendChild(button('imp-send', 'improve-voice-save', tOr('improve.voice_save', 'Save the voice')));
+		host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
+	}
+
+	/// Take the secret off the input and hand it to voice.js, which wraps it.
+	/// The input is emptied whatever happened: a secret left in a field is a
+	/// secret in a screenshot.
+	async function saveVoice() {
+		var input = el('improve-voice-in');
+		if (!input) return false;
+		var raw = String(input.value || '');
+		input.value = '';
+		var v = voice();
+		if (!v) return false;
+		var why = '';
+		try { why = v.check(raw); } catch (e) { why = ''; }
+		if (why) { flash(why); return false; }
+		try { await v.set(raw); }
+		catch (e) { flash(e && e.message ? String(e.message) : tOr('improve.voice_failed', 'That voice could not be stored.')); return false; }
+		_voiceOpen = false;
+		flash(tOr('improve.voice_saved', 'Your voice is held here, encrypted.'));
+		render();
+		return true;
+	}
+
+	/// Forget the voice on this device. It asks, because the forge cannot give it
+	/// back: a voice is minted once and shown once.
+	async function forgetVoice() {
+		var v = voice();
+		if (!v) return false;
+		var ok = true;
+		try {
+			if (window.DaimondCore && DaimondCore.confirm) {
+				ok = await DaimondCore.confirm(
+					tOr('improve.voice_ask_forget',
+						'Forget your voice on this device? The forge showed it once and cannot show it again.'),
+					tOr('improve.voice_forget', 'Forget it'),
+					{ title: tOr('improve.voice_forget', 'Forget it') });
+			}
+		} catch (e) { ok = true; }
+		if (!ok) return false;
+		try { v.clear(); } catch (e) { /* nothing was stored */ }
+		flash(tOr('improve.voice_forgotten', 'The copy on this device is gone.'));
+		render();
+		return true;
+	}
+
+	/// The line beside Send, saying what a note goes as.
+	///
+	/// A user must never find out AFTERWARDS that something about them went too,
+	/// so this is beside the button and not in a help text. It no longer names a
+	/// handle: what the forge attributes a proposal to is the VOICE, and the
+	/// browser never learns that voice's name -- there is no name on the wire.
 	function drawAs() {
-		var as = el('improve-as'), send = el('improve-send');
-		if (!as) return;
-		var h = handle();
-		as.textContent = h
-			? tOr('improve.as', 'Goes as @{handle}', { handle: h })
-			: tOr('improve.as_none', 'You have no account, so a note can only be kept here.');
-		// Without an account there is nothing to send AS, and the gateway would
-		// refuse it. The button is hidden rather than shown-and-inert: a control
-		// that does nothing when pressed teaches people to distrust every control.
-		if (send) send.hidden = !h;
+		// `#improve-acts .imp-send` AND NOT `#improve-send`, which does not exist:
+		// the markup gives that button a class and no id. This file asked for it
+		// by id, got null, and the guard below silently did nothing -- so Send has
+		// been offered on every build to every user with nothing to send as, since
+		// the panel was written. A verifier that asked for the same missing id
+		// would have agreed with it: an absent locator reports itself hidden.
+		var as = el('improve-as');
+		var send = document.querySelector('#panel-improve #improve-acts .imp-send');
+		if (as) {
+			as.textContent = hasVoice()
+				? tOr('improve.as_voice', 'Goes to the forge under your voice, where anyone with the repository can read it.')
+				: tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.');
+		}
+		// Without a voice there is nothing to send AS, and the forge would refuse
+		// it. The button is hidden rather than shown-and-inert: a control that
+		// does nothing when pressed teaches people to distrust every control.
+		if (send) send.hidden = !hasVoice();
+		drawHint();
+	}
+
+	/// The one sentence a person needs before they press Send: the first line is
+	/// the title. Drawn beside the buttons rather than in the placeholder, which
+	/// vanishes the moment anybody types.
+	function drawHint() {
+		var acts = el('improve-acts');
+		if (!acts) return;
+		var hint = el('improve-hint');
+		if (!hint) {
+			hint = document.createElement('span');
+			hint.className = 'imp-as';
+			hint.id = 'improve-hint';
+			acts.appendChild(hint);
+		}
+		hint.textContent = tOr('improve.title_hint',
+			'The first line is the title of the proposal. What happened goes underneath it.');
 	}
 
 	// ── Keeping and sending ────────────────────────────────────
@@ -294,6 +515,7 @@
 			at:   Date.now(),
 			text: String(text).slice(0, MAX_CHARS),
 			sent: ms(sentAt),
+			n:    0,
 		};
 		s.notes.unshift(rec);
 		save();
@@ -319,54 +541,76 @@
 		return rec;
 	}
 
-	/// Send one note, and store it either way.
+	/// Open a proposal from one note's characters.
 	///
-	/// THE WHOLE OF WHAT LEAVES IS `text`, and `text` is what `outgoing()` read
-	/// off the screen. `text/plain`, no envelope, no query string, no header
-	/// carrying anything -- so "what left is what you read" is a claim a verifier
-	/// can settle by comparing two strings.
+	/// THE WHOLE OF WHAT LEAVES is these three fields, and all three came out of
+	/// `split()`, which cut what `outgoing()` read off the screen. The field set
+	/// is asserted by dev/verify_improve.mjs, so a fourth field has to defeat a
+	/// check rather than merely be forgotten.
 	///
 	/// A failure is not retried and nothing is queued. The note is kept, the row
 	/// says so, and Copy is there for a person who wants to carry it themselves.
-	async function post(text) {
-		var res;
-		try {
-			res = await fetch('/api/note', {
-				method:      'POST',
-				credentials: 'same-origin',
-				headers:     { 'Content-Type': 'text/plain; charset=utf-8' },
-				body:        text,
-			});
-		} catch (e) { return false; }			// offline, or no gateway in this build
-		return !!(res && res.ok);
+	async function post(parts) {
+		var f = new URLSearchParams();
+		f.set('title', parts.title);
+		f.set('body',  parts.body);
+		if (parts.build) f.set('build', parts.build);
+		return await ask(route(''), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		});
+	}
+
+	/// What a refusal leaves on the screen after a Send: why it did not go, and
+	/// that the note is still here.
+	function keptAfter(a) {
+		return saying(a) + ' ' + tOr('improve.kept_here',
+			'Your note is kept here and nothing tried again.');
 	}
 
 	async function send() {
 		var text = outgoing();
 		if (!text) { flash(tOr('improve.nothing', 'Write something first.')); return null; }
-		if (!handle()) { flash(tOr('improve.as_none', 'You have no account, so a note can only be kept here.')); return null; }
+		var parts = split(text);
+		if (!parts) {
+			flash(tOr('improve.no_title', 'The first line is the title. Write one, then what happened underneath.'));
+			return null;
+		}
+		if (!hasVoice()) { flash(tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.')); return null; }
 		var rec = store(text, 0);
 		clearBox();
 		render();
-		var ok = await post(text);
-		if (ok) { rec.sent = Date.now(); save(); }
-		else flash(tOr('improve.not_sent', 'It could not be sent, so it is kept here. Nothing has gone anywhere.'));
+		var a = await post(parts);
+		if (a.ok) {
+			rec.sent = Date.now();
+			rec.n    = Math.max(0, whole(a.data && a.data.number));
+			save();
+			absorb(cleanProp(a.data), true);
+		} else flash(keptAfter(a));
 		render();
 		return rec;
 	}
 
 	/// Send a note that is already kept. The same one act, from the row instead
-	/// of from the box, and it posts the note's stored characters unchanged.
+	/// of from the box, and it opens a proposal from the note's stored
+	/// characters unchanged.
 	async function resend(id) {
 		var s = load();
 		var rec = s.notes.find(function (n) { return n.id === id; });
 		if (!rec || rec.sent) return false;
-		if (!handle()) { flash(tOr('improve.as_none', 'You have no account, so a note can only be kept here.')); return false; }
-		var ok = await post(rec.text);
-		if (ok) { rec.sent = Date.now(); save(); }
-		else flash(tOr('improve.not_sent', 'It could not be sent, so it is kept here. Nothing has gone anywhere.'));
+		var parts = split(rec.text);
+		if (!parts) { flash(tOr('improve.no_title', 'The first line is the title. Write one, then what happened underneath.')); return false; }
+		if (!hasVoice()) { flash(tOr('improve.as_novoice', 'You have no voice, so a note can only be kept here.')); return false; }
+		var a = await post(parts);
+		if (a.ok) {
+			rec.sent = Date.now();
+			rec.n    = Math.max(0, whole(a.data && a.data.number));
+			save();
+			absorb(cleanProp(a.data), true);
+		} else flash(keptAfter(a));
 		render();
-		return ok;
+		return a.ok;
 	}
 
 	/// Delete one note. It is only on this device, so this is the whole of it --
@@ -391,7 +635,7 @@
 		return true;
 	}
 
-	/// Put a note on the clipboard, so somebody with no account, or no gateway,
+	/// Put a note on the clipboard, so somebody with no voice, or no gateway,
 	/// can still carry their own report out by hand.
 	async function copy(id) {
 		var s = load();
@@ -409,150 +653,380 @@
 		if (!n) return;
 		n.textContent = text;
 		clearTimeout(flash._t);
-		flash._t = setTimeout(function () { if (n.textContent === text) n.textContent = ''; }, 6000);
+		flash._t = setTimeout(function () { if (n.textContent === text) n.textContent = ''; }, 8000);
+	}
+
+	// ── The wire ───────────────────────────────────────────────
+	//
+	// One door: `/api/improve`, which the gateway forwards over loopback to the
+	// forge. The account and the repository ride in the QUERY on both methods, so
+	// the body stays whatever the forge reads and the proxy in between never has
+	// to parse it.
+	//
+	// Every request goes through `DaimondVoice.send`, which spreads the voice
+	// header and goes on through `DaimondGateway.gwFetch` -- the one copy of the
+	// session rule. A read of a public repository carries no voice at all, which
+	// `header()` answers `{}` for by design, so this same door serves both.
+
+	/// The route, with the repository this panel reads. Built here and nowhere
+	/// else, and the voice is never in it: a query string is written into every
+	/// access log it passes.
+	function route(extra) {
+		var q = 'account=' + encodeURIComponent(ACCOUNT) + '&repo=' + encodeURIComponent(REPO);
+		return '/api/improve?' + q + (extra ? '&' + extra : '');
+	}
+
+	/// The nine refusals the forge speaks, per contract §3.1. A client branches
+	/// on `error` and NEVER on `said`, which is a sentence a person reads and may
+	/// be reworded at any time.
+	var TOKENS = {
+		absent: 1, unvoiced: 1, unknown: 1, unpermitted: 1, throttled: 1,
+		malformed: 1, no_proposal: 1, unsupported: 1, internal: 1,
+	};
+
+	/// The three reasons a `throttled` carries. Anything else is read as none.
+	var BECAUSE = { address: 1, voice: 1, failing: 1 };
+
+	/// One exchange with the forge, as this panel reads it.
+	///
+	/// `{ ok: true, data }`, or `{ ok: false, why, because, status }` where `why`
+	/// is one of the nine tokens, `gateway` for a refusal this side generated, or
+	/// `offline` for a request that never got an answer at all. Three sources of
+	/// refusal and one shape, because every caller has to handle all three.
+	async function ask(path, opts) {
+		var v = voice();
+		var r;
+		try {
+			r = v ? await v.send(path, opts || {}) : await fetch(path, opts || {});
+		} catch (e) {
+			// `header()` throws a SENTENCE a person can act on -- a locked
+			// identity, a voice that cannot be read under this passphrase -- and
+			// those are worth showing. A network failure throws a `TypeError`
+			// whose message is the browser's own English ("Failed to fetch"),
+			// which must never reach a screen this app has translated eight ways.
+			var mine = (e && e.name !== 'TypeError' && e.message) ? String(e.message) : '';
+			return { ok: false, why: 'offline', said: mine };
+		}
+		var text = '';
+		try { text = await r.text(); } catch (e) { text = ''; }
+		var data = null;
+		try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+		// The forge's refusal. Told from a record by the token, and from the
+		// gateway's own refusal by the token being one of the nine: the gateway
+		// answers `{ok:false, error:"<a sentence>"}`, which is not a token.
+		if (data && typeof data === 'object' && typeof data.error === 'string' && TOKENS[data.error]) {
+			return {
+				ok:      false,
+				why:     data.error,
+				because: (typeof data.because === 'string' && BECAUSE[data.because]) ? data.because : '',
+				status:  r.status,
+			};
+		}
+		if (r.ok && data && typeof data === 'object') return { ok: true, data: data };
+		return { ok: false, why: 'gateway', status: r.status };
+	}
+
+	/// What a refusal says on the screen.
+	///
+	/// EVERY ONE OF THE NINE IS SAID. A refusal a panel swallows is a panel that
+	/// looks broken for a reason nobody can find, and this file shipped for weeks
+	/// telling every tester the same sentence about a 404 that was really a route
+	/// that did not exist.
+	///
+	/// `absent` covers BOTH "no such repository" and "this repository is
+	/// private", deliberately and permanently: any wording, status or timing that
+	/// separated the two would republish exactly what a private repository is
+	/// withholding. So the sentence has to be TRUE IN BOTH CASES. "There is no
+	/// such repository" is false when it is private; "This repository is private"
+	/// leaks.
+	///
+	/// None of these names which allowance ran out, either. A limit that reports
+	/// its own state is one somebody can pace against, and a vote and a proposal
+	/// draw on different budgets -- so a sentence about "submissions" shown to
+	/// somebody who tapped a vote button twice is wrong as well as leaky.
+	function saying(a) {
+		if (!a) return tOr('improve.err_offline', 'Nothing could be sent just now.');
+		switch (a.why) {
+		case 'absent':
+			return tOr('improve.err_absent', 'This repository is not available to you.');
+		case 'unvoiced':
+			return tOr('improve.err_unvoiced', 'The forge was given no voice, so it refused.');
+		case 'unknown':
+			return tOr('improve.err_unknown', 'The forge does not recognise your voice. Set it again from the line the forge printed for you.');
+		case 'unpermitted':
+			return tOr('improve.err_unpermitted', 'Your voice may not do that here.');
+		case 'throttled':
+			if (a.because === 'address') {
+				return tOr('improve.err_throttled_address', 'Too many requests from this address just now. Wait a little, then try again.');
+			}
+			if (a.because === 'failing') {
+				return tOr('improve.err_throttled_failing', 'Too many failing requests just now. Wait a little, then try again.');
+			}
+			return tOr('improve.err_throttled', 'Too many requests just now. Wait a little, then try again.');
+		case 'malformed':
+			return tOr('improve.err_malformed', 'The forge could not read what Daimond asked it. That is a fault in Daimond, not in what you wrote.');
+		case 'no_proposal':
+			return tOr('improve.err_no_proposal', 'There is no such proposal here.');
+		case 'unsupported':
+			return tOr('improve.err_unsupported', 'The forge does not answer that.');
+		case 'internal':
+			return tOr('improve.err_internal', 'Something went wrong at the forge. This is not your fault.');
+		case 'gateway':
+			if (a.status === 401) {
+				return tOr('improve.err_session', 'Daimond is not signed in just now, so it could not reach the forge.');
+			}
+			if (a.status === 413) {
+				return tOr('improve.err_toolong', 'That is longer than the forge accepts. Shorten it, or send it in two.');
+			}
+			return tOr('improve.err_gateway', 'Daimond could not reach the forge just now.');
+		default:
+			return a.said || tOr('improve.err_offline', 'Nothing could be sent just now.');
+		}
 	}
 
 	// ── Proposals ──────────────────────────────────────────────
 	//
-	// Read from `assets/proposals.json`, which SHIPS WITH THE BUILD. There is no
-	// live tally and none is wanted: a tally served on request is a service that
-	// must answer for ever and be right, where a tally shipped with the build is
-	// a fact with a date on it that is still true on an aeroplane. The panel says
-	// which build the counts are from, in a line, so nobody reads them as live.
+	// Read from the forge as the panel is opened, NEWEST FIRST. `from` is a
+	// numeric CEILING that counts DOWN and not an offset -- an offset slides as
+	// proposals arrive, so a client paging through a growing list silently skips
+	// or repeats records.
 	//
-	// UNDER `assets/`, and not at the app root, because that is where the service
-	// worker's shell begins (`SHELL_DIRS` in sw.js). At the root it would be
-	// fetched from the network every time and be missing from the one place the
-	// whole design was chosen for -- a device with no connection. Read with the
-	// ordinary cache for the same reason: the cache is keyed by build id, so the
-	// answer it gives is this build's answer, which is exactly what is wanted.
+	// THE WALK'S TERMINATION IS THE SUBTLE PART, and it is why `from=0` is never
+	// sent from here. There is NO value of `from` that says "nothing below this":
+	// zero is not a proposal number, so a forge either refuses it or reads it as
+	// "no ceiling", which is BACK TO THE NEWEST. A client that pages by asking
+	// for `lowest - 1` therefore wraps to the start and loops for ever the moment
+	// it reaches proposal 1, with every answer along the way looking perfectly
+	// valid and nothing anywhere reporting a fault. So the walk ends on a page
+	// SHORTER than the limit it asked for, on proposal 1, or on a page that did
+	// not descend -- and the last of those three holds even if the other two are
+	// wrong, which is why it is there.
 
-	var _props = null;			// the parsed file, or null before the first read
-	var _asAt  = '';			// the build those counts were taken at
+	var _by    = {};			// proposal number -> the record, listing or detail
+	var _order = [];			// the numbers, in the order they are drawn
+	var _open  = {};			// which rows are open, so a redraw does not shut them
+	var _list  = {
+		total:   0,
+		lowest:  null,			// the lowest number drawn so far, the ceiling counts down from
+		done:    false,			// the walk has ended and there is nothing below
+		loading: false,
+		err:     null,			// the last refusal, drawn under the list until it is gone
+		read:    false,			// whether the listing has ever been read
+	};
 
-	var STATES = { open: 1, taken: 1, done: 1, declined: 1 };
+	/// The four states a proposal takes on the forge. The vocabulary is closed:
+	/// anything else is drawn as open rather than as a state nobody has a word
+	/// for.
+	var STATES = { open: 1, accepted: 1, declined: 1, done: 1 };
 
+	/// One proposal as it arrived, defended against a shape this build does not
+	/// know.
+	///
+	/// `mine` is the delicate one. Contract §9: it is `1`, `-1` or `null` when a
+	/// voice was sent and ABSENT ENTIRELY when none was, so that "I have not
+	/// voted" and "I was not asked" cannot be confused. `asked` carries that
+	/// distinction here, because `undefined` and `null` are the same thing to
+	/// anything that round-trips this record through JSON.
 	function cleanProp(p) {
 		if (!p || typeof p !== 'object') return null;
-		var id = Number(p.id);
-		if (!isFinite(id) || Math.floor(id) !== id || id < 1) return null;
-		var title = (typeof p.title === 'string') ? p.title.trim() : '';
-		if (!title) return null;
-		return {
-			id:    id,
-			state: STATES[p.state] ? p.state : 'open',
-			title: title,
-			body:  (typeof p.body === 'string') ? p.body : '',
-			from:  Math.max(0, Number(p.from) | 0),
-			yes:   Math.max(0, Number(p.yes)  | 0),
-			no:    Math.max(0, Number(p.no)   | 0),
-			build: (typeof p.build === 'string') ? p.build : '',
+		var n = whole(p.number);
+		if (n < 1) return null;
+		var rec = {
+			n:          n,
+			title:      (typeof p.title === 'string') ? p.title : '',
+			state:      STATES[p.state] ? p.state : 'open',
+			author:     (typeof p.author === 'string') ? p.author : '',
+			comments:   Math.max(0, whole(p.comments)),
+			opened:     Math.max(0, whole(p.opened)),
+			changed:    Math.max(0, whole(p.changed)),
+			mark:       (typeof p.mark === 'string') ? p.mark : '',
+			build:      (typeof p.build === 'string') ? p.build : '',
+			body:       (typeof p.body === 'string') ? p.body : '',
+			discussion: null,
+			detail:     false,
+			votes:      null,		// null: this forge does not answer votes yet
+			asked:      false,		// whether the answer carried `mine` at all
+			mine:       null,
 		};
+		if (Array.isArray(p.discussion)) {
+			rec.detail = true;
+			rec.discussion = p.discussion.map(function (d) {
+				return {
+					author: (d && typeof d.author === 'string') ? d.author : '',
+					// `said` on a discussion entry is what a person wrote, which is
+					// not the `said` of a refusal. One word, two contracts.
+					said:   (d && typeof d.said === 'string') ? d.said : '',
+					when:   Math.max(0, whole(d && d.when)),
+				};
+			});
+		}
+		if (typeof p.body === 'string') rec.detail = true;
+		if (p.votes && typeof p.votes === 'object' && !Array.isArray(p.votes)) {
+			rec.votes = {
+				for:     Math.max(0, whole(p.votes.for)),
+				against: Math.max(0, whole(p.votes.against)),
+			};
+		}
+		if (Object.prototype.hasOwnProperty.call(p, 'mine')) {
+			rec.asked = true;
+			rec.mine  = (p.mine === 1 || p.mine === -1) ? p.mine : null;
+		}
+		return rec;
 	}
 
-	async function readProposals() {
-		if (_props) return _props;
-		var j = null;
-		try {
-			var r = await fetch('assets/proposals.json');
-			if (r.ok) j = await r.json();
-		} catch (e) { j = null; }		// no file in this build: an empty list, honestly
-		_props = [];
-		_asAt  = (j && typeof j.built === 'string') ? j.built : '';
-		var list = (j && Array.isArray(j.proposals)) ? j.proposals : [];
-		list.forEach(function (p) { var c = cleanProp(p); if (c) _props.push(c); });
-		// Open first, then what is being done, then what is finished. Within each,
-		// the ones most people asked for first: the list's whole job is to say
-		// what is next.
-		var rank = { open: 0, taken: 1, done: 2, declined: 3 };
-		_props.sort(function (a, b) {
-			return (rank[a.state] - rank[b.state]) || (b.yes - a.yes) || (a.id - b.id);
-		});
-		return _props;
-	}
-
-	/// What this device says about one proposal, or null.
-	function myVote(id) { return load().votes[String(id)] || null; }
-
-	/// Cast, or take back, a vote.
+	/// Take one record in, keeping what a listing does not carry.
 	///
-	/// Pressing the side you already chose takes the vote off, which is the only
-	/// way back and is what a pressed control that stays pressed has to offer.
-	function vote(id, dir) {
-		var s = load(), k = String(id), d = (dir === 'do') ? 1 : 2;
-		if (s.votes[k] && s.votes[k].d === d) delete s.votes[k];
-		else s.votes[k] = { d: d, at: Date.now(), sent: 0 };
-		save();
-		render();
-		flushVotes();
+	/// A listing record has no body and no discussion, so absorbing one over a
+	/// detail that has already been read must not wipe them -- otherwise opening
+	/// a proposal and then paging would empty it.
+	function absorb(rec) {
+		if (!rec) return null;
+		var cur = _by[rec.n];
+		if (cur && !rec.detail) {
+			rec.body       = cur.body;
+			rec.discussion = cur.discussion;
+			rec.detail     = cur.detail;
+		}
+		if (!cur) _order.push(rec.n);
+		_by[rec.n] = rec;
+		return rec;
+	}
+
+	/// Read a page of the listing. `more` walks downwards from what is drawn.
+	async function loadList(more) {
+		if (_list.loading) return false;
+		if (more && _list.done) return false;
+		var extra = 'limit=' + PAGE;
+		if (more) {
+			// Never `from=0`. See the note above: there is no value of `from` that
+			// says "nothing below this", and zero means back to the newest.
+			if (!(_list.lowest > 1)) { _list.done = true; drawProps(); return false; }
+			extra += '&from=' + (_list.lowest - 1);
+		}
+		_list.loading = true;
+		_list.err     = null;
+		drawProps();
+		var a = await ask(route(extra), { method: 'GET' });
+		_list.loading = false;
+		if (!a.ok) { _list.err = a; drawProps(); return false; }
+
+		if (!more) { _by = {}; _order = []; _list.lowest = null; _list.done = false; }
+		var raw = Array.isArray(a.data.proposals) ? a.data.proposals : [];
+		var got = 0, lowest = null;
+		raw.forEach(function (p) {
+			var rec = cleanProp(p);
+			if (!rec) return;
+			got++;
+			if (lowest === null || rec.n < lowest) lowest = rec.n;
+			absorb(rec);
+		});
+		// `total` is the count AFTER `state` and BEFORE `from` and `limit`, so it
+		// is how "no more" is told from "more to come".
+		_list.total = Math.max(0, whole(a.data.total));
+		_list.read  = true;
+
+		// A short page is the end of the walk.
+		if (got < PAGE) _list.done = true;
+		// So is proposal 1: there is nothing below it to ask for.
+		if (lowest === null || lowest <= 1) _list.done = true;
+		// AND SO IS A PAGE THAT DID NOT DESCEND. This is the belt: a forge that
+		// read `from` as a lower bound, or aliased a value of it back to the
+		// newest, would hand the same page again for ever and every answer would
+		// look valid. Stopping the moment the walk stops descending turns that
+		// into a list that ends rather than a tab that never settles.
+		if (more && lowest !== null && _list.lowest !== null && lowest >= _list.lowest) {
+			_list.done = true;
+		}
+		if (lowest !== null && (_list.lowest === null || lowest < _list.lowest)) _list.lowest = lowest;
+		drawProps();
 		return true;
 	}
 
-	/// The build id as an integer, the way telemetry.js reads it: the first eight
-	/// hex characters. It is how the operator maps a vote back to a release
-	/// without a string going anywhere near the wire.
-	function buildOrdinal(id) {
-		if (typeof id !== 'string' || !/^[0-9a-f]{8}/.test(id)) return 0;
-		var n = parseInt(id.slice(0, 8), 16);
-		return isFinite(n) ? n : 0;
+	/// Read one proposal in full, for its body and its discussion.
+	async function loadOne(n) {
+		var a = await ask(route('n=' + n), { method: 'GET' });
+		if (!a.ok) { _list.err = a; drawProps(); return false; }
+		absorb(cleanProp(a.data));
+		drawProps();
+		return true;
 	}
 
-	/// Is this vote integers all the way down?
+	// ── Voting ─────────────────────────────────────────────────
+	//
+	// Contract §9: one store of truth, and it is the forge. Nothing is queued
+	// here and nothing is kept here, because a tally in two places is a tally
+	// that disagrees with itself. Every write answers with the DETAIL SHAPE of
+	// the record it changed, so a vote's answer carries the new tally and the
+	// caller's own `mine` and the control is redrawn from it -- never from a
+	// second request, and never from a guess about what the press must have done.
+
+	/// A vote's whole body: one field, one of three values, and nothing else.
 	///
-	/// The last gate before the wire, and the reason a vote is allowed to queue
-	/// when a note is not. It is here so that an edit which adds a field to a
-	/// vote has to defeat a check rather than merely forget one.
-	function onlyIntegers(body) {
-		if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
-		var keys = Object.keys(body);
-		var allowed = ['v', 'b', 'p', 'd'];
-		for (var i = 0; i < keys.length; i++) {
-			if (allowed.indexOf(keys[i]) === -1) return false;
-		}
-		return keys.every(function (k) {
-			var x = body[k];
-			return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= 0;
+	/// Form-encoded, like every other write on this surface. Written as a
+	/// function that returns the exact characters rather than assembled at the
+	/// call site, so an edit that wants to send a fifth thing has to defeat this
+	/// rather than merely forget it -- the same discipline the old integers-only
+	/// gate kept, in the shape the contract now asks for.
+	///
+	/// A vote with no `d` at all is `malformed` at the forge and NOT a
+	/// withdrawal, which is right: reading a lost field as an instruction to
+	/// delete turns a dropped parameter into silent data loss. So there is no
+	/// path here that sends one.
+	function voteBody(d) {
+		if (d !== 1 && d !== -1 && d !== 0) return '';
+		return 'd=' + d;
+	}
+
+	/// Cast, move, or take back a vote.
+	///
+	/// Pressing the side you already chose withdraws it, which is the only way
+	/// back and is what a pressed control that stays pressed has to offer.
+	async function vote(n, dir) {
+		var rec = _by[n];
+		if (!rec || !rec.votes || !rec.asked) return false;
+		var want = (dir === 'do') ? 1 : -1;
+		var body = voteBody(rec.mine === want ? 0 : want);
+		if (!body) return false;
+		var a = await ask(route('n=' + n + '&vote=1'), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    body,
 		});
+		if (!a.ok) { _list.err = a; drawProps(); return false; }
+		absorb(cleanProp(a.data));
+		_list.err = null;
+		drawProps();
+		return true;
 	}
 
-	var _flushing = false;
+	// ── Saying something on a proposal ─────────────────────────
 
-	/// Send every vote that has not been counted yet.
+	/// Add one comment to a proposal.
 	///
-	/// THIS IS ALLOWED TO QUEUE AND A NOTE IS NOT, and the asymmetry is the
-	/// design rather than an oversight: there is nothing in `{v,b,p,d}` that
-	/// could carry a syllable of anybody's work. Called when a vote is cast and
-	/// when the panel opens, so a vote made on an aeroplane is counted on the
-	/// ground without anybody having to press anything again.
-	async function flushVotes() {
-		if (_flushing) return false;
-		var s = load();
-		var pending = Object.keys(s.votes).filter(function (k) { return !s.votes[k].sent; });
-		if (!pending.length) return false;
-		_flushing = true;
-		var moved = false;
-		try {
-			for (var i = 0; i < pending.length; i++) {
-				var k = pending[i];
-				var body = { v: 1, b: buildOrdinal(_build), p: Number(k), d: s.votes[k].d };
-				if (!onlyIntegers(body)) continue;		// unreachable by construction
-				var ok = false;
-				try {
-					var r = await fetch('/api/vote', {
-						method:      'POST',
-						credentials: 'same-origin',
-						headers:     { 'Content-Type': 'application/json' },
-						body:        JSON.stringify(body),
-					});
-					ok = !!(r && r.ok);
-				} catch (e) { ok = false; }
-				if (!ok) break;							// no gateway; the rest wait too
-				s.votes[k].sent = 1;
-				moved = true;
-			}
-		} finally { _flushing = false; }
-		if (moved) { save(); render(); }
-		return moved;
+	/// The same one rule as a note: what leaves is exactly the characters in that
+	/// one box, at the moment the button beside it is pressed, and a failure is
+	/// said rather than queued. The box is emptied only when the forge took it,
+	/// so a refusal leaves the words where the person can still read and copy
+	/// them.
+	async function comment(n) {
+		var box = document.querySelector('.imp-prop[data-prop="' + n + '"] .imp-reply');
+		if (!box) return false;
+		var text = String(box.value || '').trim();
+		if (!text) { _list.err = null; flash(tOr('improve.nothing', 'Write something first.')); return false; }
+		if (!hasVoice()) { _list.err = { why: 'unvoiced' }; drawProps(); return false; }
+		var f = new URLSearchParams();
+		f.set('said', text);
+		var a = await ask(route('n=' + n), {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body:    f.toString(),
+		});
+		if (!a.ok) { _list.err = a; drawProps(); return false; }
+		box.value = '';
+		absorb(cleanProp(a.data));
+		_list.err = null;
+		drawProps();
+		return true;
 	}
 
 	// ── Drawing ────────────────────────────────────────────────
@@ -566,6 +1040,9 @@
 		try { return new Date(at).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short' }); }
 		catch (e) { return ''; }
 	}
+
+	/// A forge stamp is in seconds; everything else here is in milliseconds.
+	function fmtWhen(secs) { return secs ? fmtDate(secs * 1000) : ''; }
 
 	function button(cls, act, text, title) {
 		var b = document.createElement('button');
@@ -607,11 +1084,13 @@
 			state.className = 'imp-note-state';
 			state.dataset.state = n.sent ? 'sent' : 'kept';
 			state.textContent = n.sent
-				? tOr('improve.state_sent', 'Sent {date}', { date: fmtDate(n.sent) })
+				? (n.n
+					? tOr('improve.state_sent_n', 'Sent {date}, and is proposal {n}', { date: fmtDate(n.sent), n: n.n })
+					: tOr('improve.state_sent', 'Sent {date}', { date: fmtDate(n.sent) }))
 				: tOr('improve.state_kept', 'Kept here');
 			foot.appendChild(state);
 
-			if (!n.sent && handle()) {
+			if (!n.sent && hasVoice()) {
 				foot.appendChild(button('imp-note-send', 'improve-resend',
 					tOr('improve.send', 'Send'),
 					tOr('improve.send_help', 'Send exactly what is above to Oxedyne. Nothing else goes with it.')));
@@ -633,11 +1112,73 @@
 		});
 	}
 
+	/// The word a state is read as. The forge's vocabulary is
+	/// open/accepted/declined/done; the guide's words are Open, Being done, Done
+	/// and Declined, and those are what a reader has been promised.
+	///
+	/// `accepted` reads through `improve.state_taken`, which is the key those
+	/// eight locales already hold "Being done" in. The key's name is older than
+	/// the forge's word and renaming it would throw eight translations away to
+	/// tidy a string nobody sees.
 	function stateWord(s) {
-		if (s === 'taken')    return tOr('improve.state_taken', 'Being done');
+		if (s === 'accepted') return tOr('improve.state_taken', 'Being done');
 		if (s === 'done')     return tOr('improve.state_done', 'Done');
 		if (s === 'declined') return tOr('improve.state_declined', 'Declined');
 		return tOr('improve.state_open', 'Open');
+	}
+
+	/// The vote control, which draws ONLY when the answer carried a tally.
+	///
+	/// DARK UNTIL THE FORGE ANSWERS. The vote route is not built there yet, so a
+	/// record arrives with no `votes` at all and nothing is drawn -- not a
+	/// disabled button, not a zero. The day the forge starts answering it, this
+	/// lights up on its own with no edit here.
+	///
+	/// This is NOT the test §9 warns a client off. That warning is against
+	/// treating an UNVOTED proposal as one with no tally: `votes` on a proposal
+	/// nobody has voted on is `{"for":0,"against":0}`, the zero object, and it is
+	/// drawn like any other. What is tested here is the key's ABSENCE, which
+	/// under §9 cannot happen at all -- so the day §9 ships this branch stops
+	/// being reachable and stops costing anything.
+	///
+	/// `mine` ABSENT and `mine` NULL are different and are drawn differently: the
+	/// first says the request carried no voice, so the buttons are not offered at
+	/// all and a line says why; the second says a voice asked and has not voted,
+	/// which is two buttons with neither pressed. A control that drew those the
+	/// same way would show an unvoted button to somebody who cannot vote.
+	function drawVoteControl(p, into) {
+		if (!p.votes) return;
+		var box = document.createElement('div');
+		box.className = 'imp-votes';
+
+		var tally = document.createElement('span');
+		tally.className = 'imp-prop-tally';
+		tally.textContent = tOr('improve.tally', '{yes} for, {no} against',
+			{ yes: p.votes.for, no: p.votes.against });
+		box.appendChild(tally);
+
+		if (!p.asked) {
+			var line = document.createElement('span');
+			line.className = 'imp-as';
+			line.textContent = tOr('improve.vote_novoice', 'Set a voice to vote on this.');
+			box.appendChild(line);
+			into.appendChild(box);
+			return;
+		}
+		[['do', 1, tOr('improve.do', 'Do this')], ['not', -1, tOr('improve.not', 'Not this')]]
+			.forEach(function (pair) {
+				var b = button('imp-vote', 'improve-vote', pair[2], pair[2]);
+				b.dataset.dir = pair[0];
+				if (p.mine === pair[1]) {
+					b.classList.add('on');
+					b.setAttribute('aria-pressed', 'true');
+					b.title = tOr('improve.vote_off', 'Press again to take your vote back off.');
+				} else {
+					b.setAttribute('aria-pressed', 'false');
+				}
+				box.appendChild(b);
+			});
+		into.appendChild(box);
 	}
 
 	/// One proposal, as a row that opens what it names: a coloured dot, the
@@ -646,46 +1187,62 @@
 	function drawProps() {
 		var list = el('improve-props'), asAt = el('improve-asat');
 		if (!list) return;
-		// WHICH ROWS WERE OPEN SURVIVES THE REDRAW. Casting a vote redraws the
-		// list, and the first build of this closed the proposal the user was
-		// reading at the moment they pressed a button on it -- the answer
-		// vanishing along with the question.
-		var wasOpen = {};
+		// WHAT SOMEBODY IS HALF-WAY THROUGH TYPING SURVIVES THE REDRAW, for the
+		// same reason an open row does: a vote or a language change redraws this
+		// whole list, and a reply box emptied by it would take the words with it.
+		var typed = {};
 		list.querySelectorAll('.imp-prop').forEach(function (r) {
-			var body = r.querySelector('.imp-prop-body');
-			if (body && !body.hidden) wasOpen[r.dataset.prop] = 1;
+			var box = r.querySelector('.imp-reply');
+			if (box && box.value) typed[r.dataset.prop] = box.value;
 		});
 		list.innerHTML = '';
-		var props = _props || [];
 
 		if (asAt) {
-			asAt.textContent = props.length
-				? (_asAt
-					? tOr('improve.as_at', 'Counts as at build {build}. They move when Daimond updates.', { build: _asAt })
-					: tOr('improve.as_at_none', 'Counts move when Daimond updates.'))
-				: '';
+			// WHAT THIS PANEL WILL NEVER DO, said on the surface rather than in a
+			// help page. Contract §7: there is no change feed, so a tester is never
+			// TOLD their proposal was answered -- they find out by looking. A panel
+			// that implied otherwise, with a badge or an unread count it cannot
+			// honour, would be promising something nothing behind it can deliver.
+			asAt.textContent = tOr('improve.live_note',
+				'These are read from the forge as you look at them. Nothing tells you when a proposal is answered; look again to find out.');
 		}
 
-		if (!props.length) {
+		if (_list.err) {
+			var err = document.createElement('div');
+			err.className = 'rail-note imp-err';
+			err.dataset.why = _list.err.why || '';
+			err.textContent = saying(_list.err);
+			list.appendChild(err);
+		}
+
+		if (!_order.length) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = tOr('improve.no_props',
-				'No proposals yet. They are made from notes, and they arrive with a new build.');
+			none.textContent = _list.loading
+				? tOr('improve.loading', 'Reading the proposals…')
+				// NOT `improve.no_props`, whose English in the catalogue says
+				// proposals "arrive with a new build". They do not any more: they
+				// arrive when somebody opens one, and a translated sentence that is
+				// now false is worse than an English one that is true.
+				: (_list.err
+					? tOr('improve.none_shown', 'Nothing could be read just now.')
+					: tOr('improve.none_yet', 'No proposals here yet. Yours would be the first.'));
 			list.appendChild(none);
 			return;
 		}
 
-		props.forEach(function (p) {
+		_order.forEach(function (n) {
+			var p = _by[n];
+			if (!p) return;
 			var row = document.createElement('div');
 			row.className = 'imp-prop';
-			row.dataset.prop = String(p.id);
+			row.dataset.prop = String(p.n);
 			row.dataset.state = p.state;
 
 			var head = document.createElement('button');
 			head.type = 'button';
 			head.className = 'imp-prop-row';
 			head.dataset.act = 'improve-open';
-			head.setAttribute('aria-expanded', 'false');
 
 			var dot = document.createElement('span');
 			dot.className = 'imp-dot';
@@ -697,63 +1254,123 @@
 			title.textContent = p.title;
 			head.appendChild(title);
 
-			var tally = document.createElement('span');
-			tally.className = 'imp-prop-tally';
-			tally.textContent = String(p.yes);
-			tally.title = tOr('improve.tally', '{yes} for, {no} against', { yes: p.yes, no: p.no });
-			head.appendChild(tally);
+			// The row's value is the tally, and there is no tally until the forge
+			// answers one. A row that showed a zero there would be reporting a
+			// count nothing has taken.
+			if (p.votes) {
+				var tally = document.createElement('span');
+				tally.className = 'imp-prop-tally';
+				tally.textContent = String(p.votes.for);
+				tally.title = tOr('improve.tally', '{yes} for, {no} against',
+					{ yes: p.votes.for, no: p.votes.against });
+				head.appendChild(tally);
+			}
 			row.appendChild(head);
 
 			var body = document.createElement('div');
 			body.className = 'imp-prop-body';
-			body.hidden = !wasOpen[String(p.id)];
+			// WHICH ROWS WERE OPEN SURVIVES THE REDRAW. Casting a vote redraws the
+			// list, and the first build of this closed the proposal the user was
+			// reading at the moment they pressed a button on it -- the answer
+			// vanishing along with the question.
+			body.hidden = !_open[String(p.n)];
 			head.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
 
 			var says = document.createElement('p');
 			says.className = 'imp-prop-says';
-			says.textContent = p.body;
+			says.textContent = p.detail
+				? p.body
+				: tOr('improve.reading', 'Reading it…');
 			body.appendChild(says);
 
 			var facts = document.createElement('div');
 			facts.className = 'imp-prop-facts';
 			var parts = [stateWord(p.state)];
-			if (p.from) parts.push(tnOr('improve.from_notes', p.from, 'From {n} note', 'From {n} notes', { n: p.from }));
-			if (p.state === 'done' && p.build) {
-				parts.push(tOr('improve.shipped_in', 'Shipped in build {build}', { build: p.build }));
-			}
-			parts.push(tOr('improve.tally', '{yes} for, {no} against', { yes: p.yes, no: p.no }));
+			if (p.author) parts.push(tOr('improve.by', 'from {who}', { who: p.author }));
+			if (p.opened) parts.push(fmtWhen(p.opened));
+			parts.push(tnOr('improve.said_n', p.comments, '{n} reply', '{n} replies', { n: p.comments }));
+			if (p.build) parts.push(tOr('improve.built_on', 'written on build {build}', { build: p.build }));
+			if (p.mark)  parts.push(tOr('improve.closed_by', 'closed by mark {mark}', { mark: p.mark }));
 			facts.textContent = parts.join(' · ');
 			body.appendChild(facts);
 
-			var mine = myVote(p.id);
-			var votes = document.createElement('div');
-			votes.className = 'imp-votes';
-			[['do', tOr('improve.do', 'Do this')], ['not', tOr('improve.not', 'Not this')]].forEach(function (pair) {
-				var b = button('imp-vote', 'improve-vote', pair[1], pair[1]);
-				b.dataset.dir = pair[0];
-				var want = pair[0] === 'do' ? 1 : 2;
-				if (mine && mine.d === want) {
-					b.classList.add('on');
-					// A vote nobody has counted yet says so rather than looking
-					// counted: the tally beside it is as at a build, and this one is
-					// not in it.
-					if (!mine.sent) {
-						b.classList.add('held');
-						b.title = tOr('improve.vote_held', 'Your vote is here and has not been counted yet.');
-					}
-				}
-				votes.appendChild(b);
-			});
-			body.appendChild(votes);
+			// WHERE A READER MEETS THE CASE, not in a help page. A proposal that
+			// names a mark is one whose code has moved, and "did my note follow
+			// it?" is the question a reader has at exactly this moment. Contract §5.
+			if (p.mark) {
+				var floor = document.createElement('p');
+				floor.className = 'imp-prop-says imp-floor';
+				floor.textContent = tOr('improve.move_floor',
+					'A note follows its content across a file boundary only when the change is recognised as a move, '
+					+ 'and the floor for that is 64 bytes. Cut less than that from one file into another and the '
+					+ 'history holds a deletion and an insertion, so a note anchored there honestly reports its '
+					+ 'content deleted. The note is right and the history is right.');
+				body.appendChild(floor);
+			}
+
+			if (p.discussion && p.discussion.length) {
+				var disc = document.createElement('div');
+				disc.className = 'imp-disc';
+				p.discussion.forEach(function (d) {
+					var one = document.createElement('div');
+					one.className = 'imp-disc-one';
+					var who = document.createElement('span');
+					who.className = 'imp-note-state';
+					who.textContent = d.author + (d.when ? ' · ' + fmtWhen(d.when) : '');
+					var said = document.createElement('p');
+					said.className = 'imp-prop-says';
+					said.textContent = d.said;
+					one.appendChild(who);
+					one.appendChild(said);
+					disc.appendChild(one);
+				});
+				body.appendChild(disc);
+			}
+
+			drawVoteControl(p, body);
+
+			// Saying something back. Offered only with a voice, because the forge
+			// refuses a comment without one and a box that cannot be sent is a box
+			// that teaches people to distrust every box.
+			if (p.detail && hasVoice()) {
+				var reply = document.createElement('textarea');
+				reply.className = 'imp-box imp-reply';
+				reply.rows = 2;
+				reply.placeholder = tOr('improve.reply_ph', 'Say something about this proposal.');
+				reply.setAttribute('aria-label', tOr('improve.reply_ph', 'Say something about this proposal.'));
+				if (typed[String(p.n)]) reply.value = typed[String(p.n)];
+				body.appendChild(reply);
+				var acts = document.createElement('div');
+				acts.className = 'imp-acts';
+				acts.appendChild(button('imp-send', 'improve-comment',
+					tOr('improve.reply', 'Say it'),
+					tOr('improve.reply_help', 'Send exactly what is in this box. Nothing else goes with it.')));
+				body.appendChild(acts);
+			}
 
 			row.appendChild(body);
 			list.appendChild(row);
 		});
+
+		// The foot: how many there are, and the one control that walks downwards.
+		var foot = document.createElement('div');
+		foot.className = 'rail-note imp-foot';
+		var count = document.createElement('span');
+		count.id = 'improve-count';
+		count.textContent = tnOr('improve.count', _list.total,
+			'{n} proposal', '{n} proposals', { n: _list.total });
+		foot.appendChild(count);
+		if (!_list.done) {
+			foot.appendChild(button('imp-note-copy', 'improve-more',
+				_list.loading ? tOr('improve.loading', 'Reading the proposals…') : tOr('improve.more', 'Show older')));
+		}
+		list.appendChild(foot);
 	}
 
 	function render() {
 		drawContext();
 		drawAs();
+		drawVoice();
 		drawNotes();
 		drawProps();
 	}
@@ -772,17 +1389,17 @@
 			c.classList.toggle('on', on);
 			c.setAttribute('aria-pressed', on ? 'true' : 'false');
 		});
-		if (_view === 'proposals') readProposals().then(drawProps, drawProps);
+		if (_view === 'proposals' && !_list.read && !_list.loading) loadList(false);
+		else drawProps();
 	}
 
 	// ── Wiring ─────────────────────────────────────────────────
 
-	/// The panel was opened. Proposals are re-read and any vote that has not
-	/// been counted is offered again; the notes are already drawn.
+	/// The panel was opened. The listing is read again, because there is no change
+	/// feed and looking IS how a tester finds out.
 	function onOpen() {
-		readProposals().then(function () { drawProps(); flushVotes(); },
-			function () { drawProps(); });
 		render();
+		if (_view === 'proposals') loadList(false);
 	}
 
 	document.addEventListener('click', function (e) {
@@ -795,6 +1412,11 @@
 		var act = b.dataset.act;
 		if (act === 'improve-keep')   { e.preventDefault(); keep(); return; }
 		if (act === 'improve-send')   { e.preventDefault(); send(); return; }
+		if (act === 'improve-more')   { e.preventDefault(); loadList(true); return; }
+		if (act === 'improve-voice-open')   { e.preventDefault(); _voiceOpen = true;  drawVoice(); return; }
+		if (act === 'improve-voice-cancel') { e.preventDefault(); _voiceOpen = false; drawVoice(); return; }
+		if (act === 'improve-voice-save')   { e.preventDefault(); saveVoice(); return; }
+		if (act === 'improve-voice-forget') { e.preventDefault(); forgetVoice(); return; }
 		if (act === 'improve-with-off') {
 			e.preventDefault();
 			var row = el('improve-with');
@@ -809,15 +1431,23 @@
 		}
 		var propEl = b.closest('.imp-prop');
 		if (propEl) {
+			var n = Number(propEl.dataset.prop);
 			if (act === 'improve-open') {
 				e.preventDefault();
 				var body = propEl.querySelector('.imp-prop-body');
 				var shut = !body || body.hidden;
 				if (body) body.hidden = !shut;
 				b.setAttribute('aria-expanded', shut ? 'true' : 'false');
+				if (shut) {
+					_open[String(n)] = 1;
+					// Opening it is what reads it: one proposal, one request, and
+					// only for the one somebody asked to see.
+					if (_by[n] && !_by[n].detail) loadOne(n);
+				} else delete _open[String(n)];
 				return;
 			}
-			if (act === 'improve-vote') { e.preventDefault(); vote(propEl.dataset.prop, b.dataset.dir); return; }
+			if (act === 'improve-vote')    { e.preventDefault(); vote(n, b.dataset.dir); return; }
+			if (act === 'improve-comment') { e.preventDefault(); comment(n); return; }
 		}
 	});
 
@@ -829,7 +1459,6 @@
 		try { window.addEventListener(ev, function () { if (!contextOff()) drawContext(); }); }
 		catch (e) { /* no window */ }
 	});
-	try { window.addEventListener('daimond:handle', drawAs); } catch (e) { /* no window */ }
 
 	// Another tab wrote a note, or an account switch emptied the store.
 	window.addEventListener('storage', function (e) {
@@ -865,17 +1494,25 @@
 		send:     send,
 		resend:   resend,
 		drop:     drop,
-		/// The exact characters a Send would put on the wire right now. The
-		/// verifier compares this against what actually left.
+		/// The exact characters a Send would put on the wire right now, and the
+		/// cut that turns them into a proposal. The verifier compares both against
+		/// what actually left.
 		outgoing: outgoing,
-		/// Voting, and the queue that carries a vote made offline.
-		vote:      vote,
-		myVote:    myVote,
-		flushVotes: flushVotes,
-		onlyIntegers: onlyIntegers,
+		split:    split,
+		/// Reading the forge, and the walk downwards through it.
+		load:     loadList,
+		one:      loadOne,
+		/// Voting and saying something. Both go straight to the forge; neither is
+		/// kept here.
+		vote:     vote,
+		comment:  comment,
+		voteBody: voteBody,
+		/// What is drawn, for a verifier that wants the record rather than the
+		/// pixels.
+		proposal: function (n) { return _by[n] ? JSON.parse(JSON.stringify(_by[n])) : null; },
+		listing:  function () { return { total: _list.total, shown: _order.slice(), done: _list.done, err: _list.err ? _list.err.why : '' }; },
 		/// The store, for a verifier and for an account switch.
 		notes:    function () { return load().notes.slice(); },
-		votes:    function () { return JSON.parse(JSON.stringify(load().votes)); },
-		reset:    function () { _st = null; _props = null; },
+		reset:    function () { _st = null; _by = {}; _order = []; _open = {}; _list = { total: 0, lowest: null, done: false, loading: false, err: null, read: false }; },
 	};
 })();

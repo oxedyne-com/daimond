@@ -988,7 +988,7 @@
 	'typst.pack_locked': 'La composición tipográfica forma parte de un paquete de herramientas que esta cuenta no ha comprado. El panel Herramientas indica su nombre y su precio: se compra una vez, se conserva para siempre y se paga con dinero, no con tus créditos.',
 	'typst.watch.starting': 'Componiendo las páginas…',
 	'typst.watch.building': 'Recompilando…',
-	'typst.watch.live': 'En vivo',
+	'typst.watch.live_preview': 'Vista previa en vivo',
 	'typst.watch.stale': 'Mostrando la última compilación que funcionó',
 	'typst.watch.held': 'Recompilación detenida',
 	'typst.watch.dead': 'El compilador se ha detenido',
@@ -999,9 +999,15 @@
 	'typst.watch.page': 'Página',
 	'typst.watch.zoom_out': 'Más pequeño',
 	'typst.watch.zoom_in': 'Más grande',
-	'typst.watch.fit': 'Ajustar al ancho',
-	'typst.watch.night': 'Papel oscuro',
-	'typst.watch.day': 'Papel claro',
+	// Una palabra en el botón; la forma larga va en el título al pasar por encima.
+	'typst.watch.fit_width': 'Ajustar al ancho',
+	'typst.watch.fit_page': 'Ajustar a la página entera',
+	'typst.watch.paper_dark': 'Oscuro',
+	'typst.watch.paper_light': 'Claro',
+	'typst.watch.paper_dark_why': 'Papel oscuro, para leer de noche',
+	'typst.watch.paper_light_why': 'Papel claro',
+	'typst.watch.sections': 'Secciones',
+	'typst.watch.sections_none': 'Este documento no tiene encabezados que listar.',
 	'typst.watch.dead_why': 'El compilador se quedó sin memoria con este documento y no puede reiniciarse sin recargar la página. Las páginas de abajo son las últimas que se compilaron. Recarga y abre el mismo archivo otra vez.',
 
 
@@ -2071,6 +2077,10 @@
 	'settings.trail_empty': 'Todavía no hay nada registrado.',
 	// ── The Trash ──────────────────────────────────────────────
 	'panel.trash': 'Papelera',
+
+	// ── El panel Mejorar ───────────────────────────────────────
+	// Donde se escribe una nota sobre Daimond y donde se leen las propuestas.
+	// Las dos mitades pasan ahora por la forja de Oregami.
 	'panel.improve': 'Mejorar',
 	'improve.notes': 'Notas',
 	'improve.proposals': 'Propuestas',
@@ -2083,13 +2093,20 @@
 	'improve.keep_help': 'Guarda esta nota en este dispositivo. No se envía nada.',
 	'improve.send': 'Enviar',
 	'improve.send_help': 'Envía a Oxedyne exactamente lo de arriba. No va nada más con ello.',
-	'improve.as': 'Va como @{handle}',
-	'improve.as_none': 'No tienes cuenta, así que una nota solo puede quedarse aquí.',
+	// Una nota va bajo la VOZ de quien escribe. No viaja ningún alias ni ningún
+	// nombre, así que nada de aquí puede nombrar a esa persona.
+	'improve.as_voice': 'Va a la forja bajo tu voz, donde puede leerla cualquiera que tenga el repositorio.',
+	'improve.as_novoice': 'No tienes voz, así que una nota solo puede quedarse aquí.',
+	'improve.title_hint': 'La primera línea es el título de la propuesta. Lo que ocurrió va debajo.',
+	'improve.no_title': 'La primera línea es el título. Escribe una y, debajo, lo que ocurrió.',
 	'improve.nothing': 'Escribe algo primero.',
-	'improve.not_sent': 'No se pudo enviar, así que se queda aquí. No ha ido nada a ninguna parte.',
+	// Se dice tras un rechazo. No se encola nada ni se reintenta nada, así que la
+	// traducción no debe prometer otro intento.
+	'improve.kept_here': 'Tu nota se queda aquí y no se ha vuelto a intentar nada.',
 	'improve.copied': 'Copiado.',
 	'improve.state_kept': 'Solo aquí',
 	'improve.state_sent': 'Enviada el {date}',
+	'improve.state_sent_n': 'Enviada el {date}, y es la propuesta {n}',
 	'improve.drop': 'Eliminar esta nota',
 	'improve.drop_ask': '¿Eliminar esta nota? Solo está en este dispositivo, así que no hay otra copia.',
 	'improve.drop_ok': 'Eliminar',
@@ -2099,20 +2116,79 @@
 	'improve.ctx_pointer': 'puntero',
 	'improve.ctx_palette': 'paleta {name}',
 	'improve.ctx_panels': 'paneles abiertos: {list}',
-	'improve.no_props': 'Todavía no hay propuestas. Se hacen a partir de las notas y llegan con una compilación nueva.',
-	'improve.as_at': 'Recuentos a fecha de la compilación {build}. Se mueven cuando Daimond se actualiza.',
-	'improve.as_at_none': 'Los recuentos se mueven cuando Daimond se actualiza.',
+
+	// La voz: un secreto personal por el que la forja reconoce a quien escribe.
+	// Se guarda aquí cifrada con tu frase de paso y nunca va en una dirección.
+	'improve.voice_held': 'Hay una voz guardada en este dispositivo, cifrada con tu frase de paso.',
+	'improve.voice_none': 'Aquí no hay ninguna voz, así que una nota solo puede guardarse.',
+	'improve.voice_set': 'Poner una voz',
+	'improve.voice_replace': 'Cambiar la voz',
+	'improve.voice_help': 'La línea que la forja imprimió para ti. Se guarda aquí cifrada y nunca se pone en una dirección.',
+	'improve.voice_ph': 'Pega la línea que la forja imprimió para ti',
+	'improve.voice_save': 'Guardar la voz',
+	'improve.voice_saved': 'Tu voz está aquí, cifrada.',
+	'improve.voice_failed': 'Esa voz no se pudo guardar.',
+	'improve.voice_forget': 'Olvidarla',
+	'improve.voice_forget_help': 'Quitar la copia de este dispositivo.',
+	'improve.voice_forgotten': 'La copia de este dispositivo ya no está.',
+	'improve.voice_ask_forget': '¿Olvidar tu voz en este dispositivo? La forja la mostró una vez y no puede volver a mostrarla.',
+
+	// Las propuestas se leen de la forja mientras las miras. Nada avisa de cuándo
+	// se responde una, y ninguna frase de aquí puede dar a entender lo contrario.
+	'improve.live_note': 'Esto se lee de la forja mientras lo miras. Nada te avisa cuando se responde una propuesta; vuelve a mirar para saberlo.',
+	'improve.loading': 'Leyendo las propuestas…',
+	'improve.none_shown': 'Ahora mismo no se pudo leer nada.',
+	'improve.none_yet': 'Aquí todavía no hay propuestas. La tuya sería la primera.',
+	'improve.reading': 'Leyéndola…',
+	'improve.more': 'Ver más antiguas',
+	'improve.count.one': '{n} propuesta',
+	'improve.count.other': '{n} propuestas',
+	'improve.by': 'de {who}',
+	'improve.said_n.one': '{n} respuesta',
+	'improve.said_n.other': '{n} respuestas',
+	'improve.built_on': 'escrita en la compilación {build}',
+	'improve.closed_by': 'cerrada por la marca {mark}',
+	'improve.move_floor': 'Una nota sigue a su contenido a través del límite de un archivo solo cuando el cambio se reconoce como un movimiento, y el mínimo para eso son 64 bytes. Si cortas menos que eso de un archivo a otro, el historial guarda un borrado y una inserción, así que una nota anclada ahí informa honestamente de que su contenido se borró. La nota tiene razón y el historial también.',
 	'improve.state_open': 'Abierta',
 	'improve.state_taken': 'En marcha',
 	'improve.state_done': 'Hecha',
 	'improve.state_declined': 'Rechazada',
-	'improve.shipped_in': 'Entregada en la compilación {build}',
-	'improve.from_notes.one': 'De {n} nota',
-	'improve.from_notes.other': 'De {n} notas',
 	'improve.tally': '{yes} a favor, {no} en contra',
 	'improve.do': 'Hacer esto',
 	'improve.not': 'Esto no',
-	'improve.vote_held': 'Tu voto está aquí y todavía no se ha contado.',
+	'improve.vote_novoice': 'Pon una voz para votar esto.',
+	'improve.vote_off': 'Púlsalo otra vez para retirar tu voto.',
+	'improve.reply': 'Decirlo',
+	'improve.reply_ph': 'Di algo sobre esta propuesta.',
+	'improve.reply_help': 'Envía exactamente lo que hay en este cuadro. No va nada más con ello.',
+
+	// Lo que la forja rechazó, dicho en palabras. Ninguna de estas frases dice qué
+	// cupo se agotó: un límite que informa de su propio estado es un límite que
+	// alguien puede ir midiendo.
+	//
+	// TRADUCCIÓN — `improve.err_absent` es una regla de privacidad, no una
+	// preferencia de estilo. La forja responde `absent` tanto para «no existe ese
+	// repositorio» como para «ese repositorio es privado», a propósito y de forma
+	// permanente: cualquier señal que los distinguiera volvería a publicar
+	// justamente lo que un repositorio privado está reservando. La frase tiene que
+	// ser verdadera en los dos casos: «no existe» es falso cuando es privado, y
+	// «es privado» lo filtra. Di solo que no está disponible para ti.
+	// Véase dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1).
+	'improve.err_absent': 'Este repositorio no está disponible para ti.',
+	'improve.err_unvoiced': 'A la forja no se le dio ninguna voz, así que se negó.',
+	'improve.err_unknown': 'La forja no reconoce tu voz. Vuelve a ponerla a partir de la línea que la forja imprimió para ti.',
+	'improve.err_unpermitted': 'Tu voz no puede hacer eso aquí.',
+	'improve.err_throttled': 'Demasiadas peticiones ahora mismo. Espera un poco y vuelve a intentarlo.',
+	'improve.err_throttled_address': 'Demasiadas peticiones desde esta dirección ahora mismo. Espera un poco y vuelve a intentarlo.',
+	'improve.err_throttled_failing': 'Demasiadas peticiones fallidas ahora mismo. Espera un poco y vuelve a intentarlo.',
+	'improve.err_malformed': 'La forja no pudo leer lo que Daimond le pidió. Eso es un fallo de Daimond, no de lo que escribiste.',
+	'improve.err_no_proposal': 'Aquí no hay ninguna propuesta así.',
+	'improve.err_unsupported': 'La forja no responde a eso.',
+	'improve.err_internal': 'Algo salió mal en la forja. No es culpa tuya.',
+	'improve.err_gateway': 'Daimond no pudo llegar a la forja ahora mismo.',
+	'improve.err_session': 'Daimond no tiene la sesión iniciada ahora mismo, así que no pudo llegar a la forja.',
+	'improve.err_toolong': 'Eso es más largo de lo que la forja acepta. Acórtalo o mándalo en dos.',
+	'improve.err_offline': 'Ahora mismo no se pudo enviar nada.',
 	'trash.nothing': 'No has borrado nada.',
 	'trash.kept_days': 'Se guarda {days} días y luego se destruye.',
 	'trash.holding.one': '{n} cosa, {bytes}',

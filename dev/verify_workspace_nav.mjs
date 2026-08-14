@@ -69,8 +69,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// The damaged source, or a hard stop. Nothing is served that was not verified
 /// to differ from the file on disk — an anchor that no longer matches would
 /// silently serve the WORKING file and the run below would prove nothing.
-function damaged(spec) {
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+function damaged(src, spec) {
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -80,6 +79,23 @@ function damaged(spec) {
 	return src.replace(spec.find, spec.with);
 }
 
+/// The damaged files, ONE BODY PER FILE.
+///
+/// Every edit a break names for a file goes into the SAME body, in order, and
+/// that one body is what the route serves. A `page.route` per edit spec does not
+/// work and does not say so: Playwright hands a request to the LAST route
+/// registered for its URL, so a two-edit break shipped only its second edit --
+/// and still went red, for half the reason it claims, with nothing to notice it.
+function damagedFiles() {
+	const byFile = new Map();
+	for (const spec of (BREAKS[BREAK] || [])) {
+		const src = byFile.has(spec.file) ? byFile.get(spec.file)
+			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		byFile.set(spec.file, damaged(src, spec));
+	}
+	return byFile;
+}
+
 const PROFILE = scratch('pw', 'wsnav' + (BREAK ? '-' + BREAK : ''));
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
@@ -87,9 +103,8 @@ const s = await open({ name: 'wsnav', profile: PROFILE, signIn: false, connect: 
 const { page } = s;
 
 if (BREAK) {
-	for (const spec of BREAKS[BREAK]) {
-		const body = damaged(spec);
-		await page.route('**/' + spec.file, r => r.fulfill({
+	for (const [file, body] of damagedFiles()) {
+		await page.route('**/' + file, r => r.fulfill({
 			status: 200, contentType: 'application/javascript', body,
 		}));
 	}

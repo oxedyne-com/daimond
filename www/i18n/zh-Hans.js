@@ -1019,7 +1019,7 @@
 	'typst.pack_locked':   '排版属于本账户尚未购买的工具包。名称和价格见「工具」面板：一次购买，长期保留，用钱支付而非扣除额度。',
 	'typst.watch.starting': '正在排版页面…',
 	'typst.watch.building': '正在重新编译…',
-	'typst.watch.live':     '实时',
+	'typst.watch.live_preview': '实时预览',
 	'typst.watch.stale':    '显示的是最后一次编译成功的结果',
 	'typst.watch.held':     '已停止重新编译',
 	'typst.watch.dead':     '编译器已停止',
@@ -1030,9 +1030,15 @@
 	'typst.watch.page': '页',
 	'typst.watch.zoom_out': '缩小',
 	'typst.watch.zoom_in': '放大',
-	'typst.watch.fit': '适应宽度',
-	'typst.watch.night': '深色纸张',
-	'typst.watch.day': '浅色纸张',
+	// 按钮上只放一个词，较长的说法放在悬停时的标题里。
+	'typst.watch.fit_width': '适应宽度',
+	'typst.watch.fit_page': '适应整页',
+	'typst.watch.paper_dark': '深色',
+	'typst.watch.paper_light': '浅色',
+	'typst.watch.paper_dark_why': '深色纸张，适合夜里阅读',
+	'typst.watch.paper_light_why': '浅色纸张',
+	'typst.watch.sections': '章节',
+	'typst.watch.sections_none': '这个文档没有可以列出的标题。',
 	'typst.watch.dead_why': '编译器在这份文档上耗尽了内存，不重新加载页面就无法重启。下方是最后一次编译成功的页面。请重新加载，然后再次打开同一个文件。',
 
 	// ── 提示 ───────────────────────────────────────────────────
@@ -2106,6 +2112,11 @@
 	'settings.trail_empty': '尚无记录。',
 	// ── The Trash ──────────────────────────────────────────────
 	'panel.trash': '回收站',
+
+	// ── 改进面板 ───────────────────────────────────────────────
+	// 在这里写下关于 Daimond 的笔记，也在这里读提案。两半现在都经由 Oregami
+	// 的锻造台（存放提案的服务器）。“锻造台”和“声音”是这个应用的说法，母语
+	// 审校时换成别的词也可以。
 	'panel.improve': '改进',
 	'improve.notes': '笔记',
 	'improve.proposals': '提案',
@@ -2118,13 +2129,19 @@
 	'improve.keep_help': '把这条笔记存在这台设备上。不会发送任何东西。',
 	'improve.send': '发送',
 	'improve.send_help': '把上面的内容原样发给 Oxedyne。不会附带别的。',
-	'improve.as': '以 @{handle} 的身份发送',
-	'improve.as_none': '你还没有账户，所以笔记只能留在这里。',
+	// 笔记以书写者的“声音”发出。没有账号名，也没有姓名同行，所以这里的任何
+	// 一句都不能指名书写的人。
+	'improve.as_voice': '以你的声音发往锻造台，凡是能看到这个仓库的人都能读到。',
+	'improve.as_novoice': '你还没有声音，所以笔记只能留在这里。',
+	'improve.title_hint': '第一行是提案的标题。发生了什么写在它下面。',
+	'improve.no_title': '第一行是标题。先写一行标题，再在下面写发生了什么。',
 	'improve.nothing': '先写点什么。',
-	'improve.not_sent': '发送不出去，所以留在了这里。什么都没有发出去。',
+	// 被拒绝之后显示。没有队列也没有重试，所以译文不能许诺再试一次。
+	'improve.kept_here': '你的笔记留在这里，没有再试过。',
 	'improve.copied': '已复制。',
 	'improve.state_kept': '只在这里',
 	'improve.state_sent': '{date} 已发送',
+	'improve.state_sent_n': '{date} 已发送，是提案 {n}',
 	'improve.drop': '删除这条笔记',
 	'improve.drop_ask': '删除这条笔记？它只在这台设备上，没有别的副本。',
 	'improve.drop_ok': '删除',
@@ -2134,20 +2151,76 @@
 	'improve.ctx_pointer': '指针',
 	'improve.ctx_palette': '配色 {name}',
 	'improve.ctx_panels': '打开的面板：{list}',
-	'improve.no_props': '还没有提案。提案由笔记汇成，会随新构建一起到来。',
-	'improve.as_at': '截至构建 {build} 的计数。Daimond 更新时会变动。',
-	'improve.as_at_none': 'Daimond 更新时计数会变动。',
+
+	// 声音是每个人自己的一段秘密，锻造台靠它认出是谁在写。它在这里用你的口令
+	// 加密保存，绝不会出现在地址里。
+	'improve.voice_held': '这台设备上存着一个声音，用你的口令加密。',
+	'improve.voice_none': '这里没有声音，所以笔记只能留在本机。',
+	'improve.voice_set': '设置声音',
+	'improve.voice_replace': '更换声音',
+	'improve.voice_help': '锻造台为你打印出的那一行。它在这里加密保存，绝不会放进地址里。',
+	'improve.voice_ph': '粘贴锻造台为你打印出的那一行',
+	'improve.voice_save': '保存声音',
+	'improve.voice_saved': '你的声音已加密保存在这里。',
+	'improve.voice_failed': '这个声音没能保存。',
+	'improve.voice_forget': '忘掉它',
+	'improve.voice_forget_help': '删掉这台设备上的副本。',
+	'improve.voice_forgotten': '这台设备上的副本没有了。',
+	'improve.voice_ask_forget': '忘掉这台设备上的声音？锻造台只显示过一次，无法再显示第二次。',
+
+	// 提案是在你查看时从锻造台读来的。没有任何东西会告诉你提案何时有了回应，
+	// 这里的任何一句都不能让人以为有。
+	'improve.live_note': '这些是在你查看时从锻造台读来的。提案有了回应不会有任何提示；再看一次才知道。',
+	'improve.loading': '正在读取提案…',
+	'improve.none_shown': '刚才什么都没能读到。',
+	'improve.none_yet': '这里还没有提案。你的会是第一条。',
+	'improve.reading': '正在读取…',
+	'improve.more': '显示更早的',
+	'improve.count.one': '{n} 条提案',
+	'improve.count.other': '{n} 条提案',
+	'improve.by': '来自 {who}',
+	'improve.said_n.one': '{n} 条回复',
+	'improve.said_n.other': '{n} 条回复',
+	'improve.built_on': '写于构建 {build}',
+	'improve.closed_by': '由标记 {mark} 关闭',
+	'improve.move_floor': '只有当一次改动被认作移动时，笔记才会跟着内容跨过文件的边界，而这个门槛是 64 字节。从一个文件里剪走少于这个数量再放进另一个文件，历史里留下的就是一次删除和一次插入，于是锚在那里的笔记会如实地说它的内容被删掉了。笔记没有错，历史也没有错。',
 	'improve.state_open': '待议',
 	'improve.state_taken': '正在做',
 	'improve.state_done': '已完成',
 	'improve.state_declined': '已谢绝',
-	'improve.shipped_in': '已在构建 {build} 中发布',
-	'improve.from_notes.one': '来自 {n} 条笔记',
-	'improve.from_notes.other': '来自 {n} 条笔记',
 	'improve.tally': '{yes} 赞成，{no} 反对',
 	'improve.do': '做这个',
 	'improve.not': '不做这个',
-	'improve.vote_held': '你的一票在这里，还没有计入。',
+	'improve.vote_novoice': '设置一个声音才能给它投票。',
+	'improve.vote_off': '再按一次可以把你的票收回。',
+	'improve.reply': '说出来',
+	'improve.reply_ph': '说说你对这条提案的看法。',
+	'improve.reply_help': '把这个框里的内容原样发出。不会附带别的。',
+
+	// 锻造台拒绝的理由，用话说出来。这些句子都不说是哪一项额度用完了：会报出
+	// 自己状态的限额，是别人可以拿捏着用的限额。
+	//
+	// 译者请注意 —— `improve.err_absent` 是隐私规则，不是措辞偏好。锻造台对
+	// “没有这个仓库”和“这个仓库是私有的”这两种情况，有意且永久地都回答
+	// `absent`。任何能把两者分开的迹象，都会把私有仓库正在保留的事实重新公开
+	// 出去。所以这句话在两种情况下都必须为真：仓库是私有的时候，“不存在”是
+	// 假话；而“是私有的”本身就泄露了。只说它对你不可用。
+	// 参见 dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1)。
+	'improve.err_absent': '这个仓库对你不可用。',
+	'improve.err_unvoiced': '没有把声音交给锻造台，所以它拒绝了。',
+	'improve.err_unknown': '锻造台认不出你的声音。请用锻造台为你打印出的那一行重新设置。',
+	'improve.err_unpermitted': '你的声音在这里不能做这件事。',
+	'improve.err_throttled': '刚才请求太多了。稍等一会儿再试。',
+	'improve.err_throttled_address': '刚才这个地址发出的请求太多了。稍等一会儿再试。',
+	'improve.err_throttled_failing': '刚才失败的请求太多了。稍等一会儿再试。',
+	'improve.err_malformed': '锻造台读不懂 Daimond 的请求。这是 Daimond 的毛病，不是你写的内容有问题。',
+	'improve.err_no_proposal': '这里没有这条提案。',
+	'improve.err_unsupported': '锻造台不回答这个。',
+	'improve.err_internal': '锻造台那边出了问题。这不是你的错。',
+	'improve.err_gateway': 'Daimond 刚才没能连上锻造台。',
+	'improve.err_session': 'Daimond 现在没有登录，所以没能连上锻造台。',
+	'improve.err_toolong': '这比锻造台能接受的长度还长。缩短一些，或者分两次发。',
+	'improve.err_offline': '刚才什么都没能发出去。',
 	'trash.nothing': '没有删除过任何东西。',
 	'trash.kept_days': '保留 {days} 天，之后彻底删除。',
 	'trash.holding.one': '{n} 项，{bytes}',

@@ -203,6 +203,92 @@
 		if (!a.folders[name]) a.folders[name] = blankFolder(name);
 		return a.folders[name];
 	}
+	// ── Surviving a passphrase change ──────────────────────────────
+	//
+	// Every mailbox password is sealed under a key derived from the passphrase.
+	// Changing the passphrase therefore made all of them unopenable, silently:
+	// nothing re-wrapped them, and the first sign was a mailbox that had stopped
+	// working for no stated reason. Found 2026-08-14 by the lane that added the
+	// forge voice, which would have inherited the same hole.
+	//
+	// The plaintexts are held here, in this module, for the length of the change
+	// and no longer. The caller learns how many are held, never what they are.
+
+	/// Passwords in the clear, keyed by address so that a mailbox added or
+	/// removed mid-change cannot put a password onto the wrong account.
+	var rekey = null;
+
+	/// Read every mailbox password out from under the CURRENT passphrase.
+	///
+	/// Must be called BEFORE `DaimondIdentity.changePassphrase` swaps the key:
+	/// afterwards nothing can open them at all.
+	async function unsealForRekey() {
+		// Fresh every time, and assigned BEFORE the loop, so a throw part-way
+		// through leaves a hold the caller's `forgetRekey` can still clear rather
+		// than an unreachable object holding passwords in the clear.
+		rekey = {};
+		var failed = [];
+		for (var i = 0; i < state.accounts.length; i++) {
+			var a = state.accounts[i];
+			if (!a || !a.address || !a.pass) continue;
+			try { rekey[a.address] = await DaimondIdentity.unwrap(a.pass); }
+			catch (e) { failed.push(a.address); }
+		}
+		return { ok: !failed.length, held: Object.keys(rekey).length, failed: failed };
+	}
+
+	/// Put them back under the NEW passphrase, and forget them either way.
+	///
+	/// A mailbox whose password could not be re-sealed is NAMED rather than
+	/// counted, because "one mailbox needs its password again" is actionable and
+	/// "something went wrong" is not.
+	async function resealAfterRekey() {
+		if (!rekey) return { ok: true, failed: [] };
+		var failed = [];
+		try {
+			for (var i = 0; i < state.accounts.length; i++) {
+				var a = state.accounts[i];
+				if (!a || !a.address) continue;
+				var plain = rekey[a.address];
+				if (typeof plain !== 'string' || !plain) continue;
+				try { a.pass = await DaimondIdentity.wrap(plain); }
+				catch (e) { failed.push(a.address); }
+			}
+			save();
+		} finally { rekey = null; }		// in the clear; never held past here
+		return { ok: !failed.length, failed: failed };
+	}
+
+	/// Drop the plaintexts unused, for a change that did not happen.
+	function forgetRekey() { rekey = null; }
+
+	/// Take part in a passphrase change, registered HERE beside the seal rather
+	/// than named in `doChangePassphrase`.
+	///
+	/// That is the whole of the 2026-08-14 fix: this module's passwords were
+	/// missing from a hand-written list in another file, and nothing anywhere
+	/// said so. A registration next to the sealing code is visible to whoever
+	/// writes the next seal, and `dev/verify_rekey.mjs` fails the build for a
+	/// module that seals without one.
+	///
+	/// Both phases, because a password is held ONLY sealed: read out under the
+	/// old key, put back under the new one, forgotten either way.
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'mail',
+			read:   unsealForRekey,
+			reseal: resealAfterRekey,
+			forget: forgetRekey,
+			/// The mailboxes named, never counted. `list` is addresses, which is
+			/// what the user knows them by and what they will retype the password
+			/// into.
+			sentence: function (kind, list) {
+				return t(kind === 'unread' ? 'changepass.mail_not_unsealed'
+					: 'changepass.mail_not_resealed', { list: list.join(', ') });
+			},
+		});
+	}
+
 	function save() {
 		localStorage.setItem(LS, JSON.stringify({ accounts: state.accounts, sel: state.sel }));
 		// A mailbox added or removed outside a turn must travel like any edit.
@@ -2795,6 +2881,11 @@
 		accounts: function () {
 			return state.accounts.map(function (a) { return a.address; });
 		},
+		// Surviving a passphrase change. The caller drives the two halves; the
+		// passwords never cross this boundary in either direction.
+		unsealForRekey:   unsealForRekey,
+		resealAfterRekey: resealAfterRekey,
+		forgetRekey:      forgetRekey,
 		onOpen:  onOpen,
 		clear:   clear,
 		// Cross-device sync (driven by sync.js through DaimondCore): what to put in

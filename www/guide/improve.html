@@ -511,9 +511,19 @@
 
 		<p>A note is written in the <span class="ui">Improve</span> panel, which sits in the dock, beside your work, so that a note about what is on screen can be written without leaving it. Its <strong>head</strong> carries two <strong>chips</strong>, <span class="ui">Notes</span> and <span class="ui">Proposals</span>, and one is filled while you are looking at it.</p>
 
-		<h3 id="s27">Writing one</h3>
+		<p>A note you send does not stop at Oxedyne. It goes to <strong>the forge</strong>, the place where the work on Daimond is tracked, and it arrives there as a proposal anyone with that repository can read. The <span class="ui">Proposals</span> chip is that same forge, read back.</p>
 
-		<p>Under the <span class="ui">Notes</span> chip is the <strong>note box</strong>. Write the three things from the top of this page into it: where it is, what you expected, what happened instead.</p>
+		<h3 id="s27">Your voice</h3>
+
+		<p>Anything that leaves this device goes under a <strong>voice</strong>. A voice is a line of text the forge prints for you once: a secret belonging to one person, which the forge looks you up by. It is the whole of your identity there. No name, no handle and no address travels with what you write, and this browser is never told what your voice is called.</p>
+
+		<p>You set it in the panel. Press <span class="ui">Set a voice</span>, paste the line in, and press <span class="ui">Save the voice</span>. Daimond holds it on this device, encrypted under your passphrase, and the gateway it passes through on its way out stores nothing. <span class="ui">Forget it</span> removes the copy on this device; the forge showed that line once and cannot show it again, so keep it where you can find it.</p>
+
+		<p>Without a voice, <span class="ui">Keep</span> is all there is: the panel does not offer <span class="ui">Send</span>, and it does not offer voting or a reply either.</p>
+
+		<h3 id="s28">Writing one</h3>
+
+		<p>Under the <span class="ui">Notes</span> chip is the <strong>note box</strong>. Write the three things from the top of this page into it: where it is, what you expected, what happened instead. <strong>The first line is the title</strong> and the rest is what happened; the sentence beside the buttons says so.</p>
 
 		<p>Below the box is a <strong>row</strong> headed <span class="ui">What goes with it</span>. It holds one line: the build, the language, the size of the window, whether you are on a phone, the palette you are wearing, and which panels are open. That is the fourth piece of advice above, gathered for you rather than asked of you, and it is shown in the exact characters it will travel as. The row has a <strong>closer</strong>, and closing it takes the line off the note as well as off the screen.</p>
 
@@ -521,25 +531,31 @@
 
 		<ul>
 			<li><span class="ui">Keep</span> stores the note on this device. Nothing is sent, then or later.</li>
-			<li><span class="ui">Send</span> stores it and sends it to Oxedyne, and what is sent is exactly the characters in the box and in that row. Nothing is added on the way out, and nothing else about you goes with it. It goes as your account's public handle, which is written beside the button so that you know before you press it and not after.</li>
+			<li><span class="ui">Send</span> stores it and sends it, and what is sent is exactly the characters in the box and in that row. Nothing is added on the way out, and nothing else about you goes with it. It goes under your voice, and it goes somewhere public: anyone who can read the repository can read what you wrote. The sentence beside the button says so, so that you know before you press it and not after.</li>
 		</ul>
 
 		<div class="note">
-			<strong>A note is never sent by itself.</strong> Nothing here is queued, batched, retried or synced. Sending needs Oxedyne's gateway to be listening; when it is not, because you are offline or have no account, the note is kept, the <strong>row</strong> under the box says <span class="ui">Kept here</span>, and nothing tries again behind your back. <span class="ui">Copy</span> is on every note, so you can always carry your own words out by hand.
+			<strong>A note is never sent by itself.</strong> Nothing here is queued, batched, retried or synced. Sending needs the forge to be reachable; when it is not, because you are offline or have no voice, the note is kept, the <strong>row</strong> under the box says <span class="ui">Kept here</span>, and nothing tries again behind your back. <span class="ui">Copy</span> is on every note, so you can always carry your own words out by hand.
 		</div>
 
-		<p>Your own notes are listed under the box, newest first, each a <strong>row</strong> saying what you wrote and whether it went. A kept note can be sent, copied or deleted; a note is only on this device, so deleting it asks first.</p>
+		<p>Your own notes are listed under the box, newest first, each a <strong>row</strong> saying what you wrote and whether it went. A kept note can be sent, copied or deleted; a note is only on this device, so deleting it asks first. A note that went says which proposal it became.</p>
 
-		<h3 id="s28">Reading the proposals, and voting</h3>
+		<h3 id="s29">Reading the proposals, and voting</h3>
 
-		<p>A <strong>proposal</strong> is one change to Daimond, made from notes and stated so that it can be finished. It is why the advice at the top of this page says one note, one thing: two faults in one note become one proposal that cannot be finished.</p>
+		<p>A <strong>proposal</strong> is one change to Daimond, stated so that it can be agreed or disagreed with, and so that it can be finished. Sending a note opens one: its first line becomes the title and the rest becomes the body. That is why the advice at the top of this page says one note, one thing: two faults in one note become one proposal that cannot be finished.</p>
 
-		<p>Under the <span class="ui">Proposals</span> chip each one is a <strong>row</strong> of the same shape as a row in the admin panel: a coloured dot for what state it is in, its title, and how many people have asked for it. Pressing the row opens it, and inside are the proposal in full, how many notes it was made from, and two buttons: <span class="ui">Do this</span> and <span class="ui">Not this</span>. Pressing the one you already chose takes your vote back off.</p>
+		<p>Under the <span class="ui">Proposals</span> chip each one is a <strong>row</strong> of the same shape as a row in the admin panel: a coloured dot for what state it is in, its title, and, where there are counts, how many have asked for it. Pressing the row opens it, and inside are the proposal in full, who wrote it and when, how many replies it has, the build it was written on, and the mark that closed it if one has.</p>
 
-		<p>There are four states. <span class="ui">Open</span> and <span class="ui">Being done</span> say where it stands, <span class="ui">Done</span> names the build it shipped in, and <span class="ui">Declined</span> says why. A proposal that simply vanished would teach people not to write notes, so none of them does.</p>
+		<p>Under that is a box to say something back. Write in it and press <span class="ui">Say it</span>, and what is sent is exactly what is in that box, the same promise the note box keeps. What has already been said sits above it.</p>
+
+		<p>Where the forge is keeping counts, two buttons sit with them: <span class="ui">Do this</span> and <span class="ui">Not this</span>. Pressing the one you already chose takes your vote back off.</p>
+
+		<p>There are four states. <span class="ui">Open</span> and <span class="ui">Being done</span> say where it stands, <span class="ui">Done</span> says it is finished, and <span class="ui">Declined</span> says it will not be done. A proposal that simply vanished would teach people not to write notes, so none of them does.</p>
+
+		<p><strong>Nothing tells you when your proposal is answered.</strong> There is no feed, no badge and no message: you find out by opening the panel and reading it. The line above the list says so, so that a silence is never taken for an answer.</p>
 
 		<div class="note">
-			<strong>The counts are as at a build, not as at this minute.</strong> They arrive with Daimond itself, and the line above the list says which build they were taken at. A vote of yours that has not been counted yet is drawn as a dashed button, so that a number and your own press are never confused for each other.
+			<strong>The counts are live, and nothing is held.</strong> Everything under <span class="ui">Proposals</span> is read from the forge while you are looking at it, so a count is what it was at that moment rather than as at a build. There is no queue behind the two buttons either: <strong>a vote pressed while you are offline is not cast</strong>, and nothing casts it for you afterwards. Press it again when you are back.
 		</div>
 	</section>
 

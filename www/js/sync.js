@@ -1400,6 +1400,44 @@
 		schedule();
 	}
 
+	// ── Surviving a passphrase change ──────────────────────────
+	//
+	// THE PARCEL IS SEALED AT REST TOO, so this file takes part — but it is the
+	// one participant with nothing to read out and nothing to hold. The blob is
+	// built from live state on every push (`collectParcel` + `JSON.stringify`), so
+	// it is a DERIVED COPY: there is no secret here that exists only in the
+	// ciphertext, and re-sealing it means nothing more than sending it again.
+	//
+	// Sending it again is not automatic, which is why this is a participant and
+	// not an exemption. `push()` skips a parcel identical to the one it last sent
+	// — and a passphrase change does not change the parcel, only the key it goes
+	// under. So without this the blob in the mailbox stays sealed under a key
+	// nobody has any more: the account's cloud copy is dead, silently, until some
+	// unrelated edit happens to change the state. Forgetting what was last pushed
+	// is the whole of the fix, and the next round re-seals it.
+	//
+	// WHAT THIS DOES NOT FIX, deliberately: a SECOND device still on the old
+	// passphrase cannot read this blob, adopts its version, and pushes its own
+	// over the top — after which the two clobber each other for ever and nothing
+	// tells anyone. That is a known defect of the merge path, it is out of this
+	// file's rekey participation, and it is not made better or worse by re-sending
+	// here.
+
+	/// Re-seal the mailbox copy: forget what was last sent, so the next push
+	/// genuinely sends, and ask for that push.
+	function resealAfterRekey() {
+		lastPushed = null;
+		schedule();
+		return { failed: [] };
+	}
+
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'sync',
+			reseal: resealAfterRekey,
+		});
+	}
+
 	function saveVersion() {
 		try { localStorage.setItem(K_VERSION, String(serverVersion)); } catch (e) { /* ignore */ }
 	}

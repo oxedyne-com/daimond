@@ -553,6 +553,28 @@
 	/// is exactly the retry that must not exist. Both deliberately call `fetch`
 	/// directly -- see the notes at `redeem()` in pairing.js and `getBlob()` in
 	/// passkey.js.
+	/// The forge's own refusal vocabulary, from the Improve-panel contract §3.1.
+	///
+	/// Only the two that arrive as 401 are listed, because this is asked ONLY of a
+	/// 401 -- a wider list would invite the next reader to use this for something
+	/// it was not measured for.
+	var FORGE_401 = ['unvoiced', 'unknown'];
+
+	/// Is this 401 the FORGE refusing a voice, rather than the gateway refusing
+	/// our session?
+	///
+	/// Answered from the body, on a clone, so the caller still gets an unread
+	/// one. Anything that does not parse, or parses without one of the two
+	/// tokens, is treated as ours -- the safe direction, since the cost of
+	/// renewing unnecessarily is a round trip and the cost of NOT renewing when
+	/// we should is the silent refusal this whole mechanism was built to end.
+	async function isForgeRefusal(r) {
+		var body = null;
+		try { body = await r.clone().json(); } catch (e) { return false; }
+		return !!(body && typeof body.error === 'string'
+			&& FORGE_401.indexOf(body.error) !== -1);
+	}
+
 	async function gwFetch(path, opts) {
 		// A paused node never reaches the network. Here as well as in the guard
 		// over `fetch`, because this is the one copy of the gateway rule and a
@@ -564,6 +586,18 @@
 		// A call the bootstrap is making itself cannot answer a 401 by
 		// bootstrapping; see isBootstrapOwn. Everything else may.
 		if (r.status !== 401 || isBootstrapOwn(path)) return r;
+		// NOT EVERY 401 IS OURS. `/api/improve` forwards a tester's VOICE to the
+		// Oregami forge, which answers 401 in its own right -- `unvoiced` for a
+		// missing credential, `unknown` for one it does not recognise. Renewing
+		// this app's session cannot make a wrong voice right, so without this the
+		// forge's refusal costs a pointless signature round trip AND SENDS THE
+		// WRITE A SECOND TIME. Measured at two requests for one refused post.
+		//
+		// Told apart by the forge's own vocabulary rather than by the path,
+		// because the token is the thing that means "this 401 was not about your
+		// session" wherever it arrives from. The body is read off a CLONE: the
+		// caller is handed the original and must still be able to read it.
+		if (await isForgeRefusal(r)) return r;
 		var back = false;
 		try { back = !!(await reauth()); } catch (e) { back = false; }
 		if (!back) return r;

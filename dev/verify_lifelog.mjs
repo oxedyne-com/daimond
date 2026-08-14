@@ -101,6 +101,14 @@ const SEED_MODE = process.argv.includes('--seed') || process.argv.includes('nose
 const SHOTS = process.env.SHOTS || path.dirname(scratch('shots', 'x'));
 fs.mkdirSync(SHOTS, { recursive: true });
 
+// The floor a filled surface's ink must clear against its own ground. 3.0 rather than 4.5, and
+// the reason is worth stating: the app resolves its own `accentText` against its own accent and
+// hands it to the page, so a threshold above what the APP's palette achieves would be this file
+// failing the whole product's colour scheme through a capp. What is being caught here is the
+// fault the owner reported — ink that does not invert at all, which lands between 1.0 and 2.0
+// — and 3.0 catches that with room to spare while leaving the palette's own choices alone.
+const CONTRAST_MIN = 3.0;
+
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
 	(pass ? ok : bad).push(name);
@@ -172,8 +180,8 @@ const BREAKS = {
 	// leaves Log alone: the entry view carries the numbers and the charts as well, which is
 	// exactly the page he was given.  -> 'LOG IS THE ENTRY VIEW' goes red, 'LIFE IS' does not.
 	mixedlog: {
-		find: "\treturn pad() + toastBar()",
-		with: "\treturn pad() + stats() + charts() + toastBar()",
+		find: "\treturn (sc ? scopeBar(l, sc) : '') + pad() + restBar(l) + toastBar()",
+		with: "\treturn (sc ? scopeBar(l, sc) : '') + pad() + stats() + charts() + restBar(l) + toastBar()",
 	},
 	// The builder stops offering one of the types the ontology names, so a lane that wants a note
 	// on every entry cannot be made from the page at all.  -> 'THE + OPENS A LANE BUILDER' goes
@@ -192,7 +200,7 @@ const BREAKS = {
 	// still shows it, which is why the check reads the disk.  -> 'A LANE MADE FROM THE PAGE
 	// REACHES THE DISK' goes red.
 	nolanesave: {
-		find: "\tvar ps = [save('lanes/' + l.id + '.json', JSON.stringify(l), 'replace')];",
+		find: "\tvar ps = [save('lanes/' + l.id + '.json', laneJson(l), 'replace')];",
 		with: "\tvar ps = [Promise.resolve({ ok: true })];",
 	},
 	// Nothing is checked before a lane is written, so a lane with no name and no fields is made
@@ -233,6 +241,135 @@ const BREAKS = {
 		find: "\t\t+ '<div class=\"gap\"></div><div class=\"seg\">'",
 		with: "\t\t+ '<div class=\"gap\"></div><div class=\"chips\">'",
 	},
+	// ── The ontology the Gym lane is the hardest case of ────────────
+	//
+	// None of what follows is a gym feature. `p` is a plan, `prefill` is "the same as last
+	// time", `pick` is several choices at once, `rest` is a lane that counts between one
+	// commit and the next, and `end` is the second of two stamps. Each break below damages
+	// one of them, and each is chosen to survive every check but the one it proves — where
+	// that is not possible it is said so here and in the report.
+
+	// The lane files this directory ships stop being the lanes the page would seed, so a
+	// delivered Diamond and a seeded one are two different apps. The page still WORKS —
+	// nothing else moves.  -> 'THE LANES IT CARRIES ARE THE LANES IT WOULD SEED' goes red.
+	laneDrift: {
+		find: "\t\tid: 'gym', n: 'Gym', dayStart: 0, sess: true, primary: 'lift', title: 'name',",
+		with: "\t\tid: 'gym', n: 'Gymnasium', dayStart: 0, sess: true, primary: 'lift', title: 'name',",
+	},
+	// The pending gate opens: a plan counts. This is the one break that is MEANT to redden
+	// more than one check, because "invisible to every number" is one property with four
+	// witnesses — the day's total, the pie, the streak and the bar for the day that has
+	// nothing real in it. A gate that leaked into only three of them would be worse.
+	//  -> the energy check, 'AND NO NUMBER COUNTS IT' and the bar count all go red.
+	countpending: {
+		find: "\tfor (i = 0; i < es.length; i++) if (!es[i].p) o.push(es[i]);",
+		with: "\tfor (i = 0; i < es.length; i++) o.push(es[i]);",
+	},
+	// The other half, and the reason it needs its own break: a plan that is not DRAWN is
+	// also counted by nothing, and the aggregation checks above cannot tell the two apart.
+	//  -> 'A PLANNED ENTRY IS DRAWN, AND DRAWN AS A PLAN' goes red, and nothing else.
+	nopendingrow: {
+		find: "\tfor (i = es.length - 1; i >= 0; i--) if (!es[i].of) rows.push(es[i]);",
+		with: "\tfor (i = es.length - 1; i >= 0; i--) if (!es[i].of && !es[i].p) rows.push(es[i]);",
+	},
+	// Nothing is ever carried forward, so every set opens empty and every food has to have
+	// its amount typed again.  -> 'AND EACH OPENS ON THE LAST TIME' goes red.
+	noprefill: {
+		find: "\t\tif (!f || f.prefill !== 'last' || bag[f.k] != null) continue;",
+		with: "\t\tif (true) continue;",
+	},
+	// Prefill reads a row that has been written down and not yet done. One mistyped weight
+	// then propagates down the whole exercise, and the log fills with numbers nobody lifted.
+	//  -> 'AND A ROW THAT IS ONLY A PLAN IS NOT WHAT THE NEXT ONE COPIES' goes red.
+	prefillpending: {
+		find: "\t\tif (e.p || (e.f || {})[l.primary] !== ref) continue;",
+		with: "\t\tif ((e.f || {})[l.primary] !== ref) continue;",
+	},
+	// The picker takes several and adds one, which is the difference between choosing your
+	// exercises and choosing an exercise five times.  -> 'THE PICKER TAKES SEVERAL AT ONCE'
+	// goes red on what reaches the disk, not on what the screen highlighted.
+	singlepick: {
+		find: "\t\t\tif (!on6[k6]) continue;",
+		with: "\t\t\tif (!on6[k6] || es3.length) continue;",
+	},
+	// What the picker adds is committed rather than planned, so the session's totals count
+	// work that has not been done.  -> 'EXERCISES ARE PICKED SEVERAL AT A TIME AND ARRIVE AS
+	// A PLAN' goes red.
+	notpending: { find: "\t\t\tif (sc.p) ne3.p = 1;", with: "\t\t\tif (0) ne3.p = 1;" },
+	// A session with no end stamp reads as finished, so the workout in progress is not one.
+	//  -> 'A WORKOUT STARTS OPEN AND BECOMES THE SCREEN' goes red on the control it offers.
+	alwaysclosed: {
+		find: "function sessOpen(e) { return !!e && !e.end; }",
+		with: "function sessOpen(e) { return false; }",
+	},
+	// A length stops falling out of the two stamps, so a session that was never given a
+	// typed duration has none.  -> 'A FINISH CLOSES IT, AND ITS LENGTH IS THE DISTANCE
+	// BETWEEN TWO STAMPS' goes red on yesterday's 1h 2m.
+	nospan: {
+		find: "\tif ((raw === '' || raw === undefined) && f.t === 'dur' && e.end) {",
+		with: "\tif (false) {",
+	},
+	// The rest clock will not restart while it is running, so the second exercise's set
+	// rests on whatever was left of the first's.  -> 'THE REST CLOCK STARTS ON A TICK AND
+	// STARTS AGAIN ON THE NEXT' goes red.
+	reststicky: {
+		find: "\tREST.until = Date.now() + REST.secs * 1000;\n\trestTone(REST.secs);",
+		with: "\tif (REST.until > Date.now()) return;\n\tREST.until = Date.now() + REST.secs * 1000;\n\trestTone(REST.secs);",
+	},
+	// The tone plays at the moment of the tick instead of being scheduled two minutes out on
+	// the audio clock — which is what a countdown driven by `setInterval` would sound like,
+	// and it is silent in a backgrounded tab.  -> 'AND THE DING IS SCHEDULED ON THE AUDIO
+	// CLOCK' goes red on the offsets, which is the only place the difference shows.
+	nodingsched: {
+		find: "\t\tt0 = c.currentTime + secs + i * 0.3;",
+		with: "\t\tt0 = c.currentTime + i * 0.3;",
+	},
+	// The scope stops selecting: the live list shows every set of every session there has
+	// ever been.  -> THIS ONE REDDENS TWO, and deliberately: reviewing a past session and
+	// working through a live one are the SAME list with the same scope, which is the whole
+	// point of building the workout as the Log view rather than as a screen of its own. A
+	// break that reddened only one of them would mean there were two selections to get
+	// wrong.
+	scopeleak: {
+		find: "function scoped(l, sc) { return sc ? kids(l.id, sc.id) : inBucket(l.id, curB(), S.per); }",
+		with: "function scoped(l, sc) {\n\tif (!sc) return inBucket(l.id, curB(), S.per);\n\t"
+			+ "var a = live(l.id), o = [], i;\n\tfor (i = 0; i < a.length; i++) if (a[i].of) o.push(a[i]);\n\t"
+			+ "return o;\n}",
+	},
+	// A selected row keeps the ink it had on the ground it no longer has: the row goes dark,
+	// its contents do not invert, and what you have just chosen is the one thing you cannot
+	// read. This is the fault the owner reported, in the class it belongs to.
+	//  -> 'SELECTED SURFACES INVERT THEIR INK' goes red.
+	dimselect: {
+		find: ".pickr.on .gap,.pickr.on .ev{color:var(--on)}",
+		with: ".pickr.on .never-matches{color:var(--on)}",
+	},
+	// The page goes back to taking the app's `accentText` on trust. In this palette that is a
+	// light tint of the accent — ink for accent-coloured text on the PAGE's ground, not ink
+	// for text on the accent — so every selected chip in the capp measures 1.83:1 and the
+	// thing you have just chosen is the thing you cannot read. This was the shipped state.
+	//  -> 'SELECTED SURFACES INVERT THEIR INK' goes red, on the switch rather than the rows.
+	trustaccenttext: {
+		find: "\t\tif (!on || ratio(luma(on), la) < 3) on = ratio(0, la) >= ratio(1, la) ? '#141414' : '#ffffff';",
+		with: "\t\tif (!on) on = ratio(0, la) >= ratio(1, la) ? '#141414' : '#ffffff';",
+	},
+	// The pressed rule goes back BEHIND `.tile.acc .tn`. Both weigh (0,2,1), so the later one
+	// wins and a pressed accent tile draws accent ink on an accent ground: 1.00, and the name
+	// of the tile under the thumb is invisible for as long as the thumb is on it.
+	//  -> 'SELECTED SURFACES INVERT THEIR INK' goes red, on the pressed tile.
+	dimpressed: {
+		find: ".tile:active .ts,.tile:active .tn{color:var(--on)}",
+		with: ".tile:active .never-matches{color:var(--on)}",
+	},
+	// The weight box is given a height a fraction under what its own type needs. The VALUE in
+	// it stays correct, so every check that reads a set's numbers back is green and the person
+	// holding the phone sees an empty box.  -> 'AND EVERY CONTROL HAS MORE ROOM THAN ITS OWN
+	// TYPE NEEDS' goes red, and nothing that reads a value moves at all.
+	tightsetin: {
+		find: ".setin{width:56px;text-align:center;font-family:var(--mo);font-weight:600;padding:4px 5px;flex:none}",
+		with: ".setin{width:56px;text-align:center;font-family:var(--mo);font-weight:600;padding:4px 5px;flex:none;height:16px}",
+	},
+
 	// A field box that will not fit a phone, which is where a lane gets made.  -> 'the lane
 	// builder does not scroll sideways on a phone' goes red.
 	widebuilder: {
@@ -359,6 +496,47 @@ check('the page asks for nothing the sandbox and the policy have not got',
 		complaints.length === 0, complaints.slice(0, 4).join(' | ') || 'checked');
 }
 
+// The same lanes, twice over, and they have to be the same lanes. A delivered Diamond gets the
+// files in this directory; one a daimon wrote from the page alone gets `seed()`'s literals. The
+// two are maintained by hand and drift silently — a property added to the page's gym and not to
+// `lanes/gym.json` is a feature that works for one half of the users and is absent for the
+// other, and every check in this file that runs delivered would say nothing about it. So the
+// literals are lifted out of the page's own source and compared. `eval` here is node reading a
+// data literal out of a file this repo owns; the page itself may not have it and is held to
+// that separately.
+{
+	const grab = (name) => {
+		const i = PAGE.indexOf('var ' + name + ' = {');
+		if (i < 0) return null;
+		const j = PAGE.indexOf('{', i);
+		let d = 0, k = j;
+		for (; k < PAGE.length; k++) {
+			if (PAGE[k] === '{') d++;
+			else if (PAGE[k] === '}' && !--d) break;
+		}
+		return PAGE.slice(j, k + 1);
+	};
+	// The page's own per-100 g helper, in scope so the diet literal evaluates as it does there.
+	// eslint-disable-next-line no-unused-vars
+	const sc = (k, n, u) => ({ k, t: 'num', n, u, agg: 'sum', d: { c: 'food', k, per: 100, by: 'g' } });
+	const drift = [];
+	for (const id of ['diet', 'gym', 'body']) {
+		const src = grab(id);
+		if (!src) { drift.push(id + ': no literal in the page at all'); continue; }
+		let seeded = null;
+		try { seeded = eval('(' + src + ')'); } catch (e) { drift.push(id + ': ' + e.message); continue; }
+		const shipped = JSON.parse(FILE('lanes/' + id + '.json'));
+		const a = JSON.stringify(seeded), b = JSON.stringify(shipped);
+		if (a !== b) {
+			const pos = [...a].findIndex((c, n) => c !== b[n]);
+			drift.push(id + ' differs from ' + pos + ': carried `' + b.slice(pos, pos + 40)
+				+ '` vs seeded `' + a.slice(pos, pos + 40) + '`');
+		}
+	}
+	check('THE LANES IT CARRIES ARE THE LANES IT WOULD SEED', drift.length === 0,
+		drift.join(' | ') || 'diet, gym and body identical either way');
+}
+
 // ── A fortnight of history, so the charts have something to draw ──
 const p2 = n => (n < 10 ? '0' : '') + n;
 const ymd = d => d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
@@ -414,9 +592,29 @@ for (let d = 13; d >= 0; d--) {
 	// fails for four hours a night is a verifier people learn to ignore.
 	if (d % 5 === 0 || d === 1) body.push(ent(d, 7, 8, { hr: 54 + (d % 3) }, 'form'));
 }
+// A PLAN, and not a record. Two of tonight's meals written down before they are eaten, and one
+// on the day the log has a hole in. Both are drawn and neither is counted, which is the whole
+// of `p` — and the choice of foods is deliberate: they are foods ALREADY eaten today, so the
+// pie's series are the same set either way and only the totals would move. A break that
+// counted them therefore has nowhere to hide behind a legend that happened to change shape.
+const PLANNED = [['chick', 300], ['rice', 300]];
+let plannedKcal = 0;
+for (const [food, g] of PLANNED) {
+	const e = ent(0, 20, 30, { food, g, meal: 'Dinner' }, 'pick');
+	e.p = 1;
+	diet.push(e);
+	plannedKcal += KCAL[food] * g / 100;
+}
+// On the empty day, so that a plan cannot extend a streak or raise a bar out of nothing.
+const gapPlan = ent(GAP_DAY, 12, 0, { food: 'app', g: 150, meal: 'Lunch' }, 'pick');
+gapPlan.p = 1;
+diet.push(gapPlan);
+const STREAK = GAP_DAY;		// days 0..4 have something real in them, and the fifth has a plan
+
 // Distinct foods eaten today, which is what the pie has to split up. Eleven of them, and the
-// page's rule is that a ninth series is never a ninth hue: seven, then a neutral Other.
-const TODAY_FOODS = new Set(diet.filter(e => e.day === ymd(new Date())).map(e => e.f.food));
+// page's rule is that a ninth series is never a ninth hue: seven, then a neutral Other. Real
+// entries only: the pie is a reading and a plan is not read.
+const TODAY_FOODS = new Set(diet.filter(e => e.day === ymd(new Date()) && !e.p).map(e => e.f.food));
 const DAYS_LOGGED = 13;		// fourteen buckets on the chart, one of them empty
 
 // Yesterday's session is the one the verifier opens, so its numbers are named here.
@@ -428,13 +626,27 @@ const PLAN = [
 	[3, 'Legs', [['sq', 105, 5], ['sq', 105, 5], ['sq', 110, 3], ['rdl', 85, 8], ['lp', 170, 10]]],
 	[1, 'Push', PUSH],
 ];
+const SESS_MIN = 62;
 for (const [back, name, sets] of PLAN) {
-	const s = ent(back, 18, 0, { name, dur: 62 * 60 }, 'tap');
+	const s = ent(back, 18, 0, { name }, 'tap');
+	// TWO STAMPS AND NO TYPED DURATION. A session is open until it has an `end`, and its
+	// length is the distance between the two — so every one of these is finished, none of
+	// them scopes the page on opening, and the 1h 2m the screen shows for one of them is
+	// arithmetic on the pair rather than a number in a field.
+	s.sess = 1;
+	s.end = isoAt(at(back, 19, 2));
 	gym.push(s);
 	sets.forEach(([lift, kg, reps], i) => {
 		gym.push(ent(back, 18, 4 + i * 6, { lift, kg, reps }, 'form', s.id));
 	});
 }
+// How many of those sessions fall in the month the run happens in — COUNTED rather than assumed.
+// `back: 12` is the second of the month on the fourteenth and the twenty-fourth of the month
+// before on the sixth, so a check that assumed all five would be a check that failed for the
+// first fortnight of every month.
+const THIS_MONTH = ymd(new Date()).slice(0, 7);
+const SESS_IN_MONTH = PLAN.filter(([back]) => ymd(at(back, 18, 0)).slice(0, 7) === THIS_MONTH).length;
+
 // Volume is `kg*reps` summed, and the sets are grouped by lift in the order each first appeared.
 const PUSH_LIFTS = [...new Set(PUSH.map(x => x[0]))];
 const BENCH_VOL = PUSH.filter(x => x[0] === 'bp').reduce((a, [, kg, reps]) => a + kg * reps, 0);
@@ -572,6 +784,88 @@ const viewParts = () => inFrame(() => ({
 	stats: document.querySelectorAll('.st').length,
 	charts: document.querySelectorAll('svg').length,
 }));
+/// mm:ss as seconds, or -1. The rest clock is read off the screen, because what the page holds
+/// in a closure is not what the person in the gym is looking at.
+const clockSecs = (t) => {
+	const m = /(\d+):(\d+)/.exec(String(t || ''));
+	return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+};
+/// The live list, group by group: what each exercise is called, what its heading adds up to,
+/// what each of its rows is showing, and which rows are still only a plan.
+const liveGroups = () => inFrame(() => [...document.querySelectorAll('.grp')].map(g => ({
+	n: g.querySelector('.grph .gap').textContent,
+	vol: g.querySelector('.grph .ev').textContent,
+	pend: g.querySelectorAll('.setr.pend').length,
+	green: g.querySelectorAll('.tick.on').length,
+	vals: [...g.querySelectorAll('.setr')].map(r => {
+		const ins = [...r.querySelectorAll('.setin')];
+		return ins.length ? ins.map(i => i.value).join('x') : r.querySelector('.gap').textContent.trim();
+	}),
+})));
+/// THE ROOM A GLYPH ACTUALLY HAS, which is not the same question as whether the text is there.
+///
+/// An input whose `value` is correct and whose content box is a fraction of a pixel shorter
+/// than its own type shows nothing at all, and every assertion on its value passes. So each
+/// control is measured three ways: the height left inside the padding against the font size,
+/// and whether the content overflows the box in either direction. All of the new controls are
+/// small boxes with numbers in them, which is precisely the shape this fails on.
+const roomIn = (sel) => inFrame((s) => [...document.querySelectorAll(s)].map((el) => {
+	const cs = getComputedStyle(el);
+	const r1 = (v) => Math.round(v * 10) / 10;
+	return {
+		n: s + '>' + String(el.className || el.tagName).split(' ').join('.'),
+		fs: r1(parseFloat(cs.fontSize)),
+		room: r1(el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)),
+		overW: r1(el.scrollWidth - el.clientWidth),
+		overH: r1(el.scrollHeight - el.clientHeight),
+	};
+}), sel);
+/// THE CONTRAST OF INK ON THE GROUND IT ACTUALLY SITS ON.
+///
+/// The walk up for the first OPAQUE background is the whole of this function, and it is here
+/// because of a real failure in this app: a contrast verifier once reported eleven palettes at
+/// exactly 1.00 because it read `background-color` off the element, got `rgba(0,0,0,0)`,
+/// treated that as a colour, and was in effect photographing the backdrop. So a colour that is
+/// not opaque is not a ground, and an element whose ground cannot be resolved is REPORTED with
+/// a null ratio rather than quietly scored as anything at all.
+///
+/// Only elements with a text node of their OWN are measured. A container is not judged on text
+/// belonging to its children, or a wrapper whose own colour nothing ever paints would fail a
+/// check about something a reader can actually see.
+const contrastIn = (sel) => inFrame((s) => {
+	const lum = (c) => {
+		const m = /(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/.exec(c || '');
+		if (!m) return null;
+		if (m[4] != null && Number(m[4]) < 0.95) return null;
+		const f = (v) => {
+			v = Number(v) / 255;
+			return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+		};
+		return 0.2126 * f(m[1]) + 0.7152 * f(m[2]) + 0.0722 * f(m[3]);
+	};
+	const ground = (el) => {
+		let e = el;
+		while (e) {
+			const g = lum(getComputedStyle(e).backgroundColor);
+			if (g != null) return g;
+			e = e.parentElement;
+		}
+		return null;
+	};
+	const own = (k) => [...k.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+	const out = [];
+	for (const el of document.querySelectorAll(s)) {
+		for (const k of [el, ...el.querySelectorAll('*')]) {
+			if (!own(k)) continue;
+			const ink = lum(getComputedStyle(k).color), bg = ground(k);
+			const name = s + '>' + String(k.className || k.tagName).split(' ').join('.');
+			if (ink == null || bg == null) { out.push({ n: name, r: null }); continue; }
+			const hi = Math.max(ink, bg) + 0.05, lo = Math.min(ink, bg) + 0.05;
+			out.push({ n: name, r: Math.round((hi / lo) * 100) / 100 });
+		}
+	}
+	return out;
+}, sel);
 
 try {
 	await page.goto(process.env.DAIMOND_APP || 'http://localhost:8777', { waitUntil: 'domcontentloaded' });
@@ -651,6 +945,39 @@ try {
 	const fell = await page.evaluate(() => !!document.querySelector('.crystal-fallback-note'));
 	check('THE FRAME IS UP AND THE APP DID NOT FALL BACK', up && !fell,
 		'frame:' + up + ' fallback:' + fell);
+	// THE PAGE THAT IS ACTUALLY RUNNING, read out of the frame's own document.
+	//
+	// A break lives in a string held by this file; what matters is the code the browser is
+	// executing. If the damage never reached that, the run goes green for the best of reasons
+	// and proves nothing — and the matrix then reads exactly like a matrix of real results.
+	// So on a clean run the document is confirmed whole, and on a broken one the anchor is
+	// confirmed GONE and the damage confirmed PRESENT: both directions, because a replacement
+	// that appended rather than replaced would satisfy only the second.
+	//
+	// It is read from the FRAME and not from the file, and that is not a convenience. The
+	// engine's `file_read` truncates at 80,000 bytes and the page is larger than that, so a
+	// check written against the file would have reported every late anchor as gone — the page
+	// literal that seeds the lanes is in the last tenth of it. `outerHTML` carries the text of
+	// every `<style>` and `<script>` verbatim, which is where every anchor here lives.
+	// One break legitimately KEEPS its anchor and wraps a guard round it, so "the anchor is
+	// gone" is only asked of a replacement that replaces. Distinguishing the two is the point:
+	// the check this first ran under called that break broken, which is the same instrument
+	// working — it noticed a difference between what was meant and what was there.
+	const spec = BREAK ? BREAKS[BREAK] : null;
+	const additive = !!spec && spec.with.indexOf(spec.find) >= 0;
+	const running = await inFrame(() => document.documentElement.outerHTML);
+	check(BREAK ? 'AND THE BREAK REACHED THE PAGE THAT IS RUNNING'
+		: 'the page that is running is the page in this repo',
+		BREAK
+			? running.includes(spec.with) && (additive || !running.includes(spec.find))
+			: running.includes(PAGE.slice(PAGE.indexOf('<style>'), PAGE.indexOf('<style>') + 400))
+				&& running.length > bytes * 0.9,
+		BREAK
+			? 'damage present: ' + running.includes(spec.with)
+				+ (additive ? ' (additive, so the anchor stays)'
+					: ', anchor gone: ' + !running.includes(spec.find))
+			: running.length + ' characters running vs ' + bytes + ' bytes on disk');
+
 	const st = await state();
 	const missing = Object.keys(CRYSTAL).filter(k => !(st && (st.keys || []).includes(k)));
 	check('and `rendered` named every content key, the unknown one included',
@@ -688,6 +1015,24 @@ try {
 		drew.rows === todayRows && drew.names.includes('Rolled oats') && drew.names.includes('Black coffee'),
 		drew.rows + ' rows for ' + todayRows + ' entries; ' + drew.names.slice(0, 3).join(' / '));
 	check('no horizontal scroll', !drew.wide, JSON.stringify({ wide: drew.wide }));
+
+	// ── `p`: a plan, drawn ──
+	//
+	// The row count above already includes the two planned meals, because a plan is an entry
+	// like any other and IS shown. This is the other half: that it is shown AS a plan, so a
+	// day already eaten is not confused with a day merely intended. It needs its own break,
+	// because every aggregation check below is equally green whether a plan is uncounted or
+	// simply absent — two correct checks with a gap between them that neither can see.
+	const planned = await inFrame(() => ({
+		rows: document.querySelectorAll('.er').length,
+		pend: document.querySelectorAll('.er.pend').length,
+		said: [...document.querySelectorAll('.er.pend small')].map(x => x.textContent).join(' | '),
+		names: [...document.querySelectorAll('.er.pend .en')].map(x => x.firstChild.textContent),
+	}));
+	check('A PLANNED ENTRY IS DRAWN, AND DRAWN AS A PLAN',
+		planned.pend === PLANNED.length && planned.rows === todayRows
+		&& planned.names.includes('Chicken breast') && /planned/.test(planned.said),
+		JSON.stringify(planned));
 
 	// ── 9. Log and Life: the axis he asked for ──
 	//
@@ -762,6 +1107,23 @@ try {
 	}));
 	check('A BAR PER DAY THAT HAS SOMETHING, AND NONE FOR THE DAY THAT HAS NOT',
 		chart.bars === DAYS_LOGGED, chart.bars + ' bars over 14 buckets, ' + DAYS_LOGGED + ' logged');
+	// ── `p`: and counted by nothing ──
+	//
+	// The energy stat above is one witness. These are the other three, and they are here
+	// rather than folded into it because they are three separate code paths: the pie goes
+	// through `groups`, the streak through `streak`, and the bar for the empty day through
+	// `aggPer`. A gate that leaked into any one of them would leave a number on the screen
+	// that nobody has earned. The bar count is the check immediately above this one.
+	const noCount = await inFrame(() => ({
+		streak: (document.querySelector('.tag b') || {}).textContent || '',
+		pie: (document.querySelector('.pie svg text') || {}).textContent || '',
+	}));
+	check('AND NO NUMBER COUNTS IT: NOT THE PIE, NOT THE STREAK, NOT THE EMPTY DAY\'S BAR',
+		Number(noCount.streak) === STREAK && numOf(noCount.pie) === Math.round(todayKcal)
+		&& Math.round(todayKcal) !== Math.round(todayKcal + plannedKcal),
+		JSON.stringify(noCount) + ' expected streak ' + STREAK + ', pie ' + Math.round(todayKcal)
+		+ ' (a plan would have made it ' + Math.round(todayKcal + plannedKcal) + ')');
+
 	check('THE PIE FOLDS ITS TAIL INTO ONE NEUTRAL OTHER',
 		TODAY_FOODS.size > 8 && chart.legend.length === 8
 		&& chart.legend[chart.legend.length - 1] === 'Other',
@@ -818,11 +1180,327 @@ try {
 		!!bench && numOf(bench.v) === BENCH_VOL,
 		'page: ' + JSON.stringify(bench && bench.v) + '  expected: ' + BENCH_VOL + ' kg');
 
-	// The body lane, which is where `last`, `mean` and `since` are.
-	await inFrame(() => document.querySelector('[data-a="back"]').click());
-	await page.waitForTimeout(300);
+	// ── `end`: a length that falls out of two stamps ──
+	// The fixture typed no duration into any of these sessions. It stamped a start and a
+	// finish 62 minutes apart, and the number on the scope bar is the distance between them.
+	const spanBar = await inFrame(() => ({
+		ts: (document.querySelector('.scope .ts') || {}).textContent || '',
+		fin: (document.querySelector('[data-a="finish"]') || {}).textContent || '',
+	}));
+	check('A CLOSED SESSION\'S LENGTH IS THE DISTANCE BETWEEN ITS TWO STAMPS',
+		/\b1h 2m\b/.test(spanBar.ts) && spanBar.fin === 'Reopen',
+		JSON.stringify(spanBar) + ' expected ' + SESS_MIN + ' minutes and a way to reopen');
+
+	// ── THE WORKOUT ──────────────────────────────────────────────────
+	//
+	// What the owner asked for, and what he did NOT ask for: a Gym screen. What is built is
+	// the Log view given three things it did not have — a SCOPE (only this session's own
+	// entries), a GROUPING (by the lane's `primary`), and rows that are a PLAN until they are
+	// ticked. Everything asserted below is asserted through those three, which is why the
+	// checks read `.grp`, `.setr` and `.scope` rather than anything named after a gym.
+	await inFrame(() => {
+		const b = document.querySelector('[data-a="unscope"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(400);
 	await inFrame(() => document.querySelector('[data-a="now"]').click());
+	await page.waitForTimeout(700);
+
+	// The audio instrument, installed BEFORE anything can open a context — and proved to read
+	// nothing first. A counter that was already at one would report the page as correct
+	// whatever the page went on to do, which is the failure this project keeps paying for.
+	await inFrame(() => {
+		const Real = window.AudioContext || window.webkitAudioContext;
+		window.__audio = { have: !!Real, ctx: 0, osc: 0, when: [] };
+		if (!Real) return;
+		const Fake = function () {
+			const c = new Real();
+			window.__audio.ctx++;
+			const co = c.createOscillator.bind(c);
+			c.createOscillator = function () {
+				const o = co();
+				window.__audio.osc++;
+				const st = o.start.bind(o);
+				o.start = function (t) {
+					window.__audio.when.push(Math.round(t - c.currentTime));
+					return st(t);
+				};
+				return o;
+			};
+			return c;
+		};
+		window.AudioContext = Fake;
+		window.webkitAudioContext = Fake;
+	});
+	const audio0 = await inFrame(() => window.__audio);
+	check('the audio instrument is in place and reads nothing yet',
+		audio0.have && audio0.ctx === 0 && audio0.osc === 0, JSON.stringify(audio0));
+
+	// ── A button starts a session, and the session becomes the screen ──
+	const gymWas = new Set((await shardLines('gym')).map(e => e.id));
+	await inFrame(() => {
+		const t = [...document.querySelectorAll('.pad .tile')]
+			.find(x => /Start a workout/.test(x.textContent));
+		if (t) t.click();
+	});
+	await page.waitForTimeout(1600);
+	const startLines = (await shardLines('gym')).filter(e => !gymWas.has(e.id));
+	const sessId = startLines.length ? startLines[0].id : '';
+	const live1 = await inFrame(() => ({
+		scope: !!document.querySelector('.scope'),
+		title: (document.querySelector('.scope .h1') || {}).textContent || '',
+		finish: (document.querySelector('[data-a="finish"]') || {}).textContent || '',
+		dates: !!document.querySelector('[data-a="off"]'),
+		tiles: [...document.querySelectorAll('.pad .tile .tn')].map(x => x.textContent),
+	}));
+	await shotP('lifelog-1280-dark-workout-start', 0);
+	check('A WORKOUT STARTS OPEN, TITLED, AND BECOMES THE SCREEN',
+		startLines.length === 1 && startLines[0].sess === 1 && !startLines[0].end
+		&& live1.scope && live1.title === 'Morning' && live1.finish === 'Finish'
+		&& !live1.dates && live1.tiles.includes('Add exercises')
+		&& !live1.tiles.includes('Start a workout'),
+		JSON.stringify(live1) + ' | disk: '
+		+ JSON.stringify(startLines.map(e => ({ sess: e.sess, end: e.end, f: e.f }))));
+
+	// ── A picker that takes several, and the contrast of what it has taken ──
+	//
+	// The PRESSED state cannot be read off a computed style: `:active` needs a button that is
+	// actually held down. So it is held down, on the frame's own coordinates, measured while
+	// down, and then released — and the release IS the click that opens the picker, so the
+	// measurement costs no extra interaction and cannot drift out of the sequence.
+	let pressed = [];
+	const tileBox = await (async () => {
+		const f = page.frames().find(fr => fr.url().indexOf('blob:') === 0);
+		return f ? await f.locator('.tile.acc').first().boundingBox().catch(() => null) : null;
+	})();
+	if (tileBox) {
+		await page.mouse.move(tileBox.x + tileBox.width / 2, tileBox.y + tileBox.height / 2);
+		await page.mouse.down();
+		await page.waitForTimeout(180);
+		pressed = await contrastIn('.tile:active');
+		await page.mouse.up();
+	} else {
+		await inFrame(() => {
+			const t = [...document.querySelectorAll('.pad .tile')]
+				.find(x => /Add exercises/.test(x.textContent));
+			if (t) t.click();
+		});
+	}
+	await page.waitForTimeout(900);
+	const chose = await inFrame(() => {
+		const rows = [...document.querySelectorAll('.pickr')];
+		for (const want of ['Back squat', 'Bench press']) {
+			const r = rows.find(x => x.querySelector('.gap').textContent === want);
+			if (r) r.click();
+		}
+		const add = document.querySelector('[data-a="padd"]');
+		return {
+			on: document.querySelectorAll('.pickr.on').length,
+			label: add ? add.textContent : '',
+			typed: !!document.getElementById('q'),
+		};
+	});
+	await shotP('lifelog-1280-dark-workout-pick', 0);
+
+	// ── The selected-button fault, in the class it belongs to ──
+	//
+	// A selected surface goes to the accent ground; if its contents keep the ink they had,
+	// what you have just chosen is the one thing on the screen you cannot read. Four kinds of
+	// filled surface are measured at once — a chosen row, a pressed tile, the view switch,
+	// the primary button — and reported WITH THEIR NUMBERS, because a contrast check that
+	// says only "pass" is one nobody can argue with.
+	//
+	// What this found in the shipped page was two separate faults. `.tile.acc .tn` sat AFTER
+	// the pressed rule at equal weight, so a pressed accent tile drew accent ink on an accent
+	// ground at 1.00. And the page took the app's `accentText` on trust, which in this
+	// palette is a light tint of the accent rather than ink to sit on it: every selected chip
+	// in the whole capp measured 1.83.
+	const ratios = [].concat(pressed,
+		await contrastIn('.pickr.on'), await contrastIn('.chip.on'), await contrastIn('.go'));
+	const unresolved = ratios.filter(x => x.r == null);
+	const worst = ratios.filter(x => x.r != null).sort((a, b) => a.r - b.r)[0];
+	check('SELECTED SURFACES INVERT THEIR INK, EVERY ONE OF THEM',
+		pressed.length >= 2 && ratios.length >= 8 && unresolved.length === 0
+		&& !!worst && worst.r >= CONTRAST_MIN,
+		ratios.length + ' surfaces (' + pressed.length + ' of them pressed), worst '
+		+ JSON.stringify(worst)
+		+ (unresolved.length ? ', unresolved: ' + JSON.stringify(unresolved.slice(0, 3)) : '')
+		+ ' | ' + ratios.map(x => x.n + '=' + x.r).join(' '));
+
+	await inFrame(() => {
+		const b = document.querySelector('[data-a="padd"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1800);
+	const added = (await shardLines('gym')).filter(e => !gymWas.has(e.id) && e.id !== sessId);
+	const g1 = await liveGroups();
+	const names1 = g1.map(x => x.n).sort().join();
+	check('THE PICKER TAKES SEVERAL AT ONCE AND ADDS EVERY ONE OF THEM',
+		chose.on === 2 && chose.label === 'Add 2' && added.length === 2
+		&& names1 === 'Back squat,Bench press',
+		JSON.stringify(chose) + ' | disk: ' + added.length + ' | groups: ' + names1);
+	check('AND THEY ARRIVE AS A PLAN, UNDER THIS SESSION, WITH NOTHING TICKED',
+		added.every(e => e.p === 1 && e.of === sessId)
+		&& g1.every(x => x.pend === 1 && x.green === 0),
+		JSON.stringify(added.map(e => ({ p: e.p, of: e.of === sessId, f: e.f })))
+		+ ' | ' + JSON.stringify(g1));
+
+	// ── `prefill`: the same as last time, and never the same as a plan ──
+	//
+	// The last real squat was 110 x 3, three days back; the last real bench 85 x 4, yesterday.
+	const valOf = (gs, n) => (gs.find(x => x.n === n) || { vals: [] }).vals;
+	check('AND EACH OPENS ON THE LAST TIME THAT EXERCISE WAS REALLY DONE',
+		valOf(g1, 'Back squat')[0] === '110x3' && valOf(g1, 'Bench press')[0] === '85x4',
+		JSON.stringify(g1.map(x => x.n + ': ' + x.vals.join(' '))));
+
+	// Something wrong typed into the bench row, and NOT ticked. A plan is not a record, so the
+	// next row must still come from the last real one — otherwise one mistyped weight walks
+	// down the whole exercise and the log fills with numbers nobody lifted.
+	// GUARDED, every one of these. A break that removes a group must redden the check that
+	// names it and nothing else: an exception here would abort the run and take every later
+	// check with it, and a break whose damage is hidden behind `the run completed` has proved
+	// only that the file stops when it throws.
+	await inFrame(() => {
+		const g = [...document.querySelectorAll('.grp')].find(x => /Bench press/.test(x.textContent));
+		const ins = g ? [...g.querySelectorAll('.setin')] : [];
+		if (ins.length >= 2) { ins[0].value = '60'; ins[1].value = '20'; }
+	});
+	await inFrame(() => {
+		const g = [...document.querySelectorAll('.grp')].find(x => /Bench press/.test(x.textContent));
+		const b = g && g.querySelector('[data-a="addset"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1600);
+	const g2 = await liveGroups();
+	check('AND A ROW THAT IS ONLY A PLAN IS NOT WHAT THE NEXT ONE COPIES',
+		valOf(g2, 'Bench press').length === 2 && valOf(g2, 'Bench press')[0] === '60x20'
+		&& valOf(g2, 'Bench press')[1] === '85x4',
+		JSON.stringify(g2.map(x => x.n + ': ' + x.vals.join(' '))));
+
+	// ── The tick, the rest clock, and the ding that is scheduled rather than counted ──
+	await inFrame(() => {
+		const g = [...document.querySelectorAll('.grp')].find(x => /Bench press/.test(x.textContent));
+		const b = g && g.querySelector('.setr.pend [data-a="tick"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1500);
+	const rest1 = await inFrame(() => ({
+		bar: !!document.querySelector('.rest'),
+		clock: (document.getElementById('rest') || {}).textContent || '',
+		said: (document.querySelector('.rest .ts') || {}).textContent || '',
+		green: document.querySelectorAll('.setr .tick.on').length,
+	}));
+	await shotP('lifelog-1280-dark-workout-rest', 0);
+	await page.waitForTimeout(3400);
+	const midClock = await inFrame(() => (document.getElementById('rest') || {}).textContent || '');
+	// A DIFFERENT exercise. The rest is between one effort and the next, not between one
+	// exercise and the next, and a clock that only restarted within a group would be green on
+	// any check that ticked the same lift twice.
+	await inFrame(() => {
+		const g = [...document.querySelectorAll('.grp')].find(x => /Back squat/.test(x.textContent));
+		const b = g && g.querySelector('.setr.pend [data-a="tick"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1300);
+	const rest2 = await inFrame(() => (document.getElementById('rest') || {}).textContent || '');
+	check('THE REST CLOCK STARTS ON A TICK AND STARTS AGAIN ON THE NEXT, IN ANY EXERCISE',
+		rest1.bar && rest1.green >= 1
+		&& clockSecs(rest1.clock) >= 116 && clockSecs(rest1.clock) <= 120
+		&& clockSecs(midClock) <= clockSecs(rest1.clock) - 2
+		&& clockSecs(rest2) >= clockSecs(midClock) + 3 && clockSecs(rest2) >= 116,
+		'first ' + rest1.clock + ' -> waited -> ' + midClock + ' -> other exercise -> ' + rest2);
+	check('AND IT SAYS WHAT IT CANNOT PROMISE, rather than promising it',
+		/may not ring/i.test(rest1.said), JSON.stringify(rest1.said));
+
+	// ── Room for the numbers, on the screen that is all numbers ──
+	//
+	// This is the live screen, so every control this work added is on it at once: the weight
+	// and rep boxes, the ticks, the clock, the chips and the Finish button. A box shorter
+	// than its own type is invisible text that every value assertion above would still call
+	// correct — the failure this check exists for, and the reason it measures the room rather
+	// than reading the value back.
+	const room = [].concat(await roomIn('.setin'), await roomIn('.tick'), await roomIn('.rt'),
+		await roomIn('.chip.on'), await roomIn('.go'));
+	const cramped = room.filter(x => x.room < x.fs || x.overW > 1 || x.overH > 1);
+	check('AND EVERY CONTROL HAS MORE ROOM THAN ITS OWN TYPE NEEDS',
+		room.length >= 8 && cramped.length === 0,
+		room.length + ' controls measured, ' + cramped.length + ' cramped'
+		+ (cramped.length ? ': ' + JSON.stringify(cramped.slice(0, 3)) : '')
+		+ ' | tightest ' + JSON.stringify(room.slice().sort((a, b) => (a.room - a.fs) - (b.room - b.fs))[0]));
+
+	// The ding cannot be a file under this policy, so it is synthesised — and it is SCHEDULED
+	// on the audio clock two minutes out rather than fired by an interval, which is the only
+	// version of it that survives a throttled tab. The offsets are the only place the
+	// difference between the two shows at all.
+	const au = await inFrame(() => window.__audio);
+	check('AND THE DING IS SCHEDULED ON THE AUDIO CLOCK, NOT COUNTED DOWN BY A TIMER',
+		au.ctx === 1 && au.osc >= 4 && au.when.length >= 4
+		&& au.when.every(w => w >= 115 && w <= 125),
+		JSON.stringify(au) + ' — one context opened on the press, tones due ~120s out');
+
+	// ── The gap between two correct checks ──
+	//
+	// Each group heading is right, and each row is right, and the two of them together still
+	// permit the session's own total to be something else entirely — a leaked scope, a
+	// double-counted plan, a sum over the wrong set. So the three numbers are compared with
+	// each other AND with arithmetic done here: 60 x 20 and 110 x 3, the two rows that were
+	// actually ticked, and not one thing more.
+	const DONE_VOL = 60 * 20 + 110 * 3;
+	const g3 = await liveGroups();
+	const bar3 = await inFrame(() => (document.querySelector('.scope .ts') || {}).textContent || '');
+	const groupSum = g3.reduce((a, x) => a + numOf(x.vol), 0);
+	const barVol = numOf(String(bar3).split('·')[1] || '');
+	check('THE SESSION\'S TOTAL IS THE SUM OF ITS GROUPS AND OF NOTHING ELSE',
+		groupSum === DONE_VOL && barVol === DONE_VOL,
+		'groups ' + JSON.stringify(g3.map(x => x.n + '=' + x.vol)) + ' sum ' + groupSum
+		+ ', scope bar ' + JSON.stringify(bar3) + ' -> ' + barVol + ', arithmetic ' + DONE_VOL);
+
+	// ── A finish, and what the closed session then reads as ──
+	await inFrame(() => {
+		const b = document.querySelector('[data-a="finish"]');
+		if (b) b.click();
+	});
+	await page.waitForTimeout(1700);
+	const fin = await inFrame(() => ({
+		scope: !!document.querySelector('.scope'),
+		dates: !!document.querySelector('[data-a="off"]'),
+		rows: [...document.querySelectorAll('.er .en')].map(x => x.firstChild.textContent),
+		said: [...document.querySelectorAll('.er small')].map(x => x.textContent).join(' | '),
+	}));
+	const closed = (await shardLines('gym')).filter(e => e.id === sessId).pop();
+	await shotP('lifelog-1280-dark-workout-done', 0);
+	check('A FINISH CLOSES IT, AND NOTHING TYPED A DURATION ANYWHERE',
+		!!closed && !!closed.end && (closed.f || {}).dur == null
+		&& !fin.scope && fin.dates && fin.rows.includes('Morning')
+		&& /2 logged/.test(fin.said) && /1 to do/.test(fin.said),
+		JSON.stringify({ end: closed && closed.end, f: closed && closed.f }) + ' | '
+		+ JSON.stringify(fin));
+
+	// AND THE SAME LENGTH READ BACK THE ORDINARY WAY. The scope bar works out a running
+	// session's length for itself, so it is green whether or not a CLOSED session's duration
+	// falls out of its stamps — which is what the first version of this block missed: the
+	// break that removes the derivation changed nothing at all and reported green. The
+	// reading that actually needs it is the lane's own `dur` field in Life, where five
+	// finished sessions have to add up without a single typed duration between them.
+	await inFrame(() => document.querySelector('[data-a="view"][data-v="life"]').click());
+	await page.waitForTimeout(800);
+	await inFrame(() => document.querySelector('[data-a="per"][data-v="month"]').click());
+	await page.waitForTimeout(1300);
+	const gymLife = await inFrame(() => [...document.querySelectorAll('.st')]
+		.map(x => x.querySelector('.sk').textContent + '=' + x.querySelector('.sv').textContent));
+	const timeStat = (gymLife.find(x => /^Time=/.test(x)) || '=').split('=')[1];
+	const mHM = /(?:(\d+)h)?\s*(?:(\d+)m)?/.exec(timeStat || '');
+	const mins = timeStat && /\d/.test(timeStat) ? Number(mHM[1] || 0) * 60 + Number(mHM[2] || 0) : -1;
+	check('AND EVERY FINISHED SESSION\'S LENGTH IS READ BACK FROM ITS STAMPS, NOT A FIELD',
+		mins >= SESS_IN_MONTH * SESS_MIN && mins <= SESS_IN_MONTH * SESS_MIN + 2,
+		'Time reads ' + JSON.stringify(timeStat) + ' = ' + mins + ' minutes; expected '
+		+ SESS_IN_MONTH + ' x ' + SESS_MIN + ' plus the one just finished | ' + gymLife.join('  '));
+	await inFrame(() => document.querySelector('[data-a="per"][data-v="day"]').click());
+	await page.waitForTimeout(700);
+	await inFrame(() => document.querySelector('[data-a="view"][data-v="log"]').click());
 	await page.waitForTimeout(500);
+
+	// The body lane, which is where `last`, `mean` and `since` are.
 	await inFrame(() => document.querySelector('[data-a="lane"][data-v="body"]').click());
 	await page.waitForTimeout(1200);
 	// The readings are read back in LIFE now, which is the point of the axis: the body lane's
@@ -1001,7 +1679,7 @@ try {
 		padNow.on === 'Reading' && padNow.tiles.includes('Finished a book')
 		&& padNow.tiles.includes('New entry'), JSON.stringify(padNow));
 
-	const pressed = await inFrame(() => {
+	const tapped = await inFrame(() => {
 		const t = [...document.querySelectorAll('.pad .tile')]
 			.find(x => /Finished a book/.test(x.textContent));
 		if (!t) return false;
@@ -1010,7 +1688,7 @@ try {
 	await page.waitForTimeout(1600);
 	const readingLines = await shardLines('reading');
 	check('AND PRESSING ONE PUTS A LINE IN THAT LANE\'S OWN SHARD',
-		pressed && readingLines.length === 1 && readingLines[0].f.finished_a_book === true
+		tapped && readingLines.length === 1 && readingLines[0].f.finished_a_book === true
 		&& readingLines[0].day === today && readingLines[0].src === 'tap',
 		JSON.stringify(readingLines.map(e => ({ src: e.src, day: e.day, f: e.f }))));
 

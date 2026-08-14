@@ -141,7 +141,11 @@
 .imp-prop-row:hover { background: var(--bg-tertiary); }
 .imp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
 .imp-prop[data-state="open"]     .imp-dot { background: var(--accent); }
-.imp-prop[data-state="taken"]    .imp-dot { background: var(--warn); }
+/* `accepted` is the forge's word; `taken` was this panel's before it read the
+   forge, and no proposal now carries it. Without this line the dot fell through
+   to `--text-muted` and an accepted proposal was drawn IDENTICALLY to a declined
+   one — the two outcomes a reader most needs told apart. */
+.imp-prop[data-state="accepted"] .imp-dot { background: var(--warn); }
 .imp-prop[data-state="done"]     .imp-dot { background: var(--ok); }
 .imp-prop[data-state="declined"] .imp-dot { background: var(--text-muted); }
 .imp-prop-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

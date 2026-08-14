@@ -261,6 +261,50 @@ import init, {
 		return !!(cfg.baseUrl && cfg.model && cfg.apiKey);
 	}
 
+	// ── The two secrets THIS file seals, surviving a passphrase change ──
+	//
+	// `apiKeyEnc` and `pushTokenEnc`, both written by `saveCfg` above and both
+	// sealed with `DaimondIdentity.wrap`. They were the only two on the old
+	// hand-written list in `doChangePassphrase`, and they are registered here for
+	// the same reason every other module registers beside its own seal: the list
+	// is gone, and a secret takes part by saying so where it is sealed.
+	//
+	// Neither has a read-out phase. `cfg.apiKey` and `cfg.pushToken` are held
+	// decrypted in memory for the length of an unlocked session — `afterUnlock`
+	// puts them there — so there is nothing to read out under the old key. That is
+	// the `models.js` shape, not the `mail.js` one.
+	//
+	// SEPARATELY, not as one participant, because they fail separately: a refused
+	// API key must cost the push token nothing, and two participants is how the
+	// registry states that rather than how a comment claims it.
+	if (window.DaimondRekey) {
+		DaimondRekey.register({
+			name:   'apikey',
+			reseal: async function () {
+				if (!cfg.apiKey) return { failed: [] };
+				try { cfg.apiKeyEnc = await DaimondIdentity.wrap(cfg.apiKey); saveCfg(cfg); }
+				catch (e) { return { failed: [t('changepass.the_api_key')] }; }
+				return { failed: [] };
+			},
+			// One secret, so the sentence names the thing rather than a list of one.
+			sentence: function () { return t('changepass.key_not_resealed'); },
+		});
+		DaimondRekey.register({
+			name:   'push',
+			reseal: async function () {
+				// Sealed under the passphrase that has just changed, so without this it
+				// would unwrap to nothing on the next load and every push would be
+				// refused with no reason on screen. The engine's copy is untouched, so
+				// pushing goes on working until the tab is reloaded.
+				if (!cfg.pushToken) return { failed: [] };
+				try { cfg.pushTokenEnc = await DaimondIdentity.wrap(cfg.pushToken); saveCfg(cfg); }
+				catch (e) { return { failed: [t('push.the_token')] }; }
+				return { failed: [] };
+			},
+			sentence: function () { return t('push.not_resealed'); },
+		});
+	}
+
 	// ── The credential a push travels with ─────────────────────
 	//
 	// The engine holds it in ONE `thread_local` belonging to the wasm instance, and
@@ -2566,6 +2610,14 @@ import init, {
 	async function collectChunked(large) {
 		if (!window.DaimondCloud) return {};
 		if (!window.DaimondChunks || !DaimondCloud.available()) return DaimondCloud.index();
+		// A passphrase change makes every chunk already in the cloud store
+		// unopenable: they were sealed under the old key and the gateway holds them
+		// still. `chunks.js` drops its address map so none of that ciphertext can be
+		// reused, and asks HERE for the one thing it cannot do for itself — that the
+		// skip below yields for a single round, so the files are genuinely offloaded
+		// again rather than skipped as unchanged for ever. See "Surviving a
+		// passphrase change" in js/chunks.js.
+		var stale = !!(DaimondChunks.staleSinceRekey && DaimondChunks.staleSinceRekey());
 		for (var p in (large || {})) {
 			if (!Object.prototype.hasOwnProperty.call(large, p)) continue;
 			var f = null;
@@ -2578,12 +2630,15 @@ import init, {
 			// skipping outright is a file identical in length and untouched since
 			// its own upload.
 			var known = DaimondCloud.manifest(p);
-			if (known && known.bytes === f.size && known.mtime === f.lastModified && known.key) continue;
+			if (!stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) continue;
 			try {
 				var mani = await DaimondChunks.offloadFile(p, f);
 				await DaimondCloud.put(p, mani, mani.key);
 			} catch (e) { /* offload failed: retry next sync, index unharmed */ }
 		}
+		// Cleared only after the pass that owed it, so a round that never ran leaves
+		// the debt standing rather than marking it paid.
+		if (stale && DaimondChunks.clearStale) DaimondChunks.clearStale();
 		return DaimondCloud.index();
 	}
 
@@ -3403,7 +3458,48 @@ import init, {
 	// ── Diamonds state ─────────────────────────────────────────────
 	var diamonds = [];              // [{ id, name, crystal_version, updated, tags }]
 	var currentDiamond = null;    // selected Diamond meta, or null
-	var centreMode = 'chat';    // 'chat' | 'focus' — what the Centre shows
+	// WHAT THE CENTRE IS SHOWING, and the ONLY three values `centreMode` ever
+	// holds. `showCentre` is the only thing that writes it, and it refuses a
+	// fourth; `dev/verify_daimonface.mjs` reads this very list and checks that
+	// nothing in the file compares against a value missing from it, and that
+	// nothing in the list is a face no call ever enters.
+	//
+	// THIS LIST EXISTS BECAUSE ITS PREDECESSOR WAS A COMMENT, AND THE COMMENT WAS
+	// WRONG. It read `'chat' | 'focus'` for as long as a Diamond has had two
+	// faces, while `selectDiamond` had been entering `'daimon'` all along. Three
+	// guards that read `centreMode === 'daimon'` were therefore taken for dead
+	// branches -- a real feature apiece, none of which had supposedly ever run --
+	// and a night's work was spent about to make three of them live at once. They
+	// were live. The comment was not.
+	var CENTRE_FACES = ['chat', 'focus', 'daimon'];
+	//   'chat'   — an ordinary chat's thread.
+	//   'focus'  — a Diamond's crystal, which draws no conversation.
+	//   'daimon' — a Diamond's own conversation, in the chat's thread and composer.
+	var centreMode = 'chat';    // one of CENTRE_FACES; written only by showCentre
+
+	/// Is THIS conversation the one the Centre is drawing?
+	///
+	/// Two questions, and both have to be asked, which is why they are asked in
+	/// one place. `current` says WHICH conversation the thread is drawing;
+	/// `centreMode` says whether the thread is what the Centre is showing at all
+	/// — a Diamond has two faces, and the crystal face draws no conversation even
+	/// though the composer beneath it talks to one. A daimon turn can also run
+	/// with its Diamond nowhere near the screen, from a gather round or a
+	/// triggered action, and drawing then would paint one Diamond's words into
+	/// another's transcript.
+	///
+	/// Three sites asked this in three slightly different ways. Three copies of a
+	/// subtle condition is how one of them drifts, and it is also how all three
+	/// came to be misread at once: one name, asked the same way everywhere.
+	///
+	/// # Arguments
+	/// * `rec` - A chat record, or nothing.
+	///
+	/// # Returns
+	/// True only when `rec`'s thread is the one on screen.
+	function daimonOnScreen(rec) {
+		return !!(rec && current && current.id === rec.id && centreMode === 'daimon');
+	}
 	var crystalBusy = false;      // a steer or fold turn is in flight
 	// A pending fold proposal belongs to its Diamond, not to whatever is on
 	// screen. It used to live in one global that `selectDiamond` cleared
@@ -11102,21 +11198,67 @@ import init, {
 		b.textContent = t('tile.daimon_reset');
 		b.title = t('tile.daimon_reset_help');
 		b.addEventListener('click', async function () {
+			// NOT WHILE THE DAIMON IS MID-TURN, and the confirm is not even offered. A turn
+			// writes its reply into `rec.messages` and the model's whole conversation into
+			// `rec.session` when it ENDS, both by reference — so a clear taken while one is in
+			// flight is undone a few seconds later by a turn that knew nothing about it, and
+			// what the reader is left with is a "fresh" daimon holding half an answer to a
+			// question that is no longer there. Measured, not supposed.
+			//
+			// Refused rather than repaired, because the repair is a decision about somebody's
+			// money: stopping a turn they are paying for is not this control's to make. Stop is
+			// already on the composer while it runs, and it reaches a daimon's turn.
+			if (rec._generating) {
+				await noticeDialog(t('tile.daimon_reset_busy_title'), t('tile.daimon_reset_busy'));
+				return;
+			}
 			var ok = await confirmDialog(
 				t('tile.daimon_reset_body', { n: (rec.messages || []).length }),
 				t('tile.daimon_reset_ok'),
 				{ title: t('tile.daimon_reset_title'), danger: true });
 			if (!ok) return;
+			// TOMBSTONED BEFORE IT IS EMPTIED, and this is the line the feature did not work
+			// without. `persistChats` UNIONS this tab's transcript with the stored one, on
+			// purpose — it is what stops an idle tab rolling back a turn another tab has just
+			// taken — so emptying the array and saving merged the empty array with the whole
+			// conversation and put every message straight back. The screen cleared, the store
+			// did not, and the next reload had the testing conversation again. Reported as
+			// *"the chat screen has not cleared, which was the entire point, to start fresh"*.
+			// A tombstone is how a deliberate removal survives the union; it is the same
+			// mechanism a replaced interrupted turn already uses, and it travels in the sync
+			// parcel, so a daimon ended here is ended on the other devices too.
+			msgTombstone((rec.messages || []).map(function (m) { return m.mid; }));
 			rec.messages = [];
 			// Both halves, and the second is the one that matters: `messages` is what the thread
 			// DRAWS, `session.msgs` is what goes to the model on the next turn. Clearing only the
 			// first would empty the screen and send the whole testing conversation anyway.
-			rec.session = null;
+			//
+			// AN EMPTY SESSION, NOT NO SESSION, for the same reason. `persistChats` keeps the
+			// stored session when this tab's record has none — so `null` here read as "this tab
+			// does not know" and the model's whole conversation came back with it. A session
+			// that exists and holds nothing is the difference between not knowing and knowing
+			// there is nothing.
+			rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
 			rec.lastPrompt = 0;
+			// The stamp moves, or a tab that has been idle since before the clear counts as the
+			// fresher copy of everything else on the record and writes its figures back over it.
+			touchChat(rec);
 			persistChats();
 			// The daimon's own directory, its crystal and its links are untouched. This ends a
 			// conversation; it does not undo anything the conversation did.
-			if (currentDiamond && currentDiamond.id === id && centreMode === 'daimon') {
+			//
+			// REDRAWN ONLY WHERE THE THREAD IS ACTUALLY ON SCREEN. This dialog overlays the
+			// app, so whatever is behind it is stale until something repaints it, and closing
+			// a dialog repaints nothing. On the CRYSTAL face there is no thread drawn to be
+			// stale, and switching to the chat face renders from the record, which is already
+			// empty -- so there is nothing to do there and nothing is done.
+			//
+			// `'chat'` cannot move the reader anywhere they did not ask to go, and that is
+			// worth saying because it would be the obvious way to get this wrong: the guard
+			// has ALREADY established that the chat face is the one up, so this re-selects
+			// the face they are on. Widening the guard to the crystal face and keeping this
+			// argument would silently walk them off the crystal they were reading.
+			if (daimonOnScreen(rec)) {
 				await selectDiamond(f, 'chat');
 			}
 			// Gone, because there is now nothing to clear — the same rule that kept it off an
@@ -12547,7 +12689,7 @@ import init, {
 		// The DAIMON face only. In the crystal face there is no conversation on
 		// screen, so a Fold there would act on something the reader cannot see;
 		// and an ordinary chat is meant to be thrown away rather than folded.
-		b.style.display = (centreMode === 'daimon' && current && current.diamondId) ? '' : 'none';
+		b.style.display = (daimonOnScreen(current) && current.diamondId) ? '' : 'none';
 	}
 
 	/// Turn the chip on or off for the chat on screen.
@@ -20765,7 +20907,16 @@ import init, {
 	/// panels now, and open beside it.
 	/// `'chat'` — an ordinary chat. `'focus'` — a Diamond's crystal. `'daimon'` — a
 	/// Diamond's conversation, which uses the chat's own thread and composer.
+	///
+	/// The three are `CENTRE_FACES`, and this is the only thing that writes
+	/// `centreMode`. A fourth is refused rather than entered: every guard in the
+	/// file asks which face is up, so an unknown one would turn all of them off at
+	/// once and the Centre would quietly stop drawing anything.
 	function showCentre(mode) {
+		if (CENTRE_FACES.indexOf(mode) < 0) {
+			try { console.warn('[centre] no such face: ' + mode); } catch (e) { /* no console */ }
+			return;
+		}
 		centreMode = mode;
 		var crystalOn = (mode === 'focus');
 		var onDiamond = crystalOn || mode === 'daimon';
@@ -25127,9 +25278,7 @@ import init, {
 		// in another's transcript, still arriving minutes later. `runTurn` asks
 		// the same question the same way, through `owns()`.
 		var rec = daimonChat(currentDiamond);
-		var onScreen = function () {
-			return !!(current && rec && current.id === rec.id && centreMode === 'daimon');
-		};
+		var onScreen = function () { return daimonOnScreen(rec); };
 		// The OTHER face of the same Diamond. Both faces share one composer, so a
 		// steer is just as likely to be typed at the crystal -- which is the face
 		// a Diamond opens on -- and until now the crystal answered with twelve
@@ -27181,25 +27330,51 @@ import init, {
 		var next = await promptNewPassphrase(cur);
 		if (!next) return;
 
-		var plain = cfg.apiKey;                      // held decrypted while unlocked
-		var pushPlain = cfg.pushToken;               // likewise, and sealed under the old one
+		// EVERY SECRET THAT IS SEALED UNDER THE PASSPHRASE IS CARRIED ACROSS, AND
+		// NOT ONE OF THEM IS NAMED HERE.
+		//
+		// This used to be a hand-written list, and the list was wrong: seven modules
+		// sealed something and one of them was on it. Mail's passwords, the provider
+		// keys, the forge voice and the search key were each found separately and
+		// each in the same way — a user reporting that something had quietly stopped
+		// working. Forgetting was the default and forgetting was silent.
+		//
+		// So the list is gone. Each module registers with `DaimondRekey` beside its
+		// own sealing code, this iterates, and `dev/verify_rekey.mjs` reads the
+		// source for every caller of `wrap`/`wrapBytes` and fails on one that is
+		// neither registered nor exempted where it seals.
+		//
+		// FIRST, while the old key still opens them: the secrets that are held ONLY
+		// sealed are read out. Afterwards nothing can open them at all.
+		var readOut = { held: 0, sentences: [] };
+		try { readOut = await DaimondRekey.readAll(); }
+		catch (e) { readOut = { held: 0, sentences: [] }; }
 		var r;
 		try { r = await DaimondIdentity.changePassphrase(cur, next); }
 		catch (e) { r = { ok: false }; }
-		if (!r || !r.ok) { noticeDialog(t('changepass.failed'), t('changepass.failed_body')); return; }
+		if (!r || !r.ok) {
+			// The change did not happen, so nothing needs re-sealing — but whatever
+			// was read out is in memory and must not stay there.
+			try { DaimondRekey.forgetAll(); } catch (e) { /* each one caught its own */ }
+			// NOT "your current passphrase did not match" — the first dialog already
+			// verified it, so by here the cause is a key store that cannot be read
+			// or written, never a typo. Naming the one cause that cannot have
+			// happened sends the user to check the one thing that is fine.
+			noticeDialog(t('changepass.failed'), t('changepass.failed_body')); return;
+		}
 
-		if (plain) {
-			try { cfg.apiKeyEnc = await DaimondIdentity.wrap(plain); saveCfg(cfg); }
-			catch (e) { noticeDialog(t('changepass.careful'), t('changepass.key_not_resealed')); return; }
-		}
-		// The push token is sealed under the passphrase that has just changed, so
-		// without this it would unwrap to nothing on the next load and every push
-		// would be refused with no reason on screen. The engine's copy is untouched,
-		// so pushing goes on working until the tab is reloaded.
-		if (pushPlain) {
-			try { cfg.pushTokenEnc = await DaimondIdentity.wrap(pushPlain); saveCfg(cfg); }
-			catch (e) { noticeDialog(t('changepass.careful'), t('push.not_resealed')); return; }
-		}
+		// AND NOW BACK, under the new key. Every participant runs, whatever the one
+		// before it did: `resealAll` calls each in its own try/catch, collects the
+		// failures and returns them all.
+		//
+		// It used to return on the first one. A failure re-wrapping the API key
+		// returned from here, which silently abandoned the push token, the passkey
+		// and — once mail was added above it — would have abandoned those too. One
+		// secret failing is a sentence in the notice; it is not a reason to leave
+		// the others sealed under a passphrase that no longer exists.
+		var put = { sentences: [] };
+		try { put = await DaimondRekey.resealAll(); }
+		catch (e) { put = { sentences: [t('changepass.rekey_failed')] }; }
 		// The passkey seals a copy of the passphrase and of the wrapped key, both
 		// of which have just changed, so it opens onto something that no longer
 		// works until it is re-sealed. One biometric gesture, right here, rather
@@ -27219,8 +27394,19 @@ import init, {
 			var acct = (window.DaimondIdentity && DaimondIdentity.displayName()) || 'Daimond';
 			offerToSaveCredential(acct, next);
 		} catch (e) { /* best-effort; the passphrase changed regardless. */ }
+		// Everything that did not survive, named. "Gmail needs its password again"
+		// can be acted on; "a mailbox failed" cannot. Each sentence is the module's
+		// own words about its own secret, in registration order.
+		//
+		// ONE EXIT, and the body says the passphrase changed FIRST, because that
+		// part is true whatever else went wrong and a user who stops reading after
+		// the first sentence has still been told the thing they must not get wrong.
+		// This path used to end in a bare "Careful" that never said the passphrase
+		// had changed at all.
+		var said = [].concat(readOut.sentences || [], put.sentences || []);
 		noticeDialog(t('changepass.changed'), t('changepass.changed_body')
-			+ (resealed ? '' : ' ' + t('changepass.passkey_stale')));
+			+ (resealed ? '' : ' ' + t('changepass.passkey_stale'))
+			+ said.map(function (s) { return ' ' + s; }).join(''));
 	}
 
 	/// A brief status line, floated centre-bottom, for actions that happen away

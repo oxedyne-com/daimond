@@ -1315,6 +1315,15 @@
      proposals made from notes are read and voted on in. Nothing leaves this
      device until somebody presses Send on one note. See dev/IMPROVE_CONTRACT.md. -->
 <script src="js/trash.js"></script>
+<!-- rekey.js BEFORE every module that seals a secret under the passphrase —
+     voice.js is the first of them. Each registers with it AT LOAD, beside its
+     own sealing code, so that a passphrase change carries every secret across
+     without anybody keeping a list. See the header of js/rekey.js. -->
+<script src="js/rekey.js"></script>
+<!-- voice.js BEFORE improve.js: the panel presents a voice to write with, and
+     this holds it. Before identity.js is fine — it reaches DaimondIdentity only
+     inside a call, never while loading. -->
+<script src="js/voice.js"></script>
 <script src="js/improve.js"></script>
 <script src="js/triggers.js"></script>
 <script src="js/verify.js"></script>

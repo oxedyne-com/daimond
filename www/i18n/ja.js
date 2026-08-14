@@ -1022,7 +1022,7 @@
 	'typst.pack_locked':   '組版はこのアカウントが購入していないツールパックに含まれています。名称と価格はツールパネルに表示されます。買い切りでずっと使え、クレジットではなく代金でのお支払いです。',
 	'typst.watch.starting': 'ページを組んでいます…',
 	'typst.watch.building': '再ビルド中…',
-	'typst.watch.live':     'ライブ',
+	'typst.watch.live_preview': 'ライブプレビュー',
 	'typst.watch.stale':    '最後に成功したビルドを表示しています',
 	'typst.watch.held':     '再ビルドを停止しました',
 	'typst.watch.dead':     'コンパイラーが停止しました',
@@ -1033,9 +1033,15 @@
 	'typst.watch.page': 'ページ',
 	'typst.watch.zoom_out': '小さく',
 	'typst.watch.zoom_in': '大きく',
-	'typst.watch.fit': '幅に合わせる',
-	'typst.watch.night': '暗い紙',
-	'typst.watch.day': '明るい紙',
+	// ボタンには一語だけ置き、長い言い方はホバー時のタイトルに回します。
+	'typst.watch.fit_width': '幅に合わせる',
+	'typst.watch.fit_page': 'ページ全体に合わせる',
+	'typst.watch.paper_dark': 'ダーク',
+	'typst.watch.paper_light': 'ライト',
+	'typst.watch.paper_dark_why': '暗い紙。夜に読むときに。',
+	'typst.watch.paper_light_why': '明るい紙',
+	'typst.watch.sections': 'セクション',
+	'typst.watch.sections_none': 'この文書には一覧にする見出しがありません。',
 	'typst.watch.dead_why': 'この文書でコンパイラーのメモリーが尽きました。ページを再読み込みしないと再起動できません。下のページは最後にビルドできたものです。再読み込みして、同じファイルをもう一度開いてください。',
 
 	// ── トースト ───────────────────────────────────────────────
@@ -2112,6 +2118,12 @@
 	'settings.trail_empty': 'まだ何も記録されていません。',
 	// ── The Trash ──────────────────────────────────────────────
 	'panel.trash': 'ゴミ箱',
+
+	// ── 改善パネル ─────────────────────────────────────────────
+	// Daimond についてのメモを書き、提案を読む場所です。どちらの半分も
+	// Oregami のフォージ（提案を預かるサーバー）を通ります。「フォージ」と
+	// 「声」はこのアプリの言い方で、母語話者の見直しで別の訳語に変わって
+	// かまいません。
 	'panel.improve': '改善',
 	'improve.notes': 'メモ',
 	'improve.proposals': '提案',
@@ -2124,13 +2136,20 @@
 	'improve.keep_help': 'このメモをこの端末に保存します。何も送信されません。',
 	'improve.send': '送信',
 	'improve.send_help': '上にあるものをそのまま Oxedyne に送ります。ほかには何も付きません。',
-	'improve.as': '@{handle} として送ります',
-	'improve.as_none': 'アカウントがないため、メモはここに置くことしかできません。',
+	// メモは書いた人の「声」で送られます。ハンドルも名前も一緒に行かないので、
+	// ここで書き手を名指しする文は書けません。
+	'improve.as_voice': 'あなたの声でフォージに送られます。そのリポジトリを見られる人は誰でも読めます。',
+	'improve.as_novoice': '声がないので、メモはここに置くことしかできません。',
+	'improve.title_hint': '最初の行が提案の題名です。何が起きたかはその下に書きます。',
+	'improve.no_title': '最初の行が題名です。まず題名を書き、その下に何が起きたかを書いてください。',
 	'improve.nothing': 'まず何か書いてください。',
-	'improve.not_sent': '送信できなかったので、ここに残しました。どこにも送られていません。',
+	// 断られたあとに出ます。待ち行列も再送もないので、訳文で再試行を約束しては
+	// いけません。
+	'improve.kept_here': 'メモはここに残っていて、再送はしていません。',
 	'improve.copied': 'コピーしました。',
 	'improve.state_kept': 'ここだけ',
 	'improve.state_sent': '{date} に送信',
+	'improve.state_sent_n': '{date} に送信、提案 {n} です',
 	'improve.drop': 'このメモを削除',
 	'improve.drop_ask': 'このメモを削除しますか。この端末にしかないので、ほかに控えはありません。',
 	'improve.drop_ok': '削除',
@@ -2140,20 +2159,78 @@
 	'improve.ctx_pointer': 'ポインター',
 	'improve.ctx_palette': 'パレット {name}',
 	'improve.ctx_panels': '開いているパネル: {list}',
-	'improve.no_props': 'まだ提案はありません。提案はメモから作られ、新しいビルドとともに届きます。',
-	'improve.as_at': 'ビルド {build} 時点の集計です。Daimond が更新されると動きます。',
-	'improve.as_at_none': '集計は Daimond が更新されると動きます。',
+
+	// 声とは、フォージが書き手を見分けるための一人ひとりの合言葉です。ここには
+	// パスフレーズで暗号化して保管され、アドレスに入ることはありません。
+	'improve.voice_held': 'この端末には声が保管されています。あなたのパスフレーズで暗号化されています。',
+	'improve.voice_none': 'ここに声はありません。メモは手元に置くことしかできません。',
+	'improve.voice_set': '声を設定',
+	'improve.voice_replace': '声を入れ替える',
+	'improve.voice_help': 'フォージがあなたに一度だけ表示した行です。ここに暗号化して保管され、アドレスに入ることはありません。',
+	'improve.voice_ph': 'フォージが表示した行を貼り付けてください',
+	'improve.voice_save': '声を保存',
+	'improve.voice_saved': 'あなたの声を暗号化してここに保管しました。',
+	'improve.voice_failed': 'その声は保存できませんでした。',
+	'improve.voice_forget': '忘れる',
+	'improve.voice_forget_help': 'この端末の控えを消します。',
+	'improve.voice_forgotten': 'この端末の控えは消えました。',
+	'improve.voice_ask_forget': 'この端末の声を忘れますか。フォージは一度しか表示せず、もう一度は表示できません。',
+
+	// 提案は見ているそのときにフォージから読み込まれます。返事が付いたことを
+	// 知らせる仕組みはないので、そう思わせる文をここに書いてはいけません。
+	'improve.live_note': 'これは見ているそのときにフォージから読み込まれます。提案に返事が付いても知らせは来ません。もう一度見て確かめてください。',
+	'improve.loading': '提案を読み込んでいます…',
+	'improve.none_shown': 'いまは何も読み込めませんでした。',
+	'improve.none_yet': 'ここにはまだ提案がありません。あなたのものが最初になります。',
+	'improve.reading': '読み込んでいます…',
+	'improve.more': '古いものを表示',
+	'improve.count.one': '提案 {n} 件',
+	'improve.count.other': '提案 {n} 件',
+	'improve.by': '{who} から',
+	'improve.said_n.one': '返信 {n} 件',
+	'improve.said_n.other': '返信 {n} 件',
+	'improve.built_on': 'ビルド {build} で書かれた',
+	'improve.closed_by': 'マーク {mark} で完了',
+	'improve.move_floor': 'メモが内容についてファイルの境界を越えるのは、その変更が移動と認められたときだけで、その下限は 64 バイトです。それより少ない量をあるファイルから別のファイルへ切り出すと、履歴には削除と挿入が残ります。そこに結び付いたメモは、内容が削除されたと正直に報告します。メモも履歴も正しいのです。',
 	'improve.state_open': '受付中',
 	'improve.state_taken': '着手中',
 	'improve.state_done': '完了',
 	'improve.state_declined': '見送り',
-	'improve.shipped_in': 'ビルド {build} で反映',
-	'improve.from_notes.one': 'メモ {n} 件から',
-	'improve.from_notes.other': 'メモ {n} 件から',
 	'improve.tally': '賛成 {yes}、反対 {no}',
 	'improve.do': 'これをやる',
 	'improve.not': 'これはやらない',
-	'improve.vote_held': 'あなたの投票はここにあり、まだ集計されていません。',
+	'improve.vote_novoice': '投票するには声を設定してください。',
+	'improve.vote_off': 'もう一度押すと投票を取り消せます。',
+	'improve.reply': '送る',
+	'improve.reply_ph': 'この提案について書いてください。',
+	'improve.reply_help': 'この欄にあるものをそのまま送ります。ほかには何も付きません。',
+
+	// フォージが断った理由を言葉にしたものです。どの上限に達したかは書きません。
+	// 自分の状態を知らせる上限は、相手に測られる上限だからです。
+	//
+	// 翻訳者へ — `improve.err_absent` は言い回しの好みではなく、プライバシーの
+	// 規則です。フォージは「そのリポジトリがない」場合と「そのリポジトリは
+	// 非公開だ」場合の両方に、意図して恒久的に `absent` と答えます。両者を
+	// 区別できる手がかりを出せば、非公開のリポジトリが伏せている事実そのものを
+	// 明かしてしまうからです。したがってこの文は両方の場合に真でなければ
+	// なりません。「存在しません」は非公開のときに偽になり、「非公開です」は
+	// 漏らしてしまいます。「あなたには利用できません」とだけ言ってください。
+	// dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1) を参照。
+	'improve.err_absent': 'このリポジトリはあなたには利用できません。',
+	'improve.err_unvoiced': 'フォージに声が渡されなかったので、断られました。',
+	'improve.err_unknown': 'フォージがあなたの声を認識できません。フォージが表示した行から設定し直してください。',
+	'improve.err_unpermitted': 'あなたの声ではここでそれはできません。',
+	'improve.err_throttled': 'いまは要求が多すぎます。少し待ってからやり直してください。',
+	'improve.err_throttled_address': 'いまはこのアドレスからの要求が多すぎます。少し待ってからやり直してください。',
+	'improve.err_throttled_failing': 'いまは失敗した要求が多すぎます。少し待ってからやり直してください。',
+	'improve.err_malformed': 'Daimond の問い合わせをフォージが読めませんでした。これは Daimond 側の不具合で、書いた内容のせいではありません。',
+	'improve.err_no_proposal': 'そのような提案はここにありません。',
+	'improve.err_unsupported': 'フォージはそれには答えません。',
+	'improve.err_internal': 'フォージ側で問題が起きました。あなたのせいではありません。',
+	'improve.err_gateway': 'いまは Daimond からフォージに届きませんでした。',
+	'improve.err_session': 'いま Daimond はサインインしていないので、フォージに届きませんでした。',
+	'improve.err_toolong': 'フォージが受け取れる長さを超えています。短くするか、二回に分けて送ってください。',
+	'improve.err_offline': 'いまは何も送れませんでした。',
 	'trash.nothing': '削除したものはありません。',
 	'trash.kept_days': '{days} 日間保管し、その後完全に削除します。',
 	'trash.holding.one': '{n} 件、{bytes}',
